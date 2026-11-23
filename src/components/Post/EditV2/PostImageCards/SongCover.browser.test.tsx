@@ -87,7 +87,7 @@ const song = (cover: SongCoverRow | null = null) =>
     id: 7,
     type: 'audio',
     url: 'song-key',
-    metadata: { duration: 120, ...(cover && { coverImageId: cover.id }) },
+    metadata: { duration: 120 },
     cover,
   } as unknown as PostEditImageDetail);
 
@@ -178,7 +178,8 @@ describe("a song's cover in the post editor", () => {
     apply(stored);
     expect(songId).toBe(7);
     expect(stored.cover).toEqual(pending);
-    expect(stored.metadata).toEqual({ duration: 120, coverImageId: pending.id });
+    // The link lives in the song's Track row; the stored metadata is left as it was.
+    expect(stored.metadata).toEqual({ duration: 120 });
   });
 
   test('shows a cover still being scanned as processing, not as a clean cover', async () => {

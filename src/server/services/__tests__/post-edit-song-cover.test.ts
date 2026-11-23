@@ -40,6 +40,8 @@ type Row = {
 
 /** The `Image` table the editor reads: post media by `postId`, anything else by id. */
 let table: Row[] = [];
+/** The `Track` table: each song's cover link. */
+let tracks: { imageId: number; coverImageId: number | null; genre: string | null }[] = [];
 
 function image(id: number, values: Partial<Row> = {}): Row {
   return {
@@ -55,17 +57,22 @@ function image(id: number, values: Partial<Row> = {}): Row {
     ...values,
   };
 }
-const song = (id: number, coverImageId?: number) =>
-  image(id, {
-    postId: POST,
-    type: 'audio',
-    metadata: { duration: 90, ...(coverImageId !== undefined && { coverImageId }) },
-  });
+/** A song, linked to `coverImageId` through its `Track` row. */
+const song = (id: number, coverImageId?: number) => {
+  if (coverImageId !== undefined) tracks.push({ imageId: id, coverImageId, genre: null });
+  return image(id, { postId: POST, type: 'audio', metadata: { duration: 90 } });
+};
 const coverOf = (id: number, songId: number, values: Partial<Row> = {}) =>
   image(id, { metadata: { parentId: songId }, ...values });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  tracks = [];
+  vi.mocked(dbMock.dbRead.track.findMany).mockImplementation((async ({
+    where,
+  }: {
+    where: { imageId: { in: number[] } };
+  }) => tracks.filter((x) => where.imageId.in.includes(x.imageId))) as never);
   vi.mocked(dbMock.dbRead.image.findMany).mockImplementation((async ({
     where,
     select,
@@ -108,24 +115,24 @@ describe("the post editor's song covers", () => {
       [3, null],
       [4, null],
     ]);
-    // The post's media read plus one read for every cover.
+    // The post's media read, one read of the songs' Track rows, and one read for every cover.
     expect(dbMock.dbRead.image.findMany).toHaveBeenCalledTimes(2);
+    expect(dbMock.dbRead.track.findMany).toHaveBeenCalledTimes(1);
   });
 
-  it("is null when the linked image is gone, someone else's, a post image or another song's", async () => {
+  // Another song's cover cannot be linked: `Track.coverImageId` is unique.
+  it("is null when the linked image is gone, someone else's, or a post image", async () => {
     table = [
       song(1, 404),
       song(2, 102),
       song(3, 103),
-      song(4, 104),
       coverOf(102, 2, { userId: 6 }),
       coverOf(103, 3, { postId: POST + 1 }),
-      coverOf(104, 1),
     ];
 
     const images = await read();
 
-    expect(images.map((x) => x.cover)).toEqual([null, null, null, null]);
+    expect(images.map((x) => x.cover)).toEqual([null, null, null]);
   });
 
   it('skip the cover read for a post whose songs have none', async () => {

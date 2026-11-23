@@ -1042,21 +1042,30 @@ const songCoverSelect = {
 } satisfies Prisma.ImageSelect;
 export type SongCover = Prisma.ImageGetPayload<{ select: typeof songCoverSelect }>;
 
+/** Each song's `Track` row: its cover link. A song without one has no cover. */
+async function readSongTracks(songIds: number[], db: typeof dbRead | typeof dbWrite) {
+  if (!songIds.length) return new Map<number, SongTrack>();
+  const rows = await (db as typeof dbRead).track.findMany({
+    where: { imageId: { in: songIds } },
+    select: { imageId: true, coverImageId: true },
+  });
+  return new Map(rows.map(({ imageId, ...track }) => [imageId, track]));
+}
+type SongTrack = { coverImageId: number | null };
+
 /**
  * Each song's cover, in one read for all of them: the fields `coverSelect` names (by default its
- * scan state, for the editor).
+ * scan state, for the editor). The link is the song's `Track.coverImageId`.
  */
 async function getSongCovers<S extends Prisma.ImageSelect = typeof songCoverSelect>(
-  images: { id: number; type: MediaType; metadata: unknown }[],
+  images: { id: number; type: MediaType; track?: SongTrack | null }[],
   db: typeof dbRead | typeof dbWrite,
   coverSelect: S = songCoverSelect as unknown as S
 ) {
   type Cover = Prisma.ImageGetPayload<{ select: S }>;
   const links = images.flatMap((image) => {
-    const coverId = (image.metadata as { coverImageId?: unknown } | null)?.coverImageId;
-    return image.type === MediaType.audio && typeof coverId === 'number'
-      ? [{ songId: image.id, coverId }]
-      : [];
+    const coverId = image.track?.coverImageId;
+    return image.type === MediaType.audio && coverId != null ? [{ songId: image.id, coverId }] : [];
   });
   if (!links.length) return new Map<number, Cover>();
   // The songs come back too, for their owner: a cover must be theirs. Typed as the plain select so
@@ -1066,7 +1075,6 @@ async function getSongCovers<S extends Prisma.ImageSelect = typeof songCoverSele
     id: true,
     userId: true,
     postId: true,
-    metadata: true,
   };
   const rows = (await (db as typeof dbRead).image.findMany({
     where: { id: { in: links.flatMap(({ songId, coverId }) => [songId, coverId]) } },
@@ -1075,14 +1083,13 @@ async function getSongCovers<S extends Prisma.ImageSelect = typeof songCoverSele
     id: number;
     userId: number;
     postId: number | null;
-    metadata: unknown;
   } & Record<string, unknown>)[];
   const byId = new Map(rows.map((row) => [row.id, row]));
   return new Map(
     links.flatMap(({ songId, coverId }) => {
       const song = byId.get(songId);
       const cover = byId.get(coverId);
-      if (!song || !cover || !isCoverOfSong(cover, song)) return [];
+      if (!song || !cover || !isSongsOwnImage(cover, song)) return [];
       const shown = Object.fromEntries(Object.keys(coverSelect).map((key) => [key, cover[key]]));
       return [[songId, shown as Cover] as const];
     })
@@ -1131,7 +1138,7 @@ export async function getSongCoversForPlayer({
   if (!visible.size) return [];
   const songs = await dbRead.image.findMany({
     where: { id: { in: [...visible] } },
-    select: { id: true, type: true, metadata: true },
+    select: { id: true, type: true, track: { select: { coverImageId: true } } },
   });
   const covers = await getSongCovers(songs, dbRead, playerCoverSelect);
   return [...covers].flatMap(([songId, cover]) =>
@@ -1155,7 +1162,14 @@ async function combinePostEditImageData(
   const tags = await getVotableImageTags({ ids: imageIds, user });
   const thumbnails = await thumbnailCache.fetch(imageIds);
   const lyrics = await getSongLyricLines(images, db);
-  const covers = await getSongCovers(images, db);
+  const tracks = await readSongTracks(
+    images.filter((x) => x.type === MediaType.audio).map((x) => x.id),
+    db
+  );
+  const covers = await getSongCovers(
+    images.map((x) => ({ id: x.id, type: x.type, track: tracks.get(x.id) })),
+    db
+  );
   const songTags = await readSongTags(
     images.filter((x) => x.type === MediaType.audio).map((x) => x.id),
     db
@@ -2072,7 +2086,7 @@ export const addPostImage = async ({
     }).catch(handleLogError);
     if (saved) submitTrackLyricsScan({ imageId: partialResult.id }).catch(handleLogError);
   }
-  if (song && songWorkflow && typeof song.metadata.coverImageId !== 'number')
+  if (song && songWorkflow)
     await linkGeneratedSongCover({
       songId: partialResult.id,
       userId: user.id,
@@ -2344,19 +2358,25 @@ export const updatePostImage = async ({ title, allowRemix, ...image }: UpdatePos
   enqueueImageIngestion({ images: requeued, name: 'post-image-ingest', userId: result.userId });
 };
 
+/** A song's cover is its owner's own image, outside any post: only such a linked row is shown. */
+function isSongsOwnImage(
+  row: { userId: number; postId: number | null } | null | undefined,
+  song: { userId: number }
+) {
+  return !!row && row.userId === song.userId && row.postId == null;
+}
+
 /**
- * A song's cover is its owner's own image, outside any post, naming the song as its parent. Only
- * such a row is shown or replaced through the song's `coverImageId`.
+ * A cover row made for this song: its own image naming the song as its parent. Only such a row is
+ * reused by a retried save or deleted when it is replaced.
  */
 function isCoverOfSong(
   row: { userId: number; postId: number | null; metadata: unknown } | null | undefined,
   song: { id: number; userId: number }
 ) {
   return (
-    !!row &&
-    row.userId === song.userId &&
-    row.postId == null &&
-    (row.metadata as { parentId?: unknown } | null)?.parentId === song.id
+    isSongsOwnImage(row, song) &&
+    (row?.metadata as { parentId?: unknown } | null)?.parentId === song.id
   );
 }
 
@@ -2398,17 +2418,20 @@ export async function setSongCover({
       })
     ).id;
 
-  // One statement, with the row locked, so concurrent saves each get back the cover they replaced
-  // and no other metadata field written meanwhile is lost.
-  const [linked] = await dbWrite.$queryRaw<{ previous: unknown }[]>`
-    UPDATE "Image" i
-    SET metadata = COALESCE(i.metadata, '{}'::jsonb) || jsonb_build_object('coverImageId', ${coverId}::int),
-      "updatedAt" = now()
-    FROM (SELECT id, metadata -> 'coverImageId' AS previous FROM "Image" WHERE id = ${song.id} FOR UPDATE) old
-    WHERE i.id = old.id
+  // The song's Track row exists before the link, so the link below always has a row to lock.
+  await dbWrite.$executeRaw`
+    INSERT INTO "Track" ("imageId") VALUES (${song.id}) ON CONFLICT ("imageId") DO NOTHING
+  `;
+  // One statement, with the Track row locked, so concurrent saves each get back the cover they
+  // replaced.
+  const [linked] = await dbWrite.$queryRaw<{ previous: number | null }[]>`
+    UPDATE "Track" t
+    SET "coverImageId" = ${coverId}::int
+    FROM (SELECT "imageId", "coverImageId" AS previous FROM "Track" WHERE "imageId" = ${song.id} FOR UPDATE) old
+    WHERE t."imageId" = old."imageId"
     RETURNING old.previous
   `;
-  const previousId = typeof linked?.previous === 'number' ? linked.previous : undefined;
+  const previousId = linked?.previous ?? undefined;
   if (previousId !== undefined && previousId !== coverId) {
     // primary: the link was just rewritten
     const previous = await dbWrite.image.findUnique({
@@ -2418,10 +2441,7 @@ export async function setSongCover({
     if (isCoverOfSong(previous, song)) await deleteImages([previousId], { actor: { id: user.id } });
   }
 
-  await Promise.all([
-    imageMetadataCache.refresh(song.id),
-    song.postId ? preventReplicationLag('postImages', song.postId) : undefined,
-  ]);
+  if (song.postId) await preventReplicationLag('postImages', song.postId);
 
   // primary: read-your-write after linking the cover
   const saved = await dbWrite.image.findUnique({ where: { id: coverId }, select: songCoverSelect });
@@ -2500,10 +2520,9 @@ async function linkGeneratedSongCover({
   });
   // Only a song still without a cover takes it; a row left unlinked is removed.
   const linked = await dbWrite.$executeRaw`
-    UPDATE "Image"
-    SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('coverImageId', ${cover.id}::int),
-      "updatedAt" = now()
-    WHERE id = ${songId} AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'coverImageId')
+    INSERT INTO "Track" ("imageId", "coverImageId") VALUES (${songId}, ${cover.id})
+    ON CONFLICT ("imageId") DO UPDATE SET "coverImageId" = EXCLUDED."coverImageId"
+    WHERE "Track"."coverImageId" IS NULL
   `.catch((error) => {
     handleLogError(error);
     return 0;

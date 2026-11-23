@@ -517,7 +517,7 @@ describe('addPostImage — generated song cover', () => {
     expect(addSong({ generationWorkflowId: 'wf-1', ...extra })).rejects.toThrow(
       'An unexpected error'
     );
-  /** The link statement's bound values: the cover id, then the song id. */
+  /** The link statement's bound values: the song id, then the cover id. */
   const linkValues = () => dbMock.dbWrite.$executeRaw.mock.calls.map(([, ...values]) => values);
   const linkSql = () =>
     (dbMock.dbWrite.$executeRaw.mock.calls[0][0] as unknown as TemplateStringsArray).join('');
@@ -549,11 +549,10 @@ describe('addPostImage — generated song cover', () => {
     // No postId and no skipped ingestion: createImage's default path requests the scan.
     expect(coverArgs).not.toHaveProperty('postId');
     expect(coverArgs).not.toHaveProperty('skipIngestion');
-    expect(linkValues()).toEqual([[12, 11]]);
-    // The link is the song's `coverImageId`, set only while it has none.
-    expect(linkSql()).toContain('UPDATE "Image"');
-    expect(linkSql()).toContain("jsonb_build_object('coverImageId'");
-    expect(linkSql()).toContain(`AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'coverImageId')`);
+    expect(linkValues()).toEqual([[11, 12]]);
+    // The link is the song's `Track.coverImageId`, set only while it has none.
+    expect(linkSql()).toContain('INSERT INTO "Track" ("imageId", "coverImageId")');
+    expect(linkSql()).toContain('WHERE "Track"."coverImageId" IS NULL');
     expect(mocks.deleteImages).not.toHaveBeenCalled();
   });
 
@@ -573,7 +572,7 @@ describe('addPostImage — generated song cover', () => {
       expect.objectContaining({ imageUrl: UPLOADED, width: 768, height: 768 })
     );
     expect(mocks.createImage.mock.calls[1][0]).not.toHaveProperty('skipIngestion');
-    expect(linkValues()).toEqual([[12, 11]]);
+    expect(linkValues()).toEqual([[11, 12]]);
   });
 
   it("reads the workflow with the caller's own orchestrator token", async () => {
@@ -640,10 +639,12 @@ describe('addPostImage — generated song cover', () => {
     }
   });
 
-  it('copies nothing when the song already names a cover', async () => {
+  // A cover is linked only through `Track`; the metadata key is no longer part of the schema.
+  it('ignores a cover id the client sent: the song keeps none of it and takes its generated cover', async () => {
     await postFromGenerator({ metadata: { ...song, coverImageId: 3 } });
-    expect(mocks.stageGenerationOutputImage).not.toHaveBeenCalled();
-    expect(mocks.createImage).toHaveBeenCalledTimes(1);
+    expect(mocks.createImage.mock.calls[0][0].metadata).not.toHaveProperty('coverImageId');
+    expect(mocks.stageGenerationOutputImage).toHaveBeenCalledTimes(1);
+    expect(linkValues()).toEqual([[11, 12]]);
   });
 
   it('removes the cover row it made when the song gained a cover first, leaving one cover', async () => {
