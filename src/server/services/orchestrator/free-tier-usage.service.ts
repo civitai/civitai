@@ -46,6 +46,11 @@ export async function getMyOrchestrationFreeUsage(
     if (e instanceof TRPCError && e.code === 'FORBIDDEN') return null;
     throw e;
   }
+  return readOrchestrationFreeUsage(token);
+}
+
+/** The free-tier rows for the account `token` belongs to. */
+export async function readOrchestrationFreeUsage(token: string): Promise<FreeUsageRow[]> {
   const { data, error } = await getFreeTier({ client: createOrchestratorClient(token) });
   if (error || !data) throw new Error('Failed to read free-tier usage');
   if (!data.enabled) return [];

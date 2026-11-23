@@ -1,16 +1,9 @@
-import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getFreeTier } from '@civitai/orchestration-client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const h = vi.hoisted(() => ({ getOrchestratorToken: vi.fn() }));
-vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
-  getOrchestratorToken: h.getOrchestratorToken,
-}));
+import { readOrchestrationFreeUsage } from '~/server/services/orchestrator/free-tier-usage.service';
 
-import { getMyOrchestrationFreeUsage } from '~/server/services/orchestrator/free-tier-usage.service';
-
-const USER = { id: 42 } as never;
 const AIR = 'urn:air:qwen3:checkpoint:civitai:900@901';
 // The shared client mock (src/__tests__/setup.ts) keeps Air.parseSafe verbatim, so AIR labels run real parsing.
 const freeTierMock = vi.mocked(getFreeTier);
@@ -18,7 +11,6 @@ const freeTier = (data: unknown) =>
   freeTierMock.mockResolvedValue({ data, error: undefined } as never);
 
 beforeEach(() => {
-  h.getOrchestratorToken.mockReset().mockResolvedValue('tok');
   freeTierMock.mockReset();
   dbMock.dbRead.modelVersion.findMany
     .mockReset()
@@ -38,7 +30,7 @@ describe('getMyOrchestrationFreeUsage', () => {
         },
       ],
     });
-    expect(await getMyOrchestrationFreeUsage(USER)).toEqual([]);
+    expect(await readOrchestrationFreeUsage('tok')).toEqual([]);
   });
 
   it('one row per window, named after the model behind its AIR, used counted from what is left', async () => {
@@ -62,7 +54,7 @@ describe('getMyOrchestrationFreeUsage', () => {
         },
       ],
     });
-    const rows = await getMyOrchestrationFreeUsage(USER);
+    const rows = await readOrchestrationFreeUsage('tok');
     expect(rows).toEqual([
       expect.objectContaining({
         label: 'Qwen 3.8, free per day',
@@ -84,12 +76,6 @@ describe('getMyOrchestrationFreeUsage', () => {
     ]);
   });
 
-  it('gives null, not an error, when the orchestrator will not issue this account a token', async () => {
-    h.getOrchestratorToken.mockRejectedValue(new TRPCError({ code: 'FORBIDDEN' }));
-    expect(await getMyOrchestrationFreeUsage(USER)).toBeNull();
-    expect(freeTierMock).not.toHaveBeenCalled();
-  });
-
   it('an unused window shows no reset time, though the orchestrator sends one', async () => {
     freeTier({
       enabled: true,
@@ -105,17 +91,12 @@ describe('getMyOrchestrationFreeUsage', () => {
         },
       ],
     });
-    const rows = await getMyOrchestrationFreeUsage(USER);
+    const rows = await readOrchestrationFreeUsage('tok');
     expect(rows?.map((r) => r.resetAt)).toEqual([null, '2026-11-09T22:00:00Z']);
-  });
-
-  it('a failure to get a token, other than a refusal, is an error, not "no free tier"', async () => {
-    h.getOrchestratorToken.mockRejectedValue(new Error('redis down'));
-    await expect(getMyOrchestrationFreeUsage(USER)).rejects.toThrow('redis down');
   });
 
   it('an orchestrator error is an error, not "free tier is off"', async () => {
     freeTierMock.mockResolvedValue({ data: undefined, error: { status: 503 } } as never);
-    await expect(getMyOrchestrationFreeUsage(USER)).rejects.toThrow();
+    await expect(readOrchestrationFreeUsage('tok')).rejects.toThrow();
   });
 });
