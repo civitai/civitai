@@ -372,6 +372,61 @@ func runListingsContract(t *testing.T, newStore func(t *testing.T) listingsTestS
 			t.Fatalf("cursor %q after a failed commit, want c1", c)
 		}
 	})
+
+	t.Run("StaleMarks", func(t *testing.T) {
+		s := newStore(t)
+		if _, err := s.StaleCount(t.Context(), 999); !errors.Is(err, ErrNoGeneration) {
+			t.Fatalf("stale count of a missing generation: %v, want ErrNoGeneration", err)
+		}
+		g, err := s.NewBuilding(t.Context(), listingSchemaURN, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustApply(t, s, g.ID, listingUpsert(mustListing("alpha", "Alpha"), ""), listingUpsert(mustListing("beta", "Beta"), ""))
+		stale := func(want int, what string) {
+			t.Helper()
+			n, err := s.StaleCount(t.Context(), g.ID)
+			if err != nil || n != want {
+				t.Fatalf("stale count %s = %d %v, want %d", what, n, err, want)
+			}
+		}
+		stale(0, "of fresh rows")
+		// A mark keeps the row exactly as it was, and stores its cursor.
+		mustApply(t, s, g.ID, Change{Kind: ChangeStale, URN: listingURN("alpha"), Cursor: "c1"},
+			Change{Kind: ChangeStale, URN: listingURN("beta"), Cursor: "c2"})
+		stale(2, "after two marks")
+		l, ok := mustGet(t, s, g.ID, listingURN("alpha"))
+		if !ok {
+			t.Fatal("a stale mark removed the row")
+		}
+		checkListing(t, l, "alpha", "Alpha")
+		if n := mustCount(t, s, g.ID); n != 2 {
+			t.Fatalf("count after marks = %d, want 2", n)
+		}
+		if c := mustState(t, s).Building.Cursor; c != "c2" {
+			t.Fatalf("cursor %q after a mark, want c2", c)
+		}
+		// A mark of a URN the generation does not hold changes nothing but the cursor.
+		mustApply(t, s, g.ID, Change{Kind: ChangeStale, URN: listingURN("gamma"), Cursor: "c3"})
+		stale(2, "after a mark of a missing row")
+		if _, ok := mustGet(t, s, g.ID, listingURN("gamma")); ok {
+			t.Fatal("a stale mark created a row")
+		}
+		// An upsert writes the row unmarked; a delete removes it, mark and all.
+		mustApply(t, s, g.ID, listingUpsert(mustListing("alpha", "Alpha Two"), "c4"))
+		stale(1, "after an upsert of a stale row")
+		mustApply(t, s, g.ID, Change{Kind: ChangeDelete, URN: listingURN("beta"), Cursor: "c5"})
+		stale(0, "after a delete of a stale row")
+		// A row upserted again after its delete is not stale.
+		mustApply(t, s, g.ID, listingUpsert(mustListing("beta", "Beta"), "c6"))
+		stale(0, "after a re-upsert")
+		mustApply(t, s, g.ID, Change{Kind: ChangeStale, URN: listingURN("beta"), Cursor: "c7"})
+		stale(1, "after a mark")
+		if err := s.Reset(t.Context(), g.ID); err != nil {
+			t.Fatal(err)
+		}
+		stale(0, "after a reset")
+	})
 }
 
 func TestListingsMemoryContract(t *testing.T) {

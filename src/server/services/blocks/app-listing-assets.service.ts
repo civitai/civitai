@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
@@ -210,16 +211,6 @@ function gradientDefs(seed: string): { hue: number; hue2: number } {
   return placeholderHues(seed);
 }
 
-/** Escape the few chars that are unsafe inside SVG text content. */
-function svgEscape(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
 /**
  * Deterministic square icon SVG: a diagonal gradient (hue seeded by slug/
  * category) with the app's initial centered. Mirrors the marketplace coverless-
@@ -234,7 +225,7 @@ export function buildPlaceholderIconSvg(args: {
   const size = args.size ?? 512;
   const seed = listingPlaceholderSeed(args.slug, args.category);
   const { hue, hue2 } = gradientDefs(seed);
-  const initial = svgEscape(appInitial(args.name, args.slug));
+  const initial = escapeHtml(appInitial(args.name, args.slug));
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`,
     `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">`,
@@ -265,8 +256,8 @@ export function buildPlaceholderCoverSvg(args: {
   const height = args.height ?? 720;
   const seed = listingPlaceholderSeed(args.slug, args.category);
   const { hue, hue2 } = gradientDefs(seed);
-  const glyph = svgEscape(categoryGlyph(args.category));
-  const name = svgEscape((args.name || args.slug).slice(0, 48));
+  const glyph = escapeHtml(categoryGlyph(args.category));
+  const name = escapeHtml((args.name || args.slug).slice(0, 48));
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
     `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">`,

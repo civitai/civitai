@@ -8,6 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +18,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { classifyUnitJobs } from '../ci/full-ci-unit-shards.mjs';
 import { SUITES } from '../ci/lint-dispatch-passed.mjs';
-import { dispatchArgs } from '../ci/unit-batched.mjs';
+import { BATCH_WORKFLOWS, dispatchArgs } from '../ci/unit-batched.mjs';
 
 // The `full-ci` PR label: lint.yml, apps.yml and moderator-boot.yml read it on every PR run, and
 // full-ci.yml dispatches all three when it is added.
@@ -37,6 +38,7 @@ import { dispatchArgs } from '../ci/unit-batched.mjs';
 // `if`: a clause that sits inside an `||` gates nothing.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const requireHere = createRequire(import.meta.url);
 const WORKFLOW_DIR = path.resolve(HERE, '../../.github/workflows');
 
 const FULL = "contains(github.event.pull_request.labels.*.name, 'full-ci')";
@@ -143,19 +145,102 @@ describe('the full-ci label', () => {
     expect(conjuncts(load('lint.yml').jobs?.unit?.if ?? '')).toContain(UNIT_PR_GATE);
   });
 
+  // The batched suites (unit above; component, its ledger and the app suites here) take the unit
+  // job's gate: never on a push (the batch covers `main`), on a PR only with the label, draft or
+  // not. Both conjuncts, at the top level of the `if`, so neither can sit inside an `||`.
+  it.each([
+    ['lint.yml', 'component'],
+    ['lint.yml', 'component-ledger'],
+    ['apps.yml', 'apps'],
+  ])('%s:%s is a batch suite: no push, PR only with the label', (file, id) => {
+    const c = conjuncts(load(file).jobs?.[id]?.if ?? '');
+    expect(c).toContain("github.event_name != 'push'");
+    expect(c).toContain(UNIT_PR_GATE);
+    expect(c).not.toContain(DRAFT_GATE);
+  });
+
+  // The component suites run in the bot's `only: unit` batch run (one run per batch, so every
+  // `(main batch)` status names it), and only for the bot: a person's `only: unit` stays unit-only.
+  it.each(['component', 'component-ledger'])(
+    'lint.yml:%s runs on the bot only: unit batch dispatch',
+    (id) => {
+      const only = conjuncts(load('lint.yml').jobs?.[id]?.if ?? '').find((c) =>
+        c.startsWith("(!inputs.only || inputs.only == 'all'")
+      );
+      expect(splitTop(unwrap(only ?? ''), '||')).toContain(
+        "(inputs.only == 'unit' && github.actor == 'github-actions[bot]')"
+      );
+    }
+  );
+
+  // Or on a dispatch that asks for it by name; never on a push.
+  it('lint.yml runs related-tests on a ready PR without the label, and nowhere else', () => {
+    expect(norm(load('lint.yml').jobs?.['related-tests']?.if ?? '')).toBe(
+      `(github.event_name == 'pull_request' && !github.event.pull_request.draft && !${FULL}) || (github.event_name == 'workflow_dispatch' && inputs.only == 'related')`
+    );
+  });
+
+  // The split tier: the plan, the shards and the ledger take the same gate, the ledger after a
+  // `!cancelled()` so a red shard still gets its verdict.
+  it.each(['related-plan', 'related-tests'])('lint.yml:%s has the related-tests gate', (id) => {
+    expect(norm(load('lint.yml').jobs?.[id]?.if ?? '')).toBe(
+      norm(load('lint.yml').jobs?.['related-tests']?.if ?? '')
+    );
+  });
+
+  it('lint.yml:related-ledger keeps the check name and needs the plan and both shards', () => {
+    const job = load('lint.yml').jobs?.['related-ledger'] ?? {};
+    expect(job.name).toBe('Related unit tests + smoke (PR)');
+    expect(([] as string[]).concat(job.needs ?? [])).toEqual(['related-plan', 'related-tests']);
+    expect(conjuncts(job.if ?? '')[0]).toBe('!cancelled()');
+    expect(norm(job.if ?? '')).toContain(norm(load('lint.yml').jobs?.['related-tests']?.if ?? ''));
+  });
+
+  // A verify job posts commit statuses and bisects. full-ci.yml's dispatches are ALSO
+  // github-actions[bot], on a PR branch, so a new verify job must check the ref. (unit-verify
+  // predates this: full-ci never sends `only: unit`; it sends `only: all`.)
+  it.each([
+    [
+      'lint.yml',
+      'component-verify',
+      ["github.actor == 'github-actions[bot]'", "inputs.only == 'unit'"],
+    ],
+    ['apps.yml', 'apps-verify', ['inputs.batch']],
+  ])('%s:%s verifies only the batch on main', (file, id, extra) => {
+    const c = conjuncts(load(file).jobs?.[id]?.if ?? '');
+    expect(c).toContain("github.event_name == 'workflow_dispatch'");
+    expect(c).toContain("github.ref == 'refs/heads/main'");
+    for (const e of extra) expect(c).toContain(e);
+  });
+
   // The label lifts the draft gate on every job that has one. `eslint` has none (it runs on
   // drafts already) and `unit` is gated by UNIT_PR_GATE, which implies it.
   it.each([
     ['lint.yml', 'typecheck'],
     ['lint.yml', 'typecheck-tests'],
     ['lint.yml', 'packages'],
-    ['lint.yml', 'component'],
-    ['lint.yml', 'component-ledger'],
-    ['apps.yml', 'apps'],
     ['apps.yml', 'apps-typecheck'],
-    ['moderator-boot.yml', 'boot'],
   ])('%s:%s runs on a labeled draft', (file, id) => {
     expect(conjuncts(load(file).jobs?.[id]?.if ?? '')).toContain(DRAFT_GATE);
+  });
+
+  // apps-ledger takes no draft gate of its own: it follows the shards, so it can never run over
+  // skipped shards (and go red) when their gate changes. Pinned whole, so a copied gate added back
+  // fails here.
+  it('apps.yml:apps-ledger runs exactly when the shards ran', () => {
+    expect(conjuncts(load('apps.yml').jobs?.['apps-ledger']?.if ?? '')).toEqual([
+      '!cancelled()',
+      "needs.apps.result != 'skipped'",
+    ]);
+  });
+
+  // Moderator boot left pull requests and pushes for the main batch: it runs on a dispatch only
+  // (the batch, a hand dispatch, the full-ci dispatcher), never on a PR run, labelled or not.
+  // Pinned whole, so a clause that brings PR runs back fails here.
+  it('moderator-boot.yml:boot never runs on a pull_request event', () => {
+    expect(norm(load('moderator-boot.yml').jobs?.boot?.if ?? '')).toBe(
+      "github.event_name != 'pull_request'"
+    );
   });
 
   // Ledger: the job set the assertions above were written against. A new job fails here so its
@@ -166,17 +251,22 @@ describe('the full-ci label', () => {
       [
         'component',
         'component-ledger',
+        'component-verify',
         'eslint',
         'full-ci-done',
         'packages',
         'passed',
+        'related-ledger',
+        'related-plan',
+        'related-tests',
         'typecheck',
         'typecheck-tests',
         'unit',
         'unit-verify',
-      ],
+        'batch-suites',
+      ].sort(),
     ],
-    ['apps.yml', ['apps', 'apps-typecheck']],
+    ['apps.yml', ['apps', 'apps-ledger', 'apps-typecheck', 'apps-verify']],
     ['moderator-boot.yml', ['boot']],
   ])('%s has exactly the jobs this guard was written for', (file, ids) => {
     expect(Object.keys(load(file).jobs ?? {}).sort()).toEqual(ids);
@@ -483,9 +573,9 @@ describe('the full-ci label', () => {
       expect(step['continue-on-error']).toBeUndefined();
     });
 
-    // Lint is always dispatched; the nine other draft-gated workflows only on a draft PR. On a
-    // ready PR their own PR runs on the commit are not draft-gated, so dispatching them only ran
-    // them again, unfiltered. Before, all nine were dispatched on every labelled PR.
+    // Lint is always dispatched; apps.yml (draft-gated) only on a draft PR, since on a ready PR
+    // its own PR run covers the commit; the main batch suites (BATCH_WORKFLOWS) on any labelled
+    // PR, since no PR run covers them. All but Lint only when their paths filter matches.
     describe('the other workflows', () => {
       const step = (jobs[0].steps ?? []).find((s) => /gh workflow run lint\.yml/.test(s.run ?? ''));
       const run = step?.run ?? '';
@@ -493,7 +583,7 @@ describe('the full-ci label', () => {
       it('are dispatched by name only from a loop that skips on a skip verdict first', () => {
         expect(run).not.toMatch(/gh workflow run (?!lint\.yml)[\w.-]+\.yml/);
         const loop =
-          /for wf in "\$\{others\[@\]\}"; do\s+if \[ "\$\{verdict\[\$wf\]\}" = skip \]; then\s+echo [^\n]*\n\s+continue\n/;
+          /for wf in "\$\{batch\[@\]\}"; do\s+if \[ "\$\{verdict\[\$wf\]\}" = skip \]; then\s+echo [^\n]*\n\s+continue\n/;
         const at = run.search(loop);
         expect(at, 'no dispatch loop that skips on a skip verdict first').toBeGreaterThan(-1);
         const dispatches = [...run.matchAll(/gh workflow run "\$wf"/g)].map((m) => m.index ?? -1);
@@ -502,14 +592,18 @@ describe('the full-ci label', () => {
       });
 
       // Runs the step itself, with a stand-in `gh` that records each call (and answers the
-      // unit-shard poll with a decided, skipped `Unit tests`, so it dispatches) and a no-op
-      // `sleep`, and reads which workflows it dispatched.
+      // unit-shard poll with a decided, skipped `Unit tests`, so it dispatches; and the PR files
+      // list with the case's fixture, or a failure), a stand-in `yq` that answers the one query
+      // the step makes (`-o=json '.on' <file>`, from the real workflow files via the `yaml`
+      // package, since a runner of this suite need not have yq) and a no-op `sleep`, and reads
+      // which workflows it dispatched.
       describe('run with a stand-in gh', () => {
         const tmp = mkdtempSync(path.join(tmpdir(), 'full-ci-dispatch-'));
         afterAll(() => rmSync(tmp, { recursive: true, force: true }));
         const bin = path.join(tmp, 'bin');
         mkdirSync(bin);
         const log = path.join(tmp, 'gh.log');
+        const files = path.join(tmp, 'files.txt');
         writeFileSync(
           path.join(bin, 'gh'),
           [
@@ -518,29 +612,46 @@ describe('the full-ci label', () => {
             'case "$*" in',
             '  *"/actions/workflows/lint.yml/runs"*) echo 1 ;;',
             '  *"/actions/runs/1/jobs"*) echo \'{"jobs":[{"name":"Unit tests","conclusion":"skipped"}]}\' ;;',
+            `  *"repos/o/r/pulls/1/files"*) [ "$FILES_FAIL" = 1 ] && exit 1; cat '${files}' ;;`,
             'esac',
+            '',
+          ].join('\n')
+        );
+        writeFileSync(
+          path.join(bin, 'yq'),
+          [
+            '#!/usr/bin/env node',
+            `const { parse } = require(${JSON.stringify(requireHere.resolve('yaml'))});`,
+            'const [flag, expr, file, ...rest] = process.argv.slice(2);',
+            "if (flag !== '-o=json' || expr !== '.on' || !file || rest.length) process.exit(2);",
+            "const doc = parse(require('fs').readFileSync(file, 'utf8'));",
+            'process.stdout.write(JSON.stringify(doc.on ?? null));',
             '',
           ].join('\n')
         );
         writeFileSync(path.join(bin, 'sleep'), '#!/usr/bin/env bash\n');
         chmodSync(path.join(bin, 'gh'), 0o755);
+        chmodSync(path.join(bin, 'yq'), 0o755);
         chmodSync(path.join(bin, 'sleep'), 0o755);
         const script = path.join(tmp, 'step.sh');
         writeFileSync(script, run);
 
-        const dispatched = (draft: string) => {
+        const dispatched = (draft: string, changed: string[] = [], filesFail = false) => {
           writeFileSync(log, '');
+          writeFileSync(files, changed.map((f) => `${f}\n`).join(''));
           execFileSync('bash', ['-e', script], {
             cwd: path.resolve(HERE, '../..'),
             env: {
               PATH: `${bin}:${process.env.PATH}`,
               GITHUB_STEP_SUMMARY: path.join(tmp, 'summary'),
+              RUNNER_TEMP: tmp,
               GH_TOKEN: 'x',
               HEAD_REF: 'some-branch',
               HEAD_SHA: 'a'.repeat(40),
               DRAFT: draft,
               PR: '1',
               REPO: 'o/r',
+              FILES_FAIL: filesFail ? '1' : '0',
             },
             stdio: ['ignore', 'ignore', 'pipe'],
           });
@@ -550,33 +661,90 @@ describe('the full-ci label', () => {
             .filter(Boolean)
             .sort();
         };
-        const NINE = [
-          'app-data-go.yml',
-          'app-index-go.yml',
-          'apps.yml',
-          'beacon-go.yml',
-          'content-policy-go.yml',
-          'feed-go.yml',
-          'moderator-boot.yml',
-          'registry-adapter-image.yml',
-          'storage-hook-runner-image.yml',
-        ];
+        // Every workflow dispatched here is a main batch suite (BATCH_WORKFLOWS, apps.yml among
+        // them since its app suites left PR runs), which no PR run covers, so the label
+        // dispatches it on a READY PR as on a draft, when its paths filter matches.
+        const BATCH = BATCH_WORKFLOWS.map((b) => b.workflow);
+        const ALL = BATCH;
+        // Each lists its own workflow file in its filter, so a PR changing all of them reaches all.
+        const ALL_FILES = ALL.map((f) => `.github/workflows/${f}`);
 
-        it('on a ready PR, dispatches Lint and none of the nine', () => {
-          expect(dispatched('false')).toEqual(['lint.yml']);
+        it('on a ready PR, dispatches Lint and the batch suites the files reach, apps.yml too', () => {
+          expect(BATCH).toContain('apps.yml');
+          expect(dispatched('false', ALL_FILES)).toEqual(['lint.yml', ...BATCH].sort());
+          // (windows-dev-env's filter has `apps/**`: every app's prepare step runs in its install.)
+          expect(dispatched('false', ['apps/moderator/src/hooks.server.ts'])).toEqual([
+            'apps.yml',
+            'lint.yml',
+            'moderator-boot.yml',
+            'windows-dev-env.yml',
+          ]);
         });
 
-        it('on a draft PR, dispatches Lint and all nine', () => {
-          expect(dispatched('true')).toEqual(['lint.yml', ...NINE].sort());
+        it('on a ready docs-only PR, dispatches Lint alone', () => {
+          expect(dispatched('false', ['docs/testing/reading-ci-results.md'])).toEqual(['lint.yml']);
         });
 
-        it('dispatches all nine when the draft flag is anything but an exact false', () => {
-          expect(dispatched('')).toEqual(['lint.yml', ...NINE].sort());
+        it('on a draft PR whose change every filter reaches, dispatches Lint and all of them', () => {
+          expect(dispatched('true', ALL_FILES)).toEqual(['lint.yml', ...ALL].sort());
+        });
+
+        it('treats a draft flag that is anything but an exact false as a draft', () => {
+          expect(dispatched('', ALL_FILES)).toEqual(['lint.yml', ...ALL].sort());
+        });
+
+        // REGRESSION: before the path check, a labelled draft dispatched all of them whatever it
+        // changed. A feed-go change reaches apps.yml (`apps/**`), feed-go, ports (it holds feed-go
+        // ports) and Windows (`apps/**`) only.
+        it("on a draft PR, dispatches only the workflows whose paths filter the PR's files reach", () => {
+          expect(dispatched('true', ['apps/feed-go/internal/feed/rank.go'])).toEqual([
+            'apps.yml',
+            'feed-go.yml',
+            'lint.yml',
+            'ports.yml',
+            'windows-dev-env.yml',
+          ]);
+        });
+
+        it('on a docs-only draft PR, dispatches Lint alone', () => {
+          expect(dispatched('true', ['docs/testing/reading-ci-results.md'])).toEqual(['lint.yml']);
+        });
+
+        // A rename's old name counts too: it is in the list the step builds.
+        it('reads the PR files with the old name of a rename', () => {
+          dispatched('true', ['src/a.ts']);
+          expect(readFileSync(log, 'utf8')).toContain(
+            'api repos/o/r/pulls/1/files?per_page=100 --paginate --jq .[] | .filename, (.previous_filename // empty)'
+          );
+        });
+
+        // FAILS OPEN: no file list (a failed call, or none) dispatches every batch suite, ready or
+        // draft.
+        it.each([
+          ['the PR files call fails', true],
+          ['the PR files call answers nothing', false],
+        ])('dispatches everything the PR state allows when %s', (_label, fail) => {
+          expect(dispatched('true', [], fail)).toEqual(['lint.yml', ...ALL].sort());
+          expect(dispatched('false', [], fail)).toEqual(['lint.yml', ...BATCH].sort());
         });
       });
 
-      // A ledger, so a new draft-gated workflow is either dispatched here or exempted here.
-      it('are exactly the draft-gated, dispatchable workflows other than Lint', () => {
+      // The step reads the batch list from the one source, never a copy of it.
+      it('reads BATCH_WORKFLOWS through `unit-batched.mjs workflows`, which prints exactly it', () => {
+        expect(run).toContain('mapfile -t batch < <(node scripts/ci/unit-batched.mjs workflows)');
+        const printed = execFileSync(
+          'node',
+          [path.resolve(HERE, '../ci/unit-batched.mjs'), 'workflows'],
+          { encoding: 'utf8' }
+        )
+          .trim()
+          .split('\n');
+        expect(printed).toEqual(BATCH_WORKFLOWS.map((b) => b.workflow));
+      });
+
+      // A ledger, so a new label-reading workflow is either dispatched here or exempted here. The
+      // dispatched set is BATCH_WORKFLOWS alone: no draft-gated list is left in the step.
+      it('are exactly the label-reading, dispatchable workflows other than Lint, plus the batch', () => {
         const EXEMPT: Record<string, string> = {
           'lint.yml': 'dispatched first, with its own inputs, and never filtered',
           'feed-go-release.yml':
@@ -590,9 +758,13 @@ describe('the full-ci label', () => {
             return wf.on && 'workflow_dispatch' in wf.on && jobsIfs.some((c) => c.includes(FULL));
           });
         for (const f of Object.keys(EXEMPT)) expect(gated, f).toContain(f);
-        const others = /others=\(([^)]*)\)/.exec(run)?.[1].split(/\s+/).filter(Boolean) ?? [];
-        expect(others.length).toBeGreaterThan(0);
-        expect([...others].sort()).toEqual(gated.filter((f) => !(f in EXEMPT)).sort());
+        expect(run).not.toMatch(/others=\(/);
+        const batch = BATCH_WORKFLOWS.map((b) => b.workflow);
+        const all = batch;
+        for (const f of gated.filter((g) => !(g in EXEMPT)))
+          expect(all, `${f} is draft-gated but not dispatched`).toContain(f);
+        for (const f of batch)
+          expect('workflow_dispatch' in (load(f).on ?? {}), `${f} is not dispatchable`).toBe(true);
       });
     });
 
@@ -636,7 +808,9 @@ describe('the full-ci label', () => {
       // The classifier must be on disk when the step runs, and the checkout must not leave the
       // dispatching token in the git config.
       const checkout = steps.slice(0, idx).find((s) => s.uses?.startsWith('actions/checkout@'));
-      expect(checkout?.with?.['sparse-checkout']).toBe('scripts/ci/full-ci-unit-shards.mjs');
+      expect(checkout?.with?.['sparse-checkout']).toBe(
+        'scripts/ci/full-ci-unit-shards.mjs\nscripts/ci/full-ci-paths.mjs\nscripts/ci/unit-batched.mjs\n.github/workflows/\n'
+      );
       expect(checkout?.with?.['persist-credentials']).toBe(false);
     });
 

@@ -789,6 +789,10 @@ describe('the contract file', () => {
         'needs a hook source and a runner, which the request table cannot express yet; doc-store-api.hooks.test.ts',
       hook_unavailable:
         'needs a hook source and a runner, which the request table cannot express yet; doc-store-api.hooks.test.ts',
+      not_supported_here:
+        'raised only on the signed internal route, never the public one; doc-store-api.unchanged-writes.test.ts',
+      stale_major:
+        'raised only on the signed internal route, never the public one; doc-store-api.unchanged-writes.test.ts',
     };
     const reachable = Object.keys(STORAGE_ERROR_STATUS).filter(
       (code) => !(code in UNREACHABLE_IN_PHASE_1)
@@ -2273,6 +2277,76 @@ describe('the App Store card follows the author deleting a shared document', () 
   });
 });
 
+// INVARIANT GUARD (green before the store's writes answered a seq, and must stay green): the store
+// now answers each write's `seq` and `recordId` and each delete's tombstone `seq` (`WrittenDocRecord`,
+// `DocDeleteResult`), for the app-data service's internal route. The public route answers none of
+// them: every write's body is exactly the fields it always had.
+describe('the public write answers carry no store seq or record id', () => {
+  afterEach(() => {
+    h.unchangedWritesApps = new Set();
+  });
+  // A presented document, levels off: exactly these top-level fields.
+  const DOC_FIELDS = [
+    'author',
+    'counters',
+    'createdAt',
+    'data',
+    'key',
+    'marks',
+    'updatedAt',
+    'version',
+    'viewer',
+  ];
+  const expectPublicDoc = (r: Reply, status: number) => {
+    expect(r.status).toBe(status);
+    expect(Object.keys(r.body as object).sort()).toEqual(DOC_FIELDS);
+    expect(JSON.stringify(r.body)).not.toMatch(/"(seq|recordId|record_id)"/);
+  };
+
+  it('create, put (private and shared), an unchanged put, and delete', async () => {
+    const { A } = freshApps();
+    h.unchangedWritesApps = new Set([A.id]);
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    expectPublicDoc(
+      await call({ token: t, method: 'POST', path: '/prefs', body: { data: { n: 1 } } }),
+      201
+    );
+    expectPublicDoc(
+      await call({ token: t, method: 'POST', path: '/notes', body: { data: { t: 'one' } } }),
+      201
+    );
+    expectPublicDoc(
+      await call({ token: t, method: 'PUT', path: '/prefs/p7', body: { data: { n: 2 } } }),
+      200
+    );
+    const put = { token: t, method: 'PUT', path: '/notes/n7', body: { data: { t: 'two' } } };
+    expectPublicDoc(await call(put), 200);
+    const before = await harness.raw(
+      `SELECT u.last_seq FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = 'prod'`,
+      [A.id]
+    );
+    // The same body again, the unchanged-writes flag on: answered by `putIfUnchanged`, which
+    // writes nothing (the head stays), and presented the same way.
+    expectPublicDoc(await call(put), 200);
+    expect(
+      await harness.raw(
+        `SELECT u.last_seq FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = 'prod'`,
+        [A.id]
+      )
+    ).toEqual(before);
+    for (const path of ['/prefs/p7', '/notes/n7']) {
+      const del = await call({ token: t, method: 'DELETE', path });
+      expect({ status: del.status, body: del.body }).toEqual({
+        status: 200,
+        body: { deleted: true },
+      });
+    }
+    expect((await call({ token: t, method: 'DELETE', path: '/notes/n7' })).body).toEqual({
+      deleted: false,
+    });
+  });
+});
+
 describe('ownedModelVersions: a manifest-declared ownership rule on document data', () => {
   const POINTER = '/workflow/modelVersionId';
   // Model version id → owner. Distinct from every viewer id, and from each other.
@@ -2523,6 +2597,82 @@ describe('ownedModelVersions: a manifest-declared ownership rule on document dat
 // ---------------------------------------------------------------------------
 // Shared-data moderation follows the per-app shadow/enforce flags
 // ---------------------------------------------------------------------------
+
+// INVARIANT GUARD (green before the store's marks answered a sequence, and must stay green): the
+// store now answers each mark, unmark and increment's `markSeq`, and a creating increment's `seq`,
+// for the app-data service's internal route. The public route answers none of them.
+describe('the public mark and counter answers carry no mark sequence or seq', () => {
+  it('mark, a repeated mark, unmark, report, an increment, and an increment that creates its document', async () => {
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const other = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
+    expect(
+      (await call({ token: t, method: 'PUT', path: '/posts/m1', body: { data: { status: 'a' } } }))
+        .status
+    ).toBe(200);
+    const answers = [
+      await call({ token: t, method: 'PUT', path: '/posts/m1/marks/vote' }),
+      await call({ token: t, method: 'PUT', path: '/posts/m1/marks/vote' }),
+      await call({ token: t, method: 'DELETE', path: '/posts/m1/marks/vote' }),
+      await call({ token: other, method: 'PUT', path: '/posts/m1/marks/report' }),
+      await call({ token: t, method: 'POST', path: '/posts/m1/counters/views' }),
+      await call({ token: t, method: 'POST', path: '/plays/new-one/counters/plays' }),
+    ];
+    expect(answers.map((r) => ({ status: r.status, body: r.body }))).toEqual([
+      { status: 200, body: { marked: true, count: 1 } },
+      { status: 200, body: { marked: true, count: 1 } },
+      { status: 200, body: { marked: false, count: 0 } },
+      { status: 200, body: { marked: true } },
+      { status: 200, body: { value: 1 } },
+      { status: 200, body: { value: 1 } },
+    ]);
+    // Positive control: the store did take a sequence for each of the six.
+    const [mh] = await harness.raw(
+      `SELECT mh.last_mark_seq FROM appdata.mark_head mh WHERE mh.app_id = $1 AND mh.ns = 'prod'`,
+      [A.id]
+    );
+    expect(Number(mh.last_mark_seq)).toBe(6);
+  });
+
+  it('🔴 before the mark-sequence migration is applied, the same calls answer the same bodies', async () => {
+    const absent = await createPgliteHarness({ rls: true, markHead: false });
+    try {
+      h.store = createDocStore({ db: absent.db });
+      const { A } = freshApps();
+      const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+      const other = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
+      expect(
+        (
+          await call({
+            token: t,
+            method: 'PUT',
+            path: '/posts/m1',
+            body: { data: { status: 'a' } },
+          })
+        ).status
+      ).toBe(200);
+      const answers = [
+        await call({ token: t, method: 'PUT', path: '/posts/m1/marks/vote' }),
+        await call({ token: t, method: 'PUT', path: '/posts/m1/marks/vote' }),
+        await call({ token: t, method: 'DELETE', path: '/posts/m1/marks/vote' }),
+        await call({ token: other, method: 'PUT', path: '/posts/m1/marks/report' }),
+        await call({ token: t, method: 'POST', path: '/posts/m1/counters/views' }),
+        await call({ token: t, method: 'POST', path: '/plays/new-one/counters/plays' }),
+      ];
+      expect(answers.map((r) => ({ status: r.status, body: r.body }))).toEqual([
+        { status: 200, body: { marked: true, count: 1 } },
+        { status: 200, body: { marked: true, count: 1 } },
+        { status: 200, body: { marked: false, count: 0 } },
+        { status: 200, body: { marked: true } },
+        { status: 200, body: { value: 1 } },
+        { status: 200, body: { value: 1 } },
+      ]);
+      expect(absent.violations).toEqual([]);
+    } finally {
+      await absent.close();
+    }
+  });
+});
 
 describe('shared-data moderation follows the per-app shadow / enforce flags', () => {
   const HITS_TABLE = 'appBlocksSharedDataHits';

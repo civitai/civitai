@@ -284,26 +284,36 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool, 
 	return in, nil
 }
 
-// ApplyDomainCap is applyDomainFeature: the input's levels clamped in place to the domain cap BEFORE
-// the schema default applies (an absent level under a cap becomes the cap; uncapped, it becomes 31).
-func (in *Input) ApplyDomainCap(cap int) (browsingLevel int, preCap *int) {
+// ApplyDomainCap is applyDomainFeature: the input's levels held to the viewer
+// (stripBlockedForNonModerator), then clamped to the domain cap BEFORE the schema default applies (an
+// absent level under a cap becomes the cap; uncapped, it becomes 31).
+func (in *Input) ApplyDomainCap(cap int, isModerator bool) (browsingLevel int, preCap *int) {
+	var level, pre *int
+	if in.BrowsingLevel != nil {
+		v := browsing.ForViewer(*in.BrowsingLevel, isModerator)
+		level = &v
+	}
+	if in.PreCapBrowsingLevel != nil {
+		v := browsing.ForViewer(*in.PreCapBrowsingLevel, isModerator)
+		pre = &v
+	}
 	if cap != 0 {
 		raw := 0
-		if in.BrowsingLevel != nil {
-			raw = *in.BrowsingLevel
+		if level != nil {
+			raw = *level
 		}
 		browsingLevel = browsing.ClampToCap(raw, cap)
-		if in.PreCapBrowsingLevel != nil {
-			v := browsing.ClampToCap(*in.PreCapBrowsingLevel, cap)
+		if pre != nil {
+			v := browsing.ClampToCap(*pre, cap)
 			preCap = &v
 		}
 		return browsingLevel, preCap
 	}
 	browsingLevel = browsing.AllLevels
-	if in.BrowsingLevel != nil {
-		browsingLevel = *in.BrowsingLevel
+	if level != nil {
+		browsingLevel = *level
 	}
-	return browsingLevel, in.PreCapBrowsingLevel
+	return browsingLevel, pre
 }
 
 func mapKeys(m map[string]any) []string {

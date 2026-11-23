@@ -1,4 +1,7 @@
 import { Prisma } from '@prisma/client';
+import { imageBlockedForConditions } from '~/server/common/image-visibility';
+
+export { imageBlockedForConditions };
 import { NsfwLevel } from '~/server/common/enums';
 import {
   hasBlockMarkerSql,
@@ -54,28 +57,10 @@ export const countableImageSql = () =>
   )})`;
 
 /**
- * An image with any `blockedFor` reason is visible only to its owner and moderators, as SQL over
- * `"Image" i`. Empty for a moderator.
- */
-export function imageBlockedForConditions({
-  userId,
-  isModerator,
-}: {
-  userId?: number;
-  isModerator?: boolean;
-}): Prisma.Sql[] {
-  if (isModerator) return [];
-  return [
-    userId
-      ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
-      : Prisma.sql`(i."blockedFor" IS NULL)`,
-  ];
-}
-
-/**
  * Which images attached to an entity (a bounty, a bounty entry) a viewer is served, as SQL over
- * `"Image" i`. Held, unscanned, unrated, blocked, acceptable-minor and minor-restricted images are
- * the owner's and moderators' alone; base-model restricted images are the owner's alone.
+ * `"Image" i`. Held, unscanned, unrated, blocked, ToS-removed, acceptable-minor and
+ * minor-restricted images are the owner's and moderators' alone; base-model restricted images are
+ * the owner's alone.
  */
 export function entityImageVisibilityConditions({
   userId,
@@ -101,7 +86,10 @@ export function entityImageVisibilityConditions({
         : Prisma.sql`(${Prisma.join([Prisma.sql`i."needsReview" IS NULL`], ' OR ')})`,
       userId
         ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
-        : Prisma.sql`i."acceptableMinor" = FALSE`
+        : Prisma.sql`i."acceptableMinor" = FALSE`,
+      userId
+        ? Prisma.sql`(i."tosViolation" IS NOT TRUE OR i."userId" = ${userId})`
+        : Prisma.sql`i."tosViolation" IS NOT TRUE`
     );
   }
   AND.push(...imageBlockedForConditions({ userId, isModerator }));
@@ -157,6 +145,7 @@ export function imageVisibilityConditions({
           AND a.status = 'Published'
           AND a."publishedAt" IS NOT NULL
           AND a.ingestion = 'Scanned'
+          AND (a.availability != 'Private' OR a."userId" = ${userId})
       ))
       OR (i."postId" IS NULL AND (
         EXISTS (

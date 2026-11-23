@@ -29,8 +29,17 @@ const (
 	AllLevels = PG | PG13 | R | X | XXX
 )
 
-// OnlySelectable strips the Blocked bit (onlySelectableLevels).
-func OnlySelectable(level int) int { return level &^ Blocked }
+// OnlySelectable is onlySelectableLevels: the level held to AllLevels.
+func OnlySelectable(level int) int { return level & AllLevels }
+
+// ForViewer is stripBlockedForNonModerator on one requested level: a moderator's is kept as sent,
+// anyone else's is held to the selectable levels. It runs before the domain clamp.
+func ForViewer(level int, isModerator bool) int {
+	if isModerator {
+		return level
+	}
+	return OnlySelectable(level)
+}
 
 // DomainCap is domainBrowsingLevelCap: signed out -> PG, signed in where NSFW is not viewable -> PG/PG13,
 // otherwise no cap (returned as 0).

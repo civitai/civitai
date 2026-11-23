@@ -11,9 +11,11 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Image Resources | [docs/features/image-resources.md](image-resources.md) |
 | NSFW Filtering | [docs/features/nsfw-filtering.md](nsfw-filtering.md) |
 | Image Rating and Visibility | [docs/features/image-rating.md](image-rating.md) |
+| Version showcase (per-site carousel, community images, covers) | [docs/features/version-showcase.md](version-showcase.md) |
 | Text Scan (LLM moderation of user text) | [docs/features/text-scan.md](text-scan.md) |
 | Moderator app: Model Flags (appeals, flagged, file matches) | [docs/features/moderator-model-flags.md](moderator-model-flags.md) |
 | CSAM text holds queue (moderator app) | [docs/features/text-scan-csam-holds.md](text-scan-csam-holds.md) |
+| Pending deletes (deletes a child-safety case keeps) | [docs/features/pending-deletes.md](pending-deletes.md) |
 | Model rule matches queue (moderator app) | [docs/features/text-scan.md](text-scan.md) |
 | Minor detection review mode | [docs/features/minor-detection-review.md](minor-detection-review.md) |
 | Label store (every moderation judgement, for training) | [docs/features/label-store.md](label-store.md) |

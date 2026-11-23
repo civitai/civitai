@@ -90,6 +90,12 @@ describe('listJudgments', () => {
     expect(row.status).toBe('wrong');
   });
 
+  it('hides the thumbnail of an image on a Private post', async () => {
+    await judge(10, NOW);
+    await pg.exec(`UPDATE "Post" SET availability = 'Private' WHERE id = 10`);
+    expect((await listJudgments(db, 1, { page: 1 })).judgments[0].imageKey).toBeNull();
+  });
+
   it('shows a vote as pending until it is settled, even once graded', async () => {
     const id = await judge(10, NOW);
     await pg.exec(`UPDATE "KnightsVote" SET verdict='correct' WHERE "itemId"=${id}`);

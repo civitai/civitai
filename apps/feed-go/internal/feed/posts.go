@@ -191,7 +191,7 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 	if req.Viewer != nil {
 		viewer = *req.Viewer
 	}
-	browsingLevel, preCap := in.ApplyDomainCap(req.Cap)
+	browsingLevel, preCap := in.ApplyDomainCap(req.Cap, viewer.IsModerator)
 
 	// Model-gallery gates: settings, the held level of minor / SFW-only models, taken-down models.
 	var modelIDs []int

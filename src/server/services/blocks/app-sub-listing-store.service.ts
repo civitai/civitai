@@ -341,12 +341,10 @@ export type StoreSubListingRow = SubListingHydrateRow & {
 };
 
 /**
- * Every sub-listing of the listings `parentIds` that the store grid could show, whatever the
- * viewer (no mature filter: each item carries its rating), with the columns the grid's card is
- * projected from. The listing stream's read (`store-listing@v1` `subListings`,
- * `catalog-source.live.ts`): the parents are the public catalog's listings, so their own
- * eligibility is already applied, and this applies the child arm's ({@link subListingStoreArmWhere})
- * plus the hydration's re-check ({@link subListingLiveWhere}). In id order.
+ * Every sub-listing of the listings `parentIds` that the store grid could show, whatever the viewer
+ * (no mature filter: each item carries its rating), with the columns its card is projected from:
+ * the listing stream's read (`catalog-source.live.ts`). The parents are assumed already eligible,
+ * so only the child arm and the live re-check apply here. In id order.
  */
 export async function readStoreSubListingsOfParents(
   db: Pick<PrismaClient, '$queryRaw'>,

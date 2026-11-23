@@ -565,7 +565,7 @@ the stream cap binds; `app_data_block_exchanges_total` (the hub exchange rate); 
 - Resuming a stream from its cursor (see "Token lifetime").
 - A block-token stream outliving its block token's one exchange (see "Block tokens": the next read
   is REST's).
-- Any write path (P3b), the app SDK serving side of P4 (a browser calling this service, which needs a
+- Any write path (P3b; proposed in [WRITES-DESIGN.md](WRITES-DESIGN.md)), the app SDK serving side of P4 (a browser calling this service, which needs a
   public route; the shadow above is server-side), overlays.
 - Deploy manifests and the image build.
 - A true per-user cap: only per token, which is per (user, app).

@@ -627,6 +627,7 @@ model User {
   blockGoodPurchasesAsAppOwner     BlockGoodPurchase[]      @relation("BlockGoodPurchaseAppOwner")
   blockGoodEntitlements            BlockGoodEntitlement[]   @relation("BlockGoodEntitlementOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
+  appAssistantSessionLinks   AppAssistantSessionLink[]
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
   appUserScopeGrants         AppUserScopeGrant[]
@@ -1290,6 +1291,8 @@ model ModelVersionShowcaseItem {
   source         String // 'Owner' | 'Community' (CHECK in the migration)
   position       Int?     @db.SmallInt
   excluded       Boolean  @default(false)
+  /// The image's author or a moderator removed it; kept so the owner can't add it back.
+  removed        Boolean  @default(false)
   addedById      Int
   createdAt      DateTime @default(now())
 
@@ -3542,6 +3545,7 @@ model AppBlockPublishRequest {
   actionsRunId                   String? @map("actions_run_id") // @no-type
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  assistantTrace        AppPublishRequestTrace?
 
   @@index([status, submittedAt(sort: Desc)], map: "app_block_publish_requests_queue_idx")  // mod queue
   @@index([appBlockId, submittedAt(sort: Desc)], map: "app_block_publish_requests_app_history_idx")
@@ -3585,6 +3589,64 @@ model AppBlockBuildAttempt {
   @@index([publishRequestId, mode, createdAt(sort: Desc)], map: "app_block_build_attempts_request_idx")
   @@index([mode, slug, sha, createdAt(sort: Desc)], map: "app_block_build_attempts_version_idx")
   @@map("app_block_build_attempts")
+}
+
+/// App Assistant session tracing: which App Assistant chats worked on which app, for whom. One row
+/// per (conversation, app slug), upserted by every finished server-runner turn whose chat had an app
+/// chosen (`~/server/services/app-assistant/session-tracing.service`), while the
+/// `app-assistant-tracing` Flipt flag is on. A chat that moves between apps has one row per app; an
+/// app built over several chats has one row per chat. Read by moderators only (submission tracing).
+///
+/// 🔴 APPLIED MANUALLY, AND THE APP TOLERATES IT BEING ABSENT: every write is best-effort (a failure,
+/// a missing table included, is logged and dropped), so code using it ships before the table.
+/// Migration `20271124120000_app_assistant_session_links`. The user FK cascades only on a HARD
+/// delete; account deletion (`deleteUser`) is soft, and its `delete-app-assistant-links` step
+/// deletes these rows.
+model AppAssistantSessionLink {
+  id             Int      @id @default(autoincrement())
+  userId         Int      @map("user_id")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String   @map("conversation_id") // the chat's conversation id (orchestration tag `cvt:conv:<id>`)
+  appSlug        String   @map("app_slug") // the app's blockId, as `create_app` / `use_open_app` chose it
+  firstSeenAt    DateTime @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt     DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  turnCount      Int      @default(0) @map("turn_count")
+  lastModel      String?  @map("last_model")
+  buzzTotal      Float    @default(0) @map("buzz_total")
+  lastRunId      String?  @map("last_run_id") // the last reported PASS, "<runId>@<pass start>": that pass delivered again right after counts once
+
+  // Per user: a conversation id is chosen by the page, so only the user's own chats share its space.
+  @@unique([userId, conversationId, appSlug], map: "app_assistant_session_links_user_conversation_app_key")
+  @@index([appSlug, userId, lastSeenAt(sort: Desc)], map: "app_assistant_session_links_app_user_idx")
+  @@map("app_assistant_session_links")
+}
+
+/// App Assistant session tracing, frozen at submission: for one publish request, the App Assistant
+/// chats that built it (the submitter's own `AppAssistantSessionLink` rows for the slug), an immutable
+/// JSON snapshot of each chat's transcript in the bundle store (`snapshots[].key`), and the signals
+/// computed from the submitted bundle and those transcripts (`signals`, shape versioned by
+/// `signalsVersion`). Written once per request at submit, best-effort, while the
+/// `app-assistant-tracing` flag is on. Read by moderators only.
+///
+/// 🔴 APPLIED MANUALLY, AND THE APP TOLERATES IT BEING ABSENT: a write that fails is logged and the
+/// submission goes on. Migration `20271124130000_app_publish_request_traces`.
+model AppPublishRequestTrace {
+  id               Int                    @id @default(autoincrement())
+  publishRequestId String                 @unique @map("publish_request_id")
+  publishRequest   AppBlockPublishRequest @relation(fields: [publishRequestId], references: [id], onDelete: Cascade)
+  slug             String
+  userId           Int                    @map("user_id") // the submitter
+  conversationIds  String[]               @map("conversation_ids")
+  snapshots        Json // [{ conversationId, key?, bytes?, turns?, error? }]
+  signals          Json
+  signalsVersion   Int                    @map("signals_version")
+  snapshotError    String?                @map("snapshot_error") // why the trace is partial, if it is
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([slug, createdAt(sort: Desc)], map: "app_publish_request_traces_slug_idx")
+  @@index([createdAt], map: "app_publish_request_traces_created_idx")
+  @@index([userId], map: "app_publish_request_traces_user_idx")
+  @@map("app_publish_request_traces")
 }
 
 /// App Store Listings (W13) — the store-facing record, decoupled from runtime.
@@ -7918,8 +7980,10 @@ enum JobQueueType {
   /// by that service's own database functions. No job in this app processes these rows; the
   /// moderator queue-health panel only counts them.
   CsamArchive
-  /// A delete that has to wait: an owner's own delete a child-safety case keeps, or a parent's cleanup
-  /// of an image something still keeps. `pending-deletes` carries it out once nothing blocks it.
+  /// A delete that has to wait: a delete a child-safety case keeps (the owner's, carried out as the
+  /// owner, or anyone else's, carried out as the system; `removeBlockedImages` keeps its own in its own
+  /// queue instead), or a parent's cleanup of an image something still keeps.
+  /// `pending-deletes` carries it out once nothing blocks it.
   PendingDelete
 }
 

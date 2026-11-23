@@ -129,6 +129,38 @@ describe('the content gate', () => {
   });
 });
 
+describe("the service's spelling correction", () => {
+  let bodies: Record<string, unknown>[];
+  beforeEach(() => {
+    setEnv({ SEARCH_SERVICE_URL: 'http://search.test/' });
+    bodies = [];
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return Response.json({ corrected: 'x', changes: [], hits: [] });
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const search = (query: { text: string; spellcheck?: false }) =>
+    searchServiceSource('articles')({
+      query,
+      filter: { gate: { kind: 'level', nsfwLevels: [1] } } as CandidateFilter,
+      offset: 0,
+      limit: 10,
+      viewer: { isModerator: false },
+    });
+
+  it('is turned off for a query searched as typed', async () => {
+    await search({ text: 'Shikata nee', spellcheck: false });
+    expect(bodies[0]).toMatchObject({ query: 'Shikata nee', spellcheck: false });
+  });
+
+  it('is left to the service otherwise (control)', async () => {
+    await search({ text: 'Shikata nee' });
+    expect(bodies[0]).not.toHaveProperty('spellcheck');
+  });
+});
+
 describe('collectPage', () => {
   /** A ranking that records each page it was asked for. */
   function ranked(length: number) {

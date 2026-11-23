@@ -27,6 +27,8 @@ type memGens[R any] struct {
 type memGen[R any] struct {
 	Generation
 	rows map[string]R
+	// stale is the URNs of rows marked stale (ChangeStale); every one is also a key of rows.
+	stale map[string]bool
 }
 
 func newMemGens[R any](row func(Change) (string, R)) memGens[R] {
@@ -109,7 +111,7 @@ func (m *memGens[R]) NewBuilding(_ context.Context, schema string, layout int) (
 		delete(m.gens, g.ID)
 	}
 	m.next++
-	g := &memGen[R]{Generation: Generation{ID: m.next, Layout: layout, Schema: schema, State: StateBuilding}, rows: map[string]R{}}
+	g := &memGen[R]{Generation: Generation{ID: m.next, Layout: layout, Schema: schema, State: StateBuilding}, rows: map[string]R{}, stale: map[string]bool{}}
 	m.gens[g.ID] = g
 	return g.Generation, nil
 }
@@ -126,6 +128,7 @@ func (m *memGens[R]) Reset(_ context.Context, gen int64) error {
 		return err
 	}
 	g.rows = map[string]R{}
+	g.stale = map[string]bool{}
 	g.Cursor = ""
 	return nil
 }
@@ -139,23 +142,30 @@ func (m *memGens[R]) Apply(_ context.Context, gen int64, c Change) error {
 		return ErrNoGeneration
 	}
 	// The change and its cursor are staged together and committed together.
-	rows := g.rows
+	rows, stale := g.rows, g.stale
 	switch c.Kind {
 	case ChangeUpsert:
-		rows = maps.Clone(g.rows)
+		rows, stale = maps.Clone(g.rows), maps.Clone(g.stale)
 		k, r := m.row(c)
 		rows[k] = r
+		delete(stale, k)
 	case ChangeDelete:
 		if _, ok := g.rows[c.URN]; ok {
-			rows = maps.Clone(g.rows)
+			rows, stale = maps.Clone(g.rows), maps.Clone(g.stale)
 			delete(rows, c.URN)
+			delete(stale, c.URN)
+		}
+	case ChangeStale:
+		if _, ok := g.rows[c.URN]; ok {
+			stale = maps.Clone(g.stale)
+			stale[c.URN] = true
 		}
 	case ChangeProgress:
 	}
 	if err := m.commit("apply"); err != nil {
 		return err
 	}
-	g.rows = rows
+	g.rows, g.stale = rows, stale
 	g.Cursor = c.Cursor
 	return nil
 }

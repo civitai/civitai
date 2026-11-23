@@ -13,6 +13,8 @@ const h = vi.hoisted(() => ({
   summary: null as unknown,
   // Creators who have blocked the viewer: the hidden-preferences filter drops their images.
   blockedBy: new Set<number>(),
+  // Users the viewer hid or blocked themselves: dropped too, unless their own preferences are set aside.
+  hiddenByViewer: new Set<number>(),
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
@@ -40,8 +42,17 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
 });
 vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', () => ({
-  useApplyHiddenPreferences: ({ data }: { data: { user?: { id: number } }[] }) => ({
-    items: data.filter((item) => !h.blockedBy.has(item.user?.id ?? 0)),
+  useApplyHiddenPreferences: ({
+    data,
+    ignoreViewerHidden,
+  }: {
+    data: { user?: { id: number } }[];
+    ignoreViewerHidden?: boolean;
+  }) => ({
+    items: data.filter((item) => {
+      const userId = item.user?.id ?? 0;
+      return !h.blockedBy.has(userId) && (ignoreViewerHidden || !h.hiddenByViewer.has(userId));
+    }),
     loadingPreferences: false,
   }),
 }));
@@ -83,6 +94,7 @@ afterEach(() => {
   h.open = null;
   h.summary = null;
   h.blockedBy = new Set();
+  h.hiddenByViewer = new Set();
 });
 
 // Today's summary for the given flags: the same for every viewer, whatever they may see.
@@ -204,5 +216,41 @@ describe('the Flag Race home row for a viewer a flag creator has blocked', () =>
     await vi.waitFor(() => expect(cards()).toBe(2));
     expect(hiddenCards()).toBe(0);
     expect(panel()).not.toBeNull();
+  });
+});
+
+// Show anyway (#10115): only the viewer's own hides may be set aside; a creator's block never.
+describe('the Flag Race home row for a viewer whose own settings hide a flag', () => {
+  const HID = 88;
+  const showAnyway = (card: Element) =>
+    [...card.querySelectorAll('button')].find((b) => b.textContent === 'Show anyway');
+
+  test('offers Show anyway, which turns it into a normal flag card', async () => {
+    h.summary = day([101, 102, 103]);
+    h.items = byCreator([101, 102, 103], (id) => (id === 102 ? HID : 5));
+    h.hiddenByViewer = new Set([HID]);
+    block();
+    await vi.waitFor(() => expect(cards()).toBe(2));
+    const hidden = document.querySelector('[data-testid="flag-hidden-for-you"]')!;
+    expect(hidden.textContent).toContain('Hidden by your content settings');
+    showAnyway(hidden)!.click();
+    await vi.waitFor(() => expect(cards()).toBe(3));
+    expect(hiddenCards()).toBe(0);
+  });
+
+  test('offers no Show anyway on a flag whose creator blocked the viewer', async () => {
+    h.summary = day([101, 102, 103]);
+    h.items = byCreator([101, 102, 103], (id) => (id === 102 ? HID : id === 103 ? BLOCKER : 5));
+    h.hiddenByViewer = new Set([HID]);
+    h.blockedBy = new Set([BLOCKER]);
+    block();
+    await vi.waitFor(() => expect(hiddenCards()).toBe(2));
+    // The row shuffles its flags, so tell the two cards apart by what they say.
+    const all = [...document.querySelectorAll('[data-testid="flag-hidden-for-you"]')];
+    const own = all.find((c) => c.textContent?.includes('Hidden by your content settings'));
+    const blocked = all.find((c) => c.textContent?.includes('Hidden for you'));
+    expect(showAnyway(own!)).toBeDefined();
+    expect(blocked).toBeDefined();
+    expect(showAnyway(blocked!)).toBeUndefined();
   });
 });

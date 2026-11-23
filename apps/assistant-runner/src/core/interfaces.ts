@@ -3,6 +3,7 @@ import type { IncomingHttpHeaders } from 'node:http';
 import type { StoredConversationMetadata } from '@civitai/components-chat/core';
 import type {
   ChatToolResult,
+  RunEndStatus,
   RunPageState,
   RunSettings,
   RunSubagentProgress,
@@ -191,6 +192,30 @@ export interface GrantStore {
   pendingEnds(): Promise<PendingEnd[]>;
   /** Deletes expired grants. Returns how many. */
   sweep(): Promise<number>;
+}
+
+/**
+ * One pass of a reply, as it ended, for a deployment's own analytics (`RunnerDeps.turnEnded`): ids,
+ * what it was charged, when it ran, and the messages it ended with. Never a credential.
+ */
+export interface TurnEnded {
+  userId: string;
+  runId: string;
+  conversationId: string;
+  seq: number;
+  /** The model the start asked for. */
+  model: string;
+  /** How the run ended, as its `run-ended` says. */
+  status: RunEndStatus;
+  /** What this pass's model calls were charged, in Buzz; `undefined` when none reported a charge. */
+  buzz?: number;
+  /** When this pass began, and when it ended. A reply recovered after a crash is a second pass. */
+  startedAt: Date;
+  endedAt: Date;
+  /** The reply's messages as it ended (its tool calls and results included). */
+  messages: ModelMessage[];
+  /** The messages of the conversation's earlier replies, as the pass read them. */
+  earlier: ModelMessage[];
 }
 
 export interface Logger {

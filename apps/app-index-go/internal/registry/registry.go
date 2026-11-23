@@ -50,6 +50,10 @@ type Entity struct {
 	// Key is a private document's storage key, sent beside its body by the adapter's private feed only
 	// (src/server/registry-adapter/private-feed.ts); empty on every other entity.
 	Key string `json:"key,omitempty"`
+	// Seq is a private document's `seq`, where its last write sits in its app namespace's write order,
+	// sent beside its key by the same feed (body format k2). Zero when the entity carries none: every
+	// other entity, and a private one from an adapter before k2.
+	Seq int64 `json:"seq,omitempty"`
 }
 
 // Event is one protocol event. Cursor is empty on End, and on any event a registry cannot resume
@@ -63,6 +67,10 @@ type Event struct {
 	Of EventType
 	// Reason says why a Malformed event could not be decoded. It never contains the event's data.
 	Reason string
+	// Meta is the `meta` object a live or progress event carried, as sent (the spec's `Event.meta`);
+	// nil when it carried none. The adapter's private feed names its head there,
+	// `{"head":{"seq":N}}`. Read by the consumer; nothing here interprets it.
+	Meta json.RawMessage
 }
 
 // Code is an error's name: the `error` field of the JSON body or of an `error` event ("Errors").
@@ -338,9 +346,10 @@ func ParseEvent(typ EventType, data []byte) Event {
 		return Event{Type: Malformed, Of: typ, Cursor: cursor, Reason: reason}
 	}
 	var p struct {
-		Entity *Entity `json:"entity"`
-		URN    string  `json:"urn"`
-		Cursor string  `json:"cursor"`
+		Entity *Entity         `json:"entity"`
+		URN    string          `json:"urn"`
+		Cursor string          `json:"cursor"`
+		Meta   json.RawMessage `json:"meta"`
 	}
 	err := json.Unmarshal(data, &p)
 	var typeErr *json.UnmarshalTypeError
@@ -373,6 +382,8 @@ func ParseEvent(typ EventType, data []byte) Event {
 	}
 	ev := Event{Type: typ, Cursor: p.Cursor}
 	switch typ {
+	case Live, Progress:
+		ev.Meta = p.Meta
 	case Upsert:
 		if p.Entity == nil || p.Entity.URN == "" {
 			return malformed(p.Cursor, "upsert without an entity urn")

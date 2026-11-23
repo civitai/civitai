@@ -275,6 +275,9 @@ type fakeV1Sources struct {
 	contributors     map[int]map[int][]string
 	collectionsErr   error
 	collectionsAsked [][2]int
+	// showcase answers VersionShowcase (zero: ShowcaseUncurated); showcaseAsked is each call's ids.
+	showcase      hydrate.Showcase
+	showcaseAsked [][]int
 }
 
 func pickIDs[V any](m map[int]V, ids []int) map[int]V {
@@ -335,6 +338,11 @@ func (f *fakeV1Sources) CollectionPermission(_ context.Context, collectionID, vi
 	return &c, nil
 }
 
+func (f *fakeV1Sources) VersionShowcase(_ context.Context, ids []int) hydrate.Showcase {
+	f.showcaseAsked = append(f.showcaseAsked, ids)
+	return f.showcase
+}
+
 type fakeV1Gallery struct {
 	settings map[int]*GallerySettings
 	withheld map[int]bool
@@ -376,7 +384,7 @@ func newV1Fixture(rows []RawImage) *v1Fixture {
 		feed: &v1Feed{ans: feedsvc.Answer{Status: 200, IDs: []int{11, 10}, NextCursor: "1700000000000|10"}},
 		src: &fakeV1Sources{
 			users:   map[int]hydrate.BasicUser{5: {ID: 5, Username: "alice"}},
-			thumbs:  map[int]hydrate.Thumbnail{10: {URL: "thumb-uuid", NsfwLevel: 1, Width: int64(320), Height: int64(180)}},
+			thumbs:  map[int]hydrate.Thumbnail{10: {URL: "thumb-uuid", NsfwLevel: 1, Width: int64(320), Height: int64(180), Servable: true}},
 			metrics: map[int]hydrate.Metrics{10: {"Like": 3}, 11: {"Heart": 2, "commentCount": 1}},
 			resources: map[int][]hydrate.ImageResource{11: {
 				{ModelVersionID: 9, Detected: true, ModelType: "Checkpoint", BaseModel: "SDXL 1.0"},
@@ -944,6 +952,21 @@ func TestAddonLevel(t *testing.T) {
 	for in, want := range map[int]int{0: 1, 32: 1, 33: 1, 3: 3, 6: 6, 63: 31} {
 		if got := AddonLevel(in); got != want {
 			t.Errorf("AddonLevel(%d) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+func TestShapeV1CustomThumbnailServable(t *testing.T) {
+	r := row(10, 100, "video", "vid-uuid", 1, `{"width":640,"height":360,"duration":12}`)
+	for _, servable := range []bool{true, false} {
+		it, err := ShapeV1Image(r, V1Hydrated{Thumb: hydrate.Thumbnail{URL: "thumb-uuid", NsfwLevel: 1, Servable: servable}, HasThumb: true}, browsing.PG, loc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		thumb, _ := it.wire.Get("thumbnail")
+		b, _ := superjson.Plain(thumb)
+		if custom := strings.Contains(string(b), "thumb-uuid"); custom != servable {
+			t.Errorf("servable %v: thumbnail %s", servable, b)
 		}
 	}
 }

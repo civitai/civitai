@@ -758,6 +758,7 @@ type Bundle = {
   postSubjectRefusalsTotal: Counter<string>;
   rateLimitRefusalsTotal: Counter<string>;
   docStoreUnchangedWritesTotal: Counter<string>;
+  appStorageRequestsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
   submitFailuresTotal: Counter<string>;
   launchTotalSeconds: Histogram<string>;
@@ -1423,6 +1424,23 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['app_block_id']
   );
 
+  // ── APP STORAGE: REQUESTS BY PATH (direct | service) ────────────────────────
+  // The cut-over measure of apps/app-data-go/WRITES-DESIGN.md: one increment per document-store
+  // request whose caller's access resolved, on the public route (`via="direct"`) and on the
+  // signed internal route app-data-go forwards to (`via="service"`), for every op. The name is
+  // the design's own (its closing query reads it), so it carries no `civitai_` prefix.
+  // ONE recorder (`recordAppStorageRequest`), called from the storage handler only. Whenever one
+  // `via` is counted, the other `via` of the same (app, op, viewer, token_kind) is created at 0,
+  // so a path that goes quiet reads 0, not absent, from the first request on the other one.
+  // Cardinality: app (approved apps + 'dev' via `blockClaimsAppLabel`) × the closed op, via,
+  // viewer and token_kind sets; nothing from request input.
+  const appStorageRequestsTotal = getOrCreateCounter(
+    reg,
+    'app_storage_requests_total',
+    'App Blocks document-store requests whose caller access resolved, by app, op (the storage route op: info|list|get|getMany|create|put|delete|patch|increment|mark|unmark|publish|unpublish), via (direct = the public /api/v1/blocks/storage route; service = the signed internal route app-data-go forwards to), viewer (signed_in|signed_out) and token_kind (app|hub|dev|review). Counting one via creates the other via of the same series at 0. app="dev" is every dev token',
+    ['app', 'op', 'via', 'viewer', 'token_kind']
+  );
+
   // ── POST-FROM-APP: UNREADABLE SUBJECT ────────────────────────────────────────
   // 🔴 THIS BRANCH WAS PREVIOUSLY INDISTINGUISHABLE FROM A FLAG DENIAL, AND THAT IS
   // THE DEFECT THIS COUNTER EXISTS TO MAKE READABLE. `authorizeBlockPostRequest`
@@ -1670,6 +1688,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     postSubjectRefusalsTotal,
     rateLimitRefusalsTotal,
     docStoreUnchangedWritesTotal,
+    appStorageRequestsTotal,
     stepPriceCheckTotal,
     launchTotalSeconds,
     launchPhaseSeconds,
@@ -2168,6 +2187,9 @@ const DOC_STORE_SEEDED_ERROR_CODES: Partial<Record<StorageApiCode, readonly DocS
   moderation_unavailable: ['storage_write', 'storage_tally'],
   // Raised only by the permission-hook gate, on a document write or a tally.
   hook_unavailable: ['storage_write', 'storage_tally'],
+  // Raised only on the signed internal route (an import, which it refuses), which serves the
+  // writes, the tallies and info, never a read.
+  not_supported_here: ['storage_info', 'storage_write', 'storage_tally'],
 };
 
 /** Every outcome of `civitai_app_block_storage_hook_calls_total`, published at 0. */
@@ -2215,6 +2237,38 @@ export function recordDocStoreUnchangedWrite(appBlockIdLabel: string): void {
     });
   } catch {
     /* instrument-only — never let a metrics error change a write's reply */
+  }
+}
+
+/** Which route a document-store request arrived on (`app_storage_requests_total{via}`). */
+export const APP_STORAGE_VIAS = ['direct', 'service'] as const;
+export type AppStorageVia = (typeof APP_STORAGE_VIAS)[number];
+
+/**
+ * One document-store request whose caller's access resolved (`app_storage_requests_total`), and
+ * the same series on the other `via` created at 0, so the path a cut-over app left reads 0, never
+ * absent. Total.
+ */
+export function recordAppStorageRequest(labels: {
+  app: string;
+  op: string;
+  via: AppStorageVia;
+  viewer: 'signed_in' | 'signed_out';
+  tokenKind: string;
+}): void {
+  try {
+    const counter = ensureRegisterAppBlockRuntimeMetrics().appStorageRequestsTotal;
+    const base = {
+      app: labels.app,
+      op: labels.op,
+      viewer: labels.viewer,
+      token_kind: labels.tokenKind,
+    };
+    for (const via of APP_STORAGE_VIAS) {
+      counter.inc({ ...base, via }, via === labels.via ? 1 : 0);
+    }
+  } catch {
+    /* instrument-only — never let a metrics error change a storage reply */
   }
 }
 

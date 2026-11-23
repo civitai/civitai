@@ -1,18 +1,19 @@
 import { count } from './format';
 
-type Perks = { goldMultiplier: number };
+/** `dailyGoldCap` spans the rank's levels: the cap rises with level, so a rank has a range rather than one value. */
+export type RankPerks = {
+  voteWeight: number;
+  goldMultiplier: number;
+  dailyGoldCap: { from: number; to: number };
+};
 
-const times = (n: number) => (n === 0 ? 'None' : `${n}×`);
-
-/** What a rank-up changes, as the dialog prints it: each perk before and after. Empty when either side is unknown. The daily gold cap follows level, not rank, so it is not a rank perk. */
-export function rankUpChanges(previous: Perks | undefined, now: Perks | undefined) {
-  if (!previous || !now) return [];
-  return [
-    {
-      key: 'gold',
-      label: 'Gold multiplier',
-      from: times(previous.goldMultiplier),
-      to: times(now.goldMultiplier),
-    },
-  ];
-}
+/** What the new rank brings, as the rank-up dialog prints it. Only the new values: what the rank below had is not shown. */
+export const rankBenefits = (perks: RankPerks) => [
+  { key: 'weight', label: 'Vote weight', value: `${perks.voteWeight}×` },
+  { key: 'gold', label: 'Gold multiplier', value: `${perks.goldMultiplier}×` },
+  {
+    key: 'cap',
+    label: 'Daily gold cap',
+    value: `${count(perks.dailyGoldCap.from)}–${count(perks.dailyGoldCap.to)}`,
+  },
+];

@@ -171,22 +171,29 @@ vi.mock('~/server/services/model-file.service', async (importOriginal) => ({
   deleteFilesForModelVersionCache: vi.fn(),
 }));
 
-vi.mock('~/server/services/image.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  getImagesForModelVersion: vi.fn(),
-  // imagesForModelVersionsCache with its appendFn: each image's `tags` from tagIdsForImagesCache.
-  getImagesForModelVersionCache: vi.fn(async (ids: number[]) => {
-    const out = records(state.world.images, ids);
-    for (const entry of Object.values(out)) {
-      for (const image of entry.images) {
-        const t = state.world.imageTags?.[image.id];
-        image.tags = t && t !== 'notFound' ? t.tags : [];
+vi.mock('~/server/services/image.service', async (importOriginal) => {
+  const { onlySelectableLevels } = await import('~/shared/constants/browsingLevel.constants');
+  return {
+    ...(await importOriginal<Record<string, unknown>>()),
+    getImagesForModelVersion: vi.fn(),
+    // imagesForModelVersionsCache with its appendFn: the images at a selectable level, each image's
+    // `tags` from tagIdsForImagesCache.
+    getImagesForModelVersionCache: vi.fn(async (ids: number[]) => {
+      const out = records(state.world.images, ids);
+      for (const entry of Object.values(out)) {
+        entry.images = entry.images.filter(
+          (image: { nsfwLevel: number }) => onlySelectableLevels(image.nsfwLevel) !== 0
+        );
+        for (const image of entry.images) {
+          const t = state.world.imageTags?.[image.id];
+          image.tags = t && t !== 'notFound' ? t.tags : [];
+        }
       }
-    }
-    return out;
-  }),
-  queueImageSearchIndexUpdate: vi.fn(),
-}));
+      return out;
+    }),
+    queueImageSearchIndexUpdate: vi.fn(),
+  };
+});
 
 vi.mock('~/server/services/hot-reads-11.reads', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -468,13 +475,15 @@ async function runFixture(f: Fixture, extraHeaders: Record<string, string>, real
       const id = f.world.tagIdsByName?.[args?.where?.name];
       return id ? { id } : null;
     });
-    // trainingDataListing's statement (the only `$queryRaw` these routes send): captured, and
-    // answered with the fixture's rows of the candidate versions (`ANY($1::int[])`).
+    // trainingDataListing's statement: captured, and answered with the fixture's rows of the
+    // candidate versions (`ANY($1::int[])`). The versions' curated showcase read is answered empty:
+    // no fixture curates a showcase, so each version keeps its own images.
     dbMock.dbRead.$queryRaw.mockImplementation((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
     ) => {
       const sql = Prisma.sql(strings, ...values);
+      if (sql.text.includes('FROM "ModelVersionShowcaseItem"')) return [];
       state.trainingDataSql.push({ text: sql.text, values: sql.values });
       const candidates = (sql.values[0] ?? []) as number[];
       return (revive(f.world.trainingData ?? []) as Record<string, unknown>[])

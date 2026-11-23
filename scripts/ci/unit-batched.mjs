@@ -1,13 +1,20 @@
 #!/usr/bin/env node
-// Batched verification of the unit suite on `main`: the scheduled run, and what it does on red.
+// Batched verification of the unit, component and app suites on `main`: the scheduled run, and what
+// it does on red.
 //
-// A push to `main` does not run the `Unit tests` job (see lint.yml). Instead:
+// A push to `main` runs none of the three (see lint.yml and apps.yml). Instead:
 //
 //   node scripts/ci/unit-batched.mjs gate <ref>
 //       In unit-batched.yml, on its schedule. Dispatches lint.yml `only: unit` on <ref> unless <ref>'s
-//       head is the commit the last batch run already verified (green or red).
-//   node scripts/ci/unit-batched.mjs verify <unit-result> <reports-dir> <shards>
-//       (<shards> is the number of shard reports a complete batch must have.)
+//       head is the commit the last batch run already verified (green or red). That one run is the
+//       whole batch: the unit shards, the component + geometry shards, and the `batch-suites` job,
+//       which dispatches every BATCH_WORKFLOWS entry (apps.yml among them) and waits for them.
+//   node scripts/ci/unit-batched.mjs workflows
+//       Prints the BATCH_WORKFLOWS file names, one per line, for full-ci.yml.
+//   node scripts/ci/unit-batched.mjs verify <unit-result> <reports-dir> <shards> [suite]
+//       (<shards> is the number of reports a complete batch must have; <suite> is a SUITES key,
+//       `unit` when omitted. Every rule below is the same for each suite; only the commit status
+//       context, the verify job, the workflow and the re-run's vitest projects differ.)
 //       In lint.yml's `unit-verify` job, after the shards of that dispatched run. Green: a success
 //       status on HEAD. Red: re-runs the failed files at HEAD (a pass = flaky: a success on HEAD
 //       whose description names the flaky files, plus a warning annotation), then
@@ -18,12 +25,16 @@
 //       where this file may not exist, so the caller runs a copy from outside the tree.
 //
 // THE RECORD of what was verified is the `Unit tests (main batch)` commit status on HEAD: the
-// gate skips only when a success or failure was actually POSTED there (headVerdict). A crashed
-// verify job leaves `error` (its last step) or nothing, so HEAD is re-verified next time.
-// The bisect's green base comes from the run list: of the 20 newest lint.yml runs on <ref> with
-// event workflow_dispatch and actor github-actions[bot] that concluded success (this run
-// excluded), the newest whose `Unit verified (main batch)` job concluded success or failure.
-// Its head_sha is the base. The `only` input is not filtered on; the run list does not carry it.
+// gate skips only when a success or failure was actually POSTED there (headVerdict). The component
+// and app verdicts come from the same batch and post their own contexts, but the gate reads the
+// unit one only. A crashed verify job leaves `error` (its last step) or nothing, so HEAD is
+// re-verified next time.
+// THE BISECT'S GREEN BASE is per suite (pickBase): of the 20 newest completed runs of the suite's
+// workflow on <ref> with event workflow_dispatch and actor github-actions[bot] (this run excluded),
+// the newest whose verify job concluded success or failure AND whose posted verdict in the suite's
+// own context, on that run's head_sha with a target_url naming that run, is `success`. The run's
+// conclusion is not read: the unit and component suites share one lint.yml run, so a red component
+// makes that run `failure` while its unit verdict is green, and the reverse.
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -39,8 +50,54 @@ import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const CONTEXT = 'Unit tests (main batch)';
-const VERIFY_JOB = 'Unit verified (main batch)';
 const BOT = 'github-actions[bot]';
+
+/**
+ * The batched suites. `context`: the commit status each posts. `verifyJob`: the job name in
+ * `workflow` that runs `verify` for it (the bisect base must have run it). `projects`: the vitest
+ * projects the flake re-run and the bisect step run the failed files under. `browser`: the bisect
+ * step installs Chromium on every commit it builds. `label`/`noun`/`article` word the statuses; the unit
+ * suite's strings are the ones it has always posted.
+ */
+export const SUITES = {
+  unit: {
+    context: CONTEXT,
+    verifyJob: 'Unit verified (main batch)',
+    workflow: 'lint.yml',
+    projects: ['unit*'],
+    browser: false,
+    label: 'Unit',
+    noun: 'unit',
+    article: 'A',
+  },
+  component: {
+    context: 'Component tests (main batch)',
+    verifyJob: 'Component verified (main batch)',
+    workflow: 'lint.yml',
+    projects: ['component', 'geometry'],
+    browser: true,
+    label: 'Component',
+    noun: 'component',
+    article: 'A',
+  },
+  apps: {
+    context: 'App tests (main batch)',
+    verifyJob: 'App tests verified (main batch)',
+    workflow: 'apps.yml',
+    projects: ['app:*'],
+    browser: false,
+    label: 'App',
+    noun: 'app',
+    article: 'An',
+  },
+};
+
+/** The suite descriptor for a SUITES key; throws on an unknown one rather than verify the unit. */
+export function suiteOf(key = 'unit') {
+  const s = SUITES[key];
+  if (!s) throw new Error(`unknown suite: ${key} (one of ${Object.keys(SUITES).join(', ')})`);
+  return s;
+}
 
 /**
  * The verdict a batch run POSTED on a commit: the state of the newest `Unit tests (main batch)`
@@ -91,15 +148,17 @@ export function statusTarget({
   flaky = false,
   firstBad = null,
   incomplete = false,
+  suite = SUITES.unit,
 }) {
+  const { label, noun, article } = suite;
   if (unitResult === 'success')
-    return { sha: head, state: 'success', description: 'Unit suite passed at this commit.' };
+    return { sha: head, state: 'success', description: `${label} suite passed at this commit.` };
   // The suite did not finish (cancelled or skipped): no verdict, so `error` and a re-verify.
   if (unitResult !== 'failure')
     return {
       sha: head,
       state: 'error',
-      description: `Unit suite did not finish (${unitResult}); the next batch run re-verifies.`,
+      description: `${label} suite did not finish (${unitResult}); the next batch run re-verifies.`,
     };
   // A shard with no report (timeout, setup) or a red the failed files do not explain: the listed
   // files are not the whole story, so neither a flake nor a bisect of them is a verdict. It is
@@ -108,14 +167,13 @@ export function statusTarget({
     return {
       sha: head,
       state: 'error',
-      description:
-        'Not every unit shard reported, or a shard failed outside its test files. Re-verified next batch.',
+      description: `Not every ${noun} shard reported, or a shard failed outside its test files. Re-verified next batch.`,
     };
   if (!failed.length)
     return {
       sha: head,
       state: 'failure',
-      description: 'A unit shard failed with no failing test file (setup or timeout). See the run.',
+      description: `${article} ${noun} shard failed with no failing test file (setup or timeout). See the run.`,
     };
   // A flake is not the commit's fault, so HEAD gets a success, but never a bare one: the
   // description always leads with the note and names the flaky files.
@@ -192,6 +250,33 @@ const repo = () => process.env.GITHUB_REPOSITORY;
 /** What the gate dispatches: this workflow, with this value for its `only` input. */
 export const DISPATCH = { workflow: 'lint.yml', only: 'unit' };
 
+/**
+ * The other suites of the main batch. lint.yml's `batch-suites` job (on the batch dispatch above)
+ * dispatches each on `main` with `batch: true` when a path in its workflow's `on.pull_request.paths`
+ * (else `on.push.paths`) changed since the last green batch, waits for them, and posts their
+ * verdict as the `Batch suites (main batch)` commit status (scripts/ci/batch-suites.mjs). One
+ * entry per line. `ownContext`: the workflow posts its own `(main batch)` status instead; the batch
+ * job still dispatches it and waits for that status, leaves it out of its own verdict, and re-posts
+ * it on this commit with the lint batch run as its target_url (batch-suites.mjs repostStatuses).
+ *
+ * THE ONE LIST of the batch's other suites: lint.yml's `batch-suites` job dispatches from it, and
+ * full-ci.yml reads it (`node scripts/ci/unit-batched.mjs workflows`) to dispatch the same suites
+ * on a labelled PR, ready or draft, since no PR run of theirs covers them. Change it here only.
+ */
+export const BATCH_WORKFLOWS = [
+  { workflow: 'moderator-boot.yml' },
+  { workflow: 'ports.yml' },
+  { workflow: 'registry-adapter-image.yml' },
+  { workflow: 'storage-hook-runner-image.yml' },
+  { workflow: 'windows-dev-env.yml' },
+  { workflow: 'feed-go.yml' },
+  { workflow: 'beacon-go.yml' },
+  { workflow: 'app-index-go.yml' },
+  { workflow: 'app-data-go.yml' },
+  { workflow: 'content-policy-go.yml' },
+  { workflow: 'apps.yml', ownContext: 'App tests (main batch)' },
+];
+
 /** The exact `gh` argv the gate runs to dispatch the batch on <ref>. */
 export function dispatchArgs(ref, repoName) {
   return [
@@ -207,8 +292,8 @@ export function dispatchArgs(ref, repoName) {
   ];
 }
 
-/** Recent bot-dispatched lint.yml runs on <ref>, newest first (the gate's only dispatches). */
-function botRuns(ref, status) {
+/** Recent bot-dispatched runs of <workflow> on <ref>, newest first (the gate's dispatches). */
+function botRuns(ref, status, workflow = 'lint.yml') {
   const q = new URLSearchParams({
     branch: ref,
     event: 'workflow_dispatch',
@@ -217,35 +302,65 @@ function botRuns(ref, status) {
   });
   if (status) q.set('status', status);
   const runs = JSON.parse(
-    gh('api', `repos/${repo()}/actions/workflows/lint.yml/runs?${q}`, '-q', '.workflow_runs')
+    gh('api', `repos/${repo()}/actions/workflows/${workflow}/runs?${q}`, '-q', '.workflow_runs')
   );
   return runs.filter((r) => String(r.id) !== process.env.GITHUB_RUN_ID);
 }
 
 /**
- * The newest finished run whose verify job actually RAN (success or failure). A skipped verify
- * job is listed too, so its presence alone proves nothing.
+ * The verdict a batch run posted for <suite>: the newest status in the suite's context among
+ * `statuses` (newest first, the commit's list) whose target_url names this run; null when none.
  */
-function lastVerifiedRun(ref, { green = false } = {}) {
-  for (const run of botRuns(ref, green ? 'success' : undefined)) {
-    if (run.status !== 'completed') continue;
-    if (!['success', 'failure'].includes(run.conclusion)) continue;
-    const jobs = JSON.parse(
-      gh('api', `repos/${repo()}/actions/runs/${run.id}/jobs?per_page=50`, '-q', '.jobs')
-    );
-    const v = jobs.find((j) => j.name === VERIFY_JOB);
-    if (v && ['success', 'failure'].includes(v.conclusion)) return run;
+export function postedVerdict(run, statuses, suite = SUITES.unit) {
+  const suffix = `/actions/runs/${run.id}`;
+  return (
+    (statuses ?? []).find(
+      (s) => s.context === suite.context && (s.target_url ?? '').replace(/\/$/, '').endsWith(suffix)
+    )?.state ?? null
+  );
+}
+
+/**
+ * The bisect base for <suite>, pure: `candidates` are newest-first [{ run, jobs, statuses }]
+ * (`jobs`/`statuses` may be functions, read lazily). The newest completed run whose verify job
+ * concluded success or failure and whose posted verdict for THIS suite is `success`. The run's
+ * own conclusion is never read (see the header): another suite in the same run being red does not
+ * move this suite's base. Returns the run or null.
+ */
+export function pickBase(candidates, suite = SUITES.unit) {
+  const val = (v) => (typeof v === 'function' ? v() : v);
+  for (const c of candidates) {
+    if (c.run.status !== 'completed') continue;
+    const v = (val(c.jobs) ?? []).find((j) => j.name === suite.verifyJob);
+    if (!v || !['success', 'failure'].includes(v.conclusion)) continue;
+    if (postedVerdict(c.run, val(c.statuses), suite) === 'success') return c.run;
   }
   return null;
 }
 
-function summary(lines) {
+/** The last green verified run of <suite> on <ref> (pickBase over the API). */
+function lastGreenRun(ref, suite = SUITES.unit) {
+  const candidates = botRuns(ref, 'completed', suite.workflow).map((run) => ({
+    run,
+    jobs: () =>
+      JSON.parse(
+        gh('api', `repos/${repo()}/actions/runs/${run.id}/jobs?per_page=100`, '-q', '.jobs')
+      ),
+    statuses: () =>
+      JSON.parse(gh('api', `repos/${repo()}/commits/${run.head_sha}/statuses?per_page=100`)),
+  }));
+  return pickBase(candidates, suite);
+}
+
+function summary(lines, suite = SUITES.unit) {
   const text = lines.join('\n');
   console.log(text);
   if (process.env.GITHUB_STEP_SUMMARY)
-    writeFileSync(process.env.GITHUB_STEP_SUMMARY, `### Unit suite, main batch\n\n${text}\n`, {
-      flag: 'a',
-    });
+    writeFileSync(
+      process.env.GITHUB_STEP_SUMMARY,
+      `### ${suite.label} suite, main batch\n\n${text}\n`,
+      { flag: 'a' }
+    );
 }
 
 function gate(ref) {
@@ -290,17 +405,23 @@ export function classifyRed({ unitResult, failed, incomplete, flaky = isFlaky })
   return flaky(failed) ? 'flaky' : 'bisect';
 }
 
+/** The vitest argv that re-runs <files> under <suite>'s projects. */
+export function rerunArgs(files, suite = SUITES.unit) {
+  return [
+    'exec',
+    'vitest',
+    'run',
+    ...suite.projects.flatMap((p) => ['--project', p]),
+    '--passWithNoTests',
+    ...files,
+  ];
+}
+
 /** Runs the failed files at the current checkout. 0 = all pass. */
-function runFiles(files) {
+function runFiles(files, suite = SUITES.unit) {
   const present = files.filter((f) => existsSync(f));
   if (!present.length) return 0;
-  return spawnSync(
-    'pnpm',
-    ['exec', 'vitest', 'run', '--project', 'unit*', '--passWithNoTests', ...present],
-    { stdio: 'inherit' }
-  ).status === 0
-    ? 0
-    : 1;
+  return spawnSync('pnpm', rerunArgs(present, suite), { stdio: 'inherit' }).status === 0 ? 0 : 1;
 }
 
 // What an install depends on: the lockfile, and the Prisma schema the postinstall generates from.
@@ -312,7 +433,17 @@ const lockHash = () => {
 };
 const LOCK_MARK = 'node_modules/.bisect-install-sha';
 
+/**
+ * What `step` reads from failed.json: a bare array is the unit suite (the form bisect always wrote
+ * for it), `{ suite, files }` any other.
+ */
+export function stepInput(payload) {
+  if (Array.isArray(payload)) return { suite: SUITES.unit, files: payload };
+  return { suite: suiteOf(payload.suite), files: payload.files ?? [] };
+}
+
 function step(failedJson) {
+  const { suite, files } = stepInput(JSON.parse(readFileSync(failedJson, 'utf8')));
   try {
     sh('git', ['submodule', 'update', '--init', '--quiet']);
     if (!existsSync(LOCK_MARK) || readFileSync(LOCK_MARK, 'utf8') !== lockHash()) {
@@ -323,10 +454,18 @@ function step(failedJson) {
       if (r.status !== 0) throw new Error('pnpm install failed');
       writeFileSync(LOCK_MARK, lockHash());
     }
+    // The Chromium revision this commit's playwright wants (a no-op when it is already there).
+    // The system libraries were installed once, by the verify job.
+    if (suite.browser) {
+      const r = spawnSync('pnpm', ['exec', 'playwright', 'install', 'chromium'], {
+        stdio: 'inherit',
+      });
+      if (r.status !== 0) throw new Error('playwright install failed');
+    }
   } catch {
     process.exit(125); // cannot build this commit: let bisect skip it
   }
-  process.exit(runFiles(JSON.parse(readFileSync(failedJson, 'utf8'))));
+  process.exit(runFiles(files, suite));
 }
 
 function readReports(dir) {
@@ -342,11 +481,15 @@ function readReports(dir) {
   return out;
 }
 
-function bisect(green, head, failed) {
+function bisect(green, head, failed, suite = SUITES.unit) {
   const tmp = process.env.RUNNER_TEMP ?? '/tmp';
   const self = join(tmp, 'unit-batched.mjs');
   copyFileSync(fileURLToPath(import.meta.url), self);
-  writeFileSync(join(tmp, 'failed.json'), JSON.stringify(failed));
+  const key = Object.keys(SUITES).find((k) => SUITES[k] === suite);
+  writeFileSync(
+    join(tmp, 'failed.json'),
+    JSON.stringify(suite === SUITES.unit ? failed : { suite: key, files: failed })
+  );
   writeFileSync(LOCK_MARK, lockHash());
   sh('git', ['bisect', 'start', '--first-parent', head, green]);
   try {
@@ -362,7 +505,7 @@ function bisect(green, head, failed) {
   }
 }
 
-function post(target) {
+function post(target, suite = SUITES.unit) {
   const url = `${process.env.GITHUB_SERVER_URL}/${repo()}/actions/runs/${
     process.env.GITHUB_RUN_ID
   }`;
@@ -374,7 +517,7 @@ function post(target) {
     '-f',
     `state=${target.state}`,
     '-f',
-    `context=${CONTEXT}`,
+    `context=${suite.context}`,
     '-f',
     `description=${target.description}`,
     '-f',
@@ -382,7 +525,8 @@ function post(target) {
   );
 }
 
-function verify(unitResult, reportsDir, shards) {
+function verify(unitResult, reportsDir, shards, suiteKey = 'unit') {
+  const suite = suiteOf(suiteKey);
   const root = process.cwd();
   const head = sh('git', ['rev-parse', 'HEAD']);
   const ref = process.env.GITHUB_REF_NAME;
@@ -393,13 +537,18 @@ function verify(unitResult, reportsDir, shards) {
   let firstBad = null;
   if (incomplete)
     lines.push(
-      `Only ${reports.length} of ${shards} unit report(s), or a red no test file explains: not bisected.`
+      `Only ${reports.length} of ${shards} ${suite.noun} report(s), or a red no test file explains: not bisected.`
     );
   if (failed.length && !incomplete) {
     lines.push(`${failed.length} failed file(s):`, ...failed.map((f) => `- \`${f}\``), '');
     console.log('Re-running the failed files at HEAD first.');
   }
-  const kind = classifyRed({ unitResult, failed, incomplete });
+  const kind = classifyRed({
+    unitResult,
+    failed,
+    incomplete,
+    flaky: (f) => isFlaky(f, { runner: (files) => runFiles(files, suite) }),
+  });
   const flaky = kind === 'flaky';
   if (kind === 'flaky' || kind === 'bisect') {
     if (flaky) {
@@ -407,14 +556,16 @@ function verify(unitResult, reportsDir, shards) {
         `**Flaky:** they pass on a re-run at HEAD, so this is not bisected: ${failed.join(', ')}`
       );
       console.log(
-        `::warning title=Flaky unit tests (main batch)::Failed in the batch run, passed on a re-run at HEAD: ${failed.join(
+        `::warning title=Flaky ${
+          suite.noun
+        } tests (main batch)::Failed in the batch run, passed on a re-run at HEAD: ${failed.join(
           ', '
         )}`
       );
     } else {
       let green = null;
       try {
-        green = lastVerifiedRun(ref, { green: true })?.head_sha ?? null;
+        green = lastGreenRun(ref, suite)?.head_sha ?? null;
       } catch (err) {
         lines.push(`Could not read the last green verified commit: ${err.message.split('\n')[0]}`);
       }
@@ -422,7 +573,7 @@ function verify(unitResult, reportsDir, shards) {
       else {
         try {
           sh('git', ['merge-base', '--is-ancestor', green, head]);
-          firstBad = bisect(green, head, failed);
+          firstBad = bisect(green, head, failed, suite);
           lines.push(
             firstBad
               ? `First bad commit since ${green.slice(0, 10)}: **${firstBad.slice(0, 10)}** ${sh(
@@ -439,29 +590,35 @@ function verify(unitResult, reportsDir, shards) {
       }
     }
   }
-  const targets = statusTargets({ unitResult, head, failed, flaky, firstBad, incomplete });
+  const targets = statusTargets({ unitResult, head, failed, flaky, firstBad, incomplete, suite });
   // Summary first: a POST that fails below crashes the job, and the crash step then posts
   // `error` on HEAD, which the gate reads as "not verified".
   for (const t of targets)
-    lines.push(`Posting \`${CONTEXT}\` = ${t.state} on ${t.sha.slice(0, 10)}: ${t.description}`);
-  summary(lines.length ? lines : [`unit result: ${unitResult}; nothing posted.`]);
+    lines.push(
+      `Posting \`${suite.context}\` = ${t.state} on ${t.sha.slice(0, 10)}: ${t.description}`
+    );
+  summary(lines.length ? lines : [`${suite.noun} result: ${unitResult}; nothing posted.`], suite);
   for (const t of targets) {
-    post(t);
+    post(t, suite);
     if (t.state === 'failure')
       console.log(
-        `::error title=Unit suite red (main batch)::${t.sha.slice(0, 10)}: ${t.description}`
+        `::error title=${suite.label} suite red (main batch)::${t.sha.slice(0, 10)}: ${
+          t.description
+        }`
       );
   }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [cmd, a, b, c] = process.argv.slice(2);
+  const [cmd, a, b, c, d] = process.argv.slice(2);
   if (cmd === 'gate') gate(a);
-  else if (cmd === 'verify') verify(a, b, c);
+  // One BATCH_WORKFLOWS file name per line, for full-ci.yml.
+  else if (cmd === 'workflows') console.log(BATCH_WORKFLOWS.map((e) => e.workflow).join('\n'));
+  else if (cmd === 'verify') verify(a, b, c, d);
   else if (cmd === 'step') step(a);
   else {
     console.error(
-      'usage: unit-batched.mjs gate <ref> | verify <unit-result> <reports-dir> <shards> | step <failed.json>'
+      'usage: unit-batched.mjs gate <ref> | workflows | verify <result> <reports-dir> <shards> [suite] | step <failed.json>'
     );
     process.exit(2);
   }

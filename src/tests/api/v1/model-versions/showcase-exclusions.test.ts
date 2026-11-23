@@ -13,6 +13,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  */
 
 const mockGetImages = vi.hoisted(() => vi.fn());
+const curated = vi.hoisted(() => ({ value: false }));
 const addons = vi.hoisted(() => ({ current: undefined as unknown }));
 
 vi.mock('~/server/services/system-cache', async (importOriginal) => ({
@@ -211,7 +212,22 @@ function serve(
 ) {
   showcase = images;
   const version = modelVersion(versionNsfwLevel, sfwName);
-  dbMock.dbRead.$queryRaw.mockResolvedValue([version]);
+  // The version row, and the version showcase's rows: a hidden owner image when the test curates it.
+  dbMock.dbRead.$queryRaw.mockImplementation((async (query: string[]) =>
+    !query.join('').includes('FROM "ModelVersionShowcaseItem" s')
+      ? [version]
+      : curated.value
+      ? [
+          {
+            modelVersionId: VERSION,
+            imageId: 999,
+            site: 'red',
+            source: 'Owner',
+            position: null,
+            excluded: true,
+          },
+        ]
+      : []) as never);
   dbMock.dbRead.modelFile.findFirst.mockResolvedValue({ modelVersion: version });
   dbMock.dbRead.modelFile.findMany.mockResolvedValue([{ modelVersion: version }]);
 }
@@ -226,6 +242,7 @@ const HOSTS = ['civitai.com', 'civitai.red'];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  curated.value = false;
   region.restricted = false;
   addons.current = undefined;
   mockGetImages.mockImplementation(async (args: any) => fakeGetImages(args));
@@ -313,6 +330,14 @@ describe.each(ROUTES)('%s, anonymous', (route) => {
         expect(servedIds(version)).toEqual([UNTAGGED_PG.id, UNTAGGED_PG13.id]);
       }
     );
+
+    it("keeps out a version with a curated showcase, whose featured images its level doesn't show", async () => {
+      region.restricted = false;
+      serve(NsfwLevel.PG, [UNTAGGED_PG]);
+      curated.value = true;
+      const { res } = await call(route, 'civitai.com');
+      expect(noStore(res)).toBe(true);
+    });
 
     it('keeps out a region held to SFW even when its version is stored as SFW', async () => {
       region.restricted = true;

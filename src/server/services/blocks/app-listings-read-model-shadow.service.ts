@@ -1057,9 +1057,8 @@ export function createListingsReadModelShadow(deps: ListingsShadowDeps) {
   }
 
   /**
-   * A served page's cards are typed as `dbRead`'s: a sub-listing card is served only when the
-   * request asked for them (`includeSubListings`), which is exactly when `dbRead`'s own page may
-   * carry them (`attemptServe` refuses one otherwise).
+   * A sub-listing card is served only when the request asked for them (`includeSubListings`),
+   * exactly when `dbRead`'s own page may carry them.
    */
   async function serve<P extends ListingPage>(
     surface: ReadModelSurface,

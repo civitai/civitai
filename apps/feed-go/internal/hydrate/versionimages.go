@@ -42,7 +42,7 @@ var sqlVersionImages = `WITH targets AS (
       AND i."tosViolation" = FALSE
       AND (i."blockedFor" IS NULL)
       AND i."needsReview" IS NULL AND i."acceptableMinor" = FALSE
-      AND i."nsfwLevel" != 0
+      AND (i."nsfwLevel" & ` + strconv.Itoa(browsing.AllLevels) + `) != 0
       AND ` + ImageReviewedSQL("i") + `
       AND ` + MinorMatureImageHiddenSQL("i") + `
       AND (
@@ -205,4 +205,16 @@ func versionImageValue(col string, v any) (any, error) {
 		return int64(t), nil
 	}
 	return nil, fmt.Errorf("unexpected %T", v)
+}
+
+// WithSelectableLevel drops the images at no selectable level (nsfwLevel & AllLevels == 0), as the
+// showcase cache's appendFn does on every read, for every viewer.
+func WithSelectableLevel[T any](images []T, get func(T, string) any) []T {
+	out := make([]T, 0, len(images))
+	for _, img := range images {
+		if n, ok := Int(get(img, "nsfwLevel")); ok && browsing.OnlySelectable(n) != 0 {
+			out = append(out, img)
+		}
+	}
+	return out
 }

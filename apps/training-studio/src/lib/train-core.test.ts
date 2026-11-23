@@ -464,6 +464,41 @@ describe('keep-training base model pin', () => {
   });
 });
 
+describe('keep-training a published run', () => {
+  it("starts unpublished, with no link to the source run's model", async () => {
+    getWorkflow.mockResolvedValue({
+      data: {
+        metadata: {
+          name: 'phaser',
+          trigger: 'ohwx',
+          matureCount: 0,
+          published: true,
+          modelId: 3057695,
+          modelVersionId: 3478834,
+        },
+        steps: [
+          {
+            $type: 'training',
+            input: { engine: 'ai-toolkit', ecosystem: 'sdxl', epochs: 10, steps: 2000 },
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+    await continueTraining(
+      client,
+      { workflowId: 'wf-src', fromEpoch: 10, addEpochs: 5 },
+      { checkText }
+    );
+    const { metadata } = submitWorkflow.mock.calls.at(-1)![0].body;
+    expect(metadata).not.toHaveProperty('published');
+    expect(metadata).not.toHaveProperty('modelId');
+    expect(metadata).not.toHaveProperty('modelVersionId');
+    expect(metadata).toMatchObject({ name: 'phaser (further)', trigger: 'ohwx' });
+  });
+});
+
 describe('keep-training checkpoint reference', () => {
   const source = (input: Record<string, unknown>) => ({
     data: {
@@ -2236,5 +2271,40 @@ describe('per-image repeats', () => {
         { checkText }
       )
     ).rejects.toThrow(/repeats are not supported/);
+  });
+});
+
+describe('the size of one Start', () => {
+  const items = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ air: `blob-${i}`, caption: 'ohwx, 1girl' }));
+  const refused = (runs: TrainingRunInput[]) =>
+    expect(submitTrainingBatch(client, runs, { checkText })).rejects.toBeInstanceOf(
+      TrainingBatchValidationError
+    );
+
+  it('refuses more runs than a Start offers, before spending Buzz', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await refused(Array.from({ length: 6 }, baseRun));
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('refuses a run with more dataset items than the Studio handles, before spending Buzz', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await refused([{ ...baseRun(), items: items(2001) }]);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('control: five runs of 2,000 items each are submitted', async () => {
+    submitWorkflow.mockResolvedValue({ data: { id: 'wf-full', cost: { total: 0 } } });
+    try {
+      const batch = await submitTrainingBatch(
+        client,
+        Array.from({ length: 5 }, () => ({ ...baseRun(), items: items(2000) })),
+        { checkText }
+      );
+      expect(batch.workflowIds).toHaveLength(5);
+    } finally {
+      submitWorkflow.mockReset();
+    }
   });
 });

@@ -29,7 +29,7 @@ export const READ_MODEL_SHADOW_OUTCOMES = [
   'saturated',
   // The read model did not answer within the shadow timeout.
   'timeout',
-  // The read model answered 503 (no serving generation yet, or a generation switch).
+  // The read model answered 503 (no serving generation yet, a generation switch, or a stale row).
   'not_ready',
   // The read model answered another non-2xx status, or the call failed.
   'error',

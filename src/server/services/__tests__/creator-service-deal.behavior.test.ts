@@ -7,6 +7,7 @@ import { TRPCError } from '@trpc/server';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
@@ -140,7 +141,8 @@ const dealReviews = await import('~/server/services/creator-service-deal-review.
 const publish = await import('~/server/services/creator-service-deal-review-publish');
 const reviewReports = await import('~/server/services/service-deal-review-report.service');
 const reconcile = await import('~/server/services/creator-service-deal-review-reconcile');
-const reviewScan = await import('~/server/services/service-deal-review-moderation.adapter');
+const { REDIS_KEYS } = await import('~/server/redis/client');
+const { resetTextScanRolloutCache } = await import('~/server/services/text-scan/mode');
 const { creatorServiceNotifications } = await import(
   '~/server/notifications/creator-service.notifications'
 );
@@ -4361,18 +4363,32 @@ describe('review publishing and counters', () => {
          WHERE "dealId" = $1 RETURNING id`,
         [id]
       );
-      const scans = vi.spyOn(reviewScan, 'scanServiceDealReviewText');
+      const submitCheck = vi.fn(async () => null);
+      // The scan can ask every label: the csam gate is open and its prompt is in the cache. The
+      // content-check suite covers when it cannot.
+      redisMock.sysRedis.hGetAll.mockResolvedValue({ csam: 'review' } as never);
+      redisMock.redis.packed.get.mockImplementation((async (key: string) =>
+        key === REDIS_KEYS.CACHES.TEXT_SCAN_PROMPTS
+          ? {
+              data: { 'label:csam': { id: 1, key: 'label:csam', content: 'CSAM DEF' } },
+              cachedAt: Date.now(),
+            }
+          : null) as never);
+      resetTextScanRolloutCache();
       try {
-        await reconcile.reconcileServiceDealReviews({ limit: 10 });
-        expect(scans).toHaveBeenCalledOnce();
-        expect(scans).toHaveBeenCalledWith('ServiceDealReview', reviewId);
+        await reconcile.reconcileServiceDealReviews({ limit: 10, submitCheck });
+        expect(submitCheck.mock.calls).toEqual([
+          [expect.objectContaining({ entityType: 'ServiceDealReview', entityId: reviewId })],
+        ]);
         // A hidden review's skipped scan is not resent.
-        scans.mockClear();
+        submitCheck.mockClear();
         await q(`UPDATE "ServiceDealReview" SET "hiddenAt" = now() WHERE id = $1`, [reviewId]);
-        await reconcile.reconcileServiceDealReviews({ limit: 10 });
-        expect(scans).not.toHaveBeenCalled();
+        await reconcile.reconcileServiceDealReviews({ limit: 10, submitCheck });
+        expect(submitCheck).not.toHaveBeenCalled();
       } finally {
-        scans.mockRestore();
+        redisMock.sysRedis.hGetAll.mockImplementation(async () => ({} as never));
+        redisMock.redis.packed.get.mockImplementation(async () => null as never);
+        resetTextScanRolloutCache();
       }
     });
   });

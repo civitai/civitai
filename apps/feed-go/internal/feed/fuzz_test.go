@@ -41,7 +41,7 @@ func FuzzParse(f *testing.F) {
 		_ = in.NumericCursor()
 		for _, domainCap := range []int{0, 1, 31} {
 			cp := *in
-			_, _ = cp.ApplyDomainCap(domainCap)
+			_, _ = cp.ApplyDomainCap(domainCap, false)
 		}
 	})
 }
@@ -81,7 +81,7 @@ func FuzzParseInfinite(f *testing.F) {
 		_ = in.ownScoped(in.UserID, in.Username)
 		for _, domainCap := range []int{0, 1, 31} {
 			cp := *in
-			_, _ = cp.ApplyDomainCap(domainCap)
+			_, _ = cp.ApplyDomainCap(domainCap, false)
 		}
 	})
 }

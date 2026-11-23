@@ -1,4 +1,5 @@
 import { createEmail, renderEmailShell } from '@civitai/email';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { env } from '$env/dynamic/private';
 import { siteAppealDecisionText, type SiteAppealCategory } from '@civitai/shared/site-appeal';
 
@@ -9,9 +10,6 @@ export type AppealResolutionEmailData = {
   // Affected content, each linked when a public URL is available.
   items: { url?: string; label: string }[];
 };
-
-const escapeHtml = (s: string) =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 const tosFooter =
   'For more information, see our <a href="https://civitai.com/content/tos">Terms of Service</a>.';
@@ -41,6 +39,9 @@ export const appealResolutionEmail = createEmail<AppealResolutionEmailData, neve
       )
       .join('');
     return renderEmailShell({
+      icon: approved ? '✅' : '⚖️',
+      accent: approved ? 'green' : 'gray',
+      eyebrow: 'Appeal',
       header: heading,
       body: `<p style="margin: 0 0 16px 0;">Hi ${escapeHtml(username)},</p>
         <p style="margin: 0 0 16px 0;">${intro}</p>
@@ -85,6 +86,9 @@ export const siteAppealResolutionEmail = createEmail<SiteAppealResolutionEmailDa
     const heading = approved ? 'Appeal Approved' : 'Appeal Decision';
     const text = siteAppealDecisionText({ category, approved, restored });
     return renderEmailShell({
+      icon: approved ? '✅' : '⚖️',
+      accent: approved ? 'green' : 'gray',
+      eyebrow: 'Appeal',
       header: heading,
       body: `<p style="margin: 0 0 16px 0;">Hi ${escapeHtml(username)},</p>
         <p style="margin: 0 0 16px 0;">${escapeHtml(text)}</p>

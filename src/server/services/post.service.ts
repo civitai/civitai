@@ -1,9 +1,5 @@
 import { ilikeContains } from '~/server/utils/ilike';
-import {
-  deletePostRows,
-  ownPostDeleteBlocked,
-  type DeleteActor,
-} from '@civitai/db-queries/content-deletion';
+import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-deletion';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { Prisma } from '@prisma/client';
 import {
@@ -60,7 +56,7 @@ import {
   refreshHasReceivedReviews,
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { ImageSchema, IngestImageInput } from '~/server/schema/image.schema';
+import type { ImageSchema } from '~/server/schema/image.schema';
 import { externalMetaSchema } from '~/server/schema/image.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
@@ -104,8 +100,8 @@ import {
   imagesForModelVersionsCache,
   enqueueImageIngestion,
   queueImageSearchIndexUpdate,
-  deleteImages,
-  imagesPendingDeletion,
+  requeueUnverifiedImages,
+  deleteImagesWithOutcome,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/services/image.service';
 import { Flags } from '~/shared/utils/flags';
@@ -123,6 +119,7 @@ import type {
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
+import { bustVersionShowcasesForPosts } from '~/server/services/version-showcase.service';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { capPostGetInfiniteImages } from '~/server/utils/post-getinfinite-images';
 import {
@@ -1453,28 +1450,20 @@ export const deletePost = async ({
 
   // Images first, then the post: a failure in between leaves a post with fewer images, which can
   // be deleted again.
-  const deletedImages = await deleteImages(
+  const { deleted: deletedImages, kept: keptImages } = await deleteImagesWithOutcome(
     images.filter((image) => image.deletable).map((image) => image.id),
     { actor, moderatorDelete: !!viewerIsModerator, updatePosts: false }
   );
-  // The deleter's own post under a child-safety report stays, as a pending delete, until the report
-  // is ruled on.
-  const deletedById = 'id' in actor ? actor.id : undefined;
-  const [post] = await deletePostRows(kyselyOver(dbWrite), {
-    ids: [id],
-    actor,
-    pending:
-      deletedById === undefined
-        ? undefined
-        : { blocked: ownPostDeleteBlocked(deletedById), data: { ownerId: deletedById } },
-  });
-  // Only the deleter's own images: the notice is for an owner's delete.
-  const ownImageIds = images.filter((image) => image.userId === deletedById).map((x) => x.id);
-  const deleteAfterReview = (await imagesPendingDeletion(ownImageIds)).size > 0;
+  const {
+    deleted: [post],
+    kept: keptPost,
+  } = await deletePostRows(kyselyOver(dbWrite), { ids: [id], actor });
+  // Only a moderator hears that a delete in the post was kept; a member's reply never says so.
+  const deleteAfterReview = !!viewerIsModerator && (keptPost.length > 0 || keptImages.length > 0);
 
-  // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
-  // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
-  // never revisits them — their docs must be dropped here.
+  // Images left behind (not this caller's to delete, kept by a hold marker, or left for a
+  // child-safety case) keep their row with `postId` nulled (ON DELETE SET NULL). The index sync only
+  // selects `postId IS NOT NULL`, so it never revisits them — their docs must be dropped here.
   const deletedIds = new Set(deletedImages.map((image) => image.id));
   const orphanedImageIds = images.filter((image) => !deletedIds.has(image.id)).map((x) => x.id);
   const imageOwnerIds = uniq(images.map((image) => image.userId));
@@ -1500,8 +1489,6 @@ export const deletePost = async ({
   await userImageVideoCountCaches.bust(imageOwnerIds);
 
   if (post) return { ...post, deletedImageIds, deleteAfterReview };
-  // Kept, with an image of theirs blocked where they can see it: the one generic notice. Otherwise it
-  // answers as if nothing was deleted.
   return deleteAfterReview ? { deleteAfterReview } : undefined;
 };
 
@@ -1871,6 +1858,9 @@ export async function bustCachesForPosts(postIds: number | number[]) {
   const showcaseVersionIds = results
     .filter((x) => x.isShowcase && x.modelVersionId != null)
     .map((x) => x.modelVersionId as number);
+  // Before the return below, which covers only the owner showcase: a featured image is in someone
+  // else's post.
+  await bustVersionShowcasesForPosts(ids);
   if (!showcaseVersionIds.length) return;
 
   const showcaseModelIds = [
@@ -1976,15 +1966,14 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
           ? (meta as Prisma.JsonObject)
           : Prisma.JsonNull
         : undefined,
-      // If this image was blocked due to missing metadata, we need to set it back to pending
-      ingestion: shouldIngest ? 'Pending' : undefined,
-      blockedFor: shouldIngest ? null : undefined,
       metadata: {
         ...((currentImage.metadata as MixedObject) ?? {}),
       } as Prisma.JsonObject,
     },
     select: { id: true, url: true, userId: true, name: true, type: true },
   });
+  // Blocked for missing metadata: another scan, decided on the row as it stands now.
+  const requeued = shouldIngest ? await requeueUnverifiedImages([image.id]) : [];
   // Parallelize independent cache refreshes — none read what others write.
   // ingestImage stays sequential after: it does not read these caches but
   // does have ordering relative to the dbWrite.image.update above.
@@ -2005,14 +1994,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   }
   await Promise.all(cacheRefreshPromises);
 
-  if (shouldIngest) {
-    // Ensures a proper rescan of this image.
-    enqueueImageIngestion({
-      images: [result as IngestImageInput],
-      name: 'post-image-ingest',
-      userId: result.userId,
-    });
-  }
+  enqueueImageIngestion({ images: requeued, name: 'post-image-ingest', userId: result.userId });
 };
 
 /** Looks up a version an uploader may credit to their images, or throws not found. */

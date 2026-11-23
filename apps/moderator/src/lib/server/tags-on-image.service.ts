@@ -1,4 +1,6 @@
 import { sql } from '@civitai/db/kysely';
+import type { Kysely, Transaction } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
 import type { TagSource } from '@civitai/db-schema/enums';
 import { NsfwLevel } from '@civitai/shared';
@@ -69,12 +71,25 @@ function applyTagRules(args: TagOnImageArgs[], rules: TagRule[]): TagOnImageArgs
   return [...seen.values()];
 }
 
-// Bind params are cast (::int / ::"TagSource" / …) so upsert_tag_on_image's overload resolves; NULLs
-// preserve existing bits.
 export async function upsertTagsOnImageNew(args: TagOnImageArgs[]): Promise<void> {
   if (!args.length) return;
-  const items = applyTagRules(args, await getTagRules());
+  const items = await withTagRules(args);
+  await writeTagRows(dbWrite, items);
+  await afterTagWrite(items);
+}
 
+/** The rows a write of `args` touches once the tag rules (Replace, Append) are applied. */
+export async function withTagRules(args: TagOnImageArgs[]): Promise<TagOnImageArgs[]> {
+  return applyTagRules(args, await getTagRules());
+}
+
+// Bind params are cast (::int / ::"TagSource" / …) so upsert_tag_on_image's overload resolves; NULLs
+// preserve existing bits. `db` may be a transaction; the side effects (`afterTagWrite`) run after it commits.
+export async function writeTagRows(
+  db: Kysely<DB> | Transaction<DB>,
+  items: TagOnImageArgs[]
+): Promise<void> {
+  if (!items.length) return;
   const values = sql.join(
     items.map(
       (t) =>
@@ -90,8 +105,12 @@ export async function upsertTagsOnImageNew(args: TagOnImageArgs[]): Promise<void
       t."imageId", t."tagId", t."source", t."confidence", t."automated", t."disabled", t."needsReview"
     )
     FROM (VALUES ${values}) AS t("imageId", "tagId", "source", "confidence", "automated", "disabled", "needsReview")
-  `.execute(dbWrite);
+  `.execute(db);
+}
 
+/** The rating recompute, cache busts, blocked-tag review and search update that follow a committed tag write. */
+export async function afterTagWrite(items: TagOnImageArgs[]): Promise<void> {
+  if (!items.length) return;
   const imageIds = [...new Set(items.map((x) => x.imageId))];
   // Bust after the recompute (busting first lets a reader refill the thumbnail entry with the old
   // level), and even when it throws, since the tag rows are already written.

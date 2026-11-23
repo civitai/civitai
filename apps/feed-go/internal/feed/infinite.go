@@ -438,6 +438,8 @@ type InfiniteSources interface {
 	// on, with the viewer's contributor permissions (viewerID 0: signed out); nil when the collection
 	// does not exist.
 	CollectionPermission(ctx context.Context, collectionID, viewerID int) (*hydrate.CollectionPermission, error)
+	// VersionShowcase is what the version-showcase cache says about the versions (hydrate.Showcase).
+	VersionShowcase(ctx context.Context, versionIDs []int) hydrate.Showcase
 }
 
 // maxFollowedBinds bounds the follow list the Postgres path binds (`i."userId" IN (…)`, one Prisma
@@ -732,7 +734,7 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		viewer = *req.Viewer
 		viewerUsername = req.ViewerUsername
 	}
-	level, _ := in.ApplyDomainCap(req.Cap)
+	level, _ := in.ApplyDomainCap(req.Cap, viewer.IsModerator)
 
 	// The gallery gates (moderators are exempt from both): a taken-down model's images only to its
 	// owner, a minor or SFW-only model's only at its held level.
@@ -772,7 +774,8 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	if allBlocked {
+	// getAllImagesUncaptured: a level made only of unselectable bits is an empty page too.
+	if allBlocked || (!useIndex && level != 0 && browsing.OnlySelectable(level) == 0) {
 		// getAllImagesIndex's / getAllImagesUncaptured's own `{ nextCursor: undefined, items: [] }`;
 		// the Postgres arm's caller stamps its source on it.
 		v := superjson.Object{{Key: "nextCursor", Val: superjson.Undefined{}}, {Key: "items", Val: []any{}}}
@@ -1009,6 +1012,21 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 			// every visible image on the site by an IIF, with no model or creator clause at all. That
 			// unbounded sort is left to Node rather than run here.
 			return nil, fallback.New("prioritized-system-user-no-version")
+		}
+		if in.ModelVersionID != 0 {
+			// getAllImages reads the version's curated showcase (getCarouselShowcaseIds) for every
+			// prioritizedUserIds request with a modelVersionId; curated, the carousel is that list in
+			// its order. Not ported, so anything but a fresh uncurated entry falls back. Read
+			// regardless of Node's `model-version-showcase-serve` flag: off, Node serves the live list
+			// and a fallback here is only a lost answer (DESIGN.md §16.9).
+			switch d.Sources.VersionShowcase(ctx, []int{in.ModelVersionID}) {
+			case hydrate.ShowcaseCurated:
+				return nil, fallback.New("prioritized-curated-showcase")
+			case hydrate.ShowcaseUnknown:
+				return nil, fallback.New("prioritized-showcase-miss")
+			case hydrate.ShowcaseStale:
+				return nil, fallback.New("prioritized-showcase-stale")
+			}
 		}
 	}
 	if in.CollectionID != 0 {
