@@ -394,6 +394,54 @@ func TestServeDetailTagNameMissComputed(t *testing.T) {
 	}
 }
 
+// With FEED_GO_COMPUTE_MISSES (Sources.Compute) a showcase-images miss is computed by the cache's own
+// lookup, the showcase query on the replica, as model.getAll's is, and answered; nothing is written
+// without write-back. Without a computation it falls back (`v1-models-images-miss`,
+// TestServeDetailFallbacks). A failed lookup falls back too.
+func TestServeDetailImagesMissComputed(t *testing.T) {
+	cols := []string{"id", "userId", "name", "url", "nsfwLevel", "width", "height", "hash", "type", "metadata",
+		"minor", "poi", "modelVersionId", "availability", "hasMeta", "hasPositivePrompt", "onSite", "remixOfId"}
+	setup := func(t *testing.T, fail bool) (*testWorld, *Deps, *[][]int) {
+		w := newTestWorld()
+		w.entries[KeyImagesForVersion+":6001"] = nil
+		w.entries[KeyTagIDsForImages+":8002"] = append(meta("imageId", int64(8002), "tags", []any{int64(1)}),
+			superjson.Field{Key: "cachedAt", Val: testNow.Add(-time.Minute)})
+		d := w.deps(t)
+		var bound [][]int
+		w.db.Routes = append(w.db.Routes, testkit.Route{Match: `AS full_mv(id)`, Rows: func(args []any) (*testkit.Rows, error) {
+			bound = append(bound, args[0].([]int))
+			if fail {
+				return nil, errors.New("replica down")
+			}
+			return testkit.NewRows(cols, []any{int64(8002), int64(1001), nil, "u2", int64(1), int64(512), int64(768), nil, "image",
+				`{}`, false, false, int64(6001), "Public", false, false, false, nil}), nil
+		}})
+		d.Sources.Compute = &hydrate.MissCompute{Now: func() time.Time { return testNow }}
+		return w, d, &bound
+	}
+
+	w, d, bound := setup(t, false)
+	ans, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001", TrainingDataSQL: TrainingDataSQLHash})
+	if err != nil {
+		t.Fatalf("serve: %v (%s)", err, reason(err))
+	}
+	body, _ := superjson.Plain(ans.Body)
+	if !strings.Contains(string(body), `"url":"https://image.example.test/u2/original=true/8002.jpeg"`) {
+		t.Errorf("body lacks the looked-up image 8002:\n%s", body)
+	}
+	if !reflect.DeepEqual(*bound, [][]int{{6001}}) {
+		t.Errorf("showcase lookups bound %v, want [[6001]]", *bound)
+	}
+	if _, ok := w.cache.String(KeyImagesForVersion + ":6001"); ok {
+		t.Error("the computed entry was written without write-back")
+	}
+
+	_, d, _ = setup(t, true)
+	if _, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001", TrainingDataSQL: TrainingDataSQLHash}); reason(err) != "model-images-miss-failed" {
+		t.Errorf("failed lookup: %q (%v), want model-images-miss-failed", reason(err), err)
+	}
+}
+
 func TestServeDetailHeldAndNotFound(t *testing.T) {
 	w := newTestWorld()
 	w.modelRow["sfwOnly"] = true

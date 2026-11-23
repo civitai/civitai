@@ -2287,7 +2287,7 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 | Query | every key above except those on the right; an empty `query` (falsy: the database path); `tag` (ASCII); unknown keys ignored and kept for `nextPage` | a truthy or repeated `query` (`v1-models-query`: Meilisearch), a non-ASCII `tag` or a blocked list holding a non-ASCII name (`v1-models-tag`: Go's lowercasing of such text is not always JS's `toLowerCase`), no cached blocked list (`blocked-tags-*`), every other schema key (`v1-models-<key>`: `tagname`, `supportsGeneration`, `checkpointType`, …), a signed-out `favorites`/`hidden` (`v1-models-authed-only`), `limit=0` or over 100 (`v1-models-limit`), the 429 (`v1-models-page-limit`), a Recently Added or unknown sort (`v1-models-sort`), a value `Number()` or zod reads otherwise (`v1-models-input-*`), a cursor Node answers with a 400 or reads through JS's Date parser (`v1-models-cursor`) |
 | Viewer | the list signed out; `[id]` always (it reads no session) | a list session (`v1-models-session`); API credentials (`bearer-token`; the sampler never sends them) |
 | Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, `tag` (the blocked-name empty page, the Tag lookup, its `EXISTS`), ids, earlyAccess, archived, the addons' POI/minor/tag clauses | a username the replica does not hold (`v1-models-username-miss`) |
-| Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads); a tag-name miss with `FEED_GO_COMPUTE_MISSES` (tagCache's lookup, §16.7) | a model-data, model-tags, images, files or membership miss (`v1-models-*-miss`), a tag-name miss with `FEED_GO_COMPUTE_MISSES` off, a stale images/files/tag entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level |
+| Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads); a tag-name miss and a version-images miss with `FEED_GO_COMPUTE_MISSES` (tagCache's lookup, the showcase cache's own lookup, §16.7) | a model-data, model-tags, files or membership miss (`v1-models-*-miss`), a tag-name or images miss with `FEED_GO_COMPUTE_MISSES` off (`v1-models-images-miss`; a failed showcase lookup is `model-images-miss-failed`), a stale images/files/tag entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level |
 | Shaping | both shapers, the file naming over ASCII model names, Training Data files' empty metadata | a name the scheme strips non-ASCII text from (`v1-models-filename`) |
 | Training Data | the listing on both routes (list: in the shaper; `[id]`: after the build or the cache, a body without `modelVersions` gaining an empty one): the candidates, the statement (`internal/v1models/training_data_listing.sql`, Node's rendered text), the predicate, the red-capable host (SERVER_DOMAIN_RED and its aliases, read as Node reads them) | a sample whose Training Data statement hash is missing or is not this build's (`v1-models-training-data-drift`, below), the statement failing (`v1-models-training-data-unread`, see §16.7), a value of a type a jsonb read does not produce, an absolute-form request line (`v1-models-host`: its host replaces the Host header Node reads), a body or row shape the Node code would throw on (`v1-models-training-data`), non-ASCII text in the Host header or the red host list (`v1-models-host`) |
 | Config | | no `NEXT_PUBLIC_IMAGE_LOCATION` or (`[id]`) `NEXTAUTH_URL` (`v1-models-unconfigured-urls`) |
@@ -2391,9 +2391,9 @@ decisions' behaviour beyond the golden fixtures.
 - a cursor timestamp's fraction is padded to three digits before it is read, as parseCursor's
   `normalizeCursorTimestamp` does (`.25` is 250 ms); a date-like token outside that
   `YYYY-MM-DD HH:mm:ss.f` shape keeps dayjs's own reading of the fraction as a millisecond count;
-- the caches are read, never refilled or revalidated, and the answer serves what Node's cache held
-  milliseconds earlier (`stats.*` and `nextCursor` noise on busy lists). A stale entry Node would
-  revalidate falls back. Per cache, a miss:
+- the caches are read, and (but for the version images below) never refilled or revalidated, and the
+  answer serves what Node's cache held milliseconds earlier (`stats.*` and `nextCursor` noise on busy
+  lists). A stale entry Node would revalidate falls back. Per cache, a miss:
   - tag names (`basic-tags`): with `FEED_GO_COMPUTE_MISSES` (§3.1) named by tagCache's own lookup on
     the replica (`SELECT id, name FROM "Tag"`), nothing written back; off, it falls back;
   - model data (`data-for-model-2`): falls back. Its lookup is lag-aware (it may read the primary
@@ -2402,8 +2402,12 @@ decisions' behaviour beyond the golden fixtures.
   - model tags (`model-tags`): falls back. Its lookup reads `TagsOnModels` with no ORDER BY, so the
     tag order Node writes is the replica's row order, which a second read cannot be held to
     (model.getAll computes it, documenting that order as a divergence, §15.7);
-  - version images (`images-for-model-version-2`): falls back here (model.getAll computes it with
-    `FEED_GO_COMPUTE_MISSES`, §3.1);
+  - version images (`images-for-model-version-2`): with `FEED_GO_COMPUTE_MISSES` (§3.1) computed by
+    the cache's own lookup, as model.getAll's is (`hydrate.Sources.VersionImageEntries`: the showcase
+    query, lag-aware and written back when `version-images` is in `FEED_GO_CACHE_WRITEBACK`), and a
+    stale entry revalidated as Node's fetch revalidates it; a stale entry whose revalidation lock
+    another process holds still falls back (`v1-models-images-stale`), where Node serves it. Off, a
+    miss falls back;
   - version files (`files-for-model-version-2`): falls back. Its lookup joins files, hashes and
     metadata (`fetchModelFilesForCache`); no Go port exists;
   - creator membership (`creator-membership-valid`): falls back. Its origin parses subscription

@@ -224,17 +224,18 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 
 	b := hydrate.NewBatch()
 	paidRead := d.Packed.QueueOrdered(b, KeyPaidAccessVersion, versionIDs, 0)
-	imagesRead := d.Packed.QueueOrdered(b, KeyImagesForVersion, versionIDs, ttlDay)
+	imagesRead := d.Packed.Queue(b, KeyImagesForVersion, versionIDs, ttlDay)
 	filesRead := d.Packed.QueueOrdered(b, KeyFilesForVersion, versionIDs, ttlDay)
 	privacyRead := d.Packed.QueueOrdered(b, KeyMetricPrivacy, ownerIDs, 0)
 	b.Exec(ctx)
 
 	g := d.group(ctx)
 	var (
-		held     map[int]int // model id -> held level
-		stats    *versionStats
-		paidMiss []int
-		privMiss []int
+		held         map[int]int // model id -> held level
+		stats        *versionStats
+		imageEntries map[int]hydrate.Entry
+		paidMiss     []int
+		privMiss     []int
 	)
 	p.paid = map[int]superjson.Object{}
 	paidEntries := paidRead.Entries()
@@ -280,6 +281,13 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 			return nil
 		})
 	}
+	// The showcase images: with FEED_GO_COMPUTE_MISSES (Sources.Compute) a miss is computed by the
+	// cache's own lookup and a stale entry revalidated, as model.getAll's are; without, a miss falls
+	// back below.
+	g.Go(func(ctx context.Context) (err error) {
+		imageEntries, err = d.Sources.VersionImageEntries(ctx, versionIDs, imagesRead)
+		return
+	})
 	g.Go(func(ctx context.Context) (err error) { held, err = d.heldLevels(ctx, flagged); return })
 	g.Go(func(ctx context.Context) (err error) { stats, err = d.versionStats(ctx, modelIDs, versionIDs); return })
 	if err := g.Wait(); err != nil {
@@ -288,7 +296,6 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 
 	// Showcase images: held, then filtered.
 	p.images = map[int][]superjson.Object{}
-	imageEntries := imagesRead.Entries()
 	imageIDs := make([]int, 0, len(versionIDs)*8)
 	for _, vid := range versionIDs {
 		e, ok := imageEntries[vid]
@@ -301,7 +308,7 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 		if e.NotFound {
 			continue
 		}
-		list, _ := getVal(e.Value, "images").([]any)
+		list, _ := getVal(e.Ordered(), "images").([]any)
 		cached := make([]superjson.Object, 0, len(list))
 		for _, x := range list {
 			if o, ok := x.(superjson.Object); ok {
