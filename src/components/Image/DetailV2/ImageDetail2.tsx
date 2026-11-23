@@ -128,6 +128,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { ClientOnlySection } from '~/components/ClientOnlySection/ClientOnlySection';
 import { isSongDetail } from '~/components/Music/SongDetail/SongDetailStage';
+import { SongContextMenu } from '~/components/Music/SongContextMenu';
 import { SongMoreFromCard } from '~/components/Music/SongDetail/SongMoreFromCard';
 import { SongStageBackdrop } from '~/components/Music/SongDetail/SongStageBackdrop';
 import { SongUpNextButton } from '~/components/Music/SongDetail/SongUpNextButton';
@@ -605,7 +606,10 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                                     <ShareButton
                                       url={imageShareUrl}
                                       title={title}
-                                      collect={{ type: CollectionType.Image, imageId: image.id }}
+                                      collect={{
+                                        type: isSong ? CollectionType.Music : CollectionType.Image,
+                                        imageId: image.id,
+                                      }}
                                     >
                                       <LegacyActionIcon {...sharedActionIconProps}>
                                         <IconShare3 {...sharedIconProps} />
@@ -623,38 +627,75 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                                         <IconFlag {...sharedIconProps} />
                                       </LegacyActionIcon>
                                     </LoginRedirect>
-                                    <ImageContextMenu
-                                      image={image}
-                                      additionalMenuItems={
-                                        <>
-                                          {narrowStage && (
-                                            <Menu.Item
-                                              leftSection={<IconDownload size={14} stroke={1.5} />}
-                                              onClick={download}
-                                              disabled={downloading}
-                                              closeMenuOnClick={false}
-                                            >
-                                              {!downloading
-                                                ? 'Download'
-                                                : Number.isFinite(progress) && progress > 0
-                                                ? `Downloading ${Math.round(progress)}%`
-                                                : 'Downloading…'}
-                                            </Menu.Item>
-                                          )}
-                                          {storyline.active &&
-                                            !isOwner &&
-                                            !!image.postId &&
-                                            storyline.chapterIdOfImage(image.id) !== undefined && (
-                                              <ReportChapterMenuItem postId={image.postId} />
+                                    {isSong ? (
+                                      <SongContextMenu
+                                        image={image}
+                                        additionalMenuItems={
+                                          <>
+                                            {narrowStage && (
+                                              <Menu.Item
+                                                leftSection={
+                                                  <IconDownload size={14} stroke={1.5} />
+                                                }
+                                                onClick={download}
+                                                disabled={downloading}
+                                                closeMenuOnClick={false}
+                                              >
+                                                {!downloading
+                                                  ? 'Download'
+                                                  : Number.isFinite(progress) && progress > 0
+                                                  ? `Downloading ${Math.round(progress)}%`
+                                                  : 'Downloading…'}
+                                              </Menu.Item>
                                             )}
-                                          <StorylineChapterRemoveItem imageId={image.id} />
-                                        </>
-                                      }
-                                    >
-                                      <LegacyActionIcon {...sharedActionIconProps}>
-                                        <IconDotsVertical {...sharedIconProps} />
-                                      </LegacyActionIcon>
-                                    </ImageContextMenu>
+                                            {storyline.active &&
+                                              !isOwner &&
+                                              !!image.postId &&
+                                              storyline.chapterIdOfImage(image.id) !==
+                                                undefined && (
+                                                <ReportChapterMenuItem postId={image.postId} />
+                                              )}
+                                            <StorylineChapterRemoveItem imageId={image.id} />
+                                          </>
+                                        }
+                                      />
+                                    ) : (
+                                      <ImageContextMenu
+                                        image={image}
+                                        additionalMenuItems={
+                                          <>
+                                            {narrowStage && (
+                                              <Menu.Item
+                                                leftSection={
+                                                  <IconDownload size={14} stroke={1.5} />
+                                                }
+                                                onClick={download}
+                                                disabled={downloading}
+                                                closeMenuOnClick={false}
+                                              >
+                                                {!downloading
+                                                  ? 'Download'
+                                                  : Number.isFinite(progress) && progress > 0
+                                                  ? `Downloading ${Math.round(progress)}%`
+                                                  : 'Downloading…'}
+                                              </Menu.Item>
+                                            )}
+                                            {storyline.active &&
+                                              !isOwner &&
+                                              !!image.postId &&
+                                              storyline.chapterIdOfImage(image.id) !==
+                                                undefined && (
+                                                <ReportChapterMenuItem postId={image.postId} />
+                                              )}
+                                            <StorylineChapterRemoveItem imageId={image.id} />
+                                          </>
+                                        }
+                                      >
+                                        <LegacyActionIcon {...sharedActionIconProps}>
+                                          <IconDotsVertical {...sharedIconProps} />
+                                        </LegacyActionIcon>
+                                      </ImageContextMenu>
+                                    )}
                                   </>
                                 )}
                               </DownloadImage>

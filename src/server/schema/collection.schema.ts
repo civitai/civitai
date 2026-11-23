@@ -69,7 +69,8 @@ export const saveCollectionItemInputSchema = collectionItemSchema
       if (type === CollectionType.Model) {
         return modelId !== undefined;
       }
-      if (type === CollectionType.Image) {
+      // A playlist's songs are images.
+      if (type === CollectionType.Image || type === CollectionType.Music) {
         return imageId !== undefined;
       }
       if (type === CollectionType.Model3D) {

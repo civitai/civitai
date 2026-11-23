@@ -39,15 +39,26 @@ export function SongArt({
   width,
   iconSize,
   className,
+  gradient,
 }: {
   url?: string;
   /** The rendered width, for the image request. */
   width: number;
   iconSize: number;
   className?: string;
+  /** No cover: the design's gradient tile (Pencil `AECSM`) rather than the plain grey one. */
+  gradient?: boolean;
 }) {
   return (
-    <div className={clsx('shrink-0 overflow-hidden bg-gray-2 dark:bg-dark-5', className)}>
+    <div
+      className={clsx(
+        'shrink-0 overflow-hidden',
+        !url && gradient
+          ? 'bg-gradient-to-br from-[#5f3dc4] to-[#4dabf7]'
+          : 'bg-gray-2 dark:bg-dark-5',
+        className
+      )}
+    >
       {url ? (
         <EdgeMedia
           src={url}
@@ -61,7 +72,10 @@ export function SongArt({
       ) : (
         <div
           data-testid="music-cover-placeholder"
-          className={clsx('flex size-full items-center justify-center', dimmed)}
+          className={clsx(
+            'flex size-full items-center justify-center',
+            gradient ? 'text-white/80' : dimmed
+          )}
         >
           <IconMusic size={iconSize} stroke={1.5} />
         </div>

@@ -1,7 +1,10 @@
 // Pencil `AECSM`.
 export const SONG_COVER_RATIO = 200 / 213;
-/** The Song Card's height below the cover; the feed adds it to the cover height. */
-export const SONG_CARD_TEXT_HEIGHT = 98;
+/**
+ * The Song Card's height below the cover; the feed adds it to the cover height. Its four rows
+ * (20 + 16 + 15 + 15), three 6px gaps and 12px padding above and below.
+ */
+export const SONG_CARD_TEXT_HEIGHT = 108;
 /** Pencil `xNZ0Z`. */
 export const MUSIC_FEED_COLUMN_WIDTH = 213;
 /** Pencil `CaAoU`: 256 there, four across in a body with 24px sides. */

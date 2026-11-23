@@ -8,7 +8,13 @@ import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hi
 
 import { showSuccessNotification } from '~/utils/notifications';
 
-export function HideImageButton({ imageId, as = 'button', onToggleHide, ...props }: Props) {
+export function HideImageButton({
+  imageId,
+  as = 'button',
+  onToggleHide,
+  noun = 'image',
+  ...props
+}: Props) {
   const images = useHiddenPreferencesData().hiddenImages;
   const hiddenImages = images.filter((x) => x.hidden);
   const alreadyHiding = hiddenImages.some((x) => x.id === imageId);
@@ -20,8 +26,8 @@ export function HideImageButton({ imageId, as = 'button', onToggleHide, ...props
     e.stopPropagation();
     toggleHiddenMutation.mutateAsync({ kind: 'image', data: [{ id: imageId }] }).then(() => {
       showSuccessNotification({
-        title: `Image ${alreadyHiding ? 'unhidden' : 'hidden'}`,
-        message: `This image will${alreadyHiding ? ' ' : ' not '}show up in your feed`,
+        title: `${noun[0].toUpperCase()}${noun.slice(1)} ${alreadyHiding ? 'unhidden' : 'hidden'}`,
+        message: `This ${noun} will${alreadyHiding ? ' ' : ' not '}show up in your feed`,
       });
     });
 
@@ -47,7 +53,7 @@ export function HideImageButton({ imageId, as = 'button', onToggleHide, ...props
           alreadyHiding ? <IconEye size={16} stroke={1.5} /> : <IconEyeOff size={16} stroke={1.5} />
         }
       >
-        {alreadyHiding ? 'Unhide ' : 'Hide '}this image
+        {alreadyHiding ? 'Unhide ' : 'Hide '}this {noun}
       </Menu.Item>
     </LoginRedirect>
   );
@@ -57,4 +63,6 @@ type Props = Omit<ButtonProps, 'onClick'> & {
   imageId: number;
   as?: 'menu-item' | 'button';
   onToggleHide?: () => void;
+  /** What the menu item and its notification call the item: "Hide this song". */
+  noun?: string;
 };

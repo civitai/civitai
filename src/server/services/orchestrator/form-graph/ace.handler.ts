@@ -94,17 +94,15 @@ export const createAceAudioInput = defineHandler<EcosystemData<'Ace'>, StepInput
     steps.push(chatStep);
   }
 
-  const cover = coverRef
-    ? { imageUrl: { $ref: coverRef, path: 'output.images[0].url' } as unknown as string }
-    : data.images?.length
-    ? { imageUrl: data.images[0].url }
-    : undefined;
+  // No `cover` input: with one, ACE muxes the song into an MP4 over the image, which the song scan
+  // can't read. The song stays an MP3 and posting links the cover as its own image: the generated
+  // one from the imageGen step, an uploaded one from this step's metadata.
+  const uploadedCover = !coverRef && data.images?.length ? data.images[0] : undefined;
 
   const aceInput = removeEmpty({
     duration: data.duration,
     seed: data.seed,
     diffusionModel,
-    cover,
     ...(data.aceAudioMode === 'simple'
       ? {
           prompt: { $ref: chatRef!, path: 'output.parsed.musicDescription' },
@@ -126,6 +124,15 @@ export const createAceAudioInput = defineHandler<EcosystemData<'Ace'>, StepInput
   steps.push({
     $type: 'aceStepAudio',
     input: aceInput as AceStepAudioInput,
+    ...(uploadedCover && {
+      metadata: {
+        coverImage: {
+          url: uploadedCover.url,
+          width: uploadedCover.width,
+          height: uploadedCover.height,
+        },
+      },
+    }),
   } as AceStepAudioStepTemplate as unknown as StepInput);
   return steps;
 });

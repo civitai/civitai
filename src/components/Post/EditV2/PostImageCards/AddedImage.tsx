@@ -37,7 +37,15 @@ import {
 } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { remove, uniq } from 'lodash-es';
-import React, { createContext, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -263,10 +271,11 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #endregion
 
   // #region [delete image]
-  const { onDelete: handleDelete, removeFromEditor, isDeleting } = useDeletePostImage(
-    image.id,
-    image.type
-  );
+  const {
+    onDelete: handleDelete,
+    removeFromEditor,
+    isDeleting,
+  } = useDeletePostImage(image.id, image.type);
   // #endregion
 
   // #region [move image]
@@ -838,6 +847,12 @@ function EditDetail() {
           {(!showPreview || hasSimpleMeta) && (
             <div className={`flex w-full flex-col gap-3 ${!showPreview ? '@sm:w-4/12' : ''}`}>
               {!showPreview && <PostImage />}
+              {/* 8px under the player, against the column's 12px, so it reads as the cover's. */}
+              {!showPreview && isAudio && (
+                <div className="-mt-1">
+                  <SongRemixSwitch image={image} />
+                </div>
+              )}
               {!showPreview && <StorylineCaption />}
               {/* Directly under the image. The wrapper is `flex-row-reverse`, so
                   this narrow column is the one on the RIGHT. Renders nothing
@@ -970,7 +985,8 @@ function EditDetail() {
 
             {/* #endregion */}
 
-            {isAudio && (
+            {/* The preview layout has no cover column; the switch keeps its own card there. */}
+            {isAudio && showPreview && (
               <CustomCard>
                 <SongRemixSwitch image={image} />
               </CustomCard>
@@ -1084,110 +1100,116 @@ function EditDetail() {
               </Alert>
             )} */}
 
-            <CustomCard className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
-                    Tools
-                  </h3>
-                  <InfoPopover
-                    type="hover"
-                    hideClick={true}
-                    variant="transparent"
-                    size="sm"
-                    className="justify-end"
-                    iconProps={{ size: 20 }}
-                  >
-                    Traditional or generative AI programs, platforms or websites used to create this
-                    image.
-                  </InfoPopover>
+            {/* Not on a song for now. */}
+            {!isAudio && (
+              <CustomCard className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+                      Tools
+                    </h3>
+                    <InfoPopover
+                      type="hover"
+                      hideClick={true}
+                      variant="transparent"
+                      size="sm"
+                      className="justify-end"
+                      iconProps={{ size: 20 }}
+                    >
+                      Traditional or generative AI programs, platforms or websites used to create
+                      this image.
+                    </InfoPopover>
+                  </div>
+                  <Popover>
+                    <PopoverButton
+                      as={Button}
+                      // @ts-ignore eslint-disable-next-line
+                      variant="light"
+                      color="blue"
+                      size="compact-sm"
+                      classNames={{ label: 'flex gap-1' }}
+                      onClick={() => undefined}
+                      className="text-sm"
+                    >
+                      <IconPlus size={16} />
+                      <span>TOOL</span>
+                    </PopoverButton>
+                    <PopoverPanel className="[--anchor-gap:4px]" anchor="top start" focus>
+                      {({ close }) => (
+                        <Card p={0} withBorder>
+                          <ImageToolsPopover image={image} onSuccess={close} />
+                        </Card>
+                      )}
+                    </PopoverPanel>
+                  </Popover>
                 </div>
-                <Popover>
-                  <PopoverButton
-                    as={Button}
-                    // @ts-ignore eslint-disable-next-line
-                    variant="light"
-                    color="blue"
-                    size="compact-sm"
-                    classNames={{ label: 'flex gap-1' }}
-                    onClick={() => undefined}
-                    className="text-sm"
-                  >
-                    <IconPlus size={16} />
-                    <span>TOOL</span>
-                  </PopoverButton>
-                  <PopoverPanel className="[--anchor-gap:4px]" anchor="top start" focus>
-                    {({ close }) => (
-                      <Card p={0} withBorder>
-                        <ImageToolsPopover image={image} onSuccess={close} />
-                      </Card>
-                    )}
-                  </PopoverPanel>
-                </Popover>
-              </div>
-              {!!image.tools?.length && (
-                <ul className="flex flex-col">
-                  {sortAlphabeticallyBy([...image.tools], (x) => x.name).map((tool, index) => (
-                    <li key={tool.id} className="list-none">
-                      {index !== 0 && <Divider />}
-                      <PostImageTool image={image} tool={tool} />
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CustomCard>
+                {!!image.tools?.length && (
+                  <ul className="flex flex-col">
+                    {sortAlphabeticallyBy([...image.tools], (x) => x.name).map((tool, index) => (
+                      <li key={tool.id} className="list-none">
+                        {index !== 0 && <Divider />}
+                        <PostImageTool image={image} tool={tool} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CustomCard>
+            )}
             {/* #endregion */}
 
             {/*
           // #region [techniques]
           */}
 
-            <CustomCard className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
-                    Techniques
-                  </h3>
-                  {/* <LegacyActionIcon variant="transparent" size="sm">
-                    <IconInfoCircle />
-                  </LegacyActionIcon> */}
+            {/* Not on a song for now, as Tools. */}
+            {!isAudio && (
+              <CustomCard className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+                      Techniques
+                    </h3>
+                    {/* <LegacyActionIcon variant="transparent" size="sm">
+                      <IconInfoCircle />
+                    </LegacyActionIcon> */}
+                  </div>
+                  <Popover>
+                    <PopoverButton
+                      as={Button}
+                      // @ts-ignore eslint-disable-next-line
+                      variant="light"
+                      color="blue"
+                      size="compact-sm"
+                      classNames={{ label: 'flex gap-1' }}
+                      onClick={() => undefined}
+                      className="text-sm"
+                    >
+                      <IconPlus size={16} />
+                      <span>TECHNIQUE</span>
+                    </PopoverButton>
+                    <PopoverPanel className="[--anchor-gap:4px]" anchor="top start" focus>
+                      {({ close }) => (
+                        <Card p={0} withBorder>
+                          <ImageTechniquesPopover image={image} onSuccess={close} />
+                        </Card>
+                      )}
+                    </PopoverPanel>
+                  </Popover>
                 </div>
-                <Popover>
-                  <PopoverButton
-                    as={Button}
-                    // @ts-ignore eslint-disable-next-line
-                    variant="light"
-                    color="blue"
-                    size="compact-sm"
-                    classNames={{ label: 'flex gap-1' }}
-                    onClick={() => undefined}
-                    className="text-sm"
-                  >
-                    <IconPlus size={16} />
-                    <span>TECHNIQUE</span>
-                  </PopoverButton>
-                  <PopoverPanel className="[--anchor-gap:4px]" anchor="top start" focus>
-                    {({ close }) => (
-                      <Card p={0} withBorder>
-                        <ImageTechniquesPopover image={image} onSuccess={close} />
-                      </Card>
+                {!!image.techniques.length && (
+                  <ul className="flex flex-col">
+                    {sortAlphabeticallyBy([...image.techniques], (x) => x.name).map(
+                      (technique, index) => (
+                        <li key={technique.id} className="list-none">
+                          {index !== 0 && <Divider />}
+                          <PostImageTechnique image={image} technique={technique} />
+                        </li>
+                      )
                     )}
-                  </PopoverPanel>
-                </Popover>
-              </div>
-              {!!image.techniques.length && (
-                <ul className="flex flex-col">
-                  {sortAlphabeticallyBy([...image.techniques], (x) => x.name).map(
-                    (technique, index) => (
-                      <li key={technique.id} className="list-none">
-                        {index !== 0 && <Divider />}
-                        <PostImageTechnique image={image} technique={technique} />
-                      </li>
-                    )
-                  )}
-                </ul>
-              )}
-            </CustomCard>
+                  </ul>
+                )}
+              </CustomCard>
+            )}
             {/* #endregion */}
 
             {/* #region [thumbnail] */}
@@ -1398,8 +1420,11 @@ function PostImage() {
             aria-label={isAudio ? 'Song options' : undefined}
             // A song's cover may be the light placeholder or a pale image, with no gradient behind.
             className={isAudio ? 'rounded-full bg-black/40 hover:bg-black/60' : undefined}
+            // The music feed card's trigger: a 26px round with a 16px ⋯.
+            size={isAudio ? 26 : undefined}
           >
             <IconDotsVertical
+              size={isAudio ? 16 : undefined}
               color="#fff"
               filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
             />

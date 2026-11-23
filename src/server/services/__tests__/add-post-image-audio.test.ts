@@ -557,6 +557,25 @@ describe('addPostImage — generated song cover', () => {
     expect(mocks.deleteImages).not.toHaveBeenCalled();
   });
 
+  it('links a cover the creator uploaded with the song, the same scanned way', async () => {
+    const UPLOADED = 'https://orchestration.civitai.com/v2/consumer/blobs/mine.png';
+    mocks.getWorkflow.mockResolvedValue({
+      steps: [
+        {
+          ...songStep,
+          metadata: { coverImage: { url: UPLOADED, width: 768, height: 768 } },
+        },
+      ],
+    });
+    await postFromGenerator();
+
+    expect(mocks.stageGenerationOutputImage).toHaveBeenCalledWith(
+      expect.objectContaining({ imageUrl: UPLOADED, width: 768, height: 768 })
+    );
+    expect(mocks.createImage.mock.calls[1][0]).not.toHaveProperty('skipIngestion');
+    expect(linkValues()).toEqual([[12, 11]]);
+  });
+
   it("reads the workflow with the caller's own orchestrator token", async () => {
     await postFromGenerator();
     expect(getOrchestratorToken).toHaveBeenCalledWith(5, expect.anything());

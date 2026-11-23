@@ -6,7 +6,7 @@ import { songAllowsRemix } from '~/shared/form-graph/generation/audio/song-metad
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-/** Whether others may use a song's recipe in the generator. */
+/** Whether others may use a song's recipe in the generator: a small switch under the song's cover. */
 export function SongRemixSwitch({ image }: { image: PostEditImageDetail }) {
   const updateImage = usePostEditStore((state) => state.updateImage);
   const { mutate, isPending } = trpc.post.updateImage.useMutation({
@@ -20,7 +20,7 @@ export function SongRemixSwitch({ image }: { image: PostEditImageDetail }) {
 
   return (
     <Switch
-      size="sm"
+      size="xs"
       labelPosition="left"
       label="Allow remixes"
       description="Others can use this song's recipe in the generator."
@@ -30,8 +30,8 @@ export function SongRemixSwitch({ image }: { image: PostEditImageDetail }) {
       classNames={{
         body: 'justify-between gap-3',
         labelWrapper: 'flex-1',
-        label: 'text-[13px] font-semibold text-black dark:text-white p-0',
-        description: 'text-xs mt-0.5',
+        label: 'text-xs font-semibold text-black dark:text-white p-0',
+        description: 'text-[11px] leading-tight mt-0.5',
       }}
     />
   );

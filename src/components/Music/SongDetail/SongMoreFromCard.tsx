@@ -34,14 +34,19 @@ function SongMoreFromCardContent({ song }: { song: SongImage }) {
     <CollapsibleCard title={name} icon={<IconMusic />} storageKey="song-more-from">
       <div className="flex flex-col gap-2.5">
         {evenRows(songs, ROW_SIZE).map((row) => (
-          <ul key={row[0].id} className="m-0 flex list-none gap-2.5 p-0">
+          // A short row is centred, its songs as wide as a full row's, not stretched to fill it.
+          <ul key={row[0].id} className="m-0 flex list-none justify-center gap-2.5 p-0">
             {row.map((other) => {
               const track = songTrack(other);
               return (
-                <li key={other.id} className="min-w-0 flex-1">
+                <li
+                  key={other.id}
+                  className="min-w-0"
+                  style={{ width: `calc((100% - ${ROW_SIZE - 1} * 10px) / ${ROW_SIZE})` }}
+                >
                   <NextLink
                     href={`/images/${other.id}`}
-                    className="flex flex-col items-center gap-1.5 rounded-lg p-1 text-center hover:bg-gray-1 dark:hover:bg-dark-5"
+                    className="flex flex-col items-center gap-1.5 rounded-lg px-1 pb-1.5 pt-2 text-center hover:bg-gray-1 dark:hover:bg-dark-5"
                   >
                     <SongArt
                       url={covers.get(other.id)?.url}

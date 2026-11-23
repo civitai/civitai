@@ -714,6 +714,7 @@ export const CollectionType = {
   Post: 'Post',
   Image: 'Image',
   Model3D: 'Model3D',
+  Music: 'Music',
 } as const;
 
 export type CollectionType = (typeof CollectionType)[keyof typeof CollectionType];

@@ -222,3 +222,70 @@ it('does not check an item already in the collection that writes nothing new', a
   ).resolves.toBeDefined();
   expect(assertVisible).not.toHaveBeenCalled();
 });
+
+describe('songs and playlists', () => {
+  const SONG = 21;
+  const PICTURE = 22;
+  beforeEach(() => {
+    mockDbRead.image.findUnique.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: number };
+    }) => ({ type: where.id === SONG ? 'audio' : 'image' })) as never);
+  });
+  const save = (imageId: number) =>
+    saveItemInCollections({
+      input: {
+        imageId,
+        userId: SUBMITTER_ID,
+        collections: [{ collectionId: COLLECTION_ID }],
+        removeFromCollectionIds: [],
+      } as never,
+    });
+
+  it('saves a song to a playlist', async () => {
+    arrange('Music');
+    await expect(save(SONG)).resolves.toBe('added');
+  });
+
+  it('refuses a song in an image collection, and a picture in a playlist', async () => {
+    arrange('Image');
+    await expect(save(SONG)).rejects.toThrow('Collection type mismatch');
+    arrange('Music');
+    await expect(save(PICTURE)).rejects.toThrow('Collection type mismatch');
+    expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('keeps a picture going to an image collection', async () => {
+    arrange('Image');
+    await expect(save(PICTURE)).resolves.toBe('added');
+  });
+
+  it('bulk-adds only the songs to a playlist', async () => {
+    arrange('Music');
+    mockDbRead.image.findMany.mockResolvedValue([{ id: SONG }] as never);
+    mockDbWrite.collectionItem.createMany.mockResolvedValue({ count: 1 } as never);
+    await bulkSaveItems({
+      input: { collectionId: COLLECTION_ID, imageIds: [SONG, PICTURE], userId: SUBMITTER_ID },
+      permissions: { write: true, isContributor: true, isOwner: false } as never,
+    } as never);
+    const rows = mockDbWrite.collectionItem.createMany.mock.calls[0]?.[0]?.data as {
+      imageId: number;
+    }[];
+    expect(rows.map((r) => r.imageId)).toEqual([SONG]);
+  });
+
+  it('starts a playlist only with a song, and never as a contest', async () => {
+    await expect(
+      upsertCollection({
+        input: { name: 'Mine', type: 'Music', read: 'Public', imageId: PICTURE, userId: 1 },
+      } as never)
+    ).rejects.toThrow('Collection type mismatch');
+    await expect(
+      upsertCollection({
+        input: { name: 'Mine', type: 'Music', mode: 'Contest', read: 'Public', userId: 1 },
+      } as never)
+    ).rejects.toThrow('Playlists cannot be contests');
+    expect(mockDbWrite.collection.create).not.toHaveBeenCalled();
+  });
+});

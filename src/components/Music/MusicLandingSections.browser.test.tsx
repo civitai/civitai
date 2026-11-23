@@ -67,8 +67,8 @@ vi.mock('~/components/Image/Providers/ImagesProvider', async () => {
     useImagesContext: () => React.useContext(Context) ?? { getImages: () => undefined },
   };
 });
-vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
-  ImageContextMenu: () => null,
+vi.mock('~/components/Music/SongContextMenu', () => ({
+  SongContextMenu: () => null,
 }));
 vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   ...(await importOriginal<typeof RoutedDialogLinkModule>()),

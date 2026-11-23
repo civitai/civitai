@@ -1,3 +1,4 @@
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   Badge,
   Center,
@@ -78,6 +79,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   const [roleFilter, setRoleFilter] = useState<string | null>(null);
   const [debouncedQuery] = useDebouncedValue(query, 300);
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const router = useRouter();
   const { data, isLoading } = trpc.collection.getAllUser.useQuery(MY_COLLECTIONS_LIST_INPUT, {
     enabled: !!currentUser,
@@ -134,10 +136,12 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
       placeholder="All types"
       value={typeFilter}
       onChange={setTypeFilter}
-      data={Object.values(CollectionType).map((type) => ({
-        value: type,
-        label: collectionTypeData[type].label,
-      }))}
+      data={Object.values(CollectionType)
+        .filter((type) => type !== CollectionType.Music || features.music)
+        .map((type) => ({
+          value: type,
+          label: collectionTypeData[type].label,
+        }))}
       clearable
       size="xs"
       leftSection={

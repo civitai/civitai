@@ -27,6 +27,10 @@ export function SongGenreTags({ image }: { image: PostEditImageDetail }) {
   // An upload's result can reach the store before the editor read that carries the tags.
   const songTags = image.songTags ?? [];
   const updateImage = usePostEditStore((state) => state.updateImage);
+  // As `assertSongsHaveGenres`: the genre is required to publish, so a live post asks for none.
+  const live = usePostEditStore(
+    (state) => !!state.post?.publishedAt && new Date(state.post.publishedAt) <= new Date()
+  );
 
   const setStored = (changes: { genre?: SongGenre; tags?: SongTagRow[] }) =>
     updateImage(id, (draft) => {
@@ -67,7 +71,7 @@ export function SongGenreTags({ image }: { image: PostEditImageDetail }) {
         }}
         allowDeselect={false}
         searchable
-        error={!genre ? SONG_GENRE_REQUIRED_MESSAGE : undefined}
+        error={!genre && !live ? SONG_GENRE_REQUIRED_MESSAGE : undefined}
         // Inside the card, which clips: the theme renders Popover dropdowns in place.
         comboboxProps={{ withinPortal: true }}
         w={200}

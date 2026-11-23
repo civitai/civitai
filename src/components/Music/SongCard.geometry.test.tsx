@@ -28,9 +28,19 @@ vi.mock('~/components/MusicPlayer/useMusicPlayerCover', () => ({
 vi.mock('~/components/Music/useSongPlays', () => ({
   useSongListPlays: () => ({ 1: 9700 }),
 }));
-vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
-  ImageContextMenu: () => null,
-}));
+// The menu's items need the image's own reads; the card's real trigger stands in for the whole menu.
+vi.mock('~/components/Music/SongContextMenu', async () => {
+  const { ActionIconDotsVertical } = await import(
+    '~/components/Cards/components/ActionIconDotsVertical'
+  );
+  return {
+    SongContextMenu: ({
+      image: _image,
+      leadingMenuItems: _items,
+      ...props
+    }: Record<string, unknown>) => <ActionIconDotsVertical aria-label="Song options" {...props} />,
+  };
+});
 vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   ...(await importOriginal<typeof RoutedDialogLinkModule>()),
   RoutedDialogLink: ({ children, className }: { children: ReactNode; className?: string }) => (
@@ -65,7 +75,16 @@ const songs = [song(1, 'Midnight Arcade'), song(2, 'Palm Static')];
 
 const title = (name: string) =>
   [...document.querySelectorAll('a')].find((a) => a.textContent === name)!;
-const cardOf = (el: Element) => el.parentElement!;
+/** The card, around the body that holds the title. */
+const cardOf = (el: Element) => el.parentElement!.parentElement!;
+/** The cover's height and each text row's, from the card. */
+const parts = (card: Element) => {
+  const [cover, body] = [...card.children];
+  return {
+    cover: cover.getBoundingClientRect().height,
+    rows: [...body.children].map((el) => el.getBoundingClientRect().height),
+  };
+};
 
 const feedSizing = {
   imageDimensions: () => ({ width: 1000, height: 1000 * SONG_COVER_RATIO }),
@@ -94,7 +113,7 @@ describe('the Song Card at phone width', () => {
     await renderAtViewport(<PhoneFeed />, PHONE_VIEWPORT);
     await vi.waitFor(() => expect(title('Palm Static')).toBeTruthy());
     const card = cardOf(title('Palm Static'));
-    const [cover, ...rows] = [...card.children].map((el) => el.getBoundingClientRect().height);
+    const { cover, rows } = parts(card);
     const { height } = card.getBoundingClientRect();
     expect(card.getBoundingClientRect().width).toBe(PHONE_VIEWPORT.width - 32);
     // Title 20, creator 16, style line 15, stats 15 (Pencil `AECSM`).
@@ -118,7 +137,7 @@ test('a song with no genre and no creator keeps every row and the cover its size
   );
   await vi.waitFor(() => expect(title('No Name')).toBeTruthy());
   const card = cardOf(title('No Name'));
-  const [cover, ...rows] = [...card.children].map((el) => el.getBoundingClientRect().height);
+  const { cover, rows } = parts(card);
   expect(rows.length).toBe(4);
   expect(cover).toBe(height - SONG_CARD_TEXT_HEIGHT);
 });
@@ -144,4 +163,56 @@ test('the music feed lays Song Cards six across at 1440 (Pencil `xNZ0Z`)', async
   const cards = many.slice(0, 6).map((s) => cardOf(title(`Song ${s.id}`)).getBoundingClientRect());
   expect(new Set(cards.map((c) => Math.round(c.top))).size).toBe(1);
   expect(cards.map((c) => c.width)).toEqual(Array(6).fill(MUSIC_FEED_COLUMN_WIDTH));
+});
+
+test("the menu's ⋯ is small, and the menu and the duration badge share the cover's right edge", async () => {
+  const height = Math.floor(MUSIC_FEED_COLUMN_WIDTH * SONG_COVER_RATIO + SONG_CARD_TEXT_HEIGHT);
+  await renderAtViewport(
+    <div style={{ width: MUSIC_FEED_COLUMN_WIDTH }}>
+      <SongCard data={songs[0]} height={height} />
+    </div>,
+    { width: 1440, height: 900 }
+  );
+  await vi.waitFor(() => expect(title('Midnight Arcade')).toBeTruthy());
+  const menu = document.querySelector('button[aria-label="Song options"]')!;
+  const badge = [...document.querySelectorAll('span')].find((s) => s.textContent === '3:05')!;
+  const cover = cardOf(title('Midnight Arcade')).firstElementChild!.getBoundingClientRect();
+  const box = menu.getBoundingClientRect();
+  const icon = menu.querySelector('svg')!.getBoundingClientRect();
+  expect([box.width, box.height]).toEqual([26, 26]);
+  expect([icon.width, icon.height]).toEqual([16, 16]);
+  expect(cover.right - box.right).toBe(12);
+  expect(cover.right - badge.getBoundingClientRect().right).toBe(12);
+  expect(box.top - cover.top).toBe(12);
+});
+
+test('a song with no cover shows the gradient tile, not a flat grey one', async () => {
+  const height = Math.floor(MUSIC_FEED_COLUMN_WIDTH * SONG_COVER_RATIO + SONG_CARD_TEXT_HEIGHT);
+  await renderAtViewport(
+    <div style={{ width: MUSIC_FEED_COLUMN_WIDTH }}>
+      <SongCard data={songs[1]} height={height} />
+    </div>,
+    { width: 1440, height: 900 }
+  );
+  await vi.waitFor(() => expect(title('Palm Static')).toBeTruthy());
+  const tile = document.querySelector('[data-testid="music-cover-placeholder"]')!.parentElement!;
+  expect(getComputedStyle(tile).backgroundImage).toContain('linear-gradient');
+});
+
+test('the text sits on the card surface, padded 12px under the cover', async () => {
+  const height = Math.floor(MUSIC_FEED_COLUMN_WIDTH * SONG_COVER_RATIO + SONG_CARD_TEXT_HEIGHT);
+  await renderAtViewport(
+    <div style={{ width: MUSIC_FEED_COLUMN_WIDTH }}>
+      <SongCard data={songs[0]} height={height} />
+    </div>,
+    { width: 1440, height: 900 }
+  );
+  await vi.waitFor(() => expect(title('Midnight Arcade')).toBeTruthy());
+  const card = cardOf(title('Midnight Arcade'));
+  const surface = getComputedStyle(card).backgroundColor;
+  expect(surface).not.toBe('rgba(0, 0, 0, 0)');
+  const body = card.children[1].getBoundingClientRect();
+  const first = title('Midnight Arcade').getBoundingClientRect();
+  expect(first.top - body.top).toBe(12);
+  expect(first.left - card.getBoundingClientRect().left).toBe(12);
 });

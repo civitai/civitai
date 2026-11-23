@@ -114,8 +114,8 @@ vi.mock('~/components/MasonryColumns/MasonryColumnsVirtual', async (importOrigin
     },
   };
 });
-vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
-  ImageContextMenu: () => null,
+vi.mock('~/components/Music/SongContextMenu', () => ({
+  SongContextMenu: () => null,
 }));
 vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   ...(await importOriginal<typeof RoutedDialogLinkModule>()),

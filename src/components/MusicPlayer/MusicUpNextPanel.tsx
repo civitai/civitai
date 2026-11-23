@@ -59,7 +59,8 @@ const LIFTED =
 const brightText = 'text-black dark:text-white';
 
 function upNextSummary(tracks: MusicTrack[]) {
-  if (!tracks.length) return '0 songs';
+  // Empty, the list itself says Nothing queued.
+  if (!tracks.length) return null;
   const seconds = tracks.reduce((sum, t) => sum + (t.durationSec || 0), 0);
   const minutes = Math.max(1, Math.round(seconds / 60));
   return `${tracks.length} ${tracks.length === 1 ? 'song' : 'songs'} · ${minutes} min`;
@@ -290,7 +291,7 @@ export function MusicUpNextList({
   );
 }
 
-function PanelHeader({ summary, sheet }: { summary: string; sheet: boolean }) {
+function PanelHeader({ summary, sheet }: { summary: string | null; sheet: boolean }) {
   const shuffle = useMusicPlayerStore((s) => s.shuffle);
   const repeat = useMusicPlayerStore((s) => s.repeat);
   // System toggles in the panel stay Civitai blue (Pencil `uGWPy`).
@@ -311,7 +312,7 @@ function PanelHeader({ summary, sheet }: { summary: string; sheet: boolean }) {
         >
           Up next
         </span>
-        <span className={clsx('text-xs', dimmed)}>{summary}</span>
+        {summary && <span className={clsx('text-xs', dimmed)}>{summary}</span>}
       </div>
       <PlayerTooltip label="Shuffle">
         <button
