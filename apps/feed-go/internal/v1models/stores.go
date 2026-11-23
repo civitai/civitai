@@ -549,8 +549,14 @@ func (d *Deps) showcaseFilter(ctx context.Context, in RawInput) func(superjson.O
 		if len(excluded) == 0 {
 			return true
 		}
-		// `image.tags ?? []` on the appendFn: an image the tag cache holds no entry for reads [].
-		tags, _ := getVal(img, "tags").([]any)
+		// `image.tags != null && !image.tags.some(...)` (getShowcaseImageFilter): while any tag is
+		// excluded, an image with no tags list is hidden. VersionImages always sets one ([] for an image
+		// the tag cache holds no entry for), so this only bites a source that does not, which must
+		// hide, never show.
+		tags, ok := getVal(img, "tags").([]any)
+		if !ok {
+			return false
+		}
 		for _, t := range tags {
 			if n, ok := intOf(t); ok && excluded[n] {
 				return false

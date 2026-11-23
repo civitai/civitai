@@ -2407,13 +2407,16 @@ decisions' behaviour beyond the golden fixtures.
     the appendFn's minor and selectable-level filter, then every remaining image's tag ids, read with
     the tag cache's 8 h ttl as Node's appendFn reads them). On top of it this route applies only the
     hold (holdShowcaseImages: a minor or SFW-only model's images at its gallery level) and then the
-    showcase filter (getShowcaseImageFilter, the excluded tags tested against each image's `tags`), in
+    showcase filter (getShowcaseImageFilter, the excluded tags tested against each image's `tags`; while
+    any tag is excluded an image with no `tags` list is hidden, as Node's `image.tags != null`), in
     Node's order. With `FEED_GO_COMPUTE_MISSES` (§3.1) a miss of either is computed by the cache's
     own lookup and a stale entry revalidated as Node's fetch revalidates it; with write-back on for
     that cache (`version-images`, `tag-ids` in `FEED_GO_CACHE_WRITEBACK`) the computed entries are
     written back, as model.getAll's are, and a stale entry whose revalidation lock another process
     holds is served, as Node serves it. Off, a miss falls back and a stale entry is served (as on
-    model.getAll), where a Node process that took the lock would answer the revalidated one;
+    model.getAll), where a Node process that took the lock would answer the revalidated one: with
+    the switch off, a busted showcase (an image taken down or edited) can be served until a Node
+    reader refreshes the entry, up to the entry's 2-day expiry. Flip it off knowing that;
   - version files (`files-for-model-version-2`): falls back. Its lookup joins files, hashes and
     metadata (`fetchModelFilesForCache`); no Go port exists;
   - creator membership (`creator-membership-valid`): falls back. Its origin parses subscription
