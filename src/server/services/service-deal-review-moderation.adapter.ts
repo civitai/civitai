@@ -234,9 +234,9 @@ export async function scanServiceDealReviewText(
   // The primary: called right after a write, and a lagging replica would scan the old text.
   const text = (await loadSubject(type, reviewId))?.fields[0]?.text;
   if (!text) return;
-  // An edit or restore is how text whose check ran out of retries comes back.
-  await rearmTextScanRetries({ entityType: type, entityId: reviewId });
   try {
+    // An edit or restore is how text whose check ran out of retries comes back.
+    await rearmTextScanRetries({ entityType: type, entityId: reviewId });
     await trackSubmit(type, reviewId, text, () =>
       submitCheck({
         entityType: type,

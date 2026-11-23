@@ -141,12 +141,12 @@ describe('review text while its scan cannot ask every label (civitai/civitai#101
     ];
     // The job's selection, rows oldest first: types left out, retries left, the first `take`.
     dbMock.dbRead.entityModeration.findMany.mockImplementation((async (args: {
-      where: { entityType?: { notIn: string[] } };
+      where: { entityType?: { notIn: string[] }; retryCount?: { lt: number } };
       take: number;
     }) =>
       rows
         .filter((r) => !args.where.entityType?.notIn.includes(r.entityType))
-        .filter((r) => r.retryCount < TEXT_MODERATION_RETRY_LIMIT)
+        .filter((r) => !args.where.retryCount || r.retryCount < args.where.retryCount.lt)
         .slice(0, args.take)
         .map(({ retryCount: _, ...r }) => r)) as never);
     dbMock.dbWrite.entityModeration.updateMany.mockImplementation((async (args: {
@@ -189,6 +189,28 @@ describe('review text while its scan cannot ask every label (civitai/civitai#101
       expect(submit.mock.calls.map(([args]) => args.entityId).sort()).toEqual([3, 7, 8]);
     }
   );
+
+  it('a row whose retries are spent is not sent again', async () => {
+    rows = [
+      {
+        id: 301,
+        entityType: 'Model',
+        entityId: 4,
+        status: 'Failed',
+        retryCount: TEXT_MODERATION_RETRY_LIMIT,
+      },
+      {
+        id: 302,
+        entityType: 'Model',
+        entityId: 5,
+        status: 'Failed',
+        retryCount: TEXT_MODERATION_RETRY_LIMIT - 1,
+      },
+    ];
+    askable();
+    expect(await run()).toMatchObject({ processed: 1, retried: 1 });
+    expect(submit.mock.calls.map(([args]) => args.entityId)).toEqual([5]);
+  });
 
   it('a full batch of older review rows does not hold other text back while the labels are out', async () => {
     rows = [

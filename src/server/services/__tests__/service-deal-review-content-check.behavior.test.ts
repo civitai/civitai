@@ -936,6 +936,15 @@ describe('a verdict that cannot settle its text is left to the retry job, within
       `UPDATE "ServiceDealReview" SET comment = 'Edited', "scanStatus" = 'Pending', "scanWorkflowId" = NULL`
     );
     await adapter.scanServiceDealReviewText('ServiceDealReview', REVIEW, refusedSubmit as never);
+    // Re-armed and then spent once by the refused submit, still Pending on the old check.
+    expect(
+      (
+        await q(
+          `SELECT status, "retryCount", "workflowId" FROM "EntityModeration"
+           WHERE "entityType" = 'ServiceDealReview'`
+        )
+      )[0]
+    ).toEqual({ status: 'Pending', retryCount: 1, workflowId: 'wf-c' });
     // The old check then fails: its row is marked Failed and spent, matched by its workflow alone.
     await q(
       `UPDATE "EntityModeration" SET status = 'Failed', "retryCount" = "retryCount" + 1
@@ -976,6 +985,36 @@ describe('a verdict that cannot settle its text is left to the retry job, within
        FROM "EntityModeration" WHERE "entityType" = 'ServiceDealReview'`
     );
     expect(row).toEqual({ minutesOld: 31, retryCount: 0 });
+  });
+
+  it('a restore whose check row cannot be re-armed still succeeds, and leaves its text unshown', async () => {
+    await seed(R);
+    await setServiceDealReviewHidden({ reviewId: REVIEW, moderatorId: SELLER, hidden: true });
+    await q(`UPDATE "ServiceDealReview" SET "scanStatus" = 'Error'`);
+    const routed = dbMock.dbWrite.$executeRaw.getMockImplementation()!;
+    dbMock.dbWrite.$executeRaw.mockImplementation(((strings: unknown, ...values: unknown[]) =>
+      Array.isArray(strings) && strings.join('').includes('SET "retryCount" = 0')
+        ? Promise.reject(new Error('re-arm failed'))
+        : routed(strings as never, ...(values as never[]))) as never);
+    const real = adapter.scanServiceDealReviewText;
+    const scans = vi
+      .spyOn(adapter, 'scanServiceDealReviewText')
+      .mockImplementation((t, id) => real(t, id, submitCheck));
+    try {
+      await expect(
+        setServiceDealReviewHidden({ reviewId: REVIEW, moderatorId: SELLER, hidden: false })
+      ).resolves.toBe(true);
+    } finally {
+      scans.mockRestore();
+      dbMock.dbWrite.$executeRaw.mockImplementation(routed);
+    }
+    expect(submitCheck).not.toHaveBeenCalled();
+    expect(await state('ServiceDealReview')).toEqual({ status: 'Pending', workflow: null });
+    expect(
+      loggingMock.logToAxiom.mock.calls.filter(
+        ([entry]) => (entry as { message?: string }).message === 're-arm failed'
+      )
+    ).toHaveLength(1);
   });
 
   it('an edit to text past its limit is scanned again', async () => {

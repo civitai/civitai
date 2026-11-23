@@ -330,8 +330,9 @@ function withoutPromptlessLabels(
 }
 
 /**
- * Whether a scan of this profile can ask every label it requires right now: the csam gate and the
- * csam prompt are global, so this holds or fails for every entity of the profile at once.
+ * Whether a scan of this profile can ask every label it requires right now. Global state (csam
+ * gate, csam prompt) decides it, so it is the same for every entity of a profile without
+ * `labelsFor`.
  */
 export async function textScanCanAskEveryLabel(
   profile: Pick<TextScanProfile, 'labels' | 'labelsFor' | 'requireEveryLabel'>

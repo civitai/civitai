@@ -17,8 +17,9 @@ import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-servi
 /**
  * Review texts whose check was never recorded: its submit failed, or a dismissed csam hold sent
  * the text back. The wait lets a submit in progress record its check first. A recorded check that
- * fails, or whose row the cron holds (Failed/Expired/Canceled), is the retry cron's, not here. A
- * hidden review's scan is skipped, so it is left out rather than resent every run.
+ * fails, or whose row is Failed/Expired/Canceled, is left to the retry cron; once its retries run
+ * out only an edit or restore resends it. A hidden review's scan is skipped, so it is left out
+ * rather than resent every run.
  */
 async function rescanUnsubmittedTexts(limit: number) {
   // Every text would be refused at submit while a required label cannot be asked, and reselected on
