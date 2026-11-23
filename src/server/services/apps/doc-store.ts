@@ -123,6 +123,7 @@ import type {
   AccountWipeResult,
   DocAuthor,
   DocCollection,
+  DocDeleteResult,
   DocIndexType,
   DocListQuery,
   DocLevelGate,
@@ -138,6 +139,7 @@ import type {
   PublishResult,
   QuotaCeiling,
   UnpublishResult,
+  WrittenDocRecord,
 } from '~/server/services/apps/doc-store.types';
 import {
   DEFAULT_DOC_STORE_LIMITS,
@@ -700,6 +702,13 @@ function docColumns(viewerParam: string, rating = false): string {
 }
 
 /**
+ * What a write answers beside `docColumns` (`WrittenDocRecord`): the document's seq and its
+ * record id. Selected only by the statements a write returns its document from, never by a read.
+ */
+const WRITTEN_COLUMNS = `
+    d.seq, d.record_id::text AS record_id`;
+
+/**
  * A document's CURRENT level: the moderator's override when it was given for the document's
  * current `version`, else the rated level when it was rated at that version, else NULL. A rating
  * or override for an older version does not count: every rewrite of the body bumps `version` (a
@@ -806,7 +815,7 @@ const SQL_LOCK_DOC = `SELECT d.version, d.author_uid, d.author_kind, d.size_byte
 // Unlocked: nothing is written on its answer, so the answer is simply as of this read.
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 data, $7 viewer, $8 names, $9 v_text,
 // $10 v_num, $11 v_type
-const SQL_UNCHANGED_PROBE_TAIL = `,
+const SQL_UNCHANGED_PROBE_TAIL = `,${WRITTEN_COLUMNS},
     d.hidden_at IS NOT NULL AS hidden, md5(d.data::text) AS hash,
     md5($6::jsonb::text) AS written_hash,
     NOT EXISTS (
@@ -909,24 +918,25 @@ const SQL_CHARGE_USER = `INSERT INTO appdata.usage_user AS u (app_id, ns, user_i
     AND (EXCLUDED.docs <= 0 OR u.docs + EXCLUDED.docs <= $7::int)
   RETURNING u.bytes`;
 
-// Stamp the seq and return the stored document.
+// Stamp the seq and return the stored document, with its seq and record id
+// (`WrittenDocRecord`, `WRITTEN_COLUMNS`).
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 seq, $7 viewer
 const SQL_STAMP_SEQ = `UPDATE appdata.doc d SET seq = $6::bigint
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
-  RETURNING ${docColumns('$7::int')}`;
+  RETURNING ${docColumns('$7::int')},${WRITTEN_COLUMNS}`;
 // The same, also stamping the schema major the body was written under (NULL = not known). Only
 // once the manual migration `20261106130000_appdata_doc_schema_major.sql` added the column (see
 // `hasSchemaMajorColumn`). $8 the major.
 const SQL_STAMP_SEQ_MAJOR = `UPDATE appdata.doc d SET seq = $6::bigint, schema_major = $8::int
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
-  RETURNING ${docColumns('$7::int')}`;
+  RETURNING ${docColumns('$7::int')},${WRITTEN_COLUMNS}`;
 // The two above, returning the rating too (levels on). The writer's own document: no gate.
 const SQL_STAMP_SEQ_LEVELS = `UPDATE appdata.doc d SET seq = $6::bigint
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
-  RETURNING ${docColumns('$7::int', true)}`;
+  RETURNING ${docColumns('$7::int', true)},${WRITTEN_COLUMNS}`;
 const SQL_STAMP_SEQ_MAJOR_LEVELS = `UPDATE appdata.doc d SET seq = $6::bigint, schema_major = $8::int
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
-  RETURNING ${docColumns('$7::int', true)}`;
+  RETURNING ${docColumns('$7::int', true)},${WRITTEN_COLUMNS}`;
 // Whether `appdata.doc.schema_major` exists: fails with undefined_column (42703) until the manual
 // migration is applied. Reads no row. Run under a savepoint, so that failure leaves the write's
 // transaction usable. $1 app, $2 ns
@@ -1030,14 +1040,14 @@ const SQL_FEED_WITNESS_TOMB = `SELECT tb.seq FROM appdata.doc_tomb tb
 // the registry adapter's authorized private streams. Only rows that carry a `record_id` (the id
 // in a private record's URN) and that moderation has not hidden. Keyset by key.
 // $1 app, $2 ns, $3 coll, $4 user, $5 after key, $6 limit
-const SQL_PRIVATE_FEED_VERSIONS = `SELECT d.key, d.version, d.record_id::text AS record_id
+const SQL_PRIVATE_FEED_VERSIONS = `SELECT d.key, d.version, d.record_id::text AS record_id, d.seq
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
     AND d.hidden_at IS NULL AND d.record_id IS NOT NULL AND d.key > $5::text
   ORDER BY d.key
   LIMIT $6::int`;
 // Its full twin: the same rows with their data.
-const SQL_PRIVATE_FEED_DOCS = `SELECT d.key, d.data, d.version, d.record_id::text AS record_id
+const SQL_PRIVATE_FEED_DOCS = `SELECT d.key, d.data, d.version, d.record_id::text AS record_id, d.seq
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
     AND d.hidden_at IS NULL AND d.record_id IS NOT NULL AND d.key > $5::text
@@ -1496,6 +1506,19 @@ function toDocRecord(
   };
 }
 
+/** A row a write returned its document from (`WRITTEN_COLUMNS`), as the write answers it. */
+function toWrittenDocRecord(
+  row: Record<string, unknown>,
+  ctx: DocStoreContext,
+  coll: DocCollection
+): WrittenDocRecord {
+  return {
+    ...toDocRecord(row, ctx, coll),
+    seq: Number(row.seq),
+    recordId: row.record_id === null || row.record_id === undefined ? null : String(row.record_id),
+  };
+}
+
 const RATING_STATUSES: ReadonlySet<string> = new Set<DocRatingStatus>([
   'pending',
   'rated',
@@ -1704,15 +1727,19 @@ export type DocStoreFeed = ReturnType<typeof createDocStoreFeed>;
  * decides who may read: its caller passes the user only after the one collection-read predicate
  * (`data-read-grant.ts`) granted that user the collection. A separate object, so neither the
  * public feed nor the block-token store carries a read keyed on a caller-supplied user id; its
- * importers are pinned by `__tests__/doc-store-private-feed.ledger.test.ts`.
+ * importers are pinned by `__tests__/doc-store-private-feed.ledger.test.ts`. `privateHead` reads
+ * the namespace's write head (`SQL_FEED_HEAD`), which a stream reads before its keyset.
  */
 export function createDocStorePrivateFeed(deps: DocStoreDeps) {
   return buildDocStore(deps).privateFeed;
 }
 export type DocStorePrivateFeed = ReturnType<typeof createDocStorePrivateFeed>;
 
-/** One private document's identity and version, as `privateVersions` reads it. */
-export type PrivateFeedVersion = { key: string; recordId: string; version: number };
+/**
+ * One private document's identity, version and `seq` (where its last write sits in the app
+ * namespace's write order, `usage_app.last_seq` when it was written), as `privateVersions` reads it.
+ */
+export type PrivateFeedVersion = { key: string; recordId: string; version: number; seq: number };
 /** One private document, as `privateDocuments` reads it. */
 export type PrivateFeedDocument = PrivateFeedVersion & { data: Record<string, unknown> };
 
@@ -2183,7 +2210,7 @@ function buildDocStore(deps: DocStoreDeps) {
     key: string,
     data: unknown,
     opts: { ifVersion?: number; op: 'create' | 'put'; hookPass?: HookPass }
-  ): Promise<DocRecord> {
+  ): Promise<WrittenDocRecord> {
     const policy = assertCollection(coll);
     assertKey(key);
     const viewer = requireViewer(ctx);
@@ -2273,7 +2300,7 @@ function buildDocStore(deps: DocStoreDeps) {
     key: string,
     indexRows: IndexRow[],
     usage: { app: UsageDelta; user: UserCharge }
-  ): Promise<DocRecord> {
+  ): Promise<WrittenDocRecord> {
     // Always, even with no index declared: it then deletes every index row the
     // document has, so an index declared, dropped and declared again never
     // serves values from before it was dropped.
@@ -2290,7 +2317,7 @@ function buildDocStore(deps: DocStoreDeps) {
     ]);
     const seq = await charge(c, ctx, usage.app, usage.user);
     const res = await stampWrittenDoc(c, ctx, coll, scope, key, seq, ctx.viewerUid);
-    return toDocRecord(res.rows[0], ctx, coll);
+    return toWrittenDocRecord(res.rows[0], ctx, coll);
   }
 
   async function getMany(
@@ -2336,7 +2363,7 @@ function buildDocStore(deps: DocStoreDeps) {
     key: string,
     data: Record<string, unknown>,
     opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<DocRecord> {
+  ): Promise<WrittenDocRecord> {
     return writeDoc(ctx, coll, key, data, { ...opts, op: 'put' });
   }
 
@@ -2350,7 +2377,7 @@ function buildDocStore(deps: DocStoreDeps) {
     coll: DocCollection,
     data: Record<string, unknown>,
     opts: { key?: string; hookPass?: HookPass } = {}
-  ): Promise<DocRecord> {
+  ): Promise<WrittenDocRecord> {
     return writeDoc(ctx, coll, opts.key ?? newUlid(), data, {
       ifVersion: 0,
       op: 'create',
@@ -2359,8 +2386,8 @@ function buildDocStore(deps: DocStoreDeps) {
   }
 
   /**
-   * A shared `put` that would change no stored row, answered without writing: the stored document,
-   * untouched (no version, seq or `updated_at` bump, no index sync, no usage charge, no
+   * A shared `put` that would change no stored row, answered without writing: the stored document
+   * with its current seq and record id, as a write answers it, untouched (no version, seq or `updated_at` bump, no index sync, no usage charge, no
    * `markRatingPending`, so a rating given for its version stands), when ALL of:
    * - a document is stored at `key` and `classifyPublish` calls it `unchanged` against `data` —
    *   the ONE rule a publish uses: the caller's own, not hidden, and the same content hash;
@@ -2385,7 +2412,7 @@ function buildDocStore(deps: DocStoreDeps) {
     key: string,
     data: Record<string, unknown>,
     opts: { ifVersion?: number } = {}
-  ): Promise<DocRecord | null> {
+  ): Promise<WrittenDocRecord | null> {
     const policy = assertCollection(coll);
     const viewer = requireViewer(ctx);
     assertShareWritable(coll, policy);
@@ -2429,7 +2456,7 @@ function buildDocStore(deps: DocStoreDeps) {
     }
     if (row.index_same !== true) return null;
     if (opts.ifVersion !== undefined && opts.ifVersion !== Number(row.version)) return null;
-    return toDocRecord(row, ctx, coll);
+    return toWrittenDocRecord(row, ctx, coll);
   }
 
   async function remove(
@@ -2437,7 +2464,7 @@ function buildDocStore(deps: DocStoreDeps) {
     coll: DocCollection,
     key: string,
     opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<{ deleted: boolean }> {
+  ): Promise<DocDeleteResult> {
     const policy = assertCollection(coll);
     assertKey(key);
     const viewer = requireViewer(ctx);
@@ -2454,7 +2481,7 @@ function buildDocStore(deps: DocStoreDeps) {
         if (ifVersion !== undefined && ifVersion !== 0) {
           throw new DocStoreError('version_conflict', 'version conflict', { currentVersion: 0 });
         }
-        return { deleted: false };
+        return { deleted: false as const };
       }
       const current = Number(row.version);
       if (ifVersion !== undefined && ifVersion !== current) {
@@ -2476,7 +2503,7 @@ function buildDocStore(deps: DocStoreDeps) {
         ceiling: ceilingFor(coll),
       });
       await c.query(SQL_TOMBSTONE, [ctx.appId, ctx.ns, coll.name, scope, key, seq]);
-      return { deleted: true };
+      return { deleted: true as const, seq };
     });
   }
 
@@ -3926,6 +3953,7 @@ function buildDocStore(deps: DocStoreDeps) {
       key: r.key as string,
       recordId: String(r.record_id),
       version: Number(r.version),
+      seq: seqOf(r.seq),
     }));
   }
 
@@ -3946,6 +3974,7 @@ function buildDocStore(deps: DocStoreDeps) {
       key: r.key as string,
       recordId: String(r.record_id),
       version: Number(r.version),
+      seq: seqOf(r.seq),
       data: r.data as Record<string, unknown>,
     }));
   }
@@ -3954,7 +3983,9 @@ function buildDocStore(deps: DocStoreDeps) {
     store,
     lookup: { findSharedByKey },
     feed: { feedHead, feedChanges, feedDocuments, feedWitness },
-    privateFeed: { privateVersions, privateDocuments },
+    // `privateHead` is the public feed's head read: the namespace's newest seq, one counter for
+    // every collection of the app, private and shared (`SQL_CHARGE_APP`).
+    privateFeed: { privateVersions, privateDocuments, privateHead: feedHead },
     moderation: createModeration({ withTx, charge }),
     rater: createRater({ withTx, charge, raterLookupTx }),
     maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp, migrateDocuments },

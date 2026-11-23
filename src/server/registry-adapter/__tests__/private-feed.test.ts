@@ -150,11 +150,34 @@ let revokedInstalls: Set<string>;
 let revocationReads: Array<[string, number]>;
 let now: number;
 let store: ReturnType<typeof createMemorySnapshotStore>;
+/** The app namespace's write head the source answers. */
+let head: number;
+/** Every read the feed made of the source, in order. */
+let reads: Array<'head' | 'versions' | 'documents'>;
+/** Run once, after the next `documents` read returns: a write that commits right after the keyset. */
+let afterDocumentsRead: (() => void) | null;
 
 function privateFeed(relays = parsePrivateRelays(RELAY)) {
   return createPrivateDocFeed({
     relays,
-    source: { versions: async (...a) => page(...a), documents: async (...a) => page(...a) },
+    source: {
+      head: async () => {
+        reads.push('head');
+        return head;
+      },
+      versions: async (...a) => {
+        reads.push('versions');
+        return page(...a);
+      },
+      documents: async (...a) => {
+        reads.push('documents');
+        const out = page(...a);
+        const write = afterDocumentsRead;
+        afterDocumentsRead = null;
+        write?.();
+        return out;
+      },
+    },
     resolve: resolvePrivateFromCatalog(async () => catalog()),
     decide,
     runGateReadable: async () => runGateReadable,
@@ -312,6 +335,9 @@ beforeEach(() => {
   revocationReads = [];
   wakers = [];
   store = createMemorySnapshotStore();
+  head = 97;
+  reads = [];
+  afterDocumentsRead = null;
   rows = [
     {
       id: SOURCE_ID,
@@ -359,11 +385,11 @@ beforeEach(() => {
   docs = new Map([
     [
       docsKey(SOURCE_ID, 'journal', OWNER),
-      [{ key: 'entry-1', recordId: OWNER_RECORD, version: 3, data: { t: OWNER_CANARY } }],
+      [{ key: 'entry-1', recordId: OWNER_RECORD, version: 3, seq: 41, data: { t: OWNER_CANARY } }],
     ],
     [
       docsKey(SOURCE_ID, 'journal', OTHER),
-      [{ key: 'entry-1', recordId: OTHER_RECORD, version: 5, data: { t: OTHER_CANARY } }],
+      [{ key: 'entry-1', recordId: OTHER_RECORD, version: 5, seq: 57, data: { t: OTHER_CANARY } }],
     ],
   ]);
 });
@@ -591,7 +617,13 @@ describe('🔴 revocation and deletion leave the stream as Deletes', () => {
   it('a deleted record: a Delete for it alone; a new record: an Upsert', async () => {
     const run = await liveStream('owner-own');
     docs.set(docsKey(SOURCE_ID, 'journal', OWNER), [
-      { key: 'entry-2', recordId: OWNER_RECORD_2, version: 1, data: { t: OWNER_CANARY_2 } },
+      {
+        key: 'entry-2',
+        recordId: OWNER_RECORD_2,
+        version: 1,
+        seq: 63,
+        data: { t: OWNER_CANARY_2 },
+      },
     ]);
     await poll(run);
     expect(deletes(run.events)).toEqual([OWNER_URN]);
@@ -839,8 +871,14 @@ describe('a private record carries its storage key (the shared app-data service 
 
   it("the owner's snapshot: each record's key beside its body; the URN still names the record id", async () => {
     docs.set(docsKey(SOURCE_ID, 'journal', OWNER), [
-      { key: 'entry-1', recordId: OWNER_RECORD, version: 3, data: { t: OWNER_CANARY } },
-      { key: 'entry-7c', recordId: OWNER_RECORD_2, version: 2, data: { t: OWNER_CANARY_2 } },
+      { key: 'entry-1', recordId: OWNER_RECORD, version: 3, seq: 41, data: { t: OWNER_CANARY } },
+      {
+        key: 'entry-7c',
+        recordId: OWNER_RECORD_2,
+        version: 2,
+        seq: 88,
+        data: { t: OWNER_CANARY_2 },
+      },
     ]);
     const { events } = await snapshotOf('owner-own');
     expect(
@@ -857,7 +895,13 @@ describe('a private record carries its storage key (the shared app-data service 
 
   it("🔴 another user's stream carries only their own key and record, never the owner's", async () => {
     docs.set(docsKey(SOURCE_ID, 'journal', OWNER), [
-      { key: 'owner-only-key-5d2', recordId: OWNER_RECORD, version: 3, data: { t: OWNER_CANARY } },
+      {
+        key: 'owner-only-key-5d2',
+        recordId: OWNER_RECORD,
+        version: 3,
+        seq: 41,
+        data: { t: OWNER_CANARY },
+      },
     ]);
     const { events } = await snapshotOf('other-own');
     expect(upsertEntities(events).map((e) => e.key)).toEqual(['entry-1']);
@@ -909,6 +953,182 @@ describe('a private record carries its storage key (the shared app-data service 
     expect(events.map((e) => e.type)).toEqual(['live', 'upsert']);
     expect(upsertEntities(events).map((e) => ({ urn: e.urn, key: e.key }))).toEqual([
       { urn: OWNER_URN, key: 'entry-1' },
+    ]);
+  });
+});
+
+describe('a private record carries its seq, and the stream its head (read-your-writes order)', () => {
+  const upsertEntities = (events: StreamEvent[]) =>
+    events.flatMap((e) => (e.type === 'upsert' ? [e.entity] : []));
+  /** Every `live` and `progress`, as its type and meta. */
+  const positions = (events: StreamEvent[]) =>
+    events.flatMap((e) =>
+      e.type === 'live' || e.type === 'progress' ? [{ type: e.type, meta: e.meta }] : []
+    );
+  async function poll(run: Run) {
+    wake();
+    await settle(run);
+  }
+
+  it("each record carries its document's seq beside its key", async () => {
+    docs.set(docsKey(SOURCE_ID, 'journal', OWNER), [
+      { key: 'entry-1', recordId: OWNER_RECORD, version: 3, seq: 41, data: { t: OWNER_CANARY } },
+      {
+        key: 'entry-7c',
+        recordId: OWNER_RECORD_2,
+        version: 2,
+        seq: 88,
+        data: { t: OWNER_CANARY_2 },
+      },
+    ]);
+    const { events } = await snapshotOf('owner-own');
+    expect(
+      upsertEntities(events)
+        .map((e) => ({ urn: e.urn, key: e.key, seq: e.seq }))
+        .sort((a, b) => (a.urn < b.urn ? -1 : 1))
+    ).toEqual(
+      [
+        { urn: OWNER_URN, key: 'entry-1', seq: 41 },
+        { urn: OWNER_URN_2, key: 'entry-7c', seq: 88 },
+      ].sort((a, b) => (a.urn < b.urn ? -1 : 1))
+    );
+  });
+
+  it('live names the head its snapshot read; a poll whose head moved sends a progress with it, after its changes', async () => {
+    const run = subscribe(
+      composeAdapter(entities, publicFeed(), privateFeed()),
+      await principalOf('owner-own')
+    );
+    await settle(run);
+    expect(positions(run.events)).toEqual([{ type: 'live', meta: { head: { seq: 97 } } }]);
+
+    // A write to the record: the next poll sends it, then the head it read.
+    docs.set(docsKey(SOURCE_ID, 'journal', OWNER), [
+      { key: 'entry-1', recordId: OWNER_RECORD, version: 4, seq: 102, data: { t: OWNER_CANARY_2 } },
+    ]);
+    head = 102;
+    const mark = run.events.length;
+    await poll(run);
+    const batch = run.events.slice(mark);
+    expect(batch.map((e) => e.type)).toEqual(['upsert', 'progress']);
+    expect(upsertEntities(batch).map((e) => e.seq)).toEqual([102]);
+    expect(positions(batch)).toEqual([{ type: 'progress', meta: { head: { seq: 102 } } }]);
+    // The progress closes the batch at the upsert's own position.
+    expect((batch[1] as { cursor: string }).cursor).toBe((batch[0] as { cursor: string }).cursor);
+
+    // A write to another collection of the app moves only the head: a progress, at the same cursor.
+    head = 115;
+    const quiet = run.events.length;
+    await poll(run);
+    expect(run.events.slice(quiet)).toEqual([
+      {
+        type: 'progress',
+        cursor: (batch[1] as { cursor: string }).cursor,
+        meta: { head: { seq: 115 } },
+      },
+    ]);
+    // Nothing moved: nothing sent.
+    const still = run.events.length;
+    await poll(run);
+    expect(run.events.length).toBe(still);
+    run.stop();
+    wake();
+  });
+
+  it('🔴 the head is read before the keyset: a write committing right after the keyset is not covered by it', async () => {
+    const run = subscribe(
+      composeAdapter(entities, publicFeed(), privateFeed()),
+      await principalOf('owner-own')
+    );
+    await settle(run);
+    // The next poll reads a changed keyset; a write (seq 131) commits just after its documents
+    // read, so the poll did not see it.
+    docs.set(docsKey(SOURCE_ID, 'journal', OWNER), [
+      { key: 'entry-1', recordId: OWNER_RECORD, version: 4, seq: 124, data: { t: OWNER_CANARY_2 } },
+    ]);
+    head = 124;
+    afterDocumentsRead = () => {
+      docs.set(docsKey(SOURCE_ID, 'journal', OWNER), [
+        { key: 'entry-1', recordId: OWNER_RECORD, version: 5, seq: 131, data: { t: OTHER_CANARY } },
+      ]);
+      head = 131;
+    };
+    reads = [];
+    const before = run.events.length;
+    await poll(run);
+    // The poll's reads, in order: the head first.
+    expect(reads).toEqual(['head', 'versions', 'documents']);
+    const sent = run.events.slice(before);
+    expect(upsertEntities(sent).map((e) => e.seq)).toEqual([124]);
+    // The head it names is the one read before the keyset, never the later write's.
+    expect(positions(sent)).toEqual([{ type: 'progress', meta: { head: { seq: 124 } } }]);
+    // The next poll sees the write and names its head.
+    const mark = run.events.length;
+    await poll(run);
+    expect(upsertEntities(run.events.slice(mark)).map((e) => e.seq)).toEqual([131]);
+    expect(positions(run.events.slice(mark))).toEqual([
+      { type: 'progress', meta: { head: { seq: 131 } } },
+    ]);
+    run.stop();
+    wake();
+  });
+
+  // INVARIANT GUARD (green before this change too: nothing read a head then).
+  it('a refused stream reads no head and names none', async () => {
+    const { events } = await snapshotOf('other-grantee');
+    expect(events).toEqual([{ type: 'live', cursor: expect.any(String) }]);
+    expect(reads).not.toContain('head');
+  });
+
+  it('🔴 a cursor saved under k1 (keys, no seq) resumes as a change: every record is sent again with its seq, then the head', async () => {
+    const owner = await principalOf('owner-own');
+    const binding = requestBinding({ schema: SCHEMA, urns: [] }, owner.subject);
+    const adapter = composeAdapter(entities, publicFeed(), privateFeed());
+    const first = subscribe(adapter, owner);
+    await settle(first);
+    first.stop();
+    wake();
+    await first.done;
+    const schemas = upsertEntities(first.events)[0].schemas;
+    const raw = unbindCursor(
+      (first.events.find((e) => e.type === 'live') as { cursor: string }).cursor,
+      binding
+    );
+    const digest = /^p1\.([0-9a-f]{32})$/.exec(raw)?.[1] as string;
+    const resume = async () => {
+      const run = subscribe(adapter, await principalOf('owner-own'), bindCursor(raw, binding));
+      await settle(run);
+      run.stop();
+      wake();
+      await run.done;
+      return run.events;
+    };
+
+    // Control: the cursor as this release saved it resumes with nothing to send but `live`.
+    expect((await resume()).map((e) => e.type)).toEqual(['live']);
+
+    // The same state as the k1 release saved it: its read digest and revs, and no head.
+    const state = JSON.parse((await store.get(digest)) as string) as Record<string, unknown>;
+    state.read = sha256Hex(sortedKeyJson({ f: 'k1', read: [[OWNER_RECORD, 3]] })).slice(0, 32);
+    const k1Rev = sha256Hex(
+      sortedKeyJson({
+        f: 'k1',
+        key: 'entry-1',
+        rev: docRev({ version: 3, data: { t: OWNER_CANARY } }, schemas),
+      })
+    ).slice(0, 16);
+    state.served = [[OWNER_URN, k1Rev]];
+    delete state.head;
+    await store.put(digest, sortedKeyJson(state), `${SCHEMA}#x`);
+
+    const events = await resume();
+    expect(events.map((e) => e.type)).toEqual(['live', 'upsert', 'progress']);
+    expect(positions(events)).toEqual([
+      { type: 'live', meta: undefined },
+      { type: 'progress', meta: { head: { seq: 97 } } },
+    ]);
+    expect(upsertEntities(events).map((e) => ({ urn: e.urn, key: e.key, seq: e.seq }))).toEqual([
+      { urn: OWNER_URN, key: 'entry-1', seq: 41 },
     ]);
   });
 });
