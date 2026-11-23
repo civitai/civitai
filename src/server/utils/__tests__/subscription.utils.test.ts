@@ -347,6 +347,8 @@ describe('invalidateSubscriptionCaches', () => {
     expect(mockCapBust).toHaveBeenCalledWith(42);
     expect(invalidateCivitaiUser).toHaveBeenCalledWith({ userId: 42 });
     expect(bustCreatorMembershipValidCache).toHaveBeenCalledWith(42);
+    const { redisMock } = await import('~/__tests__/mocks/redis.mock');
+    expect(redisMock.redis.del).toHaveBeenCalledWith('packed:caches:profile-member-tier:42');
     const reopen = vi
       .mocked(dbMock.dbWrite.$executeRaw)
       .mock.calls.map(([sql]) => sql as Prisma.Sql)

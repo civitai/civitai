@@ -151,10 +151,14 @@ export async function getProfileCustomization({
   if (!isSet) return empty;
 
   const canEdit = sameUser || !!isModerator;
+  // A moderator editing someone else's profile is not shown a restricted image, as with the cover.
+  const editable = <T extends { nsfwLevel: number; modelRestricted: boolean | null }>(
+    image: T | null
+  ) => (image && !sameUser && isRestrictedImage(image) ? null : image);
   const stored = canEdit
     ? {
-        backgroundImage: profile.backgroundImage,
-        sfwBackgroundImage: profile.sfwBackgroundImage,
+        backgroundImage: editable(profile.backgroundImage),
+        sfwBackgroundImage: editable(profile.sfwBackgroundImage),
         cardColor: profile.cardColor,
         cardOpacity: profile.cardOpacity,
       }
@@ -188,9 +192,9 @@ export async function getProfileCustomization({
 }
 
 /** The About tab's text: kept out of the main profile read, which every visitor pays for. */
-export async function getProfileAbout({ userId }: { userId: number }) {
-  // primary: the owner's save is read back at once.
-  const profile = await dbWrite.userProfile.findUnique({
+export async function getProfileAbout({ userId, viewerId }: { userId: number; viewerId?: number }) {
+  // primary: only for the owner, whose save is read back at once.
+  const profile = await (viewerId === userId ? dbWrite : dbRead).userProfile.findUnique({
     where: { userId },
     select: { about: true },
   });

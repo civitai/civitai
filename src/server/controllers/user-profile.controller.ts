@@ -313,7 +313,7 @@ export const getProfileAboutHandler = async ({
 }) => {
   try {
     if (await blockedViewer(ctx, input.userId)) return { about: null };
-    return await getProfileAbout({ userId: input.userId });
+    return await getProfileAbout({ userId: input.userId, viewerId: ctx.user?.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

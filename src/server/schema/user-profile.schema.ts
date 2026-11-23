@@ -144,6 +144,23 @@ export const showcaseItemSchema = z.object({
 });
 
 export const profileAboutMaxLength = 5000;
+const profileAboutAllowedTags = [
+  'p',
+  'br',
+  'h1',
+  'h2',
+  'h3',
+  'strong',
+  'em',
+  'u',
+  's',
+  'ul',
+  'ol',
+  'li',
+  'a',
+  'blockquote',
+  'code',
+];
 export const profileCardOpacityDefault = 80;
 
 /** Profile tabs an owner may hide; Overview and Shop always show. */
@@ -206,7 +223,8 @@ export const userProfileUpdateSchema = z.object({
     .regex(/^#[0-9a-f]{6}$/i)
     .nullish(),
   cardOpacity: z.number().int().min(60).max(100).nullish(),
-  about: getSanitizedStringSchema()
+  // Text only: media here would never be scanned or rated, and shows on every domain.
+  about: getSanitizedStringSchema({ allowedTags: profileAboutAllowedTags })
     .refine((html) => html.length <= profileAboutMaxLength, 'Your About text is too long')
     .nullish(),
   socialLinks: z

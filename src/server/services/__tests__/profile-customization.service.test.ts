@@ -205,6 +205,30 @@ describe('getProfileCustomization', () => {
   });
 });
 
+describe("the customizer's stored values", () => {
+  it("withhold a restricted background from a moderator editing someone else's profile", async () => {
+    const restricted = scannedImage(NsfwLevel.R, { modelRestricted: true });
+    const row = {
+      backgroundImageId: 70,
+      sfwBackgroundImageId: null,
+      cardColor: null,
+      cardOpacity: null,
+      backgroundImage: restricted,
+      sfwBackgroundImage: null,
+    };
+    dbMock.dbRead.userProfile.findUnique.mockResolvedValue(row as never);
+    dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(row as never);
+    const moderator = await getProfileCustomization({
+      userId: OWNER,
+      viewerId: VISITOR,
+      isModerator: true,
+    });
+    expect(moderator.stored?.backgroundImage).toBeNull();
+    const owner = await getProfileCustomization({ userId: OWNER, viewerId: OWNER });
+    expect(owner.stored?.backgroundImage).toMatchObject({ id: 70 });
+  });
+});
+
 describe('setProfileBackground', () => {
   it("refuses another user's image, also for a moderator, and writes nothing", async () => {
     subscriptions = [subscription('gold')];
