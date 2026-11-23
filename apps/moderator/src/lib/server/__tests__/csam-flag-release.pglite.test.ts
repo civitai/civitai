@@ -48,6 +48,7 @@ CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "userId" INTEGER NOT NULL,
   "needsReview" TEXT,
+  "blockedFor" TEXT,
   "ingestion" "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned'
 );
 ${SET_ASIDE_TABLE_SQL}
@@ -416,5 +417,36 @@ describe('releasing a user whose block put effects off', () => {
       { moderatorId: ADMIN }
     );
     expect(await deferredRows()).toEqual([]);
+  });
+});
+
+describe('releasing a user with an image under appeal', () => {
+  it('never gives an image holding a CSAM block the appeal flag', async () => {
+    const user = 250;
+    const [csam, moderated] = [user * 10 + 1, user * 10 + 2];
+    await db.query(`INSERT INTO "User" ("id", "bannedAt", "meta") VALUES ($1, $2, $3)`, [
+      user,
+      new Date('2026-01-01'),
+      minorBan,
+    ]);
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion") VALUES
+        (${csam}, ${user}, 'csam', 'CSAM', 'Blocked'), (${moderated}, ${user}, 'csam', 'moderated', 'Blocked');
+      INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
+        ('Image', ${csam}, 'Pending'), ('Image', ${moderated}, 'Pending');
+    `);
+
+    expect(await release(user)).toMatchObject({ ok: true, dryRun: false, count: 2 });
+    expect(
+      (
+        await db.query(
+          `SELECT id, "needsReview" FROM "Image" WHERE id IN (${csam}, ${moderated}) ORDER BY id`
+        )
+      ).rows
+    ).toEqual([
+      { id: csam, needsReview: null },
+      // Control: the same release restores it on an image under another block.
+      { id: moderated, needsReview: 'appeal' },
+    ]);
   });
 });

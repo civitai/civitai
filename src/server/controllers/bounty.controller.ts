@@ -40,7 +40,7 @@ import { handleLogError } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { publicBountyDetails } from '~/server/utils/bounty-details';
 import type { NsfwLevel } from '~/server/common/enums';
-import { minorMatureHidden } from '~/server/common/image-visibility';
+import { minorMatureHidden, withoutMinorFlag } from '~/server/common/image-visibility';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
@@ -58,6 +58,30 @@ const keepsMinorRule =
   (viewer: { id: number; isModerator?: boolean } | undefined) =>
   (image: { minor?: boolean | null; nsfwLevel: number; userId: number }) =>
     !minorMatureHidden(image, viewer?.id, viewer?.isModerator);
+
+type ModerationFields = 'minor' | 'poi' | 'needsReview' | 'blockedFor' | 'ingestion';
+type ModerationState = {
+  userId: number;
+  minor?: boolean | null;
+  poi?: boolean | null;
+  needsReview?: string | null;
+  blockedFor?: string | null;
+  ingestion?: string | null;
+};
+/** An image's moderation state goes only to its uploader and moderators. */
+const withoutOthersModerationFields =
+  (viewer: { id: number; isModerator?: boolean } | undefined) =>
+  <T extends ModerationState>(image: T): Omit<T, ModerationFields> => {
+    if (viewer?.isModerator || image.userId === viewer?.id) return image;
+    const {
+      poi: _poi,
+      needsReview: _needsReview,
+      blockedFor: _blockedFor,
+      ingestion: _ingestion,
+      ...rest
+    } = image;
+    return withoutMinorFlag(rest as ModerationState) as unknown as Omit<T, ModerationFields>;
+  };
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -146,7 +170,8 @@ export const getInfiniteBountiesHandler = async ({
                   image.nsfwLefel
                 ),
               }))
-              .filter(keepsMinorRule(ctx.user)),
+              .filter(keepsMinorRule(ctx.user))
+              .map(withoutOthersModerationFields(ctx.user)),
             ctx
           );
           // if there are no images, we don't want to show the bounty
@@ -223,17 +248,13 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       mayBeTextRated(bounty) ? getTextRatedBountyLevels([bounty.id]) : new Map<number, number>(),
       getRequestImageFilter(ctx),
     ]);
-    // A rated flag raises the images to its level; a flag with no rating leaves them at their own.
-    const ratedFlagLevel =
-      bounty.moderatorNsfwLevel != null || textRated.has(bounty.id)
-        ? bountyNsfwFlagLevel(bounty, textRated.get(bounty.id))
-        : null;
-    const shownImages = images.filter(showsImage);
+    const flagLevel = bountyNsfwFlagLevel(bounty, textRated.get(bounty.id));
 
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
     return {
       ...publicBounty,
+      nsfwLevel: flagLevel ?? publicBounty.nsfwLevel,
       poiFlagged,
       poiAppeal,
       flagScanReasons: poiFlagged
@@ -243,14 +264,18 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
         ? publicBountyDetails(bounty.details as BountyDetailsSchema, ctx?.user?.isModerator)
         : ({} as BountyDetailsSchema),
       images: capNestedImages(
-        ratedFlagLevel == null
-          ? shownImages
-          : shownImages
-              .map((image) => ({
-                ...image,
-                nsfwLevel: Math.max(image.nsfwLevel, ratedFlagLevel) as NsfwLevel,
-              }))
-              .filter(keepsMinorRule(ctx.user)),
+        images
+          .filter(showsImage)
+          .map((image) => ({
+            ...image,
+            nsfwLevel: bountyImageNsfwLevel(
+              bounty,
+              textRated.get(bounty.id),
+              image.nsfwLevel
+            ) as NsfwLevel,
+          }))
+          .filter(keepsMinorRule(ctx.user))
+          .map(withoutOthersModerationFields(ctx.user)),
         ctx
       ).map((image) => ({
         ...image,

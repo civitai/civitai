@@ -443,3 +443,35 @@ func TestTrainingDataSFWMask(t *testing.T) {
 		}
 	}
 }
+
+// TrainingDataRules vouches for this build's rules on a public request only while the live Node
+// rule sets (the hash's fields) are exactly TrainingDataSQLHash; every other state falls back.
+func TestTrainingDataRulesVouchedOnlyForExactlyThisBuild(t *testing.T) {
+	const key = "ns:feed-go:training-data-rules-live"
+	other := "0000000000000000000000000000000000000000000000000000000000000000;rules=1"
+	for _, c := range []struct {
+		name   string
+		fields map[string]string // nil: no key
+		err    error
+		want   bool
+	}{
+		{"this build alone", map[string]string{TrainingDataSQLHash: "1"}, nil, true},
+		{"no Node build has said", nil, nil, false},
+		{"another build alone", map[string]string{other: "1"}, nil, false},
+		{"this build and another (a rollout)", map[string]string{TrainingDataSQLHash: "1", other: "1"}, nil, false},
+		{"the read fails", map[string]string{TrainingDataSQLHash: "1"}, errors.New("down"), false},
+	} {
+		cache := testkit.NewRedis()
+		if c.fields != nil {
+			cache.SetHash(key, c.fields)
+		}
+		cache.Err = c.err
+		r := &TrainingDataRules{Redis: cache, Prefix: "ns:"}
+		if got := r.Vouched(context.Background()); got != c.want {
+			t.Errorf("%s: Vouched = %v, want %v", c.name, got, c.want)
+		}
+	}
+	if (*TrainingDataRules)(nil).Vouched(context.Background()) {
+		t.Error("a nil TrainingDataRules vouched")
+	}
+}

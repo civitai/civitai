@@ -1,4 +1,5 @@
 import type { CardProps } from '@mantine/core';
+import { creatorCardSectionStyle } from '~/components/CreatorCard/section-style';
 import { Card, Group, Stack, useMantineTheme, useComputedColorScheme } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { IconShoppingBag } from '@tabler/icons-react';
@@ -27,6 +28,7 @@ export function CreatorCard({
   withActions = true,
   tipsEnabled = true,
   subText,
+  footer,
   ...cardProps
 }: Props) {
   const { data } = trpc.user.getCreator.useQuery(
@@ -105,9 +107,7 @@ export function CreatorCard({
         <Card.Section
           withBorder
           inheritPadding
-          style={{
-            background: colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          }}
+          style={creatorCardSectionStyle(theme, colorScheme)}
           py={5}
         >
           <Group gap={4}>
@@ -125,6 +125,16 @@ export function CreatorCard({
               </LegacyActionIcon>
             ))}
           </Group>
+        </Card.Section>
+      ) : null}
+      {footer ? (
+        <Card.Section
+          withBorder
+          inheritPadding
+          style={creatorCardSectionStyle(theme, colorScheme)}
+          py="xs"
+        >
+          {footer}
         </Card.Section>
       ) : null}
     </Card>
@@ -212,6 +222,7 @@ type Props = {
   withActions?: boolean;
   tipsEnabled?: boolean;
   subText?: React.ReactNode;
+  footer?: React.ReactNode;
 } & Omit<CardProps, 'children'>;
 
 export type CreatorCardPropsV2 = Omit<CreatorCardSimpleProps, 'actions'> & {

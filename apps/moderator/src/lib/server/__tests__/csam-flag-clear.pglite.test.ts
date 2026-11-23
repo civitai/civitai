@@ -42,6 +42,7 @@ CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "userId" INTEGER NOT NULL,
   "needsReview" TEXT,
+  "blockedFor" TEXT,
   "ingestion" "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned'
 );
 ${SET_ASIDE_TABLE_SQL}
@@ -352,6 +353,31 @@ describe('clearing a user whose block put effects off', () => {
     ).toEqual([
       { id: A, needsReview: null },
       { id: B, needsReview: 'appeal' },
+    ]);
+  });
+
+  it('never gives an image holding a CSAM block the appeal flag', async () => {
+    const user = 179;
+    const [csam, moderated] = [user * 10 + 1, user * 10 + 2];
+    await db.exec(`
+      INSERT INTO "User" ("id") VALUES (${user});
+      INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion") VALUES
+        (${csam}, ${user}, 'csam', 'CSAM', 'Blocked'), (${moderated}, ${user}, 'csam', 'moderated', 'Blocked');
+      INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
+        ('Image', ${csam}, 'Pending'), ('Image', ${moderated}, 'Pending');
+    `);
+
+    expect(await clear(user)).toMatchObject({ ok: true, cleared: 2 });
+    expect(
+      (
+        await db.query(
+          `SELECT id, "needsReview" FROM "Image" WHERE id IN (${csam}, ${moderated}) ORDER BY id`
+        )
+      ).rows
+    ).toEqual([
+      { id: csam, needsReview: null },
+      // Control: the same clear restores it on an image under another block.
+      { id: moderated, needsReview: 'appeal' },
     ]);
   });
 
