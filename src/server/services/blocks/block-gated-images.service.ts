@@ -27,7 +27,9 @@ import {
  *
  * SECURITY — the read is scoped to bare (`postId IS NULL`) images whose
  * {@link BLOCK_PUBLISHED_APP_ID_META_KEY} or {@link BLOCK_SHARED_UPLOAD_APP_ID_META_KEY}
- * EQUALS the caller's verified appId. 🔴 NEVER `blockUploadedAppId`: the app's own
+ * EQUALS the caller's verified appId, plus the viewer's OWN rows whose
+ * {@link BLOCK_GENERATION_SOURCE_APP_ID_META_KEY} equals it (see the generation-source note
+ * below). 🔴 NEVER `blockUploadedAppId`: the app's own
  * bytes uploads carry it with no share and no dialog. On top of that, the per-viewer
  * clamp (mirroring canonical `getAllImages`' non-owner path) applies:
  *   - blocked-users / blocked-tags → EXCLUDED at the query level (omitted),
@@ -83,9 +85,11 @@ const GATED_IMAGE_EDGE_WIDTH = 1200;
  * image's author, their own not-yet-rated image comes back `visible` WITH the url
  * and WITHOUT `nsfwLevel`/`contentRating` — show the pixels, claim no rating.
  * This grants the author nothing they did not already hold: the row exists only
- * because THEIR workflow produced it and they confirmed the publish, and the
- * block already received that image's orchestrator url from its own
- * `pollWorkflow`. Every OTHER viewer gets `hidden`, exactly as before.
+ * because THEIR workflow produced it and they confirmed the publish (or, for a
+ * generation source, their app kept it for them), and the block already received
+ * that image's orchestrator url from its own `pollWorkflow`. Every OTHER viewer
+ * gets `hidden` for a published row, exactly as before, and nothing at all for a
+ * row only its generation-source key admits.
  *
  * 🔴 `nsfwLevel`/`contentRating` ARE OPTIONAL ON `visible` FOR THAT REASON ONLY,
  * and that IS a wire break for a deployed block. They are present on every rated
@@ -138,17 +142,19 @@ type GatedImageRow = Pick<
   | 'blockedFor'
   | 'modelRestricted'
 > & {
-  /** The PUBLISHED key matches this app. Otherwise only
-   *  {@link BLOCK_SHARED_UPLOAD_APP_ID_META_KEY} did (see the module note). */
+  /** The PUBLISHED key matches this app. Otherwise {@link BLOCK_SHARED_UPLOAD_APP_ID_META_KEY}
+   *  or {@link BLOCK_GENERATION_SOURCE_APP_ID_META_KEY} did (see the module note). */
   viaPublished: boolean | null;
-  /** Only {@link BLOCK_GENERATION_SOURCE_APP_ID_META_KEY} matched, which the SQL admits for the viewer's own rows only. */
+  /** {@link BLOCK_GENERATION_SOURCE_APP_ID_META_KEY} matches this app. True whenever it matches,
+   *  whichever arm of the SQL admitted the row, so the caller still checks the owner. */
   viaSource: boolean | null;
 };
 
 export async function getBlockGatedImagesByIds(input: {
   imageIds: number[];
   browsingLevel: number;
-  /** OauthClient id of the CALLING app — scopes the read to images IT published or was allowed to share. */
+  /** OauthClient id of the CALLING app — scopes the read to images IT published or was allowed to
+   *  share, and to the viewer's own generation sources it kept. */
   appId: string;
   /** The requesting viewer: sources their blocked-users / blocked-tags sets, and the owner exceptions. */
   userId: number;
