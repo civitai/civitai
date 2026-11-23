@@ -55,6 +55,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getPagingData } from '~/server/utils/pagination-helpers';
+import { imageOnSiteSql } from '~/server/utils/image-onsite';
 import type { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
 import { REVIEW_IMAGE_COUNT_CAP } from '~/server/schema/resourceReview.schema';
 import type {
@@ -1017,3 +1018,27 @@ export const getUserRatingTotals = async ({ userId }: { userId: number }) => {
 
   return transformed;
 };
+
+/**
+ * Whether the user has posted an image made on-site with this version, which lets them review a
+ * paid-download version they generated with for free. "On-site" is read from image meta, which an
+ * uploader controls: accepted, because it grants review only, never download or generation.
+ */
+export async function hasGeneratedWithVersion({
+  userId,
+  modelVersionId,
+}: {
+  userId: number;
+  modelVersionId: number;
+}) {
+  const rows = await dbRead.$queryRaw<{ found: number }[]>`
+    SELECT 1 AS found
+    FROM "ImageResourceNew" ir
+    JOIN "Image" i ON i.id = ir."imageId"
+    WHERE ir."modelVersionId" = ${modelVersionId}
+      AND i."userId" = ${userId}
+      AND ${imageOnSiteSql('i.meta')}
+    LIMIT 1
+  `;
+  return rows.length > 0;
+}

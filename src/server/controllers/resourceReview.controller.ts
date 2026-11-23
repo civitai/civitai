@@ -13,6 +13,7 @@ import {
   deleteResourceReview,
   getReviewImageIds,
   getUserRatingTotals,
+  hasGeneratedWithVersion,
   toggleExcludeResourceReview,
   updateResourceReview,
   upsertResourceReview,
@@ -30,6 +31,19 @@ import type {
 } from '../schema/resourceReview.schema';
 import { hasEntityAccess } from '../services/common.service';
 
+/** Who may review a version: whoever has access to it, or who generated with it on-site. */
+async function assertCanReview(modelVersionId: number, ctx: ProtectedContext) {
+  const [access] = await hasEntityAccess({
+    entityType: 'ModelVersion',
+    entityIds: [modelVersionId],
+    userId: ctx.user.id,
+    isModerator: ctx.user.isModerator,
+  });
+  if (access?.hasAccess) return;
+  if (await hasGeneratedWithVersion({ userId: ctx.user.id, modelVersionId })) return;
+  throw throwAuthorizationError('You do not have access to this model version.');
+}
+
 export const upsertResourceReviewHandler = async ({
   input,
   ctx,
@@ -38,16 +52,7 @@ export const upsertResourceReviewHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const [access] = await hasEntityAccess({
-      entityType: 'ModelVersion',
-      entityIds: [input.modelVersionId],
-      userId: ctx.user.id,
-      isModerator: ctx.user.isModerator,
-    });
-
-    if (!access?.hasAccess) {
-      throw throwAuthorizationError('You do not have access to this model version.');
-    }
+    await assertCanReview(input.modelVersionId, ctx);
 
     return await upsertResourceReview({
       ...input,
@@ -67,16 +72,7 @@ export const createResourceReviewHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const [access] = await hasEntityAccess({
-      entityType: 'ModelVersion',
-      entityIds: [input.modelVersionId],
-      userId: ctx.user.id,
-      isModerator: ctx.user.isModerator,
-    });
-
-    if (!access?.hasAccess) {
-      throw throwAuthorizationError('You do not have access to this model version.');
-    }
+    await assertCanReview(input.modelVersionId, ctx);
 
     const result = await createResourceReview({
       ...input,

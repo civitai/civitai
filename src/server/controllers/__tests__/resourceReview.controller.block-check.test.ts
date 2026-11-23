@@ -7,32 +7,36 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * exact path the guard exists to close — and no service-level test can see that.
  */
 
-const { mockCreate, mockUpdate, mockUpsert, mockHasEntityAccess } = vi.hoisted(() => ({
-  mockCreate: vi.fn(
-    async (..._a: unknown[]): Promise<unknown> => ({
-      id: 1,
-      modelId: 10,
-      modelVersionId: 20,
-      recommended: true,
-    })
-  ),
-  mockUpdate: vi.fn(
-    async (..._a: unknown[]): Promise<unknown> => ({
-      id: 1,
-      modelId: 10,
-      modelVersionId: 20,
-      rating: 5,
-      nsfw: false,
-    })
-  ),
-  mockUpsert: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ id: 1 })),
-  mockHasEntityAccess: vi.fn(async (..._a: unknown[]): Promise<unknown> => [{ hasAccess: true }]),
-}));
+const { mockCreate, mockUpdate, mockUpsert, mockHasEntityAccess, mockHasGenerated } = vi.hoisted(
+  () => ({
+    mockHasGenerated: vi.fn(async (..._a: unknown[]): Promise<boolean> => false),
+    mockCreate: vi.fn(
+      async (..._a: unknown[]): Promise<unknown> => ({
+        id: 1,
+        modelId: 10,
+        modelVersionId: 20,
+        recommended: true,
+      })
+    ),
+    mockUpdate: vi.fn(
+      async (..._a: unknown[]): Promise<unknown> => ({
+        id: 1,
+        modelId: 10,
+        modelVersionId: 20,
+        rating: 5,
+        nsfw: false,
+      })
+    ),
+    mockUpsert: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ id: 1 })),
+    mockHasEntityAccess: vi.fn(async (..._a: unknown[]): Promise<unknown> => [{ hasAccess: true }]),
+  })
+);
 
 vi.mock('~/server/services/resourceReview.service', () => ({
   createResourceReview: (...a: unknown[]) => mockCreate(...(a as [])),
   updateResourceReview: (...a: unknown[]) => mockUpdate(...(a as [])),
   upsertResourceReview: (...a: unknown[]) => mockUpsert(...(a as [])),
+  hasGeneratedWithVersion: (...a: unknown[]) => mockHasGenerated(...(a as [])),
   deleteResourceReview: vi.fn(),
   getUserRatingTotals: vi.fn(),
   toggleExcludeResourceReview: vi.fn(),
@@ -70,6 +74,7 @@ const updateInput = { id: 1, rating: 5, details: null } as Parameters<
 beforeEach(() => {
   vi.clearAllMocks();
   mockHasEntityAccess.mockResolvedValue([{ hasAccess: true }]);
+  mockHasGenerated.mockResolvedValue(false);
 });
 
 describe('resource review handlers — who the guard is told is acting', () => {
@@ -102,5 +107,31 @@ describe('resource review handlers — who the guard is told is acting', () => {
 
     for (const mock of [mockCreate, mockUpdate, mockUpsert])
       expect(mock).toHaveBeenCalledWith(expect.objectContaining({ isModerator: true }));
+  });
+});
+
+// A paid-download version that is free to generate with: hasEntityAccess grants only buyers, so the
+// people who used it on-site could not review it (hq:cant_review_paid_9qwf).
+describe('resource review handlers — reviewing a version you have no access to', () => {
+  beforeEach(() => mockHasEntityAccess.mockResolvedValue([{ hasAccess: false }]));
+
+  it('saves the review of someone who generated with the version on-site', async () => {
+    mockHasGenerated.mockResolvedValue(true);
+    await upsertResourceReviewHandler({ input: createInput, ctx: ctx() });
+    await createResourceReviewHandler({ input: createInput, ctx: ctx() });
+    expect(mockUpsert).toHaveBeenCalled();
+    expect(mockCreate).toHaveBeenCalled();
+    expect(mockHasGenerated).toHaveBeenCalledWith({ userId: USER_ID, modelVersionId: 20 });
+  });
+
+  it('still refuses someone who neither bought nor generated with it', async () => {
+    await expect(upsertResourceReviewHandler({ input: createInput, ctx: ctx() })).rejects.toThrow(
+      'You do not have access to this model version.'
+    );
+    await expect(createResourceReviewHandler({ input: createInput, ctx: ctx() })).rejects.toThrow(
+      'You do not have access to this model version.'
+    );
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 });
