@@ -1018,7 +1018,9 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 			// prioritizedUserIds request with a modelVersionId; curated, the carousel is that list in
 			// its order. Not ported: a curated version, or a failed read, is Node's
 			// (`prioritized-curated-showcase`), and so is one whose entry the cache does not hold
-			// (`prioritized-showcase-miss`: Node computes it from the database). Read whatever
+			// (`prioritized-showcase-miss`: Node computes it from the database), or one past the
+			// cache's hour (`prioritized-showcase-stale`: the Node reader that wins the revalidate
+			// lock rebuilds it from the database, hydrate.ShowcaseTTL). Read whatever
 			// `model-version-showcase-serve` says: off, Node serves the live list and a fallback here
 			// is only a lost answer (DESIGN.md §16.9).
 			switch d.Sources.VersionShowcase(ctx, []int{in.ModelVersionID}) {
@@ -1026,6 +1028,8 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 				return nil, fallback.New("prioritized-curated-showcase")
 			case hydrate.ShowcaseUnknown:
 				return nil, fallback.New("prioritized-showcase-miss")
+			case hydrate.ShowcaseStale:
+				return nil, fallback.New("prioritized-showcase-stale")
 			}
 		}
 	}

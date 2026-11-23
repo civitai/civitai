@@ -13,7 +13,9 @@ import (
 // The version-showcase cache as the curated-showcase guard reads it. Entries are written as
 // getVersionShowcaseCache writes them (a CachedVersionShowcase record plus `cachedAt`); the literal
 // expectations follow hasCuratedShowcase (src/server/services/version-showcase.service.ts):
-// `rows.length` non-zero is curated, a failed read is curated.
+// `rows.length` non-zero is curated, a failed read is curated; and createCachedArray's fetch: an
+// entry past the cache's hour (`ttl: CacheTTL.hour`) is rebuilt by the reader that wins the
+// revalidate lock, so the cache cannot answer it.
 
 var showcaseNow = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 
@@ -22,6 +24,14 @@ func showcaseEntry(id int, rows ...any) []byte {
 		rows = []any{}
 	}
 	return jspack.Pack(jspack.O("modelVersionId", id, "rows", rows, "community", []any{}, "cachedAt", showcaseNow.Add(-time.Minute)))
+}
+
+// showcaseAged is showcaseEntry written age before showcaseNow.
+func showcaseAged(id int, age time.Duration, rows ...any) []byte {
+	if rows == nil {
+		rows = []any{}
+	}
+	return jspack.Pack(jspack.O("modelVersionId", id, "rows", rows, "community", []any{}, "cachedAt", showcaseNow.Add(-age)))
 }
 
 func showcaseRow(imageID int, site string) jspack.Obj {
@@ -37,8 +47,13 @@ func TestVersionShowcaseState(t *testing.T) {
 	r.SetString(KeyVersionShowcase+":7105", jspack.Pack(jspack.O("debounce", true)))       // a bust's marker
 	r.SetString(KeyVersionShowcase+":7106", jspack.Pack(jspack.O("modelVersionId", 7106))) // no rows member
 	r.SetString(KeyVersionShowcase+":7107", []byte{0xc1})                                  // undecodable
-	r.SetString(KeyVersionShowcase+":7109", jspack.Pack(jspack.O("modelVersionId", 7109, "rows", []any{}, "community", []any{},
-		"cachedAt", showcaseNow.Add(-3*time.Hour)))) // past the hour TTL: Node serves it stale
+	// Past the hour TTL: the Node reader that wins the revalidate lock rebuilds it from the database.
+	r.SetString(KeyVersionShowcase+":7109", showcaseAged(7109, 61*time.Minute))
+	r.SetString(KeyVersionShowcase+":7111", showcaseAged(7111, 59*time.Minute))                                                 // inside the hour: fresh
+	r.SetString(KeyVersionShowcase+":7112", showcaseAged(7112, 3*time.Hour, showcaseRow(9003, "com")))                          // stale and curated
+	r.SetString(KeyVersionShowcase+":7113", jspack.Pack(jspack.O("notFound", true, "cachedAt", showcaseNow.Add(-3*time.Hour)))) // an old notFound marker
+	// No cachedAt: `undefined < ttlExpiry` is false in Node, so never stale.
+	r.SetString(KeyVersionShowcase+":7114", jspack.Pack(jspack.O("modelVersionId", 7114, "rows", []any{}, "community", []any{})))
 	r.KeyErr = func(key string) error {
 		if key == KeyVersionShowcase+":7110" {
 			return errors.New("shard down")
@@ -53,7 +68,16 @@ func TestVersionShowcaseState(t *testing.T) {
 	}{
 		{"no versions", nil, ShowcaseUncurated},
 		{"an empty rows entry", []int{7101}, ShowcaseUncurated},
-		{"a stale empty entry", []int{7109}, ShowcaseUncurated},
+		{"a stale empty entry", []int{7109}, ShowcaseStale},
+		{"an empty entry inside the hour", []int{7111}, ShowcaseUncurated},
+		{"stale beside fresh", []int{7101, 7111, 7109}, ShowcaseStale},
+		{"a stale curated entry", []int{7112}, ShowcaseCurated},
+		{"curated wins over stale", []int{7109, 7102}, ShowcaseCurated},
+		{"a miss wins over stale", []int{7109, 7108}, ShowcaseUnknown},
+		{"a miss wins over stale, either order", []int{7108, 7109}, ShowcaseUnknown},
+		// fetch() serves a notFound marker before it looks at cachedAt.
+		{"an old notFound marker", []int{7113}, ShowcaseUncurated},
+		{"no cachedAt", []int{7114}, ShowcaseUncurated},
 		{"a notFound marker", []int{7104}, ShowcaseUncurated},
 		{"curated on .com", []int{7102}, ShowcaseCurated},
 		{"curated on the other site only", []int{7103}, ShowcaseCurated},

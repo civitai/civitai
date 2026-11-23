@@ -1879,6 +1879,12 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 			}
 			return testkit.NewRows([]string{"id", "userId", "modelVersionId", "modelId"}, rows...), nil
 		}},
+		// The community-cover guard's read (getShowcaseCommunityCovers' first query): no fixture's
+		// world features a community image in a showcase, so it finds no row, and Node's
+		// withCommunityCovers found none either.
+		{Match: `FROM "ModelVersionShowcaseItem" s`, Rows: func(_ []any) (*testkit.Rows, error) {
+			return testkit.NewRows([]string{"modelId", "imageId"}), nil
+		}},
 		// The collection permission read: the fixture's Collection row and the viewer's contributor
 		// row (none: no permissions); a collection the fixture does not hold is no row.
 		{Match: `FROM "Collection" c`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {

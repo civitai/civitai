@@ -13,7 +13,8 @@ import (
 
 // The curated-showcase guard on both model routes (DESIGN.md §16.9): getModelsWithVersions puts each
 // version's curated showcase in place of its images (withCuratedShowcases), which is not ported, so a
-// curated version, a failed read or an entry the cache does not hold falls back. The world's one
+// curated version, a failed read, an entry the cache does not hold or one past the cache's hour falls
+// back. The world's one
 // version, 6001, has an uncurated entry (newTestWorld); the cases edit it.
 
 const showcaseKey6001 = hydrate.KeyVersionShowcase + ":6001"
@@ -28,6 +29,11 @@ func showcaseOf(rows ...any) superjson.Object {
 		rows = []any{}
 	}
 	return meta("modelVersionId", int64(6001), "rows", rows, "community", []any{}, "cachedAt", testNow.Add(-time.Minute))
+}
+
+// showcaseAged is showcaseOf written age before testNow.
+func showcaseAged(age time.Duration, rows ...any) superjson.Object {
+	return append(omit(showcaseOf(rows...), "cachedAt"), superjson.Field{Key: "cachedAt", Val: testNow.Add(-age)})
 }
 
 // serveBoth answers the world on `[id]` and on the list.
@@ -69,10 +75,8 @@ func TestCuratedShowcaseGuardServesUncurated(t *testing.T) {
 		edit func(*testWorld)
 	}{
 		{"an empty rows entry", nil},
-		// Node serves a stale entry while it revalidates, so its rows decide.
-		{"a stale empty entry", func(w *testWorld) {
-			w.entries[showcaseKey6001] = append(omit(showcaseOf(), "cachedAt"), superjson.Field{Key: "cachedAt", Val: testNow.Add(-3 * time.Hour)})
-		}},
+		// Inside the cache's hour Node serves the entry as it is, so its rows decide.
+		{"an empty entry inside the hour", func(w *testWorld) { w.entries[showcaseKey6001] = showcaseAged(59 * time.Minute) }},
 	} {
 		detail, list, dErr, lErr := serveBoth(t, c.edit, nil)
 		if dErr != nil || lErr != nil {
@@ -108,6 +112,10 @@ func TestCuratedShowcaseGuardFallsBack(t *testing.T) {
 			}
 		}, "v1-models-curated-showcase"},
 		{"no entry", func(w *testWorld) { w.entries[showcaseKey6001] = nil }, nil, "v1-models-showcase-miss"},
+		// Past the cache's hour the Node reader that wins the revalidate lock rebuilds the entry from
+		// the database: after a curation whose refresh failed, the curated list.
+		{"a stale empty entry", func(w *testWorld) { w.entries[showcaseKey6001] = showcaseAged(61 * time.Minute) }, nil, "v1-models-showcase-stale"},
+		{"a stale curated entry", func(w *testWorld) { w.entries[showcaseKey6001] = showcaseAged(3*time.Hour, curatedRow(8001, "com")) }, nil, "v1-models-curated-showcase"},
 		{"a bust's debounce marker", func(w *testWorld) { w.entries[showcaseKey6001] = meta("debounce", true) }, nil, "v1-models-showcase-miss"},
 	} {
 		_, _, dErr, lErr := serveBoth(t, c.edit, c.after)

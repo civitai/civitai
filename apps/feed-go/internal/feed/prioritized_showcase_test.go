@@ -11,7 +11,8 @@ import (
 // getAllImages reads the version's curated showcase for a prioritizedUserIds request with a
 // modelVersionId (getCarouselShowcaseIds, src/server/services/image.service.ts) and, curated, serves
 // that list in its order. Not ported: the guard hands a curated version, a failed read (both
-// ShowcaseCurated) or an uncached entry (ShowcaseUnknown) to Node (DESIGN.md §16.9).
+// ShowcaseCurated), an uncached entry (ShowcaseUnknown) or a stale one (ShowcaseStale) to Node
+// (DESIGN.md §16.9).
 func TestServeInfinitePrioritizedCuratedShowcase(t *testing.T) {
 	for _, c := range []struct {
 		name     string
@@ -20,6 +21,7 @@ func TestServeInfinitePrioritizedCuratedShowcase(t *testing.T) {
 	}{
 		{"curated", hydrate.ShowcaseCurated, "prioritized-curated-showcase"},
 		{"not cached", hydrate.ShowcaseUnknown, "prioritized-showcase-miss"},
+		{"stale", hydrate.ShowcaseStale, "prioritized-showcase-stale"},
 	} {
 		f := newCarouselFixture(t)
 		src := f.deps.Sources.(*fakeV1Sources)
