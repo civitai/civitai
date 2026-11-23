@@ -36,10 +36,15 @@ passes, runs one statement that:
 A row the caller's condition or the actor's ownership excludes is in none of the three, and is
 neither deleted nor queued: the condition is checked once, here, and never replayed later.
 
-Two callers do not queue what they keep (`queueKept: false`), because they retry from a queue of
-their own: both deletes in `image-ingestion.ts`'s `removeBlockedImages`. A kept row's
-`BlockedImageDelete` row stays for a later run, and only that job's run may send a takedown's
-retraction.
+Some callers do not queue what they keep (`queueKept: false`), because a queued delete is carried
+out without their condition or outside their own run:
+
+- both deletes in `image-ingestion.ts`'s `removeBlockedImages`: a kept row's `BlockedImageDelete`
+  row stays for a later run, and only that job's run may send a takedown's retraction;
+- `remove-replaced-images`: a kept image stays in its `ReplacedImageDelete` queue, so the
+  re-adoption check runs again before it goes;
+- `job-queue-clean-if-empty`: a kept empty post stays, since a queued delete would take it even
+  after its owner filled it again.
 
 ## The queued row
 
@@ -101,4 +106,4 @@ The account and review holds (`legal-hold.service.ts`, the moderator app's `held
 alongside this. Today they are often the caller's condition, so an in-case image they cover is left
 by the condition and never queued; and the moderator app refuses held images (except a marked
 owner's, which go to the delete) before its delete runs. Once the holds are removed, every in-case
-image reaches the case check and is queued, except in `removeBlockedImages` (`queueKept: false`).
+image reaches the case check and is queued, except in the `queueKept: false` callers above.

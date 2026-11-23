@@ -237,7 +237,7 @@ beforeEach(async () => {
   }) as never);
 
   await reset(
-    '"Image", "User", "CsamReport", "EvidenceHold", "EvidenceHoldImage", "Post", "EvidenceHoldPost", "Model", "JobQueue"'
+    '"Image", "User", "CsamReport", "EvidenceHold", "EvidenceHoldImage", "Post", "EvidenceHoldPost", "Model", "JobQueue", "Report", "ImageReport"'
   );
   await holder.db.exec(`
     INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor", ingestion) VALUES
@@ -307,6 +307,24 @@ describe('remove-replaced-images under an account hold', () => {
     await run();
 
     expect(sorted(holder.restamped)).toEqual(sorted(HELD));
+  });
+
+  it('leaves an image its child-safety case keeps in this queue, not as a pending delete', async () => {
+    const CASE_KEPT = 40;
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId") VALUES (${CASE_KEPT}, ${PLAIN_USER});
+      INSERT INTO "Report" (id, reason, status) VALUES (70, 'CSAM', 'Pending');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (${CASE_KEPT}, 70);
+    `);
+    dbMock.dbRead.jobQueue.findMany.mockResolvedValue([{ entityId: CASE_KEPT }]);
+
+    await run();
+
+    expect(await remaining()).toContain(CASE_KEPT);
+    // Still queued here, so the re-adoption check runs again before it goes.
+    expect(holder.restamped).toEqual([CASE_KEPT]);
+    const { rows } = await holder.db.query(`SELECT 1 FROM "JobQueue" WHERE type = 'PendingDelete'`);
+    expect(rows).toEqual([]);
   });
 
   it('holds every image when the marker table exists without its view', async () => {

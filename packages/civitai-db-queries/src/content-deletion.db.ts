@@ -65,8 +65,9 @@ type DeleteOptions = {
   /** How the `pending-deletes` job carries out a row this delete leaves for its child-safety case. */
   replay?: DeleteReplay;
   /**
-   * False: a row its case keeps is left but not queued, for a caller that retries it from a queue of
-   * its own (a takedown, whose retraction only its own run sends).
+   * False: a row its case keeps is left but not queued: for a caller that retries it from a queue of
+   * its own (a takedown, whose retraction only its own run sends), or whose condition must still hold
+   * when the row goes, since a queued delete is carried out without it.
    */
   queueKept?: boolean;
 };
