@@ -32,10 +32,15 @@ const prefs: HiddenPreferencesState = {
   ]),
   hiddenModels: new Map(),
   hiddenModel3Ds: new Map(),
-  hiddenImages: new Map([[4, true]]),
+  hiddenImages: new Map([
+    [4, true],
+    [8, true],
+  ]),
   hiddenLoading: false,
   moderatedTags: [{ id: MATURE_TAG, name: 'mature', nsfwLevel: 4 }] as never,
   systemHiddenTags: new Map(),
+  // 8 is hidden by the viewer's vote on a moderated tag they hide, not yet applied to it.
+  moderatedHiddenImages: new Map([[8, true]]),
 };
 
 const image = (
@@ -57,6 +62,7 @@ const images = [
   image(5, { userId: BLOCKER }),
   image(6, { userId: HID, nsfwLevel: 4 }),
   image(7, { tagIds: [MATURE_TAG] }),
+  image(8),
 ];
 
 const signedIn = { signedIn: true };
@@ -97,5 +103,11 @@ describe('withoutViewerHidden: what Flag Race Show anyway may set aside (#10115)
     const shown = kept(withoutViewerHidden(prefs, signedIn));
     expect(shown).toContain(3);
     expect(shown).not.toContain(7);
+  });
+
+  it('keeps an image hidden by a moderated-tag vote hidden, while setting aside one hidden by hand', () => {
+    const shown = kept(withoutViewerHidden(prefs, signedIn));
+    expect(shown).toContain(4);
+    expect(shown).not.toContain(8);
   });
 });

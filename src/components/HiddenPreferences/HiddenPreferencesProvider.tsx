@@ -16,6 +16,8 @@ export type HiddenPreferencesState = {
   hiddenModels: Map<number, boolean>;
   hiddenModel3Ds: Map<number, boolean>;
   hiddenImages: Map<number, boolean>;
+  /** The `hiddenImages` hidden by the viewer's vote on a moderated tag they hide. */
+  moderatedHiddenImages: Map<number, boolean>;
   hiddenLoading: boolean;
   moderatedTags: HiddenTag[];
   systemHiddenTags: Map<number, boolean>;
@@ -59,6 +61,12 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
     const images = new Map(
       data.hiddenImages.filter((x) => !x.tagId || tags.get(x.tagId)).map((x) => [x.id, true])
     );
+    const moderatedIds = new Set(moderatedTags.map((x) => x.id));
+    const moderatedHiddenImages = new Map(
+      data.hiddenImages
+        .filter((x) => x.tagId && tags.get(x.tagId) && moderatedIds.has(x.tagId))
+        .map((x): [number, boolean] => [x.id, true])
+    );
 
     const { hiddenUsers, blockRelations, blockedByUsers } = deriveHiddenUsers(
       data,
@@ -73,6 +81,7 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
       hiddenModel3Ds: new Map(data.hiddenModel3Ds.map((x) => [x.id, true])),
       hiddenTags: tags,
       hiddenImages: images,
+      moderatedHiddenImages,
       hiddenLoading: isLoading,
       moderatedTags,
       systemHiddenTags: new Map((settings?.excludedTagIds ?? []).map((id) => [id, true])),

@@ -31,6 +31,7 @@ vi.mock('~/components/HiddenPreferences/HiddenPreferencesProvider', () => ({
       hiddenLoading: false,
       moderatedTags: [],
       systemHiddenTags: new Map(),
+      moderatedHiddenImages: new Map(),
     },
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.user }));
@@ -75,6 +76,7 @@ const emptyPrefs = (): HiddenPreferencesState => ({
   hiddenLoading: false,
   moderatedTags: [],
   systemHiddenTags: new Map(),
+  moderatedHiddenImages: new Map(),
 });
 
 let nextId = 1;
@@ -231,6 +233,7 @@ const prefsWith = (
   hiddenUsers: new Map((o.users ?? []).map((id): [number, boolean] => [id, true])),
   hiddenTags: new Map((o.tags ?? []).map((id): [number, boolean] => [id, true])),
   systemHiddenTags: new Map((o.systemTags ?? []).map((id): [number, boolean] => [id, true])),
+  moderatedHiddenImages: new Map(),
 });
 
 type RunImagesOpts = {
@@ -508,6 +511,7 @@ describe("filterPreferences — 'comics' applies the system hidden tags to the c
         ...emptyPrefs(),
         hiddenTags: asMap(o.userTags ?? []),
         systemHiddenTags: asMap(systemTags),
+        moderatedHiddenImages: new Map(),
       },
       browsingLevel: 31,
       currentUser: (o.viewerId ? { id: o.viewerId } : null) as never,

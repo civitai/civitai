@@ -165,7 +165,8 @@ export function withoutViewerHidden(
   return {
     ...preferences,
     hiddenUsers: new Map(preferences.blockedByUsers ?? preferences.blockRelations),
-    hiddenImages: new Map(),
+    // An image hidden by the viewer's vote on a moderated tag stays hidden, like the tag itself.
+    hiddenImages: new Map(preferences.moderatedHiddenImages),
     // A hidden tag that is also a moderated (mature) tag stays in force.
     hiddenTags: new Map([...preferences.hiddenTags].filter(([id]) => moderatedIds.has(id))),
   };
