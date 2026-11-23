@@ -30,6 +30,8 @@ import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-servi
  */
 function unsentTexts(type: ServiceDealReviewTextType, limit: number) {
   const cols = SERVICE_DEAL_REVIEW_TEXTS[type];
+  // Pending counts as unsettled on both sides: under the limit a lost Pending check is the retry
+  // job's to resend, and the retry job never takes a row at the limit, Pending or not.
   const unsettledRow = Prisma.sql`SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = ${type}
     AND em."entityId" = r."id" AND em."status" <> 'Succeeded'`;
   return Prisma.sql`(SELECT r."id", ${type}::text AS "type" FROM "ServiceDealReview" r
