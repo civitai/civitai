@@ -71,19 +71,19 @@ pre-generated key). Viewer-keyed collections add a third way, below.
 
 ### Operations
 
-| Route (under `/api/v1/blocks/storage`)                              | Op                                            | Change                                                                                                                                       |
-| ------------------------------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /`                                                             | info                                          | `counters`, `marks` leave each collection; `keyedBy` is added; `rate.marksAndCountersPerMinute` and `rate.reportsPerDay` leave `limits.rate` |
-| `GET /:c`                                                           | list                                          | `markedBy`, `mark`, `sort=counter:*`, `sort=mark:*` removed                                                                                  |
-| `POST /:c`                                                          | create                                        | refused on a viewer-keyed collection                                                                                                         |
-| `POST /_get/:c`                                                     | get many                                      | unchanged                                                                                                                                    |
-| `GET /:c/:key`                                                      | get                                           | unchanged                                                                                                                                    |
-| `PUT /:c/:key`, `DELETE /:c/:key`                                   | put, delete                                   | refused on a viewer-keyed collection (use `@me`)                                                                                             |
-| `GET`, `PUT`, `DELETE /:c/@me`                                      | the viewer's document                         | **new**, `keyedBy: "viewer"`                                                                                                                 |
-| `GET`, `PUT`, `DELETE /:c/@me/:parent`                              | the viewer's document for `parent`            | **new**, `keyedBy: "parent+viewer"`                                                                                                          |
-| `PATCH /:c/:key` (`$inc`, `$mark`, `$unmark`)                       | tallies                                       | **removed**                                                                                                                                  |
-| `POST /:c/:key/counters/:name`, `PUT`/`DELETE /:c/:key/marks/:name` | tallies (already deprecated)                  | **removed**                                                                                                                                  |
-| `POST /_publish/:to`, `POST /_unpublish/:to`                        | publish (behind `app-blocks-storage-publish`) | **removed**                                                                                                                                  |
+| Route (under `/api/v1/blocks/storage`)                              | Op                                            | Change                                                                                                                                                                                                       |
+| ------------------------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /`                                                             | info                                          | `counters`, `marks` leave each collection; `keyedBy` is added, and `open` on a viewer-keyed collection (its migration switch); `rate.marksAndCountersPerMinute` and `rate.reportsPerDay` leave `limits.rate` |
+| `GET /:c`                                                           | list                                          | `markedBy`, `mark`, `sort=counter:*`, `sort=mark:*` removed                                                                                                                                                  |
+| `POST /:c`                                                          | create                                        | refused on a viewer-keyed collection                                                                                                                                                                         |
+| `POST /_get/:c`                                                     | get many                                      | unchanged                                                                                                                                                                                                    |
+| `GET /:c/:key`                                                      | get                                           | unchanged                                                                                                                                                                                                    |
+| `PUT /:c/:key`, `DELETE /:c/:key`                                   | put, delete                                   | refused on a viewer-keyed collection (use `@me`)                                                                                                                                                             |
+| `GET`, `PUT`, `DELETE /:c/@me`                                      | the viewer's document                         | **new**, `keyedBy: "viewer"`                                                                                                                                                                                 |
+| `GET`, `PUT`, `DELETE /:c/@me/:parent`                              | the viewer's document for `parent`            | **new**, `keyedBy: "parent+viewer"`                                                                                                                                                                          |
+| `PATCH /:c/:key` (`$inc`, `$mark`, `$unmark`)                       | tallies                                       | **removed**                                                                                                                                                                                                  |
+| `POST /:c/:key/counters/:name`, `PUT`/`DELETE /:c/:key/marks/:name` | tallies (already deprecated)                  | **removed**                                                                                                                                                                                                  |
+| `POST /_publish/:to`, `POST /_unpublish/:to`                        | publish (behind `app-blocks-storage-publish`) | **removed**                                                                                                                                                                                                  |
 
 `@me` cannot collide with a key: `@` is outside the key grammar (`DOC_STORE_BOUNDS.key`,
 `[A-Za-z0-9._:-]{1,128}`), so `matchStorageRoute` can route it before key parsing. It joins
@@ -263,8 +263,9 @@ fork's) `generator_marks`. And refusing `none` in the serving parse would make t
 answer `503` (`declaredStorage` refuses an unparseable manifest). Instead the parser keeps `none` as a
 policy, and the store keeps refusing every viewer document write to it (create, put, delete, `@me`)
 with `403 write_policy`, exactly as `assertShareWritable` does today, after the counter ops are gone,
-until an approved version drops the declaration. `marks` and `counters` still declared are inert (their
-ops answer `410`), which changes no write policy.
+until an approved version drops the declaration. This branch is **permanent**: step 5 does not remove
+it, because restoring an older approved manifest (a rollback) can bring the declaration back. `marks`
+and `counters` still declared are inert (their ops answer `410`), which changes no write policy.
 
 ### Store code, types and tables
 
@@ -364,42 +365,52 @@ For each (source collection `c`, mark name `m`) the inventory lists, the app shi
 declaring **one target collection `t` per mark name**, with `keyedBy: "parent+viewer"` (for
 model-benchmarking: `votes`, from `records` / `vote`). One target per name because two marks by one
 viewer on one document (`dataset-commons`' `up` and `down`) would derive the same key in one
-collection; the app may later fold them into one document of its own shape. The new version's `@me`
-writes stay off for `t` (a per-app flag) until step 5 below. Then, in this order:
+collection; the app may later fold them into one document of its own shape.
 
-1. **Check keys.** Every source key `k` must fit the parent grammar (no `:`, at most 96 characters). If
-   any does not, `migrateMarksToDocs` refuses the whole collection before writing anything, and the
-   app chooses its own mapping first. Every key in today's four apps with marks is checked in the dry
-   run; ULIDs (`records` in `model-benchmarking`) always fit.
+**The per-target switch.** Each target `t` has its own switch, off until step 6 below, so
+`dataset-commons`' two targets each open only after their own copy and verify. While it is off, `@me`
+writes to `t` answer `403 write_policy`, and `GET /` reports the collection with `"open": false`. The
+new app version branches on that one field: closed, it reads the old marks on `c` (still presented
+during the compatibility window) and shows voting as unavailable; open, it reads and writes `t`. So
+reads and writes move together, in one flip, with no second app release. Then, per target, in this
+order:
+
+1. **Check keys.** Every source key `k` must fit the parent grammar (no `:`, at most 96 characters).
+   `migrateMarksToDocs` takes an optional deterministic key mapping, a table from source key to parent
+   supplied by the person running the migration and stored with the run. A key that does not fit is
+   mapped through it; if no mapping is given and any key does not fit, the op refuses the whole target
+   before writing anything. The check runs as a dry run on every app with marks
+   (`playable-collections`, `dataset-commons`, `custom-generators`, `model-benchmarking`) during
+   rollout step 1's re-measure, and its result is recorded before any copy. ULIDs (`records` in
+   `model-benchmarking`) always fit.
 2. **Freeze.** The store refuses `$mark` / `$unmark` of `m` on `c` for that app (`410`), so no mark
    changes after this point.
-3. **Copy.** A new maintenance op, `migrateMarksToDocs(appId, ns, { from: c, mark: m, to: t, data })`,
-   beside `migrateDocuments` (the schema-migration runner). For each `doc_mark` row (c, k, m, u,
-   created_at), in primary-key order with a keyset cursor and a batch size, it inserts a document at
-   key `<k>:<d(u, k)>` with body `data` (a constant the person running it gives, checked against
-   `t`'s schema; `{}` for a plain vote), `author_kind = 'user'`, `author_uid = u`, `created_at` = the
-   mark's, `version = 1`, the next `seq`, its index rows, and usage charged to `usage_app` and `u`'s
-   `usage_user`. `INSERT ... ON CONFLICT DO NOTHING` on the derived key makes a re-run a no-op. It is a
-   platform operation like `migrateDocuments`: no hook, trust gate, budget or scan. A mark whose source
-   document is hidden is copied too (the vote existed). It runs once, after the freeze, so it reads a
-   set that can no longer change.
-4. **Verify,** in the store, by counting rows directly (`doc_mark` rows of (c, m) against `t` documents,
-   per parent and per user), never through the list API, which hides documents still pending a rating
-   from everyone but their author. A mismatch stops the rollout for that app.
-5. **Enable `@me` writes** on `t` for the app. Only now can a viewer add or delete a vote, so a delete
-   is never undone by a copy and a new vote never breaks the verify.
-6. **Rate.** With content levels on, run the app's levels backfill (`app-doc-levels-backfill`) so the
-   copied documents are rated before the app's reads move to `t` (otherwise every copied vote is
-   pending, visible only to its voter).
-7. **Switch reads.** The app's new version counts by listing `t` with `keyPrefix=<parent>:`.
+3. **Copy.** A new maintenance op, `migrateMarksToDocs(appId, ns, { from: c, mark: m, to: t, data,
+keyMap? })`, beside `migrateDocuments` (the schema-migration runner). For each `doc_mark` row (c, k,
+   m, u, created_at), in primary-key order with a keyset cursor and a batch size, it inserts a document
+   at key `<p>:<d(u, p)>`, where `p` is `k` or its mapped parent, with body `data` (a constant the
+   person running it gives, checked against `t`'s schema; `{}` for a plain vote), `author_kind =
+'user'`, `author_uid = u`, `created_at` = the mark's, `version = 1`, the next `seq`, its index rows,
+   and usage charged to `usage_app` and `u`'s `usage_user`. `INSERT ... ON CONFLICT DO NOTHING` on the
+   derived key makes a re-run a no-op. It is a platform operation like `migrateDocuments`: no hook,
+   trust gate, budget or scan. A mark whose source document is hidden is copied too (the vote existed).
+   It runs once, after the freeze, so it reads a set that can no longer change.
+4. **Verify,** in the store, by counting rows directly (`doc_mark` rows of (c, m) against `t`
+   documents, per parent and per user), never through the list API, which hides documents still
+   pending a rating from everyone but their author. A mismatch stops the rollout for that target.
+5. **Rate.** With content levels on, run the app's levels backfill (`app-doc-levels-backfill`) so the
+   copied documents are rated before anyone reads `t` (otherwise every copied vote is pending, visible
+   only to its voter).
+6. **Open the switch** for `t`. Only now can a viewer add or delete a vote, so a delete is never undone
+   by a copy and a new vote never breaks the verify; and the app's reads move to `t` at the same moment.
 
-**Rollback.** Valid only before step 5. Unfreeze (the flag), revert the app to its previous approved
-version, and delete the copied documents. No per-collection purge exists today (`doc-store-purge.ts`
-has a viewer purge and an app purge only), so this needs new work: a maintenance op that deletes every
-document of one collection in one namespace with tombstones and refunds, as a moderator delete does.
-`doc_mark` and `doc_tally` were never written, so nothing needs restoring. After step 5 a rollback
-would lose every vote made through `@me`, which were never written to `doc_mark`. Past that point the
-only way back is forward: fix the new version.
+**Rollback.** Valid only before step 6. Unfreeze, revert the app to its previous approved version, and
+delete `t`'s copied documents with the per-collection purge (a new maintenance op, built in rollout
+step 2: `doc-store-purge.ts` has only a viewer and an app purge today) that deletes every document of
+one collection in one namespace with tombstones and refunds, as a moderator delete does. `doc_mark` and
+`doc_tally` were never written, so nothing needs restoring. After step 6 a rollback would lose every
+vote made through `@me`, which were never written to `doc_mark`, so past that point the only way back
+is forward: fix the new version.
 
 ### `doc_tally`
 
@@ -454,24 +465,27 @@ restore rows without that dump, which is why it runs last.
 
 Each step names what ends it.
 
-1. **Inventory.** Done 2026-11-23 ("Inventory (2026-11-23)"); re-measured right before step 4.
+1. **Inventory.** Done 2026-11-23 ("Inventory (2026-11-23)"). Re-measured right before step 4, with
+   the copy's key check run as a dry run on every app with marks; the results are recorded before any
+   copy.
 2. **Ship the replacement, dark.** Viewer-keyed collections (parser, store, routes, SDK minor, contract
-   cases) and the report API (writing `doc_mark` as today). Both behind per-app flags. Ends when the
-   contract suite and the store's PGlite suite are green on `main` with the flags on.
+   cases, the per-target switch), the report API (writing `doc_mark` as today) behind a per-app flag,
+   `migrateMarksToDocs`, and the per-collection purge the rollback depends on. Ends when the contract
+   suite and the store's PGlite suite are green on `main` with the switches on.
 3. **Deprecate.** Submit refuses new tally and publish declarations; `Deprecation` headers on every
    removed route; developer docs updated. Ends when it is deployed.
 4. **Migrate the apps with data:** `playable-collections`, `model-benchmarking`, `custom-generators`
-   and `dataset-commons` ("Inventory (2026-11-23)"): each one's new manifest version, then key check,
-   freeze, copy, verify, enable `@me` writes, rate, switch. The other apps that declare tallies hold none and only change their manifests.
-   Ends per app when its verify step passes and its old calls stop.
+   and `dataset-commons` ("Inventory (2026-11-23)"): each one's new manifest version, then per target:
+   key check, freeze, copy, verify, rate, open the switch. The other apps that declare tallies hold
+   none and only change their manifests. Ends per target when its switch is open and its old calls
+   stop.
 5. **Remove when usage is zero for 7 days.** Zero means: `civitai_app_block_doc_store_tally_ops_total`
    flat (it has no app label), `app_storage_requests_total{op}` flat for `increment`, `mark`, `unmark`,
    `patch`, `publish` and `unpublish` (its `app` label names the app; `recordAppStorageRequest`), and no
    non-report `doc_mark` or `doc_tally` row written, **and** no app's approved manifest head still
    declares `write: "none"`, `marks` or `counters` (read from the enforced manifests, as the inventory
    did), so removing the code changes no live collection's meaning. Then the removed routes answer
-   `410` (code
-   `removed`, linking the guide) for one release and leave the route table after it; the code, types,
+   `410` (code `removed`, linking the guide) for one release and leave the route table after it; the code, types,
    SDK surface (major release) and Flipt flag go; the final cleanup SQL runs. Seven days and no longer
    because the inventory shows four apps with data and about 56 marks and 37 counter documents, all
    migrated by step 4, so the window only has to cover clients still on an old app version.
@@ -518,8 +532,8 @@ Disposition of the work already done:
   (burst 30, 300 per viewer per app per day) instead of the tally bucket (30 a minute, no daily cap). A
   heavy voter can hit limits a mark never hit (open question 4).
 - **Quota.** Votes count toward the per-viewer ceiling (1,000 documents per app by default, private
-  documents included) and the app's 1M-document ceiling. The inventory's per-user maximum shows who
-  would exceed it at migration.
+  documents included) and the app's 1M-document ceiling. At today's volume nobody is near either
+  ("Inventory (2026-11-23)").
 - **Counts lag rating.** With content levels on, a new vote is pending until the rater job reaches it,
   so others' counts trail. The migration avoids a cliff by rating before the switch; steady state lags
   by the job's cadence.
@@ -533,11 +547,10 @@ Disposition of the work already done:
   fields").
 - **Derivation key loss or leak.** Losing it orphans every viewer-keyed document from its `@me` routes;
   leaking it lets the holder link documents to user ids. Neither grants a write (open question 1).
-- **Migration ordering.** The freeze precedes the one copy, and `@me` writes are enabled only after
-  the verify, so neither an old client's mark nor a new `@me` vote can land between them. Done in any
-  other order, a re-copy can undo a `@me` delete and a new vote breaks the verify.
+- **Migration ordering.** The freeze precedes the one copy, and each target's switch opens only after
+  its verify, so neither an old client's mark nor a new `@me` vote can land between them.
 - **A `write: "none"` collection read as `own`** would be writable by every viewer; the store serves it
-  read-only until its declaration is dropped ("Manifest fields").
+  read-only, permanently ("Manifest fields").
 
 ## Open questions
 
