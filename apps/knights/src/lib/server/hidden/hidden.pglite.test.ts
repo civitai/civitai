@@ -444,7 +444,6 @@ describe("a hidden check on the player's own image", () => {
   });
 });
 
-// HQ knights_respect_blocks_e8mj: a creator the player hid or blocked is skipped for that player only.
 describe('a hidden check on the image of a creator the player hid or blocked', () => {
   it.each(['Block', 'Hide'] as const)(
     'with a %s row, is served to other players only, and the answer is refused',

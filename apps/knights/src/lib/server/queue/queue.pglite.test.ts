@@ -28,6 +28,7 @@ import {
   STAGE_SCAN_FIRST_ROUND,
 } from './queue.service';
 import { itemBucket, levelBucket } from './feed';
+import { creditLateJudgment } from './vote-record';
 
 const Q = KNIGHTS_NSFW_LEVEL_QUESTION;
 /** The starvation draw is random in production; these tests pin the ordinary path. */
@@ -172,7 +173,7 @@ afterAll(async () => {
 beforeEach(async () => {
   applyConsensus.mockClear();
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","UserEngagement" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","UserEngagement","KnightsPlayerDay" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -2901,7 +2902,6 @@ describe('a player and their own image', () => {
   });
 });
 
-// HQ knights_respect_blocks_e8mj: a creator the player hid or blocked is skipped for that player only.
 describe('a creator the player hid or blocked', () => {
   async function creatorItems() {
     await player(1, 'Knight');
@@ -2928,11 +2928,60 @@ describe('a creator the player hid or blocked', () => {
     }
   );
 
+  it('leaves the creator out of every scan round, the short per-row rounds and the long ones alike', async () => {
+    await player(1, 'Knight');
+    // 742 PG items, then two X items: only the PG bucket can fill, so the scan reads the whole stage in rounds of 100,
+    // 200 and 400 (probed per row) and then 800 (the plain anti-join). The creator owns one item in each kind of round.
+    const ids = await sameAgeStage([...Array<number>(740).fill(1), 8, 8]);
+    const [early, late, x] = [ids[5], ids[740], ids[741]];
+    await pg.query(
+      `UPDATE "Image" SET "userId"=50 WHERE id IN (SELECT "imageId" FROM "KnightsQueueItem" WHERE id IN ($1,$2))`,
+      [early, late]
+    );
+    await engage(pg, 1, 50, 'Hide');
+    const watched = watchFeedReads();
+
+    const served = (await getFeed(watched.db, 1))?.items.map((i) => i.id) ?? [];
+    expect(served).toContain(x);
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 200, 400, 40]);
+    expect(watched.rounds.flat()).toEqual(ids.filter((id) => id !== early && id !== late));
+  });
+
   it('changes nothing for a Follow row', async () => {
     const { theirs, other } = await creatorItems();
     await engage(pg, 1, 50, 'Follow');
 
     expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([theirs, other].sort());
     expect(await vote(1, theirs, '4')).toMatchObject({ status: 'recorded' });
+  });
+
+  it('still serves the creator when it is the creator who blocked the player', async () => {
+    const { theirs, other } = await creatorItems();
+    await engage(pg, 50, 1, 'Block');
+
+    expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([theirs, other].sort());
+    expect(await vote(1, theirs, '4')).toMatchObject({ status: 'recorded' });
+  });
+
+  it('gives no late Watch credit on a settled item of a hidden creator', async () => {
+    const { theirs } = await creatorItems();
+    await engage(pg, 1, 50, 'Block');
+    await pg.query(`UPDATE "KnightsQueueItem" SET status='Closed', "updatedAt"=$2 WHERE id=$1`, [
+      theirs,
+      NOW,
+    ]);
+    const watchDays = async (userId: number) =>
+      (await pg.query(`SELECT 1 FROM "KnightsPlayerDay" WHERE "playerId"=$1`, [userId])).rows;
+
+    expect(await creditLateJudgment(db, { userId: 1, itemId: theirs, answer: '4', now: NOW })).toBe(
+      false
+    );
+    expect(await verdicts(theirs)).toEqual([]);
+    expect(await watchDays(1)).toEqual([]);
+
+    expect(await creditLateJudgment(db, { userId: 2, itemId: theirs, answer: '4', now: NOW })).toBe(
+      true
+    );
+    expect((await verdicts(theirs)).map((v) => v.playerId)).toEqual([2]);
   });
 });
