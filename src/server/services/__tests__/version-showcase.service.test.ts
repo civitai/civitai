@@ -60,7 +60,7 @@ type Entry = { modelVersionId: number; rows: object[]; community: object[] };
  * rows (failing with `mocks.fetchError`), the community images that pass the filters, their live
  * ratings, and the versions a cover is featured on (all of model 1). Anything else answers empty.
  */
-const answerShowcase = (async (query: unknown) => {
+const answerShowcase = async (query: unknown): Promise<unknown[]> => {
   const sql = (
     Array.isArray(query) ? (query as string[]) : (query as { strings?: string[] })?.strings ?? []
   ).join('?');
@@ -86,7 +86,7 @@ const answerShowcase = (async (query: unknown) => {
         imageId: (row as { imageId: number }).imageId,
       }));
   return [];
-}) as never;
+};
 
 let notify: ReturnType<typeof vi.spyOn>;
 
@@ -104,8 +104,8 @@ beforeEach(async () => {
   // The showcase cache keeps a local copy too: each test reads its own entry.
   await showcase.getVersionShowcaseCache().bust([VERSION]);
   dbMock.dbWrite.$queryRaw.mockReset();
-  dbMock.dbWrite.$queryRaw.mockImplementation(answerShowcase);
-  dbMock.dbRead.$queryRaw.mockImplementation(answerShowcase);
+  dbMock.dbWrite.$queryRaw.mockImplementation(answerShowcase as never);
+  dbMock.dbRead.$queryRaw.mockImplementation(answerShowcase as never);
   notify = vi.spyOn(notifications, 'createNotification').mockResolvedValue(undefined as never);
   mocks.entry = undefined;
   mocks.fetchError = null;
@@ -410,7 +410,7 @@ describe('setVersionShowcase: what the write path refuses', () => {
         .join('')
         .includes('s."removed"')
         ? [{ imageId: 77 }]
-        : answerShowcase(query as never)) as never);
+        : answerShowcase(query)) as never);
     await expect(
       curation.setVersionShowcase({
         modelVersionId: VERSION,

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * A model whose cover is someone else's image featured in its showcase: the search document gets
@@ -53,6 +54,17 @@ describe('the search document and a community cover', () => {
     expect(community.lookup).toHaveBeenCalledTimes(1);
     expect(community.lookup).toHaveBeenCalledWith([{ modelId: 5, imageId: 90, site: 'red' }]);
     expect(images.map((image) => image.id)).toEqual([1, 90]);
+  });
+
+  it('leaves out a featured cover listed on a report, like every image in the document', async () => {
+    const featured = { id: 90, modelVersionId: 9, availability: 'Public', authorUsername: 'ann' };
+    community.covers = new Map([['5:90', { image: featured, sites: new Set(['red']) }]]);
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ id: 90 }] as never);
+    const images = [owner(1, 10)] as unknown as Images;
+
+    await appendCommunityCoverImages([{ id: 5, coverImageId: 90 }], images, lookups);
+
+    expect(images.map((image) => image.id)).toEqual([1]);
   });
 
   it('leaves out a cover featured only on the other site', async () => {

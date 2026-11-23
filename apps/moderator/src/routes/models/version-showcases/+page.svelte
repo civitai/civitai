@@ -4,6 +4,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import EdgeImage from '$lib/components/EdgeImage.svelte';
@@ -71,7 +72,7 @@
     <Input name="author" value={data.filters.author} class="w-48" />
   </label>
   <label class="flex items-center gap-2 pb-2 text-sm">
-    <input type="checkbox" name="removed" value="1" checked={data.filters.removed} />
+    <Checkbox name="removed" value="1" checked={data.filters.removed} />
     Include removed
   </label>
   <Button type="submit" variant="secondary">Filter</Button>

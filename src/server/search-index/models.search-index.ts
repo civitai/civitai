@@ -233,10 +233,15 @@ export async function appendCommunityCoverImages(
         .map((model) => ({ modelId: model.id, minor: model.minor, sfwOnly: model.sfwOnly }))
     ),
   ]);
+  // Like every image in the document, a featured cover listed on a report is left out.
+  const listed = await reportListedImageIds(
+    missing.flatMap((cover) => isShowcaseCoverImage(community, cover)?.id ?? [])
+  );
   for (const cover of missing) {
     const image = isShowcaseCoverImage(community, cover);
     // The document is shared by every searcher: a held model's cover stays within its level.
-    if (!image || !withinHeldLevel([image], heldLevels.get(cover.modelId)).length) continue;
+    if (!image || listed.has(image.id)) continue;
+    if (!withinHeldLevel([image], heldLevels.get(cover.modelId)).length) continue;
     const appended = images.find((row) => row.id === image.id && featuredForModels.has(row));
     if (appended) featuredForModels.get(appended)?.add(cover.modelId);
     else if (!present.has(image.id)) {
