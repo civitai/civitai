@@ -226,7 +226,7 @@ describe('scam profiles', () => {
     expect(dbMock.dbWrite.user.findMany.mock.calls[1][0].where.createdAt).toBeUndefined();
   });
 
-  it('UserProfile scans both bios, both announcements and showcase text, keyed by user', async () => {
+  it('UserProfile scans both bios, both announcements, showcase text and folder row names, keyed by user', async () => {
     dbMock.dbWrite.userProfile.findMany.mockResolvedValue([
       {
         userId: 7,
@@ -236,6 +236,10 @@ describe('scam profiles', () => {
         sfwMessage: null,
         showcaseSections: [
           { id: 'a', type: 'Model', title: 'T', items: [1], button: { label: 'L', url: '/u' } },
+        ],
+        folderRows: [
+          { id: 'r', name: 'Row one', folders: [] },
+          { id: 's', name: 'Row two', folders: [] },
         ],
       },
     ]);
@@ -247,6 +251,7 @@ describe('scam profiles', () => {
       { heading: 'Bio (SFW domain)', text: 'sb' },
       { heading: 'Profile announcement (SFW domain)', text: '' },
       { heading: 'Showcase sections', text: 'T\nL\n/u' },
+      { heading: 'Folder rows', text: 'Row one\nRow two' },
     ]);
     expect(subject?.userId).toBe(7);
     expect(subject?.meta).toEqual({ subjectUserId: 7 });

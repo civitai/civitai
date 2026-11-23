@@ -85,6 +85,7 @@ import { hiddenPreferencesRouter } from './hidden-preferences.router';
 import { userReferralCodeRouter } from '~/server/routers/user-referral-code.router';
 import { referralRouter } from '~/server/routers/referral.router';
 import { userProfileRouter } from '~/server/routers/user-profile.router';
+import { profileFoldersRouter } from '~/server/routers/profile-folders.router';
 import { cosmeticRouter } from '~/server/routers/cosmetic.router';
 import { eventRouter } from '~/server/routers/event.router';
 import { hatTurfRouter } from '~/server/routers/hat-turf.router';
@@ -225,6 +226,7 @@ export const routers = {
   userReferralCode: () => Promise.resolve(userReferralCodeRouter),
   referral: () => Promise.resolve(referralRouter),
   userProfile: () => Promise.resolve(userProfileRouter),
+  profileFolders: () => Promise.resolve(profileFoldersRouter),
   cosmetic: () => Promise.resolve(cosmeticRouter),
   event: () => Promise.resolve(eventRouter),
   hatTurf: () => Promise.resolve(hatTurfRouter),

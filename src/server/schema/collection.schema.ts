@@ -374,12 +374,18 @@ export const getCollectionPermissionDetails = z.object({
 });
 
 export type RemoveCollectionItemInput = z.infer<typeof removeCollectionItemInput>;
-export const removeCollectionItemInput = z.object({
-  collectionId: z.coerce.number(),
-  itemId: z.coerce.number(),
-  // Names the entity `itemId` refers to; read only when the collection itself has no type.
-  type: z.enum(CollectionType).optional(),
-});
+export const removeCollectionItemInput = z
+  .object({
+    collectionId: z.coerce.number(),
+    itemId: z.coerce.number().optional(),
+    // Several items of one type at once (a folder's "move"). Each is checked as a single remove.
+    itemIds: z.array(z.coerce.number()).min(1).max(100).optional(),
+    // Names the entity `itemId` refers to; read only when the collection itself has no type.
+    type: z.enum(CollectionType).optional(),
+  })
+  .refine((input) => (input.itemId == null) !== (input.itemIds == null), {
+    message: 'Pass itemId or itemIds',
+  });
 
 export type SetItemScoreInput = z.infer<typeof setItemScoreInput>;
 export const setItemScoreInput = z.object({

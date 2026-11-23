@@ -6760,6 +6760,7 @@ enum CollectionType {
 enum CollectionMode {
   Contest
   Bookmark
+  Folder
 }
 
 model Collection {
@@ -6845,6 +6846,9 @@ model CollectionItem {
   tagId        Int?
   tag          Tag?                  @relation(fields: [tagId], references: [id], onDelete: SetNull)
   scores       CollectionItemScore[]
+  /// Folders only: when the owner showcased this item; null = not showcased. Ordered oldest first.
+  /// Partial index "CollectionItem_showcase_idx" lives only in its migration.
+  showcasedAt  DateTime?
 
   @@unique([collectionId, articleId, postId, imageId, modelId, model3dId])
   @@index([addedById], type: Hash)
@@ -9854,6 +9858,8 @@ model UserProfile {
   profileSectionsSettings Json      @default("[{\"key\":\"showcase\",\"enabled\":true},{\"key\":\"popularModels\",\"enabled\":true},{\"key\":\"popularArticles\",\"enabled\":true},{\"key\":\"modelsOverview\",\"enabled\":true},{\"key\":\"imagesOverview\",\"enabled\":true},{\"key\":\"recentReviews\",\"enabled\":true}]")
   showcaseItems           Json      @default("[]")
   showcaseSections        Json      @default("[]")
+  /// Profile folder rows: [{ id, name, folders: [{ id, hidden? }] }]. Read only by the folders read.
+  folderRows              Json?
 
   @@id([userId])
   // Serves the ON DELETE SET NULL referential-integrity trigger for the

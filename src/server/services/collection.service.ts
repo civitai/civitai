@@ -3,6 +3,11 @@ import { hasScanWorkflowSql } from '~/server/common/judge-rating';
 import { queueNeverScannedRescan } from '~/server/services/judge-collection-rescan.service';
 import { reviewQueueVisibleTargetSql } from '~/server/services/collection-review.sql';
 import { canReadCollectionItems } from '~/server/services/collection-item-access';
+import type { FolderWriteAccess } from '~/server/services/profile-folder-guard';
+import { assertFolderWriteAllowed } from '~/server/services/profile-folder-guard';
+import type { CreateFolderInput } from '~/server/schema/profile-folders.schema';
+import { profileFolderLimits } from '~/server/schema/profile-folders.schema';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
@@ -109,6 +114,7 @@ import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
+  throwConflictError,
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -127,6 +133,7 @@ import {
   ArticleStatus,
   ChallengeSource,
   CollectionContributorPermission,
+  Availability,
   CollectionInviteStatus,
   CollectionItemStatus,
   CollectionMode,
@@ -256,6 +263,8 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
       userId,
       mode: modes && modes.length > 0 && user?.isModerator ? { in: modes } : undefined,
       name: trimmedQuery ? { contains: trimmedQuery, mode: 'insensitive' } : undefined,
+      // Profile folders are listed on the profile only. `{ not }` alone would also drop NULL modes.
+      OR: [{ mode: null }, { mode: { not: CollectionMode.Folder } }],
     },
     select,
     orderBy,
@@ -579,6 +588,8 @@ export const getUserCollectionsWithPermissions = async <
   const excludeArchivedFilter = excludeArchived
     ? Prisma.sql`AND c."archivedAt" IS NULL`
     : Prisma.empty;
+  // Profile folders live on the profile, never in My Collections or the save picker.
+  const excludeFolders = Prisma.sql`AND c."mode" IS DISTINCT FROM ${CollectionMode.Folder}::"CollectionMode"`;
 
   if (input.type) {
     AND.push(Prisma.sql`(c."type" = ${input.type}::"CollectionType" OR c."type" IS NULL)`);
@@ -600,6 +611,7 @@ export const getUserCollectionsWithPermissions = async <
       WHERE "userId" = ${userId}
         ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
         ${excludeArchivedFilter}
+          ${excludeFolders}
 
     )`,
   ];
@@ -615,6 +627,7 @@ export const getUserCollectionsWithPermissions = async <
       WHERE "write" = ${CollectionWriteConfiguration.Public}::"CollectionWriteConfiguration"
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
           ${excludeArchivedFilter}
+          ${excludeFolders}
     `);
   }
 
@@ -633,6 +646,7 @@ export const getUserCollectionsWithPermissions = async <
         ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
         ${excludeContests}
         ${excludeArchivedFilter}
+          ${excludeFolders}
 
     `);
   }
@@ -652,6 +666,7 @@ export const getUserCollectionsWithPermissions = async <
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
           ${excludeContests}
           ${excludeArchivedFilter}
+          ${excludeFolders}
     )`);
   }
 
@@ -682,6 +697,7 @@ export const getUserCollectionsWithPermissions = async <
           )
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
           ${excludeArchivedFilter}
+          ${excludeFolders}
         LIMIT 100
     )`);
   }
@@ -1081,6 +1097,7 @@ export const saveItemInCollections = async ({
     isModerator,
     removeFromCollectionIds,
     canAccessUserChallenges,
+    folderAccess,
     ...input
   },
 }: {
@@ -1088,6 +1105,7 @@ export const saveItemInCollections = async ({
     userId: number;
     isModerator?: boolean;
     canAccessUserChallenges?: boolean;
+    folderAccess?: FolderWriteAccess;
   };
 }) => {
   // By value, not key presence: `{ modelId: undefined, imageId: 5 }` passes the schema refine.
@@ -1115,6 +1133,19 @@ export const saveItemInCollections = async ({
       throw throwBadRequestError('Collection type mismatch');
     }
   }
+
+  const itemType = inputToCollectionType[itemKey];
+  await assertFolderWriteAllowed({
+    collectionIds: upsertCollectionItems.map((c) => c.collectionId),
+    userId,
+    access: folderAccess,
+    items: { type: itemType, ids: [input[itemKey] as number] },
+  });
+  await assertFolderWriteAllowed({
+    collectionIds: removeFromCollectionIds,
+    userId,
+    access: folderAccess,
+  });
 
   // validateContestCollectionEntry has no model3dIds leg, so an entry would skip every contest gate.
   if (itemKey === 'model3dId' && collections.some((c) => c.mode === CollectionMode.Contest)) {
@@ -1552,7 +1583,13 @@ export const upsertCollection = async ({
   input,
   coverViewer,
 }: {
-  input: UpsertCollectionInput & { userId: number; isModerator?: boolean; isMember?: boolean };
+  input: UpsertCollectionInput & {
+    userId: number;
+    isModerator?: boolean;
+    isMember?: boolean;
+    /** Only `createFolder` sets this; the client input can never make a folder. */
+    asFolder?: boolean;
+  };
   /** Who the editor's read showed the cover to, as for getCollectionById; the editor by default. */
   coverViewer?: { id?: number; isModerator?: boolean };
 }) => {
@@ -1572,6 +1609,7 @@ export const upsertCollection = async ({
     mode,
     metadata,
     tags,
+    asFolder,
     ...collectionItem
   } = input;
 
@@ -1649,9 +1687,13 @@ export const upsertCollection = async ({
       ).has(currentCollection.id);
 
     const canConfigure = permission.isOwner || !!isModerator;
+    // A folder stays a private-write folder, and nothing else becomes one by editing.
+    const isFolder = currentCollection.mode === CollectionMode.Folder;
+    if (!isFolder && mode === CollectionMode.Folder)
+      throw throwBadRequestError('Folders are created from your profile');
     const nextRead = canConfigure ? read : undefined;
-    const nextWrite = canConfigure ? write : undefined;
-    const nextMode = canConfigure ? mode : undefined;
+    const nextWrite = canConfigure && !isFolder ? write : undefined;
+    const nextMode = canConfigure && !isFolder ? mode : undefined;
 
     const opensSubmissions =
       !!nextWrite &&
@@ -1951,7 +1993,16 @@ export const upsertCollection = async ({
     return updated;
   }
 
-  if (write && write !== CollectionWriteConfiguration.Private && !isMember && !isModerator) {
+  if (mode === CollectionMode.Folder && !asFolder)
+    throw throwBadRequestError('Folders are created from your profile');
+  const createWrite = asFolder ? CollectionWriteConfiguration.Private : write;
+
+  if (
+    createWrite &&
+    createWrite !== CollectionWriteConfiguration.Private &&
+    !isMember &&
+    !isModerator
+  ) {
     throw throwAuthorizationError('A membership is required to open a collection to submissions.');
   }
 
@@ -1997,10 +2048,16 @@ export const upsertCollection = async ({
       description,
       nsfw,
       read,
-      write,
       userId,
-      type,
-      mode,
+      write: createWrite,
+      ...(asFolder
+        ? {
+            type: null,
+            mode: CollectionMode.Folder,
+            // Keeps folders out of every collection search index without a clause in each.
+            availability: Availability.Unsearchable,
+          }
+        : { type, mode }),
       metadata: pinnedMetadata(undefined) as Prisma.JsonObject,
       contributors: {
         create: {
@@ -3792,6 +3849,7 @@ export const bulkSaveItems = async ({
     tagId,
     isModerator,
     canAccessUserChallenges,
+    folderAccess,
   },
   permissions,
 }: {
@@ -3799,9 +3857,25 @@ export const bulkSaveItems = async ({
     userId: number;
     isModerator?: boolean;
     canAccessUserChallenges?: boolean;
+    folderAccess?: FolderWriteAccess;
   };
   permissions: CollectionContributorPermissionFlags;
 }) => {
+  // A folder takes models, images and articles, one call per type in practice; check each.
+  for (const [type, ids] of [
+    [CollectionType.Model, modelIds],
+    [CollectionType.Image, imageIds],
+    [CollectionType.Article, articleIds],
+    [CollectionType.Post, postIds],
+  ] as const) {
+    if (ids.length)
+      await assertFolderWriteAllowed({
+        collectionIds: [collectionId],
+        userId,
+        access: folderAccess,
+        items: { type, ids },
+      });
+  }
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
     select: collectionWithoutImageSelect,
@@ -4221,7 +4295,14 @@ export const removeCollectionItem = async ({
   itemId,
   type,
   isModerator,
-}: RemoveCollectionItemInput & { userId: number; isModerator?: boolean }) => {
+  folderAccess,
+}: Omit<RemoveCollectionItemInput, 'itemIds'> & {
+  itemId: number;
+  userId: number;
+  isModerator?: boolean;
+  folderAccess?: FolderWriteAccess;
+}) => {
+  await assertFolderWriteAllowed({ collectionIds: [collectionId], userId, access: folderAccess });
   const permissions = await getUserCollectionPermissionsById({
     id: collectionId,
     userId,
@@ -4684,4 +4765,43 @@ export async function setCollectionItemsTag({
   );
 
   return { count, collectionItemIds };
+}
+
+/**
+ * A profile folder: a collection the owner files their own work into. Created only here, through
+ * `upsertCollection`'s create path, so the text scan, count cache and replication guard run once.
+ */
+export async function createFolder({
+  userId,
+  isModerator,
+  name,
+  description,
+  read,
+}: CreateFolderInput & { userId: number; isModerator?: boolean }) {
+  // Count-then-create under one lock per owner, so concurrent creates cannot pass the cap together.
+  const created = await withDistributedLock(
+    { key: `profile-folder-create:${userId}`, ttl: 30, retryDelay: 200, maxRetries: 25 },
+    async () => {
+      // primary: a folder created moments ago counts.
+      const count = await dbWrite.collection.count({
+        where: { userId, mode: CollectionMode.Folder },
+      });
+      if (count >= profileFolderLimits.folders)
+        throw throwBadRequestError(`You can have up to ${profileFolderLimits.folders} folders`);
+      return upsertCollection({
+        input: {
+          userId,
+          isModerator,
+          name,
+          description,
+          read,
+          type: CollectionType.Model,
+          asFolder: true,
+        },
+      });
+    }
+  );
+  if (created === null)
+    throw throwConflictError('Another folder is still being created. Try again in a moment.');
+  return created;
 }

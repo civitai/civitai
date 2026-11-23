@@ -668,6 +668,8 @@ const featureFlags = createFeatureFlags({
   profileShowcases: { availability: ['mod'], fliptKey: 'profile-showcases' },
   // The redesigned profile page.
   profileRedesign: { availability: ['mod'], fliptKey: 'profile-redesign' },
+  // Profile folders: creators file their own models, images and articles into folders.
+  profileFolders: { availability: ['mod'], fliptKey: 'profile-folders' },
   // Recent written reviews on the model page, between Suggested Resources and Discussion.
   modelPageReviews: { availability: ['mod'], fliptKey: 'model-page-reviews' },
   // Civitai's 4th Birthday (Team Hats). Only the Flipt key is used, by the event engine's access

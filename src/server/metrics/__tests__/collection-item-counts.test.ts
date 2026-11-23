@@ -17,7 +17,7 @@ let pg: PGlite;
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(`
-    CREATE TYPE "CollectionMode" AS ENUM ('Contest', 'Bookmark');
+    CREATE TYPE "CollectionMode" AS ENUM ('Contest', 'Bookmark', 'Folder');
     CREATE TYPE "CollectionItemStatus" AS ENUM ('ACCEPTED', 'REVIEW', 'REJECTED');
     CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int, mode "CollectionMode");
     CREATE TABLE "CollectionItem" (

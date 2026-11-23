@@ -9,6 +9,8 @@ import { logToAxiom } from '~/server/logging/client';
 import { contentRestriction } from '~/server/common/content-restriction';
 import { OnboardingSteps } from '~/server/common/enums';
 import { isAccountMuted } from '~/server/services/account-standing.service';
+import type { FolderWriteAccess } from '~/server/services/profile-folder-guard';
+import { onlyFolders } from '~/server/services/profile-folder-guard';
 import { Flags } from '~/shared/utils/flags';
 import { collectedContentReward, firstDailyPostReward } from '~/server/rewards';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
@@ -79,6 +81,7 @@ import { addPostImage, createPost, deletePost } from '~/server/services/post.ser
 import { createPostOwnerCheck } from '~/server/services/image.service';
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -314,6 +317,11 @@ export const getCollectionByIdHandler = async ({
   }
 };
 
+const folderAccessFrom = (ctx: ProtectedContext): FolderWriteAccess => ({
+  foldersEnabled: !!ctx.features.profileFolders,
+  session: { muted: ctx.user.muted, mutedAt: ctx.user.mutedAt },
+});
+
 export const saveItemHandler = async ({
   ctx,
   input,
@@ -329,10 +337,15 @@ export const saveItemHandler = async ({
         userId: user.id,
         isModerator: user.isModerator,
         canAccessUserChallenges: ctx.features.userChallenges,
+        folderAccess: folderAccessFrom(ctx),
       },
     });
+    const filedInFoldersOnly = await onlyFolders([
+      ...input.collections.map((c) => c.collectionId),
+      ...(input.removeFromCollectionIds ?? []),
+    ]);
 
-    if (status === 'added' && input.type) {
+    if (status === 'added' && input.type && !filedInFoldersOnly) {
       const entityId = [input.articleId, input.modelId, input.postId, input.imageId].find(
         isDefined
       );
@@ -346,7 +359,7 @@ export const saveItemHandler = async ({
     }
 
     // nb: this will count in review / rejected additions
-    if (input.type === 'Image' && !!input.imageId) {
+    if (input.type === 'Image' && !!input.imageId && !filedInFoldersOnly) {
       await updateEntityMetric({
         ctx,
         entityType: 'Image',
@@ -411,11 +424,13 @@ export const bulkSaveItemsHandler = async ({
         userId,
         isModerator,
         canAccessUserChallenges: ctx.features.userChallenges,
+        folderAccess: folderAccessFrom(ctx),
       },
       permissions,
     });
 
-    for (const imgId of resp.imageIds) {
+    const filedInFolder = await onlyFolders([input.collectionId]);
+    for (const imgId of filedInFolder ? [] : resp.imageIds) {
       await updateEntityMetric({
         ctx,
         entityType: 'Image',
@@ -856,12 +871,22 @@ export const removeCollectionItemHandler = async ({
   ctx: ProtectedContext;
 }) => {
   const { user } = ctx;
+  const { itemId, itemIds, ...others } = input;
   try {
-    return await removeCollectionItem({
-      ...input,
-      userId: user.id,
-      isModerator: user.isModerator,
-    });
+    const remove = (id: number) =>
+      removeCollectionItem({
+        ...others,
+        itemId: id,
+        userId: user.id,
+        isModerator: user.isModerator,
+        folderAccess: folderAccessFrom(ctx),
+      });
+    // One at a time: each item keeps the single remove's own authorization.
+    const [first, ...rest] = itemId != null ? [itemId] : itemIds ?? [];
+    if (first == null) throw throwBadRequestError('Pass itemId or itemIds');
+    let result = await remove(first);
+    for (const id of rest) result = await remove(id);
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }

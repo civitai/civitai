@@ -107,6 +107,11 @@ const LEDGER: Record<string, { writes: number; busts: number; why: string }> = {
     busts: 0,
     why: `collection-wide deletes on one board collection, by predicate: ${TTL}`,
   },
+  'src/server/services/profile-folder-showcase.service.ts': {
+    writes: 2,
+    busts: 0,
+    why: 'showcasedAt on profile-folder items only; folders are never contests, so no cached entry changes',
+  },
   'src/server/services/user.service.ts': {
     writes: 2,
     busts: 0,
