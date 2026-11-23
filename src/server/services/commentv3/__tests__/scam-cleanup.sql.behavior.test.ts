@@ -11,6 +11,7 @@ import { FIXTURE, migration } from '~/server/services/__tests__/comment-v3-fixtu
 vi.setConfig({ hookTimeout: 120_000, testTimeout: 60_000 });
 
 const { restoreScamCase, runScamCleanup } = await import('~/server/services/scam-cleanup.service');
+const { setCommentFlags } = await import('~/server/services/commentv3/write.service');
 
 let pg: PGlite;
 
@@ -22,6 +23,7 @@ beforeAll(async () => {
   await pg.exec(migration('20261210120000_comment_v3_mirror_changed_columns'));
   await pg.exec(migration('20270101120000_comment_v3_old_table_triggers_off'));
   await pg.exec(migration('20270102120000_comment_v3_teardown'));
+  await pg.exec(migration('20271125130000_comment_v3_hidden_at'));
 
   const toSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
     Array.isArray(first)
@@ -62,6 +64,18 @@ beforeEach(async () => {
   `);
 });
 
+// A record written before `hiddenAt` existed, and its cleanup's own write a second later: those
+// rows have no stamp, so the restore matches them by that write.
+const LEGACY_AT = '2026-11-01T00:00:00.000Z';
+const CLEANUP_WRITE = `'2026-11-01T00:00:01Z'`;
+
+const setFlags = (ids: number[], flags: Parameters<typeof setCommentFlags>[2]) =>
+  setCommentFlags(
+    { query: async (sql, params) => (await pg.query(sql, params)) as never },
+    ids,
+    flags
+  );
+
 const hidden = async () =>
   (await pg.query<{ id: number }>(`SELECT id FROM "CommentV3" WHERE hidden ORDER BY id`)).rows.map(
     (r) => r.id
@@ -95,9 +109,9 @@ describe('scam cleanup of comments', () => {
     // 60 is the scammer's comment that cleanup hid; 61 is someone else's. A `Comment` trigger wrote
     // `commentsV2` records too, and those ids are CommentV3 ids all the same.
     await pg.exec(`
-      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, hidden, "legacyV1Id") VALUES
-        (60, 'model', 1, ${SCAMMER}, 'pre-flip', true, 31),
-        (61, 'model', 1, ${OTHER}, 'someone else', true, 32);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, hidden, "legacyV1Id", "updatedAt") VALUES
+        (60, 'model', 1, ${SCAMMER}, 'pre-flip', true, 31, ${CLEANUP_WRITE}),
+        (61, 'model', 1, ${OTHER}, 'someone else', true, 32, ${CLEANUP_WRITE});
     `);
     dbMock.dbWrite.userRestriction.findUnique.mockResolvedValueOnce({
       userId: SCAMMER,
@@ -107,7 +121,7 @@ describe('scam cleanup of comments', () => {
           entityType: 'Comment',
           cleanup: {
             kind: 'commentsV2',
-            at: new Date().toISOString(),
+            at: LEGACY_AT,
             count: 2,
             ids: [60, 61],
             truncated: false,
@@ -125,13 +139,13 @@ describe('scam cleanup of comments', () => {
   it('restores a v1-era `comments` record on a `Comment` trigger through legacyV1Id', async () => {
     // 62 is the scammer's comment with v1 id 31; 31 is theirs too, a CommentV3 id of that number.
     await pg.exec(`
-      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, hidden, "legacyV1Id") VALUES
-        (62, 'model', 1, ${SCAMMER}, 'v1', true, 31),
-        (31, 'model', 1, ${SCAMMER}, 'same number', true, NULL);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, hidden, "legacyV1Id", "updatedAt") VALUES
+        (62, 'model', 1, ${SCAMMER}, 'v1', true, 31, ${CLEANUP_WRITE}),
+        (31, 'model', 1, ${SCAMMER}, 'same number', true, NULL, ${CLEANUP_WRITE});
     `);
     const record = {
       kind: 'comments',
-      at: new Date().toISOString(),
+      at: LEGACY_AT,
       count: 1,
       ids: [31],
       truncated: false,
@@ -147,7 +161,9 @@ describe('scam cleanup of comments', () => {
     expect(await hidden()).not.toContain(62);
 
     // Once the stored-records SQL has mapped it (`migrated`), its ids are CommentV3 ids.
-    await pg.exec(`UPDATE "CommentV3" SET hidden = true WHERE id = 62`);
+    await pg.exec(
+      `UPDATE "CommentV3" SET hidden = true, "updatedAt" = ${CLEANUP_WRITE} WHERE id = 62`
+    );
     dbMock.dbWrite.userRestriction.findUnique.mockResolvedValueOnce({
       userId: SCAMMER,
       type: 'scam',
@@ -157,5 +173,57 @@ describe('scam cleanup of comments', () => {
     } as never);
     expect(await restoreScamCase(1)).toEqual({ restored: 1 });
     expect(await hidden()).not.toContain(62);
+  });
+
+  it('a restore passes by a row re-stamped after its record', async () => {
+    const record = await runScamCleanup('comments', SCAMMER);
+    // A moderator shows 42, then hides it again for their own reason: a new stamp.
+    await setFlags([42], { hidden: false });
+    await setFlags([42], { hidden: true });
+    dbMock.dbWrite.userRestriction.findUnique.mockResolvedValueOnce({
+      userId: SCAMMER,
+      type: 'scam',
+      triggers: [{ cleanup: record }],
+    } as never);
+
+    expect(await restoreScamCase(1)).toEqual({ restored: 2 });
+    expect(await hidden()).toEqual([42, 43]);
+  });
+
+  describe('a record from before hide stamps', () => {
+    const restoreLegacy = (ids: number[]) => {
+      dbMock.dbWrite.userRestriction.findUnique.mockResolvedValueOnce({
+        userId: SCAMMER,
+        type: 'scam',
+        triggers: [
+          {
+            cleanup: { kind: 'comments', at: LEGACY_AT, count: ids.length, ids, truncated: false },
+          },
+        ],
+      } as never);
+      return restoreScamCase(1);
+    };
+    const legacyRow = (id: number, updatedAt: string) =>
+      pg.exec(`
+        INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, hidden, "updatedAt")
+        VALUES (${id}, 'model', 1, ${SCAMMER}, 'legacy', true, ${updatedAt})`);
+
+    it('matches an unstamped row last written inside the record window', async () => {
+      await legacyRow(70, CLEANUP_WRITE);
+      expect(await restoreLegacy([70])).toEqual({ restored: 1 });
+      expect(await hidden()).not.toContain(70);
+    });
+
+    it('passes by an unstamped row written after the window', async () => {
+      await legacyRow(71, `'2026-11-01T00:11:00Z'`);
+      expect(await restoreLegacy([71])).toEqual({ restored: 0 });
+      expect(await hidden()).toContain(71);
+    });
+
+    it('passes by an unstamped row written before the window', async () => {
+      await legacyRow(72, `'2026-10-31T23:59:59Z'`);
+      expect(await restoreLegacy([72])).toEqual({ restored: 0 });
+      expect(await hidden()).toContain(72);
+    });
   });
 });
