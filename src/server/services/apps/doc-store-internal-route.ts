@@ -39,10 +39,11 @@ export type InternalStorageRouteDeps = Omit<StorageApiDeps, 'via'> & {
 };
 
 /**
- * The API region block the public route gets from the proxy (`apiRegionBlockMiddleware`, whose
- * matcher covers `/api/v1/` but not `/api/internal/`), decided by the same function on the
- * region headers app-data-go forwarded, which the signature covers. The page-only region
- * restriction middleware never runs for an `/api` path, on either route.
+ * The API region block the public route gets from the proxy (`apiRegionBlockMiddleware`). The
+ * proxy only runs for the paths in `src/proxy.ts`'s top-level matcher, which admits `/api/v1/`
+ * but not `/api/internal/`, so this route applies the same decision itself, on the region
+ * headers app-data-go forwarded, which the signature covers. The page-only region restriction
+ * middleware never runs for an `/api` path, on either route.
  */
 export function internalRegionGate(req: NextApiRequest, res: NextApiResponse): boolean {
   const block = getApiRegionBlock(getRegion(req));
