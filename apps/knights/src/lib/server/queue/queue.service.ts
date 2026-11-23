@@ -136,6 +136,23 @@ export function servableItems(db: Executor) {
   );
 }
 
+/**
+ * Leaves out images whose creator the player has hidden or blocked on the site: a `UserEngagement` primary-key lookup
+ * per row, so a hide or block applies on the next read. Who blocked the player is not read. Expects `Image as img`.
+ */
+export const notHiddenCreator =
+  (userId: number) => (eb: ExpressionBuilder<DB & { img: DB['Image'] }, 'img'>) =>
+    eb.not(
+      eb.exists(
+        eb
+          .selectFrom('UserEngagement as ue')
+          .select(sql<number>`1`.as('one'))
+          .where('ue.userId', '=', userId)
+          .whereRef('ue.targetUserId', '=', 'img.userId')
+          .where('ue.type', 'in', ['Hide', 'Block'])
+      )
+    );
+
 /** The latest buckets the player judged within the recent window, newest first, read from the ledger (hidden checks included). */
 async function recentBuckets(db: Executor, userId: number, now: Date) {
   const rows = await db
@@ -196,6 +213,7 @@ async function stageWindow(
     servableItems(db)
       .where('i.minRank', '=', stage)
       .where('img.userId', 'is distinct from', userId)
+      .where(notHiddenCreator(userId))
       .$if(exclude.length > 0, (qb) => qb.where('i.id', 'not in', exclude))
       .where((eb) =>
         eb.not(
@@ -664,6 +682,7 @@ export async function castVote(
 
         const item = await servableItems(trx)
           .where('i.id', '=', input.itemId)
+          .where(notHiddenCreator(input.userId))
           .select([
             'i.id',
             'i.questionKey',

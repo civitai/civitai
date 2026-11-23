@@ -7,6 +7,7 @@ import {
   ensureMonthPartition,
   lockItemVoters,
   lockPlayerVoting,
+  notHiddenCreator,
   pacingGate,
   staffedRanks,
   type QueueDeps,
@@ -60,6 +61,7 @@ export async function castYesNoVote(
 
       const item = await playableItems(trx)
         .where('i.id', '=', input.itemId)
+        .where(notHiddenCreator(input.userId))
         .select(['i.id', 'i.questionKey', 'i.imageId', 'i.minRank', 'i.prompt'])
         .executeTakeFirst();
       if (!item) return rejected('unavailable');

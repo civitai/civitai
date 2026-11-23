@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { DB } from '@civitai/db-schema/kysely';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { seedImage, seedPlayer } from '../../../test/seed';
+import { engage, seedImage, seedPlayer } from '../../../test/seed';
 import { PROGRESSION } from '../progression/config';
 import { ledgerOf, settleAndMirror, settleFinalItems } from '../progression/progression';
 import { ensureVotePartitions, lockPlayerVoting } from '../queue/queue.service';
@@ -80,7 +80,7 @@ afterAll(() => pg.close());
 beforeEach(async () => {
   mirror.mockClear();
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","KnightsPlayerDay","Image","Post" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","KnightsPlayerDay","Image","Post","UserEngagement" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
   );
 });
 
@@ -492,6 +492,27 @@ describe('escalation', () => {
       minRank: 'Knight',
     });
   });
+});
+
+// HQ knights_respect_blocks_e8mj: a creator the player hid or blocked is skipped for that player only.
+describe('a yes/no question on the image of a creator the player hid or blocked', () => {
+  it.each(['Block', 'Hide'] as const)(
+    'with a %s row, is offered to other players only, and the answer is refused',
+    async (type) => {
+      const ids = await seed([row('a')]);
+      await knights(2);
+      await pg.query(`UPDATE "Image" SET "userId"=50 WHERE id=10`);
+      await engage(pg, 1, 50, type);
+      const offer = (userId: number) =>
+        pickYesNo(db, { userId, rank: 'Knight', secret: 's', share: 1, stretch: 10, force: true });
+
+      expect(await offer(1)).toBeNull();
+      expect((await offer(2))?.itemId).toBe(ids.a);
+
+      expect(await vote(1, ids.a, 'yes')).toEqual({ status: 'rejected', reason: 'unavailable' });
+      expect(await votes(ids.a)).toEqual([]);
+    }
+  );
 });
 
 describe("a yes/no question on the player's own image", () => {

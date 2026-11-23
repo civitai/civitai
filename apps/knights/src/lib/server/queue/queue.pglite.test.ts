@@ -6,7 +6,7 @@ import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { countOpenServableKnightItems } from '@civitai/db/knights';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { lockImage } from '../../../test/seed';
+import { engage, lockImage } from '../../../test/seed';
 import { PROGRESSION } from '../progression/config';
 import { listJudgments } from '../progression/judgments';
 import { settleFinalItems } from '../progression/progression';
@@ -172,7 +172,7 @@ afterAll(async () => {
 beforeEach(async () => {
   applyConsensus.mockClear();
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","UserEngagement" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -2898,5 +2898,41 @@ describe('a player and their own image', () => {
     expect(await vote(1, mine, '4')).toEqual({ status: 'rejected', reason: 'own-image' });
     expect(await verdicts(mine)).toEqual([]);
     expect(await vote(2, mine, '4')).toMatchObject({ status: 'recorded' });
+  });
+});
+
+// HQ knights_respect_blocks_e8mj: a creator the player hid or blocked is skipped for that player only.
+describe('a creator the player hid or blocked', () => {
+  async function creatorItems() {
+    await player(1, 'Knight');
+    await player(2, 'Knight');
+    await image(10);
+    await image(11);
+    await pg.query(`UPDATE "Image" SET "userId"=50 WHERE id=10`);
+    await pg.query(`UPDATE "Image" SET "userId"=51 WHERE id=11`);
+    return { theirs: await item(10), other: await item(11) };
+  }
+
+  it.each(['Block', 'Hide'] as const)(
+    'with a %s row, serves the creator to other players only and refuses the vote',
+    async (type) => {
+      const { theirs, other } = await creatorItems();
+      await engage(pg, 1, 50, type);
+
+      expect((await getFeed(db, 1))?.items.map((i) => i.id)).toEqual([other]);
+      expect((await getFeed(db, 2))?.items.map((i) => i.id).sort()).toEqual([theirs, other].sort());
+
+      expect(await vote(1, theirs, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
+      expect(await verdicts(theirs)).toEqual([]);
+      expect(await vote(2, theirs, '4')).toMatchObject({ status: 'recorded' });
+    }
+  );
+
+  it('changes nothing for a Follow row', async () => {
+    const { theirs, other } = await creatorItems();
+    await engage(pg, 1, 50, 'Follow');
+
+    expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([theirs, other].sort());
+    expect(await vote(1, theirs, '4')).toMatchObject({ status: 'recorded' });
   });
 });
