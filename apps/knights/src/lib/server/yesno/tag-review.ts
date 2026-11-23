@@ -100,10 +100,11 @@ export async function runTagReview(
       .orderBy('t.tagId', 'asc')
       .limit(pageSize)
       .execute();
+    if (page.length > 0) result.created += await createEpisodes(db, page, now);
+    // Advanced only after the page's items exist, so a failed create retries this page next run.
     const last = page.at(-1);
     walk.after =
       page.length < pageSize || !last ? null : { imageId: last.imageId, tagId: last.tagId };
-    if (page.length > 0) result.created += await createEpisodes(db, page, now);
     if (!walk.after) break;
   }
   return result;

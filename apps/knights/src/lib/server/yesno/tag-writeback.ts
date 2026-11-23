@@ -170,16 +170,16 @@ export async function writeBackTagReviews(
     }
 
     const tagId = tagIdOf(claimed.meta);
-    const answers = await db
-      .selectFrom('KnightsVote')
-      .select(['answer', 'weight'])
-      .where('itemId', '=', id)
-      .where('stage', '=', claimed.minRank)
-      .execute();
 
     try {
       if (tagId === null || claimed.resolvedBy === null)
         throw new Error('the item names no tag or no player');
+      const answers = await db
+        .selectFrom('KnightsVote')
+        .select(['answer', 'weight'])
+        .where('itemId', '=', id)
+        .where('stage', '=', claimed.minRank)
+        .execute();
       const answer = await port.moderate({
         imageId: claimed.imageId,
         tagId,

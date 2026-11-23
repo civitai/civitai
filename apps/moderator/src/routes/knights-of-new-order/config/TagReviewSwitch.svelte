@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { enhance } from '$app/forms';
   import * as Card from '@civitai/ui/components/ui/card/index.js';
   import { Switch } from '@civitai/ui/components/ui/switch/index.js';
@@ -55,7 +55,11 @@
         id="mod-tag-review"
         bind:checked
         disabled={submitting}
-        onCheckedChange={() => queueMicrotask(() => form.requestSubmit())}
+        onCheckedChange={async () => {
+          // The hidden input must show the new value before the form posts it.
+          await tick();
+          form.requestSubmit();
+        }}
       />
     </form>
   </Card.Content>
