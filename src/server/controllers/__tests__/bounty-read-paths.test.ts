@@ -996,7 +996,8 @@ describe("bounty entry images and the owner's view, against the real image query
         "needsReview" text, "blockedFor" text, "userId" int DEFAULT ${OWNER}, index int DEFAULT 0,
         poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
         "modelRestricted" boolean NOT NULL DEFAULT false,
-        "acceptableMinor" boolean NOT NULL DEFAULT false
+        "acceptableMinor" boolean NOT NULL DEFAULT false,
+        "tosViolation" boolean NOT NULL DEFAULT false
       );
       CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
       INSERT INTO "Image" (id, "needsReview", index) VALUES (${CLEAN}, NULL, 0), (${HELD}, 'csam', 1);
