@@ -56,8 +56,8 @@ beforeEach(() => {
   dbMock.dbWrite.collection.count.mockImplementation(
     (async ({ where }: never) => collections.filter((c) => matches(c, where)).length) as never
   );
-  dbMock.dbWrite.model.count.mockImplementation(
-    (async ({ where }: never) => models.filter((m) => matches(m, where)).length) as never
+  dbMock.dbWrite.model.findMany.mockImplementation(
+    (async ({ where }: never) => models.filter((m) => matches(m, where))) as never
   );
   dbMock.dbRead.userProfile.findUnique.mockImplementation((async () => ({ folderRows })) as never);
   dbMock.dbWrite.userProfile.update.mockImplementation((async ({ data }: never) => {
@@ -135,6 +135,16 @@ describe('setFolderRows', () => {
   it("saves rows of the caller's own folders", async () => {
     await setFolderRows({ userId: OWNER, rows: [row([10, 11])] });
     expect(folderRows).toEqual([row([10, 11])]);
+  });
+
+  it('refuses a save over rows that changed since the editor opened', async () => {
+    dbMock.dbWrite.userProfile.updateMany.mockResolvedValue({ count: 0 } as never);
+    await expect(
+      setFolderRows({ userId: OWNER, rows: [row([10])], ifUnchangedFrom: [row([11])] })
+    ).rejects.toThrow(/changed while saving/);
+    expect(dbMock.dbWrite.userProfile.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: OWNER, folderRows: { equals: [row([11])] } } })
+    );
   });
 
   it("refuses another user's folder, a plain collection, or a folder in two rows", async () => {

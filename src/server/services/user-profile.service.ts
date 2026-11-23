@@ -67,6 +67,7 @@ import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { isShowcaseHiddenOn } from '~/shared/constants/profile-showcase.constants';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { ownsAllContent } from '~/server/services/owned-content';
 
 export type UserContentOverviewVariant = 'public' | 'sfw' | 'all';
 
@@ -339,27 +340,7 @@ export const assertShowcaseItemsOwned = async ({
 
   if (isModerator) return;
 
-  // Primary, not replica: an image posted moments ago is the one most likely to be showcased.
-  const [ownedImages, ownedModels, ownedArticles] = await Promise.all([
-    imageIds.length
-      ? dbWrite.image.findMany({ where: { id: { in: imageIds }, userId }, select: { id: true } })
-      : [],
-    modelIds.length
-      ? dbWrite.model.findMany({ where: { id: { in: modelIds }, userId }, select: { id: true } })
-      : [],
-    articleIds.length
-      ? dbWrite.article.findMany({
-          where: { id: { in: articleIds }, userId },
-          select: { id: true },
-        })
-      : [],
-  ]);
-
-  if (
-    ownedImages.length !== imageIds.length ||
-    ownedModels.length !== modelIds.length ||
-    ownedArticles.length !== articleIds.length
-  )
+  if (!(await ownsAllContent({ ownerId: userId, imageIds, modelIds, articleIds })))
     throw throwAuthorizationError('You can only add your own content to your showcase');
 };
 

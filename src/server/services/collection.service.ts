@@ -1137,6 +1137,7 @@ export const saveItemInCollections = async ({
   const itemType = inputToCollectionType[itemKey];
   await assertFolderWriteAllowed({
     collectionIds: upsertCollectionItems.map((c) => c.collectionId),
+    collections,
     userId,
     access: folderAccess,
     items: { type: itemType, ids: [input[itemKey] as number] },
@@ -3861,7 +3862,13 @@ export const bulkSaveItems = async ({
   };
   permissions: CollectionContributorPermissionFlags;
 }) => {
-  // A folder takes models, images and articles, one call per type in practice; check each.
+  const collection = await dbRead.collection.findUnique({
+    where: { id: collectionId },
+    select: collectionWithoutImageSelect,
+  });
+
+  if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+  // Post is listed though folders take no posts, so bulk-adding one to a folder is refused here.
   for (const [type, ids] of [
     [CollectionType.Model, modelIds],
     [CollectionType.Image, imageIds],
@@ -3871,17 +3878,12 @@ export const bulkSaveItems = async ({
     if (ids.length)
       await assertFolderWriteAllowed({
         collectionIds: [collectionId],
+        collections: [collection],
         userId,
         access: folderAccess,
         items: { type, ids },
       });
   }
-  const collection = await dbRead.collection.findUnique({
-    where: { id: collectionId },
-    select: collectionWithoutImageSelect,
-  });
-
-  if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
   for (const [itemKey, ids] of [
     ['imageId', imageIds],
     ['postId', postIds],
@@ -4302,11 +4304,16 @@ export const removeCollectionItem = async ({
   isModerator?: boolean;
   folderAccess?: FolderWriteAccess;
 }) => {
-  await assertFolderWriteAllowed({ collectionIds: [collectionId], userId, access: folderAccess });
   const permissions = await getUserCollectionPermissionsById({
     id: collectionId,
     userId,
     isModerator,
+  });
+  await assertFolderWriteAllowed({
+    collectionIds: [collectionId],
+    collections: [{ id: collectionId, mode: permissions.collectionMode, userId }],
+    userId,
+    access: folderAccess,
   });
 
   // A typed collection's own type wins. A type-NULL collection holds items of every type (see

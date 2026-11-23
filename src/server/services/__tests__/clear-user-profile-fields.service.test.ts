@@ -55,8 +55,15 @@ const stored = {
   location: 'l',
   showcaseSections: [{ key: 'k' }],
   showcaseItems: [{ entityType: 'Model', entityId: 1 }],
+  folderRows: [{ id: 'r', name: 'row text', folders: [] }],
 };
-const ALL_FIELDS: ProfileClearField[] = ['location', 'bio', 'message', 'showcaseSections'];
+const ALL_FIELDS: ProfileClearField[] = [
+  'location',
+  'bio',
+  'message',
+  'showcaseSections',
+  'folderRows',
+];
 let archive: ReturnType<typeof vi.fn<(s: ProfileClearSnapshot) => Promise<unknown>>>;
 
 beforeEach(() => {
@@ -89,6 +96,19 @@ describe('clearUserProfileFields', () => {
       where: { userId: USER },
       data: expect.objectContaining({ showcaseSections: [], bio: null, message: null }),
     });
+  });
+
+  it('clears folder row names when they are named, and archives them first', async () => {
+    reportNames(true);
+    await clear();
+    expect(db.userProfile.updateMany).toHaveBeenCalledWith({
+      where: { userId: USER },
+      data: expect.objectContaining({ folderRows: [] }),
+    });
+    expect(db.userProfile.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ folderRows: true }) })
+    );
+    expect(archive.mock.calls[0][0].profile?.folderRows).toEqual(stored.folderRows);
   });
 
   it('leaves them when only other fields are named', async () => {

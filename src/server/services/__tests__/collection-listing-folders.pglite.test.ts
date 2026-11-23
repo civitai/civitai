@@ -37,7 +37,11 @@ beforeAll(async () => {
       (2, 'bookmarks', 'Private', 5, 'Private', 'Model', 'Bookmark'),
       (3, 'my folder', 'Public', 5, 'Private', NULL, 'Folder'),
       (4, 'someone''s folder', 'Public', 6, 'Private', NULL, 'Folder'),
-      (5, 'someone''s public', 'Public', 6, 'Public', NULL, NULL);
+      (5, 'someone''s public', 'Public', 6, 'Public', NULL, NULL),
+      -- Folders can't be public-write or have contributors; these rows check every branch anyway.
+      (6, 'public-write folder', 'Public', 6, 'Public', NULL, 'Folder'),
+      (7, 'shared folder', 'Public', 6, 'Private', NULL, 'Folder');
+    INSERT INTO "CollectionContributor" VALUES (5, 7, '{VIEW,ADD}');
   `);
 });
 
@@ -64,6 +68,10 @@ const listedIds = async (input: object) =>
 describe('getUserCollectionsWithPermissions', () => {
   it("lists the user's own collections but not their folders", async () => {
     expect(await listedIds({})).toEqual([1, 2]);
+  });
+
+  it('keeps folders out of the public-write and contributor branches', async () => {
+    expect(await listedIds({ permissions: ['ADD'], contributingOnly: false })).toEqual([1, 2, 5]);
   });
 
   it('keeps folders out of the public-read branch as well', async () => {

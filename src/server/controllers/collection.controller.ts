@@ -1,6 +1,6 @@
 import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import { readCollectionForViewer } from '~/server/services/collection-viewer';
-import { omit } from 'lodash-es';
+import { chunk, omit } from 'lodash-es';
 import { TRPCError } from '@trpc/server';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
 import { constants } from '~/server/common/constants';
@@ -317,6 +317,8 @@ export const getCollectionByIdHandler = async ({
   }
 };
 
+const REMOVE_BATCH = 10;
+
 const folderAccessFrom = (ctx: ProtectedContext): FolderWriteAccess => ({
   foldersEnabled: !!ctx.features.profileFolders,
   session: { muted: ctx.user.muted, mutedAt: ctx.user.mutedAt },
@@ -340,10 +342,13 @@ export const saveItemHandler = async ({
         folderAccess: folderAccessFrom(ctx),
       },
     });
-    const filedInFoldersOnly = await onlyFolders([
-      ...input.collections.map((c) => c.collectionId),
-      ...(input.removeFromCollectionIds ?? []),
-    ]);
+    // Without the flag no folder can be written, so the lookup is skipped.
+    const filedInFoldersOnly =
+      !!ctx.features.profileFolders &&
+      (await onlyFolders([
+        ...input.collections.map((c) => c.collectionId),
+        ...(input.removeFromCollectionIds ?? []),
+      ]));
 
     if (status === 'added' && input.type && !filedInFoldersOnly) {
       const entityId = [input.articleId, input.modelId, input.postId, input.imageId].find(
@@ -429,7 +434,8 @@ export const bulkSaveItemsHandler = async ({
       permissions,
     });
 
-    const filedInFolder = await onlyFolders([input.collectionId]);
+    const filedInFolder =
+      !!ctx.features.profileFolders && (await onlyFolders([input.collectionId]));
     for (const imgId of filedInFolder ? [] : resp.imageIds) {
       await updateEntityMetric({
         ctx,
@@ -881,12 +887,15 @@ export const removeCollectionItemHandler = async ({
         isModerator: user.isModerator,
         folderAccess: folderAccessFrom(ctx),
       });
-    // One at a time: each item keeps the single remove's own authorization.
-    const [first, ...rest] = itemId != null ? [itemId] : itemIds ?? [];
-    if (first == null) throw throwBadRequestError('Pass itemId or itemIds');
-    let result = await remove(first);
-    for (const id of rest) result = await remove(id);
-    return result;
+    if (itemId != null) return await remove(itemId);
+    if (!itemIds?.length) throw throwBadRequestError('Pass itemId or itemIds');
+    // Each item goes through the single remove, so each keeps its own authorization.
+    let result: Awaited<ReturnType<typeof remove>> | undefined;
+    for (const batch of chunk(itemIds, REMOVE_BATCH)) {
+      const removed = await Promise.all(batch.map(remove));
+      result = removed[removed.length - 1];
+    }
+    return result as Awaited<ReturnType<typeof remove>>;
   } catch (error) {
     throw throwDbError(error);
   }

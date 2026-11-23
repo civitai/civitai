@@ -9858,7 +9858,7 @@ model UserProfile {
   profileSectionsSettings Json      @default("[{\"key\":\"showcase\",\"enabled\":true},{\"key\":\"popularModels\",\"enabled\":true},{\"key\":\"popularArticles\",\"enabled\":true},{\"key\":\"modelsOverview\",\"enabled\":true},{\"key\":\"imagesOverview\",\"enabled\":true},{\"key\":\"recentReviews\",\"enabled\":true}]")
   showcaseItems           Json      @default("[]")
   showcaseSections        Json      @default("[]")
-  /// Profile folder rows: [{ id, name, folders: [{ id, hidden? }] }]. Read only by the folders read.
+  /// Profile folder rows: [{ id, name, folders: [{ id, hidden? }] }]. Not part of the general profile read.
   folderRows              Json?
 
   @@id([userId])

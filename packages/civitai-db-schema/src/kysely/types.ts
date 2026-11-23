@@ -6828,7 +6828,7 @@ export type UserProfile = {
   showcaseItems: Generated<unknown>;
   showcaseSections: Generated<unknown>;
   /**
-   * Profile folder rows: [{ id, name, folders: [{ id, hidden? }] }]. Read only by the folders read.
+   * Profile folder rows: [{ id, name, folders: [{ id, hidden? }] }]. Not part of the general profile read.
    */
   folderRows: unknown | null;
 };

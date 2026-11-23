@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * A collection becomes a profile folder only through createFolder, and a folder's storage is fixed:
@@ -7,7 +8,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * or turn a collection into one.
  */
 
-const { upsertCollection } = await import('~/server/services/collection.service');
+const { upsertCollection, createFolder } = await import('~/server/services/collection.service');
 
 const OWNER = 5;
 
@@ -96,5 +97,35 @@ describe('editing', () => {
       })
     ).rejects.toThrow(/created from your profile/);
     expect(dbMock.dbWrite.collection.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('createFolder', () => {
+  const create = () => createFolder({ userId: OWNER, name: 'n', read: 'Public' });
+
+  it('creates a folder while the owner is under the cap', async () => {
+    dbMock.dbWrite.collection.count.mockResolvedValue(99 as never);
+    await create();
+    expect(createData()).toMatchObject({ mode: 'Folder', userId: OWNER });
+  });
+
+  it('refuses the 101st folder and creates nothing', async () => {
+    dbMock.dbWrite.collection.count.mockResolvedValue(100 as never);
+    await expect(create()).rejects.toThrow(/up to 100 folders/);
+    expect(dbMock.dbWrite.collection.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses, creating nothing, while another create for the same owner holds the lock', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(redisMock.redis.set).mockResolvedValue(null as never);
+      const pending = create();
+      const outcome = expect(pending).rejects.toThrow(/still being created/);
+      await vi.runAllTimersAsync();
+      await outcome;
+      expect(dbMock.dbWrite.collection.create).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

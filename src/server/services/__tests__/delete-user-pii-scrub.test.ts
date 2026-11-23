@@ -390,7 +390,7 @@ describe('the profile archive before an account deletion', () => {
       expect.objectContaining({
         userId: USER_ID,
         actorId: ACTOR,
-        clearedFields: ['location', 'bio', 'message', 'showcaseSections', 'links'],
+        clearedFields: ['location', 'bio', 'message', 'showcaseSections', 'folderRows', 'links'],
         profile: { bio: 'pay me offsite' },
       })
     );
