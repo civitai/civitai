@@ -3,12 +3,14 @@ import {
   CSAM_REPORT_LISTINGS_SQL,
   NEWEST_BLOCKLIST_ROW_SQL,
 } from '@civitai/shared/held-media';
+import { songIdOfCoverSql } from '@civitai/shared/song-csam-hold';
 import { REDACT_LOG_MARKER } from '@civitai/db';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { blocklistCall } from '~/server/services/blocked-image-hash';
+import { holdSongsOfCovers } from '~/server/services/csam-image-review';
 import { bulkAddBlockedImages, mirrorCsamEntries } from '~/server/services/image.service';
 import { BlockImageReason } from '~/shared/utils/prisma/enums';
 import { createJob } from './job';
@@ -219,11 +221,79 @@ const deps: HealDeps = {
     }),
 };
 
+export const SONG_HOLD_CAP = 200;
+
+/**
+ * A cover removed for CSAM whose song is not under csam review. A song a moderator has acted on is
+ * left to the moderator.
+ */
+const UNHELD_SONG_OF_COVER = `FROM "Image" c JOIN "Image" s ON s.id = ${songIdOfCoverSql('c')}
+  WHERE c."blockedFor" = 'CSAM' AND c."postId" IS NULL AND s.type = 'audio'
+    AND s."needsReview" IS DISTINCT FROM 'csam'
+    AND NOT EXISTS (SELECT 1 FROM "ModActivity" m WHERE m."entityType" = 'image' AND m."entityId" = s.id)`;
+
+/** One more than the cap, so a run can tell it was capped. */
+export const UNHELD_SONG_COVERS_SQL = `SELECT c.id ${UNHELD_SONG_OF_COVER}
+  ORDER BY c.id LIMIT ${SONG_HOLD_CAP + 1}`;
+/** On the primary, under the song's row lock: whether the cover $1 still qualifies. */
+export const UNHELD_SONG_COVER_RECHECK_SQL = `SELECT c.id ${UNHELD_SONG_OF_COVER}
+  AND c.id = $1 FOR UPDATE OF s`;
+
+export type SongHoldCounts = { candidates: number; held: number; failed: number; capped: boolean };
+
+/**
+ * Holds the song of each cover removed for CSAM whose song is not held yet, through the hold a
+ * scan's CSAM block of a cover writes, with the cover as its source. Each cover is its own
+ * transaction, so one that fails is retried on the next run without holding back the others.
+ */
+export async function holdSongsOfCsamBlockedCovers(): Promise<SongHoldCounts> {
+  const rows = await dbRead.$queryRawUnsafe<{ id: number }[]>(UNHELD_SONG_COVERS_SQL);
+  const covers = rows.slice(0, SONG_HOLD_CAP).map((row) => row.id);
+  let held = 0;
+  let failed = 0;
+  for (const coverId of covers) {
+    try {
+      const wrote = await dbWrite.$transaction(async (tx) => {
+        const still = await tx.$queryRawUnsafe<{ id: number }[]>(
+          UNHELD_SONG_COVER_RECHECK_SQL,
+          coverId
+        );
+        if (!still.length) return false;
+        await holdSongsOfCovers(tx, [coverId]);
+        return true;
+      });
+      if (wrote) held++;
+    } catch (error) {
+      failed++;
+      logToAxiom({
+        type: 'error',
+        name: 'csam-self-heal-song-hold',
+        message: (error as Error).message,
+        payload: { coverId },
+      });
+    }
+  }
+  const counts = { candidates: covers.length, held, failed, capped: rows.length > SONG_HOLD_CAP };
+  logToAxiom({
+    type: 'info',
+    name: 'csam-self-heal-song-hold',
+    message: 'CSAM self-heal song holds',
+    payload: counts,
+  });
+  return counts;
+}
+
 export async function runCsamBlocklistSelfHeal() {
-  return healCsamBlocklist(
+  // Not behind the blocklist flag: a hold hides a song until a moderator reviews it.
+  const songHolds = await holdSongsOfCsamBlockedCovers().catch((error: Error) => {
+    logToAxiom({ type: 'error', name: 'csam-self-heal-song-hold', message: error.message });
+    return null;
+  });
+  const counts = await healCsamBlocklist(
     { writes: await isFlipt(FLIPT_FEATURE_FLAGS.CSAM_BLOCKLIST_SELF_HEAL) },
     deps
   );
+  return { ...counts, songHolds };
 }
 
 export const csamBlocklistSelfHeal = createJob(
