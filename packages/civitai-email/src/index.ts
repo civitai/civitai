@@ -24,6 +24,7 @@ export {
   EMAIL_PREHEADER_CLASS,
   EMAIL_MUTED_CLASS,
   EMAIL_DECORATION_CLASSES,
+  EMAIL_ROW_CLASS,
 } from './shell';
 export type { EmailShellInput, EmailAccent } from './shell';
 export { default as addressparser } from 'nodemailer/lib/addressparser/index.js';

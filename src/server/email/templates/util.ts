@@ -11,6 +11,7 @@ export {
   EMAIL_PREHEADER_CLASS,
   EMAIL_MUTED_CLASS,
   EMAIL_DECORATION_CLASSES,
+  EMAIL_ROW_CLASS,
 } from '@civitai/email';
 export type { EmailAccent } from '@civitai/email';
 

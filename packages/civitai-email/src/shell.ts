@@ -159,6 +159,11 @@ export const EMAIL_MUTED_CLASS = 'em-muted';
  * on a cell, not a table, so a layout-table rule cannot outrank them.
  */
 export const EMAIL_DECORATION_CLASSES = ['em-badge', 'em-social'] as const;
+/**
+ * Class on each summary row. html-to-text writes table rows inline (only a layout TABLE is a
+ * block), so without it every row of a summary runs together on one plain-text line.
+ */
+export const EMAIL_ROW_CLASS = 'em-row';
 
 // Font family attributes are double-quoted, so the stack's own quotes become single quotes.
 const font = emailFontStack.replace(/"/g, "'");
@@ -214,7 +219,10 @@ export type EmailShellInput = {
   /** Small print at the bottom of the card, below a divider. */
   footer?: string;
   preheader?: string;
-  /** Origin the logo is loaded from (no trailing slash). Defaults to EMAIL_ASSET_ORIGIN. */
+  /**
+   * Origin of the site the email links to and loads its images from (no trailing slash): the logo,
+   * the social icons, and the Terms, Privacy and Support links. Defaults to EMAIL_ASSET_ORIGIN.
+   */
   baseUrl?: string;
   /** An emoji shown in a round badge above the heading. Decoration: plain text leaves it out. */
   icon?: string;
@@ -226,14 +234,14 @@ export type EmailShellInput = {
 
 /**
  * A tinted block of label/value rows, for the facts an email is about (a model and version, a
- * bounty, an amount). Values are inserted as HTML, so callers escape anything user-supplied. A
- * layout table, so the plain-text part reads it as lines.
+ * bounty, an amount). Values are inserted as HTML, so callers escape anything user-supplied. Each
+ * row carries EMAIL_ROW_CLASS, which the plain-text part turns into its own line ("Label Value").
  */
 export const renderEmailSummary = (rows: { label: string; value: string }[]) => {
   const cells = rows
     .map(
       ({ label, value }, i) => `
-            <tr>
+            <tr class="${EMAIL_ROW_CLASS}">
               <td class="${EMAIL_MUTED_CLASS}" style="padding: ${
         i === 0 ? '0' : '10px'
       } 16px 0 0; font-family: ${font}; font-size: 14px; line-height: 20px; color: ${

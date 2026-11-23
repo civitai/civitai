@@ -112,7 +112,7 @@ describe('page footer', () => {
 });
 
 describe('summary and callout blocks', () => {
-  it('renders label/value rows in a layout table that reads as lines in plain text', () => {
+  it('renders label/value rows in a layout table, one plain-text line per row', () => {
     const block = renderEmailSummary([
       { label: 'Model', value: 'Pixel &amp; Pal' },
       { label: 'Version', value: 'v2' },
@@ -123,8 +123,27 @@ describe('summary and callout blocks', () => {
     expect(block).toMatch(/>Model<\/td>\s*<td[^>]*>Pixel &amp; Pal<\/td>/);
     expect(block).toMatch(/>Version<\/td>\s*<td[^>]*>v2<\/td>/);
     const text = htmlToPlainText(simpleEmailWithTemplate({ header: 'H', body: block }));
-    expect(text).toMatch(/Model\s+Pixel & Pal/);
-    expect(text).toMatch(/Version\s+v2/);
+    // Each row is a line of its own: label and value together, a line break before the next row.
+    expect(text).toMatch(/^Model Pixel & Pal\n+Version v2$/m);
+    expect(text).not.toMatch(/Pixel & Pal[ \t]+Version/);
+  });
+
+  // The bounty name is user-chosen and goes into the heading as HTML.
+  it.each([
+    ['bountyExpiredEmail', 'bounties/bountyExpired.email'],
+    ['bountyExpiredReminderEmail', 'bounties/bountyExpiredReminder.email'],
+    ['bountyRefundedEmail', 'bounties/bountyRefunded.email'],
+  ])('%s escapes the bounty name in its heading', async (name, file) => {
+    const mod: Record<string, { getHtml: (data: unknown) => string }> = await import(
+      `~/server/email/templates/${file}`
+    );
+    const html = mod[name]!.getHtml({
+      bounty: { id: 1, name: 'Evil <b>& bold', entryCount: 3 },
+      user: { username: 'tester', email: 'tester@example.com' },
+    });
+    const h1 = html.match(/<h1 class="em-h1"[^>]*>([^]*?)<\/h1>/)?.[1];
+    expect(h1).toContain('<strong>Evil &lt;b&gt;&amp; bold</strong>');
+    expect(html).not.toContain('<b>&');
   });
 
   it('puts a callout behind an accent bar, in a monospace face when asked', () => {

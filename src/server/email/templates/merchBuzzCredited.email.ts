@@ -1,3 +1,4 @@
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { createEmail } from '~/server/email/templates/base.email';
 import { renderEmailSummary, simpleEmailWithTemplate } from '~/server/email/templates/util';
 
@@ -21,11 +22,11 @@ export const merchBuzzCreditedEmail = createEmail({
       body: `
       <p style="margin: 0;">
         <strong>⚡${buzzAmount.toLocaleString()} Blue Buzz</strong> has been added to your Civitai account
-        <strong>${username}</strong>.
+        <strong>${escapeHtml(username)}</strong>.
       </p>
       ${renderEmailSummary([
         { label: 'Blue Buzz added', value: `⚡${buzzAmount.toLocaleString()}` },
-        { label: 'Account', value: username },
+        { label: 'Account', value: escapeHtml(username) },
       ])}
       <p style="margin: 0;">
         Your store account is already linked to Civitai, so it was credited automatically - nothing else

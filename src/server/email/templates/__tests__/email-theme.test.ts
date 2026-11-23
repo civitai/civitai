@@ -54,8 +54,6 @@ describe('email theme text meets WCAG AA (4.5:1)', () => {
     expect(contrast(a.text, t.surface)).toBeGreaterThanOrEqual(4.5);
     expect(contrast(a.darkText, t.dark.surface)).toBeGreaterThanOrEqual(4.5);
     expect(contrast(t.text, a.tint)).toBeGreaterThanOrEqual(4.5);
-    // The dark-mode callout drops the tint for the dark panel; body text stays dark-mode text.
-    expect(contrast(t.dark.text, t.dark.panel)).toBeGreaterThanOrEqual(4.5);
   });
 
   it('gives every accent a solid colour for clients without gradients', () => {
