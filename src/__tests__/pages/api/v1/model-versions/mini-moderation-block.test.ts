@@ -306,14 +306,17 @@ describe('mini/[id] moderation block: moderator credentials', () => {
 
 describe('mini/[id] deleted model with Published versions', () => {
   const at = new Date('2026-01-01T00:00:00Z');
-  it.each<[string, Partial<Row>]>([
-    ['status Deleted', { modelStatus: 'Deleted' }],
-    ['only deletedAt set', { modelDeletedAt: at }],
-    ['status Deleted and deletedAt set', { modelStatus: 'Deleted', modelDeletedAt: at }],
-  ])('refuses generation to every caller when the model has %s', async (_, row) => {
-    // A model the shared visibility rule hides (status Deleted) is an unknown id to anyone but its
-    // owner, a moderator and the orchestrator.
-    const hidden = row.modelStatus === 'Deleted';
+  // `hidden`: the shared visibility rule hides it (status Deleted), so it is an unknown id to anyone but
+  // its owner, a moderator and the orchestrator.
+  it.each<[string, Partial<Row>, { hidden: boolean }]>([
+    ['status Deleted', { modelStatus: 'Deleted' }, { hidden: true }],
+    ['only deletedAt set', { modelDeletedAt: at }, { hidden: false }],
+    [
+      'status Deleted and deletedAt set',
+      { modelStatus: 'Deleted', modelDeletedAt: at },
+      { hidden: true },
+    ],
+  ])('refuses generation to every caller when the model has %s', async (_, row, { hidden }) => {
     for (const authorization of [undefined, 'Bearer other-key']) {
       const { status, body } = await call(authorization, row);
       if (hidden)

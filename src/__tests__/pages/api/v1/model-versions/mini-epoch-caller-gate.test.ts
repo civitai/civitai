@@ -579,8 +579,8 @@ describe('mini/[id] ?epoch= from the query string', () => {
 });
 
 /**
- * Every Private call goes through the gate, not only the epoch arm: a Private MODEL whose version
- * is Public, and a Private version whose file has no epochs.
+ * Every Private call goes through the gate, not only the epoch arm (#10174): a Private MODEL whose
+ * version is Public, and a Private version whose file has no epochs.
  */
 describe('mini/[id] a Private parent outside the epoch arm', () => {
   const PLAIN_FILE = {
