@@ -2925,6 +2925,24 @@ export const blocksRouter = router({
     }),
 
   /**
+   * MOD-ONLY: what approving this pending version does to the rating of the app's existing
+   * on-site store listing (`previewVersionListingRating`), so the approve bar can say so before
+   * the moderator approves. Same auth shape as getPublishRequestScreenshots.
+   */
+  getVersionListingRatingPreview: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getPublishRequestScreenshotsSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Mod review is restricted to civitai team');
+      }
+      const { previewVersionListingRating } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      return previewVersionListingRating(input.publishRequestId);
+    }),
+
+  /**
    * MOD-ONLY line-level code diff for a publish request. Computes the per-file
    * UNIFIED diff between the pending bundle and the previous approved version so
    * a reviewer can read the actual code change in the modal instead of clicking

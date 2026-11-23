@@ -44,6 +44,8 @@ const mocks = vi.hoisted(() => ({
   assetsQuery: vi.fn(),
   holds: [] as unknown[],
   approveResult: undefined as unknown,
+  versionPreview: undefined as unknown,
+  versionPreviewQuery: vi.fn(),
 }));
 
 const notified = vi.hoisted(() => [] as Record<string, unknown>[]);
@@ -95,6 +97,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         'blocks.listPublishRequestHolds': { useQuery: () => ({ data: mocks.holds }) },
         'blocks.clearPublishRequestHold': { useMutation: mutation('clearHold') },
         'blocks.placePublishRequestHold': { useMutation: mutation('placeHold') },
+        'blocks.getVersionListingRatingPreview': {
+          useQuery: (input: unknown, opts: unknown) => {
+            mocks.versionPreviewQuery(input, opts);
+            return { data: mocks.versionPreview };
+          },
+        },
         'appListings.getAssets': {
           useQuery: (input: unknown, opts: unknown) => {
             mocks.assetsQuery(input, opts);
@@ -117,7 +125,42 @@ beforeEach(() => {
   mocks.assets = { data: undefined, isError: false };
   mocks.assetsQuery.mockClear();
   mocks.holds = [];
+  mocks.versionPreview = undefined;
+  mocks.versionPreviewQuery.mockClear();
   showError.mockClear();
+});
+
+describe('ReviewActionBar — a new version re-rates the live listing', () => {
+  const bar = (mode: 'pending' | 'approved' = 'pending') =>
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{ request: { ...PENDING, appBlockId: 'apb_1' }, mode }}
+        onClose={vi.fn()}
+      />
+    );
+
+  test('says the approve re-rates the listing from X to PG-13, and asks the server every open', async () => {
+    mocks.versionPreview = { listingId: 'apl_live', from: 'x', to: 'pg13' };
+    bar();
+    const notice = page.getByTestId('apps-version-listing-rerate');
+    await expect.element(notice).toBeInTheDocument();
+    expect(notice.element().textContent).toBe(
+      'Approving this version re-rates the live store listing from X to PG-13: the rating this version declares, raised to its store imagery when that is rated higher.'
+    );
+    expect(mocks.versionPreviewQuery).toHaveBeenCalledWith(
+      { publishRequestId: 'req-1' },
+      { staleTime: 0, refetchOnMount: 'always', retry: false }
+    );
+    // A notice, not a gate.
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+  });
+
+  test('an unchanged rating says nothing', async () => {
+    mocks.versionPreview = { listingId: 'apl_live', from: 'r', to: 'r' };
+    bar();
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeInTheDocument();
+    expect(page.getByTestId('apps-version-listing-rerate').elements()).toHaveLength(0);
+  });
 });
 
 describe('ReviewActionBar — review holds', () => {

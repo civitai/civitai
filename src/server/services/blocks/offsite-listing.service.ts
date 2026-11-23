@@ -3392,9 +3392,9 @@ async function resolveApprovalContentRating(
  * re-sync and `republishOwnListing` use, so the on-site rating sites have ONE spelling.
  *
  * A moderator override may still RAISE above the floor (a mod may always rate up) and is
- * ignored when it would lower. It is stored only as the listing's `contentRating`, so the
- * next approved version's re-sync (`approveRequest`, (3b-sync)) re-rates the listing from
- * its manifest and media and does not keep it.
+ * ignored when it would lower. It is stored only as the listing's `contentRating`; the next
+ * approved version's re-sync (`resolveVersionListingRating`) keeps it by recognising a rating
+ * above what the previous version's declaration gives.
  *
  * 🔴 NOT quite "the same discipline as the off-site clamp above" — that sentence used to
  * live here and it is inaccurate AT EQUAL LEVEL, which is a reachable case rather than a

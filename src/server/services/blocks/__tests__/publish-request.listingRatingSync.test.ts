@@ -93,13 +93,15 @@ vi.mock('~/server/services/blocks/app-listing-assets.service', async (importOrig
   assertListingAssetsScanCleanInTx: vi.fn(async () => undefined),
 }));
 
-const { approveRequest } = await import('~/server/services/blocks/publish-request.service');
+const { approveRequest, previewVersionListingRating } = await import(
+  '~/server/services/blocks/publish-request.service'
+);
 const { NsfwLevel } = await import('~/server/common/enums');
 const { createSplitDb } = await import('./listing-media-split.harness');
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-/** The new version declares `pg13`; every listing below was approved at `x`. */
+/** The new version declares `pg13`. Unless a case says otherwise the previous one declared `x`. */
 const MANIFEST = { name: 'Cool App', scopes: [], contentRating: 'pg13' };
 const MOD = 9;
 const LIVE = 'apl_live';
@@ -116,6 +118,8 @@ const LEVELS: Record<number, number> = {
 type Row = Record<string, unknown> & { id: string; contentRating: string | null };
 let rows: Row[] = [];
 let screenshots: Record<string, number[]> = {};
+/** The app's rating before this approve: the previous version's declaration. */
+let previousDeclared = 'x';
 
 /** Plain-valued `where` fields must equal the row's; relation / operator filters are ignored. */
 const matches = (row: Row, where: Record<string, unknown> = {}) =>
@@ -127,7 +131,9 @@ const find = (where?: Record<string, unknown>) => {
 };
 const row = (id: string) => rows.find((r) => r.id === id)!;
 
-function seedListings(opts: { kind?: 'onsite' | 'offsite'; withShadow?: boolean } = {}) {
+function seedListings(
+  opts: { kind?: 'onsite' | 'offsite'; withShadow?: boolean; rating?: string } = {}
+) {
   rows = [
     {
       id: LIVE,
@@ -139,7 +145,7 @@ function seedListings(opts: { kind?: 'onsite' | 'offsite'; withShadow?: boolean 
       userId: 4242,
       iconId: ICON,
       coverId: COVER,
-      contentRating: 'x',
+      contentRating: opts.rating ?? 'x',
     },
   ];
   // A live media revision in flight: a shadow row of the same listing. Its appBlockId is NULL,
@@ -164,9 +170,10 @@ function wireListingTable() {
     find(args?.where)) as never;
   db.read.appListing.findUnique.mockImplementation(findUnique);
   db.write.appListing.findUnique.mockImplementation(findUnique);
-  db.write.appListing.findFirst.mockImplementation((async (args: {
-    where?: Record<string, unknown>;
-  }) => find(args?.where)) as never);
+  const findFirst = (async (args: { where?: Record<string, unknown> }) =>
+    find(args?.where)) as never;
+  db.read.appListing.findFirst.mockImplementation(findFirst);
+  db.write.appListing.findFirst.mockImplementation(findFirst);
   db.write.appListing.updateMany.mockImplementation((async (args: {
     where?: Record<string, unknown>;
     data?: Record<string, unknown>;
@@ -183,17 +190,23 @@ function wireListingTable() {
     if (r) Object.assign(r, args?.data);
     return r ? { ...r } : null;
   }) as never);
-  db.write.appListingScreenshot.findMany.mockImplementation((async (args: {
-    where?: { appListingId?: string };
-  }) =>
-    (screenshots[args?.where?.appListingId ?? ''] ?? []).map((imageId) => ({ imageId }))) as never);
-  db.write.image.findMany.mockImplementation((async (args: {
-    where?: { id?: { in?: number[] } };
-  }) =>
-    (args?.where?.id?.in ?? []).map((id) => ({
-      id,
-      nsfwLevel: LEVELS[id] ?? NsfwLevel.PG,
-    }))) as never);
+  // The approve floors on the primary, the approve-bar preview on the replica: both see the
+  // same media.
+  for (const client of [db.read, db.write]) {
+    client.appListingScreenshot.findMany.mockImplementation((async (args: {
+      where?: { appListingId?: string };
+    }) =>
+      (screenshots[args?.where?.appListingId ?? ''] ?? []).map((imageId) => ({
+        imageId,
+      }))) as never);
+    client.image.findMany.mockImplementation((async (args: {
+      where?: { id?: { in?: number[] } };
+    }) =>
+      (args?.where?.id?.in ?? []).map((id) => ({
+        id,
+        nsfwLevel: LEVELS[id] ?? NsfwLevel.PG,
+      }))) as never);
+  }
 }
 
 let split: Awaited<ReturnType<typeof createSplitDb>>;
@@ -215,24 +228,43 @@ const approve = () => approveRequest({ publishRequestId: 'req_1', reviewerUserId
 beforeEach(async () => {
   vi.clearAllMocks();
   screenshots = {};
+  previousDeclared = 'x';
   db.write.appBlockPublishRequest.update.mockImplementation(
     async (a: { data?: unknown }) => a?.data ?? {}
   );
   db.write.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
   db.write.appBlock.update.mockImplementation(async (a: { data?: unknown }) => a?.data ?? {});
   db.write.appBlock.updateMany.mockResolvedValue({ count: 0 });
-  // The block as the subsequent-version update above (3b) just wrote it from the manifest.
-  db.write.appBlock.findUnique.mockResolvedValue({
-    id: 'apb_1',
-    blockId: 'cool-app',
-    manifest: MANIFEST,
-    contentRating: 'pg13',
-    category: 'utility',
-    featured: false,
-    featuredOrder: null,
-    externalUrl: null,
-    app: { userId: 42 },
-  });
+  // The block as the approve reads it on the primary: the rollback snapshot taken BEFORE the
+  // version update (it selects `approvedScopes`) carries the previous declaration, every later
+  // read the new manifest's.
+  db.write.appBlock.findUnique.mockImplementation((async (args: {
+    select?: Record<string, unknown>;
+  }) =>
+    args?.select?.approvedScopes
+      ? {
+          manifest: { ...MANIFEST, contentRating: previousDeclared },
+          version: '1.2.0',
+          approvedScopes: [],
+          contentRating: previousDeclared,
+          renderMode: 'iframe',
+          trustTier: 'unverified',
+        }
+      : {
+          id: 'apb_1',
+          blockId: 'cool-app',
+          manifest: MANIFEST,
+          contentRating: 'pg13',
+          category: 'utility',
+          featured: false,
+          featuredOrder: null,
+          externalUrl: null,
+          app: { userId: 42 },
+        }) as never);
+  // Before the approve runs, the replica still has the previous version's rating.
+  db.read.appBlock.findUnique.mockImplementation((async () => ({
+    contentRating: previousDeclared,
+  })) as never);
   db.write.oauthClient.update.mockResolvedValue({});
   db.write.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0n });
   db.read.appBlockPublishRequest.findUnique.mockResolvedValue({
@@ -264,6 +296,7 @@ beforeEach(async () => {
   await split.applyMigration();
   await split.seed({ listingIds: [LIVE, SHADOW], images: LEVELS, users: [MOD] });
   split.route(db.write as never);
+  split.route(db.read as never);
   wireListingTable();
 });
 
@@ -279,6 +312,7 @@ describe('approveRequest (3b-sync) — the listing rating follows the approved m
       after: 'pg13',
       actorUserId: MOD,
     });
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
   });
 
   it('🔴 a `pg13` declaration over mature store art takes the art’s rating', async () => {
@@ -302,15 +336,32 @@ describe('approveRequest (3b-sync) — the listing rating follows the approved m
     expect(await split.stamp(LIVE)).toEqual({ at: expect.any(String), by: MOD });
   });
 
-  it('writes the rating in the same statement as the manifest copy', async () => {
-    seedListings();
+  it('🔴 KEEPS a moderator’s raise: a `pg13` app whose listing a moderator raised to `r` stays `r`', async () => {
+    previousDeclared = 'pg13';
+    seedListings({ rating: 'r' });
     await approve();
-    const writes = db.write.appListing.updateMany.mock.calls.map(
-      (c) => (c[0] as { data?: Record<string, unknown> }).data ?? {}
-    );
-    expect(writes.filter((d) => 'contentRating' in d)).toEqual([
-      expect.objectContaining({ name: 'Cool App', contentRating: 'pg13' }),
-    ]);
+    expect(row(LIVE).contentRating).toBe('r');
+    expect(recordRatingChange).not.toHaveBeenCalled();
+  });
+
+  it('a kept raise still rises with the app: the same listing goes to `x` when the version declares it', async () => {
+    previousDeclared = 'pg13';
+    seedListings({ rating: 'r' });
+    db.write.appBlock.findUnique.mockImplementation((async (args: {
+      select?: Record<string, unknown>;
+    }) =>
+      args?.select?.approvedScopes
+        ? { contentRating: 'pg13', manifest: MANIFEST, version: '1.2.0', approvedScopes: [] }
+        : {
+            id: 'apb_1',
+            blockId: 'cool-app',
+            manifest: { ...MANIFEST, contentRating: 'x' },
+            contentRating: 'x',
+            category: 'utility',
+            app: { userId: 42 },
+          }) as never);
+    await approve();
+    expect(row(LIVE).contentRating).toBe('x');
   });
 
   // Invariant guard, not regression coverage: the re-sync was keyed on appBlockId before.
@@ -334,5 +385,52 @@ describe('approveRequest (3b-sync) — the listing rating follows the approved m
     }
     expect(row(LIVE).contentRating).toBe('x');
     expect(recordRatingChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('previewVersionListingRating — what the approve bar shows the moderator', () => {
+  it('🔴 shows the re-rate the approve then writes: X → PG-13', async () => {
+    seedListings();
+    expect(await previewVersionListingRating('req_1')).toEqual({
+      listingId: LIVE,
+      from: 'x',
+      to: 'pg13',
+    });
+    await approve();
+    expect(row(LIVE).contentRating).toBe('pg13');
+  });
+
+  it('a kept moderator raise previews as no change, and the approve keeps it', async () => {
+    previousDeclared = 'pg13';
+    seedListings({ rating: 'r' });
+    expect(await previewVersionListingRating('req_1')).toEqual({
+      listingId: LIVE,
+      from: 'r',
+      to: 'r',
+    });
+    await approve();
+    expect(row(LIVE).contentRating).toBe('r');
+  });
+
+  it('mature store art previews the art’s rating', async () => {
+    seedListings();
+    screenshots[LIVE] = [SHOT_R];
+    expect(await previewVersionListingRating('req_1')).toEqual({
+      listingId: LIVE,
+      from: 'x',
+      to: 'r',
+    });
+  });
+
+  it('nothing to re-rate: an off-site listing, or a request that is not pending', async () => {
+    seedListings({ kind: 'offsite' });
+    expect(await previewVersionListingRating('req_1')).toBeNull();
+    seedListings();
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
+      status: 'approved',
+      appBlockId: 'apb_1',
+      manifest: MANIFEST,
+    } as never);
+    expect(await previewVersionListingRating('req_1')).toBeNull();
   });
 });

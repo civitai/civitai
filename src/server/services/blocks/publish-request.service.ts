@@ -2692,6 +2692,45 @@ function listingBelongsToRequest(listing: JoinedListing, req: ListingJoinSubject
   return listing.userId === req.submittedBy?.id;
 }
 
+/**
+ * What approving this pending version does to the rating of its app's existing on-site listing
+ * ((3b-sync)), for the approve bar: the listing's rating now (`from`) and after the approve
+ * (`to`), from the same `resolveVersionListingRating` the approve writes with. `null` when the
+ * approve re-rates no listing this way (no app yet, no on-site listing keyed to it, or a request
+ * that is not pending). The app's rating is read as it is now, which is the previous version's
+ * declaration until the approve runs.
+ *
+ * Asked once per opened request, not in `listingFactsForRequests`: the floor reads the
+ * listing's media, which is a query per listing, and the queue pages must stay a fixed count.
+ */
+export async function previewVersionListingRating(
+  publishRequestId: string
+): Promise<{ listingId: string; from: string | null; to: string | null } | null> {
+  const { dbRead } = await import('~/server/db/client');
+  const request = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: publishRequestId },
+    select: { status: true, appBlockId: true, manifest: true },
+  });
+  if (!request || request.status !== 'pending' || !request.appBlockId) return null;
+  const listing = await dbRead.appListing.findFirst({
+    where: { appBlockId: request.appBlockId, kind: 'onsite' },
+    select: { id: true, contentRating: true },
+  });
+  const block = await dbRead.appBlock.findUnique({
+    where: { id: request.appBlockId },
+    select: { contentRating: true },
+  });
+  if (!listing || !block) return null;
+  const { resolveVersionListingRating } = await import('./app-listing-version-rating.service');
+  const to = await resolveVersionListingRating(dbRead, {
+    appListingId: listing.id,
+    current: listing.contentRating,
+    previousDeclared: block.contentRating,
+    nextDeclared: manifestRatingOrDefault(request.manifest),
+  });
+  return { listingId: listing.id, from: listing.contentRating, to };
+}
+
 /** The rating a manifest declares; an app that declares none is approved as `g`. */
 function manifestRatingOrDefault(manifest: unknown): string {
   const rating = (manifest as { contentRating?: unknown } | null)?.contentRating;
@@ -4275,8 +4314,8 @@ async function approveRequestUnderClaim(
       //
       // WHAT WE DO NOT TOUCH (curated / mod-owned): assets (icon / cover /
       // screenshots), `featured` / `featuredOrder`, `status`, `slug`, `externalUrl`.
-      // `contentRating` IS written: the manifest's declared rating floored at the
-      // store media (see 🔴 RATING SYNC below).
+      // `contentRating` IS written, by `resolveVersionListingRating` (see 🔴 RATING SYNC
+      // below).
       //
       // `category` comes from `AppBlock.category` — NOT the manifest — because
       // step (3a) writes the manifest category onto that column ONLY when it is
@@ -4307,19 +4346,13 @@ async function approveRequestUnderClaim(
           select: { blockId: true, manifest: true, category: true, contentRating: true },
         });
         if (ab) {
-          // 🔴 RATING SYNC. The approved manifest's declared rating (`AppBlock.contentRating`,
-          // written from it above), raised to the store media's rating when that is more
-          // mature: the floor the first approve applies, so the listing reads as if this
-          // version had been its first. It LOWERS as well as raises (an app that drops
-          // `x` → `pg13` is re-rated `pg13`), and that is covered by the moderator who just
-          // approved the new manifest. The media is re-derived here, so mature art keeps the
-          // rating up. A split a moderator granted is kept, as on every path that does not
-          // publish the listing (`readListingMediaSplit`).
-          //
-          // 🔴 NO MODERATOR OVERRIDE SURVIVES THIS, because none is stored. An on-site
-          // listing's rating lives in one column; a review's override
-          // (`resolveOnsiteApprovalContentRating`) and a live-edit raise write that column and
-          // nothing else, so they cannot be told apart from the rating the last approve set.
+          // 🔴 RATING SYNC (`resolveVersionListingRating`): the approved manifest's declared
+          // rating (`AppBlock.contentRating`, written from it above), raised to the store
+          // media's rating when that is more mature, so it LOWERS as well as raises (an app
+          // that drops `x` → `pg13` is re-rated `pg13`). The approve bar shows the moderator
+          // the change first (`previewVersionListingRating`). A rating above what the
+          // PREVIOUS version's declaration gives is a moderator's raise and is kept; the
+          // previous declaration is `priorVersion`, read before the update above.
           //
           // Read on the PRIMARY. A missing row leaves the column out of the write.
           const ratingListing = await dbWrite.appListing.findFirst({
@@ -4328,16 +4361,15 @@ async function approveRequestUnderClaim(
           });
           let syncedRating: string | null = null;
           if (ratingListing) {
-            const { resolveListingRatingFloorInTx } = await import(
-              '~/server/services/blocks/app-listing-assets.service'
+            const { resolveVersionListingRating } = await import(
+              './app-listing-version-rating.service'
             );
-            const { readListingMediaSplit } = await import('./listing-media-split.service');
-            syncedRating = await resolveListingRatingFloorInTx(
-              dbWrite,
-              ratingListing.id,
-              ab.contentRating,
-              await readListingMediaSplit(dbWrite, ratingListing.id)
-            );
+            syncedRating = await resolveVersionListingRating(dbWrite, {
+              appListingId: ratingListing.id,
+              current: ratingListing.contentRating,
+              previousDeclared: priorVersion?.block.contentRating ?? null,
+              nextDeclared: ab.contentRating,
+            });
           }
           const synced = await dbWrite.appListing.updateMany({
             where: { appBlockId, kind: 'onsite' },
@@ -4351,7 +4383,7 @@ async function approveRequestUnderClaim(
               ...(ratingListing ? { contentRating: syncedRating } : {}),
             },
           });
-          if (ratingListing && synced.count > 0) {
+          if (ratingListing && synced.count > 0 && syncedRating !== ratingListing.contentRating) {
             await recordListingRatingChangeAfterCommit({
               appListingId: ratingListing.id,
               slug: request.slug,

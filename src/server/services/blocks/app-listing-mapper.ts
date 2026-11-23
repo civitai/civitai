@@ -144,8 +144,9 @@ export function buildListingIssueTrackerSync(args: {
  * NOT included — these are curated/mod-owned and must never be clobbered by an
  * approve: assets (icon/cover/screenshots), `featured`/`featuredOrder`, `status`,
  * `slug`, `externalUrl`. `contentRating` is not in this set either, because it is
- * not a straight copy: the re-sync writes it beside these, as the manifest's declared
- * rating floored at the store media (`approveRequest`, (3b-sync)).
+ * not a straight copy: the re-sync writes it beside these, from
+ * `resolveVersionListingRating` (the manifest's declared rating floored at the store media,
+ * keeping a moderator's raise).
  *
  * `category` is passed in RATHER than read from the manifest on purpose: the
  * approve path resolves it from `AppBlock.category`, which is the manifest value
