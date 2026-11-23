@@ -167,15 +167,18 @@ describe('isSmoke: the smoke set, by name or by the scanner list', () => {
     expect(isSmoke(f, new Set())).toBe(false);
   });
 
+  // Unlisted, and no name pattern: out.
   it.each([
     'src/server/services/__tests__/model.service.test.ts',
-    // the component project, not unit, even when listed
-    'src/components/__tests__/no-overflow.browser.test.tsx',
-    // apps are not in the unit project's include
-    'apps/moderator/src/no-thing.test.ts',
     // `no-` must start the file name, not a directory
     'src/no-dir/__tests__/thing.test.ts',
-  ])('%s is not in it', (f) => expect(isSmoke(f, new Set([f]))).toBe(false));
+  ])('%s is not in it', (f) => expect(isSmoke(f, new Set())).toBe(false));
+
+  // Outside the unit project: out even when listed (checkManifest rejects such a listing).
+  it.each([
+    'src/components/__tests__/no-overflow.browser.test.tsx',
+    'apps/moderator/src/no-thing.test.ts',
+  ])('%s is not in it, even listed', (f) => expect(isSmoke(f, new Set([f]))).toBe(false));
 });
 
 // The list is checked in, so it can rot: a renamed or deleted scanner would silently leave the
