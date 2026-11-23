@@ -170,7 +170,6 @@ describe.each([{ rls: true }, { rls: false }])('the mark sequence (rls %o)', (op
   });
 
   describe('🔴 the lock order: (1) document, (1b) tally and mark rows, (1c) mark_head, (2) usage_app, (3) usage_user', () => {
-    /** The tables, in order, of the statements one call sent for `app`. */
     /**
      * The tables, in order, of the statements one call sent for `app`: each statement's first
      * appdata table. Statements naming none (a cold store's mark-sequence savepoint) are left out,
