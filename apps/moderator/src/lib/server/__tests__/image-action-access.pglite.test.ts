@@ -51,6 +51,11 @@ vi.mock('../image-moderation.service', async (importOriginal) => ({
   sendBulkAppealEmails: vi.fn(async () => undefined),
 }));
 vi.mock('../image-nsfw-level', () => ({ updateImageNsfwLevel }));
+// The open item's reports are not what these tests read.
+vi.mock('../report-queue-load', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../report-queue-load')>()),
+  loadItemReports: vi.fn(async () => []),
+}));
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
@@ -58,7 +63,7 @@ const { reportModerationActions } = await import('../report-actions');
 const bulkPage = await import('../../../routes/retool/bulk-image-manager/+page.server');
 const lookupPage = await import('../../../routes/retool/image-lookup/+page.server');
 const queuePage = await import('../../../routes/images/[slug]/+page.server');
-const { collectionImages } = await import('../entity-queue-load');
+const { collectionImages, loadEntityItem } = await import('../entity-queue-load');
 
 // A routine block reason, kept by the other row on its url, which has not finished its scan.
 const WITHHELD = 501;
@@ -334,5 +339,47 @@ describe("the image queues' accept actions", () => {
   it('bulk accept it for a grant holder', async () => {
     await queuePage.actions.bulkAccept(event(WITH_GRANT, { imageIds: String(WITHHELD) }));
     expect(acceptImage).toHaveBeenCalledOnce();
+  });
+});
+
+describe('an article report', () => {
+  beforeEach(async () => {
+    await db.exec(`
+      ALTER TABLE "Article" ADD COLUMN "userId" INTEGER, ADD COLUMN title TEXT,
+        ADD COLUMN "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(), ADD COLUMN "updatedAt" TIMESTAMP(3),
+        ADD COLUMN "publishedAt" TIMESTAMP(3), ADD COLUMN status TEXT NOT NULL DEFAULT 'Published',
+        ADD COLUMN availability TEXT NOT NULL DEFAULT 'Public',
+        ADD COLUMN unlisted BOOLEAN NOT NULL DEFAULT false, ADD COLUMN nsfw BOOLEAN NOT NULL DEFAULT false,
+        ADD COLUMN "tosViolation" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN cover TEXT,
+        ADD COLUMN "nsfwLevel" INTEGER NOT NULL DEFAULT 1, ADD COLUMN "userNsfwLevel" INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN "moderatorNsfwLevel" INTEGER, ADD COLUMN "moderatorNsfwLevelBasis" TEXT,
+        ADD COLUMN ingestion TEXT NOT NULL DEFAULT 'Scanned', ADD COLUMN "contentScannedAt" TIMESTAMP(3),
+        ADD COLUMN "scanRequestedAt" TIMESTAMP(3), ADD COLUMN "lockedProperties" TEXT[],
+        ADD COLUMN metadata JSONB, ADD COLUMN content TEXT;
+      INSERT INTO "Article" (id, "userId", title, cover, content) VALUES (70, 7, 'a', 'shared-key',
+        '<p>x</p><edge-media url="shared-key" type="image"><edge-media url="control-key" type="image"><edge-media url="missing-key" type="image">');
+      INSERT INTO "ImageConnection" ("imageId", "entityId", "entityType") VALUES (${CONTROL}, 70, 'Article');
+    `);
+  });
+
+  const page = async (user: { id: number; roles: string[] }) =>
+    JSON.stringify(
+      await loadEntityItem(
+        'article',
+        70,
+        { user, grants: GRANTS } as never,
+        new URL('https://mod.test/reports/article/70')
+      )
+    );
+
+  it('sends no withheld or unknown image key anywhere in the page data', async () => {
+    const data = await page(WITHOUT_GRANT);
+    expect(data).not.toContain('shared-key');
+    expect(data).not.toContain('missing-key');
+    expect(data).toContain('control-key');
+  });
+
+  it('sends a grant holder the withheld image key', async () => {
+    expect(await page(WITH_GRANT)).toContain('shared-key');
   });
 });

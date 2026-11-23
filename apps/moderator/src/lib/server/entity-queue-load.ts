@@ -16,7 +16,8 @@ import {
   withholdBatchMedia,
 } from './bulk-image.service';
 import { HELD_MEDIA_PAGE } from './held-media';
-import { articleBody } from './article-body';
+import { articleBody, type ArticleBody } from './article-body';
+import { restrictedImageIds } from './retracted-media';
 import { cappedText } from './html-to-text';
 import { loadItemReports } from './report-queue-load';
 import { parseQueryKeys } from './query';
@@ -243,6 +244,40 @@ async function subjectsByEntity(type: EntityQueueType, ids: number[]): Promise<S
 // ---------------------------------------------------------------------------------------------------
 // The open item
 
+/**
+ * `body` with each media segment the media access rule withholds from this moderator replaced by a
+ * `withheld` one that carries no key. A key that is no image's, or whose images include a withheld
+ * one, is withheld. A grant holder gets `body` as it is.
+ */
+export async function withholdArticleBody(
+  body: ArticleBody | null,
+  { csamReview }: { csamReview: boolean }
+): Promise<ArticleBody | null> {
+  if (!body || csamReview) return body;
+  const urls = [...new Set(body.segments.flatMap((s) => (s.kind === 'media' ? [s.url] : [])))];
+  if (!urls.length) return body;
+  const rows = await dbRead
+    .selectFrom('Image')
+    .select(['id', 'url'])
+    .where('url', 'in', urls)
+    .execute();
+  const withheld = await restrictedImageIds(
+    rows.map((r) => r.id),
+    { csamReview }
+  );
+  const shown = new Set(urls);
+  for (const url of urls) {
+    const ids = rows.filter((r) => r.url === url).map((r) => r.id);
+    if (!ids.length || ids.some((rowId) => withheld.has(rowId))) shown.delete(url);
+  }
+  return {
+    ...body,
+    segments: body.segments.map((s) =>
+      s.kind === 'media' && !shown.has(s.url) ? { kind: 'withheld', mediaType: s.mediaType } : s
+    ),
+  };
+}
+
 async function articleItem(id: number, csamReview: boolean) {
   const article = await getArticle(id);
   if (!article)
@@ -259,8 +294,9 @@ async function articleItem(id: number, csamReview: boolean) {
   ]);
   return {
     kind: 'article' as const,
-    article,
-    body: articleBody(content?.content),
+    // `cover` is a storage key the page never draws.
+    article: { ...article, cover: null },
+    body: await withholdArticleBody(articleBody(content?.content), { csamReview }),
     images,
     ownerId: article.userId,
   };
