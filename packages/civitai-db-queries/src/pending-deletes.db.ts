@@ -117,9 +117,12 @@ const unsentReportLists = (imageId: RawBuilder<unknown>) =>
 const unsentReportOn = {
   Image: (ownerId: number | RawBuilder<unknown>) =>
     sql<boolean>`(${unsentReportNames(ownerId)} OR ${unsentReportLists(sql.ref('Image.id'))})`,
-  Post: (ownerId: number | RawBuilder<unknown>) => sql<boolean>`(${unsentReportNames(ownerId)} OR EXISTS (
-    SELECT 1 FROM "Image" pi WHERE pi."postId" = "Post".id AND ${unsentReportLists(sql.ref('pi.id'))}
-  ))`,
+  Post: (ownerId: number | RawBuilder<unknown>) => {
+    const listed = unsentReportLists(sql.ref('pi.id'));
+    return sql<boolean>`(${unsentReportNames(ownerId)} OR EXISTS (
+      SELECT 1 FROM "Image" pi WHERE pi."postId" = "Post".id AND ${listed}
+    ))`;
+  },
 };
 
 /**
@@ -131,12 +134,16 @@ export const ownerReportHold = (table: 'Image' | 'Post', ownerId: number | RawBu
   sql<boolean>`(${sql.ref(`${table}.userId`)} = ${ownerId} AND ${unsentReportOn[table](ownerId)})`;
 
 /** An owner's delete of their own image waits on its child-safety case or `ownerReportHold`. */
-const ownImageDeleteBlocked = (ownerId: number | RawBuilder<unknown>) =>
-  sql<boolean>`("Image"."userId" = ${ownerId} AND (${childSafetyImageCase()} OR ${unsentReportOn.Image(ownerId)}))`;
+const ownImageDeleteBlocked = (ownerId: number | RawBuilder<unknown>) => {
+  const reported = unsentReportOn.Image(ownerId);
+  return sql<boolean>`("Image"."userId" = ${ownerId} AND (${childSafetyImageCase()} OR ${reported}))`;
+};
 
 /** An owner's delete of their own post waits on a child-safety report on it or `ownerReportHold`. */
-const ownPostDeleteBlocked = (ownerId: number | RawBuilder<unknown>) =>
-  sql<boolean>`("Post"."userId" = ${ownerId} AND (${childSafetyPostCase()} OR ${unsentReportOn.Post(ownerId)}))`;
+const ownPostDeleteBlocked = (ownerId: number | RawBuilder<unknown>) => {
+  const reported = unsentReportOn.Post(ownerId);
+  return sql<boolean>`("Post"."userId" = ${ownerId} AND (${childSafetyPostCase()} OR ${reported}))`;
+};
 
 /**
  * `id` has a pending delete queued; with `ownerAsked`, one its owner asked for. Read for who may be
