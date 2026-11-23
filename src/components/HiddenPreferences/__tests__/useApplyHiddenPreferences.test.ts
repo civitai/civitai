@@ -563,3 +563,57 @@ describe('useApplyHiddenPreferences without ignoreViewerHidden', () => {
     }
   });
 });
+
+describe('useApplyHiddenPreferences with ignoreViewerHidden (#10115)', () => {
+  const MATURE = 501;
+  const image = (id: number, userId: number, tagIds: number[] = []) => ({
+    id,
+    userId,
+    nsfwLevel: 1,
+    tagIds,
+    prompt: '',
+  });
+  // 1 by a user the viewer hid, 2 with a tag they hid, 3 by a creator who blocked them,
+  // 4 with a moderated tag they hid.
+  const images = [image(1, 9), image(2, 2, [500]), image(3, 7), image(4, 2, [MATURE])];
+  const run = (user: { id: number } | null) => {
+    viewer.user = user;
+    viewer.prefs = {
+      ...emptyPrefs(),
+      hiddenUsers: new Map([
+        [9, true],
+        [7, true],
+      ]),
+      blockRelations: new Map([[7, true]]),
+      blockedByUsers: new Map([[7, true]]),
+      hiddenTags: new Map([
+        [500, true],
+        [MATURE, true],
+      ]),
+      moderatedTags: [{ id: MATURE, name: 'mature', nsfwLevel: 4 }],
+    };
+    try {
+      const { result, unmount } = renderHook(() =>
+        useApplyHiddenPreferences({
+          type: 'images',
+          data: images as never,
+          ignoreViewerHidden: true,
+        })
+      );
+      const ids = (result.current.items as { id: number }[]).map((i) => i.id);
+      unmount();
+      return ids;
+    } finally {
+      viewer.user = null;
+      viewer.prefs = null;
+    }
+  };
+
+  it("sets aside a signed-in viewer's hidden user and ordinary tag, but not a blocker or a moderated tag", () => {
+    expect(run({ id: 1 })).toEqual([1, 2]);
+  });
+
+  it('sets nothing aside for a signed-out viewer', () => {
+    expect(run(null)).toEqual([]);
+  });
+});
