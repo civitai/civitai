@@ -51,12 +51,15 @@ describe('feed-go training data rules publisher', () => {
     ]);
   });
 
-  it('never throws when the write fails, and tries again a minute later', async () => {
+  it('never throws when the write fails, and tries again 5 s later, not a minute later', async () => {
     const p = publisher(5_000);
     p.failing();
     expect(() => p.publish()).not.toThrow();
     await new Promise((r) => setImmediate(r));
-    p.at(65_000);
+    p.at(9_999);
+    p.publish();
+    expect(p.writes).toHaveLength(1);
+    p.at(10_000);
     p.publish();
     expect(p.writes).toHaveLength(2);
   });

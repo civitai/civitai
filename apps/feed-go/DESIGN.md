@@ -2464,11 +2464,11 @@ deployment config. Every answer carries `X-Feed-Go-Served` (`go` or `node`), as 
    and nothing kept in memory; a body without one reads nothing); none (no Node build has said, or
    the Node change is not deployed), another build's (a Node deploy that changed the rules, while it
    rolls out and for 5 minutes after the last old process stops), or a failed or timed-out read
-   falls back (`v1-models-training-data-drift`), so Go never lists a dataset by rules the Node app
-   answering it does not apply. The one window left is the publisher's: a Node process with new
-   rules writes its id when it first answers a model route, so a body served in the moment before
-   that write may still list by the old ones, which is what an old Node process still answering in
-   the same rollout does. No deployment setting: the hash is read on the
+   falls back (`v1-models-training-data-drift`). The one window left is the publisher's: Go can only
+   see a Node process once its field has landed. A process with new rules writes its id when it
+   first answers a model route and retries 5 s after a failed write, so until one new process has
+   published, an old build's still-live field (up to 5 minutes after its last write) lets Go list
+   by the old rules, which is what an old Node process still answering in the same rollout does. No deployment setting: the hash is read on the
    cache cluster feed-go already reads, under its `CACHE_KEY_NAMESPACE` prefix.
 5. The body as `JSON.stringify` writes it (`v1models.NodeBody`: the plain writer's `\u2028` /
    `\u2029` escapes written raw); a body holding an escaped U+FFFD (an invalid UTF-8 byte) has no

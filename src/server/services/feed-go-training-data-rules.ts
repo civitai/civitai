@@ -23,6 +23,13 @@ export const FEED_GO_TRAINING_DATA_RULES_TTL_MS = 5 * 60_000;
 /** The least time between two writes from one process. */
 export const FEED_GO_TRAINING_DATA_RULES_EVERY_MS = 60_000;
 
+/**
+ * How soon a process tries again after a write that failed. Short, because until this process's
+ * field lands feed-go cannot see it: if another build's field is still live, feed-go would vouch
+ * by that build's rules.
+ */
+export const FEED_GO_TRAINING_DATA_RULES_RETRY_MS = 5_000;
+
 export type TrainingDataRulesPublisherDeps = {
   /** Sets `field` of the hash and its TTL (production: hSetWithTTL on the cache client). */
   write: (field: string, ttlMs: number) => Promise<unknown>;
@@ -39,7 +46,8 @@ export function createTrainingDataRulesPublisher(deps: TrainingDataRulesPublishe
       if (now < nextAt) return;
       nextAt = now + FEED_GO_TRAINING_DATA_RULES_EVERY_MS;
       deps.write(deps.rulesId(), FEED_GO_TRAINING_DATA_RULES_TTL_MS).catch(() => {
-        // Not written: feed-go hands the requests that need it to Node until a later write lands.
+        // Not written: try again soon rather than a minute from now.
+        nextAt = Math.min(nextAt, deps.now() + FEED_GO_TRAINING_DATA_RULES_RETRY_MS);
       });
     } catch {
       /* never throw from the handler */
