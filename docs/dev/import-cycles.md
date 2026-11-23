@@ -40,7 +40,11 @@ Worked example: `src/components/Dialog/dialog-registry2.ts` held 23 `dynamic()` 
 were opened, each from one component. Each opener now names only its own modal:
 
 ```ts
-openDialog(() => import('~/components/Buzz/CryptoDeposit/BulkBonusInfoModal'), {}, { id: 'bulk-bonus-info' });
+openDialog(
+  () => import('~/components/Buzz/CryptoDeposit/BulkBonusInfoModal'),
+  {},
+  { id: 'bulk-bonus-info' }
+);
 ```
 
 The registry was deleted, along with one modal that only the registry had imported. The 164-module
@@ -73,6 +77,12 @@ higher-level modules it hands work to. Two fixes, in order of preference:
    nothing above it.
 2. The higher-level modules register themselves at an entry point (a route, a job, a
    startup module), and the low-level module reads the registration.
+
+Example of the first: `home-block-cache.service` is imported by every writer that busts a home
+block, and its read-through getter lazily imported `home-block.service` to build a missing block,
+which handed every one of those writers that service's imports. The getter's only caller is
+`home-block.service`, so it now passes its two builders in (`getHomeBlockCached(…, source)`), and
+the cache imports the service for types only.
 
 An uncut example that neither fix covers yet: `text-scan/submit.ts` reaches `moderation-adapters.ts`
 through a call-site `await import()`, to apply a cleared verdict when text shrinks below the scan

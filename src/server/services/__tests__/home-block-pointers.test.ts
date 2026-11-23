@@ -23,6 +23,7 @@ vi.mock('~/server/services/collection.service', async (importOriginal) => ({
 const { getHomeBlockData, getHomeBlocks, resolveHomeBlockMetadata } = await import(
   '~/server/services/home-block.service'
 );
+const homeBlockSource = { getHomeBlockData, resolveHomeBlockMetadata };
 const { getHomeBlockCached } = await import('~/server/services/home-block-cache.service');
 
 const SOURCE_META = {
@@ -103,7 +104,7 @@ describe('a linked clone is a pointer, not a copy', () => {
   it('keys a clone cache entry off the resolved collection id, not the empty column', async () => {
     redisMock.redis.packed.get.mockResolvedValue(null);
 
-    const result = await getHomeBlockCached(POINTER);
+    const result = await getHomeBlockCached(POINTER, undefined, undefined, homeBlockSource);
 
     // The shared entry: ~114k clones of collection 107 address one key. Keying off the clone's
     // own (now empty) metadata yields `undefined`, and getHomeBlockCached returns null for that —
@@ -129,7 +130,12 @@ describe('a linked clone is a pointer, not a copy', () => {
       collection: { id: 3870938, items: [{ id: 1 }] },
     });
 
-    const result = await getHomeBlockCached({ ...POINTER, userId: 7 });
+    const result = await getHomeBlockCached(
+      { ...POINTER, userId: 7 },
+      undefined,
+      undefined,
+      homeBlockSource
+    );
 
     expect(result?.id).toBe(900);
     expect(result?.userId).toBe(7);
@@ -143,15 +149,25 @@ describe('a linked clone is a pointer, not a copy', () => {
     redisMock.redis.packed.get.mockResolvedValue(null);
     stubSystemBlocks([{ id: 4, metadata: { leaderboards: [] } }]);
 
-    await getHomeBlockCached({
-      id: 777,
-      type: HomeBlockType.Leaderboard,
-      metadata: {},
-      sourceId: 4,
-    });
+    await getHomeBlockCached(
+      {
+        id: 777,
+        type: HomeBlockType.Leaderboard,
+        metadata: {},
+        sourceId: 4,
+      },
+      undefined,
+      undefined,
+      homeBlockSource
+    );
     const [cloneKey] = redisMock.redis.packed.get.mock.calls.at(-1) as [string];
 
-    await getHomeBlockCached({ id: 4, type: HomeBlockType.Leaderboard, metadata: {} });
+    await getHomeBlockCached(
+      { id: 4, type: HomeBlockType.Leaderboard, metadata: {} },
+      undefined,
+      undefined,
+      homeBlockSource
+    );
     const [sourceKey] = redisMock.redis.packed.get.mock.calls.at(-1) as [string];
 
     expect(cloneKey, 'clone keyed on its own row, so a bust on the source cannot reach it').toBe(
