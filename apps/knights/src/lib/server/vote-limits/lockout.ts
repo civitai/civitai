@@ -1,10 +1,10 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { voteLockUntil, type VoteLimit } from '../queue/vote-rate';
-import type { VoteGate } from './gate';
+import { voteLock, type VoteLimit } from '../queue/vote-rate';
+import type { Pause, VoteGate } from './gate';
 
 type LockoutDeps = {
-  gate: Pick<VoteGate, 'cooldownUntil' | 'freeze'>;
+  gate: Pick<VoteGate, 'cooldown' | 'freeze'>;
   limits: { load: () => Promise<readonly VoteLimit[]> };
 };
 
@@ -20,17 +20,33 @@ export async function voteLockout(
   db: Kysely<DB>,
   userId: number,
   now: Date,
-  { gate, limits }: LockoutDeps,
+  deps: LockoutDeps,
   floor: Date | null = null
 ): Promise<Date | null> {
-  const [cooldown, ledger] = await Promise.all([
-    gate.cooldownUntil(userId, now),
-    limits.load().then((live) => voteLockUntil(db, userId, now, live)),
-  ]);
-  const end = [ledger, floor].reduce<Date | null>(
-    (latest, next) => (next && (!latest || next.getTime() > latest.getTime()) ? next : latest),
-    cooldown
+  return (
+    (await votePause(db, userId, now, deps, floor && { until: floor, windowSeconds: null }))
+      ?.until ?? null
   );
-  if (!end || (cooldown && end.getTime() <= cooldown.getTime())) return end;
+}
+
+/**
+ * `voteLockout` with the window that set the end, for copy that names the limit. `floor` is the pause a refusal gave,
+ * with its window when the refusal knew it.
+ */
+export async function votePause(
+  db: Kysely<DB>,
+  userId: number,
+  now: Date,
+  { gate, limits }: LockoutDeps,
+  floor: Pause | null = null
+): Promise<Pause | null> {
+  const [cooldown, ledger] = await Promise.all([
+    gate.cooldown(userId, now),
+    limits.load().then((live) => voteLock(db, userId, now, live)),
+  ]);
+  const later = (latest: Pause | null, next: Pause | null) =>
+    next && (!latest || next.until.getTime() > latest.until.getTime()) ? next : latest;
+  const end = [ledger, floor].reduce<Pause | null>(later, cooldown);
+  if (!end || (cooldown && end.until.getTime() <= cooldown.until.getTime())) return end;
   return gate.freeze(userId, now, end);
 }

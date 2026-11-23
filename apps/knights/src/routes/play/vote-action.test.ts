@@ -18,7 +18,7 @@ vi.mock('$lib/server/skip-runtime', async () => ({
 }));
 vi.mock('$lib/server/db', () => ({ db: {}, dbRead: {} }));
 const guard = vi.hoisted(() => vi.fn());
-vi.mock('$lib/server/vote-limits/runtime', () => ({ voteGate: { guard }, lockoutFor: vi.fn() }));
+vi.mock('$lib/server/vote-limits/runtime', () => ({ voteGate: { guard }, pauseFor: vi.fn() }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/queue/runtime', () => ({
   queueDeps: { now: () => new Date('2026-12-15T12:00:00Z') },

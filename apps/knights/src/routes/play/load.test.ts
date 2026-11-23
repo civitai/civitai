@@ -9,7 +9,7 @@ const railFor = vi.hoisted(() => vi.fn());
 const pickHiddenCheck = vi.hoisted(() => vi.fn());
 const hasUnseenReset = vi.hoisted(() => vi.fn());
 const readHiddenNotices = vi.hoisted(() => vi.fn());
-const lockoutFor = vi.hoisted(() => vi.fn());
+const pauseFor = vi.hoisted(() => vi.fn());
 const pickYesNo = vi.hoisted(() => vi.fn());
 const burstDue = vi.hoisted(() => vi.fn());
 const servedHistory = vi.hoisted(() => vi.fn());
@@ -32,7 +32,7 @@ vi.mock('$lib/server/membership', async (original) => ({
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key, THUMBNAIL_WIDTH: 192 }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps }));
-vi.mock('$lib/server/vote-limits/runtime', () => ({ lockoutFor, voteGate: { guard: vi.fn() } }));
+vi.mock('$lib/server/vote-limits/runtime', () => ({ pauseFor, voteGate: { guard: vi.fn() } }));
 vi.mock('$lib/server/rail-runtime', () => ({ railFor }));
 vi.mock('$lib/server/daily/daily.service', () => ({ getDailyStatus }));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
@@ -129,7 +129,7 @@ beforeEach(() => {
   hasUnseenReset.mockResolvedValue(false);
   readHiddenNotices.mockReset();
   readHiddenNotices.mockResolvedValue([]);
-  lockoutFor.mockReset();
+  pauseFor.mockReset();
   pickYesNo.mockReset();
   pickYesNo.mockResolvedValue(null);
   burstDue.mockReset();
@@ -355,7 +355,7 @@ describe('play load vote pacing', () => {
   });
 
   it('shows the lockout instead of the next image while the player is paced', async () => {
-    lockoutFor.mockResolvedValue(until);
+    pauseFor.mockResolvedValue({ until, windowSeconds: null });
 
     const page = await run();
 
@@ -364,18 +364,25 @@ describe('play load vote pacing', () => {
     expect(getFeed).not.toHaveBeenCalled();
     expect(pickHiddenCheck).not.toHaveBeenCalled();
     expect(pickYesNo).not.toHaveBeenCalled();
-    expect(lockoutFor).toHaveBeenCalledWith(expect.anything(), 7, NOW);
+    expect(pauseFor).toHaveBeenCalledWith(expect.anything(), 7, NOW);
+  });
+
+  it('passes on the window behind the pause, so the panel can name the limit', async () => {
+    pauseFor.mockResolvedValue({ until, windowSeconds: 86400 });
+    expect(await run()).toMatchObject({ lockoutSeconds: 30, lockoutWindowSeconds: 86400 });
+    pauseFor.mockResolvedValue({ until, windowSeconds: null });
+    expect(await run()).toMatchObject({ lockoutSeconds: 30, lockoutWindowSeconds: null });
   });
 
   it('serves the feed when the player is not paced', async () => {
-    lockoutFor.mockResolvedValue(null);
+    pauseFor.mockResolvedValue(null);
     expect((await run()).lockoutSeconds).toBeNull();
     expect(getFeed).toHaveBeenCalled();
   });
 
   it('never paces a moderator', async () => {
     await run({ isModerator: true });
-    expect(lockoutFor).not.toHaveBeenCalled();
+    expect(pauseFor).not.toHaveBeenCalled();
     expect(getFeed).toHaveBeenCalled();
   });
 });
@@ -446,14 +453,14 @@ describe('play load feed', () => {
 
   it('reads the feed from the replica, and the player, their pace and their served history from the primary', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2, smites: 0, maxSmites: 3 });
-    lockoutFor.mockResolvedValue(null);
+    pauseFor.mockResolvedValue(null);
 
     await run();
 
     expect(getFeed).toHaveBeenCalledTimes(1);
     expect(getFeed.mock.calls[0][0]).toBe(REPLICA);
     expect(getPlayerStatus.mock.calls[0][0]).toBe(PRIMARY);
-    expect(lockoutFor.mock.calls[0][0]).toBe(PRIMARY);
+    expect(pauseFor.mock.calls[0][0]).toBe(PRIMARY);
     expect(servedHistory.mock.calls[0][0]).toBe(PRIMARY);
   });
 
@@ -616,11 +623,11 @@ describe('play load yes/no questions', () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2, smites: 3, maxSmites: 3 });
     expect((await run()).item).toBeNull();
     getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2, smites: 0, maxSmites: 3 });
-    lockoutFor.mockResolvedValue(new Date('2026-12-15T12:00:30Z'));
+    pauseFor.mockResolvedValue({ until: new Date('2026-12-15T12:00:30Z'), windowSeconds: null });
     expect((await run()).item).toBeNull();
     expect(pickYesNo).not.toHaveBeenCalled();
 
-    lockoutFor.mockResolvedValue(null);
+    pauseFor.mockResolvedValue(null);
     yesNoSettings.share = 0;
     getFeed.mockResolvedValue(null);
     expect((await run()).item).toBeNull();

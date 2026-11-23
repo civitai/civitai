@@ -12,8 +12,8 @@ import {
 } from '../queue/queue.service';
 import type { VoteLimit } from '../queue/vote-rate';
 import { fakeRedis } from './fake-redis';
-import { createVoteGate, type GateClient } from './gate';
-import { voteLockout } from './lockout';
+import { createVoteGate, type GateClient, type Pause } from './gate';
+import { voteLockout, votePause } from './lockout';
 
 const Q = 'knights.image.nsfwLevel';
 const NOW = new Date('2026-12-15T12:00:00Z');
@@ -57,9 +57,9 @@ async function vote(limits: VoteLimit[], gate?: ReturnType<typeof createVoteGate
   return gate ? gate.guard(1, now, cast) : cast();
 }
 
-const gateWith = (cooldown: Date | null) => ({
-  cooldownUntil: async () => cooldown,
-  freeze: async (_userId: number, _now: Date, until: Date) => until,
+const gateWith = (cooldown: Date | null, windowSeconds: number | null = null) => ({
+  cooldown: async () => (cooldown ? { until: cooldown, windowSeconds } : null),
+  freeze: async (_userId: number, _now: Date, pause: Pause) => pause,
 });
 const limits = (live: VoteLimit[]) => ({ load: async () => live });
 
@@ -87,6 +87,18 @@ describe('voteLockout', () => {
     expect(
       await voteLockout(db, 1, NOW, { gate: gateWith(at(5)), limits: limits(LIMITS) })
     ).toEqual(at(60));
+  });
+
+  it('names the window behind the pause: the ledger window, or the cooldown when it ends later', async () => {
+    await vote(LIMITS);
+    await vote(LIMITS);
+    expect(await votePause(db, 1, NOW, { gate: gateWith(null), limits: limits(LIMITS) })).toEqual({
+      until: at(60),
+      windowSeconds: 60,
+    });
+    expect(
+      await votePause(db, 1, NOW, { gate: gateWith(at(600), 86400), limits: limits(LIMITS) })
+    ).toEqual({ until: at(600), windowSeconds: 86400 });
   });
 
   it('is null for a player nothing holds back, and follows the live limits', async () => {
@@ -155,6 +167,18 @@ describe('a pause the player is shown', () => {
       shown: (now = NOW) => voteLockout(db, 1, now, { gate, limits: limits(HOUR) }),
     };
   }
+
+  it('labels a pause the ledger set, so refusals during it name the limit', async () => {
+    const { gate } = redisGate();
+    for (let i = 0; i < 3; i++) await vote(HOUR, gate);
+    expect(await votePause(db, 1, NOW, { gate, limits: limits(HOUR) })).toMatchObject({
+      windowSeconds: 3600,
+    });
+    expect(await gate.guard(1, NOW, async () => 'ok')).toMatchObject({
+      status: 'limited',
+      windowSeconds: 3600,
+    });
+  });
 
   it('never ends later while refused votes keep arriving', async () => {
     const { redis, gate, shown } = redisGate();
