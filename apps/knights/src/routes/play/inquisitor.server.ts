@@ -48,6 +48,7 @@ const REJECTION_TEXT: Record<ReviewVoteRejection | 'not-found', string> = {
 /** What a vote that went through tells the moderator, when it needs saying. */
 const RESULT_TEXT: Partial<Record<string, string>> = {
   excluded: HELD_TEXT,
+  'confirmed-no-check': "Level updated; this image won't be used as a skill check.",
   'written-not-closed':
     'The new level was written to the image, but this review could not be closed and no skill check was added.',
 };

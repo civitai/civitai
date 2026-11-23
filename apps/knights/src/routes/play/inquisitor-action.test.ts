@@ -18,9 +18,12 @@ vi.mock('$lib/server/db', () => ({
 }));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { now: () => NOW } }));
-vi.mock('$lib/server/skill-check/runtime', () => ({
-  skillChecks: async () => ({ enabled: true, poolCap: 500, serveJudged: false }),
-}));
+vi.mock('$lib/server/skill-check/runtime', async () => {
+  const { DEFAULT_SKILL_CHECKS } = await vi.importActual<
+    typeof import('$lib/server/skill-check/config')
+  >('$lib/server/skill-check/config');
+  return { skillChecks: async () => ({ ...DEFAULT_SKILL_CHECKS, enabled: true }) };
+});
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 
 const { sealItem, sealReview } = await import('$lib/server/feed-token');
@@ -40,7 +43,7 @@ beforeEach(async () => {
   process.env.CIVITAI_APP_URL = 'https://main.example';
   vi.stubGlobal('fetch', fetchMock);
   await pg.exec(
-    `TRUNCATE "ModActivity","KnightsInquisitorVote","KnightsInquisitorReview","KnightsReferenceImage","KnightsQueueItem","Image","Post","Report","ImageReport" RESTART IDENTITY CASCADE`
+    `TRUNCATE "ModActivity","KnightsInquisitorVote","KnightsInquisitorReview","KnightsReferenceImage","KnightsQueueItem","Image","Post","Report","ImageReport","TagsOnImageDetails" RESTART IDENTITY CASCADE`
   );
 });
 afterEach(() => {
@@ -145,6 +148,47 @@ describe('inquisitor actions', () => {
     expect((await pg.query(`SELECT pool,source,answer FROM "KnightsReferenceImage"`)).rows).toEqual(
       [{ pool: 'skillCheck', source: 'inquisitor', answer: '8' }]
     );
+  });
+
+  it("writes an agreed level that keeps the image out of the pool, and says it won't be a skill check", async () => {
+    const id = await review([{ moderatorId: OTHER, answer: '8' }]);
+    // A tag that keeps an image out of the pool only at R or above.
+    await pg.query(`INSERT INTO "TagsOnImageDetails" ("imageId","tagId") VALUES (1,5351)`);
+    await lockImage(pg, 1, { reason: KNIGHTS_VOTE_NSFW_LEVEL_REASON, level: 2 });
+    await pg.query(`UPDATE "KnightsInquisitorReview" SET "consensusValue"='2' WHERE id=$1`, [id]);
+    fetchMock.mockImplementation(async () => {
+      await lockImage(pg, 1, { reason: 'moderator', level: 8 });
+      await pg.query(
+        `INSERT INTO "ModActivity" ("userId","activity","entityType","entityId","createdAt") VALUES ($1,'setNsfwLevel','image',1,$2)`,
+        [MOD, NOW]
+      );
+      return new Response('{"count":1}', { status: 200 });
+    });
+
+    expect(
+      await call('inquisitorVote', { token: sealReview('secret', MOD, id), answer: '8' })
+    ).toEqual({
+      reviewed: 'confirmed-no-check',
+      message: "Level updated; this image won't be used as a skill check.",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((await pg.query(`SELECT "nsfwLevel" FROM "Image" WHERE id=1`)).rows).toEqual([
+      { nsfwLevel: 8 },
+    ]);
+    expect(
+      (
+        await pg.query(
+          `SELECT "userId",activity FROM "ModActivity" WHERE "entityType"='image' AND "entityId"=1`
+        )
+      ).rows
+    ).toEqual([{ userId: MOD, activity: 'setNsfwLevel' }]);
+    expect(
+      (await pg.query(`SELECT status,"confirmedValue" FROM "KnightsInquisitorReview"`)).rows
+    ).toEqual([{ status: 'confirmed', confirmedValue: '8' }]);
+    expect(
+      (await pg.query(`SELECT "moderatorId" FROM "KnightsInquisitorVote" ORDER BY 1`)).rows
+    ).toEqual([{ moderatorId: MOD }, { moderatorId: OTHER }]);
+    expect((await pg.query(`SELECT 1 FROM "KnightsReferenceImage"`)).rows).toEqual([]);
   });
 
   it('turns a refusal into a 409 with words for the moderator', async () => {

@@ -369,7 +369,6 @@ async function buildCheckpoint(
       .orderBy('a.id', 'desc')
       .limit(APPRENTICE.checkpointEvery)
       .execute();
-  // A mod-confirmed image is shown only while it passes the safety exclusions; unreadable, it is hidden (fail closed).
   const rows =
     (await failClosed(db, 'recap', () => read('checked'), null)) ?? (await read('hidden'));
   const { options } = await ratingOptions(db);

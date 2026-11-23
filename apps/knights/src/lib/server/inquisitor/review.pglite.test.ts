@@ -354,6 +354,24 @@ describe('overriding the image level', () => {
     ]);
   });
 
+  it('writes the agreed level even when it keeps the image out of the pool: confirmed, both votes kept, no check', async () => {
+    const id = await reviewed(1, { value: '2', level: 2 });
+    // A tag that keeps an image out of the pool only at R or above (a level-dependent exclusion).
+    await pg.query(`INSERT INTO "TagsOnImageDetails" ("imageId","tagId") VALUES (1,5351)`);
+    await voteWith(id, MOD_A, '4');
+    expect(await voteWith(id, MOD_B, '4')).toEqual({ status: 'confirmed-no-check' });
+    expect(setImageLevel).toHaveBeenCalledWith(1, 4, MOD_B);
+    expect((await pg.query(`SELECT "nsfwLevel" FROM "Image" WHERE id=1`)).rows[0]).toEqual({
+      nsfwLevel: 4,
+    });
+    expect(await reviewRow(id)).toMatchObject({ status: 'confirmed', confirmedValue: '4' });
+    expect(await votesOn(id)).toEqual([
+      { moderatorId: MOD_A, answer: '4' },
+      { moderatorId: MOD_B, answer: '4' },
+    ]);
+    expect(await pool()).toEqual([]);
+  });
+
   it('writes nothing to the image when the mods agree with its level', async () => {
     const id = await reviewed(1);
     await voteWith(id, MOD_A, '4');
@@ -478,10 +496,11 @@ describe('overriding the image level', () => {
     });
   });
 
-  it('refuses up front, without writing, a level at which the image would be held', async () => {
+  it('refuses up front, without writing, while the image is under a hold now', async () => {
     const id = await reviewed(1, { value: '2', level: 2 });
-    await pg.query(`INSERT INTO "TagsOnImageDetails" ("imageId","tagId") VALUES (1,5351)`);
     await voteWith(id, MOD_A, '4');
+    await pg.query(`INSERT INTO "Report" ("id","status") VALUES (100,'Pending')`);
+    await pg.query(`INSERT INTO "ImageReport" ("reportId","imageId") VALUES (100,1)`);
     expect(await voteWith(id, MOD_B, '4')).toEqual({ status: 'rejected', reason: 'held' });
     expect(setImageLevel).not.toHaveBeenCalled();
     expect((await reviewRow(id)).status).toBe('open');

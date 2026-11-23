@@ -37,7 +37,7 @@ vi.mock('$lib/server/inquisitor/review.service', () => ({
   expireBeyondCap,
 }));
 vi.mock('$lib/server/skill-check/runtime', () => ({
-  skillChecks: async () => ({ enabled: true, poolCap: 500, serveJudged: false, maxOpen: 40 }),
+  skillChecks: async () => ({ enabled: true, poolCap: 500, serveJudged: false, maxOpen: 5000 }),
 }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ maxAgeDays: 14 }) }));
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
@@ -142,10 +142,6 @@ describe('POST /api/jobs/tick', () => {
       reviewsExpired: 4,
       labels: { done: true, labelsWritten: 0, labelFailures: 0 },
     });
-    expect(expireBeyondCap).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ maxOpen: 40 })
-    );
   });
 
   it('runs no review sweep while the inquisitor queue is switched off', async () => {

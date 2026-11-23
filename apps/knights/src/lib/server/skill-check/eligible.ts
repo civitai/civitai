@@ -21,13 +21,13 @@ const OPEN_REPORT = ['Pending', 'Processing'] as const;
 
 const none = (eb: Builder, query: Expression<unknown>) => eb.not(eb.exists(query as never));
 
-/**
- * What keeps an image out of the mod-confirmed skill-check pool on top of `servableImage`: anything that puts it under a
- * safety review or hold. One entry per reason, checked when a check is added and on every serve; replace the list, not
- * the callers, when the moderation lead's list changes. Expects `Image as img` joined to `Post as p`.
- */
 /** What a clause may be asked about the image: `level`, the level it would have (default: the one it has). */
 export type ClauseOptions = { level?: number };
+
+/**
+ * Safety exclusions on top of servableImage, one per reason; checked when a check is added and on every serve. Expects
+ * Image as img joined to Post as p.
+ */
 
 export const SKILL_CHECK_EXCLUSIONS: {
   name: string;
@@ -294,11 +294,11 @@ export const answeredImageServable = (eb: Builder, skillChecks: 'checked' | 'hid
   ]);
 
 /** `servableImage` and the exclusions that never lift on their own: an image failing this can never be a check. */
-export const skillCheckLasting = (eb: Builder) =>
+export const skillCheckLasting = (eb: Builder, options?: ClauseOptions) =>
   eb.and([
     servableImage(eb),
     ...SKILL_CHECK_EXCLUSIONS.filter(({ name }) => !LIFTING_EXCLUSIONS.has(name)).map(
-      ({ clause }) => clause(eb)
+      ({ clause }) => clause(eb, options)
     ),
   ]);
 

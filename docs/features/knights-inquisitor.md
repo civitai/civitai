@@ -34,9 +34,11 @@ is recorded. The second closes the review:
 When the two moderators agree on a level other than the image's, that level is written to the image as a moderator ruling
 first, through the main app's moderator rating endpoint and in the name of the moderator whose vote closed the review (their
 own session is used, so the main app records the ruling as theirs). Only then is the vote recorded and the review confirmed;
-if the write fails, nothing is recorded and the moderator can vote again. The image is judged at the agreed level before the
-write, since some predicates depend on the level. If the level lands but the review cannot close, the moderator's vote is
-still recorded. While the write runs the review is held for that
+if the write fails, nothing is recorded and the moderator can vote again. Before the write the image is judged at its
+current level; a predicate that depends on the level only decides whether the image becomes a check. When the agreed level
+keeps it out of the pool, the level is still written and the review confirmed, with no check, and the moderator is told the
+image won't be used as a skill check. If the level lands but the review cannot close, the moderator's vote is still
+recorded. While the write runs the review is held for that
 moderator for two minutes. The image is never written while it is blocked: such a review is excluded first. The players who
 settled the item keep their verdicts, XP and gold.
 

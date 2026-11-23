@@ -8,6 +8,7 @@ import { lockImage, seedImage } from '../../../test/seed';
 import {
   closeIneligibleReviews,
   expireBeyondCap,
+  expireCandidates,
   ineligibleSweepCandidates,
   nextReview,
   sweepMissingReviews,
@@ -81,6 +82,32 @@ describe('the open backlog cap', () => {
       5: 'open',
     });
     expect(await expireBeyondCap(db, { now: NOW, maxOpen: 2 })).toBe(0);
+  });
+
+  it('never expires a review that gets a vote after the candidates are picked', async () => {
+    for (const id of [1, 2, 3]) await item(id, { appliedMinutesAgo: 100 - id });
+    let voted = false;
+    // A vote lands right after the candidate read, before the update.
+    const racing = db.withPlugin({
+      transformQuery: (args) => args.node,
+      transformResult: async (args) => {
+        const rows = args.result.rows as Record<string, unknown>[];
+        if (!voted && rows.length > 0 && Object.keys(rows[0]).join() === 'id') {
+          voted = true;
+          await pg.query(
+            `INSERT INTO "KnightsInquisitorVote" ("reviewId","moderatorId","answer") VALUES ($1,9,'4')`,
+            [rows[0].id]
+          );
+        }
+        return args.result;
+      },
+    });
+    expect(await expireBeyondCap(racing, { now: NOW, maxOpen: 1 })).toBe(1);
+    expect(await statuses()).toEqual({ 1: 'open', 2: 'expired', 3: 'open' });
+  });
+
+  it('takes its candidates with SKIP LOCKED, so a review a vote holds is passed over', () => {
+    expect(expireCandidates(db, 10).compile().sql).toMatch(/for update skip locked/i);
   });
 });
 

@@ -495,7 +495,6 @@ export async function readHiddenNotices(db: Executor, playerId: number): Promise
       .orderBy('v.createdAt', 'desc')
       .limit(NOTICES_SHOWN)
       .execute();
-  // A mod-confirmed image is shown only while it passes the safety exclusions; unreadable, it is hidden (fail closed).
   const rows =
     (await failClosed(db, 'notice', () => read('checked'), null)) ?? (await read('hidden'));
   return rows.map((row) => {

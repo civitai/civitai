@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS "KnightsInquisitorReview" (
   "closedAt" TIMESTAMP(3)
 );
 
--- Added after the first copy of this file; both statements are safe to re-run and upgrade a database that applied it.
+-- Upgrades a database that applied an earlier copy.
 ALTER TABLE "KnightsInquisitorReview" ADD COLUMN IF NOT EXISTS "checkedAt" TIMESTAMP(3);
 ALTER TABLE "KnightsInquisitorReview" DROP CONSTRAINT IF EXISTS "KnightsInquisitorReview_status_check";
 ALTER TABLE "KnightsInquisitorReview" ADD CONSTRAINT "KnightsInquisitorReview_status_check"

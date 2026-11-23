@@ -146,7 +146,14 @@ async function exclusionOf(
   if (!ownWrite && String(image.nsfwLevel) !== review.consensusValue) {
     return { permanent: 'level-moved' };
   }
-  return heldOrUnreadable(db, review.imageId);
+  // After the moderators' own write, judge the level-dependent exclusions at the players' level: the agreed level only
+  // decides whether the image becomes a check (the pool insert), never whether the moderators' level stands.
+  return heldOrUnreadable(
+    db,
+    review.imageId,
+    'review',
+    ownWrite ? Number(review.consensusValue) : undefined
+  );
 }
 
 /**
@@ -169,7 +176,7 @@ const heldOrUnreadable = (
         .innerJoin('Post as p', 'p.id', 'img.postId')
         .select((eb) => [
           skillCheckEligible(eb, { level }).as('eligible'),
-          skillCheckLasting(eb).as('lasting'),
+          skillCheckLasting(eb, { level }).as('lasting'),
         ])
         .where('img.id', '=', imageId)
         .executeTakeFirst();
@@ -350,8 +357,34 @@ export async function closeIneligibleReviews(
 export const EXPIRE_LIMIT = 1_000;
 
 /**
+ * The cap's candidates: the oldest open reviews no moderator voted on, `excess` at most, row locked with SKIP LOCKED so a
+ * review a vote holds is passed over. Exported for its test.
+ */
+export const expireCandidates = (db: Executor, excess: number) =>
+  db
+    .selectFrom('KnightsInquisitorReview as r')
+    .select('r.id')
+    .where('r.status', '=', 'open')
+    .where((eb) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('KnightsInquisitorVote as v')
+            .select(sql<number>`1`.as('one'))
+            .whereRef('v.reviewId', '=', 'r.id')
+        )
+      )
+    )
+    .orderBy('r.createdAt', 'asc')
+    .orderBy('r.id', 'asc')
+    .limit(excess)
+    .forUpdate()
+    .skipLocked();
+
+/**
  * Keeps the open backlog at `maxOpen` (`inquisitorMaxOpen`): the oldest open reviews no moderator voted on beyond it are
- * closed `expired`, at most `limit` per run. A review with a vote is never expired. Run by the tick. Returns how many.
+ * closed `expired`, at most `limit` per run. A review with a vote is never expired: the update repeats the check under
+ * the candidates' row locks. Run by the tick. Returns how many.
  */
 export async function expireBeyondCap(
   db: Kysely<DB>,
@@ -364,32 +397,27 @@ export async function expireBeyondCap(
     .executeTakeFirstOrThrow();
   const excess = Math.min(Number(n) - maxOpen, limit);
   if (excess <= 0) return 0;
-  const result = await db
-    .updateTable('KnightsInquisitorReview')
-    .set({ status: 'expired', closedAt: utc(now), claimedBy: null, claimExpiresAt: null })
-    .where(
-      'id',
-      'in',
-      db
-        .selectFrom('KnightsInquisitorReview as r')
-        .select('r.id')
-        .where('r.status', '=', 'open')
-        .where((eb) =>
-          eb.not(
-            eb.exists(
-              eb
-                .selectFrom('KnightsInquisitorVote as v')
-                .select(sql<number>`1`.as('one'))
-                .whereRef('v.reviewId', '=', 'r.id')
-            )
+  const expired = await db.transaction().execute(async (trx) => {
+    const ids = (await expireCandidates(trx, excess).execute()).map((r) => r.id);
+    if (ids.length === 0) return 0;
+    const result = await trx
+      .updateTable('KnightsInquisitorReview')
+      .set({ status: 'expired', closedAt: utc(now), claimedBy: null, claimExpiresAt: null })
+      .where('id', 'in', ids)
+      .where('status', '=', 'open')
+      .where((eb) =>
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('KnightsInquisitorVote as v')
+              .select(sql<number>`1`.as('one'))
+              .whereRef('v.reviewId', '=', 'KnightsInquisitorReview.id')
           )
         )
-        .orderBy('r.createdAt', 'asc')
-        .orderBy('r.id', 'asc')
-        .limit(excess)
-    )
-    .executeTakeFirst();
-  const expired = Number(result.numUpdatedRows);
+      )
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows);
+  });
   for (let k = expired; k > 0; k--) metrics.reviewClosed('expired');
   return expired;
 }
@@ -472,8 +500,20 @@ export type ReviewVoteRejection =
   | 'override-uncertain';
 
 export type ReviewVoteResult =
-  /** `written-not-closed`: the agreed level reached the image, but the review could not be closed and no check was added. */
-  | { status: 'recorded' | 'confirmed' | 'split' | 'excluded' | 'written-not-closed' }
+  /**
+   * `confirmed-no-check`: the agreed level was written and the review confirmed, but at that level the image cannot be a
+   * check. `written-not-closed`: the agreed level reached the image, but the review could not be closed and no check was
+   * added.
+   */
+  | {
+      status:
+        | 'recorded'
+        | 'confirmed'
+        | 'confirmed-no-check'
+        | 'split'
+        | 'excluded'
+        | 'written-not-closed';
+    }
   | { status: 'rejected'; reason: ReviewVoteRejection };
 
 export type ReviewVoteDeps = {
@@ -536,10 +576,7 @@ export async function castReviewVote(
 
   // The closing vote names another level. Check the image once more right before writing it, then write it as a moderator
   // ruling, holding no lock or transaction across the call.
-  // Judged at the agreed level too: some exclusions depend on the level the image would have.
-  const before =
-    (await exclusionOf(db, first.review)) ??
-    (await heldOrUnreadable(db, first.review.imageId, 'review', Number(input.answer)));
+  const before = await exclusionOf(db, first.review);
   if (before !== null) {
     await releaseClaim(db, input.reviewId, input.moderatorId);
     if (before === 'held') return { status: 'rejected', reason: 'held' };
@@ -568,7 +605,12 @@ export async function castReviewVote(
   const second = await inTransaction(db, (trx) =>
     voteOrClaim(trx, input, deps, deps.now(), { overrideWritten: true })
   );
-  if (second.kind === 'done' && second.result.status === 'confirmed') return second.result;
+  if (
+    second.kind === 'done' &&
+    (second.result.status === 'confirmed' || second.result.status === 'confirmed-no-check')
+  ) {
+    return second.result;
+  }
   // The level is the closing moderator's ruling now: keep their vote on record even though the review stays as it was.
   await db
     .insertInto('KnightsInquisitorVote')
@@ -711,7 +753,12 @@ async function voteOrClaim(
     cap: deps.poolCap,
     now,
   });
-  // An image the pool cannot take now (held, or its checks unreadable) rolls the vote back for a retry.
+  // The moderators' written level stands even when it keeps the image out of the pool: confirm without a check.
+  if (pooled === 'ineligible' && overrideWritten) {
+    await closeReview(trx, review.id, 'confirmed', now, input.answer);
+    return done({ status: 'confirmed-no-check' });
+  }
+  // Otherwise an image the pool cannot take now (held, or its checks unreadable) rolls the vote back for a retry.
   if (pooled === 'ineligible' || pooled === 'unreadable') throw new PoolRefused(pooled);
   await closeReview(trx, review.id, 'confirmed', now, input.answer);
   return done({ status: 'confirmed' });
