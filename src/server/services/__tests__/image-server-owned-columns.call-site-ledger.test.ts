@@ -722,7 +722,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     decision: 'subject',
   },
   // A version's own images, or community images that pass the showcase eligibility check.
-  'src/server/services/version-showcase.service.ts#setVersionShowcase': {
+  'src/server/services/version-showcase-curation.service.ts#setVersionShowcase': {
     writes: ['imageId: item.imageId'],
     decision: 'owner-checked',
     guards: {
