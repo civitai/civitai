@@ -1,3 +1,4 @@
+import { isBrowsingLevelClaim } from '@civitai/auth/browsing-level-claim';
 import type { Workflow } from '@civitai/orchestration-client';
 import { isUnratedOutput } from '~/shared/orchestrator/workflow-data';
 import { NsfwLevel } from '~/server/common/enums';
@@ -218,11 +219,7 @@ export function blockOutputCeilingFromClaims(claims: {
 }): BlockOutputCeiling {
   const viewer = claims.viewerBrowsingLevel;
   const flooredForSignedInViewer =
-    typeof claims.sub === 'string' &&
-    USER_SUB_RE.test(claims.sub) &&
-    typeof viewer === 'number' &&
-    Number.isInteger(viewer) &&
-    viewer >= 0;
+    typeof claims.sub === 'string' && USER_SUB_RE.test(claims.sub) && isBrowsingLevelClaim(viewer);
   return {
     maxBrowsingLevel: resolveViewerBrowsingLevel(
       flooredForSignedInViewer

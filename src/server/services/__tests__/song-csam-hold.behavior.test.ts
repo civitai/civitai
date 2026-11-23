@@ -92,6 +92,8 @@ const SCHEMA = `
   CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean);
   CREATE TABLE "ModActivity" ("userId" int, "entityType" text, "entityId" int, activity text);
   CREATE TYPE "EntityType" AS ENUM ('Image');
+  CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+  CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
   CREATE DOMAIN "JobQueueType" AS text;
   CREATE TABLE "JobQueue" ("entityId" int, "entityType" "EntityType", type "JobQueueType",
     "createdAt" timestamp(3) NOT NULL DEFAULT now(), PRIMARY KEY ("entityType", "entityId", type));

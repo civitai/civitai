@@ -6,7 +6,6 @@ import { bustAfterWrite } from './bust-after-write';
 import { bustPostGalleryCaches } from './image-moderation-effects';
 import { bustProfilePictures } from './profile-picture-cache';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
-import { syncKonoFinalize } from './kono';
 import { recordModActivity } from './mod-activity';
 import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
 
@@ -105,5 +104,4 @@ export async function updateImageNsfwLevel({
   );
 
   if (image.postId != null) await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
-  void syncKonoFinalize(id, nsfwLevel);
 }

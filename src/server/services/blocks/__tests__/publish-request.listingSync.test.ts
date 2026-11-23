@@ -33,8 +33,9 @@ vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOri
  *      scalars — and NEVER a create.
  *   3. `category` comes from `AppBlock.category` (mod curation survives), not
  *      straight from the manifest.
- *   4. Curated / mod-owned columns (assets, featured, contentRating, status,
- *      slug) are NOT in the update payload.
+ *   4. Curated / mod-owned columns (assets, featured, status, slug) are NOT in
+ *      the update payload. `contentRating` is, floored at the media, when the
+ *      primary read finds the listing: listing-media-split.approve-request.test.ts.
  *   5. The re-sync is BEST-EFFORT: a failing write is swallowed and the
  *      approve/deploy still succeeds.
  *
@@ -171,6 +172,11 @@ vi.mock('~/server/services/blocks/app-listing-assets.service', () => ({
   assertListingAssetsScanCleanInTx: vi.fn(async () => undefined),
   resolveListingRatingFloorInTx: vi.fn(
     async (_db: unknown, _id: string, declared: string | null) => declared
+  ),
+  // The version re-rate, as identity on the new declaration (the real rule is pinned in
+  // listing-media-split.approve-request.test.ts).
+  resolveVersionListingRating: vi.fn(
+    async (_db: unknown, a: { nextDeclared: string | null }) => a.nextDeclared
   ),
 }));
 
@@ -365,7 +371,6 @@ describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-gove
       'coverId',
       'featured',
       'featuredOrder',
-      'contentRating',
       'status',
       'slug',
       'externalUrl',

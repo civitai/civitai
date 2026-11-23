@@ -205,3 +205,6 @@ __pycache__/
 designs/images/
 # scripts/lib/ts7.mjs install lock (left behind only by a killed install)
 tools/ts7/.install.lock
+
+# Written by the related tests' cache key step in CI (scripts/ci/related-install-key.mjs).
+.related-install-manifests.txt

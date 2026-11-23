@@ -6,6 +6,7 @@ import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { updateDocs } from '~/server/meilisearch/client';
 import { withRetries } from '~/server/utils/errorHandling';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { userRefreshDocuments } from '~/server/search-index/search-index-user';
 
 const BATCH_SIZE = 10000;
 const INDEX_ID = ARTICLES_SEARCH_INDEX;
@@ -45,7 +46,7 @@ const updateUser = (idOffset: number) =>
       return -1;
     }
 
-    const updateIndexReadyRecords = records;
+    const updateIndexReadyRecords = userRefreshDocuments(records);
 
     if (updateIndexReadyRecords.length === 0) {
       return -1;

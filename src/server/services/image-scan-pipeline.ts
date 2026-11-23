@@ -75,6 +75,8 @@ import {
   ingestionAfterVerdictSql,
   scanKeepsRowSql,
   ingestionKeptAfterVerdict,
+  reviewKeyAfterSql,
+  csamBlockedSql,
   withoutGraceMarkersSql,
 } from '~/server/common/image-visibility';
 import { judgeRatingFloorSql } from '~/server/common/judge-rating';
@@ -810,7 +812,12 @@ export async function resolveScanOutcome({
   // The rule's keys, merged over the stored row so no other key is replaced.
   const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
   // Decided on the row, so a stored CSAM block holds whatever this scan loaded or decided.
-  const csamBlocked = Prisma.raw(`"blockedFor" = '${BlockedReason.CSAM}'`);
+  const csamBlocked = csamBlockedSql();
+  // The CSAM block the row holds once this write lands: the stored one, or one this scan writes back
+  // from the loaded copy after it was lifted.
+  const csamAfterWrite = Prisma.sql`(${csamBlocked} OR ${
+    (toUpdate.blockedFor as string) ?? null
+  }::text = ${BlockedReason.CSAM})`;
   // A block outlives an account restore (every write that lands drops the breadcrumbs); anything
   // else leaves a grace-blocked row as it is.
   const metadataSet = Prisma.sql`CASE WHEN ${metadataJson}::jsonb IS NULL OR ${csamBlocked} THEN "metadata"
@@ -837,11 +844,19 @@ export async function resolveScanOutcome({
         WHEN "nsfwLevelLocked" AND "nsfwLevel" <> 0
           AND ${scanLevel}::int <> ${Prisma.raw(String(NsfwLevel.Blocked))} THEN "nsfwLevel"
         ELSE ${scanLevel}::int END,
-      "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
-        ELSE ${(toUpdate.needsReview as string) ?? null} END,
+      -- Every way the row ends Blocked, a stored CSAM block included, settles its review as any block does.
+      "needsReview" = CASE WHEN ${csamBlocked} THEN ${reviewKeyAfterSql(
+        'block',
+        (toUpdate.needsReview as string) ?? null
+      )} ELSE ${reviewKeyAfterSql(
+        lifting ? 'verdict' : 'block',
+        (toUpdate.needsReview as string) ?? null,
+        csamAfterWrite
+      )} END,
       "nsfwLevelLocked" = "nsfwLevelLocked" AND "nsfwLevel" <> 0,
-      "minor" = ${(toUpdate.minor as boolean) ?? false},
-      "poi" = ${(toUpdate.poi as boolean) ?? false},
+      -- Only a moderator clears these.
+      "minor" = "minor" OR ${(toUpdate.minor as boolean) ?? false},
+      "poi" = "poi" OR ${(toUpdate.poi as boolean) ?? false},
       "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
       "metadata" = ${withoutGraceMarkersSql(metadataSet)},
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
@@ -966,6 +981,8 @@ export async function resolveScanOutcome({
   if (scanLevel !== NsfwLevel.Blocked && !ratingLocked) {
     const floor = judgeRatingFloorSql();
     const rescan = Prisma.sql`(${floor} > ${audit.checkedLevel}::int AND ${floor} > ${sfwBrowsingLevelsFlag}::int)`;
+    const minorAtFloor = Prisma.sql`(COALESCE(("scanJobs"->'hasMinor')::boolean, false)
+      AND ${floor} > 1 AND ${floor} < ${NsfwLevel.Blocked})`;
     try {
       const [raised] = await dbWrite.$queryRaw<
         { nsfwLevel: number; ingestion: ImageIngestionStatus }[]
@@ -973,14 +990,15 @@ export async function resolveScanOutcome({
         UPDATE "Image" SET
           -- A rescan keeps the level until its checks have run at the floor; it applies it then.
           "nsfwLevel" = CASE WHEN ${rescan} THEN "nsfwLevel" ELSE ${floor} END,
-          ingestion = CASE WHEN ${rescan} THEN ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
+          ingestion = CASE WHEN ${rescan} THEN ${
+        ImageIngestionStatus.Rescan
+      }::"ImageIngestionStatus"
             ELSE ingestion END,
-          "needsReview" = CASE
-            WHEN "needsReview" IN ('csam', 'appeal') THEN "needsReview"
-            WHEN ("scanJobs"->'hasMinor')::boolean AND ${floor} > 1 AND ${floor} < ${NsfwLevel.Blocked}
-            THEN 'minor'
-            ELSE "needsReview"
-          END
+          "needsReview" = ${reviewKeyAfterSql(
+            'verdict',
+            Prisma.sql`CASE WHEN ${minorAtFloor} THEN 'minor' END`
+          )},
+          "minor" = "minor" OR ${minorAtFloor}
         WHERE id = ${image.id}
           AND NOT "nsfwLevelLocked"
           AND ingestion NOT IN (

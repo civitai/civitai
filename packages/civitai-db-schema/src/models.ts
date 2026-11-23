@@ -3232,6 +3232,7 @@ export interface CommentV3 {
   deletedAt: Date | null;
   tosViolation: boolean;
   hidden: boolean;
+  hiddenAt: Date | null;
   locked: boolean;
   pinnedAt: Date | null;
   reactionCount: number;
@@ -5370,6 +5371,11 @@ export interface KnightsPlayer {
   recapDismissedFor: Date | null;
   startAtSeen: Date | null;
   recapPopupOptOut: boolean;
+}
+
+export interface KnightsLegacyPlayerDay {
+  playerId: number;
+  day: Date;
 }
 
 export interface KnightsPlayerDay {

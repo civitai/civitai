@@ -19,7 +19,8 @@ import (
 // region or a crawler's user agent is handed to the Node app, which answers its 451 or decides the
 // crawler), a serve slot from the one shared pool (MaxInFlight), the request budget, and the compute
 // the shadow runs (v1ModelsCompute). An answer is the shadow-compared body and headers plus
-// X-Feed-Go-Served: go; every fallback is proxied to V1Fallback, the Node app that serves `/api/v1`.
+// X-Feed-Go-Served: go, or, to a conditional request the answer's ETag satisfies, Next's 304
+// (writeV1Models); every fallback is proxied to V1Fallback, the Node app that serves `/api/v1`.
 // No origin allow-list (unlike model.getAll): the list answers any origin (CORS `*`); an `[id]`
 // request with an Origin falls back (v1-models-origin).
 
@@ -62,7 +63,7 @@ func (s *Server) serveV1Models(w http.ResponseWriter, r *http.Request, endpoint 
 		case c.cached:
 			served = "served_cached"
 		}
-		writeV1Models(w, c)
+		writeV1Models(w, c, notModified(r, c))
 		c.release()
 		setOutcome(span, served)
 		s.Metrics.Requests.WithLabelValues(endpoint, "serve", served).Inc()
@@ -77,11 +78,20 @@ func (s *Server) serveV1Models(w http.ResponseWriter, r *http.Request, endpoint 
 }
 
 // writeV1Models writes a computed answer as Node's res.json does: c.headers (v1models.ResponseHeaders),
-// Next's JSON Content-Type, and the body bytes.
-func writeV1Models(w http.ResponseWriter, c *computed) {
+// Next's JSON Content-Type, and the body bytes. With is304 it is sendEtagResponse's 304: the
+// same headers, no body. Node's 304 also carries the Content-Type res.json set before sendData; Go's
+// net/http drops Content-Type, Content-Length and Transfer-Encoding from every 304 it writes, so
+// this one has none (the one known divergence, DESIGN.md §16.8). It is counted under the outcome of
+// the answer it was computed from (served, served_empty or served_cached), as the same compute.
+func writeV1Models(w http.ResponseWriter, c *computed, is304 bool) {
 	h := w.Header()
 	for _, x := range c.headers {
 		h.Set(x.Name, x.Value)
+	}
+	if is304 {
+		h.Set(ServedByHeader, ServedByGo)
+		w.WriteHeader(http.StatusNotModified)
+		return
 	}
 	h.Set("Content-Type", v1models.JSONContentType)
 	h.Set("Content-Length", strconv.Itoa(len(c.payload)))
@@ -152,6 +162,19 @@ func (s *Server) v1ModelsCompute(endpoint string, serving bool) func(context.Con
 	}
 }
 
+// notModified is Next's `fresh(req.headers, { etag })` for the answer c (v1models.Fresh, over the
+// ETag of c.headers). v1ModelsServeOnly has already handed every conditional request Fresh does not
+// decide as Next does to the app.
+func notModified(r *http.Request, c *computed) bool {
+	etag := ""
+	for _, x := range c.headers {
+		if x.Name == "ETag" {
+			etag = x.Value
+		}
+	}
+	return v1models.Fresh(r.Header, etag)
+}
+
 // v1ModelsPreflight falls back, in the shadow and serving alike, on a request that is not a GET
 // (`method`) or carries any API credential: an Authorization header of any value, or any non-empty
 // `token` query value, read as loosely as the endpoint wrappers read it (auth.AnyQueryToken)
@@ -169,8 +192,9 @@ func v1ModelsPreflight(r *http.Request) error {
 // v1ModelsServeOnly falls back, on the public route only, on a request whose answer or headers depend
 // on something this service does not read, before anything is computed:
 //
-//   - a conditional request, If-None-Match or If-Modified-Since (`v1-models-conditional`): Next's
-//     sendData may answer it 304 (fresh), which is not reproduced;
+//   - a conditional request (If-None-Match or If-Modified-Since) whose headers fresh reads are not
+//     each one ASCII line (`v1-models-conditional`, v1models.ConditionalUnsupported); every other
+//     conditional request is computed and answered 304 or 200 as Next's fresh decides (notModified);
 //   - the list: a cookie under a session cookie name (`v1-models-session-cookie`): the list serves
 //     signed-out callers only, and the cookie, valid or not, also switches Node's cache headers to the
 //     credentialed arm; an `etag` query value (`v1-models-etag`): MixedAuthEndpoint checks it against
@@ -181,7 +205,7 @@ func v1ModelsPreflight(r *http.Request) error {
 // In the shadow these do not drop a sample: of them the sampler forwards only the session cookie and
 // the query, and such a list sample is computed and compared (v1ModelsHeadersUnknown for its headers).
 func v1ModelsServeOnly(r *http.Request, detail bool) error {
-	if r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != "" {
+	if v1models.ConditionalUnsupported(r.Header) {
 		return fallback.New("v1-models-conditional")
 	}
 	if detail {

@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { DELETED_ROW_COLUMNS_SQL } from '../services/__tests__/deleted-row-columns.fixture';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
@@ -110,7 +111,7 @@ beforeAll(async () => {
     CREATE TABLE "Article" (id int PRIMARY KEY, "coverId" int);
     CREATE TABLE "Challenge" ("coverImageId" int);
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
-    CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync');
+    CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync');
     CREATE TABLE "JobQueue" (
       "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
       data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(),
@@ -121,6 +122,7 @@ beforeAll(async () => {
     INSERT INTO "User" (id, meta, "bannedAt") VALUES
       (${BAN_NOTE}, '{"banDetails": {"detailsInternal": "CSAM"}}', now() - interval '1 day');
   `);
+  await db.exec(imageUseTablesSql);
   await db.exec(DELETED_ROW_COLUMNS_SQL);
 });
 afterAll(() => db.close());

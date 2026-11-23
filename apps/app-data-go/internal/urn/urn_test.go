@@ -59,3 +59,17 @@ func TestTheSegmentGrammars(t *testing.T) {
 		}
 	}
 }
+
+// A document URN is the adapter's private-feed form, and anything it would refuse to name is refused.
+// Fails on origin/main: there is no Document (the test does not compile).
+func TestDocumentIsTheAdaptersRecordURN(t *testing.T) {
+	got, err := Document("model-benchmarking", "kv", "0b7e3c1a-55d2-4f0e-9c41-7d2a9e1f6b30")
+	if err != nil || got != "urn:apps.civitai.com:model-benchmarking/kv/0b7e3c1a-55d2-4f0e-9c41-7d2a9e1f6b30" {
+		t.Fatalf("%q, %v", got, err)
+	}
+	for _, c := range [][3]string{{"Bad", "kv", "r1"}, {"app", "2kv", "r1"}, {"app", "kv", ""}, {"app", "kv", "a/b"}} {
+		if got, err := Document(c[0], c[1], c[2]); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%q: %q, %v; want ErrInvalid", c, got, err)
+		}
+	}
+}

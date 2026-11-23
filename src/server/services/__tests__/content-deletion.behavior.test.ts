@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import {
   deleteImageRows,
@@ -28,18 +29,19 @@ beforeAll(async () => {
       "needsReview" text, "blockedFor" text, metadata jsonb
     );
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
-    CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel', 'ImageDelete');
+    CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel', 'ImageDelete');
     CREATE TABLE "JobQueue" (
       "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
       data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(),
       UNIQUE ("entityType", "entityId", type)
     );
   `);
+  await pg.exec(imageUseTablesSql);
 });
 
 beforeEach(async () => {
   await pg.exec(`
-    TRUNCATE "Image", "Post", "JobQueue";
+    TRUNCATE "Image", "Post", "JobQueue", "CsamQueueSetAside";
     INSERT INTO "Post" VALUES (10, ${OWNER}), (11, ${OTHER});
     INSERT INTO "Image" (id, url, "userId", "postId", metadata) VALUES
       (1, 'a', ${OWNER}, 10, '{"parentId": 900}'),
@@ -53,7 +55,7 @@ const remaining = async (table: 'Image' | 'Post') =>
 
 describe('deleteImageRows', () => {
   it("deletes only a member's own images", async () => {
-    const rows = await deleteImageRows(db(), {
+    const { deleted: rows } = await deleteImageRows(db(), {
       ids: [1, 2],
       actor: { id: OWNER, isModerator: false },
     });
@@ -70,7 +72,7 @@ describe('deleteImageRows', () => {
   });
 
   it("keeps the rows the caller's condition excludes", async () => {
-    const rows = await deleteImageRows(db(), {
+    const { deleted: rows } = await deleteImageRows(db(), {
       ids: [1, 2, 3],
       actor: { system: 'test' },
       where: sql<boolean>`"postId" IS NOT NULL`,
@@ -80,7 +82,7 @@ describe('deleteImageRows', () => {
   });
 
   it("still limits a member to their own images under the caller's condition", async () => {
-    const rows = await deleteImageRows(db(), {
+    const { deleted: rows } = await deleteImageRows(db(), {
       ids: [1, 2, 3],
       actor: { id: OWNER, isModerator: false },
       where: sql<boolean>`"postId" IS NOT NULL`,
@@ -89,7 +91,10 @@ describe('deleteImageRows', () => {
   });
 
   it('returns what the follow-up needs, with a malformed thumbnail parent as null and the largest id kept', async () => {
-    const rows = await deleteImageRows(db(), { ids: [1, 2, 2, 3], actor: { system: 'test' } });
+    const { deleted: rows } = await deleteImageRows(db(), {
+      ids: [1, 2, 2, 3],
+      actor: { system: 'test' },
+    });
     expect(rows.sort((a, b) => a.id - b.id)).toEqual([
       expect.objectContaining({ id: 1, url: 'a', userId: OWNER, postId: 10, parentId: 900 }),
       expect.objectContaining({ id: 2, ingestion: 'Scanned', parentId: null }),
@@ -110,7 +115,7 @@ describe('deleteImageRows', () => {
 
   it('takes more ids than one statement could bind one by one', async () => {
     const ids = [...Array.from({ length: 70_000 }, (_, i) => 100_000 + i), 1];
-    const rows = await deleteImageRows(db(), { ids, actor: { system: 'test' } });
+    const { deleted: rows } = await deleteImageRows(db(), { ids, actor: { system: 'test' } });
     expect(rows.map((r) => r.id)).toEqual([1]);
   });
 
@@ -121,14 +126,14 @@ describe('deleteImageRows', () => {
         ids: [],
         actor: { system: 'test' },
       })
-    ).toEqual([]);
+    ).toEqual({ deleted: [], kept: [], gone: [] });
     expect(queryRaw).not.toHaveBeenCalled();
   });
 });
 
 describe('deletePostRows', () => {
   it("deletes only a member's own posts", async () => {
-    const rows = await deletePostRows(db(), {
+    const { deleted: rows } = await deletePostRows(db(), {
       ids: [10, 11],
       actor: { id: OWNER, isModerator: false },
     });
@@ -166,9 +171,11 @@ describe('deleteImageRows queueing in the same statement', () => {
     (await queued()).filter((row) => row.type === type);
 
   it("queues each deleted file with the flags its own row's conditions give, and returns them", async () => {
-    await pg.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 2`);
+    // Dismissed, so no open case keeps it.
+    await pg.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 2;
+        INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES (2, 'Dismissed')`);
 
-    const rows = await deleteImageRows(db(), { ids: [1, 2, 3], actor: SYSTEM, files });
+    const { deleted: rows } = await deleteImageRows(db(), { ids: [1, 2, 3], actor: SYSTEM, files });
 
     expect(
       (await queuedOf('ImageStorageDelete')).map(({ entityId, data }) => [entityId, data])
@@ -247,7 +254,9 @@ describe('deleteImageRows queueing in the same statement', () => {
     const cdnRows = async () => (await queued()).filter((row) => row.type === 'CdnAccessSync');
 
     it("queues a moderator's takedown of each deleted url, its owner and CSAM review travelling with it", async () => {
-      await pg.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 2`);
+      // Dismissed, so no open case keeps it.
+      await pg.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 2;
+        INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES (2, 'Dismissed')`);
 
       await deleteImageRows(db(), { ids: [1, 2], actor: SYSTEM, cdnTakedown: true });
 

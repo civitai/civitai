@@ -5,6 +5,8 @@ import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
+import type * as FliptClient from '~/server/flipt/client';
+import type { SessionUser } from '~/types/session';
 
 const { refreshSession } = vi.hoisted(() => ({ refreshSession: vi.fn(async () => undefined) }));
 vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
@@ -18,6 +20,27 @@ const { notifyAppAccessDecision } = vi.hoisted(() => ({
   notifyAppAccessDecision: vi.fn(async (_opts: unknown) => undefined),
 }));
 vi.mock('~/server/services/app-access-request-notify', () => ({ notifyAppAccessDecision }));
+
+// `app-access-auto-approve`, answered per entity id. Matched on the LITERAL key, so a submit that
+// read a different flag gets `null` (unreadable) and stays pending. Default: off for everyone.
+const flag = vi.hoisted(() => ({
+  on: new Set<string>(),
+  answer: 'set' as 'set' | 'null' | 'throw',
+}));
+const { readFliptBoolean } = vi.hoisted(() => ({
+  readFliptBoolean: vi.fn(
+    async (key: string, entityId?: string, _context?: Record<string, string>) => {
+      if (key !== 'app-access-auto-approve') return null;
+      if (flag.answer === 'null') return null;
+      if (flag.answer === 'throw') throw new Error('flipt unreachable');
+      return flag.on.has(entityId ?? '');
+    }
+  ),
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  readFliptBoolean,
+}));
 
 const {
   APP_ACCESS_ALREADY_APPROVED,
@@ -44,8 +67,16 @@ const MIGRATION = join(
   '../../../../packages/civitai-db-schema/prisma/migrations/20261204120000_app_access_request/migration.sql'
 );
 
-// A stand-in for the real `User` table, cut to what the queue reads.
-const PRELUDE = `CREATE TABLE "User" ("id" SERIAL PRIMARY KEY, "username" TEXT);`;
+// A stand-in for the real `User` table, cut to what the queue and the auto-approval checks read
+// (same column names and types as the real table).
+const PRELUDE = `CREATE TABLE "User" (
+  "id" SERIAL PRIMARY KEY,
+  "username" TEXT,
+  "emailVerified" TIMESTAMP(3),
+  "bannedAt" TIMESTAMP(3),
+  "muted" BOOLEAN NOT NULL DEFAULT false,
+  "deletedAt" TIMESTAMP(3)
+);`;
 
 const MIRA_IDEA =
   'A pose-reference board that pulls my favourite model images into collections I can share.';
@@ -74,11 +105,14 @@ let moderator: number;
 const run = async (q: Prisma.Sql) =>
   (await pg.query<Record<string, unknown>>(q.text, q.values)).rows;
 
+// Every seeded account passes the auto-approval checks (verified email, not banned, not muted); a
+// test that needs one to fail breaks that one account itself.
 const seedUser = async (username: string) =>
   (
-    await pg.query<{ id: number }>('INSERT INTO "User" ("username") VALUES ($1) RETURNING "id"', [
-      username,
-    ])
+    await pg.query<{ id: number }>(
+      'INSERT INTO "User" ("username", "emailVerified") VALUES ($1, CURRENT_TIMESTAMP) RETURNING "id"',
+      [username]
+    )
   ).rows[0].id;
 
 const rowsFor = async (userId: number) =>
@@ -89,8 +123,9 @@ const rowsFor = async (userId: number) =>
     )
   ).rows;
 
+const asUser = (id: number) => ({ id, isModerator: false } as SessionUser);
 const submit = (userId: number, whatToBuild: string) =>
-  submitAppAccessRequest({ userId, input: { whatToBuild } });
+  submitAppAccessRequest({ user: asUser(userId), input: { whatToBuild } });
 const decide = (id: number, decision: 'approved' | 'declined') =>
   decideAppAccessRequest({ moderatorId: moderator, input: { id, decision } });
 
@@ -117,6 +152,9 @@ beforeEach(async () => {
   refreshSession.mockClear();
   notifyAppAccessDecision.mockReset();
   notifyAppAccessDecision.mockImplementation(async () => undefined);
+  flag.on = new Set();
+  flag.answer = 'set';
+  readFliptBoolean.mockClear();
 });
 
 describe('submitAppAccessRequest', () => {
@@ -165,6 +203,202 @@ describe('submitAppAccessRequest', () => {
       message: APP_ACCESS_ALREADY_APPROVED,
     });
     expect((await rowsFor(mira)).map((r) => r.status)).toEqual(['approved']);
+  });
+});
+
+describe('submitAppAccessRequest — app-access-auto-approve', () => {
+  const reviewOf = async (id: number) =>
+    (
+      await pg.query<{ status: string; reviewedAt: Date | null; reviewedById: number | null }>(
+        'SELECT "status", "reviewedAt", "reviewedById" FROM "AppAccessRequest" WHERE "id" = $1',
+        [id]
+      )
+    ).rows[0];
+
+  it('🔴 flag ON + eligible: the request is written APPROVED (the grant), with no reviewer, and the session is refreshed', async () => {
+    flag.on.add(String(mira));
+    const row = await submit(mira, MIRA_IDEA);
+
+    expect(row).toMatchObject({ status: 'approved', whatToBuild: MIRA_IDEA });
+    expect(row.reviewedAt).toBeInstanceOf(Date);
+    expect(await rowsFor(mira)).toEqual([
+      { id: row.id, status: 'approved', whatToBuild: MIRA_IDEA },
+    ]);
+    expect((await reviewOf(row.id)).reviewedById).toBeNull();
+    // The hub's grant predicate, and what the page reads back.
+    expect(await isApproved(mira)).toBe(true);
+    expect(await getMyAppAccessRequest({ userId: mira })).toMatchObject({
+      id: row.id,
+      status: 'approved',
+    });
+    expect(refreshSession).toHaveBeenCalledTimes(1);
+    expect(refreshSession).toHaveBeenCalledWith(mira, { caller: 'profile' });
+    // The page shows the result; no "approved" notification on top of it.
+    expect(notifyAppAccessDecision).not.toHaveBeenCalled();
+  });
+
+  it('🔴 the flag is evaluated PER REQUESTER: entity = their id, context = their flipt context', async () => {
+    flag.on.add(String(mira));
+    await submit(mira, MIRA_IDEA);
+    await submit(tomasz, TOMASZ_IDEA);
+    expect(readFliptBoolean).toHaveBeenCalledWith(
+      'app-access-auto-approve',
+      String(mira),
+      expect.objectContaining({ userId: String(mira), isModerator: 'false' })
+    );
+    expect(readFliptBoolean).toHaveBeenCalledWith(
+      'app-access-auto-approve',
+      String(tomasz),
+      expect.objectContaining({ userId: String(tomasz) })
+    );
+    expect(await isApproved(mira)).toBe(true);
+    expect((await rowsFor(tomasz)).map((r) => r.status)).toEqual(['pending']);
+    expect(await isApproved(tomasz)).toBe(false);
+  });
+
+  // The operator's "basic account checks": approve instantly only if the account is not banned or
+  // muted and has a verified email (plus not deleted, which the operator agreed to keep); anyone
+  // failing a check still lands pending for a moderator.
+  it.each([
+    ['banned', `UPDATE "User" SET "bannedAt" = CURRENT_TIMESTAMP WHERE "id" = $1`],
+    ['muted', `UPDATE "User" SET "muted" = true WHERE "id" = $1`],
+    ['without a verified email', `UPDATE "User" SET "emailVerified" = NULL WHERE "id" = $1`],
+    ['deleted', `UPDATE "User" SET "deletedAt" = CURRENT_TIMESTAMP WHERE "id" = $1`],
+  ])(
+    '🔴 flag ON but the account is %s: the request lands PENDING for a moderator',
+    async (_label, breakAccount) => {
+      flag.on.add(String(mira));
+      flag.on.add(String(tomasz));
+      await pg.query(breakAccount, [mira]);
+
+      const row = await submit(mira, MIRA_IDEA);
+      expect(row).toMatchObject({ status: 'pending', reviewedAt: null });
+      expect((await rowsFor(mira)).map((r) => r.status)).toEqual(['pending']);
+      expect(await isApproved(mira)).toBe(false);
+      expect(refreshSession).not.toHaveBeenCalled();
+
+      // Positive control: the same flag state approves an account that passes the checks.
+      await expect(submit(tomasz, TOMASZ_IDEA)).resolves.toMatchObject({ status: 'approved' });
+    }
+  );
+
+  it('🔴 flag OFF: an eligible account still lands pending, exactly as before', async () => {
+    flag.on.add(String(tomasz));
+    const row = await submit(mira, MIRA_IDEA);
+    expect(row).toMatchObject({ status: 'pending', reviewedAt: null });
+    expect(await isApproved(mira)).toBe(false);
+    expect(refreshSession).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['unreadable (null)', 'null'],
+    ['throwing', 'throw'],
+  ] as const)('🔴 flag %s: the request lands pending', async (_label, answer) => {
+    flag.on.add(String(mira));
+    flag.answer = answer;
+    const row = await submit(mira, MIRA_IDEA);
+    expect(row).toMatchObject({ status: 'pending' });
+    expect(await isApproved(mira)).toBe(false);
+    expect(readFliptBoolean).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 an existing PENDING request is NOT approved by a submit: the same "waiting for review" CONFLICT, nothing written', async () => {
+    const pending = await submit(mira, MIRA_IDEA);
+    expect(pending.status).toBe('pending');
+
+    flag.on.add(String(mira));
+    await expect(submit(mira, MIRA_IDEA_AGAIN)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: APP_ACCESS_ALREADY_PENDING,
+    });
+    expect(await rowsFor(mira)).toEqual([
+      { id: pending.id, status: 'pending', whatToBuild: MIRA_IDEA },
+    ]);
+    expect(await reviewOf(pending.id)).toMatchObject({ reviewedAt: null, reviewedById: null });
+    expect(await isApproved(mira)).toBe(false);
+    expect(refreshSession).not.toHaveBeenCalled();
+    expect(await countPendingAppAccessRequests()).toBe(1);
+
+    // Positive control: the flag and the checks were live — the same flag state approves an
+    // eligible person who has no pending request.
+    flag.on.add(String(tomasz));
+    await expect(submit(tomasz, TOMASZ_IDEA)).resolves.toMatchObject({ status: 'approved' });
+  });
+
+  it('🔴 after a REVOKE, a new submit with the flag on is approved again (operator decision: re-grant is fine)', async () => {
+    flag.on.add(String(mira));
+    const first = await submit(mira, MIRA_IDEA);
+    await decide(first.id, 'declined');
+    expect(await isApproved(mira)).toBe(false);
+    refreshSession.mockClear();
+
+    const again = await submit(mira, MIRA_IDEA_AGAIN);
+    expect(again).toMatchObject({ status: 'approved', whatToBuild: MIRA_IDEA_AGAIN });
+    expect(again.id).not.toBe(first.id);
+    expect(await rowsFor(mira)).toEqual([
+      { id: first.id, status: 'declined', whatToBuild: MIRA_IDEA },
+      { id: again.id, status: 'approved', whatToBuild: MIRA_IDEA_AGAIN },
+    ]);
+    expect(await isApproved(mira)).toBe(true);
+    expect(refreshSession).toHaveBeenCalledWith(mira, { caller: 'profile' });
+  });
+
+  it('🔴 already approved (by a moderator or automatically): a submit is the same CONFLICT and writes nothing', async () => {
+    const t = await submit(tomasz, TOMASZ_IDEA);
+    await decide(t.id, 'approved');
+    flag.on.add(String(mira));
+    flag.on.add(String(tomasz));
+    await submit(mira, MIRA_IDEA);
+    refreshSession.mockClear();
+
+    for (const userId of [mira, tomasz]) {
+      await expect(submit(userId, MIRA_IDEA_AGAIN)).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: APP_ACCESS_ALREADY_APPROVED,
+      });
+      expect((await rowsFor(userId)).map((r) => r.status)).toEqual(['approved']);
+    }
+    expect(refreshSession).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a moderator can REVOKE an auto-approved request, and the revoke is attributed to them', async () => {
+    flag.on.add(String(mira));
+    const row = await submit(mira, MIRA_IDEA);
+    refreshSession.mockClear();
+
+    await expect(decide(row.id, 'declined')).resolves.toMatchObject({
+      id: row.id,
+      status: 'declined',
+    });
+    expect(await isApproved(mira)).toBe(false);
+    expect((await reviewOf(row.id)).reviewedById).toBe(moderator);
+    expect(refreshSession).toHaveBeenCalledWith(mira, { caller: 'moderation' });
+    expect(notifyAppAccessDecision).toHaveBeenCalledWith({
+      userId: mira,
+      requestId: row.id,
+      decision: 'declined',
+      revoked: true,
+    });
+  });
+
+  it('the queue shows an auto-approval as approved with a review time and NO reviewer', async () => {
+    flag.on.add(String(mira));
+    const auto = await submit(mira, MIRA_IDEA);
+    const t = await submit(tomasz, TOMASZ_IDEA);
+    await decide(t.id, 'approved');
+
+    const { items } = await listAppAccessRequests({ status: 'approved', limit: 50 });
+    expect(items.map((i) => [i.id, i.reviewedById, i.reviewedByUsername])).toEqual([
+      [t.id, moderator, 'queue_reviewer'],
+      [auto.id, null, null],
+    ]);
+    expect(items.every((i) => i.reviewedAt instanceof Date)).toBe(true);
+  });
+
+  it('an EMPTY answer is stored as an empty string, pending or approved', async () => {
+    await expect(submit(tomasz, '')).resolves.toMatchObject({ status: 'pending', whatToBuild: '' });
+    flag.on.add(String(mira));
+    await expect(submit(mira, '')).resolves.toMatchObject({ status: 'approved', whatToBuild: '' });
   });
 });
 

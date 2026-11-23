@@ -85,8 +85,8 @@ importers:
         specifier: ^0.12.0
         version: 0.12.0
       '@civitai/app-sdk':
-        specifier: ^0.85.0
-        version: 0.85.0(@civitai/client@0.2.0-beta.98)(ajv@8.20.0)(vite@6.4.4(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
+        specifier: ^0.93.0
+        version: 0.93.0(@civitai/client@0.2.0-beta.98)(ajv@8.20.0)(vite@6.4.4(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
       '@civitai/auth':
         specifier: workspace:*
         version: link:packages/civitai-auth
@@ -1253,6 +1253,9 @@ importers:
       '@civitai/flipt':
         specifier: workspace:*
         version: link:../../packages/civitai-flipt
+      '@civitai/moderation':
+        specifier: workspace:*
+        version: link:../../packages/civitai-moderation
       '@civitai/notifications':
         specifier: workspace:*
         version: link:../../packages/civitai-notifications
@@ -2494,8 +2497,8 @@ packages:
   '@chevrotain/utils@10.5.0':
     resolution: {integrity: sha512-hBzuU5+JjB2cqNZyszkDHZgOSrUUT8V3dhgRl8Q9Gp6dAj/H5+KILGjbhDpc3Iy9qmqlm/akuOI2ut9VUtzJxQ==}
 
-  '@civitai/app-sdk@0.85.0':
-    resolution: {integrity: sha512-tMAagvffjkEYpZXYIEOhz1mPCOlaMkdLx1drQEix3nft7xMxHVoMCIcDA/HJx/GOV+eHxzlsgnybKNtMb4jg9g==}
+  '@civitai/app-sdk@0.93.0':
+    resolution: {integrity: sha512-7rLJ03ui7dW4u38iYU1R+G8SVR8AClEl5pHuD8uma09huYvPFIi5p4LXp07GFpsl0b8vUCS4m39zdvSYfvz4fg==}
     engines: {node: '>=20'}
     peerDependencies:
       '@civitai/client': ^0.2.0-beta.98
@@ -2512,6 +2515,7 @@ packages:
   '@civitai/client@0.2.0-beta.98':
     resolution: {integrity: sha512-hjWw+5xI7xkFjk6PcteUSMA9Y/BegaY3E8M/clJc/tCz3DNgwVACz2W7wazysrUwn4VuzKtq+9nzF048CrSDEA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
+    deprecated: Moved to @civitai/orchestration-client. See https://github.com/civitai/civitai-client-javascript#renamed-from-civitaiclient
 
   '@civitai/components-chat@0.35.0':
     resolution: {integrity: sha512-VjOCqSvYBNoKd6A86djpi62GSe8CZcThyJT+HHdFjv0XQSAY/yOIyrrUIBgAMmKcYO2AJj1AW1UGehbg2E5TTA==}
@@ -13539,7 +13543,7 @@ snapshots:
 
   '@chevrotain/utils@10.5.0': {}
 
-  '@civitai/app-sdk@0.85.0(@civitai/client@0.2.0-beta.98)(ajv@8.20.0)(vite@6.4.4(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))':
+  '@civitai/app-sdk@0.93.0(@civitai/client@0.2.0-beta.98)(ajv@8.20.0)(vite@6.4.4(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))':
     optionalDependencies:
       '@civitai/client': 0.2.0-beta.98
       ajv: 8.20.0

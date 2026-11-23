@@ -476,10 +476,15 @@ export async function toggleHideCommentV3Handler({
   const comment = await writableComment(ctx, input.id);
   assertNotRemovedForMember(ctx, comment);
   await assertSectionOwnerOrModerator(ctx, comment);
-  await dbWrite.$transaction((tx) =>
-    setCommentFlags(prismaRunner(tx), [comment.id], { hidden: !comment.hidden })
-  );
-  return { id: comment.id, hidden: !comment.hidden };
+  // Toggled from the row read under its lock: the read above may predate a hide since.
+  const hidden = await dbWrite.$transaction(async (tx) => {
+    const row = await getStoredComment(prismaRunner(tx), comment.id, 'FOR UPDATE');
+    if (!row || row.deletedAt) throw throwNotFoundError('Comment not found');
+    const next = !row.hidden;
+    await setCommentFlags(prismaRunner(tx), [comment.id], { hidden: next });
+    return next;
+  });
+  return { id: comment.id, hidden };
 }
 
 export async function togglePinCommentV3Handler({

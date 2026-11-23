@@ -1,6 +1,6 @@
 # Training Studio on Civitai Elements
 
-**Status:** in progress, behind the `training-studio-elements-ui` flag. The Select step (#9552) and the Data step (#9878) are redesigned; the shell is in progress; the Review step is next.
+**Status:** in progress, behind the `training-studio-elements-ui` flag. Redesigned: the Select step (#9552), the Data step (#9878), the shell (#9902), the Review step (#10185), the run page (#10189) and My trainings (#10196). The Data-step dialogs (#10201) are redesigned and the run page's loss graph and log are in review. Next: the image-edit Data step, then cleanup.
 Tracked in HQ as `training_studio_civitai_ww5n`; slice 0 is `elements_training_studio_d595`.
 
 ## Goal
@@ -63,6 +63,23 @@ Measured on the Select step (Media, Type and Engine rows, Continue button):
 - **Labels.** A kit field's accessible name comes only from its own visible `label`; `aria-label` on
   the host is not forwarded into the shadow root. So every converted field gets a visible label (the
   Data step's trigger word moved its help tooltip into the field's `description`).
+- **Number fields.** `civitai-number-input` writes its value back into the input on every keystroke,
+  which clears `1e` on the way to `1e-4` and turns `0.000` into `0`. Decimal parameters on the Review
+  step use a `civitai-text-input` committed on change instead.
+- **Links.** `civitai-button` takes an `href` but no `target`, so a link that must open the main app in a
+  new tab (publish, model page, download weights) stays an `<a>` styled like a kit button.
+- **Boolean options with dashed names.** Svelte sets a dashed attribute such as `close-on-escape` as an
+  attribute, and `"false"` reads as on to Lit. Pass a changing boolean as the property instead
+  (`closeOnEscape={…}`).
+- **Selects.** `civitai-select` marks its choice with the `selected` attribute only, which a browser
+  ignores once the user has picked from that select; resetting one from code needs a remount.
+- **Modals keep their content mounted.** `civitai-modal` only hides its `<dialog>` on close, so a dialog
+  whose content holds media or runs a mount-time action renders that content only while `open`.
+- **Enter in kit fields** submits the form through `requestSubmit()` even when the form's submit button
+  is disabled, so a submit handler checks the same condition the button does.
+- **Controls on a card.** In the dark theme the slider track (`--civitai-color-track`) and the segmented
+  control's group background (`--civitai-color-segmented-bg`) are the card surface colour, so on a
+  card they disappear; set the token on the element (the loss graph does).
 - **Datalists.** A `list=` id can't reach an `<input>` inside a shadow root, so a field with datalist
   suggestions (the Data step's tag filter) stays a native input.
 - **Not yet checked:** rendering inside the main-app embed. The spike was checked in the standalone

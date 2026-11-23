@@ -7,9 +7,16 @@ export type YesNoSettings = {
   stretch: number;
   /** An answered question nobody has answered for this many days is closed with no outcome. */
   maxAgeDays: number;
+  /** The moderator tag review source: created, served and written back only when the Config page switched it on. */
+  tagReview: boolean;
 };
 
-export const DEFAULT_YESNO: YesNoSettings = { share: 0.7, stretch: 8, maxAgeDays: 14 };
+export const DEFAULT_YESNO: YesNoSettings = {
+  share: 0.7,
+  stretch: 8,
+  maxAgeDays: 14,
+  tagReview: false,
+};
 
 const read = (raw: string | undefined, fallback: number, valid: (n: number) => boolean) => {
   const value = raw === undefined || raw.trim() === '' ? NaN : Number(raw);
@@ -34,5 +41,7 @@ export function yesNoSettings(
     maxAgeDays:
       stored.yesNoMaxAgeDays ??
       read(env.KNIGHTS_YESNO_MAX_AGE_DAYS, DEFAULT_YESNO.maxAgeDays, (n) => n > 0),
+    // No environment fallback: turning it on is the moderators' call, made and audited on the Config page.
+    tagReview: stored.modTagReview === true,
   };
 }

@@ -1,5 +1,6 @@
 // Package urn builds the one registry URN this service subscribes by: a collection's schema,
-// `urn:schema:apps.civitai.com:<slug>/<collection>@v<major>`.
+// `urn:schema:apps.civitai.com:<slug>/<collection>@v<major>`; and a document's, which names a
+// record a write answered (Document).
 //
 // The TypeScript twin is `registryUrn({ kind: 'collection-schema', … })` in
 // src/server/registry-adapter/urn.ts, the function the registry adapter names its private streams
@@ -22,6 +23,9 @@ const Namespace = "apps.civitai.com"
 var (
 	slugRE       = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$`)
 	collectionRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+	// idRE is a document URN's last segment (urn.ts KEY_RE): the private feed puts the row's
+	// record_id there.
+	idRE = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 )
 
 // ErrInvalid is returned for a slug, collection or major the adapter would refuse to name.
@@ -50,3 +54,14 @@ func ValidSlug(slug string) bool { return slugRE.MatchString(slug) }
 // ValidCollection reports whether collection is a collection name the adapter would name
 // (urn.ts COLLECTION_RE).
 func ValidCollection(collection string) bool { return collectionRE.MatchString(collection) }
+
+// Document is the URN the adapter's private feed names a record by,
+// `urn:apps.civitai.com:<slug>/<collection>/<record_id>` (urn.ts `registryUrn({kind: 'document'})`,
+// with the record id as private-feed.ts passes it), so a record a write answered and the same record
+// on the stream are one URN.
+func Document(slug, collection, id string) (string, error) {
+	if !slugRE.MatchString(slug) || !collectionRE.MatchString(collection) || !idRE.MatchString(id) {
+		return "", ErrInvalid
+	}
+	return fmt.Sprintf("urn:%s:%s/%s/%s", Namespace, slug, collection, id), nil
+}

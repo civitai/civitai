@@ -49,6 +49,36 @@ export function disarmAccountDeletionImagePurge(userId: number) {
 }
 
 /**
+ * Takes the drain's ask off this account's pending deletes, which `pending-deletes` carries out
+ * without looking at the account: a row only it asked for goes, and one someone else also asked for
+ * keeps theirs. A `PrismaPromise`, for the same transaction as the `deletedAt` clear.
+ */
+export function releaseAccountDeletionPendingDeletes(userId: number) {
+  return dbWrite.$executeRaw`
+    WITH drained AS (
+      SELECT q."entityType", q."entityId", q.data ?| array['ownerId', 'cleanup'] AS "askedElse"
+      FROM "JobQueue" q
+      WHERE q.type = 'PendingDelete'::"JobQueueType" AND q.data->>'deletedBy' = ${ACCOUNT_DELETION_DRAIN}
+        AND (
+          (q."entityType" = 'Image' AND q."entityId" IN (SELECT id FROM "Image" WHERE "userId" = ${userId}))
+          OR (q."entityType" = 'Post' AND q."entityId" IN (SELECT id FROM "Post" WHERE "userId" = ${userId}))
+        )
+    ),
+    stripped AS (
+      UPDATE "JobQueue" q SET data = q.data - 'deletedBy' FROM drained d
+      WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"
+        AND q."entityId" = d."entityId" AND d."askedElse"
+    )
+    DELETE FROM "JobQueue" q USING drained d
+    WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"
+      AND q."entityId" = d."entityId" AND NOT d."askedElse"
+  `;
+}
+
+/** The actor `remove-deleted-user-images` deletes as, which its queued deletes name. */
+export const ACCOUNT_DELETION_DRAIN = 'remove-deleted-user-images';
+
+/**
  * Undoes the grace block, keyed off the `Image.metadata` breadcrumbs the block wrote rather than
  * off `blockedFor`: a moderator block is also `blockedFor = 'moderated'`, so anything scoped that
  * way would unblock content a moderator hid. Restoring the recorded values rather than forcing

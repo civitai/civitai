@@ -16,7 +16,10 @@ import { Flags } from '~/shared/utils/flags';
 import { Availability, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
-import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
+import {
+  IMAGE_REVIEW_PRECEDENCE,
+  REVIEWS_KEPT_WHEN_LIFTED,
+} from '@civitai/shared/image-review-types';
 import { LIFT_WHILE_OWNER_DELETED } from '@civitai/shared/account-deletion-grace';
 import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
 import {
@@ -451,6 +454,61 @@ export const reviewKeptWhenLiftedSql = Prisma.sql`(CASE
   THEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
 END)`;
 
+/**
+ * The row holds a CSAM block. NULL when `blockedFor` is NULL: a filter negates it with `IS NOT TRUE`.
+ * A scan's block write, `keepPendingAppealFlags` and an appeal filing never give such a row the
+ * 'appeal' review.
+ */
+export const csamBlockedSql = (alias?: 'i') =>
+  Prisma.raw(`${alias ? `"${alias}".` : ''}"blockedFor" = '${BlockedReason.CSAM}'`);
+
+/**
+ * Reviews only a moderator clears, so a scan never replaces one whatever it ranks. Known gaps, both
+ * leaving a review a moderator then clears: an appeal approved while a scan is in flight gets
+ * 'appeal' back from that scan, and a 'csam' review cleared while a scan is in flight gets 'csam'
+ * back from it.
+ */
+const REVIEWS_ONLY_A_MODERATOR_CLEARS = ['csam', 'appeal'] as const;
+
+/**
+ * `needsReview` after a write that sets `key`, by who writes it: 'human' (an unblock, an approved
+ * appeal) writes `key`; 'block' (a scan that leaves the row blocked) settles every review but
+ * 'csam', keeping 'appeal' while an appeal is pending unless the row holds a CSAM block; 'verdict'
+ * (any other scan) never clears or lowers a review, and replaces a stored key only by one ranked
+ * higher, except that a pending appeal's 'appeal' takes any key but 'csam'. Its SQL reads
+ * "Image".id, so it is only for an UPDATE of "Image". `csamBlock` is whether the row holds a CSAM
+ * block once the write lands; it defaults to the stored one.
+ */
+export function reviewKeyAfterSql(
+  actor: 'verdict' | 'block' | 'human',
+  key: string | null | Prisma.Sql,
+  csamBlock: Prisma.Sql = csamBlockedSql()
+) {
+  const next =
+    typeof key === 'string' || key === null ? Prisma.sql`${key}::text` : Prisma.sql`(${key})::text`;
+  if (actor === 'human') return next;
+  if (actor === 'block')
+    // A stored 'appeal' and a Pending appeal are read at write time, so an appeal filed while the
+    // scan ran keeps its flag.
+    return Prisma.sql`(CASE WHEN "needsReview" = 'csam' THEN "needsReview"
+      WHEN ${csamBlock} THEN NULL
+      WHEN ${next} = 'appeal' OR "needsReview" = 'appeal' OR EXISTS (
+        SELECT 1 FROM "Appeal" a
+        WHERE a."entityType" = 'Image'::"EntityType"
+          AND a."entityId" = "Image".id
+          AND a.status = 'Pending'::"AppealStatus"
+      ) THEN 'appeal' END)`;
+  return Prisma.sql`(CASE
+    WHEN "needsReview" = 'csam' THEN "needsReview"
+    WHEN ${next} = 'appeal' THEN ${next}
+    WHEN "needsReview" IS NULL THEN ${next}
+    WHEN "needsReview" = ANY(${REVIEWS_ONLY_A_MODERATOR_CLEARS}::text[]) THEN "needsReview"
+    WHEN array_position(${IMAGE_REVIEW_PRECEDENCE}::text[], ${next})
+      < array_position(${IMAGE_REVIEW_PRECEDENCE}::text[], "needsReview") THEN ${next}
+    ELSE "needsReview"
+  END)`;
+}
+
 /** `metadata` without the grace-block breadcrumbs. A non-object value is left as it is. */
 export const withoutGraceMarkersSql = (metadata: Prisma.Sql = Prisma.sql`"metadata"`) =>
   Prisma.sql`(CASE WHEN jsonb_typeof(${metadata}) = 'object'
@@ -520,6 +578,13 @@ export const withoutMinorFlag = <T extends { minor?: boolean | null }>({
 /** The images `minorMatureImageVisibleSql` shows only to their owner and moderators. */
 export const isMinorMatureImage = (image: { minor?: boolean | null; nsfwLevel: number }) =>
   isMinorContentRestricted({ minor: image.minor === true, nsfwLevel: image.nsfwLevel });
+
+/** A minor-flagged image the minor content rule restricts, as this viewer sees it: hidden unless they uploaded it or moderate. */
+export const minorMatureHidden = (
+  image: { userId: number; minor?: boolean | null; nsfwLevel: number } | null | undefined,
+  viewerId?: number,
+  isModerator?: boolean
+) => !!image && !isModerator && image.userId !== viewerId && isMinorMatureImage(image);
 
 /**
  * A minor-flagged image the minor content rule restricts is shown only to its owner and

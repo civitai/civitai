@@ -1,9 +1,5 @@
 import { ilikeContains } from '~/server/utils/ilike';
-import {
-  deletePostRows,
-  ownPostDeleteBlocked,
-  type DeleteActor,
-} from '@civitai/db-queries/content-deletion';
+import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-deletion';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { Prisma } from '@prisma/client';
 import {
@@ -103,15 +99,15 @@ import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
   createImage,
   createImageResources,
+  deleteImages,
   deleteImagesForModelVersionCache,
   getImageMetricsObject,
   getImagesForPosts,
   imagesForModelVersionsCache,
   enqueueImageIngestion,
   queueImageSearchIndexUpdate,
-  deleteImages,
-  imagesPendingDeletion,
   requeueUnverifiedImages,
+  deleteImagesWithOutcome,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/services/image.service';
 import { stageGenerationOutputImage } from '~/server/services/blocks/block-image-upload.service';
@@ -1705,28 +1701,20 @@ export const deletePost = async ({
 
   // Images first, then the post: a failure in between leaves a post with fewer images, which can
   // be deleted again.
-  const deletedImages = await deleteImages(
+  const { deleted: deletedImages, kept: keptImages } = await deleteImagesWithOutcome(
     images.filter((image) => image.deletable).map((image) => image.id),
     { actor, moderatorDelete: !!viewerIsModerator, updatePosts: false }
   );
-  // The deleter's own post under a child-safety report stays, as a pending delete, until the report
-  // is ruled on.
-  const deletedById = 'id' in actor ? actor.id : undefined;
-  const [post] = await deletePostRows(kyselyOver(dbWrite), {
-    ids: [id],
-    actor,
-    pending:
-      deletedById === undefined
-        ? undefined
-        : { blocked: ownPostDeleteBlocked(deletedById), data: { ownerId: deletedById } },
-  });
-  // Only the deleter's own images: the notice is for an owner's delete.
-  const ownImageIds = images.filter((image) => image.userId === deletedById).map((x) => x.id);
-  const deleteAfterReview = (await imagesPendingDeletion(ownImageIds)).size > 0;
+  const {
+    deleted: [post],
+    kept: keptPost,
+  } = await deletePostRows(kyselyOver(dbWrite), { ids: [id], actor });
+  // Only a moderator hears that a delete in the post was kept; a member's reply never says so.
+  const deleteAfterReview = !!viewerIsModerator && (keptPost.length > 0 || keptImages.length > 0);
 
-  // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
-  // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
-  // never revisits them — their docs must be dropped here.
+  // Images left behind (not this caller's to delete, kept by a hold marker, or left for a
+  // child-safety case) keep their row with `postId` nulled (ON DELETE SET NULL). The index sync only
+  // selects `postId IS NOT NULL`, so it never revisits them — their docs must be dropped here.
   const deletedIds = new Set(deletedImages.map((image) => image.id));
   const orphanedImageIds = images.filter((image) => !deletedIds.has(image.id)).map((x) => x.id);
   const imageOwnerIds = uniq(images.map((image) => image.userId));
@@ -1752,8 +1740,6 @@ export const deletePost = async ({
   await userImageVideoCountCaches.bust(imageOwnerIds);
 
   if (post) return { ...post, deletedImageIds, deleteAfterReview };
-  // Kept, with an image of theirs blocked where they can see it: the one generic notice. Otherwise it
-  // answers as if nothing was deleted.
   return deleteAfterReview ? { deleteAfterReview } : undefined;
 };
 
