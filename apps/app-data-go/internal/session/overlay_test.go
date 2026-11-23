@@ -257,10 +257,12 @@ func TestADeleteLeavesAMarkerUntilTheStreamDeletesItsURN(t *testing.T) {
 	eventually(t, "the k4 marker to drop", func() bool { return h.hubOverlays() == 1 })
 }
 
-// 5. For a block token, a floor is met by an acknowledgement this replica holds for the token, in any
-// of its streams of the same app: no reopen.
+// 5. For a block token, a floor is met by an acknowledgement this replica holds for the token's
+// stream of the collection read: no reopen. One held for another collection is no credit, and an
+// expired one is none either.
 // Fails on origin/main: no Manager.ReadAt or Ack (does not compile); the behavioural assertion is
-// one subscription for the floor read.
+// one subscription for the floor read. The cross-collection assertion (ErrFloorNotMet, 3 opened)
+// fails on 3c012af11b, where an ack in any collection of the app counted.
 func TestABlockTokensFloorIsMetByItsOwnAckWithoutAReopen(t *testing.T) {
 	floors := floorReads{}
 	h := newHarness(t, withFloorCount(overlayOpts(), floors))
@@ -273,21 +275,98 @@ func TestABlockTokensFloorIsMetByItsOwnAckWithoutAReopen(t *testing.T) {
 	if err != nil || shown(got) != "k1=ACK-31" || h.o.opens(blockTok) != 1 {
 		t.Fatalf("%q, %v, %d opened; want k1=ACK-31 from the one stream", shown(got), err, h.o.opens(blockTok))
 	}
-	// A write to another collection of the same app (seqs are app-wide) meets it too.
 	if _, err := read(t, h.m, blockTok, schemaB); err != nil {
 		t.Fatal(err)
 	}
 	h.m.Ack(blockTok, schemaB, Ack{Key: "list-1", Seq: 36, URN: "urn:apps.civitai.com:todo-app/lists/l1", Body: text("LIST-36")})
-	if _, err := h.m.ReadAt(context.Background(), blockTok, schemaA, 36); err != nil || h.o.opens(blockTok) != 2 {
-		t.Fatalf("%v, %d opened; want the floor met by the lists ack (2 streams, no reopen)", err, h.o.opens(blockTok))
+	if _, err := h.m.ReadAt(context.Background(), blockTok, schemaA, 36); !errors.Is(err, ErrFloorNotMet) || h.o.opens(blockTok) != 3 {
+		t.Fatalf("%v, %d opened; want ErrFloorNotMet after one reopen: the lists ack is no credit for notes", err, h.o.opens(blockTok))
 	}
-	// An expired acknowledgement is no credit.
 	h.c.add(91 * time.Second)
-	if _, err := h.m.ReadAt(context.Background(), blockTok, schemaA, 36); !errors.Is(err, ErrFloorNotMet) {
+	if _, err := h.m.ReadAt(context.Background(), blockTok, schemaA, 31); !errors.Is(err, ErrFloorNotMet) {
 		t.Fatalf("%v; want ErrFloorNotMet once the ack expired", err)
 	}
-	if len(floors) != 1 || floors[FloorStillBehind] != 1 {
+	if len(floors) != 1 || floors[FloorStillBehind] != 2 {
 		t.Fatalf("floor outcomes %v", floors)
+	}
+}
+
+// A stream that names no head (one the origin refused, or that holds nothing) cannot be compared
+// with a floor, so a floored read of it is answered as an unfloored one: no reopen, no 503.
+// Fails on 3c012af11b: every such read was ErrFloorNotMet (`err != nil`).
+func TestAHeadlessStreamAnswersAFlooredReadUnfloored(t *testing.T) {
+	floors := floorReads{}
+	h := newHarness(t, withFloorCount(overlayOpts(), floors))
+	for _, tok := range []string{hubTok, blockTok} {
+		h.o.records[tok] = []registry.Entity{rec("r-"+tok[:4], "k1", 20, "HEADLESS")}
+		got, err := h.m.ReadAt(context.Background(), tok, schemaA, 5)
+		if err != nil || shown(got) != "k1=HEADLESS" || h.o.opens(tok) != 1 {
+			t.Fatalf("%s: %q, %v, %d opened; want the unfloored answer", tok, shown(got), err, h.o.opens(tok))
+		}
+	}
+	if len(floors) != 0 {
+		t.Fatalf("floor outcomes %v; want none counted", floors)
+	}
+}
+
+// A stream that holds nothing and names no head answers empty whatever is overlaid, so the caller
+// still reads REST; one that names a head shows the overlay.
+// Fails on 3c012af11b: the refused stream answered the overlay record (`k1=ACK-5`).
+func TestARefusedStreamStaysEmptyUnderAnAck(t *testing.T) {
+	h := newHarness(t, overlayOpts())
+	h.reads(t, hubTok, "")
+	h.m.Ack(hubTok, schemaA, put("k1", 5, "r1", "ACK-5"))
+	h.reads(t, hubTok, "")
+	// Positive control: the same, on a stream that names a head.
+	h.o.heads[blockTok] = 3
+	h.reads(t, blockTok, "")
+	h.m.Ack(blockTok, schemaA, put("k1", 6, "r1", "ACK-6"))
+	h.reads(t, blockTok, "k1=ACK-6")
+}
+
+// The manager's size counts overlays: they are bounded apart from the records.
+// Fails on 3c012af11b: Stats counted records only (Records 1, not 2).
+func TestStatsCountOverlays(t *testing.T) {
+	h := newHarness(t, overlayOpts())
+	h.o.records[hubTok] = []registry.Entity{rec("r1", "k1", 20, "BASE-20")}
+	h.reads(t, hubTok, "k1=BASE-20")
+	before := h.m.Stats()
+	h.m.Ack(hubTok, schemaA, put("k2", 31, "r2", "ACK-31"))
+	after := h.m.Stats()
+	if before.Records != 1 || after.Records != 2 || after.Bytes <= before.Bytes {
+		t.Fatalf("before %+v, after %+v", before, after)
+	}
+}
+
+// With the writes off, a head that went back is main's failure: an adapter `cursor_expired` closes
+// the stream as an error and cools the key down, and a head below the one held is not read at all.
+// Fails on 3c012af11b: there the end closed `cursor_expired` with no cooldown whatever the flag.
+func TestWithTheWritesOffAHeadThatWentBackIsAFailureAsBefore(t *testing.T) {
+	h := newHarness(t, Options{})
+	h.o.records["tok-a"] = []registry.Entity{entity("urn:apps.civitai.com:todo-app/notes/r-off1", "OFF1")}
+	if _, err := read(t, h.m, "tok-a", schemaA); err != nil {
+		t.Fatal(err)
+	}
+	h.o.last(t, "tok-a").push(t, step{err: &registry.Error{Code: registry.CursorExpired}})
+	eventually(t, "the stream to close", func() bool { return h.closedFor(CloseError) == 1 })
+	if _, err := read(t, h.m, "tok-a", schemaA); !errors.Is(err, ErrCoolingDown) || h.closedFor(CloseCursorExpired) != 0 {
+		t.Fatalf("%v, closed cursor_expired %d; want ErrCoolingDown", err, h.closedFor(CloseCursorExpired))
+	}
+
+	h.o.records["tok-b"] = []registry.Entity{rec("rb", "kb", 50, "OFF-B")}
+	h.o.heads["tok-b"] = 40
+	if _, err := read(t, h.m, "tok-b", schemaA); err != nil {
+		t.Fatal(err)
+	}
+	st := h.o.last(t, "tok-b")
+	st.push(t, step{ev: registry.Event{Type: registry.Progress, Cursor: liveCursor, Meta: headMeta(39)}})
+	barrier(t, st, "1")
+	eventually(t, "the barrier", func() bool {
+		got, err := read(t, h.m, "tok-b", schemaA)
+		return err == nil && shown(got) == "kb=OFF-B,sync-1=S1"
+	})
+	if h.o.opens("tok-b") != 1 || h.closedFor(CloseCursorExpired) != 0 {
+		t.Fatalf("%d opened, %d closed cursor_expired; want the stream kept", h.o.opens("tok-b"), h.closedFor(CloseCursorExpired))
 	}
 }
 
@@ -355,12 +434,12 @@ func TestAHubTokensFloorIsTheHeadAlone(t *testing.T) {
 	h.reads(t, hubTok, "k1=ACK-31")
 }
 
-// 8a. A head that went back: the adapter ends the stream `cursor_expired` (private-feed.ts). That is
-// not a failure: the key is not cooled down, and the next read opens a fresh stream.
+// 8a. A head that went back, writes on: the adapter ends the stream `cursor_expired`
+// (private-feed.ts). That is not a failure: no cooldown, and the next read opens a fresh stream.
 // Fails on origin/main: the end is classified as an error and cools the key down, so the read after
 // it is ErrCoolingDown (`err != nil`). Uses only what main has.
 func TestACursorExpiredEndReopensWithoutACooldown(t *testing.T) {
-	h := newHarness(t, Options{})
+	h := newHarness(t, overlayOpts())
 	h.o.records["tok-a"] = []registry.Entity{entity("urn:apps.civitai.com:todo-app/notes/r-ce1", "CE1")}
 	if _, err := read(t, h.m, "tok-a", schemaA); err != nil {
 		t.Fatal(err)

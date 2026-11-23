@@ -29,7 +29,8 @@
 // store acknowledged is shown over its token's stream until the stream shows it (session.Ack), and a
 // read may name a floor, `?minSeq=S`, the highest `seq` the client was acknowledged for the app. A
 // floor the stream does not meet reopens it once per adapter poll; one still not met is
-// `503 floor_not_met` with Retry-After, never a REST read. Also the keyed get,
+// `503 floor_not_met` with Retry-After, never a REST read (a stream that names no head answers it
+// unfloored). Also the keyed get,
 //
 //	GET /v1/apps/{slug}/collections/{collection}/records/{key}[?major=N][&minSeq=S]
 //	→ {"source":"registry","item":{"urn"?:…,"key":…,"rev":…,"data":{…}}}
@@ -167,7 +168,6 @@ type answer struct {
 	Items  []item `json:"items"`
 }
 
-// keyed is the keyed get's answer.
 type keyed struct {
 	Source string `json:"source"`
 	Item   item   `json:"item"`
@@ -176,7 +176,6 @@ type keyed struct {
 // minSeqRE is a floor: a non-negative integer of at most 15 digits (below 2^53, as the site's seqs).
 var minSeqRE = regexp.MustCompile(`^[0-9]{1,15}$`)
 
-// readParams are what both reads take: the schema the path and `major` name, the floor, the token.
 type readParams struct {
 	schema string
 	minSeq int64
@@ -220,7 +219,6 @@ func (s *Server) params(w http.ResponseWriter, r *http.Request, start time.Time)
 	return p, true
 }
 
-// record serves the keyed get: from the stream only (see the package comment).
 func (s *Server) record(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	h := w.Header()
@@ -340,7 +338,7 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		// snapshot, exactly as a user who holds nothing, so only REST can tell the two apart.
 		switch {
 		case errors.Is(err, session.ErrFloorNotMet):
-			// The client sent a floor: it is answered by the stream, or told to retry.
+			// Never REST: a client that sent a floor retries this service.
 			s.streamRefusal(w, start, "floor_not_met")
 			return
 		case err != nil || len(ents) == 0:

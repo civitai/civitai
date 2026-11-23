@@ -149,7 +149,7 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 			func(s, _, _, _ int) int { return s }),
 		gauge("app_data_streams_live", "Open streams that have sent Live, so reads are answered from them.",
 			func(_, l, _, _ int) int { return l }),
-		gauge("app_data_cached_records", "Records held in every stream's cache.",
+		gauge("app_data_cached_records", "Records held in every stream's cache, acknowledged writes shown over a stream included.",
 			func(_, _, r, _ int) int { return r }),
 		gauge("app_data_cached_bytes", "Approximate bytes held in every stream's cache.",
 			func(_, _, _, b int) int { return b }),

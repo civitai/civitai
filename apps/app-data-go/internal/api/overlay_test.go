@@ -226,6 +226,7 @@ func TestTheKeyedGetIsAnsweredFromTheStreamOnly(t *testing.T) {
 		keyedEnt("rid-d-old", "d-1", 40, "D-OLD-ROW"), keyedEnt("rid-d-new", "d-1", 41, "D-NEW-ROW"),
 		keyedEnt("rid-d2", "d-2", 42, "D-2"),
 	}
+	s.reg.heads["civitai_dave"] = 50
 	s.reg.records["civitai_unkeyed"] = []registry.Entity{ent("urn:apps.civitai.com:todo-app/notes/r-u", "UNKEYED")}
 	s.reg.notPrivate["civitai_shared"] = true
 	s.reg.records["civitai_shared"] = []registry.Entity{keyedEnt("rid-s", "s-1", 1, "SHARED")}
@@ -249,8 +250,9 @@ func TestTheKeyedGetIsAnsweredFromTheStreamOnly(t *testing.T) {
 		{notesPath + "/d-1?major=x", "civitai_dave", 400, "bad_request"},
 		{"/v1/apps/Bad/collections/notes/records/d-1", "civitai_dave", 400, "bad_request"},
 		{notesPath + "/d-1?minSeq=x", "civitai_dave", 400, "bad_request"},
-		// The fake adapter's Live names no head for this token, so no floor above zero is met.
-		{notesPath + "/d-1?minSeq=5", "civitai_dave", 503, "floor_not_met"},
+		{notesPath + "/d-1?minSeq=51", "civitai_dave", 503, "floor_not_met"},
+		// A stream that names no head answers a floored read unfloored.
+		{notesPath + "/s-2?minSeq=51", "civitai_empty", 404, "not_found"},
 	}
 	for _, c := range cases {
 		g := s.getKey(t, c.path, c.token)
@@ -314,5 +316,23 @@ func TestEveryStreamReasonHasAnAnswer(t *testing.T) {
 		if retry := rec.Header().Get("Retry-After"); (rec.Code == 503) != (retry == "1") {
 			t.Errorf("%s: %d with Retry-After %q", reason, rec.Code, retry)
 		}
+	}
+}
+
+// A stream that holds nothing and names no head (the origin's answer to a token it refuses) still
+// sends the list to REST after an acknowledged write: an overlay never turns it into a one-record
+// registry answer.
+// Fails on 3c012af11b: the list answered `source: registry` with the overlay record alone.
+func TestAnAckNeverTurnsARefusedStreamIntoARegistryAnswer(t *testing.T) {
+	s := newWritesStack(t, newFakeWriteSite(t, 60))
+	s.store.by["civitai_erin"] = restAnswer{200, `{"items":[{"key":"e-1","data":{"text":"REST-E1"},"version":3}],"nextCursor":null}`}
+	if g := s.get(t, notesPath, "civitai_erin"); g.ans.Source != "rest" {
+		t.Fatalf("before: %s", g.body)
+	}
+	if rec := s.call(t, http.MethodPut, notesPath+"/e-2", "civitai_erin", `{"data":{"text":"PUT-61"}}`); rec.Code != 200 {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body)
+	}
+	if g := s.get(t, notesPath, "civitai_erin"); g.ans.Source != "rest" || itemsOf(g) != `e-1={"text":"REST-E1"}` {
+		t.Fatalf("after the put: %s; want the REST answer", g.body)
 	}
 }

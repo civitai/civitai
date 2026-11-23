@@ -119,7 +119,7 @@ func run(log *slog.Logger) error {
 			Exchange: router.Exchange, ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
 			Opened: m.StreamsOpened.Inc,
 			Closed: func(reason string) { m.StreamsClosed.WithLabelValues(reason).Inc() },
-			// Read-your-writes: with the writes off nothing is acknowledged, and no read names a floor.
+			// Read-your-writes; zero with the writes off, which turns all of it off (session.Options).
 			OverlayTTL:  overlayTTL(cfg),
 			ReopenEvery: cfg.AdapterPoll,
 			Floor:       func(outcome string) { m.FloorReopens.WithLabelValues(outcome).Inc() },
@@ -148,7 +148,6 @@ func run(log *slog.Logger) error {
 			Metrics: m, Log: log.With("component", "writes"),
 		}
 		if mgr != nil {
-			// Each acknowledged write is shown over its token's stream until the stream shows it.
 			fwd.Acked = mgr.Ack
 		}
 		srv.Writes = fwd

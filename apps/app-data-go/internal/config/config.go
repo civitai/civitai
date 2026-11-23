@@ -81,11 +81,9 @@ type Config struct {
 	// timeoutMs, at most 500, plus 450 ms: doc-store-hook.ts hookClientTimeoutMs), plus the rest of
 	// the store's chain; a forward past it answers 504 with its outcome unknown.
 	WritesTimeout time.Duration
-	// AdapterPoll is the registry adapter's poll interval (APP_DATA_WRITES_ADAPTER_POLL_SECONDS,
-	// default 60, from 1 to 600; the adapter's own REGISTRY_ADAPTER_POLL_SECONDS): how long a stream
-	// may lag a write. An acknowledged write is shown over its stream for one poll plus 30 s, and a
-	// read's floor reopens its stream at most once per poll (WRITES-DESIGN.md, "Read-your-writes").
-	// Zero with Writes off.
+	// AdapterPoll is how long a stream may lag a write (APP_DATA_WRITES_ADAPTER_POLL_SECONDS, default
+	// 60, from 1 to 600), kept at or above the adapter's REGISTRY_ADAPTER_POLL_SECONDS: an overlay lives
+	// this plus 30 s, and a floor reopens a stream at most once per it. Zero with Writes off.
 	AdapterPoll time.Duration
 
 	// ignoredWrites names the APP_DATA_WRITES_* settings set while APP_DATA_WRITES is off

@@ -36,12 +36,16 @@ headers (`cf-ipcountry`, `cf-region-code`, `x-isuk`) are copied onto the forward
 **Read-your-writes for private collections (dark, the same flag).** Each create, put and delete the
 store acknowledged is shown over the writing token's stream (an overlay at the write's `seq`, beside
 the stream's own records, never merged into them) until the stream shows it, its head passes it, the
-stream deletes its URN, or one adapter poll plus 30 s (`APP_DATA_WRITES_ADAPTER_POLL_SECONDS`). A read
+stream deletes its URN, or one adapter poll plus 30 s (`APP_DATA_WRITES_ADAPTER_POLL_SECONDS`, which
+must be kept at or above the adapter's `REGISTRY_ADAPTER_POLL_SECONDS`). A read
 may name a floor, `?minSeq=S`: met by the stream's head, or for a block token by an acknowledgement
 this replica still holds for it; otherwise the stream is reopened once per poll, and a floor still not
-met is `503 floor_not_met`, never a REST read. The keyed get,
+met is `503 floor_not_met`, never a REST read; a stream that names no head answers it unfloored, and
+one that also holds nothing still answers empty (so the list reads REST) whatever is overlaid. The
+keyed get,
 `GET /v1/apps/{slug}/collections/{collection}/records/{key}`, answers from the stream only. A head
-that went back (the adapter's `cursor_expired`) reopens the stream with no cooldown. Shared
+that went back (the adapter's `cursor_expired`) reopens the stream with no cooldown. With the flag
+off none of this runs: no seq or head is read, and `cursor_expired` is a stream error, as before. Shared
 collections, marks and the mark floor are not served yet (WRITES-DESIGN.md, "Read-your-writes").
 
 ## Layout

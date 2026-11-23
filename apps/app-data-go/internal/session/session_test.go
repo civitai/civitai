@@ -255,7 +255,7 @@ func read(t *testing.T, m *Manager, token, schema string) ([]registry.Entity, er
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	return m.Read(ctx, token, schema)
+	return m.ReadAt(ctx, token, schema, 0)
 }
 
 func urns(es []registry.Entity) string {
@@ -506,7 +506,7 @@ func TestAStreamShortOfLiveGivesUpAtTheDeadlineAndThenStopsMakingReadsWait(t *te
 	h.o.records["tok-a"] = []registry.Entity{entity("urn:apps.civitai.com:todo-app/notes/r-1", "x")}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	start := time.Now()
-	_, err := h.m.Read(ctx, "tok-a", schemaA)
+	_, err := h.m.ReadAt(ctx, "tok-a", schemaA, 0)
 	cancel()
 	if !errors.Is(err, ErrNotLive) {
 		t.Fatalf("got %v, want ErrNotLive", err)
@@ -516,7 +516,7 @@ func TestAStreamShortOfLiveGivesUpAtTheDeadlineAndThenStopsMakingReadsWait(t *te
 	}
 	// Stalled: the next read answers at once instead of waiting out its own (long) deadline.
 	ctx, cancel = context.WithTimeout(context.Background(), time.Hour)
-	_, err = h.m.Read(ctx, "tok-a", schemaA)
+	_, err = h.m.ReadAt(ctx, "tok-a", schemaA, 0)
 	cancel()
 	if !errors.Is(err, ErrStalled) {
 		t.Fatalf("got %v, want ErrStalled", err)
@@ -533,7 +533,7 @@ func TestAStreamThatReachesLiveAfterAStallServesAgain(t *testing.T) {
 	h := newHarness(t, Options{})
 	h.o.noLive["tok-a"] = true
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
-	_, _ = h.m.Read(ctx, "tok-a", schemaA)
+	_, _ = h.m.ReadAt(ctx, "tok-a", schemaA, 0)
 	cancel()
 	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Upsert,
 		Entity: entity("urn:apps.civitai.com:todo-app/notes/r-late", "late")}})

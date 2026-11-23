@@ -508,7 +508,6 @@ func (f *Forwarder) forward(w http.ResponseWriter, r *http.Request, ob outbound)
 	}
 }
 
-// ack hands a 2xx create, put or delete answer to Acked, when it names a seq.
 func (f *Forwarder) ack(ob outbound, raw []byte) {
 	if f.Acked == nil {
 		return
@@ -517,8 +516,7 @@ func (f *Forwarder) ack(ob outbound, raw []byte) {
 	if !ok {
 		return
 	}
-	// prepare checked the slug, the collection and the major (majorRE) against the same grammars, so
-	// this names a schema; were it ever "", it would match no stream and apply nothing.
+	// prepare checked every part against the same grammars; a "" schema would match no stream.
 	schema, _ := urn.CollectionSchema(ob.slug, ob.collection, ob.major)
 	f.Acked(ob.token, schema, a)
 }
