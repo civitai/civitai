@@ -58,7 +58,7 @@ export function useApplyHiddenPreferences<
   const stringified = JSON.stringify([...hiddenImages, ...hiddenUsers, ...hiddenTags]);
   const { items, hidden, feedDrop } = useMemo(() => {
     const preferences = ignoreViewerHidden
-      ? withoutViewerHidden(hiddenPreferences)
+      ? withoutViewerHidden(hiddenPreferences, { signedIn: !!currentUser })
       : { ...hiddenPreferences };
     if (hiddenImages.length > 0)
       preferences.hiddenImages = new Map([
@@ -153,9 +153,14 @@ export function useApplyHiddenPreferences<
 /**
  * The preferences left once the users, images and tags the viewer chose to hide are set aside: what
  * still hides an item anyway (a creator who blocked the viewer, the browsing level, site filters).
- * Without `blockedByUsers` every block, either way, stays in force.
+ * Without `blockedByUsers` every block, either way, stays in force. A signed-out viewer's hidden
+ * tags are the site's defaults, not their choice, so for them nothing is set aside.
  */
-export function withoutViewerHidden(preferences: HiddenPreferencesState): HiddenPreferencesState {
+export function withoutViewerHidden(
+  preferences: HiddenPreferencesState,
+  { signedIn }: { signedIn: boolean }
+): HiddenPreferencesState {
+  if (!signedIn) return { ...preferences };
   return {
     ...preferences,
     hiddenUsers: new Map(preferences.blockedByUsers ?? preferences.blockRelations),

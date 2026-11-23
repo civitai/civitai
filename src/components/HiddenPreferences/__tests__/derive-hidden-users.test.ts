@@ -14,14 +14,17 @@ const ids = (map: Map<number, boolean>) => [...map.keys()].sort();
 
 describe('deriveHiddenUsers', () => {
   it('a viewer hides their own hides and blocks in both directions', () => {
-    const { hiddenUsers, blockRelations } = deriveHiddenUsers(data, false);
+    const { hiddenUsers, blockRelations, blockedByUsers } = deriveHiddenUsers(data, false);
     expect(ids(hiddenUsers)).toEqual([HIDDEN, BLOCKED, BLOCKED_BY]);
     expect(ids(blockRelations)).toEqual([BLOCKED, BLOCKED_BY]);
+    // Only those who blocked the viewer: the one hide "Show anyway" may never set aside.
+    expect(ids(blockedByUsers)).toEqual([BLOCKED_BY]);
   });
 
   it('a moderator is not subject to blocks', () => {
-    const { hiddenUsers, blockRelations } = deriveHiddenUsers(data, true);
+    const { hiddenUsers, blockRelations, blockedByUsers } = deriveHiddenUsers(data, true);
     expect(ids(hiddenUsers)).toEqual([HIDDEN]);
     expect(ids(blockRelations)).toEqual([]);
+    expect(ids(blockedByUsers)).toEqual([]);
   });
 });

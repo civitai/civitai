@@ -141,10 +141,16 @@ export function useFeedImageItems<TItem extends BaseDataTypeMap['images'][number
 
 export const useQueryImages = (
   filters?: GetInfiniteImagesInput,
-  options?: { keepPreviousData?: boolean; enabled?: boolean; applyHiddenPreferences?: boolean }
+  options?: {
+    keepPreviousData?: boolean;
+    enabled?: boolean;
+    applyHiddenPreferences?: boolean;
+    /** Also return `revealable`: what only the viewer's own hidden users, images or tags took out. */
+    withRevealable?: boolean;
+  }
 ) => {
   const currentUser = useCurrentUser();
-  const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
+  const { applyHiddenPreferences = true, withRevealable, ...queryOptions } = options ?? {};
   filters ??= {};
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   // Only the domains that cap browsing (green) get `browsingLevel` backfilled by
@@ -193,6 +199,16 @@ export const useQueryImages = (
     disabled: !applyHiddenPreferences,
     isRefetching: rest.isRefetching,
   });
+  const viewerHidden = useMemo(() => {
+    if (!withRevealable) return undefined;
+    const kept = new Set(items.map((image) => image.id));
+    return flatData.filter((image) => !kept.has(image.id));
+  }, [withRevealable, flatData, items]);
+  const { items: revealable } = useApplyHiddenPreferences({
+    type: 'images',
+    data: viewerHidden,
+    ignoreViewerHidden: true,
+  });
 
   // Debug-mode override so the retry UI can be exercised without a real
   // backend failure. The parent combines this with React Query's isError to
@@ -205,6 +221,7 @@ export const useQueryImages = (
     data,
     flatData,
     images: items,
+    revealable,
     removedImages: hiddenCount,
     fetchedImages: flatData?.length,
     isLoading: isLoading || loadingPreferences,

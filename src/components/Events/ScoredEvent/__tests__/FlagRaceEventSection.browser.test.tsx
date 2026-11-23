@@ -7,13 +7,14 @@ const h = vi.hoisted(() => ({
   row: null as { event: string; summary: { flags: { imageId: number }[] } } | null,
   images: [] as { id: number }[],
   // What the server served before the viewer's hidden preferences; defaults to `images`.
-  served: null as { id: number }[] | null,
+  served: null as { id: number; nsfwLevel?: number }[] | null,
   loading: false,
   // The image request failed: no data at all.
   failed: false,
   asked: [] as (number[] | undefined)[],
   // Served flags only the viewer's own hidden users, images or tags took out.
-  ownHidden: new Set<number>(),
+  revealable: [] as { id: number }[],
+  withRevealable: false,
 }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
@@ -25,22 +26,16 @@ vi.mock('~/components/HatTurf/FlagRace/FlagRowProviders', () => ({
 }));
 vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageUtils>()),
-  useQueryImages: (filters: { ids?: number[] }) => {
+  useQueryImages: (filters: { ids?: number[] }, options?: { withRevealable?: boolean }) => {
     h.asked.push(filters.ids);
+    h.withRevealable = !!options?.withRevealable;
     return {
       images: h.images,
       flatData: h.failed ? undefined : h.served ?? h.images,
+      revealable: h.revealable,
       isLoading: h.loading,
     };
   },
-}));
-// Only the hidden flags reach the real filter here (useQueryImages is stubbed): with the viewer's
-// own preferences set aside, what passes is what they hid themselves.
-vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', () => ({
-  useApplyHiddenPreferences: ({ data }: { data: { id: number }[] }) => ({
-    items: data.filter((image) => h.ownHidden.has(image.id)),
-    loadingPreferences: false,
-  }),
 }));
 vi.mock('~/components/HatTurf/FlagRace/FlagRacePanel', () => ({
   FlagRacePanel: () => <div data-testid="panel" />,
@@ -78,7 +73,7 @@ beforeEach(() => {
   h.served = null;
   h.loading = false;
   h.failed = false;
-  h.ownHidden = new Set();
+  h.revealable = [];
 });
 afterEach(async () => {
   await cleanup();
@@ -104,8 +99,10 @@ describe('Flag Race on the event page', () => {
   test('lets the viewer show anyway, in its place, a flag only their own settings hid', async () => {
     h.served = [{ id: 30 }, { id: 10 }, { id: 20 }];
     h.images = [{ id: 20 }, { id: 30 }];
-    h.ownHidden = new Set([10]);
+    h.revealable = [{ id: 10 }];
     await renderWithProviders(<FlagRaceEventSection event="birthday2026" />);
+    // `revealable` is computed only when asked for.
+    expect(h.withRevealable).toBe(true);
     const hidden = document.querySelector('[data-testid="flag-hidden-for-you"]')!;
     expect(hidden.textContent).toContain('Hidden by your content settings');
     [...hidden.querySelectorAll('button')].find((b) => b.textContent === 'Show anyway')!.click();
@@ -118,6 +115,16 @@ describe('Flag Race on the event page', () => {
     await renderWithProviders(<FlagRaceEventSection event="birthday2026" />);
     const hidden = document.querySelector('[data-testid="flag-hidden-for-you"]')!;
     expect(hidden.textContent).toContain('Hidden for you');
+    expect(hidden.querySelector('button')).toBeNull();
+  });
+
+  test('says plainly, with no Show anyway, when a flag is above the browsing level', async () => {
+    const xxx = { id: 10, nsfwLevel: 16 };
+    h.served = [{ id: 30 }, xxx, { id: 20 }];
+    h.images = [{ id: 20 }, { id: 30 }];
+    await renderWithProviders(<FlagRaceEventSection event="birthday2026" />);
+    const hidden = document.querySelector('[data-testid="flag-hidden-for-you"]')!;
+    expect(hidden.textContent).toContain('Hidden by your browsing level');
     expect(hidden.querySelector('button')).toBeNull();
   });
 

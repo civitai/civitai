@@ -94,7 +94,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
 
   // TODO - find a different way to return collections so that the type isn't set on the individual item
   const type = shuffled[0]?.type ?? 'model';
-  const { loadingPreferences, items: filtered } = useApplyHiddenPreferences({
+  const { loadingPreferences, items: preferred } = useApplyHiddenPreferences({
     type: `${type}s`,
     data: shuffledData,
   });
@@ -103,26 +103,34 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
   // preferences hid can be shown anyway, and then goes through the same pipeline as the rest.
   const hiddenFlagItems = useMemo(() => {
     if (!flagRow || loadingPreferences) return [];
-    const visibleIds = new Set(filtered.map((item) => item.id));
+    const visibleIds = new Set(preferred.map((item) => item.id));
     return shuffledData.filter((item) => !visibleIds.has(item.id));
-  }, [flagRow, loadingPreferences, filtered, shuffledData]);
-  const flagReveal = useFlagReveal(hiddenFlagItems as { id: number; nsfwLevel?: number }[]);
-  const shown = useMemo(() => {
-    if (!flagReveal.revealed.length) return filtered;
+  }, [flagRow, loadingPreferences, preferred, shuffledData]);
+  const { items: revealableFlags } = useApplyHiddenPreferences({
+    type: 'images',
+    data: hiddenFlagItems as never,
+    ignoreViewerHidden: true,
+  });
+  const flagReveal = useFlagReveal(
+    hiddenFlagItems as { id: number; nsfwLevel?: number }[],
+    revealableFlags as { id: number }[]
+  );
+  const filtered = useMemo(() => {
+    if (!flagReveal.revealed.length) return preferred;
     const revealedIds = new Set(flagReveal.revealed.map((item) => item.id));
-    const visibleIds = new Set(filtered.map((item) => item.id));
+    const visibleIds = new Set(preferred.map((item) => item.id));
     return shuffledData.filter(
       (item) => visibleIds.has(item.id) || revealedIds.has(item.id)
-    ) as typeof filtered;
-  }, [filtered, shuffledData, flagReveal.revealed]);
+    ) as typeof preferred;
+  }, [preferred, shuffledData, flagReveal.revealed]);
 
   const maxPerUser = metadata.collection?.maxPerUser;
   // Served from the same shared, viewer-agnostic entry the feed block is, so image items arrive
   // with `reactions: []` for every viewer. Passed straight into the cap rather than held in a
   // binding of its own, which removes the INVITED mistake of rendering the un-hydrated list —
-  // not every one: `filtered` is still in scope, and so is what `ImagesProvider` is handed below.
+  // not every one: `preferred` and `filtered` are still in scope, and so is what `ImagesProvider` is handed below.
   const items = useDedupedCappedItems(
-    useHydratedImageReactions(useViewerEventDecorations(shown, { entity: type }), {
+    useHydratedImageReactions(useViewerEventDecorations(filtered, { entity: type }), {
       entity: type,
     }) as {
       id: number;
@@ -131,7 +139,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
     {
       order: dedupeOrder(blockIndex),
       entity: type,
-      rows: flagEvent ? Math.max(1, Math.ceil(shown.length / ITEMS_PER_ROW)) : rows,
+      rows: flagEvent ? Math.max(1, Math.ceil(filtered.length / ITEMS_PER_ROW)) : rows,
       maxPerUser,
     }
   ) as typeof filtered;

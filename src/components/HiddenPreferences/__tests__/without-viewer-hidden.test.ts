@@ -54,6 +54,8 @@ const images = [
   image(6, { userId: HID, nsfwLevel: 4 }),
 ];
 
+const signedIn = { signedIn: true };
+
 const kept = (hiddenPreferences: HiddenPreferencesState) =>
   filterPreferences({
     type: 'images',
@@ -67,16 +69,22 @@ const kept = (hiddenPreferences: HiddenPreferencesState) =>
 describe('withoutViewerHidden', () => {
   it("lets through what only the viewer's own hidden users, blocks, images and tags hid", () => {
     expect(kept(prefs)).toEqual([]);
-    expect(kept(withoutViewerHidden(prefs))).toEqual([1, 2, 3, 4]);
+    expect(kept(withoutViewerHidden(prefs, signedIn))).toEqual([1, 2, 3, 4]);
   });
 
   it('keeps a creator who blocked the viewer, and the browsing level, in force', () => {
-    const shown = kept(withoutViewerHidden(prefs));
+    const shown = kept(withoutViewerHidden(prefs, signedIn));
     expect(shown).not.toContain(5);
     expect(shown).not.toContain(6);
   });
 
   it('keeps every block, either way, when it cannot tell who blocked whom', () => {
-    expect(kept(withoutViewerHidden({ ...prefs, blockedByUsers: undefined }))).toEqual([1, 3, 4]);
+    expect(kept(withoutViewerHidden({ ...prefs, blockedByUsers: undefined }, signedIn))).toEqual([
+      1, 3, 4,
+    ]);
+  });
+
+  it("sets nothing aside for a signed-out viewer, whose hidden tags are the site's defaults", () => {
+    expect(kept(withoutViewerHidden(prefs, { signedIn: false }))).toEqual([]);
   });
 });
