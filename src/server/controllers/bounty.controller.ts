@@ -60,10 +60,18 @@ const keepsMinorRule =
     !minorMatureHidden(image, viewer?.id, viewer?.isModerator);
 
 type ModerationFields = 'minor' | 'poi' | 'needsReview' | 'blockedFor' | 'ingestion';
+type ModerationState = {
+  userId: number;
+  minor?: boolean | null;
+  poi?: boolean | null;
+  needsReview?: string | null;
+  blockedFor?: string | null;
+  ingestion?: string | null;
+};
 /** An image's moderation state goes only to its uploader and moderators. */
 const withoutOthersModerationFields =
   (viewer: { id: number; isModerator?: boolean } | undefined) =>
-  <T extends { userId: number } & Partial<Record<ModerationFields, unknown>>>(image: T) => {
+  <T extends ModerationState>(image: T): Omit<T, ModerationFields> => {
     if (viewer?.isModerator || image.userId === viewer?.id) return image;
     const {
       poi: _poi,
@@ -71,8 +79,8 @@ const withoutOthersModerationFields =
       blockedFor: _blockedFor,
       ingestion: _ingestion,
       ...rest
-    } = withoutMinorFlag(image);
-    return rest as Omit<T, ModerationFields> & Partial<Pick<T, ModerationFields>>;
+    } = image;
+    return withoutMinorFlag(rest as ModerationState) as unknown as Omit<T, ModerationFields>;
   };
 
 export const getInfiniteBountiesHandler = async ({

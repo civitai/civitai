@@ -694,7 +694,7 @@ describe('an nsfw-flagged bounty page', () => {
     expect((await page(NsfwLevel.R, [])).levels).toEqual([NsfwLevel.R, NsfwLevel.X]);
   });
 
-  // An unrated nsfw flag fails closed to XXX (see bountyNsfwFlagLevel).
+  // An unrated nsfw flag fails closed to XXX on the page as on the feed (#10178).
   it('shows the images of a flag with no recorded rating at XXX', async () => {
     const { levels, bounty } = await page(null, []);
     expect(levels).toEqual([NsfwLevel.XXX, NsfwLevel.XXX]);
@@ -806,7 +806,7 @@ describe('a minor-flagged image a bounty flag raises into the mature range', () 
   });
 });
 
-describe('the bounty page shows images by the same rule as the bounty feed', () => {
+describe('the bounty page shows images by the same rule as the bounty feed (#10178)', () => {
   beforeEach(() => {
     dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([]);
     mockAssert.mockResolvedValue(undefined);
@@ -944,7 +944,7 @@ describe('the bounty page shows images by the same rule as the bounty feed', () 
   });
 });
 
-describe('bounty images keep their moderation state for their uploader and moderators only', () => {
+describe('bounty images keep their moderation state for their uploader and moderators only (#10178)', () => {
   beforeEach(() => {
     dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([]);
     mockAssert.mockResolvedValue(undefined);
@@ -1022,7 +1022,7 @@ describe('bounty images keep their moderation state for their uploader and moder
     expect(image).toMatchObject(moderation);
   });
 
-  // An unrated flag raises images to XXX and never lowers one (see bountyImageNsfwLevel).
+  // An unrated flag raises images to XXX and never lowers one (#10178).
   it.each([
     ['page', 'uploader'],
     ['page', 'moderator'],
