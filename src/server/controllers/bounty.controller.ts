@@ -223,17 +223,13 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       mayBeTextRated(bounty) ? getTextRatedBountyLevels([bounty.id]) : new Map<number, number>(),
       getRequestImageFilter(ctx),
     ]);
-    // A rated flag raises the images to its level; a flag with no rating leaves them at their own.
-    const ratedFlagLevel =
-      bounty.moderatorNsfwLevel != null || textRated.has(bounty.id)
-        ? bountyNsfwFlagLevel(bounty, textRated.get(bounty.id))
-        : null;
-    const shownImages = images.filter(showsImage);
+    const flagLevel = bountyNsfwFlagLevel(bounty, textRated.get(bounty.id));
 
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
     return {
       ...publicBounty,
+      nsfwLevel: flagLevel ?? publicBounty.nsfwLevel,
       poiFlagged,
       poiAppeal,
       flagScanReasons: poiFlagged
@@ -243,14 +239,17 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
         ? publicBountyDetails(bounty.details as BountyDetailsSchema, ctx?.user?.isModerator)
         : ({} as BountyDetailsSchema),
       images: capNestedImages(
-        ratedFlagLevel == null
-          ? shownImages
-          : shownImages
-              .map((image) => ({
-                ...image,
-                nsfwLevel: Math.max(image.nsfwLevel, ratedFlagLevel) as NsfwLevel,
-              }))
-              .filter(keepsMinorRule(ctx.user)),
+        images
+          .filter(showsImage)
+          .map((image) => ({
+            ...image,
+            nsfwLevel: bountyImageNsfwLevel(
+              bounty,
+              textRated.get(bounty.id),
+              image.nsfwLevel
+            ) as NsfwLevel,
+          }))
+          .filter(keepsMinorRule(ctx.user)),
         ctx
       ).map((image) => ({
         ...image,
