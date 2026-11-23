@@ -9,6 +9,9 @@ import {
   SUITES_CONTEXT,
   decideBase,
   findRun,
+  ownContextErrors,
+  postedSince,
+  repostStatuses,
   runState,
   selectSuites,
   suiteDispatchArgs,
@@ -369,14 +372,195 @@ describe('waitDone', () => {
       })
     ).toBe(true);
   });
-  // Mutant: not waiting for an own context lets the lint run complete before that status lands,
-  // and the status is then never read with this batch run.
-  it('waits for an own context to be posted after its run finished', () => {
-    const own = [s('red', true, 'App tests (main batch)')];
-    expect(waitDone({ suites: own, postedContexts: new Set() })).toBe(false);
-    expect(waitDone({ suites: own, postedContexts: new Set(['App tests (main batch)']) })).toBe(
-      true
+  // An own-context suite's run that FINISHED ends the wait whether or not it posted: its verify job
+  // is part of that run, so nothing will post later. Waiting on (75 min) only delayed the green
+  // the batch then posted over a missing verdict. ownContextErrors handles the missing one.
+  it('stops waiting for an own context once its run has finished, posted or not', () => {
+    for (const state of ['green', 'red', 'undecided'])
+      expect(
+        waitDone({ suites: [s(state, true, 'App tests (main batch)')], postedContexts: new Set() })
+      ).toBe(true);
+    expect(waitDone({ suites: [s('running', true, 'App tests (main batch)')] })).toBe(false);
+  });
+});
+
+// A dispatched own-context suite that did not post must leave `error` in ITS context, never a
+// silence that a reader takes for "nothing to say" and a batch green over it.
+describe('ownContextErrors', () => {
+  const CTX = 'App tests (main batch)';
+  const own = (state: string, run = true) => ({
+    workflow: 'apps.yml',
+    ownContext: CTX,
+    run,
+    state,
+  });
+  const one = (state: string) =>
+    ownContextErrors({ suites: [own(state)], postedContexts: new Set() });
+
+  it.each([
+    ['not-dispatched', 'No verdict: apps its dispatch failed'],
+    ['undecided', 'No verdict: apps its run was cancelled or skipped before posting'],
+    ['red', 'No verdict: apps its run failed before posting'],
+    ['green', 'No verdict: apps its run finished without posting'],
+    ['missing', 'No verdict: apps its run was not found at this commit by the deadline'],
+  ])('%s and not posted: error in that context', (state, description) => {
+    expect(one(state)).toEqual([{ context: CTX, state: 'error', description }]);
+  });
+
+  // Mutant: drop the posted check and a real verdict gets overwritten by `error`.
+  it('nothing when the context was posted, or the suite was not dispatched (paths unchanged)', () => {
+    expect(ownContextErrors({ suites: [own('green')], postedContexts: new Set([CTX]) })).toEqual(
+      []
     );
+    expect(
+      ownContextErrors({ suites: [own('skipped', false)], postedContexts: new Set() })
+    ).toEqual([]);
+    expect(
+      ownContextErrors({
+        suites: [{ workflow: 'feed-go.yml', ownContext: null, run: true, state: 'red' }],
+        postedContexts: new Set(),
+      })
+    ).toEqual([]);
+  });
+
+  // The batch's own verdict leaves own-context suites out, so a failed dispatch of one never makes
+  // `Batch suites` red or green: its error is in its own context (above).
+  it('a failed own-context dispatch does not read green anywhere', () => {
+    const suites = [own('not-dispatched')];
+    expect(verdict({ suites, base: null }).state).toBe('success');
+    expect(one('not-dispatched')[0].state).toBe('error');
+  });
+
+  // Only this batch's posts count: an older status on the same commit is not this run's verdict.
+  it('postedSince counts verdicts created at or after the dispatch only', () => {
+    const t = Date.parse('2026-11-23T10:00:00Z');
+    expect(
+      postedSince(
+        [
+          { context: CTX, state: 'success', created_at: '2026-11-23T09:59:59Z' },
+          { context: 'B', state: 'failure', created_at: '2026-11-23T10:00:00Z' },
+          { context: 'C', state: 'pending', created_at: '2026-11-23T10:05:00Z' },
+        ],
+        t
+      )
+    ).toEqual(new Set(['B']));
+  });
+});
+
+// F2: apps has its own base, from its own context's verdicts. After a red app verdict the next
+// batch dispatches apps.yml even when no app path changed, while the other suites use the batch
+// base (here green, with nothing changed: they skip).
+describe('an own-context suite has its own base', () => {
+  const onApps = { pull_request: { paths: ['apps/**'] }, workflow_dispatch: {} };
+  const onFeed = { pull_request: { paths: ['apps/feed-go/**'] }, workflow_dispatch: {} };
+  it('a red app verdict re-runs apps with no app path change', () => {
+    const appBase = decideBase([{ sha: 'a'.repeat(40), state: 'failure' }]);
+    expect(appBase.base).toBeNull();
+    const got = selectSuites({
+      entries: [
+        { workflow: 'feed-go.yml', on: onFeed },
+        {
+          workflow: 'apps.yml',
+          on: onApps,
+          ownContext: 'App tests (main batch)',
+          base: appBase.base,
+          baseReason: appBase.reason,
+          files: null,
+        },
+      ],
+      base: 'b'.repeat(40),
+      baseReason: 'last green batch',
+      files: ['src/unrelated.ts'],
+    });
+    expect(got.map((g) => [g.workflow, g.run])).toEqual([
+      ['feed-go.yml', false],
+      ['apps.yml', true],
+    ]);
+  });
+
+  // The control: with a GREEN app base and no app change, apps skips like any other suite.
+  it('a green app verdict and no app path change skips apps', () => {
+    const got = selectSuites({
+      entries: [
+        {
+          workflow: 'apps.yml',
+          on: onApps,
+          ownContext: 'App tests (main batch)',
+          base: 'c'.repeat(40),
+          baseReason: 'last green',
+          files: ['src/unrelated.ts'],
+        },
+      ],
+      base: null,
+      baseReason: 'the last batch verdict was red',
+      files: null,
+    });
+    expect(got[0].run).toBe(false);
+  });
+});
+
+// An own-context verdict (apps.yml's `App tests (main batch)`) is posted from its own run; the
+// batch re-posts it with the lint batch run as its target_url, so a reader that lists lint batch
+// runs and keeps statuses naming THAT run finds it (lint.yml's header, the status contract).
+describe('repostStatuses', () => {
+  const RUN = 'https://github.com/o/r/actions/runs/500';
+  const APPS = 'https://github.com/o/r/actions/runs/777';
+  const CTX = 'App tests (main batch)';
+  const suite = (over: Record<string, unknown> = {}) => ({
+    workflow: 'apps.yml',
+    ownContext: CTX,
+    run: true,
+    state: 'green',
+    ...over,
+  });
+  const st = (state: string, target_url: string, description = `d-${state}`) => ({
+    context: CTX,
+    state,
+    target_url,
+    description,
+  });
+
+  // Mutant: re-post the OLDEST status (or drop the state) and the bisected red's HEAD line is lost.
+  it('re-posts the newest own-context verdict, state and description unchanged', () => {
+    expect(
+      repostStatuses({
+        suites: [suite()],
+        statuses: [
+          st('failure', APPS, 'Failing since first bad commit cccccccccc: apps/a.test.ts'),
+          st('error', APPS),
+        ],
+        runUrl: RUN,
+      })
+    ).toEqual([
+      {
+        context: CTX,
+        state: 'failure',
+        description: 'Failing since first bad commit cccccccccc: apps/a.test.ts',
+      },
+    ]);
+  });
+
+  it('does not re-post one that already names this run, nor a pending one, nor none', () => {
+    expect(
+      repostStatuses({ suites: [suite()], statuses: [st('success', `${RUN}/`)], runUrl: RUN })
+    ).toEqual([]);
+    expect(
+      repostStatuses({ suites: [suite()], statuses: [st('pending', APPS)], runUrl: RUN })
+    ).toEqual([]);
+    expect(repostStatuses({ suites: [suite()], statuses: [], runUrl: RUN })).toEqual([]);
+  });
+
+  // A suite not dispatched at this commit (paths unchanged) gets nothing re-posted: an older
+  // status in that context on this commit, if any, is not this batch's.
+  it('only for dispatched suites that have an own context', () => {
+    const statuses = [st('success', APPS)];
+    expect(repostStatuses({ suites: [suite({ run: false })], statuses, runUrl: RUN })).toEqual([]);
+    expect(
+      repostStatuses({ suites: [suite({ state: 'not-dispatched' })], statuses, runUrl: RUN })
+    ).toEqual([]);
+    expect(
+      repostStatuses({ suites: [suite({ ownContext: null })], statuses, runUrl: RUN })
+    ).toEqual([]);
   });
 });
 

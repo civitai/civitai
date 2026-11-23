@@ -236,6 +236,22 @@ func (r *Redis) HGet(ctx context.Context, key, field string) *redis.StringCmd {
 	return redis.NewStringResult(r.hget(key, field))
 }
 
+// HGetAll is HGETALL.
+func (r *Redis) HGetAll(ctx context.Context, key string) *redis.MapStringStringCmd {
+	r.count()
+	cmd := redis.NewMapStringStringCmd(ctx, "hgetall", key)
+	if err := r.wait(ctx); err != nil {
+		cmd.SetErr(err)
+		return cmd
+	}
+	if err := r.keyErr(key); err != nil {
+		cmd.SetErr(err)
+		return cmd
+	}
+	cmd.SetVal(r.hgetall(key))
+	return cmd
+}
+
 // Pipelined runs fn against a pipeline whose commands all answer at once, as one round trip. Like
 // go-redis it returns the first command error (redis.Nil included).
 func (r *Redis) Pipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error) {

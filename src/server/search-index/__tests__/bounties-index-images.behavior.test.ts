@@ -88,7 +88,7 @@ beforeAll(async () => {
       "benefactorCountAllTime" int, "unitAmountCountAllTime" int, "commentCountAllTime" int
     );
 
-    INSERT INTO "User" (id, username) VALUES (${OWNER}, 'owner');
+    INSERT INTO "User" (id, username, image) VALUES (${OWNER}, 'owner', 'legacy.png');
     INSERT INTO "Image" (id, "tosViolation") VALUES (${TOS_VIOLATION}, true);
     INSERT INTO "Image" (id, "acceptableMinor") VALUES (${ACCEPTABLE_MINOR}, true);
     INSERT INTO "Image" (id) VALUES (${REPORT_LISTED});
@@ -143,6 +143,14 @@ const pull = async (bountyId: number) => {
   return (await transformData(data))[0];
 };
 const indexed = async (bountyId: number) => (await pull(bountyId))?.images ?? [];
+
+describe('bounties search index owner', () => {
+  it("carries the owner's profilePictureId but not the legacy image", async () => {
+    const user = (await pull(CLEAN))?.user as Record<string, unknown> | undefined;
+    expect(user).toHaveProperty('profilePictureId');
+    expect(user).toHaveProperty('image', null);
+  });
+});
 
 describe('bounties search index images', () => {
   it('indexes a scanned, rated, unblocked image with its generation data (control)', async () => {

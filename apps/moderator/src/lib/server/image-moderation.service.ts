@@ -52,7 +52,8 @@ import type { DB } from '@civitai/db-schema/kysely';
 const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK} OR "ingestion" <> 'Blocked')`;
 
 const BLOCKED_REASON_MODERATED = 'moderated';
-const BLOCKED_REASON_CSAM = 'CSAM';
+/** The block reason of a CSAM removal; the main app's `csamBlockedSql` reads the same literal. */
+export const BLOCKED_REASON_CSAM = 'CSAM';
 
 /**
  * Removed for CSAM, or under the review flag and not dismissed from its queue. A block of a held image
@@ -825,6 +826,8 @@ export async function keepPendingAppealFlags(db: Kysely<DB>, imageIds: readonly 
     .set({ needsReview: 'appeal' })
     .where('id', 'in', [...imageIds])
     .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
+    // A row holding a CSAM block never takes the appeal flag (main app: keepPendingAppealFlags).
+    .where(sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM}) IS NOT TRUE`)
     .where((eb) =>
       eb.exists(
         eb
