@@ -193,6 +193,7 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
       INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId") VALUES (1001, ${BLOCKED}, 'image', 10);`);
     holder.afterRead = cleanupRecord;
     await hideBlockedUserCommentsOnOwnContent({ ownerId: BLOCKER, blockedUserId: BLOCKED });
+    expect(holder.afterRead, 'the hook ran').toBeNull();
 
     expect(await restoreScamCase(1)).toEqual({ restored: 0 });
     expect(await hiddenIds()).toEqual([1001]);
@@ -204,6 +205,7 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
     await cleanupRecord();
     holder.afterRead = () => restoreScamCase(1);
     await hideBlockedUserCommentsOnOwnContent({ ownerId: BLOCKER, blockedUserId: BLOCKED });
+    expect(holder.afterRead, 'the hook ran').toBeNull();
 
     expect(await hiddenIds()).toEqual([1001]);
   });
@@ -212,6 +214,27 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
     await hideBlockedUserCommentsOnOwnContent({ ownerId: OTHER_OWNER, blockedUserId: BLOCKED });
 
     expect(await hiddenIds()).toEqual([2001, 3001, 3002, 3003, 3004]);
+  });
+
+  it('hides a visible comment even past a ceiling of comments hidden already', async () => {
+    await holder.db.exec(`
+      TRUNCATE "CommentV3";
+      INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId", hidden)
+      SELECT g, ${BLOCKED}, 'image', 10, true FROM generate_series(1, ${BLOCK_HIDE_MAX_COMMENTS}) g;
+      INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId")
+      VALUES (${BLOCK_HIDE_MAX_COMMENTS + 1}, ${BLOCKED}, 'image', 10);
+    `);
+
+    const result = await hideBlockedUserCommentsOnOwnContent({
+      ownerId: BLOCKER,
+      blockedUserId: BLOCKED,
+    });
+
+    expect(result).toMatchObject({ status: 'hidden', count: 1 });
+    const { rows } = await holder.db.query<{ hidden: boolean }>(
+      `SELECT hidden FROM "CommentV3" WHERE id = ${BLOCK_HIDE_MAX_COMMENTS + 1}`
+    );
+    expect(rows).toEqual([{ hidden: true }]);
   });
 
   it('stops at the row ceiling, in batches, and says so', async () => {
@@ -225,14 +248,13 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
       blockedUserId: BLOCKED,
     });
 
-    // The ceiling counts candidates, and 2001, hidden already, is the first of them.
-    expect(result).toEqual({ status: 'hidden', count: BLOCK_HIDE_MAX_COMMENTS - 1, capped: true });
+    expect(result).toEqual({ status: 'hidden', count: BLOCK_HIDE_MAX_COMMENTS, capped: true });
     expect(dbMock.dbWrite.$queryRawUnsafe).toHaveBeenCalledTimes(10);
     // The ceiling's worth plus the one already hidden.
     const { rows } = await holder.db.query<{ n: number }>(
       `SELECT count(*)::int n FROM "CommentV3" WHERE "userId" = ${BLOCKED} AND hidden`
     );
-    expect(rows[0].n).toBe(BLOCK_HIDE_MAX_COMMENTS);
+    expect(rows[0].n).toBe(BLOCK_HIDE_MAX_COMMENTS + 1);
   });
 
   it('reports the rows already hidden when a later batch fails', async () => {
@@ -248,8 +270,7 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
 
     await expect(
       hideBlockedUserCommentsOnOwnContent({ ownerId: BLOCKER, blockedUserId: BLOCKED })
-      // Two batches landed; the first held 2001, hidden already.
-    ).resolves.toEqual({ status: 'failed', count: 1999 });
+    ).resolves.toEqual({ status: 'failed', count: 2000 });
   });
 
   it('reports failure instead of throwing when a write fails', async () => {
