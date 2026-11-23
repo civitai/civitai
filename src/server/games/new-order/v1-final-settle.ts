@@ -1,6 +1,7 @@
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
+import { dbRead } from '~/server/db/client';
 import { runGrantBlessedBuzz } from '~/server/jobs/new-order-jobs';
 import { processFinalRatings } from '~/server/services/games/new-order.service';
 import { throwInternalServerError } from '~/server/utils/errorHandling';
@@ -40,10 +41,42 @@ export async function countPendingV1Votes() {
   };
 }
 
+/** Payout-blocked players with v1 judgments the nightly grant held back (it held from two days
+ *  before the block). Clearing their block no longer pays those, so they stay held. */
+export async function countHeldV1Players() {
+  const blocked = await dbRead.newOrderPlayer.findMany({
+    where: { payoutBlockedAt: { not: null } },
+    select: { userId: true, payoutBlockedAt: true },
+  });
+  if (!blocked.length) return { blocked: 0, withHeldJudgments: 0 };
+  const conditions = blocked
+    .map(
+      (p) =>
+        `(userId = ${p.userId} AND createdAt >= parseDateTimeBestEffort('${dayjs(p.payoutBlockedAt!)
+          .startOf('day')
+          .subtract(2, 'day')
+          .toISOString()}'))`
+    )
+    .join(' OR ');
+  const [row] = await requireClickhouse().$query<{ players: number }>`
+    SELECT uniq(userId) AS players
+    FROM knights_new_order_image_rating
+    WHERE (${conditions})
+      AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}')
+  `;
+  return { blocked: blocked.length, withHeldJudgments: Number(row?.players ?? 0) };
+}
+
 /** Settles every vote still Pending as Inconclusive, as the daily rating-slot purge did. Those pay
  *  nothing: only Correct and Failed judgments earn Buzz. */
 export async function voidPendingV1Votes() {
   const ch = requireClickhouse();
+  // A moderator rating still waiting in the batch would lose to the later NULL row and settle as
+  // Inconclusive, so it has to be processed first.
+  const flushed = await processFinalRatings();
+  if (flushed.status !== 'processed' && flushed.status !== 'no-new-data')
+    return { images: 0, processed: flushed, retry: true };
+
   const rows = await ch.$query<{ imageId: number }>`
     SELECT DISTINCT imageId FROM (${pendingVotes})
   `;
@@ -56,7 +89,7 @@ export async function voidPendingV1Votes() {
     });
   }
   const processed = imageIds.length ? await processFinalRatings() : { status: 'nothing-pending' };
-  return { images: imageIds.length, processed };
+  return { images: imageIds.length, processed, retry: false };
 }
 
 /** Pays each day from `from` through today, oldest first. */
