@@ -5,6 +5,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { TEXT_MODERATION_RETRY_LIMIT } from '~/server/jobs/text-moderation-retry.constants';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -62,6 +64,10 @@ dbMock.dbWrite.entityModeration.findFirst.mockImplementation((async (args: {
 
 const adapter = await import('~/server/services/service-deal-review-moderation.adapter');
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
+const { reconcileServiceDealReviews } = await import(
+  '~/server/services/creator-service-deal-review-reconcile'
+);
+const rescanUnsubmitted = () => reconcileServiceDealReviews({ limit: 10 });
 const { loadServiceDealReviewSubjects } = await import(
   '~/server/services/text-scan/profiles/service-deal-review.profile'
 );
@@ -545,6 +551,122 @@ describe('a verdict that does not answer every label the profile requires', () =
         },
         data: { retryCount: { increment: 1 } },
       });
+      expect(dbMock.dbWrite.entityModeration.updateMany).toHaveBeenCalledTimes(1);
     }
   );
+});
+
+describe('a verdict that cannot settle its text is left to the retry job, within its limit', () => {
+  const TYPES = ['ServiceDealReview', 'ServiceDealReviewReply'] as const;
+  const cols = {
+    ServiceDealReview: { status: 'scanStatus', workflow: 'scanWorkflowId', text: 'comment' },
+    ServiceDealReviewReply: {
+      status: 'sellerReplyScanStatus',
+      workflow: 'sellerReplyScanWorkflowId',
+      text: 'sellerReply',
+    },
+  } as const;
+  const state = async (type: (typeof TYPES)[number]) =>
+    (
+      await q<{ status: string; workflow: string | null }>(
+        `SELECT "${cols[type].status}"::text AS status, "${cols[type].workflow}" AS workflow
+         FROM "ServiceDealReview" WHERE id = $1`,
+        [REVIEW]
+      )
+    )[0];
+  const checkRow = async (type: (typeof TYPES)[number]) =>
+    (
+      await q<{ status: string; retryCount: number }>(
+        `SELECT status, "retryCount" FROM "EntityModeration" WHERE "entityType" = $1 AND "entityId" = $2`,
+        [type, REVIEW]
+      )
+    )[0];
+  /** The retry job's own selection: a failed check row with retries left. */
+  const retryJobSelects = async (type: (typeof TYPES)[number]) => {
+    const row = await checkRow(type);
+    return row?.status === 'Failed' && row.retryCount < TEXT_MODERATION_RETRY_LIMIT;
+  };
+  /** A check the retry job sent recorded its verdict: the row is Succeeded, its retries kept. */
+  const recordCheck = async (type: (typeof TYPES)[number], workflowId: string) => {
+    await q(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", status, result)
+       VALUES ($1, $2, $3, 'Succeeded', $4::jsonb)
+       ON CONFLICT ("entityType", "entityId") DO UPDATE SET "workflowId" = $3, status = 'Succeeded'`,
+      [type, REVIEW, workflowId, JSON.stringify({ version: 1, labels: NSFW_ONLY })]
+    );
+    await q(`UPDATE "ServiceDealReview" SET "${cols[type].workflow}" = $1`, [workflowId]);
+  };
+  const spentLogs = () =>
+    loggingMock.logToAxiom.mock.calls.filter(([entry]) =>
+      String((entry as { message?: string }).message).startsWith('retries spent')
+    );
+
+  it.each(TYPES)(
+    '%s: verdicts that never answer every label stop being sent at the limit, and never show the text',
+    async (type) => {
+      await seed(R);
+      let sent = 0;
+      for (let attempt = 1; attempt <= TEXT_MODERATION_RETRY_LIMIT + 3; attempt++) {
+        if (attempt > 1 && !(await retryJobSelects(type))) break;
+        sent++;
+        await recordCheck(type, `wf-${attempt}`);
+        await textScan({ type, everyLabel: false, workflowId: `wf-${attempt}` });
+        expect(await state(type)).toEqual({ status: 'Pending', workflow: null });
+      }
+      expect(sent).toBe(TEXT_MODERATION_RETRY_LIMIT);
+      expect(await checkRow(type)).toEqual({
+        status: 'Failed',
+        retryCount: TEXT_MODERATION_RETRY_LIMIT,
+      });
+      expect(spentLogs()).toHaveLength(1);
+      expect(spentLogs()[0][0]).toMatchObject({
+        type: 'error',
+        reviewId: REVIEW,
+        entityType: type,
+        payload: { labels: ['csam'] },
+      });
+    }
+  );
+
+  it('a verdict for an older check spends nothing on the newer check', async () => {
+    await seed(R);
+    await recordCheck('ServiceDealReview', 'wf-newer');
+    await textScan({ everyLabel: false, workflowId: 'wf-older' });
+    expect(await checkRow('ServiceDealReview')).toEqual({ status: 'Succeeded', retryCount: 0 });
+  });
+
+  it('the reconcile leaves text whose check row the retry job holds, and only that text', async () => {
+    await seed(R);
+    await q(
+      `UPDATE "ServiceDealReview" SET "scanWorkflowId" = NULL, "sellerReplyScanWorkflowId" = NULL,
+         "updatedAt" = now() - interval '1 hour'`
+    );
+    await q(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", status, "retryCount")
+       VALUES ('ServiceDealReview', $1, 'Failed', $2)`,
+      [REVIEW, TEXT_MODERATION_RETRY_LIMIT]
+    );
+    const rescans = vi.spyOn(adapter, 'scanServiceDealReviewText').mockResolvedValue(undefined);
+    try {
+      await rescanUnsubmitted();
+      expect(rescans.mock.calls).toEqual([['ServiceDealReviewReply', REVIEW]]);
+    } finally {
+      rescans.mockRestore();
+    }
+  });
+
+  it('an edit to text past its limit is scanned again', async () => {
+    await seed(R);
+    await recordCheck('ServiceDealReview', 'wf-1');
+    await q(`UPDATE "EntityModeration" SET status = 'Failed', "retryCount" = $1`, [
+      TEXT_MODERATION_RETRY_LIMIT,
+    ]);
+    // What the review's writer does on an edit: the text back to Pending, then its check.
+    await q(
+      `UPDATE "ServiceDealReview" SET comment = 'Edited', "scanStatus" = 'Pending', "scanWorkflowId" = NULL`
+    );
+    await adapter.scanServiceDealReviewText('ServiceDealReview', REVIEW, submitCheck);
+    expect(submitCheck).toHaveBeenCalledTimes(1);
+    expect(await state('ServiceDealReview')).toEqual({ status: 'Pending', workflow: 'wf-new' });
+  });
 });

@@ -9,6 +9,7 @@ import {
   settleSkippedScan,
   type SkipReason,
 } from '~/server/services/text-scan/actions/settle-skipped';
+import { TEXT_MODERATION_RETRY_LIMIT } from '~/server/jobs/text-moderation-retry.constants';
 import { csamHoldBars } from '~/server/services/text-scan/csam-hold-bars';
 import {
   csamHoldState,
@@ -68,8 +69,8 @@ async function settleReviewText(
 }
 
 /**
- * Text whose verdict cannot settle it stays unshown and is left for the reconcile in the deals job
- * to send again: Pending, with no check recorded.
+ * Text whose verdict cannot settle it stays unshown: Pending, with no check recorded. The retry job
+ * sends it again when its check row was handed over, the reconcile in the deals job otherwise.
  */
 async function resendReviewText(
   type: TextType,
@@ -83,6 +84,35 @@ async function resendReviewText(
     WHERE r."id" = ${reviewId}::int AND r.${cols.status} IN ('Pending', 'Error')
       AND (${workflowId ?? null}::text IS NULL OR r.${cols.workflow} = ${workflowId ?? null}::text)
       AND (${text ?? null}::text IS NULL OR r.${cols.text} = ${text ?? null}::text)`;
+}
+
+/**
+ * A verdict that cannot settle its text hands the check's row to the retry job, which sends it again
+ * until its retries run out; the text stays Pending, so unshown, throughout and after. Scoped to the
+ * check that produced the verdict, so a newer check's row is left alone.
+ */
+async function leaveForRetry(
+  type: TextType,
+  reviewId: number,
+  workflowId: string,
+  unanswered: readonly string[]
+) {
+  const [row] = await dbWrite.$queryRaw<{ retryCount: number }[]>`
+    UPDATE "EntityModeration"
+    SET "status" = 'Failed', "retryCount" = "retryCount" + 1, "updatedAt" = now()
+    WHERE "entityType" = ${type} AND "entityId" = ${reviewId}::int
+      AND "workflowId" = ${workflowId} AND "status" = 'Succeeded'
+    RETURNING "retryCount"`;
+  if (row?.retryCount === TEXT_MODERATION_RETRY_LIMIT)
+    logToAxiom({
+      type: 'error',
+      name: 'service-deal-review-scan',
+      message: 'retries spent on verdicts that do not answer every label; text left unshown',
+      reviewId,
+      entityType: type,
+      workflowId,
+      payload: { labels: unanswered },
+    });
 }
 
 /** Settles a check, blocked instead while the csam queue holds the text. */
@@ -162,12 +192,13 @@ async function trackSubmit(
   });
   if (!early || (!early.blocked && early.nsfwLevel === null)) return workflow;
   const answers = (early.result as { labels?: TextScanOutput } | null)?.labels;
-  if (
-    !early.blocked &&
-    unansweredTextScanLabels(SERVICE_DEAL_REVIEW_PROFILES[type], answers).length
-  )
+  const unanswered = early.blocked
+    ? []
+    : unansweredTextScanLabels(SERVICE_DEAL_REVIEW_PROFILES[type], answers);
+  if (unanswered.length) {
     await resendReviewText(type, reviewId, { workflowId });
-  else
+    await leaveForRetry(type, reviewId, workflowId, unanswered);
+  } else
     await settleUnlessHeld(
       type,
       reviewId,
@@ -282,13 +313,14 @@ const applyVerdict =
       logToAxiom({
         type: 'error',
         name: 'service-deal-review-scan',
-        message: 'verdict does not answer every label; text left unshown and sent again',
+        message: 'verdict does not answer every label; text left unshown for the retry job',
         reviewId: entityId,
         entityType: type,
         workflowId,
         payload: { labels: unanswered },
       });
       await resendReviewText(type, entityId, { workflowId });
+      await leaveForRetry(type, entityId, workflowId, unanswered);
       return;
     }
     await settleUnlessHeld(

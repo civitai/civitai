@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromptModule from '~/server/services/text-scan/prompt';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -313,8 +313,10 @@ describe('a scan settles only on a verdict that answers every label its profile 
         { fields: [{ heading: 'Body', text: 'placeholder text' }], declared: { nsfwLevel: 1 } },
       ])
     );
-  for (const type of [...REQUIRING, ...NOT_REQUIRING])
-    registerTextScanProfile({ ...getTextScanProfile(type)!, load: reviewLoad });
+  beforeAll(() => {
+    for (const type of [...REQUIRING, ...NOT_REQUIRING])
+      registerTextScanProfile({ ...getTextScanProfile(type)!, load: reviewLoad });
+  });
 
   const EVERY_PROMPT = {
     base: { id: 1, key: 'base', content: 'BASE' },

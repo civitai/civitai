@@ -385,8 +385,7 @@ export async function scanEntity({
     passes = planPasses(labels);
     if (!passes.length) return { status: 'skipped', reason: 'off' };
   }
-  // Submitting would record a check whose verdict cannot settle the entity, and the text would wait
-  // on it instead of being sent again.
+  // A verdict that cannot answer every required label cannot settle the entity, so do not submit.
   if (mode === 'active') {
     const unanswerable = unansweredTextScanLabels(
       profile,

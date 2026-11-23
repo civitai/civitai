@@ -14,8 +14,9 @@ import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-servi
 /**
  * Review texts whose check was never recorded: its submit failed, or a dismissed csam hold sent
  * the text back. The wait lets a submit in progress record its check first. A recorded check
- * that fails is retried by the moderation retry cron, not here. A hidden review's scan is skipped,
- * so it is left out rather than resent every run.
+ * that fails is retried by the moderation retry cron, not here, and so is text whose check row that
+ * cron holds, including one past its limit. A hidden review's scan is skipped, so it is left out
+ * rather than resent every run.
  */
 async function rescanUnsubmittedTexts(limit: number) {
   const rows = await dbWrite.$queryRaw<
@@ -25,12 +26,18 @@ async function rescanUnsubmittedTexts(limit: number) {
       WHERE "scanStatus" = 'Pending' AND "scanWorkflowId" IS NULL AND "comment" IS NOT NULL
         AND "hiddenAt" IS NULL
         AND "updatedAt" < now() - interval '15 minutes'
+        AND NOT EXISTS (SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = 'ServiceDealReview'
+          AND em."entityId" = "ServiceDealReview"."id"
+          AND em."status" IN ('Failed', 'Expired', 'Canceled'))
       ORDER BY "id" LIMIT ${limit})
     UNION ALL
     (SELECT "id", 'ServiceDealReviewReply' AS "type" FROM "ServiceDealReview"
       WHERE "sellerReplyScanStatus" = 'Pending' AND "sellerReplyScanWorkflowId" IS NULL
         AND "sellerReply" IS NOT NULL AND "hiddenAt" IS NULL
         AND "updatedAt" < now() - interval '15 minutes'
+        AND NOT EXISTS (SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = 'ServiceDealReviewReply'
+          AND em."entityId" = "ServiceDealReview"."id"
+          AND em."status" IN ('Failed', 'Expired', 'Canceled'))
       ORDER BY "id" LIMIT ${limit})`;
   for (const { id, type } of rows) await scanServiceDealReviewText(type, id);
   return rows.length;
