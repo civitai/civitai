@@ -24,8 +24,10 @@ import { announceMoves } from '$lib/server/live/announce';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { resetDeps } from '$lib/server/smites/runtime';
 import { expireSmites, resetPendingPlayers } from '$lib/server/smites/smites.service';
-import { yesNoConfig } from '$lib/server/yesno/runtime';
+import { tagReviewPort, yesNoConfig } from '$lib/server/yesno/runtime';
 import { closeStrandedYesNo } from '$lib/server/yesno/sweep';
+import { runTagReview } from '$lib/server/yesno/tag-review';
+import { writeBackTagReviews } from '$lib/server/yesno/tag-writeback';
 import type { RequestHandler } from './$types';
 
 async function settle<T>(step: string, run: () => Promise<T>) {
@@ -75,6 +77,17 @@ export const POST: RequestHandler = async ({ request }) => {
       mirror: queueDeps.mirrorXp,
     })
   );
+  // Moderator tag review: ends the episodes moderators ruled (always), then creates items while the switch is on.
+  const tagReview = await settle('tag review', async () =>
+    runTagReview(db, { now: new Date(), enabled: (await yesNoConfig()).tagReview })
+  );
+  // Paladin consensus on a flagged tag, written back through the moderator app's own Keep/Remove.
+  const tagWriteBack = await settle('tag review write-back', async () =>
+    writeBackTagReviews(db, tagReviewPort(), {
+      now: new Date(),
+      enabled: (await yesNoConfig()).tagReview,
+    })
+  );
   // Resets first: a smite that lapses must not drop a player out of a reset that is already due.
   // One read for both steps, so a reset the first leaves due is not lapsed by the second.
   const acolyteSmites = (await resetDeps.acolyteSmites?.()) ?? true;
@@ -121,6 +134,8 @@ export const POST: RequestHandler = async ({ request }) => {
     !progression.ok ||
     !hidden.ok ||
     !yesNo.ok ||
+    !tagReview.ok ||
+    !tagWriteBack.ok ||
     !smites.ok ||
     !resets.ok ||
     !conversions.ok ||
@@ -133,9 +148,10 @@ export const POST: RequestHandler = async ({ request }) => {
     writeback: writeBacks.value.failed ?? 0,
     moderator_ruled: moderatorRuled.value.failed,
     payout: progression.value.failed,
-    yesno: yesNo.value.failed,
+    yesno: yesNo.value.failed + tagReview.value.failed,
     reset: resets.value.failed,
     buzz_grant: conversions.value.failed,
+    tag_writeback: tagWriteBack.value.failed + tagWriteBack.value.exhausted,
   };
   const failing = Object.entries(itemFailures).filter(([, count]) => count > 0);
   if (failing.length > 0) {
@@ -158,6 +174,10 @@ export const POST: RequestHandler = async ({ request }) => {
     settledVotes: progression.value.votes,
     hiddenChecksGraded: hidden.value.graded,
     yesNoClosed: yesNo.value.unplayable + yesNo.value.stale,
+    tagReviewCreated: tagReview.value.created,
+    tagReviewRuled: tagReview.value.ruled,
+    tagReviewWrittenBack: tagWriteBack.value.applied,
+    tagReviewWaiting: tagWriteBack.value.waiting,
     expiredSmites: smites.value,
     resets: resets.value.due,
     conversionsRetried: conversions.value.retried,
