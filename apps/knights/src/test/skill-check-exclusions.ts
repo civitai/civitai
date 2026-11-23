@@ -14,7 +14,7 @@ export const exclusionCases = (pg: () => PGlite): [string, (id: number) => Promi
     },
   ],
   [
-    'suspect-image',
+    'csam-signal',
     (id) =>
       pg().query(`INSERT INTO "ScanLabelItem" ("imageId","voidReason") VALUES ($1,'csam-hold')`, [
         id,

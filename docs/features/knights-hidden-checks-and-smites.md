@@ -39,7 +39,7 @@ ordinary vote in every way a player can see.
   alike. An image already in another pool moves here with its counters reset; a core trial image never moves. The pool keeps
   `skillCheckPoolCap` active checks (Config page, default 500) and retires the oldest when a new one comes in. An image under
   a review or hold never enters, checked again at every serve (`skill-check/eligible.ts`): the shared legal-hold and
-  reported-image predicates and the shared suspect and unscanned predicates (`@civitai/shared/held-media`, `held-url`: the
+  reported-image predicates and the shared CSAM-signal and unscanned predicates (`@civitai/shared/held-media`, `held-url`: the
   image, and its owner's account), evidence holds, open reports on the image, its post, a model it was made with or its owner,
   appeals and scan holds, prompt flags, an open Inquisitor item, a banned or muted uploader, and a model flagged as depicting
   a minor or a real person. A check that cannot be read keeps the image out (fail closed): the serve skips the pool rather than

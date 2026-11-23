@@ -8,7 +8,7 @@ import {
 } from 'kysely';
 import { servableImage } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
-import { heldImageSql, suspectImageSql, unreadableImageSql } from '@civitai/shared/held-media';
+import { csamSignalImageSql, heldImageSql, unreadableImageSql } from '@civitai/shared/held-media';
 import { evidenceHeldUrlSql, reportListedUrlSql } from '@civitai/shared/held-url';
 
 type Joined = DB & { img: DB['Image']; p: DB['Post'] };
@@ -35,11 +35,11 @@ export const SKILL_CHECK_EXCLUSIONS: {
     name: 'legal-hold',
     clause: () => sql<SqlBool>`NOT COALESCE(${sql.raw(heldImageSql('img'))}, false)`,
   },
-  // The shared suspect predicate (the hold above, minor flags, child tags at mature levels, a CSAM blocklist hash, scan
-  // labels): NULL-safe like the hold.
+  // The shared CSAM-signal predicate (a CSAM blocklist hash, a scan flag, a moderator vote or a CSAM hold on its label
+  // item), NULL-safe like the hold.
   {
-    name: 'suspect-image',
-    clause: () => sql<SqlBool>`NOT COALESCE(${sql.raw(suspectImageSql('img'))}, false)`,
+    name: 'csam-signal',
+    clause: () => sql<SqlBool>`NOT COALESCE(${sql.raw(csamSignalImageSql('img'))}, false)`,
   },
   // The shared unscanned predicate: an image whose scan has not landed.
   {

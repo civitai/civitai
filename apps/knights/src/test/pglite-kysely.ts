@@ -71,7 +71,8 @@ CREATE TABLE "ModelVersion" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NUL
 CREATE TABLE "ImageResourceNew" ("imageId" INTEGER NOT NULL, "modelVersionId" INTEGER NOT NULL, PRIMARY KEY ("imageId", "modelVersionId"));
 CREATE TABLE "ScanLabelItem" (
   "id" serial PRIMARY KEY,
-  "imageId" integer NOT NULL REFERENCES "Image"("id") ON DELETE CASCADE,
+  -- No foreign key to "Image": suites that TRUNCATE "Image" without CASCADE must not trip over it.
+  "imageId" integer NOT NULL,
   "copyState" text,
   "copyKey" text,
   "copiedAt" timestamptz(3),
