@@ -1567,9 +1567,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     await applyForkSessionToFirstPublishRequest({ publishRequestId, slug, submittedByUserId });
   }
 
-  // APP ASSISTANT SESSION TRACING — the submitter's App Assistant chats for this slug are frozen and
-  // the submission's signals recorded (a no-op while `app-assistant-tracing` is off). FIRED, NEVER
-  // AWAITED, and it never throws: a trace that fails or hangs can neither fail nor slow a submit.
+  // App Assistant session trace: fired, never awaited, never throws, so a trace that fails or
+  // hangs can neither fail nor slow a submit.
   void import('~/server/services/app-assistant/submission-trace.service')
     .then(({ recordSubmissionTrace }) =>
       recordSubmissionTrace({ publishRequestId, slug, submittedByUserId, bundleBuffer })

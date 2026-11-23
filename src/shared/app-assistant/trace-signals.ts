@@ -11,7 +11,7 @@
  * the CLI's `internal/scaffold/templates/page-elements`) themes an app ONLY through the
  * `@civitai/theme` design tokens: `src/main.ts` imports `@civitai/theme/styles.css`, `src/index.css`
  * sets `color: var(--civitai-color-text)` and nothing else colour-wise, and `index.html`'s boot
- * skeleton paints four fixed literals (`TEMPLATE_COLOR_LITERALS`). So an app "keeps the default
+ * skeleton paints fixed literals (`TEMPLATE_COLOR_LITERALS`). So an app "keeps the default
  * theme" when its source (tests, dev harness and build output excluded) does neither of:
  *   1. SET a `--civitai-*` token (`--civitai-color-primary: …` in CSS, or `setProperty('--civitai-…')`);
  *   2. declare a colour of its own: a colour-valued declaration whose value holds a colour literal
@@ -86,8 +86,6 @@ export interface TraceSignals {
   themeCustomized: boolean | null;
   theme: ThemeEvidence;
 }
-
-// ─── transcripts ──────────────────────────────────────────────────────────────────────────────
 
 /** A content part of a saved message, as far as the signals read it. */
 interface Part {
@@ -178,8 +176,6 @@ export function transcriptSignals(
     editedFiles: [...editedFiles].sort(),
   };
 }
-
-// ─── the bundle's theme ───────────────────────────────────────────────────────────────────────
 
 const SOURCE_FILE = /\.(?:css|scss|sass|less|html?|[cm]?[jt]sx?|vue|svelte)$/i;
 const STYLE_FILE = /\.(?:css|scss|sass|less)$/i;

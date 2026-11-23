@@ -24,7 +24,7 @@ const migration = (name: string) =>
     'utf8'
   );
 
-const { aggregateSignals, getAppTraces, getRequestTrace } = await import(
+const { aggregateSignals, getAppTraces, getRequestTrace, liveTraceSweepDeps } = await import(
   '~/server/services/app-assistant/submission-trace.service'
 );
 const { backfillPage, writeReplacingEmptyTrace } = await import(
@@ -35,7 +35,7 @@ let h: Awaited<ReturnType<typeof startPglitePrisma>>;
 
 beforeAll(async () => {
   h = await startPglitePrisma(`
-    CREATE TABLE "User" (id integer PRIMARY KEY);
+    CREATE TABLE "User" (id integer PRIMARY KEY, "deletedAt" timestamptz(3));
     INSERT INTO "User" VALUES (7301), (7402);
     CREATE TABLE "app_block_publish_requests" (
       id text PRIMARY KEY, slug text NOT NULL, version text NOT NULL, status text NOT NULL,
@@ -232,6 +232,19 @@ describe('the backfill’s page and write', () => {
     expect(await ids(true, 'r-untraced')).toEqual(['r-empty']);
   });
 
+  it('skips requests whose submitter’s account is deleted', async () => {
+    await three();
+    await request('r-deleted-user', 'app-d', '2026-11-04T00:00:00Z', 7402);
+    await h.pg.exec(`UPDATE "User" SET "deletedAt" = now() WHERE id = 7402`);
+    try {
+      expect(
+        (await backfillPage(h.prisma, { take: 10, includeEmpty: true })).map((r) => r.id)
+      ).toEqual(['r-untraced', 'r-empty']);
+    } finally {
+      await h.pg.exec(`UPDATE "User" SET "deletedAt" = NULL WHERE id = 7402`);
+    }
+  });
+
   it('replaces a zero-chat trace in place, and never overwrites a trace with chats', async () => {
     await three();
     const row = (publishRequestId: string) => ({
@@ -256,5 +269,40 @@ describe('the backfill’s page and write', () => {
       { publish_request_id: 'r-empty', conversation_ids: ['c-new'] },
       { publish_request_id: 'r-untraced', conversation_ids: ['c-new'] },
     ]);
+  });
+});
+
+describe('the sweep’s page of deleted accounts', () => {
+  it('lists deleted accounts that still have traces, ascending, strictly after the cursor', async () => {
+    await h.pg.exec(`INSERT INTO "User" VALUES (7503, NULL), (7604, NULL) ON CONFLICT DO NOTHING`);
+    for (const [id, user] of [
+      ['s1', 7301],
+      ['s2', 7402],
+      ['s3', 7503],
+      ['s4', 7604],
+      ['s5', 7402],
+    ] as const) {
+      await request(id, `app-${id}`, '2026-11-01T00:00:00Z', user);
+      await h.pg.query(
+        `INSERT INTO app_publish_request_traces (publish_request_id, slug, user_id, signals_version)
+         VALUES ($1, 'x', $2, 1)`,
+        [id, user]
+      );
+    }
+    await h.pg.exec(`UPDATE "User" SET "deletedAt" = now() WHERE id IN (7402, 7503, 7604)`);
+    dbMock.dbWrite.$queryRaw.mockImplementation((...args: unknown[]) =>
+      (h.prisma.$queryRaw as (...a: unknown[]) => unknown)(...args)
+    );
+    try {
+      const deps = await liveTraceSweepDeps({
+        isMissingTable: () => false,
+        isHeld: async () => false,
+      });
+      expect(await deps.deletedAccountsWithTraces(0, 10)).toEqual([7402, 7503, 7604]);
+      expect(await deps.deletedAccountsWithTraces(7402, 1)).toEqual([7503]);
+      expect(await deps.deletedAccountsWithTraces(7604, 10)).toEqual([]);
+    } finally {
+      await h.pg.exec(`UPDATE "User" SET "deletedAt" = NULL`);
+    }
   });
 });

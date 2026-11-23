@@ -3643,6 +3643,7 @@ model AppPublishRequestTrace {
 
   @@index([slug, createdAt(sort: Desc)], map: "app_publish_request_traces_slug_idx")
   @@index([createdAt], map: "app_publish_request_traces_created_idx")
+  @@index([userId], map: "app_publish_request_traces_user_idx")
   @@map("app_publish_request_traces")
 }
 

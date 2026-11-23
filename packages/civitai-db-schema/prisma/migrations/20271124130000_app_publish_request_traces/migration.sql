@@ -42,6 +42,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS "app_publish_request_traces_publish_request_id
 CREATE INDEX IF NOT EXISTS "app_publish_request_traces_slug_idx"
   ON "app_publish_request_traces" ("slug", "created_at" DESC);
 
+-- A user's traces: account deletion and its hourly retry read and delete by user.
+CREATE INDEX IF NOT EXISTS "app_publish_request_traces_user_idx"
+  ON "app_publish_request_traces" ("user_id");
+
 -- The aggregate signals read, by time window.
 CREATE INDEX IF NOT EXISTS "app_publish_request_traces_created_idx"
   ON "app_publish_request_traces" ("created_at");

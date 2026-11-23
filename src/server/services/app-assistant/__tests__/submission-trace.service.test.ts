@@ -20,6 +20,7 @@ const {
   bundleSignalFiles,
   deleteAssistantTracesOfAccount,
   sweepDeletedAccountTraces,
+  TRACE_SWEEP_BATCH,
   MAX_TRACED_SESSIONS,
   recordSubmissionTrace,
   transcriptKey,
@@ -84,6 +85,7 @@ function deps(overrides: Partial<Deps> = {}) {
     },
     reader: async () => ({ read: async (id) => CHATS[id] ?? null }),
     store: async (key, body) => void stored.set(key, body),
+    deleteObject: async (key) => void stored.delete(key),
     files: async () => new Map([['src/index.css', ':root { --civitai-color-primary: red; }']]),
     write: async (row) => void written.push(row),
     defaultModel: 'default-model-q',
@@ -257,6 +259,44 @@ describe('buildSubmissionTrace', () => {
     expect(written).toEqual([]);
   });
 
+  it('a row that cannot be written takes its just-stored transcripts with it: no orphan survives', async () => {
+    const { d, stored } = deps({
+      write: async () => {
+        throw Object.assign(new Error('relation "app_publish_request_traces" does not exist'), {
+          code: 'P2021',
+        });
+      },
+    });
+    await expect(buildSubmissionTrace(input, d)).resolves.toBeNull();
+    expect([...stored.keys()]).toEqual([]);
+  });
+
+  it('a unique conflict (another writer’s row names these keys) keeps them', async () => {
+    const { d, stored } = deps({
+      write: async () => {
+        throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+      },
+    });
+    await buildSubmissionTrace(input, d);
+    expect([...stored.keys()]).toEqual([
+      transcriptKey(REQUEST, 'conv-one'),
+      transcriptKey(REQUEST, 'conv-two'),
+    ]);
+  });
+
+  it('a failure after storing that nothing else caught also deletes what was stored', async () => {
+    let reads = 0;
+    const { d, stored } = deps({
+      // The clock fails only after the first chat was frozen.
+      now: () => {
+        if (reads++ > 0) throw new Error('clock gone');
+        return new Date('2026-11-21T12:00:00.000Z');
+      },
+    });
+    await expect(buildSubmissionTrace(input, d)).resolves.toBeNull();
+    expect([...stored.keys()]).toEqual([]);
+  });
+
   it('nothing it meets throws: failing links, reader, bundle and row write', async () => {
     const { d } = deps({
       links: async () => {
@@ -408,10 +448,8 @@ describe('sweepDeletedAccountTraces (the retry of unfinished deletions)', () => 
   function sweep(overrides: { held?: Record<number, boolean | null>; failFor?: number } = {}) {
     const deleted: number[] = [];
     const deps = {
-      deletedAccountsWithTraces: async (limit: number) => {
-        expect(limit).toBeGreaterThan(0);
-        return [7301, 7402, 7503];
-      },
+      deletedAccountsWithTraces: async (after: number, limit: number) =>
+        [7301, 7402, 7503].filter((id) => id > after).slice(0, limit),
       isHeld: async (userId: number) =>
         overrides.held && userId in overrides.held ? overrides.held[userId]! : false,
       deletion: {
@@ -468,5 +506,34 @@ describe('sweepDeletedAccountTraces (the retry of unfinished deletions)', () => 
       failed: 1,
     });
     expect(deleted).toEqual([7301, 7503]);
+  });
+
+  it('held accounts can never fill every page: an account after more than a batch of them is reached', async () => {
+    // More held accounts than one page holds (and not a multiple of it), then one to finish.
+    const held = Array.from({ length: TRACE_SWEEP_BATCH + 57 }, (_, i) => 3000 + i);
+    const last = 9999;
+    const all = [...held, last];
+    const finished: number[] = [];
+    const summary = await sweepDeletedAccountTraces({
+      deletedAccountsWithTraces: async (after, limit) =>
+        all.filter((id) => id > after).slice(0, limit),
+      isHeld: async (userId) => userId !== last,
+      deletion: {
+        traces: async () => [],
+        listKeys: async () => [],
+        deleteObject: async () => undefined,
+        deleteTraceRows: async (userId) => {
+          finished.push(userId);
+          return 1;
+        },
+      },
+    });
+    expect(summary).toEqual({
+      accounts: held.length + 1,
+      finished: 1,
+      held: held.length,
+      failed: 0,
+    });
+    expect(finished).toEqual([last]);
   });
 });

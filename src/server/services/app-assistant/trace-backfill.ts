@@ -75,8 +75,6 @@ export function conversationsChoosing(
   return ids;
 }
 
-// ─── the run ──────────────────────────────────────────────────────────────────────────────────
-
 export interface BackfillRequest {
   id: string;
   slug: string;
@@ -199,6 +197,8 @@ export function backfillPage(
         { assistantTrace: null },
         ...(includeEmpty ? [{ assistantTrace: { conversationIds: { isEmpty: true } } }] : []),
       ],
+      // A deleted account's traces were deleted with it: the backfill must not bring them back.
+      submittedBy: { deletedAt: null },
       ...(filters.id ? { id: filters.id } : {}),
       ...(filters.slug ? { slug: filters.slug } : {}),
       ...(filters.since ? { submittedAt: { gte: filters.since } } : {}),
