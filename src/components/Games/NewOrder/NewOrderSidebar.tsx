@@ -1,5 +1,6 @@
 import { Group, Alert, ThemeIcon, Card } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
+import { openDialog } from '~/components/Dialog/openDialog';
 import {
   IconBubbleText,
   IconChevronDown,
@@ -14,14 +15,8 @@ import {
 import clsx from 'clsx';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import {
-  openJudgmentHistoryModal,
-  openPlayersDirectoryModal,
-  openRatingGuideModal,
-  useJoinKnightsNewOrder,
-} from '~/components/Games/KnightsNewOrder.utils';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
+import { useJoinKnightsNewOrder } from '~/components/Games/KnightsNewOrder.utils';
 import { NewOrderRulesModal } from '~/components/Games/NewOrder/NewOrderRulesModal';
 import { PlayerCard } from '~/components/Games/PlayerCard';
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
@@ -71,7 +66,7 @@ export function NewOrderSidebar() {
       <div className="flex flex-col">
         <button
           className="w-full rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-5"
-          onClick={() => openJudgmentHistoryModal()}
+          onClick={() => openDialog(() => import('~/components/Games/NewOrder/JudgmentHistory'))}
         >
           <Group>
             <ThemeIcon size="xl" variant="light">
@@ -83,7 +78,9 @@ export function NewOrderSidebar() {
         {currentUser?.isModerator && (
           <button
             className="w-full rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-5"
-            onClick={() => openPlayersDirectoryModal()}
+            onClick={() =>
+              openDialog(() => import('~/components/Games/NewOrder/PlayersDirectoryModal'))
+            }
           >
             <Group>
               <ThemeIcon size="xl" variant="light" color="lime">
@@ -107,15 +104,12 @@ export function NewOrderSidebar() {
         <button
           className="w-full rounded-md p-3 hover:bg-gray-0 dark:hover:bg-dark-5"
           onClick={() => {
-            dialogStore.trigger({
-              component: ConfirmDialog,
-              props: {
-                title: 'Are you sure?',
-                message: 'This will restart your career and reset all your progress.',
-                labels: { cancel: 'No', confirm: `Yes, I'm sure` },
-                onConfirm: async () => await resetCareer(),
-                confirmProps: { color: 'red' },
-              },
+            openConfirm({
+              title: 'Are you sure?',
+              message: 'This will restart your career and reset all your progress.',
+              labels: { cancel: 'No', confirm: `Yes, I'm sure` },
+              onConfirm: async () => await resetCareer(),
+              confirmProps: { color: 'red' },
             });
           }}
         >
@@ -128,7 +122,9 @@ export function NewOrderSidebar() {
         </button>
         <button
           className="w-full rounded-md p-3 hover:bg-gray-0 dark:hover:bg-dark-5"
-          onClick={() => openRatingGuideModal()}
+          onClick={() =>
+            openDialog(() => import('~/components/Games/NewOrder/NewOrderRatingGuideModal'))
+          }
         >
           <div className="flex flex-nowrap items-center gap-4">
             <ThemeIcon size="xl" color="teal" variant="light">
@@ -167,7 +163,7 @@ export function NewOrderSidebar() {
 
   useEffect(() => {
     if (!viewedRatingGuide) {
-      openRatingGuideModal();
+      openDialog(() => import('~/components/Games/NewOrder/NewOrderRatingGuideModal'));
     }
   }, [viewedRatingGuide]);
 

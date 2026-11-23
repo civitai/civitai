@@ -1,13 +1,8 @@
-import dynamic from 'next/dynamic';
 import { useEffect, useRef } from 'react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useAppContext } from '~/providers/AppProvider';
 import { trpc } from '~/utils/trpc';
-
-const TosModal = dynamic(() => import('~/components/ToSModal/TosModal'), {
-  ssr: false,
-});
 
 export function useToSUpdateModal() {
   const currentUser = useCurrentUser();
@@ -44,17 +39,14 @@ export function useToSUpdateModal() {
     if (!hasUpdate || shownForHash.current === hash) return;
     shownForHash.current = hash;
 
-    dialogStore.trigger({
-      component: TosModal,
-      props: {
-        slug: 'tos',
-        fieldKey,
-        hashFieldKey,
-        contentHash: hash,
-        showBackButton: false,
-        onAccepted: async () => {
-          await currentUser.refresh();
-        },
+    openDialog(() => import('~/components/ToSModal/TosModal'), {
+      slug: 'tos',
+      fieldKey,
+      hashFieldKey,
+      contentHash: hash,
+      showBackButton: false,
+      onAccepted: async () => {
+        await currentUser.refresh();
       },
     });
   }, [currentUser, tosMeta, settings]);

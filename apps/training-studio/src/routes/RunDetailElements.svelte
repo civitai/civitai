@@ -41,8 +41,8 @@
     IconExternalLink,
   } from '@tabler/icons-svelte';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
-  import LossGraph from '$lib/components/LossGraph.svelte';
-  import RunLog from '$lib/components/RunLog.svelte';
+  import LossGraph from '$lib/components/LossGraphElements.svelte';
+  import RunLog from '$lib/components/RunLogElements.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import ReviewStatusPanel from '$lib/components/ReviewStatusPanel.svelte';

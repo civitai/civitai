@@ -2264,10 +2264,9 @@ export async function republishOwnListing(opts: {
     //     The raise's real effect is STORE VISIBILITY, and only ever NARROWING it:
     //     `listingMatureFilter` hides the card and `getListingDetail` 404s it for
     //     SFW-only viewers. That is the point of the fix.
-    //   - the raise PERSISTS: `buildListingScalarSync` deliberately EXCLUDES
-    //     `contentRating` from the manifest re-sync ("mod override, floored at the
-    //     derived rating" — `app-listing-mapper.ts`, restated at the approve call site in
-    //     `publish-request.service.ts`), so a later version approve does not undo it.
+    //   - the raise PERSISTS while the media does: a later version approve re-rates the
+    //     listing from its manifest (`approveRequest`, (3b-sync)) through this same
+    //     helper, which re-derives the media and keeps the raise.
     // 🔴 Three comments elsewhere still assert an UNQUALIFIED "on-site listings MIRROR
     // AppBlock.content_rating" (the `AppListing.contentRating` schema comment, the
     // mapper's create path, the backfill service) and the on-site media-revision copy

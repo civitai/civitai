@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as Notifications from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
@@ -37,15 +37,17 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
 });
 
-import { ModalsProvider } from '@mantine/modals';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CatalogItemsCard } from '~/components/Account/CatalogItemsCard';
 
-// The withdraw asks for confirmation through `openConfirmModal`, which needs a ModalsProvider.
+// The withdraw asks for confirmation through `openConfirm`, which renders in a DialogProvider.
 const renderCard = () =>
   renderWithProviders(
-    <ModalsProvider>
+    <>
       <CatalogItemsCard />
-    </ModalsProvider>
+      <DialogProvider />
+    </>
   );
 
 const parent = {
@@ -76,6 +78,9 @@ beforeEach(() => {
     item('asl_GONE', 'Gone Game', 'withdrawn'),
   ];
 });
+
+// Each test renders its own DialogProvider; the store is global, so empty it between tests.
+afterEach(() => dialogStore.closeAll());
 
 describe('CatalogItemsCard', () => {
   test('lists each item with its status, parent listing and link', async () => {

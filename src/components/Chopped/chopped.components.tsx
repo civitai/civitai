@@ -57,7 +57,7 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useBase64Audio } from '~/server/utils/audio-utils';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { useChoppedServer } from '~/components/Chopped/chopped.connection';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
@@ -136,10 +136,9 @@ export function ChoppedLayout({
   const isHost = useIsHost();
 
   const exitGame = () => {
-    openConfirmModal({
+    openConfirm({
       title: 'Are you sure?',
-      children: <Text size="sm">Are you sure you want to leave this game?</Text>,
-      centered: true,
+      message: <Text size="sm">Are you sure you want to leave this game?</Text>,
       labels: { confirm: 'Leave game', cancel: 'Nevemind' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
