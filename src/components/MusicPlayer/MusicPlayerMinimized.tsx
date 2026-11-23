@@ -10,7 +10,8 @@ import type { CSSProperties, PointerEvent, ReactNode } from 'react';
 import { useRef, useState } from 'react';
 import { pixelsToPosition, positionToPixels } from '~/components/MusicPlayer/minimized-position';
 import { MUSIC_PLAYER_Z_INDEX, PlayerTooltip } from '~/components/MusicPlayer/MusicPlayerLayers';
-import { ACCENT, accentAt, SongArt } from '~/components/MusicPlayer/MusicPlayerParts';
+import { ACCENT_FILL, musicAccentVars } from '~/components/MusicPlayer/music-accent';
+import { accentAt, SongArt } from '~/components/MusicPlayer/MusicPlayerParts';
 import { useMusicPlayerCover } from '~/components/MusicPlayer/useMusicPlayerCover';
 import type { MusicTrack } from '~/store/music-player.store';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
@@ -114,7 +115,7 @@ function Minimized({ track }: { track: MusicTrack }) {
       className="group fixed size-20 cursor-grab touch-none select-none active:cursor-grabbing"
       style={
         {
-          ...(accent && { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }),
+          ...musicAccentVars(accent),
           ...placement,
           zIndex: MUSIC_PLAYER_Z_INDEX,
         } as CSSProperties
@@ -187,7 +188,7 @@ function ProgressRing({ durationSec }: { durationSec: number }) {
     <div
       aria-hidden
       className="absolute inset-0 rounded-full"
-      style={{ background: `conic-gradient(${ACCENT} ${degrees}deg, #373A40 0deg)` }}
+      style={{ background: `conic-gradient(${ACCENT_FILL} ${degrees}deg, #373A40 0deg)` }}
     />
   );
 }

@@ -4,8 +4,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ACCENT_FILL } from '~/components/MusicPlayer/music-accent';
 import styles from './MusicPlayerBar.module.scss';
 
-/** The global player's accent: the artwork's colour, set on the player root, else the Civitai primary. */
-export const ACCENT = ACCENT_FILL;
 /** `ACCENT_FILL` at `percent`% opacity, for tints and glows. */
 export const accentAt = (percent: number) =>
   `color-mix(in srgb, ${ACCENT_FILL} ${percent}%, transparent)`;

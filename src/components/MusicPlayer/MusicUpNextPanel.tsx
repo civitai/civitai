@@ -30,18 +30,18 @@ import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
 import {
+  ACCENT_FILL,
+  ACCENT_TEXT,
+  ACCENT_TEXT_SCHEME,
+  musicAccentVars,
+} from '~/components/MusicPlayer/music-accent';
+import {
   MUSIC_UP_NEXT_DRAG_Z_INDEX,
   MUSIC_UP_NEXT_Z_INDEX,
   PlayerTooltip,
   MUSIC_PLAYER_BAR_HEIGHT,
 } from '~/components/MusicPlayer/MusicPlayerLayers';
-import {
-  ACCENT,
-  accentAt,
-  dimmed,
-  Equalizer,
-  SongArt,
-} from '~/components/MusicPlayer/MusicPlayerParts';
+import { accentAt, dimmed, Equalizer, SongArt } from '~/components/MusicPlayer/MusicPlayerParts';
 import { useMusicPlayerCovers } from '~/components/MusicPlayer/useMusicPlayerCover';
 import type { PlayerSongCover } from '~/server/services/post.service';
 import { useShallow } from 'zustand/react/shallow';
@@ -92,10 +92,13 @@ export function MusicUpNextPanel({
       <section
         ref={setPanel}
         aria-label="Up next"
-        className="fixed right-5 flex w-[400px] max-w-[calc(100vw-40px)] flex-col overflow-hidden rounded-2xl border border-gray-4 bg-white shadow-[0_14px_36px_#000000AA] dark:border-dark-3 dark:bg-dark-5"
+        className={clsx(
+          'fixed right-5 flex w-[400px] max-w-[calc(100vw-40px)] flex-col overflow-hidden rounded-2xl border border-gray-4 bg-white shadow-[0_14px_36px_#000000AA] dark:border-dark-3 dark:bg-dark-5',
+          ACCENT_TEXT_SCHEME
+        )}
         style={
           {
-            ...(accent && { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }),
+            ...musicAccentVars(accent, 'upNextPanel'),
             zIndex: MUSIC_UP_NEXT_Z_INDEX,
             bottom: `calc(${MUSIC_PLAYER_BAR_HEIGHT}px + var(--safe-area-inset-bottom) + 12px)`,
             maxHeight: `calc(100dvh - var(--header-height, 0px) - ${MUSIC_PLAYER_BAR_HEIGHT}px - var(--safe-area-inset-bottom) - 24px)`,
@@ -367,7 +370,7 @@ function NowPlaying({
       <span
         aria-hidden
         className="absolute inset-y-0 left-0 w-[3px]"
-        style={{ backgroundColor: ACCENT }}
+        style={{ backgroundColor: ACCENT_FILL }}
       />
       <div className="rounded-[10px]" style={{ boxShadow: `0 3px 14px ${accentAt(60)}` }}>
         <SongArt url={cover?.url} width={48} iconSize={22} className="size-12 rounded-[10px]" />
@@ -376,7 +379,7 @@ function NowPlaying({
         <span className={clsx('truncate text-[17px] font-bold leading-tight', brightText)}>
           {track.title || 'Untitled song'}
         </span>
-        <span className="truncate text-xs font-medium" style={{ color: ACCENT }}>
+        <span className="truncate text-xs font-medium" style={{ color: ACCENT_TEXT }}>
           {track.creator.username}
         </span>
       </div>
@@ -395,7 +398,9 @@ function SectionLabel({ children }: { children: ReactNode }) {
 
 /** Pencil `gM8m8`: where the dragged row will land. */
 function DropIndicator() {
-  return <div aria-hidden className="h-0.5 rounded-[1px]" style={{ backgroundColor: ACCENT }} />;
+  return (
+    <div aria-hidden className="h-0.5 rounded-[1px]" style={{ backgroundColor: ACCENT_FILL }} />
+  );
 }
 
 function QueuedEndZone({ empty, active }: { empty: boolean; active: boolean }) {

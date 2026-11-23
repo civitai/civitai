@@ -171,6 +171,59 @@ describe('the global player bar', () => {
       }
     });
 
+  for (const scheme of ['light', 'dark'])
+    for (const withCover of [true, false])
+      test(`its active toggles read at WCAG AA in ${scheme} mode, ${
+        withCover ? "in a cover's accent" : 'in the primary'
+      }`, async () => {
+        songCovers.served = withCover ? [coverRated(1)] : [];
+        // The end colours at once, without the toggles' fade.
+        const noFade = document.head.appendChild(document.createElement('style'));
+        noFade.textContent = '* { transition: none !important; }';
+        await renderWithProviders(<MusicPlayerBar />);
+        await expect.element(button('Pause')).toBeInTheDocument();
+        if (withCover)
+          await expect
+            .poll(() => bar().style.getPropertyValue('--music-accent'))
+            .toMatch(/^#[0-9a-f]{6}$/);
+        useMusicPlayerStore.setState({ showTimedComments: true });
+        await button('Up next').click();
+        await expect.element(page.getByRole('region', { name: 'Up next' })).toBeInTheDocument();
+        await expect.element(button('Hide timed comments')).toHaveAttribute('aria-pressed', 'true');
+        // After the render: the provider sets the scheme on mount.
+        document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
+        try {
+          /** `[r, g, b, alpha]` (0..255, 0..1) of a computed `rgb()`, `rgba()` or `color(srgb …)`. */
+          const parse = (css: string) => {
+            const [r, g, b, a = 1] = css.match(/[\d.]+/g)!.map(Number);
+            return css.startsWith('color(')
+              ? [r * 255, g * 255, b * 255, a]
+              : [r, g, b, css.startsWith('rgba') ? a : 1];
+          };
+          const lum = (c: number[]) =>
+            c
+              .slice(0, 3)
+              .map((v) => v / 255)
+              .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+              .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+          const surface = parse(getComputedStyle(bar()).backgroundColor);
+          for (const name of ['Hide timed comments', 'Up next']) {
+            const toggle = button(name).element();
+            const [r, g, b, a] = parse(getComputedStyle(toggle).backgroundColor);
+            // The toggle's tint over the bar, as the eye sees it.
+            const background = [r, g, b].map((c, i) => c * a + surface[i] * (1 - a));
+            expect(a, `${name} is tinted`).toBeGreaterThan(0);
+            const text = lum(parse(getComputedStyle(toggle).color));
+            const ground = lum(background);
+            const ratio = (Math.max(text, ground) + 0.05) / (Math.min(text, ground) + 0.05);
+            expect(ratio, name).toBeGreaterThanOrEqual(4.5);
+          }
+        } finally {
+          document.documentElement.removeAttribute('data-mantine-color-scheme');
+          noFade.remove();
+        }
+      });
+
   test('is slim: 72px tall on desktop', async () => {
     await renderWithProviders(<MusicPlayerBar />);
     await expect.element(page.getByText('Midnight Arcade')).toBeInTheDocument();

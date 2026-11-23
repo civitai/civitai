@@ -20,12 +20,18 @@ import {
 } from '~/components/Music/SongDetail/song-lyrics';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
-import { withAlpha } from '~/components/MusicPlayer/music-accent';
+import {
+  ACCENT_FILL,
+  ACCENT_TEXT,
+  ACCENT_TEXT_SCHEME,
+  musicAccentVars,
+  withAlpha,
+} from '~/components/MusicPlayer/music-accent';
 import {
   MUSIC_SHEET_Z_INDEX,
   MUSIC_UP_NEXT_SHEET_Z_INDEX,
 } from '~/components/MusicPlayer/MusicPlayerLayers';
-import { ACCENT, SongArt, songCreatorHref } from '~/components/MusicPlayer/MusicPlayerParts';
+import { SongArt, songCreatorHref } from '~/components/MusicPlayer/MusicPlayerParts';
 import { Timeline, Transport } from '~/components/MusicPlayer/MusicPlayerTransport';
 import { MusicUpNextSheet } from '~/components/MusicPlayer/MusicUpNextSheet';
 import { ReactionButton } from '~/components/Reaction/ReactionButton';
@@ -92,12 +98,10 @@ export function MusicNowPlayingSheet({
       >
         <Drawer.Content
           aria-label="Now playing"
+          className={ACCENT_TEXT_SCHEME}
           style={
             {
-              ...(accent && {
-                '--music-accent': accent.accent,
-                '--music-accent-2': accent.accent2,
-              }),
+              ...musicAccentVars(accent, 'nowPlayingSheet'),
               transform: dragY ? `translateY(${dragY}px)` : undefined,
             } as CSSProperties
           }
@@ -283,7 +287,7 @@ function SongActions({
           aria-pressed={hasReacted}
           disabled={!canClick}
           className="flex size-9 shrink-0 items-center justify-center rounded-full text-white disabled:opacity-60"
-          style={hasReacted ? { color: ACCENT } : undefined}
+          style={hasReacted ? { color: ACCENT_TEXT } : undefined}
         >
           {hasReacted ? <IconHeartFilled size={24} /> : <IconHeart size={24} />}
         </button>
@@ -330,7 +334,7 @@ function NowPlayingLyrics({ songId }: { songId: number }) {
             <span
               aria-hidden
               className="w-1 shrink-0 self-stretch rounded-sm"
-              style={{ backgroundColor: ACCENT }}
+              style={{ backgroundColor: ACCENT_FILL }}
             />
           )}
           <p

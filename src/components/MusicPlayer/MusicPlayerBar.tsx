@@ -18,14 +18,19 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
-import { withAlpha } from '~/components/MusicPlayer/music-accent';
+import {
+  ACCENT_FILL,
+  ACCENT_TEXT,
+  ACCENT_TEXT_SCHEME,
+  musicAccentVars,
+  withAlpha,
+} from '~/components/MusicPlayer/music-accent';
 import {
   MUSIC_PLAYER_BAR_HEIGHT,
   MUSIC_PLAYER_Z_INDEX,
   PlayerTooltip,
 } from '~/components/MusicPlayer/MusicPlayerLayers';
 import {
-  ACCENT,
   accentAt,
   dimmed,
   SongArt,
@@ -91,9 +96,8 @@ function CompactBar({ track }: { track: MusicTrack }) {
       )}
       style={
         {
+          ...musicAccentVars(accent),
           ...(accent && {
-            '--music-accent': accent.accent,
-            '--music-accent-2': accent.accent2,
             background: `linear-gradient(#14151740, #14151740), linear-gradient(90deg, ${accent.accent2}, ${accent.accent})`,
           }),
           zIndex: MUSIC_PLAYER_Z_INDEX,
@@ -151,7 +155,7 @@ function CompactBar({ track }: { track: MusicTrack }) {
             'flex size-[38px] shrink-0 items-center justify-center rounded-full',
             onColour ? 'bg-white text-[#1A1B1E]' : 'text-white'
           )}
-          style={onColour ? undefined : { backgroundColor: ACCENT }}
+          style={onColour ? undefined : { backgroundColor: ACCENT_FILL }}
         >
           {playing ? <IconPlayerPauseFilled size={18} /> : <IconPlayerPlayFilled size={18} />}
         </button>
@@ -183,7 +187,7 @@ function CompactProgress({ track, onColour }: { track: MusicTrack; onColour: boo
         className="h-full"
         style={{
           width: `${playbackProgress(currentTime, duration) * 100}%`,
-          backgroundColor: onColour ? '#fff' : ACCENT,
+          backgroundColor: onColour ? '#fff' : ACCENT_FILL,
         }}
       />
     </div>
@@ -200,10 +204,13 @@ function Bar({ track }: { track: MusicTrack }) {
       data-music-player-bar=""
       role="region"
       aria-label="Music player"
-      className="relative flex shrink-0 items-center gap-3.5 overflow-hidden border-t border-gray-3 bg-gray-0 px-5 dark:border-dark-4 dark:bg-dark-6"
+      className={clsx(
+        'relative flex shrink-0 items-center gap-3.5 overflow-hidden border-t border-gray-3 bg-gray-0 px-5 dark:border-dark-4 dark:bg-dark-6',
+        ACCENT_TEXT_SCHEME
+      )}
       style={
         {
-          ...(accent && { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }),
+          ...musicAccentVars(accent, 'bar'),
           zIndex: MUSIC_PLAYER_Z_INDEX,
           // The last in-flow row of `#__next`: the viewport's bottom edge, as the ad bar was.
           height: `calc(${MUSIC_PLAYER_BAR_HEIGHT}px + var(--safe-area-inset-bottom))`,
@@ -339,7 +346,9 @@ function Controls({ track, accent }: { track: MusicTrack; accent: MusicAccent | 
         label={showTimedComments ? 'Hide timed comments' : 'Show timed comments'}
         aria-pressed={showTimedComments}
         onClick={() => store().toggleTimedComments()}
-        style={showTimedComments ? { backgroundColor: accentAt(15), color: ACCENT } : undefined}
+        style={
+          showTimedComments ? { backgroundColor: accentAt(15), color: ACCENT_TEXT } : undefined
+        }
       >
         <IconMessage size={18} />
       </IconButton>
@@ -348,7 +357,7 @@ function Controls({ track, accent }: { track: MusicTrack; accent: MusicAccent | 
         label="Up next"
         aria-expanded={upNextOpen}
         onClick={() => setUpNextOpen((open) => !open)}
-        style={upNextOpen ? { backgroundColor: accentAt(15), color: ACCENT } : undefined}
+        style={upNextOpen ? { backgroundColor: accentAt(15), color: ACCENT_TEXT } : undefined}
       >
         <IconPlaylist size={18} />
       </IconButton>
@@ -387,7 +396,7 @@ function Controls({ track, accent }: { track: MusicTrack; accent: MusicAccent | 
             if (muted && value > 0) store().toggleMute();
           }}
           styles={{
-            bar: { backgroundColor: ACCENT },
+            bar: { backgroundColor: ACCENT_FILL },
             thumb: { backgroundColor: '#fff', borderWidth: 0 },
           }}
         />

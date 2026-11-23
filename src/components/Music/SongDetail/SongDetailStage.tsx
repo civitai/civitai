@@ -7,6 +7,7 @@ import { ViewerBrowsingLevelScope } from '~/components/BrowsingLevel/BrowsingLev
 import { Tooltip } from '~/components/MantineOverlays';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { SongLyrics } from '~/components/Music/SongDetail/SongLyrics';
+import { ACCENT_FILL, musicAccentVars } from '~/components/MusicPlayer/music-accent';
 import { useMoreFromCreator } from '~/components/Music/SongDetail/useMoreFromCreator';
 import {
   accentAt,
@@ -87,14 +88,7 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
       data-lyrics-scroll
       data-testid="song-detail-stage"
       className="flex size-full flex-col gap-6 overflow-y-auto px-4 pb-6 pt-1 text-white @md:flex-row @md:items-center @md:justify-center @md:gap-10 @md:overflow-hidden @md:px-16 @md:py-10 @lg:gap-16"
-      style={
-        accent
-          ? ({
-              '--music-accent': accent.accent,
-              '--music-accent-2': accent.accent2,
-            } as CSSProperties)
-          : undefined
-      }
+      style={musicAccentVars(accent) as CSSProperties}
     >
       <div className="flex w-full shrink-0 flex-col gap-3.5 @md:w-80 @md:gap-[18px] @lg:w-[400px]">
         <div
@@ -251,9 +245,7 @@ function Instrumental({ playing }: { playing: boolean }) {
             className="w-6 rounded-sm transition-[height] duration-300"
             style={{
               height: playing ? height : height / 2,
-              backgroundColor: playing
-                ? 'var(--music-accent, var(--mantine-primary-color-filled))'
-                : accentAt(50),
+              backgroundColor: playing ? ACCENT_FILL : accentAt(50),
             }}
           />
         ))}

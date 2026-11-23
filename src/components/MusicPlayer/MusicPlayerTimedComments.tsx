@@ -10,13 +10,14 @@ import {
 } from '~/components/Music/TimedComments/timed-comments';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
 import {
+  ACCENT_FILL,
   ACCENT_TEXT,
   ACCENT_TEXT_SCHEME,
   musicAccentVars,
 } from '~/components/MusicPlayer/music-accent';
 import { seekMusicPlayer } from '~/components/MusicPlayer/MusicPlayerAudio';
 import { MUSIC_PLAYER_FLOAT_Z_INDEX } from '~/components/MusicPlayer/MusicPlayerLayers';
-import { ACCENT, dimmed } from '~/components/MusicPlayer/MusicPlayerParts';
+import { dimmed } from '~/components/MusicPlayer/MusicPlayerParts';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { useMusicPlayerStore } from '~/store/music-player.store';
@@ -403,7 +404,7 @@ function TimedCommentLabel({
       aria-label={`Open ${commentName(comment)}`}
       {...handlers}
       className="flex h-6 max-w-[280px] items-center gap-1.5 rounded-xl border bg-[#0B0B0D] py-0 pl-[3px] pr-2.5 text-xs"
-      style={{ borderColor: ACCENT }}
+      style={{ borderColor: ACCENT_FILL }}
     >
       <span className="flex size-[18px] shrink-0 items-center justify-center overflow-hidden rounded-full">
         <UserAvatar
