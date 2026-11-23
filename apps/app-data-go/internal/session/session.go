@@ -167,9 +167,6 @@ type Options struct {
 	// Opened and Closed observe each stream (metrics); nil is none.
 	Opened func()
 	Closed func(reason string)
-	// Schemas is told the `schemas` of every record a stream upserts, as the adapter sent them
-	// (majors.Book.Observe: the writes' current-major book); nil is none.
-	Schemas func(schemas []string)
 }
 
 type tokenID [sha256.Size]byte
@@ -389,13 +386,8 @@ func (m *Manager) follow(ctx context.Context, s *session, token string) (string,
 			// An upsert without a body is the entity deleted (the spec's "Validity" rule 2).
 			if len(ev.Entity.Body) == 0 || string(ev.Entity.Body) == "null" {
 				s.remove(ev.Entity.URN)
-			} else {
-				if m.opts.Schemas != nil {
-					m.opts.Schemas(ev.Entity.Schemas)
-				}
-				if !s.put(ev.Entity, m.opts.MaxRecords, m.opts.MaxBytes) {
-					return CloseTooLarge, ErrTooLarge
-				}
+			} else if !s.put(ev.Entity, m.opts.MaxRecords, m.opts.MaxBytes) {
+				return CloseTooLarge, ErrTooLarge
 			}
 		case registry.Delete:
 			s.remove(ev.URN)

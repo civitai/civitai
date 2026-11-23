@@ -1,44 +1,103 @@
 package sign
 
-import "testing"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
 
-// The golden vectors. Every expected value below was computed OUTSIDE Go, with
-// `printf '<canonical>' | openssl dgst -sha256 -hmac test-signing-key-0001` and cross-checked with
-// Python's hmac module, and is pinned as a literal: never derive it from Sign. The site's
-// TypeScript test pins the same inputs and the same hex.
-const goldenKey = "test-signing-key-0001" //nolint:gosec // G101: a published test vector key, not a credential
+// The golden vectors: testdata/vectors.json, computed outside both implementations (Python's hmac)
+// and read byte-identically by the site's test. Every expected value comes from the file, never
+// from this package.
+type vector struct {
+	Name       string            `json:"name"`
+	Key        string            `json:"key"`
+	Method     string            `json:"method"`
+	Path       string            `json:"path"`
+	Query      string            `json:"query"`
+	Timestamp  string            `json:"timestamp"`
+	Region     map[string]string `json:"region"`
+	RegionLine string            `json:"regionLine"`
+	Body       string            `json:"body"`
+	BodySha256 string            `json:"bodySha256"`
+	Canonical  string            `json:"canonical"`
+	Signature  string            `json:"signature"`
+}
 
-func TestTheGoldenVector(t *testing.T) {
-	body := []byte(`{"data":{"n":1},"ifVersion":0}`)
-	const (
-		wantCanonical = "PUT\n/api/internal/blocks/storage/kv/run-01\nfrom=model-benchmarking\n1795000000\n" +
-			"f5edde14e10252c60e896284b60e1ef276ae22fcc79e5c3ada8eaedf0cda2a3e"
-		wantSig = "47db374505acbf36f3fce466ff71b2cb1a7ab014831408122a1c52cd4a7a880d"
-	)
-	if got := Canonical("PUT", "/api/internal/blocks/storage/kv/run-01", "from=model-benchmarking", "1795000000", body); got != wantCanonical {
-		t.Fatalf("canonical:\n%q\nwant\n%q", got, wantCanonical)
+func TestTheGoldenVectors(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "vectors.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := Sign([]byte(goldenKey), "PUT", "/api/internal/blocks/storage/kv/run-01", "from=model-benchmarking", "1795000000", body); got != wantSig {
-		t.Fatalf("signature %s, want %s", got, wantSig)
+	var file struct {
+		Vectors []vector `json:"vectors"`
+	}
+	if err := json.Unmarshal(raw, &file); err != nil {
+		t.Fatal(err)
+	}
+	// Positive control: an empty or truncated file must not pass as agreement; and the file must
+	// hold a vector with a region and one without, and one with a body and one without.
+	withRegion, withBody := 0, 0
+	for _, v := range file.Vectors {
+		if len(v.Region) > 0 {
+			withRegion++
+		}
+		if v.Body != "" {
+			withBody++
+		}
+	}
+	if len(file.Vectors) < 3 || withRegion == 0 || withRegion == len(file.Vectors) || withBody == 0 || withBody == len(file.Vectors) {
+		t.Fatalf("%d vectors (%d with a region, %d with a body): want at least 3, each kind both ways", len(file.Vectors), withRegion, withBody)
+	}
+	for _, v := range file.Vectors {
+		t.Run(v.Name, func(t *testing.T) {
+			var values [3]string
+			for i, h := range RegionHeaders {
+				values[i] = v.Region[h]
+			}
+			if len(v.Region) > countPresent(values) {
+				t.Fatalf("region %v names a header outside %v", v.Region, RegionHeaders)
+			}
+			if got := RegionLine(values); got != v.RegionLine {
+				t.Fatalf("region line %q, want %q", got, v.RegionLine)
+			}
+			sum := sha256.Sum256([]byte(v.Body))
+			if got := hex.EncodeToString(sum[:]); got != v.BodySha256 {
+				t.Fatalf("body hash %s, want %s", got, v.BodySha256)
+			}
+			if got := Canonical(v.Method, v.Path, v.Query, v.Timestamp, []byte(v.Body), RegionLine(values)); got != v.Canonical {
+				t.Fatalf("canonical:\n%q\nwant\n%q", got, v.Canonical)
+			}
+			if got := Sign([]byte(v.Key), v.Method, v.Path, v.Query, v.Timestamp, []byte(v.Body), RegionLine(values)); got != v.Signature {
+				t.Fatalf("signature %s, want %s", got, v.Signature)
+			}
+			// Each input is signed: another region line changes the signature.
+			if Sign([]byte(v.Key), v.Method, v.Path, v.Query, v.Timestamp, []byte(v.Body), v.RegionLine+"X") == v.Signature {
+				t.Fatal("the region line is not signed")
+			}
+		})
 	}
 }
 
-// An empty body hashes as zero bytes, the method is uppercased, and the query is signed as sent.
-func TestAnEmptyBodyAndALowercaseMethod(t *testing.T) {
-	const (
-		wantCanonical = "DELETE\n/api/internal/blocks/storage/records/01JX\nfrom=model-benchmarking&ifVersion=3\n1795000001\n" +
-			"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-		wantSig = "51056ecf567e973795d820c6d55e00344e7147d4564fb3a933801c452a8336e2"
-	)
-	if got := Canonical("delete", "/api/internal/blocks/storage/records/01JX", "from=model-benchmarking&ifVersion=3", "1795000001", nil); got != wantCanonical {
-		t.Fatalf("canonical:\n%q\nwant\n%q", got, wantCanonical)
+func countPresent(values [3]string) int {
+	n := 0
+	for _, v := range values {
+		if v != "" {
+			n++
+		}
 	}
-	if got := Sign([]byte(goldenKey), "DELETE", "/api/internal/blocks/storage/records/01JX", "from=model-benchmarking&ifVersion=3", "1795000001", []byte{}); got != wantSig {
-		t.Fatalf("signature %s, want %s", got, wantSig)
+	return n
+}
+
+// The method is uppercased; a lone x-isuk keeps its two leading commas.
+func TestTheMethodIsUppercasedAndTheRegionLineKeepsItsPositions(t *testing.T) {
+	if RegionLine([3]string{"", "", "1"}) != ",,1" || RegionLine([3]string{"GB", "", ""}) != "GB,," {
+		t.Fatalf("%q %q", RegionLine([3]string{"", "", "1"}), RegionLine([3]string{"GB", "", ""}))
 	}
-	// Any one input changed changes the signature (a constant answer would pass the vectors above
-	// only if it were exactly one of them).
-	if Sign([]byte(goldenKey), "DELETE", "/api/internal/blocks/storage/records/01JX", "from=model-benchmarking&ifVersion=4", "1795000001", nil) == wantSig {
-		t.Fatal("the query is not signed")
+	if Canonical("delete", "/p", "q=1", "7", nil, "") != Canonical("DELETE", "/p", "q=1", "7", []byte{}, "") {
+		t.Fatal("the method is not uppercased, or an empty body hashes differently from none")
 	}
 }

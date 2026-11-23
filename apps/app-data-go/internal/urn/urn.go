@@ -1,6 +1,5 @@
 // Package urn builds the one registry URN this service subscribes by: a collection's schema,
-// `urn:schema:apps.civitai.com:<slug>/<collection>@v<major>`, and parses it back (the writes' schema
-// major book reads the majors of the schemas its streams carry).
+// `urn:schema:apps.civitai.com:<slug>/<collection>@v<major>`.
 //
 // The TypeScript twin is `registryUrn({ kind: 'collection-schema', … })` in
 // src/server/registry-adapter/urn.ts, the function the registry adapter names its private streams
@@ -14,8 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strconv"
-	"strings"
 )
 
 // Namespace is the registry adapter's namespace (urn.ts REGISTRY_NAMESPACE).
@@ -53,31 +50,3 @@ func ValidSlug(slug string) bool { return slugRE.MatchString(slug) }
 // ValidCollection reports whether collection is a collection name the adapter would name
 // (urn.ts COLLECTION_RE).
 func ValidCollection(collection string) bool { return collectionRE.MatchString(collection) }
-
-// majorRE is a major as urn.ts parses one back: no sign, no leading zero, at most nine digits.
-var majorRE = regexp.MustCompile(`^[1-9][0-9]{0,8}$`)
-
-// ParseCollectionSchema is CollectionSchema's inverse: the slug, collection and major of a
-// collection schema URN, or ErrInvalid for any string CollectionSchema would not produce exactly
-// (another namespace, a per-viewer `<c>.viewer` schema, a major with a leading zero).
-func ParseCollectionSchema(schema string) (slug, collection string, major int, err error) {
-	prefix := "urn:schema:" + Namespace + ":"
-	rest, ok := strings.CutPrefix(schema, prefix)
-	if !ok {
-		return "", "", 0, ErrInvalid
-	}
-	at := strings.LastIndex(rest, "@v")
-	if at < 0 || !majorRE.MatchString(rest[at+2:]) {
-		return "", "", 0, ErrInvalid
-	}
-	slug, collection, ok = strings.Cut(rest[:at], "/")
-	if !ok {
-		return "", "", 0, ErrInvalid
-	}
-	major, _ = strconv.Atoi(rest[at+2:])
-	// The round trip is the grammar: only a string CollectionSchema names is accepted.
-	if again, e := CollectionSchema(slug, collection, major); e != nil || again != schema {
-		return "", "", 0, ErrInvalid
-	}
-	return slug, collection, major, nil
-}

@@ -109,11 +109,13 @@ internal route, which is the store's own front door, not the public REST API.
 Concurrency is the store's: an integer `ifVersion` (`0` = must not exist), `409 version_conflict`
 with `currentVersion` (`doc-store.ts:2221-2237`); 64 KiB documents; the grammars of
 `doc-store.types.ts:151-170`. Tallies do not change a document's `version`. A request naming a schema
-major other than the collection's current one is `409 stale_major`; none named means current. The
-current major is the newest major of the collection's schema family, which this service knows from
-the collection schema URNs it streams (`urn:schema:apps.civitai.com:<slug>/<c>@v<N>`); the site
-stamps its own major on every write (`withSchemaMajor`, `doc-store-api.ts:825-833`), so a stale view
-here can only refuse a write, never mis-stamp one. **Imports are not v1** (below).
+major other than the collection's current one is `409 stale_major` (with `details.currentMajor`);
+none named means current. The site decides it: this service forwards a named `major` as a query
+parameter (shape-checked only) and relays the answer, and the site validates it against the
+collection's current major (`resolveSchemaMajor`, `doc-store-schema-major.ts`) and answers
+`409 stale_major`, the same major it stamps on every write (`withSchemaMajor`,
+`doc-store-api.ts:825-833`). No copy of the current major is kept here, so none can be stale.
+**Imports are not v1** (below).
 
 **The internal route.** The public route's path under an `internal` prefix, on the site, running
 **the same middleware chain as the public route**, `withBlockScope(withAxiom(createStorageHandler()))`
@@ -584,8 +586,9 @@ The internal route runs the same chain, so each gate runs in the same order on t
 ## Schema versioning (D2)
 
 A write is validated against the collection's current schema and stamped with the current major, in
-the site. This service accepts only the current major (`409 stale_major` otherwise) and adds no
-upcast: the forward step chain has no production caller yet (`applyMajorChain`,
+the site. Only the current major is accepted: the site refuses a named `major` that is not the
+collection's current one (`resolveSchemaMajor`, `409 stale_major`), and this service forwards the
+`major` and relays that answer. Neither adds an upcast: the forward step chain has no production caller yet (`applyMajorChain`,
 `storage-schema-majors.ts:309`, is called only by tests).
 
 D2 is open question 2 of the registry's migrations proposal: how a stream at major N serves a

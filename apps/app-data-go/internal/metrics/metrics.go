@@ -49,11 +49,13 @@ var WriteOps = []string{"create", "put", "delete", "mark", "unmark", "increment"
 
 // WriteOutcomes are the `outcome` values of app_data_writes_total. `2xx`, `4xx` and `501` are the
 // store's answer, passed on. `refused_here` is a request this service refused before forwarding it
-// (its shape, its token, a stale major); `unavailable` is `503 not_forwarded` (shutting down, the
-// block-token key set unavailable, the request could not be built), safe to resend; `unknown` is a
+// (its shape, its token); `unavailable` is `503 not_forwarded` refused here (shutting down, the
+// block-token key set unavailable, the request could not be built), and `signature` is `503
+// not_forwarded` for the site's refusal of the forward itself (its signature check, or its internal
+// route off), each safe to resend; `unknown` is a
 // forward whose answer was lost (`504`, a site 5xx other than 501, a transport error, the timeout, a
 // redirect).
-var WriteOutcomes = []string{"2xx", "4xx", "501", "refused_here", "unknown", "unavailable"}
+var WriteOutcomes = []string{"2xx", "4xx", "501", "refused_here", "unknown", "unavailable", "signature"}
 
 // Metrics holds the series.
 type Metrics struct {
@@ -105,7 +107,7 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 		}, []string{"outcome", "error"}),
 		Writes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "app_data_writes_total",
-			Help: "Write-route answers (and info), by op and outcome (2xx, 4xx, 501: the store's; refused_here; unavailable: 503 not_forwarded; unknown: 504, the outcome lost).",
+			Help: "Write-route answers (and info), by op and outcome (2xx, 4xx, 501: the store's; refused_here; unavailable, signature: 503 not_forwarded; unknown: 504, the outcome lost).",
 		}, []string{"op", "outcome"}),
 		WriteForward: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "app_data_write_forward_seconds",

@@ -29,7 +29,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
-	"github.com/civitai/civitai/apps/app-data-go/internal/majors"
 	"github.com/civitai/civitai/apps/app-data-go/internal/metrics"
 )
 
@@ -254,13 +253,14 @@ func decode(t *testing.T, rec *httptest.ResponseRecorder) envelope {
 // reach the site.
 var clientHeaders = map[string]string{
 	"X-Forwarded-For": "203.0.113.9", "Forwarded": "for=203.0.113.9", "X-Real-Ip": "203.0.113.9",
-	"Cookie": "session=client-cookie-1", "Cf-Ipcountry": "XX", "X-Client-Region": "eu-west",
+	"Cookie": "session=client-cookie-1", "X-Client-Region": "eu-west",
 }
 
-// allowedOutbound is every header name a forward may carry: the five set here and Go's own transport
-// headers.
+// allowedOutbound is every header name a forward may carry: those set here, the three region headers
+// (only when the client sent them), and Go's own transport headers.
 var allowedOutbound = map[string]bool{
 	"Authorization": true, "Accept": true, "User-Agent": true, "Content-Type": true,
+	"Cf-Ipcountry": true, "Cf-Region-Code": true, "X-Isuk": true,
 	"X-App-Data-Ts": true, "X-App-Data-Sig": true, "Content-Length": true, "Accept-Encoding": true,
 }
 
@@ -292,6 +292,14 @@ func TestEachRouteIsForwardedExactly(t *testing.T) {
 		{"delete with ifVersion", "delete",
 			call{method: "DELETE", path: "/v1/apps/vote-wall/collections/board/records/post.9?ifVersion=3", auth: "Bearer civitai_tok-delv-74"},
 			"DELETE", "/api/internal/blocks/storage/board/post.9", "from=vote-wall&ifVersion=3", 409, `{"code":"version_conflict","details":{"currentVersion":4}}`},
+		// The client names major before ifVersion; the forward's order is from, ifVersion, major.
+		{"delete with a major and ifVersion", "delete",
+			call{method: "DELETE", path: "/v1/apps/order-check/collections/slots/records/slot-8?major=2&ifVersion=6", auth: "Bearer civitai_tok-order-31"},
+			"DELETE", "/api/internal/blocks/storage/slots/slot-8", "from=order-check&ifVersion=6&major=2", 200, `{"deleted":true,"seq":21}`},
+		{"create with a major", "create",
+			call{method: "POST", path: "/v1/apps/major-pass/collections/runs/records?major=3", auth: "Bearer civitai_tok-majc-42",
+				body: []byte(`{"data":{"run":3}}`)},
+			"POST", "/api/internal/blocks/storage/runs", "from=major-pass&major=3", 201, `{"key":"01JXMAJOR","seq":30}`},
 		{"delete with a padded ifVersion", "delete",
 			call{method: "DELETE", path: "/v1/apps/stamp-book/collections/pages/records/p:2?ifVersion=007", auth: "Bearer civitai_tok-delz-85"},
 			"DELETE", "/api/internal/blocks/storage/pages/p:2", "from=stamp-book&ifVersion=7", 200, `{"deleted":false}`},
@@ -385,16 +393,22 @@ func TestEachRouteIsForwardedExactly(t *testing.T) {
 	}
 }
 
-// recompute is the canonical rule written out again, independently of package sign.
-func recompute(key, method, path, query, ts string, body []byte) string {
+// recompute is the canonical rule written out again, independently of package sign: the region line
+// is read from the headers the site received.
+func recompute(key, method, path, query, ts string, body []byte, h http.Header) string {
 	bh := sha256.Sum256(body)
+	region := h.Get("Cf-Ipcountry") + "," + h.Get("Cf-Region-Code") + "," + h.Get("X-Isuk")
+	if region == ",," {
+		region = ""
+	}
 	mac := hmac.New(sha256.New, []byte(key))
-	_, _ = mac.Write([]byte(method + "\n" + path + "\n" + query + "\n" + ts + "\n" + hex.EncodeToString(bh[:])))
+	_, _ = mac.Write([]byte(method + "\n" + path + "\n" + query + "\n" + ts + "\n" + hex.EncodeToString(bh[:]) + "\n" + region))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // 2. The signature the site receives verifies under the canonical rule, recomputed from what the
-// site received, for a body and for none, under a site URL with a path prefix (signed as sent).
+// site received, for a body and for none, with region headers and without, under a site URL with a
+// path prefix (signed as sent).
 // Fails on origin/main: no forward, so no signature (`len(got) != 2`).
 func TestTheForwardIsSignedOverWhatTheSiteReceives(t *testing.T) {
 	const clock = 1_795_000_123
@@ -402,7 +416,7 @@ func TestTheForwardIsSignedOverWhatTheSiteReceives(t *testing.T) {
 	prefixed, _ := url.Parse(r.site.srv.URL + "/site-root/")
 	r.f.Site = prefixed
 	r.do(t, call{method: "PUT", path: "/v1/apps/sign-check/collections/ledger/records/entry-3?major=4", auth: "Bearer civitai_tok-sig-50",
-		body: []byte(`{"data":{"amount":12}}`)})
+		body: []byte(`{"data":{"amount":12}}`), header: map[string]string{"cf-ipcountry": "US", "cf-region-code": "CA"}})
 	r.do(t, call{method: "DELETE", path: "/v1/apps/sign-check/collections/ledger/records/entry-4?ifVersion=2", auth: "Bearer civitai_tok-sig-61"})
 	got := r.site.requests()
 	if len(got) != 2 {
@@ -417,18 +431,23 @@ func TestTheForwardIsSignedOverWhatTheSiteReceives(t *testing.T) {
 		if ts != strconv.Itoa(clock) {
 			t.Fatalf("timestamp %q, want %d", ts, clock)
 		}
-		want := recompute(testKey, s.method, s.rawPath, s.query, ts, s.body)
+		want := recompute(testKey, s.method, s.rawPath, s.query, ts, s.body, s.header)
 		if sig := s.header.Get("X-App-Data-Sig"); sig != want {
 			t.Fatalf("%s: signature %q, want %q", s.method, sig, want)
 		}
 		// A signature under another key, or over another body, would differ: the check can fail.
-		if recompute("another-key", s.method, s.rawPath, s.query, ts, s.body) == want ||
-			recompute(testKey, s.method, s.rawPath, s.query, ts, append(append([]byte(nil), s.body...), ' ')) == want {
-			t.Fatal("the recomputation cannot tell keys or bodies apart")
+		if recompute("another-key", s.method, s.rawPath, s.query, ts, s.body, s.header) == want ||
+			recompute(testKey, s.method, s.rawPath, s.query, ts, append(append([]byte(nil), s.body...), ' '), s.header) == want ||
+			recompute(testKey, s.method, s.rawPath, s.query, ts, s.body, http.Header{"X-Isuk": {"1"}}) == want {
+			t.Fatal("the recomputation cannot tell keys, bodies or regions apart")
 		}
 	}
-	if got[0].query != "from=sign-check" || got[1].query != "from=sign-check&ifVersion=2" {
+	if got[0].query != "from=sign-check&major=4" || got[1].query != "from=sign-check&ifVersion=2" {
 		t.Fatalf("queries %q, %q", got[0].query, got[1].query)
+	}
+	if got[0].header.Get("Cf-Ipcountry") != "US" || got[0].header.Get("Cf-Region-Code") != "CA" || got[0].header.Get("X-Isuk") != "" ||
+		got[1].header.Get("Cf-Ipcountry") != "" {
+		t.Fatalf("region headers %v / %v", got[0].header, got[1].header)
 	}
 }
 
@@ -588,37 +607,165 @@ func TestNotForwardedIsRefusedHereBeforeAnythingIsSent(t *testing.T) {
 	}
 }
 
-// 6. A write naming a major other than the collection's current one is 409 stale_major, unsent; the
-// current major is sent without `major`; a collection the book does not know is sent (the site stamps
-// its own major).
-// Fails on origin/main: the routes are 404 there (`rec.Code != 409`).
-func TestAStaleMajorIsRefusedAndTheCurrentOneIsSent(t *testing.T) {
-	book := &majors.Book{}
-	book.Observe([]string{"urn:schema:apps.civitai.com:major-check/scores@v2"})
-	r := newRig(t, func(f *Forwarder) { f.Majors = book })
-
+// 6. A named major is forwarded and judged by the site: its `409 stale_major` is relayed byte for byte,
+// status, body and Content-Type, and counted as the store's 4xx.
+// Fails on origin/main: the route is 404 there (`rec.Code != 409`).
+func TestTheSitesStaleMajorIsRelayedUnchanged(t *testing.T) {
+	r := newRig(t)
+	const stale = `{"code":"stale_major","message":"stale major","error":"stale major","details":{"currentMajor":2}}`
+	r.site.set(answerWith(409, stale, map[string]string{"Content-Type": "application/json; charset=utf-8"}))
 	rec := r.do(t, call{method: "PUT", path: "/v1/apps/major-check/collections/scores/records/s-old?major=1", auth: "Bearer civitai_tok-major-1",
 		body: []byte(`{"data":{"v":1}}`)})
-	e := decode(t, rec)
-	if rec.Code != 409 || e.Code != "stale_major" || e.Details["currentMajor"] != float64(2) {
-		t.Fatalf("%d %s; want 409 stale_major, currentMajor 2", rec.Code, rec.Body.String())
-	}
-	if n := len(r.site.requests()); n != 0 {
-		t.Fatalf("🔴 a stale write reached the site (%d)", n)
-	}
-
-	rec = r.do(t, call{method: "PUT", path: "/v1/apps/major-check/collections/scores/records/s-new?major=2", auth: "Bearer civitai_tok-major-2",
-		body: []byte(`{"data":{"v":2}}`)})
 	got := r.site.requests()
-	if rec.Code != 200 || len(got) != 1 || got[0].query != "from=major-check" {
-		t.Fatalf("%d, %d requests %+v; want the current major sent without major", rec.Code, len(got), got)
+	if len(got) != 1 || got[0].query != "from=major-check&major=1" {
+		t.Fatalf("%d requests %+v; want the major sent", len(got), got)
 	}
+	if rec.Code != 409 || rec.Body.String() != stale || rec.Header().Get("Content-Type") != "application/json; charset=utf-8" {
+		t.Fatalf("%d %q; want the site's 409 unchanged", rec.Code, rec.Body.String())
+	}
+	if r.writes("put", "4xx") != 1 {
+		t.Fatal("not counted as the store's 4xx")
+	}
+}
 
-	rec = r.do(t, call{method: "POST", path: "/v1/apps/major-check/collections/unseen/records?major=5", auth: "Bearer civitai_tok-major-3",
-		body: []byte(`{"data":{"v":5}}`)})
-	got = r.site.requests()
-	if rec.Code != 200 || len(got) != 2 || got[1].query != "from=major-check" || got[1].path != "/api/internal/blocks/storage/unseen" {
-		t.Fatalf("%d, %d requests; want a collection the book does not know sent", rec.Code, len(got))
+// The site's refusals of the forward itself (its signature check, its internal route off) are 503
+// not_forwarded, outcome signature, never the user's own 401 or 404; every other 401 and 404 is relayed.
+// Fails on origin/main: the route is 404 there; on the previous commit the two refusals were relayed
+// as 401 and 404 (`rec.Code != 503`).
+func TestTheSitesRefusalOfTheForwardIsNotForwarded(t *testing.T) {
+	cases := []struct {
+		name, body string
+		status     int
+		want       int
+		outcome    string
+	}{
+		{"a bad signature", `{"code":"service_signature","message":"bad signature"}`, 401, 503, "signature"},
+		{"the internal route off", `{"code":"service_route_off","message":"off"}`, 404, 503, "signature"},
+		{"the user's own 401", `{"code":"unauthenticated","message":"sign in"}`, 401, 401, "4xx"},
+		{"the user's own 404", `{"code":"not_found","message":"no such record"}`, 404, 404, "4xx"},
+		{"a 404 naming the signature code", `{"code":"service_signature"}`, 404, 404, "4xx"},
+		{"a 401 naming the route-off code", `{"code":"service_route_off"}`, 401, 401, "4xx"},
+		{"a 401 that is not JSON", `unauthorized`, 401, 401, "4xx"},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t)
+			r.site.set(answerWith(tc.status, tc.body, map[string]string{"Content-Type": "application/json"}))
+			rec := r.do(t, call{method: "DELETE", path: "/v1/apps/sig-refused/collections/items/records/i-" + strconv.Itoa(i),
+				auth: "Bearer civitai_tok-sigref-" + strconv.Itoa(i)})
+			if rec.Code != tc.want {
+				t.Fatalf("%d %s; want %d", rec.Code, rec.Body.String(), tc.want)
+			}
+			if tc.want == 503 {
+				if e := decode(t, rec); e.Code != "not_forwarded" || rec.Header().Get("Retry-After") == "" {
+					t.Fatalf("%+v; want not_forwarded with Retry-After", e)
+				}
+			} else if rec.Body.String() != tc.body {
+				t.Fatalf("body %q, want the site's %q", rec.Body.String(), tc.body)
+			}
+			if r.writes("delete", tc.outcome) != 1 || len(r.site.requests()) != 1 {
+				t.Fatalf("outcome %s not counted once, or %d requests", tc.outcome, len(r.site.requests()))
+			}
+		})
+	}
+}
+
+// The region headers the client sent are copied onto the forward, only those present, and a
+// malformed or repeated one is refused 400 invalid_region with nothing sent.
+// Fails on origin/main: the route is 404 there; on the previous commit no region header was copied
+// (`Cf-Ipcountry != "GB"`).
+func TestTheRegionHeadersAreForwardedAndChecked(t *testing.T) {
+	r := newRig(t)
+	rec := r.do(t, call{method: "PATCH", path: "/v1/apps/region-app/collections/polls/records/q-1", auth: "Bearer civitai_tok-region-1",
+		body: []byte(`{"$unmark":"vote"}`), header: map[string]string{"CF-IPCountry": "GB", "X-IsUK": "1"}})
+	got := r.site.requests()
+	if rec.Code != 200 || len(got) != 1 {
+		t.Fatalf("%d, %d requests", rec.Code, len(got))
+	}
+	h := got[0].header
+	if h.Get("Cf-Ipcountry") != "GB" || h.Get("X-Isuk") != "1" || len(h.Values("Cf-Region-Code")) != 0 {
+		t.Fatalf("region headers %v", h)
+	}
+	if sig := h.Get("X-App-Data-Sig"); sig != recompute(testKey, got[0].method, got[0].rawPath, got[0].query, h.Get("X-App-Data-Ts"), got[0].body, h) {
+		t.Fatal("the region line was not signed as GB,,1")
+	}
+	for name, hdr := range map[string][][2]string{
+		"a space":          {{"Cf-Ipcountry", "U S"}},
+		"too long":         {{"Cf-Region-Code", "ABCDEFGHIJKLMNOPQ"}},
+		"empty":            {{"X-Isuk", ""}},
+		"a comma":          {{"Cf-Ipcountry", "US,CA"}},
+		"repeated":         {{"Cf-Ipcountry", "US"}, {"Cf-Ipcountry", "GB"}},
+		"repeated, cased":  {{"x-isuk", "1"}, {"X-IsUK", "0"}},
+		"a bad second one": {{"Cf-Ipcountry", "US"}, {"Cf-Region-Code", "C/A"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequestWithContext(t.Context(), "PUT", "/v1/apps/region-app/collections/polls/records/q-2", strings.NewReader(`{"data":{}}`))
+			req.Header.Set("Authorization", "Bearer civitai_tok-region-2")
+			for _, kv := range hdr {
+				req.Header.Add(kv[0], kv[1])
+			}
+			rec := httptest.NewRecorder()
+			r.h.ServeHTTP(rec, req)
+			if e := decode(t, rec); rec.Code != 400 || e.Code != "invalid_region" {
+				t.Fatalf("%d %+v; want 400 invalid_region", rec.Code, e)
+			}
+		})
+	}
+	if n := len(r.site.requests()); n != 1 {
+		t.Fatalf("🔴 the site received %d requests, want only the valid one", n)
+	}
+}
+
+// A write on a REUSED keep-alive connection that the site reads in full and then drops without an
+// answer is 504 unknown, and the site saw exactly one copy of it: nothing re-sends it.
+// Fails on origin/main: the route is 404 there (`rec.Code != 504`). Over HTTP/1 a POST was never
+// replayed by Go's transport, so against the previous commit this is an invariant guard; the
+// `GetBody = nil` it pins matters for transports that replay from GetBody (HTTP/2).
+func TestAWriteOnAReusedConnectionIsNeverReplayed(t *testing.T) {
+	var n atomic.Int32
+	var mu sync.Mutex
+	var remotes []string
+	var bodies []string
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		remotes = append(remotes, r.RemoteAddr)
+		bodies = append(bodies, string(body))
+		mu.Unlock()
+		if n.Add(1) == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"key":"first","seq":1}`)
+			return
+		}
+		// The second: read whole, then dropped with no answer.
+		if c, _, err := w.(http.Hijacker).Hijack(); err == nil {
+			_ = c.Close()
+		}
+	}))
+	t.Cleanup(site.Close)
+	r := newRig(t)
+	base, _ := url.Parse(site.URL)
+	r.f.Site = base
+	first := r.do(t, call{method: "POST", path: "/v1/apps/reuse-app/collections/logs/records", auth: "Bearer civitai_tok-reuse-1",
+		body: []byte(`{"data":{"n":"first"}}`)})
+	second := r.do(t, call{method: "POST", path: "/v1/apps/reuse-app/collections/logs/records", auth: "Bearer civitai_tok-reuse-2",
+		body: []byte(`{"data":{"n":"second"}}`)})
+	mu.Lock()
+	defer mu.Unlock()
+	if first.Code != 200 || len(remotes) < 2 || remotes[0] != remotes[1] {
+		t.Fatalf("first %d, remotes %v: the second request did not reuse the first's connection, so this proves nothing", first.Code, remotes)
+	}
+	if e := decode(t, second); second.Code != 504 || e.Outcome != "unknown" {
+		t.Fatalf("second %d %s; want 504 outcome unknown", second.Code, second.Body.String())
+	}
+	copies := 0
+	for _, b := range bodies {
+		if b == `{"data":{"n":"second"}}` {
+			copies++
+		}
+	}
+	if copies != 1 || len(bodies) != 2 {
+		t.Fatalf("🔴 the site saw %d copies of the second write (%d requests), want exactly 1", copies, len(bodies))
 	}
 }
 
@@ -659,6 +806,8 @@ func TestShapeRefusalsSendNothing(t *testing.T) {
 		{"a negative ifVersion", call{method: "DELETE", path: "/v1/apps/shape-app/collections/notes/records/q-3?ifVersion=-1"}, 400, "invalid_request", "delete"},
 		{"a 16-digit ifVersion", call{method: "DELETE", path: "/v1/apps/shape-app/collections/notes/records/q-4?ifVersion=1234567890123456"}, 400, "invalid_request", "delete"},
 		{"major zero", call{method: "POST", path: "/v1/apps/shape-app/collections/notes/records?major=0", body: []byte(`{}`)}, 400, "invalid_request", "create"},
+		{"a 7-digit major", call{method: "POST", path: "/v1/apps/shape-app/collections/notes/records?major=1000000", body: []byte(`{}`)}, 400, "invalid_request", "create"},
+		{"a padded major", call{method: "POST", path: "/v1/apps/shape-app/collections/notes/records?major=02", body: []byte(`{}`)}, 400, "invalid_request", "create"},
 		{"major twice", call{method: "POST", path: "/v1/apps/shape-app/collections/notes/records?major=1&major=1", body: []byte(`{}`)}, 400, "invalid_request", "create"},
 		{"a bad query escape", call{method: "POST", path: "/v1/apps/shape-app/collections/notes/records?major=%zz", body: []byte(`{}`)}, 400, "invalid_request", "create"},
 		{"major on info", call{method: "GET", path: "/v1/apps/shape-app/info?major=1"}, 400, "invalid_request", "info"},

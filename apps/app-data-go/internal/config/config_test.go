@@ -238,6 +238,64 @@ func TestTheWritesFlag(t *testing.T) {
 	}
 }
 
+// The forward timeout's cap is what keeps a drain inside the pod's termination: the longest forward
+// plus the drain's margin, after the preStop pause, fits the grace period. 20000 is accepted and
+// 20001 refused (TestInvalidWriteSettingsFailTheStart).
+// Fails before this change: MaxWritesTimeout did not exist, and with the old 60000 cap 20001 loaded
+// (`err == nil`).
+func TestTheWritesTimeoutCapFitsTheDrain(t *testing.T) {
+	if MaxWritesTimeout != 20*time.Second {
+		t.Fatalf("MaxWritesTimeout %v, want 20s", MaxWritesTimeout)
+	}
+	if MaxWritesTimeout+ShutdownMargin+PreStopPause > TerminationGrace {
+		t.Fatalf("%v + %v + %v exceeds the %v grace period", MaxWritesTimeout, ShutdownMargin, PreStopPause, TerminationGrace)
+	}
+	kv := writesEnv()
+	kv["APP_DATA_WRITES_TIMEOUT_MS"] = "20000"
+	if c, err := load(kv); err != nil || c.WritesTimeout != MaxWritesTimeout {
+		t.Fatalf("20000: %+v, %v; want accepted", c, err)
+	}
+	kv["APP_DATA_WRITES_TIMEOUT_MS"] = "20001"
+	if _, err := load(kv); err == nil {
+		t.Fatal("20001 was accepted")
+	}
+}
+
+// A write setting with the writes off does nothing: the start goes on, and the setting is named in a
+// warning (never its value), so turning the writes off never needs the others removed first.
+// Fails on the previous commit: there this load returned an error (`err != nil`).
+func TestWriteSettingsWithTheWritesOffAreAWarningNotAFailure(t *testing.T) {
+	for _, off := range []string{"", "false", "0"} {
+		c, err := load(map[string]string{
+			"APP_DATA_REST_URL": "https://rest-site.invalid", "APP_DATA_WRITES": off,
+			"APP_DATA_WRITES_SIGNING_KEY": signingKey, "APP_DATA_WRITES_SITE_URL": "not even a url",
+			"APP_DATA_WRITES_TIMEOUT_MS": "99999999",
+		})
+		if err != nil {
+			t.Fatalf("%q: %v; want the start to go on", off, err)
+		}
+		if c.Writes || c.WritesSigningKey != "" || c.WritesSiteURL != "" || c.WritesTimeout != 0 {
+			t.Fatalf("%q: %+v; want every write setting ignored", off, c)
+		}
+		w := c.Warnings()
+		want := "APP_DATA_WRITES_SIGNING_KEY,APP_DATA_WRITES_SITE_URL,APP_DATA_WRITES_TIMEOUT_MS set with APP_DATA_WRITES off: ignored"
+		if len(w) != 1 || w[0] != want {
+			t.Fatalf("%q: warnings %q, want [%q]", off, w, want)
+		}
+		if strings.Contains(w[0], "WRITES-KEY-") {
+			t.Fatal("the warning carries the signing key")
+		}
+	}
+	// One setting alone is named alone; none set is no warning.
+	c, err := load(map[string]string{"APP_DATA_REST_URL": "https://rest-site.invalid", "APP_DATA_WRITES_TIMEOUT_MS": "5000"})
+	if err != nil || len(c.Warnings()) != 1 || c.Warnings()[0] != "APP_DATA_WRITES_TIMEOUT_MS set with APP_DATA_WRITES off: ignored" {
+		t.Fatalf("%+v, %v", c, err)
+	}
+	if c, err := load(map[string]string{"APP_DATA_REST_URL": "https://rest-site.invalid"}); err != nil || c.Warnings() != nil {
+		t.Fatalf("%v, %v; want no warning", c.Warnings(), err)
+	}
+}
+
 func TestInvalidWriteSettingsFailTheStart(t *testing.T) {
 	cases := map[string]struct {
 		set  map[string]string
@@ -249,11 +307,8 @@ func TestInvalidWriteSettingsFailTheStart(t *testing.T) {
 		"no JWKS":                   {map[string]string{"APP_DATA_BLOCK_JWKS_URL": ""}, "APP_DATA_WRITES needs APP_DATA_BLOCK_JWKS_URL"},
 		"plain http site":           {map[string]string{"APP_DATA_WRITES_SITE_URL": "http://site.invalid"}, "APP_DATA_WRITES_SITE_URL must be"},
 		"site with a query":         {map[string]string{"APP_DATA_WRITES_SITE_URL": "https://site.invalid?x=1"}, "APP_DATA_WRITES_SITE_URL must be"},
-		"timeout under the hook's":  {map[string]string{"APP_DATA_WRITES_TIMEOUT_MS": "1999"}, "APP_DATA_WRITES_TIMEOUT_MS must be an integer from 2000 to 60000"},
-		"timeout over a minute":     {map[string]string{"APP_DATA_WRITES_TIMEOUT_MS": "60001"}, "APP_DATA_WRITES_TIMEOUT_MS must be an integer"},
-		"key with writes off":       {map[string]string{"APP_DATA_WRITES": "", "APP_DATA_BLOCK_JWKS_URL": ""}, "set with APP_DATA_WRITES off"},
-		"site with writes off":      {map[string]string{"APP_DATA_WRITES": "0", "APP_DATA_WRITES_SIGNING_KEY": "", "APP_DATA_BLOCK_JWKS_URL": "", "APP_DATA_WRITES_SITE_URL": "https://site.invalid"}, "set with APP_DATA_WRITES off"},
-		"timeout with writes off":   {map[string]string{"APP_DATA_WRITES": "false", "APP_DATA_WRITES_SIGNING_KEY": "", "APP_DATA_BLOCK_JWKS_URL": "", "APP_DATA_WRITES_TIMEOUT_MS": "5000"}, "set with APP_DATA_WRITES off"},
+		"timeout under the hook's":  {map[string]string{"APP_DATA_WRITES_TIMEOUT_MS": "1999"}, "APP_DATA_WRITES_TIMEOUT_MS must be an integer from 2000 to 20000"},
+		"timeout over the cap":      {map[string]string{"APP_DATA_WRITES_TIMEOUT_MS": "20001"}, "APP_DATA_WRITES_TIMEOUT_MS must be an integer from 2000 to 20000"},
 		"JWKS with writes off only": {map[string]string{"APP_DATA_WRITES": "", "APP_DATA_WRITES_SIGNING_KEY": ""}, "set both or neither"},
 	}
 	for name, tc := range cases {

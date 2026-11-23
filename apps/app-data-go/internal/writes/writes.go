@@ -9,13 +9,17 @@
 //	PATCH  /v1/apps/{slug}/collections/{collection}/records/{key}       one of {$inc}, {$mark}, {$unmark}
 //	GET    /v1/apps/{slug}/info                                         the viewer's usage and limits
 //
-// Each goes to `<site>/api/internal/blocks/storage[/<collection>[/<key>]]?from=<slug>[&ifVersion=N]`.
+// Each goes to `<site>/api/internal/blocks/storage[/<collection>[/<key>]]?from=<slug>[&ifVersion=N][&major=N]`.
 // Registered only with APP_DATA_WRITES on: off, every one of these paths is the mux's own 404.
+//
+// A named schema `major` is passed on, never judged here: the site checks it against the
+// collection's current major and answers `409 stale_major`, which is relayed like any 4xx.
 //
 // NEVER RETRIED. One inbound request is at most one request sent to the site. A forward whose answer
 // is lost (a site 5xx other than 501, a transport error, the timeout, a redirect) is `504` with
-// `outcome: "unknown"`: it may have been written. `503 not_forwarded` is only ever this service's own
-// refusal before anything was sent, and is the one answer safe to resend.
+// `outcome: "unknown"`: it may have been written. `503 not_forwarded` is this service's own refusal
+// before anything was sent, or the site's refusal of the forward itself before anything ran (its
+// signature check, or the internal route off), and is the one answer safe to resend.
 package writes
 
 import (
@@ -65,14 +69,22 @@ var (
 	// ifVersionRE is a non-negative integer of at most 15 digits (below 2^53, so the site's number
 	// parse is exact).
 	ifVersionRE = regexp.MustCompile(`^[0-9]{1,15}$`)
-	// majorRE is a schema major as urn.ts parses one.
-	majorRE = regexp.MustCompile(`^[1-9][0-9]{0,8}$`)
+	// majorRE is a schema major: no sign, no leading zero, at most six digits.
+	majorRE = regexp.MustCompile(`^[1-9][0-9]{0,5}$`)
+	// regionValueRE is one region header's value, as the edge sets them (a country, a region code,
+	// a flag).
+	regionValueRE = regexp.MustCompile(`^[A-Za-z0-9-]{1,16}$`)
 )
 
-// Majors is the book of current schema majors (majors.Book).
-type Majors interface {
-	Current(slug, collection string) (int, bool)
-}
+// The site's refusals of the forward itself (WRITES-DESIGN.md, "The internal route"), raised before
+// anything else runs there: neither is about the user's request, so neither is relayed as the user's
+// own 401 or 404. Each is `503 not_forwarded` here.
+const (
+	// siteSignatureCode is the site's 401 for a forward whose signature or timestamp it refused.
+	siteSignatureCode = "service_signature"
+	// siteRouteOffCode is the site's 404 while its internal route is turned off.
+	siteRouteOffCode = "service_route_off"
+)
 
 // Forwarder serves the write routes.
 type Forwarder struct {
@@ -89,8 +101,6 @@ type Forwarder struct {
 	// Verify checks a block token here before it is forwarded (exchange.BlockVerifier.Check). Nil
 	// refuses every block token `503 not_forwarded`: a block token is never forwarded unverified.
 	Verify func(ctx context.Context, token string) error
-	// Majors is the current-major book; nil knows no collection.
-	Majors Majors
 	// Ready reports whether the service takes requests (false while it shuts down); nil is always.
 	Ready   func() bool
 	Metrics *metrics.Metrics
@@ -175,6 +185,9 @@ type outbound struct {
 	query  string // raw, as sent and signed
 	auth   string
 	body   []byte
+	// region holds the region header values the inbound request carried, indexed as
+	// sign.RegionHeaders ("" when absent): copied onto the forward and signed.
+	region [3]string
 }
 
 func (f *Forwarder) serve(rt route) http.HandlerFunc {
@@ -193,8 +206,8 @@ func (f *Forwarder) serve(rt route) http.HandlerFunc {
 	}
 }
 
-// prepare runs every check made here, in order: the path, the query, the body, the token, the
-// schema major, and whether this process still takes writes. Nothing is sent before all pass.
+// prepare runs every check made here, in order: the path, the query, the region headers, the body,
+// the token, and whether this process still takes writes. Nothing is sent before all pass.
 func (f *Forwarder) prepare(r *http.Request, rt route) (outbound, *refusal) {
 	ob := outbound{op: rt.op, method: rt.method}
 	slug, collection, key := r.PathValue("slug"), r.PathValue("collection"), r.PathValue("key")
@@ -207,8 +220,7 @@ func (f *Forwarder) prepare(r *http.Request, rt route) (outbound, *refusal) {
 		return ob, refused(http.StatusBadRequest, "invalid_request", "invalid record key")
 	}
 
-	// The query sent is built here, never the client's: `from` first, then `ifVersion`. `major` is
-	// read here and never sent on.
+	// The query sent is built here, never the client's: `from`, then `ifVersion`, then `major`.
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		return ob, refused(http.StatusBadRequest, "invalid_request", "invalid query string")
@@ -218,13 +230,6 @@ func (f *Forwarder) prepare(r *http.Request, rt route) (outbound, *refusal) {
 			return ob, refused(http.StatusBadRequest, "invalid_request", "unsupported query parameter")
 		}
 	}
-	major := 0
-	if raw, given := q["major"]; given {
-		if !majorRE.MatchString(raw[0]) {
-			return ob, refused(http.StatusBadRequest, "invalid_request", "major must be a positive integer")
-		}
-		major, _ = strconv.Atoi(raw[0])
-	}
 	// The slug's grammar needs no escaping: it is sent as it is.
 	ob.query = "from=" + slug
 	if raw, given := q["ifVersion"]; given {
@@ -233,6 +238,25 @@ func (f *Forwarder) prepare(r *http.Request, rt route) (outbound, *refusal) {
 		}
 		n, _ := strconv.ParseInt(raw[0], 10, 64)
 		ob.query += "&ifVersion=" + strconv.FormatInt(n, 10)
+	}
+	if raw, given := q["major"]; given {
+		if !majorRE.MatchString(raw[0]) {
+			return ob, refused(http.StatusBadRequest, "invalid_request", "major must be a positive integer of at most 6 digits")
+		}
+		// Sent as given: the grammar admits no leading zero, so it is already canonical.
+		ob.query += "&major=" + raw[0]
+	}
+	// The edge's region headers, copied onto the forward and signed, so the site's region rules see
+	// what the edge set. Each is one well-formed value, or absent.
+	for i, name := range sign.RegionHeaders {
+		vals := r.Header.Values(name)
+		switch {
+		case len(vals) == 0:
+		case len(vals) > 1 || !regionValueRE.MatchString(vals[0]):
+			return ob, refused(http.StatusBadRequest, "invalid_region", "invalid "+name+" header")
+		default:
+			ob.region[i] = vals[0]
+		}
 	}
 	ob.path = InternalPath
 	if rt.coll {
@@ -269,17 +293,6 @@ func (f *Forwarder) prepare(r *http.Request, rt route) (outbound, *refusal) {
 		return ob, ref
 	}
 	ob.auth = auth
-
-	// A major named but not the current one is refused. One named for a collection the book does not
-	// know is sent: the site stamps its own current major on every write (withSchemaMajor), so a
-	// stale or empty book here can only refuse a write, never mis-stamp one.
-	if major != 0 && f.Majors != nil {
-		if current, known := f.Majors.Current(slug, collection); known && current != major {
-			ref := refused(http.StatusConflict, "stale_major", "the collection's current schema major is another")
-			ref.details = map[string]any{"currentMajor": current}
-			return ob, ref
-		}
-	}
 
 	if f.Ready != nil && !f.Ready() {
 		return ob, notForwarded("this replica is shutting down; resend")
@@ -399,7 +412,11 @@ func (f *Forwarder) forward(w http.ResponseWriter, r *http.Request, ob outbound)
 		f.refuse(w, ob.op, notForwarded("the request could not be built"))
 		return
 	}
-	// Built from nothing: no client X-Forwarded-For, Forwarded, region header or cookie is ever sent.
+	// No replay: without GetBody no transport (HTTP/2's included) can re-send the body of a request
+	// it already began to send.
+	req.GetBody = nil
+	// Built from nothing: no client X-Forwarded-For, Forwarded or cookie is ever sent; of the client's
+	// headers only Authorization and the region headers (checked above) are.
 	ts := strconv.FormatInt(f.now().Unix(), 10)
 	req.Header.Set("Authorization", ob.auth)
 	req.Header.Set("Accept", "application/json")
@@ -409,8 +426,14 @@ func (f *Forwarder) forward(w http.ResponseWriter, r *http.Request, ob outbound)
 	}
 	// Signed over the path and query exactly as they go on the wire (the request line is
 	// EscapedPath + "?" + RawQuery).
+	for i, name := range sign.RegionHeaders {
+		if ob.region[i] != "" {
+			req.Header.Set(name, ob.region[i])
+		}
+	}
 	req.Header.Set(sign.TimestampHeader, ts)
-	req.Header.Set(sign.SignatureHeader, sign.Sign(f.Key, req.Method, req.URL.EscapedPath(), req.URL.RawQuery, ts, ob.body))
+	req.Header.Set(sign.SignatureHeader, sign.Sign(f.Key, req.Method, req.URL.EscapedPath(), req.URL.RawQuery, ts, ob.body,
+		sign.RegionLine(ob.region)))
 
 	// One Do, never repeated. (Go's transport itself re-sends a request only when none of it reached
 	// the wire, or, for the idempotent GET of `info`, on a pooled connection the site had already
@@ -435,6 +458,13 @@ func (f *Forwarder) forward(w http.ResponseWriter, r *http.Request, ob outbound)
 	}
 	outcome := ""
 	switch s := res.StatusCode; {
+	case siteRefusedTheForward(s, raw):
+		// Refused before anything ran there, so nothing was written: safe to resend, and never the
+		// user's own 401 or 404.
+		ref := notForwarded("the site refused the forward; resend")
+		ref.outcome = "signature"
+		f.refuse(w, ob.op, ref)
+		return
 	case s >= 200 && s < 300:
 		outcome = "2xx"
 	case s >= 400 && s < 500:
@@ -458,6 +488,23 @@ func (f *Forwarder) forward(w http.ResponseWriter, r *http.Request, ob outbound)
 	w.WriteHeader(res.StatusCode)
 	_, _ = w.Write(raw)
 	f.Metrics.Writes.WithLabelValues(ob.op, outcome).Inc()
+}
+
+// siteRefusedTheForward reports whether the site's answer is its refusal of the forward itself: a 401
+// whose JSON `code` is siteSignatureCode, or a 404 whose `code` is siteRouteOffCode. Any other 401
+// or 404 is the store's answer to the user's request.
+func siteRefusedTheForward(status int, body []byte) bool {
+	if status != http.StatusUnauthorized && status != http.StatusNotFound {
+		return false
+	}
+	var b struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(body, &b) != nil {
+		return false
+	}
+	return (status == http.StatusUnauthorized && b.Code == siteSignatureCode) ||
+		(status == http.StatusNotFound && b.Code == siteRouteOffCode)
 }
 
 // unknown answers `504 outcome_unknown`: the request was sent and its outcome is not known.

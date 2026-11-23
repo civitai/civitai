@@ -59,25 +59,3 @@ func TestTheSegmentGrammars(t *testing.T) {
 		}
 	}
 }
-
-func TestParseCollectionSchemaIsTheInverse(t *testing.T) {
-	slug, coll, major, err := ParseCollectionSchema("urn:schema:apps.civitai.com:model-benchmarking/records@v12")
-	if err != nil || slug != "model-benchmarking" || coll != "records" || major != 12 {
-		t.Fatalf("got %q %q %d %v", slug, coll, major, err)
-	}
-	for _, bad := range []string{
-		"urn:schema:other.example:model-benchmarking/records@v1", // another namespace
-		"urn:schema:apps.civitai.com:model-benchmarking/records", // no major
-		"urn:schema:apps.civitai.com:model-benchmarking/records@v0",
-		"urn:schema:apps.civitai.com:model-benchmarking/records@v01",
-		"urn:schema:apps.civitai.com:model-benchmarking/records@v1000000000",
-		"urn:schema:apps.civitai.com:model-benchmarking/records.viewer@v1", // the per-viewer schema
-		"urn:schema:apps.civitai.com:model-benchmarking@v1",                // no collection
-		"urn:schema:apps.civitai.com:Model/records@v1",                     // a bad slug
-		"urn:schema:apps.civitai.com:a/b/c@v1",                             // a bad collection
-	} {
-		if _, _, _, err := ParseCollectionSchema(bad); !errors.Is(err, ErrInvalid) {
-			t.Errorf("%q: %v, want ErrInvalid", bad, err)
-		}
-	}
-}

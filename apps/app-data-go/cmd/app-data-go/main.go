@@ -23,7 +23,6 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/api"
 	"github.com/civitai/civitai/apps/app-data-go/internal/config"
 	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
-	"github.com/civitai/civitai/apps/app-data-go/internal/majors"
 	"github.com/civitai/civitai/apps/app-data-go/internal/metrics"
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
 	"github.com/civitai/civitai/apps/app-data-go/internal/rest"
@@ -55,6 +54,9 @@ func run(log *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
+	}
+	for _, w := range cfg.Warnings() {
+		log.Warn("configuration", "warning", w)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -88,8 +90,6 @@ func run(log *slog.Logger) error {
 	if cfg.BlockJWKSURL != "" {
 		verifier = &exchange.BlockVerifier{JWKSURL: cfg.BlockJWKSURL, HTTP: &http.Client{Timeout: exchangeTimeout}}
 	}
-	// Every collection schema major the streams carry, for the writes' 409 stale_major.
-	book := &majors.Book{}
 	swept := make(chan struct{})
 	if cfg.RegistryURL != "" {
 		ex := &exchange.Exchanger{
@@ -114,9 +114,8 @@ func run(log *slog.Logger) error {
 			MaxRecords: cfg.MaxRecords, MaxBytes: cfg.MaxBytes,
 			Cooldown: streamCooldown, NotPrivateCooldown: notPrivateCooldown,
 			Exchange: router.Exchange, ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
-			Opened:  m.StreamsOpened.Inc,
-			Closed:  func(reason string) { m.StreamsClosed.WithLabelValues(reason).Inc() },
-			Schemas: book.Observe,
+			Opened: m.StreamsOpened.Inc,
+			Closed: func(reason string) { m.StreamsClosed.WithLabelValues(reason).Inc() },
 		})
 		srv.Streams = mgr
 		go func() {
@@ -137,7 +136,7 @@ func run(log *slog.Logger) error {
 		srv.Writes = &writes.Forwarder{
 			Site: site, Key: []byte(cfg.WritesSigningKey), Timeout: cfg.WritesTimeout,
 			HTTP:   &http.Client{}, // bounded per forward by Timeout; redirects never followed (writes.Forwarder)
-			Verify: verifier.Check, Majors: book, Ready: srv.Ready,
+			Verify: verifier.Check, Ready: srv.Ready,
 			Metrics: m, Log: log.With("component", "writes"),
 		}
 	}
@@ -163,8 +162,10 @@ func run(log *slog.Logger) error {
 	}
 	draining.Store(true)
 	// In-flight writes are let finish: one cut off here would answer its client nothing, its outcome
-	// unknown. New writes are refused 503 not_forwarded once draining is set.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), max(10*time.Second, longest+2*time.Second))
+	// unknown. New writes are refused 503 not_forwarded once draining is set. The wait is sized by the
+	// forward timeout alone (a read cut off is only retried), and that timeout's cap
+	// (config.MaxWritesTimeout) keeps it inside the pod's termination grace period.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), max(10*time.Second, cfg.WritesTimeout+config.ShutdownMargin))
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx) //nolint:contextcheck // shutdown outlives the cancelled ctx by design
 	<-swept

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -76,10 +77,39 @@ type Config struct {
 	// RESTURL, the same site): `/api/internal/blocks/storage/…` is appended to its path.
 	WritesSiteURL string
 	// WritesTimeout bounds one forward (APP_DATA_WRITES_TIMEOUT_MS, default 10000, from 2000 to
-	// 60000). It must exceed the site's permission-hook client timeout (the hook's timeoutMs, at most
-	// 500, plus 450 ms: doc-store-hook.ts hookClientTimeoutMs), plus the rest of the store's chain; a
-	// forward past it answers 504 with its outcome unknown.
+	// MaxWritesTimeout). It must exceed the site's permission-hook client timeout (the hook's
+	// timeoutMs, at most 500, plus 450 ms: doc-store-hook.ts hookClientTimeoutMs), plus the rest of
+	// the store's chain; a forward past it answers 504 with its outcome unknown.
 	WritesTimeout time.Duration
+
+	// ignoredWrites names the APP_DATA_WRITES_* settings set while APP_DATA_WRITES is off
+	// (comma-separated, so Config stays comparable); Warnings reports them.
+	ignoredWrites string
+}
+
+// MaxWritesTimeout caps APP_DATA_WRITES_TIMEOUT_MS so a draining replica can let its last forward
+// finish inside the pod's termination: the drain waits for in-flight forwards for up to the timeout
+// plus ShutdownMargin, after a preStop pause of PreStopPause, and the whole must fit the termination
+// grace period, TerminationGrace (20 s + 2 s + 5 s = 27 s, under 30 s). Raising the cap means raising
+// the grace period first. config_test pins the arithmetic.
+const MaxWritesTimeout = 20 * time.Second
+
+// The deployment facts MaxWritesTimeout is sized against.
+const (
+	// ShutdownMargin is how much longer than the forward timeout the drain waits (cmd/app-data-go).
+	ShutdownMargin = 2 * time.Second
+	// PreStopPause is the deployment's preStop pause before the process is signalled.
+	PreStopPause = 5 * time.Second
+	// TerminationGrace is the deployment's terminationGracePeriodSeconds.
+	TerminationGrace = 30 * time.Second
+)
+
+// Warnings are settings that were read but do nothing; the start logs each and goes on.
+func (c *Config) Warnings() []string {
+	if c.ignoredWrites == "" {
+		return nil
+	}
+	return []string{c.ignoredWrites + " set with APP_DATA_WRITES off: ignored"}
 }
 
 // minSigningKeyBytes is the shortest signing key accepted: 256 bits, the HMAC-SHA256 block's half.
@@ -190,15 +220,22 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 	return c, nil
 }
 
-// writesFromEnv reads the write settings into c. Each needs APP_DATA_WRITES on, so a setting that
-// does nothing never reads as if it did.
+// writesFromEnv reads the write settings into c. With APP_DATA_WRITES off they do nothing: any that
+// is set is ignored and named in a warning (Warnings), so turning the writes off never needs the
+// other settings removed first.
 func writesFromEnv(getenv func(string) string, c *Config) error {
 	key, site, timeout := getenv("APP_DATA_WRITES_SIGNING_KEY"), getenv("APP_DATA_WRITES_SITE_URL"), getenv("APP_DATA_WRITES_TIMEOUT_MS")
 	switch v := getenv("APP_DATA_WRITES"); v {
 	case "", "false", "0":
-		if key != "" || site != "" || timeout != "" {
-			return errors.New("an APP_DATA_WRITES_* setting is set with APP_DATA_WRITES off; set it on or unset them")
+		var set []string
+		for name, v := range map[string]string{"APP_DATA_WRITES_SIGNING_KEY": key, "APP_DATA_WRITES_SITE_URL": site, "APP_DATA_WRITES_TIMEOUT_MS": timeout} {
+			if v != "" {
+				set = append(set, name)
+			}
 		}
+		// Names only, never the key.
+		sort.Strings(set)
+		c.ignoredWrites = strings.Join(set, ",")
 		return nil
 	case "true", "1":
 	default:
@@ -218,7 +255,7 @@ func writesFromEnv(getenv func(string) string, c *Config) error {
 	if !secureURL(site) {
 		return errors.New("APP_DATA_WRITES_SITE_URL must be an https URL (http only to a cluster-local *.svc host)")
 	}
-	ms, err := intEnv(getenv, "APP_DATA_WRITES_TIMEOUT_MS", 10_000, 2_000, 60_000)
+	ms, err := intEnv(getenv, "APP_DATA_WRITES_TIMEOUT_MS", 10_000, 2_000, int(MaxWritesTimeout/time.Millisecond))
 	if err != nil {
 		return err
 	}

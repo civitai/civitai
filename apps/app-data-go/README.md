@@ -28,7 +28,10 @@ sends it, since the REST fallback is the site's own route (DESIGN.md, "P4: the s
 `info` of [WRITES-DESIGN.md](WRITES-DESIGN.md) are checked for shape here (and a block token verified
 locally), then forwarded once, never retried, with the user's own token and an HMAC signature
 (`internal/sign`), to the site's internal storage route. A lost answer is `504 {outcome: "unknown"}`;
-`503 not_forwarded`, refused here before anything was sent, is the only answer safe to resend.
+`503 not_forwarded` (refused here before anything was sent, or the site's refusal of the forward
+itself: its signature check, or its internal route off) is the only answer safe to resend. A named
+`major` is forwarded and judged by the site, whose `409 stale_major` is relayed. The edge's region
+headers (`cf-ipcountry`, `cf-region-code`, `x-isuk`) are copied onto the forward and signed.
 
 ## Layout
 
@@ -43,7 +46,6 @@ locally), then forwarded once, never retried, with the user's own token and an H
 | `internal/urn`      | the collection schema URN, pinned to the adapter's by golden vectors                      |
 | `internal/writes`   | the write routes and `info`: shape checks, the signed forward to the site                 |
 | `internal/sign`     | the forward's signature, pinned to the site's by a golden vector                          |
-| `internal/majors`   | each collection's current schema major, from the schemas the streams carry                |
 | `internal/config`   | the environment ([.env.example](.env.example)), validated at start                        |
 | `internal/metrics`  | Prometheus series, `app_data_*`; no label holds a token, user, app or collection          |
 
