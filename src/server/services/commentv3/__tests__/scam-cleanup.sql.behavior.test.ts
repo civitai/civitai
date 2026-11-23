@@ -23,7 +23,7 @@ beforeAll(async () => {
   await pg.exec(migration('20261210120000_comment_v3_mirror_changed_columns'));
   await pg.exec(migration('20270101120000_comment_v3_old_table_triggers_off'));
   await pg.exec(migration('20270102120000_comment_v3_teardown'));
-  await pg.exec(migration('20271125120000_comment_v3_hidden_at'));
+  await pg.exec(migration('20271125130000_comment_v3_hidden_at'));
 
   const toSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
     Array.isArray(first)

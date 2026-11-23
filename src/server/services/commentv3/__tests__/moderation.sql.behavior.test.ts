@@ -44,7 +44,7 @@ beforeAll(async () => {
   await pg.exec(migration('20261217120000_comment_v3_removed_by_author'));
   await pg.exec(migration('20270101120000_comment_v3_old_table_triggers_off'));
   await pg.exec(migration('20270102120000_comment_v3_teardown'));
-  await pg.exec(migration('20271125120000_comment_v3_hidden_at'));
+  await pg.exec(migration('20271125130000_comment_v3_hidden_at'));
 
   const toSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
     Array.isArray(first)
