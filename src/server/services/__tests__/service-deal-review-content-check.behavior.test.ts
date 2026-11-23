@@ -953,6 +953,9 @@ describe('a verdict that cannot settle its text is left to the retry job, within
     try {
       await rescanUnsubmitted();
       expect(scans.mock.calls).toContainEqual(['ServiceDealReview', REVIEW]);
+      expect(submitCheck).toHaveBeenCalledWith(
+        expect.objectContaining({ entityType: 'ServiceDealReview', entityId: REVIEW })
+      );
     } finally {
       scans.mockRestore();
     }

@@ -88,9 +88,9 @@ async function resendReviewText(
 /**
  * A verdict that cannot settle its text hands the check's row to the retry job, which sends it again
  * until its retries run out; the text stays Pending, so unshown, throughout and after. Scoped to the
- * check that produced the verdict, so a newer check's row is left alone.
+ * check that produced the verdict, so a newer check's row is left alone. Raw, not
+ * recordEntityModerationFailure: this needs the Succeeded guard and the new retryCount.
  */
-// Raw, not recordEntityModerationFailure: this needs the Succeeded guard and the new retryCount.
 async function leaveForRetry(
   type: TextType,
   reviewId: number,
@@ -209,10 +209,6 @@ async function trackSubmit(
 }
 
 /**
- * Queues a review's text (the buyer's comment or the seller's reply) for the content check; the
- * adapters below apply the result. Every writer of either text resets its status to Pending first.
- */
-/**
  * The review text types whose scan cannot ask every required label right now; a failed read counts
  * as cannot. Sending such text is refused and spends a retry.
  */
@@ -226,6 +222,10 @@ export async function unaskableServiceDealReviewTypes() {
   return types.filter((_, i) => !askable[i]);
 }
 
+/**
+ * Queues a review's text (the buyer's comment or the seller's reply) for the content check; the
+ * adapters below apply the result. Every writer of either text resets its status to Pending first.
+ */
 export async function scanServiceDealReviewText(
   type: TextType,
   reviewId: number,
