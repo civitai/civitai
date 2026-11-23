@@ -72,15 +72,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
+          # No Go cache: setup-go's saves on every ref, and this key's entry is tiny (~175 KB), not worth a step that can fail the job.
           cache: false
-
-      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
-      - uses: ./.github/actions/go-cache-restore
-        with:
-          dependency-path: |
-            apps/feed-go/go.sum
-            apps/beacon-go/go.sum
-            apps/content-policy-go/go.sum
 
       - name: Install
         run: pnpm install --frozen-lockfile
@@ -109,9 +102,6 @@ jobs:
       - name: Manifest is valid and markers are committed
         run: node scripts/ports/generate.mjs --check
 
-      # Last, so the build cache holds what the steps above built. Saves only on `main`.
-      - uses: ./.github/actions/go-cache-save
-
   touched:
     name: Ports this PR touches
     runs-on: ubuntu-latest
@@ -134,15 +124,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
+          # No Go cache: setup-go's saves on every ref, and this key's entry is tiny (~175 KB), not worth a step that can fail the job.
           cache: false
-
-      # setup-go's cache is off: it saves on every ref. Restore-only here, same key.
-      - uses: ./.github/actions/go-cache-restore
-        with:
-          dependency-path: |
-            apps/feed-go/go.sum
-            apps/beacon-go/go.sum
-            apps/content-policy-go/go.sum
 
       # For `typescript`, which the Node dependency walk parses with.
       - name: Install

@@ -45,7 +45,9 @@ runs:
         DEPS_HASH: ${{ hashFiles(inputs.dependency-path) }}
       run: |
         set -euo pipefail
-        # setup-go fails the restore when nothing matches; an empty hash would key every run alike.
+        # FAIL-CLOSED, unlike setup-go: when nothing matches, setup-go only WARNS and runs on with no
+        # cache; this fails the JOB. Deliberate: an empty hash would key every run alike, and a wrong
+        # dependency-path should be fixed, not silently run cold.
         if [ -z "$DEPS_HASH" ]; then
           echo "::error title=Go cache::no file matches the dependency path"
           exit 1

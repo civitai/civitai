@@ -87,7 +87,9 @@ function gatedToMain(cond: unknown): boolean {
 
 /** Why this step saves a cache, or null when it does not. */
 function savesCache(step: Step): string | null {
-  const uses = typeof step.uses === 'string' ? step.uses : '';
+  // Lower-cased: GitHub resolves `owner/repo` case-insensitively, so `Actions/Setup-Go@v6` runs
+  // the same action and must not walk past the matchers below.
+  const uses = (typeof step.uses === 'string' ? step.uses : '').trim().toLowerCase();
   if (/^actions\/cache\/save@/.test(uses)) return 'actions/cache/save';
   if (/^actions\/cache@/.test(uses)) return 'actions/cache (saves in its post step)';
   if (/^actions\/setup-node@/.test(uses)) {
@@ -159,16 +161,20 @@ function loadStepSets(): StepSet[] {
       });
     }
   }
-  if (existsSync(ACTIONS_DIR)) {
-    for (const dir of readdirSync(ACTIONS_DIR).sort()) {
-      const file = ['action.yml', 'action.yaml']
-        .map((f) => path.join(ACTIONS_DIR, dir, f))
-        .find((f) => existsSync(f));
-      if (!file) continue;
-      const doc = yamlFile(file);
-      sets.push({ where: `.github/actions/${dir}`, steps: doc.runs?.steps ?? [] });
+  // Recursive: a local action can live at any depth (`./.github/actions/go/restore`).
+  const walk = (dir: string) => {
+    for (const ent of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    )) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) walk(full);
+      else if (/^action\.ya?ml$/.test(ent.name)) {
+        const where = path.relative(ROOT, dir).split(path.sep).join('/');
+        sets.push({ where, steps: yamlFile(full).runs?.steps ?? [] });
+      }
     }
-  }
+  };
+  if (existsSync(ACTIONS_DIR)) walk(ACTIONS_DIR);
   return sets;
 }
 
@@ -235,6 +241,10 @@ describe('no cache is saved outside main', () => {
         { uses: 'actions/setup-go@v6', with: { 'go-version-file': 'go.mod' } },
       ],
       ['setup-go cache: true', { uses: 'actions/setup-go@v6', with: { cache: true } }],
+      [
+        'a mixed-case setup-go with its default cache',
+        { uses: 'Actions/Setup-Go@v6', with: { 'go-version-file': 'go.mod' } },
+      ],
       [
         'setup-go cache as an expression',
         { uses: 'actions/setup-go@v6', with: { cache: "${{ github.ref == 'refs/heads/main' }}" } },
