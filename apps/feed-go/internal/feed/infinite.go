@@ -438,6 +438,8 @@ type InfiniteSources interface {
 	// on, with the viewer's contributor permissions (viewerID 0: signed out); nil when the collection
 	// does not exist.
 	CollectionPermission(ctx context.Context, collectionID, viewerID int) (*hydrate.CollectionPermission, error)
+	// VersionShowcase is what the version-showcase cache says about the versions (hydrate.Showcase).
+	VersionShowcase(ctx context.Context, versionIDs []int) hydrate.Showcase
 }
 
 // maxFollowedBinds bounds the follow list the Postgres path binds (`i."userId" IN (…)`, one Prisma
@@ -1010,6 +1012,21 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 			// every visible image on the site by an IIF, with no model or creator clause at all. That
 			// unbounded sort is left to Node rather than run here.
 			return nil, fallback.New("prioritized-system-user-no-version")
+		}
+		if in.ModelVersionID != 0 {
+			// getAllImages reads the version's curated showcase (getCarouselShowcaseIds) for every
+			// prioritizedUserIds request with a modelVersionId; curated, the carousel is that list in
+			// its order. Not ported: a curated version, or a failed read, is Node's
+			// (`prioritized-curated-showcase`), and so is one whose entry the cache does not hold
+			// (`prioritized-showcase-miss`: Node computes it from the database). Read whatever
+			// `model-version-showcase-serve` says: off, Node serves the live list and a fallback here
+			// is only a lost answer (DESIGN.md §16.9).
+			switch d.Sources.VersionShowcase(ctx, []int{in.ModelVersionID}) {
+			case hydrate.ShowcaseCurated:
+				return nil, fallback.New("prioritized-curated-showcase")
+			case hydrate.ShowcaseUnknown:
+				return nil, fallback.New("prioritized-showcase-miss")
+			}
 		}
 	}
 	if in.CollectionID != 0 {
