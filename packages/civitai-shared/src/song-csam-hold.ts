@@ -50,10 +50,8 @@ function idArray(ids: number[]): string {
  */
 export function songIdOfCoverSql(cover: string): string {
   const c = imageAlias(cover);
-  return `(SELECT s.id FROM "Image" s
-    WHERE s.id = CASE WHEN ${c}."metadata" ->> 'parentId' ~ '^[0-9]{1,9}$' THEN (${c}."metadata" ->> 'parentId')::int END
-      AND s."userId" = ${c}."userId" AND ${c}."postId" IS NULL
-      AND s."metadata" ->> 'coverImageId' = ${c}.id::text)`;
+  return `(SELECT s.id FROM "Track" t JOIN "Image" s ON s.id = t."imageId"
+    WHERE t."coverImageId" = ${c}.id AND s."userId" = ${c}."userId" AND ${c}."postId" IS NULL)`;
 }
 
 /** The songs a release reaches: the given songs, or the songs of the given covers. */

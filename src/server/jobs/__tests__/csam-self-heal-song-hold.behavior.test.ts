@@ -39,6 +39,7 @@ const SCHEMA = `
     ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', metadata jsonb NOT NULL DEFAULT '{}',
     "pHash" bigint, "updatedAt" timestamp(3)
   );
+  CREATE TABLE "Track" ("imageId" int PRIMARY KEY, "coverImageId" int UNIQUE, genre text);
   CREATE TABLE "CsamQueueSetAside" ("imageId" int PRIMARY KEY);
   CREATE TABLE "ModActivity" (
     id serial PRIMARY KEY, "userId" int, "entityType" text, "entityId" int, activity text,
@@ -64,15 +65,16 @@ afterAll(() => h?.stop());
 
 beforeEach(async () => {
   await h.pg.exec(`
-    TRUNCATE "Image", "CsamQueueSetAside", "ModActivity";
+    TRUNCATE "Image", "Track", "CsamQueueSetAside", "ModActivity";
     INSERT INTO "Image" (id, type, "userId", "postId", ingestion, "blockedFor", "needsReview", metadata) VALUES
-      (${SONG}, 'audio', ${OWNER}, 1, 'Scanned', NULL, NULL, '{"coverImageId": ${COVER}}'),
+      (${SONG}, 'audio', ${OWNER}, 1, 'Scanned', NULL, NULL, '{}'),
       (${COVER}, 'image', ${OWNER}, NULL, 'Blocked', 'CSAM', NULL, '{"parentId": ${SONG}}'),
       (${PICTURE}, 'image', ${OWNER}, NULL, 'Blocked', 'CSAM', NULL, '{}'),
       (${FORGED}, 'image', ${OTHER}, NULL, 'Blocked', 'CSAM', NULL, '{"parentId": ${SONG}}'),
       (${HELD_SONG}, 'audio', ${OWNER}, 2, 'Scanned', NULL, 'csam',
-        '{"coverImageId": ${HELD_COVER}, "csamHold": {"lyrics": 5}}'),
+        '{"csamHold": {"lyrics": 5}}'),
       (${HELD_COVER}, 'image', ${OWNER}, NULL, 'Blocked', 'CSAM', NULL, '{"parentId": ${HELD_SONG}}');
+    INSERT INTO "Track" ("imageId", "coverImageId") VALUES (${SONG}, ${COVER}), (${HELD_SONG}, ${HELD_COVER});
   `);
 });
 
@@ -103,8 +105,9 @@ describe('the CSAM self-heal job, on songs of covers removed for CSAM', () => {
     expect(await row(HELD_SONG)).toEqual({ needsReview: 'csam', marker: { lyrics: 5 } });
   });
 
-  it("ignores a picture and another user's row naming the song", async () => {
-    await h.pg.exec(`UPDATE "Image" SET "blockedFor" = NULL WHERE id = ${COVER}`);
+  it("ignores a picture and another user's row the song links to", async () => {
+    await h.pg.exec(`UPDATE "Image" SET "blockedFor" = NULL WHERE id = ${COVER};
+      UPDATE "Track" SET "coverImageId" = ${FORGED} WHERE "imageId" = ${SONG}`);
 
     const { songHolds } = await runCsamBlocklistSelfHeal();
 

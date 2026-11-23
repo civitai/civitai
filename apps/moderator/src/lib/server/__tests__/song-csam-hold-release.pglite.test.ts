@@ -107,6 +107,7 @@ CREATE TABLE "Image" (
   "scanJobs" JSONB
 );
 CREATE TYPE "CsamQueueSetAsideOutcome" AS ENUM ('AfterReport', 'Dismissed');
+CREATE TABLE "Track" ("imageId" INTEGER PRIMARY KEY, "coverImageId" INTEGER UNIQUE, "genre" TEXT);
 CREATE TABLE "CsamQueueSetAside" (
   "imageId" INTEGER PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -180,13 +181,14 @@ async function seed({
   marker = { cover: COVER } as Record<string, number> | null,
   removed = false,
 } = {}) {
-  await db.exec(`TRUNCATE "Image", "CsamQueueSetAside", "TextScanHold", "Report", "ImageReport",
+  await db.exec(`TRUNCATE "Image", "Track", "CsamQueueSetAside", "TextScanHold", "Report", "ImageReport",
     "ModActivity", "ImageDeferredBlockEffect", "User"`);
   await db.query(
     `INSERT INTO "Image" ("id", "type", "userId", "postId", "needsReview", "metadata") VALUES
       ($1, 'audio', $2, 1, 'csam', $3::jsonb)`,
-    [SONG, OWNER, JSON.stringify({ coverImageId: COVER, ...(marker ? { csamHold: marker } : {}) })]
+    [SONG, OWNER, JSON.stringify(marker ? { csamHold: marker } : {})]
   );
+  await db.query(`INSERT INTO "Track" ("imageId", "coverImageId") VALUES ($1, $2)`, [SONG, COVER]);
   await db.query(
     `INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion", "blockedFor", "nsfwLevel", "metadata") VALUES
       ($1, $2, 'csam', $3, $4, $5, $6::jsonb)`,

@@ -108,6 +108,7 @@ beforeAll(async () => {
       "updatedAt" timestamp(3),
       metadata jsonb
     );
+    CREATE TABLE "Track" ("imageId" int PRIMARY KEY, "coverImageId" int UNIQUE, genre text);
     -- Enums as in prod, so a literal outside the enum fails here too.
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
     CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');

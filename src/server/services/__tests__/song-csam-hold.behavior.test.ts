@@ -72,6 +72,7 @@ const SCHEMA = `
     "hideMeta" boolean NOT NULL DEFAULT false, "createdAt" timestamp NOT NULL DEFAULT now(),
     "mimeType" text, index int
   );
+  CREATE TABLE "Track" ("imageId" int PRIMARY KEY, "coverImageId" int UNIQUE, genre text);
   CREATE TABLE "TextScanHold" (
     id serial PRIMARY KEY, "entityType" text NOT NULL, "entityId" int NOT NULL, label text NOT NULL,
     "textHash" text NOT NULL, status "TextScanHoldStatus" NOT NULL DEFAULT 'Pending', "userId" int,
@@ -165,15 +166,16 @@ const holds = () =>
 beforeEach(async () => {
   vi.clearAllMocks();
   await h.pg.exec(`
-    TRUNCATE "Image", "TextScanHold", "CsamQueueSetAside", "Report", "ImageReport", "Post";
+    TRUNCATE "Image", "Track", "TextScanHold", "CsamQueueSetAside", "Report", "ImageReport", "Post";
     INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (1, ${OWNER}, now() - interval '1 day');
     INSERT INTO "Image" (id, type, "userId", "postId", ingestion, metadata) VALUES
-      (${SONG}, 'audio', ${OWNER}, 1, 'Scanned', '{"coverImageId": ${COVER}}'),
+      (${SONG}, 'audio', ${OWNER}, 1, 'Scanned', '{}'),
       (${COVER}, 'image', ${OWNER}, NULL, 'Scanned', '{"parentId": ${SONG}}'),
       (${PICTURE}, 'image', ${OWNER}, NULL, 'Scanned', '{}'),
       (${VIDEO}, 'video', ${OWNER}, NULL, 'Scanned', '{"thumbnailId": ${THUMBNAIL}}'),
       (${THUMBNAIL}, 'image', ${OWNER}, NULL, 'Scanned', '{"parentId": ${VIDEO}}'),
       (${FORGED}, 'image', ${OTHER}, NULL, 'Scanned', '{"parentId": ${SONG}}');
+    INSERT INTO "Track" ("imageId", "coverImageId") VALUES (${SONG}, ${COVER});
   `);
 });
 
@@ -337,7 +339,7 @@ describe('a csam flag on the cover', () => {
   it.each([
     [
       'a replaced cover the song no longer links to',
-      `UPDATE "Image" SET metadata = '{"coverImageId": ${PICTURE}}' WHERE id = ${SONG}`,
+      `UPDATE "Track" SET "coverImageId" = ${PICTURE} WHERE "imageId" = ${SONG}`,
       COVER,
     ],
     ['a cover row in a post', `UPDATE "Image" SET "postId" = 1 WHERE id = ${COVER}`, COVER],
@@ -348,7 +350,7 @@ describe('a csam flag on the cover', () => {
     ],
     [
       "another user's row the song links to",
-      `UPDATE "Image" SET metadata = '{"coverImageId": ${FORGED}}' WHERE id = ${SONG}`,
+      `UPDATE "Track" SET "coverImageId" = ${FORGED} WHERE "imageId" = ${SONG}`,
       FORGED,
     ],
   ])('holds no song for %s', async (_label, change, reported) => {
@@ -413,7 +415,9 @@ describe("the scan's CSAM block of the cover", () => {
     expect(await song()).toEqual({ needsReview: 'csam', marker: { cover: COVER } });
   });
 
-  it("holds nothing for a block of another user's row naming the song", async () => {
+  it("holds nothing for a block of another user's row the song links to", async () => {
+    await h.pg.exec(`UPDATE "Track" SET "coverImageId" = ${FORGED} WHERE "imageId" = ${SONG}`);
+
     await blockForCsam(FORGED);
 
     expect(await song()).toEqual({ needsReview: null, marker: null });
