@@ -149,8 +149,8 @@ const media = async () => {
 
 describe('getInquisitorQueue media, by viewer', () => {
   it('sends a restricted image to the route for a moderator cleared for CSAM review', async () => {
-    // Restricted in Postgres, by its block reason, and by the scanner: none applies to them.
-    for (const blockedFor of [null, 'unlisted']) {
+    // Restricted by its block reason, and by the scanner: neither applies to them.
+    for (const blockedFor of ['unlisted']) {
       await db.exec(`DELETE FROM "KnightsQueueItem"; DELETE FROM "Image";`);
       await queued({ blockedFor });
       expect({ blockedFor, media: await media() }).toEqual({ blockedFor, media: 'restricted' });
@@ -216,26 +216,6 @@ describe('getInquisitorQueue media', () => {
     [
       'a hold register entry',
       async () => db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES ($1)`, [IMAGE]),
-    ],
-    [
-      'a hold on its owner',
-      async () => db.query(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES ($1)`, [OWNER]),
-    ],
-    ['a block with no reason', async () => db.query(`UPDATE "Image" SET "blockedFor" = NULL`)],
-    [
-      'a model a confirmed CSAM hold removed',
-      async () => {
-        await db.query(
-          `INSERT INTO "ModelVersion" (id, meta, "modelId") VALUES (990300002, '{}', 990500002)`
-        );
-        await db.query(
-          `INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400002, '{}', 990300002)`
-        );
-        await db.query(`UPDATE "Image" SET "postId" = 990400002`);
-        await db.query(
-          `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Model', 990500002, 'csam', 'Confirmed')`
-        );
-      },
     ],
     ['another review flag', async () => db.query(`UPDATE "Image" SET "needsReview" = 'csam'`)],
     [
@@ -315,6 +295,26 @@ describe('getInquisitorQueue media', () => {
       },
     ],
     [
+      'a hold on its owner',
+      async () => db.query(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES ($1)`, [OWNER]),
+    ],
+    ['a block with no reason', async () => db.query(`UPDATE "Image" SET "blockedFor" = NULL`)],
+    [
+      'a model a confirmed CSAM hold removed',
+      async () => {
+        await db.query(
+          `INSERT INTO "ModelVersion" (id, meta, "modelId") VALUES (990300002, '{}', 990500002)`
+        );
+        await db.query(
+          `INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400002, '{}', 990300002)`
+        );
+        await db.query(`UPDATE "Image" SET "postId" = 990400002`);
+        await db.query(
+          `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Model', 990500002, 'csam', 'Confirmed')`
+        );
+      },
+    ],
+    [
       'its url retracted outright',
       async () =>
         db.query(
@@ -336,7 +336,7 @@ describe('getInquisitorQueue media', () => {
   it('marks each item by its own image', async () => {
     await queued({});
     await db.query(
-      `INSERT INTO "Image" (id, url, "userId", ingestion, "blockedFor", minor) VALUES (990000003, 'key-990000003', 990100004, 'Blocked', NULL, false)`
+      `INSERT INTO "Image" (id, url, "userId", ingestion, "blockedFor", minor) VALUES (990000003, 'key-990000003', 990100004, 'Blocked', 'unlisted', false)`
     );
     await db.query(
       `INSERT INTO "KnightsQueueItem" ("id","questionKey","imageId","source","minRank","votesNeeded","priority","status","reason","createdAt")

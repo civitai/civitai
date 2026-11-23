@@ -37,9 +37,15 @@ export function heldUserSql(column: string): string {
     )`;
 }
 
+/** Whether the "Image" row aliased `image` is itself in the CSAM queue or blocked as CSAM. */
+export function heldItemImageSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
+  return `(${image}."needsReview" = 'csam' OR ${image}."blockedFor" = 'CSAM')`;
+}
+
 /**
- * Whether the "Image" row aliased `image` may be served: it is flagged for CSAM itself, or its owner
- * is held (`heldUserSql`). The one definition both routes run, as plain SQL so each app wraps it in
+ * Whether the "Image" row aliased `image` may be served: it is flagged for CSAM itself
+ * (`heldItemImageSql`), or its owner is held (`heldUserSql`). The one definition both routes run, as plain SQL so each app wraps it in
  * its own builder.
  *
  * The owner legs skip an AiNotVerified block, which the owner lifts by verifying, and never count the

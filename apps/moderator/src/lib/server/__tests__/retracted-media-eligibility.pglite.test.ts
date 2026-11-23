@@ -49,7 +49,7 @@ vi.mock('../review-batch', () => ({
 const { getRetractedMedia, recordRetractedView, scannerVerdicts } = await import(
   '../retracted-media'
 );
-const { URL_SIBLING_CAP, csamRestrictedSql } = await import('@civitai/shared/retracted-media-tier');
+const { URL_SIBLING_CAP } = await import('@civitai/shared/retracted-media-tier');
 beforeEach(() => scannerVerdicts.clear());
 
 const SCHEMA = `
@@ -215,9 +215,9 @@ describe('retracted media eligibility', () => {
     });
   });
 
-  it('serves a minor signal to any moderator, and keeps a block with no reason to cleared ones', async () => {
+  it('serves a minor signal, and a block with no reason, to any moderator', async () => {
     expect(await tierOf(2)).toBe('anyMod');
-    expect(await tierOf(3)).toBe('cleared');
+    expect(await tierOf(3)).toBe('anyMod');
   });
 
   it('never serves held media, an unblocked image or a missing id', async () => {
@@ -268,11 +268,9 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
       expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
   });
 
-  // Each of these is refused by heldUrlSql alone: heldImageSql and the sole-row guards pass them.
-  // Its delete and takedown legs are pinned by the cdn-access parity suite, since a delete or
-  // takedown row on the url is refused here before them.
-  it('refuses a url cdn-access holds', async () => {
-    expect(await tierOf(13)).toBe('none');
+  // cdn-access holds this url for its post's CSAM-hold removal; the file itself is not held.
+  it('serves a url cdn-access holds only for its post to any moderator', async () => {
+    expect(await tierOf(13)).toBe('anyMod');
   });
 
   it('serves a mature-underage removal to any moderator, though cdn-access holds its url', async () => {
@@ -355,7 +353,6 @@ describe('copies sharing bytes with a restricted image', () => {
       DELETE FROM "CsamReport" WHERE "userId" = 990100199;
       DELETE FROM "EvidenceHoldImage" WHERE "imageId" IN (990000102, 990000104);
       DELETE FROM "ImageCdnModeratorDelete" WHERE "imageId" = 990000105;
-      DELETE FROM "EvidenceHeldUser" WHERE "userId" = 990100102;
       UPDATE "Image" SET "needsReview" = NULL, minor = false WHERE id = 990000102;
     `);
   });
@@ -376,11 +373,6 @@ describe('copies sharing bytes with a restricted image', () => {
     ['a reported row on the same url', 990000101, () => report(990000102)],
     ['a reported row with the same pHash', 990000103, () => report(990000104)],
     ['a held row on the same url', 990000101, () => hold(990000102)],
-    [
-      'a copy on the same url whose owner is held',
-      990000101,
-      () => db.query(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (990100102)`),
-    ],
     [
       'an unreported copy on the same url in review',
       990000101,
@@ -435,69 +427,26 @@ describe('a model version unpublished for its subject', () => {
     });
   });
 
-  it('keeps an image on a model a confirmed CSAM hold removed to cleared moderators', async () => {
+  it('serves an image on a model a CSAM hold removed to any moderator', async () => {
     await db.exec(`
       INSERT INTO "Model" (id, meta) VALUES (990500126, '{"unpublishedReason": "mature-underage"}');
       INSERT INTO "ModelVersion" (id, meta, "modelId") VALUES (990300126, '{}', 990500126);
       INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400126, '{}', 990300126);
       INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "postId") VALUES
-        (990000126, 'key-990000126', 'Blocked', 'moderated', 990100126, 990400126),
-        (990000127, 'key-990000127', 'Blocked', 'moderated', 990100127, NULL),
-        (990000128, 'key-990000127', 'Scanned', NULL, 990100128, 990400126);
+        (990000126, 'key-990000126', 'Blocked', 'moderated', 990100126, 990400126);
     `);
-    // Removed by a moderator for its subject alone: the image itself is open, and so is an image
-    // whose url a row on that model shares.
-    expect(await getRetractedMedia(990000126, { csamReview: false })).toMatchObject({
-      url: 'key-990000126',
-    });
-    expect(await getRetractedMedia(990000127, { csamReview: false })).toMatchObject({
-      url: 'key-990000127',
-    });
-    // A hold that does not mark this model as CSAM leaves it open.
-    for (const hold of [
-      `('Model', 990500126, 'csam', 'Dismissed')`,
-      `('Model', 990500126, 'other', 'Confirmed')`,
-      `('Article', 990500126, 'csam', 'Confirmed')`,
-      `('Model', 990500999, 'csam', 'Confirmed')`,
-    ]) {
+    for (const status of ['Pending', 'Confirmed']) {
       await db.exec(
-        `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ${hold}`
+        `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Model', 990500126, 'csam', '${status}')`
       );
       try {
         expect({
-          hold,
+          status,
           served: !!(await getRetractedMedia(990000126, { csamReview: false })),
-        }).toEqual({
-          hold,
-          served: true,
-        });
+        }).toEqual({ status, served: true });
       } finally {
-        await db.exec(
-          `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129, 990400999)`
-        );
+        await db.exec(`DELETE FROM "TextScanHold" WHERE "entityId" = 990500126`);
       }
-    }
-    // A pending hold restricts too.
-    await db.exec(
-      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Model', 990500126, 'csam', 'Pending')`
-    );
-    try {
-      expect(await getRetractedMedia(990000126, { csamReview: false })).toBeNull();
-    } finally {
-      await db.exec(
-        `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129, 990400999)`
-      );
-    }
-    await db.exec(
-      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Model', 990500126, 'csam', 'Confirmed')`
-    );
-    try {
-      expect(await getRetractedMedia(990000126, { csamReview: false })).toBeNull();
-      expect(await getRetractedMedia(990000126, { csamReview: true })).toMatchObject({
-        url: 'key-990000126',
-      });
-    } finally {
-      await db.exec(`DELETE FROM "TextScanHold" WHERE "entityId" = 990500126`);
     }
   });
 
@@ -512,23 +461,22 @@ describe('a model version unpublished for its subject', () => {
     });
   });
 
-  it('keeps an image whose owner is named on a report to cleared moderators', async () => {
+  it('serves an image whose owner is named on a report to any moderator', async () => {
     await db.exec(`
       INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "postId") VALUES
         (990000125, 'key-990000125', 'Blocked', 'AiNotVerified', 990100125, NULL);
       INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100125, '{}', '[]');
     `);
     try {
-      expect(await getRetractedMedia(990000125, { csamReview: false })).toBeNull();
+      expect(await getRetractedMedia(990000125, { csamReview: false })).toMatchObject({
+        url: 'key-990000125',
+      });
     } finally {
       await db.exec(`DELETE FROM "CsamReport" WHERE "userId" = 990100125`);
     }
-    expect(await getRetractedMedia(990000125, { csamReview: false })).toMatchObject({
-      url: 'key-990000125',
-    });
   });
 
-  it('keeps an image on a post a CSAM hold removed, after the post is republished', async () => {
+  it('serves an image on a post a CSAM hold removed to any moderator', async () => {
     await db.exec(`
       INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400129, '{"unpublishedReason": "csam-text-hold"}', NULL);
       INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "postId") VALUES
@@ -536,48 +484,12 @@ describe('a model version unpublished for its subject', () => {
       INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Post', 990400129, 'csam', 'Confirmed');
     `);
     try {
-      expect(await getRetractedMedia(990000129, { csamReview: false })).toBeNull();
-      // With the post's reason cleared, the hold still restricts.
-      await db.exec(`UPDATE "Post" SET metadata = '{}' WHERE id = 990400129`);
-      expect(await getRetractedMedia(990000129, { csamReview: false })).toBeNull();
-      await db.exec(`UPDATE "TextScanHold" SET status = 'Pending' WHERE "entityId" = 990400129`);
-      expect(await getRetractedMedia(990000129, { csamReview: false })).toBeNull();
-      // A hold that does not mark this post as CSAM leaves it open.
-      for (const hold of [
-        `'Post', 990400129, 'csam', 'Dismissed'`,
-        `'Post', 990400129, 'other', 'Confirmed'`,
-        `'Model', 990400129, 'csam', 'Confirmed'`,
-        `'Post', 990400999, 'csam', 'Confirmed'`,
-      ]) {
-        await db.exec(`DELETE FROM "TextScanHold" WHERE "entityId" IN (990400129, 990400999)`);
-        await db.exec(
-          `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES (${hold})`
-        );
-        expect({
-          hold,
-          served: !!(await getRetractedMedia(990000129, { csamReview: false })),
-        }).toEqual({
-          hold,
-          served: true,
-        });
-      }
+      expect(await getRetractedMedia(990000129, { csamReview: false })).toMatchObject({
+        url: 'key-990000129',
+      });
     } finally {
-      await db.exec(
-        `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129, 990400999)`
-      );
+      await db.exec(`DELETE FROM "TextScanHold" WHERE "entityId" = 990400129`);
     }
-  });
-
-  it('keeps an image whose own post is on a CSAM hold to cleared moderators', async () => {
-    await db.exec(`
-      INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400124, '{"unpublishedReason": "csam-text-hold"}', NULL);
-      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "postId") VALUES
-        (990000124, 'key-990000124', 'Blocked', 'moderated', 990100124, 990400124)
-    `);
-    expect(await getRetractedMedia(990000124, { csamReview: false })).toBeNull();
-    expect(await getRetractedMedia(990000124, { csamReview: true })).toMatchObject({
-      url: 'key-990000124',
-    });
   });
 });
 
@@ -628,14 +540,14 @@ describe('rows sharing its url, its post text and its articles', () => {
     }
   });
 
-  it('restricts an image whose url a row with an unknown signal shares', async () => {
+  it('keeps an image whose url a row with an unknown signal shares to cleared moderators', async () => {
     await db.exec(`ALTER TABLE "Image" ALTER COLUMN ingestion DROP NOT NULL;
       INSERT INTO "Image" (id, url, "userId", ingestion) VALUES (990900001, 'key-990900000', 990910001, NULL)`);
     try {
-      const { rows } = await db.query<{ restricted: boolean }>(
-        `SELECT ${csamRestrictedSql('i')} AS restricted FROM "Image" i WHERE i.id = 990900000`
-      );
-      expect(rows).toEqual([{ restricted: true }]);
+      expect(await getRetractedMedia(target.id, { csamReview: false })).toBeNull();
+      expect(await getRetractedMedia(target.id, { csamReview: true })).toMatchObject({
+        url: target.url,
+      });
     } finally {
       await db.exec(`DELETE FROM "Image" WHERE id = 990900001;
         ALTER TABLE "Image" ALTER COLUMN ingestion SET NOT NULL`);

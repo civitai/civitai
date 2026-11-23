@@ -5,6 +5,8 @@
  * case wrote and clears the target's post.
  */
 
+import { CSAM_HOLD_POST_UNPUBLISH_REASON } from '../held-url';
+
 /** The tables these cases write that the older suite schemas lack. */
 export const CSAM_LINK_TABLES_SQL = `
 CREATE TABLE "PostText" (id INTEGER PRIMARY KEY, "postId" INTEGER NOT NULL, "csamHeld" BOOLEAN NOT NULL DEFAULT false);
@@ -27,6 +29,9 @@ const HASH = 990980001;
 const OFFERING = 990990001;
 const PROFILE_USER = 990910002;
 const OTHER_IMAGE = 990900002;
+const REPORTED_USER = 990910003;
+/** Marks the reports a case writes, so the cleanup removes only those. */
+const CASE_DETAILS = '{"case": "csam-restriction"}';
 
 type Target = { id: number; url: string };
 export type CsamCase = { label: string; restricts: boolean; mark: (target: Target) => string };
@@ -101,12 +106,12 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   },
   {
     label: 'a row on its url whose post is on an undecided csam hold',
-    restricts: true,
+    restricts: false,
     mark: (t) => `${post} ${sibling(t, { postId: POST })} ${hold('Post', POST, 'Pending')}`,
   },
   {
     label: 'a row on its url whose model is on a confirmed csam hold',
-    restricts: true,
+    restricts: false,
     mark: (t) => `
       INSERT INTO "ModelVersion" (id, meta, "modelId") VALUES (${VERSION}, '{}', ${MODEL});
       INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (${POST}, '{}', ${VERSION});
@@ -114,13 +119,13 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   },
   {
     label: "a row on its url whose post's text is on a csam hold",
-    restricts: true,
+    restricts: false,
     mark: (t) =>
       `${post} ${postText()} ${sibling(t, { postId: POST })} ${hold('PostText', TEXT, 'Pending')}`,
   },
   {
     label: 'a row on its url that is the cover of an article on a csam hold',
-    restricts: true,
+    restricts: false,
     mark: (t) => `${sibling(t)}
       INSERT INTO "Article" (id, "coverId") VALUES (${ARTICLE}, ${SIBLING}); ${hold(
       'Article',
@@ -163,7 +168,7 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   },
   {
     label: 'a row on its url blocked with no reason',
-    restricts: true,
+    restricts: false,
     mark: (t) => sibling(t, { ingestion: "'Blocked'", blockedFor: 'NULL' }),
   },
   {
@@ -179,17 +184,17 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   // The image's own post text, articles, service offerings and profiles.
   {
     label: "its post's text on a confirmed csam hold",
-    restricts: true,
+    restricts: false,
     mark: (t) => `${ownPost(t)} ${postText()} ${hold('PostText', TEXT, 'Confirmed')}`,
   },
   {
     label: "its post's text held for CSAM",
-    restricts: true,
+    restricts: false,
     mark: (t) => `${ownPost(t)} ${postText(true)}`,
   },
   {
     label: 'the cover of an article on an undecided csam hold',
-    restricts: true,
+    restricts: false,
     mark: (t) =>
       `INSERT INTO "Article" (id, "coverId") VALUES (${ARTICLE}, ${t.id}); ${hold(
         'Article',
@@ -199,7 +204,7 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   },
   {
     label: 'the banner of an article on a csam hold',
-    restricts: true,
+    restricts: false,
     mark: (t) =>
       `INSERT INTO "Article" (id, "bannerId") VALUES (${ARTICLE}, ${t.id}); ${hold(
         'Article',
@@ -209,7 +214,7 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   },
   {
     label: 'an image in an article on a csam hold',
-    restricts: true,
+    restricts: false,
     mark: (t) => `
       INSERT INTO "Article" (id) VALUES (${ARTICLE});
       INSERT INTO "ImageConnection" ("imageId", "entityId", "entityType") VALUES (${
@@ -282,7 +287,7 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   },
   {
     label: 'the cover of a service offering on a csam hold',
-    restricts: true,
+    restricts: false,
     mark: (t) =>
       `INSERT INTO "ServiceOffering" (id, "coverImageId") VALUES (${OFFERING}, ${t.id}); ${hold(
         'ServiceOffering',
@@ -302,7 +307,7 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   },
   {
     label: 'the cover of a profile on a csam hold',
-    restricts: true,
+    restricts: false,
     mark: (t) =>
       `INSERT INTO "UserProfile" ("userId", "coverImageId") VALUES (${PROFILE_USER}, ${
         t.id
@@ -310,7 +315,7 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   },
   {
     label: 'the SFW cover of a profile on a csam hold',
-    restricts: true,
+    restricts: false,
     mark: (t) =>
       `INSERT INTO "UserProfile" ("userId", "sfwCoverImageId") VALUES (${PROFILE_USER}, ${
         t.id
@@ -318,7 +323,7 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   },
   {
     label: 'the cover of a service offering whose csam verdict has no hold yet',
-    restricts: true,
+    restricts: false,
     mark: (t) =>
       `INSERT INTO "ServiceOffering" (id, "coverImageId") VALUES (${OFFERING}, ${t.id});
        INSERT INTO "EntityModeration" ("entityType", "entityId", status, "triggeredLabels", result)
@@ -352,6 +357,78 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
         'Confirmed'
       )}`,
   },
+  // The owner's account, and the post's unpublish by a CSAM text hold, do not restrict the image itself.
+  {
+    label: 'its owner named as the subject of a CSAM report',
+    restricts: false,
+    mark: (t) =>
+      `INSERT INTO "CsamReport" ("userId", details, images) SELECT "userId", '${CASE_DETAILS}', '[]' FROM "Image" WHERE id = ${t.id};`,
+  },
+  {
+    label: 'its owner named as the secondary user of a CSAM report',
+    restricts: false,
+    mark: (t) =>
+      `INSERT INTO "CsamReport" ("userId", details, images)
+        SELECT ${REPORTED_USER}, '${CASE_DETAILS}'::jsonb || jsonb_build_object('secondaryUserId', "userId"::text), '[]'
+        FROM "Image" WHERE id = ${t.id};`,
+  },
+  {
+    label: 'its owner under an evidence hold',
+    restricts: false,
+    mark: (t) =>
+      `INSERT INTO "EvidenceHeldUser" ("userId") SELECT "userId" FROM "Image" WHERE id = ${t.id};`,
+  },
+  {
+    label: 'a row on its url whose owner is under an evidence hold',
+    restricts: false,
+    mark: (t) =>
+      `${sibling(t)} INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${SIBLING_OWNER});`,
+  },
+  {
+    label: 'a row on its url whose owner is named on a CSAM report',
+    restricts: false,
+    mark: (t) =>
+      `${sibling(
+        t
+      )} INSERT INTO "CsamReport" ("userId", details, images) VALUES (${SIBLING_OWNER}, '${CASE_DETAILS}', '[]');`,
+  },
+  {
+    label: 'its post unpublished by a CSAM text hold',
+    restricts: false,
+    mark: (t) =>
+      `INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (${POST}, '{"unpublishedReason": "${CSAM_HOLD_POST_UNPUBLISH_REASON}"}', NULL);
+        UPDATE "Image" SET "postId" = ${POST} WHERE id = ${t.id};`,
+  },
+  {
+    label: 'a moderator delete on its url with no owner recorded',
+    restricts: false,
+    mark: (t) =>
+      `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES (${OTHER_IMAGE}, '${t.url}', NULL, false);`,
+  },
+  {
+    label: 'a shop takedown on its url with no owner recorded',
+    restricts: false,
+    mark: (t) =>
+      `INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId", "userId") VALUES ('${t.url}', ${OFFERING}, NULL);`,
+  },
+  // Item-level signals, which stay with the CSAM grant.
+  {
+    label: 'a row on its url in the CSAM review queue',
+    restricts: true,
+    mark: (t) => sibling(t, { needsReview: "'csam'" }),
+  },
+  {
+    label: 'its listing on a CSAM report',
+    restricts: true,
+    mark: (t) =>
+      `INSERT INTO "CsamReport" ("userId", details, images) VALUES (${REPORTED_USER}, '${CASE_DETAILS}', jsonb_build_array(jsonb_build_object('id', ${t.id})));`,
+  },
+  {
+    label: 'a moderator delete on its url flagged for CSAM review',
+    restricts: true,
+    mark: (t) =>
+      `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES (${OTHER_IMAGE}, '${t.url}', ${SIBLING_OWNER}, true);`,
+  },
 ];
 
 /** Removes every row a case writes, and the target's post. */
@@ -373,4 +450,9 @@ export const csamCaseCleanupSql = (t: Target) => `
   DELETE FROM "ScanLabelVote" WHERE "itemId" = ${ITEM};
   DELETE FROM "ScanLabelItem" WHERE id = ${ITEM};
   DELETE FROM "BlockedImage" WHERE hash = ${HASH};
+  DELETE FROM "CsamReport" WHERE details ->> 'case' = 'csam-restriction';
+  DELETE FROM "EvidenceHeldUser"
+    WHERE "userId" = ${SIBLING_OWNER} OR "userId" = (SELECT "userId" FROM "Image" WHERE id = ${t.id});
+  DELETE FROM "ImageCdnModeratorDelete" WHERE "imageId" = ${OTHER_IMAGE};
+  DELETE FROM "ImageCdnShopTakedown" WHERE "shopItemId" = ${OFFERING};
 `;
