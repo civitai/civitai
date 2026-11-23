@@ -16,7 +16,7 @@ export type ScamCleanupRecord = {
 type IdRow = { id: number };
 
 /** Hides the user's live comments, stamping each with `at`, the record's time. */
-async function hideComments(userId: number, at: Date) {
+async function hideUserComments(userId: number, at: Date) {
   const ids = (
     await dbWrite.$queryRaw<IdRow[]>`
       SELECT id FROM "CommentV3"
@@ -68,7 +68,7 @@ function affectedRows(kind: Exclude<ScamCleanup, 'none'>, userId: number, at: Da
     case 'comments':
       // `hidden`, not the ToS removal: that is the ban path, which notifies and settles rewards per
       // comment. This one has to be undone by id when a moderator overturns the mute.
-      return hideComments(userId, at);
+      return hideUserComments(userId, at);
   }
 }
 
