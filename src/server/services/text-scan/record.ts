@@ -135,13 +135,23 @@ export async function recordTextScanFailure({
   workflowId,
   marker,
   status,
+  from,
+  db = dbWrite,
 }: RowKey & {
   workflowId: string;
   marker?: string;
   status: Exclude<EntityModerationStatus, 'Pending' | 'Succeeded'>;
+  /** Fails the row only while it is in this status. */
+  from?: EntityModerationStatus;
+  db?: Pick<Prisma.TransactionClient, 'entityModeration'>;
 }) {
-  const updated = await dbWrite.entityModeration.updateMany({
-    where: { entityType, entityId, workflowId: matchWorkflow(workflowId, marker) },
+  const updated = await db.entityModeration.updateMany({
+    where: {
+      entityType,
+      entityId,
+      workflowId: matchWorkflow(workflowId, marker),
+      ...(from ? { status: from } : {}),
+    },
     data: { workflowId, status, retryCount: { increment: 1 } },
   });
   return updated.count > 0;

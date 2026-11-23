@@ -315,11 +315,7 @@ export function planTextScanPasses(
   ];
 }
 
-/**
- * Drops csam while its prompt is blank: the gate can open before the prompt exists. A profile that
- * tolerates it scans the other labels; a requireEveryLabel profile is refused in active mode (see
- * scanEntity).
- */
+/** Drops csam while its prompt is blank: the gate can open before the prompt exists. */
 function withoutPromptlessLabels(
   labels: TextScanLabel[],
   prompts: Awaited<ReturnType<typeof getActiveTextScanPrompts>>
@@ -338,10 +334,11 @@ export async function textScanCanAskEveryLabel(
   profile: Pick<TextScanProfile, 'labels' | 'labelsFor' | 'requireEveryLabel'>
 ) {
   if (!profile.requireEveryLabel) return true;
-  const labels = withoutPromptlessLabels(
-    await resolveTextScanProfileLabels(profile),
-    await getActiveTextScanPrompts()
-  );
+  const resolved = await resolveTextScanProfileLabels(profile);
+  // Only csam needs its prompt read; a failed read must not refuse a profile that never asks it.
+  const labels = resolved.includes('csam')
+    ? withoutPromptlessLabels(resolved, await getActiveTextScanPrompts())
+    : resolved;
   return !unansweredTextScanLabels(
     profile,
     Object.fromEntries(labels.map((label) => [label, true]))
