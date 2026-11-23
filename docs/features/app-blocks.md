@@ -852,9 +852,14 @@ Request `PERSIST_GENERATION_SOURCE { requestId, workflowId, imageIndex }`; the a
 error? }`, on every path. The server half is `blocks.persistGenerationSource`.
 
 - **No confirm, nothing shared.** No host dialog opens. The image is stored for the viewer
-  with no post and is stamped `blockGenerationSourceAppId`, which the app's shared grid
-  (`getImagesByIds`), the post-from-app `published` source and the "Published with" credit
-  do not accept. Use `PUBLISH_GENERATION_OUTPUTS` to put an output on the shared grid.
+  with no post and is stamped `blockGenerationSourceAppId`, which the post-from-app
+  `published` source and the "Published with" credit do not accept. The gated read
+  (`GET_IMAGES_BY_IDS`, `useGatedImages`) returns it to its OWN author on the app that kept
+  it, and to nobody else: another viewer, or another app, gets no entry for the id (it is
+  omitted, not `hidden`). For the author it is judged like a published image at their
+  ceiling, `visible` + `ratingPending` while unrated; a source that is restricted, held for
+  review, blocked or above the ceiling is omitted for the author too. Use
+  `PUBLISH_GENERATION_OUTPUTS` to put an output on the shared grid for other viewers.
 - **Gates.** The app needs `ai:write:budgeted` and the signed-in viewer must be the token's
   subject, as for publishing. The workflow must be the app's own (its `block_workflows` row
   and app tag) and finished; unlike publishing, there is no stand-in for a missing row on a

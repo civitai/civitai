@@ -482,7 +482,7 @@ describe('the written row is private', () => {
     expect(row.metadata).not.toHaveProperty('blockUploadedAppId');
   });
 
-  it('🔴 the app’s shared grid read never returns it — not to the viewer, not to anyone else', async () => {
+  it('🔴 the app’s gated read returns it to its own author only — never to anyone else, never to another app', async () => {
     const out = await persistAfterScan();
     // Positive control: a scanned image this app PUBLISHED, by another viewer, IS returned.
     await holder.db.query(
@@ -490,15 +490,14 @@ describe('the written row is private', () => {
        VALUES (77, $1, 'published-key', 1, 'Scanned', 512, 512, $2::jsonb)`,
       [OTHER_USER, JSON.stringify({ blockPublishedAppId: APP })]
     );
-    for (const userId of [VIEWER, OTHER_USER]) {
-      const { images } = await getBlockGatedImagesByIds({
-        imageIds: [out.imageId, 77],
-        browsingLevel: 1,
-        appId: APP,
-        userId,
-      });
-      expect(images.map((i) => i.imageId)).toEqual([77]);
-    }
+    const read = (userId: number, appId = APP) =>
+      getBlockGatedImagesByIds({ imageIds: [out.imageId, 77], browsingLevel: 1, appId, userId });
+    // The author, on the app that kept it: the source resolves (written by the real persist path).
+    expect((await read(VIEWER)).images.map((i) => i.imageId)).toEqual([out.imageId, 77]);
+    // Another viewer of the same app: omitted.
+    expect((await read(OTHER_USER)).images.map((i) => i.imageId)).toEqual([77]);
+    // The author on another app: omitted (and so is the other app's view of APP's published row).
+    expect((await read(VIEWER, 'appblk-other')).images).toEqual([]);
   });
 
   it('is not postable by the app', async () => {

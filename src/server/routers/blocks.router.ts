@@ -6620,7 +6620,8 @@ export const blocksRouter = router({
    * See `block-generation-source.service.ts`.
    *
    * No host dialog, because nothing is shared: the row is the viewer's, has no post, and carries
-   * `blockGenerationSourceAppId`, which no shared-grid, post or attribution read accepts.
+   * `blockGenerationSourceAppId`, which no post or attribution read accepts and the gated read
+   * (`getImagesByIds`) returns to its own author only (`block-gated-images.service.ts`).
    *
    * GATES. The token checks match `publishGenerationOutputs`'s first three (`ai:write:budgeted`,
    * subject = session user, the runtime flag). Two things differ from publish, on purpose:

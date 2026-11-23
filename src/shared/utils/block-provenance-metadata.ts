@@ -9,7 +9,8 @@ import { FEEDBACK_CAPTURE_METADATA_KEY } from '@civitai/shared/feedback-capture'
  *  - `blockPublishedAppId`: a workflow output the app published (`persistBlockWorkflowOutputImage`).
  *  - `blockUploadedAppId`: an image the app uploaded from bytes (`persistBlockUploadImage`).
  *  - `blockGenerationSourceAppId`: a workflow output the app kept as a PRIVATE generation source
- *    (`persistBlockGenerationSourceImage`). Never shared, never postable.
+ *    (`persistBlockGenerationSourceImage`). Never shared, never postable; the gated read returns it
+ *    to its own author only.
  *  - `blockSharedUploadAppId`: a viewer-picked upload the app asked to SHARE with its other viewers
  *    (`persistBlockUploadImage` via `blockImageUpload.persist { share: true }`). Read by the
  *    cross-user gated read only; not postable.
