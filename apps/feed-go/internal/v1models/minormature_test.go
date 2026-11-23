@@ -70,4 +70,29 @@ func TestServeDetailShowcaseLevels(t *testing.T) {
 	if strings.Contains(string(body), `/u5/`) {
 		t.Errorf("8005 is served:\n%s", body)
 	}
+
+	// The list with nsfw=true passes every image level through, so only the read mask keeps 8005 out;
+	// 8006 (X) shows the pass-through works.
+	w = newTestWorld()
+	w.usernames["artist_one"] = 1001
+	w.entries[KeyImagesForVersion+":6001"] = append(meta("modelVersionId", int64(6001), "images", []any{
+		meta("id", int64(8001), "url", "u1", "nsfwLevel", int64(1), "type", "image", "poi", false, "minor", false),
+		meta("id", int64(8005), "url", "u5", "nsfwLevel", int64(32), "type", "image", "poi", false, "minor", false),
+		meta("id", int64(8006), "url", "u6", "nsfwLevel", int64(8), "type", "image", "poi", false, "minor", false),
+	}), cached)
+	for _, id := range []string{"8005", "8006"} {
+		w.entries[KeyTagIDsForImages+":"+id] = append(meta("imageId", int64(0), "tags", []any{int64(1)}), cached)
+	}
+	d = w.deps(t)
+	list, err := ServeList(context.Background(), d, d.Sources, ListRequest{Query: "username=Artist%20One&nsfw=true", Path: "/api/v1/models", Host: "site.example.test"})
+	if err != nil {
+		t.Fatalf("list: %v (%s)", err, reason(err))
+	}
+	lb, _ := superjson.Plain(list.Body)
+	if !strings.Contains(string(lb), `/u6/original=true/8006.jpeg`) {
+		t.Errorf("list lacks 8006 (no pass-through):\n%s", lb)
+	}
+	if strings.Contains(string(lb), `/u5/`) {
+		t.Errorf("list serves 8005:\n%s", lb)
+	}
 }

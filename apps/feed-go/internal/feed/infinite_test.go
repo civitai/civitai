@@ -560,6 +560,13 @@ func TestServeInfiniteEmptyAnswers(t *testing.T) {
 			uncapped: true, viewer: &Viewer{ID: 7},
 		},
 		{
+			name:     "a signed-in level of unselectable bits only",
+			m:        map[string]any{"limit": num("2"), "browsingLevel": num("32")},
+			want:     `{"items":[],"source":"feed"}|{"nextCursor":["undefined"]}`,
+			trivial:  true,
+			uncapped: true, viewer: &Viewer{ID: 7},
+		},
+		{
 			name: "a shape the feed cannot express",
 			m:    map[string]any{"generation": []any{"txt2img"}},
 			want: `{"items":[],"source":"feed"}|{"nextCursor":["undefined"]}`, trivial: true,

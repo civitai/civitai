@@ -255,3 +255,19 @@ func TestServeGalleryLevelForViewer(t *testing.T) {
 		}
 	}
 }
+
+// A signed-in level of unselectable bits only is held to nothing: an empty gallery, no feed call.
+func TestServeGalleryLevelOfNoSelectableBits(t *testing.T) {
+	listed := testkit.NewRedis()
+	listed.SetString(BlockedTagsKey, []byte(`[{"id":5161,"name":"a"}]`))
+	feed := &fakeFeed{answers: map[string]feedsvc.Answer{}}
+	d := &Deps{Feed: feed, Blocked: &BlockedTags{Cache: listed}, Config: Config{ImageIndexFeed: true, LazyPostImages: true}, Now: func() time.Time { return time.Unix(0, 0) }}
+	in, err := Parse(parseObj(t, `{"model3dId":5,"limit":10,"browsingLevel":32}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	res, err := Serve(context.Background(), d, Request{Input: in, Viewer: &Viewer{ID: 9}})
+	if err != nil || res == nil || len(res.Items) != 0 || len(feed.queries) != 0 {
+		t.Fatalf("result %+v, err %v, feed queries %v; want an empty gallery and no feed call", res, err, feed.queries)
+	}
+}
