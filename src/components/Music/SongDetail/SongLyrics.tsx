@@ -6,7 +6,7 @@ import {
   toLyricRows,
 } from '~/components/Music/SongDetail/song-lyrics';
 import { seekMusicPlayer } from '~/components/MusicPlayer/MusicPlayerAudio';
-import { ACCENT } from '~/components/MusicPlayer/MusicPlayerParts';
+import { ACCENT_FILL } from '~/components/MusicPlayer/music-accent';
 import type { LyricLine } from '~/server/schema/media.schema';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 import { formatPlaybackTime } from '~/utils/audio-player';
@@ -114,7 +114,7 @@ export function SongLyrics({
               'w-1 shrink-0 self-stretch rounded-[3px] @md:w-[5px]',
               !isActive && 'bg-transparent'
             )}
-            style={isActive ? { backgroundColor: ACCENT } : undefined}
+            style={isActive ? { backgroundColor: ACCENT_FILL } : undefined}
           />
         );
         if (row.t == null)

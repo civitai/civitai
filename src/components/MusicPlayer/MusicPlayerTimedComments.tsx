@@ -1,4 +1,3 @@
-import { useMantineTheme } from '@mantine/core';
 import clsx from 'clsx';
 import type { CSSProperties, KeyboardEvent, ReactNode } from 'react';
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -10,10 +9,10 @@ import {
   clusterTimedComments,
 } from '~/components/Music/TimedComments/timed-comments';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
-import { ACCENT_TEXT, accentTextVars } from '~/components/MusicPlayer/music-accent';
+import { ACCENT_FILL, ACCENT_TEXT, musicSurface } from '~/components/MusicPlayer/music-accent';
 import { seekMusicPlayer } from '~/components/MusicPlayer/MusicPlayerAudio';
 import { MUSIC_PLAYER_FLOAT_Z_INDEX } from '~/components/MusicPlayer/MusicPlayerLayers';
-import { ACCENT, dimmed } from '~/components/MusicPlayer/MusicPlayerParts';
+import { dimmed } from '~/components/MusicPlayer/MusicPlayerParts';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { useMusicPlayerStore } from '~/store/music-player.store';
@@ -32,8 +31,6 @@ const STACK_AVATARS = 3;
 // How far above the bar a floating label or list sits, and how near the window's edge it may go.
 const FLOAT_GAP_PX = 8;
 const FLOAT_EDGE_PX = 8;
-// The cluster list's surface in each scheme (white, dark-5).
-const LIST_SURFACE = { light: '#ffffff', dark: '#2c2e33' };
 // Leaving an avatar or stack for what floats above it crosses a gap: wait before closing.
 const HOVER_CLOSE_MS = 150;
 
@@ -130,13 +127,8 @@ export function TimedCommentStrip({
     ? undefined
     : comments.find((comment) => comment.id === hovered.value) ??
       activeTimedComment(clusters, currentTime);
-  const theme = useMantineTheme();
-  // What floats is portalled out of the bar, so it takes the accent along; times in the list read
-  // at 4.5:1 on its surface in each scheme.
-  const accentVars = {
-    ...(accent && { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }),
-    ...accentTextVars(accent?.accent ?? theme.colors[theme.primaryColor][6], LIST_SURFACE),
-  } as CSSProperties;
+  // What floats is portalled out of the bar, so it takes the accent along.
+  const surface = musicSurface(accent, 'commentList');
 
   const refocus = (selector: string) => {
     refocusing.current = true;
@@ -189,7 +181,7 @@ export function TimedCommentStrip({
               key={first.id}
               opened={!!labelHere || isList}
               lift={layout.lift}
-              style={accentVars}
+              surface={surface}
               target={
                 cluster.comments.length === 1 ? (
                   <button
@@ -276,13 +268,13 @@ export function TimedCommentStrip({
 function FloatAbove({
   opened,
   lift,
-  style,
+  surface,
   target,
   children,
 }: {
   opened: boolean;
   lift: number;
-  style?: CSSProperties;
+  surface: ReturnType<typeof musicSurface>;
   target: ReactNode;
   children: ReactNode;
 }) {
@@ -301,7 +293,10 @@ function FloatAbove({
     >
       <Popover.Target>{target}</Popover.Target>
       {/* `unstyled` drops the dropdown's own positioning along with its surface. */}
-      <Popover.Dropdown className="absolute" style={style}>
+      <Popover.Dropdown
+        className={clsx('absolute', surface.className)}
+        style={surface.style as CSSProperties}
+      >
         {children}
       </Popover.Dropdown>
     </Popover>
@@ -406,7 +401,7 @@ function TimedCommentLabel({
       aria-label={`Open ${commentName(comment)}`}
       {...handlers}
       className="flex h-6 max-w-[280px] items-center gap-1.5 rounded-xl border bg-[#0B0B0D] py-0 pl-[3px] pr-2.5 text-xs"
-      style={{ borderColor: ACCENT }}
+      style={{ borderColor: ACCENT_FILL }}
     >
       <span className="flex size-[18px] shrink-0 items-center justify-center overflow-hidden rounded-full">
         <UserAvatar
@@ -470,10 +465,7 @@ function ClusterList({
         handlers.onKeyDown(event);
         moveFocus(event);
       }}
-      className={clsx(
-        'flex max-h-[22rem] w-80 flex-col gap-3 overflow-y-auto rounded-[14px] border border-gray-3 bg-white p-3.5 shadow-[0_12px_32px_#00000099] dark:border-dark-3 dark:bg-dark-5',
-        ACCENT_TEXT
-      )}
+      className="flex max-h-[22rem] w-80 flex-col gap-3 overflow-y-auto rounded-[14px] border border-gray-3 bg-white p-3.5 shadow-[0_12px_32px_#00000099] dark:border-dark-3 dark:bg-dark-5"
     >
       <div className="flex items-center justify-between gap-3">
         <span className="text-base font-bold text-black dark:text-white">{title}</span>
@@ -499,7 +491,7 @@ function ClusterList({
               <span className="truncate text-[13px] font-semibold text-black dark:text-white">
                 {comment.user.username}
               </span>
-              <span className="shrink-0 text-xs font-medium text-[var(--accent-text)]">
+              <span className="shrink-0 text-xs font-medium" style={{ color: ACCENT_TEXT }}>
                 {formatPlaybackTime(comment.timestampSec)}
               </span>
             </span>

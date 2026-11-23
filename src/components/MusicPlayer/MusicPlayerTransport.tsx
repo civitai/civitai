@@ -16,7 +16,8 @@ import { WaveformBars } from '~/components/Audio/WaveformBars';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
 import { seekMusicPlayer } from '~/components/MusicPlayer/MusicPlayerAudio';
 import { PlayerTooltip } from '~/components/MusicPlayer/MusicPlayerLayers';
-import { ACCENT, accentAt, dimmed } from '~/components/MusicPlayer/MusicPlayerParts';
+import { ACCENT_FILL, ACCENT_TEXT } from '~/components/MusicPlayer/music-accent';
+import { accentAt, dimmed } from '~/components/MusicPlayer/MusicPlayerParts';
 import {
   TimedCommentStrip,
   usePlayerTimedComments,
@@ -56,7 +57,7 @@ const store = useMusicPlayerStore.getState;
 export function Transport({ playing, sheet = false }: { playing: boolean; sheet?: boolean }) {
   const shuffle = useMusicPlayerStore((s) => s.shuffle);
   const repeat = useMusicPlayerStore((s) => s.repeat);
-  const toggleColour = (on: boolean) => (on && !sheet ? { color: ACCENT } : undefined);
+  const toggleColour = (on: boolean) => (on && !sheet ? { color: ACCENT_TEXT } : undefined);
   const toggleClass = (on: boolean) =>
     sheet
       ? clsx(sheetIconButton, on ? 'bg-white/15' : 'text-white/70')
@@ -100,7 +101,7 @@ export function Transport({ playing, sheet = false }: { playing: boolean; sheet?
             'flex shrink-0 items-center justify-center rounded-full transition-transform hover:scale-105',
             sheet ? 'size-16 bg-white text-dark-7' : 'size-10 text-white'
           )}
-          style={sheet ? undefined : { backgroundColor: ACCENT }}
+          style={sheet ? undefined : { backgroundColor: ACCENT_FILL }}
         >
           {playing ? (
             <IconPlayerPauseFilled size={sheet ? 28 : 20} />
@@ -172,7 +173,7 @@ export function Timeline({
   const peaks = useAudioPeaks(url, WAVEFORM_PEAKS, sliderRef, { enabled: listened });
   const bars = useMemo(() => (peaks ? resamplePeaks(peaks, barCount) : null), [peaks, barCount]);
   const progress = playbackProgress(currentTime, duration);
-  const played = playing ? ACCENT : accentAt(50);
+  const played = playing ? ACCENT_FILL : accentAt(50);
   const timedComments = usePlayerTimedComments(track.id);
   const unplayed = sheet ? 'bg-white/25' : 'bg-gray-4 dark:bg-dark-3';
   const timeClass = sheet ? 'text-xs text-white/80' : clsx('text-xs', dimmed);

@@ -1,6 +1,7 @@
 import { Drawer } from '@mantine/core';
 import type { CSSProperties } from 'react';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
+import { musicSurface } from '~/components/MusicPlayer/music-accent';
 import { MUSIC_UP_NEXT_SHEET_Z_INDEX } from '~/components/MusicPlayer/MusicPlayerLayers';
 import { MusicUpNextList } from '~/components/MusicPlayer/MusicUpNextPanel';
 import { useSwipeToClose } from '~/components/MusicPlayer/useSwipeToClose';
@@ -25,6 +26,7 @@ export function MusicUpNextSheet({
 }) {
   useHistoryLayer(opened, onClose);
   const { offset, handlers: swipe } = useSwipeToClose(onClose);
+  const surface = musicSurface(accent, 'upNextSheet');
   return (
     <Drawer.Root
       opened={opened}
@@ -44,9 +46,10 @@ export function MusicUpNextSheet({
       <Drawer.Overlay backgroundOpacity={0.65} />
       <Drawer.Content
         aria-label="Up next"
+        className={surface.className}
         style={
           {
-            ...(accent && { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }),
+            ...surface.style,
             transform: offset ? `translateY(${offset}px)` : undefined,
           } as CSSProperties
         }
