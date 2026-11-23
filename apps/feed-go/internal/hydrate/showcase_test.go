@@ -120,7 +120,7 @@ func TestShowcaseReadStateSubset(t *testing.T) {
 	r := testkit.NewRedis()
 	r.SetString(KeyVersionShowcase+":7101", showcaseEntry(7101))
 	r.SetString(KeyVersionShowcase+":7102", showcaseEntry(7102, showcaseRow(9001, "com")))
-	p := &PackedReader{Redis: r}
+	p := &PackedReader{Redis: r, Now: func() time.Time { return showcaseNow }}
 	b := NewBatch()
 	read := p.QueueShowcases(b, []int{7101, 7102})
 	b.Exec(context.Background())
