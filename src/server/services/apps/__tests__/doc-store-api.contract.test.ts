@@ -63,6 +63,10 @@ const h = vi.hoisted(() => ({
   docLevels: false,
   /** The app ids `app-blocks-storage-unchanged-writes-free` is on for; none unless a case sets it. */
   unchangedWritesApps: new Set<string>(),
+  /** The viewer-keyed switch (`app-blocks-storage-viewer-keyed-open`), by collection: absent is closed. */
+  vkOpen: new Map<string, boolean>(),
+  /** `app-blocks-storage-publish`, for every app; off unless a case turns it on. */
+  publishOn: false,
   isFlipt: undefined as unknown as ReturnType<
     typeof vi.fn<(flag: string, entityId?: string, context?: unknown) => Promise<boolean>>
   >,
@@ -81,6 +85,12 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
     if (flag === ENFORCE_FLAG) return h.moderationMode === 'enforce';
     if (flag === DOC_LEVELS_FLAG) return h.docLevels;
     if (flag === UNCHANGED_WRITES_FLAG) return h.unchangedWritesApps.has(entityId ?? '');
+    if (flag === 'app-blocks-storage-viewer-keyed-open') {
+      return (
+        h.vkOpen.get((context as { collection?: string } | undefined)?.collection ?? '') ?? false
+      );
+    }
+    if (flag === 'app-blocks-storage-publish' && h.publishOn) return true;
     return real.isFlipt(flag, entityId, context as never);
   });
   return {
@@ -182,6 +192,8 @@ import {
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { createDocStore, createDocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { DEFAULT_DOC_STORE_LIMITS, DocStoreError } from '~/server/services/apps/doc-store.types';
+import type { DocCollection } from '~/server/services/apps/doc-store.types';
+import { envMock } from '~/__tests__/mocks/env.mock';
 import { OnboardingSteps } from '~/server/common/enums';
 import {
   createStorageHandler,
@@ -5154,5 +5166,464 @@ describe('the app-data shadow read: handed each list after the response, never a
     });
     expect(hanging.status).toBe(200);
     expect(hanging.body).toEqual(plain.body);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// VIEWER-KEYED DOCUMENTS (docs/app-storage-generic-core.md, "Viewer-keyed documents"): `keyedBy`
+// collections and the `/:c/@me[/:parent]` routes, end to end through this file's harness. The
+// fixtures are pairwise distinct: two viewers whose ids appear nowhere else, parents that are not
+// prefixes of each other, collections whose names match no parent.
+// ---------------------------------------------------------------------------
+
+const VK_SCOPES = ['apps:storage', 'apps:storage:publish'];
+const VK_SECRET = 'viewer-keyed-test-secret-5f0c9a7e2b';
+const VK_OPEN_FLAG = 'app-blocks-storage-viewer-keyed-open';
+const VK_P1 = '01JD3Q8M5Z4X2V7K9C6B1N0RTA';
+const VK_P2 = 'record-two';
+const VK_DIGEST = /^[a-z2-7]{26}$/;
+const VK_MANIFEST = {
+  scopes: VK_SCOPES,
+  storage: {
+    collections: {
+      votes: { visibility: 'shared', write: 'own', keyedBy: 'parent+viewer' },
+      likes: { visibility: 'shared', write: 'own', keyedBy: 'viewer' },
+      records: { visibility: 'shared', write: 'own' },
+      drafts: { visibility: 'private' },
+      plays: { visibility: 'shared', write: 'none', counters: ['plays'] },
+    },
+  },
+};
+type VkDoc = { key: string; data: Record<string, unknown>; version: number };
+
+const vkApp = () => freshApps('approved', VK_MANIFEST).A;
+const vkMint = (app: AppRow, uid: number | null) => mint({ app, uid, scopes: VK_SCOPES });
+const vkCall = (
+  token: string,
+  method: string,
+  segments: string[],
+  opts: { body?: unknown; query?: Record<string, string> } = {}
+) => call({ token, method, path: `/${segments.join('/')}`, body: opts.body, query: opts.query });
+const vkMe = (coll: string, parent?: string) =>
+  parent === undefined ? [coll, '@me'] : [coll, '@me', parent];
+const vkPutMine = (
+  t: string,
+  coll: string,
+  parent: string | undefined,
+  data: object,
+  ifVersion?: number
+) =>
+  vkCall(t, 'PUT', vkMe(coll, parent), {
+    body: ifVersion === undefined ? { data } : { data, ifVersion },
+  });
+const vkGetMine = (t: string, coll: string, parent?: string) =>
+  vkCall(t, 'GET', vkMe(coll, parent));
+const vkDeleteMine = (t: string, coll: string, parent?: string) =>
+  vkCall(t, 'DELETE', vkMe(coll, parent));
+async function vkOk(p: Promise<Reply>, status = 200): Promise<Reply> {
+  const r = await p;
+  expect(r.status, JSON.stringify(r.body)).toBe(status);
+  return r;
+}
+async function vkRefused(p: Promise<Reply>, status: number, code: string, reason?: string) {
+  const r = await p;
+  expect(r.status, JSON.stringify(r.body)).toBe(status);
+  expect(r.body).toMatchObject({ code, ...(reason ? { details: { reason } } : {}) });
+  return r;
+}
+/** Every stored shared row of a collection: key, data, version, author. */
+const vkRows = (app: AppRow, coll: string) =>
+  harness.raw(
+    `SELECT key, data, version::int AS version, author_uid::int AS author_uid
+       FROM appdata.doc WHERE app_id = $1 AND ns = 'prod' AND coll = $2 AND scope_uid = 0
+       ORDER BY key`,
+    [app.id, coll]
+  );
+/** Every (entityId, context) the viewer-keyed switch was evaluated with. */
+const vkOpenEvaluations = () =>
+  h.isFlipt.mock.calls
+    .filter(([flag]) => flag === VK_OPEN_FLAG)
+    .map(([, entityId, context]) => ({ entityId, context }));
+/** Every key handed to the key scan since the case began. */
+async function vkKeyScans(): Promise<string[]> {
+  const m = await import('~/server/services/apps/shared-data-moderation');
+  return vi.mocked(m.scanCounterKey).mock.calls.map((c) => c[0]);
+}
+
+describe('viewer-keyed documents', () => {
+  let VK_V1 = 0;
+  let VK_V2 = 0;
+  beforeEach(async () => {
+    VK_V1 = VIEWER_IDS.v1;
+    VK_V2 = VIEWER_IDS.v2;
+    h.vkOpen = new Map([
+      ['votes', true],
+      ['likes', true],
+    ]);
+    h.publishOn = true;
+    h.isFlipt.mockClear();
+    const m = await import('~/server/services/apps/shared-data-moderation');
+    vi.mocked(m.scanCounterKey).mockClear();
+    envMock.set({ APP_STORAGE_VIEWER_KEY_SECRET: VK_SECRET });
+  });
+  afterEach(() => {
+    h.vkOpen = new Map();
+    h.publishOn = false;
+    envMock.set({ APP_STORAGE_VIEWER_KEY_SECRET: undefined });
+  });
+
+  describe('parent+viewer: one document per viewer per parent', () => {
+    it('🔴 two viewers on one parent get different keys, and neither can touch the other’s', async () => {
+      const A = vkApp();
+      const [t1, t2] = [await vkMint(A, VK_V1), await vkMint(A, VK_V2)];
+      const mine1 = (await vkOk(vkPutMine(t1, 'votes', VK_P1, { value: 1 }))).body as VkDoc;
+      const mine2 = (await vkOk(vkPutMine(t2, 'votes', VK_P1, { value: -1 }))).body as VkDoc;
+      expect(mine1.key.startsWith(`${VK_P1}:`)).toBe(true);
+      expect(mine2.key.startsWith(`${VK_P1}:`)).toBe(true);
+      expect(mine1.key.slice(VK_P1.length + 1)).toMatch(VK_DIGEST);
+      expect(mine2.key.slice(VK_P1.length + 1)).toMatch(VK_DIGEST);
+      expect(mine1.key).not.toBe(mine2.key);
+      // No response carries a numeric user id: the key is a digest of it.
+      for (const uid of [VK_V1, VK_V2])
+        expect(JSON.stringify([mine1, mine2])).not.toContain(String(uid));
+
+      // Each `@me` reaches only its own viewer's document.
+      expect(((await vkOk(vkGetMine(t1, 'votes', VK_P1))).body as VkDoc).data).toEqual({
+        value: 1,
+      });
+      expect(((await vkOk(vkGetMine(t2, 'votes', VK_P1))).body as VkDoc).data).toEqual({
+        value: -1,
+      });
+
+      // Viewer 2 cannot reach viewer 1's document by its key: writes by key are refused outright.
+      await vkRefused(
+        vkCall(t2, 'PUT', ['votes', mine1.key], { body: { data: { value: -1 } } }),
+        400,
+        'invalid_request',
+        'viewer_keyed'
+      );
+      await vkRefused(
+        vkCall(t2, 'DELETE', ['votes', mine1.key]),
+        400,
+        'invalid_request',
+        'viewer_keyed'
+      );
+
+      // Viewer 2 deleting their own leaves viewer 1's.
+      expect((await vkOk(vkDeleteMine(t2, 'votes', VK_P1))).body).toEqual({ deleted: true });
+      await vkRefused(vkGetMine(t2, 'votes', VK_P1), 404, 'not_found');
+      expect(await vkRows(A, 'votes')).toEqual([
+        { key: mine1.key, data: { value: 1 }, version: 1, author_uid: VK_V1 },
+      ]);
+    });
+
+    it('the same viewer and parent address one stable document; ifVersion applies as to a put', async () => {
+      const A = vkApp();
+      const t1 = await vkMint(A, VK_V1);
+      const first = (await vkOk(vkPutMine(t1, 'votes', VK_P1, { value: 1 }))).body as VkDoc;
+      const again = (await vkOk(vkPutMine(t1, 'votes', VK_P1, { value: 0 }))).body as VkDoc;
+      expect(again.key).toBe(first.key);
+      expect(again.version).toBe(2);
+      // A second token for the same viewer derives the same key.
+      const fresh = (await vkOk(vkGetMine(await vkMint(A, VK_V1), 'votes', VK_P1))).body as VkDoc;
+      expect(fresh).toMatchObject({ key: first.key, data: { value: 0 }, version: 2 });
+      await vkRefused(vkPutMine(t1, 'votes', VK_P1, { value: 1 }, 0), 409, 'version_conflict');
+      // Another parent is another document.
+      const other = (await vkOk(vkPutMine(t1, 'votes', VK_P2, { value: 1 }))).body as VkDoc;
+      expect(other.key.startsWith(`${VK_P2}:`)).toBe(true);
+      expect((await vkRows(A, 'votes')).map((r) => r.key).sort()).toEqual(
+        [first.key, other.key].sort()
+      );
+    });
+
+    it('keyPrefix=<parent>: lists exactly one parent’s documents, author=me the viewer’s own', async () => {
+      const A = vkApp();
+      const [t1, t2] = [await vkMint(A, VK_V1), await vkMint(A, VK_V2)];
+      const a = (await vkOk(vkPutMine(t1, 'votes', VK_P1, { value: 1 }))).body as VkDoc;
+      const b = (await vkOk(vkPutMine(t2, 'votes', VK_P1, { value: 1 }))).body as VkDoc;
+      const c = (await vkOk(vkPutMine(t1, 'votes', VK_P2, { value: -1 }))).body as VkDoc;
+      const keysOf = (r: Reply) => (r.body as { items: VkDoc[] }).items.map((d) => d.key).sort();
+      const byParent = await vkOk(
+        vkCall(await vkMint(A, null), 'GET', ['votes'], { query: { keyPrefix: `${VK_P1}:` } })
+      );
+      expect(keysOf(byParent)).toEqual([a.key, b.key].sort());
+      const minePage = await vkOk(vkCall(t1, 'GET', ['votes'], { query: { author: 'me' } }));
+      expect(keysOf(minePage)).toEqual([a.key, c.key].sort());
+    });
+  });
+
+  describe('the parent grammar: [A-Za-z0-9._-]{1,96}, not only dots', () => {
+    const at96 = `${'a1.B_-'.repeat(16)}`;
+    it.each([
+      ['one character', 'q'],
+      ['a ULID', VK_P1],
+      ['96 characters', at96],
+      ['dots beside other characters', '.a.'],
+    ])('accepted: %s', async (_label, parent) => {
+      const A = vkApp();
+      expect(parent.length).toBeLessThanOrEqual(96);
+      await vkRefused(vkGetMine(await vkMint(A, VK_V1), 'votes', parent), 404, 'not_found');
+    });
+
+    it.each([
+      ['97 characters', `${at96}z`],
+      ['a colon (it would break keyPrefix=<parent>:)', 'a:b'],
+      ['only dots', '..'],
+      ['one dot', '.'],
+      ['a space', 'a b'],
+      ['non-ASCII', 'é'],
+      ['an @', 'a@b'],
+    ])('refused invalid_parent: %s', async (_label, parent) => {
+      const A = vkApp();
+      await vkRefused(
+        vkGetMine(await vkMint(A, VK_V1), 'votes', parent),
+        400,
+        'invalid_request',
+        'invalid_parent'
+      );
+    });
+
+    it('a parent+viewer collection needs a parent; a viewer collection refuses one', async () => {
+      const A = vkApp();
+      const t1 = await vkMint(A, VK_V1);
+      await vkRefused(vkGetMine(t1, 'votes'), 400, 'invalid_request', 'parent_required');
+      await vkRefused(vkGetMine(t1, 'likes', VK_P1), 400, 'invalid_request', 'parent_not_allowed');
+      await vkRefused(vkGetMine(t1, 'records'), 400, 'invalid_request', 'not_viewer_keyed');
+    });
+  });
+
+  describe('keyedBy viewer: one document per viewer', () => {
+    it('the key is the bare digest, distinct per viewer', async () => {
+      const A = vkApp();
+      const k1 = (
+        (await vkOk(vkPutMine(await vkMint(A, VK_V1), 'likes', undefined, { on: true })))
+          .body as VkDoc
+      ).key;
+      const k2 = (
+        (await vkOk(vkPutMine(await vkMint(A, VK_V2), 'likes', undefined, { on: true })))
+          .body as VkDoc
+      ).key;
+      expect(k1).toMatch(VK_DIGEST);
+      expect(k2).toMatch(VK_DIGEST);
+      expect(k1).not.toBe(k2);
+    });
+  });
+
+  describe('refusals', () => {
+    it('🔴 anonymous: every @me op, reads included, is 401 sign_in_required; reads by key and list stay open', async () => {
+      const A = vkApp();
+      const mine = (await vkOk(vkPutMine(await vkMint(A, VK_V1), 'votes', VK_P1, { value: 1 })))
+        .body as VkDoc;
+      const anon = await vkMint(A, null);
+      for (const r of [
+        vkGetMine(anon, 'votes', VK_P1),
+        vkPutMine(anon, 'votes', VK_P1, { value: 1 }),
+        vkDeleteMine(anon, 'votes', VK_P1),
+        vkGetMine(anon, 'likes'),
+        vkPutMine(anon, 'likes', undefined, { on: true }),
+      ]) {
+        await vkRefused(r, 401, 'sign_in_required');
+      }
+      expect(((await vkOk(vkCall(anon, 'GET', ['votes', mine.key]))).body as VkDoc).key).toBe(
+        mine.key
+      );
+      await vkOk(vkCall(anon, 'GET', ['votes']));
+    });
+
+    it('🔴 a raw-key create, put or delete on a viewer-keyed collection is 400 viewer_keyed; a plain collection is unaffected', async () => {
+      const A = vkApp();
+      const t1 = await vkMint(A, VK_V1);
+      const raw = `${VK_P1}:${'a'.repeat(26)}`;
+      await vkRefused(
+        vkCall(t1, 'POST', ['votes'], { body: { data: { value: 1 } } }),
+        400,
+        'invalid_request',
+        'viewer_keyed'
+      );
+      await vkRefused(
+        vkCall(t1, 'PUT', ['votes', raw], { body: { data: { value: 1 } } }),
+        400,
+        'invalid_request',
+        'viewer_keyed'
+      );
+      await vkRefused(vkCall(t1, 'DELETE', ['votes', raw]), 400, 'invalid_request', 'viewer_keyed');
+      expect(await vkRows(A, 'votes')).toEqual([]);
+      // Control: the same put on a collection without keyedBy writes.
+      await vkOk(vkCall(t1, 'PUT', ['records', raw], { body: { data: { value: 1 } } }));
+    });
+
+    it('🔴 a declared write:"none" collection is read-only to every viewer document write (write_policy)', async () => {
+      const A = vkApp();
+      const t1 = await vkMint(A, VK_V1);
+      await vkRefused(vkCall(t1, 'POST', ['plays'], { body: { data: {} } }), 403, 'write_policy');
+      await vkRefused(
+        vkCall(t1, 'PUT', ['plays', 'item-1'], { body: { data: {} } }),
+        403,
+        'write_policy'
+      );
+      await vkRefused(vkCall(t1, 'DELETE', ['plays', 'item-1']), 403, 'write_policy');
+      expect(await vkRows(A, 'plays')).toEqual([]);
+    });
+
+    it('🔴 the derivation secret unset or blank: every @me op answers 503, nothing is written', async () => {
+      const A = vkApp();
+      const t1 = await vkMint(A, VK_V1);
+      for (const value of [undefined, '   ']) {
+        envMock.set({ APP_STORAGE_VIEWER_KEY_SECRET: value });
+        await vkRefused(vkGetMine(t1, 'votes', VK_P1), 503, 'service_unavailable');
+        await vkRefused(vkPutMine(t1, 'votes', VK_P1, { value: 1 }), 503, 'service_unavailable');
+        await vkRefused(
+          vkPutMine(t1, 'likes', undefined, { on: true }),
+          503,
+          'service_unavailable'
+        );
+      }
+      expect(await vkRows(A, 'votes')).toEqual([]);
+      expect(await vkRows(A, 'likes')).toEqual([]);
+      // Positive control: the same calls succeed once it is set.
+      envMock.set({ APP_STORAGE_VIEWER_KEY_SECRET: VK_SECRET });
+      await vkOk(vkPutMine(t1, 'votes', VK_P1, { value: 1 }));
+    });
+  });
+
+  describe('the per-collection switch', () => {
+    it('🔴 closed: @me writes are 403 write_policy, reads work, and GET / says open: false', async () => {
+      h.vkOpen.set('votes', false);
+      const A = vkApp();
+      const t1 = await vkMint(A, VK_V1);
+      await vkRefused(
+        vkPutMine(t1, 'votes', VK_P1, { value: 1 }),
+        403,
+        'write_policy',
+        'viewer_keyed_closed'
+      );
+      await vkRefused(vkDeleteMine(t1, 'votes', VK_P1), 403, 'write_policy', 'viewer_keyed_closed');
+      await vkRefused(vkGetMine(t1, 'votes', VK_P1), 404, 'not_found');
+      expect(await vkRows(A, 'votes')).toEqual([]);
+      // Evaluated for this app and this collection.
+      expect(vkOpenEvaluations()).toContainEqual({
+        entityId: A.id,
+        context: { collection: 'votes' },
+      });
+
+      const info = (await vkOk(vkCall(t1, 'GET', []))).body as {
+        collections: Record<string, Record<string, unknown>>;
+      };
+      expect(info.collections.votes).toMatchObject({ keyedBy: 'parent+viewer', open: false });
+      expect(info.collections.likes).toMatchObject({ keyedBy: 'viewer', open: true });
+      expect(info.collections.records).not.toHaveProperty('keyedBy');
+      expect(info.collections.records).not.toHaveProperty('open');
+
+      // Another collection's switch is its own: likes is open.
+      await vkOk(vkPutMine(t1, 'likes', undefined, { on: true }));
+      // Opened: the same write lands.
+      h.vkOpen.set('votes', true);
+      await vkOk(vkPutMine(t1, 'votes', VK_P1, { value: 1 }));
+    });
+  });
+
+  describe('platform policies on @me writes', () => {
+    it('🔴 the content scan sees the PARENT, never the derived key', async () => {
+      const A = vkApp();
+      const t1 = await vkMint(A, VK_V1);
+      await vkOk(vkPutMine(t1, 'votes', VK_P1, { value: 1 }));
+      expect(await vkKeyScans()).toEqual([VK_P1]);
+      // keyedBy viewer has no parent: no key is scanned at all.
+      await vkOk(vkPutMine(t1, 'likes', undefined, { on: true }));
+      expect(await vkKeyScans()).toEqual([VK_P1]);
+      // A blocked parent is refused as a blocked key would be, and nothing is written.
+      const r = await vkRefused(
+        vkPutMine(t1, 'votes', 'contract-blocked-term', { value: 1 }),
+        422,
+        'content_rejected'
+      );
+      expect((r.body as { details: { field: string } }).details.field).toBe('key');
+      expect((await vkRows(A, 'votes')).map((d) => d.key.split(':')[0])).toEqual([VK_P1]);
+    });
+
+    it('a blocked body is refused as on any shared put', async () => {
+      const A = vkApp();
+      await vkRefused(
+        vkPutMine(await vkMint(A, VK_V1), 'votes', VK_P1, { text: 'contract-blocked-term' }),
+        422,
+        'content_rejected'
+      );
+      expect(await vkRows(A, 'votes')).toEqual([]);
+    });
+  });
+
+  describe('🔴 no path writes a viewer-keyed collection at a key the client names', () => {
+    it('the route: publish into it, unpublish from it, and every tally route are 400 viewer_keyed', async () => {
+      const A = vkApp();
+      const t1 = await vkMint(A, VK_V1);
+      const key = `${VK_P1}:${'b'.repeat(26)}`;
+      await vkOk(vkCall(t1, 'PUT', ['drafts', key], { body: { data: { value: 1 } } }));
+      const refusals: Promise<Reply>[] = [
+        vkCall(t1, 'POST', ['_publish', 'votes'], { body: { from: 'drafts', keys: [key] } }),
+        vkCall(t1, 'POST', ['_unpublish', 'votes'], { body: { keys: [key] } }),
+        vkCall(t1, 'PATCH', ['votes', key], { body: { $mark: 'vote' } }),
+        vkCall(t1, 'PATCH', ['votes', key], { body: { $unmark: 'vote' } }),
+        vkCall(t1, 'PATCH', ['likes', key], { body: { $inc: { plays: 1 } } }),
+        vkCall(t1, 'PUT', ['votes', key, 'marks', 'vote']),
+        vkCall(t1, 'POST', ['likes', key, 'counters', 'plays'], { body: { by: 1 } }),
+      ];
+      for (const r of refusals) await vkRefused(r, 400, 'invalid_request', 'viewer_keyed');
+      expect(await vkRows(A, 'votes')).toEqual([]);
+      // Control: the same publish into a collection without keyedBy lands.
+      const published = await vkOk(
+        vkCall(t1, 'POST', ['_publish', 'records'], { body: { from: 'drafts', keys: [key] } })
+      );
+      expect((published.body as { created: string[] }).created).toEqual([key]);
+    });
+
+    it('the store, for every caller: publish, unpublish, increment, mark and unmark refuse, even with tallies declared; a report does not', async () => {
+      const A = vkApp();
+      const ctx = { appId: A.id, ns: 'prod', viewerUid: VK_V1 };
+      // Declared as no manifest can be any more (the parser refuses tallies beside keyedBy): the
+      // store's own refusal must not depend on that.
+      const keyed: DocCollection = {
+        name: 'votes',
+        config: {
+          kind: 'docs',
+          visibility: 'shared',
+          write: 'own',
+          counters: ['plays'],
+          marks: ['vote'],
+          indexes: new Map(),
+          showAuthor: false,
+          keyedBy: 'parent+viewer',
+        },
+      };
+      const drafts: DocCollection = {
+        name: 'drafts',
+        config: {
+          kind: 'docs',
+          visibility: 'private',
+          counters: [],
+          marks: [],
+          indexes: new Map(),
+          showAuthor: false,
+        },
+      };
+      const reasonOf = (p: Promise<unknown>) =>
+        p.then(
+          () => 'resolved',
+          (e: { code?: string; details?: { reason?: string } }) => `${e.code}:${e.details?.reason}`
+        );
+      const key = `${VK_P2}:${'c'.repeat(26)}`;
+      expect(
+        await Promise.all([
+          reasonOf(
+            liveStore.publishCopies(ctx, drafts, keyed, { keys: [key], checked: new Map() })
+          ),
+          reasonOf(liveStore.unpublishCopies(ctx, keyed, [key])),
+          reasonOf(liveStore.increment(ctx, keyed, key, 'plays', 1)),
+          reasonOf(liveStore.mark(ctx, keyed, key, 'vote')),
+          reasonOf(liveStore.unmark(ctx, keyed, key, 'vote')),
+        ])
+      ).toEqual(Array(5).fill('invalid_request:viewer_keyed'));
+      // A report stays possible on a viewer-keyed document: it passes the check and finds no document.
+      expect(await reasonOf(liveStore.mark(ctx, keyed, key, 'report'))).toBe('not_found:undefined');
+    });
   });
 });
