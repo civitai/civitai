@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
-import { reviewImageVisibleSql } from '~/server/services/creator-service-deal-review-images';
+import {
+  reviewImageLevelSql,
+  reviewImageVisibleSql,
+} from '~/server/services/creator-service-review-image-sql';
 import { shownReviewSql } from '~/server/services/creator-service-deal-review-publish';
 import { getHiddenOrBlockedUserIds } from '~/server/services/user-preferences.service';
 import type { ServiceDealReviewVerdict } from '~/shared/utils/prisma/enums';
@@ -58,7 +61,7 @@ type ReviewImageRow = {
 
 const reviewImageColumns = Prisma.sql`ri."reviewId", i."id", i."name", i."url", i."hash", i."width",
   i."height", i."type"::text AS "type", i."metadata", i."userId",
-  GREATEST(i."nsfwLevel", d."maxNsfwLevel") AS "nsfwLevel"`;
+  ${reviewImageLevelSql} AS "nsfwLevel"`;
 
 /** Newest first, paged by review id. `levels`: the viewer's levels, already limited to the domain. */
 export async function getServiceOfferingReviews({
