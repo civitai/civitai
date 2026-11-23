@@ -80,6 +80,20 @@ it('requires the disclosure version the buyer was shown', () => {
   ).toBe(true);
 });
 
+// An old page sends no disclosure form; the service then refuses with its terms message.
+it('accepts a request that names no disclosure form', () => {
+  expect(
+    requestServiceDealSchema.safeParse({
+      offeringId: 1,
+      expectedPrice: 500,
+      expectedRevisionsIncluded: 0,
+      expectedDeliveryDays: 1,
+      requestText: 'x',
+      disclosureVersion: 'v1',
+    }).success
+  ).toBe(true);
+});
+
 describe('exit reasons', () => {
   const ok = (schema: { safeParse: (v: unknown) => { success: boolean } }, value: object) =>
     schema.safeParse({ id: 1, ...value }).success;

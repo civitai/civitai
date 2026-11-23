@@ -360,8 +360,8 @@ export async function requestServiceDeal({
   requestText: string;
   /** The buyer-disclosure version shown before the hold. */
   disclosureVersion: string;
-  /** Which disclosure the buyer was shown: with reviews (line 5a) or without (5b). */
-  disclosureReviewEnabled: boolean;
+  /** Which disclosure the buyer was shown: with reviews (line 5a) or without (5b). None from an old page. */
+  disclosureReviewEnabled?: boolean;
   buzzType: string;
   /** What the request's domain may be served (`domainServableLevels`). */
   servableLevels: number;

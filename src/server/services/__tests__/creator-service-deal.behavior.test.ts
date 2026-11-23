@@ -461,6 +461,14 @@ describe('request', () => {
     expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
 
+  it('refuses a request from an old page that names no disclosure form, before any charge', async () => {
+    await expect(request({ disclosureReviewEnabled: undefined })).rejects.toThrow(
+      'Review the request terms before sending. Nothing was charged.'
+    );
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
   // Legal's text as written: each deal keeps the version and the exact lines its buyer was shown.
   const held = `${PRICE.toLocaleString()} Buzz is held now. Refunded if the seller declines, doesn't accept within 48 hours, or you withdraw before they accept.`;
   const shared = [
