@@ -39,9 +39,9 @@ export const emailTheme = {
 /**
  * Per-email accents, all from the site palette (ThemeProvider overrides plus the Mantine defaults
  * the site uses in its own gradients). `from`/`to` paint the stripe under the header band, with
- * `solid` as the colour for clients that drop gradients (classic Outlook). `text` is the eyebrow
- * and callout bar colour on the light card, `darkText` on the dark card; `tint`/`tintBorder` are
- * the light icon badge.
+ * `solid` as the colour for clients that drop gradients (classic Outlook); `solid` is also the
+ * callout's left bar. `text` is the eyebrow colour on the light card, `darkText` on the dark card.
+ * `tint`/`tintBorder` colour the icon badge, and `tint` is also the callout background.
  */
 export const emailAccents = {
   // The site's default gradient, cyan[6] -> blue[6].
