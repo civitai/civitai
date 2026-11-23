@@ -8,12 +8,12 @@ Per item it answers `enqueued` | `duplicate` | `refused` (refusal reasons: see t
 `@civitai/shared/new-order`. An open, Inquisitor or Ruling item for the same question and image makes a new one a duplicate; the partial unique
 index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knights_v2_tables`, applied by hand, which also has the `prediction` column) closes the race.
 
-- `POST /api/mod/knights/enqueue` (`src/pages/api/mod/knights/enqueue.ts`): a moderator session or full-access API key that also holds the
-  `knightsEnqueue` grant. Up to 1000 items per call; a 200 does not mean every item was queued, read `results`. Unlike the producers below, it also refuses images Knights may not show (`not-servable`: `servableImage` in `@civitai/db/knights`: published, rated, no block marker or review hold, not flagged poi/minor).
+- `POST /api/mod/knights/enqueue` (`src/server/api-routes/mod/knights/enqueue.ts`): a moderator session or full-access API key that also holds the
+  `knightsEnqueue` grant. Up to 1000 items per call; a 200 does not mean every item was queued, read `results`. Unlike the producers below, it also refuses images Knights may not show (`not-servable`: `servableImage` in `@civitai/db/knights`: published on a post that is not Private, rated, no block marker or review hold, not flagged poi/minor).
 - The image-scan pipeline (`scan-sample`: safe-looking priority 1, NSFW priority 2) and an owner's own rating (`owner-rating`, priority 1) also enqueue
   here, beside today's game, which is untouched. Both pass `requirePublished`: an image with no post is refused (`no-post`), and so is one whose post is
   a draft or scheduled for later (`unpublished`), which the publish sweep below samples once the post goes live, at the sampling rates (an owner
-  rating there gets no item of its own). An owner rating on a video is refused too (`not-still-image`; the scan hook only ever passes still
+  rating there gets no item of its own), and one whose post is Private (`private-post`). An owner rating on a video is refused too (`not-still-image`; the scan hook only ever passes still
   images). Both hooks live in `src/server/services/knights/sources.ts`, never throw into the scan, and are
   **off unless** the sys Redis key `system:knights-v2-sources` (`REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES`) holds
   `{"enabled":true,"sfwRate":1,"nsfwRate":0.3}`; a missing or unreadable key means off, rates are 0-1 samples per pool. Set it in sys Redis; no
@@ -25,7 +25,7 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
   arriving, a model, version or collection publish), at most 200 per run in `(publishedAt, id)` order, so posts sharing one instant drain
   across runs. It also re-reads the posts published in the 15 minutes behind its cursor (up to 2000), since a scheduled publish stamps the
   scheduled time and an owner's publish stamps before it commits, so a post can land behind a cursor that has passed it. Never more than six
-  hours back. Their scanned still images (`servableImageContent` in `@civitai/db/knights`) go through the same enqueue and rates as a scan
+  hours back. Their scanned still images on a post that is not Private (`servableImageContent` and `postNotPrivate` in `@civitai/db/knights`) go through the same enqueue and rates as a scan
   sample, with the same `scan-sample` source; an image not scanned yet is left to its scan. The SFW/NSFW split there is `Image.nsfwLevel`
   above the SFW levels, as the scan splits it. The cursor (`{ publishedAt, postId }`) is a `KeyValue` row, `knights-publish-sampling:cursor`,
   stored only after a run completes; a run that could not read the sources switch in time stores nothing, so the window is retried, while
@@ -54,6 +54,24 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
   images (scanned, unlocked, and servable: published, level not 0 or Blocked, no block marker, no review hold; default 50, max 1000) as source `dev-backfill`. It reads `DATABASE_URL` from
   `apps/knights/.env`, is safe to repeat, and refuses to run unless the host is `localhost` or `127.0.0.1`.
 
+## Paladin tag review
+
+A Knights-side source: Paladins answer the moderator tag review queue as yes/no questions and their consensus is written back
+through the moderator app (detail: [yes/no questions](knights-yesno-questions.md#moderator-tag-review-source-tag-reviewts-tag-writebackts)).
+It is off until the moderator Config page's "Paladin tag review" switch turns it on (`modTagReview`, audited like every save);
+off means no new items, nothing served and nothing written back, while items whose tag a moderator ruled still close.
+
+Switch-on checklist, in order:
+
+1. Both apps released with the source (Knights and the moderator app; either order is inert while the switch is off).
+2. `KNIGHTS_TAG_REVIEW_TOKEN` set to the same value on both apps, and `MODERATOR_APP_INTERNAL_URL` (or `MODERATOR_APP_URL`) on
+   Knights, by an infra owner. Knights' database user also needs `SELECT` on the tables this source reads beyond Knights'
+   own: `TagsOnImageNew`, `TagsOnImageDetails` and `Tag` (the flagged tags and the rating check), and `CsamReport`,
+   `EvidenceHeldUser`, `ImageReport` and `Report` (the eligibility predicate). Knights only reads them. Without the grants
+   the source fails closed: nothing is created or served, and the tick logs the permission errors.
+3. The moderation team's sign-off: moderators keep their full queue, and items only leave it sooner.
+4. Then the switch. With no Paladin active it creates nothing.
+
 ## Game settings
 
 The game-tuning variables Knights read from its environment can also be saved under the optional `game` object of the same
@@ -79,7 +97,7 @@ Knights reads them, with `yesNoShare`, through one cached source (`apps/knights/
 The two kill switches follow the same rule, so a store outage never flips the shop or conversion away from the last known state.
 
 The moderator Config page (`/knights-of-new-order/config`) is one column: the queue counts, then cards for Queue sources (switch,
-both rates, yes/no share), Skill checks, Yes/no questions, Acolytes, Harvest, and a "Shop and conversion" danger-zone card. Each
+both rates, the yes/no questions switch), Skill checks, Yes/no questions, Acolytes, Harvest, and a "Shop and conversion" danger-zone card. Each
 setting with a Knights default carries a "Default" or "Custom" badge (its tooltip names the variable behind the default), and a
 custom number has a "Reset" button that removes the saved value. Toggles are segmented with the default first and positive labels:
 Shop Default / Open / Closed, Gold to Buzz conversion Default / On / Off, Acolyte wrong-answer smites Default / On / Off, Harvest

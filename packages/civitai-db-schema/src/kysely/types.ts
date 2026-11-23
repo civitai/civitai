@@ -142,6 +142,7 @@ import type {
   ServiceOfferingStatus,
   ServiceOfferingIngestionStatus,
   ServicePreviewKind,
+  ServiceLicensePreset,
   ServiceBuzzType,
   ServiceDealStatus,
   ServiceDealEventType,
@@ -150,6 +151,7 @@ import type {
   ServiceDealFileScanStatus,
   ServiceDisputeResolution,
   ServiceDealLeg,
+  ServiceDealReviewVerdict,
   UserHubSourceType,
   CrucibleStatus,
   CrucibleIngestionStatus,
@@ -340,6 +342,18 @@ export type AppAccessRequest = {
   createdAt: Generated<Timestamp>;
   reviewedAt: Timestamp | null;
   reviewedById: number | null;
+};
+export type AppAssistantSessionLink = {
+  id: Generated<number>;
+  user_id: number;
+  conversation_id: string;
+  app_slug: string;
+  first_seen_at: Generated<Timestamp>;
+  last_seen_at: Generated<Timestamp>;
+  turn_count: Generated<number>;
+  last_model: string | null;
+  buzz_total: Generated<number>;
+  last_run_id: string | null;
 };
 export type AppBlock = {
   id: string;
@@ -745,6 +759,18 @@ export type AppPostIntent = {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
+export type AppPublishRequestTrace = {
+  id: Generated<number>;
+  publish_request_id: string;
+  slug: string;
+  user_id: number;
+  conversation_ids: string[];
+  snapshots: unknown;
+  signals: unknown;
+  signals_version: number;
+  snapshot_error: string | null;
+  created_at: Generated<Timestamp>;
+};
 export type AppReviewAgentReport = {
   id: string;
   publish_request_id: string;
@@ -767,6 +793,13 @@ export type AppReviewAgentReport = {
   cost_usd: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+};
+export type AppReviewAgentReportCheck = {
+  report_id: string;
+  publish_request_id: string;
+  checks: unknown;
+  fingerprint: string;
+  created_at: Generated<Timestamp>;
 };
 export type AppSubListing = {
   id: string;
@@ -4175,6 +4208,7 @@ export type LicensingRoot = {
   modelType: ModelType;
   modelVersionId: number;
   isDefault: Generated<boolean>;
+  restricted: Generated<boolean>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -4631,6 +4665,9 @@ export type ModelVersion = {
   licensingFee: string | null;
   licensingFeeType: Generated<LicensingFeeType | null>;
   licensingFeeSettlementCurrency: Generated<LicensingFeeSettlementCurrency | null>;
+  licensingFeeMarkup: string | null;
+  licensingFeeLocked: Generated<boolean>;
+  licensingFeePaidByInvoice: Generated<boolean>;
   licensingSourceVersionId: number | null;
 };
 export type ModelVersionEngagement = {
@@ -4717,6 +4754,10 @@ export type ModelVersionShowcaseItem = {
   source: string;
   position: number | null;
   excluded: Generated<boolean>;
+  /**
+   * The image's author or a moderator removed it; kept so the owner can't add it back.
+   */
+  removed: Generated<boolean>;
   addedById: number;
   createdAt: Generated<Timestamp>;
 };
@@ -5790,6 +5831,16 @@ export type ServiceDeal = {
   deliveryDays: number;
   previewKind: ServicePreviewKind;
   /**
+   * The offering's license when requested, as the buyer agreed to it; never re-read from it.
+   */
+  licensePreset: ServiceLicensePreset | null;
+  licenseCustomText: string | null;
+  licenseAllowResale: Generated<boolean>;
+  /**
+   * When the buyer ticked the license checkbox. Null on a deal whose offering had no license.
+   */
+  licenseAgreedAt: Timestamp | null;
+  /**
    * The offering's maxNsfwLevel when requested; never re-read from the offering.
    */
   maxNsfwLevel: Generated<number>;
@@ -5830,6 +5881,11 @@ export type ServiceDeal = {
   disputeResolvedById: number | null;
   closedAt: Timestamp | null;
   closeReason: string | null;
+  /**
+   * Set at accept when the buyer had the review flag: the deal ends in a review card, and a happy
+   * review may release the Buzz early.
+   */
+  reviewEnabledAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -5946,6 +6002,46 @@ export type ServiceDealFilePurge = {
   etag: string | null;
   purgedAt: Generated<Timestamp>;
 };
+export type ServiceDealReview = {
+  id: Generated<number>;
+  dealId: number;
+  offeringId: number;
+  sellerId: number;
+  buyerId: number;
+  verdict: ServiceDealReviewVerdict;
+  comment: string | null;
+  /**
+   * The content check of `comment`; reset to Pending on every edit.
+   */
+  scanStatus: Generated<ServiceOfferingIngestionStatus>;
+  scanWorkflowId: string | null;
+  publishedAt: Timestamp | null;
+  /**
+   * The buyer may edit until then.
+   */
+  editableUntil: Timestamp;
+  sellerReply: string | null;
+  sellerReplyAt: Timestamp | null;
+  sellerReplyScanStatus: ServiceOfferingIngestionStatus | null;
+  sellerReplyScanWorkflowId: string | null;
+  hiddenAt: Timestamp | null;
+  hiddenById: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type ServiceDealReviewImage = {
+  reviewId: number;
+  imageId: number;
+  /**
+   * The final it was copied from; one copy per final per review.
+   */
+  sourceFileId: number | null;
+};
+export type ServiceDealReviewReport = {
+  reportId: number;
+  serviceDealReviewId: number;
+  serviceOfferingId: number;
+};
 export type ServiceDealTransaction = {
   id: Generated<number>;
   dealId: number;
@@ -6017,6 +6113,15 @@ export type ServiceOffering = {
   deliveryDays: number;
   revisionsIncluded: Generated<number>;
   maxOpenDeals: number | null;
+  /**
+   * Null: no license terms set. Copied onto each deal at request time.
+   */
+  licensePreset: ServiceLicensePreset | null;
+  /**
+   * The seller's own terms; set only with the Custom preset.
+   */
+  licenseCustomText: string | null;
+  licenseAllowResale: Generated<boolean>;
   status: Generated<ServiceOfferingStatus>;
   /**
    * Set only when a moderator removes the offering: a key of the moderator reason list in code.
@@ -6031,6 +6136,20 @@ export type ServiceOffering = {
    * affirmedAt, version and the statement verbatim. Null until first published.
    */
   sellerAffirmation: unknown | null;
+  /**
+   * The seller lets buyers attach delivered work to their review. Off until the seller opts in.
+   */
+  allowReviewWork: Generated<boolean>;
+  /**
+   * Counted reviews only (one per distinct buyer, priced and aged per the counting bar). Changed
+   * only in the transaction that publishes or hides a review; the deals job compares them to rows.
+   */
+  happyCount: Generated<number>;
+  reviewCount: Generated<number>;
+  /**
+   * happyCount / reviewCount once reviewCount >= 3, else -1. Never null, so the feed pages by it with an id cursor.
+   */
+  happySortKey: Generated<number>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -6984,6 +7103,7 @@ export type DB = {
   AnswerReaction: AnswerReaction;
   AnswerVote: AnswerVote;
   ApiKey: ApiKey;
+  app_assistant_session_links: AppAssistantSessionLink;
   app_block_build_attempts: AppBlockBuildAttempt;
   app_block_publish_requests: AppBlockPublishRequest;
   app_block_upload_batches: AppBlockUploadBatch;
@@ -7001,6 +7121,8 @@ export type DB = {
   app_ownership_events: AppOwnershipEvent;
   app_ownership_transfers: AppOwnershipTransfer;
   app_post_intents: AppPostIntent;
+  app_publish_request_traces: AppPublishRequestTrace;
+  app_review_agent_report_checks: AppReviewAgentReportCheck;
   app_review_agent_reports: AppReviewAgentReport;
   app_sub_listing_parents: AppSubListingParent;
   app_sub_listings: AppSubListing;
@@ -7345,6 +7467,9 @@ export type DB = {
   ServiceDealFile: ServiceDealFile;
   ServiceDealFileEntry: ServiceDealFileEntry;
   ServiceDealFilePurge: ServiceDealFilePurge;
+  ServiceDealReview: ServiceDealReview;
+  ServiceDealReviewImage: ServiceDealReviewImage;
+  ServiceDealReviewReport: ServiceDealReviewReport;
   ServiceDealTransaction: ServiceDealTransaction;
   ServiceDisputeReview: ServiceDisputeReview;
   ServiceOffering: ServiceOffering;

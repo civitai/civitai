@@ -1,15 +1,12 @@
 import { Prisma } from '@prisma/client';
-import {
-  imageRoutesHeld,
-  parseBlockedForPatterns,
-  REVIEW_SERVED_ACTIVITY,
-} from '@civitai/shared/review-batch';
-import { env } from '~/env/server';
+import { imageRoutesHeld, REVIEW_SERVED_ACTIVITY } from '@civitai/shared/review-batch';
+import { URL_SIBLING_CAP } from '@civitai/shared/retracted-media-tier';
+import { blockedForPatterns } from '~/server/services/blocked-for-patterns';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   readImageSignals,
-  readScannerHits,
+  readScannerCsamVerdicts,
 } from '~/server/services/review-batch/review-batch.service';
 import { createJob } from './job';
 
@@ -23,8 +20,8 @@ const SYSTEM_USER_ID = -1;
 type Served = { imageId: number; batchHash: string };
 
 /**
- * Each general-tier view within `LOOKBACK_HOURS` whose image now carries a CSAM or minor signal: a
- * batch the server routed general that it would route held today. Records each one once, with the
+ * Each general-tier view within `LOOKBACK_HOURS` whose image is now CSAM-restricted: a batch the
+ * server routed general that it would route held today. Records each one once, with the
  * image's CSAM report when there is one, and writes a dated heartbeat row every run, misses or not,
  * so a run that never happened shows as a missing day.
  */
@@ -75,24 +72,47 @@ const dayNumber = (date: Date) => Number(date.toISOString().slice(0, 10).replace
 const CHUNK = 1000;
 
 async function findMisses(ids: number[]) {
-  const patterns = parseBlockedForPatterns(env.REVIEW_SHEET_BLOCKEDFOR_PATTERNS);
+  const patterns = blockedForPatterns();
   const held = new Set<number>();
   let scannerRead = true;
   for (let i = 0; i < ids.length; i += CHUNK) {
     const part = ids.slice(i, i + CHUNK);
-    const [signals, scannerHits] = await Promise.all([
+    const [signals, verdicts] = await Promise.all([
       readImageSignals(part),
-      readScannerHits(part, { absentHolds: false }),
+      readScannerCsamVerdicts(part),
     ]);
-    if (!scannerHits) scannerRead = false;
-    // A miss is a signal present now. A missing image, row or pattern list, or a scan gone back to
-    // pending, is not evidence of one; the routing itself treats all of those as held.
+    if (!verdicts) scannerRead = false;
+    // A miss is a signal present now. A missing image or row, a missing pattern list, a scan gone back
+    // to pending, or a url with more copies than the routing reads is not evidence of one; the
+    // routing holds all of those.
+    const clean = patterns ?? { signal: [], nonMinor: [/^/] };
+    const siblingIds = [
+      ...new Set([...signals.values()].flatMap((row) => row.siblings.map((s) => s.id))),
+    ];
+    const siblingRead = await readScannerCsamVerdicts(siblingIds);
+    if (!siblingRead) scannerRead = false;
+    const presentHits = async (imageIds: number[]) =>
+      new Map(
+        imageIds.map((id) => [id, siblingRead?.get(id) === 'hit' ? 'hit' : 'clear'] as const)
+      );
     for (const id of part) {
       const row = signals.get(id);
       if (!row) continue;
-      const clean = patterns ?? { signal: [], nonMinor: [/^/] };
-      if (scannerHits?.has(id) || imageRoutesHeld({ ...row, unreadable: false }, clean))
-        held.add(id);
+      const routesHeld = await imageRoutesHeld(
+        {
+          ...row,
+          unreadable: false,
+          siblings: row.siblings
+            .slice(0, URL_SIBLING_CAP - 1)
+            .map((sibling) => ({ ...sibling, unreadable: false })),
+        },
+        {
+          patterns: clean,
+          verdict: verdicts?.get(id) === 'hit' ? 'hit' : 'clear',
+          readVerdicts: presentHits,
+        }
+      );
+      if (routesHeld) held.add(id);
     }
   }
   return { held, scannerRead };

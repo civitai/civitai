@@ -13,7 +13,7 @@ import {
   updateCollectionsNsfwLevels,
   updateNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
-import { accountHoldSql } from '~/server/services/legal-hold.service';
+import { contentRemovalHeldSql } from '~/server/services/legal-hold.service';
 import { limitConcurrency, Limiter } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 // TEMP: unused while collection enqueue is disabled below. REVERT.
@@ -248,7 +248,6 @@ const updateNsfwLevelsCollectionsJob = createJob(
 
 const batchSize = 1000;
 const handleJobQueueCleanup = createJob('job-queue-cleanup', '*/1 * * * *', async (e) => {
-  const now = new Date();
   const jobQueue = await dbRead.jobQueue.findMany({
     where: { type: JobQueueType.CleanUp },
   });
@@ -281,9 +280,9 @@ const handleJobQueueCleanup = createJob('job-queue-cleanup', '*/1 * * * *', asyn
 
   await updateNsfwLevels(relatedEntities);
 
-  await dbWrite.jobQueue.deleteMany({
-    where: { createdAt: { lt: now }, type: JobQueueType.CleanUp },
-  });
+  // Only the rows read: the read is on the replica, so a row it has not yet received would be
+  // deleted unprocessed.
+  await deleteProcessedJobQueueItems(jobQueue, JobQueueType.CleanUp);
 });
 
 const handleJobQueueCleanIfEmpty = createJob(
@@ -320,7 +319,10 @@ const handleJobQueueCleanIfEmpty = createJob(
             AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = "Post".id)
             -- Text items are content: a post with them is not empty.
             AND NOT EXISTS (SELECT 1 FROM "PostText" t WHERE t."postId" = "Post".id)
-            AND NOT ${accountHoldSql(Prisma.raw('"Post"."userId"'), true)}`),
+            AND NOT ${contentRemovalHeldSql(Prisma.raw('"Post"."userId"'), true)}`),
+          // A post its child-safety case keeps stays: a pending delete would take it unchecked, even
+          // after its owner filled it again.
+          queueKept: false,
         });
       });
 

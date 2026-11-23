@@ -3,6 +3,7 @@ import { buildFliptContext } from '@civitai/flipt/context';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { isExternalModerationConfigured } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
+import { STEP_MEDIA_INPUT_KEYS } from '~/server/services/blocks/step-media-keys';
 import {
   foldStepTypeCase,
   isTrainingStepTypeIgnoringCase,
@@ -54,66 +55,8 @@ const WALK_DEPTH_MAX = 64;
 const TEXT_KEY = /prompt|lyric|text|message|style|caption|instruction/i;
 const NEGATIVE_KEY = /negative/i;
 const URL_OR_AIR = /^\s*(https?:\/\/\S+|urn:air:\S+)\s*$/i;
-/**
- * Step input fields that take media or a url, from the `@civitai/orchestration-client` input
- * types (lower-cased). A reference is readable as non-prompt only under one of these; under
- * any other key it may bind text, so it counts as an unreadable prompt.
- */
-const MEDIA_KEYS: ReadonlySet<string> = new Set([
-  'additionalvideos',
-  'audioblob',
-  'audiourl',
-  'blob',
-  'blobkey',
-  'bloburl',
-  'endimage',
-  'endsourceimage',
-  'firstframe',
-  'firstframeimage',
-  'frames',
-  'frontalimage',
-  'garmenturl',
-  'image',
-  'image_url',
-  'images',
-  'imagestylereferences',
-  'imageurl',
-  'imageurls',
-  'inputurl',
-  'keyframes',
-  'lastframe',
-  'lastframeimage',
-  'mask',
-  'mediaurl',
-  'mediaurls',
-  'middleframeimage',
-  'middleimages',
-  'personmask',
-  'refaudiourl',
-  'referenceaudios',
-  'referenceimage',
-  'referenceimages',
-  'referencevideos',
-  'referencevideourls',
-  'sampleinputimages',
-  'sourceaudio',
-  'sourceimage',
-  'sourceimages',
-  'sourceimageurl',
-  'sourceurl',
-  'sourcevideo',
-  'startimage',
-  'subjectmaskurl',
-  'subjecturl',
-  'targetaudio',
-  'textureimageurl',
-  'url',
-  'video',
-  'videoblob',
-  'videos',
-  'videourl',
-]);
-
+// A reference is readable as non-prompt only under a media key; elsewhere it may bind text.
+const MEDIA_KEYS = STEP_MEDIA_INPUT_KEYS;
 export type PromptRefSource = 'argument' | 'step';
 
 export type PassThroughAuditText = {

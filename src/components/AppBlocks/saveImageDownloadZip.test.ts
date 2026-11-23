@@ -117,6 +117,33 @@ describe('zip classification on the save path', () => {
     }
   });
 
+  it('a zip holding .glb / .fbx model entries beside renders saves as a zip (app-sdk >= 0.93.0)', async () => {
+    // The entry-name allowlist is app-sdk's; this pins that the version this host depends on has
+    // the model extensions, and that the whole save path (classify + inflate check) accepts it.
+    const zip = await jszip(
+      {
+        'turnaround/model.glb': new Uint8Array([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0, 9, 9, 9, 9]),
+        'turnaround/rig.fbx': enc.encode('Kaydara FBX Binary  \0'),
+        'turnaround/front.png': new Uint8Array([...PNG_HEAD, 1, 2, 3]),
+      },
+      'DEFLATE'
+    );
+    const prepared = prepareSaveBytes({ bytes: zip, filename: 'turnaround.glb' });
+    expect(prepared).toMatchObject({
+      ok: true,
+      type: 'application/zip',
+      filename: 'turnaround.zip',
+    });
+    if (!prepared.ok) return;
+    expect(await verifySaveBytesContent(zip, prepared)).toMatchObject({ ok: true });
+    // A glTF-JSON entry is still not allowed.
+    const gltf = await jszip({ 'model.gltf': '{"asset":{"version":"2.0"}}' });
+    expect(classifySaveBytesContent(gltf, 'm.zip')).toEqual({
+      ok: false,
+      error: 'zip entry type is not allowed: gltf',
+    });
+  });
+
   it('a non-zip named .zip is classified by content: text saves as .txt, binary is refused', () => {
     const text = enc.encode('not a zip at all').buffer as ArrayBuffer;
     expect(prepareSaveBytes({ bytes: text, filename: 'dataset.zip' })).toEqual({
@@ -270,6 +297,23 @@ describe('zip size caps on the path the handler calls (processSaveBytes)', () =>
     expect(text.result).toEqual({ ok: false, error: 'file exceeds the maximum save size' });
   });
 
+  it('the window: a 130 MB zip fits an empty window (over the 100 MB non-zip budget)…', () => {
+    const big = 130 * MB + 11;
+    const r = processSaveBytes({ bytes: storedZipOfSize(big) }, [], T0);
+    expect(r.result).toMatchObject({ ok: true, type: 'application/zip' });
+    // …a following small text save is still held to the 100 MB budget, so it is busy…
+    const after = processSaveBytes(
+      { bytes: enc.encode('hi').buffer as ArrayBuffer },
+      r.recent,
+      T0 + 1
+    );
+    expect(after.result).toEqual({ ok: false, error: 'busy' });
+    // …and a second zip that would take the window over 256 MB is busy too.
+    const second = processSaveBytes({ bytes: storedZipOfSize(126 * MB + 5) }, r.recent, T0 + 2);
+    expect(second.result).toEqual({ ok: false, error: 'busy' });
+    const fits = processSaveBytes({ bytes: storedZipOfSize(125 * MB + 5) }, r.recent, T0 + 3);
+    expect(fits.result).toMatchObject({ ok: true, type: 'application/zip' });
+  });
   it('a full window refuses a zip `busy` WITHOUT validating it (a malformed zip still says busy)', async () => {
     const full = Array.from({ length: SAVE_BYTES_MAX_PER_WINDOW }, (_, i) => ({
       at: T0 + i,

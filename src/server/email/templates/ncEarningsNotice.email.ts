@@ -53,6 +53,9 @@ export const ncEarningsNoticeEmail = createEmail({
   }),
   html(data: NcEarningsNoticeData) {
     return simpleEmailWithTemplate({
+      icon: '📢',
+      accent: 'blue',
+      eyebrow: 'Creator earnings',
       header: getNcEarningsNoticeSubject(data),
       body: getNcEarningsNoticeHtml(data),
     });

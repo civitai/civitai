@@ -16,12 +16,14 @@ exports[`getImagesByEntity SQL > for a moderator 1`] = `
 
 exports[`getImagesByEntity SQL > for a signed-in viewer 1`] = `
 {
-  "sql": "WITH targets AS ( SELECT id, "entityId" FROM ( SELECT i.id, ic."entityId", row_number() OVER (PARTITION BY ic."entityId" ORDER BY i.index) row_num FROM "Image" i JOIN "ImageConnection" ic ON ic."imageId" = i.id AND ic."entityType" = ? AND ic."entityId" IN (?,?) WHERE (i."ingestion" = ?::"ImageIngestionStatus" OR i."userId" = ?) AND (i."nsfwLevel" != 0 OR i."userId" = ?) AND (i."needsReview" IS NULL OR i."userId" = ?) AND (i."acceptableMinor" = FALSE OR i."userId" = ?) AND (i."blockedFor" IS NULL OR i."userId" = ?) AND ((i."nsfwLevel" & ?) = 0 OR NOT i."modelRestricted" OR i."userId" = ?) AND (NOT ((COALESCE(i."minor", FALSE)) AND (i."nsfwLevel" IS NULL OR i."nsfwLevel" = 0 OR i."nsfwLevel" >= ?)) OR i."userId" = ?) AND (i."needsReview" IS NULL OR i."needsReview" NOT IN (?,?)) ) ranked WHERE ranked.row_num <= ? ) SELECT i.id, i.name, i.url, i."nsfwLevel", i.width, i.height, i.hash, i."hideMeta", i."createdAt", i."mimeType", i.type, i.metadata, i.ingestion, i."scannedAt", i."needsReview", i."userId", i."index", i.poi, i.minor, ( CASE WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE ELSE TRUE END ) AS "hasMeta", ( CASE WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta" AND i.meta->>'prompt' IS NOT NULL THEN TRUE ELSE FALSE END ) AS "hasPositivePrompt", t."entityId" FROM targets t JOIN "Image" i ON i.id = t.id",
+  "sql": "WITH targets AS ( SELECT id, "entityId" FROM ( SELECT i.id, ic."entityId", row_number() OVER (PARTITION BY ic."entityId" ORDER BY i.index) row_num FROM "Image" i JOIN "ImageConnection" ic ON ic."imageId" = i.id AND ic."entityType" = ? AND ic."entityId" IN (?,?) WHERE (i."ingestion" = ?::"ImageIngestionStatus" OR i."userId" = ?) AND (i."nsfwLevel" NOT IN (0, ?) OR i."userId" = ?) AND (i."needsReview" IS NULL OR i."userId" = ?) AND (i."acceptableMinor" = FALSE OR i."userId" = ?) AND (i."tosViolation" IS NOT TRUE OR i."userId" = ?) AND (i."blockedFor" IS NULL OR i."userId" = ?) AND ((i."nsfwLevel" & ?) = 0 OR NOT i."modelRestricted" OR i."userId" = ?) AND (NOT ((COALESCE(i."minor", FALSE)) AND (i."nsfwLevel" IS NULL OR i."nsfwLevel" = 0 OR i."nsfwLevel" >= ?)) OR i."userId" = ?) AND (i."needsReview" IS NULL OR i."needsReview" NOT IN (?,?)) ) ranked WHERE ranked.row_num <= ? ) SELECT i.id, i.name, i.url, i."nsfwLevel", i.width, i.height, i.hash, i."hideMeta", i."createdAt", i."mimeType", i.type, i.metadata, i.ingestion, i."scannedAt", i."needsReview", i."userId", i."index", i.poi, i.minor, ( CASE WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE ELSE TRUE END ) AS "hasMeta", ( CASE WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta" AND i.meta->>'prompt' IS NOT NULL THEN TRUE ELSE FALSE END ) AS "hasPositivePrompt", t."entityId" FROM targets t JOIN "Image" i ON i.id = t.id",
   "values": [
     "BountyEntry",
     1,
     2,
     "Scanned",
+    20,
+    32,
     20,
     20,
     20,
@@ -40,12 +42,13 @@ exports[`getImagesByEntity SQL > for a signed-in viewer 1`] = `
 
 exports[`getImagesByEntity SQL > for an anonymous viewer 1`] = `
 {
-  "sql": "WITH targets AS ( SELECT id, "entityId" FROM ( SELECT i.id, ic."entityId", row_number() OVER (PARTITION BY ic."entityId" ORDER BY i.index) row_num FROM "Image" i JOIN "ImageConnection" ic ON ic."imageId" = i.id AND ic."entityType" = ? AND ic."entityId" IN (?,?) WHERE (i."ingestion" = ?::"ImageIngestionStatus") AND i."nsfwLevel" != 0 AND (i."needsReview" IS NULL) AND i."acceptableMinor" = FALSE AND (i."blockedFor" IS NULL) AND ((i."nsfwLevel" & ?) = 0 OR NOT i."modelRestricted") AND (NOT ((COALESCE(i."minor", FALSE)) AND (i."nsfwLevel" IS NULL OR i."nsfwLevel" = 0 OR i."nsfwLevel" >= ?))) AND (i."needsReview" IS NULL OR i."needsReview" NOT IN (?,?)) ) ranked WHERE ranked.row_num <= ? ) SELECT i.id, i.name, i.url, i."nsfwLevel", i.width, i.height, i.hash, i."hideMeta", i."createdAt", i."mimeType", i.type, i.metadata, i.ingestion, i."scannedAt", i."needsReview", i."userId", i."index", i.poi, i.minor, ( CASE WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE ELSE TRUE END ) AS "hasMeta", ( CASE WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta" AND i.meta->>'prompt' IS NOT NULL THEN TRUE ELSE FALSE END ) AS "hasPositivePrompt", t."entityId" FROM targets t JOIN "Image" i ON i.id = t.id",
+  "sql": "WITH targets AS ( SELECT id, "entityId" FROM ( SELECT i.id, ic."entityId", row_number() OVER (PARTITION BY ic."entityId" ORDER BY i.index) row_num FROM "Image" i JOIN "ImageConnection" ic ON ic."imageId" = i.id AND ic."entityType" = ? AND ic."entityId" IN (?,?) WHERE (i."ingestion" = ?::"ImageIngestionStatus") AND i."nsfwLevel" NOT IN (0, ?) AND (i."needsReview" IS NULL) AND i."acceptableMinor" = FALSE AND i."tosViolation" IS NOT TRUE AND (i."blockedFor" IS NULL) AND ((i."nsfwLevel" & ?) = 0 OR NOT i."modelRestricted") AND (NOT ((COALESCE(i."minor", FALSE)) AND (i."nsfwLevel" IS NULL OR i."nsfwLevel" = 0 OR i."nsfwLevel" >= ?))) AND (i."needsReview" IS NULL OR i."needsReview" NOT IN (?,?)) ) ranked WHERE ranked.row_num <= ? ) SELECT i.id, i.name, i.url, i."nsfwLevel", i.width, i.height, i.hash, i."hideMeta", i."createdAt", i."mimeType", i.type, i.metadata, i.ingestion, i."scannedAt", i."needsReview", i."userId", i."index", i.poi, i.minor, ( CASE WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE ELSE TRUE END ) AS "hasMeta", ( CASE WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta" AND i.meta->>'prompt' IS NOT NULL THEN TRUE ELSE FALSE END ) AS "hasPositivePrompt", t."entityId" FROM targets t JOIN "Image" i ON i.id = t.id",
   "values": [
     "BountyEntry",
     1,
     2,
     "Scanned",
+    32,
     60,
     4,
     "csam",

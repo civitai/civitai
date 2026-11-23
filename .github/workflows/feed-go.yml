@@ -19,7 +19,19 @@ name: feed-go
 # (`Package unit tests`). The workflow also triggers on packages/civitai-flipt/parity/** for it.
 #
 # A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
-# dispatches this workflow when the label is added. A push to `main` is unfiltered.
+# dispatches this workflow when the label is added to a draft PR (on a ready PR, the PR's own run
+# here is not draft-gated, so nothing is dispatched).
+# A push to `main` has its own `push` paths filter below, and no draft gate.
+#
+# ── THE 2-HOUR MAIN BATCH: fuzz, govulncheck, go.mod tidy, benchmarks ─────────────────────
+#
+# `vuln`, `mod`, `fuzz` and `bench` no longer run on pull requests or on a push: across 59 recent
+# runs on PRs and `main` they caught nothing the PR's own `test` and `lint` did not. They run on a
+# dispatch: the 2-hour batch on `main` (lint.yml's `batch-suites` job dispatches this workflow with
+# `batch: true` when a path below changed since the last green batch), a hand dispatch, or the
+# `full-ci` label's dispatch on a draft. A batch dispatch runs ONLY those jobs (`test`, `lint`, `flipt-parity`
+# already ran on the push), and a red one turns the `Batch suites (main batch)` commit status red,
+# which opens a CI-watch item naming the commit range; nothing bisects it automatically.
 on:
   pull_request:
     branches: [main, release]
@@ -35,19 +47,31 @@ on:
       - 'packages/civitai-flipt/parity/**'
       - '.github/workflows/feed-go.yml'
   workflow_dispatch:
+    inputs:
+      # Set by the main batch (lint.yml, `batch-suites`): run only the batch jobs (see the header).
+      batch:
+        description: Run only the batch jobs (fuzz, govulncheck, go.mod tidy, benchmarks). Set by the main batch.
+        type: boolean
+        default: false
+      # Set by the main batch: the commit the last green batch verified. The benchmarks compare
+      # HEAD against it, so a batch's allocs/op gate covers every merge since that batch.
+      base:
+        description: Commit the benchmarks compare against (default the merge-base with main, or HEAD^1 on main).
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: feed-go-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
+  group: feed-go-${{ github.event_name == 'workflow_dispatch' && inputs.batch && format('batch-{0}', github.run_id) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
     name: feed-go vet + test + build
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && !inputs.batch
     timeout-minutes: 20
     services:
       postgres:
@@ -247,7 +271,7 @@ jobs:
   flipt-parity:
     name: Flipt Node/Go parity
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && !inputs.batch
     timeout-minutes: 15
     defaults:
       run:
@@ -344,7 +368,7 @@ jobs:
   lint:
     name: feed-go golangci-lint
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && !inputs.batch
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -366,7 +390,7 @@ jobs:
   vuln:
     name: feed-go govulncheck
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 15
     defaults:
       run:
@@ -393,7 +417,7 @@ jobs:
   mod:
     name: feed-go go.mod tidy + verify
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 10
     defaults:
       run:
@@ -426,7 +450,7 @@ jobs:
   fuzz:
     name: feed-go fuzz
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 25
     defaults:
       run:
@@ -444,6 +468,8 @@ jobs:
       FUZZ_TARGETS: >-
         internal/auth:FuzzTokenFromCookieHeader:170000
         internal/auth:FuzzVerify:95000
+        internal/devalue:FuzzRoundTrip:200000
+        internal/devalue:FuzzString:600000
         internal/feed:FuzzParse:180000
         internal/feed:FuzzParseInfinite:140000
         internal/hydrate:FuzzMetaEntry:150000
@@ -519,8 +545,12 @@ jobs:
   bench:
     name: feed-go benchmarks (allocs/op gate)
     runs-on: ubuntu-latest
-    # PRs only: the allocs/op compare needs a PR base, and a push to main has none.
-    if: github.event_name == 'pull_request' && (!github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    # Dispatch only (see the header). The base is the `base` input when one is given (the main batch
+    # passes the newest GREEN batch commit, even after a red batch, so the gate covers every merge
+    # since then; the job summary names the base and why),
+    # else the merge-base with main (a branch dispatch: the PR's own base), else HEAD^1 (a dispatch
+    # on main without `base`: the last merge alone).
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 25
     defaults:
       run:
@@ -537,15 +567,27 @@ jobs:
           go-version-file: apps/feed-go/go.mod
           cache-dependency-path: apps/feed-go/go.sum
 
-      # The merge-base with the PR's target branch (the parent if HEAD is already the merge-base).
-      - name: Check out the merge-base
+      # The `base` input, else the merge-base with main (the parent if HEAD is already the merge-base).
+      # Through env: `base` is free text, and is checked to be a commit before it is used.
+      - name: Check out the base
         env:
-          BASE_BRANCH: ${{ github.base_ref || 'main' }}
+          BASE_INPUT: ${{ inputs.base }}
         run: |
           set -euo pipefail
-          git fetch --no-tags origin "$BASE_BRANCH"
-          base=$(git merge-base "origin/$BASE_BRANCH" HEAD)
-          if [ "$base" = "$(git rev-parse HEAD)" ]; then base=$(git rev-parse HEAD^1); fi
+          git fetch --no-tags origin main
+          if [ -n "$BASE_INPUT" ]; then
+            base=$(git rev-parse --verify --quiet "${BASE_INPUT}^{commit}") \
+              || { echo "::error::base input is not a commit in this repository: $BASE_INPUT"; exit 1; }
+            why="the base input (the main batch passes its last green batch commit)"
+          else
+            base=$(git merge-base origin/main HEAD)
+            why="no base input: the merge-base with main"
+          fi
+          if [ "$base" = "$(git rev-parse HEAD)" ]; then
+            base=$(git rev-parse HEAD^1)
+            why="$why, which is HEAD, so HEAD^1: only the last merge is compared"
+          fi
+          echo "Benchmark base: $(git rev-parse --short "$base") ($why)" >> "$GITHUB_STEP_SUMMARY"
           echo "head $(git rev-parse HEAD), base $base"
           git worktree add --detach "$RUNNER_TEMP/base" "$base"
 
@@ -565,7 +607,7 @@ jobs:
           set -euo pipefail
           go run golang.org/x/perf/cmd/benchstat@v0.0.0-20261009192801-be2c69fb417e \
             base="$RUNNER_TEMP/base.txt" head="$RUNNER_TEMP/head.txt" | tee "$RUNNER_TEMP/benchstat.txt"
-          { echo '### feed-go benchstat (base = merge-base)'; echo '```'; cat "$RUNNER_TEMP/benchstat.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### feed-go benchstat (base = $(git -C "$RUNNER_TEMP/base" rev-parse --short HEAD))"; echo '```'; cat "$RUNNER_TEMP/benchstat.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: allocs/op gate
         run: |

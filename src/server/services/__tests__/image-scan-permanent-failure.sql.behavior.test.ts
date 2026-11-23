@@ -57,7 +57,7 @@ beforeAll(async () => {
       id int PRIMARY KEY, url text, type text DEFAULT 'image', width int, height int, meta jsonb,
       "scanRequestedAt" timestamp(3), "createdAt" timestamp(3) NOT NULL,
       ingestion "ImageIngestionStatus" NOT NULL, "scanJobs" jsonb, "userId" int,
-      "nsfwLevelLocked" boolean NOT NULL DEFAULT TRUE, metadata jsonb
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT TRUE, metadata jsonb, "blockedFor" text
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityType" text, "entityId" int);
     CREATE TABLE "Article" (id int PRIMARY KEY, status "ArticleStatus");

@@ -40,6 +40,7 @@ const buildSql = (domain: keyof typeof domainFilter) => `
   WHERE a.status = 'Published'
     AND a."publishedAt" IS NOT NULL
     AND a.availability != 'Unsearchable'
+    AND a.availability != 'Private'
     AND a.ingestion != 'Blocked'
     AND ${domainFilter[domain]}
     AND (

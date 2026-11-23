@@ -1,6 +1,7 @@
 import { useRouter } from 'next/router';
+import { isAdFreeRoute, isRequestsRoute } from '~/components/Ads/ad-free-routes';
 import Script from 'next/script';
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
 import { SparteoTag } from '~/components/Ads/SparteoTag';
@@ -118,13 +119,6 @@ export function useAdPageNsfwLevel() {
   return useAdProviderStore((state) => state.pageNsfwLevel);
 }
 
-const blockedUrls: string[] = [
-  '/collections/6503138',
-  '/collections/7514194',
-  '/collections/7514211',
-  '/moderator',
-];
-
 export function AdsProvider({
   children,
   gated = false,
@@ -163,10 +157,18 @@ export function AdsProvider({
       !browserBlocked &&
       consentAllowed &&
       (allowAds || !isMember) &&
-      !blockedUrls.some((url) => router.asPath.includes(url)) &&
-      // The gift claim page holds a live gift code in its props, readable by any script on the page.
-      !router.pathname.startsWith('/gift/') &&
-      !router.asPath.split('?')[0].endsWith('/edit');
+      !isAdFreeRoute(router.pathname, router.asPath);
+
+  // Ad scripts loaded on an earlier page keep running after a client-side route change. A request page
+  // holds contact details or a case link, so reaching one that way reloads it without them.
+  const adsLoadedBefore = useRef(false);
+  useEffect(() => {
+    if (adsEnabled) adsLoadedBefore.current = true;
+  }, [adsEnabled]);
+  useEffect(() => {
+    if (adsLoadedBefore.current && isRequestsRoute(router.pathname, router.asPath))
+      window.location.reload();
+  }, [router.pathname, router.asPath]);
 
   function handleLoadedError() {
     useAdProviderStore.setState({ adsBlocked: true });

@@ -11,6 +11,7 @@ paths:
 Root CLAUDE.md covers the stack, the `typecheck`-not-`check` rule and the prettier-svelte ban; this file has the detail. Each app's `CLAUDE.md` records only its deltas from [`docs/svelte-app-standard.md`](../../docs/svelte-app-standard.md).
 
 - Review a segment with `svelte-correctness-review`, `svelte-idiom-review` and `svelte-abstraction-review`.
+- Server code here follows "Predicates, limiters, readers and rules" in `.claude/rules/server.md`: search `packages/civitai-*` and the main app's `src/server/` first, and move shared logic into a package rather than copying it.
 - `apps/moderator`: a bulk-selection bar is `$lib/components/SelectionBar`, never a hand-rolled fixed footer, and every action in it is a `TipButton` (or `ConfirmSubmit` with `tip`).
 
 ## `typecheck` vs `check`

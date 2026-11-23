@@ -16,9 +16,9 @@ vi.mock('~/utils/metadata/audit', async (importOriginal) => {
   const real = await importOriginal<typeof Audit>();
   return {
     ...real,
-    auditPrompt: (p: string, ...rest: [string?, boolean?]) => {
-      if (p === THROWS) throw new Error('auditor failure');
-      return real.auditPrompt(p, ...rest);
+    auditPrompt: (...args: Parameters<typeof real.auditPrompt>) => {
+      if (args[0] === THROWS) throw new Error('auditor failure');
+      return real.auditPrompt(...args);
     },
   };
 });

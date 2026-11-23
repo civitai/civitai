@@ -16,7 +16,7 @@ async function main() {
   });
   metrics.attachPool(pool);
 
-  const app = buildApp({ secret: config.secret, pool, metrics, logger: true });
+  const app = buildApp({ secret: config.secret, mode: config.mode, pool, metrics, logger: true });
   await app.listen({ port: config.port, host: config.host });
 
   // Metrics on their own port, so the request port's network policy can admit only the caller.
@@ -32,7 +32,7 @@ async function main() {
   });
   metricsServer.listen(config.metricsPort, config.host);
   app.log.info(
-    `storage-hook-runner listening on ${config.port} (metrics ${config.metricsPort}), ${config.poolSize} workers`
+    `storage-hook-runner listening on ${config.port} (metrics ${config.metricsPort}), ${config.poolSize} workers, mode ${config.mode}`
   );
 
   const shutdown = (signal: string) => {

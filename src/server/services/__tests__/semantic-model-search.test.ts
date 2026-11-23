@@ -188,7 +188,12 @@ describe('name and keyword matches', () => {
       candidateSource: ranking([1, 2, 3, 9], undefined, [9]),
     });
     expect(result.items.map((m) => m.id)).toEqual([9, 1, 2, 3]);
-    expect(sent[0].allWords).toEqual({ key: 'name', text: 'civetai' });
+    // A model tagged with a query word is in the same first tier as a name match.
+    expect(sent[0].allWords).toEqual({
+      key: 'name',
+      text: 'civetai',
+      orAnyOf: { key: 'tags', values: ['civetai'] },
+    });
   });
 });
 
@@ -230,6 +235,27 @@ describe('the query audit', () => {
     const result = await run([1]);
     expect(result.items).toEqual([]);
     expect(sent).toHaveLength(0);
+  });
+
+  it('searched as typed, still refuses a flagged query before asking the index', async () => {
+    h.includesInappropriate.mockReturnValue('poi');
+    const result = await run([1], { spellcheck: false });
+    expect(result.items).toEqual([]);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('searched as typed, asks the index for the text with its spelling correction off', async () => {
+    const queries: unknown[] = [];
+    await searchSemanticModels({
+      input: input({ query: 'Shikata nee', spellcheck: false }),
+      user: VIEWER,
+      queryOptions: OPTIONS,
+      candidateSource: async ({ query }) => {
+        queries.push(query);
+        return { ids: [] };
+      },
+    });
+    expect(queries[0]).toEqual({ text: 'Shikata nee', spellcheck: false });
   });
 
   it("refuses when the service's spelling correction fails the audit", async () => {

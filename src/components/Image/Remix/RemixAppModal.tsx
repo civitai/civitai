@@ -16,6 +16,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { RemixRunState } from '~/server/services/remix-app-run.service';
 import { TEAM_REMIX_SLUG } from '~/shared/constants/remix-apps.constants';
 import type { RemixAnswer, RemixImage, RemixViewerAsk } from '~/shared/remix-apps/define';
+import { USER_REMIX_SLUG } from '~/shared/remix-apps/row.schema';
 import { REMIX_DONE_TAG } from '~/shared/remix-apps/tags';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import {
@@ -76,8 +77,9 @@ function useOfferPrice(slug: string, imageId: number | undefined, enabled: boole
     { imageId: imageId ?? 0 },
     { ...opts, enabled: enabled && isTeam && imageId != null }
   );
+  // A user app is priced alone, when its modal opens; a system app shares the menu's quote.
   const quote = trpc.remixApp.quote.useQuery(
-    { imageId: imageId ?? 0 },
+    { imageId: imageId ?? 0, ...(USER_REMIX_SLUG.test(slug) ? { slug } : {}) },
     { ...opts, enabled: enabled && !isTeam && imageId != null }
   );
   const price = isTeam

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type * as MeiliUtil from '~/server/meilisearch/util';
 
 /**
@@ -34,6 +35,12 @@ const MINOR_R = 13;
 const HIDDEN_META = 14;
 const TOS_VIOLATION = 15;
 const ACCEPTABLE_MINOR = 16;
+const NSFW_UNRATED = 17;
+const NSFW_RATED_R = 18;
+const NSFW_TEXT_RATED_R = 19;
+const MINOR_PG_ON_NSFW = 20;
+const X_ON_RATED_R = 21;
+const REPORT_LISTED = 22;
 
 let pg: PGlite;
 const db = {
@@ -54,7 +61,8 @@ beforeAll(async () => {
       "createdAt" timestamp DEFAULT now(), "updatedAt" timestamp DEFAULT now(), "userId" int NOT NULL,
       "startsAt" timestamp DEFAULT now() - interval '1 day', "expiresAt" timestamp DEFAULT now() + interval '1 day',
       type text DEFAULT 'ModelCreation', details jsonb, complete boolean DEFAULT false,
-      nsfw boolean DEFAULT false, availability "Availability" NOT NULL DEFAULT 'Public'
+      nsfw boolean DEFAULT false, availability "Availability" NOT NULL DEFAULT 'Public',
+      "moderatorNsfwLevel" int
     );
     CREATE TABLE "User" (
       id int PRIMARY KEY, username text, "deletedAt" timestamp, image text, "profilePictureId" int
@@ -72,6 +80,7 @@ beforeAll(async () => {
       "acceptableMinor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, images jsonb);
     CREATE TABLE "Tag" (id int PRIMARY KEY, name text);
     CREATE TABLE "TagsOnBounty" ("bountyId" int, "tagId" int);
     CREATE TABLE "BountyStat" (
@@ -82,12 +91,29 @@ beforeAll(async () => {
     INSERT INTO "User" (id, username, image) VALUES (${OWNER}, 'owner', 'legacy.png');
     INSERT INTO "Image" (id, "tosViolation") VALUES (${TOS_VIOLATION}, true);
     INSERT INTO "Image" (id, "acceptableMinor") VALUES (${ACCEPTABLE_MINOR}, true);
+    INSERT INTO "Image" (id) VALUES (${REPORT_LISTED});
+    INSERT INTO "CsamReport" (images) VALUES ('[{"id": ${REPORT_LISTED}}]'), ('"not a list"');
     INSERT INTO "Image" (id, meta, "nsfwLevel", "blockedFor", minor, "hideMeta") VALUES
       (${CLEAN}, '{"prompt": "p"}', 1, NULL, false, false),
       (${BLOCKED_FOR}, NULL, 1, 'tos', false, false),
       (${UNRATED}, NULL, 0, NULL, false, false),
       (${MINOR_R}, NULL, ${NsfwLevel.R}, NULL, true, false),
       (${HIDDEN_META}, '{"prompt": "secret"}', 1, NULL, false, true);
+  `);
+  await pg.exec(`
+    INSERT INTO "Image" (id) VALUES (${NSFW_UNRATED}), (${NSFW_RATED_R}), (${NSFW_TEXT_RATED_R});
+    INSERT INTO "Image" (id, minor) VALUES (${MINOR_PG_ON_NSFW}, true);
+    INSERT INTO "Image" (id, "nsfwLevel") VALUES (${X_ON_RATED_R}, ${NsfwLevel.X});
+    INSERT INTO "Bounty" (id, "userId", nsfw) VALUES (${NSFW_UNRATED}, ${OWNER}, true),
+      (${NSFW_TEXT_RATED_R}, ${OWNER}, true), (${MINOR_PG_ON_NSFW}, ${OWNER}, true);
+    INSERT INTO "Bounty" (id, "userId", nsfw, "moderatorNsfwLevel")
+      VALUES (${X_ON_RATED_R}, ${OWNER}, true, ${NsfwLevel.R});
+    INSERT INTO "Bounty" (id, "userId", nsfw, "moderatorNsfwLevel")
+      VALUES (${NSFW_RATED_R}, ${OWNER}, true, ${NsfwLevel.R});
+    INSERT INTO "ImageConnection" VALUES (${NSFW_UNRATED}, ${NSFW_UNRATED}, 'Bounty'),
+      (${NSFW_RATED_R}, ${NSFW_RATED_R}, 'Bounty'),
+      (${NSFW_TEXT_RATED_R}, ${NSFW_TEXT_RATED_R}, 'Bounty'),
+      (${MINOR_PG_ON_NSFW}, ${MINOR_PG_ON_NSFW}, 'Bounty'), (${X_ON_RATED_R}, ${X_ON_RATED_R}, 'Bounty');
   `);
   for (const id of [
     CLEAN,
@@ -97,6 +123,7 @@ beforeAll(async () => {
     HIDDEN_META,
     TOS_VIOLATION,
     ACCEPTABLE_MINOR,
+    REPORT_LISTED,
   ]) {
     await pg.exec(`
       INSERT INTO "Bounty" (id, "userId") VALUES (${id}, ${OWNER});
@@ -143,6 +170,7 @@ describe('bounties search index images', () => {
     ['is minor-flagged and rated R', MINOR_R],
     ['violates the ToS', TOS_VIOLATION],
     ['is marked acceptable-minor', ACCEPTABLE_MINOR],
+    ['is listed on a CSAM report', REPORT_LISTED],
   ])('drops the document of a bounty whose only image %s', async (_, id) => {
     expect(await pull(id)).toBeUndefined();
     expect(onSearchIndexDocumentsCleanup).toHaveBeenCalledWith({
@@ -156,5 +184,58 @@ describe('bounties search index images', () => {
     const images = await indexed(HIDDEN_META);
     expect(images.map((i) => i.id)).toEqual([HIDDEN_META]);
     expect(images[0].meta).toBeNull();
+  });
+
+  it('indexes a PG image of an unflagged bounty at its own level (control)', async () => {
+    const doc = await pull(CLEAN);
+    expect(doc?.images.map((i) => i.nsfwLevel)).toEqual([NsfwLevel.PG]);
+    expect(doc?.nsfwLevel).toEqual(parseBitwiseBrowsingLevel(NsfwLevel.PG));
+  });
+
+  it('raises the images and document of an unrated mature-marked bounty to XXX', async () => {
+    const doc = await pull(NSFW_UNRATED);
+    expect(doc?.images.map((i) => i.nsfwLevel)).toEqual([NsfwLevel.XXX]);
+    expect(doc?.nsfwLevel).toEqual(parseBitwiseBrowsingLevel(NsfwLevel.XXX));
+  });
+
+  it("raises a PG image of a mature-marked bounty to a moderator's R rating", async () => {
+    const doc = await pull(NSFW_RATED_R);
+    expect(doc?.images.map((i) => i.nsfwLevel)).toEqual([NsfwLevel.R]);
+    expect(doc?.nsfwLevel).toEqual(parseBitwiseBrowsingLevel(NsfwLevel.R));
+  });
+
+  it('raises a PG image of a mature-marked bounty to the R its text scan rated it', async () => {
+    const queryRaw = dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>;
+    // The scan's moderation row, as the text-rating lookup reads it; any other read finds nothing.
+    queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+      strings.join('').includes('"EntityModeration"')
+        ? [
+            {
+              id: NSFW_TEXT_RATED_R,
+              byScan: true,
+              scanCurrent: true,
+              scanLevel: NsfwLevel.R,
+              scanVersion: '1',
+              content: null,
+            },
+          ]
+        : []
+    );
+    try {
+      const doc = await pull(NSFW_TEXT_RATED_R);
+      expect(doc?.images.map((i) => i.nsfwLevel)).toEqual([NsfwLevel.R]);
+      expect(doc?.nsfwLevel).toEqual(parseBitwiseBrowsingLevel(NsfwLevel.R));
+    } finally {
+      queryRaw.mockReset();
+      queryRaw.mockResolvedValue([]);
+    }
+  });
+
+  it('keeps an X image of an R-rated mature-marked bounty at X', async () => {
+    expect((await indexed(X_ON_RATED_R)).map((i) => i.nsfwLevel)).toEqual([NsfwLevel.X]);
+  });
+
+  it('leaves out a minor-flagged PG image that an unrated mature-marked bounty raises', async () => {
+    expect(await indexed(MINOR_PG_ON_NSFW)).toEqual([]);
   });
 });

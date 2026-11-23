@@ -1,65 +1,65 @@
 /**
- * AUTHORIZED PRIVATE STREAMS: one user's private documents of one collection, streamed on the
- * collection's own schema URN (`urn:schema:apps.civitai.com:<slug>/<coll>@vN`) to an authorized
- * subscription that may read them, and to nobody else. The auth extension's origin rule 4: "An
- * origin holding restricted data streams, to each authorized subscription, what that token may
- * read, by its own grants. A grant that ends removes the entity from that stream as a `Delete`."
+ * AUTHORIZED PRIVATE STREAMS: one user's private documents of one collection, on the collection's
+ * own schema URN, to a subscription that may read them (the auth extension's origin rule 4).
  *
- * SWITCHED OFF BY DEFAULT. Nothing here is built unless `REGISTRY_ADAPTER_PRIVATE_RELAYS` names at
- * least one relay (`main.ts`, {@link parsePrivateRelays}); unset or empty, every document stream is
- * the public feed's (`doc-feed.ts`), exactly as before.
+ * OFF unless `REGISTRY_ADAPTER_PRIVATE_RELAYS` names a relay ({@link parsePrivateRelays}); until
+ * then every document stream is the public feed's.
  *
- * Which collections: those whose approved app declares them `visibility: "private"` (each user has
- * their own key space). A subscription to such a collection's schema is routed here
- * ({@link createPrivateDocFeed} `routes`), whoever sends it; what it is then sent depends on the
- * gates below. A public collection never reaches this feed, and this feed never reads a shared
- * document (`createDocStorePrivateFeed` in `doc-store.ts` reads one user's key space only).
+ * THE GATES, in order; a refusal streams NOTHING (an empty snapshot and `live`), so a refused
+ * subscriber learns nothing, not even whether the user holds any records:
+ *   1. a token; 2. a user's token (`VerifiedToken.userId`, never a service's);
+ *   3. presented by a listed relay (`act.sub`); 4. granting `AppDataRead`;
+ *   5. `decideCollectionRead` grants this user, through this client, this collection.
+ * Gates 1–4 are fixed for the token's life; gate 5 re-runs on every poll, which is what turns a
+ * revocation into `Delete`s within one {@link PrivateFeedOptions.pollMs}.
  *
- * THE GATES, in order. Every one must pass for a single record to be sent; a refusal streams
- * NOTHING (an empty snapshot and `live`, as for a collection not published), so a refused
- * subscriber learns nothing, not even whether the user holds anything:
- *   1. the subscription carries a token (anonymous: nothing);
- *   2. the token is a USER's (`VerifiedToken.userId`): a service's own token, which has no user,
- *      never reads private data;
- *   3. the relay that presents it (`act.sub`) is one of {@link PrivateFeedOptions.relays}: a
- *      token with no actor (sent directly, not exchanged by a relay) or from any other relay reads
- *      nothing;
- *   4. the token grants `AppDataRead`;
- *   5. the one collection-read predicate (`decideCollectionRead`, `data-read-grant.ts`, injected
- *      as {@link PrivateFeedOptions.decide}) grants this user, through this token's client, this
- *      collection: the client is the app itself (`own`), or an app the user granted the import
- *      (`grant`). Every record sent is the user's own (their key space), so the collection's
- *      decision is each record's. Its mature-content ceiling is the subscription's audience.
- * Gates 1–4 depend only on the token, which is fixed for the stream's life. Gate 5 is re-run on
- * EVERY poll.
+ * A BLOCK-EXCHANGE TOKEN (`VerifiedToken.block`: the hub minted it from an App Block token, and it
+ * carries that token's block, install and ceiling; `auth.jwt.ts`) is held, on every poll, to what
+ * the site's document store would serve the block token itself:
+ *   - its ceiling: a source app whose rating the viewer's audience admits is read only when
+ *     `ratingAllowedForCeiling` (`rating-ceiling.ts`) also admits it for the token's
+ *     `civitai_max_browsing_level`. That is the store's own rule for a block token's import
+ *     (`resolveImportAccess` in `doc-store-access.ts`), the same function: a mature rating (`r`,
+ *     `x`, `xxx`) only under a ceiling with a mature bit, so an SFW host's token reads no mature-rated
+ *     app's records, its own app's or an import's;
+ *   - its block: `decideCollectionRead` is passed the token's `civitai_app_block_id`
+ *     (`DataReader.appBlockId`), and refuses unless that block is still its client's one approved
+ *     block, by the predicate's own resolution (`clientIsOnlySource` / `resolveConsumer`);
+ *   - its install: refused while the install is revoked (uninstalled, turned off, or its publisher
+ *     banned), by the markers the store's `withBlockScope` reads
+ *     ({@link PrivateFeedOptions.instanceRevoked}).
+ * A refusal is a stream that holds nothing, as for gate 5: `Delete`s on the next poll. Any other
+ * token (a user-exchange token included) has no `block`, and none of this applies to it.
  *
- * REVOCATION. Each poll ({@link PrivateFeedOptions.pollMs}, `REGISTRY_ADAPTER_POLL_SECONDS`,
- * default 60 s) re-runs gate 5 and re-reads the user's records. A grant revoked, the import scope
- * withdrawn, the app no longer approved, the user no longer allowed to run apps, the source
- * re-rated above the audience: the stream then holds nothing, and every record it had sent goes as
- * a `Delete`. A record deleted or hidden goes as a `Delete` the same way. One refusal is checked
- * before it is believed: `apps_disabled` while the run gate's flag cannot be read (a Flipt outage)
- * ends the stream `unavailable`, with no `Delete` ({@link PrivateFeedOptions.runGateReadable}). So the lag is at most one
- * poll interval plus that poll's reads (and the read replica's lag on the app rows). A failed read
- * is never taken for a revocation: it ends the stream `unavailable`, and the consumer resumes.
- * A resume is judged the same way: a cursor whose gates 1–4 still pass resumes, and its first poll
- * sends the `Delete`s for whatever the user lost while the consumer was away.
+ * A refusal is believed only when it was read: an `apps_disabled` while the run gate's flag cannot
+ * be read (a Flipt outage refuses everyone) ends the stream `unavailable` instead of sending
+ * `Delete`s ({@link PrivateFeedOptions.runGateReadable}), and so does any failed read.
  *
- * CURSORS. A cursor names a stored state (`p1.<digest>`) that records the token's SUBJECT (user and
- * client), the audience, the app, the schemas and every (urn, rev) sent. A cursor is refused
- * (`cursor_expired`) before its state is used when the token fails gates 1–4, when it was issued to
- * another subject (the auth extension's relay rule 3, enforced here too, since the request binding
- * in `subscription.ts` is a public digest) or another audience, or when it is older than
- * {@link PRIVATE_CURSOR_TTL_MS} (7 days). Private states share the snapshot store's key space with
- * public ones and differ only in retention ({@link PRIVATE_STATE_RETENTION_SECONDS}); what keeps
- * them apart is the state format (`p1`, refused by the public feed) and the subject check above.
+ * CURSORS. The stored state records the token subject, and a cursor is refused before its state is
+ * used for another subject: the request binding in `subscription.ts` is a public digest, so it
+ * cannot keep one subject's cursor from another. Cursors expire after
+ * {@link PRIVATE_CURSOR_TTL_MS}. Private and public states share one key space in the snapshot
+ * store; they are kept apart only by the `p1` state format (which the public feed refuses) and
+ * that subject check.
  *
- * A private record's URN is `urn:apps.civitai.com:<slug>/<coll>/<record_id>`, the record core's
- * (`app-record.ts`): its stored random id, since a private key is unique only within one user's
- * key space. A row with no `record_id` yet is not sent.
+ * A record's URN carries its stored `record_id`, not its key: a private key is unique only within
+ * one user's key space. The key itself travels beside the body, as the entity's `key`, and so does
+ * the document's `seq`, the entity's `seq` ({@link PRIVATE_BODY_FORMAT}): the body stays the
+ * document its schemas claim, and a private stream belongs to one user's token, so neither reaches
+ * another user. The public feeds carry none. The HTTP binding sends both (an SSE upsert is the whole
+ * entity); the gRPC binding's `Entity` message has no field for them.
  *
- * Relays never share or cache an authorized stream (auth extension, relay rule 2); over HTTP every
- * authorized stream is also sent `Cache-Control: private, no-store` (`serve.ts`).
+ * THE HEAD. Each poll reads the app namespace's write head (`usage_app.last_seq`, one counter for
+ * every collection of the app, `PrivateDocSource.head`) BEFORE its keyset, never after: every write
+ * at or below the head had committed when the keyset was read, so it is in what the poll read. A
+ * head read after the keyset could name a write that committed between the two reads and that the
+ * keyset missed. The stream says it in `meta` ({@link headMeta}): on `live`, the head of the state
+ * the cursor names (absent for a state saved before heads were kept, or one that holds nothing);
+ * then a `progress` whenever a poll's head differs from the last one sent, after that poll's
+ * changes. A refused poll (a stream that holds nothing) reads no head and sends none. A head
+ * below the cursor state's, or below the last one sent, means the namespace's seqs restarted (its
+ * usage row was wiped: an app deleted and restored), and the stream is `cursor_expired`, at resume
+ * and mid-stream, as the public feed's is.
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import { audienceAdmits, contextAudience } from '~/server/registry-adapter/audience';
@@ -67,10 +67,11 @@ import { hasScope } from '~/server/registry-adapter/auth.jwt';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import type { CollectionStream } from '~/server/registry-adapter/doc-feed';
 import { createClaimer, docRev, familyDigest } from '~/server/registry-adapter/doc-feed';
-import type { AdapterContext, Change, Entity } from '~/server/registry-adapter/protocol';
+import type { AdapterContext, Change, Entity, EventMeta } from '~/server/registry-adapter/protocol';
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
 import { sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
 import { registryUrn } from '~/server/registry-adapter/urn';
+import { ratingAllowedForCeiling } from '~/server/utils/rating-ceiling';
 import type {
   CollectionReadDecision,
   CollectionReadTarget,
@@ -92,6 +93,14 @@ export function parsePrivateRelays(raw: string | undefined): ReadonlySet<string>
   return new Set((raw ?? '').split(/[\s,]+/).filter(Boolean));
 }
 
+/** Whether the token was presented by one of `relays` (its `act.sub`). */
+export function isListedRelay(
+  relays: ReadonlySet<string>,
+  reader: AdapterContext['reader']
+): boolean {
+  return !!reader?.actor && relays.has(reader.actor);
+}
+
 /** Why gates 1–4 refuse a subscription; null when they pass. */
 export type PrivateGateRefusal = 'anonymous' | 'not_user' | 'relay_not_listed' | 'scope_missing';
 
@@ -102,13 +111,15 @@ export function privateTokenGate(
 ): PrivateGateRefusal | null {
   if (!reader) return 'anonymous';
   if (reader.userId === null) return 'not_user';
-  if (reader.actor === null || !relays.has(reader.actor)) return 'relay_not_listed';
+  if (!isListedRelay(relays, reader)) return 'relay_not_listed';
   if (!hasScope(reader, 'AppDataRead')) return 'scope_missing';
   return null;
 }
 
 /** The private reads of the document store (`createDocStorePrivateFeed`). */
 export type PrivateDocSource = {
+  /** The app namespace's write head (`privateHead`): its newest seq, 0 when nothing was written. */
+  head(appId: string): Promise<number>;
   versions(
     appId: string,
     coll: string,
@@ -157,6 +168,13 @@ export type PrivateFeedOptions = {
    */
   runGateReadable: (userId: number) => Promise<boolean>;
   /**
+   * Whether a block-exchange token's install is revoked for `userId`'s block token: uninstalled,
+   * turned off, or its publisher banned (`BlockRevocation.isRevoked`, the check `withBlockScope`
+   * runs on every REST call). Asked only for a token with a `block`. Like the store's, a marker
+   * that cannot be read is not a revocation (it answers false).
+   */
+  instanceRevoked: (blockInstanceId: string, userId: number) => Promise<boolean>;
+  /**
    * The private states' store: the same key space as the public feed's, with a retention of its
    * own ({@link PRIVATE_STATE_RETENTION_SECONDS}).
    */
@@ -169,6 +187,29 @@ export type PrivateFeedOptions = {
 
 export const PRIVATE_PAGE = 500;
 const STATE_FORMAT = 'p1';
+/**
+ * The version of what a private entity carries: `k1` was the body plus the record's storage `key`;
+ * `k2` adds the document's `seq`. It is folded into every private `rev` and into the poll's read
+ * digest, so a cursor saved under an earlier format resumes as a change: its read digest no longer
+ * matches, every record's rev differs, and each is sent again, now with its key and seq. No cursor
+ * has to be expired for it.
+ */
+export const PRIVATE_BODY_FORMAT = 'k2';
+
+/**
+ * A private entity's rev: the document feed's `docRev`, under {@link PRIVATE_BODY_FORMAT}, the key
+ * and the seq, so it changes whenever anything the entity carries does.
+ */
+export const privateRev = (
+  d: Pick<PrivateFeedDocument, 'key' | 'version' | 'data' | 'seq'>,
+  schemas: readonly string[]
+) =>
+  sha256Hex(
+    sortedKeyJson({ f: PRIVATE_BODY_FORMAT, key: d.key, seq: d.seq, rev: docRev(d, schemas) })
+  ).slice(0, 16);
+
+/** The `meta` a private stream's `live` and `progress` carry for a head (see the file comment). */
+export const headMeta = (seq: number): EventMeta => ({ head: { seq } });
 /** The cursor of a private stream that holds nothing; it names no stored state. */
 export const PRIVATE_EMPTY_CURSOR = `${STATE_FORMAT}.empty`;
 const CURSOR_RE = /^p1\.([0-9a-f]{32})$/;
@@ -181,10 +222,18 @@ type PrivateState = {
   audience: string;
   appId: string | null;
   family: string | null;
-  /** A digest of every (record id, version) read, sent or not: what an unchanged poll compares. */
+  /**
+   * A digest of every (record id, version) read, sent or not, under {@link PRIVATE_BODY_FORMAT}:
+   * what an unchanged poll compares.
+   */
   read: string | null;
   /** When the state was saved, ms: its cursor expires {@link PRIVATE_CURSOR_TTL_MS} after. */
   issuedAt: number;
+  /**
+   * The head the poll that computed this state read before its keyset; absent in a state that
+   * holds nothing, and in one saved before heads were kept.
+   */
+  head?: number;
   served: Array<[urn: string, rev: string]>;
 };
 
@@ -275,15 +324,29 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
     prev: PrivateState | null,
     reader: AdapterContext['reader'],
     audience: Audience
-  ): Promise<{ next: PrivateState; entities: Map<string, Entity> }> {
-    const nothing = () => ({ next: emptyState(schema, audience), entities: new Map() });
+  ): Promise<{ next: PrivateState; entities: Map<string, Entity>; head: number | null }> {
+    const nothing = () => ({
+      next: emptyState(schema, audience),
+      entities: new Map<string, Entity>(),
+      head: null,
+    });
     if (privateTokenGate(opts.relays, reader) !== null) return nothing();
-    const { subject, userId, clientId } = reader as Reader & { userId: number };
+    const { subject, userId, clientId, block } = reader as Reader & { userId: number };
     const stream = await opts.resolve(schema);
     if (!stream) return nothing();
     const { appId, slug, collection, family } = stream;
+    // A block-exchange token's install, revoked since it was exchanged (see the file comment).
+    if (block && (await opts.instanceRevoked(block.blockInstanceId, userId))) return nothing();
     const decision = await opts.decide(
-      { userId, clientId, matureAllowed: (rating) => audienceAdmits(audience, rating) },
+      {
+        userId,
+        clientId,
+        // The viewer's audience, and for a block-exchange token also its ceiling: the store's rule.
+        matureAllowed: (rating) =>
+          audienceAdmits(audience, rating) &&
+          (block === undefined || ratingAllowedForCeiling(rating, block.maxBrowsingLevel)),
+        ...(block ? { appBlockId: block.appBlockId } : {}),
+      },
       { sourceBlockId: slug, collection }
     );
     if (!decision.ok) {
@@ -303,14 +366,25 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
     }
 
     const digest = familyDigest(family);
+    // Before the keyset, never after (see the file comment).
+    const head = await opts.source.head(appId);
+    // A head below the one this state was read at: the namespace was wiped and written again
+    // (an app deleted and restored), so its seqs restarted, and nothing this state holds can be
+    // compared with what is there now. As the public feed does.
+    if (prev?.appId === appId && prev.head !== undefined && head < prev.head) {
+      throw cursorExpired('the namespace seq went back');
+    }
     const versions = await readPaged((after) =>
       opts.source.versions(appId, collection, userId, after, PRIVATE_PAGE)
     );
     const read = sha256Hex(
-      sortedKeyJson(versions.map((v) => [v.recordId, v.version]).sort())
+      sortedKeyJson({
+        f: PRIVATE_BODY_FORMAT,
+        read: versions.map((v) => [v.recordId, v.version, v.seq]).sort(),
+      })
     ).slice(0, 32);
     if (prev && prev.appId === appId && prev.family === digest && prev.read === read) {
-      return { next: prev, entities: new Map() };
+      return { next: prev, entities: new Map(), head };
     }
 
     const claims = claimer(family, digest);
@@ -322,7 +396,14 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
       const schemas = claims(d.data);
       if (!schemas.includes(schema)) continue;
       const urn = registryUrn({ kind: 'document', slug, collection, key: d.recordId });
-      entities.set(urn, { urn, schemas, rev: docRev(d, schemas), body: d.data });
+      entities.set(urn, {
+        urn,
+        schemas,
+        rev: privateRev(d, schemas),
+        body: d.data,
+        key: d.key,
+        seq: d.seq,
+      });
     }
     return {
       next: {
@@ -334,11 +415,13 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
         family: digest,
         read,
         issuedAt: 0,
+        head,
         served: [...entities.values()]
           .map((e) => [e.urn, e.rev] as [string, string])
           .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
       },
       entities,
+      head,
     };
   }
 
@@ -363,11 +446,18 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
     let state = loaded;
     let position = cursor;
     let pending: Awaited<ReturnType<typeof advance>> | null = first;
+    // The head `live` carried (the loaded state's), then the last one a `progress` carried.
+    let sentHead = loaded.head ?? null;
     while (!ctx.signal.aborted) {
       const before = state;
-      const { next, entities } =
+      const { next, entities, head } =
         pending ?? (await guarded(() => advance(schema, before, ctx.reader, audience)));
       pending = null;
+      // The same, against the newest head this stream SENT (a head-only move is not saved in the
+      // state, so `advance` compares with an older one).
+      if (head !== null && sentHead !== null && head < sentHead) {
+        throw cursorExpired('the namespace seq went back');
+      }
       if (next !== before) {
         const was = new Map(before.served);
         const still = new Set(next.served.map(([urn]) => urn));
@@ -393,6 +483,12 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
           }
           position = nextCursor;
         }
+      }
+      // After the poll's changes, so a consumer holds all of them when it reads the head.
+      if (head !== null && head !== sentHead) {
+        if (ctx.signal.aborted) return;
+        sentHead = head;
+        yield { progress: position, meta: headMeta(head) };
       }
       await opts.sleep(opts.pollMs, ctx.signal);
     }
@@ -423,7 +519,11 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
       const audience = contextAudience(ctx);
       const state = await guarded(() => load(schema, cursor, ctx.reader, audience));
       const first = await guarded(() => advance(schema, state, ctx.reader, audience));
-      return follow(schema, cursor, state, first, ctx, audience);
+      // `live` carries the head of the state the cursor names: what the consumer holds once it is
+      // live. The first poll's changes, and its head, follow it.
+      return Object.assign(follow(schema, cursor, state, first, ctx, audience), {
+        ...(state.head !== undefined ? { liveMeta: headMeta(state.head) } : {}),
+      });
     },
   };
 }

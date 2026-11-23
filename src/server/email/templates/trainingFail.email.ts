@@ -1,4 +1,6 @@
+import { escape as escapeHtml } from 'he';
 import { createEmail } from '~/server/email/templates/base.email';
+import { renderEmailCallout, simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
 type TrainingCompleteEmailData = {
@@ -22,66 +24,21 @@ export const trainingFailEmail = createEmail({
     to: user.email,
   }),
   html({ user, model, mName }: TrainingCompleteEmailData) {
-    const brandColor = '#346df1';
-    const color = {
-      background: '#f9f9f9',
-      text: '#444',
-      mainBackground: '#fff',
-      buttonBackground: brandColor,
-      buttonBorder: brandColor,
-      buttonText: '#fff',
-    };
-
-    return `
-  <body style="background: ${color.background};">
-    <table width="100%" border="0" cellgap="0" cellpadding="0" style="max-width: 600px; margin: auto;">
-      <tr><td height="20"></td></tr>
-      <tr><td>
-        <table width="100%" border="0" cellgap="20" cellpadding="0" style="background: ${
-          color.mainBackground
-        }; border-radius: 10px;">
-          <tr>
-            <td align="center"
-              style="padding: 10px 0px; font-size: 22px; font-family: Helvetica, Arial, sans-serif; color: ${
-                color.text
-              };">
-              Your model failed to train 😞
-            </td>
-          </tr>
-          <tr>
-            <td
-              style="padding: 0px 0px 10px 0px; font-size: 16px; line-height: 22px; font-family: Helvetica, Arial, sans-serif; color: ${
-                color.text
-              };">
-              Unfortunately, this model ("${
-                model.name
-              } - ${mName}") failed to train properly. If you have not yet received your refund, you should receive it within 24 hours.
-            </td>
-          </tr>
-          <tr>
-            <td align="center" style="padding: 0;">
-              <table border="0" cellgap="0" cellpadding="0">
-                <tr>
-                  <td align="center" style="border-radius: 5px;" bgcolor="${
-                    color.buttonBackground
-                  }"><a href="${reviewUrl(user.username)}"
-                      target="_blank"
-                      style="font-size: 18px; font-family: Helvetica, Arial, sans-serif; color: ${
-                        color.buttonText
-                      }; text-decoration: none; border-radius: 5px; padding: 10px 20px; border: 1px solid ${
-      color.buttonBorder
-    }; display: inline-block; font-weight: bold;">Go To Dashboard</a></td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-        </table>
-      </td></tr>
-      <tr><td height="20"></td></tr>
-    </table>
-  </body>
-  `;
+    return simpleEmailWithTemplate({
+      icon: '😞',
+      accent: 'red',
+      eyebrow: 'Training failed',
+      header: 'Your model failed to train',
+      body: `<p style="margin: 0;">Unfortunately, this model ("${escapeHtml(
+        model.name
+      )} - ${escapeHtml(mName)}") failed to train properly.</p>
+        ${renderEmailCallout(
+          'If you have not yet received your refund, you should receive it within 24 hours.',
+          { accent: 'gray' }
+        )}`,
+      btnUrl: escapeHtml(reviewUrl(user.username)),
+      btnLabel: 'Go To Dashboard',
+    });
   },
 
   /** Email Text body (fallback for email clients that don't render HTML, e.g. feature phones) */

@@ -4,7 +4,7 @@ import {
   DEV_TUNNEL_HARD_SECONDS,
   getActiveDevTunnel,
 } from '~/server/services/blocks/dev-tunnel.service';
-import { isValidDevHost } from '~/server/services/blocks/dev-tunnel-session';
+import { sessionHostDomains, sessionHostKind } from '~/server/services/blocks/dev-tunnel-session';
 
 const QUERY_TIMEOUT_MS = 1_500;
 /** Nameservers asked per check; each is asked in parallel and all of them have to agree. */
@@ -130,12 +130,15 @@ async function serverHasName(server: string, name: string): Promise<boolean | nu
  * none could be asked: the check only narrows a race, and skipping it is the behaviour from before
  * it existed.
  *
- * Without `APPS_DEV_TUNNEL_INGRESS_TARGET` this deployment publishes no record per tunnel, so
- * there is nothing to wait for and the answer is always `true`.
+ * Always `true` for an App Assistant direct-preview session host (never published one by one),
+ * and for any host when `APPS_DEV_TUNNEL_INGRESS_TARGET` is unset (this deployment then publishes
+ * no record per tunnel, so there is nothing to wait for).
  */
 export async function isDevTunnelHostPublished(host: string): Promise<boolean> {
+  const kind = sessionHostKind(host, sessionHostDomains());
+  if (kind === 'direct') return true;
   if (!env.APPS_DEV_TUNNEL_INGRESS_TARGET) return true;
-  if (!isValidDevHost(host, env.APPS_DOMAIN)) return false;
+  if (kind !== 'tunnel') return false;
   if (seenPublished(host)) return true;
   const servers = await authoritativeServers(env.APPS_DOMAIN);
   const answers = await Promise.all(servers.map((server) => serverHasName(server, absolute(host))));

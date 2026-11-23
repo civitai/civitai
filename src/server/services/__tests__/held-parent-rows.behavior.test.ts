@@ -102,7 +102,7 @@ beforeAll(async () => {
     );
     -- An image delete queues its stored file and its post's recount in the same transaction.
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
-    CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel', 'ImageDelete');
+    CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel', 'PendingDelete');
     CREATE TABLE "JobQueue" (
       "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
       data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(),
@@ -185,7 +185,8 @@ beforeEach(async () => {
   await db.exec(`
     TRUNCATE "CommentTopic", "CommentV3", "ResourceReview", "Model", "PostText", "Post", "Image", "CsamReport",
       "EvidenceHold", "BountyEntry", "Bounty", "Article",
-      "HeldResourceReview", "BountyBenefactor", "ModActivity", "BountyUnpaidAward", "JobQueue";
+      "HeldResourceReview", "BountyBenefactor", "ModActivity", "BountyUnpaidAward", "JobQueue",
+      "CsamQueueSetAside";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
   `);
@@ -664,7 +665,9 @@ describe("a held author's comments go with their parent", () => {
   it('returns the block markers of the image it deletes', async () => {
     await db.exec(`
       INSERT INTO "Image" (id, "userId", ingestion, "needsReview", "blockedFor")
-      VALUES (50, ${OWNER}, 'Blocked', 'csam', 'tos')
+      VALUES (50, ${OWNER}, 'Blocked', 'csam', 'tos');
+      -- No open case keeps it.
+      INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES (50, 'Dismissed');
     `);
 
     const [image] = await deleteImages([50], { updatePosts: false, actor: { system: 'test' } });
@@ -755,7 +758,9 @@ describe("a bounty entry's images", () => {
   });
 
   const queuedData = () =>
-    rows(`SELECT "entityId", data FROM "JobQueue" WHERE type = 'ImageDelete' ORDER BY "entityId"`);
+    rows(
+      `SELECT "entityId", data FROM "JobQueue" WHERE type = 'PendingDelete' ORDER BY "entityId"`
+    );
   // A member's delete checks no award was paid on the entry first.
   const noAward = () =>
     vi
@@ -763,11 +768,11 @@ describe("a bounty entry's images", () => {
       .mockImplementationOnce((async () => [{ id: 61, awardedUnitAmount: 0 }]) as never);
 
   it.each([
-    ['a moderator', MODERATOR, true, { moderatorDelete: true }],
-    ['a member', OWNER, false, {}],
-    ['a moderator who wrote it', OWNER, true, {}],
+    ['a moderator', MODERATOR, true, { cleanup: true, moderatorDelete: true }],
+    ['a member', OWNER, false, { cleanup: true }],
+    ['a moderator who wrote it', OWNER, true, { cleanup: true }],
   ])(
-    "are queued with %s's delete, the author's own only, and left to image-deletes",
+    "are queued with %s's delete, the author's own only, and left to pending-deletes",
     async (_, userId, isModerator, queuedAs) => {
       if (!isModerator) noAward();
       await deleteBountyEntry({ id: 61, userId, isModerator });

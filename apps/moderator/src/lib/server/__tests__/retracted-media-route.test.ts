@@ -9,8 +9,9 @@ import { retractedMediaUrl } from '$lib/held-media';
 
 const KEY = '0b9f5a4e-1d2c-4e3f-8a7b-6c5d4e3f2a1b';
 
-const getRetractedMedia = vi.hoisted(() => vi.fn());
+const getModeratorMedia = vi.hoisted(() => vi.fn());
 const recordRetractedView = vi.hoisted(() => vi.fn(async () => {}));
+const recordHeldView = vi.hoisted(() => vi.fn(async () => {}));
 const getGetUrl = vi.hoisted(() =>
   vi.fn(async (input: { key?: string }) => ({ url: `https://store.test/signed/${input.key}` }))
 );
@@ -21,7 +22,7 @@ vi.mock('$lib/server/access', () => ({
   canAccess: (_user: unknown, path: string) => grants.paths.has(path),
 }));
 vi.mock('$lib/server/retracted-media', () => ({
-  getRetractedMedia,
+  getModeratorMedia,
   recordRetractedView,
   retractedMediaEnabled: () => enabled.on,
 }));
@@ -31,6 +32,7 @@ vi.mock('$lib/server/retracted-media-rate', () => ({ retractedMediaRetryAfter })
 vi.mock('$lib/server/storage', () => ({ getStorage: () => ({ getGetUrl }) }));
 vi.mock('$lib/server/held-media', () => ({
   HELD_MEDIA_PAGE: '/images/csam',
+  recordHeldView,
   recordHeldServe: () => undefined,
 }));
 vi.mock('$lib/server/held-sheet', () => ({ SHEET_IMAGE_TYPES: new Set(['image/jpeg']) }));
@@ -63,7 +65,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   grants.paths = new Set();
   enabled.on = true;
-  getRetractedMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null });
+  getModeratorMedia.mockResolvedValue({
+    url: KEY,
+    type: 'image',
+    mimeType: null,
+    kind: 'retracted',
+  });
   recordRetractedView.mockResolvedValue(undefined);
   fetchMock.mockImplementation(
     async () =>
@@ -80,11 +87,11 @@ afterEach(() => vi.unstubAllGlobals());
 describe('/api/retracted-media', () => {
   it('refuses a request with no moderator behind it, before reading the image', async () => {
     expect((await call({ user: null })).status).toBe(403);
-    expect(getRetractedMedia).not.toHaveBeenCalled();
+    expect(getModeratorMedia).not.toHaveBeenCalled();
   });
 
   it('answers every refusal no-store', async () => {
-    getRetractedMedia.mockResolvedValue(null);
+    getModeratorMedia.mockResolvedValue(null);
     for (const opts of [{ user: null }, { imageId: 'x' }, {}]) {
       const { status, res } = await call(opts);
       expect(status).toBeGreaterThanOrEqual(400);
@@ -97,7 +104,7 @@ describe('/api/retracted-media', () => {
     const { status, res } = await call();
     expect(status).toBe(404);
     expect(res?.headers.get('cache-control')).toBe('private, no-store');
-    expect(getRetractedMedia).not.toHaveBeenCalled();
+    expect(getModeratorMedia).not.toHaveBeenCalled();
   });
 
   it('answers a probe with eligibility alone: no storage, no audit row', async () => {
@@ -110,22 +117,39 @@ describe('/api/retracted-media', () => {
   it('refuses a bad id', async () => {
     expect((await call({ imageId: 'x' })).status).toBe(400);
     expect((await call({ imageId: String(2 ** 31) })).status).toBe(400);
-    expect(getRetractedMedia).not.toHaveBeenCalled();
+    expect(getModeratorMedia).not.toHaveBeenCalled();
   });
 
   it('asks for the CSAM-review tier only with the CSAM page grant', async () => {
     await call();
-    expect(getRetractedMedia).toHaveBeenLastCalledWith(7, { csamReview: false });
+    expect(getModeratorMedia).toHaveBeenLastCalledWith(7, { csamReview: false });
     grants.paths = new Set(['/images/csam']);
     await call();
-    expect(getRetractedMedia).toHaveBeenLastCalledWith(7, { csamReview: true });
+    expect(getModeratorMedia).toHaveBeenLastCalledWith(7, { csamReview: true });
   });
 
   it('refuses an image it may not serve, and never touches storage', async () => {
-    getRetractedMedia.mockResolvedValue(null);
+    getModeratorMedia.mockResolvedValue(null);
     expect((await call()).status).toBe(404);
     expect(getGetUrl).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('serves held media to a moderator with the CSAM page grant, audited as a held view', async () => {
+    grants.paths = new Set(['/images/csam']);
+    getModeratorMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null, kind: 'held' });
+    const { status } = await call();
+    expect(status).toBe(200);
+    expect(recordHeldView).toHaveBeenCalledWith(42, 7, 'web');
+    expect(recordRetractedView).not.toHaveBeenCalled();
+  });
+
+  it('answers a probe for held media with eligibility alone: no storage, no audit row', async () => {
+    grants.paths = new Set(['/images/csam']);
+    getModeratorMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null, kind: 'held' });
+    expect((await call({ query: '?probe=1' })).status).toBe(204);
+    expect(getGetUrl).not.toHaveBeenCalled();
+    expect(recordHeldView).not.toHaveBeenCalled();
   });
 
   it('streams the stored file, keyed by the row, no-store, after its audit row', async () => {
@@ -175,7 +199,7 @@ describe('/api/retracted-media', () => {
 
 describe('/api/retracted-media eligibility read failure', () => {
   it('answers 503, no-store, and touches no storage', async () => {
-    getRetractedMedia.mockRejectedValue(new Error('canceling statement due to statement timeout'));
+    getModeratorMedia.mockRejectedValue(new Error('canceling statement due to statement timeout'));
     const { status, res } = await call();
     expect(status).toBe(503);
     expect(res?.headers.get('cache-control')).toBe('private, no-store');
@@ -191,7 +215,7 @@ describe('/api/retracted-media rate limit', () => {
       expect(status).toBe(429);
       expect(res?.headers.get('retry-after')).toBe('42');
       expect(res?.headers.get('cache-control')).toBe('private, no-store');
-      expect(getRetractedMedia).not.toHaveBeenCalled();
+      expect(getModeratorMedia).not.toHaveBeenCalled();
       expect(retractedMediaRetryAfter).toHaveBeenCalledWith(42);
     } finally {
       retryAfter.seconds = null;

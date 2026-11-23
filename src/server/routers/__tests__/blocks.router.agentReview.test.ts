@@ -25,6 +25,7 @@ const {
   mockIsAppBlocksEnabled,
   mockIsReviewSandboxEnabled,
   mockIsAgenticEnabled,
+  mockIsListingsAgenticEnabled,
   mockGetAgentReport,
   mockStartAgentReview,
   mockAgentReviewChat,
@@ -41,6 +42,7 @@ const {
   mockIsAppBlocksEnabled: vi.fn(),
   mockIsReviewSandboxEnabled: vi.fn(),
   mockIsAgenticEnabled: vi.fn(),
+  mockIsListingsAgenticEnabled: vi.fn(),
   mockGetAgentReport: vi.fn(),
   mockStartAgentReview: vi.fn(),
   mockAgentReviewChat: vi.fn(),
@@ -59,6 +61,7 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
   isAppBlocksReviewSandboxEnabled: mockIsReviewSandboxEnabled,
   isAppBlocksAgenticReviewEnabled: mockIsAgenticEnabled,
+  isAppListingsAgenticReviewEnabled: mockIsListingsAgenticEnabled,
 }));
 vi.mock('~/server/services/blocks/app-review-report.service', () => ({
   getAgentReport: mockGetAgentReport,
@@ -173,6 +176,9 @@ beforeEach(() => {
   mockIsReviewSandboxEnabled.mockImplementation(fakePerUserFlag);
   mockIsAgenticEnabled.mockReset();
   mockIsAgenticEnabled.mockImplementation(fakePerUserFlag); // on for mods by default
+  // The CONNECT lane's own flag: OFF by default, as it ships.
+  mockIsListingsAgenticEnabled.mockReset();
+  mockIsListingsAgenticEnabled.mockResolvedValue(false);
   mockGetAgentReport.mockReset();
   mockGetAgentReport.mockResolvedValue(REPORT);
   mockStartAgentReview.mockReset();
@@ -364,5 +370,60 @@ describe('blocks.agentReviewChat', () => {
     mockAgentReviewChat.mockRejectedValue(new Error('kaboom'));
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     await expect(caller.agentReviewChat(CHAT_INPUT)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+});
+
+describe('agent review CONNECT lane — gated on its own flag', () => {
+  const ALPR = 'alpr_0123456789ABCDEFGHJKMNPQRS';
+  const CHAT = [{ role: 'user' as const, content: 'why offline?' }];
+
+  it('🔴 connect flag OFF (as shipped), on-site flag ON: start, read and chat all refuse; no dispatch', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.startAgentReview({ publishRequestId: ALPR })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    await expect(caller.getAgentReview({ publishRequestId: ALPR })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    await expect(
+      caller.agentReviewChat({ publishRequestId: ALPR, messages: CHAT })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mockStartAgentReview).not.toHaveBeenCalled();
+    expect(mockGetAgentReport).not.toHaveBeenCalled();
+    expect(mockAgentReviewChat).not.toHaveBeenCalled();
+    // The on-site flag was never the one asked about a connect request.
+    expect(mockIsAgenticEnabled).not.toHaveBeenCalled();
+  });
+
+  it('connect flag ON (on-site flag OFF): a moderator dispatches the connect request', async () => {
+    mockIsListingsAgenticEnabled.mockImplementation(fakePerUserFlag);
+    mockIsAgenticEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await caller.startAgentReview({ publishRequestId: ALPR });
+    expect(mockStartAgentReview).toHaveBeenCalledWith({
+      publishRequestId: ALPR,
+      modUserId: 1,
+      sections: undefined,
+    });
+    expect(mockIsListingsAgenticEnabled).toHaveBeenCalledWith({ user: modUser });
+  });
+
+  it('connect flag ON does not open the ON-SITE lane', async () => {
+    mockIsListingsAgenticEnabled.mockImplementation(fakePerUserFlag);
+    mockIsAgenticEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.startAgentReview({ publishRequestId: PUBREQ })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockStartAgentReview).not.toHaveBeenCalled();
+  });
+
+  it('connect flag ON still requires a moderator', async () => {
+    mockIsListingsAgenticEnabled.mockResolvedValue(true);
+    const caller = blocksRouter.createCaller(fakeCtx(normalUser) as never);
+    await expect(caller.startAgentReview({ publishRequestId: ALPR })).rejects.toBeInstanceOf(
+      TRPCError
+    );
+    expect(mockStartAgentReview).not.toHaveBeenCalled();
   });
 });

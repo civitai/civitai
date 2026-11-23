@@ -373,6 +373,20 @@ describe('resolveBlockWorkflowGraph — repeat', () => {
     }
   });
 
+  it.each([
+    ['the arguments in another case', '$ARGUMENTS', []],
+    ['a step name in another case', 'Item', [step({ name: 'item' })]],
+  ])('🔴 refuses a repeat variable that recases %s', (_label, as, before) => {
+    const r = graph([...before, repeat({ ...overImages, as }, { $type: 'echo', input: {} })]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errorCode).toBe('workflow_ref_invalid');
+      expect(r.error).toBe(
+        `a repeat "as" name ${JSON.stringify(as)} is also a step name or "$arguments"`
+      );
+    }
+  });
+
   it('🔴 nested repeats MULTIPLY their generations: 3 × 5 = 15', () => {
     const r = graph(
       [

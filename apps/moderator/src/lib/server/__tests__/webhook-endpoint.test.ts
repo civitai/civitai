@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   ACCEPTED_CREDENTIALS,
   authenticateWebhookToken,
+  CREDENTIAL_SCOPE,
   type WebhookAuthResult,
 } from '$lib/server/webhook-endpoint';
 
@@ -41,8 +42,11 @@ import {
 const LEGACY = 'legacy-shared-token';
 const INBOUND = 'inbound-only-token';
 
-function eventWith(presented: { query?: string; authorization?: string }) {
-  const url = new URL('https://moderator.civitai.com/api/mod/abuse-report');
+function eventWith(
+  presented: { query?: string; authorization?: string },
+  path = '/api/mod/abuse-report'
+) {
+  const url = new URL(`https://moderator.civitai.com${path}`);
   if (presented.query !== undefined) url.searchParams.set('token', presented.query);
   const headers = new Headers();
   if (presented.authorization !== undefined) headers.set('authorization', presented.authorization);
@@ -50,11 +54,21 @@ function eventWith(presented: { query?: string; authorization?: string }) {
 }
 
 /** Both variables are deleted rather than blanked — blank is a case under test in its own right. */
-function setEnv(vars: { WEBHOOK_TOKEN?: string; MOD_INBOUND_TOKEN?: string }) {
-  delete process.env.WEBHOOK_TOKEN;
-  delete process.env.MOD_INBOUND_TOKEN;
-  if (vars.WEBHOOK_TOKEN !== undefined) process.env.WEBHOOK_TOKEN = vars.WEBHOOK_TOKEN;
-  if (vars.MOD_INBOUND_TOKEN !== undefined) process.env.MOD_INBOUND_TOKEN = vars.MOD_INBOUND_TOKEN;
+function setEnv(vars: {
+  WEBHOOK_TOKEN?: string;
+  MOD_INBOUND_TOKEN?: string;
+  MOD_CASES_TOKEN?: string;
+  KNIGHTS_TAG_REVIEW_TOKEN?: string;
+}) {
+  for (const k of [
+    'WEBHOOK_TOKEN',
+    'MOD_INBOUND_TOKEN',
+    'MOD_CASES_TOKEN',
+    'KNIGHTS_TAG_REVIEW_TOKEN',
+  ] as const) {
+    delete process.env[k];
+    if (vars[k] !== undefined) process.env[k] = vars[k];
+  }
 }
 
 /**
@@ -71,6 +85,8 @@ function refusalOf(result: WebhookAuthResult): Response {
 const saved = {
   WEBHOOK_TOKEN: process.env.WEBHOOK_TOKEN,
   MOD_INBOUND_TOKEN: process.env.MOD_INBOUND_TOKEN,
+  MOD_CASES_TOKEN: process.env.MOD_CASES_TOKEN,
+  KNIGHTS_TAG_REVIEW_TOKEN: process.env.KNIGHTS_TAG_REVIEW_TOKEN,
 };
 
 beforeEach(() => setEnv({ WEBHOOK_TOKEN: LEGACY, MOD_INBOUND_TOKEN: INBOUND }));
@@ -188,7 +204,9 @@ describe('authenticateWebhookToken', () => {
     );
     for (const credential of ACCEPTED_CREDENTIALS) {
       setEnv(distinct);
-      expect(authenticateWebhookToken(eventWith({ query: distinct[credential] }))).toEqual({
+      // A scoped class is attributable on its own path only.
+      const path = CREDENTIAL_SCOPE[credential] ?? undefined;
+      expect(authenticateWebhookToken(eventWith({ query: distinct[credential] }, path))).toEqual({
         kind: 'authenticated',
         credential,
       });
@@ -220,7 +238,7 @@ describe('authenticateWebhookToken', () => {
     // that class's name, so a `stringContaining` guard passes on exactly the message that would send
     // an operator to set the wrong variable.
     expect(body).toEqual({
-      message: 'MOD_INBOUND_TOKEN is not configured on this deployment.',
+      message: 'Neither MOD_INBOUND_TOKEN nor MOD_CASES_TOKEN is configured on this deployment.',
     });
   });
 
@@ -255,6 +273,51 @@ describe('authenticateWebhookToken', () => {
       refusalOf(authenticateWebhookToken(eventWith({ authorization: `Basic ${INBOUND}` }))).status
     ).toBe(401);
   });
+});
+
+describe('KNIGHTS_TAG_REVIEW_TOKEN is scoped to the tag write-back action', () => {
+  const KNIGHTS = 'knights-tag-review-token';
+  const ACTION = '/api/mod/image-tag-moderate';
+  beforeEach(() => setEnv({ MOD_INBOUND_TOKEN: INBOUND, KNIGHTS_TAG_REVIEW_TOKEN: KNIGHTS }));
+
+  it('is accepted on image-tag-moderate', () => {
+    expect(authenticateWebhookToken(eventWith({ query: KNIGHTS }, ACTION))).toEqual({
+      kind: 'authenticated',
+      credential: 'KNIGHTS_TAG_REVIEW_TOKEN',
+    });
+    expect(
+      authenticateWebhookToken(eventWith({ authorization: `Bearer ${KNIGHTS}` }, ACTION))
+    ).toEqual({ kind: 'authenticated', credential: 'KNIGHTS_TAG_REVIEW_TOKEN' });
+  });
+
+  it.each([
+    '/api/mod/image-moderate',
+    '/api/mod/image-tag-moderate-x',
+    '/api/mod/image-tag-moderate/x',
+    '/api/mod/abuse-report',
+  ])('is refused with 401 on %s', (path) => {
+    expect(refusalOf(authenticateWebhookToken(eventWith({ query: KNIGHTS }, path))).status).toBe(
+      401
+    );
+  });
+
+  it('is not configured when blank', () => {
+    setEnv({ MOD_INBOUND_TOKEN: INBOUND, KNIGHTS_TAG_REVIEW_TOKEN: '  ' });
+    expect(refusalOf(authenticateWebhookToken(eventWith({ query: '' }, ACTION))).status).toBe(401);
+    expect(refusalOf(authenticateWebhookToken(eventWith({ query: KNIGHTS }, ACTION))).status).toBe(
+      401
+    );
+  });
+
+  it.each([ACTION, '/api/mod/image-moderate', '/api/mod/abuse-report'])(
+    'leaves MOD_INBOUND_TOKEN working on %s',
+    (path) => {
+      expect(authenticateWebhookToken(eventWith({ query: INBOUND }, path))).toEqual({
+        kind: 'authenticated',
+        credential: 'MOD_INBOUND_TOKEN',
+      });
+    }
+  );
 });
 
 // The no-early-exit property of the comparison loop is pinned in `webhook-endpoint-timing.test.ts`,

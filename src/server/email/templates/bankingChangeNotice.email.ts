@@ -43,6 +43,9 @@ export const bankingChangeNoticeEmail = createEmail({
   }),
   html({ username }: BankingChangeNoticeData) {
     return simpleEmailWithTemplate({
+      icon: '🏦',
+      accent: 'blue',
+      eyebrow: 'Creator earnings',
       header: BANKING_CHANGE_NOTICE_SUBJECT,
       body: getBankingChangeNoticeHtml(username),
     });

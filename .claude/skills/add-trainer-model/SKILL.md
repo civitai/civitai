@@ -193,7 +193,7 @@ Edit `trainingModels.ts`:
 ## Step 4 — Typecheck both trainers, then the gate test
 
 ```bash
-pnpm run typecheck                                            # main app (TS 5.9, authoritative)
+pnpm run typecheck                                            # main app (TS 7, authoritative)
 pnpm --filter @civitai/training-studio-app run typecheck      # Training Studio (svelte-check; NEVER `check`)
 pnpm exec vitest run --project 'unit*' src/utils/__tests__/new-training-models.test.ts   # every catalog flagKey is in studioModelFlagFeatures — typecheck cannot see a missing key
 ```

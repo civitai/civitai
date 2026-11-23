@@ -7,7 +7,7 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileRunState, type RunLimits, type RunState } from '@/vector-sync/cursor';
-import { imageIdFromEvent, VectorSyncQueue } from '@/vector-sync/consumer';
+import { imageIdFromEvent, liveness, VectorSyncQueue } from '@/vector-sync/consumer';
 import {
   ModelMismatchError,
   SITE_REPLICATION,
@@ -22,6 +22,7 @@ import type { QdrantClient } from '@qdrant/js-client-rest';
 import { parseRateLimitHeader, parseRetryAfter, RateLimiter } from '@/vector-sync/ratelimit';
 import {
   buildEmbedInput,
+  failedStepDetail,
   takeBatch,
   Embedder,
   type EmbedderOptions,
@@ -230,10 +231,13 @@ describe('eligibility', () => {
     ['needs review', { needsReview: 'poi' }],
     ['minor', { minor: true }],
     ['poi', { poi: true }],
+    ['rated Blocked', { nsfwLevel: 32 }],
+    ['rated Blocked among other levels', { nsfwLevel: 36 }],
   ];
 
-  test('a scanned, posted, unflagged image is eligible', () => {
+  test('a scanned, posted, unflagged image is eligible, at any level but Blocked', () => {
     expect(isEligible(imageRow(1))).toBe(true);
+    expect(isEligible(imageRow(1, { nsfwLevel: 16 }))).toBe(true);
   });
 
   test.each(ineligible)('%s is not eligible', (_name, patch) => {
@@ -242,7 +246,7 @@ describe('eligibility', () => {
 
   test('the SQL predicate names every rule the row check applies', () => {
     expect(eligibleSql('i')).toBe(
-      `i."ingestion" = 'Scanned' AND i."tosViolation" = false AND i."blockedFor" IS NULL AND i."postId" IS NOT NULL AND i."needsReview" IS NULL AND i."minor" = false AND i."poi" = false`
+      `i."ingestion" = 'Scanned' AND i."tosViolation" = false AND i."blockedFor" IS NULL AND i."postId" IS NOT NULL AND i."needsReview" IS NULL AND i."minor" = false AND i."poi" = false AND (i."nsfwLevel" & 32) = 0`
     );
   });
 });
@@ -377,6 +381,23 @@ describe('embed inputs', () => {
     });
   });
 
+  test("a failed step's own account of itself is logged, without its media URL or a vector", () => {
+    const detail = failedStepDetail({
+      name: 'embed-7',
+      status: 'failed',
+      input: { videoUrl: 'https://cdn.example/v/original=true/v.mp4' },
+      reason: 'decode error at https://cdn.example/v/original=true/v.mp4',
+      output: { embedding: [0.5, 0.25], profile: 'p' } as never,
+    });
+    expect(JSON.parse(detail)).toEqual({
+      status: 'failed',
+      reason: 'decode error at <url>',
+      output: { profile: 'p' },
+    });
+    expect(failedStepDetail(undefined)).toBe('no step in the workflow');
+    expect(failedStepDetail({ status: 'failed', note: 'x'.repeat(2000) }).length).toBe(601);
+  });
+
   test('a workflow takes at most its size in inputs and 8 videos', () => {
     const drain = (queue: { id: string; imageUrl?: string; videoUrl?: string }[], size: number) => {
       const sizes: number[] = [];
@@ -448,6 +469,7 @@ describe('embedder', () => {
     const result = await e.embed(['1', '2', '3', '4'].map((id) => ({ id, imageUrl: 'u' })));
     expect([...result.vectors.keys()].sort()).toEqual([1, 2, 4]);
     expect(result.failed).toEqual([3]);
+    expect(result.rejected).toEqual([3]);
   });
 
   test('an auth failure stops the run instead of being bisected', async () => {
@@ -1842,6 +1864,35 @@ describe('review round 2', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  test('liveness: a flush hung on a query that never returns is wedged; a failing or progressing one is not', async () => {
+    const hung = new FakePg();
+    hung.query = () => new Promise(() => undefined);
+    const queue = new VectorSyncQueue(deps(hung, new FakeStore()), async () => undefined);
+    queue.add(1, { topic: 't', partition: 0, offset: '1' });
+    void queue.flush();
+    await Promise.resolve();
+    const t0 = queue.flushStartedAt!;
+    expect(t0).not.toBeNull();
+    expect(liveness(queue, t0 + 44 * 60_000).status).toBe(200);
+    expect(liveness(queue, t0 + 45 * 60_000)).toEqual({
+      status: 503,
+      body: { wedged: true, flushStartedAt: t0 },
+    });
+    // Vectors returned meanwhile mean it is slow, not stuck.
+    queue.lastProgress = t0 + 30 * 60_000;
+    expect(liveness(queue, t0 + 45 * 60_000).status).toBe(200);
+
+    const failing = new FakePg();
+    failing.query = async () => {
+      throw new Error('Query read timeout');
+    };
+    const retried = new VectorSyncQueue(deps(failing, new FakeStore()), async () => undefined);
+    retried.add(1, { topic: 't', partition: 0, offset: '1' });
+    await expect(retried.flush()).rejects.toThrow('Query read timeout');
+    expect(retried.flushStartedAt).toBeNull();
+    expect(retried.isWedged(Date.now() + 60 * 60_000)).toBe(false);
+  });
+
   test('health: a slow flush making progress after one failure stays up; a retry loop does not', () => {
     const queue = new VectorSyncQueue(deps(new FakePg(), new FakeStore()), async () => undefined);
     const t0 = 1_000_000_000;
@@ -2184,7 +2235,19 @@ describe('one input per step (orchestration #460)', () => {
     const result = await embedderWith(fetchImpl).embed(inputs(3));
     expect([...result.vectors.keys()].sort()).toEqual([1, 3]);
     expect(result.failed).toEqual([2]);
+    expect(result.rejected).toEqual([2]);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test('a step that succeeds with an unusable output fails, but is not the media refused', async () => {
+    const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(workflowBody(stepIds(init)));
+      body.steps[1].output.embedding = [1, 2];
+      return new Response(JSON.stringify(body), { status: 200 });
+    }) as unknown as typeof fetch;
+    const result = await embedderWith(fetchImpl).embed(inputs(3));
+    expect(result.failed).toEqual([2]);
+    expect(result.rejected).toEqual([]);
   });
 
   test('one step from another model revision rejects the workflow it came in', async () => {
@@ -2643,6 +2706,8 @@ describe('orchestrator rate limits (orchestration #460 guidance)', () => {
     expect(posts).toBe(2); // at 10 min one re-submit fits the 15-min window; at 20 min none does
 
     expect(result.failed.sort()).toEqual([1, 2]);
+    // An outage is not the media's fault: the refused-media memo must not hold these back.
+    expect(result.rejected).toEqual([]);
     expect(result.error).toBeUndefined();
   });
 

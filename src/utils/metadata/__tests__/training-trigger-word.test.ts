@@ -1,31 +1,36 @@
 import { describe, expect, it } from 'vitest';
 import { auditTrainingTriggerWord, labelAsTrained } from '~/utils/metadata/training-trigger-word';
 import { MAX_AUDIT_PROMPT_LENGTH } from '~/utils/metadata/audit';
+import { createProfanityFilter } from '~/libs/profanity-simple';
+
+/** The shipped lists, as the server uses with `profanity-managed-list` off. */
+const SHIPPED = createProfanityFilter();
 
 /** The trigger word rule the trainer's browser shares with every training submit. */
 
 describe('auditTrainingTriggerWord', () => {
   it('passes a clean or empty trigger word', () => {
-    expect(auditTrainingTriggerWord('mystyle', true)).toEqual({
+    expect(auditTrainingTriggerWord('mystyle', SHIPPED)).toEqual({
       severity: 'clean',
       offendingWords: [],
     });
-    expect(auditTrainingTriggerWord('', true)).toEqual({ severity: 'clean', offendingWords: [] });
+    expect(auditTrainingTriggerWord('', SHIPPED)).toEqual({
+      severity: 'clean',
+      offendingWords: [],
+    });
   });
 
   it('warns on profanity where it is checked, naming the word', () => {
-    expect(auditTrainingTriggerWord('fagus tree', true)).toEqual({
+    expect(auditTrainingTriggerWord('fagus tree', SHIPPED)).toEqual({
       severity: 'soft',
       offendingWords: ['fagus'],
     });
-    expect(auditTrainingTriggerWord('fagus tree', false).severity).toBe('clean');
+    expect(auditTrainingTriggerWord('fagus tree').severity).toBe('clean');
   });
 
   it('refuses a minor-age trigger word, and one longer than the audit reads', () => {
-    expect(auditTrainingTriggerWord('8 year old girl', false).severity).toBe('hard');
-    expect(auditTrainingTriggerWord('a'.repeat(MAX_AUDIT_PROMPT_LENGTH + 1), false).severity).toBe(
-      'hard'
-    );
+    expect(auditTrainingTriggerWord('8 year old girl').severity).toBe('hard');
+    expect(auditTrainingTriggerWord('a'.repeat(MAX_AUDIT_PROMPT_LENGTH + 1)).severity).toBe('hard');
   });
 });
 

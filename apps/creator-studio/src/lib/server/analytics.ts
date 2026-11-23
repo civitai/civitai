@@ -157,14 +157,14 @@ export type AllTimeTotals = { reactions: number; comments: number };
 // of these queries changes, or warm keys keep serving the old shape past the deploy. These four expire independently,
 // so a stale one next to a fresh one puts contradictory reaction totals on /dashboard and /analytics at once.
 export const getContentAnalytics = createCache({
-  name: 'analytics:content:v4',
+  name: 'analytics:content:v5',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchContentAnalytics(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
 export const getContentTotals = createCache({
-  name: 'analytics:totals:v3',
+  name: 'analytics:totals:v4',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchContentTotals(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
@@ -263,7 +263,7 @@ export const getImageViewDetail = createCache({
 }).get;
 
 export const getReactionAudienceSplit = createCache({
-  name: 'analytics:reaction-split:v1',
+  name: 'analytics:reaction-split:v2',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchReactionAudienceSplit(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
@@ -342,7 +342,7 @@ function seriesSql(
 // count filtered to `_Create` makes every react/un-react cycle a permanent +1. Must stay unclamped — clamping a
 // negative bucket makes the period total depend on bucket width. Kept in sync with `reactions_owner_scores_mv`; a
 // new entity type in the `type` enum has to be added to both or it counts as a delete here.
-const reactionCreateTypes = `('Image_Create', 'Comment_Create', 'CommentV2_Create', 'Review_Create', 'Question_Create', 'Answer_Create', 'BountyEntry_Create', 'Article_Create')`;
+const reactionCreateTypes = `('Image_Create', 'Comment_Create', 'CommentV2_Create', 'Review_Create', 'Question_Create', 'Answer_Create', 'BountyEntry_Create', 'Article_Create', 'Post_Create')`;
 const netReactions = `sum(if(type IN ${reactionCreateTypes}, 1, -1))`;
 
 // Articles deliberately do NOT get the owner-rollup treatment images needed. There are ~32k articles on the

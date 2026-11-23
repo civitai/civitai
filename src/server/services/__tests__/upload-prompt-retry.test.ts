@@ -160,6 +160,23 @@ describe('upload prompt retry queue', () => {
     ]);
   });
 
+  it('hands back the entries it took before a removal fails, leaving the rest queued', async () => {
+    const { store, raw, zset } = fakeStore();
+    for (const imageId of [1, 2, 3])
+      await queueUploadPromptRetry({ imageId, attempt: 1, now: T0, store });
+    const realZRem = raw.zRem;
+    let calls = 0;
+    raw.zRem = async (key, member) => {
+      if (++calls === 2) throw new Error('deadline');
+      return realZRem(key, member);
+    };
+
+    expect(await takeDueUploadPromptRetries({ limit: 10, now: T0 + HOUR, store })).toEqual([
+      { imageId: 1, attempt: 1 },
+    ]);
+    expect([...zset.keys()].sort()).toEqual(['2', '3']);
+  });
+
   it('reports a failed write as not queued instead of throwing', async () => {
     const { store, raw } = fakeStore();
     raw.hSet = async () => {

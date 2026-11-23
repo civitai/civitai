@@ -4000,3 +4000,32 @@ describe('the reads moved off the Prisma query engine', () => {
     expect(kysely.read.mock.calls.map(flatten).join(' ')).not.toContain('SELECT EXISTS');
   });
 });
+
+describe('host media rows', () => {
+  it('case 1', async () => {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const { hostIsShowable } = await import('../remix-gallery.service');
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+      CREATE TABLE "Image" (id int PRIMARY KEY, ingestion "ImageIngestionStatus", "blockedFor" text,
+        "nsfwLevel" int NOT NULL, "nsfwLevelLocked" boolean NOT NULL, "needsReview" text,
+        "tosViolation" boolean NOT NULL DEFAULT false, "modelRestricted" boolean NOT NULL DEFAULT false,
+        "userId" int, metadata jsonb, "scanJobs" jsonb);
+      INSERT INTO "Image" (id, ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked") VALUES
+        (1, 'Scanned', NULL, 1, false),
+        (2, 'Error', NULL, 1, true),
+        (3, 'Error', 'moderated', 1, true);
+    `);
+    const flat = Prisma.sql`SELECT i.id, ${hostIsShowable()} AS showable FROM "Image" i ORDER BY i.id`;
+    const { rows } = await db.query<{ id: number; showable: boolean }>(
+      flat.text,
+      flat.values as unknown[]
+    );
+    expect(rows.map((r) => [r.id, r.showable])).toEqual([
+      [1, true],
+      [2, true],
+      [3, false],
+    ]);
+  });
+});

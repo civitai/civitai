@@ -129,10 +129,10 @@ func TestIntegrationPrioritizedPage(t *testing.T) {
 		{"pending, signed out", func(q *ImagesQuery) { q.Pending = true },
 			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106022, 2106016, 2106017}},
 		// Pending, the owner: their unrated (2106019, and 2106026 though in a collection post),
-		// acceptableMinor (2106024) and needsReview 'poi' (2106029) images too; never their 'minor'
-		// (2106021) or 'csam' (2106028) one, nor the Blocked level (2106027).
+		// acceptableMinor (2106024), needsReview 'poi' (2106029) and their own held 'minor' (2106021) and
+		// 'csam' (2106028) images too; never the Blocked level (2106027).
 		{"pending, the owner", func(q *ImagesQuery) { q.Pending = true; q.ViewerID = owner },
-			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106019, 2106024, 2106029, 2106022, 2106016, 2106017, 2106026}},
+			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106019, 2106021, 2106024, 2106028, 2106029, 2106022, 2106016, 2106017, 2106026}},
 		// The owner beside another creator: the owner's acceptableMinor image (2106024) shows, the other
 		// creator's (2106025) does not, nor any needsReview image of theirs (2106030, 2106031); the other
 		// creator's ordinary image (2106015) does.
@@ -140,15 +140,15 @@ func TestIntegrationPrioritizedPage(t *testing.T) {
 			q.Pending = true
 			q.ViewerID = owner
 			q.PrioritizedUserIDs = []int{owner, other}
-		}, []int{2106013, 2106012, 2106011, 2106010, 2106023, 2106019, 2106024, 2106029, 2106022, 2106015, 2106016, 2106017, 2106026}},
-		// The other creator viewing both: their own acceptableMinor (2106025) and 'poi' (2106030) images,
-		// not their 'csam' one (2106031), and none of the owner's needsReview, acceptableMinor or
+		}, []int{2106013, 2106012, 2106011, 2106010, 2106023, 2106019, 2106021, 2106024, 2106028, 2106029, 2106022, 2106015, 2106016, 2106017, 2106026}},
+		// The other creator viewing both: their own acceptableMinor (2106025), 'poi' (2106030) and held
+		// 'csam' (2106031) images, and none of the owner's needsReview (held included), acceptableMinor or
 		// unrated images.
 		{"pending, the other creator, two creators", func(q *ImagesQuery) {
 			q.Pending = true
 			q.ViewerID = other
 			q.PrioritizedUserIDs = []int{owner, other}
-		}, []int{2106013, 2106012, 2106011, 2106010, 2106023, 2106022, 2106015, 2106025, 2106030, 2106016, 2106017}},
+		}, []int{2106013, 2106012, 2106011, 2106010, 2106023, 2106022, 2106015, 2106025, 2106030, 2106031, 2106016, 2106017}},
 		// Pending, a viewer who MANAGEs the collection: the rated image of its post above their level,
 		// never its unrated (2106026) or Blocked-level (2106027) one, nor another creator's
 		// acceptableMinor image (2106024).

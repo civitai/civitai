@@ -1,3 +1,7 @@
+import {
+  bustPublicModelResponseCache,
+  publicModelResponseKey,
+} from '~/server/services/public-model-response-cache';
 import { Prisma } from '@prisma/client';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import { keepHeldReviewsCte, reviewsOnVersionsSql } from '~/server/services/held-review.service';
@@ -485,6 +489,7 @@ export const getLicensingRoots = async ({
       licensingFeeType: LicensingFeeType | null;
       licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
       isDefault: boolean;
+      restricted: boolean;
     }>
   >`
     SELECT
@@ -494,7 +499,8 @@ export const getLicensingRoots = async ({
       mv."licensingFee"::float8 AS "licensingFee",
       mv."licensingFeeType",
       mv."licensingFeeSettlementCurrency",
-      lr."isDefault"
+      lr."isDefault",
+      lr.restricted
     FROM "LicensingRoot" lr
     JOIN "ModelVersion" mv ON mv.id = lr."modelVersionId"
     JOIN "Model" m ON m.id = mv."modelId"
@@ -507,7 +513,9 @@ export const getLicensingRoots = async ({
     ORDER BY lr."isDefault" DESC, m.name, mv.index
   `;
 
-  const defaultVersionId = roots.find((r) => r.isDefault)?.id ?? null;
+  // Restricted roots stay in the returned list (the editor needs them to recognise a root's own version);
+  // only the pre-selected default skips them.
+  const defaultVersionId = roots.find((r) => r.isDefault && !r.restricted)?.id ?? null;
   return { roots, defaultVersionId };
 };
 
@@ -1117,6 +1125,7 @@ export const upsertModelVersion = async ({
         usageControl: true,
         flags: true,
         licensingFee: true,
+        licensingFeeType: true,
         // Read for the audit diff, not for the write. `watchedEntityFields` compares before/after by
         // key, so a watched field missing from this select silently produces no row rather than an
         // error — the audit would look wired up and record nothing.
@@ -1161,12 +1170,6 @@ export const upsertModelVersion = async ({
     // them computes the refund that unpublishModelVersionById owes its buyers. So this refuses
     // LEAVING Published rather than listing the values that do it: an enumeration of forbidden
     // statuses is not a control, and ModelStatus has eight members.
-    //
-    // ⚠️ This closes the take-down, NOT every way this route can defeat the gate. The same save
-    // clears the PaidAccess row when `paidAccess` is omitted (writePaidAccessForModelVersion →
-    // deleteMany), and the requirement returns empty with no active gate — so one save then an
-    // ordinary unpublish still refunds nobody. That is tracked separately; do not read this guard
-    // as "the editor can no longer strand a buyer".
     if (
       existingVersion.status === ModelStatus.Published &&
       data.status !== undefined &&
@@ -1403,7 +1406,11 @@ export const upsertModelVersion = async ({
     const feeBefore =
       existingVersion.licensingFee != null ? Number(existingVersion.licensingFee) : null;
     const feeAfter = feeProvided ? data.licensingFee ?? null : feeBefore;
-    if (feeBefore !== feeAfter)
+    // The type changes what the number means (Buzz per image or a percent), so it busts too.
+    const typeChanged =
+      data.licensingFeeType !== undefined &&
+      data.licensingFeeType !== existingVersion.licensingFeeType;
+    if (feeBefore !== feeAfter || typeChanged)
       await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
 
     if (version.description !== existingVersion.description)
@@ -3233,38 +3240,7 @@ export const modelVersionDonationGoal = async ({
   return (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null;
 };
 
-// Public-response cache (origin-side cache for GET /api/v1/models/[id]) toggle —
-// only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler).
-const PUBLIC_MODEL_RESPONSE_CACHE_ENABLED = env.IS_DATAPACKET;
-
-export function publicModelResponseKey(
-  modelId: number,
-  browsingLevel: number
-): RedisKeyTemplateCache {
-  // `v2`: bodies whose card images are held to the level. Bump when the body's filtering changes,
-  // so entries built by the previous code are not read.
-  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:v2:${modelId}:${browsingLevel}`;
-}
-
-// Best-effort, fail-open invalidation of the origin-side public response cache for
-// GET /api/v1/models/[id] (see the handler). Called from bustMvCache so an
-// unpublish / takedown / update / delete drops the cached 200 immediately rather
-// than serving stale for up to the cache TTL globally. Busts BOTH browsing-level
-// keys the handler can write (all-levels for unrestricted regions, sfw-only for
-// region-restricted ones). Deletes the physical key — the handler's read keys off
-// key PRESENCE, so a clean delete forces a rebuild. A Redis error here must NOT
-// throw into the mutation path, so it is swallowed (the entry otherwise expires
-// via its TTL).
-export async function bustPublicModelResponseCache(modelId: number | number[]) {
-  if (!PUBLIC_MODEL_RESPONSE_CACHE_ENABLED) return;
-  const modelIds = Array.isArray(modelId) ? modelId : [modelId];
-  if (modelIds.length === 0) return;
-  const keys = modelIds.flatMap((id) => [
-    publicModelResponseKey(id, allBrowsingLevelsFlag),
-    publicModelResponseKey(id, sfwBrowsingLevelsFlag),
-  ]);
-  await redis.del(keys).catch(() => undefined);
-}
+export { bustPublicModelResponseCache, publicModelResponseKey };
 
 /**
  * The model-level caches that carry a version's data. Both callers below reach it: `bustMvCache`
@@ -4197,6 +4173,9 @@ export const mergeVersions = async ({
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);
+  // A showcase failure never fails the merge.
+  const { repointVersionShowcases } = await import('~/server/services/version-showcase.service');
+  await repointVersionShowcases(targetVersionId, sourceVersionIds);
   // Then the AIRs read before the write, and the file-pinned AIRs, which version busts never reach: a
   // pinned AIR names its version, so a moved file is cached under its source's AIR, and the target's
   // coverage now counts the moved files.

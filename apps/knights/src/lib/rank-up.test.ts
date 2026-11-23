@@ -1,19 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { rankUpChanges } from './rank-up';
+import { rankBenefits } from './rank-up';
 
-describe('rankUpChanges', () => {
-  it('shows each perk from the rank below to the new rank', () => {
-    expect(rankUpChanges({ goldMultiplier: 1 }, { goldMultiplier: 1.25 })).toEqual([
-      { key: 'gold', label: 'Gold multiplier', from: '1×', to: '1.25×' },
+describe('rankBenefits', () => {
+  it("shows the new rank's vote weight, gold multiplier and daily gold cap range", () => {
+    expect(
+      rankBenefits({
+        voteWeight: 1.5,
+        goldMultiplier: 1.25,
+        dailyGoldCap: { from: 140_000, to: 180_000 },
+      })
+    ).toEqual([
+      { key: 'weight', label: 'Vote weight', value: '1.5×' },
+      { key: 'gold', label: 'Gold multiplier', value: '1.25×' },
+      { key: 'cap', label: 'Daily gold cap', value: '140,000–180,000' },
     ]);
-  });
-
-  it('calls a perk the rank below did not have "None" (an Acolyte earns no judging gold)', () => {
-    const [gold] = rankUpChanges({ goldMultiplier: 0 }, { goldMultiplier: 1 });
-    expect([gold.from, gold.to]).toEqual(['None', '1×']);
-  });
-
-  it('is empty when the notice carries no perks', () => {
-    expect(rankUpChanges(undefined, undefined)).toEqual([]);
   });
 });

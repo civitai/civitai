@@ -25,6 +25,7 @@ import {
 
 import { getCachedNsfwWords } from './word-processor';
 import { customLeetSpeakTransformer } from './custom-transformers';
+import { createAnyTermPrefilter } from './any-term-prefilter';
 import { whitelistWords } from '@civitai/mod-utils/profanity/lists';
 import { removeTags } from '~/utils/string-helpers';
 import { NsfwLevel } from '~/server/common/enums';
@@ -47,6 +48,11 @@ export interface ProfanityFilterOptions {
    * 424 shipped words over the top of it would be the opposite of what they asked for.
    */
   moderatorWhitelist: string[] | null;
+  /**
+   * The moderator-managed blocked words (`BlocklistType.ProfanityWord`). Like the whitelist it
+   * REPLACES the shipped list. `null` falls back to the shipped list.
+   */
+  moderatorBlocklist: readonly string[] | null;
 }
 
 export interface ProfanityThresholdConfig {
@@ -131,6 +137,7 @@ export const LIBRARY_OVERMATCH_TOKENS = ['fu'] as const;
 
 export class SimpleProfanityFilter {
   private matcher!: RegExpMatcher;
+  private anyTermPrefilter: ((text: string) => boolean) | null = null;
   private censor!: TextCensor;
   private options: ProfanityFilterOptions;
   private dataset: DataSet<{ originalWord: string }>;
@@ -142,13 +149,13 @@ export class SimpleProfanityFilter {
     this.options = {
       replacementStyle: 'asterisk',
       moderatorWhitelist: null,
+      moderatorBlocklist: null,
       ...options,
     };
 
     const whitelist = this.options.moderatorWhitelist ?? whitelistWords;
 
-    // Cache NSFW words once during construction
-    this.nsfwWords = getCachedNsfwWords();
+    this.nsfwWords = getCachedNsfwWords(this.options.moderatorBlocklist);
 
     // Initialize dataset with default English dictionary
     this.dataset = new DataSet();
@@ -182,11 +189,16 @@ export class SimpleProfanityFilter {
     });
   }
 
+  private getAllMatches(text: string, sorted = false): MatchPayload[] {
+    if (this.anyTermPrefilter && !this.anyTermPrefilter(text)) return [];
+    return this.matcher.getAllMatches(text, sorted);
+  }
+
   /**
    * Clean profane words from text
    */
   clean(text: string): string {
-    const matches = this.excludeWhitelisted(text, this.matcher.getAllMatches(text));
+    const matches = this.excludeWhitelisted(text, this.getAllMatches(text));
     return this.censor.applyTo(text, matches);
   }
 
@@ -194,7 +206,7 @@ export class SimpleProfanityFilter {
    * Get detailed information about matches
    */
   analyze(text: string) {
-    const matches = this.matcher.getAllMatches(text, true); // sorted by position
+    const matches = this.getAllMatches(text, true); // sorted by position
 
     if (matches.length === 0) {
       return {
@@ -419,6 +431,7 @@ export class SimpleProfanityFilter {
       ],
       whitelistMatcherTransformers: englishRecommendedWhitelistMatcherTransformers,
     });
+    this.anyTermPrefilter = createAnyTermPrefilter(this.matcher);
   }
 
   private initializeCensor(): void {

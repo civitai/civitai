@@ -31,7 +31,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * CI's unit job provides one (a `postgres:18` service in `.github/workflows/lint.yml`).
  * Without it every case here is skipped, and the properties below are NOT
  * exercised by that run: quota under concurrent writers, concurrent marks,
- * counters and first increments, and deadlock-freedom. Everything else is covered by `doc-store.pglite.test.ts`.
+ * counters and first increments, the lock timeout, and deadlock-freedom. Everything else is covered by `doc-store.pglite.test.ts`.
  */
 
 if (!REAL_PG_URL) {
@@ -147,6 +147,33 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
     await assertUsageConsistent(h, app, NS_PROD);
   });
 
+  it('a writer blocked on a held usage row gives up as rate_limited instead of parking its connection', async () => {
+    const app = freshApp('locked');
+    const store = createDocStore({ db: h.db });
+    await store.put(ctx(app, NS_PROD, 1), PREFS, 'seed', { a: 1 });
+    const holder = await h.rawAsRole();
+    try {
+      await holder.query(
+        `BEGIN; SELECT set_config('appdata.app_id', '${app}', true), set_config('appdata.ns', '${NS_PROD}', true)`
+      );
+      await holder.query(
+        `SELECT 1 FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = $2 FOR UPDATE`,
+        [app, NS_PROD]
+      );
+      const started = Date.now();
+      const err = await store.put(ctx(app, NS_PROD, 1), PREFS, 'blocked', { a: 1 }).catch((e) => e);
+      const waited = Date.now() - started;
+      expect(err).toBeInstanceOf(DocStoreError);
+      expect((err as DocStoreError).code).toBe('rate_limited');
+      expect(waited).toBeGreaterThanOrEqual(2_900);
+      expect(waited).toBeLessThan(15_000);
+      await holder.query('ROLLBACK');
+    } finally {
+      await holder.close();
+    }
+    expect(await store.get(ctx(app, NS_PROD, 1), PREFS, 'blocked')).toBeNull();
+  });
+
   it('concurrent first increments of one absent key create ONE doc and lose no count', async () => {
     const app = freshApp('race_ctrcreate');
     const store = createDocStore({ db: h.db });
@@ -202,6 +229,73 @@ describe.skipIf(!REAL_PG_URL)('concurrency on Postgres (appdata_rw, RLS on)', ()
     );
     expect(r.codes).toEqual([]);
     expect((await store.get(ctx(app, NS_PROD, null), POSTS, 'k'))?.counters.views).toBe(60);
+  });
+
+  it(`mark sequence: ${
+    3 * N + 1
+  } unmarks, marks and increments parked at (1c) together take each of the next sequences exactly once, stamp what they answered, and deadlock nothing, with a creating increment and a put racing them`, async () => {
+    const app = freshApp('race_markseq');
+    const seed = createDocStore({ db: h.db });
+    const author = ctx(app, NS_PROD, 3000);
+    const voter = ctx(app, NS_PROD, 3001);
+    for (let i = 0; i < N; i++) await seed.put(author, POSTS, `k${i}`, { status: 'open' });
+    // Mark sequences 1..N, taken one at a time.
+    for (let i = 0; i < N; i++) await seed.mark(voter, POSTS, `k${i}`, 'vote');
+
+    // Every call below holds its (1b) row and waits here until all have arrived, so they reach
+    // `mark_head` together. Each changes a tally row no other call touches.
+    const parked = 3 * N + 1;
+    const gate = barrier(parked);
+    const store = createDocStore({ db: h.db, hooks: { beforeMarkSeq: () => gate.wait() } });
+    const calls: { row: string; done: Promise<{ markSeq?: number }> }[] = [
+      ...Array.from({ length: N }, (_, i) => ({
+        row: `posts|k${i}|mark|vote`,
+        done: store.unmark(voter, POSTS, `k${i}`, 'vote'),
+      })),
+      ...Array.from({ length: N }, (_, i) => ({
+        row: `posts|k${i}|mark|star`,
+        done: store.mark(ctx(app, NS_PROD, 3100 + i), POSTS, `k${i}`, 'star'),
+      })),
+      ...Array.from({ length: N }, (_, i) => ({
+        row: `posts|k${i}|counter|views`,
+        done: store.increment(ctx(app, NS_PROD, 3200 + i), POSTS, `k${i}`, 'views', i + 1),
+      })),
+      // Creates its counter document: (1), (1b), (1c), then (2) usage_app.
+      {
+        row: 'tallies|fresh|counter|plays',
+        done: store.increment(ctx(app, NS_PROD, 3300), TALLIES, 'fresh', 'plays'),
+      },
+    ];
+    // A document write in the same namespace: (1), (2) usage_app, never (1c).
+    const put = store.put(author, BOARD, 'racer', DOC);
+    const results = await Promise.allSettled([...calls.map((c) => c.done), put]);
+    expect(results.flatMap((r) => (r.status === 'rejected' ? [String(r.reason)] : []))).toEqual([]);
+    expect(gate.arrived).toBe(parked);
+
+    const answered = results
+      .slice(0, parked)
+      .map((r) => (r as PromiseFulfilledResult<{ markSeq?: number }>).value.markSeq ?? -1);
+    // Distinct and dense: exactly N+1 .. N+parked, each once.
+    expect([...answered].sort((a, b) => a - b)).toEqual(
+      Array.from({ length: parked }, (_, i) => N + 1 + i)
+    );
+    // Each tally row carries the sequence its call answered.
+    const rows = await h.raw(
+      `SELECT t.coll, t.key, t.kind, t.name, t.mark_seq FROM appdata.doc_tally t WHERE t.app_id = $1`,
+      [app]
+    );
+    const stamped = new Map(
+      rows.map((r) => [`${r.coll}|${r.key}|${r.kind}|${r.name}`, Number(r.mark_seq)])
+    );
+    expect(calls.map((c) => [c.row, stamped.get(c.row)])).toEqual(
+      calls.map((c, i) => [c.row, answered[i]])
+    );
+    const [mh] = await h.raw(
+      `SELECT mh.last_mark_seq FROM appdata.mark_head mh WHERE mh.app_id = $1 AND mh.ns = $2`,
+      [app, NS_PROD]
+    );
+    expect(Number(mh.last_mark_seq)).toBe(N + parked);
+    await assertUsageConsistent(h, app, NS_PROD);
   });
 
   it('mixed racing writes, deletes, marks and counters across users and keys settle with no deadlock and consistent usage', async () => {

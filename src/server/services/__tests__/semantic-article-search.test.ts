@@ -4,6 +4,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import type { CandidateFilter, CandidateSource } from '~/server/services/semantic-search-client';
 import type { SessionUser } from '~/types/session';
+import { stripBlockedForNonModerator } from '~/server/utils/browsing-level';
 import { describeSemanticAuditContract } from './semantic-audit.harness';
 
 const h = vi.hoisted(() => ({
@@ -160,6 +161,28 @@ describe('semantic article search', () => {
     const { items } = await search([20, 13, 21, 10, 22, 23, 24]);
     expect(items.map((a) => a.id)).toEqual([20, 21, 10, 22]);
     expect(items.filter((a) => a.user.id === 7)).toHaveLength(MAX_HITS_PER_USER);
+  });
+
+  describe('a level after stripBlockedForNonModerator, which the procedure middleware runs', () => {
+    const VIEWER = { id: 500, isModerator: false } as SessionUser;
+    const askedLevels = async (browsingLevel: number, user: SessionUser) => {
+      const input = { browsingLevel };
+      stripBlockedForNonModerator(input, user.isModerator);
+      await search([10], input.browsingLevel, user);
+      return (sent[0]?.gate as { nsfwLevels?: number[] } | undefined)?.nsfwLevels;
+    };
+
+    it('asks for an XXX article for a non-moderator (control)', async () => {
+      expect(await askedLevels(16, VIEWER)).toEqual([16]);
+    });
+
+    it('never asks for a Blocked article for a non-moderator', async () => {
+      expect(await askedLevels(16 | 32, VIEWER)).toEqual([16]);
+    });
+
+    it('asks for it for a moderator', async () => {
+      expect(await askedLevels(16 | 32, MOD)).toEqual([16, 32]);
+    });
   });
 
   it("asks the service for the viewer's browsing level, without hidden users or tags", async () => {
@@ -338,11 +361,21 @@ describe("the articles feed's filters", () => {
 describe('semantic article search: the query audit and the browsing level', () => {
   const VIEWER = { id: 500, isModerator: false } as SessionUser;
   const run = (
-    over: { browsingLevel?: number; user?: SessionUser; correctedQuery?: string } = {}
+    over: {
+      browsingLevel?: number;
+      user?: SessionUser;
+      correctedQuery?: string;
+      spellcheck?: false;
+    } = {}
   ) => {
     const track = { action: vi.fn().mockResolvedValue(undefined) };
     return searchSemanticArticles({
-      input: { query: 'guide', browsingLevel: over.browsingLevel ?? 1, limit: 10 },
+      input: {
+        query: 'guide',
+        browsingLevel: over.browsingLevel ?? 1,
+        limit: 10,
+        ...(over.spellcheck === false && { spellcheck: false }),
+      },
       user: 'user' in over ? over.user : VIEWER,
       track,
       candidateSource: ranking([10], over.correctedQuery),
@@ -497,6 +530,26 @@ describe('semantic article search: the query audit and the browsing level', () =
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
+  });
+
+  it('searched as typed, still refuses a refused query before asking the service', async () => {
+    h.includesPoi.mockReturnValue('someone');
+    const { result } = await run({ spellcheck: false });
+    expect(result.items).toEqual([]);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('searched as typed, asks the service for the text with its spelling correction off', async () => {
+    const queries: unknown[] = [];
+    await searchSemanticArticles({
+      input: { query: 'Shikata nee', browsingLevel: 1, limit: 10, spellcheck: false },
+      user: VIEWER,
+      candidateSource: async ({ query }) => {
+        queries.push(query);
+        return { ids: [] };
+      },
+    });
+    expect(queries[0]).toEqual({ text: 'Shikata nee', spellcheck: false });
   });
 
   it('shows results for a spelling correction that passes the audit', async () => {

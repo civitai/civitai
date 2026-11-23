@@ -73,8 +73,8 @@ vi.mock('~/server/utils/get-server-stripe', () => ({
   getServerStripe: async () => stripeRef.current,
 }));
 
-import extendHandler from '~/pages/api/mod/user/membership-extend';
-import previewHandler from '~/pages/api/mod/user/membership-extend-preview';
+import extendHandler from '~/server/api-routes/mod/user/membership-extend';
+import previewHandler from '~/server/api-routes/mod/user/membership-extend-preview';
 
 function liveSub(over: Record<string, unknown> = {}) {
   return {

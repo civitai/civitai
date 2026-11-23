@@ -1,5 +1,9 @@
 import { ZodError } from 'zod';
 import { parseAiToolkitOptions, type AiToolkitOptions } from '@civitai/shared/training-options';
+import {
+  KOHYA_CONTINUE_KEYS as SHARED_KOHYA_CONTINUE_KEYS,
+  pickDefinedKeys,
+} from '@civitai/shared/training-kohya-replay';
 import type { AiToolkitTrainingInput } from '@civitai/orchestration-client';
 import { buildKohyaInput } from './kohya-training';
 import { engineTakesRepeats, expandRepeats, isRepeatExt, MAX_REPEATS } from './repeats';
@@ -34,6 +38,7 @@ import {
   forEachPooled,
   isTrainingDataNotReady,
   isFlux2,
+  MAX_DATASET_BLOBS,
   queryRecentWorkflows,
   readWorkflow,
   resolveCurrencies,
@@ -74,6 +79,7 @@ import {
 import { FILES_PROCESSING_PARTIAL_REASON, FilesProcessingError } from '$lib/files-processing';
 import type { DatasetRating, StoredRating } from '$lib/dataset-rating';
 import { slugify } from '$lib/slug';
+import { MAX_RUNS } from '$lib/submit-limits';
 import { MatureRepriceError } from '$lib/mature-charge';
 import type { TrainingTextCheck } from '$lib/training-text';
 
@@ -547,6 +553,8 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   if (!isString(run.trigger)) fail(`${field}.trigger`, 'must be a string.');
   if (!Array.isArray(run.items) || run.items.length === 0)
     fail(`${field}.items`, 'must be a non-empty array.');
+  if (run.items.length > MAX_DATASET_BLOBS)
+    fail(`${field}.items`, `must hold at most ${MAX_DATASET_BLOBS} items.`);
   if (run.editTraining !== undefined && typeof run.editTraining !== 'boolean')
     fail(`${field}.editTraining`, 'must be a boolean.');
   if (run.editTraining) validatePairs(run, field);
@@ -730,6 +738,8 @@ export async function submitTrainingBatch(
 ): Promise<SubmittedBatch> {
   if (!Array.isArray(runs) || runs.length === 0)
     throw new TrainingBatchValidationError('runs must be a non-empty array.');
+  if (runs.length > MAX_RUNS)
+    throw new TrainingBatchValidationError(`At most ${MAX_RUNS} runs can start together.`);
   runs.forEach((run, i) => validateRun(run, `runs[${i}]`));
   if (opts.kohyaAllowed !== true && runs.some((run) => run.engine === 'kohya'))
     throw new TrainingBatchValidationError(KOHYA_UNAVAILABLE);
@@ -982,10 +992,17 @@ async function buildContinuation(
       ? srcMeta.matureCount
       : await sourceMatureCount(client, opts.workflowId, airs, datasetRating, onMatureCount);
   const name = srcMeta.name ? `${srcMeta.name} (further)` : undefined;
+  // Publish state belongs to the source's model; carried over, the new run shows as published and can't be published.
+  const {
+    published: _published,
+    modelId: _modelId,
+    modelVersionId: _modelVersionId,
+    ...inherited
+  } = srcMeta;
   // Lineage always points at the IMMEDIATE parent — a copied-through sourceWorkflowId from the
   // source's own metadata would skip a link in the chain.
   const metadata: TrainingStudioMeta = {
-    ...srcMeta,
+    ...inherited,
     name: name ?? srcMeta.name,
     v: META_VERSION,
     sourceWorkflowId: opts.workflowId,
@@ -1073,37 +1090,7 @@ async function buildContinuation(
   };
 }
 
-const KOHYA_CONTINUE_KEYS = [
-  'model',
-  'numRepeats',
-  'trainBatchSize',
-  'resolution',
-  'enableBucket',
-  'shuffleCaption',
-  'keepTokens',
-  'clipSkip',
-  'flipAugmentation',
-  'unetLR',
-  'textEncoderLR',
-  'trainTextEncoder',
-  'lrScheduler',
-  'lrSchedulerNumCycles',
-  'minSnrGamma',
-  'networkDim',
-  'networkAlpha',
-  'noiseOffset',
-  'optimizerType',
-  'seed',
-  'fp8Base',
-  'blocksToSwap',
-  'vParameterization',
-  'zeroTerminalSnr',
-  'trainingData',
-  'samples',
-  'clipLModel',
-  'textEncoderModel',
-  'vaeModel',
-] as const satisfies readonly (keyof KohyaInput)[];
+const KOHYA_CONTINUE_KEYS = SHARED_KOHYA_CONTINUE_KEYS satisfies readonly (keyof KohyaInput)[];
 
 function continueKohyaInput(
   input: Record<string, unknown>,
@@ -1117,9 +1104,7 @@ function continueKohyaInput(
       'keep training: Kohya supports at most 20 checkpoints and 10,000 steps per run.'
     );
   return {
-    ...Object.fromEntries(
-      KOHYA_CONTINUE_KEYS.filter((key) => input[key] !== undefined).map((key) => [key, input[key]])
-    ),
+    ...pickDefinedKeys(input, KOHYA_CONTINUE_KEYS),
     engine: 'kohya',
     maxTrainEpochs: epochs,
     ...(steps ? { steps } : {}),

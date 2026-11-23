@@ -1,0 +1,91 @@
+# Breaking import cycles
+
+Every module in an import cycle reaches every other module in it, and everything those import. A
+page or API route that imports any one of them pulls all of it into its import graph (its
+"reach"), so a cycle in `src/` makes the graph heavier for every entry point that touches it.
+Breaking cycles shrinks each entry point's reach.
+
+Dynamic `import()` counts. The bundler still builds a dynamic import's target, as a separate
+chunk, so moving an edge to a call-site `await import()` only puts off when the target loads; it
+does not shrink what the build compiles.
+
+## Find the next cut
+
+```bash
+pnpm exec tsx scripts/import-cycles.ts            # cycles, ranked cuts, page and API reach
+pnpm exec tsx scripts/import-cycles.ts --cuts 50  # rank further down the list
+pnpm exec tsx scripts/import-cycles.ts --json out.json  # also write the report as JSON
+```
+
+For each cycle of ten or more modules, it lists edges in the order that shrinks the cycles fastest,
+with the cycle sizes left after each cut. The ranking assumes the edge disappears outright. A real
+fix sometimes moves the edge rather than removing it, so re-run after each change rather than
+working down an old list. The `(dynamic)` marker means the edge is an `import()`, either a
+call-site `await import()` or a `next/dynamic` component. Some are earlier cycle fixes that hid the
+edge from the old static-only guard; others, like the trigger files below, were never meant as cuts.
+
+Reach is the number this work is trying to move, not the cycle count itself.
+
+## Fix shapes
+
+### A module imports a whole registry to use one entry
+
+The first cut, and the most common shape near the top of the list. A registry maps keys to
+implementations, so it imports every implementation. A module that reads one key from it reaches all
+of them, and when any of those reaches back to the module, the registry closes a cycle.
+
+Fix: give the entry its own module and import that. Then delete registry entries nothing reads.
+
+Worked example: `src/components/Dialog/dialog-registry2.ts` held 23 `dynamic()` dialogs. Three
+were opened, each from one component. Each became a trigger file in
+`src/components/Dialog/triggers/`, the pattern the other dialogs already used:
+
+```ts
+// src/components/Dialog/triggers/bulk-bonus-info.ts
+const BulkBonusInfoModal = dynamic(() => import('~/components/Buzz/CryptoDeposit/BulkBonusInfoModal'));
+export const openBulkBonusInfo = () =>
+  dialogStore.trigger({ component: BulkBonusInfoModal, id: 'bulk-bonus-info' });
+```
+
+The registry was deleted, along with one modal that only the registry had imported. The 164-module
+client cycle split into three much smaller ones.
+
+Before deleting a registry, check two things. Nothing may look an entry up by a key computed at
+runtime: grep for the registry's export, not only its file name. And when an entry goes, check
+that its target is still imported somewhere; if not, delete it too.
+
+### A shared piece lives in a big service
+
+Module A imports service B for one function or constant, and B (through anything) imports A. Move
+the piece into a new module that imports neither A nor B, and point both at it. Name the new module
+for what the piece does, not for the service it came out of. A type-only import (`import type`) is
+not an edge and needs no move.
+
+### A low-level module calls up
+
+A shared module (a notification sender, a scan pipeline, an event hook) imports the
+higher-level modules it hands work to. Two fixes, in order of preference:
+
+1. The caller passes what is needed (the adapter, a callback), so the low-level module imports
+   nothing above it.
+2. The higher-level modules register themselves at an entry point (a route, a job, a
+   startup module), and the low-level module reads the registration.
+
+An uncut example: `text-scan/submit.ts` reaches `moderation-adapters.ts` through a call-site
+`await import()`. The fix is for the caller to pass the adapter.
+
+## After each cut
+
+1. Re-run `scripts/import-cycles.ts` and put the before and after numbers in the PR: modules in
+   cycles, cycle sizes, page and API reach.
+2. Lower the caps in `no-import-cycle-growth.test.ts` and, if that cycle shrank,
+   `no-image-service-import-cycle.test.ts`. Both fail until you do.
+3. Run both guards: `pnpm exec vitest run --project 'unit*' src/server/services/__tests__/no-import-cycle-growth.test.ts src/server/services/__tests__/no-image-service-import-cycle.test.ts`.
+4. Where a module's import moved, update the tests that `vi.mock` it.
+
+## Ask first when
+
+- The fix needs a new registration mechanism, or changes the order in which modules run at startup
+  (side-effect imports, top-level registration).
+- A function moves from one entity's service to another's, so ownership changes.
+- The top-ranked cut does not fit any shape above. Add the new shape here once it is agreed.

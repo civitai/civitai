@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { POST_TAG_LIMIT } from '~/server/common/constants';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
@@ -35,14 +36,6 @@ export const openIntentQuerySchema = z
     return { ...rest, mediaUrls };
   });
 export type OpenIntentQuery = z.infer<typeof openIntentQuerySchema>;
-
-const escapeHtml = (value: string) =>
-  value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 
 /** The description with a "Source" link to `link` appended, as post detail HTML. */
 export function appendSourceLink(description: string | undefined, link: string | undefined) {

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -121,13 +122,16 @@ await pg.exec(`
     "needsReview" text, "blockedFor" text, metadata jsonb
   );
   CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
-  CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
+  CREATE TYPE "JobQueueType" AS ENUM (
+    'ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel', 'PendingDelete'
+  );
   CREATE TABLE "JobQueue" (
     "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
     data jsonb, "createdAt" timestamp(3) NOT NULL DEFAULT now(),
     UNIQUE ("entityType", "entityId", type)
   );
 `);
+await pg.exec(imageUseTablesSql);
 
 /** Stores `image` and answers each statement: the DELETE on PGlite, the report read from `reports`. */
 const storeImage = async (
@@ -148,12 +152,24 @@ const storeImage = async (
         image.blockedFor ?? null,
       ]
     );
+  // Dismissed and filed, so no open case keeps this image.
+  if (image) {
+    await pg.query(
+      `INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES ($1, 'Dismissed')`,
+      [image.id]
+    );
+    await pg.query(
+      `INSERT INTO "CsamReport" (images, "reportSentAt", details)
+       VALUES (jsonb_build_array($1::int), now(), '{"evidenceVerifiedAt": "2026-11-01T00:00:00Z"}')`,
+      [image.id]
+    );
+  }
   dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
   ) => {
     const text = strings.join('');
-    if (text.includes('"ImageReport"')) return reports();
+    if (text.includes('SELECT ir."imageId" FROM "ImageReport"')) return reports();
     if (!text.includes('DELETE FROM "Image"')) return [];
     const sql = Prisma.sql(strings, ...(values as never[]));
     return (await pg.query(sql.text, sql.values as unknown[])).rows;
@@ -186,7 +202,7 @@ const row = (id: number, url: string) => ({ id, url, postId: null, nsfwLevel: 1,
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  await pg.exec(`TRUNCATE "Image", "JobQueue"`);
+  await pg.exec(`TRUNCATE "Image", "JobQueue", "CsamQueueSetAside", "CsamReport"`);
   vi.stubGlobal('fetch', mockFetch);
   mockFetch.mockResolvedValue({ ok: true, status: 202 } as any);
   setEnv({
@@ -385,7 +401,7 @@ describe('retraction load on the image-cache service', () => {
       ...values: unknown[]
     ) => {
       if (!strings.join('').includes('DELETE FROM "Image"')) return [];
-      return (values[0] as number[]).map((id) => row(id, `key-${id}`));
+      return (values.find(Array.isArray) as number[]).map((id) => row(id, `key-${id}`));
     }) as never);
     let inFlight = 0;
     let maxInFlight = 0;
@@ -474,7 +490,7 @@ describe('retraction load on the image-cache service', () => {
       ...values: unknown[]
     ) => {
       if (!strings.join('').includes('DELETE FROM "Image"')) return [];
-      return (values[0] as number[]).map((id) => row(id, `key-${id}`));
+      return (values.find(Array.isArray) as number[]).map((id) => row(id, `key-${id}`));
     }) as never);
     mockFetch.mockImplementation(async () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -500,7 +516,7 @@ describe('retraction load on the image-cache service', () => {
       ...values: unknown[]
     ) => {
       if (!strings.join('').includes('DELETE FROM "Image"')) return [];
-      return (values[0] as number[]).map((id) => row(id, `key-${id}`));
+      return (values.find(Array.isArray) as number[]).map((id) => row(id, `key-${id}`));
     }) as never);
   const requestedLogs = () =>
     mockLogToAxiom.mock.calls.filter(
@@ -611,14 +627,11 @@ describe('an image whose key shop artwork uses', () => {
       { actor: { id: OWNER, isModerator: false } },
       { ingestion: 'Pending' },
     ],
-    [
-      'it is held for review',
-      { actor: { id: OWNER, isModerator: false } },
-      { needsReview: 'csam' },
-    ],
+    // Not the owner: an owner's own delete of these waits on the case as a pending delete.
+    ['it is held for review', { actor: { system: 'test' } }, { needsReview: 'csam' }],
     [
       'it is blocked for CSAM',
-      { actor: { id: OWNER, isModerator: false } },
+      { actor: { system: 'test' } },
       { ingestion: 'Blocked', blockedFor: 'CSAM' },
     ],
   ])('queues its object for a delete by key when %s', async (_case, args, over) => {

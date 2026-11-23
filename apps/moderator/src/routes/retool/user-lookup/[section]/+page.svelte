@@ -38,6 +38,7 @@
   import MembershipExtendPanel from '../MembershipExtendPanel.svelte';
   import MembershipCancelPanel from '../MembershipCancelPanel.svelte';
   import MembershipResyncPanel from '../MembershipResyncPanel.svelte';
+  import MembershipGiftCompPanel from '../MembershipGiftCompPanel.svelte';
   import { page } from '$app/state';
   import ReactionErasurePanel from '../ReactionErasurePanel.svelte';
   import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
@@ -123,6 +124,9 @@
       {/if}
       {#if data.grants['user.membership.code']}
         <MembershipCodePanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
+      {/if}
+      {#if data.grants['user.membership.gift.comp']}
+        <MembershipGiftCompPanel userId={result.identity.id} />
       {/if}
       <ModerationMemoryPanel
         userId={result.identity.id}

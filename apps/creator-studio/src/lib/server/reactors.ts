@@ -122,9 +122,7 @@ export async function getReactors(
   // Reactors the site's reaction totals leave out, left out of the counts and the list too so both match the
   // reaction bar. In SQL, before the LIMIT, so a page still fills.
   const notCounted = await getMetricExcludedUserIds();
-  const counted = notCounted.length
-    ? sql`AND NOT (${sql.ref('userId')} = ANY(${notCounted}::int[]))`
-    : sql``;
+  const counted = notMetricExcluded('userId', notCounted);
 
   const countRows = await sql<{ reaction: string; n: number }>`
     SELECT reaction, count(*)::int AS n FROM ${sql.table(t.reactions)}
@@ -206,8 +204,8 @@ const countedThumbsUp = sql`
     SELECT 1 FROM "Post" rvp WHERE rvp.id = rr."postId" AND rvp."publishedAt" <= now()
   ))`;
 
-const notMetricExcluded = (ids: number[]) =>
-  ids.length ? sql`AND NOT (rr."userId" = ANY(${ids}::int[]))` : sql``;
+export const notMetricExcluded = (column: string, ids: number[]) =>
+  ids.length ? sql`AND NOT (${sql.ref(column)} = ANY(${ids}::int[]))` : sql``;
 
 /**
  * Who left a thumbs-up on any version of the caller's model, one row per user. Null when the model is not theirs or a
@@ -246,7 +244,7 @@ export async function getModelLikers(
       CROSS JOIN LATERAL (
         SELECT rr."userId", rr."createdAt" FROM "ResourceReview" rr
         WHERE rr."modelVersionId" = mv.id AND ${countedThumbsUp}
-          AND ${listedToViewer('rr.userId', ownerId)} ${notMetricExcluded(notCounted)} ${bound}
+          AND ${listedToViewer('rr.userId', ownerId)} ${notMetricExcluded('rr.userId', notCounted)} ${bound}
         ORDER BY rr."userId" ${order}
         LIMIT ${REACTORS_PAGE_SIZE + 1}
       ) x

@@ -10,6 +10,7 @@ import {
   type ViewerGate,
   buildQdrantFilter,
   withWordMatchesFirst,
+  queryKeywords,
   withTagMatchesFirst,
   type CandidateSource,
 } from '~/server/services/semantic-search-client';
@@ -125,6 +126,38 @@ describe('the content gate', () => {
       viewer: { isModerator: false },
     });
     expect(sent[0].must).toContainEqual({ has_id: [3, 5] });
+  });
+});
+
+describe("the service's spelling correction", () => {
+  let bodies: Record<string, unknown>[];
+  beforeEach(() => {
+    setEnv({ SEARCH_SERVICE_URL: 'http://search.test/' });
+    bodies = [];
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return Response.json({ corrected: 'x', changes: [], hits: [] });
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const search = (query: { text: string; spellcheck?: false }) =>
+    searchServiceSource('articles')({
+      query,
+      filter: { gate: { kind: 'level', nsfwLevels: [1] } } as CandidateFilter,
+      offset: 0,
+      limit: 10,
+      viewer: { isModerator: false },
+    });
+
+  it('is turned off for a query searched as typed', async () => {
+    await search({ text: 'Shikata nee', spellcheck: false });
+    expect(bodies[0]).toMatchObject({ query: 'Shikata nee', spellcheck: false });
+  });
+
+  it('is left to the service otherwise (control)', async () => {
+    await search({ text: 'Shikata nee' });
+    expect(bodies[0]).not.toHaveProperty('spellcheck');
   });
 });
 
@@ -301,6 +334,28 @@ describe('withWordMatchesFirst', () => {
   it('is the plain ranking when nothing holds every word', async () => {
     const { source } = index([], [1, 2, 3]);
     expect((await page(withWordMatchesFirst(source, 'search_text'), 0, 3)).ids).toEqual([1, 2, 3]);
+  });
+
+  it('sends a keyword field beside the words when asked, so either one matches', async () => {
+    const { source, calls } = index([], [1, 2, 3]);
+    await page(withWordMatchesFirst(source, 'name', 'tags'), 0, 3);
+    expect(calls[0].filter.allWords).toEqual({
+      key: 'name',
+      text: 'civetai',
+      orAnyOf: { key: 'tags', values: ['civetai'] },
+    });
+    const filter = buildQdrantFilter('models', { gate, allWords: calls[0].filter.allWords });
+    expect(filter.must).toContainEqual({
+      should: [
+        { key: 'name', match: { text: 'civetai' } },
+        { key: 'tags', match: { any: ['civetai'] } },
+      ],
+    });
+  });
+
+  it('offers the whole query and each word as keywords, lowercased', () => {
+    expect(queryKeywords('  Anime  Style ')).toEqual(['anime style', 'anime', 'style']);
+    expect(queryKeywords('Anime')).toEqual(['anime']);
   });
 
   it('sends the words as a full-text match in the Qdrant filter', () => {

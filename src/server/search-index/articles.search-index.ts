@@ -190,7 +190,7 @@ export const articleSearchEligibleWhere = {
   status: ArticleStatus.Published,
   ingestion: ArticleIngestionStatus.Scanned,
   tosViolation: false,
-  availability: { not: Availability.Unsearchable },
+  availability: { notIn: [Availability.Unsearchable, Availability.Private] },
 } satisfies Prisma.ArticleWhereInput;
 
 /**

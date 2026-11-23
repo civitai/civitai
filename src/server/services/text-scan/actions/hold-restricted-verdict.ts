@@ -46,7 +46,10 @@ export async function holdRestrictedVerdict(
   db: { $executeRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<number> },
   modelId: number,
   source: string,
-  { privateOnly = false }: { privateOnly?: boolean } = {}
+  {
+    privateOnly = false,
+    guard = Prisma.empty,
+  }: { privateOnly?: boolean; /** ANDed into the write's WHERE. */ guard?: Prisma.Sql } = {}
 ) {
   const held = await db.$executeRaw`
     UPDATE "Model" m
@@ -55,6 +58,7 @@ export async function holdRestrictedVerdict(
       AND ${holdsRatingSql}
       AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
       ${privateOnly ? Prisma.sql`AND ${onlyPrivateHoldsRatingSql}` : Prisma.empty}
+      ${guard}
   `;
   return held > 0;
 }

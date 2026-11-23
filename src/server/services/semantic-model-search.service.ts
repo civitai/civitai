@@ -64,7 +64,7 @@ export async function searchSemanticModels({
   candidateSource?: CandidateSource;
 }) {
   const none = { items: [] as HydratedModel[], nextCursor: undefined, correctedQuery: undefined };
-  const { query, cursor, limit, ...feedFilters } = input;
+  const { query, cursor, limit, spellcheck, ...feedFilters } = input;
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,
@@ -168,12 +168,13 @@ export async function searchSemanticModels({
     return result.items;
   };
 
-  // Name matches first (the collection's `name` word index), then by meaning.
-  const ranked = withWordMatchesFirst(cachedSource, 'name');
+  // Name or tag matches first (the `name` word index, the `tags` keyword index), then by meaning.
+  const ranked = withWordMatchesFirst(cachedSource, 'name', 'tags');
   const search = auditedTextCandidates({
     source: (args) => timed('candidates', ranked(args)),
     viewer,
     text: query,
+    spellcheck,
     filter,
     audit: (correction) => refusalOf(correction, 'correction'),
   });

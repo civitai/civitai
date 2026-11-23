@@ -1,3 +1,4 @@
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import { Prisma } from '@prisma/client';
 import { updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
@@ -17,7 +18,12 @@ import { dbRead } from '~/server/db/client';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import type { ImageModelWithIngestion } from '../selectors/image.selector';
 import { isMinorMatureImage, withoutMinorFlag } from '~/server/common/image-visibility';
-import { NsfwLevel } from '~/server/common/enums';
+import {
+  bountyImageNsfwLevel,
+  bountyNsfwFlagLevel,
+  getTextRatedBountyLevels,
+  mayBeTextRated,
+} from '~/server/services/bounty-rated-level';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
 import { entityImageVisibilityConditions } from '~/server/services/image-visibility.service';
 import type { profileImageSelect } from '../selectors/image.selector';
@@ -122,8 +128,9 @@ type BountyForSearchIndex = {
   details: Prisma.JsonObject | null;
   complete: boolean;
   nsfwLevel: number;
-  /** Marked mature by its creator: its images count as XXX, as the bounty feed treats them. */
+  /** Marked mature by its creator; with the ratings below, it raises its images as the feed does. */
   nsfw: boolean;
+  moderatorNsfwLevel: number | null;
   stats: {
     favoriteCountAllTime: number;
     trackCountAllTime: number;
@@ -169,32 +176,36 @@ export const transformData = async ({
   imageTags: ImageTag[];
   profilePictures: ProfileImage[];
 }) => {
+  const textRated = await getTextRatedBountyLevels(
+    bounties.filter(mayBeTextRated).map((bounty) => bounty.id)
+  );
   const records = bounties
-    .map(({ cosmetics, user, tags, images: bountyImages, nsfwLevel, nsfw, ...bounty }) => {
+    .map(({ cosmetics, user, tags, images: bountyImages, moderatorNsfwLevel, ...bounty }) => {
       if (!bountyImages) {
         return null;
       }
+      const levels = { ...bounty, moderatorNsfwLevel };
+      const flagLevel = bountyNsfwFlagLevel(levels, textRated.get(bounty.id));
 
       const images = bountyImages
         .filter(isDefined)
         .map((i) => ({
           ...i,
+          nsfwLevel: bountyImageNsfwLevel(levels, textRated.get(bounty.id), i.nsfwLevel),
           tags: imageTags
             .filter((t) => t.imageId === i.id)
             .map((t) => ({ id: t.tagId, name: t.tag.name })),
         }))
-        .filter((i) => {
-          const nsfwLevel = nsfw ? NsfwLevel.XXX : i.nsfwLevel;
-          // The index has no viewer, so a restricted minor image is left out for everyone.
-          return !isMinorMatureImage({ minor: i.minor, nsfwLevel });
-        })
+        // The index has no viewer, so a restricted minor image is left out for everyone.
+        .filter((i) => !isMinorMatureImage(i))
         .map(withoutMinorFlag);
       const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
 
+      const { nsfwLevel, nsfw: _nsfw, ...rest } = bounty;
       return {
-        ...bounty,
-        details: bounty.details && publicBountyDetails(bounty.details, false),
-        nsfwLevel: parseBitwiseBrowsingLevel(nsfwLevel),
+        ...rest,
+        details: rest.details && publicBountyDetails(rest.details, false),
+        nsfwLevel: parseBitwiseBrowsingLevel(flagLevel ?? nsfwLevel),
         tags: tags || [],
         images,
         stats: bounty.stats || null,
@@ -273,7 +284,8 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
         b."type",
         b."details",
         b."complete",
-        b."nsfw"
+        b."nsfw",
+        b."moderatorNsfwLevel"
         FROM "Bounty" b
         WHERE ${Prisma.join(where, ' AND ')}
       ), users AS MATERIALIZED (
@@ -339,9 +351,10 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
           ) images
         FROM "Image" i
         JOIN "ImageConnection" ic ON ic."imageId" = i.id AND ic."entityId" IN (SELECT "id" FROM target) AND ic."entityType" = 'Bounty'
-        -- No viewer: the images a signed-out visitor is served on the bounty page, less ToS removals.
+        -- No viewer: the images a signed-out visitor is served on the bounty page, less images
+        -- listed on a CSAM report.
         WHERE ${Prisma.join(entityImageVisibilityConditions({}), ' AND ')}
-          AND i."tosViolation" IS NOT TRUE
+          AND (i.id)::text NOT IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})
         GROUP BY ic."entityId"
       ), tags AS MATERIALIZED (
         SELECT

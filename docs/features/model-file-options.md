@@ -54,7 +54,7 @@ public procedure); `dbKV` is bound to the primary, so a write is self-consistent
 
 ## Mod management endpoint (webhook, token-secured)
 
-`src/pages/api/admin/model-file-options.ts` using `WebhookEndpoint` (`?token=$WEBHOOK_TOKEN`).
+`src/server/api-routes/admin/model-file-options.ts` using `WebhookEndpoint` (`?token=$WEBHOOK_TOKEN`).
 Method-based REST (no `action` param) — the verb says what it does; body `{ precisions?, quantTypes? }`:
 
 - `GET` → current `{ precisions, quantTypes }` (live, bypasses cache)

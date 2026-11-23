@@ -1,5 +1,5 @@
 import { createEmail } from '~/server/email/templates/base.email';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { renderEmailCallout, simpleEmailWithTemplate } from '~/server/email/templates/util';
 
 // Category 3 (unsupported / wrapped token, e.g. cbBTC): NP cannot convert the
 // funds to our USDC payout, so only NP can refund them and they require the
@@ -18,7 +18,8 @@ export type StuckCryptoDepositUserData = {
 };
 
 const sent = ({ payAmount, payCurrency, network }: StuckCryptoDepositUserData) => {
-  const amount = payAmount != null ? `${payAmount} ${payCurrency.toUpperCase()}` : payCurrency.toUpperCase();
+  const amount =
+    payAmount != null ? `${payAmount} ${payCurrency.toUpperCase()}` : payCurrency.toUpperCase();
   return network ? `${amount} on ${network}` : amount;
 };
 
@@ -35,8 +36,13 @@ export const stuckCryptoDepositUserEmail = createEmail({
       payAddress ? `Deposit address: ${payAddress}` : null,
       `Sent: ${sent(data)}`,
       payinHash ? `TXID: ${payinHash}` : null,
-    ].filter(Boolean).join('\n');
+    ]
+      .filter(Boolean)
+      .join('\n');
     return simpleEmailWithTemplate({
+      icon: '🪙',
+      accent: 'buzz',
+      eyebrow: 'Crypto deposit',
       header: 'Your crypto deposit needs a refund from NowPayments',
       body: `
       <p>Hi ${username},</p>
@@ -56,7 +62,7 @@ export const stuckCryptoDepositUserEmail = createEmail({
         <li>A short <strong>video of your withdrawal record</strong> showing the TxID, payin address, token, amount, and date</li>
       </ul>
       <p style="margin-bottom:6px;">Your deposit details (copy and paste these to NowPayments):</p>
-      <div style="background:#f4f4f4; border-radius:6px; padding:12px; font-family:Menlo,Consolas,monospace; font-size:13px; line-height:20px; white-space:pre-wrap;">${details}</div>
+      ${renderEmailCallout(details, { accent: 'gray', mono: true })}
       <p>
         If you have any questions, just reach us at
         <a href="mailto:hello@civitai.com">hello@civitai.com</a> and we'll help however we can.
@@ -71,7 +77,9 @@ export const stuckCryptoDepositUserEmail = createEmail({
       payAddress ? `Deposit address: ${payAddress}` : null,
       `Sent: ${sent(data)}`,
       payinHash ? `TXID: ${payinHash}` : null,
-    ].filter(Boolean).join('\n');
+    ]
+      .filter(Boolean)
+      .join('\n');
     return [
       `Hi ${username},`,
       `Your recent crypto deposit to Civitai arrived in a token/network we can't accept (a wrapped or unsupported coin, in this case ${payCurrency.toUpperCase()}). It could not be converted, so no Buzz was credited. These funds are held by our payment processor, NowPayments, and only they can return them to you.`,

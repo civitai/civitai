@@ -22,7 +22,8 @@ name: App suites
 #       `vitest --project 'app:*'` loads the ROOT config (which imports these) before any app
 #       config, and its root-level sequencer applies to the whole run.
 #   scripts/ci/assert-workspace-suites-ran.mjs, scripts/ci/typecheck-apps.mjs,
-#   scripts/ci/assert-apps-paths-filter.mjs, scripts/ci/app-suite-scope.mjs
+#   scripts/ci/assert-apps-paths-filter.mjs, scripts/ci/app-suite-scope.mjs,
+#   scripts/ci/merge-component-shard-reports.mjs (+ assert-component-suite-ran.mjs, its import)
 #       what the steps below run. (The test step calls vitest itself rather than
 #       `test:apps:run`/queued-check; see it.)
 #   scripts/generate-slim-schema.js, scripts/prisma-*-generator.mjs
@@ -33,6 +34,12 @@ name: App suites
 #       main app's).
 #   src/server/utils/__tests__/redis-lua-harness.ts
 #       the real-Lua redis harness apps/auth's device tests run their scripts through.
+#   src/server/services/block-token.service.ts, src/server/services/block-token-subject.ts,
+#   src/server/middleware/block-scope.middleware.ts, src/server/common/enums.ts,
+#   src/shared/constants/browsingLevel.constants.ts, src/server/services/apps/data-read-grant.ts
+#       read by apps/auth's block-exchange test, which pins the hub's copies of the site's block-token
+#       constants (issuer, audience, subject pattern, kid, age cap, clock tolerance, the mature
+#       browsing-level bits) and its one-approved-block rule to them.
 #   containers/notification-db/docker-init/**
 #       the DDL apps/notifications' behavioural test builds its database from.
 #   package.json
@@ -56,7 +63,8 @@ name: App suites
 #
 # Same label as lint.yml (read its header): on a PR carrying `full-ci` the draft gate is lifted.
 # `types` deliberately omits `labeled`; full-ci.yml dispatches this workflow when the label is
-# added. That first, dispatched run is NOT path-filtered (`paths:` applies to pull_request
+# added to a draft PR (on a ready PR, the PR's own run here is not draft-gated, so nothing is
+# dispatched). That first, dispatched run is NOT path-filtered (`paths:` applies to pull_request
 # events only); later pushes are: a PR that touches nothing these suites read starts no PR run
 # here, label or not.
 #
@@ -106,12 +114,20 @@ on:
       - 'scripts/ci/typecheck-apps.mjs'
       - 'scripts/ci/assert-apps-paths-filter.mjs'
       - 'scripts/ci/app-suite-scope.mjs'
+      - 'scripts/ci/merge-component-shard-reports.mjs'
+      - 'scripts/ci/assert-component-suite-ran.mjs'
       - 'scripts/generate-slim-schema.js'
       - 'scripts/prisma-enum-generator.mjs'
       - 'scripts/prisma-updated-at-generator.mjs'
       - 'src/components/Account/creator-score-copy.ts'
       - 'src/server/services/crucible-bradley-terry.ts'
       - 'src/server/utils/__tests__/redis-lua-harness.ts'
+      - 'src/server/services/block-token.service.ts'
+      - 'src/server/services/block-token-subject.ts'
+      - 'src/server/middleware/block-scope.middleware.ts'
+      - 'src/server/common/enums.ts'
+      - 'src/shared/constants/browsingLevel.constants.ts'
+      - 'src/server/services/apps/data-read-grant.ts'
       - 'src/server/services/knights/**'
       - 'containers/notification-db/docker-init/**'
   push:
@@ -140,7 +156,7 @@ jobs:
   # `apps` job's comment describes: a slow test step can no longer cancel the typecheck.
   apps-typecheck:
     name: App typecheck
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.repository == 'civitai/civitai' && vars.CIVITAI_DC_OFF != 'true' && !endsWith(github.actor, '[bot]') && !endsWith(github.event.pull_request.user.login || '', '[bot]') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER'))) && 'civitai-dc' || 'ubuntu-latest' }}
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
     # Measured 2026-11-18: step 169-286 s, install ~40 s.
     timeout-minutes: 20
@@ -170,9 +186,13 @@ jobs:
 
   apps:
     # Renaming is safe: neither `main` nor `release` has any required_status_checks (re-verified
-    # 2026-10-29), so no merge gate keys on it. It was `App unit tests + typecheck` until the
-    # typecheck moved to `apps-typecheck`.
-    name: App unit tests
+    # 2026-10-29, and again 2026-11-23 when this job was sharded), so no merge gate keys on it. It
+    # was `App unit tests + typecheck` until the typecheck moved to `apps-typecheck`, and
+    # `App unit tests` until it was sharded; that name now belongs to `apps-ledger` below.
+    name: App unit tests (${{ matrix.shard }}/${{ strategy.job-total }})
+    # Hosted, not civitai-dc: the pglite suites here (knights apprenticeship, event-engine
+    # collection-item-adder) hit their 5s test timeout under civitai-dc load while hosted stays green.
+    # App typecheck stays on civitai-dc.
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
     # The `apps/*` suites had never once run in CI before this job existed (369 tests across
@@ -188,8 +208,42 @@ jobs:
     # took it down with it: 16 of 162 runs were cancelled at 15m (2026-10-19/20). It now runs in
     # `apps-typecheck`, so this limit bounds the tests alone (test step 253-936 s over 6 green PR
     # runs, 2026-11-18). Nearly all of the test time is the moderator app's pglite suites: speed
-    # those up or shard this job before raising the limit.
-    timeout-minutes: 30
+    # those up or add a shard before raising the limit.
+    #
+    # ── SHARDED ACROSS 3 RUNNERS ────────────────────────────────────────────
+    #
+    # Unsharded, this job was the critical path of the slowest PR suite: p50 960 s / p90 1169 s
+    # (2026-11-21..23). Vitest's `--shard` cuts the selected files into equal file COUNTS, which
+    # suits this suite: the moderator app is most of the time and most of the files (659 of
+    # ~1,160 test files, 2026-11-23), so every shard draws a similar share of it. Setup
+    # (checkout, install, Postgres) is paid again by every shard and does not shard. 3, as for
+    # the component suite: each extra shard is one more slot of the plan's org-wide concurrent-job
+    # limit (see lint.yml's `unit` job for that trade). READ THE THREE DURATIONS after any
+    # change to this matrix or to the suite's heaviest files.
+    #
+    # Every app suite is still accounted for: `apps-ledger` below merges the shard reports,
+    # fails on a missing shard, on a test file in more than one shard (`--shard` not reaching
+    # vitest) and on a report beyond the shard total, then runs the suites ledger on the union,
+    # the same gate the unsharded job had. Only the union can be checked: which shard holds an
+    # app's files is vitest's hash, so a single shard cannot be held to the ledger.
+    #
+    # 🔴 THE SHARD COUNT IS WRITTEN ONCE, in `matrix.shard` below. The `--shard` denominator, the
+    # check names and the ledger's expected count all read `strategy.job-total` (the ledger via
+    # the `shard_total` output), so growing the matrix cannot leave a `/3` behind that silently
+    # drops the new shard's files.
+    #
+    # `fail-fast: false`: a red shard must not cancel its siblings, or their files go
+    # unreported and the ledger can only say "missing".
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    # Every shard writes the same value; `apps-ledger` reads it as its expected shard count. Empty
+    # if no shard got far enough to set it, and the merge then fails on bad usage, not green.
+    outputs:
+      shard_total: ${{ strategy.job-total }}
+    # Per shard. A third of the old 253-936 s test step, plus setup, with room for a slow runner.
+    timeout-minutes: 20
     # A real Postgres for apps/assistant-runner, whose runs are DBOS workflows. Its *.pg.test.ts
     # files fail in CI without the URL (they skip only outside CI). The suites create and drop their
     # own databases on this throwaway server.
@@ -238,32 +292,105 @@ jobs:
       # the same command with `--project app:*` fixed in front: vitest keeps a project when ANY
       # `--project` pattern matches it, so that fixed pattern would make leaving one out
       # impossible. The scope step's output is `--project=app:*` when nothing is left out. If the
-      # scope step fails, this does not run and the ledger below fails on the missing report.
-      # `set -f`: the arguments carry a `*` that must reach vitest, not the shell's globbing.
+      # scope step fails, this does not run and the ledger in `apps-ledger` fails on the missing
+      # report. `set -f`: the arguments carry a `*` that must reach vitest, not the shell's globbing.
+      #
+      # Every shard runs the same scope step, so all three shard the same selection: `--shard`
+      # applies after `--project`. 🔴 NO `--` SEPARATOR before `--shard` (see lint.yml's `unit`
+      # job: vitest discards everything after a bare `--`).
       - name: App unit tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.scope.outcome == 'success' }}
         env:
           VITEST_PROJECT_ARGS: ${{ steps.scope.outputs.vitest_args }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_TOTAL: ${{ strategy.job-total }}
         run: |
           set -f
-          pnpm exec vitest run $VITEST_PROJECT_ARGS --reporter=default --reporter=json --outputFile=apps-report.json
+          pnpm exec vitest run $VITEST_PROJECT_ARGS --shard="$SHARD/$SHARD_TOTAL" --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/app-unit-report.json"
+
+      # For `apps-ledger`. `!cancelled()` so a RED shard still hands over its report: the ledger
+      # must account for its files either way. A shard that wrote no report uploads nothing
+      # (`warn`: the shard is already red, and the ledger then names it as missing).
+      - name: Upload app unit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-unit-report-${{ matrix.shard }}
+          path: ${{ runner.temp }}/app-unit-report.json
+          if-no-files-found: warn
+          retention-days: 3
+          # A re-run of a failed shard uploads again under the same name.
+          overwrite: true
+
+      # Re-derives what the `paths:` filter above must contain and fails on a missing or stale
+      # entry. See the header and the script. It reads the tree, not the tests, so one shard pays it.
+      - name: Paths filter covers what the app suites read
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard == 1 }}
+        run: node scripts/ci/assert-apps-paths-filter.mjs
+
+  # Named `App unit tests`, the unsharded job's check name, so anything that reads that check by
+  # name keeps reading the whole suite's verdict. Red when any shard job did not succeed, when a
+  # shard's report is missing, when the reports do not split the suite (a file in two shards, a
+  # shard beyond the total), or when the merged report fails the suites ledger. Same shape as
+  # lint.yml's `component-ledger`.
+  apps-ledger:
+    name: App unit tests
+    needs: apps
+    runs-on: ubuntu-latest
+    # 🔴 FOLLOWS the shards rather than copying their gate: runs whenever they ran, whatever
+    # decided that. A copied gate goes stale the first time the shards' `if` changes, and then
+    # this runs over skipped shards and goes red ("concluded 'skipped'") on every such run.
+    # `!cancelled()` rather than the default, so a FAILED shard still gets a ledger verdict
+    # (red); a cancelled run gets none, as for lint.yml's `component-ledger`.
+    if: ${{ !cancelled() && needs.apps.result != 'skipped' }}
+    timeout-minutes: 10
+    steps:
+      # Depth 2 and no install: the ledger re-derives the PR's changed files from git (the merge
+      # commit against its first parent, as the scope step does) and imports scripts/ci only.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Download app unit reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: app-unit-report-*
+          path: ${{ runner.temp }}/app-unit-reports
+
+      # The same decision the shards ran under (same commit, same event), so the ledger can
+      # re-check any suite it excuses. See `Scope app suites` in the `apps` job.
+      - name: Scope app suites
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/app-suite-scope.mjs --out app-suite-scope.json
 
       # A green vitest run is a claim, not evidence, and this positive control earns its keep
       # harder here than for packages: the projects are named by hand (`app:auth`, ...), so an
       # app that loses its `test.name` stops being selected while the others keep the run green
-      # and exit 0. Measured, not assumed — see the script header. `always()` so it runs after
-      # a red suite, which is the case it exists for.
+      # and exit 0. Measured, not assumed — see the script header. Both checks always run, so a
+      # missing shard and a missing suite are both named; the ledger reads the merged report,
+      # which the merge writes even when it fails.
       - name: Assert every app suite actually ran
-        if: always()
-        run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps --scope app-suite-scope.json
+        if: ${{ !cancelled() }}
+        env:
+          SHARD_TOTAL: ${{ needs.apps.outputs.shard_total }}
+        run: |
+          rc=0
+          node scripts/ci/merge-component-shard-reports.mjs "$RUNNER_TEMP/app-unit-reports" "$SHARD_TOTAL" apps-report.json app-unit-report || rc=1
+          node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps --scope app-suite-scope.json || rc=1
+          exit $rc
 
       # PER-TEST TIMINGS, read a few times a day by an external ci-speed job that ranks slow
-      # and flaky tests across runs. The SAME report this job's suite step wrote (no extra test run), under its
-      # own `test-times-` name so no artifact download can match it — lint.yml's `unit-verify`
+      # and flaky tests across runs. The merged report of the three shards (no extra test run),
+      # under the unsharded job's artifact name, so the reader finds it as before. Its own
+      # `test-times-` name so no artifact download can match it — lint.yml's `unit-verify`
       # globs `unit-report-*` and once counted every .json it found. `ignore` when absent: a
-      # missing report is already failed, by name, by this suite's own ledger step.
+      # missing report is already failed, by name, by the ledger step above.
       - name: Upload test timings
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.scope.outcome == 'success' }}
+        if: ${{ !cancelled() }}
         # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
         # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
         continue-on-error: ${{ github.event_name != 'push' }}
@@ -276,8 +403,12 @@ jobs:
           # One artifact per attempt (`-a<run_attempt>`, never overwritten): a failed attempt
           # and its passing re-run on the same commit is exactly the flake the reader counts.
 
-      # Re-derives what the `paths:` filter above must contain and fails on a missing or stale
-      # entry. See the header and the script.
-      - name: Paths filter covers what the app suites read
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: node scripts/ci/assert-apps-paths-filter.mjs
+      - name: Every shard succeeded
+        if: ${{ !cancelled() }}
+        env:
+          SHARDS: ${{ needs.apps.result }}
+        run: |
+          if [ "$SHARDS" != success ]; then
+            echo "::error title=App unit shard did not succeed::the app unit shard jobs concluded '$SHARDS'. Open the red 'App unit tests (n/N)' job for the cause."
+            exit 1
+          fi

@@ -76,7 +76,10 @@ const PACKAGE_EXPORTS = {
   './csam-queue': './src/csam-queue.db.ts',
   './evidence-archive-queue': './src/evidence-archive-queue.db.ts',
   './content-deletion': './src/content-deletion.db.ts',
+  './pending-deletes': './src/pending-deletes.db.ts',
+  './child-safety-case': './src/child-safety-case.db.ts',
   './profile-picture-clear': './src/profile-picture-clear.db.ts',
+  './access-token': './src/access-token.db.ts',
   './test-harness': './src/test/compile-harness.ts',
   './test/image-uses': './src/test/image-uses.ts',
 };

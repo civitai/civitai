@@ -27,6 +27,7 @@ const eventLabel: Record<ServiceDealEventType, string> = {
   Held: 'Buzz held in escrow',
   Released: 'Buzz released to the seller',
   Refunded: 'Buzz refunded to the buyer',
+  ReviewedHappy: 'Left a happy review',
 };
 
 type DealEvent = ServiceDealView['events'][number];

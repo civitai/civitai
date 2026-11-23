@@ -3,9 +3,10 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 const API_ROOT = path.resolve(__dirname, '../../pages/api');
+const SERVED_API_ROOT = path.resolve(__dirname, '../api-routes');
 
 const SCAN_SUBMIT =
-  /\b(ingestImages?|ingestImageById|enqueueImageIngestion|createImageIngestionRequest)\b/;
+  /\b(ingestImages?|ingestImageById|rescanImageById|enqueueImageIngestion|createImageIngestionRequest)\b/;
 
 /**
  * REST routes that name an image scan submit function directly. Adding one is a deliberate
@@ -30,9 +31,12 @@ function walk(dir: string): string[] {
 
 describe('image scan submit functions named by REST routes', () => {
   it('are named only by the recorded routes', () => {
-    const found = walk(API_ROOT)
-      .filter((file) => SCAN_SUBMIT.test(readFileSync(file, 'utf8')))
-      .map((file) => path.relative(API_ROOT, file).split(path.sep).join('/'))
+    const found = [API_ROOT, SERVED_API_ROOT]
+      .flatMap((root) =>
+        walk(root)
+          .filter((file) => SCAN_SUBMIT.test(readFileSync(file, 'utf8')))
+          .map((file) => path.relative(root, file).split(path.sep).join('/'))
+      )
       .sort();
 
     expect(

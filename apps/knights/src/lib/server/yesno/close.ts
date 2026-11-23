@@ -8,7 +8,14 @@ import { lockItemVoters } from '../queue/queue.service';
 
 export type Closing =
   | { kind: 'consensus'; value: 'yes' | 'no'; by: number }
-  | { kind: 'none'; reason: 'no-consensus' | 'unplayable' | 'stale' | 'retired' };
+  | {
+      kind: 'none';
+      reason: 'no-consensus' | 'unplayable' | 'stale' | 'retired' | 'moderator-ruled';
+      /** Merged into the item's `meta` in the same update. */
+      meta?: Record<string, unknown>;
+    };
+
+export type RetireReason = Extract<Closing, { kind: 'none' }>['reason'];
 
 /**
  * Closes a question and grades its votes the way a rating item's are: against a consensus the majority answer is `correct` and the
@@ -36,7 +43,7 @@ export async function closeYesNoItem(
       .execute();
     await gradeKnightsVotes(trx, itemId, closing.value);
   } else {
-    await closeYesNoItemRow(trx, itemId, closing.reason, now);
+    await closeYesNoItemRow(trx, itemId, closing.reason, now, closing.meta);
   }
   return (await settleItemVotes(trx, itemId, now)).xp;
 }
@@ -48,8 +55,9 @@ export async function closeYesNoItem(
 export async function closeOpenYesNoItem(
   db: Kysely<DB>,
   itemId: number,
-  reason: Extract<Closing, { kind: 'none' }>['reason'],
-  now: Date
+  reason: RetireReason,
+  now: Date,
+  meta?: Record<string, unknown>
 ): Promise<XpDelta[] | null> {
   return db.transaction().execute(async (trx) => {
     const locked = await trx
@@ -61,6 +69,6 @@ export async function closeOpenYesNoItem(
       .executeTakeFirst();
     if (!locked || locked.status !== 'Open') return null;
     await lockItemVoters(trx, itemId);
-    return closeYesNoItem(trx, itemId, { kind: 'none', reason }, now);
+    return closeYesNoItem(trx, itemId, { kind: 'none', reason, meta }, now);
   });
 }

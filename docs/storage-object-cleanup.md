@@ -24,7 +24,7 @@ is a generic entity-keyed queue:
 
 ```prisma
 model JobQueue {
-  type       JobQueueType   // CleanUp | BlockedImageDelete | CleanIfEmpty | UpdateNsfwLevel | UpdateSearchIndex | UpdateMetrics | ModerationRequest | ImageScan
+  type       JobQueueType   // CleanUp | BlockedImageDelete | PendingDelete | CleanIfEmpty | UpdateNsfwLevel | UpdateSearchIndex | UpdateMetrics | ModerationRequest | ImageScan | …
   entityType EntityType     // Image | Post | Article | Model | ModelVersion | Bounty | ...
   entityId   Int
   createdAt  DateTime @default(now())
@@ -141,10 +141,17 @@ All of these stop touching S3 and rely on the trigger+job instead:
   minute. The one inline path left is a takedown's retracting delete in
   [image-ingestion.ts](../src/server/jobs/image-ingestion.ts), which runs in a job and needs each outcome.
   Images a parent stops using (a bounty entry or article delete, an article edit, in either app) go through
-  `queueImageDeletes`, which queues as `ImageDelete` rows, in the parent's transaction, only the owner's images
-  that nothing else uses (no post, no other relation in `IMAGE_USES`, not shop artwork; and not reported or blocked, or for a moderator's delete not reported for CSAM);
-  [image-deletes](../src/server/jobs/image-deletes.ts) deletes them every minute, keeps those of a held owner,
-  and retries a row whose delete fails.
+  `queueImageDeletes`, which queues, in the parent's transaction (after it commits for an article's replaced
+  cover or banner), the owner's images that nothing else uses
+  (no post, no other relation in `IMAGE_USES`, not shop artwork) as pending cleanups.
+  Every delete that has to wait ([pending deletes](features/pending-deletes.md)) is one `PendingDelete` row: a parent's cleanup, or any delete that reaches
+  an image or post in an open child-safety case, whoever asks: `deleteImageRows` / `deletePostRows` leave
+  such a row and queue it in the same statement (`removeBlockedImages`, which retries from its own queue, keeps it there instead). A row the
+  caller's own condition excludes is neither deleted nor queued. An outright ask landing on a cleanup stays on it, so the cleanup goes even
+  if the image is in use again. [pending-deletes](../src/server/jobs/pending-deletes.ts) carries each out
+  once `imageDeleteBlocked` / `postDeleteBlocked` (and, for a post, a hold on its text) no longer keeps it: as the owner's, or as the system's with
+  the purge and keep-files flags it was queued with. A caller's own condition is checked when it deletes,
+  not again.
 - Model files: `deleteModelFileObject(s)` — [model-file.service.ts:172](../src/server/services/model-file.service.ts#L172),
   [:256](../src/server/services/model-file.service.ts#L256),
   [model-version.service.ts:865](../src/server/services/model-version.service.ts#L865),
@@ -193,7 +200,7 @@ Status legend: ✅ reclaimed · ⚠️ reclaimed but fragile (silent-orphan risk
 | Object | S3 on delete | DB-tracked | Mechanism | Status |
 | --- | --- | --- | --- | --- |
 | Cover image | yes | `Image` row + `Article.coverId` | `deleteImages` → queued `ImageStorageDelete` | ✅ |
-| Content images (embedded in body) | only the author's images nothing else uses (`queueImageDeletes`) | `Image` rows + `ImageConnection` | queued `ImageDelete` → `deleteImages` → queued `ImageStorageDelete` | ✅ |
+| Content images (embedded in body) | only the author's images nothing else uses (`queueImageDeletes`) | `Image` rows + `ImageConnection` | queued `PendingDelete` → `deleteImages` → queued `ImageStorageDelete` | ✅ |
 | Attachments (`File` rows) | **no** | `File` row (`entityType='Article'`) until deleted | `tx.file.deleteMany` — **row only** | ❌ |
 
 **Findings:**

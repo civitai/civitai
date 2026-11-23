@@ -507,12 +507,29 @@ function itemText(c: CsamContextText) {
   return `${heading}\n${quotedCapped(c.text)}`;
 }
 
+const SENDABLE_SOURCES: readonly string[] = ['postDescription', 'comment', 'postText'];
+const sendable = (c: CsamContextText) => SENDABLE_SOURCES.includes(c.source);
+
+/**
+ * Stored text of a source this build can't send: a capture from a newer build, read during a rolling
+ * deploy or after a rollback. The send leaves it out and says so; the archive keeps it.
+ */
+export const unsendableContextText = (contextText: CsamContextText[] | undefined) =>
+  (contextText ?? []).filter((c) => !sendable(c));
+
+/** The line a CyberTip carries for the captured items it leaves out: a count, no type, no content. */
+export const contextTextOmittedLine = (count: number) =>
+  count === 1
+    ? 'One captured text item is not included in this submission. Civitai has preserved it with this report.'
+    : `${count} captured text items are not included in this submission. Civitai has preserved them with this report.`;
+
 /** The page incidents as NCMEC reads them once parsed: one per page and capture time. */
 export function contextWebPageIncidents(contextText: CsamContextText[] | undefined) {
   if (!contextText?.length) return [];
   const base = getBaseUrl('red');
   const groups = new Map<string, { url: string; capturedAt: string; items: CsamContextText[] }>();
   for (const c of contextText) {
+    if (!sendable(c)) continue;
     const url = c.postId ? `${base}/posts/${c.postId}` : `${base}/images/${c.imageId}`;
     const key = `${url} ${c.capturedAt}`;
     const group = groups.get(key) ?? { url, capturedAt: c.capturedAt, items: [] };

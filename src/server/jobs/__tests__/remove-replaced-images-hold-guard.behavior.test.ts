@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
@@ -78,6 +79,7 @@ const OTHER_FLAG_USER = 10; // another image has a review flag that is not CSAM 
 const RELEASED_USER = 11; // their hold marker was released -> deleted
 const LAPSED_LISTED_USER = 12; // a CSAM-blocked image listed on their own lapsed sent report -> deleted
 const READOPTED_USER = 13; // made the replaced image their profile picture again -> kept
+const BAN_NOTE_USER = 14; // banned with a note naming NCMEC, no account hold -> deleted
 const REPORT_SUBJECT = 9; // owns nothing; the subject of the report listing LISTED_USER's image
 
 const PLAIN = 10;
@@ -94,6 +96,7 @@ const RELEASED = 20;
 const LAPSED_LISTED = 21;
 const READOPTED = 22;
 const GONE = 23; // queued, but the image was already deleted some other way
+const BAN_NOTE = 24;
 const QUEUED = [
   PLAIN,
   REPORT,
@@ -109,8 +112,9 @@ const QUEUED = [
   LAPSED_LISTED,
   READOPTED,
   GONE,
+  BAN_NOTE,
 ];
-const DELETED = [PLAIN, LAPSED, OTHER_FLAG, RELEASED, LAPSED_LISTED];
+const DELETED = [PLAIN, LAPSED, OTHER_FLAG, RELEASED, LAPSED_LISTED, BAN_NOTE];
 const HELD = [REPORT, REVIEW, BLOCKED, LISTED, MARKED, PLACEHOLDER, SELF_FLAGGED];
 
 // Not queued: the images that put their owner under a hold, or that stand beside one.
@@ -135,7 +139,12 @@ const SCHEMA = `
       "updatedAt" timestamp(3),
       "cascadeParentId" int
     );
-    CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int UNIQUE);
+    CREATE TABLE "User" (
+      id int PRIMARY KEY, "profilePictureId" int UNIQUE, meta jsonb, "bannedAt" timestamp(3)
+    );
+    CREATE TABLE "ModActivity" (
+      "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3)
+    );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Post" (
       id int PRIMARY KEY,
@@ -158,7 +167,7 @@ const SCHEMA = `
     );
     -- The DELETE queues each deleted image's stored file here, in the same statement.
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
-    CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
+    CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
     CREATE TABLE "JobQueue" (
       "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
       data jsonb, "createdAt" timestamp(3) NOT NULL DEFAULT now(),
@@ -177,6 +186,7 @@ beforeAll(async () => {
   setEnv({ DATABASE_IS_PROD: true });
   holder.db = new PGlite();
   await holder.db.exec(SCHEMA);
+  await holder.db.exec(imageUseTablesSql);
   await holder.db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
   // Off, so the guard is what keeps a held image rather than the marker's delete trigger, and so
   // the report fixtures write no markers of their own.
@@ -227,7 +237,7 @@ beforeEach(async () => {
   }) as never);
 
   await reset(
-    '"Image", "User", "CsamReport", "EvidenceHold", "EvidenceHoldImage", "Post", "EvidenceHoldPost", "Model", "JobQueue"'
+    '"Image", "User", "CsamReport", "EvidenceHold", "EvidenceHoldImage", "Post", "EvidenceHoldPost", "Model", "JobQueue", "Report", "ImageReport"'
   );
   await holder.db.exec(`
     INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor", ingestion) VALUES
@@ -244,12 +254,15 @@ beforeEach(async () => {
       (${RELEASED}, ${RELEASED_USER}, NULL, NULL, 'Scanned'),
       (${LAPSED_LISTED}, ${LAPSED_LISTED_USER}, NULL, NULL, 'Scanned'),
       (${READOPTED}, ${READOPTED_USER}, NULL, NULL, 'Scanned'),
+      (${BAN_NOTE}, ${BAN_NOTE_USER}, NULL, NULL, 'Scanned'),
       (${REVIEW_OTHER}, ${REVIEW_USER}, 'csam', NULL, 'Scanned'),
       (${BLOCKED_OTHER}, ${BLOCKED_USER}, NULL, 'CSAM', 'Blocked'),
       (${LISTED_OTHER}, ${LISTED_USER}, NULL, NULL, 'Scanned'),
       (${OTHER_FLAG_OTHER}, ${OTHER_FLAG_USER}, 'minor', NULL, 'Scanned'),
       (${LAPSED_LISTED_OTHER}, ${LAPSED_LISTED_USER}, NULL, 'CSAM', 'Blocked');
     INSERT INTO "User" (id, "profilePictureId") VALUES (${READOPTED_USER}, ${READOPTED});
+    INSERT INTO "User" (id, meta, "bannedAt") VALUES (${BAN_NOTE_USER},
+      '{"banDetails": {"detailsExternal": "NCMEC"}}', now() - interval '1 day');
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images) VALUES
       (${REPORT_USER}, NULL, NULL, '[]'),
       (${REPORT_SUBJECT}, now() - interval '30 days', NULL, '[{"id": ${LISTED_OTHER}}]'),
@@ -294,6 +307,24 @@ describe('remove-replaced-images under an account hold', () => {
     await run();
 
     expect(sorted(holder.restamped)).toEqual(sorted(HELD));
+  });
+
+  it('leaves an image its child-safety case keeps in this queue, not as a pending delete', async () => {
+    const CASE_KEPT = 40;
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId") VALUES (${CASE_KEPT}, ${PLAIN_USER});
+      INSERT INTO "Report" (id, reason, status) VALUES (70, 'CSAM', 'Pending');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (${CASE_KEPT}, 70);
+    `);
+    dbMock.dbRead.jobQueue.findMany.mockResolvedValue([{ entityId: CASE_KEPT }]);
+
+    await run();
+
+    expect(await remaining()).toContain(CASE_KEPT);
+    // Still queued here, so the re-adoption check runs again before it goes.
+    expect(holder.restamped).toEqual([CASE_KEPT]);
+    const { rows } = await holder.db.query(`SELECT 1 FROM "JobQueue" WHERE type = 'PendingDelete'`);
+    expect(rows).toEqual([]);
   });
 
   it('holds every image when the marker table exists without its view', async () => {

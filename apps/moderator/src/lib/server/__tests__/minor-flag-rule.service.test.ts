@@ -8,7 +8,9 @@ const { callModEndpoint, bustMinorQueueCounts } = vi.hoisted(() => ({
 vi.mock('../user-actions.service', () => ({ callModEndpoint }));
 vi.mock('../minor-hash.service', () => ({ bustMinorQueueCounts }));
 
-const { revertMinorFlag, ruleTextScanFlag } = await import('../minor-flag.service');
+const { revertMinorFlag, ruleRestrictedVerdict, ruleTextScanFlag } = await import(
+  '../minor-flag.service'
+);
 
 const reason = { resolvedReason: 'other', internalNotes: 'a cartoon' };
 
@@ -67,5 +69,16 @@ describe('revertMinorFlag', () => {
   it('control: a plain revert reports success without a warning', async () => {
     callModEndpoint.mockResolvedValue({ ok: true, body: { reverted: 1, keptMinor: 0, failed: 0 } });
     expect(await revertMinorFlag(42)).toEqual({ ok: true });
+  });
+});
+
+describe('ruleRestrictedVerdict', () => {
+  it('sends the revision of the lead the moderator saw', async () => {
+    await ruleRestrictedVerdict(42, 'dismiss', 'escalated', 'rev-1');
+    expect(callModEndpoint).toHaveBeenCalledWith(
+      'model/resolve-restricted-nsfw-verdict',
+      { modelId: 42, ruling: 'dismiss', reason: 'escalated', revision: 'rev-1' },
+      expect.any(String)
+    );
   });
 });

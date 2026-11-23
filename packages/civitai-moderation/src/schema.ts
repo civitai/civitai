@@ -17,7 +17,24 @@ export const MOD_ACTION = {
   abuseReport: 'abuse-report',
   relabelBuildBatch: 'relabel-build-batch',
   feedbackTriage: 'feedback-triage',
+  imageTagModerate: 'image-tag-moderate',
+  caseDefinitions: 'case-definitions',
+  caseIntake: 'case-intake',
+  casePartyView: 'case-party-view',
+  casePartyAction: 'case-party-action',
 } as const;
+
+/**
+ * The actions the main app may call with the scoped takedown-intake credential (MOD_CASES_TOKEN), and
+ * the only ones it may. The spoke refuses that credential on any other action, and refuses the general
+ * credential on these, so neither can stand in for the other.
+ */
+export const CASE_ACTIONS: ReadonlySet<ModActionName> = new Set([
+  MOD_ACTION.caseDefinitions,
+  MOD_ACTION.caseIntake,
+  MOD_ACTION.casePartyView,
+  MOD_ACTION.casePartyAction,
+]);
 export type ModActionName = (typeof MOD_ACTION)[keyof typeof MOD_ACTION];
 
 // image.moderate — block/unblock one or more images (the review-queue verdict + inline badges). Unblock
@@ -317,6 +334,12 @@ export const feedbackTriageInput = feedbackTriageRequest.extend({
    * route's input: a moderator acting is the one doing the re-stamping.
    */
   expectedHandledById: z.number().int().positive().nullable().optional(),
+  /**
+   * `true`: write only while the row carries no HQ sync hold (`context.syncHold`). The HQ sync
+   * sets it, so a row a moderator moved back to `new` after the sync read it is refused, not
+   * moved forward. Absent = not checked.
+   */
+  expectedUnheld: z.boolean().optional(),
 });
 export type FeedbackTriageInput = z.infer<typeof feedbackTriageInput>;
 
@@ -331,3 +354,95 @@ export const feedbackTriageResponse = z.object({
     z.object({ ok: z.literal(false), reason: z.string() }),
   ]),
 });
+
+// image-tag-moderate (`MOD_ACTION.imageTagModerate`) — Knights writes back a Paladin consensus on one flagged tag of the
+// moderator tag review queue: keep it (`disable: false`) or remove it (`disable: true`), through the same
+// `moderateImageTags` the queue's Keep/Remove buttons call, in its guarded mode.
+//
+// 🔴 The one action whose `userId` is NOT a moderator: it is the player whose vote completed the consensus, asserted
+// by Knights. The handler grants that id nothing beyond the one tag write and its `moderateTagKono` activity row.
+export const imageTagModerateInput = z.object({
+  imageId: z.number().int().positive().max(MAX_INT4),
+  tagId: z.number().int().positive().max(MAX_INT4),
+  disable: z.boolean(),
+  userId: z.number().int().positive().max(MAX_INT4),
+  /** The consensus closed on exactly the votes its stage needs (the 2-0 rule). A removal that would now lower the
+   *  image's rating is then refused, since such a removal needs the stricter rule. */
+  settledAtMinimum: z.boolean(),
+});
+export type ImageTagModerateInput = z.infer<typeof imageTagModerateInput>;
+
+/**
+ * `applied`: the tag was kept or removed. `already-ruled`: the tag is no longer flagged (a moderator ruled first, or it
+ * was disabled or removed). `ineligible`: the image or tag is staff-only now, or the removal needs the stricter rule;
+ * the tag stays in the moderators' queue. `missing`: the image is gone.
+ */
+export const IMAGE_TAG_MODERATE_OUTCOMES = [
+  'applied',
+  'already-ruled',
+  'ineligible',
+  'missing',
+] as const;
+export type ImageTagModerateOutcome = (typeof IMAGE_TAG_MODERATE_OUTCOMES)[number];
+export const imageTagModerateResult = z.object({
+  outcome: z.enum(IMAGE_TAG_MODERATE_OUTCOMES),
+  reason: z.string().optional(),
+});
+export type ImageTagModerateResult = z.infer<typeof imageTagModerateResult>;
+/** What the action answers: the result inside `modActionResponse`. */
+export const imageTagModerateResponse = z.object({ result: imageTagModerateResult });
+
+// Called by the main app's public /requests pages, signed out as well as in. Nothing here carries an
+// acting moderator: the submitter is a member of the public, so the spoke verifies Turnstile itself and
+// rate-limits by the forwarded ip. Field values are checked against the definition in the spoke, never here.
+
+const processKey = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
+/** A case's public reference, e.g. TD-26-AJEDE5. */
+export const casePublicRef = z.string().regex(/^[A-Z]{2}-\d{2}-[A-Z0-9]{6}$/);
+const fieldValue = z.union([
+  z.string().max(20_000),
+  z.array(z.string().max(2_000)).max(200),
+  z.boolean(),
+]);
+const fieldValues = z.record(z.string().max(40), fieldValue);
+const requestOrigin = {
+  /** The submitter's ip as the main app saw it, for the spoke's rate limit and Turnstile check. */
+  ip: z.string().min(1).max(64),
+  userAgent: z.string().max(512).optional(),
+};
+
+export const caseDefinitionsInput = z.object({});
+export type CaseDefinitionsInput = z.infer<typeof caseDefinitionsInput>;
+
+export const caseIntakeInput = z.object({
+  processKey,
+  /** Made by the form once per page load, so a resubmit after a timeout returns the same case. */
+  submissionId: z.string().uuid(),
+  values: fieldValues,
+  turnstileToken: z.string().min(1).max(4_096),
+  /** Set by the main app only for a signed-in submitter; the spoke never trusts it for access. */
+  submitterUserId: z.number().int().positive().max(2_147_483_647).optional(),
+  /** A test case. The main app sets it only for a signed-in moderator. */
+  isTest: z.boolean().optional(),
+  ...requestOrigin,
+});
+export type CaseIntakeInput = z.infer<typeof caseIntakeInput>;
+
+/** The party's own link token travels to the spoke on every call and is resolved there each time. */
+const partyAccess = {
+  publicRef: casePublicRef,
+  token: z.string().min(16).max(256),
+  ...requestOrigin,
+};
+
+export const casePartyViewInput = z.object(partyAccess);
+export type CasePartyViewInput = z.infer<typeof casePartyViewInput>;
+
+export const casePartyActionInput = z.object({
+  ...partyAccess,
+  /** Made by the page once per filing, so a retry after a timeout records nothing new. */
+  submissionId: z.string().uuid(),
+  actionId: processKey,
+  values: fieldValues,
+});
+export type CasePartyActionInput = z.infer<typeof casePartyActionInput>;

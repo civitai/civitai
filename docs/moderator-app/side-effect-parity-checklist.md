@@ -53,11 +53,16 @@ deferred), #4 (user moderation, out of scope), #8 (dispute auto-resolve, needs a
         same statement, `ImageStorageDelete` (the main app's `image-storage-deletes` job deletes the file, with URL
         dedup), `UpdateNsfwLevel` for the post and, when asked, `CdnAccessSync`; the helper then removes the image's collection
         links. After commit, `finishImageDeletes`:
-        `IMAGE_EXISTS` sysRedis false → bust `imageMeta`/`imageMetadata` → `syncSearchIndex('image', delete)`
+        `IMAGE_EXISTS` sysRedis false → bust `imageMeta`/`imageMetadata` → `syncSearchIndex('image', delete)`.
+        An image the hold check refuses (CSAM review or block) is left untouched and returned as `review`, with
+        nothing queued. One that reaches the delete in an open child-safety case is left in place, queued by
+        the same statement as a `PendingDelete` for the main app's `pending-deletes` job, and also returned as
+        `review`. Either way it keeps its search entry. Once the holds are removed, every in-case image takes
+        the second path.
   - [x] Wire into `deleteArticle`: capture `coverId` + content image ids before deleting connections; hand
         cover, banner and content images to the shared `queueImageDeletes` in the delete's transaction, which
         queues the author's images nothing else uses, the same rule as `deleteArticleById`; the main app's
-        `image-deletes` job deletes them.
+        `pending-deletes` job deletes them.
   - [x] **Storage app tested functional** — `STORAGE_ENDPOINT`/`STORAGE_TOKEN` pulled from the civitai main
         worktree `.env` (localhost:8084). `/health` OK; auth enforced (401 w/o token); `head`/`delete`/
         `delete-many` all 200 with the token.

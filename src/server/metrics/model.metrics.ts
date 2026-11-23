@@ -1,5 +1,6 @@
 import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
+import { PLATFORM_REVENUE_SOURCES_SQL } from '@civitai/buzz';
 import { env } from '~/env/server';
 import { PG_INT4_MAX, PG_INT4_MIN } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -609,6 +610,7 @@ async function getVersionBuzzEarnedTasks(ctx: ModelMetricContext) {
       floor(SUM(amount)) as earned
       FROM orchestration.resourceCompensations
       WHERE modelVersionId IN (SELECT modelVersionId FROM affected)
+        AND source NOT IN (${PLATFORM_REVENUE_SOURCES_SQL})
       GROUP BY modelVersionId;
   `;
 

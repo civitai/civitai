@@ -1,6 +1,7 @@
 package shadow
 
 import (
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,14 +22,30 @@ import (
 // are transport, and the rate-limit, Retry-After and site-alerts headers are per caller or per moment.
 var ComparedHeaders = []string{"cache-control", "vary", "cache-tag", "set-cookie", "x-update-required"}
 
+// RESTComparedHeaders are the headers compared on the REST model routes (DESIGN.md §16.8), as the Node
+// sampler sends them for a REST sample (FEED_GO_COMPARED_REST_RESPONSE_HEADERS, marked
+// `responseHeaderSet: "rest"`): ComparedHeaders, plus the ETag a cache revalidates with, the CORS
+// headers a browser reads the public API through, the config's X-Frame-Options, and the list's
+// X-Expires (which this service never writes: it falls back on the `etag` query key that sets it).
+var RESTComparedHeaders = append(slices.Clone(ComparedHeaders),
+	"etag", "access-control-allow-origin", "access-control-allow-headers", "access-control-allow-methods",
+	"access-control-expose-headers", "x-frame-options", "x-expires")
+
 // CompareResponse compares the ComparedHeaders of the two answers. The status is not compared: Node
 // posts only the samples it answered 200, and an answer computed here is a 200, so it cannot differ.
 // Noise rules: values are trimmed; Cache-Control and Vary compare as sets of lowercased directives or
 // header names (order and case do not matter to a cache); Cache-Tag as a set of tags; Set-Cookie by
 // presence. Diffs carry category `header:<name>`, never a value.
 func CompareResponse(goHeaders, nodeHeaders map[string]string) []Diff {
-	out := make([]Diff, 0, len(ComparedHeaders))
-	for _, name := range ComparedHeaders {
+	return CompareResponseHeaders(goHeaders, nodeHeaders, ComparedHeaders)
+}
+
+// CompareResponseHeaders is CompareResponse over the headers names (lowercased) lists. Beyond
+// CompareResponse's rules: the Access-Control-Allow-Headers, -Allow-Methods and -Expose-Headers lists
+// compare as sets of lowercased names, X-Frame-Options case-insensitively, and an ETag exactly.
+func CompareResponseHeaders(goHeaders, nodeHeaders map[string]string, names []string) []Diff {
+	out := make([]Diff, 0, len(names))
+	for _, name := range names {
 		g, gok := lookup(goHeaders, name)
 		n, nok := lookup(nodeHeaders, name)
 		cat := "header:" + name
@@ -57,8 +74,10 @@ func lookup(h map[string]string, name string) (string, bool) {
 
 func normalizeHeader(name, v string) string {
 	switch name {
-	case "cache-control", "vary":
+	case "cache-control", "vary", "access-control-allow-headers", "access-control-allow-methods", "access-control-expose-headers":
 		return tokenSet(strings.ToLower(v), ",")
+	case "x-frame-options":
+		return strings.ToLower(v)
 	case "cache-tag":
 		return tokenSet(v, ",")
 	case "set-cookie":

@@ -22,7 +22,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
   WebhookEndpoint: (handler: unknown) => handler,
 }));
 
-import handler from '~/pages/api/mod/restore-images';
+import handler from '~/server/api-routes/mod/restore-images';
 
 const row = (id: number, blockedFor: string | null) => ({
   id,
@@ -46,9 +46,10 @@ const restore = async (imageIds: number[]) => {
 
 beforeEach(() => {
   // The service answers with the images it restored; by default, all it was given.
-  h.unblock
-    .mockReset()
-    .mockImplementation(async ({ ids }: { ids: number[] }) => ids.map((id) => ({ id })));
+  h.unblock.mockReset().mockImplementation(async ({ ids }: { ids: number[] }) => ({
+    restored: ids.map((id) => ({ id })),
+    kept: [],
+  }));
   h.trackImages.mockReset();
 });
 
@@ -83,7 +84,8 @@ describe('/api/mod/restore-images', () => {
 
   it('counts only the images the service restored', async () => {
     found([row(2, 'moderated'), row(3, 'moderated')]);
-    h.unblock.mockResolvedValueOnce([{ id: 3 }]);
+    // 2 was kept blocked (its owner is deleted): not restored, so neither counted nor tracked.
+    h.unblock.mockResolvedValueOnce({ restored: [{ id: 3 }], kept: [{ id: 2 }] });
 
     const body = await restore([2, 3]);
 

@@ -61,6 +61,19 @@ describe('seedAppBlockSharedStorageMetrics', () => {
 });
 
 describe('recording', () => {
+  it('re-seeding keeps a recorded latency observation and counter value', async () => {
+    const latencyBefore = await latencyCount('vote');
+    const okBefore = await opsValue('vote', 'ok');
+    await withSharedStorageMetrics('vote', async () => 'done');
+    expect(await latencyCount('vote')).toBe(latencyBefore + 1);
+    expect(await opsValue('vote', 'ok')).toBe(okBefore + 1);
+
+    await seedAppBlockSharedStorageMetrics();
+
+    expect(await latencyCount('vote')).toBe(latencyBefore + 1);
+    expect(await opsValue('vote', 'ok')).toBe(okBefore + 1);
+  });
+
   it('a rejected call records its outcome once and rethrows the same error', async () => {
     const before = await opsValue('report', 'not_found');
     const latencyBefore = await latencyCount('report');
@@ -125,6 +138,19 @@ describe('sharedStorageOutcomeOf', () => {
     const keysBefore = Reflect.ownKeys(err);
     expect(tagSharedStorageOutcome(err, 'moderation_blocked')).toBe(err);
     expect(Reflect.ownKeys(err)).toEqual(keysBefore);
+  });
+
+  it.each([
+    ['UNAUTHORIZED', 'unauthorized'],
+    ['FORBIDDEN', 'forbidden'],
+    ['TOO_MANY_REQUESTS', 'rate_limited'],
+    ['PAYLOAD_TOO_LARGE', 'payload_too_large'],
+    ['BAD_REQUEST', 'bad_request'],
+    ['NOT_FOUND', 'not_found'],
+    ['INTERNAL_SERVER_ERROR', 'error'],
+    ['SERVICE_UNAVAILABLE', 'error'],
+  ] as const)('untagged %s is %s', (code, outcome) => {
+    expect(sharedStorageOutcomeOf(new TRPCError({ code, message: 'x' }))).toBe(outcome);
   });
 
   it('anything that is not a TRPCError is an error', () => {

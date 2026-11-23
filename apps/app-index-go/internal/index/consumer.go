@@ -21,13 +21,22 @@
 //     while the registry keeps refusing. A token that cannot be fetched is retried the same way,
 //     without opening a subscription. Without one, the static token (or none) is sent and
 //     `invalid_token` waits the longest backoff, as before.
-//   - An upsert whose body is unusable is treated as deleted. An event that cannot be decoded at all
-//     (no usable urn, unreadable data) is skipped and counted, advancing the cursor only when it
-//     carried one, so one bad event never wedges the stream.
+//   - An upsert whose body is unusable is treated as deleted; a serving listings generation
+//     (Consumer.KeepInvalidWhileServing) keeps the row and marks it stale instead. An event that
+//     cannot be decoded at all (no usable urn, unreadable data) is skipped and counted, advancing
+//     the cursor only when it carried one, so one bad event never wedges the stream.
+//   - With Consumer.Count set (the listings read model), a snapshot that reaches Live holding no
+//     entity is suspect: it is never promoted. The serving generation keeps every row it holds, the
+//     hold is logged and counted, and the snapshot is taken again from an empty cursor after the
+//     longest backoff. Without it (the app index), an empty snapshot is promoted, as before.
+//
+// One process may run several consumers, one per stream, each over its own store, generations,
+// cursor and consumer lock: the app index always, the listings read model with APP_INDEX_LISTINGS.
 package index
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"math/rand/v2"
@@ -40,7 +49,16 @@ import (
 
 // LayoutVersion is the shape of an index row. Bump it when what a row holds changes (a new filter
 // column, a changed tsvector): the next start builds a new generation beside the serving one.
-const LayoutVersion = 1
+// 2: the listing's own rating (listing_rating, listing_rated), which search filters on
+// (store.App.GateRating); a layout 1 row was written without reading it from its body.
+const LayoutVersion = 2
+
+// ListingsLayoutVersion is LayoutVersion for the listings read model's rows (store.Listing).
+// 2: the listing's own rating (listing_content_rating), which the read API gates on. 3: the listing
+// id (listing_id), the store's tie-break, required in every body. 4: the listing's sub-listings
+// (sub_listing_keys, and subListings required in every body). A generation of another layout is
+// not served by the listing API (api.Server.ListingsLayout).
+const ListingsLayoutVersion = 4
 
 // Events is one open subscription.
 type Events interface {
@@ -97,24 +115,46 @@ func (b Backoff) Delay(attempt int) time.Duration {
 
 // Consumer follows one schema's stream into a store.
 type Consumer struct {
-	Store   store.Store
+	Store   store.Generations
 	Sub     Subscriber
 	Schema  string
 	Layout  int
 	Log     *slog.Logger
-	Metrics *metrics.Metrics
+	Metrics *metrics.Stream
 	Backoff Backoff
+	// Decode turns an upsert's entity into its change, or says why the body is unusable (the
+	// entity is then treated as deleted). Nil is the app entity's (store.DecodeApp).
+	Decode func(urn, rev string, body json.RawMessage) (store.Change, error)
+	// KeepInvalidWhileServing keeps the row of an unusable upsert while serving, marked stale
+	// (store.ChangeStale), instead of deleting it; a building generation still deletes. Without it, an
+	// adapter rolled back below the required layout would empty the serving generation one delete at
+	// a time while the API answers 200. The listing API fails closed while any row is stale
+	// (store.Listings.StaleCount).
+	KeepInvalidWhileServing bool
+	// StaleCount, when set, is how many rows of a generation are marked stale; the consumer reads it
+	// into Metrics.Stale, which must be set with it, for the serving generation.
+	StaleCount func(ctx context.Context, gen int64) (int, error)
+	// Count, when set, is how many rows a generation holds, and switches on the empty-snapshot
+	// hold: a building generation that reaches Live with none is never promoted (package doc).
+	// Metrics.EmptySnapshots must be set with it.
+	Count func(ctx context.Context, gen int64) (int, error)
 	// Sleep waits d or until ctx ends; nil is a timer. Tests replace it to observe the delays.
 	Sleep func(ctx context.Context, d time.Duration) error
 	// Tokens, when set, supplies every subscription's bearer token, and is told when the registry
 	// refuses one. Nil: the registry.Client's own token (or none) is sent, unchanged.
 	Tokens TokenSource
+
+	// staleRows is the serving generation's stale row count as last read (StaleCount).
+	staleRows int
 }
 
 // maxAttempt caps the backoff exponent (the delay is capped at Backoff.Max long before).
 const maxAttempt = 30
 
 var errEnded = errors.New("registry ended the stream")
+
+// errEmptySnapshot ends a subscription whose snapshot reached Live with no entity (Consumer.Count).
+var errEmptySnapshot = errors.New("snapshot ended with no entity")
 
 // storeError marks a failure of the store, as opposed to the stream.
 type storeError struct{ err error }
@@ -209,6 +249,10 @@ func (c *Consumer) handle(ctx context.Context, gen store.Generation, err error) 
 	case errors.Is(err, errEnded):
 		c.Log.Warn("registry sent End; subscribing again later", "generation", gen.ID)
 		return "end", true
+	case errors.Is(err, errEmptySnapshot):
+		// Logged where it was found; a catalog that legitimately empties is rare, and retrying
+		// sooner would most likely get the same answer.
+		return "empty_snapshot", true
 	case errors.As(err, &se):
 		c.Log.Warn("store write failed; reconnecting from the stored cursor", "err", se.err, "generation", gen.ID)
 		return "store", false
@@ -260,6 +304,11 @@ func (c *Consumer) prepare(ctx context.Context) (store.Generation, error) {
 		return store.Generation{}, err
 	}
 	c.setServing(st.Serving)
+	if st.Serving != nil {
+		if err := c.readStale(ctx, st.Serving.ID); err != nil {
+			return store.Generation{}, err
+		}
+	}
 	fresh := func(reason string) (store.Generation, error) {
 		g, err := c.Store.NewBuilding(ctx, c.Schema, c.Layout)
 		if err != nil {
@@ -303,10 +352,29 @@ func (c *Consumer) setServing(g *store.Generation) {
 	if g == nil {
 		c.Metrics.Ready.Set(0)
 		c.Metrics.Generation.Set(0)
+		if c.StaleCount != nil {
+			c.staleRows = 0
+			c.Metrics.Stale.Set(0)
+		}
 		return
 	}
 	c.Metrics.Ready.Set(1)
 	c.Metrics.Generation.Set(float64(g.ID))
+}
+
+// readStale reads the stale row count of gen, the serving generation, into Metrics.Stale. Nothing
+// without StaleCount.
+func (c *Consumer) readStale(ctx context.Context, gen int64) error {
+	if c.StaleCount == nil {
+		return nil
+	}
+	n, err := c.StaleCount(ctx, gen)
+	if err != nil {
+		return err
+	}
+	c.staleRows = n
+	c.Metrics.Stale.Set(float64(n))
+	return nil
 }
 
 // follow subscribes from gen's cursor and applies events until the stream ends. live reports
@@ -333,28 +401,53 @@ func (c *Consumer) follow(ctx context.Context, gen *store.Generation) (live bool
 		typ := string(ev.Type)
 		switch ev.Type {
 		case registry.Upsert:
-			ch := store.Change{Kind: store.ChangeUpsert, Cursor: ev.Cursor}
-			app, verr := store.AppFromEntity(ev.Entity.URN, ev.Entity.Rev, ev.Entity.Body)
-			if verr != nil {
-				// A body this index cannot use is treated as deleted (spec "Validity" rule 2).
-				c.Log.Warn("unusable app body; treating it as deleted", "urn", ev.Entity.URN, "reason", verr.Error())
-				ch = store.Change{Kind: store.ChangeDelete, URN: ev.Entity.URN, Cursor: ev.Cursor}
+			decode := c.Decode
+			if decode == nil {
+				decode = store.DecodeApp
+			}
+			ch, verr := decode(ev.Entity.URN, ev.Entity.Rev, ev.Entity.Body)
+			if verr != nil && c.KeepInvalidWhileServing && gen.State == store.StateServing {
+				// Serving: the last good row stays, marked stale, so the read API fails closed.
+				c.Log.Warn("unusable body; keeping the stored row, marked stale", "schema", c.Schema, "urn", ev.Entity.URN, "reason", verr.Error())
+				ch = store.Change{Kind: store.ChangeStale, URN: ev.Entity.URN}
 				typ = "invalid"
-			} else {
-				ch.App = app
+			} else if verr != nil {
+				// A body this index cannot use is treated as deleted (spec "Validity" rule 2).
+				c.Log.Warn("unusable body; treating it as deleted", "schema", c.Schema, "urn", ev.Entity.URN, "reason", verr.Error())
+				ch = store.Change{Kind: store.ChangeDelete, URN: ev.Entity.URN}
+				typ = "invalid"
+			}
+			ch.Cursor = ev.Cursor
+			for _, d := range ch.Dropped {
+				c.Log.Warn("part of a body left out; entity kept", "schema", c.Schema, "urn", ev.Entity.URN,
+					"what", d.What, "reason", d.Reason)
+				if c.Metrics.Dropped != nil {
+					c.Metrics.Dropped.WithLabelValues(d.What).Inc()
+				}
 			}
 			if err := c.Store.Apply(ctx, gen.ID, ch); err != nil {
 				return live, storeError{err}
 			}
+			if err := c.afterRowChange(ctx, gen, ch.Kind); err != nil {
+				return live, err
+			}
 		case registry.Delete:
 			if err := c.Store.Apply(ctx, gen.ID, store.Change{Kind: store.ChangeDelete, URN: ev.URN, Cursor: ev.Cursor}); err != nil {
 				return live, storeError{err}
+			}
+			if err := c.afterRowChange(ctx, gen, store.ChangeDelete); err != nil {
+				return live, err
 			}
 		case registry.Progress:
 			if err := c.Store.Apply(ctx, gen.ID, store.Change{Kind: store.ChangeProgress, Cursor: ev.Cursor}); err != nil {
 				return live, storeError{err}
 			}
 		case registry.Live:
+			if gen.State == store.StateBuilding && c.Count != nil {
+				if err := c.holdEmpty(ctx, gen); err != nil {
+					return live, err
+				}
+			}
 			promoted, err := c.Store.Live(ctx, gen.ID, ev.Cursor)
 			if err != nil {
 				return live, storeError{err}
@@ -363,6 +456,9 @@ func (c *Consumer) follow(ctx context.Context, gen *store.Generation) (live bool
 			if promoted {
 				gen.State = store.StateServing
 				c.setServing(gen)
+				if err := c.readStale(ctx, gen.ID); err != nil {
+					return live, storeError{err}
+				}
 				c.Log.Info("generation is serving", "generation", gen.ID)
 			}
 			live = true
@@ -387,4 +483,38 @@ func (c *Consumer) follow(ctx context.Context, gen *store.Generation) (live bool
 		gen.Cursor = ev.Cursor
 		c.Metrics.EventApplied(typ)
 	}
+}
+
+// afterRowChange reads the stale row count again after a change of kind to gen's rows, when gen is
+// serving and the change can move it: a stale mark, or an upsert or delete while some row is stale.
+func (c *Consumer) afterRowChange(ctx context.Context, gen *store.Generation, kind store.ChangeKind) error {
+	if c.StaleCount == nil || gen.State != store.StateServing || (kind != store.ChangeStale && c.staleRows == 0) {
+		return nil
+	}
+	if err := c.readStale(ctx, gen.ID); err != nil {
+		return storeError{err}
+	}
+	return nil
+}
+
+// holdEmpty is the empty-snapshot hold, at the Live of a building generation: one holding no row is
+// not promoted. Its rows (none) and cursor are reset, so the next subscription takes the snapshot
+// again from an empty cursor, and errEmptySnapshot ends this one; the serving generation, if any,
+// is untouched and keeps every row it holds. A catalog that empties is far likelier to be a failed
+// upstream read than a real one, and switching to it would empty the read model.
+func (c *Consumer) holdEmpty(ctx context.Context, gen *store.Generation) error {
+	n, err := c.Count(ctx, gen.ID)
+	if err != nil {
+		return storeError{err}
+	}
+	if n > 0 {
+		return nil
+	}
+	c.Metrics.EmptySnapshots.Inc()
+	c.Log.Warn("snapshot ended with no entity; not switching to it, keeping the serving generation, and taking it again later",
+		"schema", c.Schema, "generation", gen.ID)
+	if err := c.Store.Reset(ctx, gen.ID); err != nil {
+		return storeError{err}
+	}
+	return errEmptySnapshot
 }

@@ -17,18 +17,27 @@ type SessionUser struct {
 	Username    string
 	IsModerator bool
 	Banned      bool
+	// APIKey is set when the viewer came from an API key rather than a session cookie: the app then
+	// accepts the request whatever its Origin (createContext's isBearerAuth).
+	APIKey bool
+
+	// raw is the cached session entry, for the bearer checks that read more of it.
+	raw map[string]any
 }
 
 // Resolver turns a request into a viewer. It is deliberately narrow: any credential shape it does not
-// handle exactly as the main app does (bearer/API keys, two session cookies at once, an uncached session
-// user) is a fallback, never a guess.
+// handle exactly as the main app does (an API key it cannot decide, an uncached session user) is a
+// fallback, never a guess. Session cookies are read as getHubSession reads them (readSessionToken in
+// packages/civitai-auth/src/cookies.ts), API keys as getSessionFromBearerToken does (bearer.go): see
+// Resolve.
 type Resolver struct {
 	Verifier   *Verifier
 	Revocation *Revocation
 	// Sessions reads `session:data2:<userId>` on the cache cluster (session-client.ts).
 	Sessions *hydrate.PackedReader
-	// CookieNames gives the session cookie names to look for on a request to a host (e.g.
-	// `__Secure-civ-token`, `__Host-civ-token`): a site's cookie mode picks them.
+	// CookieNames gives the session cookie names to look for on a request to a host, in the order the
+	// main app reads them (e.g. `__Host-civ-token` then `__Secure-civ-token` in host mode): a site's
+	// cookie mode picks them. Resolve reads the first one present.
 	CookieNames func(host string) []string
 	// OnSlot, when set, is told the cookie slot ("host" | "shared", see CookieSlot) of each session it resolves.
 	OnSlot func(slot string)
@@ -37,6 +46,9 @@ type Resolver struct {
 	// ModerationAccountID is CIVITAI_MODERATION_USER_ID (0 = unset): the shared moderation account,
 	// which nobody signs in as. See IsModerationAccount.
 	ModerationAccountID int
+	// APIKeys resolves API keys (FEED_GO_BEARER_AUTH); nil keeps every API credential a `bearer-token`
+	// fallback.
+	APIKeys *APIKeys
 }
 
 // ModerationAccountUsername is MODERATION_ACCOUNT_USERNAME (packages/civitai-auth).
@@ -54,26 +66,46 @@ func IsModerationAccount(id int, username string, configuredID int) bool {
 }
 
 // Resolve returns the viewer, or nil when signed out. A non-nil error is always a fallback.
+//
+// An API credential is read first, as resolveSession does: when the request carries one
+// (readRequestBearerToken), its answer is the request's, signed out included, and the cookies are never
+// read. See resolveBearer.
+//
+// Otherwise the session token is the value of the first name in CookieNames(req.Host) that the request
+// carries with a non-empty value, as readSessionToken does: presence alone picks the cookie, its
+// validity is never consulted. When that token does not verify, is revoked, or names the moderation
+// account, the request is signed out; the other slot's cookie is not tried, as getHubSession does not
+// try it.
 func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser, error) {
-	if req.Header.Get("Authorization") != "" || req.URL.Query().Get("token") != "" {
-		// API keys and OAuth tokens carry scopes and a different moderator rule (moderatorView).
-		return nil, fallback.New("bearer-token")
+	if m, ok := ctx.Value(resolvedKey{}).(*resolved); ok {
+		return m.user, m.err
 	}
-	cookie := req.Header.Get("Cookie")
+	if r.APIKeys == nil || credentialsRedacted(ctx) {
+		if HasAPICredential(req) {
+			return nil, fallback.New("bearer-token")
+		}
+	} else {
+		key, present, err := bearerToken(req)
+		if err != nil {
+			return nil, err
+		}
+		if present {
+			return r.resolveBearer(ctx, key)
+		}
+	}
+	// Several Cookie header lines are joined with "; ", as Node's http server joins them (and Next's
+	// cookie parser joins an array), so a cookie on a later line is seen.
+	cookie := strings.Join(req.Header.Values("Cookie"), "; ")
 	var token, tokenCookie string
-	found := 0
 	var names []string
 	if r.CookieNames != nil {
 		names = r.CookieNames(req.Host)
 	}
 	for _, name := range names {
 		if t := TokenFromCookieHeader(cookie, name); t != "" {
-			found++
 			token, tokenCookie = t, name
+			break
 		}
-	}
-	if found > 1 {
-		return nil, fallback.New("multiple-session-cookies")
 	}
 	if token == "" {
 		return nil, nil
@@ -131,7 +163,7 @@ func SessionUserFrom(id int, m map[string]any) (*SessionUser, error) {
 			return nil, fallback.Newf("session-id-mismatch", "%s", strconv.Itoa(id))
 		}
 	}
-	u := &SessionUser{ID: id}
+	u := &SessionUser{ID: id, raw: m}
 	u.Username, _ = m["username"].(string)
 	u.IsModerator, _ = m["isModerator"].(bool)
 	if b, ok := m["bannedAt"]; ok && b != nil {

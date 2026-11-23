@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { seedImage, seedPlayer } from '../../../test/seed';
+import { engage, seedImage, seedPlayer } from '../../../test/seed';
 import { PROGRESSION } from '../progression/config';
 import { castVote, ensureVotePartitions, getFeed, enqueueItem } from '../queue/queue.service';
 import {
@@ -36,7 +36,7 @@ afterAll(() => pg.close());
 beforeEach(async () => {
   vi.restoreAllMocks();
   await pg.exec(
-    `TRUNCATE "KnightsReferenceImage","KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsReferenceImage","KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","UserEngagement" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -131,6 +131,15 @@ describe('serving a hidden check', () => {
     expect((await pick(2))?.referenceId).toBe(hidden);
     await answer(2, hidden, '4');
     expect(await pick(2)).toBeNull();
+  });
+
+  it('skips a check on a Private post, and serves it once the post is not', async () => {
+    await seedPlayer(pg, 2);
+    const check = await reference(11);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 11`);
+    expect(await pick(2)).toBeNull();
+    await pg.query(`UPDATE "Post" SET availability = 'EarlyAccess' WHERE id = 11`);
+    expect((await pick(2))?.referenceId).toBe(check);
   });
 
   it('finds the one check left whichever end of the pool the start point falls on', async () => {
@@ -302,6 +311,14 @@ describe('answering a hidden check', () => {
     expect((await pg.query(`SELECT 1 FROM "KnightsVote"`)).rows).toHaveLength(0);
   });
 
+  it('refuses an answer to a check on a Private post', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await reference(10);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 10`);
+    expect(await answer(1, ref, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
+    expect((await pg.query(`SELECT 1 FROM "KnightsVote"`)).rows).toHaveLength(0);
+  });
+
   it('refuses like a vote while a career reset is pending', async () => {
     await seedPlayer(pg, 1);
     await pg.query(`INSERT INTO "NewOrderSmite" ("targetPlayerId") VALUES (1),(1),(1)`);
@@ -425,4 +442,25 @@ describe("a hidden check on the player's own image", () => {
     expect(await answer(1, ref, '4')).toMatchObject({ status: 'rejected', reason: 'own-image' });
     expect((await pg.query(`SELECT 1 FROM "KnightsVote" WHERE "playerId"=1`)).rows).toHaveLength(0);
   });
+});
+
+describe('a hidden check on the image of a creator the player hid or blocked', () => {
+  it.each(['Block', 'Hide'] as const)(
+    'with a %s row, is served to other players only, and the answer is refused',
+    async (type) => {
+      await seedPlayer(pg, 1);
+      await seedPlayer(pg, 2);
+      const ref = await reference(10);
+      await pg.query(`UPDATE "Image" SET "userId"=50 WHERE id=10`);
+      await engage(pg, 1, 50, type);
+
+      expect(await pick(1)).toBeNull();
+      expect((await pick(2))?.referenceId).toBe(ref);
+
+      expect(await answer(1, ref, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
+      expect((await pg.query(`SELECT 1 FROM "KnightsVote" WHERE "playerId"=1`)).rows).toHaveLength(
+        0
+      );
+    }
+  );
 });

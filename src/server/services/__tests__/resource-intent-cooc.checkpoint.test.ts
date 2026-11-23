@@ -8,6 +8,7 @@ import {
   CoocCountAccumulator,
   deserializeCoocCounts,
   deserializeCoocPayload,
+  fetchVersionBaseModels,
   serializeCoocCounts,
   serializeTrainImageIds,
 } from '~/server/services/resource-intent-cooc/build';
@@ -18,7 +19,10 @@ import {
   decodeCheckpointAttachSection,
   encodeCheckpointAttachSection,
 } from '~/server/services/resource-intent-cooc/checkpoint-attach';
-import { CoocSnapshotHolder } from '~/server/services/resource-intent-cooc/holder';
+import {
+  CoocSnapshotHolder,
+  CoocStudySnapshots,
+} from '~/server/services/resource-intent-cooc/holder';
 import { buildCoocSnapshot } from '~/server/services/resource-intent-cooc/pipeline';
 import {
   RESOURCE_INTENT_COOC_SPEC,
@@ -27,6 +31,7 @@ import {
 import {
   beginCoocBuild,
   completeCoocBuild,
+  coocContentHash,
   loadCoocSnapshot,
   type CoocSql,
 } from '~/server/services/resource-intent-cooc/store';
@@ -236,9 +241,54 @@ describe('loading and serving the section', () => {
     expect(served.snapshot?.contentHash).toBe(hash);
     expect(served.snapshot?.checkpoints).toBeNull();
   });
+
+  it('a section built under another build hash is not served; the snapshot still is', async () => {
+    const { sql } = await freshDb();
+    await storeSnapshot(
+      sql,
+      'production',
+      encodeCheckpointAttachSection(sectionCounts(), 'f'.repeat(64)),
+      3
+    );
+    const served = await new CoocSnapshotHolder({ sql: () => sql }).resolve();
+    expect(served.snapshot).not.toBeNull();
+    expect(served.snapshot?.checkpoints).toBeNull();
+  });
+
+  it('🔴 a malformed section is ignored (checkpoint mode falls back); POOL_MERGE still serves the snapshot', async () => {
+    const { sql } = await freshDb();
+    const hash = await storeSnapshot(sql, 'production', ['not-a-section'], 4);
+    expect(
+      (await loadCoocSnapshot(sql, hash, { kind: 'production', now: new Date() })).checkpoints
+    ).toBeNull();
+    const served = await new CoocSnapshotHolder({ sql: () => sql }).resolve();
+    expect(served.snapshot?.contentHash).toBe(hash);
+    expect(served.snapshot?.checkpoints).toBeNull();
+  });
+
+  it('🔴 study mode: a study snapshot serves its section; a foreign section serves none', async () => {
+    const { sql } = await freshDb();
+    const good = await storeSnapshot(
+      sql,
+      'study',
+      encodeCheckpointAttachSection(sectionCounts()),
+      5
+    );
+    const foreign = await storeSnapshot(
+      sql,
+      'study',
+      encodeCheckpointAttachSection(sectionCounts(), 'f'.repeat(64)),
+      6
+    );
+    const studies = new CoocStudySnapshots({ sql: () => sql });
+    expect((await studies.get(good, new Date())).checkpoints?.candidates.get('EcoA')).toEqual([
+      6, 5,
+    ]);
+    expect((await studies.get(foreign, new Date())).checkpoints).toBeNull();
+  });
 });
 
-describe('the build pipeline writes the section when asked', () => {
+describe('the build pipeline writes the section only when asked', () => {
   it('🔴 a production build counts every training image’s checkpoint under its version’s baseModel', async () => {
     const { sql } = await freshDb();
     const trainEnd = new Date('2026-09-30T00:00:00.000Z');
@@ -273,5 +323,59 @@ describe('the build pipeline writes the section when asked', () => {
     });
     // One baseModel lookup, for the checkpoint version only (the LORA versions are never asked).
     expect(asked).toEqual([[9900]]);
+  });
+
+  it('🔴 with checkpointSection off the payload is exactly the no-section one, and nothing is looked up', async () => {
+    const { sql } = await freshDb();
+    const trainEnd = new Date('2026-09-30T00:00:00.000Z');
+    const now = new Date('2026-10-01T12:34:56.789Z');
+    const images = fakeImageDb({
+      trainStart: new Date(trainEnd.getTime() - RESOURCE_INTENT_COOC_SPEC.trainDays * DAY),
+      trainEnd,
+      images: 900,
+    });
+    const asked: number[][] = [];
+    const s = await buildCoocSnapshot({
+      kind: 'production',
+      seed: RESOURCE_INTENT_COOC_SPEC.defaultSeed,
+      pinnedUntil: null,
+      dryRun: false,
+      checkpointSection: false,
+      now,
+      query: async (q) => {
+        if (q.sql.includes('"baseModel" FROM "ModelVersion"')) asked.push(q.values[0] as number[]);
+        return images.query(q);
+      },
+      sql,
+    });
+    expect([s.checkpointSection, s.checkpointBaseModels, s.checkpointPairs]).toEqual([
+      false,
+      null,
+      null,
+    ]);
+    expect(asked).toEqual([]);
+    const { counts, checkpoints } = await loadCoocSnapshot(sql, s.contentHash, {
+      kind: 'production',
+      now,
+    });
+    expect(checkpoints).toBeNull();
+    // The stored bytes hash to what the section-less serializer gives for the same counts.
+    expect(s.contentHash).toBe(coocContentHash('production', await serializeCoocCounts(counts)));
+  });
+});
+
+describe('fetchVersionBaseModels', () => {
+  it('asks in chunks of 10,000 and returns every version it was given', async () => {
+    const asked: number[][] = [];
+    const query = async (q: { values: unknown[] }) => {
+      asked.push(q.values[0] as number[]);
+      return (q.values[0] as number[]).map((id) => ({ id, baseModel: `E${id % 3}` }));
+    };
+    const ids = Array.from({ length: 25_001 }, (_, i) => i + 1);
+    const got = await fetchVersionBaseModels(query as never, ids, 0);
+    expect(asked.map((a) => a.length)).toEqual([10_000, 10_000, 5_001]);
+    expect(asked.flat()).toEqual(ids);
+    expect(got.size).toBe(25_001);
+    expect(got.get(25_001)).toBe('E2');
   });
 });

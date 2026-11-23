@@ -156,6 +156,7 @@ export function listModelWithDetailsVersions(db: Kysely<DB>, modelId: number) {
       'ModelVersion.uploadType',
       'ModelVersion.usageControl',
       sql<string | null>`${eb.ref('ModelVersion.licensingFee')}::text`.as('licensingFee'),
+      'ModelVersion.licensingFeeType',
       'ModelVersion.generatorLoaded',
       jsonArrayFrom(
         eb
@@ -298,6 +299,8 @@ export function getUserCreatorRow(
           .selectFrom('UserLink')
           .select(['UserLink.url', 'UserLink.type'])
           .whereRef('UserLink.userId', '=', 'User.id')
+          // A banned user's links are not served; a ban whose archive failed keeps them as evidence.
+          .where('User.bannedAt', 'is', null)
       ).as('links'),
       jsonArrayFrom(
         eb

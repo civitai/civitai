@@ -53,6 +53,7 @@ type CoverableModel = {
   id: number;
   images?: { id: number }[] | null;
   hasSfwFace?: boolean;
+  nsfw?: boolean;
   coverImageId?: number | null;
   sfwCoverImageId?: number | null;
 };

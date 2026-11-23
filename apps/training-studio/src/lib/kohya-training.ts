@@ -1,9 +1,11 @@
 import { Air, type BlobsTrainingData, type ZipTrainingData } from '@civitai/orchestration-client';
 import {
-  KOHYA_BOUNDS,
+  kohyaBound,
+  kohyaClipSkip,
   KOHYA_OPTIMIZERS,
   KOHYA_SCHEDULERS,
   isKohyaFlow,
+  isKohyaFlux,
   kohyaFamily,
   type KohyaInput,
 } from './data/kohya';
@@ -52,10 +54,12 @@ export function buildKohyaInput(
   if (run.editTraining || run.sourceImages?.length)
     throw new Error('Kohya does not support image-edit datasets.');
   const flow = isKohyaFlow(family);
+  const flux = isKohyaFlux(family);
   const settings = run.kohya;
   const prodigy = optimizerType === 'Prodigy';
   const textEncoderLR =
     family === 'chroma' ? 0 : run.textEncoderLr > 0 && prodigy ? 1 : run.textEncoderLr;
+  const clipSkipRange = kohyaClipSkip(family);
   const numeric = {
     steps: run.steps,
     epochs: run.epochs,
@@ -66,16 +70,16 @@ export function buildKohyaInput(
     unetLr: prodigy ? 1 : run.unetLr,
     textEncoderLr: textEncoderLR,
     numRepeats: settings?.numRepeats ?? 1,
-    clipSkip: family === 'sd1' ? settings?.clipSkip ?? 1 : 1,
+    clipSkip: clipSkipRange ? settings?.clipSkip ?? clipSkipRange.default : 1,
     lrSchedulerNumCycles: settings?.lrSchedulerNumCycles ?? 3,
     seed: settings?.seed ?? 42,
     keepTokens: run.keepTokens ?? 0,
     minSnrGamma: flow ? 0 : run.minSnrGamma ?? 5,
     noiseOffset: flow ? 0 : run.noiseOffset ?? 0,
-    blocksToSwap: flow ? settings?.blocksToSwap ?? 18 : 0,
+    blocksToSwap: flux ? settings?.blocksToSwap ?? 18 : 0,
   };
   for (const [name, value] of Object.entries(numeric)) {
-    const { min, max, step } = KOHYA_BOUNDS[name]!;
+    const { min, max, step } = kohyaBound(name, family)!;
     const integer = step >= 1;
     if (
       !Number.isFinite(value) ||
@@ -112,7 +116,7 @@ export function buildKohyaInput(
     enableBucket: settings?.enableBucket ?? true,
     shuffleCaption: run.shuffleTokens ?? false,
     keepTokens: run.keepTokens ?? 0,
-    clipSkip: family === 'sd1' ? settings?.clipSkip ?? 1 : 1,
+    clipSkip: clipSkipRange ? settings?.clipSkip ?? clipSkipRange.default : 1,
     flipAugmentation: run.flipAugmentation ?? false,
     unetLR: prodigy ? 1 : run.unetLr,
     textEncoderLR,
@@ -126,7 +130,7 @@ export function buildKohyaInput(
     optimizerType,
     seed: settings?.seed ?? 42,
     trace: trace === 'logs' || trace === 'none' ? trace : 'events',
-    ...(flow
+    ...(flux
       ? { fp8Base: settings?.fp8Base ?? true, blocksToSwap: settings?.blocksToSwap ?? 18 }
       : {}),
     ...(!flow && settings?.vParameterization != null

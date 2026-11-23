@@ -171,7 +171,7 @@ const INSERT_SITE_LEDGER: Record<string, InsertSite> = {
     spreads: [],
     serverColumns: [],
   },
-  'src/pages/api/admin/temp/migrate-article-images.ts#processBatch': {
+  'src/server/api-routes/admin/temp/migrate-article-images.ts#processBatch': {
     sites: 1,
     spreads: [],
     serverColumns: [],
@@ -720,6 +720,15 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/user-preferences.service.ts#toggleHideImage': {
     writes: ['imageId'],
     decision: 'subject',
+  },
+  // A version's own images, or community images that pass the showcase eligibility check.
+  'src/server/services/version-showcase-curation.service.ts#setVersionShowcase': {
+    writes: ['imageId: item.imageId'],
+    decision: 'owner-checked',
+    guards: {
+      'imageId: item.imageId':
+        'const refused = communityItems.find((item) => !allowed.has(item.imageId));',
+    },
   },
   // The image createImageIngestionRequest is scanning.
   'src/server/services/video-audio-scan.service.ts#submitVideoAudioScan': {

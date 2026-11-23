@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { DELETED_ROW_COLUMNS_SQL } from '../services/__tests__/deleted-row-columns.fixture';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
@@ -58,14 +59,15 @@ const { mockArchiveUserComments } = vi.hoisted(() => ({
 vi.mock('~/server/services/csam.service-new', () => ({
   archiveUserComments: mockArchiveUserComments,
 }));
-import archiveHeldUserComments from '~/pages/api/admin/temp/archive-held-user-comments';
-import resetTrainingModel from '~/pages/api/admin/temp/reset-training-model';
-import migrateArticleImages from '~/pages/api/admin/temp/migrate-article-images';
+import archiveHeldUserComments from '~/server/api-routes/admin/temp/archive-held-user-comments';
+import resetTrainingModel from '~/server/api-routes/admin/temp/reset-training-model';
+import migrateArticleImages from '~/server/api-routes/admin/temp/migrate-article-images';
 import '~/__tests__/mocks/logging.mock';
 
 const OWNER = 1;
 const HELD = 2; // named on a pending report
 const MARKED = 3; // held by a hold marker
+const BAN_NOTE = 6; // banned with a note naming CSAM, no account hold: not held
 
 let db: PGlite;
 const run = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) => {
@@ -101,12 +103,15 @@ beforeAll(async () => {
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     CREATE TABLE "TagsOnImageNew" ("imageId" int);
     CREATE TABLE "ImageResourceNew" ("imageId" int);
-    CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int);
+    CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int, meta jsonb, "bannedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (
+      "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3)
+    );
     CREATE TABLE "UserProfile" ("coverImageId" int);
     CREATE TABLE "Article" (id int PRIMARY KEY, "coverId" int);
     CREATE TABLE "Challenge" ("coverImageId" int);
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
-    CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync');
+    CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync');
     CREATE TABLE "JobQueue" (
       "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
       data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(),
@@ -114,7 +119,10 @@ beforeAll(async () => {
     );
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
+    INSERT INTO "User" (id, meta, "bannedAt") VALUES
+      (${BAN_NOTE}, '{"banDetails": {"detailsInternal": "CSAM"}}', now() - interval '1 day');
   `);
+  await db.exec(imageUseTablesSql);
   await db.exec(DELETED_ROW_COLUMNS_SQL);
 });
 afterAll(() => db.close());
@@ -173,6 +181,13 @@ describe('reset-training-model', () => {
     expect(mockLeavingPrivate.mock.calls[0]).toEqual([tx, 5]);
   });
 
+  it('deletes the post and image of an owner banned with a CSAM note and no hold', async () => {
+    await seed(BAN_NOTE);
+    await call();
+    expect(await left('Post')).toEqual([]);
+    expect(await left('Image')).toEqual([]);
+  });
+
   it.each([HELD, MARKED])("leaves a held owner's post and image (owner %i)", async (owner) => {
     await seed(owner);
     await call();
@@ -197,6 +212,13 @@ describe('migrate-article-images rollback', () => {
 
   it("deletes an unheld owner's article-only image, and its tags (control)", async () => {
     await seed(OWNER);
+    await call();
+    expect(await left('Image')).toEqual([]);
+    expect(await tags()).toBe(0);
+  });
+
+  it('deletes the article-only image of an owner banned with a CSAM note and no hold', async () => {
+    await seed(BAN_NOTE);
     await call();
     expect(await left('Image')).toEqual([]);
     expect(await tags()).toBe(0);

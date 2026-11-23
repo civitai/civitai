@@ -57,7 +57,7 @@ func TestV1ShadowSampleIsLabelledAndComparedAsJSON(t *testing.T) {
 	if n, _ := metricValue(t, reg, "feed_go_shadow_phase_seconds", map[string]string{"feed_endpoint": EndpointV1Images, "phase": "compute", "outcome": "served"}); n != 1 {
 		t.Fatalf("v1 compute phase count = %v, want 1", n)
 	}
-	if _, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointAsPosts, "result": "match"}); found {
+	if v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointAsPosts, "result": "match"}); v != 0 {
 		t.Fatal("a v1 sample must not be counted under the as-posts endpoint")
 	}
 	// A value diff is counted by category under the endpoint.
@@ -108,7 +108,7 @@ func TestV1TrivialAnswerIsKeptOutOfServedAndMatch(t *testing.T) {
 		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": "match_empty"})
 		return v == 1 && len(s.ShadowQueue) == 0
 	})
-	if _, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": "match"}); found {
+	if v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": "match"}); v != 0 {
 		t.Fatal("a trivial answer must not count as a match")
 	}
 	if n, _ := metricValue(t, reg, "feed_go_shadow_phase_seconds", map[string]string{"feed_endpoint": EndpointV1Images, "phase": "compute", "outcome": "served_empty"}); n != 1 {

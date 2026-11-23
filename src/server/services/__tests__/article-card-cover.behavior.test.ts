@@ -154,6 +154,13 @@ describe('article card reads use the card cover', () => {
     expect(issued[0]).toContain(`${articleCardCoverIdSql.text} AS "coverId"`);
   });
 
+  it('Civitai News follows the article availability rule', async () => {
+    await getCivitaiNews().catch(() => undefined);
+
+    expect(issued).toHaveLength(1);
+    expect(issued[0]).toContain(`AND a.availability != 'Private'`);
+  });
+
   it('Civitai News selects the card cover as "coverId"', async () => {
     await getCivitaiNews().catch(() => undefined);
 

@@ -104,7 +104,7 @@ const verdicts = async (itemId: number) =>
 
 beforeAll(async () => {
   db = await freshPglite();
-  await db.exec(`CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP);
+  await db.exec(`CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP, "availability" TEXT NOT NULL DEFAULT 'Public');
   CREATE TABLE "Image" (
     "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "name" TEXT, "type" TEXT NOT NULL DEFAULT 'image',
     "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "blockedFor" TEXT,
@@ -211,6 +211,19 @@ describe('getYesNoQuestionItems', () => {
 
   it('lists the yes/no axes', async () => {
     expect((await getYesNoAxes()).map((a) => a.key)).toEqual([OTHER_AXIS, AXIS]);
+  });
+});
+
+describe('tag review items', () => {
+  it('are neither listed nor retired here: their answer is written back to the tag they name', async () => {
+    await seedItem(7, { imageId: 1, prompt: 'Should this image have the tag x?' });
+    await db.query(`UPDATE "KnightsQueueItem" SET "source" = 'mod-tag-review' WHERE "id" = 7`);
+    await seedItem(8, { imageId: 2 });
+    expect((await getYesNoQuestionItems()).items.map((i) => i.id)).toEqual([8]);
+    expect(await retireYesNoQuestion({ id: 7, by: MOD, note: 'no', now: NOW })).toMatchObject({
+      ok: false,
+    });
+    expect(await row(7)).toMatchObject({ status: 'Open', reason: null });
   });
 });
 
