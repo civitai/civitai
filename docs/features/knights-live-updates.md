@@ -35,6 +35,13 @@ and the page reads its data again after each vote.
   least as many votes today as the page shows (`acceptsStats`). The header reads the same status.
 - Items settled by the tick (write-back retries, the moderator app's rulings) send no stats; they show on the next page read.
 
+## Connection state on a vote
+
+`$lib/signals` keeps the topics the hub confirmed (added when `subscribe` resolves on the current connection, removed on
+leaving, cleared while reconnecting and on close; a reconnect re-subscribes and re-confirms them). `signalsAt(topics)` reads
+it, and /play sends the result with each vote (`signals`), so a vote refused because its item had already settled shows
+whether the page could have heard that drop ([metrics](knights-metrics.md)).
+
 ## Failure
 
 Every send is best effort with a 3-second timeout, never thrown into a vote or the tick. A failure logs an Axiom event

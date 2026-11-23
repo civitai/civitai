@@ -260,6 +260,29 @@ export function createSerialQueue() {
   };
 }
 
+export type PressClock = { wall: () => number; mono: () => number };
+const systemClock: PressClock = { wall: () => Date.now(), mono: () => performance.now() };
+
+/**
+ * Stamps a vote body at the press with the press time and the live connection's state then (`signals`: connected, then
+ * every stage topic confirmed, each `1` or `0`). Returns the call that adds `waitedMs`, the time from the press to the
+ * start of the post on the monotonic clock, so no clock skew is in it; it records the first call only. The server logs
+ * these and never acts on them.
+ */
+export function markPress(
+  body: FormData,
+  signals: { connected: boolean; subscribed: boolean },
+  clock: PressClock = systemClock
+): () => void {
+  const pressed = clock.mono();
+  body.set('pressedAt', String(clock.wall()));
+  body.set('signals', `${signals.connected ? 1 : 0}${signals.subscribed ? 1 : 0}`);
+  return () => {
+    if (!body.has('waitedMs'))
+      body.set('waitedMs', String(Math.max(0, Math.round(clock.mono() - pressed))));
+  };
+}
+
 /** A post that has had no answer by then is given up on, so one hung request cannot hold up the votes queued behind it. */
 export const POST_TIMEOUT_MS = 15_000;
 
@@ -273,6 +296,8 @@ export type PostVoteDeps = {
   /** Posts the vote once. `reached` is true only for an answer that was read in full; an abort or a lost connection is not. */
   send: VoteSend;
   wait: (ms: number) => Promise<void>;
+  /** When the vote leaves the queue and its first post starts. */
+  onStart?: () => void;
   /** A vote that came back as anything but recorded: the notice, and whether the page must be read again. */
   onFailure: (outcome: Extract<VoteOutcome, { ok: false }>) => void;
   /** A recorded vote, with what the action returned (a skill check graded on the spot carries `check`). */
@@ -295,7 +320,10 @@ export async function postVote(key: string, deps: PostVoteDeps): Promise<void> {
     reached = sent.reached;
     return sent.result;
   };
-  const result = await queue.add(() => sendWithRetry(attempt, wait, deps.retryDelays));
+  const result = await queue.add(() => {
+    deps.onStart?.();
+    return sendWithRetry(attempt, wait, deps.retryDelays);
+  });
   const outcome = describeOutcome(result);
   tracker.settle(key);
   if (!reached || isBusy(result)) tracker.release(key);
