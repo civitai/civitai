@@ -227,14 +227,15 @@ describe('review maintenance and account-wipe enumeration are confined to their 
       ? n.head.text + n.templateSpans.map((sp) => sp.literal.text).join('')
       : null;
 
-  it('every maintenance-shaped statement is one of the eight in SQL_REVIEW_PURGE / SQL_REVIEW_APP_IDS', () => {
+  it('every maintenance-shaped statement is one of the nine in SQL_REVIEW_PURGE / SQL_REVIEW_APP_IDS', () => {
     const maint = collect((n) => {
       const t = literalText(n);
       return t !== null && /appdata\./.test(t) && isReviewMaintenanceStatement(t);
     });
     expect(maint.map((n) => owner(n, 'variable')).sort()).toEqual([
       'SQL_REVIEW_APP_IDS',
-      ...Array(7).fill('SQL_REVIEW_PURGE'),
+      // One delete per appdata table (the mark sequence's `mark_head` included).
+      ...Array(8).fill('SQL_REVIEW_PURGE'),
     ]);
   });
 
@@ -277,6 +278,8 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     expect(found.filter((f) => !f.includes('/__tests__/')).sort()).toEqual([
       'server/services/apps/doc-store.ts',
       'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
+      // The mark sequence's table gets the same review-maintenance read and delete policies.
+      'server/services/apps/migrations/20261122120000_appdata_mark_head.sql',
     ]);
   });
 

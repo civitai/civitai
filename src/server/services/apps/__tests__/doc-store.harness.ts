@@ -79,7 +79,7 @@ export const MIGRATION_RECORD_ID_UNIQUE = path.resolve(
   '../migrations/20261119120200_appdata_doc_record_id_unique.sql'
 );
 /**
- * The mark sequence: `appdata.mark_head` and the `mark_seq` columns of `doc_tally` and
+ * The mark sequence: the `mark_head` table and the `mark_seq` columns of `doc_tally` and
  * `doc_mark`. ON by default: the store takes it on every mark, unmark and increment, so every
  * suite runs against a datastore that has it, as an environment must before that code ships.
  */
