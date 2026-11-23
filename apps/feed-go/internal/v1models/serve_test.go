@@ -89,16 +89,16 @@ func newTestWorld() *testWorld {
 			hydrate.KeyBasicUsers + ":1001":      append(meta("id", int64(1001), "username", "artist_one", "deletedAt", nil, "image", nil), cached),
 			hydrate.KeyProfilePictures + ":1001": meta("notFound", true),
 			KeyPaidAccessVersion + ":6001":       append(meta("entityId", int64(6001), "endsAtMs", nil, "timeframeDays", nil), cached),
-			KeyImagesForVersion + ":6001": append(meta("modelVersionId", int64(6001), "images", []any{
+			hydrate.KeyVersionImages + ":6001": append(meta("modelVersionId", int64(6001), "images", []any{
 				meta("id", int64(8001), "url", "u1", "nsfwLevel", int64(1), "type", "image", "poi", false, "minor", false),
 			}), cached),
 			KeyFilesForVersion + ":6001": append(meta("modelVersionId", int64(6001), "files", []any{
 				meta("id", int64(7001), "name", "a.safetensors", "type", "Model", "visibility", "Public", "modelVersionId", int64(6001),
 					"hashes", []any{}, "metadata", meta("format", "SafeTensor")),
 			}), cached),
-			// The default addons exclude tags at every level, so the images' tag ids are read.
-			KeyTagIDsForImages + ":8001": append(meta("imageId", int64(8001), "tags", []any{int64(1)}), cached),
-			KeyMetricPrivacy + ":1001":   meta("hideModelBuzz", false, "hideModelDownloads", false, "hideModelGenerations", false),
+			// getImagesForModelVersionCache's appendFn reads every showcase image's tag ids.
+			hydrate.KeyTagIDs + ":8001": append(meta("imageId", int64(8001), "tags", []any{int64(1)}), cached),
+			KeyMetricPrivacy + ":1001":  meta("hideModelBuzz", false, "hideModelDownloads", false, "hideModelGenerations", false),
 			// The version's showcase as getVersionShowcaseCache writes an uncurated one.
 			hydrate.KeyVersionShowcase + ":6001": append(meta("modelVersionId", int64(6001), "rows", []any{}, "community", []any{}), cached),
 		},
@@ -310,8 +310,8 @@ func TestServeDetailFallbacks(t *testing.T) {
 		{"model tags miss", func(w *testWorld) { w.entries[KeyModelTags+":5001"] = nil }, nil, "v1-models-tags-miss"},
 		{"tag name miss", func(w *testWorld) { w.entries[KeyBasicTags+":11"] = nil }, nil, "v1-models-tag-name-miss"},
 		{"tag name stale", stale(KeyBasicTags + ":11"), nil, "v1-models-tag-name-stale"},
-		{"images miss", func(w *testWorld) { w.entries[KeyImagesForVersion+":6001"] = nil }, nil, "v1-models-images-miss"},
-		{"images stale", stale(KeyImagesForVersion + ":6001"), nil, "v1-models-images-stale"},
+		{"images miss", func(w *testWorld) { w.entries[hydrate.KeyVersionImages+":6001"] = nil }, nil, "model-images-miss"},
+		{"image tags miss", func(w *testWorld) { w.entries[hydrate.KeyTagIDs+":8001"] = nil }, nil, "tag-ids-miss"},
 		{"files miss", func(w *testWorld) { w.entries[KeyFilesForVersion+":6001"] = nil }, nil, "v1-models-files-miss"},
 		{"files stale", stale(KeyFilesForVersion + ":6001"), nil, "v1-models-files-stale"},
 		{"membership miss", func(w *testWorld) {
@@ -393,6 +393,97 @@ func TestServeDetailTagNameMissComputed(t *testing.T) {
 	d.Config.ComputeMisses = true
 	if _, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001"}); reason(err) != "v1-models-tag-name-stale" {
 		t.Errorf("stale: %v", err)
+	}
+}
+
+// With FEED_GO_COMPUTE_MISSES (Sources.Compute) a showcase-images miss is computed by the cache's own
+// lookup, the showcase query on the replica, as model.getAll's is, and answered; nothing is written
+// without write-back. Without a computation it falls back (`model-images-miss`,
+// TestServeDetailFallbacks). A failed lookup falls back too.
+func TestServeDetailImagesMissComputed(t *testing.T) {
+	cols := []string{"id", "userId", "name", "url", "nsfwLevel", "width", "height", "hash", "type", "metadata",
+		"minor", "poi", "modelVersionId", "availability", "hasMeta", "hasPositivePrompt", "onSite", "remixOfId"}
+	setup := func(t *testing.T, fail bool) (*testWorld, *Deps, *[][]int) {
+		w := newTestWorld()
+		w.entries[hydrate.KeyVersionImages+":6001"] = nil
+		w.entries[hydrate.KeyTagIDs+":8002"] = append(meta("imageId", int64(8002), "tags", []any{int64(1)}),
+			superjson.Field{Key: "cachedAt", Val: testNow.Add(-time.Minute)})
+		d := w.deps(t)
+		var bound [][]int
+		w.db.Routes = append(w.db.Routes, testkit.Route{Match: `AS full_mv(id)`, Rows: func(args []any) (*testkit.Rows, error) {
+			bound = append(bound, args[0].([]int))
+			if fail {
+				return nil, errors.New("replica down")
+			}
+			return testkit.NewRows(cols, []any{int64(8002), int64(1001), nil, "u2", int64(1), int64(512), int64(768), nil, "image",
+				`{}`, false, false, int64(6001), "Public", false, false, false, nil}), nil
+		}})
+		d.Sources.Compute = &hydrate.MissCompute{Now: func() time.Time { return testNow }}
+		return w, d, &bound
+	}
+
+	w, d, bound := setup(t, false)
+	ans, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001", TrainingDataSQL: TrainingDataSQLHash})
+	if err != nil {
+		t.Fatalf("serve: %v (%s)", err, reason(err))
+	}
+	body, _ := superjson.Plain(ans.Body)
+	if !strings.Contains(string(body), `"url":"https://image.example.test/u2/original=true/8002.jpeg"`) {
+		t.Errorf("body lacks the looked-up image 8002:\n%s", body)
+	}
+	if !reflect.DeepEqual(*bound, [][]int{{6001}}) {
+		t.Errorf("showcase lookups bound %v, want [[6001]]", *bound)
+	}
+	if _, ok := w.cache.String(hydrate.KeyVersionImages + ":6001"); ok {
+		t.Error("the computed entry was written without write-back")
+	}
+
+	_, d, _ = setup(t, true)
+	if _, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001", TrainingDataSQL: TrainingDataSQLHash}); reason(err) != "model-images-miss-failed" {
+		t.Errorf("failed lookup: %q (%v), want model-images-miss-failed", reason(err), err)
+	}
+}
+
+// A stale showcase entry is read as model.getAll reads it (hydrate.Sources.VersionImages), as Node's
+// fetch serves it: with write-back on and the revalidation lock held by another process, the stale
+// entry is served and nothing is looked up (this read used to fall back, v1-models-images-stale);
+// without a computation it is served as it is. 8009 is only in the stale entry, so the body shows
+// which value was served.
+func TestServeDetailStaleImagesServed(t *testing.T) {
+	stale := func(w *testWorld) {
+		w.entries[hydrate.KeyVersionImages+":6001"] = append(meta("modelVersionId", int64(6001), "images", []any{
+			meta("id", int64(8009), "url", "u9", "nsfwLevel", int64(1), "type", "image", "poi", false, "minor", false),
+		}), superjson.Field{Key: "cachedAt", Val: testNow.Add(-48 * time.Hour)})
+		w.entries[hydrate.KeyTagIDs+":8009"] = append(meta("imageId", int64(8009), "tags", []any{}),
+			superjson.Field{Key: "cachedAt", Val: testNow.Add(-time.Minute)})
+	}
+	for _, c := range []struct {
+		name    string
+		compute *hydrate.MissCompute
+	}{
+		{"lock held elsewhere", &hydrate.MissCompute{WriteBack: hydrate.WriteSet{hydrate.MissVersionImages: true}, Now: func() time.Time { return testNow }}},
+		{"no computation", nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newTestWorld()
+			stale(w)
+			w.raw["cache-lock:"+hydrate.KeyVersionImages+":6001"] = "1"
+			d := w.deps(t)
+			lookups := 0
+			w.db.Routes = append(w.db.Routes, testkit.Route{Match: `AS full_mv(id)`, Rows: func([]any) (*testkit.Rows, error) {
+				lookups++
+				return nil, errors.New("not looked up")
+			}})
+			d.Sources.Compute = c.compute
+			ans, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001", TrainingDataSQL: TrainingDataSQLHash})
+			if err != nil {
+				t.Fatalf("serve: %v (%s)", err, reason(err))
+			}
+			body, _ := superjson.Plain(ans.Body)
+			if !strings.Contains(string(body), `"url":"https://image.example.test/u9/original=true/8009.jpeg"`) || lookups != 0 {
+				t.Errorf("lookups %d, want the stale 8009 served with none:\n%s", lookups, body)
+			}
+		})
 	}
 }
 
@@ -570,7 +661,7 @@ func TestUnpackOrderedThroughDeps(t *testing.T) {
 func TestServeDetailSendsEmptyImages(t *testing.T) {
 	// A version whose images were all left out still sends images: [], never a missing key.
 	w := newTestWorld()
-	w.entries[KeyImagesForVersion+":6001"] = append(meta("modelVersionId", int64(6001), "images", []any{}),
+	w.entries[hydrate.KeyVersionImages+":6001"] = append(meta("modelVersionId", int64(6001), "images", []any{}),
 		superjson.Field{Key: "cachedAt", Val: testNow.Add(-time.Minute)})
 	ans, err := detailOf(t, w)
 	if err != nil {

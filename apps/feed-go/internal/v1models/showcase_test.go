@@ -126,7 +126,7 @@ func TestCuratedShowcaseGuardFallsBack(t *testing.T) {
 // withCuratedShowcases never reads its showcase: no entry for it is no fallback.
 func TestCuratedShowcaseGuardSkipsVersionsWithoutImages(t *testing.T) {
 	detail, list, dErr, lErr := serveBoth(t, func(w *testWorld) {
-		w.entries[KeyImagesForVersion+":6001"] = meta("notFound", true)
+		w.entries[hydrate.KeyVersionImages+":6001"] = meta("notFound", true)
 		w.entries[showcaseKey6001] = nil
 	}, nil)
 	if dErr != nil || lErr != nil {

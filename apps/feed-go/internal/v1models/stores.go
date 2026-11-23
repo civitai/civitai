@@ -19,12 +19,10 @@ const (
 	KeyModelTags           = "packed:caches:model-tags"
 	KeyBasicTags           = "packed:caches:basic-tags"
 	KeyFilesForVersion     = "packed:caches:files-for-model-version-2"
-	KeyImagesForVersion    = "packed:caches:images-for-model-version-2"
 	KeyPaidAccessVersion   = "packed:caches:paid-access:ModelVersion"
 	KeyMetricPrivacy       = "packed:caches:user-metric-privacy-defaults"
 	KeyMembershipValid     = "packed:caches:creator-membership-valid"
 	KeyPublicModelResponse = "packed:caches:public-model-response"
-	KeyTagIDsForImages     = "packed:caches:tag-ids-for-images"
 )
 
 // The TTL of the caches whose stale entries Node revalidates (staleWhileRevalidate on): a stale entry
@@ -224,7 +222,6 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 
 	b := hydrate.NewBatch()
 	paidRead := d.Packed.QueueOrdered(b, KeyPaidAccessVersion, versionIDs, 0)
-	imagesRead := d.Packed.QueueOrdered(b, KeyImagesForVersion, versionIDs, ttlDay)
 	filesRead := d.Packed.QueueOrdered(b, KeyFilesForVersion, versionIDs, ttlDay)
 	privacyRead := d.Packed.QueueOrdered(b, KeyMetricPrivacy, ownerIDs, 0)
 	showcaseRead := d.Packed.QueueShowcases(b, versionIDs)
@@ -234,6 +231,7 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 	var (
 		held     map[int]int // model id -> held level
 		stats    *versionStats
+		images   map[int][]superjson.Object
 		paidMiss []int
 		privMiss []int
 	)
@@ -281,40 +279,26 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 			return nil
 		})
 	}
+	// The showcase images: getImagesForModelVersionCache, read as model.getAll reads it
+	// (hydrate.Sources.VersionImages: the appendFn's minor and selectable-level filter and each
+	// image's tag ids; with FEED_GO_COMPUTE_MISSES a miss computed and a stale entry revalidated).
+	g.Go(func(ctx context.Context) (err error) { images, err = d.Sources.VersionImages(ctx, versionIDs); return })
 	g.Go(func(ctx context.Context) (err error) { held, err = d.heldLevels(ctx, flagged); return })
 	g.Go(func(ctx context.Context) (err error) { stats, err = d.versionStats(ctx, modelIDs, versionIDs); return })
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 
-	// Showcase images: held, then filtered.
+	// Showcase images: held (holdShowcaseImages), then filtered (getShowcaseImageFilter, below). A
+	// version VersionImages leaves out has a notFound entry: no images.
 	p.images = map[int][]superjson.Object{}
-	imageEntries := imagesRead.Entries()
-	imageIDs := make([]int, 0, len(versionIDs)*8)
 	listed := make([]int, 0, len(versionIDs))
 	for _, vid := range versionIDs {
-		e, ok := imageEntries[vid]
+		cached, ok := images[vid]
 		if !ok {
-			return nil, fallback.New("v1-models-images-miss")
-		}
-		if e.Stale {
-			return nil, fallback.New("v1-models-images-stale")
-		}
-		if e.NotFound {
 			continue
 		}
 		listed = append(listed, vid)
-		list, _ := getVal(e.Value, "images").([]any)
-		cached := make([]superjson.Object, 0, len(list))
-		for _, x := range list {
-			if o, ok := x.(superjson.Object); ok {
-				cached = append(cached, o)
-			}
-		}
-		// getImagesForModelVersionCache's appendFn: the images the minor content rule restricts are
-		// dropped for every viewer, before the hold below.
-		// The appendFn also drops the images at no selectable level.
-		cached = hydrate.WithSelectableLevel(hydrate.WithoutMinorMatureImages(cached, getVal), getVal)
 		imgs := make([]superjson.Object, 0, len(cached))
 		lvl, isHeld := held[modelOf[vid].row.ID]
 		for _, o := range cached {
@@ -325,20 +309,13 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 				}
 			}
 			imgs = append(imgs, o)
-			if id, ok := intOf(getVal(o, "id")); ok {
-				imageIDs = append(imageIDs, id)
-			}
 		}
 		p.images[vid] = imgs
 	}
 	if err := curatedShowcaseGuard(showcaseRead, listed); err != nil {
 		return nil, err
 	}
-	filter, err := d.showcaseFilter(ctx, in, imageIDs)
-	if err != nil {
-		return nil, err
-	}
-	p.showsImage = filter
+	p.showsImage = d.showcaseFilter(ctx, in)
 
 	// Files, then the linked VAE versions' primary files.
 	p.files = map[int][]superjson.Object{}
@@ -557,8 +534,9 @@ func (d *Deps) heldLevels(ctx context.Context, flagged []*rawItem) (map[int]int,
 }
 
 // showcaseFilter is getShowcaseImageFilter for a signed-out viewer: the addons at the request's level
-// (none skipped: the rules target names no owner), plus the input's excluded tags.
-func (d *Deps) showcaseFilter(ctx context.Context, in RawInput, imageIDs []int) (func(superjson.Object) bool, error) {
+// (none skipped: the rules target names no owner), plus the input's excluded tags, tested against
+// each image's `tags` (the appendFn's tag ids, VersionImages).
+func (d *Deps) showcaseFilter(ctx context.Context, in RawInput) func(superjson.Object) bool {
 	resolved := d.resolvedAddons(ctx, in.BrowsingLevel)
 	excluded := map[int]bool{}
 	for _, id := range resolved.ExcludedTagIDs {
@@ -566,32 +544,6 @@ func (d *Deps) showcaseFilter(ctx context.Context, in RawInput, imageIDs []int) 
 	}
 	for _, id := range in.ExcludedTagIDs {
 		excluded[id] = true
-	}
-	tagsOf := map[int][]int{}
-	if len(excluded) > 0 && len(imageIDs) > 0 {
-		// The images' `tags` are the cache's appendFn read (tagIdsForImagesCache), not stored.
-		ids := hydrate.Unique(imageIDs)
-		b := hydrate.NewBatch()
-		read := d.Packed.QueueOrdered(b, KeyTagIDsForImages, ids, 0)
-		b.Exec(ctx)
-		entries := read.Entries()
-		for _, id := range ids {
-			e, ok := entries[id]
-			if !ok {
-				return nil, fallback.New("v1-models-image-tags-miss")
-			}
-			if e.NotFound {
-				continue
-			}
-			list, _ := getVal(e.Value, "tags").([]any)
-			ts := []int{}
-			for _, t := range list {
-				if n, ok := intOf(t); ok {
-					ts = append(ts, n)
-				}
-			}
-			tagsOf[id] = ts
-		}
 	}
 	return func(img superjson.Object) bool {
 		if resolved.DisablePoi && getVal(img, "poi") == true {
@@ -603,15 +555,21 @@ func (d *Deps) showcaseFilter(ctx context.Context, in RawInput, imageIDs []int) 
 		if len(excluded) == 0 {
 			return true
 		}
-		id, _ := intOf(getVal(img, "id"))
-		// `image.tags ?? []` on the appendFn: an image the tag cache holds no entry for reads [].
-		for _, t := range tagsOf[id] {
-			if excluded[t] {
+		// `image.tags != null && !image.tags.some(...)` (getShowcaseImageFilter): while any tag is
+		// excluded, an image with no tags list is hidden. VersionImages always sets one ([] for an image
+		// the tag cache holds no entry for), so this only bites a source that does not, which must
+		// hide, never show.
+		tags, ok := getVal(img, "tags").([]any)
+		if !ok {
+			return false
+		}
+		for _, t := range tags {
+			if n, ok := intOf(t); ok && excluded[n] {
 				return false
 			}
 		}
 		return true
-	}, nil
+	}
 }
 
 // curatedShowcaseGuard stands in for withCuratedShowcases (src/server/services/version-showcase.service.ts),
