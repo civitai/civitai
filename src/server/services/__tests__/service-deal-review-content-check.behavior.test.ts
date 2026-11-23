@@ -753,7 +753,7 @@ describe('a verdict that cannot settle its text is left to the retry job, within
     expect(await checkRow('ServiceDealReview')).toEqual({ status: 'Succeeded', retryCount: 0 });
   });
 
-  it('a verdict delivered twice spends one retry', async () => {
+  it('the same verdict applied twice spends one retry', async () => {
     await seed(R);
     await recordCheck('ServiceDealReview', 'wf-1');
     await textScan({ everyLabel: false, workflowId: 'wf-1' });
