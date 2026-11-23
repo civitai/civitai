@@ -65,7 +65,10 @@ Switch-on checklist, in order:
 
 1. Both apps released with the source (Knights and the moderator app; either order is inert while the switch is off).
 2. `KNIGHTS_TAG_REVIEW_TOKEN` set to the same value on both apps, and `MODERATOR_APP_INTERNAL_URL` (or `MODERATOR_APP_URL`) on
-   Knights, by an infra owner. Knights' database user must be able to read the tables the eligibility predicate reads.
+   Knights, by an infra owner. Knights' database user also needs `SELECT` on the tables this source reads beyond Knights'
+   own: `TagsOnImageNew`, `TagsOnImageDetails` and `Tag` (the flagged tags and the rating check), and `CsamReport`,
+   `EvidenceHeldUser`, `ImageReport` and `Report` (the eligibility predicate). Knights only reads them. Without the grants
+   the source fails closed: nothing is created or served, and the tick logs the permission errors.
 3. The moderation team's sign-off: moderators keep their full queue, and items only leave it sooner.
 4. Then the switch. With no Paladin active it creates nothing.
 
