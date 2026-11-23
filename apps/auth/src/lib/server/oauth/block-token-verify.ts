@@ -1,5 +1,6 @@
 import { createHash, createPublicKey, type KeyObject } from 'crypto';
 import { decodeProtectedHeader, jwtVerify } from 'jose';
+import { isBrowsingLevelClaim } from '@civitai/auth/browsing-level-claim';
 import { env } from '$env/dynamic/private';
 import { logToAxiom } from '$lib/server/axiom';
 
@@ -128,9 +129,6 @@ function verificationKeys(): KeySet {
   return result;
 }
 
-const isNonNegativeInteger = (v: unknown): v is number =>
-  typeof v === 'number' && Number.isInteger(v) && v >= 0;
-
 /** The verified token, or why it is refused. Never throws. */
 export async function verifyBlockTokenForExchange(
   token: string,
@@ -191,7 +189,7 @@ export async function verifyBlockTokenForExchange(
     typeof iat !== 'number' ||
     typeof exp !== 'number' ||
     // The site's shape guard (`verifyBlockToken`): optional, but when present a non-negative integer.
-    (viewerBrowsingLevel !== undefined && !isNonNegativeInteger(viewerBrowsingLevel))
+    (viewerBrowsingLevel !== undefined && !isBrowsingLevelClaim(viewerBrowsingLevel))
   ) {
     return { ok: false, reason: 'claim shape' };
   }
@@ -222,8 +220,8 @@ export async function verifyBlockTokenForExchange(
       scopes: scopes as string[],
       iat,
       exp,
-      maxBrowsingLevel: isNonNegativeInteger(maxBrowsingLevel) ? maxBrowsingLevel : null,
-      viewerBrowsingLevel: isNonNegativeInteger(viewerBrowsingLevel) ? viewerBrowsingLevel : null,
+      maxBrowsingLevel: isBrowsingLevelClaim(maxBrowsingLevel) ? maxBrowsingLevel : null,
+      viewerBrowsingLevel: isBrowsingLevelClaim(viewerBrowsingLevel) ? viewerBrowsingLevel : null,
     },
   };
 }

@@ -1152,56 +1152,33 @@ jobs:
   #
   # Hosted, with the `unit` job's services and env: a related or smoke file may be one of the
   # Postgres- or Redis-backed suites, several of which fail rather than skip without their URL.
-  # ── SPLIT 2 WAYS: ONE PLAN, TWO SHARDS, ONE LEDGER ──
+  # ── SPLIT 2 WAYS: TWO SHARDS THAT EACH PLAN, ONE LEDGER ──
   #
-  # `related-plan` computes the selection ONCE (the import-graph walk, up to ~160 s) and splits the
-  # files into two lists balanced by the main batch's per-file timings (count when there are none);
-  # the two `related-tests` shards download that plan and run their list; `related-ledger` keeps
-  # the job's original check name and is its verdict. Measured before the split: one job ran the
-  # 599 smoke files in 429 s and a one-file change (690 files) in 669 s.
-  related-plan:
-    name: Related tests, plan (PR)
-    runs-on: ubuntu-latest
-    if: ${{ (github.event_name == 'pull_request' && !github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'full-ci')) || (github.event_name == 'workflow_dispatch' && inputs.only == 'related') }}
-    timeout-minutes: 20
-    permissions:
-      # Reads the newest main batch runs' `test-times-unit-*` artifacts, for the split.
-      actions: read
-      contents: read
-    steps:
-      # Depth 2: the plan diffs the PR's merge commit against its first parent (the base).
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-          submodules: true
-          persist-credentials: false
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Plan and split the related + smoke tests
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/ci/related-tests.mjs plan HEAD^1 "$RUNNER_TEMP/related-plan" 2
-
-      - name: Upload the plan
-        uses: actions/upload-artifact@v7
-        with:
-          name: related-plan
-          path: ${{ runner.temp }}/related-plan
-          if-no-files-found: error
-          retention-days: 3
-
+  # Each `related-tests` shard computes the same plan itself (the selection, from the same commit
+  # with the same code) and runs its half, so no shard waits on a plan job; `related-ledger` keeps
+  # the job's original check name, checks the shards agreed and is its verdict.
+  #
+  # ── THE INSTALLED TREE IS CACHED, KEYED ON WHAT AN INSTALL READS ──
+  #
+  # `cache: pnpm` (setup-node) caches the pnpm STORE only, so every job still links ~2,300 packages
+  # and runs the root postinstall (`db:generate`: the slim schema and five Prisma generators).
+  # Measured on a shard: store restore ~14 s, then `pnpm install` 41.6 s (link ~13 s, workspace
+  # prepare scripts ~5 s, postinstall ~23 s). These jobs restore the installed tree instead:
+  # every `node_modules` plus the gitignored slim schema the postinstall writes, keyed on the
+  # runner image, the lockfile, the workspace file, the workspace members' manifests WITHOUT their
+  # `version` (scripts/ci/related-install-key.mjs: most commits to `main` are release bumps, and
+  # hashing raw manifests made each one a new entry), `.nvmrc`, `patches/` and the postinstall's
+  # inputs (the full schema and its generator scripts), so a key can only ever hold what an
+  # install of those inputs produces. The cached paths follow pnpm-workspace.yaml's includes;
+  # scripts/__tests__/related-install-key.test.ts fails when they drift apart. An exact hit skips setup-node's store cache and the install
+  # and runs only the apps' `prepare` (it writes from the checkout); a miss installs as before.
+  #
+  # 🔴 SAVED ONLY ON `main`, by `related-cache` on the batch dispatch, the rule the `unit` job's
+  # Vite cache states: an entry saved by a PR is scoped to that PR's ref, readable by nothing else,
+  # and spends the repo's 10 GB cache budget. One entry per key; a PR with its own lockfile
+  # misses and installs.
   related-tests:
     name: Related unit tests + smoke (PR) (${{ matrix.shard }}/${{ strategy.job-total }})
-    needs: related-plan
     runs-on: ubuntu-latest
     if: ${{ (github.event_name == 'pull_request' && !github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'full-ci')) || (github.event_name == 'workflow_dispatch' && inputs.only == 'related') }}
     timeout-minutes: 30
@@ -1228,50 +1205,82 @@ jobs:
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
     env: *unit-env
     steps:
+      # Depth 2: the plan diffs the PR's merge commit against its first parent (the base).
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 2
           submodules: true
           persist-credentials: false
 
       - uses: pnpm/action-setup@v6
 
+      # The key's inputs that are not plain files: the workspace members' manifests with `version`
+      # stripped (scripts/ci/related-install-key.mjs: a release bump changes no install), and the
+      # runner image (`ImageOS`, e.g. ubuntu24, which the expression `env` context does not see),
+      # so a new Ubuntu release never restores a tree built against another one's libraries.
+      - &related-nm-key-step
+        name: Cache key inputs
+        id: key
+        run: |
+          node scripts/ci/related-install-key.mjs .related-install-manifests.txt
+          echo "image=${ImageOS:?}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the installed tree
+        id: nm
+        uses: actions/cache/restore@v6
+        with:
+          path: &related-nm-paths |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+            packages/civitai-db-schema/prisma/schema.prisma
+          key: &related-nm-key related-nm-${{ runner.os }}-${{ steps.key.outputs.image }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', '.related-install-manifests.txt', '.nvmrc', '.npmrc', 'patches/**', 'packages/civitai-db-schema/prisma/schema.full.prisma', 'scripts/generate-slim-schema.js', 'scripts/prisma-*-generator.mjs') }}
+
+      # The store cache only matters to an install, which an exact hit skips.
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+          cache: ${{ steps.nm.outputs.cache-hit != 'true' && 'pnpm' || '' }}
 
       - name: Install
+        if: steps.nm.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
-      - name: Download the plan
-        uses: actions/download-artifact@v7
-        with:
-          name: related-plan
-          path: ${{ runner.temp }}/related-plan
+      # What an install writes OUTSIDE the cached tree, from the checkout rather than the
+      # lockfile: each app's `prepare` (`svelte-kit sync`, which writes `apps/*/.svelte-kit` from
+      # that app's routes and config, so it cannot be cached on the install key). Measured: without
+      # it the app-reading unit tests fail on a missing `.svelte-kit/tsconfig.json`. `--if-present`
+      # so an app with no `prepare` is skipped, and a new app's is run.
+      - name: App prepare scripts (cache hit)
+        if: steps.nm.outputs.cache-hit == 'true'
+        run: pnpm -r --filter './apps/*' --if-present run prepare
 
-      - name: Related + smoke unit tests (this shard)
+      - name: Plan, then run this shard
         env:
           SHARD: ${{ matrix.shard }}
-        run: node scripts/ci/related-tests.mjs shard "$RUNNER_TEMP/related-plan" "$SHARD" "$RUNNER_TEMP/related-report.json"
+          TOTAL: ${{ strategy.job-total }}
+        run: node scripts/ci/related-tests.mjs shard HEAD^1 "$SHARD" "$TOTAL" "$RUNNER_TEMP/related-report"
 
-      # For `related-ledger`. `!cancelled()` so a RED shard still hands over its report.
-      - name: Upload the shard report
+      # For `related-ledger`: the report and the two lists. `!cancelled()` so a RED shard still
+      # hands them over.
+      - name: Upload the shard report and plan
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: related-report-${{ matrix.shard }}
-          path: ${{ runner.temp }}/related-report.json
+          path: ${{ runner.temp }}/related-report
           if-no-files-found: warn
           retention-days: 3
           overwrite: true
 
-  # The whole tier's verdict, under the check name the unsplit job had. Red when the plan or a
-  # shard did not succeed, when a shard report is missing, holds a file another shard also ran, or
-  # comes from a shard index outside the matrix (merge-component-shard-reports.mjs), or when the
-  # union misses a file the plan listed.
+  # The whole tier's verdict, under the check name the unsplit job had. Red when a shard did not
+  # succeed; when the shards planned different files, or their lists overlap or leave a planned
+  # file out (related-tests.mjs `ledger`); when a shard report is missing, holds a file another
+  # shard also ran, or comes from a shard index outside the matrix
+  # (merge-component-shard-reports.mjs); or when the union misses a file the plan listed.
   related-ledger:
     name: Related unit tests + smoke (PR)
-    needs: [related-plan, related-tests]
+    needs: related-tests
     runs-on: ubuntu-latest
     if: ${{ !cancelled() && ((github.event_name == 'pull_request' && !github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'full-ci')) || (github.event_name == 'workflow_dispatch' && inputs.only == 'related')) }}
     timeout-minutes: 10
@@ -1285,38 +1294,79 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      - name: Download the plan
-        uses: actions/download-artifact@v7
-        with:
-          name: related-plan
-          path: ${{ runner.temp }}/related-plan
-
-      - name: Download the shard reports
+      - name: Download the shard reports and plans
         uses: actions/download-artifact@v7
         with:
           pattern: related-report-*
           path: ${{ runner.temp }}/related-reports
 
-      # Both checks always run, so a missing shard and a missing file are both named. 2: the
-      # `related-tests` matrix, which this job cannot read; the merge also fails on any report
-      # outside 1..2.
-      - name: Every listed file ran exactly once
+      # All three checks always run, so every problem is named. 2: the `related-tests` matrix,
+      # which this job cannot read; both scripts also fail on any shard outside 1..2.
+      - name: The shards agreed, and every planned file ran exactly once
         run: |
           rc=0
+          node scripts/ci/related-tests.mjs ledger "$RUNNER_TEMP/related-reports" 2 || rc=1
           node scripts/ci/merge-component-shard-reports.mjs "$RUNNER_TEMP/related-reports" 2 "$RUNNER_TEMP/related-merged.json" related-report || rc=1
-          node scripts/ci/related-tests.mjs assert "$RUNNER_TEMP/related-plan/files.txt" "$RUNNER_TEMP/related-merged.json" || rc=1
+          node scripts/ci/related-tests.mjs assert "$RUNNER_TEMP/related-reports/files.txt" "$RUNNER_TEMP/related-merged.json" || rc=1
           exit $rc
 
-      - name: The plan and every shard succeeded
+      - name: Every shard succeeded
         if: ${{ !cancelled() }}
         env:
-          PLAN: ${{ needs.related-plan.result }}
           SHARDS: ${{ needs.related-tests.result }}
         run: |
-          if [ "$PLAN" != success ] || [ "$SHARDS" != success ]; then
-            echo "::error title=Related tests did not succeed::plan '$PLAN', shards '$SHARDS'. Open the red job for the cause."
+          if [ "$SHARDS" != success ]; then
+            echo "::error title=Related tests did not succeed::the shards concluded '$SHARDS'. Open the red shard for the cause."
             exit 1
           fi
+
+  # Saves the related jobs' installed tree (see `related-tests`), on `main` only: the bot's batch
+  # dispatch, about every two hours. A no-op when that key is already saved.
+  related-cache:
+    name: Related tests install cache (main batch)
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' && github.ref == 'refs/heads/main' }}
+    # Best-effort infrastructure: a failed install or save must never paint the batch run red,
+    # where a red means a suite. An expression, not a literal `true`: this job runs only on that
+    # dispatch, so it reads true wherever it runs, and the push-path guard in
+    # main-branch-ci-coverage.test.ts (no unconditional report-only job) keeps its meaning.
+    continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      - *related-nm-key-step
+
+      - name: Is it saved already?
+        id: nm
+        uses: actions/cache/restore@v6
+        with:
+          path: *related-nm-paths
+          key: *related-nm-key
+          lookup-only: true
+
+      - uses: actions/setup-node@v7
+        if: steps.nm.outputs.cache-hit != 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        if: steps.nm.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      # Best-effort infrastructure, like the Vite cache save: a failed save must not red `main`.
+      - name: Save the installed tree
+        if: steps.nm.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: *related-nm-paths
+          key: *related-nm-key
 
   packages:
     name: Package unit tests

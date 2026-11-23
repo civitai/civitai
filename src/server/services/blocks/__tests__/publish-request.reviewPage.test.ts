@@ -285,12 +285,14 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
       ).toEqual({ listingId: 'apl_draft', declared: 'g' });
     });
 
-    it('a listing RESET to pending is floored from the rating it already carries', async () => {
+    // The approve re-rates a reset listing from the version's manifest ((3b-sync)) before it
+    // restores it, so the rating the listing carries now is not what the approve starts from.
+    it('a listing RESET to pending is floored from the submitted manifest rating, not its own', async () => {
       expect(
         await approveRatingFor({
           resets: [{ id: 'apl_reset', appBlockId: 'appblk_1', contentRating: 'r' }],
         })
-      ).toEqual({ listingId: 'apl_reset', declared: 'r' });
+      ).toEqual({ listingId: 'apl_reset', declared: 'pg13' });
     });
 
     it('rows for another request on the same page are not this one’s', async () => {

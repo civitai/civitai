@@ -1,14 +1,15 @@
-// The vote action, the real gate (its Lua over fake Redis) and the real `voteLockout`, with the ledger read
+// The vote action, the real gate (its Lua over fake Redis) and the real `votePause`, with the ledger read
 // (`voteLockUntil`) standing on an in-memory list of vote times: what a player is shown while paused.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { limitsFromConfig } from './config';
 import { fakeRedis } from './fake-redis';
+import type { Pause } from './gate';
 import { createVoteGate, type VoteGate } from './gate';
 
 const T0 = new Date('2026-12-15T12:00:00Z').getTime();
 const MIN = 60_000;
 const clock = vi.hoisted(() => ({ ms: 0 }));
-// `reads` counts the ledger reads behind `lockoutFor`; `failing` makes them throw (a degraded database).
+// `reads` counts the ledger reads behind `pauseFor`; `failing` makes them throw (a degraded database).
 const ledger = vi.hoisted(() => ({ rows: [] as number[], reads: 0, failing: false }));
 const live = vi.hoisted(() => ({ config: null as unknown }));
 const redisCtl = vi.hoisted(() => ({ down: false }));
@@ -42,20 +43,22 @@ vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote: vi.fn() }));
 vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo: vi.fn() }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ share: 0, stretch: 8 }) }));
 
-// The same arithmetic as `voteLockUntil`, over the in-memory ledger.
+// The same arithmetic as `voteLock`, over the in-memory ledger.
 function ledgerLock(now: number, limits: { windowSeconds: number; max: number }[]) {
-  let latest = 0;
+  let latest: { until: Date; windowSeconds: number } | null = null;
   for (const { windowSeconds, max } of limits) {
     const filling = ledger.rows.filter((t) => t > now - windowSeconds * 1000).sort((a, b) => b - a)[
       max - 1
     ];
-    if (filling !== undefined) latest = Math.max(latest, filling + windowSeconds * 1000);
+    const end = filling === undefined ? null : filling + windowSeconds * 1000;
+    if (end !== null && (!latest || end > latest.until.getTime()))
+      latest = { until: new Date(end), windowSeconds };
   }
-  return latest ? new Date(latest) : null;
+  return latest;
 }
 vi.mock('$lib/server/queue/vote-rate', async (original) => ({
   ...(await original<typeof import('$lib/server/queue/vote-rate')>()),
-  voteLockUntil: async (
+  voteLock: async (
     _db: unknown,
     _player: number,
     now: Date,
@@ -67,24 +70,22 @@ vi.mock('$lib/server/queue/vote-rate', async (original) => ({
   },
 }));
 vi.mock('$lib/server/vote-limits/runtime', async () => {
-  const { voteLockout } = await import('$lib/server/vote-limits/lockout');
+  const { votePause } = await import('$lib/server/vote-limits/lockout');
   const { limitsFromConfig } = await import('$lib/server/vote-limits/config');
+  const deps = () => ({
+    gate: gate.current,
+    limits: { load: async () => limitsFromConfig(live.config) },
+  });
   return {
-    lockoutFor: (db: unknown, userId: number, now: Date, floor: Date | null = null) =>
-      voteLockout(
-        db as never,
-        userId,
-        now,
-        { gate: gate.current, limits: { load: async () => limitsFromConfig(live.config) } },
-        floor
-      ),
+    pauseFor: (db: unknown, userId: number, now: Date, floor: Pause | null = null) =>
+      votePause(db as never, userId, now, deps(), floor),
     voteGate: new Proxy({}, { get: (_, key) => gate.current[key as keyof VoteGate] }),
   };
 });
 
 const { sealItem } = await import('$lib/server/feed-token');
 const { actions } = await import('../../../routes/play/+page.server');
-const { lockoutFor } = await import('$lib/server/vote-limits/runtime');
+const { pauseFor } = await import('$lib/server/vote-limits/runtime');
 
 type Answer =
   | { status?: number; data?: { lockoutSeconds?: number; busy?: true } }
@@ -112,7 +113,8 @@ const endOf = (res: Answer) =>
     ? clock.ms + res.data.lockoutSeconds * 1000
     : null;
 /** The end `/play` would show now, in ms. */
-const show = async () => (await lockoutFor({} as never, 7, new Date(clock.ms)))?.getTime() ?? null;
+const show = async () =>
+  (await pauseFor({} as never, 7, new Date(clock.ms)))?.until.getTime() ?? null;
 
 beforeEach(() => {
   store = fakeRedis();
@@ -139,7 +141,7 @@ beforeEach(() => {
   // The ledger check inside the vote transaction: refuse while the trailing windows are full, else record.
   castVote.mockImplementation(async (_db: unknown, args: { isModerator?: boolean }) => {
     if (!args.isModerator) {
-      const until = ledgerLock(clock.ms, limitsFromConfig(live.config));
+      const until = ledgerLock(clock.ms, limitsFromConfig(live.config))?.until;
       if (until) return { status: 'limited', until };
     }
     ledger.rows.push(clock.ms);
