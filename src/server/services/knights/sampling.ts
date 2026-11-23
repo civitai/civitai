@@ -310,6 +310,9 @@ export async function offerLeftPrivateImagesToKnights(
       .where(filter.column, 'in', ids)
       // As when the owner rates: a moderator-locked level is not asked about.
       .where('img.nsfwLevelLocked', '=', false)
+      // Only images Knights may show, read as the sampling half reads them.
+      .where(servableImageContent)
+      .where('img.ingestion', '=', 'Scanned')
       .orderBy('img.id', 'asc')
       .execute();
     if (rated.length === 0) continue;

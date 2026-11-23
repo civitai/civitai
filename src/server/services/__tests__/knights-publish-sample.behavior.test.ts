@@ -483,4 +483,19 @@ describe('offerLeftPrivateImagesToKnights', () => {
       { imageId: 13, source: 'owner-rating', priority: 1, status: 'Applied' },
     ]);
   });
+
+  it('queues no owner rating for an image Knights may not show: blocked, a minor, or not yet scanned', async () => {
+    await post(1, minutesAgo(300));
+    await images(1, [11, 12, 13]);
+    await images(1, [14], { ingestion: 'Pending' });
+    await pg.query(`UPDATE "Image" SET "blockedFor" = 'moderated' WHERE id = 12`);
+    await pg.query(`UPDATE "Image" SET minor = true WHERE id = 13`);
+    for (const id of [11, 12, 13, 14]) await ownerRating(id);
+
+    const result = await offer({ postIds: [1] }, { sfwRate: 0, nsfwRate: 0 });
+
+    // 11 is the servable control.
+    expect(result).toEqual({ ownerRatings: 1, enqueued: 0, capped: false });
+    expect((await queued()).map((i) => i.imageId)).toEqual([11]);
+  });
 });
