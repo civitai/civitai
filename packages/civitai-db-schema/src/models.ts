@@ -114,7 +114,7 @@ export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
 export type DomainColor = "red" | "green" | "blue" | "all";
 
-export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground" | "Sticker" | "ChatTheme" | "CardDecoration";
+export type CosmeticType = "Badge" | "NamePlate" | "ContentDecoration" | "ProfileDecoration" | "ProfileBackground" | "Sticker" | "ChatTheme" | "CardDecoration" | "SidebarBackground";
 
 export type CosmeticSource = "Trophy" | "Purchase" | "Event" | "Membership" | "Claim";
 
@@ -1773,6 +1773,8 @@ export interface Image {
   connections?: ImageConnection[];
   UserProfile?: UserProfile[];
   userProfileSfwCover?: UserProfile[];
+  userProfileBackground?: UserProfile[];
+  userProfileSfwBackground?: UserProfile[];
   announcementCovers?: Announcement[];
   clubCover?: Club[];
   clubHeader?: Club[];
@@ -6181,6 +6183,13 @@ export interface UserProfile {
   profileSectionsSettings: JsonValue;
   showcaseItems: JsonValue;
   showcaseSections: JsonValue;
+  backgroundImageId: number | null;
+  backgroundImage?: Image | null;
+  sfwBackgroundImageId: number | null;
+  sfwBackgroundImage?: Image | null;
+  cardColor: string | null;
+  cardOpacity: number | null;
+  about: string | null;
 }
 
 export interface BountyStat {

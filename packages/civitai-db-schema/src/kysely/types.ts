@@ -6822,6 +6822,11 @@ export type UserProfile = {
   profileSectionsSettings: Generated<unknown>;
   showcaseItems: Generated<unknown>;
   showcaseSections: Generated<unknown>;
+  backgroundImageId: number | null;
+  sfwBackgroundImageId: number | null;
+  cardColor: string | null;
+  cardOpacity: number | null;
+  about: string | null;
 };
 export type UserPurchasedRewards = {
   buzzTransactionId: string;

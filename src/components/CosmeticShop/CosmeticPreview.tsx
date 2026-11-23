@@ -4,6 +4,7 @@ import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLe
 import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { PreviewCard } from '~/components/Modals/CardDecorationModal';
+import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type {
   ContentDecorationCosmetic,
@@ -100,6 +101,21 @@ export const CosmeticPreview = ({
             cosmeticOverwrites={[cosmetic]}
             style={{ width: '100%', maxWidth: 450 }}
           />
+          {descriptionBox}
+        </Stack>
+      );
+    case CosmeticType.SidebarBackground:
+      return (
+        <Stack gap="xl" align="center">
+          {!hideHeader && (
+            <Text fw="bold" align="center">
+              Preview
+            </Text>
+          )}
+          {/* The profile sidebar's width. */}
+          <Box w="100%" maw={320}>
+            <CosmeticSample cosmetic={cosmetic} size="lg" />
+          </Box>
           {descriptionBox}
         </Stack>
       );

@@ -65,6 +65,7 @@ import type {
   ContentDecorationCosmetic,
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
+  SidebarBackgroundCosmetic,
 } from '~/server/selectors/cosmetic.selector';
 import { changedCosmeticId } from '~/components/Modals/profile-cosmetic-ids';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
@@ -146,6 +147,7 @@ const schema = z.object({
   profileDecoration: cosmeticInputSchema.nullish(),
   profileBackground: cosmeticInputSchema.nullish(),
   cardDecoration: cosmeticInputSchema.nullish(),
+  sidebarBackground: cosmeticInputSchema.nullish(),
 });
 
 const chipProps: Partial<ChipProps> = {
@@ -297,6 +299,20 @@ export default function UserProfileEditModal() {
     [user, owned]
   );
 
+  const sidebarBackgrounds = useMemo(
+    () =>
+      user
+        ? owned
+            .filter(({ cosmetic: c }) => c.type === CosmeticType.SidebarBackground && !!c.data)
+            .map(({ cosmetic, cosmeticId, ...c }) => ({
+              ...c,
+              ...cosmetic,
+              data: cosmetic.data as SidebarBackgroundCosmetic['data'],
+            }))
+        : [],
+    [user, owned]
+  );
+
   // `getLeaderboards` is already domain-scoped, so this list is whatever is visible
   // on the current host — no second filter on `domain` belongs here.
   const leaderboardOptions = useMemo(
@@ -379,6 +395,9 @@ export default function UserProfileEditModal() {
       const selectedCardDecoration = equippedCosmetics.find(
         (c) => c.type === CosmeticType.CardDecoration
       );
+      const selectedSidebarBackground = equippedCosmetics.find(
+        (c) => c.type === CosmeticType.SidebarBackground
+      );
       const formData = {
         ...user.profile,
         // `profile.bio`/`message`/`coverImage` are resolved for the current domain, so
@@ -413,6 +432,7 @@ export default function UserProfileEditModal() {
         profileDecoration: selectedProfileDecoration ?? null,
         profileBackground: selectedProfileBackground ?? null,
         cardDecoration: selectedCardDecoration ?? null,
+        sidebarBackground: selectedSidebarBackground ?? null,
         leaderboardShowcase: user?.leaderboardShowcase ?? null,
         profilePicture: user.profilePicture
           ? (user.profilePicture as FormDataSchema['profilePicture'])
@@ -439,6 +459,7 @@ export default function UserProfileEditModal() {
       profileDecoration: prevProfileDecorationId,
       profileBackground: prevProfileBackgroundId,
       cardDecoration: prevCardDecoration,
+      sidebarBackground: prevSidebarBackground,
       leaderboardShowcase: prevLeaderboardShowcase,
       ...prevProfileData
     } = previousData.current ?? {};
@@ -449,6 +470,7 @@ export default function UserProfileEditModal() {
       profileDecoration,
       profileBackground,
       cardDecoration,
+      sidebarBackground,
       leaderboardShowcase,
       creatorCardStatsPreferences,
       ...profileData
@@ -461,6 +483,7 @@ export default function UserProfileEditModal() {
       profileDecoration !== prevProfileDecorationId ||
       profileBackground !== prevProfileBackgroundId ||
       changedCosmeticId(cardDecoration, prevCardDecoration) !== undefined ||
+      changedCosmeticId(sidebarBackground, prevSidebarBackground) !== undefined ||
       leaderboardShowcase !== prevLeaderboardShowcase;
     const shouldUpdateProfile = !isEqual(prevProfileData, profileData);
 
@@ -474,6 +497,7 @@ export default function UserProfileEditModal() {
         profileDecorationId: profileDecoration?.id ?? null,
         profileBackgroundId: profileBackground?.id ?? null,
         cardDecorationId: changedCosmeticId(cardDecoration, prevCardDecoration),
+        sidebarBackgroundId: changedCosmeticId(sidebarBackground, prevSidebarBackground),
         leaderboardShowcase,
       });
   };
@@ -601,6 +625,19 @@ export default function UserProfileEditModal() {
                   label="Creator Card Glow"
                   description="Select it again to turn the glow off"
                   data={cardDecorations}
+                />
+              )}
+              {featureFlags.profileRedesign && (
+                <InputCosmeticSelect
+                  name="sidebarBackground"
+                  label="Profile Sidebar Background"
+                  description="Shown behind the top of your profile sidebar. Select it again to remove it"
+                  shopUrl={`/shop?cosmeticTypes=${CosmeticType.SidebarBackground}`}
+                  nothingFound={
+                    <Text size="xs">You don&rsquo;t have any sidebar backgrounds yet</Text>
+                  }
+                  data={sidebarBackgrounds}
+                  onShopClick={handleClose}
                 />
               )}
             </>
@@ -919,6 +956,7 @@ export default function UserProfileEditModal() {
         'profileBackground',
         'profileDecoration',
         'profilePicture',
+        'sidebarBackground',
       ],
       content: profileGroup,
     },
