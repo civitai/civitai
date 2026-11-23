@@ -10,6 +10,8 @@ describe('OffDomainTrainingDataNotice', () => {
     renderWithProviders(<OffDomainTrainingDataNotice stub={{ offDomain: true }} href={HREF} />);
     const link = page.getByRole('link', { name: 'See it on civitai.red' });
     await expect.element(link).toBeVisible();
+    // The control for the empty-state test below, which queries this id.
+    await expect.element(page.getByTestId('off-domain-training-data')).toBeVisible();
     expect(link.element().getAttribute('href')).toBe(HREF);
   });
 

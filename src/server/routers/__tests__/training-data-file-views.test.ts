@@ -213,6 +213,7 @@ describe.each(SURFACES)('%s and a shared training dataset', (_, read) => {
     ]);
   });
 
+  // The civitai.red pointer and its limits (sole refusal, exact keys, withheld models, the flag): #10207.
   it('points others on civitai.com to civitai.red for a dataset refused only for its rating', async () => {
     listingRow({ nsfwLevel: 4, restricted: false });
     const files = await read([WEIGHTS, dataset()], undefined);
