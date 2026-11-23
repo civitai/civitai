@@ -6,10 +6,13 @@ import * as z from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
-import { pluralize } from '~/components/CreatorShop/Services/creator-service.util';
-import { useServiceBuzzType } from '~/components/CreatorShop/Services/useServiceBuzzType';
+import {
+  pluralize,
+  sellerRecordLine,
+} from '~/components/CreatorShop/Services/creator-service.util';
 import {
   ServiceOfferingLicense,
   ServiceRequestModal,
@@ -68,7 +71,7 @@ export const getServerSideProps = createServerSideProps({
 
 function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
-  const buzzType = useServiceBuzzType();
+  const [buzzType] = useAvailableBuzz();
   const { data: offering, isLoading } = trpc.creatorService.getById.useQuery({ id });
 
   if (isLoading) return <PageLoader />;
@@ -81,7 +84,7 @@ function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSidePro
   const isActive = offering.status === ServiceOfferingStatus.Active;
   const happy = serviceHappyShare([offering]);
   const full = offering.slotsOpen === 0;
-  const onTimePct = record.completed ? Math.round((record.onTime / record.completed) * 100) : null;
+  const recordLine = sellerRecordLine(record);
   const href = servicePageHref(offering.id, offering.title);
 
   const details: ComponentProps<typeof DescriptionTable>['items'] = [
@@ -208,7 +211,7 @@ function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSidePro
                 </Button>
               ) : (
                 <LoginRedirect reason="perform-action">
-                  {/* Opens the popup without spending, so no funds check: a plain button in the Buzz color. */}
+                  {/* No funds check: the hold is placed in the popup. */}
                   <Button
                     color={buzzType}
                     size="lg"
@@ -240,9 +243,9 @@ function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSidePro
               <SmartCreatorCard
                 user={seller}
                 footer={
-                  onTimePct != null ? (
+                  recordLine ? (
                     <Text size="sm" c="dimmed">
-                      {`${pluralize(record.completed, 'deal')} · ${onTimePct}% on time`}
+                      {recordLine}
                     </Text>
                   ) : undefined
                 }

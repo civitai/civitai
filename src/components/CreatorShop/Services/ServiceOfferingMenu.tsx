@@ -116,7 +116,6 @@ export function ServiceOfferingMenu({
     <Menu position="bottom-end" withinPortal>
       <Menu.Target>
         {placement === 'title' ? (
-          // The model page's title buttons: 32px, light, vertical dots.
           <LegacyActionIcon variant="light" w={32} h={32} aria-label="Service options">
             <IconDotsVertical size={16} />
           </LegacyActionIcon>

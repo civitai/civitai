@@ -15,7 +15,7 @@ import type { ReactNode } from 'react';
 import { useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { useServiceBuzzType } from '~/components/CreatorShop/Services/useServiceBuzzType';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { serviceTermsLine } from '~/components/CreatorShop/Services/creator-service.util';
 import {
@@ -64,7 +64,7 @@ export function ServiceRequestModal({
 }) {
   const dialog = useDialogContext();
   const features = useOptionalFeatureFlags();
-  const buzzType = useServiceBuzzType();
+  const [buzzType] = useAvailableBuzz();
   const router = useRouter();
   const utils = trpc.useUtils();
   const [text, setText] = useState('');

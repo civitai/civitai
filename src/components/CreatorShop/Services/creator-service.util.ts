@@ -17,6 +17,12 @@ export function serviceTermsLine(
   )} included`;
 }
 
+/** "12 deals · 75% on time" for a seller with finished deals, else null. */
+export function sellerRecordLine({ completed, onTime }: { completed: number; onTime: number }) {
+  if (!completed) return null;
+  return `${pluralize(completed, 'deal')} · ${Math.round((onTime / completed) * 100)}% on time`;
+}
+
 export function useQueryShopServices(userId: number, enabled: boolean) {
   const { data, isLoading } = trpc.creatorService.getForShop.useQuery({ userId }, { enabled });
   return { offerings: data ?? [], isLoading };

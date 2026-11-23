@@ -1,10 +1,7 @@
 import type { AccordionProps } from '@mantine/core';
 import { Accordion, useComputedColorScheme } from '@mantine/core';
 
-/**
- * The model page's "Details" accordion look: padded control, label without its own padding,
- * a bordered, shadowed item. Give the panel `p={0}` so a table inside runs edge to edge.
- */
+/** The model page's "Details" accordion look: padded control, bordered and shadowed item. */
 export function DetailsAccordion<Multiple extends boolean = false>(
   props: AccordionProps<Multiple>
 ) {

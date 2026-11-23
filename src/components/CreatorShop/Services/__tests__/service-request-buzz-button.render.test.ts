@@ -34,7 +34,7 @@ vi.mock('~/hooks/useDomainColor', () => ({ useDomainColor: () => mocks.domain })
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useOptionalFeatureFlags: () => ({ creatorServicesNext: mocks.next }),
-  useFeatureFlags: () => ({ creatorServicesNext: mocks.next }),
+  useFeatureFlags: () => ({ creatorServicesNext: mocks.next, isGreen: mocks.domain === 'green' }),
 }));
 vi.mock('next/router', () => ({ useRouter: () => ({ push: () => undefined }) }));
 vi.mock('~/components/Currency/CurrencyBadge', () => ({ CurrencyBadge: () => null }));

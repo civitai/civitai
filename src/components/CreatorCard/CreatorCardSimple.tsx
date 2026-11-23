@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { creatorCardSectionStyle } from '~/components/CreatorCard/section-style';
 import { uniqBy } from 'lodash-es';
 import { memo } from 'react';
 import type { CardProps } from '@mantine/core';
@@ -252,9 +253,7 @@ const CreatorCardSimpleContent = ({
         <Card.Section
           withBorder
           inheritPadding
-          style={{
-            background: colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          }}
+          style={creatorCardSectionStyle(theme, colorScheme)}
           py={5}
         >
           <Group gap={4}>
@@ -278,9 +277,7 @@ const CreatorCardSimpleContent = ({
         <Card.Section
           withBorder
           inheritPadding
-          style={{
-            background: colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          }}
+          style={creatorCardSectionStyle(theme, colorScheme)}
           py="xs"
         >
           {footer}
