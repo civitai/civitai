@@ -30,7 +30,6 @@ const viewers = {
   stranger: { userId: 20 },
   owner: { userId: OWNER },
   moderator: { userId: 30, isModerator: true },
-  // A moderator with the held-media grant (csamReports).
   grantHolder: { userId: 31, isModerator: true, seesReportListed: true },
 };
 type Viewer = (typeof viewers)[keyof typeof viewers];
