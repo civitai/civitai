@@ -456,9 +456,10 @@ END)`;
 
 /**
  * The row holds a CSAM block. NULL when `blockedFor` is NULL: a filter negates it with `IS NOT TRUE`.
- * It never settles to the 'appeal' review, whatever writes it.
+ * A scan's block write, `keepPendingAppealFlags` and an appeal filing never give such a row the
+ * 'appeal' review.
  */
-export const csamBlockedSql = (alias?: string) =>
+export const csamBlockedSql = (alias?: 'i') =>
   Prisma.raw(`${alias ? `"${alias}".` : ''}"blockedFor" = '${BlockedReason.CSAM}'`);
 
 /**
@@ -475,11 +476,13 @@ const REVIEWS_ONLY_A_MODERATOR_CLEARS = ['csam', 'appeal'] as const;
  * 'csam', keeping 'appeal' while an appeal is pending unless the row holds a CSAM block; 'verdict'
  * (any other scan) never clears or lowers a review, and replaces a stored key only by one ranked
  * higher, except that a pending appeal's 'appeal' takes any key but 'csam'. Its SQL reads
- * "Image".id, so it is only for an UPDATE of "Image".
+ * "Image".id, so it is only for an UPDATE of "Image". `csamBlock` is whether the row holds a CSAM
+ * block once the write lands; it defaults to the stored one.
  */
 export function reviewKeyAfterSql(
   actor: 'verdict' | 'block' | 'human',
-  key: string | null | Prisma.Sql
+  key: string | null | Prisma.Sql,
+  csamBlock: Prisma.Sql = csamBlockedSql()
 ) {
   const next =
     typeof key === 'string' || key === null ? Prisma.sql`${key}::text` : Prisma.sql`(${key})::text`;
@@ -488,7 +491,7 @@ export function reviewKeyAfterSql(
     // A stored 'appeal' and a Pending appeal are read at write time, so an appeal filed while the
     // scan ran keeps its flag.
     return Prisma.sql`(CASE WHEN "needsReview" = 'csam' THEN "needsReview"
-      WHEN ${csamBlockedSql()} THEN NULL
+      WHEN ${csamBlock} THEN NULL
       WHEN ${next} = 'appeal' OR "needsReview" = 'appeal' OR EXISTS (
         SELECT 1 FROM "Appeal" a
         WHERE a."entityType" = 'Image'::"EntityType"

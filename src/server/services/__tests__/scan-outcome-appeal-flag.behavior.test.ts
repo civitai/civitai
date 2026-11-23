@@ -410,8 +410,11 @@ type Stored = {
   loadedReview?: string | null;
   /** A hold blocked the image after the scan loaded it unblocked. */
   heldAfterLoad?: boolean;
-  /** The image is held by a CSAM block: one the scan loaded, or one set after it loaded the image. */
-  csamBlocked?: 'loaded' | 'afterLoad';
+  /**
+   * The image is held by a CSAM block: one the scan loaded, or one set after it loaded the image; or
+   * the scan loaded one that a moderator lifted before its write.
+   */
+  csamBlocked?: 'loaded' | 'afterLoad' | 'liftedAfterLoad';
   /**
    * The CSAM report listing the image was sent and archived over a year ago, so it no longer holds
    * the owner. Otherwise the block holds the owner, and a held owner's block is kept from the scan.
@@ -454,7 +457,8 @@ const rescan = async (verdict: Verdict, stored: Stored = {}) => {
     );
   if (stored.heldAfterLoad)
     await holder.db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES ($1)`, [GRID_ID]);
-  if (stored.csamBlocked)
+  // A lifted block leaves the stored row as inserted: unblocked.
+  if (stored.csamBlocked && stored.csamBlocked !== 'liftedAfterLoad')
     await holder.db.query(
       `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM', "nsfwLevel" = 32 WHERE id = $1;`,
       [GRID_ID]
@@ -482,7 +486,7 @@ const rescan = async (verdict: Verdict, stored: Stored = {}) => {
     metadata: {},
     postId: null,
     nsfwLevelLocked: false,
-    ...(stored.csamBlocked === 'loaded'
+    ...(stored.csamBlocked === 'loaded' || stored.csamBlocked === 'liftedAfterLoad'
       ? { ingestion: 'Blocked', nsfwLevel: 32, blockedFor: 'CSAM' }
       : { ingestion: 'Rescan', nsfwLevel: 1, blockedFor: null }),
     needsReview:
@@ -688,6 +692,23 @@ describe('the review a scan verdict leaves', () => {
       expect(row.needsReview).toBeNull();
     }
   );
+
+  it('a CSAM block lifted while the scan ran is not written back with an appeal review', async () => {
+    const row = await rescan('clean', {
+      needsReview: 'appeal',
+      appeal: true,
+      csamBlocked: 'liftedAfterLoad',
+    });
+    const { blockedFor } = (
+      await holder.db.query<{ blockedFor: string | null }>(
+        `SELECT "blockedFor" FROM "Image" WHERE id = $1`,
+        [GRID_ID]
+      )
+    ).rows[0];
+    // Control: the scan wrote the loaded block back.
+    expect(blockedFor).toBe('CSAM');
+    expect(row.needsReview).toBeNull();
+  });
 
   it('a blocking verdict on a csam review under appeal keeps csam', async () => {
     expect((await rescan('block', { needsReview: 'csam', appeal: true })).needsReview).toBe('csam');

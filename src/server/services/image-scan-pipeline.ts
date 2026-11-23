@@ -786,6 +786,11 @@ export async function resolveScanOutcome({
   const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
   // Decided on the row, so a stored CSAM block holds whatever this scan loaded or decided.
   const csamBlocked = csamBlockedSql();
+  // The CSAM block the row holds once this write lands: the stored one, or one this scan writes back
+  // from the loaded copy after it was lifted.
+  const csamAfterWrite = Prisma.sql`(${csamBlocked} OR ${
+    (toUpdate.blockedFor as string) ?? null
+  }::text = ${BlockedReason.CSAM})`;
   // A block outlives an account restore (every write that lands drops the breadcrumbs); anything
   // else leaves a grace-blocked row as it is.
   const metadataSet = Prisma.sql`CASE WHEN ${metadataJson}::jsonb IS NULL OR ${csamBlocked} THEN "metadata"
@@ -818,7 +823,8 @@ export async function resolveScanOutcome({
         (toUpdate.needsReview as string) ?? null
       )} ELSE ${reviewKeyAfterSql(
         lifting ? 'verdict' : 'block',
-        (toUpdate.needsReview as string) ?? null
+        (toUpdate.needsReview as string) ?? null,
+        csamAfterWrite
       )} END,
       "nsfwLevelLocked" = "nsfwLevelLocked" AND "nsfwLevel" <> 0,
       -- Only a moderator clears these.

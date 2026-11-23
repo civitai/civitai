@@ -8,6 +8,7 @@ import {
   liftedMetadataSql,
   liftedNeedsReviewSql,
   reviewKeyAfterSql,
+  csamBlockedSql,
   liftedNsfwLevelSql,
   liftKeptBlockedSql,
 } from '~/server/common/image-visibility';
@@ -1089,11 +1090,13 @@ export async function createEntityAppeal({
   const writeAppeal = async (tx: Prisma.TransactionClient, feeTransactionId: string | null) => {
     switch (entityType) {
       case EntityType.Image: {
-        // The handler refuses any flagged image off a replica read. This re-checks only the
-        // moderator-only flag, under the row lock, so one set in between is never overwritten.
+        // The handler refuses any flagged image off a replica read. This re-checks the
+        // moderator-only flag and a CSAM block under the row lock, so one set in between is never
+        // overwritten.
         const updated = await tx.$executeRaw`
           UPDATE "Image" SET "needsReview" = 'appeal', "updatedAt" = now()
           WHERE id = ${entityId} AND "needsReview" IS DISTINCT FROM 'csam'
+            AND (${csamBlockedSql()}) IS NOT TRUE
         `;
         if (!updated) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
         break;
