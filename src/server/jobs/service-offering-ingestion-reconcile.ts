@@ -6,6 +6,7 @@ import {
   TEXT_MODERATION_RETRY_LIMIT,
 } from '~/server/jobs/text-moderation-retry';
 import {
+  TEXT_MODERATION_EXHAUSTED_RESEND_AFTER_HOURS,
   TEXT_MODERATION_RETRY_STATUSES,
   textModerationRetryStatusSql,
 } from '~/server/jobs/text-moderation-retry.constants';
@@ -20,8 +21,6 @@ import { decreaseDate } from '~/utils/date-helpers';
 
 // Gives the callback time to land before the job steps in.
 const STUCK_THRESHOLD_MINUTES = 10;
-// A check that spent its retries is sent again after this, with a fresh retry budget.
-export const EXHAUSTED_RESUBMIT_AFTER_HOURS = 24;
 const FETCH_LIMIT = 200;
 const CONCURRENCY = 5;
 
@@ -132,7 +131,11 @@ export const serviceOfferingIngestionReconcile = createJob(
     const stuckBefore = decreaseDate(now, STUCK_THRESHOLD_MINUTES, 'minutes');
     const pendingBefore = decreaseDate(now, TEXT_MODERATION_PENDING_TIMEOUT_MINUTES, 'minutes');
 
-    const exhaustedBefore = decreaseDate(now, EXHAUSTED_RESUBMIT_AFTER_HOURS, 'hours');
+    const exhaustedBefore = decreaseDate(
+      now,
+      TEXT_MODERATION_EXHAUSTED_RESEND_AFTER_HOURS,
+      'hours'
+    );
 
     const candidates = await serviceOfferingReconcileCandidates({
       stuckBefore,

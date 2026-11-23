@@ -5,6 +5,8 @@ import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 // without importing the job and every moderation adapter it reaches.
 export const TEXT_MODERATION_PENDING_TIMEOUT_MINUTES = 30; // 30 min for stuck Pending rows
 export const TEXT_MODERATION_RETRY_LIMIT = 9;
+// A check that spent its retries is sent again after this, with a fresh retry budget.
+export const TEXT_MODERATION_EXHAUSTED_RESEND_AFTER_HOURS = 24;
 
 /** A check row in one of these is the retry job's to send again, until its retries run out. */
 export const TEXT_MODERATION_RETRY_STATUSES: EntityModerationStatus[] = [
