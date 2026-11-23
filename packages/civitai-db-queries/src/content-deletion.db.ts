@@ -1,10 +1,6 @@
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import {
-  childSafetyImageCase,
-  childSafetyPostCase,
-  childSafetyVisibleCase,
-} from './child-safety-case.db';
+import { childSafetyImageCase, childSafetyPostCase } from './child-safety-case.db';
 import {
   PENDING_DELETE_UPSERT,
   PENDING_DELETES_ACTOR,
@@ -92,19 +88,11 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
   const caseOpen = table === 'Image' ? childSafetyImageCase() : childSafetyPostCase();
   const blocked =
     'id' in actor ? sql<boolean>`(${caseOpen} OR ${ownerReportHold(table, actor.id)})` : caseOpen;
-  // Only an owner's own image on a case they can already see may tell them it waits on a review.
-  const ownerTold =
-    table === 'Image' && 'id' in actor
-      ? sql<boolean>`("userId" = ${actor.id} AND ${childSafetyVisibleCase()})`
-      : sql<boolean>`false`;
   const ctes = [
     // One array parameter, not one per id: an account wipe can list more ids than a statement binds.
     sql`listed AS (SELECT unnest(${ids}::int[]) AS id)`,
     sql`doomed AS (
-      SELECT id, ${blocked} AS blocked, ${pendingRowData(
-      actor,
-      options.replay
-    )} AS pending, ${ownerTold} AS "ownerTold"
+      SELECT id, ${blocked} AS blocked, ${pendingRowData(actor, options.replay)} AS pending
       FROM ${t}
       WHERE id IN (SELECT id FROM listed) ${on} ORDER BY id FOR UPDATE
     )`,
@@ -129,33 +117,28 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
     // The rest of each listed id's outcome, as rows to append to the deleted ones: kept for its case,
     // or gone before the statement (its snapshot still sees the rows it deletes).
     others: (padding: RawBuilder<unknown>) => sql`
-      SELECT id, ${padding}, 'kept' AS outcome, "ownerTold" FROM doomed WHERE blocked
+      SELECT id, ${padding}, 'kept' AS outcome FROM doomed WHERE blocked
       UNION ALL
-      SELECT id, ${padding}, 'gone', false FROM listed
+      SELECT id, ${padding}, 'gone' FROM listed
       WHERE NOT EXISTS (SELECT 1 FROM ${t} WHERE ${t}.id = listed.id)`,
   };
 }
 
 /**
- * What a delete did with each listed id it did not delete: kept for its child-safety case (with
- * whether the owner may be told), or already gone. A row the caller's condition or ownership skipped
- * is in neither.
+ * What a delete did with each listed id it did not delete: kept for its child-safety case, or already
+ * gone. A row the caller's condition or ownership skipped is in neither.
  */
-export type DeleteOutcome<Row> = {
-  deleted: Row[];
-  kept: { id: number; ownerTold: boolean }[];
-  gone: number[];
-};
+export type DeleteOutcome<Row> = { deleted: Row[]; kept: number[]; gone: number[] };
 
 /** A deleted row carries no `outcome`; a kept or gone one says which. */
-type OutcomeRow = { id: number; outcome?: 'kept' | 'gone'; ownerTold?: boolean };
+type OutcomeRow = { id: number; outcome?: 'kept' | 'gone' };
 
 function splitOutcome<Row>(rows: (Row & OutcomeRow)[]): DeleteOutcome<Row> {
   const deleted: Row[] = [];
-  const kept: DeleteOutcome<Row>['kept'] = [];
+  const kept: number[] = [];
   const gone: number[] = [];
-  for (const { outcome, ownerTold, ...row } of rows) {
-    if (outcome === 'kept') kept.push({ id: row.id, ownerTold: !!ownerTold });
+  for (const { outcome, ...row } of rows) {
+    if (outcome === 'kept') kept.push(row.id);
     else if (outcome === 'gone') gone.push(row.id);
     else deleted.push(row as unknown as Row);
   }
@@ -238,7 +221,7 @@ export async function deleteImageRows(
         SET "data" = COALESCE("JobQueue"."data", '{}'::jsonb) || EXCLUDED."data"
     )
     SELECT id, url, "userId", "postId", "nsfwLevel", ingestion::text AS ingestion, "needsReview",
-      "blockedFor", "parentId", "allVersions", NULL AS outcome, NULL::boolean AS "ownerTold"
+      "blockedFor", "parentId", "allVersions", NULL AS outcome
     FROM deleted
     UNION ALL
     ${others(sql.raw('NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL'))}`.execute(db);
@@ -256,7 +239,7 @@ export async function deletePostRows(
   const { rows } = await sql<DeletedPostRow & OutcomeRow>`
     ${withCtes(ctes, true)}
     gone_rows AS (${remove} RETURNING id, "userId", "nsfwLevel")
-    SELECT id, "userId", "nsfwLevel", NULL AS outcome, NULL::boolean AS "ownerTold" FROM gone_rows
+    SELECT id, "userId", "nsfwLevel", NULL AS outcome FROM gone_rows
     UNION ALL
     ${others(sql.raw('NULL, NULL'))}`.execute(db);
   return splitOutcome(rows);

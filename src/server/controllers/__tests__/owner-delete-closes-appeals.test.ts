@@ -35,10 +35,7 @@ import { deletePostHandler } from '../post.controller';
 import { DELETE_PROCESSING_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 
 /** The delete's outcome: the rows it deleted, and the ids its child-safety case kept. */
-const outcome = (deleted: unknown[], kept: { id: number; ownerTold: boolean }[] = []) => ({
-  deleted,
-  kept,
-});
+const outcome = (deleted: unknown[], kept: number[] = []) => ({ deleted, kept });
 
 const ctx = (userId: number, isModerator = false) =>
   ({
@@ -100,11 +97,8 @@ describe('deleteImageHandler', () => {
 // same whether it went or any hold kept it, a review they can already see included (it lasts until
 // the report is sent, so telling it apart would say when). Do not tell a kept delete apart here.
 describe('deleteImageHandler, a delete a hold keeps', () => {
-  it.each([
-    ['a review its owner can see', true],
-    ['a hold with no notice of its own', false],
-  ])('answers a delete kept by %s byte for byte like one that went', async (_, ownerTold) => {
-    deleteImagesMock.mockResolvedValue(outcome([], [{ id: 55, ownerTold }]));
+  it('answers a kept delete byte for byte like one that went', async () => {
+    deleteImagesMock.mockResolvedValue(outcome([], [55]));
     const kept = await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) });
     expect(closeMock).not.toHaveBeenCalled();
 
@@ -121,8 +115,8 @@ describe('deleteImageHandler, a delete a hold keeps', () => {
     expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(9, true) })).toEqual({ id: 55 });
   });
 
-  it('tells a moderator their delete was kept, whatever the owner may see', async () => {
-    deleteImagesMock.mockResolvedValue(outcome([], [{ id: 55, ownerTold: false }]));
+  it('tells a moderator their delete was kept', async () => {
+    deleteImagesMock.mockResolvedValue(outcome([], [55]));
 
     expect(await deleteImageHandler({ input: { id: 55 }, ctx: ctx(9, true) })).toEqual({
       deleteAfterReview: true,

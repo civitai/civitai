@@ -1458,11 +1458,8 @@ export const deletePost = async ({
     deleted: [post],
     kept: keptPost,
   } = await deletePostRows(kyselyOver(dbWrite), { ids: [id], actor });
-  // A moderator hears of any delete in the post its child-safety case keeps; an owner only of their own
-  // images on a case they can already see.
-  const deleteAfterReview = viewerIsModerator
-    ? keptPost.length > 0 || keptImages.length > 0
-    : keptImages.some((image) => image.ownerTold);
+  // Only a moderator hears that a delete in the post was kept; a member's reply never says so.
+  const deleteAfterReview = !!viewerIsModerator && (keptPost.length > 0 || keptImages.length > 0);
 
   // Images left behind (not this caller's to delete, kept by a hold marker, or left for a
   // child-safety case) keep their row with `postId` nulled (ON DELETE SET NULL). The index sync only

@@ -342,7 +342,7 @@ describe('deleteImageRows keeps a row in a child-safety case', () => {
     ]);
   });
 
-  it('reports each listed id: deleted, kept for its case (and whether its owner is told), or gone', async () => {
+  it('reports each listed id: deleted, kept for its case, or gone', async () => {
     await addImage({ blockedFor: 'CSAM' });
     await pg.exec(`INSERT INTO "Image" (id, "userId", "needsReview") VALUES (3, ${OWNER}, 'csam')`);
 
@@ -352,10 +352,7 @@ describe('deleteImageRows keeps a row in a child-safety case', () => {
     });
 
     expect(deleted.map((row) => row.id)).toEqual([PLAIN]);
-    expect(kept).toEqual([
-      { id: IMAGE, ownerTold: true },
-      { id: 3, ownerTold: false },
-    ]);
+    expect(kept).toEqual([IMAGE, 3]);
     expect(gone).toEqual([404]);
   });
 
@@ -605,7 +602,8 @@ describe('a CSAM report not yet sent', () => {
     expect((await ownDelete([PLAIN])).map((row) => row.id)).toEqual([PLAIN]);
   });
 
-  const ownPostDelete = async (ids: number[]) => (await deletePostRows(db, { ids, actor: owner })).deleted;
+  const ownPostDelete = async (ids: number[]) =>
+    (await deletePostRows(db, { ids, actor: owner })).deleted;
 
   it('keeps every post of an owner it names, until it is sent', async () => {
     await pg.exec(`INSERT INTO "Post" (id, "userId") VALUES (50, ${OWNER})`);

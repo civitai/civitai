@@ -1046,12 +1046,12 @@ export async function deleteImagesWithOutcome(
        *  sent; those rows come back `busy` so the caller can queue them. */
       retractionGate?: RetractionGate;
     }
-): Promise<{ deleted: DeletedImage[]; kept: DeleteOutcome<DeletedImage>['kept'] }> {
+): Promise<{ deleted: DeletedImage[]; kept: number[] }> {
   const deletedById = 'id' in actor ? actor.id : undefined;
   // This call's own rows run no wider than the shared limit, so they never wait out their slot
   // behind each other; only other senders in the process can hold them back.
   const ownLimit = pLimit(MAX_IN_FLIGHT_RETRACTIONS);
-  const keptForCase: DeleteOutcome<DeletedImage>['kept'] = [];
+  const keptForCase: number[] = [];
   const deleted = await Limiter({ batchSize: 100 }).process(uniq(ids), async (ids) => {
     // Read before the DELETE, which cascades `CollectionItem` and the report links and nulls
     // `User.profilePictureId`. Neither read throws.
@@ -1095,7 +1095,7 @@ export async function deleteImagesWithOutcome(
     keptForCase.push(...caseKept);
     // Of the rest, only the hold marker's record tells a row its delete trigger kept from one the
     // caller's condition or ownership skipped.
-    const accounted = new Set([...rows, ...caseKept].map((row) => row.id).concat(gone));
+    const accounted = new Set([...rows.map((row) => row.id), ...caseKept, ...gone]);
     const kept = await getKeptImages(ids.filter((id) => !accounted.has(id)));
     await invalidateDeletedImages({
       rows,

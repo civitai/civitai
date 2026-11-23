@@ -481,14 +481,18 @@ describe('an owner deleting their own content in a child-safety case', () => {
     expect(await told(imageOf(PLAIN))).toBe(false);
   });
 
-  it("tells the owner of a post kept over an image they see blocked, in the post delete's answer", async () => {
+  // A member's reply never says a delete was kept, even over an image they already see blocked.
+  it.each([
+    ['the owner', owner, undefined, false],
+    ['a moderator', { id: MODERATOR, isModerator: true }, true, true],
+  ])('tells %s whether a post delete kept an image', async (_, actor, isModerator, told) => {
     await holder.db.exec(`UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${imageOf(PLAIN)}`);
 
-    const answer = await deletePost({ id: postOf(PLAIN), actor: owner });
+    const answer = await deletePost({ id: postOf(PLAIN), actor, isModerator });
     expect(answer).toMatchObject({
       id: postOf(PLAIN),
       deletedImageIds: [],
-      deleteAfterReview: true,
+      deleteAfterReview: told,
     });
   });
 

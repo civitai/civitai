@@ -5,7 +5,9 @@ row stays and the delete is queued as a `PendingDelete` JobQueue row (except in
 `removeBlockedImages`, which keeps it in its own queue; below), and the main app's
 `pending-deletes` job carries it out once the case closes. Parent cleanups (an article delete, a
 replaced cover) use the same queue. What counts as an open case is `childSafetyImageCase` /
-`childSafetyPostCase`; this page covers the machinery around it, not the case rules.
+`childSafetyPostCase`; this page covers the machinery around it, not the case rules. An owner's
+delete of their own row also waits while a CSAM report not yet sent names them or lists the image
+(for a post, an image in it): `ownerReportHold`.
 
 ## Where it lives
 
@@ -24,11 +26,12 @@ replaced cover) use the same queue. What counts as an open case is `childSafetyI
 passes, runs one statement that:
 
 1. locks the listed rows the actor may delete and the caller's condition allows;
-2. leaves each locked row in an open case and queues it as a `PendingDelete`;
+2. leaves each locked row in an open case, or the actor's own row under `ownerReportHold`, and
+   queues it as a `PendingDelete`;
 3. deletes the rest and, for images, queues what the caller asks for: their stored files (unless
    `files` is absent), post recounts (`recountPosts`) and CDN takedowns (`cdnTakedown`);
-4. returns `{ deleted, kept, gone }`: the deleted rows, the kept ids (with `ownerTold`, below), and the
-   listed ids that were already gone.
+4. returns `{ deleted, kept, gone }`: the deleted rows, the kept ids, and the listed ids that were
+   already gone.
 
 A row the caller's condition or the actor's ownership excludes is in none of the three, and is
 neither deleted nor queued: the condition is checked once, here, and never replayed later.
@@ -83,10 +86,10 @@ reaches through a post it carries out, and finds in a case of its own, is queued
 
 ## Who is told
 
-- **The owner** sees the one generic message (`DELETE_AFTER_REVIEW_MESSAGE`) only for their own
-  delete of an image whose case they can already see (`ownerTold`, from `childSafetyVisibleCase`).
-  Every other kept delete by a member answers as if it went. `imagesPendingDeletion` is the same
-  rule, read later (the image page's banner).
+- **A member** gets the same reply to their own image or post delete whether it went or was kept
+  (`DELETE_PROCESSING_MESSAGE`), so the reply never says that a hold applies. Only the image
+  page's banner (`imagesPendingDeletion`) shows `DELETE_AFTER_REVIEW_MESSAGE`, to the owner, for
+  a kept delete of theirs on a case they can already see (`childSafetyVisibleCase`).
 - **A moderator** deleting through the main app's image or post delete (`deleteImageHandler`,
   `deletePost`) is told when the delete was kept; bulk and account-wide deletes (`removeAllContent`,
   the mod and admin delete endpoints) do not report it. The moderator app returns such an image as
