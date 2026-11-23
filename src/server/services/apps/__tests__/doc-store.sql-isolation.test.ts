@@ -462,6 +462,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     // Reads back the schema major each write stamped, and probes the catalog for the column.
     'server/services/apps/__tests__/doc-store.schema-major.pglite.test.ts',
     'server/services/apps/__tests__/doc-store.sql-isolation.test.ts',
+    // Reads back the seq and record id each write stored, and the tombstone a delete wrote.
+    'server/services/apps/__tests__/doc-store.write-seq.pglite.test.ts',
     'server/services/apps/doc-store.ts',
     'server/services/apps/migrations/20261013120000_appdata_document_store.down.sql',
     'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
