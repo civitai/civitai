@@ -62,7 +62,7 @@ export async function holdSongsOfCovers(tx: FlagClient, coverIds: number[]) {
  * Flags a song for its lyrics hold or its cover's flag, the way `flagImagesForCsamReview` flags any
  * image, and records the source on the song's hold marker: a new marker when this turns the song
  * from unflagged to flagged, an added source while a marker exists. A song already flagged without
- * one was flagged by a moderator and stays theirs. Read under the song's row lock.
+ * one was flagged by something else and stays that caller's. Read under the song's row lock.
  */
 export async function holdSongForCsam(
   tx: FlagClient,

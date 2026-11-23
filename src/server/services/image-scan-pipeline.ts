@@ -621,7 +621,7 @@ async function logScanAfterReview(image: ScanImage, toUpdate: Prisma.ImageUpdate
 
 /** Never throws: the block has landed, and a failure leaves the song as it was. */
 async function holdSongOfCsamBlockedCover(imageId: number) {
-  // One immediate retry: the hold is not retried later, and the song stays public without it.
+  // One immediate retry before logging.
   await withRetries(() => dbWrite.$transaction((tx) => holdSongsOfCovers(tx, [imageId])), 1).catch(
     (error: Error) =>
       logToAxiom({ type: 'error', name: 'song-csam-hold', imageId, message: error.message })

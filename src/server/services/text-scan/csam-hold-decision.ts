@@ -398,7 +398,7 @@ export async function decideCsamHold(args: DecideArgs) {
           where: { id: hold.entityId },
           data: { csamHeld: status === 'Confirmed' },
         });
-      // A confirm flags the song again: its flag may have been cleared while the hold was Pending.
+      // A confirm re-flags the song (a lift may have cleared the flag while Pending); any other status releases it.
       if (hold.entityType === TRACK_LYRICS_ENTITY_TYPE) {
         if (status === 'Confirmed') await holdSongForCsam(tx, hold.entityId, { lyrics: holdId });
         else await releaseSongCsamHold(tx, { source: 'lyrics', songIds: [hold.entityId] });

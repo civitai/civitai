@@ -8,7 +8,7 @@ export function imageAlias(ref: string): string {
 /**
  * Whether the "Image" row aliased `image` is held for CSAM: removed for it, or flagged for review and
  * not dismissed from the CSAM queue. The main app's and the moderator app's one definition. Not
- * held-media.ts's `heldImageSql`, whose legs differ.
+ * @civitai/shared/held-media's `heldImageSql`, whose legs differ.
  */
 export function csamHeldImageSql(image: string): string {
   const i = imageAlias(image);
