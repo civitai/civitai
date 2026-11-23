@@ -1300,10 +1300,14 @@ export async function handleUnblockImages({
     const [, ...written] = await Promise.all([
       // Drops its blocks' deferred effects unfired.
       dbWrite.$executeRaw`DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${ids}::int[])`,
-      ...Object.entries(grouped).map(
-        ([needsReview, groupedIds]) => dbWrite.$queryRaw<
-          { id: number; keptBlocked: boolean; wasCsam: boolean }[]
-        >`
+      // Each lift locks its rows in a statement of its own first, so the UPDATE reads a song's
+      // lyrics hold as committed by whoever held the row, not as it found it before waiting.
+      ...Object.entries(grouped).map(([needsReview, groupedIds]) =>
+        dbWrite.$transaction(async (tx) => {
+          await tx.$queryRaw`
+            SELECT id FROM "Image" WHERE id IN (${Prisma.join(groupedIds)}) ORDER BY id FOR UPDATE
+          `;
+          return tx.$queryRaw<{ id: number; keptBlocked: boolean; wasCsam: boolean }[]>`
           UPDATE "Image" SET
             "needsReview" = ${liftedNeedsReviewSql},
             "blockedFor" = ${liftedBlockedForSql},
@@ -1331,7 +1335,8 @@ export async function handleUnblockImages({
           RETURNING id, ${liftKeptBlockedSql} AS "keptBlocked",
             -- The statement's snapshot: the value this update replaced, read on the primary.
             COALESCE((SELECT pre."needsReview" = 'csam' FROM "Image" pre WHERE pre.id = "Image".id), false) AS "wasCsam";
-        `
+        `;
+        })
       ),
       upsertTagsOnImageNew(
         imageTagsForReview.map(({ imageId, tagId }) => ({

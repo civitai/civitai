@@ -339,8 +339,60 @@ describe("closing a song cover's csam review", () => {
   });
 });
 
+/** The statements `fn` sent to the database, in order. */
+async function statementsOf(fn: () => Promise<unknown>): Promise<string[]> {
+  const spy = vi.spyOn(db, 'query');
+  try {
+    await fn().catch(() => undefined);
+    return spy.mock.calls.map(([text]) => String(text));
+  } finally {
+    spy.mockRestore();
+  }
+}
+
+/**
+ * A lift whose refusal reads the song's lyrics hold runs in a transaction that locks its rows in an
+ * earlier statement: an UPDATE that waited on the lock itself would re-check the row but read the
+ * hold as it was before waiting. PGlite is one connection, so the race itself cannot run here; this
+ * pins the order of statements that closes it.
+ */
+function expectLockedBeforeLift(statements: string[]) {
+  const lift = statements.findIndex(
+    (text) => text.startsWith('update "Image" set') && text.includes('"TextScanHold"')
+  );
+  expect(lift).toBeGreaterThan(-1);
+  const begin = statements.lastIndexOf('begin', lift);
+  expect(begin).toBeGreaterThan(-1);
+  const inTransaction = statements.slice(begin + 1, lift);
+  expect(inTransaction.some((text) => /^(commit|rollback)$/.test(text))).toBe(false);
+  expect(
+    inTransaction.some(
+      (text) => text.startsWith('select "id" from "Image"') && text.endsWith('for update')
+    )
+  ).toBe(true);
+}
+
 describe('lifting the song itself', () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it('locks the song before an accept reads its lyrics hold', async () => {
+    await seed({ marker: { lyrics: 5 } });
+    await lyricsHold('Confirmed');
+
+    expectLockedBeforeLift(await statementsOf(() => acceptImage({ imageId: SONG, userId: MOD })));
+  });
+
+  it("locks the owner's removed flagged rows before a bulk clear reads a lyrics hold", async () => {
+    await seed({ marker: { lyrics: 5 } });
+    await db.exec(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = ${SONG};`);
+    await lyricsHold('Confirmed');
+
+    expectLockedBeforeLift(
+      await statementsOf(() =>
+        clearUserCsamFlags({ userId: OWNER, expectedCount: 1, moderatorId: MOD })
+      )
+    );
+  });
 
   it('refuses an accept while its lyrics hold is confirmed, as for a video removed for CSAM', async () => {
     await seed({ marker: { lyrics: 5 } });

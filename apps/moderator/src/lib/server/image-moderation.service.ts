@@ -328,53 +328,60 @@ export async function acceptImage({
       ? sql`(COALESCE("metadata", '{}'::jsonb) - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
       : sql`"metadata" - 'ruleId' - 'ruleReason'`
   );
-  // Refused in the statement itself, not off the replica read above.
-  const updated = await dbWrite
-    .updateTable('Image')
-    .set({
-      needsReview: LIFTED_NEEDS_REVIEW,
-      blockedFor: LIFTED_BLOCKED_FOR,
-      nsfwLevel: LIFTED_NSFW_LEVEL,
-      ingestion: LIFTED_INGESTION,
-      metadata: liftedMetadata(metadataExpr),
-      ...(nr === 'poi' ? { poi: false } : {}),
-      ...(nr === 'minor'
-        ? {
-            minor: removeMinorFlag
-              ? false
-              : sql<boolean>`CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END`,
-          }
-        : {}),
-      ...(nr && ['minor', 'poi', 'newUser', 'bestiality'].includes(nr)
-        ? { scannedAt: sql`now()` }
-        : {}),
-    })
-    .where('id', '=', imageId)
-    .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
-    .where(sql<boolean>`NOT ${CONFIRMED_SONG_HOLD}`)
-    .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
-    .$if(keepModeratorRemoved, (qb) =>
-      qb.where(
-        sql<boolean>`NOT (${REMOVED_BY_MODERATOR} OR ${BANNED_OWNER_BLOCKED}) AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
-      )
-    )
-    // A subquery in RETURNING reads the statement's snapshot, so `wasMinor` and `wasCsam` are the
-    // values this update replaced, from the primary, not the replica. Only a minor-queue accept reads
-    // the minor flag back.
-    .returning([
-      'id',
-      LIFT_KEPT_BLOCKED.as('keptBlocked'),
-      sql<boolean>`COALESCE((SELECT pre."needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} FROM "Image" pre WHERE pre."id" = ${imageId}), false)`.as(
-        'wasCsam'
-      ),
-      sql<boolean | null>`${nr === 'minor' ? sql`"minor"` : sql`NULL`}`.as('minor'),
-      sql<boolean | null>`${
-        nr === 'minor'
-          ? sql`(SELECT pre."minor" FROM "Image" pre WHERE pre."id" = ${imageId})`
-          : sql`NULL`
-      }`.as('wasMinor'),
-    ])
-    .executeTakeFirst();
+  // Refused in the statement itself, not off the replica read above. The row lock is taken in a
+  // statement of its own first, so the UPDATE reads every refusal (a lyrics hold included) as
+  // committed by whoever held the row, not as it found them before waiting.
+  const updated = await dbWrite.transaction().execute(async (trx) => {
+    await trx.selectFrom('Image').select('id').where('id', '=', imageId).forUpdate().execute();
+    return (
+      trx
+        .updateTable('Image')
+        .set({
+          needsReview: LIFTED_NEEDS_REVIEW,
+          blockedFor: LIFTED_BLOCKED_FOR,
+          nsfwLevel: LIFTED_NSFW_LEVEL,
+          ingestion: LIFTED_INGESTION,
+          metadata: liftedMetadata(metadataExpr),
+          ...(nr === 'poi' ? { poi: false } : {}),
+          ...(nr === 'minor'
+            ? {
+                minor: removeMinorFlag
+                  ? false
+                  : sql<boolean>`CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END`,
+              }
+            : {}),
+          ...(nr && ['minor', 'poi', 'newUser', 'bestiality'].includes(nr)
+            ? { scannedAt: sql`now()` }
+            : {}),
+        })
+        .where('id', '=', imageId)
+        .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
+        .where(sql<boolean>`NOT ${CONFIRMED_SONG_HOLD}`)
+        .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
+        .$if(keepModeratorRemoved, (qb) =>
+          qb.where(
+            sql<boolean>`NOT (${REMOVED_BY_MODERATOR} OR ${BANNED_OWNER_BLOCKED}) AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
+          )
+        )
+        // A subquery in RETURNING reads the statement's snapshot, so `wasMinor` and `wasCsam` are the
+        // values this update replaced, from the primary, not the replica. Only a minor-queue accept reads
+        // the minor flag back.
+        .returning([
+          'id',
+          LIFT_KEPT_BLOCKED.as('keptBlocked'),
+          sql<boolean>`COALESCE((SELECT pre."needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} FROM "Image" pre WHERE pre."id" = ${imageId}), false)`.as(
+            'wasCsam'
+          ),
+          sql<boolean | null>`${nr === 'minor' ? sql`"minor"` : sql`NULL`}`.as('minor'),
+          sql<boolean | null>`${
+            nr === 'minor'
+              ? sql`(SELECT pre."minor" FROM "Image" pre WHERE pre."id" = ${imageId})`
+              : sql`NULL`
+          }`.as('wasMinor'),
+        ])
+        .executeTakeFirst()
+    );
+  });
   if (!updated) {
     if (restoreRemoved) throw new ImageNotRestoredError(imageId);
     const confirmed = await dbWrite

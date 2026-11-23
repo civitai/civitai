@@ -645,6 +645,46 @@ describe("the main app's unblock of the song itself", () => {
     expect((await song()).needsReview).toBe('csam');
   });
 
+  it('locks the song in a statement of its own, in the same transaction, before the lift', async () => {
+    await scanLyrics();
+    await decide('remove');
+    // PGlite is one connection, so the race the lock closes cannot run here: this pins the order.
+    const statements: { transaction: number; text: string }[] = [];
+    let transactions = 0;
+    dbMock.dbWrite.$transaction.mockImplementation(((fn: (tx: unknown) => unknown) =>
+      h.prisma.$transaction((tx) => {
+        const transaction = ++transactions;
+        const recorded = new Proxy(tx, {
+          get(target, key) {
+            const value = Reflect.get(target, key);
+            if (key !== '$queryRaw' && key !== '$executeRaw') return value;
+            return (strings: TemplateStringsArray, ...values: unknown[]) => {
+              statements.push({ transaction, text: strings.join('?') });
+              return (value as (...a: unknown[]) => unknown).call(target, strings, ...values);
+            };
+          },
+        });
+        return fn(recorded) as never;
+      })) as never);
+    try {
+      await unblockSong();
+    } finally {
+      dbMock.dbWrite.$transaction.mockImplementation(((fn: (tx: unknown) => unknown) =>
+        h.prisma.$transaction(fn as never)) as never);
+    }
+
+    const lift = statements.findIndex(({ text }) =>
+      /UPDATE "Image" SET\s+"needsReview"/.test(text)
+    );
+    expect(lift).toBeGreaterThan(0);
+    const lock = statements[lift - 1];
+    expect(lock.transaction).toBe(statements[lift].transaction);
+    expect(lock.text).toMatch(
+      /^\s*SELECT id FROM "Image" WHERE id IN \(.*\) ORDER BY id FOR UPDATE\s*$/
+    );
+    expect((await song()).needsReview).toBe('csam');
+  });
+
   it('lifts a song whose lyrics hold is still pending: the moderator decides', async () => {
     await scanLyrics();
 

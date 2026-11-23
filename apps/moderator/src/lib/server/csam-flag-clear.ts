@@ -1,5 +1,5 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
-import type { Kysely } from 'kysely';
+import type { Kysely, Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { dbRead, dbWrite } from './db';
 import { insertModActivityBatch } from './mod-activity';
@@ -121,14 +121,25 @@ export async function getFlagClearHolds(
 
 /** Clears the review flag from every one of `userId`'s removed, flagged images, unless the user is
  *  held by a leg other than `overriding`. The hold is repeated in the
- *  UPDATE so the check and the write are one statement. Returns the cleared image ids. */
+ *  UPDATE so the check and the write are one statement. Returns the cleared image ids. Runs in the
+ *  caller's transaction: the rows are locked by a statement of their own first, so the UPDATE reads
+ *  a song's lyrics hold as committed by whoever held the row. */
 export async function clearRemovedFlagsUnlessHeld(
-  db: Kysely<DB>,
+  trx: Transaction<DB>,
   userId: number,
   marker: HoldMarkerState,
   overriding: readonly FlagClearHoldLeg[] = []
 ): Promise<number[]> {
-  const rows = await db
+  await trx
+    .selectFrom('Image')
+    .select('id')
+    .where('userId', '=', userId)
+    .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
+    .where('ingestion', '=', 'Blocked')
+    .orderBy('id')
+    .forUpdate()
+    .execute();
+  const rows = await trx
     .updateTable('Image')
     .set({ needsReview: null })
     .where('userId', '=', userId)
