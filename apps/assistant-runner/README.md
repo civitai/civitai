@@ -182,6 +182,29 @@ makes, which `WORKFLOW_VERSION` protects.
        preview without asking civitai again (other scopes or auth open it again with them). In production a model
        had started the dev server, checked the app and reported it ready without ever calling
        `start_preview`.
+    6. **Direct preview** (civitai's `app-assistant-direct-preview` flag, off by default). Every start
+       first reads the app's sandbox's preview id (`GET /v1/sandboxes/<name>`) and asks civitai's
+       `POST /api/internal/app-assistant/preview/open` (the same secret, grant and gates as
+       `start`). `{ mode: "tunnel" }` (the flag off, a civitai without the endpoint, or a sandbox
+       with no preview id) is steps 1–5 unchanged. Otherwise the sandbox service serves the preview
+       and no `tunnel_*` tool is called: civitai answers the app's session for that id (an open one
+       as it is, or a new one for an id never used), or `fresh` for an id whose session ended (a
+       resumed app, a stopped preview); then the runner rotates the id
+       (`POST /v1/sandboxes/<name>/preview-id`) and asks once more, and a second `fresh` is an
+       error, never a loop. A `503` (another open of the same app in progress) is asked again, up
+       to 4 times a second apart. Its result is `{ shown, blockId, next_step }` with no `host`: the
+       session host is the preview's credential, so it never reaches the assistant, the journal or
+       the saved conversation, and the page fetches the frame from civitai by block id. Every run
+       keeps the app's direct preview alive and `stop_preview` closes it by `(user, blockId)`
+       (`keepalive`/`stop { blockId, transport: "direct" }`), the block id it ran under, which can
+       differ from the app's key, whichever run opened it. `transport: "direct"` makes civitai
+       leave a tunnel alone, so with the flag off nothing a tunnel does changes, and a civitai from
+       before those by-block routes (a codeless `400`) is read as "none", never as a refusal. An
+       open session keeps the scopes it was opened with, so a start that declares scopes or auth
+       (the automatic open passes the manifest's) ends the app's direct session first and opens a
+       new one with them: one start per run, as a tunnel start is; a later start in the same run
+       with the same scopes answers the same preview. A start that declares none reuses the open
+       session.
     A later reply (or Continue after the app was paused) starts or restarts the dev server, which
     opens the preview again; civitai replaces the user's tunnel for that block. The instructions say the
     preview opens by itself, keep `start_preview` for when the user asks to reopen it, and tell

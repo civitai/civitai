@@ -14,6 +14,7 @@
   import { formatRange } from '$lib/date-range';
   import { impressionsComparable } from '$lib/impressions';
   import ImpressionsNotice from '$lib/components/ImpressionsNotice.svelte';
+  import BuzzCurrencyToggleGroup from '$lib/components/BuzzCurrencyToggleGroup.svelte';
   import { currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import {
     CHANNEL_HEAD,
@@ -22,11 +23,7 @@
     shownChannels,
     type PerformanceChannel,
   } from '$lib/analytics/earning-channels';
-  import {
-    BANKABLE_CURRENCIES,
-    FILTERABLE_CURRENCIES,
-    currencySelectionKind,
-  } from '$lib/buzz-currency-filter';
+  import { currencySelectionKind } from '$lib/buzz-currency-filter';
   import { buzzCurrencyState } from '$lib/state/buzz-currency.svelte';
   import { modelGroupingState } from '$lib/state/model-grouping.svelte';
   import { analyticsPageSize } from '$lib/stores/analytics-page-size';
@@ -257,7 +254,7 @@
           {selectionLabel}
         </span>
       </p>
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         <span class="text-xs text-dark-3">View</span>
         <ToggleGroup.Root
           type="single"
@@ -276,29 +273,10 @@
           >
         </ToggleGroup.Root>
         <span class="ml-2 text-xs text-dark-3">Counting</span>
-        <ToggleGroup.Root
-          type="multiple"
-          variant="outline"
-          size="sm"
-          spacing={1}
-          value={[...selected]}
-          onValueChange={(v: string[]) => currencies.set(v)}
-          aria-label="Which buzz types the earnings columns count"
-        >
-          {#each FILTERABLE_CURRENCIES as c (c)}
-            <ToggleGroup.Item
-              value={c}
-              title={(BANKABLE_CURRENCIES as readonly string[]).includes(c)
-                ? `${currencyMeta(c).label} — can be withdrawn`
-                : `${currencyMeta(c).label} — cannot be withdrawn`}
-              class="gap-1.5 text-xs"
-            >
-              <span class="size-2 shrink-0 rounded-full" style="background:{currencyMeta(c).color}"
-              ></span>
-              {currencyMeta(c).label}
-            </ToggleGroup.Item>
-          {/each}
-        </ToggleGroup.Root>
+        <BuzzCurrencyToggleGroup
+          {currencies}
+          ariaLabel="Which buzz types the earnings columns count"
+        />
       </div>
     </div>
     <!-- `title` is required, not optional: Svelte strips the TS annotation from a snippet parameter but

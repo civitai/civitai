@@ -57,6 +57,16 @@ describe('buildRumExperimentAttributes', () => {
     expect(off.exp_feed_go_transport_infinite).toBe('false');
   });
 
+  it('carries the client shadow-compare cohort under its exact Loki field name', () => {
+    // A wire string: the shadow cohort's own cost is read by splitting on
+    // `session_attr_exp_client_shadow_compare`.
+    const on = buildRumExperimentAttributes({ clientShadowCompare: true, feedGoTransport: false });
+    expect(on.exp_client_shadow_compare).toBe('true');
+    expect(on.exp_feed_go_transport).toBe('false');
+    const off = buildRumExperimentAttributes({ feedGoTransport: true });
+    expect(off.exp_client_shadow_compare).toBe('false');
+  });
+
   it('treats a missing flag as off ("false"), never undefined/absent', () => {
     const attrs = buildRumExperimentAttributes({});
     expect(attrs.exp_gen_tab_defer_view).toBe('false');

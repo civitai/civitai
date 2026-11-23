@@ -45,6 +45,12 @@
   @include layout.image-float-container;
 }
 
+// RenderRichText wraps the doc in one div.
+.htmlRenderer > div,
+.sizedImages :global(.ProseMirror) {
+  @include layout.blank-line-clears-float;
+}
+
 .bubbleTooltip {
   z-index: 1;
   position: relative;

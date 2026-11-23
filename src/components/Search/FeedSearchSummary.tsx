@@ -49,9 +49,7 @@ export function FeedSearchSummary({ noun, query, correctedQuery, failed, onRetry
       {failed && (
         <Alert color="yellow" icon={<IconCloudOff size={18} />} p="xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Text size="sm">
-              Search isn&rsquo;t answering right now, so these are keyword matches instead.
-            </Text>
+            <Text size="sm">Search isn&rsquo;t answering right now.</Text>
             <Button size="compact-sm" variant="light" onClick={onRetry}>
               Retry search
             </Button>

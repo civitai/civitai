@@ -1,5 +1,5 @@
 import { createEmail } from '~/server/email/templates/base.email';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { renderEmailSummary, simpleEmailWithTemplate } from '~/server/email/templates/util';
 
 type MerchClaimInviteData = {
   to: string;
@@ -14,12 +14,18 @@ export const merchClaimInviteEmail = createEmail({
   }),
   html({ buzzAmount, claimUrl }: MerchClaimInviteData) {
     return simpleEmailWithTemplate({
+      icon: '🎁',
+      accent: 'buzz',
+      eyebrow: 'Merch reward',
       header: 'Thanks for your order!',
       body: `
-      <p>
+      <p style="margin: 0;">
         Your Civitai merch purchase earned you <strong>⚡${buzzAmount.toLocaleString()} Blue Buzz</strong>.
       </p>
-      <p>
+      ${renderEmailSummary([
+        { label: 'Your reward', value: `⚡${buzzAmount.toLocaleString()} Blue Buzz` },
+      ])}
+      <p style="margin: 0;">
         Click below to add it to your Civitai account. You only need to do this once - after that, Buzz
         from future orders is added automatically.
       </p>`,

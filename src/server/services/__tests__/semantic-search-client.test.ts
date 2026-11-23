@@ -10,6 +10,7 @@ import {
   type ViewerGate,
   buildQdrantFilter,
   withWordMatchesFirst,
+  queryKeywords,
   withTagMatchesFirst,
   type CandidateSource,
 } from '~/server/services/semantic-search-client';
@@ -333,6 +334,28 @@ describe('withWordMatchesFirst', () => {
   it('is the plain ranking when nothing holds every word', async () => {
     const { source } = index([], [1, 2, 3]);
     expect((await page(withWordMatchesFirst(source, 'search_text'), 0, 3)).ids).toEqual([1, 2, 3]);
+  });
+
+  it('sends a keyword field beside the words when asked, so either one matches', async () => {
+    const { source, calls } = index([], [1, 2, 3]);
+    await page(withWordMatchesFirst(source, 'name', 'tags'), 0, 3);
+    expect(calls[0].filter.allWords).toEqual({
+      key: 'name',
+      text: 'civetai',
+      orAnyOf: { key: 'tags', values: ['civetai'] },
+    });
+    const filter = buildQdrantFilter('models', { gate, allWords: calls[0].filter.allWords });
+    expect(filter.must).toContainEqual({
+      should: [
+        { key: 'name', match: { text: 'civetai' } },
+        { key: 'tags', match: { any: ['civetai'] } },
+      ],
+    });
+  });
+
+  it('offers the whole query and each word as keywords, lowercased', () => {
+    expect(queryKeywords('  Anime  Style ')).toEqual(['anime style', 'anime', 'style']);
+    expect(queryKeywords('Anime')).toEqual(['anime']);
   });
 
   it('sends the words as a full-text match in the Qdrant filter', () => {

@@ -1,4 +1,5 @@
 import dayjs from '~/shared/utils/dayjs';
+import { withMaskedChatContent, type MaskedText } from '~/server/services/profanity-mask.service';
 import type { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import { find as findLinks } from 'linkifyjs';
@@ -500,17 +501,33 @@ export const upsertDealChat = async ({
   return { id: created.id };
 };
 
-const signalNewMessage = (chatId: number, message: ChatAllMessages[number]) =>
-  withSignals(() =>
+type SignalledMessage = Omit<ChatAllMessages[number], 'maskedContent'> & {
+  maskedContent?: MaskedText;
+};
+
+// Carries the masked copy like a `getInfiniteMessages` item, computing it unless the caller has
+// (`masked`: with the flag off a masked message carries no copy, so its absence cannot say so).
+// Never rejects: most callers do not await it, and a signal is best-effort.
+const signalNewMessage = async (
+  chatId: number,
+  message: SignalledMessage,
+  { masked = false }: { masked?: boolean } = {}
+) => {
+  const payload =
+    masked || message?.maskedContent !== undefined
+      ? message
+      : (await withMaskedChatContent([message]).catch(() => [message]))[0];
+  return withSignals(() =>
     fetch(
       `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(message),
+        body: JSON.stringify(payload),
       }
     )
   ).catch(() => undefined);
+};
 
 /**
  * Moves an Invited sender to Joined and writes the "joined" notice, inside the
@@ -550,7 +567,7 @@ export async function signalJoined({
 }: {
   chatId: number;
   userId: number;
-  notice: ChatAllMessages[number];
+  notice: SignalledMessage;
 }) {
   await withSignals(() =>
     outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
@@ -812,8 +829,10 @@ export const createMessage = async ({
     return { resp, joinNotice };
   });
 
+  // The message is saved; a masking failure must not turn the send into an error.
+  const [sent] = await withMaskedChatContent([resp]).catch(() => [resp]);
   if (joinNotice) await signalJoined({ chatId, userId, notice: joinNotice });
-  signalNewMessage(chatId, resp);
+  signalNewMessage(chatId, sent, { masked: true });
   if (joinNotice) await signalChatMembersUpdated({ chatId, userIds: [userId] });
 
   if (userId !== -1) {
@@ -839,7 +858,7 @@ export const createMessage = async ({
               },
             })
             .then((embedResp) => {
-              signalNewMessage(chatId, embedResp as ChatAllMessages[number]);
+              signalNewMessage(chatId, embedResp as SignalledMessage);
             });
         } else {
           safeUnfurl(href)
@@ -863,7 +882,7 @@ export const createMessage = async ({
                 include: { referenceMessage: { select: chatReferenceMessageSelect } },
               });
 
-              signalNewMessage(chatId, embedResp as ChatAllMessages[number]);
+              signalNewMessage(chatId, embedResp as SignalledMessage);
             })
             .catch(() => undefined);
         }
@@ -882,7 +901,11 @@ export const createMessage = async ({
     }
   }
 
-  return resp;
+  // No masked copy of the sender's own text in the write response; viewers get theirs from the
+  // signal and reads. A quoted message keeps its copy: the sender's client renders it from this.
+  if (!sent) return sent;
+  const { maskedContent: _ownCopy, ...reply } = sent as typeof sent & { maskedContent?: unknown };
+  return reply;
 };
 
 /**

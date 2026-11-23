@@ -5,6 +5,7 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 
 export const SEMANTIC_QUERY_MAX_LENGTH = 500;
 export const SEMANTIC_SEARCH_PAGE_SIZE = 50;
+export const MAX_SEARCH_MODEL_VERSIONS = 20;
 
 /**
  * The query as typed: the service's spelling correction is skipped ("Search instead for"). The text
@@ -28,7 +29,7 @@ export const semanticImageSearchSchema = baseQuerySchema
     excludedTagIds: z.number().int().array().max(50).optional(),
     baseModels: z.string().array().max(baseModels.length).optional(),
     // Images made with any of these model versions (behind `imageSearchResources`).
-    modelVersionIds: z.number().int().positive().array().max(20).optional(),
+    modelVersionIds: z.number().int().positive().array().max(MAX_SEARCH_MODEL_VERSIONS).optional(),
     types: z.enum(MediaType).array().optional(),
     usernames: z.string().trim().min(1).array().max(20).optional(),
     // The images feed's `?userId=`, as it filters by id.

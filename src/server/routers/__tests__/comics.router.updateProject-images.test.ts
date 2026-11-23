@@ -79,7 +79,7 @@ function writtenData() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbRead.comicProject.findUnique.mockResolvedValue({
+  dbMock.dbWrite.comicProject.findUnique.mockResolvedValue({
     userId: USER_ID,
     coverImageId: CURRENT_COVER,
     heroImageId: CURRENT_HERO,
@@ -133,7 +133,7 @@ describe.each(['coverImageId', 'heroImageId'] as const)(
 
 describe('comics.updateProject - project ownership still comes first', () => {
   it("refuses another user's project before any image lookup", async () => {
-    dbMock.dbRead.comicProject.findUnique.mockResolvedValue({
+    dbMock.dbWrite.comicProject.findUnique.mockResolvedValue({
       userId: OTHER_USER_ID,
       coverImageId: null,
       heroImageId: null,

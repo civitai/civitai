@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import { TokenScope, ALL_SCOPES } from '@civitai/auth/token-scope';
 
 /**
@@ -46,7 +47,8 @@ vi.mock('$lib/server/redis', () => ({
   getRedis: () => ({ packed: { hSet: h.hSet }, hExpire: h.hExpire }),
 }));
 
-vi.mock('$lib/server/oauth/rate-limit', () => ({
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
   checkOAuthRateLimit: h.checkRateLimit,
 }));
 

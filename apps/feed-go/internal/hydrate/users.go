@@ -13,7 +13,7 @@ type BasicUser struct {
 	ID        int
 	Username  any // string or nil
 	Image     any // string or nil
-	DeletedAt any // time.Time or nil
+	DeletedAt any // *time.Time (one Date per user, basicUserFrom) or nil
 }
 
 // basicUsersFrom is getBasicDataForUsers over the `basic-users` cache's answer got for (unique) ids
@@ -46,7 +46,10 @@ func (s *Sources) basicUsersFrom(ctx context.Context, ids []int, got map[int]Ent
 func basicUserFrom(id int, m map[string]any) BasicUser {
 	u := BasicUser{ID: id, Username: m["username"], Image: m["image"], DeletedAt: m["deletedAt"]}
 	if t, ok := u.DeletedAt.(time.Time); ok {
-		u.DeletedAt = t
+		// One Date per user: every image's `user` carries `deletedAt: userData?.deletedAt ?? null`, the
+		// same Date from the user's cached entry, so the devalue writer writes it once (a pointer is
+		// that identity; the superjson writer reads through it).
+		u.DeletedAt = &t
 	}
 	return u
 }
@@ -71,14 +74,16 @@ func userCosmeticsFrom(ids []int, got map[int]Entry) (map[int][]equippedCosmetic
 		if e.NotFound {
 			continue
 		}
-		list, _ := e.Value["cosmetics"].([]any)
-		for _, item := range list {
-			m, ok := item.(map[string]any)
+		// The ordered record (an ordered cache): each equipped entry's `data` keeps the key order
+		// Node's answer has.
+		for _, item := range asList(ObjectField(e.Ordered(), "cosmetics")) {
+			m, ok := item.(superjson.Object)
 			if !ok {
 				continue
 			}
-			cid, _ := Int(m["cosmeticId"])
-			perUser[id] = append(perUser[id], equippedCosmetic{cosmeticID: cid, data: m["data"]})
+			cid, _ := Int(ObjectField(m, "cosmeticId"))
+			data := ObjectField(m, "data")
+			perUser[id] = append(perUser[id], equippedCosmetic{cosmeticID: cid, data: data})
 			cosmeticIDs = append(cosmeticIDs, cid)
 		}
 	}
@@ -115,7 +120,8 @@ func (s *Sources) cosmeticsFrom(ctx context.Context, ids []int, got map[int]Entr
 	out := make(map[int]superjson.Object, len(ids))
 	for id, e := range got {
 		if !e.NotFound {
-			out[id] = Pick(e.Value, "id", "name", "type", "data", "source", "flags")
+			// The ordered record (an ordered cache): `data` keeps the key order Node's answer has.
+			out[id] = PickOrdered(e.Ordered(), "id", "name", "type", "data", "source", "flags")
 		}
 	}
 	if miss := Missing(ids, got); len(miss) > 0 {
@@ -145,7 +151,8 @@ func (s *Sources) profilePicturesFrom(ctx context.Context, ids []int, got map[in
 	out := make(map[int]superjson.Object, len(ids))
 	for id, e := range got {
 		if !e.NotFound {
-			out[id] = Pick(e.Value, profilePictureColumns...)
+			// The ordered record (an ordered cache): `metadata` keeps the key order Node's answer has.
+			out[id] = PickOrdered(e.Ordered(), profilePictureColumns...)
 		}
 	}
 	if miss := Missing(ids, got); len(miss) > 0 {

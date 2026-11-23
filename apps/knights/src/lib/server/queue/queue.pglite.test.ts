@@ -6,7 +6,7 @@ import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { countOpenServableKnightItems } from '@civitai/db/knights';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { lockImage } from '../../../test/seed';
+import { engage, lockImage } from '../../../test/seed';
 import { PROGRESSION } from '../progression/config';
 import { listJudgments } from '../progression/judgments';
 import { settleFinalItems } from '../progression/progression';
@@ -28,6 +28,7 @@ import {
   STAGE_SCAN_FIRST_ROUND,
 } from './queue.service';
 import { itemBucket, levelBucket } from './feed';
+import { creditLateJudgment } from './vote-record';
 
 const Q = KNIGHTS_NSFW_LEVEL_QUESTION;
 /** The starvation draw is random in production; these tests pin the ordinary path. */
@@ -172,7 +173,7 @@ afterAll(async () => {
 beforeEach(async () => {
   applyConsensus.mockClear();
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","UserEngagement","KnightsPlayerDay" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -1136,6 +1137,7 @@ describe('what the feed serves', () => {
       () => pg.query(`UPDATE "Post" SET "publishedAt"='2099-01-01' WHERE id=10`),
     ],
     ['an image with no post', () => pg.query(`UPDATE "Image" SET "postId"=NULL WHERE id=10`)],
+    ['a Private post', () => pg.query(`UPDATE "Post" SET availability='Private' WHERE id=10`)],
     [
       'an image held for review',
       () => pg.query(`UPDATE "Image" SET "needsReview"='minor' WHERE id=10`),
@@ -1382,6 +1384,134 @@ describe('escalateExpired', () => {
     });
     expect(await itemRow(voted)).toMatchObject({ status: 'Open', minRank: 'Templar' });
     expect(await itemRow(idle)).toMatchObject({ status: 'Closed', reason: 'expired' });
+  });
+});
+
+describe('an expired item on a Private post', () => {
+  const PAST = new Date('2026-12-15T11:00:00Z');
+  const makePrivate = () => pg.query(`UPDATE "Post" SET availability='Private' WHERE id=10`);
+  async function knightItem(answer: string) {
+    await fiveKnights();
+    await active(20, 'Templar');
+    await image(10, 4);
+    const id = await item(10, { expires: PAST });
+    await vote(1, id, answer);
+    await makePrivate();
+    return id;
+  }
+
+  it('goes to the Inquisitors as blocked from a stage below the last, never to the next player stage', async () => {
+    const id = await knightItem('32');
+    expect((await escalateExpired(db, { now: NOW })).toInquisitor).toBe(1);
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      minRank: 'Inquisitor',
+      escalationReason: 'blocked',
+    });
+  });
+
+  it('escalates the same Blocked votes on a Public post from a stage below the last, as before', async () => {
+    await fiveKnights();
+    await active(20, 'Templar');
+    await image(10, 4);
+    const id = await item(10, { expires: PAST });
+    await vote(1, id, '32');
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({
+      escalated: 1,
+      toInquisitor: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+  });
+
+  it('runs as any other item when the pick is not Blocked', async () => {
+    const id = await knightItem('4');
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({
+      escalated: 1,
+      toInquisitor: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+  });
+
+  // A month partition before the Knight votes, so a scan without ORDER BY returns the later stage first.
+  const EARLIER_MONTH = new Date('2026-11-20T12:00:00Z');
+  async function escalatedItem(
+    stage: string,
+    votes: [stage: string, answer: string, weight: number, castAt?: Date][]
+  ) {
+    await ensureVotePartitions(db, { now: EARLIER_MONTH, monthsAhead: 0 });
+    await active(20, 'Templar');
+    await active(30, 'Paladin');
+    await image(10, 4);
+    const id = await item(10, { expires: PAST });
+    await pg.query(`UPDATE "KnightsQueueItem" SET "minRank"=$2, "escalatedAt"=$3 WHERE id=$1`, [
+      id,
+      stage,
+      new Date(PAST.getTime() - 3_600_000),
+    ]);
+    for (const [i, [at, answer, weight, castAt]] of votes.entries()) {
+      await pg.query(
+        `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
+         VALUES ($1,$2,$3,$4,10,$5,$6,$7)`,
+        [id, 100 + i, castAt ?? PAST, Q, at, answer, weight]
+      );
+    }
+    return id;
+  }
+
+  it('takes the Blocked plurality of the stage before when the current stage has no counted vote, and reports the move', async () => {
+    const id = await escalatedItem('Templar', [['Knight', '32', 1]]);
+    await makePrivate();
+    const moved = vi.fn();
+    expect(await escalateExpired(db, { now: NOW, moved })).toMatchObject({
+      toInquisitor: 1,
+      extended: 0,
+    });
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', escalationReason: 'blocked' });
+    expect(moved).toHaveBeenCalledWith([{ id, status: 'Open', minRank: 'Templar' }]);
+  });
+
+  it('takes only the latest voted stage, over an earlier stage with another pick', async () => {
+    const id = await escalatedItem('Paladin', [
+      ['Templar', '32', 1, EARLIER_MONTH],
+      ['Knight', '4', 1],
+      ['Knight', '4', 1],
+    ]);
+    await makePrivate();
+    expect((await escalateExpired(db, { now: NOW })).toInquisitor).toBe(1);
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', escalationReason: 'blocked' });
+  });
+
+  it('does not route when a later stage picked a level over an earlier Blocked pick', async () => {
+    const id = await escalatedItem('Paladin', [
+      ['Templar', '4', 1, EARLIER_MONTH],
+      ['Knight', '32', 1],
+    ]);
+    await makePrivate();
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({ toInquisitor: 0, extended: 1 });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Paladin' });
+  });
+
+  it('does not route on earlier votes that carry no weight', async () => {
+    const id = await escalatedItem('Templar', [['Knight', '32', 0]]);
+    await makePrivate();
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({ toInquisitor: 0, extended: 1 });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+  });
+
+  it('skips a later stage whose votes carry no weight', async () => {
+    const id = await escalatedItem('Paladin', [
+      ['Knight', '32', 1],
+      ['Templar', '4', 0],
+    ]);
+    await makePrivate();
+    expect((await escalateExpired(db, { now: NOW })).toInquisitor).toBe(1);
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', escalationReason: 'blocked' });
+  });
+
+  it('extends the same history on a Public post, as before', async () => {
+    const id = await escalatedItem('Templar', [['Knight', '32', 1]]);
+    expect(await escalateExpired(db, { now: NOW })).toMatchObject({ toInquisitor: 0, extended: 1 });
+    expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar' });
   });
 });
 
@@ -2104,6 +2234,20 @@ describe('closeUnservableItems', () => {
     expect(await countOpenServableKnightItems(db, 10)).toBe(1);
   });
 
+  it('leaves open an item on a Private post: it is only hidden', async () => {
+    const id = await queued(96);
+    await pg.query(`UPDATE "Post" SET availability='Private' WHERE id=96`);
+
+    expect(await sweep()).toEqual({
+      unservable: 0,
+      publishesAfterExpiry: 0,
+      unpublishedDrafts: 0,
+      imageUnservable: 0,
+    });
+    expect(await statusOf([id])).toEqual([['Open', null]]);
+    expect(await countOpenServableKnightItems(db, 10)).toBe(0);
+  });
+
   it('closes an Inquisitor item whose image is gone, votes set aside, and leaves blocked images, held evidence and rulings in progress', async () => {
     const atInquisitors = async (
       imageId: number,
@@ -2755,5 +2899,89 @@ describe('a player and their own image', () => {
     expect(await vote(1, mine, '4')).toEqual({ status: 'rejected', reason: 'own-image' });
     expect(await verdicts(mine)).toEqual([]);
     expect(await vote(2, mine, '4')).toMatchObject({ status: 'recorded' });
+  });
+});
+
+describe('a creator the player hid or blocked', () => {
+  async function creatorItems() {
+    await player(1, 'Knight');
+    await player(2, 'Knight');
+    await image(10);
+    await image(11);
+    await pg.query(`UPDATE "Image" SET "userId"=50 WHERE id=10`);
+    await pg.query(`UPDATE "Image" SET "userId"=51 WHERE id=11`);
+    return { theirs: await item(10), other: await item(11) };
+  }
+
+  it.each(['Block', 'Hide'] as const)(
+    'with a %s row, serves the creator to other players only and refuses the vote',
+    async (type) => {
+      const { theirs, other } = await creatorItems();
+      await engage(pg, 1, 50, type);
+
+      expect((await getFeed(db, 1))?.items.map((i) => i.id)).toEqual([other]);
+      expect((await getFeed(db, 2))?.items.map((i) => i.id).sort()).toEqual([theirs, other].sort());
+
+      expect(await vote(1, theirs, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
+      expect(await verdicts(theirs)).toEqual([]);
+      expect(await vote(2, theirs, '4')).toMatchObject({ status: 'recorded' });
+    }
+  );
+
+  it('leaves the creator out of every scan round, the short per-row rounds and the long ones alike', async () => {
+    await player(1, 'Knight');
+    // 742 PG items, then two X items: only the PG bucket can fill, so the scan reads the whole stage in rounds of 100,
+    // 200 and 400 (probed per row) and then 800 (the plain anti-join). The creator owns one item in each kind of round.
+    const ids = await sameAgeStage([...Array<number>(740).fill(1), 8, 8]);
+    const [early, late, x] = [ids[5], ids[740], ids[741]];
+    await pg.query(
+      `UPDATE "Image" SET "userId"=50 WHERE id IN (SELECT "imageId" FROM "KnightsQueueItem" WHERE id IN ($1,$2))`,
+      [early, late]
+    );
+    await engage(pg, 1, 50, 'Hide');
+    const watched = watchFeedReads();
+
+    const served = (await getFeed(watched.db, 1))?.items.map((i) => i.id) ?? [];
+    expect(served).toContain(x);
+    expect(watched.rounds.map((r) => r.length)).toEqual([100, 200, 400, 40]);
+    expect(watched.rounds.flat()).toEqual(ids.filter((id) => id !== early && id !== late));
+  });
+
+  it('changes nothing for a Follow row', async () => {
+    const { theirs, other } = await creatorItems();
+    await engage(pg, 1, 50, 'Follow');
+
+    expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([theirs, other].sort());
+    expect(await vote(1, theirs, '4')).toMatchObject({ status: 'recorded' });
+  });
+
+  it('still serves the creator when it is the creator who blocked the player', async () => {
+    const { theirs, other } = await creatorItems();
+    await engage(pg, 50, 1, 'Block');
+
+    expect((await getFeed(db, 1))?.items.map((i) => i.id).sort()).toEqual([theirs, other].sort());
+    expect(await vote(1, theirs, '4')).toMatchObject({ status: 'recorded' });
+  });
+
+  it('gives no late Watch credit on a settled item of a hidden creator', async () => {
+    const { theirs } = await creatorItems();
+    await engage(pg, 1, 50, 'Block');
+    await pg.query(`UPDATE "KnightsQueueItem" SET status='Closed', "updatedAt"=$2 WHERE id=$1`, [
+      theirs,
+      NOW,
+    ]);
+    const watchDays = async (userId: number) =>
+      (await pg.query(`SELECT 1 FROM "KnightsPlayerDay" WHERE "playerId"=$1`, [userId])).rows;
+
+    expect(await creditLateJudgment(db, { userId: 1, itemId: theirs, answer: '4', now: NOW })).toBe(
+      false
+    );
+    expect(await verdicts(theirs)).toEqual([]);
+    expect(await watchDays(1)).toEqual([]);
+
+    expect(await creditLateJudgment(db, { userId: 2, itemId: theirs, answer: '4', now: NOW })).toBe(
+      true
+    );
+    expect((await verdicts(theirs)).map((v) => v.playerId)).toEqual([2]);
   });
 });

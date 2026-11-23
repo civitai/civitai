@@ -68,7 +68,7 @@ var goldenProbeCases = []goldenProbeCase{
 	{"as-posts", Procedure, goldenMinAsPosts, goldenSetup, (*Server).compute, SyntheticRequest,
 		[]string{hydrate.CacheMetrics, CacheSessionUser, CacheGallerySettings}, []string{hydrate.CacheTagIDs, hydrate.CacheImageFrames}, true},
 	{"infinite", ProcedureInfinite, goldenMinInfinite, goldenSetup, (*Server).computeInfinite, SyntheticInfiniteRequest,
-		[]string{hydrate.CacheMetrics}, []string{hydrate.CacheTagIDs}, true},
+		[]string{hydrate.CacheMetrics, CacheNewCreators}, []string{hydrate.CacheTagIDs}, true},
 	{"model-getall", ProcedureModelGetAll, goldenMinModels, goldenSetupModels, (*Server).computeModelGetAll, SyntheticModelGetAllRequest,
 		[]string{hydrate.CacheUserCosmetics}, []string{CacheModelData, CacheModelTags, CacheModelFrames, CacheModelDecorations, hydrate.CacheTagIDs,
 			CacheOfficialModels}, false},
@@ -211,6 +211,9 @@ func goldenKeyCache(key string) string {
 	}
 	if key == hydrate.KeyOfficialModels {
 		return CacheOfficialModels
+	}
+	if strings.HasPrefix(key, feed.NewCreatorsKey+":") {
+		return CacheNewCreators
 	}
 	m := goldenPerIDKey.FindStringSubmatch(key)
 	if m == nil {

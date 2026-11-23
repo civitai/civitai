@@ -34,6 +34,8 @@ export const NOTICE_SLOTS = [
   'continueLink',
   'receivedAt',
   'submission',
+  /** The definition's own public title, so one shared text can name the request it answers. */
+  'requestType',
 ] as const;
 
 const id = z
@@ -147,6 +149,8 @@ const definitionShape = z.strictObject({
         /** The case event this action records. */
         records: id,
         moveTo: id.optional(),
+        /** The states the action is open in. Unset: every state that is not terminal. */
+        from: z.array(id).optional(),
       })
     )
     .default([]),
@@ -236,6 +240,9 @@ export const processDefinitionSchema = definitionShape.superRefine((d, ctx) => {
   d.publicActions.forEach((a, i) => {
     a.fields.forEach((f, j) => {
       if (!fieldIds.has(f)) issue(['publicActions', i, 'fields', j], `unknown field "${f}"`);
+    });
+    a.from?.forEach((s, j) => {
+      if (!states.has(s)) issue(['publicActions', i, 'from', j], `unknown state "${s}"`);
     });
     if (a.moveTo === undefined) return;
     const to = states.get(a.moveTo);

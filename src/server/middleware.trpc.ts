@@ -385,6 +385,18 @@ export function purgeOnSuccess(tags: string[]) {
   });
 }
 
+/** `noEdgeCache` for the inputs `when` matches. It mutates `ctx.cache` in place, which the response headers read. */
+export function noEdgeCacheWhen(when: (input: Record<string, unknown>) => boolean) {
+  return middleware(async ({ next, ctx, getRawInput }) => {
+    const input = await getRawInput();
+    if (ctx.cache && input && typeof input === 'object' && when(input as Record<string, unknown>)) {
+      ctx.cache.edgeTTL = 0;
+      ctx.cache.browserTTL = 0;
+    }
+    return next();
+  });
+}
+
 export function noEdgeCache(opts?: { authedOnly?: boolean }) {
   const { authedOnly } = opts ?? {};
 

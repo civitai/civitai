@@ -35,6 +35,23 @@ export async function queueDocumentsForImageMinorChanges({
 const MINOR_BATCH = 1000;
 
 /**
+ * Queue a rewrite of every search document showing these images, whatever their minor flag: a
+ * blocked image leaves its documents only through here, as no trigger watches the block. Never
+ * throws, with the same retry as above.
+ */
+export async function queueDocumentsForBlockedImages(imageIds: number[]) {
+  if (!imageIds.length) return;
+  const ids = [...new Set(imageIds)];
+  await withRetry(async () => {
+    await Promise.all([
+      queueModels(ids),
+      queueArticlesAndComics(ids),
+      queueCollectionsAndBounties(ids),
+    ]);
+  });
+}
+
+/**
  * Queue an update for the articles using these images as cover or banner and the comics using them
  * as cover, whatever changed about the images. Never throws, with the same retry as above.
  */
@@ -91,12 +108,19 @@ async function queueChanged({ levelImageIds = [], minorImageIds = [] }: ImageMin
 
 async function queueModels(imageIds: number[]) {
   // Primary: the image or its post may be moments old.
+  // A model can also show someone else's image, featured in its version showcase (and so maybe its
+  // cover); the showcase table is indexed by image, the model's cover columns are not.
   const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
-    SELECT DISTINCT p."modelVersionId", mv."modelId"
+    SELECT p."modelVersionId", mv."modelId"
     FROM "Image" i
     JOIN "Post" p ON p.id = i."postId"
     JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
     WHERE i.id = ANY(${imageIds}::int[])
+    UNION
+    SELECT s."modelVersionId", mv."modelId"
+    FROM "ModelVersionShowcaseItem" s
+    JOIN "ModelVersion" mv ON mv.id = s."modelVersionId"
+    WHERE s."imageId" = ANY(${imageIds}::int[]) AND s.source = 'Community' AND NOT s."removed"
   `;
   if (!rows.length) return;
 

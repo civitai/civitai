@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
 )
 
@@ -96,5 +97,49 @@ func TestFetchRowsReadOnlyCacheNeverWrites(t *testing.T) {
 	rows, err := FetchRows(context.Background(), failingDB{}, cache, b)
 	if err != nil || len(rows) != 1 || rows[0].ID != 9 {
 		t.Fatalf("rows %v, err %v; want the cached row without a query", rows, err)
+	}
+}
+
+// A statement timeout on a page only its viewer sees (their reactions, their own gallery) must not
+// answer an empty page: the viewer reads that as having none. It is the `statement-timeout` fallback,
+// which the server logs, counts and hands to the Node app. The global feed keeps the empty page
+// (TestFetchRowsStatementTimeoutIsAnEmptyPage is the control for the same timeout).
+func TestServeInfinitePersonalizedTimeoutFallsBack(t *testing.T) {
+	cases := []struct {
+		name      string
+		input     map[string]any
+		viewer    *Viewer
+		fallsBack bool
+	}{
+		{"own reactions", map[string]any{"reactions": []any{"Heart", "Like"}, "limit": num("10")}, &Viewer{ID: 9}, true},
+		{"own gallery", map[string]any{"userId": num("9"), "limit": num("10")}, &Viewer{ID: 9}, true},
+		// Controls: the same timeout on a page other viewers share stays an empty page.
+		{"another creator's gallery", map[string]any{"userId": num("5"), "limit": num("10")}, &Viewer{ID: 9}, false},
+		{"reactions signed out", map[string]any{"reactions": []any{"Heart"}, "limit": num("10")}, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			shortStatementTimeout(t)
+			f := newInfFixture(t)
+			f.deps.DB = &blockingDB{}
+			// The Postgres path for every case: a gallery would otherwise be the feed service's page.
+			f.deps.Config.ImageIndexFeed = false
+			j, _, _, err := serveInf(t, f, tc.input, InfiniteRequest{Cap: 1, Viewer: tc.viewer})
+			if tc.fallsBack {
+				if got := fallback.Reason(err); got != "statement-timeout" {
+					t.Fatalf("err %v (reason %q), items %v; want the statement-timeout fallback", err, got, itemIDs(j))
+				}
+				if d := fallback.SafeDetail(err); d != "viewer 9" {
+					t.Fatalf("loggable detail %q, want the viewer id", d)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a shared page's timeout must stay an empty page; got %v", err)
+			}
+			if items, ok := j["items"].([]any); !ok || len(items) != 0 {
+				t.Fatalf("items %v, want an empty page", j["items"])
+			}
+		})
 	}
 }

@@ -8,7 +8,12 @@ import { authenticatedConfidentialClient, clientIdMismatch } from './client-auth
 import { ACCESS_TOKEN_TYPE } from './constants';
 import { basicCredentials } from './http';
 import { findExchangeResource, isServiceClient, isServiceClientId } from './exchange-resources';
-import { chargeTokenExchangeFailure, checkTokenExchangeRateLimit } from './rate-limit';
+import {
+  chargeTokenExchangeFailure,
+  checkTokenExchangeRateLimit,
+  oauthRetryAfter,
+  rateLimitedResponse,
+} from './rate-limit';
 import { parseScopeRequest } from './scope';
 import {
   EXCHANGED_TOKEN_MAX_TTL,
@@ -51,14 +56,13 @@ type ExchangeError =
   | 'server_error'
   | 'temporarily_unavailable';
 
-const STATUS: Record<ExchangeError, number> = {
+const STATUS: Record<Exclude<ExchangeError, 'rate_limited'>, number> = {
   invalid_request: 400,
   invalid_client: 401,
   invalid_target: 400,
   unauthorized_client: 400,
   invalid_grant: 400,
   invalid_scope: 400,
-  rate_limited: 429,
   server_error: 500,
   temporarily_unavailable: 503,
 };
@@ -101,6 +105,10 @@ export async function handleClientTokenExchange(input: ClientExchangeInput): Pro
     void logToAxiom({ event: 'client_token_exchange', result: 'refused', error, reason, ...ctx });
     const headers = new Headers(NO_STORE);
     for (const [k, v] of new Headers(extra)) headers.set(k, v);
+    // token-exchange and token-exchange-ip share this window.
+    if (error === 'rate_limited') {
+      return rateLimitedResponse(oauthRetryAfter('token-exchange'), headers, DESCRIPTION[error]);
+    }
     return json(
       { error, error_description: DESCRIPTION[error] },
       { status: STATUS[error], headers }
@@ -133,7 +141,7 @@ export async function handleClientTokenExchange(input: ClientExchangeInput): Pro
     const basicAttempted = /^basic /i.test(request.headers.get('authorization') ?? '');
     const unauthenticated = async (reason: string) => {
       const withinLimit = await chargeTokenExchangeFailure(input.clientIp);
-      if (!withinLimit) return refuse('rate_limited', reason, { 'Retry-After': '60' });
+      if (!withinLimit) return refuse('rate_limited', reason);
       return refuse(
         'invalid_client',
         reason,
@@ -147,7 +155,7 @@ export async function handleClientTokenExchange(input: ClientExchangeInput): Pro
     if (!caller) return unauthenticated('client authentication failed');
     ctx.relay = caller.id;
     if (!(await checkTokenExchangeRateLimit(caller.id, caller.tokenRateLimit))) {
-      return refuse('rate_limited', 'client limit', { 'Retry-After': '60' });
+      return refuse('rate_limited', 'client limit');
     }
     if (caller.accessMode === 'disabled') return refuse('unauthorized_client', 'caller disabled');
 

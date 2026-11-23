@@ -17,8 +17,8 @@ func pinEnv(pages ...[]testRow) *env {
 	e.sources.official = []hydrate.OfficialModel{{ID: 3, Type: "Checkpoint"}, {ID: 2, Type: "LORA"}, {ID: 1, Type: "Checkpoint"},
 		{ID: 99, Type: "Checkpoint"}}
 	for _, id := range []int{1, 3, 10, 11, 12, 13} {
-		e.sources.page.Data[id] = hydrate.ModelData{Versions: []map[string]any{version(id*10, "Pony", nil)}}
-		e.sources.images[id*10] = []map[string]any{image(id*100, 9, 1, nil)}
+		e.sources.page.Data[id] = hydrate.ModelData{Versions: []superjson.Object{version(id*10, "Pony", nil)}}
+		e.sources.images[id*10] = []superjson.Object{image(id*100, 9, 1, nil)}
 	}
 	return e
 }

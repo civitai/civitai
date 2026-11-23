@@ -97,6 +97,7 @@ designs/
 docs/
 media/
 ops/
+ports/
 public/
 test/
 tests/

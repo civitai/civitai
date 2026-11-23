@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   MAX_BUFFERED_ROWS,
   createSampledRowBuffer,
+  hashToUnit,
   type CaptureConfig,
 } from '~/server/clickhouse/sampled-row-buffer';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -28,7 +29,7 @@ function harness(config: CaptureConfig, { random = 0.5, insert = async () => und
     flushIntervalMs: 60_000,
   });
   let n = 0;
-  const push = (opts?: { unsampled?: boolean }) => buffer.push(() => ++n, opts);
+  const push = (opts?: { unsampled?: boolean; sampleKey?: string }) => buffer.push(() => ++n, opts);
   return { buffer, inserted, counts, push };
 }
 
@@ -54,6 +55,21 @@ describe('createSampledRowBuffer', () => {
     await low.push({ unsampled: true });
     await off.push({ unsampled: true });
     expect([low.buffer.pending, off.buffer.pending]).toEqual([1, 0]);
+  });
+
+  it('a sampleKey keeps or drops every row of that key together, at the rate, ignoring the roll', async () => {
+    const keys = Array.from({ length: 2000 }, (_, i) => `session-${i}`);
+    // The roll would keep everything; the key's hash alone decides.
+    const { buffer, inserted, push } = harness({ ...ON, sampleRate: 0.1 }, { random: 0 });
+    for (const sampleKey of keys) {
+      await push({ sampleKey });
+      await push({ sampleKey });
+    }
+    const keptKeys = keys.filter((k) => hashToUnit(k) < 0.1).length;
+    await buffer.flush();
+    expect(inserted.flat().length).toBe(keptKeys * 2);
+    expect(keptKeys / keys.length).toBeGreaterThan(0.07);
+    expect(keptKeys / keys.length).toBeLessThan(0.13);
   });
 
   it(`sheds rows past ${MAX_BUFFERED_ROWS} while an insert is in flight, with one insert at a time`, async () => {

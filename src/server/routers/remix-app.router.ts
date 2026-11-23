@@ -33,6 +33,7 @@ import {
   submitUserRemixApp,
   reviewUserRemixApp,
   clearRemixMinorThemed,
+  validateUserRemixApp,
 } from '~/server/services/remix-app-registry.service';
 import {
   remixAppInputSchema,
@@ -45,6 +46,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
+import { REMIX_RUN_LIMITS } from '~/shared/remix-apps/replay';
 
 const remixAppProcedure = protectedProcedure.use(isFlagProtected('remixApps'));
 const remixAppAdminProcedure = moderatorProcedure.use(isFlagProtected('remixApps'));
@@ -90,7 +92,10 @@ const gallery = z
       });
   });
 
-const answer = z.union([z.string().max(1000), z.number().int().nonnegative()]);
+const answer = z.union([
+  z.string().max(REMIX_RUN_LIMITS.answerLength),
+  z.number().int().nonnegative(),
+]);
 
 function callerOf(ctx: Context & { user: SessionUser }): Omit<RemixAppCaller, 'token'> {
   return {
@@ -108,7 +113,13 @@ export async function getCaller(ctx: Context & { user: SessionUser }): Promise<R
 
 /** Mod-only: the remix app rows, and a test run that spends only on a confirmed quote. */
 const remixAppAdminRouter = router({
-  list: remixAppAdminProcedure.query(() => listRemixAppsForAdmin()),
+  list: remixAppAdminProcedure.query(async ({ ctx }) => {
+    const rows = await listRemixAppsForAdmin();
+    // By slug: a user row whose manifest no longer validates carries no `user`.
+    return ctx.features.remixAppsUserCode
+      ? rows
+      : rows.filter((row) => !USER_REMIX_SLUG.test(row.slug));
+  }),
   save: remixAppAdminProcedure
     .input(remixAppInputSchema)
     .mutation(({ input }) => saveRemixApp(input)),
@@ -138,6 +149,11 @@ const remixAppAdminRouter = router({
       })
     )
     .mutation(({ ctx, input }) => reviewUserRemixApp({ ...input, moderatorId: ctx.user.id })),
+  /** Runs a user app down every path in the sandbox, on a placeholder image: what review reads. */
+  validate: userCodeReviewProcedure
+    .use(runStepRateLimit)
+    .input(z.object({ slug: remixAppSlugSchema }))
+    .mutation(({ input }) => validateUserRemixApp(input.slug)),
   /** Lifts a minor-themed mark; refused to the moderator who set it. */
   clearMinorThemed: userCodeReviewProcedure
     .input(z.object({ slug: remixAppSlugSchema }))
@@ -178,14 +194,16 @@ export const remixAppRouter = router({
   submit: remixAppBuilderProcedure
     .use(submitRateLimit)
     .input(remixAppSubmitSchema)
-    .mutation(({ ctx, input }) => submitUserRemixApp({ ...input, authorId: ctx.user.id })),
+    .mutation(({ ctx, input }) =>
+      submitUserRemixApp({ ...input, authorId: ctx.user.id, isGreen: !!ctx.features.isGreen })
+    ),
   list: remixAppProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .query(({ ctx }) => listRemixApps(ctx)),
   quote: remixAppProcedure
     .use(quoteRateLimit)
     .meta({ requiredScope: TokenScope.AIServicesRead })
-    .input(z.object({ imageId }))
+    .input(z.object({ imageId, slug: remixAppSlugSchema.optional() }))
     .query(async ({ ctx, input }) => quoteRemixApps({ ...input, caller: await getCaller(ctx) })),
   teamQuote: remixAppProcedure
     .use(teamQuoteRateLimit)

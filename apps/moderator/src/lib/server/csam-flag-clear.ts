@@ -1,7 +1,6 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { env } from '$env/dynamic/private';
 import { dbRead, dbWrite } from './db';
 import { insertModActivityBatch } from './mod-activity';
 import { FLAG_KEPT_THROUGH_BLOCK } from '$lib/image-review';
@@ -22,17 +21,6 @@ export const HOLD_MARKER_TABLE = 'EvidenceHold';
 
 /** `drift`: the table without its view, so the view was dropped or renamed. Held until it is back. */
 export type HoldMarkerState = 'view' | 'none' | 'drift';
-
-/**
- * Whether `notes` match, case-insensitively, the pattern deployed in `MOD_HOLD_BAN_NOTES_PATTERN`.
- * Unset or blank matches everything, so every "Other" ban holds until the pattern is configured.
- * It is a Postgres regex: word boundaries are `\m` (start), `\M` (end) and `\y` (either), never
- * `\b`, which Postgres reads as a backspace.
- */
-function banNotesMatchSql(notes: RawBuilder<string>) {
-  const deployed = env.MOD_HOLD_BAN_NOTES_PATTERN?.trim();
-  return deployed ? sql<boolean>`${notes} ~* ${deployed}` : sql<boolean>`true`;
-}
 
 /**
  * For a statement built when neither marker object existed: held if either exists by the time it
@@ -58,9 +46,6 @@ export function flagClearHoldLegs(userId: RawBuilder<number>, marker: HoldMarker
         AND (
           ${reasonCode} IS NULL
           OR ${reasonCode} IN (${sql.join([...BAN_REASONS_ALWAYS_REMOVING_MEDIA])})
-          OR (${reasonCode} = 'Other' AND ${banNotesMatchSql(sql`concat_ws(' ',
-                u.meta #>> '{banDetails,detailsInternal}',
-                u.meta #>> '{banDetails,detailsExternal}')`)})
         )
     )`,
     // Any image the clear would touch that a report lists, whoever the report names, sent or

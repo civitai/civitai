@@ -29,6 +29,7 @@ export const APPDATA_TABLES = [
   'doc_tally',
   'doc_mark',
   'doc_tomb',
+  'mark_head',
   'usage_app',
   'usage_user',
 ] as const;

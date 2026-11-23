@@ -108,7 +108,7 @@ import {
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { createProfanityFilter } from '~/libs/profanity-simple';
+import { getServerProfanityFilter } from '~/server/services/profanity-list.service';
 import {
   filterSensitiveProfanityData,
   keepStoredProfanityData,
@@ -903,7 +903,7 @@ export const upsertBounty = async ({
   const addLockedProperties: string[] = [];
   if (!isModerator && (await legacyProfanityAutoNsfwApplies('Bounty', id))) {
     // Check bounty name and description for profanity using threshold-based evaluation
-    const profanityFilter = createProfanityFilter();
+    const profanityFilter = (await getServerProfanityFilter()).filter;
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
     const evaluation = profanityFilter.evaluateContent(textToCheck);
 
@@ -1020,12 +1020,14 @@ export async function applyBountyContentChange({
   // published bounty while it keeps the SFW rating it earned with the old text. Evaluated
   // unconditionally: there is no acting moderator here to exempt, only the owner whose blurb
   // changed.
+  const profanity = await getServerProfanityFilter();
   const evaluate = (row: typeof stored) =>
     evaluateAutoNsfw({
       name: row.name,
       description,
       alreadyNsfw: row.nsfw,
       lockedProperties: row.lockedProperties,
+      profanity,
     });
   // The unlocked read only decides whether to open the transaction; the write is decided again
   // under the row lock, as `updateBountyById` does, so a moderator rating written in between is

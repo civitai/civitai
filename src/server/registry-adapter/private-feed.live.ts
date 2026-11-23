@@ -9,6 +9,8 @@ import type {
 } from '~/server/registry-adapter/private-feed';
 import { sessionClient } from '~/server/auth/session-client';
 import { readAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { BlockRevocation } from '~/server/services/block-revocation.service';
+import { subjectForUserId } from '~/server/services/block-token-subject';
 import { decideCollectionRead } from '~/server/services/apps/data-read-grant';
 import { getDocStorePrivateFeed } from '~/server/services/apps/doc-store-private-feed.instance';
 import type { SessionUser } from '~/types/session';
@@ -16,6 +18,7 @@ import type { SessionUser } from '~/types/session';
 export function livePrivateDocSource(): PrivateDocSource {
   const feed = getDocStorePrivateFeed();
   return {
+    head: (appId) => feed.privateHead(appId),
     versions: (appId, coll, userId, afterKey, limit) =>
       feed.privateVersions(appId, coll, userId, afterKey, limit),
     documents: (appId, coll, userId, afterKey, limit) =>
@@ -35,3 +38,13 @@ export const liveRunGateReadable: PrivateFeedOptions['runGateReadable'] = async 
   if (!user) return true;
   return (await readAppBlocksEnabled(user)) !== null;
 };
+
+/**
+ * A block-exchange token's install revocation: THE check the site's `withBlockScope` runs
+ * (`BlockRevocation.isRevoked`), with the subject the block token carried (`user:<id>`), so the
+ * subject-scoped ban key is read for the one install shape that has it. Fails open, as there.
+ */
+export const liveInstanceRevoked: PrivateFeedOptions['instanceRevoked'] = (
+  blockInstanceId,
+  userId
+) => BlockRevocation.isRevoked(blockInstanceId, subjectForUserId(userId));

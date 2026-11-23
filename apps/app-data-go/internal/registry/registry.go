@@ -47,6 +47,9 @@ type Entity struct {
 	Schemas []string        `json:"schemas"`
 	Rev     string          `json:"rev"`
 	Body    json.RawMessage `json:"body"`
+	// Key is a private document's storage key, sent beside its body by the adapter's private feed only
+	// (src/server/registry-adapter/private-feed.ts); empty on every other entity.
+	Key string `json:"key,omitempty"`
 }
 
 // Event is one protocol event. Cursor is empty on End, and on any event a registry cannot resume

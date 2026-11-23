@@ -7,8 +7,10 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
   import SelectStepElements from './SelectStepElements.svelte';
-  import { setElementsUi } from '$lib/elements-ui';
+  import '$lib/civitai-elements';
+  import { useElementsUi } from '$lib/elements-ui';
   import DataStep from './DataStep.svelte';
+  import DataStepElements from './DataStepElements.svelte';
   import EditDataStep from './EditDataStep.svelte';
   import ReviewStep from './ReviewStep.svelte';
   import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
@@ -36,7 +38,6 @@
     type Selection,
   } from './trainingFlow';
   import {
-    ELEMENTS_UI_FLAG_KEY,
     TAG_FIND_REPLACE_FLAG_KEY,
     type FromPrices,
     type LabelType,
@@ -54,10 +55,10 @@
     onExit,
   }: { prices: FromPrices; enabledModelFlags?: string[]; onExit: () => void } = $props();
 
-  // The Civitai Elements redesign, behind its own gate until it replaces the old UI.
-  const elementsUi = $derived(enabledModelFlags.includes(ELEMENTS_UI_FLAG_KEY));
-  setElementsUi(() => elementsUi);
+  const useElements = useElementsUi();
+  const elementsUi = $derived(useElements());
   const Select = $derived(elementsUi ? SelectStepElements : SelectStep);
+  const Data = $derived(elementsUi ? DataStepElements : DataStep);
 
   const STEPS = [
     { n: 1, label: 'Select' },
@@ -422,9 +423,15 @@
         </div>
       {/each}
     </nav>
-    <Button variant="outline" size="sm" onclick={onExit}>
-      <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Exit
-    </Button>
+    {#if elementsUi}
+      <civitai-button variant="outline" size="sm" onclick={onExit}>
+        <span slot="left"><IconArrowLeft size={15} stroke={2} /></span>Exit
+      </civitai-button>
+    {:else}
+      <Button variant="outline" size="sm" onclick={onExit}>
+        <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Exit
+      </Button>
+    {/if}
   </div>
 
   <ServiceStatusBanner />
@@ -460,7 +467,7 @@
       }}
     />
   {:else if step === 2 && selection}
-    <DataStep
+    <Data
       {selection}
       {prices}
       findReplace={enabledModelFlags.includes(TAG_FIND_REPLACE_FLAG_KEY)}

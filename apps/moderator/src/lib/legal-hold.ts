@@ -1,17 +1,16 @@
 /** Shown on the disabled Delete account button. Never says which hold applies. */
 export const LEGAL_HOLD_BUTTON_TEXT = 'Account under legal hold. Contact Legal.';
 
-/** A refused deletion; the same text the main app's endpoint answers with. */
-export const LEGAL_HOLD_REFUSAL = 'Account under legal hold; contact Legal.';
-
-/** A purge a hold stopped part-way; the same text the main app's endpoint answers with. */
-export const LEGAL_HOLD_STOPPED = 'Purge stopped by a legal hold part-way; contact Legal.';
-
-/** The same, when bids it should have refunded were not; the same text the main app answers with. */
-export const LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE = `${LEGAL_HOLD_STOPPED} Some bids were not refunded; check the refund alerts.`;
+// The refusal texts the main app answers with; this app matches them by equality.
+export {
+  HOLD_UNKNOWN_REFUSAL,
+  LEGAL_HOLD_REFUSAL,
+  LEGAL_HOLD_STOPPED,
+  LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
+  PURGE_ARCHIVE_REFUSAL,
+} from '@civitai/shared/legal-hold-texts';
 
 export const HOLD_UNKNOWN_BUTTON_TEXT = "Couldn't check legal hold status. Try again.";
-export const HOLD_UNKNOWN_REFUSAL = "Couldn't check legal hold status; try again.";
 
 /** `unknown` is any answer other than a plain yes or no, and blocks deletion like a hold. */
 export type DeleteHold = 'clear' | 'held' | 'unknown';

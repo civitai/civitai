@@ -17,7 +17,26 @@ export interface Entity {
   schemas: string[];
   rev: string;
   body: unknown;
+  /**
+   * A private document's storage key (`private-feed.ts`), beside the body so the body stays the
+   * document its schemas claim. Only the private feed sets it, on a stream that belongs to one
+   * user's token. Sent by the HTTP binding; the gRPC `Entity` message has no field for it.
+   */
+  key?: string;
+  /**
+   * A private document's `seq` (`private-feed.ts`): where its last write sits in its app
+   * namespace's write order, the order a stream's head (`EventMeta`) is compared in. Set, sent and
+   * withheld exactly as `key` is.
+   */
+  seq?: number;
 }
+
+/**
+ * What a `live` or `progress` event tells its consumer beside the cursor (the spec's `Event.meta`:
+ * a JSON object; absent is none). Only the private feed sets one today: its head
+ * (`private-feed.ts`).
+ */
+export type EventMeta = Record<string, unknown>;
 
 /**
  * What an adapter's change feed yields: an upsert or a delete with the cursor after it, or a
@@ -26,13 +45,19 @@ export interface Entity {
 export type Change =
   | { upsert: Entity; cursor: string }
   | { delete: string; cursor: string }
-  | { progress: string };
+  | { progress: string; meta?: EventMeta };
+
+/**
+ * What `Adapter.changes` resolves to: the changes, and the `meta` the `live` event before them
+ * carries, when the adapter has one.
+ */
+export type Changes = AsyncIterable<Change> & { liveMeta?: EventMeta };
 
 export type StreamEvent =
   | { type: 'upsert'; entity: Entity; cursor: string }
   | { type: 'delete'; urn: string; cursor: string }
-  | { type: 'live'; cursor: string }
-  | { type: 'progress'; cursor: string }
+  | { type: 'live'; cursor: string; meta?: EventMeta }
+  | { type: 'progress'; cursor: string; meta?: EventMeta }
   | { type: 'end' };
 
 export interface SubscribeRequest {
@@ -116,7 +141,7 @@ export interface Adapter {
    * feed's later polls, e.g. its app re-created mid-stream) is thrown by the iterable and still
    * arrives after `live` as a `cursor_expired` error, so a consumer must handle both.
    */
-  changes(schema: string, cursor: string, ctx: AdapterContext): Promise<AsyncIterable<Change>>;
+  changes(schema: string, cursor: string, ctx: AdapterContext): Promise<Changes>;
 }
 
 /**
@@ -158,7 +183,15 @@ function requestMeta(raw: string | Uint8Array | null | undefined): RequestMeta |
   } catch {
     return undefined;
   }
+  return jsonObjectOrUndefined(value);
+}
+
+/**
+ * A parsed JSON value as a `meta` (`RequestMeta`, `EventMeta`) holds it: a JSON object, else
+ * nothing (an array, `null` or a primitive). The one rule both bindings read a `meta` by.
+ */
+export function jsonObjectOrUndefined(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as RequestMeta)
+    ? (value as Record<string, unknown>)
     : undefined;
 }

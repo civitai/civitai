@@ -36,11 +36,11 @@ where it loads on demand:
 ## Where knowledge lives
 - **`.claude/rules/`** — load automatically when you read or edit matching files: `testing`,
   `convention-guards`, `server` (architecture map, jobs), `database`, `sveltekit`, `components`,
-  `comments`, `debug-endpoints`, `public-api`, `label-store`, `generation-form`. Creating a new file loads nothing, so read the matching
+  `comments`, `debug-endpoints`, `public-api`, `label-store`, `generation-form`, `import-cycles`. Creating a new file loads nothing, so read the matching
   rule first; read one directly whenever you need it before touching code.
 - **`docs/dev/`** — `local-setup.md` (env setup and the traps that cost hours: auth hub, SSL, env
   precedence, feature flags), `worktrees.md`, `prettier.md`, `filing-follow-ups.md`,
-  `convention-guards.md` (every guard and what it enforces).
+  `convention-guards.md` (every guard and what it enforces), `api-routes.md` (`src/server/api-routes`).
 - **`docs/features/`** — check before implementing a feature (index: `docs/features/README.md`).
 - **Skills** — `dev-server` (dev servers **and** worktrees), `postgres-query`, `civitai-review`,
   `pr-review` (the hosted review of your PR: intent, findings, fixes), etc.
@@ -53,7 +53,7 @@ where it loads on demand:
 - **Worktrees are optional.** If you use one, create it with
   `node .claude/skills/dev-server/cli.mjs wt new <name> <branch>` and remove it with `wt stale` / `wt rm`,
   not the `EnterWorktree` tool or a hand-rolled `git worktree add`.
-- `pnpm run typecheck` (authoritative; `typecheck:fast` is edit-loop only), `pnpm run lint`.
+- `pnpm run typecheck` (TypeScript 7 from `tools/ts7`, single-threaded locally; authoritative), `pnpm run lint`.
   In SvelteKit apps use `typecheck`, never `check` or a manual `svelte-kit sync`
   (details: `.claude/rules/sveltekit.md`).
 - **Formatting:** `pnpm run prettier:write` formats uncommitted files only. Never run a repo-wide
@@ -125,8 +125,8 @@ anything committed counts as disclosed and must be fixed and rotated.
    suite at once, every later push runs it too, and it lifts the draft gate (same-repo PRs only). Add it only when needed (the change touches code the unit/component suites cover and the PR is near
    merge-ready), never on every PR: `gh pr edit <n> --add-label full-ci`); `pnpm run db:check-generated` if you touched the schema
 4. Test the change locally
-5. Before merging, check the PR's CI and its `pr-review` round (the `pr-review` skill) — `main` has no
-   required checks, so a red run doesn't block.
+5. Leave nothing open: before marking a PR ready, settle every "possibly", fix every check it turns red, and get each
+   decision answered. Before merging, check its CI and `pr-review` round (`pr-review` skill); `main` has no required checks.
 6. Run the `cleanup` skill: `comment-review`, `docs-drift-review` and `claim-review`, lanes that no build or test covers (`comment-review`
    is also the hosted review's `comments` lane, and `civitai-review` runs it locally when recording). Required when you moved a file, renamed a script or command, retired an env var,
    completed a tracked item, or a pushback has turned up an overstatement.

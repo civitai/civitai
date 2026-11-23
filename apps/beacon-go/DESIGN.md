@@ -29,6 +29,18 @@ token (`Authorization` header or `?token=`) is looked up as an API key; otherwis
 cookie (`civ-token`, either slot) is verified, checked against the revocation registry and resolved
 through the shared `session:data2:<userId>` cache. The row's `userId` is `session.user.id ?? 0`.
 
+The session cookie is chosen as `readSessionToken` (`packages/civitai-auth/src/cookies.ts`) chooses it,
+and this service reads it the same way (`internal/auth` `Resolve`). The order is the request site's
+mode's own slot, then the other: `__Host-civ-token` then `__Secure-civ-token` in host mode,
+`__Secure-civ-token` then `__Host-civ-token` in shared mode (the mode is the site's
+`AUTH_SESSION_COOKIE_MODE_BY_SITE` entry, else `AUTH_SESSION_COOKIE_MODE`; the shared slot is skipped
+when the legacy read is off; http dev has only the bare `civ-token`). The first slot the request carries
+with a non-empty value is the token, on presence alone; when it does not verify, is revoked or is the
+moderation account the request is signed out, and the other slot is not tried. The `Cookie` header is
+read as Next's `req.cookies` reads it: several lines joined with `; `, the first occurrence of a name
+wins even when empty, a value starting with `"` loses its first and last character, and a value that
+does not URL-decode is kept raw.
+
 **Rate limits.** None: neither handler nor `PublicEndpoint` applies one.
 
 **Methods.** Any method reaches the handler (`['POST']` only feeds `Access-Control-Allow-Methods`).
@@ -141,7 +153,7 @@ Fallback reasons (`beacon_go_fallback_total{reason}`):
 |---|---|
 | `query-string` | the request target has a query (getServerAuthSession and the credential check read `?token=`; beacons send none) |
 | `bearer-token` | a row would be written and the request carries an `Authorization` header (an API-key session) |
-| `multiple-session-cookies`, `session-cache-miss`, `session-cache-cleared`, `session-id-mismatch`, `session-no-id`, `session-tier-type` | the session cannot be resolved exactly from the cache (the Node path would ask the hub, or the cached user is unusual) |
+| `session-cache-miss`, `session-cache-cleared`, `session-id-mismatch`, `session-no-id`, `session-tier-type` | the session cannot be resolved exactly from the cache (the Node path would ask the hub, or the cached user is unusual) |
 | `jwks-unavailable` | a session cookie is present but no key set is held (the first fetch has not landed, or the set was dropped as stale): the token may be valid, so it is not written as signed out |
 | `revocation-unavailable` | the revocation registry read failed: Node would still deny the revocations its marker cache has seen, which this service does not hold, so it does not guess |
 | `session-roll-due` | ping only: the session's token is due a rolling refresh, which only Node can mint; Node answers with the `Set-Cookie` |

@@ -49,6 +49,7 @@ const app = (slug: string, name: string) => ({
   description: `${name} does a thing`,
   target: 'image.remix' as const,
   enabled: true,
+  inReview: false,
   engine: undefined as never,
   output: 'image' as const,
 });

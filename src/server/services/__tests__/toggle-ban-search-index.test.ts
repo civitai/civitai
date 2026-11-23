@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { showcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as HatSync from '~/server/events/points/sync';
 
 /**
@@ -94,6 +96,35 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
   },
 }));
 
+// The CSAM bucket: what the default archive writes when the caller passes none.
+const upload = vi.hoisted(() => ({ fail: undefined as Error | undefined, done: [] as string[] }));
+// Both carry `default`: the package is pre-bundled for CJS interop, so consumers resolve through it.
+vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@aws-sdk/client-s3')>();
+  const objects = new Map<string, { body: Uint8Array; Metadata?: Record<string, string> }>();
+  const S3Client = class {
+    async send(command: unknown) {
+      if (command instanceof real.PutObjectCommand) {
+        if (upload.fail) throw upload.fail;
+        const { Key, Body, Metadata } = command.input;
+        objects.set(Key!, { body: Body as Uint8Array, Metadata });
+        upload.done.push(Key!);
+        return {};
+      }
+      if (command instanceof real.GetObjectCommand) {
+        const found = objects.get(command.input.Key!)!;
+        return { Metadata: found.Metadata, Body: { transformToByteArray: async () => found.body } };
+      }
+      return {};
+    }
+    destroy() {
+      return undefined;
+    }
+  };
+  const mocked = { ...real, S3Client };
+  return { ...mocked, default: mocked };
+});
+
 const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
 const { BanReasonCode } = await import('~/server/common/enums');
 
@@ -110,6 +141,10 @@ const userFindFirst = dbMock.dbWrite.user.findFirst;
 // default for a write verb, so an undeclared one returns `undefined` and the fan-out throws.
 const userLinkDeleteMany = dbMock.dbWrite.userLink.deleteMany;
 const imageUpdateMany = dbMock.dbWrite.image.updateMany;
+/** Whether the CSAM report lookup names the user. */
+const reportNames = (named: boolean) =>
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (s: readonly string[]) =>
+    s.join('?').includes('"CsamReport"') ? [{ named }] : []) as never);
 const oldCommentTableWrites = () =>
   dbMock.dbWrite.$executeRaw.mock.calls
     .map(([strings]) => (strings as unknown as string[]).join('?'))
@@ -125,6 +160,7 @@ const call = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  reportNames(false);
   userUpdate.mockResolvedValue({ id: USER_ID, paddleCustomerId: null });
   userFindFirst.mockResolvedValue(null);
   userLinkDeleteMany.mockResolvedValue({ count: 0 });
@@ -386,11 +422,18 @@ describe('toggleBan -> removeMedia', () => {
       'positive control: softDeleteUser never reached its own CSAM block'
     ).toBe(true);
     expect(refreshShowcases).toHaveBeenCalledWith(USER_ID);
+    // The block's home-block refresh (`evictHomeBlocksForImages`), looked up by this user.
+    const homeBlockLookups = dbMock.dbRead.$queryRaw.mock.calls.filter(([query]) => {
+      const { sql, values } = query as unknown as { sql?: string; values?: unknown[] };
+      return !!sql?.includes('"CollectionItem"') && !!values?.includes(USER_ID);
+    });
+    expect(homeBlockLookups, 'softDeleteUser did not refresh the home blocks').toHaveLength(1);
   });
 });
 
 describe('toggleBan -> profile links', () => {
   beforeEach(() => {
+    reportNames(false);
     userFindUnique.mockResolvedValue({
       bannedAt: null,
       meta: {},
@@ -415,6 +458,133 @@ describe('toggleBan -> profile links', () => {
 
     expect(userUpdate).toHaveBeenCalled();
     expect(userLinkDeleteMany).not.toHaveBeenCalled();
+  });
+
+  const LINKS = [{ id: 1, url: 'https://example.com/me', type: 'Social' }];
+  const banWithArchive = (archive: () => Promise<unknown>, extra: object = {}) =>
+    toggleBan({
+      id: USER_ID,
+      reasonCode: BanReasonCode.Other,
+      userId: ACTOR_ID,
+      isModerator: true,
+      archiveProfile: archive,
+      ...extra,
+    } as Parameters<typeof toggleBan>[0]);
+  const reported = () => {
+    reportNames(true);
+    dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(null);
+    dbMock.dbWrite.userLink.findMany.mockResolvedValue(LINKS);
+  };
+
+  it('archives a reported user’s links before deleting them', async () => {
+    reported();
+    const archive = vi.fn(async () => undefined);
+
+    await banWithArchive(archive);
+
+    expect(archive).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: USER_ID, actorId: ACTOR_ID, links: LINKS })
+    );
+    expect(userLinkDeleteMany).toHaveBeenCalledWith({ where: { userId: USER_ID } });
+    expect(archive.mock.invocationCallOrder[0]).toBeLessThan(
+      userLinkDeleteMany.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('alerts the moderators when the archive fails on a ban', async () => {
+    reported();
+    const fetchMock = vi.fn(
+      async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 204 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    setEnv({ DISCORD_WEBHOOK_MOD_ALERTS: 'https://example.invalid/mod-alerts' });
+    try {
+      await banWithArchive(async () => {
+        throw new Error('bucket down');
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      setEnv({ DISCORD_WEBHOOK_MOD_ALERTS: undefined });
+    }
+
+    expect(userLinkDeleteMany).not.toHaveBeenCalled();
+    const alerts = fetchMock.mock.calls.filter(
+      ([url]) => String(url) === 'https://example.invalid/mod-alerts'
+    );
+    expect(alerts).toHaveLength(1);
+    expect(JSON.stringify((alerts[0] as unknown[])[1])).toContain(String(USER_ID));
+  });
+
+  it('keeps the links and still bans when the archive fails', async () => {
+    reported();
+    const archive = vi.fn(async () => {
+      throw new Error('bucket down');
+    });
+
+    await banWithArchive(archive);
+
+    expect(userUpdate).toHaveBeenCalled();
+    expect(userLinkDeleteMany).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'ban-user-archive-profile', userId: USER_ID })
+    );
+  });
+
+  it('archives without a report when the caller asks to', async () => {
+    dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(null);
+    dbMock.dbWrite.userLink.findMany.mockResolvedValue(LINKS);
+    const archive = vi.fn(async () => undefined);
+
+    await banWithArchive(archive, { alwaysArchiveProfile: true });
+
+    expect(archive).toHaveBeenCalledWith(expect.objectContaining({ links: LINKS }));
+    expect(userLinkDeleteMany).toHaveBeenCalled();
+  });
+
+  describe('with no archive passed', () => {
+    beforeEach(() => {
+      setEnv({
+        CSAM_UPLOAD_KEY: 'test-key',
+        CSAM_UPLOAD_SECRET: 'test-secret',
+        CSAM_UPLOAD_REGION: 'test-region',
+        CSAM_UPLOAD_ENDPOINT: 'https://example.invalid',
+        CSAM_BUCKET_NAME: 'test-bucket',
+      });
+      upload.fail = undefined;
+      upload.done = [];
+      reported();
+    });
+
+    it('writes profile.json to the CSAM bucket before deleting a reported user’s links', async () => {
+      let archivedBeforeDelete: boolean | undefined;
+      userLinkDeleteMany.mockImplementationOnce(async () => {
+        archivedBeforeDelete = upload.done.some((k) => k.endsWith('_profile.json'));
+        return { count: 1 };
+      });
+
+      await call();
+
+      expect(userLinkDeleteMany).toHaveBeenCalledTimes(1);
+      expect(archivedBeforeDelete).toBe(true);
+    });
+
+    it('keeps the links when the bucket upload fails', async () => {
+      upload.fail = new Error('s3 down');
+
+      await call();
+
+      expect(userUpdate).toHaveBeenCalled();
+      expect(userLinkDeleteMany).not.toHaveBeenCalled();
+    });
+  });
+
+  it('does not archive an unreported user’s links, and deletes them', async () => {
+    const archive = vi.fn(async () => undefined);
+
+    await banWithArchive(archive);
+
+    expect(archive).not.toHaveBeenCalled();
+    expect(userLinkDeleteMany).toHaveBeenCalledWith({ where: { userId: USER_ID } });
   });
 });
 
@@ -537,5 +707,30 @@ describe('toggleBan -> reviews written from the posts its model unpublish takes 
         expect.objectContaining({ change: 'unpublish', postIds: [9] })
       )
     );
+  });
+});
+
+describe('toggleBan -> version showcases', () => {
+  it("takes a banned author's featured images out of every showcase, and back on an unban", async () => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+    const showcaseReads = () =>
+      showcaseQueries(dbMock.dbWrite.$queryRaw).map((read) => read.values);
+    await call();
+    expect(showcaseReads()).toEqual([[USER_ID]]);
+
+    dbMock.dbWrite.$queryRaw.mockClear();
+    userFindUnique.mockResolvedValue({
+      bannedAt: ALREADY_BANNED_AT,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+    await call();
+    expect(showcaseReads()).toEqual([[USER_ID]]);
   });
 });

@@ -1,0 +1,48 @@
+:root {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.5;
+  /* DARK FIRST — must stay in the same order as index.html's
+     <meta name="color-scheme">. A CSS `color-scheme` declaration OVERRIDES the
+     meta tag, and in a production build Vite emits this file as a
+     render-blocking <link> in <head>, so `light dark` here would silently
+     re-invert the dark-default bet the meta makes. */
+  color-scheme: dark light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  /* 🔴 NO `background` HERE, deliberately. The boot <style> in index.html owns
+     the page background (dark base, light only behind
+     `html[data-theme='light']`), and Vite emits this file AFTER that inline
+     style in the built document — a background declared here would win the
+     cascade and hand the page back to the OS/browser canvas colour, which is
+     exactly what the boot skeleton exists to prevent. */
+}
+
+body {
+  /* `--civitai-color-text` comes from @civitai/theme/styles.css (imported in
+     src/main.ts): dark on :root, light under [data-theme='light']. The
+     <civitai-*> elements read the same tokens across their shadow boundary, so
+     page text and component text switch together on THEME_CHANGE. */
+  color: var(--civitai-color-text);
+}
+
+#root {
+  /* A page app fills the host surface; the host iframe owns its size, and the
+     app's root just fills it. */
+  min-width: 100%;
+}
+
+[data-block-root] {
+  padding: 16px;
+}
+
+[data-dimmed] {
+  color: var(--civitai-color-text-dimmed);
+}

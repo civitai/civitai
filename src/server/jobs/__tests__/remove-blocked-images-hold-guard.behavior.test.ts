@@ -40,12 +40,17 @@ vi.mock('~/server/search-index', () => ({
 import * as imageService from '~/server/services/image.service';
 import {
   accountHeldBlockedImagesSql,
+  legalHeldImagesSql,
   blockedQueueBatchSql,
   reviewHeldBlockedImagesSql,
   blockedQueueExpiredAmongSql,
   purgeHoldGuard,
 } from '~/server/jobs/image-ingestion';
-import { legalHoldUserIdsSql, userNamedOnHoldingReportSql } from '~/server/utils/legal-hold';
+import {
+  legalHoldUserIdsSql,
+  reportNamedUserIdsSql,
+  userNamedOnHoldingReportSql,
+} from '~/server/utils/legal-hold';
 import {
   accountHoldSql,
   assertOwnersNotUnderLegalHold,
@@ -154,6 +159,11 @@ const BASE_SCHEMA = `
       "cascadeParentId" int
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb DEFAULT '{}', "bannedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (
+      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
     CREATE TABLE "Post" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
@@ -312,6 +322,13 @@ const remaining = async () =>
 const sorted = (ids: number[]) => [...ids].sort((a, b) => a - b);
 
 describe('legalHoldUserIdsSql', () => {
+  // The shared builder keeps only the filter's text: a bound value would be dropped, not sent.
+  it('refuses a report filter that binds a value', () => {
+    expect(() => reportNamedUserIdsSql((r) => Prisma.sql`${Prisma.raw(r)}.id = ${1}`)).toThrow(
+      'A report filter must bind no values'
+    );
+  });
+
   it('names the subject and secondary user of every report still inside the hold', async () => {
     // The query the job runs, as it runs it.
     const { rows } = await holder.db.query<{ userId: string }>(
@@ -344,6 +361,22 @@ describe('purgeHoldGuard on the delete', () => {
       .mocked(imagesMetricsSearchIndex.queueUpdate)
       .mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
     expect(sorted(deindexed)).toEqual(DELETED);
+  });
+
+  it('leaves rows outside the delete selection', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES
+        (140, ${PLAIN_USER}, 'Error', 'moderated', 32),
+        (141, ${PLAIN_USER}, 'Error', NULL, 0);
+    `);
+
+    const deleted = await imageService.deleteImages([140, 141], {
+      actor: { system: 'test' },
+      onlyWhere: purgeHoldGuard(NO_COPY),
+    });
+
+    expect(deleted).toEqual([]);
+    expect((await remaining()).filter((id) => id === 140 || id === 141)).toEqual([140, 141]);
   });
 
   it('applies the guard to every batch, not only the first', async () => {
@@ -1291,6 +1324,34 @@ describe('accountHeldBlockedImagesSql, the batch exclusion', () => {
     // FLAGGED (12) is the base fixture's flagged image; its owner is held the same way.
     expect(await read()).toEqual([FLAGGED, 91, 93, 94, 98]);
   });
+
+  it('matches the shared hold selection', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES
+        (120, ${BLOCK_OWNER}, 'Blocked', 'CSAM', 32),
+        (121, ${BLOCK_OWNER}, 'Error', 'moderated', 32),
+        (122, ${BLOCK_OWNER}, 'Error', NULL, 32),
+        (123, ${BLOCK_OWNER}, 'Error', NULL, 0);
+    `);
+
+    expect(await read()).toEqual([FLAGGED, 120, 121, 122]);
+  });
+});
+
+describe('legalHeldImagesSql, the batch exclusion', () => {
+  it('returns the held owner’s rows the shared hold selection keeps, and nothing else', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES
+        (150, 71, 'Blocked', 'moderated', 32),
+        (151, 71, 'Error', 'moderated', 32),
+        (152, 71, 'Error', NULL, 0),
+        (153, 71, 'Scanned', NULL, 0),
+        (154, 72, 'Error', 'moderated', 32);
+    `);
+    const flat = legalHeldImagesSql([71]);
+    const { rows } = await holder.db.query<{ id: number }>(flat.text, flat.values as unknown[]);
+    expect(sorted(rows.map((r) => r.id))).toEqual([150, 151]);
+  });
 });
 
 describe('reviewHeldBlockedImagesSql, the batch exclusion', () => {
@@ -1308,6 +1369,22 @@ describe('reviewHeldBlockedImagesSql, the batch exclusion', () => {
     );
 
     expect(sorted(rows.map((r) => r.id))).toEqual(sorted([APPEALED, FLAGGED, 110]));
+  });
+
+  it('matches the shared hold selection', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "needsReview", "blockedFor", "nsfwLevel") VALUES
+        (130, ${PLAIN_USER}, 'Error', NULL, 'CSAM', 32),
+        (131, ${PLAIN_USER}, 'Error', 'appeal', NULL, 32),
+        (132, ${PLAIN_USER}, 'Error', 'appeal', NULL, 0);
+    `);
+
+    const { rows } = await holder.db.query<{ id: number }>(
+      reviewHeldBlockedImagesSql.text,
+      reviewHeldBlockedImagesSql.values as unknown[]
+    );
+
+    expect(sorted(rows.map((r) => r.id))).toEqual(sorted([APPEALED, FLAGGED, 130, 131]));
   });
 });
 
@@ -1534,5 +1611,42 @@ describe('the blocked-image queue reads, with a held set past the bind-variable 
 
     expect(rows).toHaveLength(HELD.length + 5);
     expect(rows[0].entityId).toBe(3);
+  });
+});
+
+// A ban note is not a hold: such a user's blocked media purges as anyone's does.
+describe('a CSAM/NCMEC ban note alone', () => {
+  const NOTE_USER = 990077001;
+  const PLAIN_USER = 990077002;
+  const NOTE_IMAGE = 990077101;
+  const PLAIN_IMAGE = 990077102;
+
+  beforeEach(() =>
+    holder.db.exec(`
+      INSERT INTO "User" (id, meta, "bannedAt") VALUES
+        (${NOTE_USER}, '{"banDetails": {"detailsInternal": "NCMEC report filed"}}', NULL),
+        (${PLAIN_USER}, '{}', NULL);
+      INSERT INTO "Image" (id, "userId", ingestion) VALUES
+        (${NOTE_IMAGE}, ${NOTE_USER}, 'Blocked'), (${PLAIN_IMAGE}, ${PLAIN_USER}, 'Blocked');
+      INSERT INTO "JobQueue" (type, "entityType", "entityId", "createdAt") VALUES
+        ('BlockedImageDelete', 'Image', ${NOTE_IMAGE}, now() - interval '30 days'),
+        ('BlockedImageDelete', 'Image', ${PLAIN_IMAGE}, now() - interval '30 days');
+    `)
+  );
+  afterEach(() =>
+    holder.db.exec(`
+      DELETE FROM "JobQueue" WHERE "entityId" IN (${NOTE_IMAGE}, ${PLAIN_IMAGE});
+      DELETE FROM "Image" WHERE id IN (${NOTE_IMAGE}, ${PLAIN_IMAGE});
+      DELETE FROM "User" WHERE id IN (${NOTE_USER}, ${PLAIN_USER});
+    `)
+  );
+
+  it("does not keep the blocked media: the purge deletes it like anyone else's", async () => {
+    const deleted = await imageService.deleteImages([NOTE_IMAGE, PLAIN_IMAGE], {
+      actor: { system: 'test' },
+      onlyWhere: purgeHoldGuard(NO_COPY),
+    });
+    expect(deleted.map((r) => r.id).sort()).toEqual([NOTE_IMAGE, PLAIN_IMAGE].sort());
+    expect(await remaining()).not.toContain(NOTE_IMAGE);
   });
 });

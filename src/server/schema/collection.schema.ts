@@ -377,6 +377,8 @@ export type RemoveCollectionItemInput = z.infer<typeof removeCollectionItemInput
 export const removeCollectionItemInput = z.object({
   collectionId: z.coerce.number(),
   itemId: z.coerce.number(),
+  // Names the entity `itemId` refers to; read only when the collection itself has no type.
+  type: z.enum(CollectionType).optional(),
 });
 
 export type SetItemScoreInput = z.infer<typeof setItemScoreInput>;

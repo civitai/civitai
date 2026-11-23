@@ -349,11 +349,16 @@ describe('a moderator unblock', () => {
   });
 
   it('refreshes the cached profile picture after the image is set back to Scanned', async () => {
+    // The unblock UPDATE hands back the row it restored.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('AS "keptBlocked"')
+        ? [{ id: AVATAR, keptBlocked: false }]
+        : []) as never);
     await handleUnblockImages({ ids: [AVATAR], moderatorId: MOD } as never);
 
     expect(refreshPicture).toHaveBeenCalledWith([AVATAR_OWNER]);
     const unblock = dbMock.dbWrite.$queryRaw.mock.calls.findIndex(([strings]) =>
-      (strings as TemplateStringsArray).join('?').includes(`"ingestion" = 'Scanned'`)
+      (strings as TemplateStringsArray).join('?').includes('AS "keptBlocked"')
     );
     expect(unblock).toBeGreaterThanOrEqual(0);
     expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[unblock]).toBeLessThan(

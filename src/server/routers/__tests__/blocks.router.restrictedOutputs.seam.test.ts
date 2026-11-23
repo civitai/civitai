@@ -636,9 +636,18 @@ describe('🔴 serving on: publish refuses what the poll restricts', () => {
     expect(fetched()).toStrictEqual([OK_B]);
   });
 
-  it('CONTROL: with serving off the same `na` position publishes', async () => {
+  it('with serving off the same `na` position is refused too', async () => {
     servingFlag.on = false;
-    await publish([1]);
-    expect(fetched()).toStrictEqual([NA]);
+    await expect(publish([1])).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'output 1 is restricted',
+    });
+    expect(mockPersistBlockWorkflowOutputImage).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: with serving off the rated position beside it publishes', async () => {
+    servingFlag.on = false;
+    await publish([2]);
+    expect(fetched()).toStrictEqual([OK_B]);
   });
 });

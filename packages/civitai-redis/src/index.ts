@@ -3,3 +3,4 @@ export * from './cache';
 export * from './lru-cache';
 export * from './cached-array';
 export * from './key-slot';
+export * from './fixed-window';

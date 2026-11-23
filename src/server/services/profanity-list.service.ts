@@ -1,0 +1,282 @@
+import {
+  managedProfanityEntries,
+  MIN_MANAGED_PROFANITY_ENTRIES,
+} from '@civitai/mod-utils/profanity/word-rules';
+import {
+  createProfanityFilter,
+  getProfanityFilter,
+  type SimpleProfanityFilter,
+} from '~/libs/profanity-simple';
+import { BlocklistType } from '~/server/common/enums';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { logToAxiom } from '~/server/logging/client';
+import {
+  ensureRegisterProfanityListMetrics,
+  type ProfanityHitSurface,
+} from '~/server/metrics/profanity-list.metrics';
+import { readBlocklistWithSource } from '~/server/services/blocklist.service';
+
+/**
+ * Which list a server profanity check enforced: `managed` the moderator row; `stale` this pod's
+ * last good list while the row cannot be read; `fallback` the shipped list in place of a row that
+ * is missing, below the floor, or unreadable with nothing held; `shipped` the flag is off.
+ */
+export type ProfanityListSource = 'managed' | 'stale' | 'fallback' | 'shipped';
+
+/** `null` in `blocked` or `allowed` means the shipped list for that slot. */
+export type ProfanityLists = {
+  blocked: string[] | null;
+  allowed: string[] | null;
+  /** Flag off only: the moderators' benign words, which a search check allows as the browser does. */
+  benign?: string[] | null;
+  source: ProfanityListSource;
+};
+
+type Held = { blocked: string[] | null; allowed: string[] | null };
+
+export interface ProfanityListReader {
+  read(): Promise<ProfanityLists>;
+}
+
+const LOG_INTERVAL_MS = 60_000;
+
+/**
+ * 🔴 The held copy is the list this pod ENFORCED, never the raw row: after a fallback it is the
+ * shipped list (`null`). Holding a missing or tiny row as "last good" would serve it in the next
+ * outage, which is exactly what the floor exists to stop.
+ */
+export function createProfanityListReader({
+  readRow,
+}: { readRow?: typeof readBlocklistWithSource } = {}): ProfanityListReader {
+  // Resolved per read, not at construction: this module builds its reader on import.
+  const read = (type: BlocklistType) => (readRow ?? readBlocklistWithSource)(type);
+  let held: Held | null = null;
+  const metrics = () => ensureRegisterProfanityListMetrics();
+  // Every server check reads the list, so a lasting fault would log once per comment thread.
+  const loggedAt = new Map<string, number>();
+  const logDue = (name: string) => {
+    const now = Date.now();
+    if (now - (loggedAt.get(name) ?? 0) < LOG_INTERVAL_MS) return false;
+    loggedAt.set(name, now);
+    return true;
+  };
+  // A held list of `null` is the shipped one: reported as the fallback it is, not as stale.
+  const fromHeld = (copy: Held): ProfanityLists => {
+    metrics().fallback.set(copy.blocked === null ? 1 : 0);
+    return { ...copy, source: copy.blocked === null ? 'fallback' : 'stale' };
+  };
+
+  return {
+    async read() {
+      if (!(await isFlipt(FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST))) {
+        // Flag off: the shipped block and allow lists. Held as what this pod enforces, so an outage
+        // after the flag returns falls back to them.
+        held = { blocked: null, allowed: null };
+        metrics().fallback.set(0);
+        // Read here so it is shared like the rest; unreadable means the shipped allow list.
+        const benign = await Promise.resolve()
+          .then(() => read(BlocklistType.ProfanityBenignWord))
+          .then(
+            (row) => (row.dto.id == null ? null : row.dto.data),
+            () => null
+          );
+        return { blocked: null, allowed: null, benign, source: 'shipped' };
+      }
+      let blockedRow, allowedRow;
+      try {
+        [blockedRow, allowedRow] = await Promise.all([
+          read(BlocklistType.ProfanityWord),
+          read(BlocklistType.ProfanityBenignWord),
+        ]);
+      } catch (error) {
+        if (held) return fromHeld(held);
+        metrics().fallback.set(1);
+        if (logDue('profanity-list-unreadable'))
+          logToAxiom({
+            name: 'profanity-list-unreadable',
+            type: 'error',
+            message: 'Enforcing the shipped profanity list; the managed list could not be read',
+            details: { error: error instanceof Error ? error.message : String(error) },
+          });
+        return { blocked: null, allowed: null, source: 'fallback' };
+      }
+
+      // A MISSING allow row is the shipped allow list; an EMPTY one is honoured (`moderatorWhitelist`, src/libs/profanity-simple/index.ts).
+      const allowed = allowedRow.dto.id == null ? null : allowedRow.dto.data;
+      const { usable, enforced } = managedProfanityEntries(
+        blockedRow.dto.id == null ? [] : blockedRow.dto.data
+      );
+      // Unlike the allow list, an empty or tiny block list is NOT honoured: it would filter nothing.
+      if (!enforced) {
+        held = { blocked: null, allowed };
+        metrics().fallback.set(1);
+        if (blockedRow.dto.id != null) {
+          if (logDue('profanity-blocklist-below-floor'))
+            logToAxiom({
+              name: 'profanity-blocklist-below-floor',
+              type: 'error',
+              message: 'Managed profanity list is below the floor; enforcing the shipped list',
+              payload: { usable: usable.length, floor: MIN_MANAGED_PROFANITY_ENTRIES },
+            });
+        }
+        return { blocked: null, allowed, source: 'fallback' };
+      }
+      held = { blocked: usable, allowed };
+      metrics().fallback.set(0);
+      return { blocked: usable, allowed, source: 'managed' };
+    },
+  };
+}
+
+let reader: ProfanityListReader = createProfanityListReader();
+
+// One list read is shared for a few seconds: a page masks many texts and a chat list many previews,
+// and each would otherwise read both rows again. Edits already take up to the Redis TTL to land.
+const READ_SHARE_MS = 5_000;
+let readShareMs = READ_SHARE_MS;
+let shared: { at: number; lists: Promise<ProfanityLists> } | null = null;
+function readShared(): Promise<ProfanityLists> {
+  const now = Date.now();
+  if (shared && now - shared.at < readShareMs) return shared.lists;
+  const lists = reader.read();
+  const entry = { at: now, lists };
+  shared = entry;
+  lists.catch(() => {
+    if (shared === entry) shared = null;
+  });
+  return lists;
+}
+
+/** Tests only. Reads are not shared unless `shareMs` says so. */
+export function setProfanityListReaderForTests(next?: ProfanityListReader, shareMs = 0) {
+  reader = next ?? createProfanityListReader();
+  readShareMs = shareMs;
+  shared = null;
+}
+
+export type ServerProfanityFilter = {
+  filter: SimpleProfanityFilter;
+  source: ProfanityListSource;
+  /** Flag off only: the moderators' benign words a search check allows. */
+  benign?: string[] | null;
+  /** Counts a match against this filter's list source. */
+  countHit(surface: ProfanityHitSurface): void;
+};
+
+// One slot, keyed on the lists' CONTENT, since a read can parse fresh arrays; the same arrays skip
+// building the key. Not `getProfanityFilter`'s shared two-entry map, which SSR
+// masking also fills and would evict this between calls.
+let slot: {
+  key: string;
+  blocked: string[] | null;
+  allowed: string[] | null;
+  filter: SimpleProfanityFilter;
+  buildFailed: boolean;
+} | null = null;
+
+function filterFor({ blocked, allowed }: ProfanityLists) {
+  if (slot && slot.blocked === blocked && slot.allowed === allowed) return slot;
+  const part = (list: string[] | null) => (list === null ? 'shipped' : `list:${list.join('\n')}`);
+  const key = `${part(allowed)}|${part(blocked)}`;
+  if (slot?.key === key) return (slot = { ...slot, blocked, allowed });
+  let filter: SimpleProfanityFilter;
+  let buildFailed = false;
+  try {
+    filter = createProfanityFilter({ moderatorWhitelist: allowed, moderatorBlocklist: blocked });
+  } catch (error) {
+    // An entry the pattern parser rejects must not take every check down with it.
+    logToAxiom({
+      name: 'profanity-list-build-failed',
+      type: 'error',
+      message: 'Managed profanity list failed to build; enforcing the shipped list',
+      // The parser's message can quote the entry it rejected; the list is not for logs.
+      details: { error: error instanceof Error ? error.name : 'unknown' },
+    });
+    filter = createProfanityFilter({ moderatorWhitelist: allowed });
+    buildFailed = true;
+  }
+  slot = { key, blocked, allowed, filter, buildFailed };
+  return slot;
+}
+
+/**
+ * The filter for the server's managed-list checks (masking, search, the trainer, app data), with
+ * the moderators' allow list. Flag off: the shipped block and allow lists.
+ */
+export async function getServerProfanityFilter(): Promise<ServerProfanityFilter> {
+  const lists = await readShared();
+  const { filter, buildFailed } = filterFor(lists);
+  const source = buildFailed ? 'fallback' : lists.source;
+  const metrics = ensureRegisterProfanityListMetrics();
+  metrics.reads.inc({ source });
+  return {
+    filter,
+    source,
+    benign: lists.benign ?? null,
+    countHit: (surface) => metrics.hits.inc({ surface, source }),
+  };
+}
+
+// Keyed on the shared read's array, so a search reuses the filter rather than rebuilding its key.
+let benignSlot: { list: string[] | null; filter: SimpleProfanityFilter } | null = null;
+function benignFilter(list: string[] | null) {
+  if (benignSlot?.list !== list) benignSlot = { list, filter: getProfanityFilter(list) };
+  return benignSlot.filter;
+}
+
+/** The typed query of each search in a site search request body, read leniently. */
+export function siteSearchQueries(body: unknown): string[] {
+  const read = (search: unknown) =>
+    search && typeof search === 'object' && typeof (search as { q?: unknown }).q === 'string'
+      ? [(search as { q: string }).q]
+      : [];
+  const queries =
+    body && typeof body === 'object' ? (body as { queries?: unknown }).queries : undefined;
+  return Array.isArray(queries) ? queries.flatMap(read) : read(body);
+}
+
+/**
+ * Whether a site search must be refused for profanity (civitai.com only; the caller decides the
+ * domain). See `profaneSearchCheck` for which list applies.
+ */
+export async function isProfaneSearch(queries: string[]): Promise<boolean> {
+  return (await profaneSearchCheck(queries)) === 'profane';
+}
+
+/**
+ * `isProfaneSearch`'s verdict. It always checks: with `profanity-managed-list` on, against the
+ * managed list; off (or Flipt unreachable), against what the browser checks (the shipped list and
+ * the moderators' benign words); and when a check throws, against the shipped list. The browser
+ * leaves these searches to the server, so there is no state where neither checks.
+ */
+export async function profaneSearchCheck(queries: string[]): Promise<'clean' | 'profane'> {
+  const texts = queries.filter((query) => query.trim().length > 0);
+  if (!texts.length) return 'clean';
+  const verdict = (filter: { analyze(text: string): { isProfane: boolean } }) =>
+    texts.some((text) => filter.analyze(text).isProfane)
+      ? ('profane' as const)
+      : ('clean' as const);
+  try {
+    const profanity = await getServerProfanityFilter();
+    if (profanity.source === 'shipped') {
+      // Counted too: with the flag off, this is the refusal rate the flip is measured against.
+      const shipped = verdict(benignFilter(profanity.benign ?? null));
+      if (shipped === 'profane') profanity.countHit('search');
+      return shipped;
+    }
+    const result = verdict(profanity.filter);
+    if (result === 'profane') profanity.countHit('search');
+    return result;
+  } catch (error) {
+    logToAxiom({
+      name: 'profanity-search-check-failed',
+      type: 'error',
+      message: 'Site search profanity check failed; checked against the shipped list',
+      details: { error: error instanceof Error ? error.message : String(error) },
+    });
+    const fallback = verdict(getProfanityFilter());
+    if (fallback === 'profane')
+      ensureRegisterProfanityListMetrics().hits.inc({ surface: 'search', source: 'fallback' });
+    return fallback;
+  }
+}

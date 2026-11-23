@@ -244,8 +244,14 @@ describe('ExternalSubmitForm — redesigned wizard', () => {
     await pickClient();
     await expect.element(page.getByTestId('apps-offsite-scope-readonly')).toBeInTheDocument();
     expect(page.getByTestId('sensitive-scope-badge').elements().length).toBeGreaterThan(0);
-    // The picker is gone — no checkboxes.
-    expect(page.getByRole('checkbox').elements()).toHaveLength(0);
+    // The scope picker is gone: the ONLY checkbox is the offline-access declaration, which is
+    // not a scope pick (it is the author's own statement, reviewed like a sensitive scope).
+    const boxes = page.getByRole('checkbox').elements();
+    expect(boxes).toHaveLength(1);
+    expect(
+      boxes[0].closest('[data-testid="apps-offsite-offline-access"]'),
+      'the one checkbox is the offline-access declaration'
+    ).not.toBeNull();
     // Sensitive scope has a required justification input (UserRead = bit 1).
     await expect.element(page.getByTestId('apps-offsite-justification-1')).toBeInTheDocument();
     // Next is BLOCKED until the sensitive justification is filled.

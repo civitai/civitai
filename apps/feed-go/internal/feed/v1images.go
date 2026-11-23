@@ -771,7 +771,8 @@ func publicVideoThumbnail(r RawImage, h V1Hydrated, level int, location string) 
 		return nil, nil
 	}
 	allowed := level & browsing.AllLevels
-	if h.HasThumb && h.Thumb.NsfwLevel != 0 && h.Thumb.NsfwLevel&allowed != 0 {
+	// servableThumbnails: only a servable custom thumbnail is used.
+	if h.HasThumb && h.Thumb.Servable && h.Thumb.NsfwLevel != 0 && h.Thumb.NsfwLevel&allowed != 0 {
 		src, ok := h.Thumb.URL.(string)
 		if !ok {
 			return nil, fallback.New("v1-thumbnail-url") // Node throws on a non-string url
@@ -942,18 +943,20 @@ func heldLevels(ctx context.Context, g V1Gallery, modelIDs []int, unsetReason st
 	return out, nil
 }
 
-// withoutHeldImages leaves out the images above the held gallery level of their post's minor or
-// SFW-only model (getHeldLevelsByPost without owners: no one is exempt on this route).
-func withoutHeldImages(ctx context.Context, d *V1Deps, items []v1Item) ([]v1Item, error) {
-	if len(items) == 0 {
-		return items, nil
-	}
-	postIDs := make([]int, 0, len(items))
-	for _, it := range items {
-		postIDs = append(postIDs, it.postID)
-	}
+// postHold is a post's hold: the minor or SFW-only model its version belongs to, and that model's
+// held gallery level.
+type postHold struct{ modelID, level int }
+
+// heldByPost is getHeldLevelsByPost (src/server/services/model.service.ts) without its owner read: each
+// post (of postIDs) whose version's model is held, with that model's level. The post→version and
+// version→model caches are read only for what the step before found; no version, no hold.
+func heldByPost(ctx context.Context, s modelResolver, g V1Gallery, postIDs []int, unsetReason string) (map[int]postHold, error) {
+	out := map[int]postHold{}
 	postIDs = hydrate.Unique(postIDs)
-	posts, err := d.Sources.PostVersions(ctx, postIDs)
+	if len(postIDs) == 0 {
+		return out, nil
+	}
+	posts, err := s.PostVersions(ctx, postIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -965,9 +968,9 @@ func withoutHeldImages(ctx context.Context, d *V1Deps, items []v1Item) ([]v1Item
 	}
 	versionIDs = hydrate.Unique(versionIDs)
 	if len(versionIDs) == 0 {
-		return items, nil
+		return out, nil
 	}
-	versions, err := d.Sources.VersionModels(ctx, versionIDs)
+	versions, err := s.VersionModels(ctx, versionIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -977,21 +980,43 @@ func withoutHeldImages(ctx context.Context, d *V1Deps, items []v1Item) ([]v1Item
 			modelIDs = append(modelIDs, m)
 		}
 	}
-	levels, err := heldLevels(ctx, d.Gallery, modelIDs, "v1-held-level-unset")
+	levels, err := heldLevels(ctx, g, modelIDs, unsetReason)
 	if err != nil {
 		return nil, err
 	}
-	if len(levels) == 0 {
+	for _, id := range postIDs {
+		if v := posts[id]; v != 0 {
+			if m, ok := versions[v]; ok {
+				if l, held := levels[m]; held {
+					out[id] = postHold{modelID: m, level: l}
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+// withoutHeldImages leaves out the images above the held gallery level of their post's minor or
+// SFW-only model (getHeldLevelsByPost without owners: no one is exempt on this route).
+func withoutHeldImages(ctx context.Context, d *V1Deps, items []v1Item) ([]v1Item, error) {
+	if len(items) == 0 {
+		return items, nil
+	}
+	postIDs := make([]int, 0, len(items))
+	for _, it := range items {
+		postIDs = append(postIDs, it.postID)
+	}
+	holds, err := heldByPost(ctx, d.Sources, d.Gallery, postIDs, "v1-held-level-unset")
+	if err != nil {
+		return nil, err
+	}
+	if len(holds) == 0 {
 		return items, nil
 	}
 	out := items[:0:0]
 	for _, it := range items {
-		if v := posts[it.postID]; v != 0 {
-			if m, ok := versions[v]; ok {
-				if l, held := levels[m]; held && l&it.browsingLevel == 0 {
-					continue
-				}
-			}
+		if h, held := holds[it.postID]; held && h.level&it.browsingLevel == 0 {
+			continue
 		}
 		out = append(out, it)
 	}

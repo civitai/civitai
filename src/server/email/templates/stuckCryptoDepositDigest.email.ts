@@ -24,7 +24,10 @@ export type StuckCryptoDepositDigestData = {
 };
 
 const received = (i: StuckCryptoDepositDigestItem) => {
-  const amount = i.payAmount != null ? `${i.payAmount} ${i.payCurrency.toUpperCase()}` : i.payCurrency.toUpperCase();
+  const amount =
+    i.payAmount != null
+      ? `${i.payAmount} ${i.payCurrency.toUpperCase()}`
+      : i.payCurrency.toUpperCase();
   return i.network ? `${amount} on ${i.network}` : amount;
 };
 
@@ -42,13 +45,22 @@ export const stuckCryptoDepositDigestEmail = createEmail({
           <td style="padding:6px; border-bottom:1px solid #eee;">${i.paymentId}</td>
           <td style="padding:6px; border-bottom:1px solid #eee;">${i.username} (${i.userId})</td>
           <td style="padding:6px; border-bottom:1px solid #eee;">${received(i)}</td>
-          <td style="padding:6px; border-bottom:1px solid #eee;">${i.outcomeAmount != null ? `~${i.outcomeAmount} USDC` : '-'}</td>
-          <td style="padding:6px; border-bottom:1px solid #eee; font-family:Menlo,Consolas,monospace; font-size:12px;">${i.payAddress ?? '-'}</td>
-          <td style="padding:6px; border-bottom:1px solid #eee; font-family:Menlo,Consolas,monospace; font-size:12px;">${i.payinHash ?? '-'}</td>
+          <td style="padding:6px; border-bottom:1px solid #eee;">${
+            i.outcomeAmount != null ? `~${i.outcomeAmount} USDC` : '-'
+          }</td>
+          <td style="padding:6px; border-bottom:1px solid #eee; font-family:Menlo,Consolas,monospace; font-size:12px;">${
+            i.payAddress ?? '-'
+          }</td>
+          <td style="padding:6px; border-bottom:1px solid #eee; font-family:Menlo,Consolas,monospace; font-size:12px;">${
+            i.payinHash ?? '-'
+          }</td>
         </tr>`
       )
       .join('');
     return simpleEmailWithTemplate({
+      icon: '🧾',
+      accent: 'gray',
+      eyebrow: 'Staff: crypto deposits',
       header: `${items.length} crypto deposit${items.length === 1 ? '' : 's'} to review`,
       body: `
       <p>

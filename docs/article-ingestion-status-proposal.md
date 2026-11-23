@@ -180,13 +180,13 @@ export async function recomputeArticleIngestion(articleId: number): Promise<void
 - `src/pages/api/webhooks/image-scan-result.ts` — after each image scan result is processed (it already queries which articles the image belongs to for the debounce logic)
 - `src/pages/api/webhooks/text-moderation-result.ts` — inside the `Article` entity handler, after `recordEntityModerationSuccess`/`Failure`
 - `src/server/services/article.service.ts` upsert path — after `linkArticleContentImages` + `submitTextModeration` (handles the "new article with no images, text pending" base case — writes `ingestion: Pending` explicitly)
-- `src/pages/api/admin/temp/migrate-article-images.ts` — at the end of each processed article
+- `src/server/api-routes/admin/temp/migrate-article-images.ts` — at the end of each processed article
 - `src/pages/api/admin/temp/migrate-article-text-moderation.ts` — **not** strictly needed because the text backfill just submits to xGuard; the webhook handler is what updates state when xGuard responds
 
 **Call sites for `scanRequestedAt`** (set once when scanning is first kicked off):
 
 - `src/server/services/article.service.ts` upsert path — set `scanRequestedAt = new Date()` alongside the `linkArticleContentImages` + `submitTextModeration` calls. This is the "we started scanning" timestamp. Covers both image-bearing and text-only articles because text moderation always fires.
-- `src/pages/api/admin/temp/migrate-article-images.ts` — set `scanRequestedAt` for each legacy article as it's processed by the backfill (if not already set).
+- `src/server/api-routes/admin/temp/migrate-article-images.ts` — set `scanRequestedAt` for each legacy article as it's processed by the backfill (if not already set).
 - `src/pages/api/admin/temp/migrate-article-text-moderation.ts` — set `scanRequestedAt` for text-only legacy articles that have no content images and were missed by the image backfill.
 
 ### Option B — Two booleans (rejected)
@@ -358,7 +358,7 @@ For quick navigation in the next session:
   - `src/pages/api/webhooks/image-scan-result.ts`
   - `src/pages/api/webhooks/text-moderation-result.ts` (entity handler: lines 25-66)
 - Backfills:
-  - `src/pages/api/admin/temp/migrate-article-images.ts`
+  - `src/server/api-routes/admin/temp/migrate-article-images.ts`
   - `src/pages/api/admin/temp/migrate-article-text-moderation.ts`
 - Feature flags: `src/server/services/feature-flags.service.ts` (the `articles` entry)
 - Extraction (already has parity test locked in): `src/server/services/article-content-cleanup.service.ts`, `src/utils/article-helpers.ts`

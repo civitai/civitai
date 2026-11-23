@@ -311,6 +311,15 @@ describe('POST /api/track/block-event — request gates', () => {
     expect(mockGetSession).not.toHaveBeenCalled();
   });
 
+  it('short-circuits in dev', async () => {
+    devStore.isDev = true;
+    const delta = await outcomeDelta(async () => {
+      expect((await post({ events: [event()] })).status).toHaveBeenCalledWith(200);
+    });
+    expect(delta).toEqual({});
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
   it('accepts an object body as well as a string one', async () => {
     expect((await post({ events: [event()] }, { objectBody: true })).status).toHaveBeenCalledWith(
       200
@@ -454,6 +463,26 @@ describe('POST /api/track/block-event — what is stored', () => {
     expect(delta).toEqual({ accepted: 1, undeclared_prop: 1 });
   });
 
+  it.each([
+    ['an enum value in the wrong case', { difficulty: 'Calm' }],
+    ['a numeric string where a number is declared', { seconds: '12' }],
+    ['Infinity', { seconds: Number.POSITIVE_INFINITY }],
+  ])('strips %s and flags the row', async (_label, properties) => {
+    // An object body, because NaN and Infinity do not survive JSON.stringify.
+    const delta = await outcomeDelta(() =>
+      post({ events: [event({ eventName: 'level_cleared', properties })] }, { objectBody: true })
+    );
+    expect(insertedRows()).toEqual([
+      expect.objectContaining({
+        eventName: 'level_cleared',
+        enumProps: {},
+        numProps: {},
+        boolProps: {},
+      }),
+    ]);
+    expect(delta).toEqual({ accepted: 1, invalid_value: 1 });
+  });
+
   it('flags a row once however many of its values are invalid, and keeps the valid one', async () => {
     const delta = await outcomeDelta(() =>
       post({
@@ -484,6 +513,22 @@ describe('POST /api/track/block-event — what is stored', () => {
       events: [event({ eventName: 'level_cleared', properties: { constructor: 'wizard' } })],
     });
     expect(insertedRows()[1].enumProps).toEqual({ constructor: 'wizard' });
+  });
+
+  it('ignores `properties` that is not an object', async () => {
+    const delta = await outcomeDelta(() =>
+      post({
+        events: [
+          event({ eventName: 'level_cleared', properties: ['difficulty', 'calm'] }),
+          event({ eventName: 'level_cleared', properties: 'difficulty=calm' }),
+          event({ eventName: 'level_cleared', properties: null }),
+        ],
+      })
+    );
+    expect(insertedRows().map((r) => [r.enumProps, r.numProps, r.boolProps])).toEqual(
+      Array(3).fill([{}, {}, {}])
+    );
+    expect(delta).toEqual({ accepted: 3 });
   });
 });
 
@@ -684,6 +729,9 @@ describe('POST /api/track/block-event — what is withheld', () => {
 
   it.each([
     ['the production signal is absent', { env: undefined }],
+    ['the production signal has another value', { env: 'staging' }],
+    ['the production signal differs in case', { env: 'Production' }],
+    ['the production signal has whitespace', { env: ' production' }],
     ['IS_PREVIEW is set, despite the signal', { isPreview: true, cacheKeyNamespace: '' }],
     [
       'a cache namespace is set, despite the signal',
@@ -783,6 +831,19 @@ describe('POST /api/track/block-event — the rate limit', () => {
 // ── review-driven cases ──────────────────────────────────────────────────────
 
 describe('POST /api/track/block-event — the block instance id', () => {
+  it.each([
+    ['page_apb_arcade'],
+    ['mbi_01HZX3'],
+    ['bki_01HZX3'],
+    ['bus_pub_01HZX3'],
+    ['bus_view_01HZX3'],
+    ['pdb_01HZX3'],
+  ])('stores the platform-shaped id %s', async (blockInstanceId) => {
+    const delta = await outcomeDelta(() => post({ events: [event({ blockInstanceId })] }));
+    expect(insertedRows()[0].blockInstanceId).toBe(blockInstanceId);
+    expect(delta).toEqual({ accepted: 1 });
+  });
+
   it.each([
     ['free text', 'my diary entry for today'],
     ['an email', 'someone@example.com'],
@@ -936,6 +997,15 @@ describe('POST /api/track/block-event — failures stay inside', () => {
     expect(signal!.aborted).toBe(false);
     vi.advanceTimersByTime(1);
     expect(signal!.aborted).toBe(true);
+  });
+
+  it('does not leave the deadline timer armed after a write that answered', async () => {
+    sessionStore.session = { user: { id: OTHER_VIEWER } };
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(DAY_1_NOON);
+    await post({ events: [event()] });
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('🔴 sheds new batches once 32 writes are in flight, and recovers when they settle', async () => {

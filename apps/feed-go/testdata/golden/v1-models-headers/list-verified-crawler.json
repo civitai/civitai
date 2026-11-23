@@ -1,0 +1,19 @@
+{
+  "name": "list-verified-crawler",
+  "fixture": "list-defaults-lookahead.json",
+  "request": {
+    "headers": {
+      "x-civitai-verified-bot": "googlebot"
+    }
+  },
+  "expect": {
+    "headers": {
+      "vary": "Authorization",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "GET",
+      "cache-control": "max-age=0, private, no-cache",
+      "etag": "\"vsdj7511jd2wl\""
+    }
+  }
+}

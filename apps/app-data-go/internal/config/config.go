@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,15 @@ type Config struct {
 	// Relay is this service's own hub client, which exchanges each user's token for one toward the
 	// adapter. Required with RegistryURL, refused without it. Nil when the registry path is off.
 	Relay *Relay
+	// BlockExchange turns on the exchange of App Block tokens (APP_DATA_BLOCK_EXCHANGE: `true`/`1` on,
+	// unset/`false`/`0` off; default off). On, a block token is exchanged at the hub's block exchange
+	// with the relay client and read through a stream like a hub token; off, it reads REST only and is
+	// never sent to the hub. Needs the registry path.
+	BlockExchange bool
+	// BlockJWKSURL is the site's block-token JWKS (APP_DATA_BLOCK_JWKS_URL, the site's
+	// `/api/v1/block-tokens/jwks`): every block token is verified against it here before it is sent to
+	// the hub (exchange.BlockVerifier). Required with BlockExchange, refused without it.
+	BlockJWKSURL string
 
 	// MaxStreams caps the streams open at once in this process (APP_DATA_MAX_STREAMS, default 100).
 	MaxStreams int
@@ -54,7 +64,56 @@ type Config struct {
 	// registry stalls every read falls back, and this keeps that from becoming unbounded load on the
 	// site. A read over it answers 503.
 	RESTMaxInFlight int
+
+	// Writes turns on the write routes and `info` (APP_DATA_WRITES: `true`/`1` on, unset/`false`/`0`
+	// off; default off). Off, every one of them answers 404, as an unregistered route does. On needs
+	// WritesSigningKey and BlockJWKSURL (block tokens are verified here before a write is forwarded),
+	// but neither the registry path nor the hub: a write is forwarded with the user's own token.
+	Writes bool
+	// WritesSigningKey is the HMAC key shared with the site, which signs every forward
+	// (APP_DATA_WRITES_SIGNING_KEY; at least 32 bytes). Required with Writes, refused without it.
+	WritesSigningKey string
+	// WritesSiteURL is the site the writes are forwarded to (APP_DATA_WRITES_SITE_URL; default
+	// RESTURL, the same site): `/api/internal/blocks/storage/…` is appended to its path.
+	WritesSiteURL string
+	// WritesTimeout bounds one forward (APP_DATA_WRITES_TIMEOUT_MS, default 10000, from 2000 to
+	// MaxWritesTimeout). It must exceed the site's permission-hook client timeout (the hook's
+	// timeoutMs, at most 500, plus 450 ms: doc-store-hook.ts hookClientTimeoutMs), plus the rest of
+	// the store's chain; a forward past it answers 504 with its outcome unknown.
+	WritesTimeout time.Duration
+
+	// ignoredWrites names the APP_DATA_WRITES_* settings set while APP_DATA_WRITES is off
+	// (comma-separated, so Config stays comparable); Warnings reports them.
+	ignoredWrites string
 }
+
+// MaxWritesTimeout caps APP_DATA_WRITES_TIMEOUT_MS so a draining replica can let its last forward
+// finish inside the pod's termination: the drain waits for in-flight forwards for up to the timeout
+// plus ShutdownMargin, after a preStop pause of PreStopPause, and the whole must fit the termination
+// grace period, TerminationGrace (20 s + 2 s + 5 s = 27 s, under 30 s). Raising the cap means raising
+// the grace period first. config_test pins the arithmetic.
+const MaxWritesTimeout = 20 * time.Second
+
+// The deployment facts MaxWritesTimeout is sized against.
+const (
+	// ShutdownMargin is how much longer than the forward timeout the drain waits (cmd/app-data-go).
+	ShutdownMargin = 2 * time.Second
+	// PreStopPause is the deployment's preStop pause before the process is signalled.
+	PreStopPause = 5 * time.Second
+	// TerminationGrace is the deployment's terminationGracePeriodSeconds.
+	TerminationGrace = 30 * time.Second
+)
+
+// Warnings are settings that were read but do nothing; the start logs each and goes on.
+func (c *Config) Warnings() []string {
+	if c.ignoredWrites == "" {
+		return nil
+	}
+	return []string{c.ignoredWrites + " set with APP_DATA_WRITES off: ignored"}
+}
+
+// minSigningKeyBytes is the shortest signing key accepted: 256 bits, the HMAC-SHA256 block's half.
+const minSigningKeyBytes = 32
 
 // Relay is the hub client the service exchanges users' tokens as (exchange.Config).
 type Relay struct {
@@ -102,6 +161,30 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 		return nil, errors.New("the relay client is set without APP_DATA_REGISTRY_URL; set both or neither")
 	}
 	c.Relay = relay
+	switch v := getenv("APP_DATA_BLOCK_EXCHANGE"); v {
+	case "", "false", "0":
+	case "true", "1":
+		if c.RegistryURL == "" {
+			return nil, errors.New("APP_DATA_BLOCK_EXCHANGE needs the registry path (APP_DATA_REGISTRY_URL and the relay client)")
+		}
+		c.BlockExchange = true
+	default:
+		return nil, errors.New("APP_DATA_BLOCK_EXCHANGE must be true, 1, false or 0")
+	}
+	if err := writesFromEnv(getenv, c); err != nil {
+		return nil, err
+	}
+	c.BlockJWKSURL = getenv("APP_DATA_BLOCK_JWKS_URL")
+	switch {
+	case c.BlockExchange && c.BlockJWKSURL == "":
+		return nil, errors.New("APP_DATA_BLOCK_EXCHANGE needs APP_DATA_BLOCK_JWKS_URL: block tokens are verified here before they are sent to the hub")
+	case c.Writes && c.BlockJWKSURL == "":
+		return nil, errors.New("APP_DATA_WRITES needs APP_DATA_BLOCK_JWKS_URL: block tokens are verified here before a write is forwarded")
+	case !c.BlockExchange && !c.Writes && c.BlockJWKSURL != "":
+		return nil, errors.New("APP_DATA_BLOCK_JWKS_URL is set without APP_DATA_BLOCK_EXCHANGE or APP_DATA_WRITES; set both or neither")
+	case c.BlockJWKSURL != "" && !secureURL(c.BlockJWKSURL):
+		return nil, errors.New("APP_DATA_BLOCK_JWKS_URL must be an https URL (http only to a cluster-local *.svc host)")
+	}
 
 	num := func(name string, def, lo, hi int) int {
 		if err != nil {
@@ -135,6 +218,50 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 		return nil, errors.New("APP_DATA_LIVE_WAIT_MS must be less than APP_DATA_REQUEST_DEADLINE_MS, so the REST fallback has time")
 	}
 	return c, nil
+}
+
+// writesFromEnv reads the write settings into c. With APP_DATA_WRITES off they do nothing: any that
+// is set is ignored and named in a warning (Warnings), so turning the writes off never needs the
+// other settings removed first.
+func writesFromEnv(getenv func(string) string, c *Config) error {
+	key, site, timeout := getenv("APP_DATA_WRITES_SIGNING_KEY"), getenv("APP_DATA_WRITES_SITE_URL"), getenv("APP_DATA_WRITES_TIMEOUT_MS")
+	switch v := getenv("APP_DATA_WRITES"); v {
+	case "", "false", "0":
+		var set []string
+		for name, v := range map[string]string{"APP_DATA_WRITES_SIGNING_KEY": key, "APP_DATA_WRITES_SITE_URL": site, "APP_DATA_WRITES_TIMEOUT_MS": timeout} {
+			if v != "" {
+				set = append(set, name)
+			}
+		}
+		// Names only, never the key.
+		sort.Strings(set)
+		c.ignoredWrites = strings.Join(set, ",")
+		return nil
+	case "true", "1":
+	default:
+		return errors.New("APP_DATA_WRITES must be true, 1, false or 0")
+	}
+	switch {
+	case key == "":
+		return errors.New("APP_DATA_WRITES needs APP_DATA_WRITES_SIGNING_KEY: every forward is signed with it")
+	case len(key) < minSigningKeyBytes:
+		// The length only; the key never appears.
+		return fmt.Errorf("APP_DATA_WRITES_SIGNING_KEY must be at least %d bytes", minSigningKeyBytes)
+	}
+	if site == "" {
+		site = c.RESTURL
+	}
+	// Every forward carries the user's bearer token.
+	if !secureURL(site) {
+		return errors.New("APP_DATA_WRITES_SITE_URL must be an https URL (http only to a cluster-local *.svc host)")
+	}
+	ms, err := intEnv(getenv, "APP_DATA_WRITES_TIMEOUT_MS", 10_000, 2_000, int(MaxWritesTimeout/time.Millisecond))
+	if err != nil {
+		return err
+	}
+	c.Writes, c.WritesSigningKey, c.WritesSiteURL = true, key, site
+	c.WritesTimeout = time.Duration(ms) * time.Millisecond
+	return nil
 }
 
 // relayFromEnv reads the relay client: nil when every setting is unset; an error when only some are,

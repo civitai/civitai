@@ -1,4 +1,5 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
+import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 import {
   agentReviewSummaryFromQueueRow,
   isImpersonationCheckStale,
@@ -42,7 +43,10 @@ import {
 } from '~/server/schema/blocks/publish-request.schema';
 // Pure shared module (only depends on token-scope.constants) — safe to import
 // statically without coupling to env/Prisma, so the pure-helper tests still run.
-import { assertSensitiveScopesJustified } from '~/shared/constants/block-scope.constants';
+import {
+  appBlockOauthCeiling,
+  assertSensitiveScopesJustified,
+} from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest and trims the
 // string fields the validator measures trimmed.
 import {
@@ -1562,6 +1566,14 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     const { applyForkSessionToFirstPublishRequest } = await import('./app-fork-start.service');
     await applyForkSessionToFirstPublishRequest({ publishRequestId, slug, submittedByUserId });
   }
+
+  // App Assistant session trace: fired, never awaited, never throws, so a trace that fails or
+  // hangs can neither fail nor slow a submit.
+  void import('~/server/services/app-assistant/submission-trace.service')
+    .then(({ recordSubmissionTrace }) =>
+      recordSubmissionTrace({ publishRequestId, slug, submittedByUserId, bundleBuffer })
+    )
+    .catch(() => undefined);
 
   // (submit-draft) W13 draft-at-submit — mint the pre-approval on-site draft
   // `AppListing` now that the pending request exists. Ordered AFTER the request create
@@ -3493,9 +3505,13 @@ async function approveRequestUnderClaim(
       appId: true,
       repoUrl: true,
       trustTier: true,
+      status: true,
       app: { select: { allowedScopes: true, allowedOrigins: true, userId: true } },
     },
   });
+  // A remix app is edited only at /moderator/remix-apps. The update below re-checks status, so no lock.
+  if (existingAppBlock && REMIX_STATUSES.includes(existingAppBlock.status))
+    throw new Error(`Cannot approve: ${request.slug} is a remix app.`);
   const isFirstVersion = !existingAppBlock;
 
   // A request filed before the owner accepted must not go live.
@@ -3782,9 +3798,10 @@ async function approveRequestUnderClaim(
       // matches the pattern used by buzz-attribution.service.ts.
       const code = (err as { code?: unknown })?.code;
       if (code !== 'P2002') throw err;
-      const existing = await dbRead.oauthClient.findUnique({
+      // primary: the ceiling re-derived below must keep a bit granted just before this approve.
+      const existing = await dbWrite.oauthClient.findUnique({
         where: { id: oauthClientId },
-        select: { id: true },
+        select: { id: true, allowedScopes: true },
       });
       if (!existing) {
         // P2002 without a hit on findUnique would indicate a foreign
@@ -3797,7 +3814,10 @@ async function approveRequestUnderClaim(
       // the inherited interactive grants.
       await dbWrite.oauthClient.update({
         where: { id: oauthClientId },
-        data: { grants: [], allowedScopes: derivedOauthCeiling },
+        data: {
+          grants: [],
+          allowedScopes: appBlockOauthCeiling(derivedOauthCeiling, existing.allowedScopes),
+        },
       });
     }
 
@@ -3908,8 +3928,9 @@ async function approveRequestUnderClaim(
     // Subsequent version: refresh manifest + version + approvedScopes
     // on the existing row. currentVersionSha is stamped in step (6) below,
     // right after the Forgejo commit returns the approved sha.
+    // Throws (P2025) for a row that became a remix app since the guard above.
     await dbWrite.appBlock.update({
-      where: { id: appBlockId },
+      where: { id: appBlockId, status: { notIn: REMIX_STATUSES } },
       data: {
         manifest: manifest as object,
         version: request.version,
@@ -3920,14 +3941,18 @@ async function approveRequestUnderClaim(
       },
     });
     // A1 fix — keep the OauthClient ceiling in sync with the newly-approved
-    // manifest. Re-cap to the derived bitmask so the policy ceiling never
-    // exceeds what this version's manifest declares, and force grants:[] so an
+    // manifest. Re-cap to the derived bitmask (plus any operator-granted bit the
+    // client already holds, via appBlockOauthCeiling) so the ceiling does not
+    // exceed what this version's manifest declares, and force grants:[] so an
     // older row created before this fix (Full + interactive grants) is
     // self-healed on its next approve. This is byte-for-byte scoped to the
     // app-block client (existingAppBlock.appId is the `appblk-<slug>` id).
     await dbWrite.oauthClient.update({
       where: { id: existingAppBlock.appId },
-      data: { grants: [], allowedScopes: derivedOauthCeiling },
+      data: {
+        grants: [],
+        allowedScopes: appBlockOauthCeiling(derivedOauthCeiling, client.allowedScopes),
+      },
     });
   }
 
@@ -4710,10 +4735,18 @@ async function approveRequestUnderClaim(
           }`
       );
     }
-    const { takeDownLiveApp } = await import('./live-unpublish.service');
-    const { liveNote } = await takeDownLiveApp(request.slug).catch(() => ({ liveNote: undefined }));
+    // Before the takedown wait: the orchestrator must stop honouring the revoked tokens at once.
     const { forgetRevokedAppTokens } = await import('./app-block-token-revoke.service');
     await forgetRevokedAppTokens(revokedTokens);
+    // Awaited, not fire-and-forget: the moderator must hear if the previous version may still serve.
+    const { takeDownLiveApp, LATE_HOLD_TAKEDOWN_WAIT_MS, unconfirmedTakedownNote } = await import(
+      './live-unpublish.service'
+    );
+    const { liveNote } = await takeDownLiveApp(request.slug, {
+      awaitMs: LATE_HOLD_TAKEDOWN_WAIT_MS,
+    }).catch(() => ({
+      liveNote: unconfirmedTakedownNote(request.slug, 'its live takedown could not be started'),
+    }));
     return {
       publishRequestId: request.id,
       appBlockId,

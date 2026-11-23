@@ -26,7 +26,7 @@ vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
   trackModActivity,
 }));
 
-const handler = (await import('~/pages/api/admin/provider-download-token')).default;
+const handler = (await import('~/server/api-routes/admin/provider-download-token')).default;
 const { getLiveProviderTokens } = await import(
   '~/server/services/provider-download/provider-token.store'
 );

@@ -2,6 +2,7 @@ import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import { TRPCError } from '@trpc/server';
 import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { rateLimit } from '~/server/middleware.trpc';
+import { refuseProfaneSearch } from '~/server/utils/refuse-profane-search';
 import {
   type SemanticImageSearchInput,
   semanticImageSearchSchema,
@@ -77,6 +78,7 @@ const holdOwnImages = async (started: number) => {
 
 // Timed first, so flag and rate-limit refusals land on the dashboard too.
 const semanticSearchProcedure = publicProcedure.use(timeSemanticSearch('images'));
+const semanticVideoSearchProcedure = publicProcedure.use(timeSemanticSearch('videos'));
 
 export const semanticImageSearchRouter = router({
   search: semanticSearchProcedure
@@ -88,6 +90,7 @@ export const semanticImageSearchRouter = router({
       ])
     )
     .input(semanticImageSearchSchema)
+    .use(refuseProfaneSearch)
     .use(imageSearchOrOwnImages)
     .use(ownImagesRateLimit)
     .query(async ({ input, ctx }) => {
@@ -141,6 +144,46 @@ export const semanticImageSearchRouter = router({
           correctedQuery: undefined,
           latencyMs: 0,
         };
+      }
+      return { ...result, latencyMs };
+    }),
+
+  searchVideos: semanticVideoSearchProcedure
+    .use(isFlagProtected('semanticVideoSearch'))
+    // As search: signed-out visitors share an IP bucket, so theirs is lower.
+    .use(
+      rateLimit([
+        { limit: 20, period: 60 },
+        { limit: 60, period: 60, userReq: () => true },
+      ])
+    )
+    .input(semanticImageSearchSchema)
+    .use(refuseProfaneSearch)
+    .query(async ({ input, ctx }) => {
+      const started = Date.now();
+      if (input.modelVersionIds?.length && !guardFlagEnabled(ctx, 'imageSearchResources'))
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Searching by resource is not available yet',
+        });
+      const result = await searchSemanticImages({
+        input,
+        user: ctx.user,
+        ...credentialViews(ctx),
+        domain: getRequestBoardDomainColor(ctx.req),
+        track: ctx.track,
+        collection: 'videos',
+      });
+      const latencyMs = Date.now() - started;
+      if (!input.cursor) {
+        const { query, imageId, cursor, limit, ...filters } = input;
+        void ctx.track
+          .search({
+            query: query ?? '',
+            index: 'videos_semantic',
+            filters: { ...filters, imageId, resultCount: result.items.length, latencyMs },
+          })
+          .catch(() => undefined);
       }
       return { ...result, latencyMs };
     }),
