@@ -1,5 +1,11 @@
 import { Button, Text } from '@mantine/core';
-import { IconArrowRight, IconClock, IconHeart, IconPhoto } from '@tabler/icons-react';
+import {
+  IconArrowRight,
+  IconClock,
+  IconHeart,
+  IconPhoto,
+  IconWallpaper,
+} from '@tabler/icons-react';
 import React from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
@@ -13,6 +19,8 @@ import { useAddToShowcaseAction } from '~/components/Profile/AddToShowcaseMenuIt
 import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import { ProfileSection, ProfileSectionPreview } from '~/components/Profile/ProfileSection';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 import { ArticleSort, ImageSort } from '~/server/common/enums';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -97,6 +105,19 @@ function OwnerImageActions({ image }: { image: ImagesInfiniteModel }) {
     entityType: 'Image',
     entityId: image.id,
   });
+  const currentUser = useCurrentUser();
+  const utils = trpc.useUtils();
+  const setBackground = trpc.userProfile.setBackground.useMutation({
+    onSuccess: async () => {
+      await utils.userProfile.customization.invalidate();
+      showSuccessNotification({ message: 'Set as your page background' });
+    },
+    onError: (error) =>
+      showErrorNotification({
+        title: 'Could not set your background',
+        error: new Error(error.message),
+      }),
+  });
 
   return (
     <div className="flex flex-wrap gap-2">
@@ -109,6 +130,17 @@ function OwnerImageActions({ image }: { image: ImagesInfiniteModel }) {
       >
         Add to Showcase
       </Button>
+      {currentUser?.isPaidMember && (
+        <Button
+          variant="default"
+          size="compact-sm"
+          leftSection={<IconWallpaper size={14} />}
+          onClick={() => setBackground.mutate({ imageId: image.id })}
+          loading={setBackground.isPending}
+        >
+          Set as background
+        </Button>
+      )}
       {image.postId && (
         <Button
           component={NextLink}

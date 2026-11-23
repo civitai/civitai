@@ -122,7 +122,10 @@
     padding: var(--mantine-spacing-md);
     border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
     border-radius: var(--mantine-radius-md);
-    background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
+    background: var(
+      --profile-card-bg,
+      light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))
+    );
   }
 
   & .title {

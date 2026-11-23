@@ -7,6 +7,8 @@ import {
   Chip,
   CloseButton,
   Collapse,
+  ColorInput,
+  Slider,
   Divider,
   Group,
   Input,
@@ -32,7 +34,16 @@ import {
   InputSelect,
   InputCosmeticSelect,
   InputChipGroup,
+  InputRTE,
 } from '~/libs/form';
+import { useFormContext } from 'react-hook-form';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { suggestedCardColor } from '~/components/Profile/profile-card-color';
+import { CREATOR_STUDIO_URL } from '~/shared/constants/creator-studio.constants';
+import {
+  profileAboutMaxLength,
+  profileCardOpacityDefault,
+} from '~/server/schema/user-profile.schema';
 import type {
   ProfileSectionSchema,
   PrivacySettingsSchema,
@@ -178,6 +189,8 @@ export default function UserProfileEditModal() {
   const { mutate, isPending: isUpdating } = trpc.userProfile.update.useMutation({
     onSuccess: (data) => {
       if (currentUser) {
+        utils.userProfile.customization.invalidate();
+        utils.userProfile.about.invalidate();
         // The update returns the profile without the showcase hat, which is read beside it.
         utils.userProfile.get.setData({ username: currentUser.username }, (old) => ({
           ...data,
@@ -215,6 +228,16 @@ export default function UserProfileEditModal() {
   const { isLoading: loadingProfile, data: user } = trpc.userProfile.get.useQuery(
     { username: currentUser ? currentUser.username : '' },
     { enabled: !!currentUser?.username }
+  );
+  const redesign = !!featureFlags.profileRedesign;
+  const { data: customization, isLoading: loadingCustomization } =
+    trpc.userProfile.customization.useQuery(
+      { userId: user?.id ?? 0 },
+      { enabled: redesign && !!user?.id }
+    );
+  const { data: aboutData, isLoading: loadingAbout } = trpc.userProfile.about.useQuery(
+    { userId: user?.id ?? 0 },
+    { enabled: redesign && !!user?.id }
   );
   // claimKey is null on anyone else's profile; this editor only ever loads the owner's.
   const owned = useMemo(
@@ -379,8 +402,10 @@ export default function UserProfileEditModal() {
 
   const publicSettings = user?.publicSettings as UserPublicSettingsSchema;
 
+  // With the redesign, the form waits for its own reads so the first snapshot holds their values.
+  const redesignLoaded = !redesign || (!!customization && !!aboutData);
   useEffect(() => {
-    if (user && user?.profile) {
+    if (user && user?.profile && redesignLoaded) {
       const equippedCosmetics = owned
         .filter((c) => !!c.equippedAt)
         .map(({ cosmetic, data, ...rest }) => ({ ...rest, ...cosmetic }));
@@ -442,13 +467,22 @@ export default function UserProfileEditModal() {
         creatorCardStatsPreferences:
           publicSettings?.creatorCardStatsPreferences ?? creatorCardStatsDefaults,
         privacySettings: user.profile.privacySettings as PrivacySettingsSchema,
+        ...(redesign && {
+          backgroundImage: (customization?.stored?.backgroundImage ??
+            null) as unknown as FormDataSchema['backgroundImage'],
+          sfwBackgroundImage: (customization?.stored?.sfwBackgroundImage ??
+            null) as unknown as FormDataSchema['sfwBackgroundImage'],
+          cardColor: customization?.stored?.cardColor ?? null,
+          cardOpacity: customization?.stored?.cardOpacity ?? null,
+          about: aboutData?.about ?? null,
+        }),
       };
 
       if (!previousData.current) previousData.current = formData;
 
       form.reset(formData);
     }
-  }, [user]);
+  }, [user, redesignLoaded]);
 
   const handleClose = () => dialog.onClose();
   const handleSubmit = (data: FormDataSchema) => {
@@ -502,7 +536,10 @@ export default function UserProfileEditModal() {
       });
   };
 
-  const isLoading = loadingProfile || loadingLeaderboards;
+  const isLoading =
+    loadingProfile ||
+    loadingLeaderboards ||
+    (redesign && !!user?.id && (loadingCustomization || loadingAbout));
 
   if (!user && !isLoading) {
     return (
@@ -529,6 +566,7 @@ export default function UserProfileEditModal() {
   }
 
   const loading = isUpdating || updateUserMutation.isPending;
+  const isPaidMember = !!currentUser?.isPaidMember;
 
   const templateImage = profilePicture?.url ?? profileImage;
   const userWithCosmetics: UserWithCosmetics | null = user
@@ -799,21 +837,30 @@ export default function UserProfileEditModal() {
         // Im aware ideally this should ideally be 450, but images will look better on a higher res here
         previewWidth={constants.profile.coverImageWidth}
       />
-      <InputTextArea
-        autosize
-        name="message"
-        description="Have something you want to share with people visiting your profile? Put it here and we'll display it at the top of your page"
-        maxLength={constants.profile.messageMaxLength}
-        labelProps={{ style: { width: '100%' } }}
-        label={
-          <Group className="w-full" justify="space-between">
-            <Text>Announcement</Text>
-            <Text size="xs">
-              {message?.length ?? 0}/{constants.profile.messageMaxLength}
-            </Text>
-          </Group>
-        }
-      />
+      {redesign ? (
+        <Text size="sm" c="dimmed">
+          Profile announcements are now part of creator announcements.{' '}
+          <Text component="a" href={`${CREATOR_STUDIO_URL}/announcements`} c="blue" inherit>
+            Manage your announcements
+          </Text>
+        </Text>
+      ) : (
+        <InputTextArea
+          autosize
+          name="message"
+          description="Have something you want to share with people visiting your profile? Put it here and we'll display it at the top of your page"
+          maxLength={constants.profile.messageMaxLength}
+          labelProps={{ style: { width: '100%' } }}
+          label={
+            <Group className="w-full" justify="space-between">
+              <Text>Announcement</Text>
+              <Text size="xs">
+                {message?.length ?? 0}/{constants.profile.messageMaxLength}
+              </Text>
+            </Group>
+          }
+        />
+      )}
       <InputTextArea
         name="bio"
         labelProps={{ style: { width: '100%' } }}
@@ -841,6 +888,17 @@ export default function UserProfileEditModal() {
         }
         maxLength={constants.profile.locationMaxLength}
       />
+      {redesign && (
+        <InputRTE
+          name="about"
+          label="About"
+          description="A longer introduction, shown on your About tab."
+          editorSize="md"
+          includeControls={['heading', 'formatting', 'list', 'link']}
+          withLinkValidation
+        />
+      )}
+      {redesign && <PageCustomizationFields cover={user?.profile?.defaultCoverImage ?? null} />}
     </>
   );
   const civitaiComGroup = (
@@ -856,34 +914,44 @@ export default function UserProfileEditModal() {
         aspectRatio={constants.profile.coverImageAspectRatio}
         previewWidth={constants.profile.coverImageWidth}
       />
-      <Stack gap="xs">
-        <Switch
-          label="Different announcement on civitai.com"
-          checked={sfwMessage != null}
-          onChange={(e) =>
-            form.setValue('sfwMessage', e.currentTarget.checked ? '' : null, {
-              shouldDirty: true,
-            })
-          }
+      {redesign && isPaidMember && (
+        <InputSimpleImageUpload
+          name="sfwBackgroundImage"
+          label="Page background (civitai.com)"
+          description="Leave empty to use the page background above. Only a safe-for-work image shows on civitai.com."
+          previewWidth={constants.profile.coverImageWidth}
         />
-        {sfwMessage != null && (
-          <InputTextArea
-            autosize
-            name="sfwMessage"
-            description="Leave blank to show no announcement on civitai.com."
-            maxLength={constants.profile.messageMaxLength}
-            labelProps={{ style: { width: '100%' } }}
-            label={
-              <Group className="w-full" justify="space-between">
-                <Text>Announcement (civitai.com)</Text>
-                <Text size="xs">
-                  {sfwMessage.length}/{constants.profile.messageMaxLength}
-                </Text>
-              </Group>
+      )}
+      {!redesign && (
+        <Stack gap="xs">
+          <Switch
+            label="Different announcement on civitai.com"
+            checked={sfwMessage != null}
+            onChange={(e) =>
+              form.setValue('sfwMessage', e.currentTarget.checked ? '' : null, {
+                shouldDirty: true,
+              })
             }
           />
-        )}
-      </Stack>
+          {sfwMessage != null && (
+            <InputTextArea
+              autosize
+              name="sfwMessage"
+              description="Leave blank to show no announcement on civitai.com."
+              maxLength={constants.profile.messageMaxLength}
+              labelProps={{ style: { width: '100%' } }}
+              label={
+                <Group className="w-full" justify="space-between">
+                  <Text>Announcement (civitai.com)</Text>
+                  <Text size="xs">
+                    {sfwMessage.length}/{constants.profile.messageMaxLength}
+                  </Text>
+                </Group>
+              }
+            />
+          )}
+        </Stack>
+      )}
       <Stack gap="xs">
         <Switch
           label="Different bio on civitai.com"
@@ -969,13 +1037,22 @@ export default function UserProfileEditModal() {
     {
       value: 'page',
       label: 'Profile page',
-      fields: ['bio', 'coverImage', 'location', 'message'],
+      fields: [
+        'bio',
+        'coverImage',
+        'location',
+        'message',
+        'about',
+        'backgroundImage',
+        'cardColor',
+        'cardOpacity',
+      ],
       content: profilePageGroup,
     },
     {
       value: 'com',
       label: 'Civitai.com',
-      fields: ['sfwBio', 'sfwCoverImage', 'sfwMessage'],
+      fields: ['sfwBio', 'sfwCoverImage', 'sfwMessage', 'sfwBackgroundImage'],
       content: civitaiComGroup,
     },
     ...(!!user?.profile
@@ -1115,6 +1192,70 @@ export function ProfilePreview({
           withUsername
         />
       </Paper>
+    </Stack>
+  );
+}
+
+/** Members-only page background, card colour and opacity (profile redesign). */
+function PageCustomizationFields({ cover }: { cover: { hash?: string | null } | null }) {
+  const currentUser = useCurrentUser();
+  const form = useFormContext<FormDataSchema>();
+  const [background, cardColor, cardOpacity] = form.watch([
+    'backgroundImage',
+    'cardColor',
+    'cardOpacity',
+  ]);
+  const suggestion = suggestedCardColor(
+    (background as { hash?: string | null } | null | undefined)?.hash ?? cover?.hash
+  );
+
+  if (!currentUser?.isPaidMember)
+    return (
+      <Paper withBorder radius="md" p="sm">
+        <Text size="sm" fw={500}>
+          Page background and card colour
+        </Text>
+        <Text size="xs" c="dimmed">
+          Members can set a background for their whole profile page and tint its cards.{' '}
+          <Text component={NextLink} href="/pricing" c="blue" inherit>
+            Become a member
+          </Text>
+        </Text>
+      </Paper>
+    );
+
+  return (
+    <Stack gap="sm">
+      <Divider label="Members" labelPosition="left" />
+      <InputSimpleImageUpload
+        name="backgroundImage"
+        label="Page background"
+        description="Shown behind your whole profile page."
+        previewWidth={constants.profile.coverImageWidth}
+      />
+      <ColorInput
+        label="Card colour"
+        format="hex"
+        value={cardColor ?? ''}
+        onChange={(value) => form.setValue('cardColor', value || null, { shouldDirty: true })}
+        swatches={suggestion ? [suggestion] : undefined}
+        description={
+          suggestion && suggestion !== cardColor
+            ? 'The swatch is a colour taken from your background or cover.'
+            : undefined
+        }
+        error={form.formState.errors.cardColor?.message}
+      />
+      <Input.Wrapper label="Card opacity">
+        <Slider
+          min={60}
+          max={100}
+          step={5}
+          value={cardOpacity ?? profileCardOpacityDefault}
+          onChange={(value) => form.setValue('cardOpacity', value, { shouldDirty: true })}
+          label={(value) => `${value}%`}
+        />
+      </Input.Wrapper>
     </Stack>
   );
 }
