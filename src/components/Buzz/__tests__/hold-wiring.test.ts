@@ -3,6 +3,7 @@ import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { stripComments } from '../../../../test/strip-comments';
 
+// Pins the decision made in civitai/civitai#10103.
 // The request popup must never place its hold on the back of a Buzz purchase. The rule lives in
 // onPurchaseSuccessAction and serviceHoldButtonProps (each tested on its values); these pin that
 // the two call sites use them. Rendering the real path needs a tRPC wire harness the repo does not
@@ -19,14 +20,16 @@ describe('hold wiring', () => {
     const buttons = source.match(/<BuzzTransactionButton\b[\s\S]*?\/>/g) ?? [];
     expect(buttons).toHaveLength(1);
     expect(source.match(/serviceHoldButtonProps\(/g) ?? []).toHaveLength(1);
-    expect(squash(buttons[0])).toContain('{...serviceHoldButtonProps(offering.price)}');
+    const [button = ''] = buttons;
+    expect(squash(button)).toContain('{...serviceHoldButtonProps(offering.price)}');
   });
 
   it('no attribute on that button sets what the spread supplies, before or after it', () => {
     const source = read('src/components/CreatorShop/Services/deals/ServiceRequestModal.tsx');
     const buttons = source.match(/<BuzzTransactionButton\b[\s\S]*?\/>/g) ?? [];
     expect(buttons).toHaveLength(1);
-    const button = squash(buttons[0]);
+    const [element = ''] = buttons;
+    const button = squash(element);
     expect(button).not.toContain('performTransactionOnPurchase=');
     expect(button).not.toContain('label=');
     expect(button).not.toContain('aria-label=');
@@ -37,7 +40,8 @@ describe('hold wiring', () => {
     const calls = source.match(/onBuyBuzz\(\{[\s\S]*?\}\);/g) ?? [];
     expect(calls).toHaveLength(1);
     expect(source.match(/onPurchaseSuccess:/g) ?? []).toHaveLength(1);
-    expect(squash(calls[0])).toContain(
+    const [call = ''] = calls;
+    expect(squash(call)).toContain(
       'onPurchaseSuccess:onPurchaseSuccessAction(performTransactionOnPurchase,onPerformTransaction),'
     );
   });
