@@ -45,7 +45,9 @@ const {
   mockIsAppBlocksAuthorEnabled: vi.fn<(opts: { user: unknown }) => Promise<boolean>>(
     async () => true
   ),
-  mockTakeSubmitSlot: vi.fn<(subject: string) => Promise<unknown>>(async () => ({ ok: true })),
+  mockTakeSubmitSlot: vi.fn<(subject: string, user: unknown) => Promise<unknown>>(async () => ({
+    ok: true,
+  })),
   mockSubmitVersion: vi.fn<(...args: any[]) => Promise<any>>(),
 }));
 
@@ -242,10 +244,11 @@ describe('POST /api/blocks/submit-version', () => {
       reason: 'limited',
       retryAfterSeconds: 37,
       used: 11,
+      limit: 10,
     });
     const res = makeRes();
     await invoke(makeReq({ body: { bundleBase64 } }), res);
-    expect(mockTakeSubmitSlot).toHaveBeenCalledWith('user:42');
+    expect(mockTakeSubmitSlot).toHaveBeenCalledWith('user:42', expect.objectContaining({ id: 42 }));
     expect(res._status).toBe(429);
     expect(res.setHeader).toHaveBeenCalledWith('Retry-After', '37');
     // A product allowance: the window's count against its 10 a minute.

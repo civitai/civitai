@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { getUsageLimitDef } from '~/shared/constants/usage-limits';
 
 /**
  * Per-instance fixed-window rate limit for the App Blocks TIP endpoint
@@ -88,7 +89,9 @@ export const BLOCK_TIP_MAX_PER_TIP = 5_000;
 // appBlockId, mirroring the per-user daily gen cap, so a publisher can't multiply the
 // ceiling by spinning up N blocks). Keep it BELOW every tier's gen daily cap
 // (`resolveUserAppCaps`) because tips are irreversible transfers to third parties.
-export const BLOCK_TIP_CAP_PER_DAY = 25_000;
+// The CODE DEFAULT, the registry's `apps.tip-daily`: the cap enforced is resolved per user
+// (`resolveUserAppLimit`), which a `usage-limits` KeyValue override can change.
+export const BLOCK_TIP_CAP_PER_DAY = getUsageLimitDef('apps.tip-daily').base;
 // 25h TTL: covers a UTC-day window plus skew; the key is re-derived per day so a
 // stale counter never bleeds into the next window.
 const BLOCK_TIP_CAP_TTL_SECONDS = 25 * 60 * 60;
@@ -167,13 +170,17 @@ export type BlockTipAllowance = { cap: number; spent: number; remaining: number 
  * tip past a ceiling the enforcing reserve would then reject; failing closed
  * keeps the read honest.
  */
-export async function readBlockTipAllowance(userId: number): Promise<BlockTipAllowance> {
+export async function readBlockTipAllowance(
+  userId: number,
+  /** The user's resolved daily cap (`resolveUserAppLimit('apps.tip-daily', …)`), as the tip enforces it. */
+  cap: number
+): Promise<BlockTipAllowance> {
   const key = tipCapRedisKey(userId);
   const raw = await sysRedis.get(key);
   const parsed = raw == null ? 0 : Number.parseInt(raw, 10);
   const spent = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-  const remaining = Math.max(0, BLOCK_TIP_CAP_PER_DAY - spent);
-  return { cap: BLOCK_TIP_CAP_PER_DAY, spent, remaining };
+  const remaining = Math.max(0, cap - spent);
+  return { cap, spent, remaining };
 }
 
 // ── Tip IDEMPOTENCY (item 2, tip half) ────────────────────────────────────────

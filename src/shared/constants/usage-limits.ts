@@ -4,6 +4,7 @@ import { isBetweenToday } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
 import type { RateLimitKind } from '~/shared/utils/rate-limit-meta';
+import { appUsageLimitDefs } from '~/shared/constants/app-usage-limits';
 
 /**
  * Every tunable usage limit, keyed by the id clients see on a 429 and on `/api/v1/me/limits`.
@@ -59,6 +60,13 @@ export type UsageLimitDef = UsageLimitValues & {
   appliesTo?: 'first-day';
   /** A gate (a limit-0 block) that overrides may not change. */
   configurable?: false;
+  /**
+   * Code-only: an ABUSE limit whose refusal still reports its counts (`limit`, `used`,
+   * `remaining`, and the window's), as a product limit's does. `kind` alone still decides what an
+   * override may do (only a product limit can be disabled), so a cap can be shown to its user and
+   * stay impossible to switch off. Read through `usageLimitReportsCounts`.
+   */
+  reportsCounts?: true;
   message?: string | ((resolution: UsageLimitResolution) => string | undefined);
 };
 
@@ -394,6 +402,8 @@ export const usageLimitDefs = [
       gold: { limit: 2 * 1024 * 1024 * 1024 },
     },
   },
+  // ── The App Platform's other per-user caps (`app-usage-limits.ts`).
+  ...appUsageLimitDefs,
 ] as const satisfies readonly UsageLimitDef[];
 
 export type UsageLimitId = (typeof usageLimitDefs)[number]['id'];
@@ -451,6 +461,14 @@ export function usageLimitApplies(
   if (def.appliesTo === 'first-day')
     return !!subject.createdAt && isBetweenToday(subject.createdAt);
   return true;
+}
+
+/**
+ * Whether a refusal by this limit carries its counts: every product limit, and an abuse limit
+ * marked `reportsCounts`. The one predicate the meta builders and the tRPC strip both read.
+ */
+export function usageLimitReportsCounts(def: Pick<UsageLimitDef, 'kind' | 'reportsCounts'>) {
+  return def.kind === 'product' || def.reportsCounts === true;
 }
 
 export function usageLimitMessage(def: UsageLimitDef, resolution: UsageLimitResolution) {

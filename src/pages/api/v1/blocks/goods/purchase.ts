@@ -13,8 +13,8 @@ import {
   purchaseBlockGood,
   resolveBlockGoodForPurchase,
 } from '~/server/services/blocks/block-goods.service';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
 import {
-  BLOCK_GOOD_CAP_PER_DAY,
   checkBlockGoodRateLimit,
   claimGoodIdempotency,
   computeGoodPurchaseFingerprint,
@@ -163,17 +163,20 @@ export const baseHandler = withAxiom(async function handler(
       };
     }
 
+    // The buyer's daily cap: the registry's `apps.goods-daily` (a KeyValue override, else the code
+    // default). Never throws; read before the reservation.
+    const dailyCap = await resolveUserAppLimit('apps.goods-daily', buyerUserId);
     let capKey: Awaited<ReturnType<typeof reserveBlockGoodSpend>>['key'];
     try {
       const reserved = await reserveBlockGoodSpend(buyerUserId, priceBuzz);
       capKey = reserved.key;
-      if (reserved.total > BLOCK_GOOD_CAP_PER_DAY) {
+      if (reserved.total > dailyCap) {
         await refundBlockGoodSpend(capKey, priceBuzz);
         // TRANSIENT, like the rate limit: no Buzz moved and the reservation is refunded, so a
         // retry after the UTC reset must run rather than replay this refusal.
         const { retryAfterSeconds, resetAt } = utcDayReset();
         const meta = appRateLimitMeta('apps.goods-daily', retryAfterSeconds, {
-          limit: BLOCK_GOOD_CAP_PER_DAY,
+          limit: dailyCap,
           // The day's purchases before this one, which the refund just gave back.
           used: reserved.total - Math.ceil(priceBuzz),
           windowSeconds: 24 * 60 * 60,
@@ -184,7 +187,7 @@ export const baseHandler = withAxiom(async function handler(
           status: 429,
           body: appRateLimitBody(
             meta,
-            `Daily purchase limit reached (${BLOCK_GOOD_CAP_PER_DAY} Buzz). Try again tomorrow.`
+            `Daily purchase limit reached (${dailyCap} Buzz). Try again tomorrow.`
           ),
           transient: true,
         };

@@ -396,6 +396,7 @@ import {
 // terminal poll/cancel hook. Static import (both are light) — the heavy
 // refundAppSpend it may call is itself dynamic-imported inside the service.
 import {
+import { usageLimits } from '~/shared/constants/usage-limits';
   persistCustomComfySettle,
   settleCustomComfySpend,
 } from '~/server/services/blocks/custom-comfy-settle.service';
@@ -5126,11 +5127,7 @@ export const blocksRouter = router({
   listAvailable: publicProcedure
     .use(enforceAppBlocksFlag)
     .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
+      rateLimit(usageLimits('apps.marketplace-reads'))
     )
     .input(listAvailableSchema)
     .query(async ({ ctx, input }) => {
@@ -5184,11 +5181,7 @@ export const blocksRouter = router({
   getAppDetail: publicProcedure
     .use(enforceAppBlocksFlag)
     .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
+      rateLimit(usageLimits('apps.marketplace-reads'))
     )
     .input(getAppDetailSchema)
     .query(async ({ ctx, input }) => {
@@ -5250,11 +5243,7 @@ export const blocksRouter = router({
   getFeaturedBlocks: publicProcedure
     .use(enforceAppBlocksFlag)
     .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
+      rateLimit(usageLimits('apps.marketplace-reads'))
     )
     .input(getFeaturedBlocksSchema)
     .query(async ({ ctx, input }) => {
@@ -6653,11 +6642,7 @@ export const blocksRouter = router({
   persistAppUploadImage: protectedProcedure
     .meta({ blockApiKeys: true })
     .use(
-      rateLimit({
-        limit: 60,
-        period: 3600,
-        errorMessage: 'Too many image uploads — slow down.',
-      })
+      rateLimit(usageLimits('apps.image-uploads'))
     )
     .input(
       persistBlockUploadImageSchema
@@ -6730,11 +6715,7 @@ export const blocksRouter = router({
   persistGenerationSource: protectedProcedure
     .meta({ blockApiKeys: true })
     .use(
-      rateLimit({
-        limit: 60,
-        period: 3600,
-        errorMessage: 'Too many generation sources saved — slow down.',
-      })
+      rateLimit(usageLimits('apps.generation-source-saves'))
     )
     .input(
       z.object({
@@ -6797,11 +6778,7 @@ export const blocksRouter = router({
   persistUploadedGenerationSource: protectedProcedure
     .meta({ blockApiKeys: true })
     .use(
-      rateLimit({
-        limit: 60,
-        period: 3600,
-        errorMessage: 'Too many generation sources saved — slow down.',
-      })
+      rateLimit(usageLimits('apps.generation-source-saves'))
     )
     .input(
       z.object({
@@ -10435,7 +10412,7 @@ export const blocksRouter = router({
       // touch block.manifest.json, leaving the app's source untouched.
       // Each edit is a new pending review (and possibly a review build): bound them per user.
       const { takePushReviewSlot } = await import('~/server/services/blocks/submit-rate-limit');
-      const slot = await takePushReviewSlot(`user:${ctx.user!.id}`);
+      const slot = await takePushReviewSlot(`user:${ctx.user!.id}`, ctx.user!);
       if (!slot.ok) {
         throwAppRateLimited(
           'apps.push-review',

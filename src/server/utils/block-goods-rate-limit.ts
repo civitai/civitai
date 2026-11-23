@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { getUsageLimitDef } from '~/shared/constants/usage-limits';
 
 /**
  * Rate limit, daily cap and idempotency for the App Blocks DIGITAL GOODS
@@ -97,7 +98,9 @@ export async function checkBlockGoodRateLimit(
 // mirroring BLOCK_TIP_CAP_PER_DAY), so a publisher cannot multiply a viewer's
 // ceiling by shipping N apps. Set above the tip ceiling because a good is
 // review-gated — a moderator saw its price — where a tip recipient is not.
-export const BLOCK_GOOD_CAP_PER_DAY = 150_000;
+// The CODE DEFAULT, the registry's `apps.goods-daily`: the cap enforced is resolved per user
+// (`resolveUserAppLimit`), which a `usage-limits` KeyValue override can change.
+export const BLOCK_GOOD_CAP_PER_DAY = getUsageLimitDef('apps.goods-daily').base;
 // 🔴 THERE IS NO PER-APP GOODS CEILING, AND THAT IS A KNOWN GAP, NOT AN OVERSIGHT.
 // `app-spend-cap.service.ts` exists because a per-USER cap cannot see
 // CONCENTRATION: a Sybil ring of N accounts each gets its own daily ceiling and

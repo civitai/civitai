@@ -4,6 +4,11 @@ import type { AppBlockRateLimitBucket } from '~/server/metrics/app-block-runtime
 import { rateLimitMetaFor, throwRateLimited } from '~/server/utils/rate-limit-error';
 import { REST_ERROR_CODE, restErrorBody } from '~/server/utils/rest-error-envelope';
 import {
+  usageLimitDefsById,
+  usageLimitReportsCounts,
+  type UsageLimitId,
+} from '~/shared/constants/usage-limits';
+import {
   parseRateLimitMeta,
   type RateLimitKind,
   type RateLimitMeta,
@@ -19,20 +24,21 @@ import {
  * 429 any other way.
  *
  * `kind`:
- *   - `product`: an allowance a user plans around (a daily Buzz cap, how many forks a day). Its
- *     refusal carries `limit`, `used`, `remaining` and, for a windowed limit, `windowSeconds` and
- *     `resetAt`.
- *   - `abuse`: an anti-flood bound. Its numbers are never sent (`rateLimitMetaOf` strips them
- *     again on the way out, whoever built the meta).
+ *   - `product`: an allowance a user plans around (how many forks a day). Its refusal carries
+ *     `limit`, `used`, `remaining` and, for a windowed limit, `windowSeconds` and `resetAt`.
+ *   - `abuse`: an anti-flood bound, or a cap guarding money or safety. Its numbers are not sent
+ *     (`rateLimitMetaOf` strips them again on the way out, whoever built the meta), unless the
+ *     registry marks it `reportsCounts` (the tip and goods daily caps).
  *
- * Most of these are per app instance, per app or per moderator, and keep their own counters; a
- * per-user cap may also be a `usage-limits` registry entry under the same id.
+ * A PER-USER cap is a `usage-limits` registry entry (`app-usage-limits.ts`), tunable from the
+ * KeyValue row, and its kind is read from there (`appRateLimitClass`). This table holds only the
+ * limits that are not per user — per app instance, per app, per listing or per moderator — which
+ * keep their own counters and code constants. The two sets are disjoint (pinned by the tests).
  */
 export const APP_RATE_LIMITS = {
   // ── Block tokens
   'apps.block-token-mint': { kind: 'abuse' },
   'apps.block-token-mint-ip': { kind: 'abuse' },
-  'apps.dev-token': { kind: 'abuse' },
   'apps.review-token-run-for-real': { kind: 'abuse' },
   // ── The bridge and the block REST routes (per app instance, app or viewer)
   'apps.catalog': { kind: 'abuse' },
@@ -41,11 +47,9 @@ export const APP_RATE_LIMITS = {
   'apps.post-app': { kind: 'abuse' },
   'apps.poll': { kind: 'abuse' },
   'apps.upload-app': { kind: 'abuse' },
-  'apps.generation-source': { kind: 'abuse' },
   'apps.estimate-cells': { kind: 'abuse' },
   'apps.llm': { kind: 'abuse' },
   'apps.submit': { kind: 'abuse' },
-  'apps.submit-user': { kind: 'abuse' },
   'apps.in-flight': { kind: 'abuse' },
   'apps.standing-consent': { kind: 'abuse' },
   'apps.standing-submit': { kind: 'abuse' },
@@ -55,31 +59,32 @@ export const APP_RATE_LIMITS = {
   // ── Storage
   'apps.doc-store': { kind: 'abuse' },
   'apps.shared-storage': { kind: 'abuse' },
-  // ── Money caps a user plans around
-  'apps.tip-daily': { kind: 'product' },
-  'apps.goods-daily': { kind: 'product' },
-  'apps.media-upload-daily-items': { kind: 'product' },
-  'apps.media-upload-daily-bytes': { kind: 'product' },
   // ── Authoring, publishing and review
-  'apps.version-submits': { kind: 'product' },
-  'apps.push-review': { kind: 'abuse' },
-  'apps.fork-starts-hourly': { kind: 'product' },
-  'apps.fork-starts-daily': { kind: 'product' },
-  'apps.dev-tunnel-starts': { kind: 'abuse' },
-  'apps.offsite-pending': { kind: 'product' },
   'apps.store-items': { kind: 'product' },
   'apps.store-item-writes': { kind: 'abuse' },
   'apps.store-item-sync': { kind: 'abuse' },
-  'apps.listing-submissions': { kind: 'abuse' },
-  'apps.listing-withdrawals': { kind: 'abuse' },
-  'apps.sleeping-reads': { kind: 'abuse' },
   'apps.directory': { kind: 'abuse' },
   // ── Moderator tools
   'apps.build-retrigger': { kind: 'abuse' },
   'apps.moderator-messages': { kind: 'abuse' },
 } as const satisfies Record<string, { kind: RateLimitKind }>;
 
-export type AppRateLimitId = keyof typeof APP_RATE_LIMITS;
+/** An App Platform limit: a registry entry (`apps.*` in `usage-limits.ts`), or one of the above. */
+export type AppRateLimitId = keyof typeof APP_RATE_LIMITS | Extract<UsageLimitId, `apps.${string}`>;
+
+/**
+ * A limit's kind, and whether its refusal reports counts: from the registry for a registry entry
+ * (the one place those are decided), from `APP_RATE_LIMITS` for the rest.
+ */
+export function appRateLimitClass(id: AppRateLimitId): {
+  kind: RateLimitKind;
+  reportsCounts: boolean;
+} {
+  const def = usageLimitDefsById.get(id);
+  if (def) return { kind: def.kind, reportsCounts: usageLimitReportsCounts(def) };
+  const { kind } = APP_RATE_LIMITS[id as keyof typeof APP_RATE_LIMITS];
+  return { kind, reportsCounts: kind === 'product' };
+}
 
 /** The id each bridge bucket's refusal names (its counter label stays the bucket). */
 export const BRIDGE_BUCKET_RATE_LIMIT_ID: Readonly<
@@ -132,19 +137,19 @@ export const STANDING_LIMIT_RETRY_SECONDS = 60 * 60;
 /** A count the meta can carry: a whole number, at least 0 (`parseRateLimitMeta` drops others). */
 const wholeCount = (value: number) => (Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0);
 
-/** The `rateLimit` meta of a refusal by `id`; the counts are kept only for a product limit. */
+/** The `rateLimit` meta of a refusal by `id`; the counts are kept only for a limit that reports them. */
 export function appRateLimitMeta(
   id: AppRateLimitId,
   retryAfterSeconds: number,
   counts?: AppRateLimitCounts
 ): RateLimitMeta {
-  const { kind } = APP_RATE_LIMITS[id];
+  const { kind, reportsCounts } = appRateLimitClass(id);
   const meta: RateLimitMeta = {
     ...rateLimitMetaFor(retryAfterSecondsOf(retryAfterSeconds, 1)),
     id,
     kind,
   };
-  if (kind === 'product' && counts) {
+  if (reportsCounts && counts) {
     meta.limit = wholeCount(counts.limit);
     meta.used = wholeCount(counts.used);
     meta.remaining = Math.max(0, meta.limit - meta.used);

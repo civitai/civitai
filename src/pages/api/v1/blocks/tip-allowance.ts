@@ -8,6 +8,7 @@ import {
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
 import { readBlockTipAllowance } from '~/server/utils/block-tip-rate-limit';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
@@ -90,7 +91,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 
   try {
-    const allowance = await readBlockTipAllowance(subjectUserId);
+    // The same cap the tip enforces: the registry's, as resolved for this user.
+    const allowance = await readBlockTipAllowance(
+      subjectUserId,
+      await resolveUserAppLimit('apps.tip-daily', subjectUserId)
+    );
     res.status(200).json(allowance);
   } catch {
     // Fail-CLOSED (redis error) → retryable 503, mirroring the reserve path.

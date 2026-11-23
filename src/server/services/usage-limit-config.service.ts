@@ -130,6 +130,7 @@ export async function resolveUsageLimitRules(
     rules.push({
       id,
       kind: def.kind,
+      ...(def.reportsCounts ? { reportsCounts: true } : {}),
       limit: resolved.limit,
       period: def.window.seconds,
       errorMessage: usageLimitMessage(def, resolved),

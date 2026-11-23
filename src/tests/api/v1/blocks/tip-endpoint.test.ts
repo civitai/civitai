@@ -116,6 +116,7 @@ vi.mock('~/server/utils/block-tip-rate-limit', () => ({
 
 import handler from '~/pages/api/v1/blocks/tip';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { resetUsageLimitConfigCache } from '~/server/services/usage-limit-config.service';
 const mockUserFind = dbMock.dbRead.user.findUnique;
 
 function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
@@ -237,7 +238,8 @@ describe('POST /api/v1/blocks/tip', () => {
           retryAfterSeconds: 14_400,
           retryAt: '2026-07-14T00:00:00.000Z',
           id: 'apps.tip-daily',
-          kind: 'product',
+          // Abuse in the registry (no override can disable it), and it still reports its counts.
+          kind: 'abuse',
           limit: 25_000,
           // 25,001 reserved with this 100-Buzz tip, which the refund gave back.
           used: 24_901,
@@ -248,6 +250,38 @@ describe('POST /api/v1/blocks/tip', () => {
       });
       expect(mockRefund).toHaveBeenCalledWith('k', 100); // over-cap reservation refunded
       expect(mockTip).not.toHaveBeenCalled();
+    });
+
+    it('a KeyValue override of apps.tip-daily is the cap enforced (and named) — no deploy', async () => {
+      resetUsageLimitConfigCache();
+      dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+        key: 'usage-limits',
+        value: { version: 1, limits: { 'apps.tip-daily': { base: 1_000 } } },
+      } as never);
+      try {
+        // 1,001 reserved with this 100-Buzz tip: over the overridden cap, far under the default.
+        mockReserve.mockResolvedValueOnce({ total: 1_001, key: 'k' });
+        const { req, res } = createMocks({ body: { toUserId: 5, amount: 100 } });
+        await handler(req as never, res as never);
+        expect(res._status()).toBe(429);
+        expect(res._json()).toMatchObject({
+          error: 'Daily tip limit reached (1000 Buzz). Try again tomorrow.',
+          rateLimit: { id: 'apps.tip-daily', limit: 1_000, used: 901, remaining: 99 },
+        });
+        expect(mockTip).not.toHaveBeenCalled();
+      } finally {
+        dbMock.dbRead.keyValue.findUnique.mockReset();
+        resetUsageLimitConfigCache();
+      }
+    });
+
+    it('CONTROL: at the default config the same reservation is under the cap, and the tip is sent', async () => {
+      resetUsageLimitConfigCache();
+      mockReserve.mockResolvedValueOnce({ total: 1_001, key: 'k' });
+      const { req, res } = createMocks({ body: { toUserId: 5, amount: 100 } });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(200);
+      expect(mockTip).toHaveBeenCalled();
     });
 
     it('the cap refusal is TRANSIENT: its idempotency claim is released, never replayed', async () => {
