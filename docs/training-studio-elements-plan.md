@@ -1,6 +1,6 @@
 # Training Studio on Civitai Elements
 
-**Status:** in progress, behind the `training-studio-elements-ui` flag. The Select step (#9552), the Data step (#9878), the shell (#9902) the Review step (#10185) and the run page (#10189) are redesigned; My trainings is in progress.
+**Status:** in progress, behind the `training-studio-elements-ui` flag. Redesigned: the Select step (#9552), the Data step (#9878), the shell (#9902), the Review step (#10185), the run page (#10189) and My trainings (#10196). Next: the run page's charts and sample viewer, the Data-step dialogs, the image-edit Data step, then cleanup.
 Tracked in HQ as `training_studio_civitai_ww5n`; slice 0 is `elements_training_studio_d595`.
 
 ## Goal
