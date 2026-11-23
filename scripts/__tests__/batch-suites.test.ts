@@ -97,9 +97,9 @@ describe('the GitHub paths filter', () => {
 
 describe('workflowPaths', () => {
   it('prefers pull_request, falls back to push, else null', () => {
-    expect(workflowPaths({ pull_request: { paths: ['a/**'] }, push: { paths: ['b/**'] } })).toEqual([
-      'a/**',
-    ]);
+    expect(workflowPaths({ pull_request: { paths: ['a/**'] }, push: { paths: ['b/**'] } })).toEqual(
+      ['a/**']
+    );
     expect(workflowPaths({ push: { paths: ['b/**'] } })).toEqual(['b/**']);
     expect(workflowPaths({ pull_request: null, push: { branches: ['main'] } })).toBeNull();
     expect(workflowPaths(null)).toBeNull();
@@ -274,7 +274,9 @@ describe('verdict: the Batch suites (main batch) status', () => {
   });
 
   it('green: every dispatched suite green', () => {
-    expect(verdict({ suites: [s('feed-go.yml', 'green'), s('ports.yml', 'skipped', false)], base: BASE })).toEqual({
+    expect(
+      verdict({ suites: [s('feed-go.yml', 'green'), s('ports.yml', 'skipped', false)], base: BASE })
+    ).toEqual({
       state: 'success',
       description: '1 suite(s) passed at this commit; 1 unchanged since bbbbbbbbbb.',
     });
@@ -290,8 +292,18 @@ describe('verdict: the Batch suites (main batch) status', () => {
   // Mutant: letting a missing run decide first would hide the red behind an `error`.
   it('red decides over a missing verdict, and names the range start', () => {
     expect(
-      verdict({ suites: [s('ports.yml', 'missing'), s('feed-go.yml', 'red'), s('windows-dev-env.yml', 'red')], base: BASE })
-    ).toEqual({ state: 'failure', description: 'Red, range bbbbbbbbbb..here: feed-go, windows-dev-env' });
+      verdict({
+        suites: [
+          s('ports.yml', 'missing'),
+          s('feed-go.yml', 'red'),
+          s('windows-dev-env.yml', 'red'),
+        ],
+        base: BASE,
+      })
+    ).toEqual({
+      state: 'failure',
+      description: 'Red, range bbbbbbbbbb..here: feed-go, windows-dev-env',
+    });
     expect(verdict({ suites: [s('feed-go.yml', 'red')], base: null })).toEqual({
       state: 'failure',
       description: 'Red: feed-go',
@@ -302,7 +314,9 @@ describe('verdict: the Batch suites (main batch) status', () => {
   it.each(['missing', 'running', 'undecided', 'not-dispatched'])(
     'a dispatched suite left %s is no verdict (error), never green',
     (state) => {
-      expect(verdict({ suites: [s('feed-go.yml', 'green'), s('ports.yml', state)], base: BASE })).toEqual({
+      expect(
+        verdict({ suites: [s('feed-go.yml', 'green'), s('ports.yml', state)], base: BASE })
+      ).toEqual({
         state: 'error',
         description: `No verdict: ports ${state}`,
       });
@@ -312,7 +326,10 @@ describe('verdict: the Batch suites (main batch) status', () => {
   // A suite that posts its own status must not raise a second item for the same red.
   it('leaves a suite with its own context out', () => {
     expect(
-      verdict({ suites: [s('feed-go.yml', 'green'), s('apps.yml', 'red', true, 'App tests (main batch)')], base: null })
+      verdict({
+        suites: [s('feed-go.yml', 'green'), s('apps.yml', 'red', true, 'App tests (main batch)')],
+        base: null,
+      })
     ).toEqual({ state: 'success', description: '1 suite(s) passed at this commit.' });
   });
 
@@ -323,18 +340,29 @@ describe('verdict: the Batch suites (main batch) status', () => {
 });
 
 describe('waitDone', () => {
-  const s = (state: string, run = true, ownContext: string | null = null) => ({ state, run, ownContext });
+  const s = (state: string, run = true, ownContext: string | null = null) => ({
+    state,
+    run,
+    ownContext,
+  });
   it('waits for every dispatched run to finish', () => {
     expect(waitDone({ suites: [s('green'), s('running')], postedContexts: new Set() })).toBe(false);
     expect(waitDone({ suites: [s('green'), s('missing')], postedContexts: new Set() })).toBe(false);
-    expect(waitDone({ suites: [s('green'), s('skipped', false), s('not-dispatched')], postedContexts: new Set() })).toBe(true);
+    expect(
+      waitDone({
+        suites: [s('green'), s('skipped', false), s('not-dispatched')],
+        postedContexts: new Set(),
+      })
+    ).toBe(true);
   });
   // Mutant: not waiting for an own context lets the lint run complete before that status lands,
   // and the status is then never read with this batch run.
   it('waits for an own context to be posted after its run finished', () => {
     const own = [s('red', true, 'App tests (main batch)')];
     expect(waitDone({ suites: own, postedContexts: new Set() })).toBe(false);
-    expect(waitDone({ suites: own, postedContexts: new Set(['App tests (main batch)']) })).toBe(true);
+    expect(waitDone({ suites: own, postedContexts: new Set(['App tests (main batch)']) })).toBe(
+      true
+    );
   });
 });
 
@@ -368,15 +396,20 @@ describe('the batch workflows and lint.yml', () => {
   };
 
   it('dispatches exactly the ledger workflows', () => {
-    expect(BATCH_WORKFLOWS.filter((b) => !b.ownContext).map((b) => b.workflow).sort()).toEqual(
-      Object.keys(LEDGER).sort()
-    );
+    expect(
+      BATCH_WORKFLOWS.filter((b) => !b.ownContext)
+        .map((b) => b.workflow)
+        .sort()
+    ).toEqual(Object.keys(LEDGER).sort());
   });
 
   it.each(Object.entries(LEDGER))('%s: every job and its gate', (file, jobs) => {
     const doc = load(file);
     const got = Object.fromEntries(
-      Object.entries(doc.jobs ?? {}).map(([id, j]) => [id, (j.if ?? '').replace(/\s+/g, ' ').trim()])
+      Object.entries(doc.jobs ?? {}).map(([id, j]) => [
+        id,
+        (j.if ?? '').replace(/\s+/g, ' ').trim(),
+      ])
     );
     expect(got).toEqual(jobs);
   });
@@ -395,9 +428,12 @@ describe('the batch workflows and lint.yml', () => {
   );
 
   // A workflow with no paths filter would run on EVERY batch; each one here has one on purpose.
-  it.each(BATCH_WORKFLOWS.map((b) => b.workflow))('%s has a paths filter the batch reads', (file) => {
-    expect(workflowPaths(load(file).on)?.length ?? 0).toBeGreaterThan(0);
-  });
+  it.each(BATCH_WORKFLOWS.map((b) => b.workflow))(
+    '%s has a paths filter the batch reads',
+    (file) => {
+      expect(workflowPaths(load(file).on)?.length ?? 0).toBeGreaterThan(0);
+    }
+  );
 
   it('no batch workflow runs its batch jobs on a push any more, except moderator boot', () => {
     // Moderator boot keeps a push trigger, filtered to its own paths.

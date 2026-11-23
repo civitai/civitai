@@ -97,7 +97,8 @@ export function workflowPaths(on) {
  */
 export function decideBase(candidates) {
   for (const c of candidates) {
-    if (c.state === 'success') return { base: c.sha, reason: `last green batch ${c.sha.slice(0, 10)}` };
+    if (c.state === 'success')
+      return { base: c.sha, reason: `last green batch ${c.sha.slice(0, 10)}` };
     if (c.state === 'failure')
       return { base: null, reason: `the last batch verdict (${c.sha.slice(0, 10)}) was red` };
   }
@@ -174,13 +175,14 @@ export function verdict({ suites, base }) {
       description: statusLine(base ? `Red, range ${base.slice(0, 10)}..here: ` : 'Red: ', red),
     };
   const open = ran.filter((s) => s.state !== 'green').map((s) => `${short(s.workflow)} ${s.state}`);
-  if (open.length)
-    return { state: 'error', description: statusLine('No verdict: ', open) };
+  if (open.length) return { state: 'error', description: statusLine('No verdict: ', open) };
   const skipped = mine.length - ran.length;
   return {
     state: 'success',
     description: ran.length
-      ? `${ran.length} suite(s) passed at this commit${skipped ? `; ${skipped} unchanged${since}` : ''}.`
+      ? `${ran.length} suite(s) passed at this commit${
+          skipped ? `; ${skipped} unchanged${since}` : ''
+        }.`
       : `No batch suite's paths changed${since}; all were green there.`,
   };
 }
@@ -196,8 +198,7 @@ export function waitDone({ suites, postedContexts }) {
 
 // ── I/O ─────────────────────────────────────────────────────────────────────────────────────────
 
-const sh = (cmd, args) =>
-  execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: 64 << 20 }).trim();
+const sh = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8', maxBuffer: 64 << 20 }).trim();
 const gh = (...args) => sh('gh', args);
 const api = (path) => JSON.parse(gh('api', path));
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -273,7 +274,10 @@ function run() {
   const pollMs = Math.max(60, Number(process.env.BATCH_POLL_SECONDS ?? 60)) * 1000;
   const lines = [];
   const done = (v) => {
-    lines.push('', `Posting \`${SUITES_CONTEXT}\` = ${v.state} on ${sha.slice(0, 10)}: ${v.description}`);
+    lines.push(
+      '',
+      `Posting \`${SUITES_CONTEXT}\` = ${v.state} on ${sha.slice(0, 10)}: ${v.description}`
+    );
     const text = lines.join('\n');
     console.log(text);
     if (process.env.GITHUB_STEP_SUMMARY)
@@ -291,7 +295,9 @@ function run() {
   if (head !== sha) {
     done({
       state: 'error',
-      description: statusLine('main moved before the suites were dispatched, now at ', [head.slice(0, 10)]),
+      description: statusLine('main moved before the suites were dispatched, now at ', [
+        head.slice(0, 10),
+      ]),
     });
     return;
   }
@@ -300,12 +306,20 @@ function run() {
   try {
     decided = decideBase(baseCandidates(repoName));
   } catch (err) {
-    decided = { base: null, reason: `could not read earlier verdicts (${String(err.message).split('\n')[0]})` };
+    decided = {
+      base: null,
+      reason: `could not read earlier verdicts (${String(err.message).split('\n')[0]})`,
+    };
   }
   const { base, reason: baseReason } = decided;
   const files = base ? changedFiles(repoName, base, sha) : null;
   lines.push(`Base: ${base ? base.slice(0, 10) : 'none'} (${baseReason}).`);
-  if (base) lines.push(files ? `${files.length} changed file(s) since the base.` : 'The changed files could not all be listed: every suite runs.');
+  if (base)
+    lines.push(
+      files
+        ? `${files.length} changed file(s) since the base.`
+        : 'The changed files could not all be listed: every suite runs.'
+    );
 
   const entries = BATCH_WORKFLOWS.map((e) => ({ ...e, on: readOn(e.workflow) }));
   const ons = Object.fromEntries(entries.map((e) => [e.workflow, e.on]));
@@ -316,7 +330,12 @@ function run() {
       gh(...suiteDispatchArgs(s.workflow, ons[s.workflow], repoName, base));
       return { ...s, state: 'missing', url: '' };
     } catch (err) {
-      return { ...s, state: 'not-dispatched', url: '', reason: `${s.reason}; dispatch failed: ${String(err.message).split('\n')[0]}` };
+      return {
+        ...s,
+        state: 'not-dispatched',
+        url: '',
+        reason: `${s.reason}; dispatch failed: ${String(err.message).split('\n')[0]}`,
+      };
     }
   });
 
@@ -348,7 +367,9 @@ function run() {
   lines.push('', '| Suite | Dispatched | State | Run |', '| --- | --- | --- | --- |');
   for (const s of suites)
     lines.push(
-      `| ${short(s.workflow)}${s.ownContext ? ` (posts \`${s.ownContext}\`)` : ''} | ${s.run ? 'yes' : 'no'}: ${s.reason} | ${s.state} | ${s.url} |`
+      `| ${short(s.workflow)}${s.ownContext ? ` (posts \`${s.ownContext}\`)` : ''} | ${
+        s.run ? 'yes' : 'no'
+      }: ${s.reason} | ${s.state} | ${s.url} |`
     );
   for (const s of suites)
     if (s.ownContext && s.run && !posted.has(s.ownContext))
