@@ -256,8 +256,44 @@ export async function deleteComments(db: SqlRunner, ids: number[]) {
 
 type Flags = { hidden?: boolean; tosViolation?: boolean; pinned?: boolean };
 
-/** Sets moderation flags on live comments; returns the rows it changed. */
-export async function setCommentFlags(db: SqlRunner, ids: number[], flags: Flags) {
+/** Row-locks comments in id order, the one order every flag writer takes. */
+function lockComments(db: SqlRunner, ids: number[]) {
+  return db.query(
+    `SELECT id FROM "CommentV3" WHERE id = ANY(string_to_array($1, ',')::int[]) ORDER BY id FOR UPDATE`,
+    [ids.join(',')]
+  );
+}
+
+/**
+ * Hides live comments and stamps every one of them `hiddenAt` now, hidden already or not: the hide
+ * is this caller's from here on. `wasHidden` says which were hidden before.
+ */
+export async function hideComments(db: SqlRunner, ids: number[]) {
+  if (!ids.length) return [];
+  const { rows } = await db.query<{ id: number; wasHidden: boolean }>(
+    `WITH locked AS (
+       SELECT id, hidden FROM "CommentV3" WHERE id = ANY(string_to_array($1, ',')::int[])
+       ORDER BY id FOR UPDATE
+     )
+     UPDATE "CommentV3" c SET hidden = true, "hiddenAt" = now(), "updatedAt" = now()
+     FROM locked WHERE c.id = locked.id AND c."deletedAt" IS NULL
+     RETURNING c.id, locked.hidden AS "wasHidden"`,
+    [ids.join(',')]
+  );
+  return rows;
+}
+
+/**
+ * Sets moderation flags on live comments; returns the rows it changed. Locks every id first, in id
+ * order, so what the caller reads afterwards is read under the lock even when nothing changed. A
+ * hide stamps `hiddenAt` (the given one, else now) on the rows it turns hidden; a show clears it.
+ */
+export async function setCommentFlags(
+  db: SqlRunner,
+  ids: number[],
+  flags: Flags,
+  { hiddenAt }: { hiddenAt?: Date } = {}
+) {
   const sets: string[] = [];
   const params: unknown[] = [ids.join(',')];
   const changed: string[] = [];
@@ -266,11 +302,20 @@ export async function setCommentFlags(db: SqlRunner, ids: number[], flags: Flags
     sets.push(`${column} = ${set.replace('$', `$${params.length}`)}`);
     changed.push(`${column} IS DISTINCT FROM ${set.replace('$', `$${params.length}`)}`);
   };
-  if (flags.hidden !== undefined) add('hidden', flags.hidden, '$::boolean');
+  if (flags.hidden !== undefined) {
+    add('hidden', flags.hidden, '$::boolean');
+    const hide = `$${params.length}::boolean`;
+    params.push(hiddenAt ?? null);
+    // In SET, `hidden` is the value before this update.
+    sets.push(
+      `"hiddenAt" = CASE WHEN hidden IS DISTINCT FROM ${hide} THEN CASE WHEN ${hide} THEN COALESCE($${params.length}::timestamptz, now()) END ELSE "hiddenAt" END`
+    );
+  }
   if (flags.tosViolation !== undefined) add('"tosViolation"', flags.tosViolation, '$::boolean');
   if (flags.pinned !== undefined)
     add('"pinnedAt"', flags.pinned, 'CASE WHEN $::boolean THEN COALESCE("pinnedAt", now()) END');
   if (!sets.length || !ids.length) return [];
+  await lockComments(db, ids);
   const { rows } = await db.query<{ id: number; userId: number }>(
     `UPDATE "CommentV3" SET ${sets.join(', ')}, "updatedAt" = now()
      WHERE id = ANY(string_to_array($1, ',')::int[]) AND "deletedAt" IS NULL AND (${changed.join(

@@ -13,7 +13,6 @@ import {
   TextInput,
 } from '@mantine/core';
 import { Menu, Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconChevronDown,
   IconPhoto,
@@ -41,6 +40,7 @@ import {
 import { titleCase } from '~/utils/string-helpers';
 import styles from './TrainingImagesTagViewer.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export const blankTagStr = '@@none@@';
 
@@ -50,8 +50,8 @@ export const labelDescriptions: { [p in LabelTypes]: React.ReactNode } = {
       <Text>Short, comma-separated descriptions.</Text>
       <Text fs="italic">Ex: &quot;dolphin, ocean, jumping, gorgeous scenery&quot;</Text>
       <Text component="div" mt="sm">
-        Preferred for <Badge color="violet">SD1</Badge> and <Badge color="grape">SDXL</Badge>{' '}
-        models only.
+        Preferred for <Badge color="violet">SD1</Badge> and <Badge color="grape">SDXL</Badge> models
+        only.
       </Text>
     </Stack>
   ),
@@ -375,9 +375,9 @@ export const TrainingImagesTagViewer = ({
                   <Menu.Item
                     leftSection={<IconTrash size={14} />}
                     onClick={() =>
-                      openConfirmModal({
+                      openConfirm({
                         title: 'Remove these tags?',
-                        children: (
+                        message: (
                           <Stack>
                             <Text>The following tags will be removed from all files:</Text>
                             <Group>
@@ -388,7 +388,6 @@ export const TrainingImagesTagViewer = ({
                           </Stack>
                         ),
                         labels: { cancel: 'Cancel', confirm: 'Confirm' },
-                        centered: true,
                         onConfirm: () => removeTags(selectedTagsNonBlank),
                       })
                     }

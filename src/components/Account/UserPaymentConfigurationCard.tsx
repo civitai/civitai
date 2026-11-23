@@ -22,9 +22,9 @@ import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { isBlockedTipaltiStatus, StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
-import dynamic from 'next/dynamic';
 import { useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
@@ -207,10 +207,6 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
   }
 };
 
-const FeatureIntroductionModal = dynamic(
-  () => import('~/components/FeatureIntroduction/FeatureIntroduction')
-);
-
 const StripeConnectConfigurationCard = ({ flat }: { flat?: boolean }) => {
   const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
   if (!userPaymentConfiguration) return null;
@@ -240,12 +236,9 @@ const StripeConnectConfigurationCard = ({ flat }: { flat?: boolean }) => {
             color="gray"
             variant="subtle"
             onClick={() => {
-              dialogStore.trigger({
-                component: FeatureIntroductionModal,
-                props: {
-                  feature: 'getting-started',
-                  contentSlug: ['feature-introduction', 'stripe-connect'],
-                },
+              openDialog(() => import('~/components/FeatureIntroduction/FeatureIntroduction'), {
+                feature: 'getting-started',
+                contentSlug: ['feature-introduction', 'stripe-connect'],
               });
             }}
           >

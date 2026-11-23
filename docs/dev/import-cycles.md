@@ -37,18 +37,16 @@ of them, and when any of those reaches back to the module, the registry closes a
 Fix: give the entry its own module and import that. Then delete registry entries nothing reads.
 
 Worked example: `src/components/Dialog/dialog-registry2.ts` held 23 `dynamic()` dialogs. Three
-were opened, each from one component. Each became a trigger file in
-`src/components/Dialog/triggers/`, the pattern the other dialogs already used:
+were opened, each from one component. Each opener now names only its own modal:
 
 ```ts
-// src/components/Dialog/triggers/bulk-bonus-info.ts
-const BulkBonusInfoModal = dynamic(() => import('~/components/Buzz/CryptoDeposit/BulkBonusInfoModal'));
-export const openBulkBonusInfo = () =>
-  dialogStore.trigger({ component: BulkBonusInfoModal, id: 'bulk-bonus-info' });
+openDialog(() => import('~/components/Buzz/CryptoDeposit/BulkBonusInfoModal'), {}, { id: 'bulk-bonus-info' });
 ```
 
 The registry was deleted, along with one modal that only the registry had imported. The 164-module
-client cycle split into three much smaller ones.
+client cycle split into three much smaller ones. New dialogs open with `openDialog`
+(`src/components/Dialog/openDialog.ts`), so an opener names only the modal it opens and needs no
+shared registry: see `.claude/rules/components.md`.
 
 Before deleting a registry, check two things. Nothing may look an entry up by a key computed at
 runtime: grep for the registry's export, not only its file name. And when an entry goes, check

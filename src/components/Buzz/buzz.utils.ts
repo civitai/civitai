@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { onPurchaseSuccessAction } from '~/components/Buzz/purchase-success';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
@@ -16,9 +16,6 @@ import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import dynamic from 'next/dynamic';
-
-const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 
 export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
   const features = useFeatureFlags();
@@ -35,11 +32,7 @@ export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
         'noreferrer'
       );
     } else {
-      dialogStore.trigger({
-        id: 'buy-buzz-modal',
-        component: BuyBuzzModal,
-        props,
-      });
+      openDialog(() => import('~/components/Modals/BuyBuzzModal'), props, { id: 'buy-buzz-modal' });
     }
   };
 };

@@ -1,6 +1,5 @@
 import { Group, Stack, Text, UnstyledButton, useMantineTheme } from '@mantine/core';
 import React from 'react';
-import dynamic from 'next/dynamic';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -18,12 +17,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import clsx from 'clsx';
 import awardedStyles from './BountyEntryCard.module.scss';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
-
-const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEntryFilesModal'), {
-  ssr: false,
-});
-const openBountyEntryFilesModal = createDialogTrigger(BountyEntryFilesModal);
+import { openDialog } from '~/components/Dialog/openDialog';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -107,10 +101,8 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        openBountyEntryFilesModal({
-                          props: {
-                            bountyEntry: data,
-                          },
+                        openDialog(() => import('~/components/Bounty/BountyEntryFilesModal'), {
+                          bountyEntry: data,
                         });
                       }}
                       keepIconOnHover

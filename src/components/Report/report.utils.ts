@@ -1,7 +1,6 @@
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { showNotification, hideNotification } from '@mantine/notifications';
 import { trpc } from '~/utils/trpc';
-import { closeModal, openConfirmModal } from '@mantine/modals';
 
 const SEND_REPORT_ID = 'sending-report';
 
@@ -40,34 +39,3 @@ export function useCreateReport(options?: Parameters<typeof trpc.report.create.u
     ...rest,
   });
 }
-
-// export function useReportCsam(options?: Parameters<typeof trpc.report.create.useMutation>[0]) {
-//   const { onSuccess, ...rest } = options ?? {};
-
-//   const createReport = useCreateReport({
-//     async onSuccess(...args) {
-//       closeModal('confirm-csam');
-//       onSuccess?.(...args);
-//     },
-//     ...rest,
-//   });
-
-//   const mutate = (args: Parameters<typeof createReport.mutate>[0][]) => {
-//     openConfirmModal({
-//       modalId: 'confirm-csam',
-//       title: 'Report CSAM',
-//       children: `Are you sure you want to report this as CSAM?`,
-//       centered: true,
-//       labels: { confirm: 'Yes', cancel: 'Cancel' },
-//       confirmProps: { color: 'red', loading: createReport.isLoading },
-//       closeOnConfirm: false,
-//       onConfirm: () => {
-//         for (const item of args) {
-//           createReport.mutate(item);
-//         }
-//       },
-//     });
-//   };
-
-//   return { ...createReport, mutate };
-// }

@@ -1,5 +1,5 @@
 import { Anchor, Badge, Box, Group, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconExternalLink, IconTrash } from '@tabler/icons-react';
 import Link from 'next/link';
 import { CardOrSection } from '~/components/Account/SettingsLayout';
@@ -73,9 +73,9 @@ export function CatalogItemsCard({ flat }: { flat?: boolean } = {}) {
   if (items.length === 0 && !isLoading) return null;
 
   const handleWithdraw = (id: string, title: string, appName: string) => {
-    openConfirmModal({
+    openConfirm({
       title: 'Withdraw store item',
-      children: (
+      message: (
         <Text size="sm">
           Withdraw <strong>{title}</strong> from the App Store? If {appName} lists it again, it goes
           back to review before it appears.

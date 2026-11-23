@@ -63,10 +63,7 @@ export function ManagePresetsModal() {
     });
   }, [serverOrder]);
 
-  const orderChanged = useMemo(
-    () => !isEqual(localOrder, serverOrder),
-    [localOrder, serverOrder]
-  );
+  const orderChanged = useMemo(() => !isEqual(localOrder, serverOrder), [localOrder, serverOrder]);
 
   const updatePreset = trpc.generationPreset.update.useMutation({
     onSuccess: async () => {
@@ -133,6 +130,7 @@ export function ManagePresetsModal() {
   return (
     <Modal
       opened={dialog.opened}
+      closeOnEscape={dialog.closeOnEscape}
       onClose={dialog.onClose}
       title="Manage presets"
       size="md"

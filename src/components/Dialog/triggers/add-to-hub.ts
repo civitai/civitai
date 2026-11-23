@@ -1,6 +1,7 @@
-import dynamic from 'next/dynamic';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import type { ComponentProps } from 'react';
+import { openDialog } from '~/components/Dialog/openDialog';
+import type AddToHubModal from '~/components/Hubs/AddToHubModal';
 
-const AddToHubModal = dynamic(() => import('~/components/Hubs/AddToHubModal'), { ssr: false });
-
-export const openAddToHubModal = createDialogTrigger(AddToHubModal);
+export function openAddToHubModal({ props }: { props: ComponentProps<typeof AddToHubModal> }) {
+  openDialog(() => import('~/components/Hubs/AddToHubModal'), props);
+}
