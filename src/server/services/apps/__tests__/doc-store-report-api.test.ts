@@ -2,7 +2,10 @@
 // service and the middleware read it at module load.
 import '~/__tests__/setup';
 import { PGlite } from '@electric-sql/pglite';
+import { createHash, createHmac } from 'crypto';
 import { readFileSync } from 'fs';
+import { createServer, type Server } from 'http';
+import type { AddressInfo } from 'net';
 import path from 'path';
 import { Readable } from 'stream';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -10,6 +13,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import '~/__tests__/mocks/logging.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as AuthPackage from '@civitai/auth';
 import type * as FliptClient from '~/server/flipt/client';
 import type { DocStore } from '~/server/services/apps/doc-store';
@@ -53,6 +57,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
         return h.reportFlag;
       }
       if (ON_FLAGS.has(flag)) return true;
+      if (flag === 'app-blocks-storage-hook-runner-offline') return false;
       // Shared-data moderation off: a document PUT scans nothing.
       if (flag.startsWith('app-blocks-shared-data-moderation')) return false;
       return real.isFlipt(flag, entityId, context as never);
@@ -86,6 +91,8 @@ import {
 } from '~/server/services/apps/doc-store-api';
 import { createReportHandler, REPORT_ENDPOINT } from '~/server/services/apps/doc-store-report-api';
 import { recordStorageImportGrants } from '~/server/services/apps/storage-import-grant.service';
+import { resetHookSourceCacheForTests } from '~/server/services/apps/doc-store-hook';
+import type { DocCollection } from '~/server/services/apps/doc-store.types';
 
 // The two chains, with the options their pages pass.
 const reportRoute = withBlockScope(createReportHandler({ store: () => h.store }), {
@@ -704,5 +711,103 @@ describe('reports through an import keep the report mark’s rule', () => {
     expect(
       kv.get(`${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:docs-report:${S.id}:u:${UID.v2}`)?.value
     ).toBe('1');
+  });
+});
+
+describe('a permission hook never sees a report', () => {
+  const SECRET = 'report-api-hook-runner-secret-0123456789abcdef';
+  // A hook that refuses every write it is asked about.
+  const DENY_ALL_SRC = `export default function check() {
+  return { allow: false, reason: 'nothing gets through' };
+}
+`;
+  const DENY_SHA = createHash('sha256').update(DENY_ALL_SRC).digest('hex');
+  const HOOK = { file: 'hooks/deny-all.js', sha256: DENY_SHA, timeoutMs: 200 };
+  const GUARDED = { visibility: 'shared', write: 'own', marks: ['vote'], hook: HOOK } as const;
+  const hmac = (body: string) => createHmac('sha256', SECRET).update(body).digest('hex');
+
+  let runner: Server;
+  /** Every call the runner received. */
+  let runnerCalls = 0;
+
+  beforeAll(async () => {
+    // A stub runner speaking the signed contract (`doc-store-hook.ts`): it denies everything.
+    runner = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('end', () => {
+        runnerCalls += 1;
+        const raw = Buffer.concat(chunks).toString('utf8');
+        const text = JSON.stringify({
+          ts: Math.floor(Date.now() / 1000),
+          req: createHash('sha256').update(raw).digest('hex'),
+          elapsedMs: 0.1,
+          result: { allow: false, cause: 'denied', reason: 'nothing gets through' },
+        });
+        res.writeHead(200, {
+          'content-type': 'application/json',
+          'x-storage-hook-sig': hmac(text),
+        });
+        res.end(text);
+      });
+    });
+    await new Promise<void>((resolve) => runner.listen(0, '127.0.0.1', resolve));
+  });
+  afterAll(async () => {
+    await new Promise((resolve) => runner?.close(resolve));
+  });
+  beforeEach(() => {
+    runnerCalls = 0;
+    resetHookSourceCacheForTests();
+    setEnv({
+      STORAGE_HOOK_RUNNER_URL: `http://127.0.0.1:${(runner.address() as AddressInfo).port}`,
+      STORAGE_HOOK_RUNNER_SECRET: SECRET,
+    });
+    // The stored hook source, by sha256 (`app_storage_hook_sources`).
+    const sources = async (strings: TemplateStringsArray, ...values: unknown[]) =>
+      strings.join('?').includes('app_storage_hook_sources') && values[0] === DENY_SHA
+        ? [{ source: DENY_ALL_SRC }]
+        : [];
+    dbMock.dbRead.$queryRaw.mockImplementation(sources);
+    dbMock.dbWrite.$queryRaw.mockImplementation(sources);
+  });
+
+  it('a report on a hooked collection whose hook denies everything lands, and the runner is never called', async () => {
+    const app = freshApp({ scopes: SCOPES, storage: { collections: { guarded: GUARDED } } }, 'rhk');
+    // Seeded by the store directly: through the route the hook would refuse the put itself.
+    const unhooked = {
+      name: 'guarded',
+      config: {
+        visibility: 'shared',
+        write: 'own',
+        counters: [],
+        marks: ['vote'],
+        indexes: new Map(),
+        showAuthor: false,
+      },
+    } as unknown as DocCollection;
+    await h.store.put({ appId: app.id, ns: PUBLISHED_NS, viewerUid: UID.v1 }, unhooked, 'g1', {
+      title: 'guarded',
+    });
+
+    // Positive control: the hook IS wired here — a vote on the same document reaches the runner
+    // and is refused by it.
+    const vote = await storage({
+      token: await mint(app, UID.v2),
+      method: 'PATCH',
+      path: '/guarded/g1',
+      body: { $mark: 'vote' },
+    });
+    expect({ status: vote.status, code: vote.body.code, runnerCalls }).toEqual({
+      status: 403,
+      code: 'hook_rejected',
+      runnerCalls: 1,
+    });
+
+    const r = await reportAs(app, 'v3', 'g1', 'guarded');
+    expect({ status: r.status, body: r.body }).toEqual({ status: 200, body: { reported: true } });
+    expect(runnerCalls).toBe(1);
+    expect(await openQueue(app)).toEqual(['guarded/g1:1']);
+    expect(await reportRows(app, 'g1', 'guarded')).toEqual({ reporters: [UID.v3], tally: null });
   });
 });

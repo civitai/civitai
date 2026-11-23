@@ -256,13 +256,8 @@ describe('a hooked collection refuses every hooked write without a HookPass', ()
   });
 
   // The report API's write takes no HookPass at all: a hook must never be able to silence a
-  // report. It is the one `reportExempt` entry.
+  // report. (Through the route: `doc-store-report-api.test.ts`, a hooked collection.)
   it('the report API write is exempt: it reaches the transaction on a hooked collection', async () => {
-    expect(
-      Object.entries(LEDGER.store)
-        .filter(([, v]) => v === 'reportExempt')
-        .map(([k]) => k)
-    ).toEqual(['report']);
     expect(await outcome(store.report(ctx, hooked, KEY))).toBe('reached the transaction');
   });
 
