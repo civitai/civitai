@@ -24,7 +24,20 @@
 // not read from REST: the answer is `{"source":"none","reason":<the fallback reason>,"items":[]}`.
 // The site's shadow caller sends it (DESIGN.md, "P4: the site's shadow read").
 //
-// With APP_DATA_WRITES on, also the write routes and `info` (package writes; WRITES-DESIGN.md).
+// With APP_DATA_WRITES on, also the write routes and `info` (package writes; WRITES-DESIGN.md), and
+// read-your-writes for private collections (WRITES-DESIGN.md, "Read-your-writes"): each write the
+// store acknowledged is shown over its token's stream until the stream shows it (session.Ack), and a
+// read may name a floor, `?minSeq=S`, the highest `seq` the client was acknowledged for the app. A
+// floor the stream does not meet reopens it once per adapter poll; one still not met is
+// `503 floor_not_met` with Retry-After, never a REST read. Also the keyed get,
+//
+//	GET /v1/apps/{slug}/collections/{collection}/records/{key}[?major=N][&minSeq=S]
+//	→ {"source":"registry","item":{"urn"?:…,"key":…,"rev":…,"data":{…}}}
+//
+// answered from the stream (base plus overlay) only: a key the stream does not hold, or a stream
+// that holds nothing, is `404 not_found`, and a stream that cannot answer is `401` or `503` with
+// its reason as the code (streamRefusal), never a REST read. Writes off, `minSeq` is not read and
+// the keyed get is the mux's 404.
 //
 // Also /healthz, /readyz and /metrics.
 package api
@@ -59,9 +72,9 @@ import (
 // allow it.
 const RegistryOnlyHeader = "X-App-Data-Registry-Only"
 
-// Streams answers a read from a per-user stream (session.Manager).
+// Streams answers a read from a per-user stream (session.Manager), under a floor when minSeq > 0.
 type Streams interface {
-	Read(ctx context.Context, token, schema string) ([]registry.Entity, error)
+	ReadAt(ctx context.Context, token, schema string, minSeq int64) ([]registry.Entity, error)
 }
 
 // Lister is the REST fallback (rest.Client).
@@ -110,6 +123,8 @@ func (s *Server) Handler() http.Handler {
 	} else {
 		// The collection path also takes the create (POST): its preflight is the write paths'.
 		mux.HandleFunc("OPTIONS /v1/apps/{slug}/collections/{collection}/records", writes.Preflight)
+		// The key path's preflight (writes.Preflight, registered with the writes) allows GET too.
+		mux.HandleFunc("GET /v1/apps/{slug}/collections/{collection}/records/{key}", s.record)
 		s.Writes.Register(mux)
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -152,6 +167,142 @@ type answer struct {
 	Items  []item `json:"items"`
 }
 
+// keyed is the keyed get's answer.
+type keyed struct {
+	Source string `json:"source"`
+	Item   item   `json:"item"`
+}
+
+// minSeqRE is a floor: a non-negative integer of at most 15 digits (below 2^53, as the site's seqs).
+var minSeqRE = regexp.MustCompile(`^[0-9]{1,15}$`)
+
+// readParams are what both reads take: the schema the path and `major` name, the floor, the token.
+type readParams struct {
+	schema string
+	minSeq int64
+	token  string
+}
+
+// params reads the schema, the floor (writes on only) and the token, or answers the refusal and
+// reports false.
+func (s *Server) params(w http.ResponseWriter, r *http.Request, start time.Time) (readParams, bool) {
+	var p readParams
+	q := r.URL.Query()
+	major := 1
+	if raw := q.Get("major"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			s.refuse(w, start, http.StatusBadRequest, "bad_request", "major must be an integer", "bad_request")
+			return p, false
+		}
+		major = n
+	}
+	if raw, given := q["minSeq"]; given && s.Writes != nil {
+		if len(raw) != 1 || !minSeqRE.MatchString(raw[0]) {
+			s.refuse(w, start, http.StatusBadRequest, "bad_request", "minSeq must be a non-negative integer of at most 15 digits", "bad_request")
+			return p, false
+		}
+		p.minSeq, _ = strconv.ParseInt(raw[0], 10, 64)
+	}
+	schema, err := urn.CollectionSchema(r.PathValue("slug"), r.PathValue("collection"), major)
+	if err != nil {
+		s.refuse(w, start, http.StatusBadRequest, "bad_request", "invalid app, collection or major", "bad_request")
+		return p, false
+	}
+	p.schema = schema
+	token, ok := bearer(r)
+	if !ok {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="app-data"`)
+		s.refuse(w, start, http.StatusUnauthorized, "unauthenticated", "a bearer token is required", "unauthenticated")
+		return p, false
+	}
+	p.token = token
+	return p, true
+}
+
+// record serves the keyed get: from the stream only (see the package comment).
+func (s *Server) record(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	h := w.Header()
+	cors(h)
+	h.Set("Cache-Control", "private, no-store")
+	h.Set("Vary", "Authorization")
+	k := r.PathValue("key")
+	if !keyPrefixRE.MatchString(k) {
+		s.refuse(w, start, http.StatusBadRequest, "bad_request", "invalid record key", "bad_request")
+		return
+	}
+	p, ok := s.params(w, r, start)
+	if !ok {
+		return
+	}
+	switch {
+	case s.Streams == nil:
+		s.streamRefusal(w, start, "registry_off")
+		return
+	case !s.exchangeable(p.token):
+		s.streamRefusal(w, start, "token_not_exchangeable")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.LiveWait)
+	defer cancel()
+	ents, err := s.Streams.ReadAt(ctx, p.token, p.schema, p.minSeq)
+	switch {
+	case errors.Is(err, session.ErrFloorNotMet):
+		s.streamRefusal(w, start, "floor_not_met")
+		return
+	case err != nil:
+		s.streamRefusal(w, start, fallbackReason(err))
+		return
+	case !allKeyed(ents):
+		s.streamRefusal(w, start, "unkeyed")
+		return
+	}
+	// Two records of one key are the old and new rows of a re-created key, both briefly held: the
+	// newer write wins.
+	var found *registry.Entity
+	for i := range ents {
+		if e := &ents[i]; e.Key == k && (found == nil || e.Seq > found.Seq) {
+			found = e
+		}
+	}
+	if found == nil {
+		// An empty stream is an empty answer (WRITES-DESIGN.md, "The empty stream").
+		s.write(w, start, http.StatusNotFound, errBody("not_found", "document not found"), "registry", "not_found")
+		return
+	}
+	s.write(w, start, http.StatusOK, keyed{Source: "registry", Item: item{URN: found.URN, Key: found.Key, Rev: found.Rev, Data: found.Body}}, "registry", "ok")
+}
+
+// refusedReasons are the stream reasons the keyed get answers 401 (WRITES-DESIGN.md, the
+// fallback-reason table): the token, not the stream. Each is sent as its code, but a spent block
+// token's, which is `block_token_spent` (the SDK gets a fresh block token on it).
+var refusedReasons = map[string]string{
+	"token_not_exchangeable": "token_not_exchangeable", "invalid_token": "invalid_token",
+	"exchange_refused": "exchange_refused", "block_spent": "block_token_spent",
+}
+
+// streamRefusal answers a read the stream could not answer, by reason, with no REST read: 401 for the
+// token's own refusals, 501 for a collection the private feed does not serve (shared collections are
+// not served here yet), and 503 with Retry-After for the rest, the reason as the code.
+func (s *Server) streamRefusal(w http.ResponseWriter, start time.Time, reason string) {
+	if code, ok := refusedReasons[reason]; ok {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="app-data"`)
+		s.write(w, start, http.StatusUnauthorized, errBody(code, "the token cannot read this stream"), "registry", "refused")
+		return
+	}
+	if reason == "not_private" {
+		s.write(w, start, http.StatusNotImplemented, errBody(reason, "this collection is not served here"), "registry", "refused")
+		return
+	}
+	outcome := "unavailable"
+	if reason == "floor_not_met" {
+		outcome = reason
+	}
+	w.Header().Set("Retry-After", "1")
+	s.write(w, start, http.StatusServiceUnavailable, errBody(reason, "the stream cannot answer this read now; retry"), "registry", outcome)
+}
+
 func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	h := w.Header()
@@ -162,31 +313,16 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 
 	slug, collection := r.PathValue("slug"), r.PathValue("collection")
 	q := r.URL.Query()
-	major := 1
-	if raw := q.Get("major"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil {
-			s.refuse(w, start, http.StatusBadRequest, "bad_request", "major must be an integer", "bad_request")
-			return
-		}
-		major = n
-	}
 	keyPrefix := q.Get("keyPrefix")
 	if _, given := q["keyPrefix"]; given && !keyPrefixRE.MatchString(keyPrefix) {
 		s.refuse(w, start, http.StatusBadRequest, "bad_request", "invalid keyPrefix", "bad_request")
 		return
 	}
-	schema, err := urn.CollectionSchema(slug, collection, major)
-	if err != nil {
-		s.refuse(w, start, http.StatusBadRequest, "bad_request", "invalid app, collection or major", "bad_request")
-		return
-	}
-	token, ok := bearer(r)
+	p, ok := s.params(w, r, start)
 	if !ok {
-		h.Set("WWW-Authenticate", `Bearer realm="app-data"`)
-		s.refuse(w, start, http.StatusUnauthorized, "unauthenticated", "a bearer token is required", "unauthenticated")
 		return
 	}
+	token := p.token
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.Deadline)
 	defer cancel()
@@ -198,11 +334,15 @@ func (s *Server) records(w http.ResponseWriter, r *http.Request) {
 		reason = "token_not_exchangeable"
 	default:
 		lctx, lcancel := context.WithTimeout(ctx, s.LiveWait)
-		ents, err := s.Streams.Read(lctx, token, schema)
+		ents, err := s.Streams.ReadAt(lctx, token, p.schema, p.minSeq)
 		lcancel()
 		// An empty answer is not trusted: the origin answers a token it refuses with an empty
 		// snapshot, exactly as a user who holds nothing, so only REST can tell the two apart.
 		switch {
+		case errors.Is(err, session.ErrFloorNotMet):
+			// The client sent a floor: it is answered by the stream, or told to retry.
+			s.streamRefusal(w, start, "floor_not_met")
+			return
 		case err != nil || len(ents) == 0:
 			reason = fallbackReason(err)
 		case keyPrefix != "" && !allKeyed(ents):
@@ -297,6 +437,8 @@ func fallbackReason(err error) string {
 		return "block_spent"
 	case errors.Is(err, session.ErrBlockFull):
 		return "block_cache_full"
+	case errors.Is(err, session.ErrCursorExpired):
+		return "cursor_expired"
 	default:
 		return "failed"
 	}

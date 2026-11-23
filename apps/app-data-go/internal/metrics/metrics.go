@@ -23,16 +23,26 @@ var Sources = []string{"registry", "rest", "none"}
 var FallbackReasons = []string{
 	"registry_off", "token_not_exchangeable", "empty", "capacity", "token_capacity", "not_live", "stalled",
 	"cooling_down", "invalid_token", "exchange_refused", "not_private", "too_large", "ended", "failed", "closed",
-	"block_spent", "block_cache_full", "unkeyed",
+	"block_spent", "block_cache_full", "unkeyed", "cursor_expired",
 }
 
 // CloseReasons are the `reason` values of app_data_streams_closed_total (session.Close*).
-var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "revoked", "too_large", "end", "malformed", "error", "shutdown", "block_spent", "block_cache_full"}
+var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "revoked", "too_large", "end", "malformed", "error", "shutdown", "block_spent", "block_cache_full", "cursor_expired", "floor_reopen"}
 
 // Outcomes are the `outcome` values of app_data_reads_total. `registry_only` is a read that asked for
 // the registry's answer only (api.RegistryOnlyHeader) and that the registry could not answer: REST
-// was not read, and the read is not counted in app_data_fallbacks_total.
-var Outcomes = []string{"ok", "refused", "bad_request", "unauthenticated", "busy", "error", "registry_only"}
+// was not read, and the read is not counted in app_data_fallbacks_total. `floor_not_met` is a read
+// whose floor (`minSeq`) its stream did not meet (503); `not_found` and `unavailable` are the keyed
+// get's 404 and its other 503s, answered without a REST read.
+var Outcomes = []string{"ok", "refused", "bad_request", "unauthenticated", "busy", "error", "registry_only", "floor_not_met", "not_found", "unavailable"}
+
+// FloorOutcomes are the `outcome` values of app_data_floor_reopens_total (session.Floor*): a read
+// whose floor its stream had not met was met by the one reopen, still not met after it, or not
+// reopened because this interval's reopen was spent.
+var FloorOutcomes = []string{"met", "still_behind", "spent"}
+
+// OverlayKinds are the `kind` values of app_data_cache_overlays_total (session.Overlay*).
+var OverlayKinds = []string{"record", "delete_marker"}
 
 // BlockOutcomes are the `outcome` values of app_data_block_exchanges_total (exchange.Block*). Only
 // `refused` and `remembered` carry a refusal code in `error` (exchange.RefusalCodes); the rest `none`.
@@ -72,6 +82,11 @@ type Metrics struct {
 	Writes *prometheus.CounterVec
 	// WriteForward is the time of each forward to the site, by op: only requests that were sent.
 	WriteForward *prometheus.HistogramVec
+	// FloorReopens counts reads whose floor their stream had not met, by outcome (FloorOutcomes);
+	// Overlays the acknowledged writes shown over a stream, by kind (OverlayKinds). Zero while
+	// APP_DATA_WRITES is off.
+	FloorReopens *prometheus.CounterVec
+	Overlays     *prometheus.CounterVec
 }
 
 // Stats is what the session manager holds now (session.Stats), read at scrape time.
@@ -114,6 +129,14 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 			Help:    "Time of one forward to the site's internal storage route, by op.",
 			Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60},
 		}, []string{"op"}),
+		FloorReopens: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "app_data_floor_reopens_total",
+			Help: "Reads whose floor (minSeq) their stream had not met, by outcome (met, still_behind: after the one reopen; spent: no reopen left in this poll interval).",
+		}, []string{"outcome"}),
+		Overlays: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "app_data_cache_overlays_total",
+			Help: "Acknowledged writes shown over their token's stream until it shows them, by kind (record, delete_marker).",
+		}, []string{"kind"}),
 	}
 	gauge := func(name, help string, pick func(s, l, r, b int) int) prometheus.Collector {
 		return prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: name, Help: help}, func() float64 {
@@ -121,7 +144,7 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 		})
 	}
 	reg.MustRegister(m.Reads, m.Fallbacks, m.StreamsOpened, m.StreamsClosed, m.ReadTime, m.BlockExchanges,
-		m.Writes, m.WriteForward,
+		m.Writes, m.WriteForward, m.FloorReopens, m.Overlays,
 		gauge("app_data_streams_open", "Per-user registry streams open now (each counts against the origin's subscription caps).",
 			func(s, _, _, _ int) int { return s }),
 		gauge("app_data_streams_live", "Open streams that have sent Live, so reads are answered from them.",
@@ -143,6 +166,12 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 	}
 	for _, r := range CloseReasons {
 		m.StreamsClosed.WithLabelValues(r)
+	}
+	for _, o := range FloorOutcomes {
+		m.FloorReopens.WithLabelValues(o)
+	}
+	for _, k := range OverlayKinds {
+		m.Overlays.WithLabelValues(k)
 	}
 	for _, op := range WriteOps {
 		m.WriteForward.WithLabelValues(op)

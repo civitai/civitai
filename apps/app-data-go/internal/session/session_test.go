@@ -67,6 +67,9 @@ type fakeOrigin struct {
 	mu      sync.Mutex
 	records map[string][]registry.Entity
 	noLive  map[string]bool
+	// heads is the head a token's Live names in its meta, as the adapter's private feed does; a
+	// token with none sends a Live with no meta.
+	heads   map[string]int64
 	refuse  map[string]error
 	streams []*fakeStream
 	opened  atomic.Int32
@@ -94,7 +97,7 @@ func (o *fakeOrigin) Exchange(_ context.Context, subject string) (exchange.Token
 }
 
 func newOrigin() *fakeOrigin {
-	return &fakeOrigin{records: map[string][]registry.Entity{}, noLive: map[string]bool{},
+	return &fakeOrigin{records: map[string][]registry.Entity{}, noLive: map[string]bool{}, heads: map[string]int64{},
 		refuse: map[string]error{}, byToken: map[string]int{},
 		refuseExchange: map[string]error{}, exchanges: map[string]int{}}
 }
@@ -121,7 +124,11 @@ func (o *fakeOrigin) Subscribe(_ context.Context, schema, presented string) (Str
 		s.events <- step{ev: registry.Event{Type: registry.Upsert, Entity: e}}
 	}
 	if !o.noLive[token] {
-		s.events <- step{ev: registry.Event{Type: registry.Live, Cursor: liveCursor}}
+		live := registry.Event{Type: registry.Live, Cursor: liveCursor}
+		if h, ok := o.heads[token]; ok {
+			live.Meta = headMeta(h)
+		}
+		s.events <- step{ev: live}
 	}
 	o.streams = append(o.streams, s)
 	return s, nil

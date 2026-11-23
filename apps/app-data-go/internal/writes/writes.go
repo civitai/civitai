@@ -20,6 +20,11 @@
 // `outcome: "unknown"`: it may have been written. `503 not_forwarded` is this service's own refusal
 // before anything was sent, or the site's refusal of the forward itself before anything ran (its
 // signature check, or the internal route off), and is the one answer safe to resend.
+//
+// READ-YOUR-WRITES. A create's, put's or delete's 2xx answer names where the write sits in the app
+// namespace's write order (`seq`; a create's or put's also its `recordId`). Each is handed to Acked
+// (session.Manager.Ack) after the answer is passed on, so the writing token's open stream shows it
+// before the adapter's next poll. An answer without a seq, or of any other op, is passed on only.
 package writes
 
 import (
@@ -38,6 +43,7 @@ import (
 
 	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
 	"github.com/civitai/civitai/apps/app-data-go/internal/metrics"
+	"github.com/civitai/civitai/apps/app-data-go/internal/session"
 	"github.com/civitai/civitai/apps/app-data-go/internal/sign"
 	"github.com/civitai/civitai/apps/app-data-go/internal/urn"
 )
@@ -107,6 +113,9 @@ type Forwarder struct {
 	Log     *slog.Logger
 	// Now is the clock the signature's timestamp is read from; nil is time.Now.
 	Now func() time.Time
+	// Acked receives each acknowledged create, put and delete, with the token that wrote it and the
+	// schema of the stream it belongs to (session.Manager.Ack). Nil is none: the registry path is off.
+	Acked func(token, schema string, a session.Ack)
 }
 
 // route is one write route's fixed facts.
@@ -188,6 +197,10 @@ type outbound struct {
 	// region holds the region header values the inbound request carried, indexed as
 	// sign.RegionHeaders ("" when absent): copied onto the forward and signed.
 	region [3]string
+	// What an acknowledgement is applied to: the bearer token, and the path's app, collection, key
+	// and schema major (the one named, else 1, as a read's).
+	token, slug, collection, key string
+	major                        int
 }
 
 func (f *Forwarder) serve(rt route) http.HandlerFunc {
@@ -209,8 +222,9 @@ func (f *Forwarder) serve(rt route) http.HandlerFunc {
 // prepare runs every check made here, in order: the path, the query, the region headers, the body,
 // the token, and whether this process still takes writes. Nothing is sent before all pass.
 func (f *Forwarder) prepare(r *http.Request, rt route) (outbound, *refusal) {
-	ob := outbound{op: rt.op, method: rt.method}
+	ob := outbound{op: rt.op, method: rt.method, major: 1}
 	slug, collection, key := r.PathValue("slug"), r.PathValue("collection"), r.PathValue("key")
+	ob.slug, ob.collection, ob.key = slug, collection, key
 	switch {
 	case !urn.ValidSlug(slug):
 		return ob, refused(http.StatusBadRequest, "invalid_request", "invalid app slug")
@@ -245,6 +259,7 @@ func (f *Forwarder) prepare(r *http.Request, rt route) (outbound, *refusal) {
 		}
 		// Sent as given: the grammar admits no leading zero, so it is already canonical.
 		ob.query += "&major=" + raw[0]
+		ob.major, _ = strconv.Atoi(raw[0])
 	}
 	// The edge's region headers, copied onto the forward and signed, so the site's region rules see
 	// what the edge set. Each is one well-formed value, or absent.
@@ -292,7 +307,7 @@ func (f *Forwarder) prepare(r *http.Request, rt route) (outbound, *refusal) {
 	if ref := f.checkToken(r.Context(), token); ref != nil {
 		return ob, ref
 	}
-	ob.auth = auth
+	ob.auth, ob.token = auth, token
 
 	if f.Ready != nil && !f.Ready() {
 		return ob, notForwarded("this replica is shutting down; resend")
@@ -488,6 +503,56 @@ func (f *Forwarder) forward(w http.ResponseWriter, r *http.Request, ob outbound)
 	w.WriteHeader(res.StatusCode)
 	_, _ = w.Write(raw)
 	f.Metrics.Writes.WithLabelValues(ob.op, outcome).Inc()
+	if outcome == "2xx" {
+		f.ack(ob, raw)
+	}
+}
+
+// ack hands a 2xx create, put or delete answer to Acked, when it names a seq.
+func (f *Forwarder) ack(ob outbound, raw []byte) {
+	if f.Acked == nil {
+		return
+	}
+	a, ok := ackOf(ob, raw)
+	if !ok {
+		return
+	}
+	// prepare checked the slug, the collection and the major (majorRE) against the same grammars, so
+	// this names a schema; were it ever "", it would match no stream and apply nothing.
+	schema, _ := urn.CollectionSchema(ob.slug, ob.collection, ob.major)
+	f.Acked(ob.token, schema, a)
+}
+
+// ackOf reads what the site's answer to ob acknowledged (WRITES-DESIGN.md, "Store changes"): a
+// create's or put's record (`key`, `data`, `seq`, `recordId`), or a delete's `{deleted: true, seq}`.
+// `{deleted: false}` wrote nothing; an answer without a positive seq cannot be ordered against the
+// stream. Neither is an ack.
+func ackOf(ob outbound, raw []byte) (session.Ack, bool) {
+	var b struct {
+		Key      string          `json:"key"`
+		Data     json.RawMessage `json:"data"`
+		Seq      int64           `json:"seq"`
+		RecordID string          `json:"recordId"`
+		Deleted  bool            `json:"deleted"`
+	}
+	if json.Unmarshal(raw, &b) != nil || b.Seq <= 0 {
+		return session.Ack{}, false
+	}
+	switch ob.op {
+	case "delete":
+		return session.Ack{Key: ob.key, Seq: b.Seq, Deleted: true}, b.Deleted
+	case "create", "put":
+	default:
+		return session.Ack{}, false
+	}
+	data := bytes.TrimSpace(b.Data)
+	// A put answers the key it was sent; a create, the key the store minted.
+	if !keyRE.MatchString(b.Key) || (ob.op == "put" && b.Key != ob.key) || len(data) == 0 || string(data) == "null" {
+		return session.Ack{}, false
+	}
+	// No recordId (a row the column's default predates) is a record with no URN: shown by key.
+	u, _ := urn.Document(ob.slug, ob.collection, b.RecordID)
+	return session.Ack{Key: b.Key, Seq: b.Seq, URN: u, Body: data}, true
 }
 
 // siteRefusedTheForward reports whether the site's answer is its refusal of the forward itself: a 401
