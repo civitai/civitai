@@ -1415,7 +1415,6 @@
   "src/server/games/new-order/__tests__/manage-queue-held.test.ts": 3,
   "src/server/games/new-order/__tests__/paladin-queue-alias.test.ts": 1,
   "src/server/games/new-order/__tests__/queue-removal-clears-tallies.test.ts": 3,
-  "src/server/games/new-order/__tests__/rating-slot-purge-clears-tallies.test.ts": 3,
   "src/server/games/new-order/__tests__/reset-player-endpoint.test.ts": 3,
   "src/server/games/new-order/__tests__/reset-player-gold.test.ts": 11,
   "src/server/games/new-order/__tests__/revote-guard.test.ts": 11,
