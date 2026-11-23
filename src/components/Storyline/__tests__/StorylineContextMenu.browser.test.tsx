@@ -1,6 +1,7 @@
-import { ModalsProvider } from '@mantine/modals';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useRouter } from 'next/router';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as NotificationsMod from '~/utils/notifications';
@@ -51,12 +52,13 @@ const storyline = { id: 2, title: 'The Long Road', tosViolation: false };
 
 const renderMenu = (props: { isOwner: boolean; tosViolation?: boolean }) =>
   renderWithProviders(
-    <ModalsProvider>
+    <>
       <StorylineContextMenu
         storyline={{ ...storyline, tosViolation: !!props.tosViolation }}
         isOwner={props.isOwner}
       />
-    </ModalsProvider>
+      <DialogProvider />
+    </>
   );
 
 const openMenu = () => page.getByRole('button', { name: 'More options' }).click();
@@ -69,6 +71,9 @@ beforeEach(() => {
   mocks.currentUser = { id: OWNER };
   vi.mocked(useRouter().push).mockClear();
 });
+
+// Each test renders its own DialogProvider; the store is global, so empty it between tests.
+afterEach(() => dialogStore.closeAll());
 
 describe('StorylineContextMenu', () => {
   test('the owner deletes after a confirm that says the posts stay, then lands on the feed', async () => {

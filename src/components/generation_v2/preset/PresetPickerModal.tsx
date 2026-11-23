@@ -110,6 +110,7 @@ export function PresetPickerModal() {
   return (
     <Modal
       opened={dialog.opened}
+      closeOnEscape={dialog.closeOnEscape}
       onClose={dialog.onClose}
       title="Presets"
       size="md"

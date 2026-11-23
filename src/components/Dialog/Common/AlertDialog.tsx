@@ -1,4 +1,6 @@
 import { Divider, Group, Modal, Stack, Text } from '@mantine/core';
+import type { Dialog } from '~/components/Dialog/dialogStore';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '../DialogProvider';
 import { IconCheck, IconCircleX, IconInfoCircle } from '@tabler/icons-react';
 
@@ -29,6 +31,10 @@ const DEFAULT_DIALOG_TEMPLATES: Record<DialogType, Omit<Props, 'type'>> = {
     icon: <IconInfoCircle size={22} />,
   },
 };
+
+export function openAlert({ id, ...props }: Props & { id?: Dialog['id'] }) {
+  dialogStore.trigger({ component: AlertDialog, id, props });
+}
 
 export default function AlertDialog({ type, size, ...props }: Props) {
   const dialog = useDialogContext();

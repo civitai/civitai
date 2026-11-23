@@ -59,9 +59,10 @@ import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { BankingChangeNoticeAlert } from '~/components/Buzz/CreatorProgramV2/BankingChangeNoticeAlert';
@@ -103,11 +104,6 @@ import {
   numberWithCommas,
 } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
-import dynamic from 'next/dynamic';
-
-const TosModal = dynamic(() => import('~/components/ToSModal/TosModal'), {
-  ssr: false,
-});
 
 const cardProps: HTMLProps<HTMLDivElement> = {
   className:
@@ -279,23 +275,20 @@ const JoinCreatorProgramCard = () => {
   const { refreshSession, refreshing } = useRefreshSession(false);
 
   const handleJoinCreatorsProgram = async () => {
-    dialogStore.trigger({
-      component: TosModal,
-      props: {
-        slug: 'creator-program-v2-tos',
-        fieldKey: 'creatorProgramToSAccepted' as const,
-        onAccepted: async () => {
-          try {
-            await joinCreatorsProgram();
-            showSuccessNotification({
-              title: 'Success!',
-              message: 'You have successfully joined the Creator Program.',
-            });
-            refreshSession();
-          } catch (error) {
-            // no-op. The mutation should handle it.
-          }
-        },
+    openDialog(() => import('~/components/ToSModal/TosModal'), {
+      slug: 'creator-program-v2-tos',
+      fieldKey: 'creatorProgramToSAccepted' as const,
+      onAccepted: async () => {
+        try {
+          await joinCreatorsProgram();
+          showSuccessNotification({
+            title: 'Success!',
+            message: 'You have successfully joined the Creator Program.',
+          });
+          refreshSession();
+        } catch (error) {
+          // no-op. The mutation should handle it.
+        }
       },
     });
   };
@@ -588,27 +581,24 @@ const BankBuzzCard = () => {
               loading={bankingBuzz}
               disabled={!hasActiveMembership}
               onClick={() => {
-                dialogStore.trigger({
-                  component: ConfirmDialog,
-                  props: {
-                    title: 'Bank your Buzz',
-                    message: (
-                      <div className="flex flex-col gap-2">
-                        <p>
-                          You are about to add{' '}
-                          <CurrencyBadge
-                            unitAmount={toBank}
-                            currency={Currency.BUZZ}
-                            type={selectedBuzzType}
-                          />{' '}
-                          to the bank.{' '}
-                        </p>
-                        <p> Are you sure?</p>
-                      </div>
-                    ),
-                    labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-                    onConfirm: handleBankBuzz,
-                  },
+                openConfirm({
+                  title: 'Bank your Buzz',
+                  message: (
+                    <div className="flex flex-col gap-2">
+                      <p>
+                        You are about to add{' '}
+                        <CurrencyBadge
+                          unitAmount={toBank}
+                          currency={Currency.BUZZ}
+                          type={selectedBuzzType}
+                        />{' '}
+                        to the bank.{' '}
+                      </p>
+                      <p> Are you sure?</p>
+                    </div>
+                  ),
+                  labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+                  onConfirm: handleBankBuzz,
                 });
               }}
             >
@@ -1069,22 +1059,19 @@ const WithdrawCashCard = () => {
                     !withdrawalMethodSetup
                   }
                   onClick={() => {
-                    dialogStore.trigger({
-                      component: ConfirmDialog,
-                      props: {
-                        title: 'Withdraw your cash',
-                        message: (
-                          <div className="flex flex-col gap-2">
-                            <p>
-                              You are about to request a withdrawal of $
-                              {formatCurrencyForDisplay(Math.round(toWithdraw * 100))}{' '}
-                            </p>
-                            <p> Are you sure?</p>
-                          </div>
-                        ),
-                        labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-                        onConfirm: handleWithdrawal,
-                      },
+                    openConfirm({
+                      title: 'Withdraw your cash',
+                      message: (
+                        <div className="flex flex-col gap-2">
+                          <p>
+                            You are about to request a withdrawal of $
+                            {formatCurrencyForDisplay(Math.round(toWithdraw * 100))}{' '}
+                          </p>
+                          <p> Are you sure?</p>
+                        </div>
+                      ),
+                      labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+                      onConfirm: handleWithdrawal,
                     });
                   }}
                 >
@@ -1244,36 +1231,33 @@ const ExtractBuzzCard = () => {
               styles={{ label: { width: '100%' } }}
               disabled={(banked?.total ?? 0) === 0}
               onClick={() => {
-                dialogStore.trigger({
-                  component: ConfirmDialog,
-                  props: {
-                    title: 'Extract your Buzz',
-                    message: (
-                      <div className="flex flex-col gap-2">
+                openConfirm({
+                  title: 'Extract your Buzz',
+                  message: (
+                    <div className="flex flex-col gap-2">
+                      <p>
+                        You are about to Extract{' '}
+                        <CurrencyBadge unitAmount={banked?.total ?? 0} currency={Currency.BUZZ} />{' '}
+                        from the Bank.
+                      </p>
+                      <p>
+                        This action is not reversible. You cannot Bank Buzz until the next Banking
+                        Phase.
+                      </p>
+                      <Alert color="yellow">
                         <p>
-                          You are about to Extract{' '}
-                          <CurrencyBadge unitAmount={banked?.total ?? 0} currency={Currency.BUZZ} />{' '}
-                          from the Bank.
+                          If you are intending to withdraw cash,{' '}
+                          <span className="font-bold">DO NOT EXTRACT</span>. Buzz must remain in the
+                          Bank to be eligible for payout.
                         </p>
-                        <p>
-                          This action is not reversible. You cannot Bank Buzz until the next Banking
-                          Phase.
-                        </p>
-                        <Alert color="yellow">
-                          <p>
-                            If you are intending to withdraw cash,{' '}
-                            <span className="font-bold">DO NOT EXTRACT</span>. Buzz must remain in
-                            the Bank to be eligible for payout.
-                          </p>
-                        </Alert>
-                        <p> Are you sure you want to proceed with Extraction??</p>
-                      </div>
-                    ),
-                    labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-                    onConfirm: handleExtractBuzz,
-                    confirmProps: {
-                      color: 'red',
-                    },
+                      </Alert>
+                      <p> Are you sure you want to proceed with Extraction??</p>
+                    </div>
+                  ),
+                  labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+                  onConfirm: handleExtractBuzz,
+                  confirmProps: {
+                    color: 'red',
                   },
                 });
               }}

@@ -1,9 +1,8 @@
 import { Badge, Button, Group, Stack, Text } from '@mantine/core';
 import { IconSend } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useEffect, useRef } from 'react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { openLoginHere } from '~/components/Login/requireLogin';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -16,8 +15,6 @@ import {
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
-const AppAccessRequestModal = dynamic(() => import('./AppAccessRequestModal'));
-
 const STATUS_BADGE: Record<AppAccessRequestStatus, { label: string; color: string }> = {
   pending: { label: 'Pending review', color: 'yellow' },
   approved: { label: 'Approved', color: 'green' },
@@ -25,7 +22,7 @@ const STATUS_BADGE: Record<AppAccessRequestStatus, { label: string; color: strin
 };
 
 export function openAppAccessRequestModal() {
-  dialogStore.trigger({ id: 'app-access-request', component: AppAccessRequestModal });
+  openDialog(() => import('./AppAccessRequestModal'), undefined, { id: 'app-access-request' });
 }
 
 /**

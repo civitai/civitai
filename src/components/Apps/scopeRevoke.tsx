@@ -1,5 +1,5 @@
 import { Badge, Button, Group, Stack, Text } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { useEffect, useState } from 'react';
 import type { ScopeConsentState } from '~/components/Apps/scopeConsentRows';
 import {
@@ -34,19 +34,7 @@ import { trpc } from '~/utils/trpc';
  * `ScopeConsentList`.
  */
 
-/**
- * ⚠️ NO `SPEND_SCOPE` DECLARATION AND NO RE-EXPORT HERE — read `BLOCK_SPEND_SCOPE` in
- * `~/shared/constants/block-scope.constants` instead, which is what this file now imports.
- *
- * Phase 3 declared the literal here, then round 1 moved it to shared constants and left
- * `export const SPEND_SCOPE = BLOCK_SPEND_SCOPE` behind so `src/pages/apps/activity.tsx` would keep
- * working. Round 2's reuse lane showed that alias defeated the point: the finding was never "the
- * literal is in the wrong file", it was that the BUDGET EDITOR — which predates revoke and is
- * independent of it — took its spend-scope identity from a module that imports `@mantine/core`,
- * `@mantine/modals`, `trpc` and `formatDate` to render a revoke dialog. Re-exporting preserved that
- * dependency edge verbatim while the docblock above it claimed the edge was the reason for moving.
- * A rename is not a consolidation.
- */
+/** Do not declare or re-export `SPEND_SCOPE` here: the budget editor reads `BLOCK_SPEND_SCOPE` from `~/shared/constants/block-scope.constants`, so this file's imports stay out of its graph. */
 
 /**
  * What a revoke actually does, in the viewer's terms — the confirm step's body.
@@ -399,8 +387,8 @@ export function useScopeRevoke({
    * `observer.setOptions` → `mutationCache.build(client, this.options)`), so they would have fired
    * after unmount. There was nothing to fix.
    *
-   * The premise about the dialog is still true — `openConfirmModal` renders into the global
-   * `CustomModalsProvider` in `src/pages/_app.tsx`, so it does outlive this component — but the
+   * The premise about the dialog is still true — `openConfirm` renders into the global
+   * `DialogProvider` in `src/pages/_app.tsx`, so it does outlive this component — but the
    * conclusion drawn from it was wrong, and a comment asserting a library behaviour that does not
    * exist is worse than no comment: the next reader trusts it, and the test fixture below was
    * written to ENFORCE this shape on that false rationale.
@@ -415,9 +403,9 @@ export function useScopeRevoke({
   const mutation = trpc.blocks.revokeScopes.useMutation();
 
   const requestRevoke = (scope: string) => {
-    openConfirmModal({
+    openConfirm({
       title: `Remove “${blockScopeTitle(scope)}”?`,
-      children: <ScopeRevokeConfirmBody appName={appName} scope={scope} />,
+      message: <ScopeRevokeConfirmBody appName={appName} scope={scope} />,
       labels: { confirm: 'Remove permission', cancel: 'Keep it' },
       confirmProps: { color: 'red', 'data-testid': 'scope-revoke-confirm' },
       cancelProps: { 'data-testid': 'scope-revoke-cancel' },
@@ -529,9 +517,9 @@ export function useScopeRevoke({
    */
   const requestRevokeAll = (scopes: string[], keptCount: number) => {
     if (scopes.length === 0 || scopes.length > REVOKE_SCOPES_MAX_PER_CALL) return;
-    openConfirmModal({
+    openConfirm({
       title: `Remove ${scopes.length} permission${scopes.length === 1 ? '' : 's'}?`,
-      children: (
+      message: (
         <ScopeRevokeAllConfirmBody appName={appName} scopes={scopes} keptCount={keptCount} />
       ),
       labels: { confirm: 'Remove all', cancel: 'Keep them' },

@@ -1,7 +1,48 @@
-import type { ButtonProps, MantineSize } from '@mantine/core';
+import type { ButtonProps, GroupProps, MantineSize } from '@mantine/core';
 import { Button, Group, Modal, Stack, Text, useMantineTheme } from '@mantine/core';
 import { useEffect, useState } from 'react';
+import type { Dialog } from '~/components/Dialog/dialogStore';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { atLeastOverMobileSheet } from '~/shared/constants/app-layout.constants';
+
+type DialogButtonProps = ButtonProps & {
+  [attribute: `data-${string}`]: string | boolean | undefined;
+};
+
+type ConfirmDialogProps = {
+  title?: React.ReactNode;
+  message: React.ReactNode;
+  /** A returned promise shows a spinner; the dialog closes when it resolves and stays open if it rejects. */
+  onConfirm?: () => Promise<unknown> | unknown;
+  onCancel?: () => void;
+  labels?: { cancel?: string; confirm?: string };
+  confirmProps?: DialogButtonProps;
+  cancelProps?: DialogButtonProps;
+  /** Props for the row that holds the buttons, e.g. `{ justify: 'center' }`. */
+  groupProps?: GroupProps;
+  size?: number | MantineSize;
+  zIndex?: number;
+  autoFocusConfirm?: boolean;
+  /** False leaves the dialog open after confirming; close it with `dialogStore.closeById(id)`. */
+  closeOnConfirm?: boolean;
+};
+
+type OpenConfirmProps = ConfirmDialogProps & {
+  id?: Dialog['id'];
+  /** Runs once when the confirm closes itself, by any route: confirm, cancel, X, Escape, outside click, Back. Not on `dialogStore.closeById`. */
+  onClose?: () => void;
+};
+
+/** Opens a confirm on the dialog stack. Labels default to Confirm / Cancel. */
+export function openConfirm({ id, onClose, ...props }: OpenConfirmProps) {
+  dialogStore.trigger({
+    component: ConfirmDialog,
+    id,
+    props: { ...props, labels: { confirm: 'Confirm', cancel: 'Cancel', ...props.labels } },
+    options: { onClose },
+  });
+}
 
 export default function ConfirmDialog({
   title,
@@ -14,18 +55,9 @@ export default function ConfirmDialog({
   size,
   zIndex,
   autoFocusConfirm,
-}: {
-  title?: React.ReactNode;
-  message: React.ReactNode;
-  onConfirm?: () => Promise<unknown> | unknown;
-  onCancel?: () => void;
-  labels?: { cancel?: string; confirm?: string };
-  confirmProps?: ButtonProps;
-  cancelProps?: ButtonProps;
-  size?: number | MantineSize;
-  zIndex?: number;
-  autoFocusConfirm?: boolean;
-}) {
+  closeOnConfirm = true,
+  groupProps,
+}: ConfirmDialogProps) {
   const dialog = useDialogContext();
   const theme = useMantineTheme();
   const [loading, setLoading] = useState(false);
@@ -45,11 +77,13 @@ export default function ConfirmDialog({
     const result = onConfirm?.();
     if (result instanceof Promise) {
       setLoading(true);
-      await Promise.resolve(result);
-      setLoading(false);
+      try {
+        await result; // a rejection skips the close below, so the user can retry
+      } finally {
+        setLoading(false);
+      }
     }
-    // await onConfirm?.();
-    dialog.onClose();
+    if (closeOnConfirm) dialog.onClose();
   };
 
   return (
@@ -59,12 +93,13 @@ export default function ConfirmDialog({
       onClose={handleCancel}
       centered
       size={size}
-      zIndex={zIndex ?? dialog.zIndex}
+      zIndex={zIndex ?? atLeastOverMobileSheet(dialog.zIndex)}
     >
       <Stack>
         {message}
         <Group
           justify="flex-end"
+          {...groupProps}
           onKeyDown={(e) => {
             if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
               e.stopPropagation();
@@ -88,8 +123,10 @@ export default function ConfirmDialog({
           </Button>
           <Button
             onClick={handleConfirm}
-            loading={loading}
             {...confirmProps}
+            // After the spread: a caller's `loading` is fixed when the dialog opens, and must not switch
+            // off the spinner (and its click guard) while an async onConfirm runs.
+            loading={loading || !!confirmProps?.loading}
             data-autofocus={autoFocusConfirm ? 'true' : undefined}
             style={
               confirmFocused

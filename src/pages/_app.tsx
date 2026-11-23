@@ -105,7 +105,6 @@ import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { ProfanityBlocklistProvider } from '~/providers/ProfanityBlocklistProvider';
-import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 import {
   ShellBootstrapProvider,
   useShellBootstrap,
@@ -409,14 +408,10 @@ function MyApp(props: CustomAppProps) {
                                                       <AuctionContextProvider>
                                                         <BaseLayout>
                                                           {isProd && <TrackPageView />}
-                                                          <CustomModalsProvider>
-                                                            {getLayout(
-                                                              <Component {...pageProps} />
-                                                            )}
-                                                            {/* <StripeSetupSuccessProvider /> */}
-                                                            <DialogProvider />
-                                                            <RoutedDialogProvider />
-                                                          </CustomModalsProvider>
+                                                          {getLayout(<Component {...pageProps} />)}
+                                                          {/* <StripeSetupSuccessProvider /> */}
+                                                          <DialogProvider />
+                                                          <RoutedDialogProvider />
                                                         </BaseLayout>
                                                       </AuctionContextProvider>
                                                     </ToursProvider>

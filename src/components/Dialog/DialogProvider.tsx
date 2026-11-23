@@ -1,7 +1,7 @@
-import React, { createContext, memo, useContext, useEffect, useState } from 'react';
+import React, { createContext, memo, Suspense, useContext, useEffect, useState } from 'react';
 import type { Dialog } from '~/components/Dialog/dialogStore';
 import { DialogIdContext, useDialogId } from '~/components/Dialog/dialogId';
-import { dialogStore, useDialogStore, useIsLevelFocused } from '~/components/Dialog/dialogStore';
+import { dialogStore, useDialogStore, useIsTopDialog } from '~/components/Dialog/dialogStore';
 import { useHistoryLayer } from '~/hooks/useHistoryLayer';
 import { useMobileGeneratorStore } from '~/store/mobile-generator.store';
 
@@ -29,7 +29,7 @@ const DialogProviderInner = memo(function DialogProviderInner({
   index: number;
 }) {
   const [opened, setOpened] = useState(false);
-  const isTopLevel = useIsLevelFocused();
+  const isTopDialog = useIsTopDialog(dialog.id);
 
   const Dialog = dialog.component;
 
@@ -55,11 +55,14 @@ const DialogProviderInner = memo(function DialogProviderInner({
         onClose,
         zIndex: 300 + index,
         target: dialog.target,
-        closeOnEscape: isTopLevel,
+        closeOnEscape: isTopDialog,
       }}
     >
       <DialogIdContext.Provider value={dialog.id}>
-        <Dialog {...dialog.props} />
+        {/* `openDialog` opens a React.lazy component; it renders once its module loads. */}
+        <Suspense fallback={null}>
+          <Dialog {...dialog.props} />
+        </Suspense>
       </DialogIdContext.Provider>
     </DialogContext.Provider>
   );

@@ -210,7 +210,6 @@
     "@mantine/dates": "^7.17.7",
     "@mantine/dropzone": "^7.17.7",
     "@mantine/hooks": "^7.17.7",
-    "@mantine/modals": "^7.17.7",
     "@mantine/notifications": "^7.17.7",
     "@mantine/nprogress": "^7.17.7",
     "@mantine/tiptap": "^7.17.7",

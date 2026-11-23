@@ -18,7 +18,6 @@ import {
 } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconChevronDown,
   IconEyeOff,
@@ -78,6 +77,7 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 /** 🔴 The gate is the SHARED `resolveActivityPageAccess`, never an inline flag read —
  *  and it is `appBlocks || appBlocksPages`. See `canAccessAppsActivity`. */
@@ -150,9 +150,9 @@ function PinnedInstallRow({ sub }: PinnedInstallRowProps) {
 
   const onConfirmUninstall = () => {
     const targetName = pinnedTo[0]?.name ?? 'this model';
-    openConfirmModal({
+    openConfirm({
       title: `Uninstall ${manifest.name ?? sub.blockId}?`,
-      children: (
+      message: (
         <Stack gap="xs">
           <Text size="sm">
             This removes the install row entirely. The app will stop appearing on{' '}

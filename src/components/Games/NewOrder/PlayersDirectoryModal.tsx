@@ -20,9 +20,8 @@ import {
 } from '@tabler/icons-react';
 import { useState } from 'react';
 import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTextInput';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
   useInquisitorTools,
   useQueryPlayersInfinite,
@@ -127,15 +126,12 @@ function PlayerDetails({ player }: { player: GetPlayersItem }) {
     useInquisitorTools();
 
   const handleResetPlayerClick = () => {
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Reset Player',
-        message: `Are you sure you want to reset ${player.username}? The player will be notified and this action cannot be undone.`,
-        labels: { cancel: 'Cancel', confirm: 'Reset Player' },
-        confirmProps: { color: 'red' },
-        onConfirm: async () => resetPlayer({ playerId: player.id }),
-      },
+    openConfirm({
+      title: 'Reset Player',
+      message: `Are you sure you want to reset ${player.username}? The player will be notified and this action cannot be undone.`,
+      labels: { cancel: 'Cancel', confirm: 'Reset Player' },
+      confirmProps: { color: 'red' },
+      onConfirm: async () => resetPlayer({ playerId: player.id }),
     });
   };
 

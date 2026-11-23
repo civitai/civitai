@@ -1,8 +1,11 @@
-import dynamic from 'next/dynamic';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import type { ComponentProps } from 'react';
+import { openDialog } from '~/components/Dialog/openDialog';
+import type BlockModelTagsModal from '~/components/Modals/BlockModelTagsModal';
 
-const BlockModelTagsModal = dynamic(() => import('~/components/Modals/BlockModelTagsModal'), {
-  ssr: false,
-});
-
-export const openBlockModelTagsModal = createDialogTrigger(BlockModelTagsModal);
+export function openBlockModelTagsModal({
+  props,
+}: {
+  props: ComponentProps<typeof BlockModelTagsModal>;
+}) {
+  openDialog(() => import('~/components/Modals/BlockModelTagsModal'), props);
+}

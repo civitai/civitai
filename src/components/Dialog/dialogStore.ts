@@ -1,5 +1,4 @@
 import type React from 'react';
-import { useRef } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
@@ -77,67 +76,11 @@ export const useDialogStore = create<DialogStore>()(
   }))
 );
 
-export function createDialogTrigger<T = any>(
-  component: DialogSettings<T>['component'],
-  defaultOptions?: Omit<DialogSettings<T>, 'component'>
-) {
-  return (options?: Omit<DialogSettings<T>, 'component'>) =>
-    dialogStore.trigger({ component, ...defaultOptions, ...options } as DialogSettings<T>);
-}
-
-export function useIsLevelFocused() {
-  const levelRef = useRef<number>();
-  const level = useDialogStore((store) => store.dialogs.length);
-
-  if (!levelRef.current) levelRef.current = level;
-
-  return levelRef.current === level;
-}
-
-/**
- * True when the dialog with this id is the LAST entry in the store — the one actually
- * in front. Unlike `useIsLevelFocused` (which compares the dialog COUNT now with the
- * count at mount), this stays correct when a dialog underneath closes or another opens
- * on top afterwards. `undefined` (no dialog context) is never top-most.
- */
+/** True when the dialog with this id is the last entry in the store, the one in front. `undefined` (no dialog context) is never top-most. */
 export function useIsTopDialog(id: string | number | symbol | undefined) {
   return useDialogStore(
     (store) => id !== undefined && store.dialogs[store.dialogs.length - 1]?.id === id
   );
-}
-
-// used to track the modal stacking context (page modals).
-const useStackingContextStore = create<{
-  stackingContext: number[];
-}>(() => ({
-  stackingContext: [],
-}));
-export function useStackingContext() {
-  const stackingContextRef = useRef(useStackingContextStore.getState().stackingContext.length);
-  const isCurrentStack = useStackingContextStore(
-    (state) => state.stackingContext.length === stackingContextRef.current
-  );
-
-  const increase = () => {
-    const stackingContext = stackingContextRef.current;
-    useStackingContextStore.setState((state) => ({
-      stackingContext: [...state.stackingContext, stackingContext],
-    }));
-  };
-
-  const decrease = () => {
-    const stackingContext = stackingContextRef.current;
-    useStackingContextStore.setState((state) => ({
-      stackingContext: [...state.stackingContext.filter((x) => x !== stackingContext)],
-    }));
-  };
-
-  return {
-    stack: stackingContextRef.current,
-    isCurrentStack,
-    increase,
-    decrease,
-  };
 }
 
 const { dialogs, ...dialogStore } = useDialogStore.getState();

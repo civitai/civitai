@@ -27,7 +27,6 @@ import {
 } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import type { FileWithPath } from '@mantine/dropzone';
-import { openConfirmModal } from '@mantine/modals';
 import type { NotificationData } from '@mantine/notifications';
 import { hideNotification, showNotification, updateNotification } from '@mantine/notifications';
 import {
@@ -53,6 +52,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import type { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
@@ -116,6 +116,7 @@ import { isDefined } from '~/utils/type-guards';
 
 import styles from './TrainingImages.module.scss';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 const TrainingImagesCaptions = dynamic(
   () =>
@@ -132,22 +133,13 @@ const TrainingImagesCaptionViewer = dynamic(
   { ssr: false }
 );
 
-const AutoLabelModal = dynamic(
-  () => import('~/components/Training/Form/TrainingAutoLabelModal').then((m) => m.AutoLabelModal),
-  { ssr: false }
-);
-
 const AudioWaveform = dynamic(
   () => import('~/components/Training/Form/AudioWaveform').then((m) => m.AudioWaveform),
   { ssr: false }
 );
 
-const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
-  ssr: false,
-});
-
 function openImageSelectModal(props: ImageSelectModalProps) {
-  dialogStore.trigger({ component: ImageSelectModal, props });
+  openDialog(() => import('~/components/Training/Form/ImageSelectModal'), props);
 }
 
 const MAX_FILES_ALLOWED = 1000;
@@ -1313,32 +1305,34 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
       const continueSubmit = async () => {
         if (imageList.filter((i) => i.label.length > 0).length === 0 && !triggerWord.length) {
-          return openConfirmModal({
+          return openConfirm({
             title: (
               <Group gap="xs">
                 <IconAlertTriangle color="gold" />
                 <Text size="lg">Missing labels</Text>
               </Group>
             ),
-            children:
+            message:
               'You have not provided any labels for your files. This can produce an inflexible model. We will also attempt to generate sample files, but they may not be what you are looking for. Are you sure you want to continue?',
             labels: { cancel: 'Cancel', confirm: 'Continue' },
-            centered: true,
-            onConfirm: handleNextAfterCheck,
+            // Not returned: the confirm closes at once, as it did, rather than waiting out the upload.
+            onConfirm: () => {
+              void handleNextAfterCheck();
+            },
           });
         }
         await handleNextAfterCheck();
       };
 
       if (audit.severity === 'soft') {
-        return openConfirmModal({
+        return openConfirm({
           title: (
             <Group gap="xs">
               <IconAlertTriangle color="gold" />
               <Text size="lg">Check your trigger word</Text>
             </Group>
           ),
-          children: (
+          message: (
             <Stack gap="xs">
               <Text size="sm">
                 {`These look like they might be inappropriate: ${audit.offendingWords.join(', ')}.`}
@@ -1347,8 +1341,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             </Stack>
           ),
           labels: { cancel: 'Review trigger word', confirm: 'Continue anyway' },
-          centered: true,
-          onConfirm: continueSubmit,
+          // Not returned: the confirm closes at once, as it did, rather than waiting out the upload.
+          onConfirm: () => {
+            void continueSubmit();
+          },
         });
       }
 
@@ -1564,10 +1560,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       disabled={autoLabeling.isRunning || !autoLabelConnected}
                       style={!autoLabelConnected ? { pointerEvents: 'initial' } : undefined}
                       onClick={() =>
-                        dialogStore.trigger({
-                          component: AutoLabelModal,
-                          props: { modelId: model.id, mediaType: thisMediaType },
-                        })
+                        openDialog(
+                          () => import('~/components/Training/Form/TrainingAutoLabelModal'),
+                          'AutoLabelModal',
+                          { modelId: model.id, mediaType: thisMediaType }
+                        )
                       }
                     >
                       <Group gap={4}>
@@ -1595,11 +1592,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     color="red"
                     disabled={autoLabeling.isRunning}
                     onClick={() => {
-                      openConfirmModal({
+                      openConfirm({
                         title: 'Remove all files?',
-                        children: 'This cannot be undone.',
+                        message: 'This cannot be undone.',
                         labels: { cancel: 'Cancel', confirm: 'Confirm' },
-                        centered: true,
                         onConfirm: () => {
                           setImageList(model.id, thisMediaType, []);
                           setAccordionUpload('uploading');

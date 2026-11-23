@@ -24,7 +24,7 @@ import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { useRouter } from 'next/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
@@ -101,21 +101,18 @@ export function ModelVersionMenu({
   // version can actually generate.
   const handleToggleGeneration = () => {
     const label = generationDisabled ? 'Unblock generation' : 'Block generation';
-    dialogStore.trigger({
+    openConfirm({
+      title: label,
+      message: generationDisabled
+        ? 'Removes the moderator block on this version. Whether it can actually generate still depends on coverage and base-model support.'
+        : 'This version will be blocked from the generator for everyone. Existing generations are unaffected.',
+      labels: { cancel: 'Cancel', confirm: label },
+      confirmProps: { color: generationDisabled ? 'blue' : 'red' },
+      // Error is surfaced by the mutation's onError — swallow the rejection so
+      // the dialog still closes and clears its loading state.
+      onConfirm: () =>
+        toggleGenerationDisabledMutation.mutateAsync({ id: modelVersionId }).catch(() => null),
       id: 'toggle-generation-blocked',
-      component: ConfirmDialog,
-      props: {
-        title: label,
-        message: generationDisabled
-          ? 'Removes the moderator block on this version. Whether it can actually generate still depends on coverage and base-model support.'
-          : 'This version will be blocked from the generator for everyone. Existing generations are unaffected.',
-        labels: { cancel: 'Cancel', confirm: label },
-        confirmProps: { color: generationDisabled ? 'blue' : 'red' },
-        // Error is surfaced by the mutation's onError — swallow the rejection so
-        // the dialog still closes and clears its loading state.
-        onConfirm: () =>
-          toggleGenerationDisabledMutation.mutateAsync({ id: modelVersionId }).catch(() => null),
-      },
     });
   };
 
@@ -130,18 +127,15 @@ export function ModelVersionMenu({
 
   const evictableAction = getEvictableAction(evictable);
   const handleToggleEvictable = () => {
-    dialogStore.trigger({
+    openConfirm({
+      title: evictableAction.label,
+      message: evictableAction.message,
+      labels: { cancel: 'Cancel', confirm: evictableAction.label },
+      onConfirm: () =>
+        setEvictableMutation
+          .mutateAsync({ id: modelVersionId, evictable: evictableAction.next })
+          .catch(() => null),
       id: 'toggle-evictable',
-      component: ConfirmDialog,
-      props: {
-        title: evictableAction.label,
-        message: evictableAction.message,
-        labels: { cancel: 'Cancel', confirm: evictableAction.label },
-        onConfirm: () =>
-          setEvictableMutation
-            .mutateAsync({ id: modelVersionId, evictable: evictableAction.next })
-            .catch(() => null),
-      },
     });
   };
 
@@ -156,18 +150,15 @@ export function ModelVersionMenu({
 
   const feeAction = getAdditionalResourceFeeAction(additionalResourceFeeWaived);
   const handleToggleFeeWaived = () => {
-    dialogStore.trigger({
+    openConfirm({
+      title: feeAction.label,
+      message: feeAction.message,
+      labels: { cancel: 'Cancel', confirm: feeAction.label },
+      onConfirm: () =>
+        setFeeWaivedMutation
+          .mutateAsync({ id: modelVersionId, waived: feeAction.next })
+          .catch(() => null),
       id: 'toggle-additional-resource-fee',
-      component: ConfirmDialog,
-      props: {
-        title: feeAction.label,
-        message: feeAction.message,
-        labels: { cancel: 'Cancel', confirm: feeAction.label },
-        onConfirm: () =>
-          setFeeWaivedMutation
-            .mutateAsync({ id: modelVersionId, waived: feeAction.next })
-            .catch(() => null),
-      },
     });
   };
 
@@ -185,18 +176,15 @@ export function ModelVersionMenu({
     { id: 'partner-trains', ...getPartnerTrainsAction(partnerDisclosure) },
   ];
   const handlePartnerAction = (action: (typeof partnerActions)[number]) => {
-    dialogStore.trigger({
+    openConfirm({
+      title: action.label,
+      message: action.message,
+      labels: { cancel: 'Cancel', confirm: action.label },
+      onConfirm: () =>
+        setPartnerDisclosureMutation
+          .mutateAsync({ id: modelVersionId, ...action.next })
+          .catch(() => null),
       id: `toggle-${action.id}`,
-      component: ConfirmDialog,
-      props: {
-        title: action.label,
-        message: action.message,
-        labels: { cancel: 'Cancel', confirm: action.label },
-        onConfirm: () =>
-          setPartnerDisclosureMutation
-            .mutateAsync({ id: modelVersionId, ...action.next })
-            .catch(() => null),
-      },
     });
   };
 
@@ -287,48 +275,42 @@ export function ModelVersionMenu({
         : '';
 
       if (impact.purchaseCount > 0) {
-        dialogStore.trigger({
+        openConfirm({
+          title: cascades ? 'Unpublish model & refund buyers' : 'Refund early access buyers',
+          message: `${cascadeNote}${
+            impact.buyerCount
+          } member(s) bought access to ${subject} in the last ${PAID_ACCESS_REFUND_WINDOW_DAYS} days. Unpublishing now will refund them a total of ${impact.totalBuzz.toLocaleString()} Buzz from your account and revoke their access.${exemptNote} Do you want to continue?`,
+          labels: { cancel: 'Cancel', confirm: 'Refund & Unpublish' },
+          confirmProps: { color: 'yellow' },
+          // Echo back what this dialog priced. The server refuses if the scope widened or the
+          // debit grew while the dialog was open, rather than acting on a stale yes.
+          onConfirm: () =>
+            unpublishVersionMutation.mutate({
+              id: modelVersionId,
+              refundEarlyAccess: true,
+              expected: { scope: impact.scope, totalBuzz: impact.totalBuzz },
+            }),
           id: 'unpublish-version-refund',
-          component: ConfirmDialog,
-          props: {
-            title: cascades ? 'Unpublish model & refund buyers' : 'Refund early access buyers',
-            message: `${cascadeNote}${
-              impact.buyerCount
-            } member(s) bought access to ${subject} in the last ${PAID_ACCESS_REFUND_WINDOW_DAYS} days. Unpublishing now will refund them a total of ${impact.totalBuzz.toLocaleString()} Buzz from your account and revoke their access.${exemptNote} Do you want to continue?`,
-            labels: { cancel: 'Cancel', confirm: 'Refund & Unpublish' },
-            confirmProps: { color: 'yellow' },
-            // Echo back what this dialog priced. The server refuses if the scope widened or the
-            // debit grew while the dialog was open, rather than acting on a stale yes.
-            onConfirm: () =>
-              unpublishVersionMutation.mutate({
-                id: modelVersionId,
-                refundEarlyAccess: true,
-                expected: { scope: impact.scope, totalBuzz: impact.totalBuzz },
-              }),
-          },
         });
         return;
       }
 
-      dialogStore.trigger({
+      openConfirm({
+        title: cascades ? 'Unpublish model' : 'Unpublish version',
+        message:
+          impact.exemptBuyerCount > 0
+            ? `${cascadeNote}${impact.exemptBuyerCount} member(s) bought access to ${subject}, all more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago. They lose access and are not refunded, and nothing is taken from your account. Do you want to continue?`
+            : cascades
+            ? `${cascadeNote}Do you want to continue?`
+            : 'This version will be hidden from the model page and can be published again later. Do you want to continue?',
+        labels: { cancel: 'Cancel', confirm: 'Unpublish' },
+        confirmProps: { color: 'yellow' },
+        onConfirm: () =>
+          unpublishVersionMutation.mutate({
+            id: modelVersionId,
+            expected: { scope: impact.scope, totalBuzz: impact.totalBuzz },
+          }),
         id: 'unpublish-version',
-        component: ConfirmDialog,
-        props: {
-          title: cascades ? 'Unpublish model' : 'Unpublish version',
-          message:
-            impact.exemptBuyerCount > 0
-              ? `${cascadeNote}${impact.exemptBuyerCount} member(s) bought access to ${subject}, all more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago. They lose access and are not refunded, and nothing is taken from your account. Do you want to continue?`
-              : cascades
-              ? `${cascadeNote}Do you want to continue?`
-              : 'This version will be hidden from the model page and can be published again later. Do you want to continue?',
-          labels: { cancel: 'Cancel', confirm: 'Unpublish' },
-          confirmProps: { color: 'yellow' },
-          onConfirm: () =>
-            unpublishVersionMutation.mutate({
-              id: modelVersionId,
-              expected: { scope: impact.scope, totalBuzz: impact.totalBuzz },
-            }),
-        },
       });
     } catch (error) {
       showErrorNotification({
@@ -339,17 +321,14 @@ export function ModelVersionMenu({
   };
 
   const handleDeleteVersion = () => {
-    dialogStore.trigger({
+    openConfirm({
+      title: 'Delete Version',
+      message:
+        'Are you sure you want to delete this version? This action is destructive and cannot be reverted.',
+      labels: { cancel: `No, don't delete it`, confirm: 'Delete Version' },
+      confirmProps: { color: 'red', loading: deleteVersionMutation.isPending },
+      onConfirm: () => deleteVersionMutation.mutate({ id: modelVersionId }),
       id: 'delete-version',
-      component: ConfirmDialog,
-      props: {
-        title: 'Delete Version',
-        message:
-          'Are you sure you want to delete this version? This action is destructive and cannot be reverted.',
-        labels: { cancel: `No, don't delete it`, confirm: 'Delete Version' },
-        confirmProps: { color: 'red', loading: deleteVersionMutation.isPending },
-        onConfirm: () => deleteVersionMutation.mutate({ id: modelVersionId }),
-      },
     });
   };
 

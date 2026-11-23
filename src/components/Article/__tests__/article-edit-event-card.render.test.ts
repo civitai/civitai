@@ -4,6 +4,7 @@ import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import type { act as actType } from 'react-dom/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BIRTHDAY_2026_PREVIEW_FROM } from '~/shared/constants/birthday2026.constants';
 import type { NavBanner } from '~/shared/constants/nav-banner.constants';
 import type * as Trpc from '~/utils/trpc';
@@ -50,10 +51,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 vi.mock('~/components/Cosmetics/cosmetics.util', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   useEquipContentDecoration: () => ({ equip: vi.fn(), unequip: h.unequip, isLoading: false }),
-}));
-vi.mock('~/components/Dialog/dialogStore', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  createDialogTrigger: () => h.openPicker,
 }));
 vi.mock('cookies-next', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -119,6 +116,7 @@ beforeEach(() => {
   h.hats = [];
   h.hatsInput = [];
   h.openPicker.mockClear();
+  vi.spyOn(dialogStore, 'trigger').mockImplementation(({ props }) => h.openPicker({ props }));
   h.unequip.mockClear();
   h.invalidateHats.mockClear();
   vi.useFakeTimers({ toFake: ['Date'] });

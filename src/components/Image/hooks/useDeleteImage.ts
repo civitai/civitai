@@ -1,7 +1,6 @@
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { DELETE_AFTER_REVIEW_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 
 export const isDeleteAfterReview = (result: unknown) =>
@@ -20,15 +19,12 @@ export function useDeleteImage() {
   });
 
   return function ({ imageId }: { imageId: number }) {
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Delete image',
-        message: 'Are you sure you want to delete this image?',
-        labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-        confirmProps: { color: 'red', loading: deleteImageMutation.isPending },
-        onConfirm: async () => await deleteImageMutation.mutateAsync({ id: imageId }),
-      },
+    openConfirm({
+      title: 'Delete image',
+      message: 'Are you sure you want to delete this image?',
+      labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+      confirmProps: { color: 'red', loading: deleteImageMutation.isPending },
+      onConfirm: async () => await deleteImageMutation.mutateAsync({ id: imageId }),
     });
   };
 }
