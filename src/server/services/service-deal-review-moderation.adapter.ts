@@ -221,6 +221,12 @@ export async function scanServiceDealReviewText(
   // The primary: called right after a write, and a lagging replica would scan the old text.
   const text = (await loadSubject(type, reviewId))?.fields[0]?.text;
   if (!text) return;
+  // Re-arms the check row, as a submit does: a scan refused before submitting spends a retry on
+  // whatever row is there, even one still in flight, and an edit or restore is how text comes back.
+  await dbWrite.$executeRaw`
+    UPDATE "EntityModeration" SET "retryCount" = 0, "updatedAt" = now()
+    WHERE "entityType" = ${type} AND "entityId" = ${reviewId}::int
+      AND "status" <> 'Succeeded'`;
   try {
     await trackSubmit(type, reviewId, text, () =>
       submitCheck({

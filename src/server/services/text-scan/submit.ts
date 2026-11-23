@@ -315,7 +315,10 @@ export function planTextScanPasses(
   ];
 }
 
-/** The csam gate can open before its prompt exists; that must not stop the other labels. */
+/**
+ * Drops csam while its prompt is blank: the gate can open before the prompt exists. A profile that
+ * tolerates it scans the other labels; a requireEveryLabel one is refused (see scanEntity).
+ */
 function withoutPromptlessLabels(
   labels: TextScanLabel[],
   prompts: Awaited<ReturnType<typeof getActiveTextScanPrompts>>

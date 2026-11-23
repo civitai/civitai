@@ -853,6 +853,87 @@ describe('a verdict that cannot settle its text is left to the retry job, within
     expect(await state('ServiceDealReview')).toEqual({ status: 'Pending', workflow: 'wf-c' });
   });
 
+  /** A submit the scan refuses because a required label cannot be asked, as in an outage. */
+  const refusedSubmit = vi.fn(
+    async (args: { onActiveSkip?: (r: 'incomplete') => Promise<void> }) => {
+      await args.onActiveSkip?.('incomplete');
+      return null;
+    }
+  );
+
+  it.each(TYPES)(
+    '%s: text edited while an outage holds its check past the limit is checked again after it, and can show',
+    async (type) => {
+      await seed(R);
+      await recordCheck(type, 'wf-1');
+      await q(`UPDATE "EntityModeration" SET status = 'Failed', "retryCount" = $1`, [
+        TEXT_MODERATION_RETRY_LIMIT,
+      ]);
+      // What the review's writer does on an edit: the text back to Pending, then its check.
+      await q(
+        `UPDATE "ServiceDealReview" SET "${cols[type].text}" = 'Edited',
+           "${cols[type].status}" = 'Pending', "${cols[type].workflow}" = NULL`
+      );
+      await adapter.scanServiceDealReviewText(type, REVIEW, refusedSubmit as never);
+      expect(refusedSubmit).toHaveBeenCalledTimes(1);
+      expect(await state(type)).toEqual({ status: 'Pending', workflow: null });
+      // Re-armed, then the refused submit's one spend: the retry job selects it once labels return.
+      expect(await checkRow(type)).toEqual({ status: 'Failed', retryCount: 1 });
+      await recordCheck(type, 'wf-2');
+      await textScan({ type, workflowId: 'wf-2', text: 'Edited' });
+      expect((await state(type)).status).toBe('Scanned');
+    }
+  );
+
+  it.each(TYPES)(
+    '%s: a restore during an outage leaves text whose check was parked for the retry job',
+    async (type) => {
+      await seed(R);
+      const wf = type === 'ServiceDealReview' ? 'wf-c' : 'wf-r';
+      await setServiceDealReviewHidden({ reviewId: REVIEW, moderatorId: SELLER, hidden: true });
+      await q(
+        `INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", status, "retryCount")
+         VALUES ($1, $2, $3, 'Failed', $4)`,
+        [type, REVIEW, wf, TEXT_MODERATION_RETRY_LIMIT]
+      );
+      const real = adapter.scanServiceDealReviewText;
+      const scans = vi
+        .spyOn(adapter, 'scanServiceDealReviewText')
+        .mockImplementation((t, id) => real(t, id, refusedSubmit as never));
+      try {
+        expect(
+          await setServiceDealReviewHidden({ reviewId: REVIEW, moderatorId: SELLER, hidden: false })
+        ).toBe(true);
+      } finally {
+        scans.mockRestore();
+      }
+      expect(refusedSubmit).toHaveBeenCalledTimes(1);
+      expect(await state(type)).toEqual({ status: 'Pending', workflow: null });
+      // Re-armed, then the refused submit's one spend: the retry job selects it once labels return.
+      expect(await checkRow(type)).toEqual({ status: 'Failed', retryCount: 1 });
+    }
+  );
+
+  it('text edited during an outage while its last retry is in flight is left for the retry job when that check fails', async () => {
+    await seed(R);
+    // The retry job resent the old text on its last retry: the row is Pending on that check.
+    await q(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", status, "retryCount")
+       VALUES ('ServiceDealReview', $1, 'wf-c', 'Pending', $2)`,
+      [REVIEW, TEXT_MODERATION_RETRY_LIMIT - 1]
+    );
+    await q(
+      `UPDATE "ServiceDealReview" SET comment = 'Edited', "scanStatus" = 'Pending', "scanWorkflowId" = NULL`
+    );
+    await adapter.scanServiceDealReviewText('ServiceDealReview', REVIEW, refusedSubmit as never);
+    // The old check then fails: its row is marked Failed and spent, matched by its workflow alone.
+    await q(
+      `UPDATE "EntityModeration" SET status = 'Failed', "retryCount" = "retryCount" + 1
+       WHERE "workflowId" = 'wf-c'`
+    );
+    expect(await checkRow('ServiceDealReview')).toEqual({ status: 'Failed', retryCount: 2 });
+  });
+
   it('an edit to text past its limit is scanned again', async () => {
     await seed(R);
     await recordCheck('ServiceDealReview', 'wf-1');
