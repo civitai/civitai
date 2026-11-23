@@ -979,6 +979,32 @@ describe('remix app runs', () => {
       ).toMatchObject({ status: 'running', workflowId: second.id });
       expect(submits()).toHaveLength(2);
     });
+
+    it('after a refused submit (409, exists but not retrieved), re-submits the same externalId', async () => {
+      const runId = await runToPick('nonce-seg-14');
+      const realSubmits = () => h.submitWorkflow.mock.calls.filter(([args]) => !args.query?.whatif);
+      // The what-if prices first; the submit after it is refused as `submitWorkflow` throws a 409.
+      h.submitWorkflow.mockImplementationOnce(async () => ({
+        cost: { total: h.price },
+        steps: [],
+      }));
+      h.submitWorkflow.mockImplementationOnce(async () => {
+        throw new Error(
+          'A workflow with this externalId already exists but could not be retrieved'
+        );
+      });
+      await expect(
+        advanceRemixRun({ runId, answers: [2], quote: 30, caller: caller() })
+      ).rejects.toThrow('already exists');
+      expect(submits()).toHaveLength(1);
+
+      await advanceRemixRun({ runId, answers: [2], quote: 30, caller: caller() });
+      const [refused, retried] = realSubmits()
+        .slice(-2)
+        .map(([args]) => args.body.externalId);
+      expect(retried).toBe(refused);
+      expect(submits()).toHaveLength(2);
+    });
   });
 
   describe('mature outputs', () => {
