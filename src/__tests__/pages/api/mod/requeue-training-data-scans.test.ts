@@ -10,7 +10,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   ModEndpoint: (handler: unknown) => handler,
 }));
 
-import handler from '~/pages/api/mod/requeue-training-data-scans';
+import handler from '~/server/api-routes/mod/requeue-training-data-scans';
 
 const call = (method: string, query: Record<string, string> = {}) => {
   const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };

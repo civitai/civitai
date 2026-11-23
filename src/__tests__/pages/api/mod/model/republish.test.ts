@@ -32,7 +32,7 @@ vi.mock('~/server/services/model-version.service', () => ({ bustMvCache }));
 vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { queueUpdate } }));
 vi.mock('~/server/redis/caches', () => ({ userContentOverviewCache: { refresh: refreshCounts } }));
 
-import handler from '~/pages/api/mod/model/republish';
+import handler from '~/server/api-routes/mod/model/republish';
 
 let sent: unknown;
 function call(body: Record<string, unknown>) {

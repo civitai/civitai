@@ -388,7 +388,15 @@ async function main() {
 
   try {
     const result = await cmd.run(cmdArgs);
-    console.log(formatOutput(result, jsonMode));
+    const output = formatOutput(result, jsonMode);
+    if (result?._error) {
+      // An API error is a failure, not an empty result: exit non-zero. --json keeps the body on
+      // stdout for callers that parse it; the status always goes to stderr.
+      if (jsonMode) console.log(output);
+      console.error(`Error (${result.statusCode}): ${result.message || result.body || 'request failed'}`);
+      process.exit(1);
+    }
+    console.log(output);
   } catch (err) {
     console.error(`Request failed: ${err.message}`);
     process.exit(1);

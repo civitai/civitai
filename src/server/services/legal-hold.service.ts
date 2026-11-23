@@ -7,12 +7,26 @@ import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import {
   PLACEHOLDER_OWNER_ID,
   reportHolds,
+  reportListedImageOwnerIdsSql,
   userNamedOnHoldingReportSql,
   userUnderLegalHoldSql,
 } from '~/server/utils/legal-hold';
 
-/** What a moderator is told. Never says which hold applies. */
-export const LEGAL_HOLD_REFUSAL = 'Account under legal hold; contact Legal.';
+import {
+  HOLD_UNKNOWN_REFUSAL as HOLD_UNCONFIRMED,
+  LEGAL_HOLD_REFUSAL,
+  LEGAL_HOLD_STOPPED,
+  LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
+  PURGE_ARCHIVE_REFUSAL,
+} from '@civitai/shared/legal-hold-texts';
+
+export {
+  HOLD_UNCONFIRMED,
+  LEGAL_HOLD_REFUSAL,
+  LEGAL_HOLD_STOPPED,
+  LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
+  PURGE_ARCHIVE_REFUSAL,
+};
 
 /** The one definition of a hold marker, and the table behind it. Both may not exist yet. */
 export const HOLD_MARKER_VIEW = 'EvidenceHeldUser';
@@ -29,12 +43,6 @@ export class LegalHoldError extends Error {
   }
 }
 
-/** What a moderator is told when a hold stopped a wipe part-way. Never says which hold applies. */
-export const LEGAL_HOLD_STOPPED = 'Purge stopped by a legal hold part-way; contact Legal.';
-
-/** A stopped purge that also left bids unrefunded; the moderator must not read it as nothing owed. */
-export const LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE = `${LEGAL_HOLD_STOPPED} Some bids were not refunded; check the refund alerts.`;
-
 /** A hold that landed after the check stopped a wipe part-way: some of it was already deleted. */
 export class LegalHoldStoppedError extends LegalHoldError {
   /** The steps that ran before the stop and failed, as `removeAllContent` names them. */
@@ -44,8 +52,13 @@ export class LegalHoldStoppedError extends LegalHoldError {
   }
 }
 
-/** What a moderator is told when whether a hold applies could not be read. */
-export const HOLD_UNCONFIRMED = "Couldn't check legal hold status; try again.";
+/** A content wipe refused because its profile archive failed; nothing was deleted. */
+export class ProfileArchiveRefusedError extends Error {
+  constructor(options?: { cause?: unknown }) {
+    super(PURGE_ARCHIVE_REFUSAL, options);
+    this.name = 'ProfileArchiveRefusedError';
+  }
+}
 
 /** Whether the account is held could not be read; refused like a hold. */
 export class LegalHoldUnconfirmedError extends LegalHoldError {
@@ -99,20 +112,11 @@ function holdLegsSql(id: Prisma.Sql) {
             AND sc.images @> jsonb_build_array(jsonb_build_object('id', bi.id))
         )
     )`,
-    // Any image of theirs listed in a report that still holds, whoever the report names. Walks the
-    // reports' image lists rather than the user's images: the lists are short, an account's images
-    // are not. Compared as bigint so an id past int range still matches rather than being skipped.
+    // Any image of theirs listed in a report that still holds, whoever the report names.
     // Uncorrelated, so Postgres builds the set once per statement rather than once per row.
-    'reported-image': Prisma.sql`${notCaptureOwner(id)} AND ((${id}) IN (
-      SELECT ri."userId"
-      FROM "CsamReport" rr
-      CROSS JOIN LATERAL jsonb_array_elements(
-        CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
-      ) re
-      JOIN "Image" ri
-        ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
-      WHERE ${reportHolds('rr')}
-    ))`,
+    'reported-image': Prisma.sql`${notCaptureOwner(
+      id
+    )} AND ((${id}) IN (${reportListedImageOwnerIdsSql(reportHolds)}))`,
   } satisfies Partial<Record<AccountHoldLeg, Prisma.Sql>>;
 }
 
@@ -478,6 +482,22 @@ export async function getAccountLegalHoldLegs(userId: number): Promise<AccountHo
 }
 
 /**
+ * Whether content owned by `id` (an int SQL expression) must not be removed: any account hold. For
+ * every path that deletes a user's media or content.
+ */
+export function contentRemovalHeldSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
+  return accountHoldSql(id, markerView);
+}
+
+/** `assertAccountNotUnderLegalHold`, for an immediate removal of a user's content. */
+export function assertContentRemovalNotHeld(
+  userId: number,
+  refused = 'Content removal refused'
+): Promise<Pick<AccountLegalHold, 'markerView'>> {
+  return assertAccountNotUnderLegalHold(userId, refused);
+}
+
+/**
  * Throws `LegalHoldError` when the account is held, and `LegalHoldUnconfirmedError` when whether it
  * is held cannot be determined. The reason is logged here and goes no further.
  */
@@ -533,6 +553,22 @@ export async function assertOwnersNotUnderLegalHold(userIds: number[]) {
 export async function isAccountUnderLegalHold(userId: number): Promise<boolean | null> {
   const hold = await holdOrNull(userId);
   return hold ? hold.legs.length > 0 : null;
+}
+
+/**
+ * `contentRemovalHeldSql` for one user, on the primary: `null` when it cannot be read, which
+ * callers treat as held. For a job or step that keeps a held user's content and carries on.
+ */
+export function isContentRemovalHeld(userId: number): Promise<boolean | null> {
+  return isAccountUnderLegalHold(userId);
+}
+
+/**
+ * `contentRemovalHeldSql` for many users, in one batched read. Never throws: a user the read fails
+ * for or leaves out answers `true`.
+ */
+export function areContentRemovalsHeld(userIds: number[]): Promise<Map<number, boolean>> {
+  return areAccountsUnderLegalHold(userIds);
 }
 
 async function holdOrNull(userId: number): Promise<AccountLegalHold | null> {

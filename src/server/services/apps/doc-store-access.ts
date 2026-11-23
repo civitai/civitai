@@ -31,8 +31,7 @@ import {
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { isHubTokenClaims } from '~/server/services/block-token-subject';
-import { isMatureContentRating } from '~/server/utils/server-domain';
-import { allowMatureContentForCeiling } from '~/shared/constants/browsingLevel.constants';
+import { ratingAllowedForCeiling } from '~/server/utils/rating-ceiling';
 import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
 import { resolveStrictAppBlockApproval } from '~/server/services/blocks/block-approval.service';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
@@ -119,17 +118,6 @@ const notEligible = (reason: string, message: string) =>
 
 const unavailable = docStoreUnavailable;
 const dependency = docStoreDependency;
-
-/**
- * Whether a token with this `maxBrowsingLevel` claim may reach an app rated `rating`: the mint's
- * rule (`isMatureContentRating`, refused off a red-capable host) read from the ceiling the mint
- * derived from that host (`allowMatureContentForCeiling`). An absent claim is the SFW ceiling.
- */
-function ratingAllowedForCeiling(rating: unknown, maxBrowsingLevel: number | undefined): boolean {
-  if (!isMatureContentRating(typeof rating === 'string' ? rating : null)) return true;
-  if (typeof maxBrowsingLevel !== 'number' || !Number.isFinite(maxBrowsingLevel)) return false;
-  return allowMatureContentForCeiling(maxBrowsingLevel) !== false;
-}
 
 /** The verified subject as a user id, or null for an anonymous token. */
 function viewerOf(claims: BlockTokenClaims): number | null {

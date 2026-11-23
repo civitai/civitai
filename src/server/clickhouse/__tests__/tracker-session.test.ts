@@ -45,6 +45,17 @@ describe('Tracker.getSession', () => {
     expect(getServerAuthSession).toHaveBeenCalledTimes(2);
   });
 
+  it('isSessionResolved: true for a signed-out request, false after a failed lookup', async () => {
+    getServerAuthSession.mockResolvedValueOnce(null);
+    const signedOut = new Tracker(req, res);
+    await signedOut.getSession();
+    getServerAuthSession.mockRejectedValueOnce(new Error('hub down'));
+    const failed = new Tracker(req, res);
+    await failed.getSession();
+
+    expect([signedOut.isSessionResolved, failed.isSessionResolved]).toEqual([true, false]);
+  });
+
   it('does no lookup when the caller already supplied the session', async () => {
     await expect(new Tracker(req, res, SESSION as never).getSession()).resolves.toBe(SESSION);
     expect(getServerAuthSession).not.toHaveBeenCalled();

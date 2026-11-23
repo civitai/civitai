@@ -155,6 +155,7 @@ describe('buildEntities', () => {
       name: 'Orbit Notes',
       kind: 'onsite',
       contentRating: 'x',
+      listingContentRating: 'x',
       tagline: 'Notes in orbit',
       category: 'productivity-q',
       iconUrl: 'https://img.example/orbit.png',
@@ -171,6 +172,25 @@ describe('buildEntities', () => {
     expect(Object.hasOwn(body('urn:apps.civitai.com:app/tide-log'), 'contentRating')).toBe(true);
     expect(body('urn:apps.civitai.com:app/tide-log').contentRating).toBeNull();
     expect(body('urn:apps.civitai.com:app/tide-log').externalUrl).toBe('https://tide.example');
+  });
+
+  it("🔴 listingContentRating is the listing's own rating, null (present) when the listing has none, never the block's", () => {
+    const body = (urn: string) =>
+      (sets.get(APP) ?? []).find((e) => e.urn === urn)?.body as Record<string, unknown>;
+    // hush-board: no listing rating, block rated r. contentRating falls back to the block; the
+    // listing's rating, which the store's search filters on, stays null.
+    const hush = body('urn:apps.civitai.com:app/hush-board');
+    expect(hush.contentRating).toBe('r');
+    expect(Object.hasOwn(hush, 'listingContentRating')).toBe(true);
+    expect(hush.listingContentRating).toBeNull();
+    // A listing rating the adapter does not know is sent as it is, while contentRating falls back.
+    const unknown = buildEntities(
+      [{ ...ORBIT, listing: listing({ slug: 'pg-dash', contentRating: 'pg-13' }) }],
+      ON
+    );
+    const pgDash = (unknown.get(APP) ?? [])[0].body as Record<string, unknown>;
+    expect(pgDash.contentRating).toBe('r');
+    expect(pgDash.listingContentRating).toBe('pg-13');
   });
 
   it('🔴 forkOf is the parent app URN when the catalog read named a parent, and absent otherwise', () => {

@@ -14,6 +14,7 @@ import {
   KafkaOffsetMeta,
 } from '@/types/events';
 import { MetricEventBatcher } from '@/services/metric-event-batcher';
+import { createSecondaryMetricTee } from '@/services/secondary-metric-tee';
 import { RedisCache } from '@/services/redis-cache';
 import { QueryCacheManager } from '@/services/query-cache-manager';
 import { metricSignals } from '@/services/metric-signals';
@@ -81,7 +82,15 @@ export class EventProcessor {
       config.redis.metricExclusionRefreshMs
     );
     this.redisCache = new RedisCache(config.redis.url, this.excludedUsers);
-    this.metricBatcher = new MetricEventBatcher(this.chClient);
+    // Off by default: createSecondaryMetricTee returns null (and creates no client) unless the
+    // secondary destination is both configured and switched on.
+    this.metricBatcher = new MetricEventBatcher(
+      this.chClient,
+      undefined,
+      undefined,
+      undefined,
+      createSecondaryMetricTee()
+    );
     this.outboxService = new OutboxService(this.pgPool);
 
     this.buildHandlerMap();

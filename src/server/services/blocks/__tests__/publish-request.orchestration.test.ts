@@ -2201,11 +2201,38 @@ describe('approveRequest', () => {
     expect(mockTriggerBuild).not.toHaveBeenCalled();
     expect(result.lateHoldIds).toEqual([7]);
     // The previous version stops serving on the subdomain too.
-    expect(takeDown).toHaveBeenCalledWith('hello');
+    expect(takeDown).toHaveBeenCalledWith('hello', { awaitMs: 20_000 });
     // The put-back listing is not served from a stale catalog cache.
     expect(bust).toHaveBeenCalled();
     // The tokens the late hold revoked are dropped from the orchestrator's auth cache too.
     expect(mockRevokeOrchestratorTokens).toHaveBeenCalledWith({ userId: 5 });
+    // ...before the takedown wait, not after it.
+    expect(mockRevokeOrchestratorTokens.mock.invocationCallOrder[0]).toBeLessThan(
+      takeDown.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('a late hold whose takedown is unconfirmed hands the moderator the note', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    const finalise = await finaliseMock();
+    const takeDown = vi.mocked(
+      (await import('~/server/services/blocks/live-unpublish.service')).takeDownLiveApp
+    );
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+
+    finalise.mockImplementationOnce(async () => ({ lateHoldIds: [7], revokedTokens: null }));
+    takeDown.mockResolvedValueOnce({ liveNote: 'hello may still be served on its subdomain: x' });
+    const noted = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+    expect(noted.liveNote).toBe('hello may still be served on its subdomain: x');
+
+    finalise.mockImplementationOnce(async () => ({ lateHoldIds: [7], revokedTokens: null }));
+    takeDown.mockRejectedValueOnce(new Error('boom'));
+    const thrown = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+    expect(thrown.liveNote).toBe(
+      'hello may still be served on its subdomain: its live takedown could not be started'
+    );
   });
 
   it('first-version happy path wires the 4 external systems in order', async () => {
@@ -3214,6 +3241,83 @@ describe('approveRequest', () => {
     expect(ocUpdateArg.data.allowedScopes).toBe(0n);
   });
 
+  // An operator-granted AppDataRead bit (1n << 32n) maps to no manifest scope, so re-deriving the
+  // ceiling from the manifest alone would drop it on every approve. Fixture bits are pairwise
+  // distinct: the manifest derives 4n (models:read:self) | 1n (user:read:self) = 5n; the client also
+  // holds 8n (a bit the manifest no longer declares) and AppsRead 2147483648n (an opt-in bit that is
+  // NOT operator-preserved), both of which must still be dropped.
+  describe('re-deriving an existing app-block client keeps an operator-granted AppDataRead bit', () => {
+    const scopes = ['models:read:self', 'user:read:self'];
+
+    async function approveSubsequentWithClientScopes(allowedScopes: bigint) {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ version: '0.2.0', scopes }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'appblk-hello',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        // The replica copy never holds bit 32, so only the primary read below can keep it:
+        // 2147483648n (AppsRead) | 8n | 1n.
+        app: { allowedScopes: 2147483657n, allowedOrigins: ['https://hello.civit.ai'] },
+      });
+      // The ceiling approve reads on the primary before re-capping it.
+      mockDbWrite.oauthClient.findUnique.mockResolvedValueOnce({ allowedScopes });
+      mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0', scopes });
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      expect(mockDbWrite.oauthClient.update).toHaveBeenCalledOnce();
+      const arg = mockDbWrite.oauthClient.update.mock.calls[0][0];
+      expect(arg.where).toEqual({ id: 'appblk-hello' });
+      expect(arg.data.grants).toEqual([]);
+      return arg.data.allowedScopes;
+    }
+
+    it('a subsequent version keeps the bit the client holds; stale bits still follow the manifest', async () => {
+      // 4294967296n (AppDataRead) | 2147483648n (AppsRead) | 8n
+      expect(await approveSubsequentWithClientScopes(6442450952n)).toBe(4294967301n);
+    });
+
+    it('a subsequent version does not grant the bit to a client without it', async () => {
+      // 2147483648n (AppsRead) | 8n | 1n
+      expect(await approveSubsequentWithClientScopes(2147483657n)).toBe(5n);
+    });
+
+    async function approveFirstVersionRetryWithClientScopes(allowedScopes: bigint) {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ scopes }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ scopes });
+      // The deterministic client id already exists (an earlier attempt created it).
+      const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+      mockDbWrite.oauthClient.create.mockRejectedValueOnce(p2002);
+      mockDbWrite.oauthClient.findUnique.mockResolvedValueOnce({
+        id: 'appblk-hello',
+        allowedScopes,
+      });
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      expect(mockDbWrite.oauthClient.update).toHaveBeenCalledOnce();
+      const arg = mockDbWrite.oauthClient.update.mock.calls[0][0];
+      expect(arg.where).toEqual({ id: 'appblk-hello' });
+      expect(arg.data.grants).toEqual([]);
+      return arg.data.allowedScopes;
+    }
+
+    it('a first-version retry onto an existing client keeps the bit it holds', async () => {
+      expect(await approveFirstVersionRetryWithClientScopes(6442450952n)).toBe(4294967301n);
+    });
+
+    it('a first-version retry onto an existing client without the bit does not grant it', async () => {
+      expect(await approveFirstVersionRetryWithClientScopes(2147483657n)).toBe(5n);
+    });
+  });
+
   // The validator here is the real one, so the padded manifest is accepted, not refused.
   it('writes a padded tagline/repository trimmed into app_blocks.manifest', async () => {
     const { approveRequest } = await import('../publish-request.service');
@@ -3466,7 +3570,7 @@ describe('approveRequest', () => {
     const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
     mockDbWrite.oauthClient.create.mockRejectedValueOnce(p2002);
     // The post-P2002 lookup returns the row from approver-1.
-    mockDbRead.oauthClient.findUnique.mockResolvedValueOnce({ id: 'appblk-hello' });
+    mockDbWrite.oauthClient.findUnique.mockResolvedValueOnce({ id: 'appblk-hello' });
     // AppBlock.create for the second approver also hits the (appId,blockId)
     // unique constraint and falls through to findFirst.
     mockDbWrite.appBlock.create.mockRejectedValueOnce(p2002);
@@ -3477,7 +3581,7 @@ describe('approveRequest', () => {
     // materialized (the second was caught + recovered).
     expect(mockDbWrite.oauthClient.create).toHaveBeenCalledTimes(2);
     expect(mockDbWrite.appBlock.create).toHaveBeenCalledTimes(2);
-    expect(mockDbRead.oauthClient.findUnique).toHaveBeenCalled();
+    expect(mockDbWrite.oauthClient.findUnique).toHaveBeenCalled();
     // The second approver UPDATEs the existing AppBlock (refreshes manifest)
     // instead of inserting a new one — converges to a consistent state.
     expect(mockDbWrite.appBlock.update).toHaveBeenCalled();
@@ -3506,7 +3610,7 @@ describe('approveRequest', () => {
     mockDbRead.appBlock.findFirst.mockResolvedValue(null);
     const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
     mockDbWrite.oauthClient.create.mockRejectedValueOnce(p2002);
-    mockDbRead.oauthClient.findUnique.mockResolvedValueOnce({ id: 'appblk-hello' });
+    mockDbWrite.oauthClient.findUnique.mockResolvedValueOnce({ id: 'appblk-hello' });
 
     const result = await approveRequest({
       publishRequestId: 'pubreq_1',
@@ -3911,7 +4015,7 @@ describe('approveRequest', () => {
         .mockResolvedValueOnce({ id: 'apb_first' }); // AppBlock.create P2002 recovery
       const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
       mockDbWrite.oauthClient.create.mockRejectedValueOnce(p2002);
-      mockDbRead.oauthClient.findUnique.mockResolvedValueOnce({ id: 'appblk-hello' });
+      mockDbWrite.oauthClient.findUnique.mockResolvedValueOnce({ id: 'appblk-hello' });
       mockDbWrite.appBlock.create.mockRejectedValueOnce(p2002);
       mockDbRead.appListing.findUnique.mockResolvedValue({ id: 'apl_test_1' }); // now exists
 

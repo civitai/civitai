@@ -29,11 +29,12 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import type { ImageFeedSearchSort } from '~/components/Image/Infinite/image-feed-search';
 import {
   parseExcludeOwn,
+  parseModelVersionIds,
   toSemanticImageSearchInput,
 } from '~/components/Image/Infinite/image-feed-search';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
-import type { SearchRefusal } from '~/components/Search/search-refusal';
+import { isSearchRefusedError, type SearchRefusal } from '~/components/Search/search-refusal';
 import { ImageFeedSearchSummary } from '~/components/Image/Infinite/ImageFeedSearchSummary';
 import {
   useImageFeedSearchQuery,
@@ -98,7 +99,7 @@ function SearchableImagesFeed(props: ImagesInfiniteProps) {
   const similarTo = useImageFeedSimilarTo();
   const { sort } = useImageFeedSearchSort();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
-  const { refusal, profanityMatches } = useSearchRefusal(query, 'images_semantic');
+  const { refusal, profanityMatches } = useSearchRefusal(query, 'images_semantic', 'semantic');
   // A feed with its own filters (a profile tab) keeps its period: the saved one is the images feed's.
   const period = useSearchPeriod(!props.disableStoreFilters && (!!query || !!similarTo));
   return (
@@ -174,7 +175,15 @@ function ImagesFeed({
   const browsingLevel = capToPublic
     ? Flags.intersection(rawBrowsingLevel, publicBrowsingLevelsFlag)
     : rawBrowsingLevel;
-  const excludeOwn = parseExcludeOwn(useRouter().query.excludeOwn);
+  const routeQuery = useRouter().query;
+  const excludeOwn = parseExcludeOwn(routeQuery.excludeOwn);
+  const rawModelVersionIds = features.imageSearchResources ? routeQuery.modelVersionIds : undefined;
+  const modelVersionIds = useMemo(
+    () => (rawModelVersionIds ? parseModelVersionIds(rawModelVersionIds) : undefined),
+    // The raw param re-renders as a new array; its content decides.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [String(rawModelVersionIds ?? '')]
+  );
   const searchInput = useMemo(
     () =>
       searchQuery || similarTo
@@ -185,11 +194,14 @@ function ImagesFeed({
             browsingLevel,
             sort: feedSearch?.sort,
             excludeOwn,
+            modelVersionIds,
           })
         : undefined,
-    [searchQuery, similarTo, filters, browsingLevel, feedSearch?.sort, excludeOwn]
+    [searchQuery, similarTo, filters, browsingLevel, feedSearch?.sort, excludeOwn, modelVersionIds]
   );
-  const search = useSemanticImageFeed(searchInput);
+  const search = useSemanticImageFeed(searchInput, {
+    videos: filterType === 'videos' && !!features.semanticVideoSearch,
+  });
   useScrollToTopOnChange(searchInput && JSON.stringify(searchInput));
   // A search that fails falls back to the plain feed with a banner, never an empty page.
   const searchFailed = !!searchInput && search.isError;
@@ -314,9 +326,10 @@ function ImagesFeed({
     />
   );
 
-  if (refusal)
+  const shownRefusal = refusal ?? (isSearchRefusedError(search.error) ? 'profanity' : undefined);
+  if (shownRefusal)
     return (
-      <SearchRefusalNotice refusal={refusal} profanityMatches={feedSearch?.profanityMatches} />
+      <SearchRefusalNotice refusal={shownRefusal} profanityMatches={feedSearch?.profanityMatches} />
     );
 
   return (

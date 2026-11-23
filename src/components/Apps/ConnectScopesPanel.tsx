@@ -7,6 +7,10 @@ import {
   isSensitiveTokenScope,
   tokenScopeMaskToList,
 } from '~/shared/constants/token-scope.constants';
+import {
+  OFFLINE_ACCESS_SCOPE,
+  offlineAccessDeclaration,
+} from '~/shared/constants/connect-agent-review.constants';
 
 /**
  * ConnectScopesPanel — the OAuth-CONNECT analog of `ManifestScopes`
@@ -63,6 +67,8 @@ export function ConnectScopesPanel({
           </Text>
         )}
 
+        <OfflineAccessDeclarationRow justifications={justifications} />
+
         {scopes.length === 0 ? (
           <Text size="xs" c="dimmed" fs="italic">
             No permissions requested — the app connects without account access.
@@ -117,6 +123,40 @@ export function ConnectScopesPanel({
         )}
       </Stack>
     </Card>
+  );
+}
+
+/**
+ * The listing's OFFLINE-ACCESS declaration, shown like a sensitive scope: declared ⇒ the
+ * `offline_access` row with the author's justification; not declared ⇒ a line saying so. Whether
+ * the OAuth client can in fact get refresh tokens is the agent review's "Checked by Civitai" check.
+ */
+function OfflineAccessDeclarationRow({
+  justifications,
+}: {
+  justifications?: Record<string, string> | null;
+}) {
+  const { declared } = offlineAccessDeclaration(justifications);
+  if (!declared) {
+    return (
+      <Text size="xs" c="dimmed" data-testid="connect-offline-access-undeclared">
+        Offline access ({OFFLINE_ACCESS_SCOPE}): not declared.
+      </Text>
+    );
+  }
+  return (
+    <Stack gap={4} data-testid="connect-offline-access-declared">
+      <ConnectScopeRow
+        scopeKey={OFFLINE_ACCESS_SCOPE}
+        label="Acts while the user is away (refresh token)"
+        sensitive
+      >
+        <ConnectScopeJustification
+          scopeKey={OFFLINE_ACCESS_SCOPE}
+          justifications={justifications}
+        />
+      </ConnectScopeRow>
+    </Stack>
   );
 }
 

@@ -170,6 +170,7 @@ const { fake, mockPool, mockClient } = vi.hoisted(() => {
 vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
+  assertContentRemovalNotHeld: async () => ({ markerView: false }),
 }));
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
 vi.mock('~/server/search-index', async (importOriginal) => {

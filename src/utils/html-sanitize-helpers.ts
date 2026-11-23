@@ -404,6 +404,9 @@ export function removeSpoilers(html: string) {
   return sanitize(html, {
     allowedTags: false,
     allowedAttributes: false,
+    // Only silences the per-call warning that script and style pass through; output is unchanged.
+    // The result is NOT sanitised: callers must strip its tags or render it through RenderHtml.
+    allowVulnerableTags: true,
     // Normalised so the strip stays broader than the editor and renderer, which match exactly.
     exclusiveFilter: (frame) => frame.attribs['data-type']?.trim().toLowerCase() === 'spoiler',
   });

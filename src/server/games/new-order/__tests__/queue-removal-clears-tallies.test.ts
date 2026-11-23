@@ -25,7 +25,7 @@ vi.mock('~/server/services/games/new-order.service', () => ({
   updatePendingImageRatings: vi.fn(),
 }));
 
-import manageQueue from '~/pages/api/mod/new-order/manage-queue';
+import manageQueue from '~/server/api-routes/mod/new-order/manage-queue';
 import konoFinalize from '~/pages/api/internal/kono-finalize';
 
 const call = async (handler: unknown, req: object) => {

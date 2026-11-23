@@ -17,6 +17,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
+	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
 )
 
 // Config is the parsed environment.
@@ -37,11 +38,12 @@ type Config struct {
 	AuthJWKSURI      string            // AUTH_JWKS_URI
 	AuthRequireIat0  bool              // AUTH_REQUIRE_IAT0
 	AuthCookieMode   string            // AUTH_SESSION_COOKIE_MODE: host | shared (default)
-	AuthLegacyRead   bool              // AUTH_LEGACY_READ (default true): read the shared-slot cookie
+	AuthLegacyRead   bool              // AUTH_LEGACY_READ (see LegacyRead): read the shared-slot cookie
 	AuthSiteModes    map[string]string // AUTH_SESSION_COOKIE_MODE_BY_SITE: registrable domain -> host | shared
 	SysReadTimeout   time.Duration
 	FallbackURL      string // FEED_GO_FALLBACK_URL: the Node app, for everything not served here
 	Hosts            browsing.HostColors
+	HostPrimaries    map[string]string // each color's SERVER_DOMAIN_<COLOR> (unset colors absent)
 	RegionRules      []browsing.RegionRule
 	RegionBlockRules []browsing.RegionRule
 	CreatorPromotion string          // FEED_GO_CREATOR_PROMOTIONS: the `creator-promotions` flag's audience (feed.ParsePromotionAudience)
@@ -74,6 +76,21 @@ type Config struct {
 	// route (`/api/trpc/image.getInfinite`). Off, every request there is the `infinite-off` fallback,
 	// proxied to the Node app unchanged.
 	ServeInfinite bool
+	// WriteDevalue is TRPC_WRITE_DEVALUE, the main app's own switch, read as the app reads it (exactly
+	// "true" is on; default off): write a public tRPC answer as devalue where the app would
+	// (server.Server.WriteDevalue). Off, every answer is superjson.
+	WriteDevalue bool
+
+	// BearerAuth is FEED_GO_BEARER_AUTH (default off): resolve API keys (an `Authorization` header) as
+	// the app does, from its principal cache (DESIGN.md §4.2). Off, every API credential is the
+	// `bearer-token` fallback.
+	BearerAuth bool
+	// APIKeySecret is NEXTAUTH_SECRET (same var as the Node app): the salt of the API-key hash. Read
+	// only with BearerAuth; unset, every key falls back (`bearer-unconfigured`).
+	APIKeySecret string
+	// OrchestratorServiceToken is ORCHESTRATOR_SERVICE_TOKEN (same var as the Node app), which the app
+	// answers as an unknown key without a lookup. Read only with BearerAuth.
+	OrchestratorServiceToken string
 
 	// RevocationMarkerCache is SESSION_REVOCATION_CACHE (default on; off|0|false turns it off, as
 	// isEnvSwitchOn): a failed revocation read still denies a revocation this process has already read.
@@ -152,6 +169,25 @@ type Config struct {
 	// pod sends at once; a read past it falls back at once (`metrics-miss-failed`).
 	ClickHouseMaxInFlight int
 
+	// The dedicated ClickHouse for entity metrics, which the image metric-hash populate reads instead
+	// of the reader above only while the `image-metrics-dedicated-clickhouse` Flipt flag is on
+	// (hydrate.MissCompute.MetricsClickHouse). The same variables as the Node app's (#9780), so one
+	// secret feeds both runtimes: CLICKHOUSE_METRICS_HOST (the full URL, protocol and port included),
+	// CLICKHOUSE_METRICS_USERNAME, CLICKHOUSE_METRICS_PASSWORD. Read only with ComputeMisses, and only
+	// when the host and the username are both set; the password is this server's alone (unset is
+	// empty, never another login's). Unset: no second reader, and every populate reads the reader above.
+	MetricsClickHouseURL, MetricsClickHouseUsername, MetricsClickHousePassword string
+	// MetricsClickHouseRequestTimeout is CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS (default 10000): the
+	// bound of one request to the dedicated server, so a hung one releases its read slot and the
+	// populate locks within seconds (a write-back populate is otherwise bounded only by its own minute).
+	MetricsClickHouseRequestTimeout time.Duration
+
+	// The Flipt server the `image-metrics-dedicated-clickhouse` flag is read from, under the Node
+	// app's names (packages/civitai-flipt/src/env.ts): FLIPT_URL, FLIPT_FETCHER_SECRET,
+	// FLIPT_ENVIRONMENT (default civitai-app). Read only when the dedicated reader is configured; with
+	// FLIPT_URL unset the flag reads off.
+	FliptURL, FliptClientToken, FliptEnvironment string
+
 	// AllowedOriginHosts is the app's allowedOriginHosts (src/server/utils/origin-helpers.ts): every
 	// SERVER_DOMAIN_* host and alias, each TRPC_ORIGINS entry's host, and NEXTAUTH_URL's host.
 	AllowedOriginHosts map[string]bool
@@ -181,7 +217,7 @@ func Load() (*Config, error) {
 		AuthJWKSURI:      os.Getenv("AUTH_JWKS_URI"),
 		AuthRequireIat0:  boolEnv("AUTH_REQUIRE_IAT0", false),
 		AuthCookieMode:   env("AUTH_SESSION_COOKIE_MODE", "shared"),
-		AuthLegacyRead:   boolEnv("AUTH_LEGACY_READ", true),
+		AuthLegacyRead:   LegacyRead(os.Getenv("AUTH_LEGACY_READ")),
 		AuthSiteModes:    SiteModes(os.Getenv("AUTH_SESSION_COOKIE_MODE_BY_SITE")),
 		FallbackURL:      os.Getenv("FEED_GO_FALLBACK_URL"),
 		CreatorPromotion: os.Getenv("FEED_GO_CREATOR_PROMOTIONS"),
@@ -200,6 +236,7 @@ func Load() (*Config, error) {
 		Pprof:                boolEnv("FEED_GO_PPROF", false),
 		ServeModelGetAll:     boolEnv("FEED_GO_SERVE_MODEL_GETALL", false),
 		ServeInfinite:        boolEnv("FEED_GO_SERVE_INFINITE", false),
+		WriteDevalue:         trpc.WriteDevalueOn(os.Getenv(trpc.WriteDevalueEnv)),
 		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
@@ -212,12 +249,18 @@ func Load() (*Config, error) {
 	ms := intEnv("REDIS_SYS_READ_TIMEOUT_MS", 1000)
 	c.SysReadTimeout = time.Duration(ms) * time.Millisecond
 	c.RevocationMarkerCache = envSwitchOn(os.Getenv("SESSION_REVOCATION_CACHE"))
+	if c.BearerAuth = boolEnv("FEED_GO_BEARER_AUTH", false); c.BearerAuth {
+		c.APIKeySecret = os.Getenv("NEXTAUTH_SECRET")
+		c.OrchestratorServiceToken = os.Getenv("ORCHESTRATOR_SERVICE_TOKEN")
+	}
 	c.Hosts = browsing.HostColors{}
+	c.HostPrimaries = map[string]string{}
 	for _, color := range []string{"green", "blue", "red"} {
 		up := strings.ToUpper(color)
 		var hosts []string
 		if h := os.Getenv("SERVER_DOMAIN_" + up); h != "" {
 			hosts = append(hosts, h)
+			c.HostPrimaries[color] = strings.ToLower(h)
 		}
 		hosts = append(hosts, list(os.Getenv("SERVER_DOMAIN_"+up+"_ALIASES"))...)
 		c.Hosts[color] = hosts
@@ -250,6 +293,15 @@ func Load() (*Config, error) {
 	c.ClickHouseTimeout = min(time.Duration(positiveIntEnv("FEED_GO_CLICKHOUSE_TIMEOUT_MS", 2000))*time.Millisecond, c.RequestBudget/2)
 	c.MetricsLockWait = time.Duration(positiveIntEnv("FEED_GO_METRICS_LOCK_WAIT_MS", 500)) * time.Millisecond
 	c.ClickHouseMaxInFlight = positiveIntEnv("FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", 4)
+	if c.ComputeMisses && os.Getenv("CLICKHOUSE_METRICS_HOST") != "" && os.Getenv("CLICKHOUSE_METRICS_USERNAME") != "" {
+		c.MetricsClickHouseURL = os.Getenv("CLICKHOUSE_METRICS_HOST")
+		c.MetricsClickHouseUsername = os.Getenv("CLICKHOUSE_METRICS_USERNAME")
+		c.MetricsClickHousePassword = os.Getenv("CLICKHOUSE_METRICS_PASSWORD")
+		c.FliptURL = os.Getenv("FLIPT_URL")
+		c.FliptClientToken = os.Getenv("FLIPT_FETCHER_SECRET")
+		c.FliptEnvironment = env("FLIPT_ENVIRONMENT", "civitai-app")
+	}
+	c.MetricsClickHouseRequestTimeout = time.Duration(positiveIntEnv("CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS", 10_000)) * time.Millisecond
 	c.AllowedOriginHosts = AllowedOriginHosts(c.Hosts, list(os.Getenv("TRPC_ORIGINS")), os.Getenv("NEXTAUTH_URL"))
 	c.Tracing = tracing.FromEnv(os.Getenv)
 	c.FallbackLogPerMinute = max(intEnv("FEED_GO_FALLBACK_LOG_PER_MIN", 0), 0)
@@ -299,6 +351,16 @@ func (c *Config) CookieNames(reqHost string) []string {
 		names = append(names, shared)
 	}
 	return append(names, host)
+}
+
+// LegacyRead parses AUTH_LEGACY_READ as legacyCookieReadEnabled (packages/civitai-auth) does: false only for
+// `false`, `0`, `off` or `no` (any case, surrounding whitespace ignored); unset or any other value is true.
+func LegacyRead(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "false", "0", "off", "no":
+		return false
+	}
+	return true
 }
 
 // SiteModes parses AUTH_SESSION_COOKIE_MODE_BY_SITE as siteCookieMode (packages/civitai-auth) does: comma-separated

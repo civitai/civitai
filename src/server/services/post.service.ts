@@ -1,5 +1,9 @@
 import { ilikeContains } from '~/server/utils/ilike';
-import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-deletion';
+import {
+  deletePostRows,
+  ownPostDeleteBlocked,
+  type DeleteActor,
+} from '@civitai/db-queries/content-deletion';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { Prisma } from '@prisma/client';
 import {
@@ -56,7 +60,7 @@ import {
   refreshHasReceivedReviews,
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { ImageSchema, IngestImageInput } from '~/server/schema/image.schema';
+import type { ImageSchema } from '~/server/schema/image.schema';
 import { externalMetaSchema } from '~/server/schema/image.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
@@ -101,6 +105,8 @@ import {
   enqueueImageIngestion,
   queueImageSearchIndexUpdate,
   deleteImages,
+  imagesPendingDeletion,
+  requeueUnverifiedImages,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/services/image.service';
 import { Flags } from '~/shared/utils/flags';
@@ -118,6 +124,7 @@ import type {
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
+import { bustVersionShowcasesForPosts } from '~/server/services/version-showcase.service';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { capPostGetInfiniteImages } from '~/server/utils/post-getinfinite-images';
 import {
@@ -170,7 +177,10 @@ import type {
 import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { flagImagesOnRestrictedVersions } from '~/server/services/restricted-images.service';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 type GetAllPostsRaw = {
   id: number;
@@ -814,13 +824,20 @@ type PostEditInput = GetByIdInput & {
   user: SessionUser;
   /** `requestServableLevels(ctx)`: the editor takes no level, so the domain cap is applied here. */
   servableLevels: number;
+  /** The request carries the owner's view (`credentialViews`): the user's own held images show. */
+  ownerSeesHeld?: boolean;
 };
 
-export const getPostEditDetail = async ({ id, user, servableLevels }: PostEditInput) => {
+export const getPostEditDetail = async ({
+  id,
+  user,
+  servableLevels,
+  ownerSeesHeld,
+}: PostEditInput) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
   const [editImages, texts] = await Promise.all([
-    getPostEditImages({ id, user, servableLevels }),
+    getPostEditImages({ id, user, servableLevels, ownerSeesHeld }),
     getPostEditTexts(id),
   ]);
   const images = await withReactionCounts(editImages, post.publishedAt);
@@ -978,13 +995,18 @@ async function getPostEditTexts(postId: number) {
   });
 }
 
-export const getPostEditImages = async ({ id, user, servableLevels }: PostEditInput) => {
+export const getPostEditImages = async ({
+  id,
+  user,
+  servableLevels,
+  ownerSeesHeld = false,
+}: PostEditInput) => {
   const db = await getDbWithoutLag('postImages', id);
   const images = await db.image.findMany({
     where: {
       postId: id,
       AND: [
-        user.isModerator ? {} : notHeldForReviewWhere(),
+        user.isModerator ? {} : notHeldForReviewWhere(ownerSeesHeld ? user.id : undefined),
         servableLevelOrOwnUnratedWhere(servableLevels, user.id),
       ],
     },
@@ -1437,7 +1459,20 @@ export const deletePost = async ({
     images.filter((image) => image.deletable).map((image) => image.id),
     { actor, moderatorDelete: !!viewerIsModerator, updatePosts: false }
   );
-  const [post] = await deletePostRows(kyselyOver(dbWrite), { ids: [id], actor });
+  // The deleter's own post under a child-safety report stays, as a pending delete, until the report
+  // is ruled on.
+  const deletedById = 'id' in actor ? actor.id : undefined;
+  const [post] = await deletePostRows(kyselyOver(dbWrite), {
+    ids: [id],
+    actor,
+    pending:
+      deletedById === undefined
+        ? undefined
+        : { blocked: ownPostDeleteBlocked(deletedById), data: { ownerId: deletedById } },
+  });
+  // Only the deleter's own images: the notice is for an owner's delete.
+  const ownImageIds = images.filter((image) => image.userId === deletedById).map((x) => x.id);
+  const deleteAfterReview = (await imagesPendingDeletion(ownImageIds)).size > 0;
 
   // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
   // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
@@ -1456,7 +1491,7 @@ export const deletePost = async ({
   });
 
   // Orphans keep their rows, with `postId` nulled; they leave the index too.
-  if (orphanedImageIds.length)
+  if (post && orphanedImageIds.length)
     await queueImageSearchIndexUpdate({
       ids: orphanedImageIds,
       action: SearchIndexUpdateQueueAction.Delete,
@@ -1466,7 +1501,10 @@ export const deletePost = async ({
   await bustCachesForPosts(id);
   await userImageVideoCountCaches.bust(imageOwnerIds);
 
-  return post ? { ...post, deletedImageIds } : post;
+  if (post) return { ...post, deletedImageIds, deleteAfterReview };
+  // Kept, with an image of theirs blocked where they can see it: the one generic notice. Otherwise it
+  // answers as if nothing was deleted.
+  return deleteAfterReview ? { deleteAfterReview } : undefined;
 };
 
 type PostQueryResult = { id: number; name: string; isCategory: boolean }[];
@@ -1835,6 +1873,9 @@ export async function bustCachesForPosts(postIds: number | number[]) {
   const showcaseVersionIds = results
     .filter((x) => x.isShowcase && x.modelVersionId != null)
     .map((x) => x.modelVersionId as number);
+  // Before the return below, which covers only the owner showcase: a featured image is in someone
+  // else's post.
+  await bustVersionShowcasesForPosts(ids);
   if (!showcaseVersionIds.length) return;
 
   const showcaseModelIds = [
@@ -1940,15 +1981,14 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
           ? (meta as Prisma.JsonObject)
           : Prisma.JsonNull
         : undefined,
-      // If this image was blocked due to missing metadata, we need to set it back to pending
-      ingestion: shouldIngest ? 'Pending' : undefined,
-      blockedFor: shouldIngest ? null : undefined,
       metadata: {
         ...((currentImage.metadata as MixedObject) ?? {}),
       } as Prisma.JsonObject,
     },
     select: { id: true, url: true, userId: true, name: true, type: true },
   });
+  // Blocked for missing metadata: another scan, decided on the row as it stands now.
+  const requeued = shouldIngest ? await requeueUnverifiedImages([image.id]) : [];
   // Parallelize independent cache refreshes — none read what others write.
   // ingestImage stays sequential after: it does not read these caches but
   // does have ordering relative to the dbWrite.image.update above.
@@ -1969,14 +2009,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   }
   await Promise.all(cacheRefreshPromises);
 
-  if (shouldIngest) {
-    // Ensures a proper rescan of this image.
-    enqueueImageIngestion({
-      images: [result as IngestImageInput],
-      name: 'post-image-ingest',
-      userId: result.userId,
-    });
-  }
+  enqueueImageIngestion({ images: requeued, name: 'post-image-ingest', userId: result.userId });
 };
 
 /** Looks up a version an uploader may credit to their images, or throws not found. */
@@ -2155,7 +2188,7 @@ export const removeResourceFromPostImage = async ({
   return deleted;
 };
 
-type Editor = { user: SessionUser; servableLevels: number };
+type Editor = { user: SessionUser; servableLevels: number; ownerSeesHeld?: boolean };
 
 /**
  * Whether an image counts, or will once scanned, toward the version level
@@ -2165,15 +2198,16 @@ const countsTowardVersionLevel = (nsfwLevel: number) => nsfwLevel !== NsfwLevel.
 
 /**
  * The post's images this editor may not move (`ids`, `indexes`): those it did not list, and those
- * `getPostEditImages` does not serve it (held for review unless a moderator, or outside the
- * request's levels and not the editor's own unrated upload) even if it lists them. They keep their
+ * `getPostEditImages` does not serve it (held for review unless a moderator, or the image's own
+ * uploader with the owner's view; or outside the request's levels and not the editor's own unrated
+ * upload) even if it lists them. They keep their
  * index. `movable` holds the others the editor listed, with their current index and whether the
  * version level counts them.
  */
 async function editorHiddenImages(
   postId: number,
   listedIds: number[],
-  { user, servableLevels }: Editor
+  { user, servableLevels, ownerSeesHeld = false }: Editor
 ) {
   // primary: decides which indexes the reorder write that follows may take
   const images = await dbWrite.image.findMany({
@@ -2183,7 +2217,9 @@ async function editorHiddenImages(
   const listed = new Set(listedIds);
   const isHidden = (image: (typeof images)[number]) =>
     !listed.has(image.id) ||
-    (!user.isModerator && isHeldForReview(image.needsReview)) ||
+    (!user.isModerator &&
+      !(ownerSeesHeld && image.userId === user.id) &&
+      isHeldForReview(image.needsReview)) ||
     !isServableLevelOrOwnUnrated(image, servableLevels, user.id);
   const hidden = images.filter(isHidden);
   const movable = new Map(
@@ -2534,7 +2570,7 @@ export const getPostResourceCovers = async ({
       showSfwFace
     ).filter(
       (image) =>
-        Flags.intersects(image.nsfwLevel, browsingLevel) &&
+        Flags.intersects(image.nsfwLevel, browsingLevel & allBrowsingLevelsFlag) &&
         // The cache keeps images from private posts; only their owner may see them.
         (image.availability !== Availability.Private || image.userId === user.id)
     );

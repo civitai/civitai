@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { postTextCsamHeldText } from '@civitai/shared/held-url';
 import type { PostTextAction, ReportedPostText } from '$lib/post-text-report';
 import { dbWrite } from './db';
 import { htmlToText } from './html-to-text';
@@ -27,9 +28,7 @@ export async function getReportedPostTexts(
       't.refused',
       't.refusedByModerator',
       't.refusedByScan',
-      sql<boolean | null>`t."csamHeld" OR EXISTS (SELECT 1 FROM "TextScanHold" th
-        WHERE th."entityType" = 'PostText' AND th."entityId" = t.id AND th.label = 'csam'
-          AND th.status IN ('Pending', 'Confirmed'))`.as('held'),
+      sql<boolean | null>`${sql.raw(postTextCsamHeldText('t'))}`.as('held'),
       // Images sort before texts at an equal index, then texts by id (the reader's order).
       sql<number | null>`CASE WHEN t.id IS NULL THEN NULL ELSE 1
         + (SELECT count(*)::int FROM "Image" i WHERE i."postId" = t."postId" AND i."index" <= t."index")

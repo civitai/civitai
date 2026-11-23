@@ -73,7 +73,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text,
-      "bannerId" int
+      "bannerId" int, availability "Availability" DEFAULT 'Public', "userId" int
     );
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]
@@ -234,11 +234,21 @@ describe('image.getDetail visibility', () => {
   });
 
   it.each(['csam', 'minor'])(
-    'an image held for %s review is refused to its owner; a moderator still gets it',
+    'an image held for %s review answers to its owner and a moderator, and to nobody else',
     async (hold) => {
       await seed({ image: { '"needsReview"': `'${hold}'` } });
-      expect(await sees(SELF)).toBe(false);
+      expect(await sees(SELF)).toBe(true);
       expect(await sees(MOD)).toBe(true);
+      expect(await sees(STRANGER)).toBe(false);
+      expect(await sees(ANON)).toBe(false);
+      // The owner's view needs a session or a full-access key: a scoped key gets the hold.
+      expect(await sees(SELF, 1, keyOf(TokenScope.MediaRead))).toBe(false);
+      expect(await sees(SELF, 1, keyOf(TokenScope.Full))).toBe(true);
+      // The owner is the session user: naming the owner in the input opens nothing.
+      for (const user of [STRANGER, ANON]) {
+        const asOwner = callerFor(user).getDetail({ id: 1, userId: OWNER } as never);
+        await expect(asOwner).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      }
     }
   );
 

@@ -27,7 +27,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/services/user.service', () => ({ forceUpdateUserIdentity: h.update }));
 
-const handler = (await import('~/pages/api/mod/user/update-identity')).default;
+const handler = (await import('~/server/api-routes/mod/user/update-identity')).default;
 
 function call(body: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body, query: {} };

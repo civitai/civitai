@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { banUserQuerySchema } from '~/pages/api/mod/ban-user';
+import { banUserQuerySchema } from '~/server/api-routes/mod/ban-user';
 import { toggleBanUserSchema } from '~/server/schema/user.schema';
 
 describe('a system-only ban reason is refused from a hand ban', () => {

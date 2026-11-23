@@ -1121,7 +1121,7 @@ describe('textOutput — the media channel is closed at the READ path too', () =
       moderationPosture: 'none',
       extractText: undefined,
       extractOutput: () => [
-        { url: 'https://blobs.example/real.webp', width: 4, height: 5, nsfwLevel: null },
+        { url: 'https://blobs.example/real.webp', width: 4, height: 5, nsfwLevel: 'pg' },
       ],
     } as unknown as Partial<AnyBlockStep>);
   }
@@ -1152,7 +1152,7 @@ describe('textOutput — the media channel is closed at the READ path too', () =
       'https://blobs.example/real.webp',
     ]);
     expect(projectAppWorkflow(workflowWith(chatStep()), TEST_OUTPUT_CEILING).images).toEqual([
-      { url: 'https://blobs.example/real.webp', width: 4, height: 5, nsfwLevel: null },
+      { url: 'https://blobs.example/real.webp', width: 4, height: 5, nsfwLevel: 1 },
     ]);
   });
 });

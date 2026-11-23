@@ -1,3 +1,4 @@
+import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 import { TRPCError } from '@trpc/server';
 import type { Context, ProtectedContext } from '../createContext';
 import type { GetByIdInput } from '../schema/base.schema';
@@ -325,6 +326,7 @@ export const getBountyEntriesHandler = async ({
         include: ['tags'],
         isModerator: ctx.user?.isModerator,
         userId: ctx.user?.id,
+        ownerSeesHeld: isSessionOrFullUserKey(ctx),
       }),
       getRequestImageFilter(ctx),
     ]);

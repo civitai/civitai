@@ -124,3 +124,46 @@ describe("getImageHandler on a minor or SFW-only model's post", () => {
     expect(heldLevels).not.toHaveBeenCalled();
   });
 });
+
+describe('getImageHandler, the image page', () => {
+  it("asks for the owner's view of a held image as the session user, whatever the input names", async () => {
+    image.mockResolvedValueOnce({
+      id: 1,
+      postId: null,
+      url: 'media-key',
+      nsfwLevel: 1,
+      metadata: null,
+      user: { id: UPLOADER },
+    });
+    const ctx = {
+      user: { id: UPLOADER },
+      features: { canViewNsfw: true },
+      req: { headers: {} },
+      cache: null,
+    } as unknown as HandlerCtx;
+    await getImageHandler({ input: { id: 1, userId: 99 } as never, ctx });
+    expect(image).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, userId: UPLOADER, ownerSeesHeld: true })
+    );
+  });
+
+  it("does not ask for the owner's view on an app token", async () => {
+    image.mockResolvedValueOnce({
+      id: 1,
+      postId: null,
+      url: 'media-key',
+      nsfwLevel: 1,
+      metadata: null,
+      user: { id: UPLOADER },
+    });
+    const ctx = {
+      user: { id: UPLOADER },
+      subject: { type: 'oauth' },
+      features: { canViewNsfw: true },
+      req: { headers: {} },
+      cache: null,
+    } as unknown as HandlerCtx;
+    await getImageHandler({ input: { id: 1 }, ctx });
+    expect(image).toHaveBeenCalledWith(expect.objectContaining({ ownerSeesHeld: false }));
+  });
+});

@@ -391,17 +391,15 @@ export async function stripBenignPhrases(text = '', type: BlocklistType) {
   return stripBenignPhrasesWith(text, pattern);
 }
 /**
- * The benign lists the BROWSER needs. The search gates (`AutocompleteSearch`,
- * `SearchLayout`) run their POI / minor / profanity checks client-side against Meili
- * directly, so there is no server hop to strip on — the lists have to be shipped down.
- * Public and edge-cached; these are phrases moderators have declared SAFE, so the list
- * says nothing about what we block.
+ * The benign lists the BROWSER needs: its POI / minor checks, and its profanity check where the
+ * server does not run one (`browserChecksProfanity`), must strip them before checking.
+ * Public and edge-cached. Never carries a managed blocked word.
  */
 export type ClientBenignLists = {
   prompt: string[];
   /** `null` means "no moderator row", which is NOT the same as an empty one — see the filter. */
   profanityWords: string[] | null;
-  /** False when the lists could not be read. The caller MUST NOT let the edge cache this. */
+  /** False when any list could not be read. The caller MUST NOT let the edge cache this. */
   available: boolean;
 };
 
@@ -419,7 +417,7 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
   } catch (error) {
     // Fails OPEN, and empty is the safe direction: nothing is stripped, so the gates flag
     // more rather than less. `available: false` exists because the caller must then skip the
-    // edge cache — a 200 carrying empty lists would otherwise be held for an hour, and every
+    // edge cache — a 200 carrying empty lists would otherwise be held for the edge TTL, and every
     // session started in that window pins it for its whole life, reinstating globally the
     // false positives this work removes. The throw it replaced was never cached.
     logToAxiom({

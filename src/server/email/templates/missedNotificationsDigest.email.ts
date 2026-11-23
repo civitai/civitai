@@ -1,7 +1,7 @@
 import { escape as escapeHtml } from 'he';
 import { createEmail } from '~/server/email/templates/base.email';
 import { absoluteUrl, notificationSettingsUrl } from '~/server/email/templates/notification.email';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { emailTheme, simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { MISSED_DIGEST_DISPLAY_NAME } from '~/server/notifications/missed-digest.constants';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
@@ -49,26 +49,36 @@ export const missedNotificationsDigestEmail = createEmail({
       .map(({ message, url }) => {
         const link = absoluteUrl(url);
         const text = escapeHtml(message);
-        return `<li style="margin-bottom: 8px;">${
-          link ? `<a href="${escapeHtml(link)}" style="color: #346df1;">${text}</a>` : text
+        return `<li style="margin: 0 0 10px 0;">${
+          link
+            ? `<a href="${escapeHtml(link)}" style="color: ${emailTheme.link};">${text}</a>`
+            : text
         }</li>`;
       })
       .join('');
     const more = moreLine(data);
-    const footer = `<p style="font-size: 13px; color: #888;">You're getting this because
+    const footer = `You're getting this because
       "${escapeHtml(
         MISSED_DIGEST_DISPLAY_NAME
-      )}" is on. <a href="${notificationSettingsUrl()}">Manage notification emails</a>
-      or <a href="${escapeHtml(data.unsubscribeUrl)}">unsubscribe from this one</a>.</p>`;
+      )}" is on. <a href="${notificationSettingsUrl()}" style="color: ${
+      emailTheme.link
+    };">Manage notification emails</a>
+      or <a href="${escapeHtml(data.unsubscribeUrl)}" style="color: ${
+      emailTheme.link
+    };">unsubscribe from this one</a>.`;
     return simpleEmailWithTemplate({
+      icon: '📬',
+      accent: 'blue',
+      eyebrow: 'Weekly digest',
       header: escapeHtml(`Notifications you missed this week`),
-      body: `<p>${escapeHtml(
+      body: `<p style="margin: 0;">${escapeHtml(
         `You have ${countLabel(data)} on Civitai you haven't seen.`
-      )}</p><ul style="text-align: left; padding-left: 20px;">${list}</ul>${
+      )}</p><ul style="margin: 16px 0; text-align: left; padding-left: 20px;">${list}</ul>${
         more ? `<p>${escapeHtml(more)}</p>` : ''
-      }${footer}`,
+      }`,
       btnUrl: escapeHtml(notificationsPageUrl()),
       btnLabel: 'See all notifications',
+      footer,
     });
   },
   text: (data: MissedNotificationsDigestData) => {

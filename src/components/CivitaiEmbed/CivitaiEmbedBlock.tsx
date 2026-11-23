@@ -1,5 +1,5 @@
 import { Button, Skeleton, Text } from '@mantine/core';
-import { IconEyeOff, IconLinkOff } from '@tabler/icons-react';
+import { IconArrowsDiagonal, IconEyeOff, IconLinkOff } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useState } from 'react';
 import {
@@ -18,6 +18,7 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { Tooltip } from '~/components/MantineOverlays';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import { useInView } from '~/hooks/useInView';
@@ -185,6 +186,7 @@ export function FullWidthMedia({ data }: EntityProps) {
               hiDpi={features.hiDpiPreviews}
               html5Controls={isVideo}
               muted={isVideo || undefined}
+              videoProps={isVideo ? { keepPlaying: true } : undefined}
               placeholder="empty"
               // Overrides the article body's img max-height (80vh); the box above sizes this one.
               style={{
@@ -215,12 +217,17 @@ export function FullWidthMedia({ data }: EntityProps) {
                 <ImageGuard2.BlurToggle />
               </div>
               {isVideo && safe && (
-                <RoutedDialogLink
-                  {...routedDialog}
-                  className="absolute right-2 top-2 rounded bg-black/60 px-2 py-1 text-xs font-semibold text-white"
-                >
-                  Open
-                </RoutedDialogLink>
+                <Tooltip label="Open in viewer" position="left">
+                  <div className="absolute right-2 top-2">
+                    <RoutedDialogLink
+                      {...routedDialog}
+                      aria-label="Open in viewer"
+                      className="flex size-11 items-center justify-center rounded-lg bg-black/60 text-white hover:bg-black/80 sm:size-9"
+                    >
+                      <IconArrowsDiagonal size={18} aria-hidden />
+                    </RoutedDialogLink>
+                  </div>
+                </Tooltip>
               )}
             </>
           );

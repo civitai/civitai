@@ -92,9 +92,14 @@ function wireSeats(rows = SEATS) {
   });
   mockDb.appCollaborator.findMany.mockImplementation(async (args: unknown): Promise<unknown[]> => {
     const w = (args as { where: Record<string, unknown> }).where;
+    // A batched read asks with `{ in: [...] }`.
+    const listing = w.appListingId as string | { in: string[] } | undefined;
     return rows.filter(
       (r) =>
-        (w.appListingId === undefined || r.appListingId === w.appListingId) &&
+        (listing === undefined ||
+          (typeof listing === 'string'
+            ? r.appListingId === listing
+            : listing.in.includes(r.appListingId))) &&
         (w.userId === undefined || r.userId === w.userId) &&
         (w.status === undefined || r.status === w.status) &&
         (w.displayed === undefined || r.displayed === w.displayed)

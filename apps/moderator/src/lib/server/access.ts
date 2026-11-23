@@ -167,6 +167,7 @@ export const NAVIGATION: NavLink[] = [
       },
       { path: MODEL_RULE_MATCHES_PATH, label: 'Model rule matches' },
       { path: MERGE_ANALYSIS_PATH, label: 'Model merge analysis' },
+      { path: '/models/version-showcases', label: 'Featured community images' },
     ],
   },
   {

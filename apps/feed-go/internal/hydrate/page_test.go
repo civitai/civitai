@@ -1,6 +1,7 @@
 package hydrate
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"reflect"
@@ -58,11 +59,19 @@ type pageFixture struct {
 
 func packValue(tb testing.TB, v map[string]any) []byte {
 	tb.Helper()
-	b, err := msgpack.Marshal(v)
-	if err != nil {
+	return packSorted(tb, v)
+}
+
+// packSorted is msgpack of v with every map's keys written sorted: a Go map has no order, and the
+// ordered reads (Entry.Ordered) keep the order the bytes hold, so a test value's order must be fixed
+// (sorted, the order hydrate.Wire gives an entry built in code).
+func packSorted(tb testing.TB, v any) []byte {
+	tb.Helper()
+	var buf bytes.Buffer
+	if err := msgpack.NewEncoder(&buf).SetSortMapKeys(true).Encode(v); err != nil {
 		tb.Fatal(err)
 	}
-	return b
+	return buf.Bytes()
 }
 
 func (f *pageFixture) put(tb testing.TB, key string, id int, v map[string]any) {

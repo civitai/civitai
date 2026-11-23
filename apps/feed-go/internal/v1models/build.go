@@ -50,6 +50,9 @@ type Config struct {
 	ResponseCacheTTL time.Duration
 	// Production is isProd: `nextPage`'s origin is https://<host> (else http://localhost:3000).
 	Production bool
+	// RedHosts are the red domain's hosts, lowercased (RedHosts): a request on one is red-capable,
+	// which lists a Training Data file whatever its rating (trainingDataServableOnHost).
+	RedHosts []string
 	// FetchConcurrency bounds the parallel reads (0 = DefaultFetchConcurrency).
 	FetchConcurrency int
 }
@@ -62,8 +65,10 @@ type Deps struct {
 	Gallery GallerySettingsReader
 	// Addons returns the browsing-settings addons (feed.AddonSource.Addons).
 	Addons func(context.Context) []browsing.Addon
-	Config Config
-	Now    func() time.Time
+	// Blocked is the blocked browsing tag list (the list's `tag` filter); nil: a `tag` falls back.
+	Blocked *feed.BlockedTags
+	Config  Config
+	Now     func() time.Time
 }
 
 func (d *Deps) now() time.Time {

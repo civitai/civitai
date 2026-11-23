@@ -1,3 +1,5 @@
+import { CSAM_LINK_TABLES_SQL } from '../../../../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
+
 /** The "Image" table and every table the shared retracted-media predicates read, for the
  *  Inquisitor queue's pglite tests. The Knights tables come from their migration. */
 export const INQUISITOR_IMAGE_SCHEMA = `
@@ -12,7 +14,10 @@ CREATE TABLE "Post" (id INTEGER PRIMARY KEY, metadata JSONB, "modelVersionId" IN
 CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, meta JSONB, "modelId" INTEGER);
 CREATE TABLE "Model" (id INTEGER PRIMARY KEY, meta JSONB);
 CREATE TABLE "User" (id INTEGER PRIMARY KEY, meta JSONB);
-CREATE TABLE "ImageCdnAccess" (url TEXT PRIMARY KEY, state TEXT NOT NULL);
+CREATE TABLE "ImageCdnAccess" (
+  url TEXT PRIMARY KEY, state TEXT NOT NULL,
+  "deniedAt" TIMESTAMPTZ NOT NULL DEFAULT now(), "retractedAt" TIMESTAMPTZ DEFAULT now()
+);
 CREATE TABLE "ImageCdnModeratorDelete" (
   "imageId" INTEGER PRIMARY KEY, url TEXT NOT NULL, "userId" INTEGER, "csamReview" BOOLEAN NOT NULL DEFAULT true
 );
@@ -27,5 +32,5 @@ CREATE TABLE "CsamReport" (
 );
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "EvidenceHoldImage" ("imageId" INTEGER PRIMARY KEY);
-CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL);
-`;
+CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL, "textHash" TEXT, meta JSONB);
+${CSAM_LINK_TABLES_SQL}`;

@@ -274,29 +274,30 @@ describe('play load', () => {
     expect(page.progress).toMatchObject({ kind: 'rank', rank: 'Knight' });
   });
 
-  it("gives a rank-up what changed: the new perks and the rank below's, including the daily gold cap", async () => {
+  it("gives a rank-up the new rank's benefits: vote weight, gold multiplier and daily gold cap range", async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Templar', level: 50 });
     seenStore.get.mockResolvedValue({ rank: 'Knight', level: 49, guide: true, whatsNew: true });
     const page = await run();
     expect(page.progress).toMatchObject({
       kind: 'rank',
       rank: 'Templar',
+      voteWeight: 1.5,
       goldMultiplier: 1.25,
-      previous: { goldMultiplier: 1 },
+      dailyGoldCap: { from: 140_000, to: 180_000 },
     });
-    expect(page.progress).not.toHaveProperty('dailyGoldCap');
-    expect(page.progress).not.toHaveProperty('voteWeight');
-    expect(page.progress.previous).not.toHaveProperty('voteWeight');
+    expect(page.progress).not.toHaveProperty('previous');
   });
 
-  it("takes a skipped rank's 'what changed' from the rank the player was last told about", async () => {
+  it('gives a skipped rank the benefits of the rank reached, not of the ranks between', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Paladin', level: 90 });
     seenStore.get.mockResolvedValue({ rank: 'Knight', level: 49, guide: true, whatsNew: true });
     const page = await run();
     expect(page.progress).toMatchObject({
       kind: 'rank',
       rank: 'Paladin',
-      previous: { goldMultiplier: 1 },
+      voteWeight: 2,
+      goldMultiplier: 1.5,
+      dailyGoldCap: { from: 200_000, to: 400_000 },
     });
   });
 

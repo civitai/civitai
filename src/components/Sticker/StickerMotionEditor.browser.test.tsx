@@ -178,6 +178,71 @@ describe('the sticker timeline', () => {
     other.remove();
   });
 
+  test('a key follows a drag along the bar, not just its first move', async () => {
+    await page.getByText('Movement').click();
+    const bar = page.getByRole('slider', { name: 'Video time' }).element() as HTMLElement;
+    const rect = bar.getBoundingClientRect();
+    const y = rect.top + rect.height / 2;
+    const at = (fraction: number) => rect.left + rect.width * fraction;
+    const send = (type: string, target: Element, x: number) =>
+      target.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          pointerId: 1,
+          isPrimary: true,
+          clientX: x,
+          clientY: y,
+        })
+      );
+    // Pointer capture sends every move to the element that was grabbed, while it stays mounted.
+    const grabbed = bar.querySelector('[data-key-index="0"]')!;
+
+    send('pointerdown', grabbed, at(0));
+    for (const fraction of [0.1, 0.2, 0.3, 0.4]) {
+      send('pointermove', grabbed, at(fraction));
+      // Lets React render the retimed key before the next move, as a real drag does.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      // A remounted diamond would drop pointer capture in a browser and end the drag there.
+      expect(grabbed.isConnected).toBe(true);
+    }
+    send('pointerup', grabbed, at(0.4));
+
+    await expect.poll(() => selected().motion?.keys.map((key) => key.t)).toEqual([4000]);
+  });
+
+  test('a key dragged past its neighbour stays the key being dragged', async () => {
+    await page.getByText('Movement').click();
+    for (let i = 0; i < 3; i++) await userEvent.keyboard('{Shift>}{ArrowRight}{/Shift}');
+    await userEvent.keyboard('k');
+    expect(selected().motion?.keys.map((key) => key.t)).toEqual([0, 3000]);
+    const bar = page.getByRole('slider', { name: 'Video time' }).element() as HTMLElement;
+    const rect = bar.getBoundingClientRect();
+    const y = rect.top + rect.height / 2;
+    const at = (fraction: number) => rect.left + rect.width * fraction;
+    // Pointer capture sends every move to the element that was grabbed.
+    const grabbed = bar.querySelector('[data-key-index="0"]')!;
+    const send = (type: string, x: number) =>
+      grabbed.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          pointerId: 1,
+          isPrimary: true,
+          clientX: x,
+          clientY: y,
+        })
+      );
+
+    send('pointerdown', at(0));
+    // The repeated x is pointer jitter: a move that changes nothing.
+    for (const fraction of [0.2, 0.4, 0.4, 0.5]) {
+      send('pointermove', at(fraction));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    send('pointerup', at(0.5));
+
+    await expect.poll(() => selected().motion?.keys.map((key) => key.t)).toEqual([3000, 5000]);
+  });
+
   test('a key’s ease and opacity change from the inspector', async () => {
     await page.getByText('Movement').click();
     await userEvent.keyboard('{Shift>}{ArrowRight}{/Shift}');

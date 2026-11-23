@@ -196,11 +196,13 @@ export const useChatMessageUpdatedSignal = () => {
       messageId,
       chatId,
       content,
+      maskedContent,
       editedAt,
     }: {
       messageId: number;
       chatId: number;
       content: string;
+      maskedContent?: string | null;
       editedAt: string;
     }) => {
       queryUtils.chat.getInfiniteMessages.setInfiniteData(
@@ -211,6 +213,8 @@ export const useChatMessageUpdatedSignal = () => {
             const msg = page.items.find((m) => m.id === messageId);
             if (msg) {
               msg.content = content;
+              // The new text's masked copy, never the old one; absent leaves masking to the browser.
+              msg.maskedContent = maskedContent;
               msg.editedAt = new Date(editedAt);
             }
           }

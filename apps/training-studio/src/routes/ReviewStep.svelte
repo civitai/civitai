@@ -11,7 +11,7 @@
     IconInfoCircle,
     IconPhotoPlus,
   } from '@tabler/icons-svelte';
-  import { KOHYA_BOUNDS, KOHYA_OPTIMIZERS, KOHYA_SCHEDULERS, kohyaFieldSupported } from '$lib/data/kohya';
+  import { kohyaBound, KOHYA_BOUNDS, KOHYA_OPTIMIZERS, KOHYA_SCHEDULERS, kohyaFieldSupported } from '$lib/data/kohya';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
   import { FILES_PROCESSING_MESSAGE, FilesProcessingError } from '$lib/files-processing';
@@ -21,6 +21,7 @@
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import BlueFirstToggle from '$lib/components/BlueFirstToggle.svelte';
   import StickySummary from '$lib/components/StickySummary.svelte';
+  import HelpTip, { TAP_TARGET } from '$lib/components/HelpTip.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
   import {
     AI_TOOLKIT_OPTION_FIELDS,
@@ -31,7 +32,6 @@
   import { isAbort, uploadFile } from '$lib/upload';
   import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
-  import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
@@ -446,7 +446,7 @@
     return [...groups].map(([reason, labels]) => ({ reason, labels }));
   };
   const fieldBound = (i: number, field: ParamField): ParamBound | undefined =>
-    runEngine(selection.runs[i]!) === 'kohya' ? KOHYA_BOUNDS[field]
+    runEngine(selection.runs[i]!) === 'kohya' ? kohyaBound(field, runVersion(selection.runs[i]!).ecosystem)
       : isExtra(field) ? capsAt(i)[field].bound : boundsFor(i)[field];
   const helpFor = (i: number, field: ParamField): string => {
     const run = selection.runs[i]!;
@@ -617,19 +617,14 @@
 </script>
 
 {#snippet help(text: string, subject: string)}
-  <Tooltip.Provider>
-    <Tooltip.Root>
-      <Tooltip.Trigger
-        class="inline-flex text-dark-2 transition-colors hover:text-dark-0"
-        aria-label="About {subject}"
-      >
-        <IconInfoCircle size={13} stroke={2} />
-      </Tooltip.Trigger>
-      <Tooltip.Content class="max-w-[300px] text-xs leading-snug" portalProps={portalProps()}>
-        {text}
-      </Tooltip.Content>
-    </Tooltip.Root>
-  </Tooltip.Provider>
+  <HelpTip
+    label="About {subject}"
+    class="{TAP_TARGET} inline-flex text-dark-2 transition-colors hover:text-dark-0"
+    contentClass="max-w-[300px] text-xs leading-snug"
+  >
+    <IconInfoCircle size={13} stroke={2} />
+    {#snippet content()}{text}{/snippet}
+  </HelpTip>
 {/snippet}
 
 {#snippet sampleImage(p: SamplePrompt)}

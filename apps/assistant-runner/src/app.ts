@@ -86,7 +86,12 @@ function previewRoute(
           `This restart needs a current preview grant for this app in ${GRANT_HEADER}.`
         );
       const outcome = await previews.restart(request.userId, appKey, grant.token, grant.expiresAt);
-      if (outcome.ok) return { v: 1, blockId: outcome.blockId, host: outcome.host };
+      if (outcome.ok)
+        return {
+          v: 1,
+          blockId: outcome.blockId,
+          ...(outcome.host ? { host: outcome.host } : {}),
+        };
       return reply
         .code(RESTART_STATUS[outcome.error])
         .send({ v: 1, error: outcome.error, message: outcome.message });

@@ -26,7 +26,7 @@ vi.mock('~/server/services/tipalti-payee-resync.service', async (importOriginal)
   resyncTipaltiPayees: resync,
 }));
 
-const handler = (await import('~/pages/api/mod/tipalti-resync-payee')).default;
+const handler = (await import('~/server/api-routes/mod/tipalti-resync-payee')).default;
 
 function call(method: string, query: Record<string, string>) {
   const req = { method, query, headers: {}, body: {} };

@@ -209,9 +209,10 @@ export const FULL_SUITE_REASON =
 // A full-program `tsc` run directly, instead of through `pnpm run typecheck`. Two reasons, and the
 // second would hold even if the first went away:
 //   1. It skips the typecheck lane of the dev-server queue, so several agents doing it at once is
-//      N single-core 8 GB heaps pegging the box — the condition the lane exists to prevent.
-//   2. It is the WRONG CHECK. tsc at node's default heap can abort part-way with ZERO diagnostics
-//      and a log that reads as clean; scripts/typecheck.mjs raises the heap and names that crash.
+//      N full-program compiler runs pegging the box — the condition the lane exists to prevent.
+//   2. It is the WRONG CHECK. The root `tsc` is TypeScript 5.9, while the repo's typecheck is
+//      TypeScript 7 (scripts/typecheck.mjs); and 5.9 at node's default heap can abort part-way
+//      with ZERO diagnostics and a log that reads as clean.
 //      Measured: a file with 8 real errors reported "No errors found" under `npx tsc -p
 //      tsconfig.json` and 8 errors under `pnpm run typecheck`.
 // Narrow runs are left alone: a sub-project (`-p tsconfig.scripts.json`, which the scripts gate
@@ -331,9 +332,10 @@ export function directRootTypecheck(command) {
 
 export const DIRECT_TSC_REASON =
   'Direct full-program tsc blocked: use `pnpm run typecheck`. That script queues the run in the ' +
-  "dev-server typecheck lane (several agents' 8 GB tsc heaps at once is what pegs the box), and it " +
-  'is also the only form that cannot report a crashed run as clean — plain tsc at the default ' +
-  'heap can abort with zero diagnostics. A sub-project (`-p tsconfig.scripts.json`), named files, ' +
+  "dev-server typecheck lane (several agents' ~8 GB typechecks at once is what pegs the box), runs " +
+  'the compiler the repo actually checks with (TypeScript 7; plain tsc is 5.9), and is the only ' +
+  'form that cannot report a crashed run as clean — plain tsc at the default heap can abort with ' +
+  'zero diagnostics. A sub-project (`-p tsconfig.scripts.json`), named files, ' +
   'and a run aimed at one workspace package (`cd apps/<name> && …`, `pnpm --filter <name> exec …`) ' +
   'still run directly — `pnpm run typecheck` does not cover `apps/`. To diagnose tsc itself, ' +
   'prefix the command with TYPECHECK_DIRECT=1.';

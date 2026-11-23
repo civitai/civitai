@@ -1,0 +1,32 @@
+// 🔴 KEEP THIS FIRST. A block is framed at an opaque origin, where merely
+// READING `localStorage`/`sessionStorage` throws — and a dependency that touches
+// storage while its module evaluates would take the block down before any of
+// your code runs. This side-effect import installs an in-memory stand-in only
+// where storage is present but unusable, and is inert everywhere else. See
+// "Web storage in a block" in the @civitai/sdk README.
+import '@civitai/sdk/safe-storage';
+
+// The `--civitai-*` design tokens (dark base, light under [data-theme='light'])
+// for the page itself; the `<civitai-*>` elements read the same tokens.
+import '@civitai/theme/styles.css';
+import './index.css';
+
+import { startBlock } from './block.js';
+
+const root = document.getElementById('root');
+if (!root) throw new Error('#root missing from index.html');
+
+// VITE_DEV_HARNESS=true installs a local simulator of the civitai.com host that
+// posts a fake BLOCK_INIT — `npm run dev:harness`, never a production build.
+// Vite replaces `import.meta.env.VITE_DEV_HARNESS` at build time, so with it
+// unset this branch and the harness module are dropped from the bundle. The
+// harness is installed before `startBlock` so the bridge's very first message
+// (its `BLOCK_HELLO`) already reaches the harness's stand-in `window.parent`.
+if (import.meta.env.VITE_DEV_HARNESS === 'true') {
+  const { installHarness } = await import('./dev/harness.js');
+  installHarness(root);
+}
+
+// `startBlock` never rejects: an app that cannot start shows an error in place
+// of the boot skeleton (and logs the cause) instead of failing silently.
+void startBlock(root);

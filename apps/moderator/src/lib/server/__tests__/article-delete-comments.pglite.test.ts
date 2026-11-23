@@ -50,7 +50,7 @@ CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER, "userId" IN
 CREATE TABLE "File" ("entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityId" INTEGER, "entityType" TEXT);
 CREATE TYPE "EntityType" AS ENUM ('Image');
-CREATE TYPE "JobQueueType" AS ENUM ('ImageDelete');
+CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete');
 CREATE TABLE "JobQueue" (
   "entityId" INTEGER NOT NULL, "entityType" "EntityType" NOT NULL, "type" "JobQueueType" NOT NULL,
   "data" JSONB, "createdAt" TIMESTAMP NOT NULL DEFAULT now(),
@@ -138,7 +138,7 @@ describe("a moderator's article delete", () => {
 });
 
 describe("a moderator's article delete with an orphaned cover", () => {
-  const queued = () => rows(`SELECT "entityId", data FROM "JobQueue" WHERE type = 'ImageDelete'`);
+  const queued = () => rows(`SELECT "entityId", data FROM "JobQueue" WHERE type = 'PendingDelete'`);
 
   beforeEach(async () => {
     await db.exec(`
@@ -147,11 +147,13 @@ describe("a moderator's article delete with an orphaned cover", () => {
     `);
   });
 
-  it('queues the image for image-deletes as a moderator delete, and leaves the row to it', async () => {
+  it('queues the image for pending-deletes as a moderator delete, and leaves the row to it', async () => {
     expect(await deleteArticle()).toEqual({ ok: true });
 
     expect(await rows(`SELECT id FROM "Article"`)).toEqual([]);
-    expect(await queued()).toEqual([{ entityId: 90, data: { moderatorDelete: true } }]);
+    expect(await queued()).toEqual([
+      { entityId: 90, data: { cleanup: true, moderatorDelete: true } },
+    ]);
     expect(await rows(`SELECT id FROM "Image"`)).toEqual([{ id: 90 }]);
   });
 });

@@ -83,9 +83,10 @@ const runEnv = (scratchHome, primary, ...argv) => {
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 };
 
-const run = (primary, name, branch, base) => {
+// WORKTREE_ROOT is pinned empty so a desk's skill .env cannot move where the default cases expect trees.
+const run = (primary, name, branch, base, worktreeRoot = '') => {
   const r = spawnSync(process.execPath, [SELF], {
-    env: { ...process.env, WT_NEW_ARGS: JSON.stringify([primary, name, branch, base]) },
+    env: { ...process.env, WORKTREE_ROOT: worktreeRoot, WT_NEW_ARGS: JSON.stringify([primary, name, branch, base]) },
     encoding: 'utf8',
   });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
@@ -301,6 +302,43 @@ try {
   const localBase = run(primary, 'three', 'feat/three', 'main');
   check('refuses a local --base', localBase.code, 1);
   check('creates nothing on refusal', existsSync(join(reposRoot, 'worktrees', 'three')), false);
+
+  // A stray local branch named origin/main shadows the bare name and wins over the remote ref.
+  git(['branch', '-f', 'origin/main', localOnly], primary);
+  const strayRun = run(primary, 'stray', 'feat/stray');
+  check('with a stray refs/heads/origin/main: still creates the worktree', strayRun.code, 0);
+  check(
+    '... and forks from the remote commit, not the stray branch',
+    gitQuiet(['rev-parse', 'HEAD'], join(reposRoot, 'worktrees', 'stray')),
+    remoteTip
+  );
+  git(['branch', '-D', 'origin/main'], primary);
+
+  // The second positional is the NEW branch name. A remote ref there once created refs/heads/origin/main.
+  for (const bad of ['origin/main', 'refs/heads/x']) {
+    const asBranch = run(primary, 'asbranch', bad);
+    check(`refuses ${bad} as the branch name`, asBranch.code, 1);
+    check('... showing the --base form', asBranch.out.includes('--base origin/'), true);
+    check('... creating no ref', gitQuiet(['rev-parse', '--verify', '--quiet', `refs/heads/${bad}`], primary), null);
+    check('... and no worktree', existsSync(join(reposRoot, 'worktrees', 'asbranch')), false);
+  }
+  const doubled = run(primary, 'doubled', 'feat/doubled', 'refs/remotes/origin/main');
+  check('refuses a fully qualified --base', doubled.code, 1);
+  check('... without making refs/remotes/refs/remotes/...', gitQuiet(['for-each-ref', 'refs/remotes/refs'], primary), '');
+
+  // WORKTREE_ROOT set: new trees go there; the tree made under the old root stays listed and working.
+  const newRoot = join(scratch, 'elsewhere');
+  const moved = run(primary, 'moved', 'feat/moved', undefined, newRoot);
+  check('WORKTREE_ROOT: creates the worktree', moved.code, 0);
+  check('WORKTREE_ROOT: places it under the override', existsSync(join(newRoot, 'moved', '.git')), true);
+  check('WORKTREE_ROOT: not under the default root', existsSync(join(reposRoot, 'worktrees', 'moved')), false);
+  const { listWorktrees } = await import('./worktree.mjs');
+  const listed = listWorktrees(primary).map((t) => t.path.replace(/\\/g, '/'));
+  check('WORKTREE_ROOT: the new tree is listed', listed.includes(join(newRoot, 'moved').replace(/\\/g, '/')), true);
+  check('WORKTREE_ROOT: the old-root tree is still listed', listed.includes(tree.replace(/\\/g, '/')), true);
+  const relative = run(primary, 'rel', 'feat/rel', undefined, 'not/absolute');
+  check('WORKTREE_ROOT: a relative path refuses', relative.code, 1);
+  check('WORKTREE_ROOT: and says why', relative.out.includes('WORKTREE_ROOT must be an absolute path'), true);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

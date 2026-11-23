@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { enhance } from '$app/forms';
+  import { page } from '$app/state';
   import { SYNC_PARAM } from '@civitai/auth/client';
   import { buildWordmarkSvg, buildBadgeSvg, getHoliday } from '@civitai/brand';
   import {
@@ -11,6 +12,7 @@
     IconMail,
   } from '@tabler/icons-svelte';
   import type { PageData, ActionData } from './$types';
+  import { providerStartHref } from './provider-href';
   import {
     decideAfterGrace,
     probeTurnstile,
@@ -18,6 +20,11 @@
   } from './turnstile-availability';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  const retryIn = (seconds: unknown) =>
+    typeof seconds !== 'number' || seconds <= 60
+      ? 'in a minute'
+      : `in ${Math.ceil(seconds / 60)} minutes`;
 
   // The method this browser last signed in with goes first, marked "Last used".
   const providers = $derived(
@@ -257,7 +264,7 @@
     const params = new URLSearchParams({ returnUrl: data.returnUrl });
     if (data.sync) params.set(SYNC_PARAM, data.sync);
     if (data.prompt) params.set('prompt', data.prompt);
-    return `/login/${providerId}?${params.toString()}`;
+    return providerStartHref(page.url.origin, providerId, params);
   };
 
   // Cloudflare Turnstile auto-renders any `.cf-turnstile` element once its script loads and injects
@@ -480,7 +487,7 @@
             </button>
             {#if form?.invalid}<p class="error">Enter a valid email address.</p>{/if}
             {#if form?.rateLimited}
-              <p class="error">Too many attempts. Please wait a few minutes and try again.</p>
+              <p class="error">Too many attempts. Try again {retryIn(form.retryAfter)}.</p>
             {/if}
             <!-- "try again" only where a retry can work — a rejected (expired/reused) token, not a
                  check that cannot run. Dropping the second term re-invites a doomed retry. -->

@@ -40,6 +40,7 @@ const NSFW_RATED_R = 18;
 const NSFW_TEXT_RATED_R = 19;
 const MINOR_PG_ON_NSFW = 20;
 const X_ON_RATED_R = 21;
+const REPORT_LISTED = 22;
 
 let pg: PGlite;
 const db = {
@@ -79,6 +80,7 @@ beforeAll(async () => {
       "acceptableMinor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, images jsonb);
     CREATE TABLE "Tag" (id int PRIMARY KEY, name text);
     CREATE TABLE "TagsOnBounty" ("bountyId" int, "tagId" int);
     CREATE TABLE "BountyStat" (
@@ -89,6 +91,8 @@ beforeAll(async () => {
     INSERT INTO "User" (id, username) VALUES (${OWNER}, 'owner');
     INSERT INTO "Image" (id, "tosViolation") VALUES (${TOS_VIOLATION}, true);
     INSERT INTO "Image" (id, "acceptableMinor") VALUES (${ACCEPTABLE_MINOR}, true);
+    INSERT INTO "Image" (id) VALUES (${REPORT_LISTED});
+    INSERT INTO "CsamReport" (images) VALUES ('[{"id": ${REPORT_LISTED}}]'), ('"not a list"');
     INSERT INTO "Image" (id, meta, "nsfwLevel", "blockedFor", minor, "hideMeta") VALUES
       (${CLEAN}, '{"prompt": "p"}', 1, NULL, false, false),
       (${BLOCKED_FOR}, NULL, 1, 'tos', false, false),
@@ -119,6 +123,7 @@ beforeAll(async () => {
     HIDDEN_META,
     TOS_VIOLATION,
     ACCEPTABLE_MINOR,
+    REPORT_LISTED,
   ]) {
     await pg.exec(`
       INSERT INTO "Bounty" (id, "userId") VALUES (${id}, ${OWNER});
@@ -157,6 +162,7 @@ describe('bounties search index images', () => {
     ['is minor-flagged and rated R', MINOR_R],
     ['violates the ToS', TOS_VIOLATION],
     ['is marked acceptable-minor', ACCEPTABLE_MINOR],
+    ['is listed on a CSAM report', REPORT_LISTED],
   ])('drops the document of a bounty whose only image %s', async (_, id) => {
     expect(await pull(id)).toBeUndefined();
     expect(onSearchIndexDocumentsCleanup).toHaveBeenCalledWith({

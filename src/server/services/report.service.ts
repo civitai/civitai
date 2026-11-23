@@ -2,7 +2,14 @@ import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { MERGE_PERMISSION_REPORT_REASON } from '@civitai/shared/merge-permission';
 import { NO_REPORT_REWARD_KEY, reportersWithoutReward } from '@civitai/shared/report-reward';
-import { reviewKeptWhenLiftedSql, withoutGraceMarkersSql } from '~/server/common/image-visibility';
+import {
+  liftedBlockedForSql,
+  liftedIngestionSql,
+  liftedMetadataSql,
+  liftedNeedsReviewSql,
+  liftedNsfwLevelSql,
+  liftKeptBlockedSql,
+} from '~/server/common/image-visibility';
 import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
@@ -12,6 +19,7 @@ import {
 } from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { reviewPublic } from '~/server/services/creator-service-deal-review-publish';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -33,6 +41,7 @@ import {
   queueImageSearchIndexUpdate,
   dropBlockedImageDeleteQueue,
   resetBlockedNsfwLevel,
+  restartBlockedImageDeleteClock,
 } from '~/server/services/image.service';
 import {
   queueComicsForPanelImage,
@@ -51,7 +60,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { getBaseUrl } from '~/server/utils/url-helpers';
+import { getBaseUrl, getColorBaseUrl } from '~/server/utils/url-helpers';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
@@ -333,6 +342,7 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.Storyline]: 'storyline',
   [ReportEntity.ServiceOffering]: 'serviceOffering',
   [ReportEntity.PostText]: 'postText',
+  [ReportEntity.ServiceDealReview]: 'serviceDealReview',
 };
 
 const reportTypeConnectionMap = {
@@ -357,6 +367,7 @@ const reportTypeConnectionMap = {
   [ReportEntity.Storyline]: 'storylineId',
   [ReportEntity.ServiceOffering]: 'serviceOfferingId',
   [ReportEntity.PostText]: 'postTextId',
+  [ReportEntity.ServiceDealReview]: 'serviceDealReviewId',
 } as const;
 
 const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
@@ -417,6 +428,27 @@ async function assertReportedPlacementIsOnEntity({
     throw throwBadRequestError('report: that sticker is not on the image being reported');
 }
 
+/** A buyer review as its reporter sees it: `shown` is whether it is public now. */
+async function readReportedServiceDealReview(reviewId: number) {
+  // primary: a moderator may have hidden it, or its buyer edited it, a moment ago.
+  const [review] = await dbWrite.$queryRaw<
+    {
+      offeringId: number;
+      dealId: number;
+      buyerId: number;
+      sellerId: number;
+      comment: string | null;
+      sellerReply: string | null;
+      shown: boolean;
+    }[]
+  >`
+    SELECT r."offeringId", r."dealId", r."buyerId", r."sellerId", r."comment", r."sellerReply",
+      (r."publishedAt" IS NOT NULL AND ${reviewPublic}) AS "shown"
+    FROM "ServiceDealReview" r JOIN "ServiceDeal" d ON d."id" = r."dealId"
+    WHERE r."id" = ${reviewId}::int`;
+  return review;
+}
+
 export const createReport = async ({
   userId,
   id,
@@ -473,6 +505,13 @@ export const createReport = async ({
     !(await dbRead.serviceOffering.findUnique({ where: { id }, select: { id: true } }))
   )
     throw throwNotFoundError('That service no longer exists.');
+  const reportedReview =
+    type === ReportEntity.ServiceDealReview ? await readReportedServiceDealReview(id) : null;
+  if (type === ReportEntity.ServiceDealReview) {
+    if (!reportedReview?.shown) throw throwNotFoundError('That review is not shown.');
+    if (reportedReview.buyerId === userId || reportedReview.sellerId === userId)
+      throw throwBadRequestError('You cannot report a review of your own deal.');
+  }
   // Read here for the author guard; the words it also yields are stamped below the dedupe, as the
   // announcement's are.
   const readReportedText = () =>
@@ -516,6 +555,7 @@ export const createReport = async ({
     type === ReportEntity.Storyline ||
     type === ReportEntity.ServiceOffering ||
     type === ReportEntity.PostText ||
+    type === ReportEntity.ServiceDealReview ||
     castsNoTagVotes;
   // Decides who is paid when the report is actioned, so it is the server's, whatever the client sent.
   // Stamped before the dedupe so a folded-in reporter's `additionalReports` entry carries it too.
@@ -524,6 +564,7 @@ export const createReport = async ({
   else delete details[NO_REPORT_REWARD_KEY];
   // The server's snapshot of a reported text (stamped below); never one the reporter sent.
   delete details.postText;
+  delete details.serviceDealReview;
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
@@ -539,6 +580,7 @@ export const createReport = async ({
             castsNoTagVotes ||
             reportsStorylineChapter ||
             type === ReportEntity.PostText ||
+            type === ReportEntity.ServiceDealReview ||
             foldIntoPendingOnly,
           tx: callerTx,
         })
@@ -572,6 +614,13 @@ export const createReport = async ({
       index: reportedText.index,
       postId: reportedText.postId,
     };
+  // As a text's: the buyer can still edit the comment, and the seller their reply.
+  if (reportedReview)
+    (data.details as MixedObject).serviceDealReview = {
+      dealId: reportedReview.dealId,
+      comment: reportedReview.comment,
+      sellerReply: reportedReview.sellerReply,
+    };
 
   let recomputeArticleNsfwLevelId: number | null = null;
 
@@ -596,6 +645,7 @@ export const createReport = async ({
           create: {
             [reportTypeConnectionMap[type]]: id,
             ...(reportedText ? { postId: reportedText.postId } : {}),
+            ...(reportedReview ? { serviceOfferingId: reportedReview.offeringId } : {}),
           },
         },
       },
@@ -1930,17 +1980,19 @@ export async function settleResolvedAppeals(
           // An approval never restores a row removed for CSAM or under the review flag, and a
           // rejection leaves that flag on. On a row an account deletion blocked, an approval settles
           // the appeal but not a review the deletion recorded, which comes back.
-          type Written = { postId: number | null; pHash: bigint | null };
+          type Written = { postId: number | null; pHash: bigint | null; keptBlocked?: boolean };
           const [updated] = approved
             ? await dbWrite.$queryRaw<Written[]>`
                 UPDATE "Image"
-                SET "needsReview" = ${reviewKeptWhenLiftedSql},
-                    "blockedFor" = NULL, ingestion = 'Scanned',
-                    "metadata" = ${withoutGraceMarkersSql()}
+                SET "needsReview" = ${liftedNeedsReviewSql},
+                    "blockedFor" = ${liftedBlockedForSql},
+                    "nsfwLevel" = ${liftedNsfwLevelSql},
+                    ingestion = ${liftedIngestionSql},
+                    "metadata" = ${liftedMetadataSql}
                 WHERE id = ${appeal.entityId}
                   AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
                   AND "needsReview" IS DISTINCT FROM 'csam'
-                RETURNING "postId", "pHash"
+                RETURNING "postId", "pHash", ${liftKeptBlockedSql} AS "keptBlocked"
               `
             : await dbWrite.$queryRaw<Written[]>`
                 UPDATE "Image"
@@ -1954,11 +2006,16 @@ export async function settleResolvedAppeals(
             break;
           }
 
-          if (approved) {
+          const restored = approved && !updated.keptBlocked;
+          if (approved && !restored) await restartBlockedImageDeleteClock([appeal.entityId]);
+          if (restored) {
             // Shared restore path: reset+unlock a Blocked-locked row so the recompute isn't a
             // no-op, then recompute. Same helper handleUnblockImages uses. (ClickUp 868kfwdzq)
             await resetBlockedNsfwLevel(appeal.entityId);
             await dropBlockedImageDeleteQueue([appeal.entityId]);
+          }
+          if (approved) {
+            // Even while the owner is deleted: an account restore never revisits the blocklist.
             // An approved appeal means the block was wrong — drop the pHash from the
             // blocked-hash set so re-uploads of the same image aren't auto-blocked (parity
             // with handleUnblockImages). A hash with a live CSAM entry stays blocked.
@@ -1971,7 +2028,7 @@ export async function settleResolvedAppeals(
 
           await queueImageSearchIndexUpdate({
             ids: [appeal.entityId],
-            action: approved
+            action: restored
               ? SearchIndexUpdateQueueAction.Update
               : SearchIndexUpdateQueueAction.Delete,
           });
@@ -2031,31 +2088,6 @@ export async function settleResolvedAppeals(
         });
       }
     }
-
-    // Notify the user that their appeal has been resolved
-    await createNotification({
-      userId: appeal.userId,
-      type: 'entity-appeal-resolved',
-      category: NotificationCategory.Moderation,
-      // Per appeal and per filing: an entity can be appealed again after a re-block (new row), and a
-      // reopened appeal reuses its row; the notification service reuses the row for a repeated key.
-      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${
-        appeal.id
-      }:${appeal.createdAt.getTime()}`,
-      details: {
-        entityType: appeal.entityType,
-        entityId: appeal.entityId,
-        status,
-        resolvedMessage,
-        ...(lockReview && {
-          kind: LOCK_REVIEW_KIND,
-          unlocked: lockReview.unlocked,
-          reason: lockReview.reason ?? null,
-          // No date to promise when the ruling started no cooldown.
-          resolvedAt: lockReview.cooldown ? appeal.resolvedAt : null,
-        }),
-      },
-    });
   }
 
   // Email each affected user once, listing every item they appealed in this
@@ -2070,12 +2102,46 @@ export async function settleResolvedAppeals(
   }
 
   const linkColor = appealsByUser.size ? await appealLinkColors(appeals) : () => undefined;
+  for (const appeal of appeals) {
+    if (reopenedIds.has(appeal.id)) continue;
+    const color = linkColor(appeal);
+    const url =
+      color && getColorBaseUrl(color)
+        ? appealEntityLink(appeal.entityType, appeal.entityId, color).url
+        : undefined;
+    await createNotification({
+      userId: appeal.userId,
+      type: 'entity-appeal-resolved',
+      category: NotificationCategory.Moderation,
+      // Per appeal and per filing: an entity can be appealed again after a re-block (new row), and a
+      // reopened appeal reuses its row; the notification service reuses the row for a repeated key.
+      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${
+        appeal.id
+      }:${appeal.createdAt.getTime()}`,
+      details: {
+        entityType: appeal.entityType,
+        entityId: appeal.entityId,
+        status,
+        resolvedMessage,
+        // Set only for an item civitai.com does not serve; the bell resolves a relative path on its own host.
+        ...(url && { url }),
+        ...(lockReview && {
+          kind: LOCK_REVIEW_KIND,
+          unlocked: lockReview.unlocked,
+          reason: lockReview.reason ?? null,
+          // No date to promise when the ruling started no cooldown.
+          resolvedAt: lockReview.cooldown ? appeal.resolvedAt : null,
+        }),
+      },
+    });
+  }
+
   for (const [recipientId, userAppeals] of appealsByUser) {
     const recipient = recipientMap.get(recipientId);
     if (!recipient?.email) continue;
     try {
       // Intentionally omit `resolvedMessage` from the email — moderator
-      // free-text is shown only in-app (notification above), never emailed,
+      // free-text is shown only in-app (notification), never emailed,
       // to avoid exposing potentially explicit/targeted prose. The TOS link in
       // the email template provides the policy reference for rejected appeals.
       await moderationActionEmail.send({

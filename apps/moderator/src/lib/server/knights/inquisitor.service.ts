@@ -11,16 +11,14 @@ import {
   type KnightsEscalationReason,
   type KnightsWritebackReason,
 } from '@civitai/shared/new-order';
-import { csamRestrictedSql, retractedImageWhereSql } from '@civitai/shared/retracted-media-tier';
-import { RETRACTED_MEDIA_READ_TIMEOUT_MS } from '@civitai/shared/retracted-media';
-import { blockedForSignal } from '@civitai/shared/review-batch';
 import { INQUISITOR_FILTERS, type InquisitorFilter } from '$lib/knights/inquisitor-filters';
 import { BLOCKED_RATING_REFUSED } from '$lib/knights/inquisitor-ruling';
 import { isRatingLevel } from '$lib/nsfw-levels';
 import { logToAxiom } from '../axiom';
-import { blockedForPatterns } from '../blocked-for-patterns';
 import { dbRead, dbWrite } from '../db';
 import { updateImageNsfwLevel } from '../image-nsfw-level';
+import { readRetractedMedia } from '../retracted-media';
+import { readScannerCsamVerdicts } from '../review-batch';
 import {
   consensusBlockReason,
   isKnightsBlockReason,
@@ -153,7 +151,8 @@ function tallyByAnswer(tallies: StageTally[], labels: Map<string, string>): Inqu
 }
 
 export async function getInquisitorQueue(
-  filter: InquisitorFilter = 'all'
+  filter: InquisitorFilter = 'all',
+  { csamReview = false }: { csamReview?: boolean } = {}
 ): Promise<InquisitorItem[]> {
   const base = waitingOnInquisitors(dbWrite);
   const items = await (filter === 'all' ? base : base.where((eb) => filterCondition(eb, filter)))
@@ -215,13 +214,17 @@ export async function getInquisitorQueue(
     .where('weight', '>', 0)
     .execute();
 
-  const viewable = await blockedImagesAnyModeratorMaySee(
-    items.filter((item) => item.ingestion === 'Blocked').map((item) => item.imageId)
+  const { eligible, viewable } = await retractedMediaFor(
+    items.map((item) => item.imageId),
+    { csamReview }
   );
 
   return items.map(({ options, ingestion, reason, escalationReason, ...item }) => {
-    const media: InquisitorMedia =
-      ingestion !== 'Blocked' ? 'cdn' : viewable.has(item.imageId) ? 'retracted' : 'restricted';
+    const media: InquisitorMedia = viewable.has(item.imageId)
+      ? 'retracted'
+      : eligible.has(item.imageId) || ingestion === 'Blocked'
+      ? 'restricted'
+      : 'cdn';
     const labels = new Map(parseOptions(options).map((option) => [option.value, option.label]));
     return {
       ...item,
@@ -241,13 +244,21 @@ export async function getInquisitorQueue(
 }
 
 /**
- * The blocked images `/api/retracted-media` may serve to a moderator without the CSAM page's grant.
- * Must mirror that route's Postgres checks (`getRetractedMedia`); the rest are drawn as restricted.
+ * Which of these images `/api/retracted-media` serves at all (`eligible`) and which it serves to
+ * this viewer (`viewable`), read by that route's own reader with one scanner read for the page. A
+ * read that fails leaves both empty, so every blocked image is drawn as restricted.
  */
-async function blockedImagesAnyModeratorMaySee(imageIds: number[]): Promise<Set<number>> {
-  if (imageIds.length === 0) return new Set();
+async function retractedMediaFor(
+  imageIds: number[],
+  { csamReview }: { csamReview: boolean }
+): Promise<{ eligible: Set<number>; viewable: Set<number> }> {
   try {
-    return await readViewable(imageIds);
+    const { eligible, viewable } = await readRetractedMedia(imageIds, {
+      csamReview,
+      orHeld: true,
+      readVerdicts: (rows) => readScannerCsamVerdicts(rows.map((row) => row.id)),
+    });
+    return { eligible, viewable: new Set(viewable.keys()) };
   } catch (e) {
     // Every blocked row is restricted rather than the whole queue failing to load.
     void logToAxiom({
@@ -255,25 +266,8 @@ async function blockedImagesAnyModeratorMaySee(imageIds: number[]): Promise<Set<
       type: 'error',
       payload: { message: e instanceof Error ? e.message : String(e) },
     });
-    return new Set();
+    return { eligible: new Set(), viewable: new Set() };
   }
-}
-
-async function readViewable(imageIds: number[]): Promise<Set<number>> {
-  const rows = await dbWrite.transaction().execute(async (trx) => {
-    await sql.raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`).execute(trx);
-    return trx
-      .selectFrom('Image as i')
-      .select(['i.id', 'i.blockedFor'])
-      .where('i.id', 'in', imageIds)
-      .where(sql<boolean>`${sql.raw(retractedImageWhereSql('i'))}`)
-      .where(sql<boolean>`NOT ${sql.raw(csamRestrictedSql('i'))}`)
-      .execute();
-  });
-  const patterns = blockedForPatterns();
-  return new Set(
-    rows.filter((row) => !blockedForSignal(row.blockedFor, patterns)).map((row) => row.id)
-  );
 }
 
 export type RulingOutcome = { ok: true } | { ok: false; error: string };

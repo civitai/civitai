@@ -27,8 +27,11 @@ export const bountyAutomaticallyAwardedEmail = createEmail({
   }),
   html({ bounty, entry }: BountyAwardedData) {
     return simpleEmailWithTemplate({
+      icon: '🏆',
+      accent: 'buzz',
+      eyebrow: 'Bounty awarded',
       header: 'Your bounty has been automatically awarded.',
-      body: 'Because no action was taken in 48 hours, your bounty has been automatically awarded to the entry with the most reactions.',
+      body: '<p style="margin: 0;">Because no action was taken in 48 hours, your bounty has been automatically awarded to the entry with the most reactions.</p>',
       btnLabel: 'Check the awarded entry',
       btnUrl: bountyEntryUrl(bounty, entry),
     });

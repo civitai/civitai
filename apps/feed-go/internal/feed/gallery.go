@@ -149,6 +149,40 @@ func (g *GalleryStore) Withheld(ctx context.Context, modelIDs []int, viewerID in
 	return false, rows.Err()
 }
 
+// ModelOwners is getHeldLevelsByPost's owner read (`dbRead.model.findMany({ where: { id: { in } },
+// select: { id, userId } })`): each existing model's owner.
+func (g *GalleryStore) ModelOwners(ctx context.Context, modelIDs []int) (map[int]int, error) {
+	out := make(map[int]int, len(modelIDs))
+	if len(modelIDs) == 0 {
+		return out, nil
+	}
+	rows, err := g.DB.Query(ctx, `SELECT id, "userId" FROM "Model" WHERE id = ANY($1::int[])`, modelIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, userID int
+		if err := rows.Scan(&id, &userID); err != nil {
+			return nil, err
+		}
+		out[id] = userID
+	}
+	return out, rows.Err()
+}
+
+// SystemUserPostOnVersion is getAllImages' hasSystemPosts read (`dbRead.post.findFirst({ where: {
+// userId: -1, modelVersionId }, select: { id } })`): whether the system user has a post on the version.
+func (g *GalleryStore) SystemUserPostOnVersion(ctx context.Context, versionID int) (bool, error) {
+	rows, err := g.DB.Query(ctx, `SELECT id FROM "Post" WHERE "userId" = -1 AND "modelVersionId" = $1 LIMIT 1`, versionID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	found := rows.Next()
+	return found, rows.Err()
+}
+
 // Reviews is the handler's resourceReview.findMany: the post creators' visible reviews of this model
 // (or version), best rating first. Returned per user id: the FIRST row in that order, as `find` picks.
 func (g *GalleryStore) Reviews(ctx context.Context, userIDs []int, modelID, versionID, viewerID int) (map[int]Review, error) {

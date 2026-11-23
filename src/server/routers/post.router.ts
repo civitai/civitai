@@ -1,3 +1,4 @@
+import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 import { dbWrite } from '~/server/db/client';
 import { middleware, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { requestServableLevels } from '~/server/utils/browsing-level';
@@ -132,7 +133,12 @@ export const postRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .query(({ ctx, input }) =>
-      getPostEditDetail({ ...input, user: ctx.user, servableLevels: requestServableLevels(ctx) })
+      getPostEditDetail({
+        ...input,
+        user: ctx.user,
+        servableLevels: requestServableLevels(ctx),
+        ownerSeesHeld: isSessionOrFullUserKey(ctx),
+      })
     ),
   getImageIds: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
@@ -240,7 +246,12 @@ export const postRouter = router({
     .input(getScheduledPostsSchema)
     .use(isFlagProtected('postPlanner'))
     .query(({ ctx, input }) =>
-      getScheduledPosts({ ...input, user: ctx.user, servableLevels: requestServableLevels(ctx) })
+      getScheduledPosts({
+        ...input,
+        user: ctx.user,
+        servableLevels: requestServableLevels(ctx),
+        ownerSeesHeld: isSessionOrFullUserKey(ctx),
+      })
     ),
   getPlannerDetail: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })

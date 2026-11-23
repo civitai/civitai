@@ -9,6 +9,7 @@ import {
 import { FeedSearchSummary } from '~/components/Search/FeedSearchSummary';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
+import { isSearchRefusedError } from '~/components/Search/search-refusal';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
@@ -47,10 +48,16 @@ function SearchableArticlesFeed(props: Props) {
   const filters = useInfiniteArticleFilters(props);
   const searchText = useFeedSearchQuery();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
-  const { refusal, profanityMatches } = useSearchRefusal(searchText, 'articles_semantic');
+  const { refusal, profanityMatches } = useSearchRefusal(
+    searchText,
+    'articles_semantic',
+    'semantic'
+  );
   const search = useSemanticArticleFeed(filters, refusal ? undefined : searchText);
   useScrollToTopOnChange(search.searchKey);
-  if (refusal) return <SearchRefusalNotice refusal={refusal} profanityMatches={profanityMatches} />;
+  const shownRefusal = refusal ?? (isSearchRefusedError(search.error) ? 'profanity' : undefined);
+  if (shownRefusal)
+    return <SearchRefusalNotice refusal={shownRefusal} profanityMatches={profanityMatches} />;
   return searchText ? (
     <ArticlesFeed {...props} search={{ text: searchText, ...search }} />
   ) : (
@@ -67,15 +74,18 @@ function ArticlesFeed({
   ...props
 }: Props & { search?: FeedSearch }) {
   const filters = useInfiniteArticleFilters(props);
+  // A failed search must not show or page the keyword feed (no server profanity check): its
+  // fetchNextPage runs even while the query is disabled.
   const searchFailed = !!search?.isError;
   const searching = !!search && !searchFailed;
   const feed = useQueryArticles(
-    // The feed's own query is a title match, used only as the fallback.
     { ...filters, query: search?.text },
-    { keepPreviousData: true, enabled: !searching }
+    { keepPreviousData: true, enabled: !search }
   );
-  const { articles, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    search && searching ? search : feed;
+  const shown = search && searching ? search : feed;
+  const { fetchNextPage, isRefetching, isFetching } = shown;
+  const articles = searchFailed ? [] : shown.articles;
+  const hasNextPage = !searchFailed && shown.hasNextPage;
 
   return (
     <>

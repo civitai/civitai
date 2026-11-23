@@ -29,7 +29,10 @@ import {
   keysInWithin,
   MAX_KEYS,
 } from '~/server/services/image-url-ownership';
-import { appUsesScannedSourceRows } from '~/server/services/blocks/source-scanned-rows';
+import {
+  appUsesScannedSourceRows,
+  readAppBlockSourceFlag,
+} from '~/server/services/blocks/source-scanned-rows';
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { ORCHESTRATOR_PROXY_HOST } from '~/server/orchestrator/region-proxy';
 import { INLINE_MEDIA_MAX_VISITS } from '~/server/schema/blocks/inline-media';
@@ -991,9 +994,7 @@ export async function assertGenerationInputsUsable({
     if (cls === 'external' && EXTERNAL_COUNTED_ENTRIES.has(entry)) {
       refuseExternal ??= await isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS);
       if (appBlock && !refuseExternal)
-        refuseExternalAppSource ??= await isFlipt(
-          FLIPT_FEATURE_FLAGS.APP_BLOCK_REFUSE_EXTERNAL_SOURCES
-        );
+        refuseExternalAppSource ??= await readAppBlockSourceFlag('refuse-external-sources');
       const refuseHere = refuseExternal || refuseExternalAppSource === true;
       recordExternalHost({
         url,

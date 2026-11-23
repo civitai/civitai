@@ -9,8 +9,10 @@
  *     `/Source/Subscribe` is not served (UNIMPLEMENTED).
  *   - `Entity.body` is the body's JSON text as UTF-8 bytes, the text the HTTP binding sends for
  *     it ({@link jsonBytes}), so a relay can pass it on byte for byte. `Entity.meta` and
- *     `Event.meta` are bytes too (a JSON object; empty is none): this source sets no `meta`, so it
- *     sends them empty, which is absent on the wire.
+ *     `Event.meta` are bytes too (a JSON object; empty is none). This source sets no
+ *     `Entity.meta`, so it is sent empty, which is absent on the wire; `Event.meta` is a `live` or
+ *     `progress` event's `meta` (`EventMeta`) when it has one, as the HTTP binding's `meta` field.
+ *     The private feed's `Entity.key` and `Entity.seq` have no field here.
  *   - `SubscribeRequest.meta` is read as the HTTP binding's `meta` parameter is
  *     (`protocol.ts`), into the call's origin (`request-origin.ts`).
  *   - An error is its gRPC status (spec "Errors") with a `google.rpc.ErrorInfo` whose `reason` is
@@ -52,10 +54,15 @@ import type { SubscriptionLimiter, SubscriptionSlot } from '~/server/registry-ad
 import type {
   Adapter,
   ErrorCode,
+  EventMeta,
   RequestMeta,
   StreamEvent,
 } from '~/server/registry-adapter/protocol';
-import { ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
+import {
+  ProtocolError,
+  jsonObjectOrUndefined,
+  subscribeRequest,
+} from '~/server/registry-adapter/protocol';
 import type { PolicyEnforcer } from '~/server/registry-adapter/policy-enforce';
 import { decidePrincipal } from '~/server/registry-adapter/policy-enforce';
 import type { PolicyShadow } from '~/server/registry-adapter/policy-shadow';
@@ -216,6 +223,7 @@ export function encodeEvent(e: StreamEvent): Buffer {
       kind = { end: {} };
       break;
   }
+  if ((e.type === 'live' || e.type === 'progress') && e.meta) kind.meta = jsonBytes(e.meta);
   return Buffer.from(types.event.encode(types.event.fromObject(kind)).finish());
 }
 
@@ -228,7 +236,14 @@ type WireEvent = {
   delete?: { urn?: string; cursor?: string };
   live?: { cursor?: string };
   progress?: { cursor?: string };
+  meta?: Uint8Array;
 };
+
+/** `Event.meta` as a consumer reads it: a JSON object, or nothing when empty or not an object. */
+function eventMeta(bytes: Uint8Array | undefined): { meta?: EventMeta } {
+  const meta = jsonObjectOrUndefined(fromJsonBytes(bytes));
+  return meta ? { meta } : {};
+}
 
 /** One event off the wire, as a consumer reads it; `null` for a kind this source never sends. */
 export function decodeEvent(buf: Uint8Array): StreamEvent | null {
@@ -253,9 +268,9 @@ export function decodeEvent(buf: Uint8Array): StreamEvent | null {
     case 'delete':
       return { type: 'delete', urn: w.delete?.urn ?? '', cursor: w.delete?.cursor ?? '' };
     case 'live':
-      return { type: 'live', cursor: w.live?.cursor ?? '' };
+      return { type: 'live', cursor: w.live?.cursor ?? '', ...eventMeta(w.meta) };
     case 'progress':
-      return { type: 'progress', cursor: w.progress?.cursor ?? '' };
+      return { type: 'progress', cursor: w.progress?.cursor ?? '', ...eventMeta(w.meta) };
     case 'end':
       return { type: 'end' };
     default:

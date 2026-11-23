@@ -1,5 +1,7 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { MIN_MANAGED_PROFANITY_ENTRIES } from '@civitai/mod-utils/profanity/word-rules';
 import { TRPCError } from '@trpc/server';
+import type * as FliptClient from '~/server/flipt/client';
 
 // getBlocklistData -> getBlocklistDTO reads redis.get first and, when a cached
 // value is present, returns it WITHOUT touching the DB. So stubbing redis.get to
@@ -18,6 +20,20 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const redisGet = redisMock.redis.get;
+
+const managedListFlag = vi.hoisted(() => ({ on: false }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const original = await importOriginal<typeof FliptClient>();
+  return {
+    ...original,
+    isFlipt: vi.fn(async (flag: string, ...rest: unknown[]) =>
+      flag === 'profanity-managed-list'
+        ? managedListFlag.on
+        : // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (original.isFlipt as any)(flag, ...rest)
+    ),
+  };
+});
 
 /** Make getBlocklistData return the given domains (already lower-cased in prod). */
 function setBlockedDomains(domains: string[]) {
@@ -481,6 +497,60 @@ describe('getClientBenignLists', () => {
 
     expect(result.prompt).toEqual(['teen titans']);
     expect(result.profanityWords).toEqual(['spreadsheet']);
+  });
+
+  describe('the managed blocked list', () => {
+    // Synthetic entries, as many as the floor asks for.
+    const atFloor = Array.from(
+      { length: MIN_MANAGED_PROFANITY_ENTRIES },
+      (_, i) => `zorb${String.fromCharCode(97 + (i % 26))}${'q'.repeat(Math.floor(i / 26))}`
+    );
+    let blockedRow: { id: number; data: string[] } | null;
+    let whitelist: string[];
+    let blockedReadFails: boolean;
+
+    beforeEach(() => {
+      managedListFlag.on = true;
+      blockedRow = { id: 31, data: atFloor };
+      whitelist = ['spreadsheet'];
+      blockedReadFails = false;
+      dbMock.dbWrite.blocklist.findMany.mockImplementation(
+        async (args?: { where?: { type?: string } }) => {
+          const type = args?.where?.type;
+          if (type === BlocklistType.PromptBenignPhrase)
+            return [{ id: 7, type, data: ['teen titans'] }];
+          if (type === BlocklistType.ProfanityBenignWord) return [{ id: 9, type, data: whitelist }];
+          if (type === BlocklistType.ProfanityWord) {
+            if (blockedReadFails) throw new Error('db down');
+            return blockedRow ? [{ ...blockedRow, type }] : [];
+          }
+          return [];
+        }
+      );
+    });
+    afterEach(() => {
+      managedListFlag.on = false;
+    });
+
+    it('never carries a managed word, whatever the row holds', async () => {
+      const served = JSON.stringify(await getClientBenignLists());
+      expect(atFloor.filter((word) => served.includes(word))).toEqual([]);
+    });
+
+    it('carries the benign lists and nothing about the managed one', async () => {
+      expect(Object.keys(await getClientBenignLists()).sort()).toEqual([
+        'available',
+        'profanityWords',
+        'prompt',
+      ]);
+    });
+
+    it('stays cacheable when the managed row cannot be read, since it no longer reads it', async () => {
+      blockedReadFails = true;
+      const result = await getClientBenignLists();
+      expect(result.available).toBe(true);
+      expect(result.profanityWords).toEqual(['spreadsheet']);
+    });
   });
 });
 

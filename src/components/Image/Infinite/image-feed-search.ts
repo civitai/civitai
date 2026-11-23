@@ -4,7 +4,10 @@ import type { MediaFilterKey } from '~/components/Image/Filters/media-filter-key
 import type { ImagesQueryParamSchema } from '~/components/Image/image-query-params';
 import { ImageSort } from '~/server/common/enums';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
-import { SEMANTIC_QUERY_MAX_LENGTH } from '~/server/schema/semantic-image-search.schema';
+import {
+  MAX_SEARCH_MODEL_VERSIONS,
+  SEMANTIC_QUERY_MAX_LENGTH,
+} from '~/server/schema/semantic-image-search.schema';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 
@@ -141,6 +144,13 @@ export function searchPeriodChange({
 /** The `?excludeOwn=` toggle of a "more like this" search. */
 export const parseExcludeOwn = (value: unknown) => value === 'true';
 
+/** The `?modelVersionIds=` the search narrows to: positive ids, distinct, at most the input takes. */
+export function parseModelVersionIds(value: unknown) {
+  const raw = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [];
+  const ids = raw.map(Number).filter((id) => Number.isInteger(id) && id > 0);
+  return [...new Set(ids)].slice(0, MAX_SEARCH_MODEL_VERSIONS);
+}
+
 /** The `?similarTo=` image id, when it is one. */
 export function parseSimilarTo(value: unknown) {
   const id = Number(first(value as string | string[] | undefined));
@@ -158,10 +168,13 @@ export function toSemanticImageSearchInput({
   browsingLevel,
   sort,
   excludeOwn,
+  modelVersionIds,
   now,
 }: {
   query?: string;
   imageId?: number;
+  /** Images made with any of these versions (behind `imageSearchResources`, decided by the caller). */
+  modelVersionIds?: number[];
   /** "More like this" without the viewer's own images. */
   excludeOwn?: boolean;
   filters: FeedFilters;
@@ -177,6 +190,7 @@ export function toSemanticImageSearchInput({
     tagIds: filters.tags?.length ? filters.tags : undefined,
     excludedTagIds: filters.excludedTagIds?.length ? filters.excludedTagIds : undefined,
     baseModels: filters.baseModels?.length ? filters.baseModels : undefined,
+    modelVersionIds: modelVersionIds?.length ? modelVersionIds : undefined,
     types: filters.types?.length ? filters.types : undefined,
     usernames: filters.username ? [filters.username] : undefined,
     userIds: filters.userId ? [filters.userId] : undefined,

@@ -72,7 +72,7 @@ describe('user.delete (tRPC) is self-only, in every environment', () => {
       input: { id: SELF },
     });
 
-    expect(deleteUser).toHaveBeenCalledWith({ id: SELF });
+    expect(deleteUser).toHaveBeenCalledWith({ id: SELF, actorId: SELF });
   });
 
   // THE CONTROL for the moderator refusal above: without it, that refusal passes against a handler
@@ -83,6 +83,6 @@ describe('user.delete (tRPC) is self-only, in every environment', () => {
       input: { id: SELF },
     });
 
-    expect(deleteUser).toHaveBeenCalledWith({ id: SELF });
+    expect(deleteUser).toHaveBeenCalledWith({ id: SELF, actorId: SELF });
   });
 });
