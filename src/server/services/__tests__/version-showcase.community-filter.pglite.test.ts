@@ -61,6 +61,8 @@ beforeAll(async () => {
   await db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM
       ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TABLE "User" (
       id int PRIMARY KEY, username text, settings jsonb, "bannedAt" timestamp, "deletedAt" timestamp
     );
@@ -84,7 +86,7 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, index int NOT NULL DEFAULT 0,
       name text, url text NOT NULL DEFAULT '',
-      "nsfwLevel" int NOT NULL, width int, height int, hash text, type text NOT NULL DEFAULT 'image',
+      "nsfwLevel" int NOT NULL, width int, height int, hash text, type "MediaType" NOT NULL DEFAULT 'image',
       metadata jsonb, meta jsonb, "hideMeta" boolean NOT NULL DEFAULT false,
       minor boolean NOT NULL DEFAULT false, poi boolean NOT NULL DEFAULT false,
       "blockedFor" text, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
