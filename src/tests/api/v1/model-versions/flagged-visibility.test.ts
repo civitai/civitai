@@ -191,7 +191,10 @@ describe('GET /api/v1/model-versions/[id]', () => {
   ])('a moderator on %s reads published versions only', async (_, context, publishedOnly) => {
     session.user = VIEWERS.moderator as never;
     await lookup(CONTROL, context);
-    const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls.at(-1)!;
+    // The version lookup, not the showcase reads that follow it.
+    const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls.find(([s]) =>
+      (s as TemplateStringsArray).join('?').includes('"RecommendedResource" rr')
+    )!;
     const query = Prisma.sql(strings as TemplateStringsArray, ...values);
     expect(query.values.includes('Published')).toBe(publishedOnly);
   });
