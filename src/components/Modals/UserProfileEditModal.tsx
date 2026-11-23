@@ -894,7 +894,13 @@ export default function UserProfileEditModal() {
           name="showcaseItems"
           label="Showcase Items"
           limit={constants.profile.showcaseItemsLimit}
-          description={`Select up to ${constants.profile.showcaseItemsLimit} items to showcase on your profile. You do this via the "Add to showcase" button on models and images`}
+          // The search finds the owner's own items; without a username it is not shown.
+          username={featureFlags.profileRedesign ? user?.username ?? undefined : undefined}
+          description={
+            featureFlags.profileRedesign
+              ? `Search your models and images, or use "Add to showcase" on them, to showcase up to ${constants.profile.showcaseItemsLimit} items on your profile.`
+              : `Select up to ${constants.profile.showcaseItemsLimit} items to showcase on your profile. You do this via the "Add to showcase" button on models and images`
+          }
         />
       )}
     </>
