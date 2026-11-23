@@ -28,6 +28,7 @@
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
   import { dismissible } from '$lib/optimistic-dismiss.svelte';
   import { noticeKey } from './level-notice';
+  import { withSubmitter } from './submitter';
   import { closeGuide, guideShowing, openGuide, settleGuide, type GuideState } from './guide-dialog';
   import {
     MAX_EXCLUDED,
@@ -189,7 +190,8 @@
     sound.play(correct ? 'trial-correct' : 'trial-wrong');
   }
 
-  const submitApprentice: SubmitFunction = ({ submitter }) => {
+  const submitApprentice: SubmitFunction = ({ submitter, formData }) => {
+    withSubmitter(formData, submitter);
     submitting = true;
     picked = answerOf(submitter);
     if (picked) sound.play('press');
@@ -233,6 +235,7 @@
     submitter instanceof HTMLButtonElement && submitter.name === 'answer' ? submitter.value : null;
 
   const submit: SubmitFunction = ({ submitter, formData }) => {
+    withSubmitter(formData, submitter);
     submitting = true;
     picked = answerOf(submitter);
     if (picked === BLOCKED_ANSWER && blockReason) formData.set('blockReason', blockReason);
@@ -542,6 +545,7 @@
     input.cancel();
     if (cooling || !tracker.claim(key, token, input.action.search.startsWith('?/vote'))) return;
     unstick();
+    withSubmitter(input.formData, input.submitter);
     const answer = answerOf(input.submitter);
     if (answer === BLOCKED_ANSWER && blockReason) input.formData.set('blockReason', blockReason);
     blockReason = null;
