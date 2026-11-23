@@ -61,7 +61,7 @@ import { blockImageFromRating } from '../image-scan-result.service';
 import { unblockAccountDeletionImages } from '../account-deletion-images';
 import { blockBannedUserImages } from '~/server/services/user.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { auditPostImageMeta } from '~/utils/metadata/audit';
+import { auditPostImageMeta, includesInappropriate } from '~/utils/metadata/audit';
 import {
   addImageTools,
   getImagesModRules,
@@ -1410,6 +1410,21 @@ describe('scan result writes', () => {
         sx.minor = true;
         await scan(W_MODERATED);
         expect(await imageRow(W_MODERATED)).toMatchObject({ ingestion: 'Blocked', minor: false });
+      });
+
+      it('case 6', async () => {
+        await set(W_AI_FLAGGED, `"needsReview" = NULL`);
+        vi.mocked(includesInappropriate).mockReturnValue('poi' as never);
+        try {
+          await scan(W_AI_FLAGGED);
+        } finally {
+          vi.mocked(includesInappropriate).mockReturnValue(false as never);
+        }
+        expect(await imageRow(W_AI_FLAGGED)).toMatchObject({
+          ingestion: 'Error',
+          blockedFor: 'AiNotVerified',
+          needsReview: 'poi',
+        });
       });
 
       it('case 5', async () => {

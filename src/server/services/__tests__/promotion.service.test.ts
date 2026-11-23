@@ -328,6 +328,26 @@ describe('createGalleryPromotion', () => {
     expect(dbMock.dbWrite.placement.create).not.toHaveBeenCalled();
   });
 
+  it('case 2', async () => {
+    // Hands back only the columns the image query names, as the database does.
+    const marked = {
+      ...cleanImage(12),
+      ingestion: 'Error',
+      nsfwLevelLocked: true,
+      blockedFor: 'moderated',
+    };
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+      const text = strings.join('');
+      if (text.includes('ImageResourceNew')) return [{ modelVersionId: HOST_VERSION }];
+      const named = (key: string) =>
+        text.includes(`"${key}"`) || text.includes(`i.${key}`) || text.includes(`AS ${key}`);
+      return [cleanImage(11), marked].map((row) =>
+        Object.fromEntries(Object.entries(row).filter(([key]) => named(key)))
+      );
+    }) as never);
+    await expect(buy()).rejects.toThrow('cannot be promoted');
+  });
+
   // The host-hidden-tag refusal is judged at purchase and accept, never while the run serves, so it
   // must not read a tag list another process's L1 may still hold from before a tag edit.
   it("reads the images' tags past this process's L1", async () => {

@@ -145,4 +145,18 @@ describe('runImageSearch: video thumbnails', () => {
       height: 704,
     });
   });
+
+  it('case 2', async () => {
+    thumbnailFetch.mockResolvedValue({
+      2: { id: 99, url: 'thumb-uuid', width: 832, height: 1216, nsfwLevel: 1, parentId: 2 },
+    });
+
+    const [video] = await search([item(2, 'video')], 1);
+
+    expect(video.thumbnail).toEqual({
+      url: expect.stringMatching(/(^|\/)uuid-2\/anim=false,transcode=true,optimized=true\//),
+      width: 1280,
+      height: 704,
+    });
+  });
 });

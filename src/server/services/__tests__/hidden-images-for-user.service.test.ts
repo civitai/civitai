@@ -91,6 +91,30 @@ describe('getHiddenImagesForUser', () => {
     expect(items[0].canViewMedia).toBe(true);
   });
 
+  it('case 2', async () => {
+    const hidden = posted(16, {
+      ingestion: ImageIngestionStatus.Error,
+      nsfwLevelLocked: true,
+      metadata: { nsfwLevelReason: 'reviewed' },
+      scanJobs: { error: { failureClass: 'unknown' } },
+      blockedFor: 'moderated',
+    });
+    // Hands back only what the query selects, as Prisma does.
+    dbMock.dbRead.imageEngagement.findMany.mockImplementation((async (args: {
+      select: { image: { select: Record<string, unknown> } };
+    }) => {
+      const picked = Object.fromEntries(
+        Object.entries(hidden.image).filter(([key]) => key in args.select.image.select)
+      );
+      return [{ ...hidden, image: picked }];
+    }) as never);
+
+    const { items } = await getHiddenImagesForUser({ userId: viewerId, targetUserId });
+
+    expect(items[0].canViewMedia).toBe(false);
+    expect(items[0].url).toBeNull();
+  });
+
   it('asks only for the caller own Hide rows on the target user images', async () => {
     dbMock.dbRead.imageEngagement.findMany.mockResolvedValue([] as never);
 
