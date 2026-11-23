@@ -12,7 +12,7 @@ const POOL_LOCK_KEY = 1;
 
 /**
  * `kept-core`: a core trial image never moves. `kept-graded`: a reference whose answers were already graded at another
- * level keeps its row, since those ledger rows read their answer through its id. `unreadable`: a safety check could not
+ * level keeps its row, retired, since those ledger rows read their answer through its id. `unreadable`: a safety check could not
  * be read; the caller must not treat the image as added.
  */
 export type AddSkillCheckResult =
@@ -49,12 +49,20 @@ export async function addSkillCheck(
       .where('verdict', 'in', ['correct', 'failed'])
       .limit(1)
       .executeTakeFirst();
-    if (graded) return 'kept-graded';
+    if (graded) {
+      // Two moderators overruled its answer: it stops serving now, though its row stays for the graded ledger rows.
+      await trx
+        .updateTable('KnightsReferenceImage')
+        .set({ status: REFERENCE_STATUS.retired, updatedAt: utc(now) })
+        .where('id', '=', existing.id)
+        .execute();
+      return 'kept-graded';
+    }
   }
 
   const eligible = await failClosed(
     trx,
-    'the skill-check exclusions',
+    'pool-insert',
     async () =>
       (await trx
         .selectFrom('Image as img')

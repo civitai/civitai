@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import AnswerPill from '$lib/AnswerPill.svelte';
   import '$lib/answer-row.css';
@@ -31,8 +32,10 @@
   const submit: SubmitFunction = ({ submitter }) => {
     submitting = true;
     picked = submitter?.getAttribute('value') ?? null;
-    return async ({ update }) => {
+    return async ({ update, result }) => {
       await update();
+      // A refusal that leaves this review no longer ours to vote on: load the next one (`update` reloads on success only).
+      if (result.type === 'failure' && result.data?.next === true) await invalidateAll();
       failed = false;
       submitting = false;
       picked = null;
@@ -69,7 +72,7 @@
       <div><dt>Your votes this week</dt><dd>{data.stats.votesThisWeek}</dd></div>
       <div>
         <dt>Waiting for you</dt>
-        <dd>{data.stats.waiting}{data.stats.waitingMore ? '+' : ''}</dd>
+        <dd>{data.stats.waiting ?? '—'}{data.stats.waitingMore ? '+' : ''}</dd>
       </div>
       <div><dt>Agreed with the other moderator</dt><dd>{percent(data.stats.agreementRate)}</dd></div>
     </dl>
@@ -196,6 +199,8 @@
         </aside>
       </div>
     {/key}
+  {:else if data.unreadable}
+    <p class="inq-empty" role="alert">We can't load the queue right now; try again shortly.</p>
   {:else}
     <p class="inq-empty">Nothing waiting for you. Check back later.</p>
     {#if message}

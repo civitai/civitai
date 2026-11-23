@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transaction } from 'kysely';
-import { REFERENCE_POOL, REFERENCE_STATUS, servableImage } from '@civitai/db/knights';
+import { REFERENCE_POOL, REFERENCE_STATUS } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
@@ -19,7 +19,7 @@ import { BLOCKED_ANSWER } from '../../block-reasons';
 import { creditVote, insertVote } from '../queue/vote-record';
 import { isRank } from '../ranks';
 import { servableReferences, type Pool, type ServedStatus } from '../reference';
-import { failClosed } from '../skill-check/eligible';
+import { answeredImageServable, failClosed } from '../skill-check/eligible';
 import { activeSmiteCount, resetNow, type ResetDeps } from '../smites/smites.service';
 import type { HiddenCheckSettings } from './config';
 import { gradeHiddenVotes, type CheckOutcome } from './settle';
@@ -259,7 +259,7 @@ async function drawHiddenCheck(
   // the other pool alone (`failClosed` logs the error).
   const unreadable = Symbol('unreadable');
   const found = input.skillChecks
-    ? await failClosed(db, 'a skill-check serve', () => find(checkPools(true)), unreadable)
+    ? await failClosed(db, 'knight-serve', () => find(checkPools(true)), unreadable)
     : await find(checkPools(false));
   const row = found === unreadable ? await find(checkPools(false)) : found;
 
@@ -338,7 +338,7 @@ export async function answerHiddenCheck(
         .executeTakeFirst();
     // The mod-confirmed pool's safety reads fail closed: unreadable, only the other pool is open to an answer.
     const ref = input.skillChecks
-      ? await failClosed(trx, 'a skill-check answer', () => findRef(checkPools(true)), null).then(
+      ? await failClosed(trx, 'knight-answer', () => findRef(checkPools(true)), null).then(
           async (found) => found ?? (await findRef(checkPools(false)))
         )
       : await findRef(checkPools(false));
@@ -464,31 +464,35 @@ const NOTICES_SHOWN = 5;
  * career. Reading changes nothing, so a preload cannot lose it.
  */
 export async function readHiddenNotices(db: Executor, playerId: number): Promise<CheckNotice[]> {
-  const rows = await db
-    .selectFrom('KnightsVote as v')
-    .leftJoin('KnightsReferenceImage as r', (join) => join.on(sql<SqlBool>`r.id = -v."itemId"`))
-    .leftJoin('KnightsQuestion as q', 'q.key', 'v.questionKey')
-    .leftJoin('Image as img', 'img.id', 'v.imageId')
-    .leftJoin('Post as p', 'p.id', 'img.postId')
-    .select((eb) => [
-      'v.itemId',
-      'v.createdAt',
-      'v.consequence',
-      'v.answer',
-      'r.answer as correct',
-      'q.options',
-      'img.url as imageKey',
-      servableImage(eb).as('servable'),
-    ])
-    .where('v.playerId', '=', playerId)
-    .where('v.consequence', 'is not', null)
-    .where('v.noticedAt', 'is', null)
-    .where(
-      sql<SqlBool>`v."createdAt" >= COALESCE((SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = v."playerId"), 'epoch')`
-    )
-    .orderBy('v.createdAt', 'desc')
-    .limit(NOTICES_SHOWN)
-    .execute();
+  const read = (skillChecks: 'checked' | 'hidden') =>
+    db
+      .selectFrom('KnightsVote as v')
+      .leftJoin('KnightsReferenceImage as r', (join) => join.on(sql<SqlBool>`r.id = -v."itemId"`))
+      .leftJoin('KnightsQuestion as q', 'q.key', 'v.questionKey')
+      .leftJoin('Image as img', 'img.id', 'v.imageId')
+      .leftJoin('Post as p', 'p.id', 'img.postId')
+      .select((eb) => [
+        'v.itemId',
+        'v.createdAt',
+        'v.consequence',
+        'v.answer',
+        'r.answer as correct',
+        'q.options',
+        'img.url as imageKey',
+        answeredImageServable(eb as never, skillChecks).as('servable'),
+      ])
+      .where('v.playerId', '=', playerId)
+      .where('v.consequence', 'is not', null)
+      .where('v.noticedAt', 'is', null)
+      .where(
+        sql<SqlBool>`v."createdAt" >= COALESCE((SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = v."playerId"), 'epoch')`
+      )
+      .orderBy('v.createdAt', 'desc')
+      .limit(NOTICES_SHOWN)
+      .execute();
+  // A mod-confirmed image is shown only while it passes the safety exclusions; unreadable, it is hidden (fail closed).
+  const rows =
+    (await failClosed(db, 'notice', () => read('checked'), null)) ?? (await read('hidden'));
   return rows.map((row) => {
     const options = (row.options ?? []) as QuestionOption[];
     const labelOf = (value: string) => options.find((o) => o.value === value)?.label ?? value;

@@ -18,6 +18,7 @@ import {
   sendToInquisitor,
   sweepMissingReviews,
 } from './review.service';
+import { moderatorStats } from './context';
 import { OverrideWriteError } from './override-error';
 
 vi.mock('../axiom', () => ({ logToAxiom: vi.fn() }));
@@ -51,7 +52,7 @@ afterAll(() => pg.close());
 beforeEach(async () => {
   applyConsensus.mockClear();
   await pg.exec(
-    `TRUNCATE "ModActivity","KnightsInquisitorVote","KnightsInquisitorReview","KnightsReferenceImage","KnightsVote","KnightsQueueItem","NewOrderPlayer","Image","Post","ImageReport","Report","TextScanHold" RESTART IDENTITY CASCADE`
+    `TRUNCATE "ModActivity","KnightsInquisitorVote","KnightsInquisitorReview","KnightsReferenceImage","KnightsVote","KnightsQueueItem","NewOrderPlayer","Image","Post","ImageReport","Report","TextScanHold","TagsOnImageDetails" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -457,6 +458,31 @@ describe('overriding the image level', () => {
     expect((await pg.query(`SELECT count(*)::int n FROM "ModActivity"`)).rows[0]).toEqual({ n: 0 });
     expect(await counterValue('knights_inquisitor_overrides_unclosed_total')).toBe(before + 1);
   });
+  it("keeps the closing moderator's vote when their level lands but the review cannot close", async () => {
+    const id = await reviewed(1);
+    const port = vi.fn(async () => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await voteWith(id, MOD_A, '8', port);
+    expect(await voteWith(id, MOD_B, '8', port)).toEqual({ status: 'written-not-closed' });
+    expect(await votesOn(id)).toEqual([
+      { moderatorId: MOD_A, answer: '8' },
+      { moderatorId: MOD_B, answer: '8' },
+    ]);
+    expect(await voteWith(id, MOD_B, '8', port)).toEqual({
+      status: 'rejected',
+      reason: 'already-voted',
+    });
+  });
+
+  it('refuses up front, without writing, a level at which the image would be held', async () => {
+    const id = await reviewed(1, { value: '2', level: 2 });
+    await pg.query(`INSERT INTO "TagsOnImageDetails" ("imageId","tagId") VALUES (1,5351)`);
+    await voteWith(id, MOD_A, '4');
+    expect(await voteWith(id, MOD_B, '4')).toEqual({ status: 'rejected', reason: 'held' });
+    expect(setImageLevel).not.toHaveBeenCalled();
+    expect((await reviewRow(id)).status).toBe('open');
+  });
+
   it('never writes a blocked image: the review is excluded first', async () => {
     const id = await reviewed(1);
     await voteWith(id, MOD_A, '8');
@@ -576,13 +602,42 @@ describe('excluding reviews', () => {
   );
 });
 
+describe('a backlog of held reviews', () => {
+  it('still serves an eligible review behind more than a batch of held ones, and counts only what can be served', async () => {
+    for (let id = 1; id <= 25; id++) {
+      await reviewed(id);
+      await pg.query(`INSERT INTO "Report" ("id","status") VALUES ($1,'Pending')`, [100 + id]);
+      await pg.query(`INSERT INTO "ImageReport" ("reportId","imageId") VALUES ($1,$2)`, [
+        100 + id,
+        id,
+      ]);
+    }
+    const eligible = await reviewed(30);
+    expect(await nextReview(db, { moderatorId: MOD_A })).toMatchObject({ reviewId: eligible });
+    expect(await moderatorStats(db, { moderatorId: MOD_A, now: NOW })).toMatchObject({
+      waiting: 1,
+    });
+  });
+
+  it('closes reviews whose image can never become a check, and keeps open those whose hold may lift', async () => {
+    const lasting = await reviewed(1);
+    const lifting = await reviewed(2);
+    await pg.query(`UPDATE "Image" SET "tosViolation"=true WHERE id=1`);
+    await pg.query(`INSERT INTO "Report" ("id","status") VALUES (200,'Pending')`);
+    await pg.query(`INSERT INTO "ImageReport" ("reportId","imageId") VALUES (200,2)`);
+    expect(await nextReview(db, { moderatorId: MOD_A })).toBeNull();
+    expect((await reviewRow(lasting)).status).toBe('excluded');
+    expect((await reviewRow(lifting)).status).toBe('open');
+  });
+});
+
 describe('failing closed', () => {
   it('serves no review and records no vote while a safety check cannot be read, and closes nothing', async () => {
     const id = await reviewed(1);
     await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
-      expect(await nextReview(db, { moderatorId: MOD_A })).toBeNull();
+      expect(await nextReview(db, { moderatorId: MOD_A })).toBe('unreadable');
       expect(await vote(id, MOD_A, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
     } finally {
       await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);

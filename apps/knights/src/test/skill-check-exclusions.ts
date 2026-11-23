@@ -167,6 +167,19 @@ export const extraExclusionCases = (
     },
   ],
   [
+    'minor-signal, moderator vote leg (school reason)',
+    async (id) => {
+      const item = await pg().query<{ id: number }>(
+        `INSERT INTO "ScanLabelItem" ("imageId") VALUES ($1) RETURNING id`,
+        [id]
+      );
+      await pg().query(
+        `INSERT INTO "ScanLabelVote" ("itemId","userId","block","reason") VALUES ($1,9,true,'school-nsfw')`,
+        [item.rows[0].id]
+      );
+    },
+  ],
+  [
     'minor-or-poi-model, poi leg',
     async (id) => {
       await pg().query(`INSERT INTO "Model" ("id","poi") VALUES (62,true)`);

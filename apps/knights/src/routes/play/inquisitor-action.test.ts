@@ -40,7 +40,7 @@ beforeEach(async () => {
   process.env.CIVITAI_APP_URL = 'https://main.example';
   vi.stubGlobal('fetch', fetchMock);
   await pg.exec(
-    `TRUNCATE "ModActivity","KnightsInquisitorVote","KnightsInquisitorReview","KnightsReferenceImage","KnightsQueueItem","Image","Post" RESTART IDENTITY CASCADE`
+    `TRUNCATE "ModActivity","KnightsInquisitorVote","KnightsInquisitorReview","KnightsReferenceImage","KnightsQueueItem","Image","Post","Report","ImageReport" RESTART IDENTITY CASCADE`
   );
 });
 afterEach(() => {
@@ -167,10 +167,53 @@ describe('inquisitor actions', () => {
     expect(
       await call('inquisitorVote', { token: sealReview('secret', MOD, id), answer: '4' })
     ).toMatchObject({
-      status: 409,
-      data: { message: expect.stringContaining('your vote was not recorded') },
+      reviewed: 'excluded',
+      message: expect.stringContaining('your vote was not recorded'),
     });
   });
+
+  it.each([
+    ['closed by another moderator', 'not-open', true],
+    ['held by a hold that may lift', 'held', true],
+    ['already voted on', 'already-voted', true],
+    ['claimed by another moderator', 'claimed', true],
+    ['unreadable for now', 'unavailable', false],
+  ])(
+    'after a refusal because the review was %s, says whether the page moves to the next one',
+    async (_label, reason, next) => {
+      const id = await review([{ moderatorId: OTHER, answer: '4' }]);
+      if (reason === 'not-open')
+        await pg.query(`UPDATE "KnightsInquisitorReview" SET status='split' WHERE id=$1`, [id]);
+      if (reason === 'held') {
+        await pg.query(`INSERT INTO "Report" ("id","status") VALUES (90,'Pending')`);
+        await pg.query(`INSERT INTO "ImageReport" ("reportId","imageId") VALUES (90,1)`);
+      }
+      if (reason === 'already-voted')
+        await pg.query(
+          `INSERT INTO "KnightsInquisitorVote" ("reviewId","moderatorId","answer") VALUES ($1,$2,'4')`,
+          [id, MOD]
+        );
+      if (reason === 'claimed')
+        await pg.query(
+          `UPDATE "KnightsInquisitorReview" SET "claimedBy"=9,"claimExpiresAt"=$1 WHERE id=$2`,
+          [new Date(NOW.getTime() + 60_000), id]
+        );
+      if (reason === 'unavailable')
+        await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        expect(
+          await call('inquisitorVote', { token: sealReview('secret', MOD, id), answer: '4' })
+        ).toMatchObject({
+          status: 409,
+          data: { next },
+        });
+      } finally {
+        if (reason === 'unavailable')
+          await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
+      }
+    }
+  );
 
   it('sends a sealed review to the Inquisitors', async () => {
     const id = await review();
@@ -189,5 +232,18 @@ describe('inquisitorView', () => {
     expect(view.levels.map((l) => l.value)).toEqual(['1', '2', '4', '8', '16']);
     expect(JSON.stringify(view)).not.toMatch(/"reviewId"|"queueItemId"/);
     expect(view.review?.token).toBeTypeOf('string');
+  });
+
+  it('says the queue cannot load, instead of showing it empty, when the safety reads fail', async () => {
+    await review();
+    await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const view = await inquisitorView(MOD);
+      expect(view).toMatchObject({ unreadable: true, review: false });
+      expect(view.stats.waiting).toBeNull();
+    } finally {
+      await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
+    }
   });
 });

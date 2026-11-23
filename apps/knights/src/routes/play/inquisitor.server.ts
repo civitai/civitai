@@ -25,6 +25,9 @@ const LEVELS = [
   { value: '16', label: 'XXX' },
 ];
 
+/** Refusals after which the review on screen is no longer the moderator's to vote on: the page loads the next one. */
+const MOVE_ON = new Set<string>(['not-open', 'claimed', 'not-found', 'already-voted', 'held']);
+
 const HELD_TEXT = 'This image came under review or a hold; your vote was not recorded.';
 
 const REJECTION_TEXT: Record<ReviewVoteRejection | 'not-found', string> = {
@@ -69,14 +72,17 @@ export async function inquisitorView(moderatorId: number) {
     hints: Object.fromEntries(
       ratingGuide().map((entry) => [String(entry.level), `${entry.label}: ${entry.description}`])
     ),
-    review: review && {
-      token: sealReview(feedSecret(), moderatorId, review.reviewId),
-      src: imageUrl(review.imageKey),
-      width: review.width,
-      height: review.height,
-      votes: review.votes,
-      sidebar: await reviewSidebar(db, review),
-    },
+    /** The safety exclusions could not be read: say so rather than showing an empty queue. */
+    unreadable: review === 'unreadable',
+    review: review &&
+      review !== 'unreadable' && {
+        token: sealReview(feedSecret(), moderatorId, review.reviewId),
+        src: imageUrl(review.imageKey),
+        width: review.width,
+        height: review.height,
+        votes: review.votes,
+        sidebar: await reviewSidebar(db, review),
+      },
   };
 }
 
@@ -110,7 +116,10 @@ export const inquisitorActions = {
       }
     );
     if (result.status === 'rejected') {
-      return fail(409, { message: REJECTION_TEXT[result.reason] });
+      return fail(409, {
+        message: REJECTION_TEXT[result.reason],
+        next: MOVE_ON.has(result.reason),
+      });
     }
     const message = RESULT_TEXT[result.status];
     return message ? { reviewed: result.status, message } : { reviewed: result.status };
@@ -127,7 +136,12 @@ export const inquisitorActions = {
       { reviewId, moderatorId: locals.user.id },
       { now: queueDeps.now }
     );
-    if (result.status === 'rejected') return fail(409, { message: REJECTION_TEXT[result.reason] });
+    if (result.status === 'rejected') {
+      return fail(409, {
+        message: REJECTION_TEXT[result.reason],
+        next: MOVE_ON.has(result.reason),
+      });
+    }
     return { reviewed: 'sent' as const };
   },
 };

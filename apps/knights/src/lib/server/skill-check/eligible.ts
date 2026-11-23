@@ -7,6 +7,7 @@ import {
   type Transaction,
 } from 'kysely';
 import { servableImage } from '@civitai/db/knights';
+import { metrics, type SkillCheckReadSite } from '../metrics';
 import { childBrowsingTagIds, NsfwLevel } from '@civitai/shared';
 import type { DB } from '@civitai/db-schema/kysely';
 import { csamSignalImageSql, heldImageSql, unreadableImageSql } from '@civitai/shared/held-media';
@@ -25,9 +26,12 @@ const none = (eb: Builder, query: Expression<unknown>) => eb.not(eb.exists(query
  * safety review or hold. One entry per reason, checked when a check is added and on every serve; replace the list, not
  * the callers, when the moderation lead's list changes. Expects `Image as img` joined to `Post as p`.
  */
+/** What a clause may be asked about the image: `level`, the level it would have (default: the one it has). */
+export type ClauseOptions = { level?: number };
+
 export const SKILL_CHECK_EXCLUSIONS: {
   name: string;
-  clause: (eb: Builder) => Expression<SqlBool>;
+  clause: (eb: Builder, options?: ClauseOptions) => Expression<SqlBool>;
 }[] = [
   { name: 'tos-violation', clause: (eb) => eb('img.tosViolation', '=', false) },
   // The shared legal-hold predicate: the image flagged for CSAM, or its owner's account held (named on a report, or under
@@ -42,15 +46,15 @@ export const SKILL_CHECK_EXCLUSIONS: {
     name: 'csam-signal',
     clause: () => sql<SqlBool>`NOT COALESCE(${sql.raw(csamSignalImageSql('img'))}, false)`,
   },
-  // Kept here though main dropped them from the shared predicate (that change was about moderator media access; these
-  // images go to players): the legs of the former `suspectImageSql` that `csam-signal` and `servableImage` do not cover.
-  // (a) A child tag on an image rated R or above, or unrated; (b) a scan flag or moderator vote marking a minor.
+  // Not covered by csam-signal or servableImage: the minor-signal legs.
   {
     name: 'minor-signal',
-    clause: (eb) =>
+    clause: (eb, options) =>
       eb.and([
         eb.or([
-          eb.and([eb('img.nsfwLevel', '!=', 0), eb('img.nsfwLevel', '<', NsfwLevel.R)]),
+          options?.level !== undefined
+            ? eb.val(options.level > 0 && options.level < NsfwLevel.R)
+            : eb.and([eb('img.nsfwLevel', '!=', 0), eb('img.nsfwLevel', '<', NsfwLevel.R)]),
           none(
             eb,
             eb
@@ -90,17 +94,14 @@ export const SKILL_CHECK_EXCLUSIONS: {
         ),
       ]),
   },
-  // The shared unscanned predicate: an image whose scan has not landed.
   {
     name: 'unreadable-image',
     clause: () => sql<SqlBool>`NOT COALESCE(${sql.raw(unreadableImageSql('img'))}, false)`,
   },
-  // The shared reported-image predicate: the image's bytes listed on a report.
   {
     name: 'reported-image',
     clause: () => sql<SqlBool>`NOT ${sql.raw(reportListedUrlSql('img."url"'))}`,
   },
-  // The shared evidence-hold predicate, by the image's bytes.
   {
     name: 'evidence-hold-image',
     clause: () => sql<SqlBool>`NOT ${sql.raw(evidenceHeldUrlSql('img."url"'))}`,
@@ -260,9 +261,46 @@ export const SKILL_CHECK_EXCLUSIONS: {
   },
 ];
 
+/**
+ * The exclusions that lift on their own in time: a report or appeal still waiting, a scan hold, an image whose scan has
+ * not landed, an Inquisitor ruling under way. Every other one (and failing `servableImage`) does not.
+ */
+export const LIFTING_EXCLUSIONS = new Set([
+  'unreadable-image',
+  'open-report',
+  'open-post-report',
+  'open-model-report',
+  'open-user-report',
+  'pending-appeal',
+  'text-scan-hold',
+  'open-inquisitor-item',
+]);
+
 /** `servableImage` and every `SKILL_CHECK_EXCLUSIONS` clause. Expects `Image as img` joined to `Post as p`. */
-export const skillCheckEligible = (eb: Builder) =>
-  eb.and([servableImage(eb), ...SKILL_CHECK_EXCLUSIONS.map(({ clause }) => clause(eb))]);
+export const skillCheckEligible = (eb: Builder, options?: ClauseOptions) =>
+  eb.and([servableImage(eb), ...SKILL_CHECK_EXCLUSIONS.map(({ clause }) => clause(eb, options))]);
+
+/**
+ * Whether an answered image may be shown again (a notice, a recap): `servableImage`, and for a reference in the
+ * mod-confirmed pool the safety exclusions too. `hidden`: the fallback when those cannot be read, which hides every
+ * mod-confirmed image. Expects `Image as img`, `Post as p` and `KnightsReferenceImage as r` joined.
+ */
+export const answeredImageServable = (eb: Builder, skillChecks: 'checked' | 'hidden' = 'checked') =>
+  eb.or([
+    eb.and([sql<SqlBool>`"r"."pool" IS DISTINCT FROM 'skillCheck'`, servableImage(eb)]),
+    skillChecks === 'checked'
+      ? eb.and([sql<SqlBool>`"r"."pool" = 'skillCheck'`, skillCheckEligible(eb)])
+      : eb.val(false),
+  ]);
+
+/** `servableImage` and the exclusions that never lift on their own: an image failing this can never be a check. */
+export const skillCheckLasting = (eb: Builder) =>
+  eb.and([
+    servableImage(eb),
+    ...SKILL_CHECK_EXCLUSIONS.filter(({ name }) => !LIFTING_EXCLUSIONS.has(name)).map(
+      ({ clause }) => clause(eb)
+    ),
+  ]);
 
 type Executor = Kysely<DB> | Transaction<DB>;
 let savepoints = 0;
@@ -274,18 +312,25 @@ let savepoints = 0;
  */
 export async function failClosed<T>(
   db: Executor,
-  label: string,
+  site: SkillCheckReadSite,
   read: () => Promise<T>,
   fallback: T
 ): Promise<T> {
+  const failed = (error: unknown) => {
+    metrics.skillCheckReadUnreadable(site);
+    console.error(
+      `knights: a skill-check safety read (${site}) failed; keeping mod-confirmed checks out`,
+      {
+        error,
+      }
+    );
+    return fallback;
+  };
   if (!db.isTransaction) {
     try {
       return await read();
     } catch (error) {
-      console.error(`knights: ${label} could not be read; keeping mod-confirmed checks out`, {
-        error,
-      });
-      return fallback;
+      return failed(error);
     }
   }
   const name = sql.id(`skill_check_${++savepoints}`);
@@ -296,9 +341,6 @@ export async function failClosed<T>(
     return result;
   } catch (error) {
     await sql`ROLLBACK TO SAVEPOINT ${name}`.execute(db);
-    console.error(`knights: ${label} could not be read; keeping mod-confirmed checks out`, {
-      error,
-    });
-    return fallback;
+    return failed(error);
   }
 }

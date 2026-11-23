@@ -32,6 +32,18 @@ const ESCALATION_REASONS = [
 const HIDDEN_VERDICTS = ['correct', 'failed', 'inconclusive'] as const;
 const SKILL_CHECK_RETIRE_REASONS = ['cap', 'failures'] as const;
 const REVIEW_OUTCOMES = ['confirmed', 'split', 'excluded'] as const;
+const SKILL_CHECK_READ_SITES = [
+  'pool-insert',
+  'knight-serve',
+  'knight-answer',
+  'acolyte-serve',
+  'review',
+  'review-serve',
+  'review-stats',
+  'notice',
+  'recap',
+] as const;
+export type SkillCheckReadSite = (typeof SKILL_CHECK_READ_SITES)[number];
 export type ReviewOutcome = (typeof REVIEW_OUTCOMES)[number];
 export type SkillCheckRetireReason = (typeof SKILL_CHECK_RETIRE_REASONS)[number];
 const REFUSAL_REASONS = [
@@ -140,6 +152,11 @@ const reviewsClosed = counter(
   'In-game inquisitor reviews closed, by outcome: two agreeing moderators, a split, or excluded (ruled, blocked, moved, held, or sent to the Inquisitors).',
   { outcome: REVIEW_OUTCOMES }
 );
+const skillCheckReadsUnreadable = counter(
+  'knights_skill_check_reads_unreadable_total',
+  'Skill-check safety reads that could not be read and failed closed, by where they ran.',
+  { site: SKILL_CHECK_READ_SITES }
+);
 const overridesUnclosed = counter(
   'knights_inquisitor_overrides_unclosed_total',
   "Two agreeing moderators' level written to an image whose review could then not be closed (no skill check added)."
@@ -217,6 +234,8 @@ export const metrics = {
   smite: () => safely(() => smites.inc()),
   reviewClosed: (outcome: ReviewOutcome) => safely(() => reviewsClosed.inc({ outcome })),
   overrideUnclosed: () => safely(() => overridesUnclosed.inc()),
+  skillCheckReadUnreadable: (site: SkillCheckReadSite) =>
+    safely(() => skillCheckReadsUnreadable.inc({ site })),
   skillChecksRetired: (reason: SkillCheckRetireReason, count: number) =>
     safely(() => {
       if (count > 0) skillChecksRetired.inc({ reason }, count);

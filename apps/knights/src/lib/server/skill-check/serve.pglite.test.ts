@@ -11,7 +11,7 @@ import {
 } from '../apprenticeship/apprenticeship.service';
 import { ACOLYTE_WRONG_ANSWER_SMITE } from '../smites/config';
 import { DEFAULT_HIDDEN_CHECKS } from '../hidden/config';
-import { answerHiddenCheck, pickHiddenCheck } from '../hidden/hidden.service';
+import { answerHiddenCheck, pickHiddenCheck, readHiddenNotices } from '../hidden/hidden.service';
 import { castVote, enqueueItem, ensureVotePartitions } from '../queue/queue.service';
 import {
   EXCLUSION_TABLES,
@@ -83,7 +83,7 @@ const answer = (
 async function judgedInQueue(userId: number, imageId: number) {
   const itemId = await enqueueItem(db, { questionKey: Q, imageId, source: 'test' }, NOW);
   expect(await castVote(db, { userId, itemId, answer: '4' }, { now: () => NOW })).toMatchObject({
-    status: expect.not.stringMatching('rejected'),
+    status: 'recorded',
   });
 }
 const ledger = async (userId: number) =>
@@ -211,6 +211,48 @@ describe('a pooled image that comes under an exclusion', () => {
     const view = await getApprentice(db, 1, { skillCheckRate: 1 });
     expect(view.kind).toBe('question');
     expect(view.kind === 'question' && view.item.referenceId).not.toBe(id);
+  });
+});
+
+describe('showing an answered mod-confirmed image again', () => {
+  it('hides it in the Knight notice once it comes under a hold', async () => {
+    await seedPlayer(pg, 1);
+    const id = await skillCheck(10, '4');
+    await answer(1, id, '16');
+    expect((await readHiddenNotices(db, 1))[0]?.imageKey).toBe('key-10');
+    await pg.query(`UPDATE "Image" SET "tosViolation"=true WHERE id=10`);
+    expect((await readHiddenNotices(db, 1))[0]?.imageKey).toBeNull();
+  });
+
+  it('hides it in the Acolyte recap once it comes under a hold', async () => {
+    await seedPlayer(pg, 1, 'Acolyte');
+    for (let i = 0; i < 19; i++) {
+      await seedImage(pg, 100 + i);
+      const ref = await pg.query<{ id: number }>(
+        `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","status") VALUES ($1,'trials','4','harvested','retired') RETURNING id`,
+        [100 + i]
+      );
+      await pg.query(
+        `INSERT INTO "KnightsApprenticeAnswer" ("playerId","referenceId","imageId","questionKey","answer","correctAnswer","correct","xp","createdAt") VALUES (1,$1,$2,$3,'4','4',true,0,$4)`,
+        [ref.rows[0].id, 100 + i, Q, new Date(NOW.getTime() - (20 - i) * 1000)]
+      );
+    }
+    const check = await skillCheck(10, '4');
+    const view = await getApprentice(db, 1, { skillCheckRate: 1 });
+    expect(view.kind === 'question' && view.item.referenceId).toBe(check);
+    await answerApprentice(
+      db,
+      { userId: 1, kind: 'rating', referenceId: check, answer: '16' },
+      { now: () => NOW, skillCheckRate: 1 }
+    );
+    const recap = async () => {
+      const v = await getApprentice(db, 1, { skillCheckRate: 1 });
+      expect(v.kind).toBe('checkpoint');
+      return v.kind === 'checkpoint' ? v.checkpoint.missed[0]?.imageKey : undefined;
+    };
+    expect(await recap()).toBe('key-10');
+    await pg.query(`UPDATE "Image" SET "tosViolation"=true WHERE id=10`);
+    expect(await recap()).toBeNull();
   });
 });
 

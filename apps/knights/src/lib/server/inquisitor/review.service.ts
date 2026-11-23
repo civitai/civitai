@@ -6,7 +6,8 @@ import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { metrics, type ReviewOutcome } from '../metrics';
 import { readImageState } from '../queue/image-state';
 import { hasBlockMarker, moderatorRuling, type ImageState } from '../queue/resolution';
-import { failClosed, skillCheckEligible } from '../skill-check/eligible';
+import { failClosed, skillCheckEligible, skillCheckLasting } from '../skill-check/eligible';
+import type { SkillCheckReadSite } from '../metrics';
 import { addSkillCheck } from '../skill-check/pool';
 import { OverrideWriteError } from './override-error';
 
@@ -77,7 +78,7 @@ export async function sweepMissingReviews(
 type OpenReview = { id: number; imageId: number; consensusValue: string };
 
 /** Why a review can never produce a check: closed `excluded`. */
-type PermanentExclusion = 'missing' | 'blocked' | 'moderator-ruled' | 'level-moved';
+type PermanentExclusion = 'missing' | 'blocked' | 'moderator-ruled' | 'level-moved' | 'ineligible';
 /**
  * A permanent reason; `held`, a review or hold that may lift (the review waits); `unreadable`, a safety check that could not
  * be read (fail closed: nothing served or recorded); null while the review can still produce a check.
@@ -85,6 +86,7 @@ type PermanentExclusion = 'missing' | 'blocked' | 'moderator-ruled' | 'level-mov
 type Exclusion = { permanent: PermanentExclusion } | 'held' | 'unreadable' | null;
 
 const MODERATOR_RULING_ACTIVITY = 'setNsfwLevel';
+const CLOCK_SKEW_MS = 30_000;
 
 /** The closing moderator's own ruling at `level`, recorded after `since` (their claim): their override landing, no one else's. */
 async function ownRuling(
@@ -99,7 +101,8 @@ async function ownRuling(
     .where('entityType', '=', 'image')
     .where('entityId', '=', imageId)
     .where('userId', '=', moderatorId)
-    .where('createdAt', '>=', utc(since))
+    // A little before the claim, for clock skew between this app and the main app's database.
+    .where('createdAt', '>=', utc(new Date(since.getTime() - CLOCK_SKEW_MS)))
     .limit(1)
     .executeTakeFirst();
   return !!row;
@@ -133,21 +136,33 @@ async function exclusionOf(
   return heldOrUnreadable(db, review.imageId);
 }
 
-/** The safety exclusions, which may lift: `held`, or `unreadable` when they cannot be read (fail closed). */
-const heldOrUnreadable = (db: Executor, imageId: number): Promise<Exclusion> =>
+/**
+ * The safety exclusions: `{ permanent: 'ineligible' }` for one that never lifts on its own (closed `excluded`), `held` for
+ * one that may (the review waits), `unreadable` when they cannot be read (fail closed). `level`: judge the image as if it
+ * were at that level (some exclusions depend on it).
+ */
+const heldOrUnreadable = (
+  db: Executor,
+  imageId: number,
+  site: SkillCheckReadSite = 'review',
+  level?: number
+): Promise<Exclusion> =>
   failClosed(
     db,
-    'the safety exclusions of a review',
-    async (): Promise<Exclusion> =>
-      (await db
+    site,
+    async (): Promise<Exclusion> => {
+      const row = await db
         .selectFrom('Image as img')
         .innerJoin('Post as p', 'p.id', 'img.postId')
-        .select('img.id')
+        .select((eb) => [
+          skillCheckEligible(eb, { level }).as('eligible'),
+          skillCheckLasting(eb).as('lasting'),
+        ])
         .where('img.id', '=', imageId)
-        .where(skillCheckEligible)
-        .executeTakeFirst())
-        ? null
-        : 'held',
+        .executeTakeFirst();
+      if (!row || !row.lasting) return { permanent: 'ineligible' };
+      return row.eligible ? null : 'held';
+    },
     'unreadable'
   );
 
@@ -197,24 +212,18 @@ export type ReviewOffer = {
   votes: number;
 };
 
-/** Candidates read per serve from each of the two queues; a held review is skipped, not closed. */
+/** Candidates read per serve from each of the two queues. */
 const SERVE_BATCH = 20;
 
-/** Open reviews this moderator may vote on: not claimed by another, not their own image, not voted on by them. */
-const servable = (db: Kysely<DB>, moderatorId: number, now: Date) =>
+/**
+ * Open reviews this moderator may vote on: not claimed by another, not their own image, not voted on by them, and on an
+ * image that passes the safety exclusions now (so held reviews never fill a batch). Exported for the waiting count.
+ */
+export const servableReviews = (db: Kysely<DB>, moderatorId: number, now: Date) =>
   db
     .selectFrom('KnightsInquisitorReview as r')
     .innerJoin('Image as img', 'img.id', 'r.imageId')
-    .select([
-      'r.id',
-      'r.queueItemId',
-      'r.imageId',
-      'r.consensusValue',
-      'img.url',
-      'img.width',
-      'img.height',
-      'img.nsfwLevel',
-    ])
+    .innerJoin('Post as p', 'p.id', 'img.postId')
     .where('r.status', '=', 'open')
     .where((eb) =>
       eb.or([
@@ -234,9 +243,10 @@ const servable = (db: Kysely<DB>, moderatorId: number, now: Date) =>
             .where('mine.moderatorId', '=', moderatorId)
         )
       )
-    );
+    )
+    .where((eb) => skillCheckEligible(eb));
 
-const hasVote = (exists: boolean) => (qb: ReturnType<typeof servable>) =>
+const hasVote = (exists: boolean) => (qb: ReturnType<typeof servableReviews>) =>
   qb.where((eb) => {
     const voted = eb.exists(
       eb
@@ -248,43 +258,89 @@ const hasVote = (exists: boolean) => (qb: ReturnType<typeof servable>) =>
   });
 
 /**
+ * Closes, oldest first and a bounded number at a time, open reviews whose image fails an exclusion that never lifts on its
+ * own: they can never produce a check. Run on every serve, so they drain without a job.
+ */
+async function closeIneligible(db: Kysely<DB>, now: Date): Promise<void> {
+  const closed = await db
+    .updateTable('KnightsInquisitorReview')
+    .set({ status: 'excluded', closedAt: utc(now), claimedBy: null, claimExpiresAt: null })
+    .where(
+      'id',
+      'in',
+      db
+        .selectFrom('KnightsInquisitorReview as r')
+        .leftJoin('Image as img', 'img.id', 'r.imageId')
+        .leftJoin('Post as p', 'p.id', 'img.postId')
+        .select('r.id')
+        .where('r.status', '=', 'open')
+        .where((eb) => eb.or([eb('p.id', 'is', null), eb.not(skillCheckLasting(eb as never))]))
+        .orderBy('r.createdAt', 'asc')
+        .limit(SERVE_BATCH)
+    )
+    .executeTakeFirst();
+  for (let n = Number(closed.numUpdatedRows); n > 0; n--) metrics.reviewClosed('excluded');
+}
+
+/**
  * The next review for this moderator: one another moderator already voted on first, then the oldest, each read as one
- * bounded batch in `(status, createdAt)` order. A review that can never produce a check is closed `excluded` on the way;
- * one under a review or hold is skipped and stays open; unreadable safety checks serve nothing.
+ * bounded batch in `(status, createdAt)` order of reviews on images that pass the safety exclusions now. Reviews that can
+ * never produce a check are closed `excluded` on the way. `unreadable`: the safety exclusions could not be read (fail
+ * closed: nothing is served).
  */
 export async function nextReview(
   db: Kysely<DB>,
   { moderatorId, now = new Date() }: { moderatorId: number; now?: Date }
-): Promise<ReviewOffer | null> {
-  for (const voted of [true, false]) {
-    const batch = await servable(db, moderatorId, now)
-      .$call(hasVote(voted))
-      .orderBy('r.createdAt', 'asc')
-      .orderBy('r.id', 'asc')
-      .limit(SERVE_BATCH)
-      .execute();
-    for (const row of batch) {
-      const exclusion = await exclusionOf(db, row);
-      if (exclusion === 'unreadable') return null;
-      if (exclusion === 'held') continue;
-      if (exclusion) {
-        await closeReview(db, row.id, 'excluded', now);
-        continue;
+): Promise<ReviewOffer | 'unreadable' | null> {
+  const unreadable = Symbol('unreadable');
+  const served = await failClosed(
+    db,
+    'review-serve',
+    async () => {
+      await closeIneligible(db, now);
+      for (const voted of [true, false]) {
+        const batch = await servableReviews(db, moderatorId, now)
+          .select([
+            'r.id',
+            'r.queueItemId',
+            'r.imageId',
+            'r.consensusValue',
+            'img.url',
+            'img.width',
+            'img.height',
+            'img.nsfwLevel',
+          ])
+          .$call(hasVote(voted))
+          .orderBy('r.createdAt', 'asc')
+          .orderBy('r.id', 'asc')
+          .limit(SERVE_BATCH)
+          .execute();
+        for (const row of batch) {
+          const exclusion = await exclusionOf(db, row);
+          if (exclusion === 'unreadable') return unreadable;
+          if (exclusion === 'held') continue;
+          if (exclusion) {
+            await closeReview(db, row.id, 'excluded', now);
+            continue;
+          }
+          return {
+            reviewId: row.id,
+            queueItemId: row.queueItemId,
+            imageId: row.imageId,
+            imageKey: row.url,
+            width: row.width,
+            height: row.height,
+            consensusValue: row.consensusValue,
+            currentLevel: row.nsfwLevel,
+            votes: voted ? 1 : 0,
+          } satisfies ReviewOffer;
+        }
       }
-      return {
-        reviewId: row.id,
-        queueItemId: row.queueItemId,
-        imageId: row.imageId,
-        imageKey: row.url,
-        width: row.width,
-        height: row.height,
-        consensusValue: row.consensusValue,
-        currentLevel: row.nsfwLevel,
-        votes: voted ? 1 : 0,
-      };
-    }
-  }
-  return null;
+      return null;
+    },
+    unreadable
+  );
+  return served === unreadable ? 'unreadable' : served;
 }
 
 export type ReviewVoteRejection =
@@ -365,7 +421,10 @@ export async function castReviewVote(
 
   // The closing vote names another level. Check the image once more right before writing it, then write it as a moderator
   // ruling, holding no lock or transaction across the call.
-  const before = await exclusionOf(db, first.review);
+  // Judged at the agreed level too: some exclusions depend on the level the image would have.
+  const before =
+    (await exclusionOf(db, first.review)) ??
+    (await heldOrUnreadable(db, first.review.imageId, 'review', Number(input.answer)));
   if (before !== null) {
     await releaseClaim(db, input.reviewId, input.moderatorId);
     if (before === 'held') return { status: 'rejected', reason: 'held' };
@@ -395,8 +454,26 @@ export async function castReviewVote(
     voteOrClaim(trx, input, deps, deps.now(), { overrideWritten: true })
   );
   if (second.kind === 'done' && second.result.status === 'confirmed') return second.result;
+  // The level is the closing moderator's ruling now: keep their vote on record even though the review stays as it was.
+  await db
+    .insertInto('KnightsInquisitorVote')
+    .values({
+      reviewId: input.reviewId,
+      moderatorId: input.moderatorId,
+      answer: input.answer,
+      createdAt: utc(deps.now()),
+    })
+    .onConflict((oc) => oc.columns(['reviewId', 'moderatorId']).doNothing())
+    .execute()
+    .catch((error) =>
+      console.error('knights: could not record the vote behind a written level', {
+        reviewId: input.reviewId,
+        error,
+      })
+    );
   console.error("knights: the moderators' level was written but the review was not closed", {
     reviewId: input.reviewId,
+    moderatorId: input.moderatorId,
     result: second.kind === 'done' ? second.result : second.kind,
   });
   metrics.overrideUnclosed();

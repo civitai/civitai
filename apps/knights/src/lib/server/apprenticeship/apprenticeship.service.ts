@@ -11,7 +11,7 @@ import { grantRankBadges } from '../progression/badges';
 import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
 import type { QuestionOption } from '../queue/queue.service';
 import { servableReferences } from '../reference';
-import { failClosed } from '../skill-check/eligible';
+import { answeredImageServable, failClosed } from '../skill-check/eligible';
 import { ACOLYTE_WRONG_ANSWER_SMITE, BASE_SMITE_SIZE, SMITES } from '../smites/config';
 import {
   activeSmiteCount,
@@ -317,7 +317,7 @@ async function findNext(
     // The mod-confirmed pool's safety reads fail closed: unreadable, the slot serves another image.
     const skill = await failClosed(
       db,
-      'a skill-check serve to an Acolyte',
+      'acolyte-serve',
       () => nextRating(db, playerId, position, 'skill'),
       null
     );
@@ -348,26 +348,30 @@ async function buildCheckpoint(
   playerId: number,
   progress: ApprenticeProgress
 ): Promise<Checkpoint> {
-  const rows = await answersOf(db, playerId)
-    .leftJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
-    .leftJoin('KnightsYesNoReference as y', 'y.id', 'a.yesNoReferenceId')
-    .leftJoin('Image as img', (join) => join.on(answerImageJoin))
-    .leftJoin('Post as p', 'p.id', 'img.postId')
-    .select((eb) => [
-      'a.id',
-      answerQuestionKey.as('questionKey'),
-      'a.answer',
-      'a.correctAnswer',
-      'a.correct',
-      sql<string | null>`COALESCE(r."explanation", y."explanation")`.as('explanation'),
-      'img.url as imageKey',
-      'img.width',
-      'img.height',
-      servableImage(eb).as('servable'),
-    ])
-    .orderBy('a.id', 'desc')
-    .limit(APPRENTICE.checkpointEvery)
-    .execute();
+  const read = (skillChecks: 'checked' | 'hidden') =>
+    answersOf(db, playerId)
+      .leftJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
+      .leftJoin('KnightsYesNoReference as y', 'y.id', 'a.yesNoReferenceId')
+      .leftJoin('Image as img', (join) => join.on(answerImageJoin))
+      .leftJoin('Post as p', 'p.id', 'img.postId')
+      .select((eb) => [
+        'a.id',
+        answerQuestionKey.as('questionKey'),
+        'a.answer',
+        'a.correctAnswer',
+        'a.correct',
+        sql<string | null>`COALESCE(r."explanation", y."explanation")`.as('explanation'),
+        'img.url as imageKey',
+        'img.width',
+        'img.height',
+        answeredImageServable(eb as never, skillChecks).as('servable'),
+      ])
+      .orderBy('a.id', 'desc')
+      .limit(APPRENTICE.checkpointEvery)
+      .execute();
+  // A mod-confirmed image is shown only while it passes the safety exclusions; unreadable, it is hidden (fail closed).
+  const rows =
+    (await failClosed(db, 'recap', () => read('checked'), null)) ?? (await read('hidden'));
   const { options } = await ratingOptions(db);
   const missed = rows
     .filter((row) => !row.correct)

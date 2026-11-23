@@ -4,7 +4,8 @@ import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { civitaiSiteUrl } from '../site-url';
-import type { ReviewOffer } from './review.service';
+import { servableReviews, type ReviewOffer } from './review.service';
+import { failClosed } from '../skill-check/eligible';
 
 export type ReviewSidebar = {
   /** The players' settled level, by its label. */
@@ -77,8 +78,8 @@ export async function reviewSidebar(
 
 export type ModeratorStats = {
   votesThisWeek: number;
-  /** Open reviews this moderator has not voted on and may vote on (not of their own images), up to `WAITING_CAP`. */
-  waiting: number;
+  /** Open reviews this moderator could be served now, up to `WAITING_CAP`; null when that cannot be read. */
+  waiting: number | null;
   /** More than `WAITING_CAP` are waiting. */
   waitingMore: boolean;
   /** Of the closed reviews they voted on, the share the other moderator gave the same level; null with none. */
@@ -99,31 +100,22 @@ export async function moderatorStats(
       .where('moderatorId', '=', moderatorId)
       .where('createdAt', '>=', utc(new Date(now.getTime() - WEEK_MS)))
       .executeTakeFirstOrThrow(),
-    // Counted up to a cap, so the stat never scans a large backlog.
-    db
-      .selectFrom((eb) =>
-        eb
-          .selectFrom('KnightsInquisitorReview as r')
-          .innerJoin('Image as img', 'img.id', 'r.imageId')
-          .select('r.id')
-          .where('r.status', '=', 'open')
-          .where('img.userId', 'is distinct from', moderatorId)
-          .where((w) =>
-            w.not(
-              w.exists(
-                w
-                  .selectFrom('KnightsInquisitorVote as v')
-                  .select(sql<number>`1`.as('one'))
-                  .whereRef('v.reviewId', '=', 'r.id')
-                  .where('v.moderatorId', '=', moderatorId)
-              )
-            )
+    // Only the reviews this moderator could be served now, counted up to a cap; unreadable, unknown (fail closed).
+    failClosed(
+      db,
+      'review-stats',
+      () =>
+        db
+          .selectFrom(
+            servableReviews(db, moderatorId, now)
+              .select('r.id')
+              .limit(WAITING_CAP + 1)
+              .as('w')
           )
-          .limit(WAITING_CAP + 1)
-          .as('w')
-      )
-      .select(sql<number>`count(*)::int`.as('n'))
-      .executeTakeFirstOrThrow(),
+          .select(sql<number>`count(*)::int`.as('n'))
+          .executeTakeFirstOrThrow(),
+      null
+    ),
     db
       .selectFrom('KnightsInquisitorReview as r')
       .innerJoin('KnightsInquisitorVote as v', 'v.reviewId', 'r.id')
@@ -137,8 +129,8 @@ export async function moderatorStats(
   ]);
   return {
     votesThisWeek: Number(week.n),
-    waiting: Math.min(Number(waiting.n), WAITING_CAP),
-    waitingMore: Number(waiting.n) > WAITING_CAP,
+    waiting: waiting ? Math.min(Number(waiting.n), WAITING_CAP) : null,
+    waitingMore: waiting ? Number(waiting.n) > WAITING_CAP : false,
     agreementRate: Number(closed.n) > 0 ? Number(closed.agreed) / Number(closed.n) : null,
   };
 }

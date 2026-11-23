@@ -35,6 +35,14 @@ describe('setImageLevelAsModerator', () => {
     expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it('forwards the session segment exactly as the browser sent it, never decoded', async () => {
+    fetchMock.mockResolvedValue(new Response('{}', { status: 200 }));
+    await write(`a=1; ${NAME}=tok%2Ben%3D; b=2`);
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get('cookie')).toBe(
+      `${NAME}=tok%2Ben%3D`
+    );
+  });
+
   it.each([
     ['no cookie', null],
     ['no session among the cookies', 'other=1; theme=dark'],

@@ -27,13 +27,12 @@ is recorded. The second closes the review:
 - the same level: `confirmed`, and the image enters the skill-check pool at that level;
 - another level: `split`, no check, the image keeps the players' level, both votes are kept.
 
-A review a moderator's override already reached (the image ruled at the level the first vote named) is still served and can
-still be confirmed.
-
 When the two moderators agree on a level other than the image's, that level is written to the image as a moderator ruling
 first, through the main app's moderator rating endpoint and in the name of the moderator whose vote closed the review (their
 own session is used, so the main app records the ruling as theirs). Only then is the vote recorded and the review confirmed;
-if the write fails, nothing is recorded and the moderator can vote again. While the write runs the review is held for that
+if the write fails, nothing is recorded and the moderator can vote again. The image is judged at the agreed level before the
+write, since some predicates depend on the level. If the level lands but the review cannot close, the moderator's vote is
+still recorded. While the write runs the review is held for that
 moderator for two minutes. The image is never written while it is blocked: such a review is excluded first. The players who
 settled the item keep their verdicts, XP and gold.
 
@@ -41,10 +40,13 @@ Moderator votes earn no XP, gold or Watch, need no player record, and never chan
 
 ## Excluded and held reviews
 
-A review is closed `excluded`, with no vote recorded, when at serve or at vote the image is gone, was blocked, moved off the
-players' level, or was ruled on by a moderator. A review whose image is under a review or hold that may lift (the
-skill-check pool's exclusions: reports, appeals, scan holds and the like) stays open: it is skipped when serving and a vote
-on it is refused, until the hold lifts. If those checks cannot be read, nothing is served or recorded.
+A review is closed `excluded`, with no vote recorded, when the image is gone, was blocked, moved off the players' level, was
+ruled on by a moderator, or fails one of the skill-check pool's safety predicates that do not lift on their own (each serve
+closes a bounded batch of these). A review whose image fails one that lifts in time (an open report or appeal, a scan hold, a
+scan still running, an Inquisitor ruling under way) stays open: it is not served, and a vote on it is refused, until that
+clears. Serving reads only reviews whose image passes the predicates now, so held reviews never crowd out servable ones, and
+the waiting count counts only those. If the predicates cannot be read, the page says the queue cannot load and nothing is
+served or recorded (`knights_skill_check_reads_unreadable_total`).
 
 Only the closing moderator's own override counts as theirs: the image ruled at the agreed level in the same request, or,
 on a retry under their own claim, a ruling the main app recorded as theirs after the claim. A ruling by anyone else, at any

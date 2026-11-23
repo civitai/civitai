@@ -132,7 +132,7 @@ describe('addSkillCheck', () => {
       );
     const before = (await rows()).find((r) => r.id === graded);
     expect(await add(1, '8')).toBe('kept-graded');
-    expect((await rows()).find((r) => r.id === graded)).toEqual(before);
+    expect((await rows()).find((r) => r.id === graded)).toEqual({ ...before, status: 'retired' });
     expect(await add(2, '4')).toBe('moved');
   });
 
@@ -242,6 +242,14 @@ describe('addSkillCheck', () => {
         await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
       }
       expect(await rows()).toEqual([]);
+    });
+
+    it('takes a disabled child tag on an image rated R', async () => {
+      await seedImage(pg, 1, { nsfwLevel: 4 });
+      await pg.query(
+        `INSERT INTO "TagsOnImageDetails" ("imageId","tagId","disabled") VALUES (1,5351,true)`
+      );
+      expect(await add(1, '4')).toBe('added');
     });
 
     it('takes a child tag on an image rated below R', async () => {
