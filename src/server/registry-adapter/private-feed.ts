@@ -50,7 +50,7 @@
  * entity); the gRPC binding's `Entity` message has no field for them.
  *
  * THE HEADS. Each poll reads the app namespace's write head (`usage_app.last_seq`, one counter for
- * every collection of the app, `PrivateDocSource.head`) and its mark head (`appdata.mark_head`, the
+ * every collection of the app, `PrivateDocSource.head`) and its mark head (`mark_head.last_mark_seq`, the
  * newest mark sequence of a mark, unmark or increment of any collection of the app,
  * `PrivateDocSource.markHead`) BEFORE its keyset, never after: every write
  * at or below the head had committed when the keyset was read, so it is in what the poll read. A
@@ -220,7 +220,7 @@ export const privateRev = (
 /**
  * The `meta` every document stream's `live` and `progress` carry for its heads (the private feed's
  * here, the level streams' in `level-feed.ts`): `head.seq` is the app namespace's document head
- * (`usage_app.last_seq`), `head.markSeq` its mark head (`appdata.mark_head.last_mark_seq`, the
+ * (`usage_app.last_seq`), `head.markSeq` its mark head (`mark_head.last_mark_seq`, the
  * write's `markSeq` answers are compared with it), omitted where the store has none. A head says
  * every write of its kind at or below it is in what the stream has sent.
  */

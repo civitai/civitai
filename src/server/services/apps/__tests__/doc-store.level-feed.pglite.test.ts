@@ -57,6 +57,8 @@ const principal: Principal = {
 const wakers: Array<() => void> = [];
 const sleep = (_ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
+    // A stream stopped mid-poll sleeps once more after its abort: that sleep must end at once.
+    if (signal.aborted) return resolve();
     wakers.push(resolve);
     signal.addEventListener('abort', () => resolve(), { once: true });
   });

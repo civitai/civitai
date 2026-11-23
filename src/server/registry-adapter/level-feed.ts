@@ -37,7 +37,7 @@
  * never an empty stream that reads as an empty board.
  *
  * POLL ("Poll shapes and cost"). The heads are read FIRST, before any row: the document head
- * (`usage_app.last_seq`) and the mark head (`appdata.mark_head`). Then the `seq` range on `doc`
+ * (`usage_app.last_seq`) and the mark head (`mark_head.last_mark_seq`). Then the `seq` range on `doc`
  * and `doc_tomb` since the stream's last position (the shared feed's shape), and, only when the
  * mark head moved, the mark-sequence range on the collection's tally rows (`doc_tally.mark_seq`),
  * whose keys are re-read as they stand now. Every write at or below a head had committed when it
