@@ -26,15 +26,34 @@ vi.mock('$lib/server/db', () => ({
     return dbHandle.current;
   },
 }));
-// ClickHouse is the boundary: a removal reason for the restricted image, and no scanner rows.
-vi.mock('$lib/server/clickhouse', () => ({
-  getClickhouse: () => ({
-    query: async ({ query }: { query: string }) => ({
-      json: async () =>
-        query.includes('tosReason') ? [{ imageId: 201, tosReason: 'removed' }] : [],
+// ClickHouse is the boundary: a removal reason for the restricted image, and the scanner's CSAM
+// label on `scanner.hits`, or no answer at all while `scanner.down`.
+const { scanner } = vi.hoisted(() => ({ scanner: { hits: [] as number[], down: false } }));
+vi.mock('$lib/server/clickhouse', async () => {
+  const { imageAuditContentHash } = await import('@civitai/shared/media-signals');
+  return {
+    getClickhouse: () => ({
+      query: async ({
+        query,
+        query_params,
+      }: {
+        query: string;
+        query_params: { hashes?: string[] };
+      }) => {
+        if (query.includes('tosReason'))
+          return { json: async () => [{ imageId: 201, tosReason: 'removed' }] };
+        if (scanner.down) throw new Error('scanner unavailable');
+        const hit = new Set(scanner.hits.map(imageAuditContentHash));
+        return {
+          json: async () =>
+            (query_params.hashes ?? [])
+              .filter((h) => hit.has(h))
+              .map((contentHash) => ({ contentHash, csamHit: 1 })),
+        };
+      },
     }),
-  }),
-}));
+  };
+});
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
@@ -48,6 +67,8 @@ const HELD = 204;
 const SHARED_URL = 205;
 const SIGNAL_SIBLING = 207;
 const CLEAN_SIBLING = 209;
+const SCANNER_HIT = 211;
+const SCANNER_SIBLING = 212;
 const KEY = 'restricted-key';
 
 const WITHOUT_GRANT = { id: 2, roles: [] };
@@ -56,10 +77,12 @@ const WITH_GRANT = { id: 3, roles: ['moderator:admin'] };
 let db: PGlite;
 
 beforeEach(async () => {
+  scanner.hits = [SCANNER_HIT, 213];
+  scanner.down = false;
   db = await freshPglite();
   await db.exec(SCHEMA);
   await db.exec(`
-    INSERT INTO "User" (id, username) VALUES (7, 'owner'), (8, 'other'), (9, 'third'), (10, 'fourth'), (11, 'fifth'), (12, 'sixth'), (14, 'seventh'), (15, 'eighth');
+    INSERT INTO "User" (id, username) VALUES (7, 'owner'), (8, 'other'), (9, 'third'), (10, 'fourth'), (11, 'fifth'), (12, 'sixth'), (14, 'seventh'), (15, 'eighth'), (16, 'ninth'), (17, 'tenth');
     INSERT INTO "Image" (id, url, type, ingestion, "needsReview", "blockedFor", width, height, "userId") VALUES
       (${RESTRICTED}, '${KEY}', 'video', 'Blocked', 'appeal', 'CSAM', 512, 768, 7),
       (${CONTROL}, 'control-key', 'image', 'Blocked', 'appeal', 'moderated', 640, 480, 8),
@@ -70,11 +93,14 @@ beforeEach(async () => {
       (${SIGNAL_SIBLING}, 'signal-sibling-key', 'image', 'Blocked', 'appeal', 'moderated', 300, 300, 14),
       (208, 'signal-sibling-key', 'image', 'Blocked', NULL, 'CSAM', 300, 300, 12),
       (${CLEAN_SIBLING}, 'clean-sibling-key', 'image', 'Blocked', 'appeal', 'moderated', 300, 300, 15),
-      (210, 'clean-sibling-key', 'image', 'Scanned', NULL, NULL, 300, 300, 12);
+      (210, 'clean-sibling-key', 'image', 'Scanned', NULL, NULL, 300, 300, 12),
+      (${SCANNER_HIT}, 'scanner-hit-key', 'image', 'Blocked', 'appeal', 'moderated', 300, 300, 16),
+      (${SCANNER_SIBLING}, 'scan-sibling-key', 'image', 'Blocked', 'appeal', 'moderated', 300, 300, 17),
+      (213, 'scan-sibling-key', 'image', 'Scanned', NULL, NULL, 300, 300, 12);
     INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (${HELD});
     INSERT INTO "Appeal" ("userId", "entityType", "entityId") VALUES
       (7, 'Image', ${RESTRICTED}), (8, 'Image', ${CONTROL}), (9, 'Image', ${SIGNAL}), (10, 'Image', ${HELD}), (11, 'Image', ${SHARED_URL}),
-      (14, 'Image', ${SIGNAL_SIBLING}), (15, 'Image', ${CLEAN_SIBLING});
+      (14, 'Image', ${SIGNAL_SIBLING}), (15, 'Image', ${CLEAN_SIBLING}), (16, 'Image', ${SCANNER_HIT}), (17, 'Image', ${SCANNER_SIBLING});
     INSERT INTO "Model3D" (id, name, status, "thumbnailImageId") VALUES (1, 'parent', 'Published', ${RESTRICTED});
     INSERT INTO "User" (id, username) VALUES (13, 'reporter');
     INSERT INTO "Report" (id, "userId", reason, status, details, "createdAt") VALUES
@@ -158,6 +184,19 @@ describe('card load, without the grant', () => {
       restricted: false,
       url: 'clean-sibling-key',
     });
+  });
+
+  it('withholds a row only the scanner marks', async () => {
+    expect(await card(WITHOUT_GRANT, SCANNER_HIT)).toMatchObject({ restricted: true, url: '' });
+  });
+
+  it('withholds a row whose url sibling only the scanner marks', async () => {
+    expect(await card(WITHOUT_GRANT, SCANNER_SIBLING)).toMatchObject({ restricted: true, url: '' });
+  });
+
+  it('withholds every row the rule reaches while the scanner cannot answer', async () => {
+    scanner.down = true;
+    expect(await card(WITHOUT_GRANT, CONTROL)).toMatchObject({ restricted: true, url: '' });
   });
 
   // The storage route's block-reason check, which the Postgres rule alone does not make.

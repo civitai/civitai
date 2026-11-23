@@ -11,7 +11,6 @@ import {
   retractedAccessColumnsSql,
   retractedImageWhereSql,
   retractedViewable,
-  siblingsServable,
   type UrlSibling,
 } from '@civitai/shared/retracted-media-tier';
 import { blockedForPatterns } from './blocked-for-patterns';
@@ -108,11 +107,12 @@ export async function readRetractedMedia(
 }
 
 /**
- * Which of these images a moderator without `csamReview` is refused on Postgres alone, as
- * `readRetractedMedia` refuses them: `retractedAccessColumnsSql`'s `restricted`, a `blockedFor`
- * signal, or a url sibling `siblingsServable` refuses. Not the scanner: a caller that lists the row without its media needs no verdict. Read on
- * the primary for the same reason as `readRetractedMedia`. None for a moderator with the grant; a
- * read that fails throws.
+ * Which of these images a moderator without `csamReview` is refused, by `readRetractedMedia`'s own
+ * rule (`retractedAccessColumnsSql` and `retractedViewable`, the scanner included) applied to every
+ * row, not only the eligible ones: a caller that lists a row without its media withholds what that
+ * route would refuse. One scanner read for the rows and their url siblings; a read the scanner cannot
+ * answer withholds. Postgres is read on the primary for the same reason as `readRetractedMedia`.
+ * None for a moderator with the grant; a Postgres read that fails throws.
  */
 export async function restrictedImageIds(
   imageIds: number[],
@@ -132,21 +132,27 @@ export async function restrictedImageIds(
       .execute();
   });
   const patterns = blockedForPatterns();
-  const isSignal = (blockedFor: string | null) => blockedForSignal(blockedFor, patterns);
   const kept = new Set<number>();
-  for (const row of rows)
-    if (
-      row.restricted ||
-      isSignal(row.blockedFor) ||
-      !(await siblingsServable(row.siblings, isSignal, noScanner))
-    )
-      kept.add(row.id);
+  // The scanner is read only for the rows Postgres has not already refused, as `readRetractedMedia`.
+  const candidates = rows.filter((row) => {
+    const refused = row.restricted || blockedForSignal(row.blockedFor, patterns);
+    if (refused) kept.add(row.id);
+    return !refused;
+  });
+  if (!candidates.length) return kept;
+  const verdicts = await readScannerCsamVerdicts([
+    ...new Set(candidates.flatMap((row) => [row.id, ...row.siblings.map((s) => s.id)])),
+  ]);
+  for (const row of candidates) {
+    const ok = await retractedViewable(row, {
+      patterns,
+      readVerdict: async () => verdicts?.get(row.id) ?? null,
+      readVerdicts: async () => verdicts,
+    });
+    if (!ok) kept.add(row.id);
+  }
   return kept;
 }
-
-/** `siblingsServable`'s Postgres legs alone: every sibling reads as unmarked by the scanner. */
-const noScanner = async (imageIds: number[]) =>
-  new Map(imageIds.map((id) => [id, 'none' as const]));
 
 /** Each row's verdict, one read per row: a scanned image can be rescanned, so it is read fresh; a
  *  blocked one from the cache. For the single-image readers. */
