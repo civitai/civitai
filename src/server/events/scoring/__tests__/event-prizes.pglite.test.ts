@@ -9,7 +9,7 @@ import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 /**
  * The end-of-event prizes on an in-process Postgres running the committed migrations: the Comeback Cup
- * frozen from the daily snapshot, and the scorer badges for it and the Champion. Ids are invented.
+ * frozen from the daily snapshot, and the scorer badges for it and the Champion.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -274,7 +274,10 @@ describe('awardEventPrizes', () => {
   });
 
   it('in shadow writes and grants nothing and stays pending, then grants once live', async () => {
-    setPrizes({ comeback: comeback('shadow'), champion: { mode: 'shadow', badges: CHAMPION } });
+    // Each prize alone, so neither one's shadow can stand in for the other's.
+    setPrizes({ comeback: comeback('shadow') });
+    expect(await award('Blue')).toEqual({ pending: true });
+    setPrizes({ champion: { mode: 'shadow', badges: CHAMPION } });
     expect(await award('Blue')).toEqual({ pending: true });
     expect(await cupRows()).toEqual([]);
     expect(await holders(CUP_BADGE)).toEqual([]);
@@ -286,7 +289,13 @@ describe('awardEventPrizes', () => {
     expect(await holders(CHAMPION.Blue)).toEqual([BLUE_WEEK, BLUE_EARLY, BLUE_BANNED]);
   });
 
-  it('refuses to grant from a Cup frozen with other windows, and grants nothing with no prizes set', async () => {
+  it('refuses a Champion grant when the winner has no badge configured', async () => {
+    setPrizes({ champion: { mode: 'live', badges: { Pink: CHAMPION.Pink } } });
+    await expect(award('Blue')).rejects.toThrow('No Champion badge');
+    expect(await holders(CHAMPION.Pink)).toEqual([]);
+  });
+
+  it('refuses to grant from a Cup frozen with other windows, and waits for prizes to be configured', async () => {
     setPrizes({ comeback: comeback('live') });
     await award('Pink');
     await pg.db.exec('DELETE FROM "UserCosmetic"');
@@ -305,7 +314,10 @@ describe('awardEventPrizes', () => {
     await expect(award('Pink')).rejects.toThrow('other windows');
     expect(await holders(CUP_BADGE)).toEqual([]);
 
+    // Not configured at all: stays pending, so a badge set up late is still granted.
     config = JSON.stringify({ mode: 'live' });
+    expect(await award('Pink')).toEqual({ pending: true });
+    setPrizes({});
     expect(await award('Pink')).toEqual({ pending: false });
     expect(await holders(CUP_BADGE)).toEqual([]);
   });

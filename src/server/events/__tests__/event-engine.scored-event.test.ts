@@ -293,6 +293,7 @@ describe('end-of-event cleanup', () => {
   it('does nothing for holiday2024 on any day after its grace window, including birthday cleanup day', async () => {
     const birthdayCleanup = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 40 * HOUR);
     sysStore[`event:${BIRTHDAY_2026_EVENT}:winner`] = 'Pink';
+    sysStore[flagRaceConfigKey(BIRTHDAY_2026_EVENT)] = JSON.stringify({ prizes: {} });
     await eventEngine.dailyReset(birthdayCleanup);
 
     expect(dbMock.dbWrite.userCosmetic.updateMany).not.toHaveBeenCalled();
@@ -519,6 +520,7 @@ describe('end-of-event cleanup', () => {
 
       // Blue is not first in the standings: the record, not the standings, decides.
       sysStore[winnerMarker] = 'Blue';
+      sysStore[flagRaceConfigKey(BIRTHDAY_2026_EVENT)] = JSON.stringify({ prizes: {} });
       await eventEngine.dailyReset(secondReset);
       expect(onCleanup).toHaveBeenCalledWith(
         expect.objectContaining({ winner: 'Blue', winnerCosmeticId: 22 })
@@ -540,7 +542,7 @@ describe('end-of-event cleanup', () => {
     await eventEngine.dailyReset(secondReset);
     expect(setKeys()).toEqual([]);
 
-    delete sysStore[flagRaceConfigKey(BIRTHDAY_2026_EVENT)];
+    sysStore[flagRaceConfigKey(BIRTHDAY_2026_EVENT)] = JSON.stringify({ prizes: {} });
     await eventEngine.dailyReset(secondReset);
     expect(setKeys()).toEqual([`eventCleanup:${BIRTHDAY_2026_EVENT}`]);
   });

@@ -42,10 +42,13 @@ export const eventPrizesSchema = z.object({
 export type EventPrizes = z.infer<typeof eventPrizesSchema>;
 type ComebackConfig = NonNullable<EventPrizes['comeback']>;
 
-/** The `prizes` field of the flagRace key's JSON. Absent reads as none; invalid throws. */
-export function parseEventPrizes(flagRaceJson: unknown): EventPrizes {
+/**
+ * The `prizes` field of the flagRace key's JSON; invalid throws. Undefined when the field is absent: a
+ * scored event must say what it awards, even if that is nothing (`{}`), before its cleanup can end.
+ */
+export function parseEventPrizes(flagRaceJson: unknown): EventPrizes | undefined {
   const prizes = (flagRaceJson as { prizes?: unknown } | undefined)?.prizes;
-  return prizes === undefined ? {} : eventPrizesSchema.parse(prizes);
+  return prizes === undefined ? undefined : eventPrizesSchema.parse(prizes);
 }
 
 const daysIn = (w: DayWindow) => (w.to.getTime() - w.from.getTime()) / DAY_MS;
@@ -180,7 +183,17 @@ async function countScorers(event: PrizeEvent, badge: ScorerBadge) {
  * and `pending` means a prize is in shadow: either way the cleanup stays open and runs again the next day.
  */
 export async function awardEventPrizes(event: PrizeEvent, winner: string, flagRaceJson: unknown) {
-  const { champion, comeback } = parseEventPrizes(flagRaceJson);
+  const prizes = parseEventPrizes(flagRaceJson);
+  if (!prizes) {
+    logToAxiom({
+      type: 'info',
+      name: 'event-prizes',
+      event: event.name,
+      message: 'not configured',
+    });
+    return { pending: true };
+  }
+  const { champion, comeback } = prizes;
   const report: Record<string, unknown> = {};
   let pending = false;
 
