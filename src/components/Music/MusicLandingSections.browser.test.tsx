@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
-import type * as ImageUtils from '~/components/Image/image.utils';
+import type * as HiddenPreferences from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import type * as Trpc from '~/utils/trpc';
@@ -33,29 +33,44 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       return { data: options?.enabled === false ? undefined : server.rising };
     },
   };
+  // One answer per (catalog, filters), so a re-render gets the same page back as React Query would.
+  const pages = new WeakMap<unknown[], Map<string, { items: unknown[] }>>();
+  const getInfinite = {
+    useQuery: (filters: { ids?: number[]; tags?: number[] }, options?: { enabled?: boolean }) => {
+      server.imageReads.push({ filters, enabled: options?.enabled });
+      if (options?.enabled === false) return { data: undefined, isLoading: false };
+      const byFilters = pages.get(server.catalog) ?? new Map<string, { items: unknown[] }>();
+      pages.set(server.catalog, byFilters);
+      const key = JSON.stringify([filters.ids, filters.tags]);
+      if (!byFilters.has(key))
+        byFilters.set(key, {
+          // In id order, as the database returns them, not in the order asked.
+          items: (server.catalog as { id: number; tagIds: number[] }[])
+            .filter((image) => filters.ids?.includes(image.id))
+            .filter(
+              (image) => !filters.tags?.length || filters.tags.some((t) => image.tagIds.includes(t))
+            )
+            .sort((a, b) => a.id - b.id),
+        });
+      return { data: byFilters.get(key), isLoading: false };
+    },
+  };
   const trpc = new Proxy(stubbed, {
     get: (target, key) =>
-      key === 'image' ? { ...Reflect.get(target, key), getRisingSongs } : Reflect.get(target, key),
+      key === 'image'
+        ? { ...Reflect.get(target, key), getRisingSongs, getInfinite }
+        : Reflect.get(target, key),
   });
   return { ...actual, trpc };
 });
-vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
-  ...(await importOriginal<typeof ImageUtils>()),
-  useQueryImages: (
-    filters: { ids?: number[]; tags?: number[] },
-    options?: { enabled?: boolean }
-  ) => {
-    server.imageReads.push({ filters, enabled: options?.enabled });
-    if (options?.enabled === false) return { images: [], isLoading: false };
-    // In id order, as the database returns them, not in the order asked.
-    const images = (server.catalog as { id: number; tagIds: number[] }[])
-      .filter((image) => filters.ids?.includes(image.id))
-      .filter(
-        (image) => !filters.tags?.length || filters.tags.some((t) => image.tagIds.includes(t))
-      )
-      .sort((a, b) => a.id - b.id);
-    return { images, isLoading: false };
-  },
+// The viewer's hidden preferences have their own tests; here nothing is hidden.
+vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', async (importOriginal) => ({
+  ...(await importOriginal<typeof HiddenPreferences>()),
+  useApplyHiddenPreferences: ({ data }: { data?: unknown[] }) => ({
+    items: data ?? [],
+    loadingPreferences: false,
+    hiddenCount: 0,
+  }),
 }));
 vi.mock('~/components/Image/Providers/ImagesProvider', async () => {
   const React = await import('react');
@@ -75,6 +90,7 @@ vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   RoutedDialogLink: ({ children }: { children: ReactNode }) => <span>{children}</span>,
 }));
 
+import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { RecentlyPlayedSection, RisingSection } from '~/components/Music/MusicLandingSections';
 import { songTrack } from '~/components/MusicPlayer/PostSong';
 import type { MusicList } from '~/store/music-player.store';
@@ -93,6 +109,9 @@ const song = (id: number, tagIds: number[] = []) =>
   } as unknown as ImagesInfiniteModel);
 const catalog = Array.from({ length: 40 }, (_, i) => song(i + 1, i % 2 ? [SYNTHWAVE] : []));
 const byId = (id: number) => catalog[id - 1];
+
+const renderSections = (ui: ReactNode) =>
+  renderWithProviders(<SignedOutSessionProvider>{ui}</SignedOutSessionProvider>);
 
 const playFromList = vi.fn<(list: MusicList) => void>();
 
@@ -120,7 +139,7 @@ describe('Rising this week', () => {
     // Song 9 is not served: removed, blocked or hidden for this viewer.
     server.rising = [3, 9, 1, 2];
     server.catalog = catalog.filter((s) => s.id !== 9);
-    await renderWithProviders(<RisingSection />);
+    await renderSections(<RisingSection />);
 
     await expect.element(heading('Rising this week')).toBeVisible();
     expect(titles()).toEqual(['Song 3', 'Song 1', 'Song 2']);
@@ -129,7 +148,7 @@ describe('Rising this week', () => {
 
   test('shows the top 7', async () => {
     server.rising = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
-    await renderWithProviders(<RisingSection />);
+    await renderSections(<RisingSection />);
 
     await expect.element(heading('Rising this week')).toBeVisible();
     expect(titles()).toEqual([
@@ -145,7 +164,7 @@ describe('Rising this week', () => {
 
   test('with a genre picked, lists that genre only', async () => {
     server.rising = [4, 1, 2, 3];
-    await renderWithProviders(<RisingSection tags={[SYNTHWAVE]} />);
+    await renderSections(<RisingSection tags={[SYNTHWAVE]} />);
 
     await expect.element(heading('Rising this week')).toBeVisible();
     expect(titles()).toEqual(['Song 4', 'Song 2']);
@@ -153,27 +172,27 @@ describe('Rising this week', () => {
 
   test('without a genre reads only the top 25 ids', async () => {
     server.rising = Array.from({ length: 40 }, (_, i) => 40 - i);
-    await renderWithProviders(<RisingSection />);
+    await renderSections(<RisingSection />);
     await expect.element(heading('Rising this week')).toBeVisible();
     expect(server.imageReads.at(-1)?.filters.ids).toEqual(server.rising.slice(0, 25));
   });
 
   test('with a genre picked reads every id, since the genre filters after', async () => {
     server.rising = Array.from({ length: 40 }, (_, i) => 40 - i);
-    await renderWithProviders(<RisingSection tags={[SYNTHWAVE]} />);
+    await renderSections(<RisingSection tags={[SYNTHWAVE]} />);
     await expect.element(heading('Rising this week')).toBeVisible();
     expect(server.imageReads.at(-1)?.filters.ids).toEqual(server.rising);
     expect(titles()).toHaveLength(7);
   });
 
   test('is hidden when no song was played this week', async () => {
-    await renderWithProviders(<RisingSection />);
+    await renderSections(<RisingSection />);
     expect(page.getByRole('heading').elements()).toHaveLength(0);
   });
 
   test('the 2nd song plays with the songs after it as Up next, "Rising this week"', async () => {
     server.rising = [3, 1, 2];
-    await renderWithProviders(<RisingSection />);
+    await renderSections(<RisingSection />);
     await page.getByRole('button', { name: 'Play Song 1' }).click();
 
     expect(playFromList).toHaveBeenCalledTimes(1);
@@ -188,7 +207,7 @@ describe('Rising this week', () => {
 describe('Recently played', () => {
   test("shows this browser's last songs, newest first", async () => {
     useMusicPlayerStore.setState({ recentlyPlayed: [5, 2, 7] });
-    await renderWithProviders(<RecentlyPlayedSection />);
+    await renderSections(<RecentlyPlayedSection />);
 
     await expect.element(heading('Recently played')).toBeVisible();
     expect(titles()).toEqual(['Song 5', 'Song 2', 'Song 7']);
@@ -197,20 +216,20 @@ describe('Recently played', () => {
   test('drops a song the image feed no longer serves (removed)', async () => {
     useMusicPlayerStore.setState({ recentlyPlayed: [5, 2, 7] });
     server.catalog = catalog.filter((s) => s.id !== 2);
-    await renderWithProviders(<RecentlyPlayedSection />);
+    await renderSections(<RecentlyPlayedSection />);
 
     await expect.element(heading('Recently played')).toBeVisible();
     expect(titles()).toEqual(['Song 5', 'Song 7']);
   });
 
   test('is hidden when nothing was played', async () => {
-    await renderWithProviders(<RecentlyPlayedSection />);
+    await renderSections(<RecentlyPlayedSection />);
     expect(page.getByRole('heading').elements()).toHaveLength(0);
   });
 
   test('the 2nd song plays with the songs after it as Up next, "Recently played"', async () => {
     useMusicPlayerStore.setState({ recentlyPlayed: [5, 2, 7] });
-    await renderWithProviders(<RecentlyPlayedSection />);
+    await renderSections(<RecentlyPlayedSection />);
     await page.getByRole('button', { name: 'Play Song 2' }).click();
 
     expect(playFromList).toHaveBeenCalledTimes(1);
@@ -230,7 +249,7 @@ describe('Recently played', () => {
         recentlyPlayed: [id, ...s.recentlyPlayed.filter((other) => other !== id)],
       }));
     });
-    await renderWithProviders(<RecentlyPlayedSection />);
+    await renderSections(<RecentlyPlayedSection />);
     await page.getByRole('button', { name: 'Play Song 2' }).click();
 
     expect(useMusicPlayerStore.getState().recentlyPlayed).toEqual([2, 5, 7]);
@@ -244,7 +263,7 @@ describe('with the music flag off', () => {
     server.music = false;
     server.rising = [1];
     useMusicPlayerStore.setState({ recentlyPlayed: [1] });
-    await renderWithProviders(
+    await renderSections(
       <>
         <RecentlyPlayedSection />
         <RisingSection />

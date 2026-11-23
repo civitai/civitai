@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { PHONE_VIEWPORT, renderAtViewport } from '../../../test/geometry-setup';
 import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
-import type * as ImageUtils from '~/components/Image/image.utils';
+import type * as HiddenPreferences from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import type * as Trpc from '~/utils/trpc';
@@ -23,17 +23,30 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const { withSongCoversStub } = await import('../MusicPlayer/__tests__/song-covers-trpc-stub');
   const stubbed = withSongCoversStub(actual.trpc);
   const getRisingSongs = { useQuery: () => ({ data: server.rising }) };
+  // One page per id list, so a re-render gets the same page back as React Query would.
+  const pages = new Map<string, { items: ImagesInfiniteModel[] }>();
+  const getInfinite = {
+    useQuery: (filters: { ids?: number[] }) => {
+      const key = (filters.ids ?? []).join(',');
+      if (!pages.has(key)) pages.set(key, { items: (filters.ids ?? []).map((id) => song(id)) });
+      return { data: pages.get(key), isLoading: false };
+    },
+  };
   const trpc = new Proxy(stubbed, {
     get: (target, key) =>
-      key === 'image' ? { ...Reflect.get(target, key), getRisingSongs } : Reflect.get(target, key),
+      key === 'image'
+        ? { ...Reflect.get(target, key), getRisingSongs, getInfinite }
+        : Reflect.get(target, key),
   });
   return { ...actual, trpc };
 });
-vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
-  ...(await importOriginal<typeof ImageUtils>()),
-  useQueryImages: (filters: { ids?: number[] }) => ({
-    images: (filters.ids ?? []).map((id) => song(id)),
-    isLoading: false,
+// The viewer's hidden preferences have their own tests; here nothing is hidden.
+vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', async (importOriginal) => ({
+  ...(await importOriginal<typeof HiddenPreferences>()),
+  useApplyHiddenPreferences: ({ data }: { data?: unknown[] }) => ({
+    items: data ?? [],
+    loadingPreferences: false,
+    hiddenCount: 0,
   }),
 }));
 vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
@@ -49,6 +62,7 @@ vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   ),
 }));
 
+import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { RisingSection } from '~/components/Music/MusicLandingSections';
 import { songCovers } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
 
@@ -109,7 +123,12 @@ const PhoneContent = () => (
 describe.each([1, 2, 3, 4, 5, 7])('Rising this week with %i songs', (count) => {
   test('fills the mosaic at 1440 with no empty cell', async () => {
     server.rising = Array.from({ length: count }, (_, i) => i + 1);
-    await renderAtViewport(<RisingSection />, DESKTOP);
+    await renderAtViewport(
+      <SignedOutSessionProvider>
+        <RisingSection />
+      </SignedOutSessionProvider>,
+      DESKTOP
+    );
     await vi.waitFor(() => expect(tiles()).toHaveLength(count));
     expectNoEmptyCells(20);
     // The large tile spans both 210px rows.
@@ -118,7 +137,12 @@ describe.each([1, 2, 3, 4, 5, 7])('Rising this week with %i songs', (count) => {
 
   test('fills the grid at 390 with no empty cell', async () => {
     server.rising = Array.from({ length: count }, (_, i) => i + 1);
-    await renderAtViewport(<PhoneContent />, PHONE_VIEWPORT);
+    await renderAtViewport(
+      <SignedOutSessionProvider>
+        <PhoneContent />
+      </SignedOutSessionProvider>,
+      PHONE_VIEWPORT
+    );
     await vi.waitFor(() => expect(tiles()).toHaveLength(Math.min(count, 4)));
     expectNoEmptyCells(8);
     // Square large tile, as Pencil `P5rvz`'s 176px one; nothing overflows into a scrollbar.
@@ -135,7 +159,12 @@ describe.each([1, 2, 3, 4, 5, 7])('Rising this week with %i songs', (count) => {
 
 test('at 390 with 4 or more songs the mosaic follows Pencil `P5rvz`: large, two square smalls, a wide one under them', async () => {
   server.rising = [1, 2, 3, 4, 5, 6, 7];
-  await renderAtViewport(<PhoneContent />, PHONE_VIEWPORT);
+  await renderAtViewport(
+    <SignedOutSessionProvider>
+      <PhoneContent />
+    </SignedOutSessionProvider>,
+    PHONE_VIEWPORT
+  );
   await vi.waitFor(() => expect(tiles()).toHaveLength(4));
   const [large, a, b, wide] = tiles().map((tile) => tile.getBoundingClientRect());
   for (const small of [a, b]) {
@@ -158,14 +187,24 @@ test('at 390 with 4 or more songs the mosaic follows Pencil `P5rvz`: large, two 
 
 test('a lone tile at 1440 is no wider than the large tile', async () => {
   server.rising = [1];
-  await renderAtViewport(<RisingSection />, DESKTOP);
+  await renderAtViewport(
+    <SignedOutSessionProvider>
+      <RisingSection />
+    </SignedOutSessionProvider>,
+    DESKTOP
+  );
   await vi.waitFor(() => expect(tiles()).toHaveLength(1));
   expect(box(tiles()[0])).toEqual({ w: 440, h: 440 });
 });
 
 test('with 7 songs at 1440 the small tiles follow Pencil `CnGl0`: wide/narrow/mid over narrow/wide/mid', async () => {
   server.rising = [1, 2, 3, 4, 5, 6, 7];
-  await renderAtViewport(<RisingSection />, DESKTOP);
+  await renderAtViewport(
+    <SignedOutSessionProvider>
+      <RisingSection />
+    </SignedOutSessionProvider>,
+    DESKTOP
+  );
   await vi.waitFor(() => expect(tiles()).toHaveLength(7));
   const [, ...small] = tiles().map((tile) => Math.round(tile.getBoundingClientRect().width));
   const [wide, narrow, mid] = small;
@@ -184,7 +223,12 @@ test('a cover fills a wide small tile, past the width its image was requested at
     hash: null,
     nsfwLevel: 1,
   }));
-  await renderAtViewport(<RisingSection />, DESKTOP);
+  await renderAtViewport(
+    <SignedOutSessionProvider>
+      <RisingSection />
+    </SignedOutSessionProvider>,
+    DESKTOP
+  );
   await vi.waitFor(() => expect(tiles()[1].querySelector('img')).not.toBeNull());
   const tile = tiles()[1].getBoundingClientRect();
   const img = tiles()[1].querySelector('img')!.getBoundingClientRect();

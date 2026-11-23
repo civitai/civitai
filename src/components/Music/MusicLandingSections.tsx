@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import type { CSSProperties, ReactNode } from 'react';
 import { useMemo, useState } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
-import { useQueryImages } from '~/components/Image/image.utils';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import {
   FeedSongPlayButton,
@@ -12,6 +12,7 @@ import {
   useFeedSongCover,
 } from '~/components/Music/FeedSongList';
 import { SongCard, UNTITLED_SONG } from '~/components/Music/SongCard';
+import { useSongList } from '~/components/Music/useSongList';
 import {
   MUSIC_FEED_COLUMN_WIDTH,
   SONG_CARD_TEXT_HEIGHT,
@@ -24,7 +25,7 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ImageSort } from '~/server/common/enums';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
-import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { useMusicPlayerStore } from '~/store/music-player.store';
 import { trpc } from '~/utils/trpc';
 
@@ -48,15 +49,16 @@ function useSongsInOrder({
   max: number;
   enabled: boolean;
 }) {
-  const { images, isLoading } = useQueryImages(
+  const browsingLevel = useBrowsingLevelDebounced();
+  const { songs: images, isLoading } = useSongList(
     {
       ids,
       tags,
-      types: [MediaType.audio],
       period: MetricTimeframe.AllTime,
       sort: ImageSort.Newest,
       limit: ids.length,
       withMeta: false,
+      browsingLevel,
     },
     { enabled: enabled && ids.length > 0 }
   );
