@@ -145,7 +145,9 @@
     }
   }
 >
-  <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>
+  <!-- Capped to the visible height with only the tag list shrinking, so a long list or the Undo bar can't
+       push the header and close ✕ off a portrait screen. dvh: mobile browser chrome makes vh too tall. -->
+  <Dialog.Content class="flex max-h-[calc(100dvh-2rem)] flex-col sm:max-w-md" portalProps={portalProps()}>
     <Dialog.Header>
       <Dialog.Title>Manage tags</Dialog.Title>
       <Dialog.Description>
@@ -224,7 +226,7 @@
     {#if tagGroups.length === 0}
       <p class="font-mono text-xs text-dark-2">No tags in this dataset.</p>
     {:else}
-      <ul class="m-0 flex max-h-[50vh] list-none flex-col gap-1 overflow-y-auto p-0">
+      <ul class="m-0 flex max-h-[50vh] min-h-0 list-none flex-col gap-1 overflow-y-auto p-0">
         {#each tagGroups as { tag, count, variants } (tag)}
           <li class="flex items-center gap-2 rounded border border-dark-4 bg-dark-7 px-2.5 py-1.5">
             {#if renameFrom === tag}

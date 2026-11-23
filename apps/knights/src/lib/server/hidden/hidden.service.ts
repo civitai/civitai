@@ -10,6 +10,7 @@ import { payOutVotes } from '../progression/progression';
 import { BUCKET_LEVELS } from '../queue/feed';
 import { canVote } from '../queue/ranks';
 import {
+  notHiddenCreator,
   pacingGate,
   type CastVoteResult,
   type QuestionOption,
@@ -87,6 +88,7 @@ function eligibleReferences(
     .where('r.questionKey', '=', questionKey)
     .where('q.active', '=', true)
     .where('img.userId', 'is distinct from', userId)
+    .where(notHiddenCreator(userId))
     .$if(exclude.length > 0, (qb) => qb.where('r.id', 'not in', exclude))
     .where((eb) =>
       eb.not(
@@ -258,6 +260,7 @@ export async function answerHiddenCheck(
       .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
       .select(['r.id', 'r.imageId', 'r.questionKey', 'r.status', 'q.options'])
       .where('r.id', '=', input.referenceId)
+      .where(notHiddenCreator(input.userId))
       .executeTakeFirst();
     if (!ref) return { status: 'rejected', reason: 'unavailable' };
     const probation = ref.status === REFERENCE_STATUS.probation;

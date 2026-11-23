@@ -7,6 +7,10 @@ name: Unit tests (main batch)
 # status, bisecting a red to the first bad merge commit. See lint.yml's header ("THE UNIT SUITE IS
 # THE EXCEPTION") and scripts/ci/unit-batched.mjs.
 #
+# The same dispatched run also verifies the batch's other suites (lint.yml's `batch-suites` job,
+# scripts/ci/batch-suites.mjs): it dispatches each one whose paths changed since the last green
+# batch and posts a `Batch suites (main batch)` commit status.
+#
 # THE CADENCE IS THIS CRON LINE. :41 keeps it off the top of the hour.
 # scripts/__tests__/main-branch-ci-coverage.test.ts bounds the interval (MAX_BATCH_HOURS);
 # widening it fails that guard until the guard changes too.

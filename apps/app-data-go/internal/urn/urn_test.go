@@ -46,3 +46,16 @@ func TestCollectionSchemaAgreesWithTheAdapter(t *testing.T) {
 		t.Fatalf("vectors: %d, accepted: %d; want at least 20 vectors and exactly 4 accepted", len(file.Vectors), accepted)
 	}
 }
+
+func TestTheSegmentGrammars(t *testing.T) {
+	for s, want := range map[string]bool{"model-benchmarking": true, "a": true, "-x": false, "x-": false, "Ab": false, "": false} {
+		if ValidSlug(s) != want {
+			t.Errorf("ValidSlug(%q) = %v, want %v", s, !want, want)
+		}
+	}
+	for c, want := range map[string]bool{"kv": true, "records_2": true, "2kv": false, "kv.viewer": false, "Kv": false, "": false} {
+		if ValidCollection(c) != want {
+			t.Errorf("ValidCollection(%q) = %v, want %v", c, !want, want)
+		}
+	}
+}

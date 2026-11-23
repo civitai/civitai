@@ -2,11 +2,10 @@
   import { onMount } from 'svelte';
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
-  import Icon from '$lib/Icon.svelte';
   import RankBadge from '$lib/RankBadge.svelte';
   import { modal } from '$lib/modal';
   import { skippable } from '$lib/motion';
-  import { rankUpChanges } from '$lib/rank-up';
+  import { rankBenefits, type RankPerks } from '$lib/rank-up';
   import { sound } from '$lib/sound';
   import '$lib/overlay.css';
 
@@ -14,8 +13,9 @@
     rank,
     level,
     levels,
+    voteWeight,
     goldMultiplier,
-    previous,
+    dailyGoldCap,
     badge = null,
     message,
     submit,
@@ -23,9 +23,9 @@
     rank: string;
     level: number;
     levels?: string;
+    voteWeight?: number;
     goldMultiplier?: number;
-    /** The rank below's perks, for the before and after. */
-    previous?: { goldMultiplier: number };
+    dailyGoldCap?: RankPerks['dailyGoldCap'];
     /** The rank's badge image; without one the crest shows. */
     badge?: string | null;
     message: string | null;
@@ -33,8 +33,10 @@
   } = $props();
 
   let form = $state<HTMLFormElement>();
-  const changes = $derived(
-    goldMultiplier === undefined ? [] : rankUpChanges(previous, { goldMultiplier })
+  const benefits = $derived(
+    voteWeight === undefined || goldMultiplier === undefined || !dailyGoldCap
+      ? []
+      : rankBenefits({ voteWeight, goldMultiplier, dailyGoldCap })
   );
   onMount(() => sound.play(rank === 'Knight' ? 'knighting-ring' : 'rankup'));
   // The dialog is gone as soon as its form is submitted, so a second close cannot post twice.
@@ -58,12 +60,12 @@
       <p class="rank">{rank}</p>
       <h2 id="rankup-title">You have risen to {rank}</h2>
       {#if levels}<p class="levels">Levels {levels}. The Order trusts your judgment more.</p>{/if}
-      {#if changes.length > 0}
+      {#if benefits.length > 0}
         <dl class="changes">
-          {#each changes as change (change.key)}
+          {#each benefits as benefit (benefit.key)}
             <div>
-              <dt>{change.label}</dt>
-              <dd>{change.from}<Icon name="arrow-right" size={12} /><b>{change.to}</b></dd>
+              <dt>{benefit.label}</dt>
+              <dd><b>{benefit.value}</b></dd>
             </div>
           {/each}
         </dl>
@@ -164,7 +166,9 @@
   }
   .changes {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-columns: minmax(0, 220px);
+    grid-auto-flow: column;
+    justify-content: center;
     gap: 12px;
     width: 100%;
     margin: 14px 0 0;
@@ -234,6 +238,7 @@
       font-size: 22px;
     }
     .changes {
+      grid-auto-flow: row;
       grid-template-columns: minmax(0, 1fr);
       gap: 8px;
     }

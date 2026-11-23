@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"sync/atomic"
@@ -26,6 +27,7 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/registry"
 	"github.com/civitai/civitai/apps/app-data-go/internal/rest"
 	"github.com/civitai/civitai/apps/app-data-go/internal/session"
+	"github.com/civitai/civitai/apps/app-data-go/internal/writes"
 )
 
 // Stream timings that are not configuration: how long a stream that failed is not reopened; how
@@ -52,6 +54,9 @@ func run(log *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
+	}
+	for _, w := range cfg.Warnings() {
+		log.Warn("configuration", "warning", w)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -80,6 +85,11 @@ func run(log *slog.Logger) error {
 		LiveWait:  cfg.LiveWait,
 		RESTSlots: make(chan struct{}, cfg.RESTMaxInFlight),
 	}
+	// One verifier, and one key set, for the block exchange and the writes alike.
+	var verifier *exchange.BlockVerifier
+	if cfg.BlockJWKSURL != "" {
+		verifier = &exchange.BlockVerifier{JWKSURL: cfg.BlockJWKSURL, HTTP: &http.Client{Timeout: exchangeTimeout}}
+	}
 	swept := make(chan struct{})
 	if cfg.RegistryURL != "" {
 		ex := &exchange.Exchanger{
@@ -92,7 +102,6 @@ func run(log *slog.Logger) error {
 		router := &exchange.Router{User: ex.Exchange}
 		if cfg.BlockExchange {
 			// Each block token is verified against the site's JWKS before it is sent to the hub.
-			verifier := &exchange.BlockVerifier{JWKSURL: cfg.BlockJWKSURL, HTTP: &http.Client{Timeout: exchangeTimeout}}
 			router.Blocks = &exchange.BlockCache{Hub: ex.ExchangeBlock, Verify: verifier.Check, Margin: expiryMargin,
 				Observe: m.ObserveBlockExchange(log.With("component", "block-exchange"))}
 		}
@@ -119,16 +128,30 @@ func run(log *slog.Logger) error {
 
 	var draining atomic.Bool
 	srv.Ready = func() bool { return !draining.Load() }
+	if cfg.Writes {
+		site, err := url.Parse(cfg.WritesSiteURL)
+		if err != nil {
+			return err // config validated it; never reached
+		}
+		srv.Writes = &writes.Forwarder{
+			Site: site, Key: []byte(cfg.WritesSigningKey), Timeout: cfg.WritesTimeout,
+			HTTP:   &http.Client{}, // bounded per forward by Timeout; redirects never followed (writes.Forwarder)
+			Verify: verifier.Check, Ready: srv.Ready,
+			Metrics: m, Log: log.With("component", "writes"),
+		}
+	}
+	// A response may take as long as the slowest request: a read's deadline, or a forward's timeout.
+	longest := max(cfg.RequestDeadline, cfg.WritesTimeout)
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      cfg.RequestDeadline + 5*time.Second,
+		WriteTimeout:      longest + 5*time.Second,
 		IdleTimeout:       100 * time.Second,
 	}
 	log.Info("app-data-go starting", "addr", cfg.Addr, "registry", cfg.RegistryURL != "", "block_exchange", cfg.BlockExchange,
-		"max_streams", cfg.MaxStreams, "max_streams_per_token", cfg.MaxStreamsPerToken)
+		"writes", cfg.Writes, "max_streams", cfg.MaxStreams, "max_streams_per_token", cfg.MaxStreamsPerToken)
 
 	served := make(chan error, 1)
 	go func() { served <- httpSrv.ListenAndServe() }()
@@ -138,7 +161,11 @@ func run(log *slog.Logger) error {
 		stop()
 	}
 	draining.Store(true)
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// In-flight writes are let finish: one cut off here would answer its client nothing, its outcome
+	// unknown. New writes are refused 503 not_forwarded once draining is set. The wait is sized by the
+	// forward timeout alone (a read cut off is only retried), and that timeout's cap
+	// (config.MaxWritesTimeout) keeps it inside the pod's termination grace period.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), max(10*time.Second, cfg.WritesTimeout+config.ShutdownMargin))
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx) //nolint:contextcheck // shutdown outlives the cancelled ctx by design
 	<-swept
