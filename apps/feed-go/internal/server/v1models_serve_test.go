@@ -763,7 +763,7 @@ func TestV1ModelsListTrainingDataVouchedByPublishedRules(t *testing.T) {
 		hydrate.KeyBasicUsers + ":1001":         {{K: "id", V: int64(1001)}, {K: "username", V: "artist_one"}, {K: "deletedAt", V: nil}, {K: "image", V: nil}, {K: "cachedAt", V: at}},
 		hydrate.KeyProfilePictures + ":1001":    {{K: "notFound", V: true}},
 		v1models.KeyPaidAccessVersion + ":6001": {{K: "entityId", V: int64(6001)}, {K: "endsAtMs", V: nil}, {K: "timeframeDays", V: nil}, {K: "cachedAt", V: at}},
-		v1models.KeyImagesForVersion + ":6001": {{K: "modelVersionId", V: int64(6001)}, {K: "images", V: []any{jspack.Obj{
+		hydrate.KeyVersionImages + ":6001": {{K: "modelVersionId", V: int64(6001)}, {K: "images", V: []any{jspack.Obj{
 			{K: "id", V: int64(8001)}, {K: "url", V: "u1"}, {K: "nsfwLevel", V: int64(1)}, {K: "type", V: "image"}, {K: "poi", V: false}, {K: "minor", V: false},
 		}}}, {K: "cachedAt", V: at}},
 		v1models.KeyFilesForVersion + ":6001": {{K: "modelVersionId", V: int64(6001)}, {K: "files", V: []any{
@@ -773,8 +773,10 @@ func TestV1ModelsListTrainingDataVouchedByPublishedRules(t *testing.T) {
 				{K: "modelVersionId", V: int64(6001)}, {K: "hashes", V: []any{}}, {K: "metadata", V: jspack.Obj{}}},
 		}}, {K: "cachedAt", V: at}},
 		// The default addons exclude tags at every level, so the image's tag ids are read.
-		v1models.KeyTagIDsForImages + ":8001": {{K: "imageId", V: int64(8001)}, {K: "tags", V: []any{int64(1)}}, {K: "cachedAt", V: at}},
-		v1models.KeyMetricPrivacy + ":1001":   {{K: "hideModelBuzz", V: false}, {K: "hideModelDownloads", V: false}, {K: "hideModelGenerations", V: false}},
+		hydrate.KeyTagIDs + ":8001":         {{K: "imageId", V: int64(8001)}, {K: "tags", V: []any{int64(1)}}, {K: "cachedAt", V: at}},
+		v1models.KeyMetricPrivacy + ":1001": {{K: "hideModelBuzz", V: false}, {K: "hideModelDownloads", V: false}, {K: "hideModelGenerations", V: false}},
+		// The version's showcase as getVersionShowcaseCache writes an uncurated one.
+		hydrate.KeyVersionShowcase + ":6001": {{K: "modelVersionId", V: int64(6001)}, {K: "rows", V: []any{}}, {K: "community", V: []any{}}, {K: "cachedAt", V: at}},
 	} {
 		cache.SetString(k, jspack.Pack(v))
 	}
