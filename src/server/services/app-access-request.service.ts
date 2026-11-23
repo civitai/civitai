@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { refreshSession } from '~/server/auth/session-invalidation';
+import { isAppAccessRequestAutoApproveEnabled } from '~/server/services/app-blocks-flag';
 import { notifyAppAccessDecision } from '~/server/services/app-access-request-notify';
 import { dbWrite } from '~/server/db/client';
 import type {
@@ -8,8 +9,12 @@ import type {
   ListAppAccessRequestsInput,
   SubmitAppAccessRequestInput,
 } from '~/server/schema/app-access-request.schema';
-import type { AppAccessRequestStatus } from '~/shared/constants/app-access-request.constants';
+import {
+  APP_ACCESS_AUTO_APPROVE_REVIEWER_ID,
+  type AppAccessRequestStatus,
+} from '~/shared/constants/app-access-request.constants';
 import { handleLogError } from '~/server/utils/errorHandling';
+import type { SessionUser } from '~/types/session';
 
 /**
  * "Request access" from the `/apps/build` pitch, and the moderator queue that reviews it.
@@ -63,16 +68,53 @@ async function hasApprovedAppAccessRequest(userId: number): Promise<boolean> {
 /**
  * Creates the viewer's request. One pending request per person (the partial unique index), so a
  * second submit while one is pending is a CONFLICT; after a decline a new request is a new row.
+ *
+ * With the `app-access-request-auto-approve` flag on for the requester, the request is recorded as
+ * already approved by the system account, unless they have a pending or declined request (so a
+ * decline or revoke stays a moderator's call; declined rows are that record, so never prune them) or
+ * their account is banned, muted or deleted. Those fall through to a pending request.
  */
 export async function submitAppAccessRequest({
-  userId,
+  user,
   input,
 }: {
-  userId: number;
+  user: SessionUser;
   input: SubmitAppAccessRequestInput;
 }): Promise<AppAccessRequestView> {
+  const userId = user.id;
   if (await hasApprovedAppAccessRequest(userId))
     throw new TRPCError({ code: 'CONFLICT', message: APP_ACCESS_ALREADY_APPROVED });
+
+  if (await isAppAccessRequestAutoApproveEnabled({ user })) {
+    // Standing is read from the User row, not the session, which can be hours old.
+    const [approved] = await dbWrite.$queryRaw<AppAccessRequestView[]>(Prisma.sql`
+      INSERT INTO "AppAccessRequest" ("userId", "whatToBuild", "status", "reviewedAt", "reviewedById")
+      SELECT u."id", ${input.whatToBuild}, 'approved', CURRENT_TIMESTAMP, ${APP_ACCESS_AUTO_APPROVE_REVIEWER_ID}
+      FROM "User" u
+      WHERE u."id" = ${userId}
+        AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT u."muted"
+        AND NOT EXISTS (
+          SELECT 1 FROM "AppAccessRequest"
+          WHERE "userId" = ${userId} AND "status" IN ('pending', 'declined')
+        )
+      RETURNING ${VIEW_COLUMNS}
+    `);
+    if (approved) {
+      // After the INSERT has committed, best-effort, as in `decide`.
+      await refreshSession(userId, { caller: 'moderation' }).catch(handleLogError);
+      try {
+        await notifyAppAccessDecision({
+          userId,
+          requestId: approved.id,
+          decision: 'approved',
+          revoked: false,
+        });
+      } catch (e) {
+        handleLogError(e as Error);
+      }
+      return approved;
+    }
+  }
 
   const [row] = await dbWrite.$queryRaw<AppAccessRequestView[]>(Prisma.sql`
     INSERT INTO "AppAccessRequest" ("userId", "whatToBuild")

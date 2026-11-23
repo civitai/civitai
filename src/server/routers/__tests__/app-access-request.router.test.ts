@@ -84,7 +84,7 @@ describe('submit', () => {
   it('passes the CALLER’s id with the trimmed text, and nothing else', async () => {
     await asRequester().submit({ whatToBuild: `  ${IDEA}  ` });
     expect(service.submit).toHaveBeenCalledWith({
-      userId: REQUESTER_ID,
+      user: expect.objectContaining({ id: REQUESTER_ID }),
       input: { whatToBuild: IDEA },
     });
   });
@@ -98,7 +98,7 @@ describe('submit', () => {
       appBuilderApproved: true,
     } as never);
     expect(service.submit).toHaveBeenCalledWith({
-      userId: REQUESTER_ID,
+      user: expect.objectContaining({ id: REQUESTER_ID }),
       input: { whatToBuild: IDEA },
     });
   });

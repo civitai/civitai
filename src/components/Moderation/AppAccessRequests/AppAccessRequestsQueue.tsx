@@ -12,7 +12,10 @@ import {
 } from '@mantine/core';
 import { useState } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import type { AppAccessRequestStatus } from '~/shared/constants/app-access-request.constants';
+import {
+  APP_ACCESS_AUTO_APPROVE_REVIEWER_ID,
+  type AppAccessRequestStatus,
+} from '~/shared/constants/app-access-request.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -117,7 +120,10 @@ export function AppAccessRequestsQueue() {
                     </Badge>
                     {item.reviewedAt && (
                       <Text size="xs" c="dimmed">
-                        {item.reviewedByUsername ?? 'a moderator'}, {formatDate(item.reviewedAt)}
+                        {item.reviewedById === APP_ACCESS_AUTO_APPROVE_REVIEWER_ID
+                          ? 'Auto-approved'
+                          : item.reviewedByUsername ?? 'a moderator'}
+                        , {formatDate(item.reviewedAt)}
                       </Text>
                     )}
                   </Table.Td>

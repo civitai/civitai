@@ -1679,6 +1679,31 @@ export async function isAppHibernateEnabled(opts: { user?: SessionUser | null })
 }
 
 /**
+ * Apps access requests approved on submit (`submitAppAccessRequest`) rather than queued for a
+ * moderator. Evaluated for the requester. No user, an absent flag or an unreachable Flipt: `false`,
+ * which is the moderator-reviewed flow.
+ */
+export const APP_ACCESS_REQUEST_AUTO_APPROVE_FLAG = 'app-access-request-auto-approve';
+
+export async function isAppAccessRequestAutoApproveEnabled(opts: {
+  user?: SessionUser | null;
+}): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (
+      (await isFlipt(
+        APP_ACCESS_REQUEST_AUTO_APPROVE_FLAG,
+        String(user.id),
+        buildFliptContext(user)
+      )) === true
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The in-app raise of a viewer's own per-app daily Buzz limit: the host's daily-limit dialog
  * offers "Raise limit", and `blocks.getMyAppDailyLimit` / `blocks.raiseAppDailyLimit` answer.
  * Checked on the server as well as the client so turning it off reaches tabs that loaded the

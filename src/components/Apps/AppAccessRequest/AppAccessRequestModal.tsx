@@ -19,12 +19,16 @@ export default function AppAccessRequestModal() {
   });
 
   const submit = trpc.appAccessRequest.submit.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (request) => {
       await utils.appAccessRequest.getMine.invalidate();
-      showSuccessNotification({
-        title: 'Request sent',
-        message: 'A moderator will review it. You can check its status on this page.',
-      });
+      showSuccessNotification(
+        request.status === 'approved'
+          ? { title: 'Access granted', message: 'You can build apps now.' }
+          : {
+              title: 'Request sent',
+              message: 'A moderator will review it. You can check its status on this page.',
+            }
+      );
       dialog.onClose();
     },
   });

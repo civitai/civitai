@@ -112,3 +112,28 @@ describe('AppAccessRequestsQueue — a decision refreshes what shows it', () => 
     expect([...mocks.invalidated].sort()).toEqual(['countPending', 'list']);
   });
 });
+
+describe('AppAccessRequestsQueue — who decided', () => {
+  test('🔴 a request the auto-approve flag approved reads "Auto-approved", not as a moderator decision', async () => {
+    mocks.items = [
+      { ...row(21, 'approved'), reviewedById: -1, reviewedByUsername: 'civitai' },
+      row(22, 'approved'),
+    ];
+    renderWithProviders(<AppAccessRequestsQueue />);
+    await expect.element(inRow(21).getByText(/Auto-approved/)).toBeInTheDocument();
+    expect(
+      inRow(21)
+        .getByText(/civitai/)
+        .elements()
+    ).toHaveLength(0);
+    await expect.element(inRow(22).getByText(/queue_reviewer/)).toBeInTheDocument();
+    expect(
+      inRow(22)
+        .getByText(/Auto-approved/)
+        .elements()
+    ).toHaveLength(0);
+    // Still revocable like any approved row.
+    await page.getByTestId('app-access-request-revoke-21').click();
+    expect(mocks.decided).toEqual([{ id: 21, decision: 'declined' }]);
+  });
+});
