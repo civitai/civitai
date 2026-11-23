@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getModeratedTags } from '~/server/services/system-cache';
+import { pgDbWrite } from '~/server/db/pgDb';
+import { logToAxiom, safeError } from '~/server/logging/client';
+import { getModeratedTags, getTagRules } from '~/server/services/system-cache';
+import type { TagWriteTransaction } from '~/server/services/tagsOnImageNew.service';
 import {
   deleteTagsOnImageNew,
   insertTagsOnImageNew,
@@ -47,9 +50,16 @@ export async function readSongTags(
   imageIds: number[],
   db: typeof dbRead | typeof dbWrite = dbWrite
 ) {
-  const byImage = new Map<number, SongTag[]>();
-  if (!imageIds.length) return byImage;
-  const rows = await (db as typeof dbWrite).$queryRaw<(SongTag & { imageId: number })[]>`
+  if (!imageIds.length) return new Map<number, SongTag[]>();
+  const query = await songTagsSql(imageIds);
+  return bySong(await (db as typeof dbWrite).$queryRaw<SongTagRow[]>`${query}`);
+}
+
+type SongTagRow = SongTag & { imageId: number };
+
+/** `readSongTags`' statement, built (its moderated set read) ahead of running it. */
+export async function songTagsSql(imageIds: number[]) {
+  return Prisma.sql`
     SELECT toi."imageId", t.id, t.name
     FROM "TagsOnImageDetails" toi
     JOIN "Tag" t ON t.id = toi."tagId"
@@ -60,6 +70,16 @@ export async function readSongTags(
       AND ${await attachableTagSql('t')}
     ORDER BY t.name
   `;
+}
+
+/** `readSongTags` inside a transaction, with the statement `songTagsSql` built before it began. */
+export async function readSongTagsIn(tx: TagWriteTransaction, query: Prisma.Sql) {
+  const { rows } = await tx.client.query<SongTagRow>(query.text, query.values);
+  return bySong(rows);
+}
+
+function bySong(rows: SongTagRow[]) {
+  const byImage = new Map<number, SongTag[]>();
   for (const { imageId, id, name } of rows)
     byImage.set(imageId, [...(byImage.get(imageId) ?? []), { id, name }]);
   return byImage;
@@ -97,19 +117,54 @@ export async function hasSongTagRow(imageId: number, tagId: number) {
 }
 
 /** Insert only: an existing row (a disabled one included) is never changed. */
-export function attachSongTag(imageId: number, tagId: number) {
-  return insertTagsOnImageNew([
-    {
-      imageId,
-      tagId,
-      source: TagSource.User,
-      automated: false,
-      disabled: false,
-      needsReview: false,
-    },
-  ]);
+export function attachSongTag(imageId: number, tagId: number, tx?: TagWriteTransaction) {
+  return insertTagsOnImageNew(
+    [
+      {
+        imageId,
+        tagId,
+        source: TagSource.User,
+        automated: false,
+        disabled: false,
+        needsReview: false,
+      },
+    ],
+    tx
+  );
 }
 
-export function detachSongTag(imageId: number, tagId: number) {
-  return deleteTagsOnImageNew([{ imageId, tagId }]);
+export function detachSongTag(imageId: number, tagId: number, tx?: TagWriteTransaction) {
+  return deleteTagsOnImageNew([{ imageId, tagId }], tx);
+}
+
+/**
+ * `write` must do nothing else (no cache, no other pool) while the transaction holds its locks: the
+ * tag rules are read before it begins. The writers' follow-up steps run after the commit, each on
+ * its own: one that fails is logged, and neither stops the others nor undoes the committed write.
+ */
+export async function inSongTagTransaction<T>(write: (tx: TagWriteTransaction) => Promise<T>) {
+  const tagRules = await getTagRules();
+  const client = await pgDbWrite.connect();
+  const tx: TagWriteTransaction = { client, tagRules, afterCommit: [] };
+  let result: T;
+  try {
+    await client.query('BEGIN');
+    result = await write(tx);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+  for (const step of tx.afterCommit)
+    await step().catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'song-tag-after-commit',
+        message: 'A step after a committed song tag write failed',
+        error: safeError(error),
+      })
+    );
+  return result;
 }

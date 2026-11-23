@@ -11,9 +11,13 @@ import {
   useSongListCovers,
 } from '~/components/MusicPlayer/useMusicPlayerCover';
 import { useSongListPlays } from '~/components/Music/useSongPlays';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { PlayerSongCover } from '~/server/services/post.service';
+import type { SongGenreTagIds } from '~/server/services/song-genre.service';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
+import { songGenreFromTagIds } from '~/shared/constants/song-genres';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import { trpc } from '~/utils/trpc';
 
 /** Up next's name for songs played from a mixed image feed (Audio picked in its filters). */
 const DEFAULT_FEED_SONG_LIST_NAME = 'Images';
@@ -27,8 +31,12 @@ export function SongListNameProvider({ name, children }: { name?: string; childr
 
 const SongCoversContext = createContext<Map<number, PlayerSongCover> | null>(null);
 const SongPlaysContext = createContext<Record<number, number> | null>(null);
+const SongGenreTagIdsContext = createContext<SongGenreTagIds | undefined>(undefined);
 
-/** Reads covers and play counts once for the songs in `images`. */
+/**
+ * Reads covers and play counts once for the songs in `images`, and the genre-to-tag map their
+ * genres are read through (one cached read, the one the genre chips make).
+ */
 export function FeedSongsProvider({
   images,
   children,
@@ -36,13 +44,35 @@ export function FeedSongsProvider({
   images: { id: number; type: string }[];
   children: ReactNode;
 }) {
+  const features = useFeatureFlags();
   const songIds = images.filter((image) => image.type === MediaType.audio).map((image) => image.id);
   const covers = useSongListCovers(songIds);
   const plays = useSongListPlays(songIds);
+  // `!!`: an off flag is absent from FeatureAccess, and `enabled: undefined` reads as enabled.
+  const { data: genreTagIds } = trpc.image.getSongGenreTags.useQuery(undefined, {
+    enabled: !!features.music && songIds.length > 0,
+  });
   return (
     <SongCoversContext.Provider value={covers}>
-      <SongPlaysContext.Provider value={plays}>{children}</SongPlaysContext.Provider>
+      <SongPlaysContext.Provider value={plays}>
+        <FeedSongGenresProvider genreTagIds={genreTagIds}>{children}</FeedSongGenresProvider>
+      </SongPlaysContext.Provider>
     </SongCoversContext.Provider>
+  );
+}
+
+/** The genre-to-tag map the songs below read their genres through (`useFeedSongGenre`). */
+export function FeedSongGenresProvider({
+  genreTagIds,
+  children,
+}: {
+  genreTagIds: SongGenreTagIds | undefined;
+  children: ReactNode;
+}) {
+  return (
+    <SongGenreTagIdsContext.Provider value={genreTagIds}>
+      {children}
+    </SongGenreTagIdsContext.Provider>
   );
 }
 
@@ -50,6 +80,14 @@ export function useFeedSongCover(songId: number) {
   const feedCovers = useContext(SongCoversContext);
   const ownCovers = useMusicPlayerCovers(feedCovers ? [] : [songId]);
   return (feedCovers ?? ownCovers).get(songId);
+}
+
+/**
+ * A feed song's genre, from the tag ids its feed item carries (`image.getInfinite` always sends
+ * them): the genre's tag is its mirror. Outside a `FeedSongsProvider` no genre is known.
+ */
+export function useFeedSongGenre(song: { tagIds?: number[] }) {
+  return songGenreFromTagIds(song.tagIds, useContext(SongGenreTagIdsContext));
 }
 
 /** The song's play count; undefined until it is known. */

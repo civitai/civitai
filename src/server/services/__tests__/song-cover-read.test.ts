@@ -44,6 +44,8 @@ type Row = {
   blockedFor: string | null;
   needsReview: string | null;
   acceptableMinor: boolean;
+  /** The song's `Track` row, as the `track` relation select returns it. */
+  track?: { coverImageId: number | null } | null;
 };
 
 let table: Row[] = [];
@@ -65,11 +67,13 @@ function image(id: number, values: Partial<Row> = {}): Row {
     ...values,
   };
 }
+/** A song linked to `coverImageId` through its `Track` row; its metadata names no cover. */
 const song = (id: number, coverImageId?: number) =>
   image(id, {
     postId: 70,
     type: 'audio',
-    metadata: { duration: 90, ...(coverImageId !== undefined && { coverImageId }) },
+    metadata: { duration: 90 },
+    track: coverImageId === undefined ? null : { coverImageId },
   });
 const coverOf = (id: number, songId: number, values: Partial<Row> = {}) =>
   image(id, { metadata: { parentId: songId }, ...values });
@@ -142,18 +146,28 @@ describe('the global player reads song covers', () => {
     expect(await read([1, 2, 3, 4, 5, 6])).toEqual([]);
   });
 
-  it("leaves out a cover that is not the song's own: someone else's, in a post, or another song's", async () => {
+  // No writer links another song's cover: each links a row made for its own song. The unique
+  // `Track.coverImageId` only stops two songs sharing one.
+  it("leaves out a linked image that is not the song's own: someone else's, or in a post", async () => {
     table = [
       song(1, 101),
       song(2, 102),
-      song(3, 103),
       coverOf(101, 1, { userId: 6 }),
       coverOf(102, 2, { postId: 71 }),
-      coverOf(103, 1),
     ];
-    mocks.visible = new Set([1, 2, 3]);
+    mocks.visible = new Set([1, 2]);
 
-    expect(await read([1, 2, 3])).toEqual([]);
+    expect(await read([1, 2])).toEqual([]);
+  });
+
+  it('reads the link from the Track row, not from a cover id left on the metadata', async () => {
+    table = [
+      image(1, { postId: 70, type: 'audio', metadata: { duration: 90, coverImageId: 101 } }),
+      coverOf(101, 1),
+    ];
+    mocks.visible = new Set([1]);
+
+    expect(await read([1])).toEqual([]);
   });
 
   it('returns nothing for a song the requester cannot see', async () => {

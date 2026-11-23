@@ -40,6 +40,8 @@ type Row = {
 
 /** The `Image` table the editor reads: post media by `postId`, anything else by id. */
 let table: Row[] = [];
+/** The `Track` table: each song's cover link. */
+let tracks: { imageId: number; coverImageId: number | null; genre: string | null }[] = [];
 
 function image(id: number, values: Partial<Row> = {}): Row {
   return {
@@ -55,17 +57,22 @@ function image(id: number, values: Partial<Row> = {}): Row {
     ...values,
   };
 }
-const song = (id: number, coverImageId?: number) =>
-  image(id, {
-    postId: POST,
-    type: 'audio',
-    metadata: { duration: 90, ...(coverImageId !== undefined && { coverImageId }) },
-  });
+/** A song, linked to `coverImageId` through its `Track` row. */
+const song = (id: number, coverImageId?: number) => {
+  if (coverImageId !== undefined) tracks.push({ imageId: id, coverImageId, genre: null });
+  return image(id, { postId: POST, type: 'audio', metadata: { duration: 90 } });
+};
 const coverOf = (id: number, songId: number, values: Partial<Row> = {}) =>
   image(id, { metadata: { parentId: songId }, ...values });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  tracks = [];
+  vi.mocked(dbMock.dbRead.track.findMany).mockImplementation((async ({
+    where,
+  }: {
+    where: { imageId: { in: number[] } };
+  }) => tracks.filter((x) => where.imageId.in.includes(x.imageId))) as never);
   vi.mocked(dbMock.dbRead.image.findMany).mockImplementation((async ({
     where,
     select,
@@ -108,24 +115,40 @@ describe("the post editor's song covers", () => {
       [3, null],
       [4, null],
     ]);
-    // The post's media read plus one read for every cover.
+    // The post's media read, one read of the songs' Track rows, and one read for every cover.
     expect(dbMock.dbRead.image.findMany).toHaveBeenCalledTimes(2);
+    expect(dbMock.dbRead.track.findMany).toHaveBeenCalledTimes(1);
   });
 
-  it("is null when the linked image is gone, someone else's, a post image or another song's", async () => {
+  // No writer links another song's cover: each links a row made for its own song. The unique
+  // `Track.coverImageId` only stops two songs sharing one.
+  it("is null when the linked image is gone, someone else's, or a post image", async () => {
     table = [
       song(1, 404),
       song(2, 102),
       song(3, 103),
-      song(4, 104),
       coverOf(102, 2, { userId: 6 }),
       coverOf(103, 3, { postId: POST + 1 }),
-      coverOf(104, 1),
     ];
 
     const images = await read();
 
-    expect(images.map((x) => x.cover)).toEqual([null, null, null, null]);
+    expect(images.map((x) => x.cover)).toEqual([null, null, null]);
+  });
+
+  it("carry the song's genre from its Track row, its genre's tag left out of the song's tags", async () => {
+    table = [song(1)];
+    tracks = [{ imageId: 1, coverImageId: null, genre: 'Pop' }];
+    // The song's owner-managed tag rows: the genre's mirror and one the owner added.
+    vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([
+      { imageId: 1, id: 21, name: 'chill' },
+      { imageId: 1, id: 20, name: 'pop' },
+    ] as never);
+
+    const [image] = await read();
+
+    expect(image.genre).toBe('Pop');
+    expect(image.songTags).toEqual([{ id: 21, name: 'chill' }]);
   });
 
   it('skip the cover read for a post whose songs have none', async () => {

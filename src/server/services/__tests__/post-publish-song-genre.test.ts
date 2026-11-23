@@ -38,13 +38,16 @@ const publishedAt = async () =>
     )
   ).rows[0].publishedAt;
 
-async function addImage(id: number, type: string, metadata: object) {
+/** An image of the post; a `genre` goes in the song's Track row, the rest in its metadata. */
+async function addImage(id: number, type: string, { genre, ...metadata }: { genre?: string }) {
   await pg.db.query(`INSERT INTO "Image" (id, "postId", type, metadata) VALUES ($1, $2, $3, $4)`, [
     id,
     POST,
     type,
     metadata,
   ]);
+  if (genre !== undefined)
+    await pg.db.query(`INSERT INTO "Track" ("imageId", genre) VALUES ($1, $2)`, [id, genre]);
 }
 
 beforeAll(async () => {
@@ -55,6 +58,7 @@ beforeAll(async () => {
       "publishedAt" timestamp(3), metadata jsonb, title text
     );
     CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, type text NOT NULL, metadata jsonb);
+    CREATE TABLE "Track" ("imageId" int PRIMARY KEY, "coverImageId" int, genre text);
     -- The publish refuses a post on a version a moderator took down; this post is on none.
     CREATE TABLE "Model" (id int PRIMARY KEY, status text NOT NULL, "userId" int);
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL, status text NOT NULL);
@@ -65,7 +69,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await pg.db.exec(`TRUNCATE "Post"; TRUNCATE "Image";`);
+  await pg.db.exec(`TRUNCATE "Post"; TRUNCATE "Image"; TRUNCATE "Track";`);
   await pg.db.query(`INSERT INTO "Post" (id, "userId") VALUES ($1, $2)`, [POST, OWNER]);
   const run = async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const q = Prisma.sql(strings, ...(values as never[]));
@@ -89,9 +93,11 @@ beforeEach(async () => {
   }) =>
     where.type === 'audio' && where.postId === POST
       ? (
-          await pg.db.query(`SELECT metadata FROM "Image" WHERE "postId" = $1 AND type = 'audio'`, [
-            POST,
-          ])
+          await pg.db.query(
+            `SELECT (SELECT json_build_object('genre', t.genre) FROM "Track" t WHERE t."imageId" = i.id) AS track
+             FROM "Image" i WHERE i."postId" = $1 AND i.type = 'audio'`,
+            [POST]
+          )
         ).rows
       : []) as never);
   dbMock.dbWrite.post.findUnique.mockImplementation(

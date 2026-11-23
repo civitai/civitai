@@ -11,8 +11,9 @@ import type * as TagsOnImageNew from '~/server/services/tagsOnImageNew.service';
 import type { SessionUser } from '~/types/session';
 
 /**
- * A song's genre and tags, with the song, the tags and the image tag rows in PGlite: each test
- * reads back what was stored.
+ * A song's genre and tags, with the song, its Track row, the tags and the image tag rows in PGlite:
+ * each test reads back what was stored. The primary pool's connection is the same PGlite session,
+ * so `setSongGenre`'s transaction holds the tag writes too.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -23,7 +24,20 @@ const mocks = vi.hoisted(() => ({
   music: true,
   /** The image tag store as PGlite rows; set in beforeAll. */
   db: null as unknown as PGlite,
+  /**
+   * Whether the genre transaction's connection is between BEGIN and COMMIT/ROLLBACK. PGlite is one
+   * session, so this is how a write that skips the transaction's client is told apart.
+   */
+  inTransaction: false,
 }));
+
+/** The tag writers' `tx`: the rows go on its client, or nowhere while the transaction is open. */
+type Tx = { client: { query: (text: string, values?: unknown[]) => Promise<unknown> } } | undefined;
+const tagStore = (tx: Tx) => {
+  if (!tx && mocks.inTransaction)
+    throw new Error("a tag write during the genre transaction must go on the transaction's client");
+  return tx?.client ?? mocks.db;
+};
 
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
@@ -44,9 +58,13 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
 vi.mock('~/server/services/tagsOnImageNew.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TagsOnImageNew>()),
   insertTagsOnImageNew: vi.fn(
-    async (args: { imageId: number; tagId: number; automated?: boolean; disabled?: boolean }[]) => {
+    async (
+      args: { imageId: number; tagId: number; automated?: boolean; disabled?: boolean }[],
+      tx?: Tx
+    ) => {
+      const store = tagStore(tx);
       for (const a of args)
-        await mocks.db.query(
+        await store.query(
           `INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", source, automated, disabled)
            VALUES ($1, $2, 'User', $3, $4) ON CONFLICT DO NOTHING`,
           [a.imageId, a.tagId, a.automated ?? false, a.disabled ?? false]
@@ -56,13 +74,29 @@ vi.mock('~/server/services/tagsOnImageNew.service', async (importOriginal) => ({
   upsertTagsOnImageNew: vi.fn(async () => {
     throw new Error('a song tag write must never upsert');
   }),
-  deleteTagsOnImageNew: vi.fn(async (args: { imageId: number; tagId: number }[]) => {
+  deleteTagsOnImageNew: vi.fn(async (args: { imageId: number; tagId: number }[], tx?: Tx) => {
+    const store = tagStore(tx);
     for (const a of args)
-      await mocks.db.query(
-        `DELETE FROM "TagsOnImageDetails" WHERE "imageId" = $1 AND "tagId" = $2`,
-        [a.imageId, a.tagId]
-      );
+      await store.query(`DELETE FROM "TagsOnImageDetails" WHERE "imageId" = $1 AND "tagId" = $2`, [
+        a.imageId,
+        a.tagId,
+      ]);
   }),
+}));
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: {},
+  pgDbReadLong: {},
+  pgDbWrite: {
+    connect: vi.fn(async () => ({
+      query: (text: string, values: unknown[] = []) => {
+        if (text === 'BEGIN') mocks.inTransaction = true;
+        if (text === 'COMMIT' || text === 'ROLLBACK') mocks.inTransaction = false;
+        const paramTypes = values.map((v) => (Number.isInteger(v) ? 23 : 0));
+        return mocks.db.query(text, values, { paramTypes });
+      },
+      release: vi.fn(),
+    })),
+  },
 }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLagHelpers>()),
@@ -88,7 +122,11 @@ import {
   suggestSongTags,
 } from '~/server/services/post.service';
 import { readSongTags, searchSongTags } from '~/server/services/tagsOnSong.service';
-import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
+import {
+  deleteTagsOnImageNew,
+  insertTagsOnImageNew,
+} from '~/server/services/tagsOnImageNew.service';
+import { SONG_GENRES } from '~/shared/constants/song-genres';
 
 const NOT_AUTHORIZED = 'You are not authorized to perform this action';
 const OWNER = 5;
@@ -101,6 +139,11 @@ const stranger = { id: 6 } as SessionUser;
 const moderator = { id: 99, isModerator: true } as SessionUser;
 
 let db: PGlite;
+
+/** The song's stored genre: `Track.genre`. */
+const genreOf = async (id = SONG) =>
+  (await db.query<{ genre: string | null }>(`SELECT genre FROM "Track" WHERE "imageId" = $1`, [id]))
+    .rows[0]?.genre ?? undefined;
 
 const metadataOf = async (id = SONG) =>
   (
@@ -174,10 +217,21 @@ beforeAll(async () => {
       "imageId" int NOT NULL, "tagId" int NOT NULL, source text NOT NULL,
       automated boolean NOT NULL, disabled boolean NOT NULL, PRIMARY KEY ("imageId", "tagId")
     );
+    CREATE TABLE "Track" ("imageId" int PRIMARY KEY, "coverImageId" int UNIQUE, genre text);
+    -- Read for the tag rules before the genre transaction begins; there are none here.
+    CREATE TABLE "TagsOnTags" (
+      "fromTagId" int NOT NULL, "toTagId" int NOT NULL, type text NOT NULL, "createdAt" timestamp
+    );
   `);
   const INT4_OID = 23;
+  // The pool clients. Nothing may use them while the genre transaction holds the Track row, and a
+  // song's Track row is written only on that transaction's client.
   const run = async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = Prisma.sql(strings, ...values);
+    if (mocks.inTransaction)
+      throw new Error('the pool was used while the genre transaction was open');
+    if (/(INSERT INTO|UPDATE) "Track"/.test(sql.text))
+      throw new Error("a song's Track row is written on the genre transaction's client");
     const paramTypes = sql.values.map((v) => (Number.isInteger(v) ? INT4_OID : 0));
     return db.query(sql.text, sql.values, { paramTypes });
   };
@@ -199,19 +253,25 @@ afterAll(() => db.close());
 beforeEach(async () => {
   vi.clearAllMocks();
   mocks.music = true;
-  await db.exec(`DELETE FROM "TagsOnImageDetails"; DELETE FROM "Tag"; DELETE FROM "Image";`);
+  mocks.inTransaction = false;
+  await db.exec(
+    `DELETE FROM "TagsOnImageDetails"; DELETE FROM "Tag"; DELETE FROM "Track"; DELETE FROM "Image";`
+  );
   await db.exec(`ALTER SEQUENCE "Tag_id_seq" RESTART WITH 5000;`);
   await db.query(
     `INSERT INTO "Image" (id, "userId", "postId", type, metadata) VALUES ($1, $2, $3, 'audio', $4), ($5, $2, $3, 'image', '{}')`,
-    [SONG, OWNER, POST, { duration: 120, title: 'Midnight Arcade', coverImageId: 41 }, IMAGE]
+    [SONG, OWNER, POST, { duration: 120, title: 'Midnight Arcade' }, IMAGE]
   );
 
   dbMock.dbWrite.image.findUnique.mockImplementation(
     (async ({ where }: { where: { id: number } }) =>
       (
-        await db.query(`SELECT id, "userId", "postId", type, metadata FROM "Image" WHERE id = $1`, [
-          where.id,
-        ])
+        await db.query(
+          `SELECT i.id, i."userId", i."postId", i.type, i.metadata,
+             (SELECT json_build_object('genre', t.genre) FROM "Track" t WHERE t."imageId" = i.id) AS track
+           FROM "Image" i WHERE i.id = $1`,
+          [where.id]
+        )
       ).rows[0] ?? null) as never
   );
   // `findOrCreateTagsByName` reads and creates tags through Prisma.
@@ -239,31 +299,26 @@ const remove = (user: SessionUser, tagId: number, id = SONG) =>
   removeSongTag({ ...removeSongTagSchema.parse({ id, tagId }), user });
 
 describe('setSongGenre', () => {
-  it("stores the genre on the song and attaches the genre's tag", async () => {
+  it("stores the genre in the song's Track row and attaches the genre's tag", async () => {
     await genre(owner, 'Hip-Hop');
 
-    expect((await metadataOf()).genre).toBe('Hip-Hop');
+    expect(await genreOf()).toBe('Hip-Hop');
     expect(await tagRows()).toEqual([{ name: 'hip-hop', disabled: false, automated: false }]);
   });
 
-  it('keeps the other metadata keys', async () => {
+  it("writes nothing to the song's metadata", async () => {
     await genre(owner, 'Pop');
 
-    expect(await metadataOf()).toEqual({
-      duration: 120,
-      title: 'Midnight Arcade',
-      coverImageId: 41,
-      genre: 'Pop',
-      genreTagAdded: true,
-    });
+    expect(await metadataOf()).toEqual({ duration: 120, title: 'Midnight Arcade' });
   });
 
-  it('swaps the genre tag when the genre changes', async () => {
+  it('leaves exactly one genre tag row, the new one, when the genre changes', async () => {
     await genre(owner, 'Pop');
     await genre(owner, 'Rock');
+    await genre(owner, 'Jazz');
 
-    expect((await metadataOf()).genre).toBe('Rock');
-    expect(await tagNames()).toEqual(['rock']);
+    expect(await genreOf()).toBe('Jazz');
+    expect(await tagNames()).toEqual(['jazz']);
   });
 
   it('refuses a genre outside the list', () => {
@@ -272,15 +327,15 @@ describe('setSongGenre', () => {
 
   it("refuses someone else's song and lets a moderator set it", async () => {
     await expect(genre(stranger, 'Pop')).rejects.toThrow(NOT_AUTHORIZED);
-    expect((await metadataOf()).genre).toBeUndefined();
+    expect(await genreOf()).toBeUndefined();
 
     await genre(moderator, 'Jazz');
-    expect((await metadataOf()).genre).toBe('Jazz');
+    expect(await genreOf()).toBe('Jazz');
   });
 
   it('refuses an image that is not a song', async () => {
     await expect(genre(owner, 'Pop', IMAGE)).rejects.toThrow(/song/i);
-    expect(await metadataOf(IMAGE)).toEqual({});
+    expect(await genreOf(IMAGE)).toBeUndefined();
     expect(await tagNames(IMAGE)).toEqual([]);
   });
 
@@ -288,24 +343,36 @@ describe('setSongGenre', () => {
     mocks.music = false;
 
     await expect(genre(owner, 'Pop')).rejects.toThrow('Songs are not available yet.');
-    expect((await metadataOf()).genre).toBeUndefined();
+    expect(await genreOf()).toBeUndefined();
   });
 
-  it('leaves the genre unchanged when attaching its tag fails', async () => {
+  // The genre is written first in the transaction, so these fail only if it is not rolled back.
+  it('rolls the genre back when attaching its tag fails', async () => {
     await genre(owner, 'Pop');
     vi.mocked(insertTagsOnImageNew).mockRejectedValueOnce(new Error('tag store down'));
 
     await expect(genre(owner, 'Rock')).rejects.toThrow('tag store down');
-    expect((await metadataOf()).genre).toBe('Pop');
+    expect(await genreOf()).toBe('Pop');
     expect(await tagNames()).toEqual(['pop']);
   });
 
-  it('keeps a tag the owner added before picking the genre of that name', async () => {
-    await add(owner, 'rock');
+  it('rolls the genre and the new tag back when taking the previous tag off fails', async () => {
+    await genre(owner, 'Pop');
+    vi.mocked(deleteTagsOnImageNew).mockRejectedValueOnce(new Error('tag store down'));
+
+    await expect(genre(owner, 'Rock')).rejects.toThrow('tag store down');
+    expect(await genreOf()).toBe('Pop');
+    expect(await tagNames()).toEqual(['pop']);
+  });
+
+  // The previous genre's tag always comes off.
+  it("takes the previous genre's tag off even when its row was there before the genre", async () => {
+    await insertTag(61, 'rock');
+    await attach(61);
     await genre(owner, 'Rock');
     await genre(owner, 'Pop');
 
-    expect(await tagNames()).toEqual(['pop', 'rock']);
+    expect(await tagNames()).toEqual(['pop']);
   });
 
   it('stores a genre whose same-named tag is restricted, without attaching that tag', async () => {
@@ -313,7 +380,7 @@ describe('setSongGenre', () => {
 
     await genre(owner, 'Metal');
 
-    expect((await metadataOf()).genre).toBe('Metal');
+    expect(await genreOf()).toBe('Metal');
     expect(await tagNames()).toEqual([]);
   });
 });
@@ -358,6 +425,14 @@ describe('addSongTag', () => {
     await expect(add(owner, 'restricted')).rejects.toThrow("This tag can't be added to a song.");
     expect(await tagNames()).toEqual([]);
   });
+
+  it.each(SONG_GENRES.map((g) => g.toLowerCase()))(
+    'refuses the genre name %s, which only the genre select attaches',
+    async (name) => {
+      await expect(add(owner, name)).rejects.toThrow("This tag can't be added to a song.");
+      expect(await tagNames()).toEqual([]);
+    }
+  );
 
   it('refuses a tag in the moderated set', async () => {
     await insertTag(MODERATED, 'moderated');
@@ -471,6 +546,13 @@ describe('searchSongTags (the tag field suggestions)', () => {
 
   it('suggests only tags an owner may attach, by name prefix', async () => {
     expect((await searchSongTags('ro')).map((t) => t.name)).toEqual(['roam', 'rock', 'rocket']);
+  });
+
+  it("leaves a genre's tag out of the song tag field's suggestions", async () => {
+    expect((await suggestSongTags({ query: 'ro', user: owner })).map((t) => t.name)).toEqual([
+      'roam',
+      'rocket',
+    ]);
   });
 
   it('puts an exact match first and caps the list', async () => {

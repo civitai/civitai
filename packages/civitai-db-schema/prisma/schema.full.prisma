@@ -2333,6 +2333,8 @@ model Image {
   storylineCoverUploads  StorylineCoverUpload[]
   caption                ImageCaption?
   trackLyrics            TrackLyrics?
+  track                  Track?                 @relation("TrackSong")
+  trackCover             Track?                 @relation("TrackCover")
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -8461,6 +8463,17 @@ model TrackLyrics {
   language  String?
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
+}
+
+/// A song's (an audio Image's) cover and genre. No row means no cover and no genre.
+model Track {
+  imageId      Int     @id
+  image        Image   @relation("TrackSong", fields: [imageId], references: [id], onDelete: Cascade)
+  /// The song's cover: its owner's own image, outside any post.
+  coverImageId Int?    @unique
+  coverImage   Image?  @relation("TrackCover", fields: [coverImageId], references: [id], onDelete: SetNull)
+  /// One of `SONG_GENRES` (src/shared/constants/song-genres.ts), checked in code.
+  genre        String?
 }
 
 model ScanLabelVote {

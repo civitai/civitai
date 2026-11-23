@@ -11,8 +11,8 @@ import type * as Orchestrator from '~/server/services/orchestrator/orchestrator.
 import type { SessionUser } from '~/types/session';
 
 /**
- * Setting a song's cover, with the `Image` rows in PGlite: the song, the cover rows and the link
- * between them are real rows, so each test reads back what was stored.
+ * Setting a song's cover, with the `Image` and `Track` rows in PGlite: the song, the cover rows and
+ * the link between them are real rows, so each test reads back what was stored.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -124,17 +124,25 @@ beforeAll(async () => {
       url text NOT NULL, metadata jsonb, ingestion text NOT NULL DEFAULT 'Pending',
       "nsfwLevel" int NOT NULL DEFAULT 0, "blockedFor" text, "updatedAt" timestamp
     );
+    CREATE TABLE "Track" (
+      "imageId" int PRIMARY KEY REFERENCES "Image"(id) ON DELETE CASCADE,
+      "coverImageId" int UNIQUE REFERENCES "Image"(id) ON DELETE SET NULL,
+      genre text
+    );
   `);
   const INT4_OID = 23;
   // Called as a tagged template by the code under test.
-  dbMock.dbWrite.$queryRaw.mockImplementation((async (
-    strings: TemplateStringsArray,
-    ...values: unknown[]
-  ) => {
+  const run = (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = Prisma.sql(strings, ...values);
     const paramTypes = sql.values.map((v) => (Number.isInteger(v) ? INT4_OID : 0));
-    return (await db.query(sql.text, sql.values, { paramTypes })).rows;
-  }) as never);
+    return db.query(sql.text, sql.values, { paramTypes });
+  };
+  dbMock.dbWrite.$queryRaw.mockImplementation(
+    (async (...a: Parameters<typeof run>) => (await run(...a)).rows) as never
+  );
+  // Only the Track writes: createImage's own raw statements read tables this test does not build.
+  dbMock.dbWrite.$executeRaw.mockImplementation((async (...a: Parameters<typeof run>) =>
+    a[0].join('').includes('"Track"') ? (await run(...a)).affectedRows ?? 0 : 0) as never);
 });
 afterAll(() => db.close());
 
@@ -195,6 +203,20 @@ const setCover = (user: SessionUser, overrides: Record<string, unknown> = {}, id
 async function songMetadata() {
   return (await row(SONG)).metadata as Record<string, unknown>;
 }
+/** The song's linked cover: `Track.coverImageId`. */
+async function linkedCover() {
+  const { rows: found } = await db.query<{ coverImageId: number | null }>(
+    `SELECT "coverImageId" FROM "Track" WHERE "imageId" = $1`,
+    [SONG]
+  );
+  return found[0]?.coverImageId ?? undefined;
+}
+const link = (coverId: number) =>
+  db.query(
+    `INSERT INTO "Track" ("imageId", "coverImageId") VALUES ($1, $2)
+     ON CONFLICT ("imageId") DO UPDATE SET "coverImageId" = EXCLUDED."coverImageId"`,
+    [SONG, coverId]
+  );
 
 describe('setSongCover', () => {
   it("makes the upload the owner's postless cover row, links it to the song and sends it for scanning", async () => {
@@ -208,11 +230,12 @@ describe('setSongCover', () => {
       url: NEW_KEY,
       metadata: { parentId: SONG },
     });
+    expect(await linkedCover()).toBe(cover.id);
+    // Nothing about the cover is written to the song's own metadata.
     expect(await songMetadata()).toEqual({
       duration: 120,
       title: 'Midnight Arcade',
       allowRemix: false,
-      coverImageId: cover.id,
     });
     expect(mocks.createImageIngestionRequest).toHaveBeenCalledWith(
       expect.objectContaining({ imageId: cover.id, url: NEW_KEY, type: 'image' })
@@ -230,14 +253,14 @@ describe('setSongCover', () => {
     const cover = await setCover(moderator);
 
     expect((await row(cover.id)).userId).toBe(OWNER);
-    expect((await songMetadata()).coverImageId).toBe(cover.id);
+    expect(await linkedCover()).toBe(cover.id);
   });
 
   it('refuses anyone else, creating and linking nothing', async () => {
     await expect(setCover(stranger)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
 
     expect(await rows('id <> $1', [SONG])).toEqual([]);
-    expect((await songMetadata()).coverImageId).toBeUndefined();
+    expect(await linkedCover()).toBeUndefined();
   });
 
   it('refuses an image, video or missing target that is not a song', async () => {
@@ -278,7 +301,7 @@ describe('setSongCover', () => {
     const first = await setCover(owner, { url: 'a1b2c3d4-0000-4000-8000-000000000001' });
     let linkedAtDelete: unknown;
     mocks.deleteImages.mockImplementation(async () => {
-      linkedAtDelete = (await songMetadata()).coverImageId;
+      linkedAtDelete = await linkedCover();
     });
 
     const second = await setCover(owner);
@@ -286,10 +309,24 @@ describe('setSongCover', () => {
     expect(mocks.deleteImages).toHaveBeenCalledTimes(1);
     expect(mocks.deleteImages).toHaveBeenCalledWith([first.id], { actor: { id: OWNER } });
     expect(linkedAtDelete).toBe(second.id);
-    expect(await songMetadata()).toMatchObject({
-      title: 'Midnight Arcade',
-      coverImageId: second.id,
-    });
+    expect(await linkedCover()).toBe(second.id);
+  });
+
+  // PGlite is one session, so this pins that the link and the read of the replaced cover are one
+  // statement; the `FOR UPDATE` that orders two real connections is not exercised here.
+  it('gives each of two concurrent saves back the cover it replaced, deleting each once', async () => {
+    const first = await setCover(owner, { url: 'a1b2c3d4-0000-4000-8000-000000000001' });
+
+    const [a, b] = await Promise.all([
+      setCover(owner, { url: 'a1b2c3d4-0000-4000-8000-000000000002' }),
+      setCover(owner, { url: 'a1b2c3d4-0000-4000-8000-000000000003' }),
+    ]);
+
+    // One save replaced the first cover, the other replaced that save's cover.
+    const deleted = mocks.deleteImages.mock.calls.map(([ids]) => ids as number[]).flat();
+    const kept = await linkedCover();
+    expect([a.id, b.id]).toContain(kept);
+    expect(deleted.sort()).toEqual([first.id, kept === a.id ? b.id : a.id].sort());
   });
 
   it("never deletes a linked image that is not this song's own cover row", async () => {
@@ -299,15 +336,12 @@ describe('setSongCover', () => {
     await insert({ id: 22, userId: OWNER, metadata: { parentId: 123 } });
 
     for (const foreign of [20, 21, 22]) {
-      await db.query(
-        `UPDATE "Image" SET metadata = metadata || jsonb_build_object('coverImageId', $1::int) WHERE id = $2`,
-        [foreign, SONG]
-      );
       await db.query(`DELETE FROM "Image" WHERE url = $1`, [NEW_KEY]);
+      await link(foreign);
 
       const cover = await setCover(owner);
 
-      expect((await songMetadata()).coverImageId).toBe(cover.id);
+      expect(await linkedCover()).toBe(cover.id);
     }
     expect(mocks.deleteImages).not.toHaveBeenCalled();
   });
@@ -317,7 +351,7 @@ describe('setSongCover', () => {
 
     await expect(setCover(owner)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
-    expect((await songMetadata()).coverImageId).toBeUndefined();
+    expect(await linkedCover()).toBeUndefined();
     expect(await rows('url = $1', [NEW_KEY])).toHaveLength(1);
   });
 
@@ -327,7 +361,7 @@ describe('setSongCover', () => {
     const cover = await setCover(owner);
 
     expect(cover.id).toBe(31);
-    expect((await songMetadata()).coverImageId).toBe(31);
+    expect(await linkedCover()).toBe(31);
     expect(await rows('url = $1', [NEW_KEY])).toHaveLength(1);
     expect(mocks.deleteImages).not.toHaveBeenCalled();
   });

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
@@ -7,6 +8,7 @@ import {
   insertTagsOnImageNew,
   upsertTagsOnImageNew,
 } from '~/server/services/tagsOnImageNew.service';
+import { notSongGenreTagVote } from '~/shared/constants/song-genres';
 
 const UPVOTE_TAG_THRESHOLD = constants.tagVoting.upvoteThreshold;
 const DOWNVOTE_TAG_THRESHOLD = 0;
@@ -32,6 +34,11 @@ async function applyUpvotes() {
           vote.vote > 0
         AND vote."createdAt" > ${lastApplied}
         AND applied."tagId" IS NULL
+        AND ${notSongGenreTagVote(
+          Prisma.sql,
+          Prisma.raw('vote."imageId"'),
+          Prisma.raw('vote."tagId"')
+        )}
     ), over_threshold AS (
       SELECT
         a."imageId",

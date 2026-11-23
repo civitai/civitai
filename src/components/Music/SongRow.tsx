@@ -7,6 +7,7 @@ import {
   FeedSongMenuItems,
   FeedSongPlayButton,
   useFeedSongCover,
+  useFeedSongGenre,
   useFeedSongPlays,
 } from '~/components/Music/FeedSongList';
 import { SongStat, UNTITLED_SONG } from '~/components/Music/SongCard';
@@ -16,7 +17,6 @@ import { songTrack } from '~/components/MusicPlayer/PostSong';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
-import { readSongGenre } from '~/shared/constants/song-genres';
 import { useMusicPlayerStore } from '~/store/music-player.store';
 import { formatPlaybackTime } from '~/utils/audio-player';
 
@@ -32,7 +32,7 @@ export const SongRow = memo(function SongRow({
 }) {
   const track = songTrack(data);
   const title = track.title || UNTITLED_SONG;
-  const genre = readSongGenre(data.metadata);
+  const genre = useFeedSongGenre(data);
   const cover = useFeedSongCover(data.id);
   const plays = useFeedSongPlays(data.id);
   const isCurrent = useMusicPlayerStore((s) => s.current?.id === data.id);

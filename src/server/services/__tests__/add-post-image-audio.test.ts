@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as Metadata from '~/utils/metadata';
 import type * as S3Utils from '~/utils/s3-utils';
@@ -517,10 +519,8 @@ describe('addPostImage — generated song cover', () => {
     expect(addSong({ generationWorkflowId: 'wf-1', ...extra })).rejects.toThrow(
       'An unexpected error'
     );
-  /** The link statement's bound values: the cover id, then the song id. */
+  /** The link statement's bound values: the song id, then the cover id. */
   const linkValues = () => dbMock.dbWrite.$executeRaw.mock.calls.map(([, ...values]) => values);
-  const linkSql = () =>
-    (dbMock.dbWrite.$executeRaw.mock.calls[0][0] as unknown as TemplateStringsArray).join('');
 
   it("links the workflow's cover as the song's cover: a scanned row outside the post, named by the song", async () => {
     await postFromGenerator();
@@ -549,12 +549,59 @@ describe('addPostImage — generated song cover', () => {
     // No postId and no skipped ingestion: createImage's default path requests the scan.
     expect(coverArgs).not.toHaveProperty('postId');
     expect(coverArgs).not.toHaveProperty('skipIngestion');
-    expect(linkValues()).toEqual([[12, 11]]);
-    // The link is the song's `coverImageId`, set only while it has none.
-    expect(linkSql()).toContain('UPDATE "Image"');
-    expect(linkSql()).toContain("jsonb_build_object('coverImageId'");
-    expect(linkSql()).toContain(`AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'coverImageId')`);
+    expect(linkValues()).toEqual([[11, 12]]);
     expect(mocks.deleteImages).not.toHaveBeenCalled();
+  });
+
+  // The link statement runs on a `Track` table in PGlite: the song's row is what it reads back.
+  describe('linking on the Track row', () => {
+    let pg: PGlite;
+    const track = async () =>
+      (
+        await pg.query<{ coverImageId: number | null; genre: string | null }>(
+          `SELECT "coverImageId", genre FROM "Track" WHERE "imageId" = 11`
+        )
+      ).rows;
+
+    beforeAll(async () => {
+      pg = new PGlite();
+      await pg.exec(
+        `CREATE TABLE "Track" ("imageId" int PRIMARY KEY, "coverImageId" int UNIQUE, genre text)`
+      );
+    }, 60_000);
+    afterAll(() => pg.close());
+    beforeEach(async () => {
+      await pg.exec(`TRUNCATE "Track"`);
+      const INT4_OID = 23;
+      dbMock.dbWrite.$executeRaw.mockImplementation((async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => {
+        const sql = Prisma.sql(strings, ...values);
+        const paramTypes = sql.values.map((v) => (Number.isInteger(v) ? INT4_OID : 0));
+        return (await pg.query(sql.text, sql.values, { paramTypes })).affectedRows ?? 0;
+      }) as never);
+    });
+
+    it('creates the Track row with the cover for a song that has none', async () => {
+      await postFromGenerator();
+      expect(await track()).toEqual([{ coverImageId: 12, genre: null }]);
+      expect(mocks.deleteImages).not.toHaveBeenCalled();
+    });
+
+    it("links the cover on a song's genre-only row, keeping its genre", async () => {
+      await pg.exec(`INSERT INTO "Track" ("imageId", genre) VALUES (11, 'Pop')`);
+      await postFromGenerator();
+      expect(await track()).toEqual([{ coverImageId: 12, genre: 'Pop' }]);
+      expect(mocks.deleteImages).not.toHaveBeenCalled();
+    });
+
+    it('keeps the cover a song gained first and removes the row it made, leaving one cover', async () => {
+      await pg.exec(`INSERT INTO "Track" ("imageId", "coverImageId") VALUES (11, 99)`);
+      await postFromGenerator();
+      expect(await track()).toEqual([{ coverImageId: 99, genre: null }]);
+      expect(mocks.deleteImages).toHaveBeenCalledWith([12], { actor: { id: 5 } });
+    });
   });
 
   it('links a cover the creator uploaded with the song, the same scanned way', async () => {
@@ -573,7 +620,7 @@ describe('addPostImage — generated song cover', () => {
       expect.objectContaining({ imageUrl: UPLOADED, width: 768, height: 768 })
     );
     expect(mocks.createImage.mock.calls[1][0]).not.toHaveProperty('skipIngestion');
-    expect(linkValues()).toEqual([[12, 11]]);
+    expect(linkValues()).toEqual([[11, 12]]);
   });
 
   it("reads the workflow with the caller's own orchestrator token", async () => {
@@ -640,16 +687,12 @@ describe('addPostImage — generated song cover', () => {
     }
   });
 
-  it('copies nothing when the song already names a cover', async () => {
+  // A cover is linked only through `Track`; the metadata key is no longer part of the schema.
+  it('ignores a cover id the client sent: the song keeps none of it and takes its generated cover', async () => {
     await postFromGenerator({ metadata: { ...song, coverImageId: 3 } });
-    expect(mocks.stageGenerationOutputImage).not.toHaveBeenCalled();
-    expect(mocks.createImage).toHaveBeenCalledTimes(1);
-  });
-
-  it('removes the cover row it made when the song gained a cover first, leaving one cover', async () => {
-    dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
-    await postFromGenerator();
-    expect(mocks.deleteImages).toHaveBeenCalledWith([12], { actor: { id: 5 } });
+    expect(mocks.createImage.mock.calls[0][0].metadata).not.toHaveProperty('coverImageId');
+    expect(mocks.stageGenerationOutputImage).toHaveBeenCalledTimes(1);
+    expect(linkValues()).toEqual([[11, 12]]);
   });
 
   it('removes the cover row when the link fails, and still posts the song', async () => {

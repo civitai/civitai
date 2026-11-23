@@ -67,11 +67,14 @@ async function storedRow(id: number) {
 }
 const storedMetadata = async (id = SONG) => (await storedRow(id)).metadata;
 
-/** The cover link as `setSongCover` writes it. */
-const linkCover = (coverId: number) =>
+/**
+ * An arbitrary metadata key another writer sets on the song meanwhile, merged into the stored
+ * metadata the way any concurrent metadata write is. No song writer owns `otherKey`.
+ */
+const writeOtherKey = (value: number) =>
   db.query(
-    `UPDATE "Image" SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('coverImageId', $1::int) WHERE id = $2`,
-    [coverId, SONG]
+    `UPDATE "Image" SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('otherKey', $1::int) WHERE id = $2`,
+    [value, SONG]
   );
 
 beforeAll(async () => {
@@ -226,17 +229,17 @@ describe('updatePostImage — overlapping saves on one song', () => {
     });
   });
 
-  it('keeps a cover linked between a title save reading the row and writing it', async () => {
-    mocks.afterRead = () => linkCover(42);
+  it('keeps a metadata key written between a title save reading the row and writing it', async () => {
+    mocks.afterRead = () => writeOtherKey(42);
 
     await update({ title: 'Night Drive' });
 
-    expect(await storedMetadata()).toEqual({ ...stored, title: 'Night Drive', coverImageId: 42 });
+    expect(await storedMetadata()).toEqual({ ...stored, title: 'Night Drive', otherKey: 42 });
   });
 
-  it('keeps a title cleared and a cover linked while a remix save is in flight', async () => {
+  it('keeps a title cleared and a metadata key written while a remix save is in flight', async () => {
     mocks.afterRead = async () => {
-      await linkCover(43);
+      await writeOtherKey(43);
       await update({ title: '' });
     };
 
@@ -246,20 +249,20 @@ describe('updatePostImage — overlapping saves on one song', () => {
       duration: 120,
       bpm: 90,
       allowRemix: true,
-      coverImageId: 43,
+      otherKey: 43,
     });
   });
 
-  it('keeps a title and cover written while a hide-prompt toggle is in flight', async () => {
+  it('keeps a title and a metadata key written while a hide-prompt toggle is in flight', async () => {
     mocks.afterRead = async () => {
-      await linkCover(44);
+      await writeOtherKey(44);
       await update({ title: 'Night Drive' });
     };
 
     await update({ hideMeta: true });
 
     expect(await storedRow(SONG)).toEqual({
-      metadata: { ...stored, title: 'Night Drive', coverImageId: 44 },
+      metadata: { ...stored, title: 'Night Drive', otherKey: 44 },
       hideMeta: true,
     });
   });

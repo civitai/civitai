@@ -231,7 +231,7 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     serverColumns: [],
     clientUrl: ['{ alsoIssuedTo: userId }'],
   },
-  // A song's cover: a fresh upload, owned by the song's owner, linked from the song's metadata.
+  // A song's cover: a fresh upload, owned by the song's owner, linked from the song's Track row.
   'src/server/services/post.service.ts#setSongCover': {
     calls: 1,
     spreads: ['pickClientImageColumns(cover)'],

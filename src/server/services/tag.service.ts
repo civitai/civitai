@@ -46,6 +46,7 @@ import {
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { Flags } from '~/shared/utils/flags';
 import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
+import { notSongGenreTagVote } from '~/shared/constants/song-genres';
 import { bustCacheTag, fetchThroughCache, queryCache } from '~/server/utils/cache-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -784,9 +785,17 @@ export const addTagVotes = async ({
 
   vote *= voteWeight;
   const isTagIds = typeof tags[0] === 'number';
-  const tagMatch = isTagIds
+  const named = isTagIds
     ? Prisma.sql`"id" = ANY(${tags as number[]}::int[])`
     : Prisma.sql`"name" = ANY(${tags as string[]}::text[])`;
+  const tagMatch =
+    type === 'image'
+      ? Prisma.sql`${named} AND ${notSongGenreTagVote(
+          Prisma.sql,
+          Prisma.sql`${id}`,
+          Prisma.raw('"Tag".id')
+        )}`
+      : named;
   const voteTable = type === 'model' ? 'TagsOnModelsVote' : 'TagsOnImageVote';
   await dbWrite.$executeRaw(Prisma.sql`
     INSERT INTO "${Prisma.raw(voteTable)}" ("userId", "tagId", "${Prisma.raw(type)}Id", "vote")

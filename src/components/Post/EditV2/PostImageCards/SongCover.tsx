@@ -4,7 +4,6 @@ import clsx from 'clsx';
 import { useMemo, useRef } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { withMetadata } from '~/components/Post/EditV2/PostImageCards/song-metadata';
 import {
   SONG_COVER_ACCEPT,
   useSongCoverUpload,
@@ -63,7 +62,6 @@ export function SongCover({ image }: { image: PostEditImageDetail }) {
     onSaved: (saved) =>
       updateImage(image.id, (song) => {
         song.cover = saved;
-        song.metadata = withMetadata(song.metadata, { coverImageId: saved.id });
       }),
   });
 

@@ -53,7 +53,6 @@ export const audioMetadataSchema = sharedMetadata.partial({ height: true, width:
   lyrics: z.array(z.object({ t: z.number().nullable(), text: z.string() })).optional(),
   bpm: z.number().optional(),
   key: z.string().max(SONG_KEY_MAX_LENGTH).optional(),
-  coverImageId: z.number().optional(),
   /** Absent means remixing is allowed. */
   allowRemix: z.boolean().optional(),
 });

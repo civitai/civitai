@@ -75,12 +75,14 @@ const post = {
   parentModelId: null,
 } as unknown as PostDetailEditable;
 
-const added = (id: number, type: string, metadata: object) => ({
+/** An added image; a song's `genre` is the editor payload's own field (Track.genre). */
+const added = (id: number, type: string, { genre }: { genre?: string }) => ({
   type: 'added',
   data: {
     id,
     type,
-    metadata,
+    metadata: {},
+    genre: genre ?? null,
     nsfwLevel: 1,
     resourceHelper: [],
     tools: [],

@@ -41,14 +41,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const { withSongCoversStub } = await import(
     '../../../MusicPlayer/__tests__/song-covers-trpc-stub'
   );
-  // The covers reads are stubbed; the rest of `trpc.image` stays real for the feed's query keys.
+  // The covers and genre-map reads are stubbed; the rest of `trpc.image` stays real for the feed's query keys.
   const stub = withSongCoversStub(actual.trpc) as unknown as {
-    image: { getSongCovers: unknown };
+    image: { getSongCovers: unknown; getSongGenreTags: unknown };
     useQueries: unknown;
   };
   const image = new Proxy(actual.trpc.image, {
     get: (target, key) =>
-      key === 'getSongCovers' ? stub.image.getSongCovers : Reflect.get(target, key),
+      key === 'getSongCovers' || key === 'getSongGenreTags'
+        ? stub.image[key]
+        : Reflect.get(target, key),
   });
   const trpc = new Proxy(actual.trpc, {
     get: (target, key) =>

@@ -211,17 +211,21 @@ import {
   detachSongTag,
   findAttachableTag,
   hasSongTagRow,
+  inSongTagTransaction,
   readSongTags,
+  readSongTagsIn,
   searchSongTags,
+  songTagsSql,
 } from '~/server/services/tagsOnSong.service';
 import {
-  readSongGenre,
+  isSongGenreTagName,
   SONG_GENRE_REQUIRED_MESSAGE,
   SONG_TAG_LIMIT,
   SONG_TAG_LIMIT_MESSAGE,
   SONG_TAG_NOT_REMOVABLE_MESSAGE,
   SONG_TAG_UNAVAILABLE_MESSAGE,
   songGenreTagName,
+  toSongGenre,
   withoutGenreTag,
 } from '~/shared/constants/song-genres';
 import type { SongGenre } from '~/shared/constants/song-genres';
@@ -1042,47 +1046,60 @@ const songCoverSelect = {
 } satisfies Prisma.ImageSelect;
 export type SongCover = Prisma.ImageGetPayload<{ select: typeof songCoverSelect }>;
 
+/** The reads a song's cover and genre take, on either client. */
+type SongTrackDb = {
+  track: Pick<typeof dbRead.track, 'findMany'>;
+  image: Pick<typeof dbRead.image, 'findMany'>;
+};
+
+/** Each song's `Track` row: its cover link and genre. A song without one has neither. */
+async function readSongTracks(songIds: number[], db: SongTrackDb) {
+  if (!songIds.length) return new Map<number, SongTrack>();
+  const rows = await db.track.findMany({
+    where: { imageId: { in: songIds } },
+    select: { imageId: true, coverImageId: true, genre: true },
+  });
+  return new Map(rows.map(({ imageId, ...track }) => [imageId, track]));
+}
+type SongTrack = { coverImageId: number | null; genre?: string | null };
+
 /**
  * Each song's cover, in one read for all of them: the fields `coverSelect` names (by default its
- * scan state, for the editor).
+ * scan state, for the editor). The link is the song's `Track.coverImageId`.
  */
 async function getSongCovers<S extends Prisma.ImageSelect = typeof songCoverSelect>(
-  images: { id: number; type: MediaType; metadata: unknown }[],
-  db: typeof dbRead | typeof dbWrite,
+  images: { id: number; type: MediaType; track?: SongTrack | null }[],
+  db: SongTrackDb,
   coverSelect: S = songCoverSelect as unknown as S
 ) {
   type Cover = Prisma.ImageGetPayload<{ select: S }>;
   const links = images.flatMap((image) => {
-    const coverId = (image.metadata as { coverImageId?: unknown } | null)?.coverImageId;
-    return image.type === MediaType.audio && typeof coverId === 'number'
-      ? [{ songId: image.id, coverId }]
-      : [];
+    const coverId = image.track?.coverImageId;
+    return image.type === MediaType.audio && coverId != null ? [{ songId: image.id, coverId }] : [];
   });
   if (!links.length) return new Map<number, Cover>();
   // The songs come back too, for their owner: a cover must be theirs. Typed as the plain select so
-  // the generic `S` does not reach `findMany`'s inference (two Prisma client types, TS2719).
+  // the generic `S` does not reach `findMany`'s inference.
   const select: Prisma.ImageSelect = {
     ...coverSelect,
     id: true,
     userId: true,
     postId: true,
-    metadata: true,
   };
-  const rows = (await (db as typeof dbRead).image.findMany({
+  const rows = (await db.image.findMany({
     where: { id: { in: links.flatMap(({ songId, coverId }) => [songId, coverId]) } },
     select,
   })) as unknown as ({
     id: number;
     userId: number;
     postId: number | null;
-    metadata: unknown;
   } & Record<string, unknown>)[];
   const byId = new Map(rows.map((row) => [row.id, row]));
   return new Map(
     links.flatMap(({ songId, coverId }) => {
       const song = byId.get(songId);
       const cover = byId.get(coverId);
-      if (!song || !cover || !isCoverOfSong(cover, song)) return [];
+      if (!song || !cover || !isSongsOwnImage(cover, song)) return [];
       const shown = Object.fromEntries(Object.keys(coverSelect).map((key) => [key, cover[key]]));
       return [[songId, shown as Cover] as const];
     })
@@ -1131,7 +1148,7 @@ export async function getSongCoversForPlayer({
   if (!visible.size) return [];
   const songs = await dbRead.image.findMany({
     where: { id: { in: [...visible] } },
-    select: { id: true, type: true, metadata: true },
+    select: { id: true, type: true, track: { select: { coverImageId: true } } },
   });
   const covers = await getSongCovers(songs, dbRead, playerCoverSelect);
   return [...covers].flatMap(([songId, cover]) =>
@@ -1155,7 +1172,14 @@ async function combinePostEditImageData(
   const tags = await getVotableImageTags({ ids: imageIds, user });
   const thumbnails = await thumbnailCache.fetch(imageIds);
   const lyrics = await getSongLyricLines(images, db);
-  const covers = await getSongCovers(images, db);
+  const tracks = await readSongTracks(
+    images.filter((x) => x.type === MediaType.audio).map((x) => x.id),
+    db
+  );
+  const covers = await getSongCovers(
+    images.map((x) => ({ id: x.id, type: x.type, track: tracks.get(x.id) })),
+    db
+  );
   const songTags = await readSongTags(
     images.filter((x) => x.type === MediaType.audio).map((x) => x.id),
     db
@@ -1164,6 +1188,8 @@ async function combinePostEditImageData(
   return _images
     .map((image) => ({
       ...image,
+      /** A song's genre (`Track.genre`); null until one is picked, and for any other media. */
+      genre: toSongGenre(tracks.get(image.id)?.genre) ?? null,
       metadata: image.metadata as PreprocessFileReturnType['metadata'],
       tags: tags.filter((x) => x.imageId === image.id),
       tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
@@ -1172,7 +1198,10 @@ async function combinePostEditImageData(
       lyrics: lyrics.get(image.id) ?? null,
       cover: covers.get(image.id) ?? null,
       /** A song's own tags, its genre's tag left out. */
-      songTags: withoutGenreTag(songTags.get(image.id) ?? [], readSongGenre(image.metadata)),
+      songTags: withoutGenreTag(
+        songTags.get(image.id) ?? [],
+        toSongGenre(tracks.get(image.id)?.genre)
+      ),
     }))
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
 }
@@ -1387,9 +1416,9 @@ async function assertSongsHaveGenres(postId: number) {
   // primary: guards the publish write
   const songs = await dbWrite.image.findMany({
     where: { postId, type: MediaType.audio },
-    select: { metadata: true },
+    select: { track: { select: { genre: true } } },
   });
-  if (!songs?.some((song) => !readSongGenre(song.metadata))) return;
+  if (!songs?.some((song) => !toSongGenre(song.track?.genre))) return;
   // primary: guards the publish write
   const post = await dbWrite.post.findUnique({
     where: { id: postId },
@@ -2072,7 +2101,7 @@ export const addPostImage = async ({
     }).catch(handleLogError);
     if (saved) submitTrackLyricsScan({ imageId: partialResult.id }).catch(handleLogError);
   }
-  if (song && songWorkflow && typeof song.metadata.coverImageId !== 'number')
+  if (song && songWorkflow)
     await linkGeneratedSongCover({
       songId: partialResult.id,
       userId: user.id,
@@ -2344,19 +2373,25 @@ export const updatePostImage = async ({ title, allowRemix, ...image }: UpdatePos
   enqueueImageIngestion({ images: requeued, name: 'post-image-ingest', userId: result.userId });
 };
 
+/** A song's cover is its owner's own image, outside any post: only such a linked row is shown. */
+function isSongsOwnImage(
+  row: { userId: number; postId: number | null } | null | undefined,
+  song: { userId: number }
+) {
+  return !!row && row.userId === song.userId && row.postId == null;
+}
+
 /**
- * A song's cover is its owner's own image, outside any post, naming the song as its parent. Only
- * such a row is shown or replaced through the song's `coverImageId`.
+ * A cover row made for this song: its own image naming the song as its parent. Only such a row is
+ * reused by a retried save or deleted when it is replaced.
  */
 function isCoverOfSong(
   row: { userId: number; postId: number | null; metadata: unknown } | null | undefined,
   song: { id: number; userId: number }
 ) {
   return (
-    !!row &&
-    row.userId === song.userId &&
-    row.postId == null &&
-    (row.metadata as { parentId?: unknown } | null)?.parentId === song.id
+    isSongsOwnImage(row, song) &&
+    (row?.metadata as { parentId?: unknown } | null)?.parentId === song.id
   );
 }
 
@@ -2398,17 +2433,20 @@ export async function setSongCover({
       })
     ).id;
 
-  // One statement, with the row locked, so concurrent saves each get back the cover they replaced
-  // and no other metadata field written meanwhile is lost.
-  const [linked] = await dbWrite.$queryRaw<{ previous: unknown }[]>`
-    UPDATE "Image" i
-    SET metadata = COALESCE(i.metadata, '{}'::jsonb) || jsonb_build_object('coverImageId', ${coverId}::int),
-      "updatedAt" = now()
-    FROM (SELECT id, metadata -> 'coverImageId' AS previous FROM "Image" WHERE id = ${song.id} FOR UPDATE) old
-    WHERE i.id = old.id
+  // The song's Track row exists before the link, so the link below always has a row to lock.
+  await dbWrite.$executeRaw`
+    INSERT INTO "Track" ("imageId") VALUES (${song.id}) ON CONFLICT ("imageId") DO NOTHING
+  `;
+  // One statement, with the Track row locked, so concurrent saves each get back the cover they
+  // replaced.
+  const [linked] = await dbWrite.$queryRaw<{ previous: number | null }[]>`
+    UPDATE "Track" t
+    SET "coverImageId" = ${coverId}::int
+    FROM (SELECT "imageId", "coverImageId" AS previous FROM "Track" WHERE "imageId" = ${song.id} FOR UPDATE) old
+    WHERE t."imageId" = old."imageId"
     RETURNING old.previous
   `;
-  const previousId = typeof linked?.previous === 'number' ? linked.previous : undefined;
+  const previousId = linked?.previous ?? undefined;
   if (previousId !== undefined && previousId !== coverId) {
     // primary: the link was just rewritten
     const previous = await dbWrite.image.findUnique({
@@ -2418,10 +2456,7 @@ export async function setSongCover({
     if (isCoverOfSong(previous, song)) await deleteImages([previousId], { actor: { id: user.id } });
   }
 
-  await Promise.all([
-    imageMetadataCache.refresh(song.id),
-    song.postId ? preventReplicationLag('postImages', song.postId) : undefined,
-  ]);
+  if (song.postId) await preventReplicationLag('postImages', song.postId);
 
   // primary: read-your-write after linking the cover
   const saved = await dbWrite.image.findUnique({ where: { id: coverId }, select: songCoverSelect });
@@ -2500,27 +2535,14 @@ async function linkGeneratedSongCover({
   });
   // Only a song still without a cover takes it; a row left unlinked is removed.
   const linked = await dbWrite.$executeRaw`
-    UPDATE "Image"
-    SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('coverImageId', ${cover.id}::int),
-      "updatedAt" = now()
-    WHERE id = ${songId} AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'coverImageId')
+    INSERT INTO "Track" ("imageId", "coverImageId") VALUES (${songId}, ${cover.id})
+    ON CONFLICT ("imageId") DO UPDATE SET "coverImageId" = EXCLUDED."coverImageId"
+    WHERE "Track"."coverImageId" IS NULL
   `.catch((error) => {
     handleLogError(error);
     return 0;
   });
   if (!linked) await deleteImages([cover.id], { actor: { id: userId } });
-}
-
-/**
- * The genre, and whether its tag row is one `setSongGenre` attached: only that row is taken off when
- * the genre changes, so a tag the owner added themselves outlives a genre of the same name.
- */
-function writeSongGenre(imageId: number, genre: SongGenre, tagAdded: boolean) {
-  return dbWrite.$executeRaw`
-    UPDATE "Image"
-    SET "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object('genre', ${genre}::text, 'genreTagAdded', ${tagAdded}::boolean)
-    WHERE id = ${imageId}
-  `;
 }
 
 /** The song, when the caller owns it or moderates; refuses anything else. */
@@ -2529,12 +2551,18 @@ async function readEditableSong(id: number, user: SessionUser) {
   // primary: guards the edit write
   const song = await dbWrite.image.findUnique({
     where: { id },
-    select: { id: true, userId: true, postId: true, type: true, metadata: true },
+    select: {
+      id: true,
+      userId: true,
+      postId: true,
+      type: true,
+      track: { select: { genre: true } },
+    },
   });
   if (!song || (song.userId !== user.id && !user.isModerator)) throw throwAuthorizationError();
   if (song.type !== MediaType.audio)
     throw throwBadRequestError('Only a song has a genre and tags.');
-  return song;
+  return { id: song.id, postId: song.postId, genre: toSongGenre(song.track?.genre) };
 }
 
 /** The song's own tags, its genre's tag left out (the genre select shows that one). */
@@ -2548,7 +2576,7 @@ export async function suggestSongTags({
   user,
 }: SearchSongTagsInput & { user: SessionUser }) {
   assertCanStoreSongs(user);
-  return searchSongTags(query);
+  return (await searchSongTags(query)).filter((tag) => !isSongGenreTagName(tag.name));
 }
 
 async function afterSongTagsChanged(song: { id: number; postId: number | null }) {
@@ -2559,39 +2587,43 @@ async function afterSongTagsChanged(song: { id: number; postId: number | null })
 }
 
 /**
- * Stores the genre on the song and mirrors it as the song's image tag, so it reaches the search
- * documents like any tag. The image tag writers run outside any transaction (their own pool), so
- * the steps are ordered to never leave the stored genre and its tag apart: the new tag first, then
- * both metadata keys in one statement (the new tag taken back off if that fails), and the previous
- * genre's tag last, only when this function attached it.
+ * Stores the genre in the song's `Track` row and mirrors it as the song's image tag, so it reaches
+ * the search documents like any tag. One transaction holds the genre, the new genre's tag and the
+ * previous genre's tag coming off, with the Track row locked so a concurrent change waits and then
+ * takes off this one's tag.
  */
 export async function setSongGenre({ id, genre, user }: SetSongGenreInput & { user: SessionUser }) {
   const song = await readEditableSong(id, user);
-  const previous = readSongGenre(song.metadata);
-  if (previous === genre) return { genre, tags: await readOwnSongTags(song.id, genre) };
-  const previousTagAdded =
-    (song.metadata as { genreTagAdded?: unknown } | null)?.genreTagAdded === true;
+  if (song.genre === genre) return { genre, tags: await readOwnSongTags(song.id, genre) };
 
   // The list is fixed, so a missing genre tag is created as a plain user tag (after the blocklist
   // check); a same-named tag that is not a plain label is left off the song.
   await findOrCreateTagsByName([songGenreTagName(genre)]);
   const tag = await findAttachableTag(songGenreTagName(genre));
-  const attach = !!tag && !(await hasSongTagRow(song.id, tag.id));
-  if (tag && attach) await attachSongTag(song.id, tag.id);
+  // Built here: nothing reads a cache or another pool while the transaction holds the Track row.
+  const songTagsQuery = await songTagsSql([song.id]);
 
-  try {
-    await writeSongGenre(song.id, genre, attach);
-  } catch (error) {
-    if (tag && attach) await detachSongTag(song.id, tag.id);
-    throw error;
-  }
+  await inSongTagTransaction(async (tx) => {
+    await tx.client.query(
+      `INSERT INTO "Track" ("imageId") VALUES ($1) ON CONFLICT ("imageId") DO NOTHING`,
+      [song.id]
+    );
+    const { rows } = await tx.client.query<{ genre: string | null }>(
+      `SELECT genre FROM "Track" WHERE "imageId" = $1 FOR UPDATE`,
+      [song.id]
+    );
+    const previous = toSongGenre(rows[0]?.genre);
+    if (previous === genre) return;
+    await tx.client.query(`UPDATE "Track" SET genre = $2 WHERE "imageId" = $1`, [song.id, genre]);
 
-  if (previous && previousTagAdded) {
-    const previousTag = (await readSongTags([song.id]))
-      .get(song.id)
-      ?.find((t) => t.name === songGenreTagName(previous));
-    if (previousTag) await detachSongTag(song.id, previousTag.id);
-  }
+    if (tag) await attachSongTag(song.id, tag.id, tx);
+    if (previous) {
+      const previousTag = (await readSongTagsIn(tx, songTagsQuery))
+        .get(song.id)
+        ?.find((t) => t.name === songGenreTagName(previous));
+      if (previousTag) await detachSongTag(song.id, previousTag.id, tx);
+    }
+  });
   await afterSongTagsChanged(song);
 
   return { genre, tags: await readOwnSongTags(song.id, genre) };
@@ -2603,9 +2635,9 @@ export async function setSongGenre({ id, genre, user }: SetSongGenreInput & { us
  */
 export async function addSongTag({ id, name, user }: AddSongTagInput & { user: SessionUser }) {
   const song = await readEditableSong(id, user);
-  const genre = readSongGenre(song.metadata);
-  if (genre && name === songGenreTagName(genre))
-    throw throwBadRequestError(SONG_TAG_UNAVAILABLE_MESSAGE);
+  // Every genre's tag, not only the song's own: the owner attaches one only through the genre select.
+  if (isSongGenreTagName(name)) throw throwBadRequestError(SONG_TAG_UNAVAILABLE_MESSAGE);
+  const { genre } = song;
 
   const tags = await readOwnSongTags(song.id, genre);
   if (tags.some((t) => t.name === name)) return { tags };
@@ -2628,8 +2660,7 @@ export async function removeSongTag({
   user,
 }: RemoveSongTagInput & { user: SessionUser }) {
   const song = await readEditableSong(id, user);
-  const genre = readSongGenre(song.metadata);
-  const tags = await readOwnSongTags(song.id, genre);
+  const tags = await readOwnSongTags(song.id, song.genre);
   if (!tags.some((t) => t.id === tagId)) throw throwBadRequestError(SONG_TAG_NOT_REMOVABLE_MESSAGE);
 
   await detachSongTag(song.id, tagId);

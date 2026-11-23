@@ -10,7 +10,14 @@ import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import type * as Trpc from '~/utils/trpc';
 
-const feed = vi.hoisted(() => ({ images: [] as unknown[], music: true }));
+const feed = vi.hoisted(() => ({
+  images: [] as unknown[],
+  music: true,
+  /** The `enabled` of each `image.getSongGenreTags` read. */
+  genreReads: [] as (boolean | undefined)[],
+}));
+/** Each genre's mirror tag id, as `image.getSongGenreTags` serves it. */
+const genreTags = vi.hoisted(() => ({ Pop: 11, Synthwave: 29 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
@@ -20,7 +27,20 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof Trpc>();
   const { withSongCoversStub } = await import('../MusicPlayer/__tests__/song-covers-trpc-stub');
-  return { ...actual, trpc: withSongCoversStub(actual.trpc) };
+  const stubbed = withSongCoversStub(actual.trpc);
+  const image = {
+    ...stubbed.image,
+    getSongGenreTags: {
+      useQuery: (_input: unknown, options?: { enabled?: boolean }) => {
+        feed.genreReads.push(options?.enabled);
+        return { data: options?.enabled === false ? undefined : genreTags };
+      },
+    },
+  };
+  const trpc = new Proxy(stubbed, {
+    get: (target, key) => (key === 'image' ? image : Reflect.get(target, key)),
+  });
+  return { ...actual, trpc };
 });
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowsingLevelProvider>()),
@@ -47,12 +67,14 @@ import { MUSIC_PLAYER_RESUME_KEY, resumeMusicPlayer } from '~/store/music-player
 import type { MusicList } from '~/store/music-player.store';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 
-const song = (id: number, title: string) =>
+/** A feed song whose genre is Synthwave: the feed item carries that genre's tag id. */
+const song = (id: number, title: string, tagIds = [genreTags.Synthwave]) =>
   ({
     id,
     url: `song-${id}.mp3`,
     type: 'audio',
-    metadata: { title, duration: 185, genre: 'Synthwave' },
+    metadata: { title, duration: 185 },
+    tagIds,
     user: { id: 100 + id, username: `artist${id}` },
     stats: { likeCountAllTime: 3, commentCountAllTime: 1 },
   } as unknown as ImagesInfiniteModel);
@@ -192,11 +214,27 @@ describe('a song the player already has', () => {
 
 describe('the Song Card', () => {
   test('shows the title, creator, genre and length', async () => {
-    await renderWithProviders(<SongCard data={songs[0]} height={360} />);
+    await renderWithProviders(
+      <FeedSongsProvider images={songs}>
+        <SongCard data={songs[0]} height={360} />
+      </FeedSongsProvider>
+    );
     await expect.element(page.getByText('Midnight Arcade')).toBeInTheDocument();
     await expect.element(page.getByRole('link', { name: 'artist1' })).toBeInTheDocument();
     await expect.element(page.getByText('Synthwave')).toBeInTheDocument();
     await expect.element(page.getByText('3:05')).toBeInTheDocument();
+  });
+
+  // A moderator's or a scanner's row can give a song a second genre tag.
+  test('with two genre tags, shows the genre that comes first in the list', async () => {
+    const twoGenres = song(4, 'Two Genres', [genreTags.Synthwave, 7, genreTags.Pop]);
+    await renderWithProviders(
+      <FeedSongsProvider images={[twoGenres]}>
+        <SongCard data={twoGenres} height={360} />
+      </FeedSongsProvider>
+    );
+    await expect.element(page.getByText('Pop')).toBeInTheDocument();
+    expect(page.getByText('Synthwave').elements()).toHaveLength(0);
   });
 
   test('shows the play count, read once for the whole feed', async () => {
@@ -221,6 +259,29 @@ describe('the Song Row', () => {
     songPlays.served = { 1: 12400 };
     await renderWithProviders(<SongRow data={songs[0]} index={0} />);
     await expect.element(page.getByLabelText('12400 plays')).toHaveTextContent('12.4k');
+  });
+
+  test('shows the genre its tag ids name', async () => {
+    await renderWithProviders(
+      <FeedSongsProvider images={songs}>
+        <SongRow data={songs[0]} index={0} />
+      </FeedSongsProvider>
+    );
+    await expect.element(page.getByText('Synthwave')).toBeInTheDocument();
+  });
+
+  test('with the music flag off, reads no genre map and shows no genre', async () => {
+    feed.music = false;
+    feed.genreReads = [];
+    await renderWithProviders(
+      <FeedSongsProvider images={songs}>
+        <SongRow data={songs[0]} index={0} />
+      </FeedSongsProvider>
+    );
+    await expect.element(page.getByText('Midnight Arcade')).toBeInTheDocument();
+    expect(feed.genreReads.length).toBeGreaterThan(0);
+    expect(feed.genreReads.every((enabled) => enabled === false)).toBe(true);
+    expect(page.getByText('Synthwave').elements()).toHaveLength(0);
   });
 
   test('with the music flag off, reads no play count', async () => {
