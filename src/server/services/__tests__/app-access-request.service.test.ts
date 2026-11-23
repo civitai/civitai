@@ -256,6 +256,9 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
     expect(await isApproved(tomasz)).toBe(false);
   });
 
+  // The operator's "basic account checks": approve instantly only if the account is not banned or
+  // muted and has a verified email (plus not deleted, which the operator agreed to keep); anyone
+  // failing a check still lands pending for a moderator.
   it.each([
     ['banned', `UPDATE "User" SET "bannedAt" = CURRENT_TIMESTAMP WHERE "id" = $1`],
     ['muted', `UPDATE "User" SET "muted" = true WHERE "id" = $1`],

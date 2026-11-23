@@ -32,10 +32,10 @@ const STATUS_COLOR: Record<AppAccessRequestStatus, string> = {
 };
 
 /**
- * Who decided a row. A decided row with no reviewer is one `app-access-auto-approve` approved on
- * submit — no moderator was involved. (A reviewer account deleted since also leaves no reviewer;
- * that case reads as "a moderator" only when the row is declined, since auto-approval never
- * declines.)
+ * Who decided a row. An approved row with no reviewer is read as one `app-access-auto-approve`
+ * approved on submit. Known mislabel: `reviewedById` is ON DELETE SET NULL, so a MODERATOR's
+ * approval whose account was deleted since also has no reviewer and reads "Approved
+ * automatically" too; telling the two apart would need a column.
  */
 function reviewedByLabel(item: {
   status: AppAccessRequestStatus;
