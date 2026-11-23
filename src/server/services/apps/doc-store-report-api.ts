@@ -28,7 +28,6 @@ import {
 } from '~/server/services/apps/doc-store-api';
 import { resolveImportAccess, resolveStorageAccess } from '~/server/services/apps/doc-store-access';
 import { getDocStore } from '~/server/services/apps/doc-store.instance';
-import { gateHook } from '~/server/services/apps/doc-store-hook';
 import { DocStoreError } from '~/server/services/apps/doc-store.types';
 
 /** The metrics label of every response this route sends. */
@@ -115,15 +114,6 @@ export function createReportHandler(deps: ReportApiDeps = {}) {
         throw new DocStoreError('invalid_request', 'reports exist on shared collections only');
       }
       await assertReportGate(access, req, true);
-      // PROBE (mutant, reverted in the next commit): a permission-hook gate at the handler layer.
-      await gateHook({
-        access,
-        coll,
-        store: getStore(),
-        op: 'mark',
-        key: input.key,
-        tally: { name: 'vote' },
-      });
       await getStore().report(access.ctx, coll, input.key);
       res.status(200).json(REPORTED);
     } catch (err) {
