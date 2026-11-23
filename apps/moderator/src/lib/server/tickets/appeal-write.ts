@@ -2,6 +2,7 @@ import { fail, type RequestEvent } from '@sveltejs/kit';
 import { z } from 'zod';
 import { int4Id, parseForm } from '../query';
 import { AppealRestoreRefusedError, APPEAL_RESTORE_REFUSED } from '../image-moderation.service';
+import { APPEAL_RULING_REFUSED } from '$lib/held-media';
 import { classifyAppeal } from '$lib/tickets/appeals';
 import {
   NOT_PERMITTED,
@@ -25,6 +26,8 @@ export type AppealWriteDeps = TicketActionDeps & {
   /** The `/images/appeals` page grant: the queue this ruling would otherwise be made in. */
   canAct: (user: App.Locals['user']) => boolean;
   appealOf: (id: number) => Promise<AppealWriteRow | null>;
+  /** Whether `user` may not rule on this image's appeal (`refusedRulings`). */
+  withheld: (user: App.Locals['user'], imageId: number) => Promise<boolean>;
   /** The image's `needsReview` flag, read from the database. */
   needsReviewOf: (imageId: number) => Promise<string | null>;
   /** The image queue's own reason rules, so a ruling from a ticket records what the queue would. */
@@ -94,6 +97,8 @@ export function createTicketAppealActions(deps: AppealWriteDeps) {
         return fail(409, {
           error: 'That image is no longer in the appeals queue — nothing was changed.',
         });
+      if (await deps.withheld(event.locals.user, appeal.entityId))
+        return fail(403, { error: APPEAL_RULING_REFUSED });
 
       const reason = deps.parseReason(ok.form, input.status);
       if (typeof reason === 'string') return fail(400, { error: reason });

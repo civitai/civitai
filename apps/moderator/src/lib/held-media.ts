@@ -8,10 +8,9 @@ export const retractedMediaUrl = (imageId: number) => `/api/retracted-media/${im
 export const RETRACTED_REFUSED =
   'Not viewable here. It may need CSAM-queue access or be unavailable; ask a lead.';
 
-/** What an appeal card shows, and its ruling actions answer, in place of the ruling form when the
- *  image is kept from this moderator. Worded like `RETRACTED_REFUSED`, for the same reason. */
-export const APPEAL_RULING_REFUSED =
-  'Not ruled on here. It may need CSAM-queue access; ask a lead.';
+/** What an appeal card shows in place of the ruling form, and every appeal ruling answers, when the
+ *  image is kept from this moderator. It names no reason. */
+export const APPEAL_RULING_REFUSED = 'Not ruled on here. Ask a lead.';
 
 /** Asks the route why it refused an image, without serving it, and returns the tile's line. */
 export async function probeRetractedRefusal(imageId: number): Promise<string> {

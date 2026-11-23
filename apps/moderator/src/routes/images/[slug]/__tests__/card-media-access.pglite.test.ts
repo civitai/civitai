@@ -3,7 +3,7 @@ import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../../test/pglite';
 import { pgliteDialect } from '$lib/server/__tests__/abuse-detection-pglite.harness';
-import { INQUISITOR_IMAGE_SCHEMA } from '$lib/server/knights/__tests__/inquisitor-schema';
+import { APPEAL_MEDIA_SCHEMA as SCHEMA } from '$lib/server/__tests__/appeal-media-schema';
 
 /**
  * What the card load sends for an image kept to moderators with the restricted
@@ -35,30 +35,6 @@ vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
 const { load, actions } = await import('../+page.server');
 const { getModeratorMedia } = await import('$lib/server/retracted-media');
-
-const SCHEMA = `${INQUISITOR_IMAGE_SCHEMA}
-ALTER TABLE "Image" ADD COLUMN width INTEGER, ADD COLUMN height INTEGER,
-  ADD COLUMN poi BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN "modelRestricted" BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE "User" ADD COLUMN username TEXT;
-CREATE TABLE "Appeal" (
-  id SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL, "entityType" TEXT NOT NULL,
-  "entityId" INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'Pending',
-  "appealMessage" TEXT NOT NULL DEFAULT '', "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
-  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now(), "resolvedBy" INTEGER, "resolvedAt" TIMESTAMP(3),
-  "resolvedReason" TEXT, "resolvedMessage" TEXT
-);
-CREATE TABLE "AppealDecisionRecord" ("appealId" INTEGER, "removalLabel" TEXT);
-CREATE TABLE "ModActivity" (
-  "userId" INTEGER, "entityType" TEXT, "entityId" INTEGER, activity TEXT, "createdAt" TIMESTAMP(3)
-);
-CREATE TABLE "Report" (
-  id INTEGER PRIMARY KEY, "userId" INTEGER, reason TEXT, status TEXT, details JSONB,
-  "createdAt" TIMESTAMP(3)
-);
-CREATE TABLE "ImageReport" ("imageId" INTEGER, "reportId" INTEGER);
-CREATE TABLE "Model3D" (id INTEGER PRIMARY KEY, name TEXT, status TEXT, "thumbnailImageId" INTEGER);
-`;
 
 const RESTRICTED = 201;
 const CONTROL = 202;

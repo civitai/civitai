@@ -107,8 +107,8 @@ async function withModel3d<T extends { id: number }>(items: T[]) {
 }
 
 /** The images among these that `user` may not rule an appeal on: the ones the appeals queue sends
- *  them without media. */
-async function refusedRulings(user: App.Locals['user'] | undefined, imageIds: number[]) {
+ *  them without media. Every path that rules on an image appeal asks this. */
+export async function refusedRulings(user: App.Locals['user'] | undefined, imageIds: number[]) {
   const kept = await restrictedImageIds(imageIds, { csamReview: canAccess(user, HELD_MEDIA_PAGE) });
   return [...kept];
 }
