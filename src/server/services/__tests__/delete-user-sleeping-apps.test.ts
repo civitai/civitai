@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as HibernationRepoModule from '~/server/services/app-hibernation/hibernation.repo';
 import type * as ArchiveS3 from '~/utils/app-archive-s3';
 import type * as HibernationDeps from '~/server/services/app-hibernation/hibernation-deps';
@@ -26,6 +27,31 @@ const h = vi.hoisted(() => ({
   log: [] as string[],
   repo: undefined as unknown as ReturnType<typeof fakeRepo>,
   store: undefined as unknown as ReturnType<typeof fakeStore>,
+  /** The bundle store App Assistant's frozen transcripts live in: key -> body. */
+  bundles: new Map<string, string>(),
+  failBundleDeletes: false,
+}));
+
+// The bundle store's S3 client (a process boundary): an in-memory bucket for List / Delete.
+vi.mock('~/utils/s3-client-factory', () => ({
+  newS3Client: () => ({
+    send: async (command: { constructor: { name: string }; input: Record<string, string> }) => {
+      const { name } = command.constructor;
+      if (name === 'ListObjectsV2Command')
+        return {
+          Contents: [...h.bundles.keys()]
+            .filter((Key) => Key.startsWith(command.input.Prefix ?? ''))
+            .map((Key) => ({ Key })),
+          IsTruncated: false,
+        };
+      if (name === 'DeleteObjectCommand') {
+        if (h.failBundleDeletes) throw new Error('store refused');
+        h.bundles.delete(command.input.Key!);
+        return {};
+      }
+      return {};
+    },
+  }),
 }));
 
 vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
@@ -301,5 +327,92 @@ describe('deleteUser — App Assistant session links', () => {
     links().mockRejectedValue(new Error('connection reset'));
     await expect(UserService.deleteUser({ id: USER_ID, actorId: USER_ID })).resolves.toBeDefined();
     expect(stepErrors()).toHaveLength(1);
+  });
+});
+
+/**
+ * App Assistant session traces go with the account too (retention: "request lifetime + account
+ * delete"): the REAL `deleteUser` deletes the user's frozen chat transcripts from the bundle store,
+ * then their trace rows (the link rows are their own step); a held account keeps them, and a store that refuses a delete keeps
+ * the rows (so they still name what is left).
+ */
+describe('deleteUser — App Assistant session traces', () => {
+  const MINE = 'app-assistant-transcripts/pubreq_mine/1a2b.json';
+  const STRAY = 'app-assistant-transcripts/pubreq_mine/3c4d.json';
+  const THEIRS = 'app-assistant-transcripts/pubreq_theirs/5e6f.json';
+
+  beforeEach(() => {
+    setEnv({
+      BUNDLE_S3_ENDPOINT: 'https://bundles.test',
+      BUNDLE_S3_ACCESS_KEY_ID: 'test-only',
+      BUNDLE_S3_SECRET_ACCESS_KEY: 'test-only',
+      BUNDLE_S3_BUCKET: 'bundles-test',
+    });
+    h.bundles = new Map([
+      [MINE, '{}'],
+      [STRAY, '{}'],
+      [THEIRS, '{}'],
+    ]);
+    h.failBundleDeletes = false;
+    dbMock.dbWrite.appPublishRequestTrace.findMany.mockImplementation(async (args: unknown) =>
+      (args as { where: { userId: number } }).where.userId === USER_ID
+        ? [{ publishRequestId: 'pubreq_mine', snapshots: [{ conversationId: 'c', key: MINE }] }]
+        : []
+    );
+    dbMock.dbWrite.appPublishRequestTrace.deleteMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.appAssistantSessionLink.deleteMany.mockResolvedValue({ count: 3 });
+  });
+
+  it('deletes the user’s frozen transcripts (a stray under their request too) and their rows; no one else’s', async () => {
+    await UserService.deleteUser({ id: USER_ID, actorId: USER_ID });
+    expect([...h.bundles.keys()]).toEqual([THEIRS]);
+    expect(dbMock.dbWrite.appPublishRequestTrace.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: USER_ID } })
+    );
+    expect(dbMock.dbWrite.appPublishRequestTrace.deleteMany).toHaveBeenCalledWith({
+      where: { userId: USER_ID },
+    });
+    expect(dbMock.dbWrite.appAssistantSessionLink.deleteMany).toHaveBeenCalledWith({
+      where: { userId: USER_ID },
+    });
+  });
+
+  it('a hold landing after the check keeps the transcripts and the rows', async () => {
+    h.lateHold = true;
+    await UserService.deleteUser({ id: USER_ID, actorId: USER_ID });
+    expect(dbMock.dbWrite.account.deleteMany).toHaveBeenCalled();
+    expect(h.bundles.size).toBe(3);
+    expect(dbMock.dbWrite.appPublishRequestTrace.deleteMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.appAssistantSessionLink.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('a store that refuses the deletes keeps the trace rows; the link rows go regardless', async () => {
+    h.failBundleDeletes = true;
+    await expect(UserService.deleteUser({ id: USER_ID, actorId: USER_ID })).resolves.toBeDefined();
+    expect(h.bundles.has(MINE)).toBe(true);
+    expect(dbMock.dbWrite.appPublishRequestTrace.deleteMany).not.toHaveBeenCalled();
+    // The links are their own step and never wait on the transcripts.
+    expect(dbMock.dbWrite.appAssistantSessionLink.deleteMany).toHaveBeenCalledWith({
+      where: { userId: USER_ID },
+    });
+  });
+
+  it('the trace table not applied yet: no traces, no failure logged, and the link rows still go', async () => {
+    const missing = () =>
+      Object.assign(new Error('The table `app_publish_request_traces` does not exist'), {
+        code: 'P2021',
+      });
+    dbMock.dbWrite.appPublishRequestTrace.findMany.mockRejectedValue(missing());
+    dbMock.dbWrite.appPublishRequestTrace.deleteMany.mockRejectedValue(missing());
+    await expect(UserService.deleteUser({ id: USER_ID, actorId: USER_ID })).resolves.toBeDefined();
+    const errors = loggingMock.logToAxiom.mock.calls.filter(
+      ([entry]) =>
+        (entry as { type?: string }).type === 'error' &&
+        /app-assistant/.test(String((entry as { name?: string }).name))
+    );
+    expect(errors).toEqual([]);
+    expect(dbMock.dbWrite.appAssistantSessionLink.deleteMany).toHaveBeenCalledWith({
+      where: { userId: USER_ID },
+    });
   });
 });

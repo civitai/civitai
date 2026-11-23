@@ -1567,6 +1567,14 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     await applyForkSessionToFirstPublishRequest({ publishRequestId, slug, submittedByUserId });
   }
 
+  // App Assistant session trace: fired, never awaited, never throws, so a trace that fails or
+  // hangs can neither fail nor slow a submit.
+  void import('~/server/services/app-assistant/submission-trace.service')
+    .then(({ recordSubmissionTrace }) =>
+      recordSubmissionTrace({ publishRequestId, slug, submittedByUserId, bundleBuffer })
+    )
+    .catch(() => undefined);
+
   // (submit-draft) W13 draft-at-submit — mint the pre-approval on-site draft
   // `AppListing` now that the pending request exists. Ordered AFTER the request create
   // so there is never a draft orphaned without a request: a request without a draft

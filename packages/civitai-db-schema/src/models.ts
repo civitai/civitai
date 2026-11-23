@@ -2451,6 +2451,7 @@ export interface AppBlockPublishRequest {
   deployUpdatedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  assistantTrace?: AppPublishRequestTrace | null;
 }
 
 export interface AppBlockBuildAttempt {
@@ -2479,6 +2480,20 @@ export interface AppAssistantSessionLink {
   lastModel: string | null;
   buzzTotal: number;
   lastRunId: string | null;
+}
+
+export interface AppPublishRequestTrace {
+  id: number;
+  publishRequestId: string;
+  publishRequest?: AppBlockPublishRequest;
+  slug: string;
+  userId: number;
+  conversationIds: string[];
+  snapshots: JsonValue;
+  signals: JsonValue;
+  signalsVersion: number;
+  snapshotError: string | null;
+  createdAt: Date;
 }
 
 export interface AppListing {

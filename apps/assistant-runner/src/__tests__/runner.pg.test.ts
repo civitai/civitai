@@ -582,9 +582,11 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     const runId = start.body!.runId as string;
     await events(runId, user);
     // The reply's own outcome is the model's business; what matters is that the report did not
-    // turn it into a workflow failure after its end was journaled.
-    await expect(DBOS.retrieveWorkflow(runId).getResult()).resolves.toBeDefined();
+    // turn it into a workflow failure after its end was journaled. The report could not be built
+    // (reading the earlier turns throws), so none was sent for this run.
+    await DBOS.retrieveWorkflow(runId).getResult();
     expect(await DBOS.getWorkflowStatus(runId)).toMatchObject({ status: 'SUCCESS' });
+    expect(turnReports.filter((turn) => turn.runId === runId)).toEqual([]);
   });
 
   it('resumes the event stream after Last-Event-ID', async () => {

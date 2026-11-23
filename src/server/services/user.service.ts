@@ -1586,6 +1586,27 @@ export const deleteUser = async ({
       isMissingTable: isMissingTableError,
     });
   });
+  // App Assistant session traces (frozen chat transcripts, then trace rows) go with the account, on
+  // their own: the link rows above never wait on this. Held while content removal is held; what this
+  // cannot finish, the hourly `sweep-app-assistant-traces` job retries.
+  await runStep('delete-app-assistant-traces', async () => {
+    if ((await isContentRemovalHeld(user.id)) !== false) {
+      logToAxiom({
+        name: 'delete-app-assistant-traces',
+        type: 'info',
+        source: 'deleteUser',
+        userId: user.id,
+        message: 'App Assistant traces kept: content removal held',
+      });
+      return;
+    }
+    const [{ deleteAssistantTracesOfAccount, liveTraceDeletionDeps }, { isMissingTableError }] =
+      await Promise.all([
+        import('~/server/services/app-assistant/submission-trace.service'),
+        import('~/server/services/blocks/app-access.service'),
+      ]);
+    await deleteAssistantTracesOfAccount(user.id, await liveTraceDeletionDeps(isMissingTableError));
+  });
   await runStep('refresh-profile-picture', () => refreshProfilePicturesForUsers([user.id]));
   await runStep('close-pending-restrictions', () =>
     closeGenerationRestrictionsOfDeletedAccount(user.id)

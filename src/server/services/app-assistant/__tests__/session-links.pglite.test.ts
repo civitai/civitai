@@ -28,7 +28,7 @@ let h: Awaited<ReturnType<typeof startPglitePrisma>>;
 
 beforeAll(async () => {
   h = await startPglitePrisma(`
-    CREATE TABLE "User" (id integer PRIMARY KEY);
+    CREATE TABLE "User" (id integer PRIMARY KEY, "deletedAt" timestamptz(3));
     INSERT INTO "User" VALUES (7301), (7402);
     ${MIGRATION}
   `);
@@ -84,17 +84,63 @@ describe('upsertSessionLink', () => {
         turn_count: 1,
         buzz_total: 3.25,
         last_model: 'model-alpha',
-        last_run_id: 'run-first',
+        last_run_id: 'run-first@2026-11-20T09:00:00.000Z',
         first_seen_at: new Date('2026-11-20T09:00:00.000Z'),
         last_seen_at: new Date('2026-11-20T09:00:05.000Z'),
       },
     ]);
   });
 
-  it('the same run reported twice counts once: idempotent on the run', async () => {
+  it('the same pass delivered again right after counts once', async () => {
     await upsertSessionLink(h.prisma, base);
     await upsertSessionLink(h.prisma, base);
     expect(await rows()).toMatchObject([{ turn_count: 1, buzz_total: 3.25 }]);
+  });
+
+  // Pairwise-distinct Buzz per pass, so every sum names exactly which passes were counted.
+  const runB = {
+    ...base,
+    runId: 'run-b',
+    buzz: 10,
+    startedAt: new Date('2026-11-20T09:10:00.000Z'),
+    endedAt: new Date('2026-11-20T09:11:00.000Z'),
+  };
+  const secondPassOfA = {
+    ...base,
+    buzz: 0.5,
+    startedAt: new Date('2026-11-20T09:20:00.000Z'),
+    endedAt: new Date('2026-11-20T09:21:00.000Z'),
+  };
+
+  it('a recovered second pass of the same run is a pass of its own: it counts, with its Buzz', async () => {
+    await upsertSessionLink(h.prisma, base);
+    await upsertSessionLink(h.prisma, secondPassOfA);
+    expect(await rows()).toMatchObject([
+      { turn_count: 2, buzz_total: 3.75, last_run_id: 'run-first@2026-11-20T09:20:00.000Z' },
+    ]);
+  });
+
+  it('A, B: two passes; A redelivered after B is not recognised and counts again (the runner never retries)', async () => {
+    await upsertSessionLink(h.prisma, base);
+    await upsertSessionLink(h.prisma, runB);
+    expect(await rows()).toMatchObject([{ turn_count: 2, buzz_total: 13.25 }]);
+    await upsertSessionLink(h.prisma, base);
+    expect(await rows()).toMatchObject([{ turn_count: 3, buzz_total: 16.5 }]);
+  });
+
+  it('a report for a deleted account writes nothing: no new row, and an existing row stays as it was', async () => {
+    await h.pg.exec(`UPDATE "User" SET "deletedAt" = now() WHERE id = 7402`);
+    try {
+      await upsertSessionLink(h.prisma, { ...base, userId: 7402 });
+      expect(await rows()).toEqual([]);
+      await h.pg.exec(`UPDATE "User" SET "deletedAt" = NULL WHERE id = 7402`);
+      await upsertSessionLink(h.prisma, { ...base, userId: 7402 });
+      await h.pg.exec(`UPDATE "User" SET "deletedAt" = now() WHERE id = 7402`);
+      await upsertSessionLink(h.prisma, { ...base, userId: 7402, runId: 'run-late' });
+      expect(await rows()).toMatchObject([{ user_id: 7402, turn_count: 1, buzz_total: 3.25 }]);
+    } finally {
+      await h.pg.exec(`UPDATE "User" SET "deletedAt" = NULL WHERE id = 7402`);
+    }
   });
 
   it('a later run adds a turn and its Buzz, and moves last-seen and the model', async () => {
@@ -113,7 +159,7 @@ describe('upsertSessionLink', () => {
         turn_count: 2,
         buzz_total: 13.75,
         last_model: 'model-beta',
-        last_run_id: 'run-second',
+        last_run_id: 'run-second@2026-11-20T09:10:00.000Z',
         first_seen_at: new Date('2026-11-20T09:00:00.000Z'),
         last_seen_at: new Date('2026-11-20T09:12:00.000Z'),
       }),

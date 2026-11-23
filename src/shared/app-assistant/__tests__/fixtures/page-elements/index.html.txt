@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      DARK FIRST, deliberately — and the OS preference is NEVER consulted.
+      Civitai apps default to dark. Light engages only when the viewer chose
+      light on civitai.com, which the host delivers three ways, in increasing
+      order of authority:
+
+        1. the `#civitai-block=v1&theme=…` URL fragment — synchronous, read by
+           the inline script below BEFORE first paint;
+        2. `BLOCK_INIT` — authoritative, overwrites the fragment seed;
+        3. `THEME_CHANGE` — the live push when the viewer toggles mid-session.
+
+      2 and 3 are synced onto <html> by `syncTheme` in src/block.ts; this file
+      owns only the pre-paint window.
+    -->
+    <meta name="color-scheme" content="dark light" />
+    <title>{{ .Name }}</title>
+    <style>
+      /*
+        BOOT SKELETON — see AGENTS.md § "Boot skeleton".
+        Inline on purpose: no external stylesheet, no JS, so it paints before
+        anything is fetched or executed. It is the counterpart to
+        `"bootSkeleton": true` in block.manifest.json — the run host stands down
+        its own loading veil for a block that declares the key, so this markup is
+        the ONLY thing on screen for the whole load. Ship the two together.
+
+        THEME RULE: the base (unconditioned) rules carry the DARK values, and
+        light is applied ONLY behind `html[data-theme='light']` — the attribute
+        the inline script below sets from the host fragment and that
+        src/block.ts keeps in step afterwards. There is deliberately NO
+        OS-preference media query anywhere in this document: the browser must
+        never decide this app's theme, and the dark base is exactly what a
+        missing fragment, an unknown theme value, or a UA without the query all
+        get.
+      */
+      html {
+        /* The strong guarantee: unlike `color-scheme` this paints the page
+           regardless of UA support for anything. */
+        background: #1a1b1e;
+      }
+
+      html[data-theme='light'] {
+        background: #ffffff;
+      }
+
+      [data-boot-skeleton] {
+        /* Matches the rendered block's own layout (src/index.css
+           [data-block-root]): padding 16, column, gap 8. */
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      [data-boot-skeleton] > span {
+        display: block;
+        border-radius: 4px;
+        background: #2c2e33;
+      }
+
+      /* Title line — mirrors the "Civitai App starter" heading. */
+      [data-boot-skeleton] > span[data-line='title'] {
+        width: 160px;
+        height: 16px;
+      }
+
+      /* Meta line — mirrors the dimmed "slot: …" row. */
+      [data-boot-skeleton] > span[data-line='meta'] {
+        width: 120px;
+        height: 12px;
+        opacity: 0.7;
+      }
+
+      /* Body lines — mirror the app and viewer rows. */
+      [data-boot-skeleton] > span[data-line='body'] {
+        width: 90%;
+        height: 14px;
+      }
+
+      [data-boot-skeleton] > span[data-line='body-short'] {
+        width: 60%;
+        height: 14px;
+      }
+
+      html[data-theme='light'] [data-boot-skeleton] > span {
+        background: #e9ecef;
+      }
+    </style>
+    <script>
+      /*
+        THEME FAST PATH — synchronous, pre-paint, no fetch. Mirrors the SDK's
+        parse rules for the host fragment: it must carry the `civitai-block=v1`
+        marker or it is not the host's (a hash-routed app's own state must never
+        theme the boot), and only `theme=light` / `theme=dark` are honoured —
+        anything else, an absent fragment included, keeps the dark default.
+        BLOCK_INIT remains authoritative: src/block.ts overwrites this attribute
+        the moment the payload lands and keeps it in step on THEME_CHANGE.
+      */
+      (function () {
+        try {
+          var params = new URLSearchParams(location.hash.slice(1));
+          if (params.get('civitai-block') !== 'v1') return;
+          document.documentElement.dataset.theme =
+            params.get('theme') === 'light' ? 'light' : 'dark';
+        } catch (e) {
+          /* a malformed fragment must never block the boot paint */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root">
+      <!--
+        Decorative only (aria-hidden). The run host publishes `aria-busy` on the
+        iframe element itself while the block is loading, so an in-frame live
+        region would announce the same state twice.
+
+        This element MUST stay a descendant of #root: the block's first render
+        (`root.replaceChildren(…)` in src/block.ts) replaces #root's children,
+        which is what removes the skeleton. Nothing else removes it — there is no
+        framework here clearing the container for you — so a skeleton painted as
+        a SIBLING of #root stays on screen forever.
+      -->
+      <div data-boot-skeleton aria-hidden="true">
+        <span data-line="title"></span>
+        <span data-line="meta"></span>
+        <span data-line="body"></span>
+        <span data-line="body-short"></span>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

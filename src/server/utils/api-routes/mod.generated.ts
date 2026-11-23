@@ -6,6 +6,13 @@ import type { ApiRoutes } from '~/server/utils/api-router';
 export const routes: ApiRoutes = {
   'action-report': () => import('~/server/api-routes/mod/action-report'),
   'adjust-tag-level': () => import('~/server/api-routes/mod/adjust-tag-level'),
+  'apps/assistant-trace/app': () => import('~/server/api-routes/mod/apps/assistant-trace/app'),
+  'apps/assistant-trace/request': () =>
+    import('~/server/api-routes/mod/apps/assistant-trace/request'),
+  'apps/assistant-trace/signals': () =>
+    import('~/server/api-routes/mod/apps/assistant-trace/signals'),
+  'apps/assistant-trace/transcript': () =>
+    import('~/server/api-routes/mod/apps/assistant-trace/transcript'),
   'apps/refund-workflows': () => import('~/server/api-routes/mod/apps/refund-workflows'),
   'apps/workflow-charges': () => import('~/server/api-routes/mod/apps/workflow-charges'),
   'audit/change-history': () => import('~/server/api-routes/mod/audit/change-history'),

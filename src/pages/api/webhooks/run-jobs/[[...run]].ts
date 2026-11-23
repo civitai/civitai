@@ -58,6 +58,7 @@ import { runStorageMigrationsJob } from '~/server/jobs/run-storage-migrations';
 import { reapDeletedAppStorageJob } from '~/server/jobs/reap-deleted-app-storage';
 import { removeDeletedAccountAppDataJob } from '~/server/jobs/remove-deleted-account-app-data';
 import { sweepHibernationObjectsJob } from '~/server/jobs/sweep-hibernation-objects';
+import { sweepAppAssistantTracesJob } from '~/server/jobs/sweep-app-assistant-traces';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { reconcileSubscriptionHistoryJob } from '~/server/jobs/reconcile-subscription-history';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
@@ -327,6 +328,7 @@ export const jobs: Job[] = [
   reapDeletedAppStorageJob,
   removeDeletedAccountAppDataJob,
   sweepHibernationObjectsJob,
+  sweepAppAssistantTracesJob,
   checkImageExistence,
   rewardsAdImpressions,
   collectionAiReview,

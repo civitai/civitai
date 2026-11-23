@@ -1,8 +1,8 @@
-import { chosenAppOf } from '@civitai/app-assistant';
 import type { ModelMessage } from 'ai';
 
 import type { Logger, TurnEnded } from '../core/interfaces';
 import { toolResultsOf } from './history';
+import { appChosenIn } from './provider';
 
 /** civitai's endpoint the runner reports each finished turn to, relative to `CIVITAI_URL`. */
 export const TURN_REPORT_PATH = 'api/internal/app-assistant/turn';
@@ -27,16 +27,6 @@ export interface TurnReportBody {
   endedAt: string;
 }
 
-/**
- * The app a conversation had chosen once `messages` were made: the last call the gate counts as
- * choosing one (`chosenAppOf`), else null. The same reading the gate's `restore` makes on the runner.
- */
-export function chosenAppIn(messages: readonly ModelMessage[]): string | null {
-  let app: string | null = null;
-  for (const result of toolResultsOf(messages)) app = chosenAppOf(result) ?? app;
-  return app;
-}
-
 /** How many calls `messages` make of each tool, by tool name. */
 export function toolCallCounts(messages: readonly ModelMessage[]): Record<string, number> {
   const counts: Record<string, number> = {};
@@ -52,7 +42,8 @@ export function toolCallCounts(messages: readonly ModelMessage[]): Record<string
 export function turnReportOf(turn: TurnEnded): Omit<TurnReportBody, 'grant'> {
   return {
     v: 1,
-    app: chosenAppIn([...turn.earlier, ...turn.messages]),
+    // The gate's own reading, as the provider rebuilds a reply's tools with it.
+    app: appChosenIn(toolResultsOf([...turn.earlier, ...turn.messages])),
     seq: turn.seq,
     runId: turn.runId,
     model: turn.model,
