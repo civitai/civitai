@@ -1014,7 +1014,10 @@ describe('publishPrivateModel', () => {
     mockPrivateModel({});
     mockDbWrite.post.findMany.mockImplementation((async (args: { where: { userId?: number } }) =>
       args.where.userId === undefined
-        ? [{ id: 70 }, { id: 71 }]
+        ? [
+            { id: 70, userId: OWNER_ID },
+            { id: 71, userId: OWNER_ID + 1 },
+          ]
         : [{ id: 70, modelVersionId: 1 }]) as never);
 
     await publish(false);

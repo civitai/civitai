@@ -30,7 +30,6 @@ export const KNIGHTS_SAMPLE_ENQUEUE_OPTIONS: EnqueueOptions = {
   oncePerImage: true,
 };
 
-/** An owner's own rating: only a live post, still images only (Knights serves only those). */
 export const KNIGHTS_OWNER_RATING_ENQUEUE_OPTIONS: EnqueueOptions = {
   requirePublished: true,
   stillImagesOnly: true,
@@ -171,10 +170,8 @@ export async function sampleNewlyLivePostsForKnights(
 export type KnightsSampleScope = { postIds: number[] } | { imageIds: number[] };
 
 /**
- * Samples the images in `scope` the way the publish sweep does: scanned, `servableImageContent` still images on a post that
- * is not Private, SFW and NSFW split on `Image.nsfwLevel`, each drawn with `knightsSampleDraw` against its pool's rate.
- * Images that already had an item are dropped before the cap is counted; at most as many are queued as keep the open count
- * within `maxOpen`.
+ * The publish sweep's sampling over `scope`. Images that already had an item are dropped before the `maxOpen` room is
+ * counted, so re-reads cost no room.
  */
 export async function sampleImagesForKnights(
   db: Kysely<DB>,
@@ -263,6 +260,8 @@ export async function offerLeftPrivateImagesToKnights(
     )
     .select('img.id')
     .where('postIds' in scope ? 'img.postId' : 'img.id', 'in', ids)
+    // As when the owner rates: a moderator-locked level is not asked about.
+    .where('img.nsfwLevelLocked', '=', false)
     .where((eb) =>
       eb.not(
         eb.exists(

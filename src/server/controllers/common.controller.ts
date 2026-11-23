@@ -110,7 +110,7 @@ export const updateEntityAvailabilityHandler = async ({
         break;
       case 'Post':
         if (availability !== Availability.Private)
-          await queueLeftPrivateForKnights({ postIds: [entityId] });
+          void queueLeftPrivateForKnights({ postIds: [entityId] });
         const images = await dbRead.image.findMany({
           where: { postId: entityId },
           select: { id: true },

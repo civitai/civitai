@@ -8364,18 +8364,14 @@ export const publishPrivateModel = async (
       rules: false,
     }).catch(() => null);
     const posts = await dbWrite.post.findMany({
-      where: { modelVersionId: { in: versionIds }, userId: model.userId },
-      select: { id: true },
+      where: { modelVersionId: { in: versionIds } },
+      select: { id: true, userId: true },
     });
     scanEntitiesInBackground(
       'Post',
-      posts.map((p) => p.id)
+      posts.filter((p) => p.userId === model.userId).map((p) => p.id)
     );
-    const leftPrivate = await dbWrite.post.findMany({
-      where: { modelVersionId: { in: versionIds } },
-      select: { id: true },
-    });
-    await queueLeftPrivateForKnights({ postIds: leftPrivate.map((p) => p.id) });
+    void queueLeftPrivateForKnights({ postIds: posts.map((p) => p.id) });
   }
 
   return { versionIds, held: false };

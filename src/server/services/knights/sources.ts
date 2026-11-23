@@ -204,17 +204,20 @@ export function queueOwnerRatingForKnights(imageId: number): Promise<void> {
 }
 
 /**
- * Call once the write that took a post (or images) out of Private has committed. Never throws into the caller: a failure is
- * logged and the images stay unoffered.
+ * Call once the write that took a post (or images) out of Private has committed; callers need not wait on it. Never throws:
+ * a failure is logged and the images stay unoffered.
  */
 export async function queueLeftPrivateForKnights(scope: KnightsSampleScope): Promise<void> {
   try {
     const config = await getKnightsSourcesConfig();
-    if (!config.enabled) return;
     await offerLeftPrivateImagesToKnights(kyselyWrite, { scope, now: new Date(), config });
   } catch (error) {
     logToAxiom(
-      { type: 'knights-v2-left-private-error', scope, error: (error as Error).message },
+      {
+        type: 'knights-v2-left-private-error',
+        ids: ('postIds' in scope ? scope.postIds : scope.imageIds).slice(0, 20),
+        error: (error as Error).message,
+      },
       'knights-v2-sources'
     );
   }

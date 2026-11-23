@@ -60,7 +60,7 @@ beforeAll(async () => {
        type text NOT NULL DEFAULT 'image', "nsfwLevel" integer NOT NULL DEFAULT 1,
        ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "postId" integer,
        poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
-       "userId" integer NOT NULL DEFAULT 1
+       "userId" integer NOT NULL DEFAULT 1, "nsfwLevelLocked" boolean NOT NULL DEFAULT false
      );
      CREATE TABLE "ImageRatingRequest" (
        "imageId" integer NOT NULL, "userId" integer NOT NULL, "nsfwLevel" integer NOT NULL,
@@ -389,16 +389,14 @@ describe('offerLeftPrivateImagesToKnights', () => {
     await post(1, minutesAgo(300));
     await images(1, [11]);
     await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 1`);
-    const sweep = () =>
-      sampleNewlyLivePostsForKnights(db, {
-        cursor: { publishedAt: minutesAgo(10), postId: 0 },
-        now: NOW,
-        config: config({ sfwRate: 1 }),
-      });
+    const sweep = (cursor: PublishSampleCursor | null) =>
+      sampleNewlyLivePostsForKnights(db, { cursor, now: NOW, config: config({ sfwRate: 1 }) });
 
-    await sweep();
+    // Within the sweep's lookback, so it reads the post, and skips it while Private.
+    const first = await sweep(null);
+    expect(first.posts).toBe(1);
     await pg.query(`UPDATE "Post" SET availability = 'Public' WHERE id = 1`);
-    await sweep();
+    await sweep(first.cursor);
     expect(await queued()).toEqual([]);
 
     expect(await offer({ postIds: [1] })).toEqual({ ownerRatings: 0, enqueued: 1, capped: false });
@@ -434,12 +432,14 @@ describe('offerLeftPrivateImagesToKnights', () => {
     expect((await queued()).map((i) => i.imageId)).toEqual([22]);
   });
 
-  it("queues the owner's refused rating as an owner rating, ahead of the draw, unless the image ever had an item", async () => {
+  it("queues the owner's rating as an owner rating, ahead of the draw, unless the image ever had an item or its level is locked", async () => {
     await post(1, minutesAgo(300));
-    await images(1, [11, 12, 13]);
+    await images(1, [11, 12, 13, 14]);
     await ownerRating(11);
     await ownerRating(12, 2); // not the owner's
     await ownerRating(13);
+    await ownerRating(14);
+    await pg.query(`UPDATE "Image" SET "nsfwLevelLocked" = true WHERE id = 14`);
     await pg.query(
       `INSERT INTO "KnightsQueueItem" ("questionKey", "imageId", source, "minRank", "votesNeeded", priority, status, "createdAt", "updatedAt")
        VALUES ('knights.image.nsfwLevel', 13, 'owner-rating', 'Knight', 3, 1, 'Applied', now(), now())`

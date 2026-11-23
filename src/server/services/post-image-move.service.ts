@@ -227,7 +227,7 @@ export async function moveImagesToPost({
       toPostId: targetPostId,
       errors: failures.map((f) => safeError(f.reason)),
     });
-  if (leftPrivate) await queueLeftPrivateForKnights({ imageIds });
+  if (leftPrivate) void queueLeftPrivateForKnights({ imageIds });
 
   return { postId: targetPostId };
 }
