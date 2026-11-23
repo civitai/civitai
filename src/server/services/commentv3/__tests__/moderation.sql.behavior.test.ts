@@ -144,7 +144,7 @@ describe('removing CommentV3 comments as ToS violations', () => {
     expect(await status()).toMatchObject({ 1: 'Actioned' });
   });
 
-  it('pays a report at most once per removal: a repeat pays nothing, a removal after a restore pays again', async () => {
+  it('actions a report once per removal: a repeat actions nothing, a later removal actions it again', async () => {
     const paid = () =>
       reward.mock.calls.filter(([e]) => (e as { reportId: number }).reportId === 1);
     await bulkSetCommentV3TosViolation({ ids: [41], actor: { id: 1 } });
@@ -152,7 +152,6 @@ describe('removing CommentV3 comments as ToS violations', () => {
     await bulkSetCommentV3TosViolation({ ids: [41], actor: { id: 1 } });
     expect(paid()).toHaveLength(1);
     await bulkClearCommentV3TosViolation({ ids: [41] });
-    // Its own transaction actions it again; the reward's daily key is what dedups this one.
     await bulkSetCommentV3TosViolation({ ids: [41], actor: { id: 1 } });
     expect(paid()).toHaveLength(2);
   });
@@ -236,7 +235,7 @@ describe('removing CommentV3 comments as ToS violations', () => {
 });
 
 // On separate connections of real Postgres: a lock is invisible to the single-connection PGlite.
-describe.skipIf(!TEST_DATABASE_URL)('a ToS clear racing a removal, on two connections', () => {
+describe.skipIf(!TEST_DATABASE_URL)('ToS set and clear on two connections', () => {
   let db: Awaited<ReturnType<typeof openScratch>>;
   beforeAll(async () => {
     db = await openScratch('comment_tos_races');

@@ -175,7 +175,7 @@ describe('scam cleanup of comments', () => {
     expect(await hidden()).not.toContain(62);
   });
 
-  it('an overturn leaves hidden a comment hidden again after the cleanup', async () => {
+  it('a restore passes by a row re-stamped after its record', async () => {
     const record = await runScamCleanup('comments', SCAMMER);
     // A moderator shows 42, then hides it again for their own reason: a new stamp.
     await setFlags([42], { hidden: false });
@@ -208,19 +208,19 @@ describe('scam cleanup of comments', () => {
         INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, hidden, "updatedAt")
         VALUES (${id}, 'model', 1, ${SCAMMER}, 'legacy', true, ${updatedAt})`);
 
-    it('restores a row untouched since the cleanup wrote it', async () => {
+    it('matches an unstamped row last written inside the record window', async () => {
       await legacyRow(70, CLEANUP_WRITE);
       expect(await restoreLegacy([70])).toEqual({ restored: 1 });
       expect(await hidden()).not.toContain(70);
     });
 
-    it('leaves hidden a row written 11 minutes after the cleanup', async () => {
+    it('passes by an unstamped row written after the window', async () => {
       await legacyRow(71, `'2026-11-01T00:11:00Z'`);
       expect(await restoreLegacy([71])).toEqual({ restored: 0 });
       expect(await hidden()).toContain(71);
     });
 
-    it('leaves hidden a row last written before the cleanup', async () => {
+    it('passes by an unstamped row written before the window', async () => {
       await legacyRow(72, `'2026-10-31T23:59:59Z'`);
       expect(await restoreLegacy([72])).toEqual({ restored: 0 });
       expect(await hidden()).toContain(72);

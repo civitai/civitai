@@ -46,7 +46,7 @@ describe.skipIf(!TEST_DATABASE_URL)('comment hides on two connections', () => {
     }
   });
 
-  it('an overturn leaves hidden a comment a moderator hid again on another connection', async () => {
+  it('a restore passes by a row whose hide stamp changed on another connection', async () => {
     await db.q(`INSERT INTO "CommentV3" (id, "userId") VALUES (4, 10), (5, 10)`);
     const record = await runScamCleanup('comments', 10);
     expect([...(record?.ids ?? [])].sort()).toEqual([4, 5]);
@@ -70,7 +70,7 @@ describe.skipIf(!TEST_DATABASE_URL)('comment hides on two connections', () => {
     ]);
   });
 
-  it('a moderator hide waits for an overturn in progress, and stands after it', async () => {
+  it('a hide waits on a restore holding the row, then applies', async () => {
     await db.q(`INSERT INTO "CommentV3" (id, "userId") VALUES (6, 10)`);
     const record = await runScamCleanup('comments', 10);
     dbMock.dbWrite.userRestriction.findUnique.mockResolvedValueOnce({
@@ -78,7 +78,7 @@ describe.skipIf(!TEST_DATABASE_URL)('comment hides on two connections', () => {
       type: 'scam',
       triggers: [{ cleanup: record }],
     } as never);
-    // Hold the restore at its show, after it has chosen its rows.
+    // Hold the restore after it has locked its rows.
     const held = holdAt(/^UPDATE "CommentV3" SET hidden/);
     const restore = restoreScamCase(1);
     await held.reachedAt;

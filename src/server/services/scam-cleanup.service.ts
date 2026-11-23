@@ -29,10 +29,9 @@ async function hideComments(userId: number, at: Date) {
 }
 
 /**
- * Shows again those of `among` that are still hidden by the cleanup recorded at `at`: stamped
- * with exactly `at`. A row hidden before stamps existed has none, so it counts only if nothing
- * has written it since the cleanup's own write, which lands within minutes of `at`. Anything
- * hidden or changed later stays hidden.
+ * Shows again those of `among` whose hide is the cleanup recorded at `at`: stamped with exactly
+ * `at`. A row hidden before stamps existed has none, so it counts only if its last write is the
+ * cleanup's own, which lands within minutes of `at`.
  */
 async function restoreComments(userId: number, among: number[], at: Date) {
   if (!among.length) return [];

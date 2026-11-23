@@ -256,6 +256,27 @@ export async function deleteComments(db: SqlRunner, ids: number[]) {
 
 type Flags = { hidden?: boolean; tosViolation?: boolean; pinned?: boolean };
 
+/** Row-locks comments in id order, the one order every flag writer takes. */
+function lockComments(db: SqlRunner, ids: number[]) {
+  return db.query(
+    `SELECT id FROM "CommentV3" WHERE id = ANY(string_to_array($1, ',')::int[]) ORDER BY id FOR UPDATE`,
+    [ids.join(',')]
+  );
+}
+
+/** Stamps `hiddenAt` anew on live comments already hidden; returns the rows it stamped. */
+export async function restampHiddenComments(db: SqlRunner, ids: number[]) {
+  if (!ids.length) return [];
+  await lockComments(db, ids);
+  const { rows } = await db.query<{ id: number }>(
+    `UPDATE "CommentV3" SET "hiddenAt" = now(), "updatedAt" = now()
+     WHERE id = ANY(string_to_array($1, ',')::int[]) AND hidden AND "deletedAt" IS NULL
+     RETURNING id`,
+    [ids.join(',')]
+  );
+  return rows;
+}
+
 /**
  * Sets moderation flags on live comments; returns the rows it changed. Locks every id first, in id
  * order, so what the caller reads afterwards is read under the lock even when nothing changed. A
@@ -288,10 +309,7 @@ export async function setCommentFlags(
   if (flags.pinned !== undefined)
     add('"pinnedAt"', flags.pinned, 'CASE WHEN $::boolean THEN COALESCE("pinnedAt", now()) END');
   if (!sets.length || !ids.length) return [];
-  await db.query(
-    `SELECT id FROM "CommentV3" WHERE id = ANY(string_to_array($1, ',')::int[]) ORDER BY id FOR UPDATE`,
-    [params[0]]
-  );
+  await lockComments(db, ids);
   const { rows } = await db.query<{ id: number; userId: number }>(
     `UPDATE "CommentV3" SET ${sets.join(', ')}, "updatedAt" = now()
      WHERE id = ANY(string_to_array($1, ',')::int[]) AND "deletedAt" IS NULL AND (${changed.join(

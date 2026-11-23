@@ -35,6 +35,7 @@ import {
   BLOCK_HIDE_MAX_COMMENTS,
   BLOCK_HIDE_READ_TIMEOUT_MS,
   blockHideCandidatesSql,
+  blockHideHiddenSql,
 } from '~/server/services/block-hide-comments.service';
 
 const userId = 42;
@@ -486,7 +487,8 @@ describe('toggleHidden kind=blockedUser — hideComments', () => {
 
     const result = await blockHiding();
 
-    expect(order).toEqual(['block', 'hide']);
+    // Both reads (to hide, then the already hidden) follow the block.
+    expect(order).toEqual(['block', 'hide', 'hide']);
     expect(result.commentsHidden).toEqual({ status: 'hidden', count: 0, capped: false });
   });
 
@@ -495,13 +497,14 @@ describe('toggleHidden kind=blockedUser — hideComments', () => {
 
     await blockHiding();
 
-    expect(queryWithTimeout).toHaveBeenCalledTimes(1);
-    expect(queryWithTimeout).toHaveBeenCalledWith(
-      expect.anything(),
-      BLOCK_HIDE_READ_TIMEOUT_MS,
-      blockHideCandidatesSql,
-      [targetUserId, userId, BLOCK_HIDE_MAX_COMMENTS]
-    );
+    expect(queryWithTimeout).toHaveBeenCalledTimes(2);
+    for (const sql of [blockHideCandidatesSql, blockHideHiddenSql])
+      expect(queryWithTimeout).toHaveBeenCalledWith(
+        expect.anything(),
+        BLOCK_HIDE_READ_TIMEOUT_MS,
+        sql,
+        [targetUserId, userId, BLOCK_HIDE_MAX_COMMENTS]
+      );
   });
 
   it('does not re-run on a block that was already in place', async () => {

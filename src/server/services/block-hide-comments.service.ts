@@ -3,7 +3,11 @@ import { queryWithTimeout } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import type { CommentEntityType } from '~/shared/utils/prisma/enums';
-import { prismaRunner, setCommentFlags } from '~/server/services/commentv3/write.service';
+import {
+  prismaRunner,
+  restampHiddenComments,
+  setCommentFlags,
+} from '~/server/services/commentv3/write.service';
 
 /** The ids of the sections of each type that `owner` owns. */
 export const SECTION_OWNERS: Record<CommentEntityType, (owner: string) => string> = {
@@ -34,7 +38,7 @@ export const BLOCK_HIDE_READ_TIMEOUT_MS = 5_000;
 export const BLOCK_HIDE_MAX_COMMENTS = 10_000;
 export const BLOCK_HIDE_BATCH_SIZE = 1_000;
 
-export const blockHideCandidatesSql = `WITH owned (t, id) AS (
+const candidatesSql = (hidden: boolean) => `WITH owned (t, id) AS (
 ${Object.entries(SECTION_OWNERS)
   .map(
     ([type, owned]) => `  SELECT '${type}'::"CommentEntityType", x.id FROM (${owned('$2')}) x (id)`
@@ -43,9 +47,12 @@ ${Object.entries(SECTION_OWNERS)
 )
 SELECT c.id FROM owned o
 JOIN "CommentV3" c ON c."entityType" = o.t AND c."entityId" = o.id
-WHERE c."userId" = $1 AND NOT c.hidden AND c."deletedAt" IS NULL
+WHERE c."userId" = $1 AND ${hidden ? '' : 'NOT '}c.hidden AND c."deletedAt" IS NULL
 ORDER BY c.id
 LIMIT $3`;
+export const blockHideCandidatesSql = candidatesSql(false);
+/** The blocked user's comments there that are already hidden, which the block re-stamps. */
+export const blockHideHiddenSql = candidatesSql(true);
 
 export type BlockHideCommentsResult =
   | { status: 'hidden'; count: number; capped: boolean }
@@ -78,6 +85,19 @@ export async function hideBlockedUserCommentsOnOwnContent({
         setCommentFlags(prismaRunner(tx), batch, { hidden: true })
       );
       count += updated.length;
+    }
+    // Hidden already: stamped as this block's hide too.
+    const hidden = await queryWithTimeout<{ id: number }>(
+      pgDbRead,
+      BLOCK_HIDE_READ_TIMEOUT_MS,
+      blockHideHiddenSql,
+      [blockedUserId, ownerId, BLOCK_HIDE_MAX_COMMENTS]
+    );
+    const justHidden = new Set(ids);
+    const hiddenIds = hidden.rows.map((r) => r.id).filter((id) => !justHidden.has(id));
+    for (let i = 0; i < hiddenIds.length; i += BLOCK_HIDE_BATCH_SIZE) {
+      const batch = hiddenIds.slice(i, i + BLOCK_HIDE_BATCH_SIZE);
+      await dbWrite.$transaction((tx) => restampHiddenComments(prismaRunner(tx), batch));
     }
     return { status: 'hidden', count, capped: ids.length >= BLOCK_HIDE_MAX_COMMENTS };
   } catch (error) {

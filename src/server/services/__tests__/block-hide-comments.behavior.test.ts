@@ -30,6 +30,8 @@ import {
   SECTION_OWNERS,
 } from '~/server/services/block-hide-comments.service';
 import { CommentEntityType } from '~/shared/utils/prisma/enums';
+import { Prisma } from '@prisma/client';
+import { restoreScamCase, runScamCleanup } from '~/server/services/scam-cleanup.service';
 
 const BLOCKER = 1;
 const BLOCKED = 2;
@@ -106,6 +108,10 @@ beforeEach(async () => {
   dbMock.dbWrite.$queryRawUnsafe.mockImplementation(
     (async (sql: string, ...params: unknown[]) => (await holder.db.query(sql, params)).rows) as any
   );
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (first: never, ...values: unknown[]) => {
+    const sql = Prisma.sql(first as unknown as TemplateStringsArray, ...(values as never[]));
+    return (await holder.db.query(sql.text, sql.values as unknown[])).rows;
+  }) as never);
 });
 
 const hiddenIds = async () =>
@@ -122,6 +128,37 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
 
     expect(result).toEqual({ status: 'hidden', count: 6, capped: false });
     expect(await hiddenIds()).toEqual([1001, 1002, 1003, 1004, 1005, 1006, 2001]);
+  });
+
+  it('re-stamps the comments it would hide that are hidden already, and no others', async () => {
+    const earlier = '2026-11-01T00:00:00.000Z';
+    await holder.db.exec(`
+      UPDATE "CommentV3" SET "hiddenAt" = '${earlier}' WHERE id = 2001;
+      INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId", hidden, "hiddenAt")
+      VALUES (3005, ${BLOCKED}, 'image', 20, true, '${earlier}');`);
+    await hideBlockedUserCommentsOnOwnContent({ ownerId: BLOCKER, blockedUserId: BLOCKED });
+    const stamps = await holder.db.query<{ id: number; hidden: boolean; same: boolean }>(
+      `SELECT id, hidden, "hiddenAt" = '${earlier}' AS same FROM "CommentV3" WHERE id IN (2001, 3005) ORDER BY id`
+    );
+    expect(stamps.rows).toEqual([
+      { id: 2001, hidden: true, same: false },
+      { id: 3005, hidden: true, same: true },
+    ]);
+  });
+
+  it('after a block, a restore of an earlier hide passes its rows by', async () => {
+    await holder.db.exec(`TRUNCATE "CommentV3";
+      INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId") VALUES (1001, ${BLOCKED}, 'image', 10);`);
+    const record = await runScamCleanup('comments', BLOCKED);
+    await hideBlockedUserCommentsOnOwnContent({ ownerId: BLOCKER, blockedUserId: BLOCKED });
+    dbMock.dbWrite.userRestriction.findUnique.mockResolvedValueOnce({
+      userId: BLOCKED,
+      type: 'scam',
+      triggers: [{ cleanup: record }],
+    } as never);
+
+    expect(await restoreScamCase(1)).toEqual({ restored: 0 });
+    expect(await hiddenIds()).toEqual([1001]);
   });
 
   it("hides on another owner's sections only when they are the blocker", async () => {
@@ -142,8 +179,8 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
     });
 
     expect(result).toEqual({ status: 'hidden', count: BLOCK_HIDE_MAX_COMMENTS, capped: true });
-    // Ten batches, each a row lock and then the update.
-    expect(dbMock.dbWrite.$queryRawUnsafe).toHaveBeenCalledTimes(20);
+    // Ten batches, each a row lock and then the update; then one re-stamp batch for 2001.
+    expect(dbMock.dbWrite.$queryRawUnsafe).toHaveBeenCalledTimes(22);
     // The ceiling's worth plus the one already hidden.
     const { rows } = await holder.db.query<{ n: number }>(
       `SELECT count(*)::int n FROM "CommentV3" WHERE "userId" = ${BLOCKED} AND hidden`
