@@ -84,7 +84,7 @@ func (r *ShowcaseRead) State(ids []int) Showcase {
 		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
 			return ShowcaseCurated
 		}
-		e, st := entryState(cmd, ShowcaseTTL, now, false)
+		e, st := entryState(cmd, 0, now, false)
 		if st != stateEntry {
 			state = ShowcaseUnknown
 			continue

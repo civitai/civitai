@@ -1028,8 +1028,6 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 				return nil, fallback.New("prioritized-curated-showcase")
 			case hydrate.ShowcaseUnknown:
 				return nil, fallback.New("prioritized-showcase-miss")
-			case hydrate.ShowcaseStale:
-				return nil, fallback.New("prioritized-showcase-stale")
 			}
 		}
 	}

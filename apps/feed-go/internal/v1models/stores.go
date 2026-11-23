@@ -631,8 +631,6 @@ func curatedShowcaseGuard(r *hydrate.ShowcaseRead, listed []int) error {
 		return fallback.New("v1-models-curated-showcase")
 	case hydrate.ShowcaseUnknown:
 		return fallback.New("v1-models-showcase-miss")
-	case hydrate.ShowcaseStale:
-		return fallback.New("v1-models-showcase-stale")
 	}
 	return nil
 }

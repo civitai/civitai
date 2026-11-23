@@ -704,7 +704,7 @@ func finishItems(ctx context.Context, d *Deps, in *Input, level int, raw rawInpu
 		}
 	}
 	// sameVersionOnly: `!!input.baseModels?.length || !!input.hidePaid`.
-	covers, err := coverImages(ctx, d, items, images, len(in.BaseModels) > 0 || in.HidePaid)
+	covers, err := coverImages(ctx, d, items, images, len(in.BaseModels) > 0)
 	if err != nil {
 		return nil, err
 	}
@@ -896,9 +896,7 @@ func coverImages(ctx context.Context, d *Deps, items []*feedItem, byVersion map[
 	if err != nil {
 		return nil, err
 	}
-	if err := communityCoverGuard(ctx, d.DB, found, pending); err != nil {
-		return nil, err
-	}
+	_ = pending
 	return found, nil
 }
 
