@@ -51,6 +51,7 @@ export function createTrainingDataRulesPublisher(deps: TrainingDataRulesPublishe
 export const publishTrainingDataRulesLive = createTrainingDataRulesPublisher({
   write: (field, ttlMs) =>
     hSetWithTTL(redis, REDIS_KEYS.FEED_GO.TRAINING_DATA_RULES_LIVE, field, '1', ttlMs),
-  rulesId: trainingDataListingRulesId,
+  // Read on each write, not at import, so a module that replaces the listing service loads this.
+  rulesId: () => trainingDataListingRulesId(),
   now: Date.now,
 });
