@@ -4,9 +4,10 @@
  * when the lyrics hold or the cover's review closes as not csam.
  *
  * The song's own "Image" row records which of its parts made this mechanism flag it, under
- * `metadata.csamHold` (`{ lyrics?: <hold id>, cover?: <cover image id> }`). The key exists only while
- * the mechanism owns the flag: a moderator flagging the song itself removes it, and a flag without it
- * is never released here.
+ * `metadata.csamHold` (`{ lyrics?: <hold id>, cover?: <cover image id>, prior?: <review> }`, `prior`
+ * being the other review the flag replaced, which a release puts back). The key exists only while the
+ * mechanism owns the flag: a moderator flagging the song itself removes it, and a flag without it is
+ * never released here.
  */
 
 export const SONG_CSAM_HOLD_KEY = 'csamHold';
@@ -16,8 +17,23 @@ export type SongCsamHoldSource = 'lyrics' | 'cover';
 const INT4_MAX = 2_147_483_647;
 
 function alias(ref: string): string {
-  if (!/^[a-z_][a-z0-9_]*$/i.test(ref)) throw new Error(`Bad table alias: ${ref}`);
+  if (!/^[a-z_][a-z0-9_]*$/i.test(ref) && ref !== '"Image"')
+    throw new Error(`Bad table alias: ${ref}`);
   return ref;
+}
+
+/** A csam hold on the lyrics of the song whose "Image" row is aliased `image`, in `statuses`. */
+const lyricsHoldSql = (image: string, statuses: string[]) => `EXISTS (SELECT 1 FROM "TextScanHold" h
+    WHERE h."entityType" = 'TrackLyrics' AND h."entityId" = ${image}.id AND h.label = 'csam'
+      AND h.status::text IN (${statuses.map((status) => `'${status}'`).join(', ')}))`;
+
+/**
+ * Whether the "Image" row aliased `image` (an alias, or `"Image"` for an unaliased table) is a song
+ * whose lyrics hold a moderator confirmed. A confirmed hold keeps the song held as a confirmed video
+ * stays removed, so a lift of the song's own flag must not apply to it.
+ */
+export function confirmedLyricsHoldSql(image: string): string {
+  return lyricsHoldSql(alias(image), ['Confirmed']);
 }
 
 /** Image ids as an int[] literal; throws on anything but positive int4 values, since it is spliced. */
@@ -29,13 +45,14 @@ function idArray(ids: number[]): string {
 
 /**
  * The id of the song the "Image" row aliased `cover` is the cover of, or NULL. The one place that
- * reads the link between a song and its cover.
+ * reads the link between a song and its cover. It does not check the row it finds is a song: every
+ * write it feeds keeps to `audio` rows itself.
  */
 export function songIdOfCoverSql(cover: string): string {
   const c = alias(cover);
   return `(SELECT s.id FROM "Image" s
     WHERE s.id = CASE WHEN ${c}."metadata" ->> 'parentId' ~ '^[0-9]{1,9}$' THEN (${c}."metadata" ->> 'parentId')::int END
-      AND s.type = 'audio' AND s."userId" = ${c}."userId" AND ${c}."postId" IS NULL
+      AND s."userId" = ${c}."userId" AND ${c}."postId" IS NULL
       AND s."metadata" ->> 'coverImageId' = ${c}.id::text)`;
 }
 
@@ -74,8 +91,8 @@ const heldSql = (
 /**
  * Re-decides each flagged song a release reaches, after its lyrics hold or its cover's review closed.
  * Only a song whose flag this mechanism set (the marker) and whose `source` is no longer open is
- * written: the marker keeps only the sources still open, and the flag (with the marker) comes off
- * only when none is left and no other csam reason remains: no lyrics hold Pending or Confirmed, the
+ * written: the marker keeps only the sources still open, and the flag (with the marker) comes off,
+ * back to the review it replaced if any, only when none is left and no other csam reason remains: no lyrics hold Pending or Confirmed, the
  * recorded cover not held, no open user CSAM report on the song. RETURNING `id, released`. `null`
  * for no ids.
  */
@@ -83,9 +100,7 @@ export function releaseSongCsamHoldSql(target: ReleaseTarget): string | null {
   const songs = targetSongsSql(target);
   if (!songs) return null;
   const marker = `s."metadata" -> '${SONG_CSAM_HOLD_KEY}'`;
-  const lyricsOpen = `EXISTS (SELECT 1 FROM "TextScanHold" h
-    WHERE h."entityType" = 'TrackLyrics' AND h."entityId" = s.id AND h.label = 'csam'
-      AND h.status::text IN ('Pending', 'Confirmed'))`;
+  const lyricsOpen = lyricsHoldSql('s', ['Pending', 'Confirmed']);
   const coverOpen = `EXISTS (SELECT 1 FROM "Image" hc
     WHERE ${marker} ->> 'cover' ~ '^[0-9]{1,9}$' AND hc.id = (${marker} ->> 'cover')::int AND ${heldSql(
     'hc'
@@ -96,13 +111,14 @@ export function releaseSongCsamHoldSql(target: ReleaseTarget): string | null {
   const released = `(NOT ${lyricsOpen} AND NOT ${coverOpen} AND NOT ${reportOpen})`;
   const kept = `jsonb_strip_nulls(jsonb_build_object(
     'lyrics', CASE WHEN ${lyricsOpen} THEN ${marker} -> 'lyrics' END,
-    'cover', CASE WHEN ${coverOpen} THEN ${marker} -> 'cover' END))`;
+    'cover', CASE WHEN ${coverOpen} THEN ${marker} -> 'cover' END,
+    'prior', ${marker} -> 'prior'))`;
   return `UPDATE "Image" s SET
-    "needsReview" = CASE WHEN ${released} THEN NULL ELSE s."needsReview" END,
+    "needsReview" = CASE WHEN ${released} THEN ${marker} ->> 'prior' ELSE s."needsReview" END,
     "metadata" = CASE WHEN ${released} THEN s."metadata" - '${SONG_CSAM_HOLD_KEY}'
       ELSE jsonb_set(s."metadata", '{${SONG_CSAM_HOLD_KEY}}', ${kept}) END
   WHERE s.id IN (${songs}) AND s.type = 'audio' AND s."needsReview" = 'csam'
     AND jsonb_typeof(${marker}) = 'object' AND ${marker} ? '${target.source}'
     AND NOT ${sourceOpen}
-  RETURNING s.id, s."needsReview" IS NULL AS released`;
+  RETURNING s.id, NOT (s."metadata" ? '${SONG_CSAM_HOLD_KEY}') AS released`;
 }

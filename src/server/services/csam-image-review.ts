@@ -76,13 +76,15 @@ export async function holdSongForCsam(
       COALESCE(jsonb_typeof("metadata" -> ${SONG_CSAM_HOLD_KEY}) = 'object', false) AS marked
     FROM "Image" WHERE id = ${songId} AND type = 'audio' FOR UPDATE`;
   if (!song) return;
-  // Before the flag write: an unflagged song gets a new marker, a marked one this source added.
+  // Before the flag write: an unflagged song gets a new marker, holding the review the flag replaces
+  // for a release to put back; a marked one gets this source added.
   if (!song.flagged || song.marked)
     await tx.$executeRaw`
       UPDATE "Image" SET "metadata" = jsonb_set(
         CASE WHEN jsonb_typeof("metadata") = 'object' THEN "metadata" ELSE '{}'::jsonb END,
         '{csamHold}',
-        CASE WHEN "needsReview" = 'csam' THEN "metadata" -> 'csamHold' ELSE '{}'::jsonb END
+        CASE WHEN "needsReview" = 'csam' THEN "metadata" -> 'csamHold'
+          ELSE jsonb_strip_nulls(jsonb_build_object('prior', "needsReview")) END
           || jsonb_strip_nulls(jsonb_build_object('lyrics', ${lyrics}::int, 'cover', ${cover}::int)))
       WHERE id = ${songId}`;
   await flagRows(tx, [songId]);

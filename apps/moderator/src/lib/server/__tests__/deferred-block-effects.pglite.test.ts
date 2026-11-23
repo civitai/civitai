@@ -71,6 +71,7 @@ const { clearUserCsamFlags } = await import('../csam-flag-clear');
 const { DEFERRED_NOTICE_LOG } = await import('../deferred-block-effects');
 
 const SCHEMA = `
+CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
 CREATE DOMAIN "ImageIngestionStatus" AS TEXT;

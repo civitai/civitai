@@ -11,6 +11,7 @@ import {
 } from './deferred-block-effects';
 import { keepPendingAppealFlags, releaseSongsOfClearedCovers } from './image-moderation.service';
 import { BAN_REASONS_ALWAYS_REMOVING_MEDIA } from '$lib/enforcement';
+import { confirmedLyricsHoldSql } from '@civitai/shared/song-csam-hold';
 
 /**
  * The one definition of a hold marker, and the table behind it. A migration that may not be applied
@@ -134,6 +135,8 @@ export async function clearRemovedFlagsUnlessHeld(
     .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
     .where('ingestion', '=', 'Blocked')
     .where(sql<boolean>`NOT ${anyHold(sql<number>`${userId}::int`, marker, overriding)}`)
+    // A song whose lyrics hold was confirmed stays held, as a video removed for CSAM does.
+    .where(sql<boolean>`NOT ${sql.raw(confirmedLyricsHoldSql('"Image"'))}`)
     .returning('id')
     .execute();
   return rows.map((r) => r.id);

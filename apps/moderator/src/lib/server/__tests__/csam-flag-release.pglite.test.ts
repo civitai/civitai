@@ -42,6 +42,7 @@ const {
 } = await import('../csam-flag-clear');
 
 const SCHEMA = `
+CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
 CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'PendingManualAssignment');
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "bannedAt" TIMESTAMP(3), "meta" JSONB);
 CREATE TABLE "Image" (

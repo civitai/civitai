@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { DEFERRED_BLOCK_EFFECT_TABLE_SQL } from '../../../test/held-image-tables';
@@ -68,8 +69,19 @@ vi.mock('../article-cover-reindex', () => ({
   queueArticlesForCoverImages: vi.fn(async () => undefined),
 }));
 
-const { acceptImage, dismissFromCsamQueue } = await import('../image-moderation.service');
-const { clearUserCsamFlags } = await import('../csam-flag-clear');
+const { acceptImage, dismissFromCsamQueue, dismissUserFromCsamQueue } = await import(
+  '../image-moderation.service'
+);
+const { clearUserCsamFlags, releaseHeldUserCsamFlags } = await import('../csam-flag-clear');
+const { imagesVersion, removedNotDismissed } = await import('../csam-queue-set-aside');
+
+const RELEASE_TABLE_SQL = readFileSync(
+  new URL(
+    '../../../../../../packages/civitai-db-schema/prisma/migrations/20261125120000_csam_flag_release/migration.sql',
+    import.meta.url
+  ),
+  'utf8'
+);
 
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
@@ -135,6 +147,7 @@ let db: PGlite;
 beforeAll(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
+  await db.exec(RELEASE_TABLE_SQL);
   dbHandle.current = new Kysely<DB>({ dialect: pgliteDialect(db) });
 });
 
@@ -149,7 +162,7 @@ async function seed({
   removed = false,
 } = {}) {
   await db.exec(`TRUNCATE "Image", "CsamQueueSetAside", "TextScanHold", "Report", "ImageReport",
-    "ModActivity", "ImageDeferredBlockEffect"`);
+    "ModActivity", "ImageDeferredBlockEffect", "User"`);
   await db.query(
     `INSERT INTO "Image" ("id", "type", "userId", "postId", "needsReview", "metadata") VALUES
       ($1, 'audio', $2, 1, 'csam', $3::jsonb)`,
@@ -178,6 +191,8 @@ const song = async () =>
   ).rows[0];
 
 const accept = () => acceptImage({ imageId: COVER, userId: MOD });
+const lyricsHold = (status: 'Pending' | 'Confirmed') =>
+  db.query(`INSERT INTO "TextScanHold" VALUES ('TrackLyrics', $1, 'csam', $2)`, [SONG, status]);
 
 describe("closing a song cover's csam review", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -244,5 +259,88 @@ describe("closing a song cover's csam review", () => {
 
     expect(result).toMatchObject({ ok: true, cleared: 1 });
     expect(await song()).toEqual({ needsReview: null, marker: null });
+  });
+
+  it('keeps the song held through a cover accept while its lyrics hold is confirmed', async () => {
+    await seed({ marker: { lyrics: 5, cover: COVER } });
+    await lyricsHold('Confirmed');
+
+    await accept();
+
+    expect(await song()).toEqual({ needsReview: 'csam', marker: { lyrics: 5 } });
+  });
+
+  it('releases the song when a removed cover is dismissed with the rest of its owner', async () => {
+    await seed({ removed: true });
+    const { v } = await removedNotDismissed(dbHandle.current as Kysely<DB>, {
+      table: true,
+      writable: true,
+    })
+      .select(imagesVersion('i').as('v'))
+      .where('i.userId', '=', OWNER)
+      .executeTakeFirstOrThrow();
+
+    const result = await dismissUserFromCsamQueue({
+      userId: OWNER,
+      expectedCount: 1,
+      version: v as string,
+      moderatorId: MOD,
+    });
+
+    expect(result).toMatchObject({ ok: true, dismissed: 1 });
+    expect(await song()).toEqual({ needsReview: null, marker: null });
+  });
+
+  it('releases the song when an admin releases a banned owner’s removed flags', async () => {
+    await seed({ removed: true });
+    await db.query(`INSERT INTO "User" ("id", "bannedAt", "meta") VALUES ($1, now(), $2)`, [
+      OWNER,
+      JSON.stringify({ banDetails: { reasonCode: 'SexualMinor' } }),
+    ]);
+
+    const result = await releaseHeldUserCsamFlags({
+      userId: OWNER,
+      expectedCount: 1,
+      approvalRef: '2026-01-31-120000-0123abcd',
+      reason: 'cleared on review',
+      moderatorId: MOD,
+    });
+
+    expect(result).toMatchObject({ ok: true, count: 1 });
+    expect(await song()).toEqual({ needsReview: null, marker: null });
+  });
+});
+
+describe('lifting the song itself', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('refuses an accept while its lyrics hold is confirmed, as for a video removed for CSAM', async () => {
+    await seed({ marker: { lyrics: 5 } });
+    await lyricsHold('Confirmed');
+
+    await expect(acceptImage({ imageId: SONG, userId: MOD })).rejects.toThrow();
+
+    expect((await song()).needsReview).toBe('csam');
+  });
+
+  it('lets a moderator accept it while its lyrics hold is pending', async () => {
+    await seed({ marker: { lyrics: 5 } });
+    await lyricsHold('Pending');
+
+    await acceptImage({ imageId: SONG, userId: MOD });
+
+    expect((await song()).needsReview).toBeNull();
+  });
+
+  it("leaves it flagged when the owner's removed flags are cleared while its hold is confirmed", async () => {
+    await seed({ marker: { lyrics: 5 } });
+    await db.exec(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = ${SONG};
+      UPDATE "Image" SET "needsReview" = NULL WHERE id = ${COVER};`);
+    await lyricsHold('Confirmed');
+
+    const result = await clearUserCsamFlags({ userId: OWNER, expectedCount: 0, moderatorId: MOD });
+
+    expect(result).toMatchObject({ ok: true, cleared: 0 });
+    expect((await song()).needsReview).toBe('csam');
   });
 });

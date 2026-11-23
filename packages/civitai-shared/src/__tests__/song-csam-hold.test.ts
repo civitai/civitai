@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { lockSongCsamHoldSql, releaseSongCsamHoldSql, songIdOfCoverSql } from '../song-csam-hold';
+import {
+  confirmedLyricsHoldSql,
+  lockSongCsamHoldSql,
+  releaseSongCsamHoldSql,
+  songIdOfCoverSql,
+} from '../song-csam-hold';
 
 // The builders splice their alias and ids into SQL text, so each refuses anything else.
 describe('song csam hold SQL builders', () => {
@@ -7,6 +12,8 @@ describe('song csam hold SQL builders', () => {
     expect(() => songIdOfCoverSql('c')).not.toThrow();
     expect(() => songIdOfCoverSql('c; DROP TABLE "Image"')).toThrow(/alias/);
     expect(() => songIdOfCoverSql('"c"')).toThrow(/alias/);
+    expect(() => confirmedLyricsHoldSql('"Image"')).not.toThrow();
+    expect(() => confirmedLyricsHoldSql('"Post"')).toThrow(/alias/);
   });
 
   it('refuse an id that is not a positive int4', () => {

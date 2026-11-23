@@ -87,10 +87,18 @@ const SANITY_HELD = 11;
 const BLOCKED = 4;
 const BLOCKED_LEVEL = 5;
 const BLOCKED_REASON = 6;
+// A song: rated only by its own scan, so never a Knights sample (D4, music stabilization).
+const SONG = 7;
 
 const rows: Record<
   number,
-  { needsReview: string | null; ingestion?: string; nsfwLevel?: number; blockedFor?: string }
+  {
+    needsReview: string | null;
+    ingestion?: string;
+    nsfwLevel?: number;
+    blockedFor?: string;
+    type?: string;
+  }
 > = {
   [CLEAN]: { needsReview: null },
   [HELD]: { needsReview: 'csam' },
@@ -100,6 +108,7 @@ const rows: Record<
   [BLOCKED]: { needsReview: null, ingestion: 'Blocked' },
   [BLOCKED_LEVEL]: { needsReview: null, nsfwLevel: 32 },
   [BLOCKED_REASON]: { needsReview: null, ingestion: 'Rescan', blockedFor: 'CSAM' },
+  [SONG]: { needsReview: null, type: 'audio' },
 };
 // Ids from 100 up are clean filler for the pool-offset case.
 const lookup = (id: number) => rows[id] ?? (id >= 100 ? { needsReview: null } : undefined);
@@ -111,6 +120,7 @@ const row = (id: number, select: Record<string, boolean>) => {
     metadata: {},
     ingestion: 'Scanned',
     blockedFor: null,
+    type: 'image',
     ...lookup(id),
   };
   return Object.fromEntries(Object.keys(select).map((key) => [key, full[key]]));
@@ -161,6 +171,17 @@ describe('New Order held-image guard', () => {
 
     expect(poolStub.getCount.mock.calls.map(([id]) => id)).toEqual([CLEAN]);
     expect(result.heldIds).toEqual([BLOCKED, BLOCKED_LEVEL, BLOCKED_REASON]);
+  });
+
+  it('(a3) addImageToQueue never enqueues a song', async () => {
+    const result = await addImageToQueue({
+      imageIds: [CLEAN, SONG],
+      rankType: NewOrderRankType.Knight,
+      priority: 1,
+    });
+
+    expect(poolStub.getCount.mock.calls.map(([id]) => id)).toEqual([CLEAN]);
+    expect(result.heldIds).toEqual([SONG]);
   });
 
   it('(a2) addImageToQueue reports nothing added when every image is held', async () => {

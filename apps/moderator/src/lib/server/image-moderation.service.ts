@@ -46,7 +46,11 @@ import type { Kysely, RawBuilder, Transaction } from 'kysely';
 import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
 import { queueArticlesForCoverImages } from './article-cover-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
-import { lockSongCsamHoldSql, releaseSongCsamHoldSql } from '@civitai/shared/song-csam-hold';
+import {
+  confirmedLyricsHoldSql,
+  lockSongCsamHoldSql,
+  releaseSongCsamHoldSql,
+} from '@civitai/shared/song-csam-hold';
 
 // The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
 // not true, for every row with no flag, and would refuse every ordinary accept.
@@ -337,6 +341,10 @@ export async function acceptImage({
     })
     .where('id', '=', imageId)
     .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
+    // A song whose lyrics hold was confirmed stays held, as a video removed for CSAM does.
+    .$if(nr === FLAG_KEPT_THROUGH_BLOCK, (qb) =>
+      qb.where(sql<boolean>`NOT ${sql.raw(confirmedLyricsHoldSql('"Image"'))}`)
+    )
     .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
     .$if(keepModeratorRemoved, (qb) =>
       qb.where(

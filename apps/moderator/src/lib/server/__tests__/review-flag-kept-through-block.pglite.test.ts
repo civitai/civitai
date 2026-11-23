@@ -77,6 +77,7 @@ const {
 } = await import('../image-moderation.service');
 
 const SCHEMA = `
+CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
 CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');

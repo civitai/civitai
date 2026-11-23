@@ -51,6 +51,7 @@ const { modActions } = await import('../mod-actions/registry');
 const { trackImageRestore } = await import('../image-moderation-effects');
 
 const SCHEMA = `
+CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
 CREATE DOMAIN "ImageIngestionStatus" AS TEXT;

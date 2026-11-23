@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type { Prisma } from '@prisma/client';
@@ -251,6 +252,35 @@ describe('a csam hold on the lyrics', () => {
     expect(await visibleTo()).toEqual([]);
     expect(await feedSongs(STRANGER)).toEqual([]);
     expect(await feedSongs()).toEqual([]);
+    // A moderator still opens it by id, as a held video, to review it.
+    expect(await visibleTo(MOD, true)).toEqual([SONG]);
+    // As for a held video, these two reads hide a csam hold from its owner too.
+    expect(await visibleTo(OWNER)).toEqual([]);
+    expect(await feedSongs(OWNER)).toEqual([]);
+  });
+
+  it('re-flags the song when the same text is detected again, or new text replaces it', async () => {
+    const lift = () => h.pg.query(`UPDATE "Image" SET "needsReview" = NULL WHERE id = $1`, [SONG]);
+    await scanLyrics('h1');
+    await lift();
+
+    await scanLyrics('h1');
+    expect((await song()).needsReview).toBe('csam');
+
+    await lift();
+    await scanLyrics('h2');
+    expect((await song()).needsReview).toBe('csam');
+    expect((await holds()).map((x) => x.status)).toEqual(['Pending']);
+  });
+
+  it('puts back the review the hold replaced when the hold is dismissed', async () => {
+    await h.pg.query(`UPDATE "Image" SET "needsReview" = 'modRule' WHERE id = $1`, [SONG]);
+
+    await scanLyrics();
+    expect((await song()).needsReview).toBe('csam');
+    await decide('dismiss');
+
+    expect(await song()).toEqual({ needsReview: 'modRule', marker: null });
   });
 
   it('writes no hold when the flag write fails', async () => {
@@ -302,6 +332,31 @@ describe('a csam flag on the cover', () => {
     expect(flagged.map((x) => x.id)).toEqual([PICTURE, THUMBNAIL, FORGED]);
   });
 
+  it.each([
+    [
+      'a replaced cover the song no longer links to',
+      `UPDATE "Image" SET metadata = '{"coverImageId": ${PICTURE}}' WHERE id = ${SONG}`,
+      COVER,
+    ],
+    ['a cover row in a post', `UPDATE "Image" SET "postId" = 1 WHERE id = ${COVER}`, COVER],
+    [
+      'a picture linked like a cover',
+      `UPDATE "Image" SET type = 'image' WHERE id = ${SONG}`,
+      COVER,
+    ],
+    [
+      "another user's row the song links to",
+      `UPDATE "Image" SET metadata = '{"coverImageId": ${FORGED}}' WHERE id = ${SONG}`,
+      FORGED,
+    ],
+  ])('holds no song for %s', async (_label, change, reported) => {
+    await h.pg.exec(change);
+
+    await reportCsamImages({ imageIds: [reported], user: moderator });
+
+    expect((await song()).needsReview).toBeNull();
+  });
+
   it('adds itself to a song the lyrics already hold, and leaves a moderator-flagged song unmarked', async () => {
     await scanLyrics();
     const [hold] = await holds();
@@ -336,6 +391,23 @@ describe("the scan's CSAM block of the cover", () => {
 
     expect(await blockForCsam(COVER)).toMatchObject({ blockedFor: 'CSAM' });
 
+    expect(await song()).toEqual({ needsReview: 'csam', marker: { cover: COVER } });
+  });
+
+  it('holds the song when a rescan finds the cover already removed for CSAM', async () => {
+    await h.pg.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE id = $1`,
+      [COVER]
+    );
+    installFakeCacheRedis();
+
+    const outcome = await resolveScanOutcome({
+      image: { id: COVER, userId: OWNER, blockedFor: null, type: 'image', metadata: {} } as never,
+      fixed: { nsfwLevel: 1 },
+      workflowId: 'wf',
+    });
+
+    expect(outcome).toMatchObject({ blockedFor: 'CSAM' });
     expect(await song()).toEqual({ needsReview: 'csam', marker: { cover: COVER } });
   });
 
@@ -427,5 +499,51 @@ describe("the main app's unblock of a cover", () => {
     await unblock(COVER);
 
     expect(await song()).toEqual({ needsReview: 'csam', marker: { lyrics: hold.id } });
+  });
+
+  it('keeps the song held after a confirmed lyrics hold, through a later cover clear', async () => {
+    await scanLyrics();
+    await decide('remove');
+    await reportCsamImages({ imageIds: [COVER], user: moderator });
+
+    await unblock(COVER);
+
+    expect((await song()).needsReview).toBe('csam');
+  });
+});
+
+describe("the main app's unblock of the song itself", () => {
+  const unblockSong = () => {
+    dbMock.dbRead.image.findMany.mockResolvedValueOnce([
+      {
+        id: SONG,
+        userId: OWNER,
+        pHash: null,
+        postId: null,
+        nsfwLevel: 1,
+        blockedFor: null,
+        needsReview: 'csam',
+      },
+    ] as never);
+    return handleUnblockImages({ ids: [SONG], moderatorId: MOD } as never);
+  };
+
+  it('refuses a song whose lyrics hold was confirmed, as a video removed for CSAM', async () => {
+    await scanLyrics();
+    await decide('remove');
+
+    const { restored, kept } = await unblockSong();
+
+    expect([restored, kept]).toEqual([[], []]);
+    expect((await song()).needsReview).toBe('csam');
+  });
+
+  it('lifts a song whose lyrics hold is still pending: the moderator decides', async () => {
+    await scanLyrics();
+
+    const { restored } = await unblockSong();
+
+    expect(restored.map((x) => x.id)).toEqual([SONG]);
+    expect((await song()).needsReview).toBeNull();
   });
 });

@@ -1645,11 +1645,13 @@ export async function addImageToQueue({
         needsReview: true,
         ingestion: true,
         blockedFor: true,
+        type: true,
       },
     })
   ).filter((image) => {
-    // A blocked image is refused whatever the caller saw: no sample may carry one.
-    if (!isHeldForReview(image) && !hasBlockMarker(image)) return true;
+    // A blocked image is refused whatever the caller saw: no sample may carry one. Nor is a song,
+    // which only its own scan rates.
+    if (!isHeldForReview(image) && !hasBlockMarker(image) && image.type !== 'audio') return true;
     heldIds.push(image.id);
     return false;
   });

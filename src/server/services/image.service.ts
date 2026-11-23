@@ -139,6 +139,7 @@ import { poolCounters } from '~/server/games/new-order/utils';
 import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { flagImagesForCsamReview, releaseSongCsamHold } from '~/server/services/csam-image-review';
+import { confirmedLyricsHoldSql } from '@civitai/shared/song-csam-hold';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { isStatementTimeout } from '~/server/utils/statement-timeout';
@@ -1321,6 +1322,12 @@ export async function handleUnblockImages({
             "ingestion" = ${liftedIngestionSql}
           WHERE id IN (${Prisma.join(groupedIds)})
             AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
+            ${
+              // A song whose lyrics hold was confirmed stays held, as a video removed for CSAM does.
+              needsReview === 'csam'
+                ? Prisma.sql`AND NOT ${Prisma.raw(confirmedLyricsHoldSql('"Image"'))}`
+                : Prisma.empty
+            }
           RETURNING id, ${liftKeptBlockedSql} AS "keptBlocked";
         `
       ),
