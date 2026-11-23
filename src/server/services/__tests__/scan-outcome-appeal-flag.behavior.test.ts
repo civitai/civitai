@@ -394,7 +394,8 @@ describe('a rescan of an image carrying the moderator-only review flag', () => {
  * Decision: a scan that does not block never clears or lowers an image's review. It keeps 'csam'
  * and 'appeal', lets a pending appeal's 'appeal' take any other key, and otherwise fills an empty
  * `needsReview` or raises the stored key by IMAGE_REVIEW_PRECEDENCE. A blocking scan settles every
- * review but 'csam', as every block does. `minor` and `poi` are only ever set by a scan, never
+ * review but 'csam', and 'appeal' while one is pending, as every block does; a row holding a CSAM
+ * block never takes 'appeal'. `minor` and `poi` are only ever set by a scan, never
  * cleared. If you are about to make a clean rescan clear a review again, that is the behaviour
  * these rows exist to stop.
  */
@@ -564,8 +565,8 @@ describe('the review a scan verdict leaves', () => {
     ).toBe('csam');
   });
 
-  // A block settles every review but csam, as every other block does: no queue lists a blocked
-  // image under another review, and lifting the block would read that review as a decision.
+  // A block settles every review but csam, and appeal while one is pending, as every other block
+  // does: lifting the block would read that review as a decision.
   it.each([
     ['minor', null],
     ['modRule', null],
@@ -653,21 +654,43 @@ describe('the review a scan verdict leaves', () => {
     ).toBe('csam');
   });
 
-  it('a blocking verdict keeps the appeal review of an appeal filed after the scan read appeals', async () => {
-    const row = await rescan('block', { needsReview: 'appeal', appealAfterRead: true });
-    // Control: the scan's read found no pending appeal, so only the write-time check keeps it.
+  it('a blocking verdict writes appeal for a pending appeal the scan did not read', async () => {
+    const row = await rescan('block', { needsReview: 'minor', appealAfterRead: true });
+    // Control: the scan's read found no pending appeal, so only the write-time check finds it.
     expect(dbMock.dbWrite.appeal.findMany).toHaveBeenCalled();
     expect(await dbMock.dbWrite.appeal.findMany.mock.results[0].value).toEqual([]);
     expect(row.needsReview).toBe('appeal');
   });
 
-  // Control for the row above: a stored appeal review whose appeal was decided is settled by the block.
-  it('a blocking verdict settles an appeal review whose appeal was decided', async () => {
+  // Control for the row above: only a Pending appeal counts.
+  it('a blocking verdict settles a review whose appeal was decided', async () => {
     await holder.db.query(
       `INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Image', $1, 'Rejected')`,
       [GRID_ID]
     );
-    expect((await rescan('block', { needsReview: 'appeal' })).needsReview).toBeNull();
+    expect((await rescan('block', { needsReview: 'minor' })).needsReview).toBeNull();
+  });
+
+  // An appeal being filed writes its review before its Appeal row commits.
+  it('a blocking verdict keeps a stored appeal review', async () => {
+    expect((await rescan('block', { needsReview: 'appeal' })).needsReview).toBe('appeal');
+  });
+
+  it.each([null, 'minor', 'appeal'])(
+    'a CSAM block, stored %s, with a pending appeal: no appeal review',
+    async (stored) => {
+      const row = await rescan('clean', {
+        needsReview: stored,
+        appeal: true,
+        csamBlocked: 'loaded',
+        reportReleased: true,
+      });
+      expect(row.needsReview).toBeNull();
+    }
+  );
+
+  it('a blocking verdict on a csam review under appeal keeps csam', async () => {
+    expect((await rescan('block', { needsReview: 'csam', appeal: true })).needsReview).toBe('csam');
   });
 
   it('a blocking verdict on an image under appeal writes appeal', async () => {

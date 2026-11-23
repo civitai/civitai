@@ -35,6 +35,7 @@ import { IMAGE_NOT_APPEALABLE } from '~/shared/utils/appeal';
 const FLAGGED = 1;
 const PLAIN = 2;
 const OTHER_FLAG = 3;
+const CSAM_BLOCKED = 4;
 
 const runOnStandIn = async (strings: TemplateStringsArray, ...values: unknown[]) => {
   const flat = Prisma.sql(strings, ...(values as never[]));
@@ -45,7 +46,7 @@ const tx = { $executeRaw: vi.fn(runOnStandIn), appeal: { create: vi.fn(async () 
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "Image" (id int PRIMARY KEY, "needsReview" text, "updatedAt" timestamp(3));
+    CREATE TABLE "Image" (id int PRIMARY KEY, "needsReview" text, "blockedFor" text, "updatedAt" timestamp(3));
     CREATE TABLE "Appeal" (
       id serial PRIMARY KEY,
       "entityType" text NOT NULL,
@@ -66,8 +67,10 @@ beforeEach(async () => {
     TRUNCATE "Image", "Appeal";
     INSERT INTO "Image" (id, "needsReview") VALUES
       (${FLAGGED}, 'csam'), (${PLAIN}, NULL), (${OTHER_FLAG}, 'minor');
+    INSERT INTO "Image" (id, "needsReview", "blockedFor") VALUES (${CSAM_BLOCKED}, 'minor', 'CSAM');
     INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
-      ('Image', ${FLAGGED}, 'Pending'), ('Image', ${PLAIN}, 'Pending'), ('Image', ${OTHER_FLAG}, 'Pending');
+      ('Image', ${FLAGGED}, 'Pending'), ('Image', ${PLAIN}, 'Pending'), ('Image', ${OTHER_FLAG}, 'Pending'),
+      ('Image', ${CSAM_BLOCKED}, 'Pending');
   `);
 });
 
@@ -115,5 +118,13 @@ describe('keepPendingAppealFlags', () => {
     expect(await flagOf(FLAGGED)).toBe('csam');
     expect(await flagOf(PLAIN)).toBe('appeal');
     expect(await flagOf(OTHER_FLAG)).toBe('appeal');
+  });
+
+  it('never restores the appeal flag on an image holding a CSAM block', async () => {
+    await keepPendingAppealFlags([CSAM_BLOCKED, PLAIN]);
+
+    expect(await flagOf(CSAM_BLOCKED)).toBe('minor');
+    // Control: the same call restores it on an image without one.
+    expect(await flagOf(PLAIN)).toBe('appeal');
   });
 });
