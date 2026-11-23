@@ -454,24 +454,6 @@ func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int]
 	return out, nil
 }
 
-// VersionImageEntries is imagesForModelVersionsCache.fetch's records for versionIDs, before the
-// appendFn, whose minor content filter each caller applies (the caller queued read, the showcase
-// cache's key with versionImagesTTL, and is the cache use the minor-rule ledger counts), answered as
-// VersionImages answers it. With s.Compute a miss is computed and a
-// stale entry revalidated (fillVersionImages: the lookupFn's showcase query, lag-aware with write-back
-// on); a stale entry whose revalidation lock another process holds is kept, marked Stale. Without
-// s.Compute (or with a nil s) the read is answered as it is: a miss absent, a stale entry Stale.
-func (s *Sources) VersionImageEntries(ctx context.Context, versionIDs []int, read *PackedRead) (map[int]Entry, error) {
-	got, writable := read.read()
-	if s == nil {
-		return got, nil
-	}
-	if err := s.fillVersionImages(ctx, Unique(versionIDs), got, writable); err != nil {
-		return nil, err
-	}
-	return got, nil
-}
-
 // CreatorMemberships is getValidCreatorMembershipMap: the cached boolean per user. A miss falls back
 // (its origin parses subscription products with the app's tier key).
 func (s *Sources) CreatorMemberships(ctx context.Context, userIDs []int) (map[int]bool, error) {
