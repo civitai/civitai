@@ -74,6 +74,7 @@ vi.mock('~/server/flipt/tester-segment', async () => {
 
 const { events, eventEngine, getActiveEvents } = await import('~/server/events/index');
 const { birthday2026 } = await import('~/server/events/birthday2026.event');
+const { flagRaceConfigKey } = await import('~/server/events/scoring/award-results');
 
 const HOUR = 60 * 60 * 1000;
 let redisStore: Record<string, string> = {};
@@ -529,6 +530,19 @@ describe('end-of-event cleanup', () => {
     } finally {
       delete def.onCleanup;
     }
+  });
+
+  it('keeps the cleanup open, to retry the next day, while the end-of-event prizes cannot be awarded', async () => {
+    sysStore[winnerMarker] = 'Blue';
+    sysStore[flagRaceConfigKey(BIRTHDAY_2026_EVENT)] = JSON.stringify({
+      prizes: { comeback: { mode: 'live' } },
+    });
+    await eventEngine.dailyReset(secondReset);
+    expect(setKeys()).toEqual([]);
+
+    delete sysStore[flagRaceConfigKey(BIRTHDAY_2026_EVENT)];
+    await eventEngine.dailyReset(secondReset);
+    expect(setKeys()).toEqual([`eventCleanup:${BIRTHDAY_2026_EVENT}`]);
   });
 
   it('waits to clean up while the engine is switched off', async () => {
