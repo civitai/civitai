@@ -133,7 +133,13 @@ describe('with the schema_major column applied', () => {
   it('invariant guard: reads are unchanged — the stored body and the record shape, no major in either', async () => {
     const app = freshApp('MAJORREAD');
     const c = ctx(app, NS_PROD, ALICE);
-    const written = await store.put(c, at(PREFS, 37), 'k1', { theme: 'moss', n: 5 });
+    // A write also answers where it sits (`seq`) and which row it is (`recordId`); a read does not.
+    const { seq, recordId, ...written } = await store.put(c, at(PREFS, 37), 'k1', {
+      theme: 'moss',
+      n: 5,
+    });
+    expect(seq).toBe(1);
+    expect(typeof recordId).toBe('string');
     const read = await store.get(c, PREFS, 'k1');
     expect(read).toEqual(written);
     expect(read?.data).toEqual({ theme: 'moss', n: 5 });
