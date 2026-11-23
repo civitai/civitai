@@ -2238,3 +2238,36 @@ describe('per-image repeats', () => {
     ).rejects.toThrow(/repeats are not supported/);
   });
 });
+
+describe('the size of one Start', () => {
+  const items = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ air: `blob-${i}`, caption: 'ohwx, 1girl' }));
+  const refused = (runs: TrainingRunInput[]) =>
+    expect(submitTrainingBatch(client, runs, { checkText })).rejects.toBeInstanceOf(
+      TrainingBatchValidationError
+    );
+
+  it('refuses more runs than a Start offers, before spending Buzz', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await refused(Array.from({ length: 6 }, baseRun));
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('refuses a run with more dataset items than the Studio handles, before spending Buzz', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await refused([{ ...baseRun(), items: items(2001) }]);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('control: five runs of 2,000 items each are submitted', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    // The workflow mock returns nothing, so the submit fails after validation: it got that far.
+    const err = await submitTrainingBatch(
+      client,
+      Array.from({ length: 5 }, () => ({ ...baseRun(), items: items(2000) })),
+      { checkText }
+    ).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(TrainingBatchValidationError);
+    expect(submitWorkflow.mock.calls.length).toBeGreaterThan(calls);
+  });
+});

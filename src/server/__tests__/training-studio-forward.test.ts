@@ -19,7 +19,9 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
       handler(req, res, { id: 7 }),
 }));
 
-import handler from '~/pages/api/training-studio/studio/[route]';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import handler, { config } from '~/pages/api/training-studio/studio/[route]';
 import { studioOrigin } from '~/server/services/training-studio-forward.service';
 
 const SESSION = '__Secure-civ-token=jwt.a.b';
@@ -251,5 +253,34 @@ describe('/api/training-studio/studio/[route]', () => {
     );
     const res = await call({ route: 'train' });
     expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('/api/training-studio/studio/[route] body limit', () => {
+  // Each limit in the one spelling its own parser reads: Next's `bytes` takes "16mb" (and reads "16m"
+  // as 16 bytes); adapter-node takes "16M" (and refuses "16MB" at startup).
+  const forward = /^(\d+)mb$/.exec(config.api.bodyParser.sizeLimit);
+  const dockerfile = readFileSync(
+    resolve(process.cwd(), 'apps/training-studio/Dockerfile'),
+    'utf8'
+  );
+  const runtimeStage = dockerfile.slice(dockerfile.search(/^FROM .* AS runtime$/m));
+  const studio = /^ENV BODY_SIZE_LIMIT=(\d+)M$/m.exec(runtimeStage);
+
+  it("matches the Studio server's own limit, set in the image it runs", () => {
+    expect(forward).not.toBeNull();
+    expect(dockerfile.search(/^FROM .* AS runtime$/m)).toBeGreaterThan(0);
+    expect(studio).not.toBeNull();
+    expect(Number(studio![1])).toBe(Number(forward![1]));
+  });
+
+  it('holds a full training submit: five runs of 1,000 items with long captions', () => {
+    const item = {
+      air: `urn:air:other:other:orchestrator:blob@${'A'.repeat(26)}.jpeg`,
+      caption: 'c'.repeat(2000),
+    };
+    const run = { items: Array.from({ length: 1000 }, () => item), prompts: ['p'.repeat(500)] };
+    const body = JSON.stringify({ runs: Array.from({ length: 5 }, () => run) });
+    expect(Buffer.byteLength(body)).toBeLessThan(Number(forward![1]) * 1024 * 1024);
   });
 });
