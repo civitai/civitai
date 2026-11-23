@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   imageReviewedSql,
   isImageReviewed,
+  isImageShownToViewer,
+  isLevelShownOnDomain,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
   withServableImage,
 } from '~/server/common/image-visibility';
@@ -165,5 +168,51 @@ describe('withServableImage', () => {
   it('judges each key on its own when nested', () => {
     const served = withServableImage(withServableImage(row(image(1)), 'cover', 6), 'hero', 6);
     expect([served.cover, served.hero]).toEqual([image(1), null]);
+  });
+});
+
+describe('isImageShownToViewer', () => {
+  const UPLOADER = 4;
+  const row = (nsfwLevel: number, modelRestricted = false) => ({
+    nsfwLevel,
+    modelRestricted,
+    userId: UPLOADER,
+  });
+
+  it.each([
+    // level, viewer, green, shown
+    [NsfwLevel.PG, 9, true, true],
+    [NsfwLevel.PG13, 9, true, true],
+    [NsfwLevel.R, 9, true, false],
+    [NsfwLevel.X, UPLOADER, true, false],
+    [0, 9, true, false],
+    [0, UPLOADER, true, true],
+    [0, undefined, true, false],
+    [NsfwLevel.R, 9, false, true],
+    [0, 9, false, true],
+    [NsfwLevel.Blocked, 9, false, false],
+    [NsfwLevel.Blocked, UPLOADER, false, true],
+    [NsfwLevel.Blocked, UPLOADER, true, false],
+  ])('level %i for viewer %s on green=%s is shown: %s', (level, viewer, green, shown) => {
+    expect(isImageShownToViewer(row(level), viewer, green)).toBe(shown);
+  });
+
+  it('is not shown when restricted, whatever the level', () => {
+    expect(isImageShownToViewer(row(NsfwLevel.R, true), 9, false)).toBe(false);
+  });
+});
+
+describe('isLevelShownOnDomain', () => {
+  it.each([
+    [NsfwLevel.PG, true, true],
+    [NsfwLevel.R, true, false],
+    [0, true, false],
+    [null, true, false],
+    [undefined, true, false],
+    [NsfwLevel.PG | NsfwLevel.R, true, true],
+    [null, false, true],
+    [NsfwLevel.X, false, true],
+  ])('level %s on green=%s is shown: %s', (level, green, shown) => {
+    expect(isLevelShownOnDomain(level, green)).toBe(shown);
   });
 });

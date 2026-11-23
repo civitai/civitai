@@ -10,6 +10,7 @@ import {
 import {
   allBrowsingLevelsFlag,
   nsfwBrowsingLevelsArray,
+  hasSafeBrowsingLevel,
   nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -351,6 +352,25 @@ export const isImageNotRestricted = (image: RestrictableImage, viewerId?: number
 export const isImageServable = (image: RestrictableImage, viewerId?: number | null) =>
   isImageNotRestricted(image, viewerId) &&
   (image.nsfwLevel !== NsfwLevel.Blocked || (isUploaderId(viewerId) && image.userId === viewerId));
+
+/** On green only a rated, safe level is shown; an unknown or unrated level is not. */
+export const isLevelShownOnDomain = (level: number | null | undefined, isGreen: boolean) =>
+  !isGreen || (!!level && hasSafeBrowsingLevel(level));
+
+/**
+ * `isImageServable`, and on green a safe level. The uploader still sees their own unrated image on
+ * green; nobody sees a level rated above the domain.
+ */
+export function isImageShownToViewer(
+  image: RestrictableImage,
+  viewerId: number | null | undefined,
+  isGreen: boolean
+) {
+  if (!isImageServable(image, viewerId)) return false;
+  if (!isGreen) return true;
+  if (!image.nsfwLevel) return isUploaderId(viewerId) && image.userId === viewerId;
+  return hasSafeBrowsingLevel(image.nsfwLevel);
+}
 
 /** `row` with its image at `key` set to null when `viewerId` may not see it. */
 export function withServableImage<

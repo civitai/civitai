@@ -1,3 +1,5 @@
+import { parseStoredCandidates } from '~/shared/utils/comic-candidates';
+
 /**
  * An imported panel: no prompt, and either no metadata (createPanelFromImage) or a source with no
  * generation flags (enhancePanel without a prompt). Reads `hasSourceImage`, which the server sends
@@ -14,25 +16,16 @@ export type StoredCandidateSlot =
 
 /** The picker's slots from a panel's stored candidates. An entry with no key that isn't locked is left out. */
 export function candidateSlotsFromMetadata(value: unknown): StoredCandidateSlot[] | null {
-  if (!Array.isArray(value)) return null;
-  const slots: StoredCandidateSlot[] = [];
-  for (const entry of value) {
-    if (typeof entry === 'string') {
-      if (entry) slots.push({ key: entry, nsfwLevel: null });
-      continue;
-    }
-    if (!entry || typeof entry !== 'object') continue;
-    const { key, requiresUnlock, blockedReason, nsfwLevel } = entry as Record<string, unknown>;
-    const level = typeof nsfwLevel === 'number' ? nsfwLevel : null;
-    if (requiresUnlock) {
-      slots.push({
-        requiresUnlock: true,
-        blockedReason: typeof blockedReason === 'string' ? blockedReason : 'canUpgrade',
-        nsfwLevel: level,
-      });
-    } else if (typeof key === 'string' && key) {
-      slots.push({ key, nsfwLevel: level });
-    }
-  }
-  return slots;
+  return (
+    parseStoredCandidates(value)?.map(
+      (entry): StoredCandidateSlot =>
+        entry.locked
+          ? {
+              requiresUnlock: true,
+              blockedReason: entry.blockedReason ?? 'canUpgrade',
+              nsfwLevel: entry.nsfwLevel,
+            }
+          : { key: entry.key as string, nsfwLevel: entry.nsfwLevel }
+    ) ?? null
+  );
 }
