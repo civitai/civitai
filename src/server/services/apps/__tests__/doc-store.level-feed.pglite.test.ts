@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Principal } from '~/server/registry-adapter/auth';
 import { SERVICE_AUDIENCE } from '~/server/registry-adapter/audience';
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
@@ -164,6 +164,14 @@ describe('the level streams over the store (rls on)', () => {
   });
 
   type Run = { events: StreamEvent[]; done: Promise<unknown>; stop: () => void };
+  /** Every stream a case opened: stopped after it, so a failed assertion never leaves one open. */
+  const opened: Run[] = [];
+  afterEach(async () => {
+    const runs = opened.splice(0);
+    for (const r of runs) r.stop();
+    wake();
+    await Promise.all(runs.map((r) => r.done));
+  });
   const settle = async (run: Run, parked: number) => {
     let finished = false;
     void run.done.then(() => (finished = true));
@@ -181,6 +189,7 @@ describe('the level streams over the store (rls on)', () => {
       principal
     ).catch((err: unknown) => err);
     const run = { events, done, stop: () => abort.abort() };
+    opened.push(run);
     await settle(run, parked + 1);
     return run;
   };
