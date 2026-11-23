@@ -1,6 +1,6 @@
 # One way to open a dialog
 
-**Status:** built, not yet in a PR (2026-11-20). Owner: Briant. plan-review: R thumbs up on v2.
+**Status:** shipped in #10184 (2026-11-23). Owner: Briant. plan-review: R thumbs up on v2.
 
 Today a modal can be opened four ways, and two of them sit on a registry that every opener imports.
 This plan keeps the dialog store, which does the hard part well, and replaces everything around it
