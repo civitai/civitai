@@ -5,6 +5,8 @@ import {
   REDIS_SYS_KEYS,
   withSysReadDeadline,
 } from '~/server/redis/client';
+import type { NextApiResponse } from 'next';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 import { boundedClusterCall, takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 
 /**
@@ -57,7 +59,8 @@ export type SubmitRateDecision =
   | { ok: true }
   /** The limiter could not be read: refuse (503), never let the submit through un-limited. */
   | { ok: false; reason: 'unavailable' | 'malformed' }
-  | { ok: false; reason: 'limited'; retryAfterSeconds: number };
+  /** `used`: this window's count, this refused submit included. */
+  | { ok: false; reason: 'limited'; retryAfterSeconds: number; used: number };
 
 /**
  * Counts one submit against `subject` (e.g. `key:<apiKeyId>`, `user:<id>`).
@@ -103,5 +106,27 @@ async function takeRateSlot(
   if (count <= limit.max) return { ok: true };
   // Bound the 429-path TTL read (#28) too; on a deadline/throw fall back to the full window.
   const retryAfterSeconds = await store.ttl().catch(() => limit.windowSeconds);
-  return { ok: false, reason: 'limited', retryAfterSeconds };
+  return { ok: false, reason: 'limited', retryAfterSeconds, used: count };
+}
+
+/**
+ * The 429 both submit routes answer a spent submit window with: the house body and meta, and the
+ * fields these routes always sent beside it (`retryAfterSeconds`, `limit`, `windowSeconds`).
+ */
+export function sendSubmitRateLimited(
+  res: NextApiResponse,
+  slot: { retryAfterSeconds: number; used: number }
+): void {
+  const { max, windowSeconds } = SUBMIT_RATE_LIMIT;
+  const meta = appRateLimitMeta('apps.version-submits', slot.retryAfterSeconds, {
+    limit: max,
+    used: slot.used,
+    windowSeconds,
+    resetAt: new Date(Date.now() + Math.max(slot.retryAfterSeconds, 1) * 1000),
+  });
+  sendAppRateLimited(res, meta, 'Rate limit exceeded', {
+    retryAfterSeconds: slot.retryAfterSeconds,
+    limit: max,
+    windowSeconds,
+  });
 }

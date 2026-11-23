@@ -9,7 +9,8 @@ import { readRunnerRequest } from '~/server/services/app-assistant/runner-reques
 import {
   authorizeDevTunnelStart,
   claimDevTunnelStart,
-  DEV_TUNNEL_REFUSAL_STATUS,
+  devTunnelRefusalAnswer,
+  type DevTunnelRefusal,
 } from '~/server/services/blocks/dev-tunnel-access.service';
 import { openDirectPreviewSession } from '~/server/services/blocks/dev-tunnel.service';
 import {
@@ -67,6 +68,13 @@ const body = z.object({
 
 const UNAVAILABLE = { error: 'Could not open the preview right now', code: 'unavailable' };
 
+/** Answers a gate refusal, with `Retry-After` when it is rate-limited. */
+function sendDevTunnelRefusal(res: NextApiResponse, refusal: DevTunnelRefusal) {
+  const answer = devTunnelRefusalAnswer(refusal);
+  if (answer.retryAfterSeconds) res.setHeader('Retry-After', String(answer.retryAfterSeconds));
+  return res.status(answer.status).json(answer.json);
+}
+
 export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   const request = await readRunnerRequest(
     req,
@@ -89,10 +97,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     if (!config) return res.json({ mode: 'tunnel' });
 
     const gate = await authorizeDevTunnelStart(subject.user, blockId, { countStart: false });
-    if (!gate.ok)
-      return res
-        .status(DEV_TUNNEL_REFUSAL_STATUS[gate.refusal.code])
-        .json({ error: gate.refusal.error, code: gate.refusal.code });
+    if (!gate.ok) return sendDevTunnelRefusal(res, gate.refusal);
 
     // One open per (user, app) at a time: a second one would replace the first's session.
     const opened = await withDistributedLock(
@@ -114,10 +119,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     );
     if (!opened) return res.status(503).json(UNAVAILABLE);
     if (opened.kind === 'fresh') return res.json({ mode: 'direct', fresh: true });
-    if (opened.kind === 'refused')
-      return res
-        .status(DEV_TUNNEL_REFUSAL_STATUS[opened.refusal.code])
-        .json({ error: opened.refusal.error, code: opened.refusal.code });
+    if (opened.kind === 'refused') return sendDevTunnelRefusal(res, opened.refusal);
     if (opened.kind === 'written')
       logToAxiom({
         type: 'app-assistant.runner-preview.opened',

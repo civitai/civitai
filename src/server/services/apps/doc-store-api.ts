@@ -136,7 +136,7 @@ import {
 } from '~/server/services/apps/shared-private-media-urls';
 import { syncStoreItem } from '~/server/services/blocks/app-sub-listing-sync';
 import { resolveClientIp } from '~/server/utils/client-ip';
-import { rateLimitMetaFor } from '~/server/utils/rate-limit-error';
+import { appRateLimitMeta, retryAfterSecondsOf } from '~/server/utils/app-rate-limit';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 import {
@@ -376,9 +376,12 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
   if (err.code === 'rate_limited' || err.code === 'version_conflict') {
     recordRefusal(req, err, retryAfter);
   }
-  if (typeof retryAfter === 'number') {
+  if (err.code === 'rate_limited') {
+    // Every 429 carries the meta, a lock-timeout refusal with no delay of its own included.
+    body.rateLimit = appRateLimitMeta('apps.doc-store', retryAfterSecondsOf(retryAfter, 1));
+    res.setHeader('Retry-After', String(body.rateLimit.retryAfterSeconds));
+  } else if (typeof retryAfter === 'number') {
     res.setHeader('Retry-After', String(retryAfter));
-    if (err.code === 'rate_limited') body.rateLimit = rateLimitMetaFor(retryAfter);
   }
   sendEnvelope(req, res, STORAGE_ERROR_STATUS[err.code], body);
 }

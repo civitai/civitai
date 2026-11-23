@@ -28,6 +28,7 @@ import {
   BLOCK_GOOD_MAX_PRICE_BUZZ,
 } from '~/shared/constants/block-goods.constants';
 import { BLOCK_IDEMPOTENCY_KEY_REGEX } from '~/server/utils/block-gen-idempotency';
+import { appRateLimitBody, appRateLimitMeta, utcDayReset } from '~/server/utils/app-rate-limit';
 
 /**
  * POST /api/v1/blocks/goods/purchase
@@ -153,10 +154,11 @@ export const baseHandler = withAxiom(async function handler(
       });
       // TRANSIENT: nothing moved, so a retry once the window clears must be able
       // to execute — not cached under the idempotency key.
-      res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
+      const meta = appRateLimitMeta('apps.goods-rate', rateLimit.retryAfterSeconds);
+      res.setHeader('Retry-After', String(meta.retryAfterSeconds));
       return {
         status: 429,
-        body: { error: 'Too many purchases — please retry shortly.' },
+        body: appRateLimitBody(meta, 'Too many purchases — please retry shortly.'),
         transient: true,
       };
     }
@@ -167,11 +169,24 @@ export const baseHandler = withAxiom(async function handler(
       capKey = reserved.key;
       if (reserved.total > BLOCK_GOOD_CAP_PER_DAY) {
         await refundBlockGoodSpend(capKey, priceBuzz);
+        // TRANSIENT, like the rate limit: no Buzz moved and the reservation is refunded, so a
+        // retry after the UTC reset must run rather than replay this refusal.
+        const { retryAfterSeconds, resetAt } = utcDayReset();
+        const meta = appRateLimitMeta('apps.goods-daily', retryAfterSeconds, {
+          limit: BLOCK_GOOD_CAP_PER_DAY,
+          // The day's purchases before this one, which the refund just gave back.
+          used: reserved.total - Math.ceil(priceBuzz),
+          windowSeconds: 24 * 60 * 60,
+          resetAt,
+        });
+        res.setHeader('Retry-After', String(meta.retryAfterSeconds));
         return {
-          status: 400,
-          body: {
-            error: `Daily purchase limit reached (${BLOCK_GOOD_CAP_PER_DAY} Buzz). Try again tomorrow.`,
-          },
+          status: 429,
+          body: appRateLimitBody(
+            meta,
+            `Daily purchase limit reached (${BLOCK_GOOD_CAP_PER_DAY} Buzz). Try again tomorrow.`
+          ),
+          transient: true,
         };
       }
     } catch {

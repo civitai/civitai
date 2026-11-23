@@ -692,6 +692,19 @@ describe('GET /api/v1/blocks/submissions', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(429);
     expect(res._getHeaders()['Retry-After']).toBeDefined();
+    // An abuse limit: the house meta names it and the wait, and carries no counts (the
+    // route's own top-level fields are kept as it always sent them).
+    expect(res._getJSONData()).toMatchObject({
+      message: 'Rate limit exceeded',
+      code: 'TOO_MANY_REQUESTS',
+      rateLimit: { retryAfterSeconds: 60, id: 'apps.listing-submissions', kind: 'abuse' },
+    });
+    expect(Object.keys(res._getJSONData().rateLimit).sort()).toEqual([
+      'id',
+      'kind',
+      'retryAfterSeconds',
+      'retryAt',
+    ]);
     expect(mockFindMany).not.toHaveBeenCalled();
   });
 

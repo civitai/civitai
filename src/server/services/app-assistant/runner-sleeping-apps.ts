@@ -4,6 +4,8 @@ import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { readRunnerRequest } from '~/server/services/app-assistant/runner-request';
+import { appRateLimitMeta } from '~/server/utils/app-rate-limit';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 import { sleepingAppSchema } from '~/server/schema/app-hibernation.schema';
 import type { SessionUser } from '~/types/session';
 import type { HibernationDeps } from '~/server/services/app-hibernation/app-hibernation.service';
@@ -43,11 +45,14 @@ export type RunnerSleepingDeps = {
   hibernation: () => Promise<HibernationDeps>;
   list: (userId: number, deps: HibernationDeps) => Promise<SleepingApp[]>;
   wakeSeed: (userId: number, app: string, deps: HibernationDeps) => Promise<WakeSeedResult>;
-  /** Counts one call for the user against {@link RUNNER_SLEEPING_RATE_LIMIT}; `false` past it. */
-  allow: (user: SessionUser) => Promise<boolean>;
+  /**
+   * Counts one call for the user against {@link RUNNER_SLEEPING_RATE_LIMIT}: `true` within it; past
+   * it the wait the limiter named (or `false` when it named none).
+   */
+  allow: (user: SessionUser) => Promise<true | false | { retryAfterSeconds: number }>;
 };
 
-type Answer = { status: number; json: unknown };
+type Answer = { status: number; json: unknown; retryAfterSeconds?: number };
 
 const DISABLED: Answer = {
   status: 404,
@@ -68,13 +73,24 @@ async function admitted(
       },
     };
   if (!(await deps.enabled(subject.user))) return { answer: DISABLED };
-  if (!(await deps.allow(subject.user)))
+  const allowed = await deps.allow(subject.user);
+  if (allowed !== true) {
+    const meta = appRateLimitMeta(
+      'apps.sleeping-reads',
+      allowed ? allowed.retryAfterSeconds : RUNNER_SLEEPING_RATE_LIMIT.period
+    );
     return {
       answer: {
         status: 429,
-        json: { error: 'Too many requests for your apps; try again later', code: 'rate_limited' },
+        json: {
+          error: 'Too many requests for your apps; try again later',
+          code: 'rate_limited',
+          rateLimit: meta,
+        },
+        retryAfterSeconds: meta.retryAfterSeconds,
       },
     };
+  }
   return { hibernation: await deps.hibernation() };
 }
 
@@ -142,7 +158,10 @@ async function defaultDeps(req: AxiomAPIRequest, keyName: string): Promise<Runne
         await record();
         return true;
       } catch (err) {
-        if (err instanceof TRPCError && err.code === 'TOO_MANY_REQUESTS') return false;
+        if (err instanceof TRPCError && err.code === 'TOO_MANY_REQUESTS') {
+          const retryAfterSeconds = rateLimitMetaOf(err)?.retryAfterSeconds;
+          return retryAfterSeconds ? { retryAfterSeconds } : false;
+        }
         throw err;
       }
     },
@@ -164,7 +183,8 @@ async function respond(
   answer: () => Promise<Answer>
 ) {
   try {
-    const { status, json } = await answer();
+    const { status, json, retryAfterSeconds } = await answer();
+    if (retryAfterSeconds) res.setHeader('Retry-After', String(retryAfterSeconds));
     return res.status(status).json(json);
   } catch (err) {
     logToAxiom({

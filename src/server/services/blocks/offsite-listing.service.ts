@@ -137,6 +137,7 @@ import {
   newUlid,
 } from '~/server/utils/app-block-ids';
 import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
+import { STANDING_LIMIT_RETRY_SECONDS, throwAppRateLimited } from '~/server/utils/app-rate-limit';
 
 /**
  * App Store Listings (W13) — P3a OFF-SITE submission service (Design B1).
@@ -376,10 +377,13 @@ export async function submitExternalListing(opts: {
     where: { submittedByUserId: userId, kind: 'offsite', status: 'pending' },
   });
   if (pendingCount >= MAX_PENDING_OFFSITE_SUBMISSIONS) {
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: `You have ${pendingCount} pending submissions (max ${MAX_PENDING_OFFSITE_SUBMISSIONS}). Withdraw one or wait for review before submitting another.`,
-    });
+    // A standing allowance: it frees when a submission is withdrawn or reviewed, at no set time.
+    throwAppRateLimited(
+      'apps.offsite-pending',
+      STANDING_LIMIT_RETRY_SECONDS,
+      `You have ${pendingCount} pending submissions (max ${MAX_PENDING_OFFSITE_SUBMISSIONS}). Withdraw one or wait for review before submitting another.`,
+      { limit: MAX_PENDING_OFFSITE_SUBMISSIONS, used: pendingCount }
+    );
   }
 
   const slug = input.slug;

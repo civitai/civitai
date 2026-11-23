@@ -328,18 +328,50 @@ describe('caps and their refunds', () => {
     await baseHandler(makeReq({ goodId: GOOD_ID }), res);
     expect(res.statusCode).toBe(429);
     expect(res.headers['Retry-After']).toBe('17');
+    // An abuse limit: the meta names it and the wait, never its numbers.
+    expect((res.body as { rateLimit?: unknown }).rateLimit).toEqual({
+      retryAfterSeconds: 17,
+      retryAt: expect.any(String),
+      id: 'apps.goods-rate',
+      kind: 'abuse',
+    });
     expect(mockReserve).not.toHaveBeenCalled();
     expect(mockPurchase).not.toHaveBeenCalled();
   });
 
-  it('400s over the DAILY cap and REFUNDS the reservation it just made', async () => {
+  it('429s over the DAILY cap with the product meta, and REFUNDS the reservation it just made', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    // 18:30 UTC: the cap's UTC day resets in 5.5 hours.
+    vi.setSystemTime(new Date('2026-09-27T18:30:00.000Z'));
     mockReserve.mockResolvedValueOnce({
       total: BLOCK_GOOD_CAP_PER_DAY + 1,
       key: 'goodscap:42:2026-09-27',
     } as never);
     const res = makeRes();
-    await baseHandler(makeReq({ goodId: GOOD_ID }), res);
-    expect(res.statusCode).toBe(400);
+    try {
+      await baseHandler(makeReq({ goodId: GOOD_ID }), res);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(res.statusCode).toBe(429);
+    expect(res.headers['Retry-After']).toBe('19800');
+    expect(res.body).toEqual({
+      error: 'Daily purchase limit reached (150000 Buzz). Try again tomorrow.',
+      message: 'Daily purchase limit reached (150000 Buzz). Try again tomorrow.',
+      code: 'TOO_MANY_REQUESTS',
+      rateLimit: {
+        retryAfterSeconds: 19_800,
+        retryAt: '2026-09-28T00:00:00.000Z',
+        id: 'apps.goods-daily',
+        kind: 'product',
+        limit: 150_000,
+        // 150,001 reserved with this 1,300-Buzz purchase, which the refund gave back.
+        used: 148_701,
+        remaining: 1_299,
+        windowSeconds: 86_400,
+        resetAt: '2026-09-28T00:00:00.000Z',
+      },
+    });
     // 🔴 Assert the RESERVATION, not just the status: a refund that never
     // happens leaves the viewer's day permanently consumed by a purchase that
     // did not occur, and the response looks identical.
@@ -534,6 +566,18 @@ describe('idempotency', () => {
 
   it('RELEASES the claim on a transient 429 so a real retry can execute', async () => {
     mockRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 5 } as never);
+    const res = makeRes();
+    await baseHandler(makeReq({ goodId: GOOD_ID, idempotencyKey: KEY }), res);
+    expect(res.statusCode).toBe(429);
+    expect(mockRelease).toHaveBeenCalledWith('idem:42');
+    expect(mockFinalize).not.toHaveBeenCalled();
+  });
+
+  it('RELEASES the claim on the daily-cap 429 too: no Buzz moved, so it is never replayed', async () => {
+    mockReserve.mockResolvedValueOnce({
+      total: BLOCK_GOOD_CAP_PER_DAY + 1,
+      key: 'goodscap:42:2026-09-27',
+    } as never);
     const res = makeRes();
     await baseHandler(makeReq({ goodId: GOOD_ID, idempotencyKey: KEY }), res);
     expect(res.statusCode).toBe(429);

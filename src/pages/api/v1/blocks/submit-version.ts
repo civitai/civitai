@@ -9,7 +9,7 @@ import {
   submitVersionSchema,
 } from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
-import { SUBMIT_RATE_LIMIT, takeSubmitSlot } from '~/server/services/blocks/submit-rate-limit';
+import { sendSubmitRateLimited, takeSubmitSlot } from '~/server/services/blocks/submit-rate-limit';
 import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 
@@ -188,14 +188,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       return;
     }
     if (!slot.ok) {
-      const retryAfter = slot.retryAfterSeconds;
-      res.setHeader('Retry-After', String(Math.max(retryAfter, 1)));
-      res.status(429).json({
-        message: 'Rate limit exceeded',
-        retryAfterSeconds: retryAfter,
-        limit: SUBMIT_RATE_LIMIT.max,
-        windowSeconds: SUBMIT_RATE_LIMIT.windowSeconds,
-      });
+      sendSubmitRateLimited(res, slot);
       return;
     }
   }

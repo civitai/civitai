@@ -13,6 +13,7 @@ import {
   type ReviewPreviewState,
   type StoredReviewPreviewState,
 } from '~/shared/constants/app-review-preview.constants';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 import type {
   NewPendingSubmission,
   ReviewPreviewActor,
@@ -5294,10 +5295,13 @@ export async function markRequestDeployState(
 /** Typed failure from {@link retriggerBuild}; `code` drives the tRPC mapping. */
 export class RetriggerBuildError extends Error {
   code: string;
-  constructor(code: string, message: string) {
+  /** On a `RATE_LIMITED` refusal: its meta, which `blocks.retriggerBuild` answers with. */
+  readonly rateLimit?: RateLimitMeta;
+  constructor(code: string, message: string, rateLimit?: RateLimitMeta) {
     super(message);
     this.name = 'RetriggerBuildError';
     this.code = code;
+    this.rateLimit = rateLimit;
   }
 }
 
@@ -5548,21 +5552,28 @@ export async function retriggerBuild(params: RetriggerBuildParams): Promise<Retr
 
   // (7) Abuse controls — redis-backed, because the tRPC `rateLimit` middleware
   //     short-circuits for moderators and would be a no-op here.
-  const { acquireRetriggerLock, releaseRetriggerLock, checkRetriggerModeratorQuota } = await import(
-    '~/server/utils/blocks-retrigger-rate-limit'
-  );
+  const {
+    acquireRetriggerLock,
+    releaseRetriggerLock,
+    checkRetriggerModeratorQuota,
+    RETRIGGER_LOCK_TTL_SECONDS,
+  } = await import('~/server/utils/blocks-retrigger-rate-limit');
+  const { appRateLimitMeta } = await import('~/server/utils/app-rate-limit');
   const quota = await checkRetriggerModeratorQuota(params.reviewerUserId);
   if (!quota.allowed) {
     throw new RetriggerBuildError(
       'RATE_LIMITED',
-      `Too many build re-triggers — try again in ${quota.retryAfterSeconds}s.`
+      `Too many build re-triggers — try again in ${quota.retryAfterSeconds}s.`,
+      appRateLimitMeta('apps.build-retrigger', quota.retryAfterSeconds)
     );
   }
   // Single-flight: a double-click must not create two PipelineRuns.
   if (!(await acquireRetriggerLock(request.id))) {
     throw new RetriggerBuildError(
       'RATE_LIMITED',
-      'A re-trigger for this request is already in flight.'
+      'A re-trigger for this request is already in flight.',
+      // The lock lapses by its TTL at the latest.
+      appRateLimitMeta('apps.build-retrigger', RETRIGGER_LOCK_TTL_SECONDS)
     );
   }
 
