@@ -68,7 +68,7 @@ USER sveltekit
 EXPOSE 3000
 ENV PORT=3000
 # Request body cap (adapter-node's default is 512K). A training submit carries every item's AIR and
-# caption for up to five runs; keep src/pages/api/training-studio/studio/[route].ts in step.
+# caption for every run in a Start; keep src/pages/api/training-studio/studio/[route].ts in step.
 ENV BODY_SIZE_LIMIT=16M
 # adapter-node uses ORIGIN (+ PROTOCOL_HEADER/HOST_HEADER if behind a proxy) for correct url.origin.
 CMD ["node", "build"]

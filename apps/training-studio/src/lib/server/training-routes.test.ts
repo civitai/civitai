@@ -157,7 +157,8 @@ describe('POST /api/train with a body over the server limit', () => {
   it('control: a malformed body under the limit is not called too large', async () => {
     train.submitTrainingBatch.mockReset().mockResolvedValue({ workflowIds: ['w'], failure: null });
     expect(await throughNode(16, '{not json')).not.toMatchObject({ status: 413 });
-    expect(train.submitTrainingBatch.mock.calls[0]?.[1]).toBeUndefined();
+    expect(train.submitTrainingBatch).toHaveBeenCalledTimes(1);
+    expect(train.submitTrainingBatch.mock.calls[0][1]).toBeUndefined();
   });
 
   it('control: a body under the limit reaches the submit', async () => {

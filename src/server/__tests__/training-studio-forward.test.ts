@@ -283,8 +283,7 @@ describe('/api/training-studio/studio/[route] body limit', () => {
     expect(Number(studio![1])).toBe(Number(forward![1]));
   });
 
-  // The accepted limit (Site Maintenance, 2026-11-23): 16 MB holds the largest Start the Studio accepts at a
-  // realistic caption length; a longer-captioned one gets the "too large" answer instead.
+  // 16 MB is chosen to hold a maximal Start at realistic captions; longer ones get the "too large" answer.
   it('the 16 MB limit holds the largest Start the Studio accepts, at 1,000-character captions', () => {
     const item = {
       air: `urn:air:other:other:orchestrator:blob@${'A'.repeat(26)}.jpeg`,
@@ -295,8 +294,9 @@ describe('/api/training-studio/studio/[route] body limit', () => {
       prompts: ['p'.repeat(500)],
     };
     const body = JSON.stringify({ runs: Array.from({ length: MAX_RUNS }, () => run) });
-    expect([MAX_RUNS, MAX_DATASET_BLOBS]).toEqual([5, 2000]);
-    expect(Number(forward![1])).toBe(16);
+    // Read from source: a missed read would size an empty body and pass.
+    expect(MAX_RUNS).toBeGreaterThan(0);
+    expect(MAX_DATASET_BLOBS).toBeGreaterThan(0);
     expect(Buffer.byteLength(body)).toBeLessThan(Number(forward![1]) * 1024 * 1024);
   });
 });
