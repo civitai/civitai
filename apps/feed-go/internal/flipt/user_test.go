@@ -232,14 +232,17 @@ func TestUserFlagCallerContextStartsNoBackoff(t *testing.T) {
 // off, and the next viewer within Backoff is answered without a request.
 func TestUserFlagClientTimeoutBacksOff(t *testing.T) {
 	var hits atomic.Int32
+	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 		select {
 		case <-r.Context().Done():
-		case <-time.After(5 * time.Second):
+		case <-release:
 		}
 	}))
+	// Cleanups run last-registered first: the handler is released, then the server closes.
 	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
 	c, err := New(Config{URL: srv.URL, Timeout: 30 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)

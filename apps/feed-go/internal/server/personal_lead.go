@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"math"
 	"strconv"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
@@ -60,9 +61,10 @@ const onboardingCreatorProgram = 16
 // bitwise result, so a value outside int32 is never a member.
 func personalHotLeadTarget(u *auth.SessionUser) flipt.TargetUser {
 	ob := u.Onboarding
+	inInt32 := ob >= math.MinInt32 && ob <= math.MaxInt32
 	return flipt.TargetUser{
 		ID: u.ID, IsModerator: u.IsModerator, Tier: u.Tier, IsEarlyAdopter: u.IsEarlyAdopter,
 		AppBuilderApproved: u.AppBuilderApproved,
-		InCreatorProgram:   ob == int(int32(ob)) && ob&onboardingCreatorProgram != 0,
+		InCreatorProgram:   inInt32 && ob&onboardingCreatorProgram != 0,
 	}
 }

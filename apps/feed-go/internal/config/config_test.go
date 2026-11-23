@@ -599,8 +599,8 @@ func TestLoadMetricsClickHouse(t *testing.T) {
 		t.Fatalf("zero timeout: %v, want the 10s default", c.MetricsClickHouseRequestTimeout)
 	}
 	t.Setenv("FEED_GO_COMPUTE_MISSES", "false")
-	if c := load(); c.MetricsClickHouseURL != "" || c.FliptURL != "" {
-		t.Fatalf("compute off: %q flipt %q, want unset", c.MetricsClickHouseURL, c.FliptURL)
+	if c := load(); c.MetricsClickHouseURL != "" || c.FliptURL != "http://flipt.example.test" {
+		t.Fatalf("compute off: %q flipt %q, want no reader and Flipt still read", c.MetricsClickHouseURL, c.FliptURL)
 	}
 }
 

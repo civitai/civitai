@@ -187,7 +187,14 @@ func TestPersonalHotLeadGolden(t *testing.T) {
 	load := func(name string) *goldenFixture {
 		return goldenLoad(t, filepath.Join(goldenDir, "model-getall", name+".json"))
 	}
-	run := func(fx *goldenFixture, flag *stubUserFlag) error {
+	// run answers fx with flag. A run that falls back queries no page, so the fixture it sets up is
+	// told so (Expect.Fallback), or the golden DB's page-count check would read it as a miss.
+	run := func(fx *goldenFixture, flag *stubUserFlag, fallsBack bool) error {
+		if fallsBack {
+			c := *fx
+			c.Expect.Fallback = ReasonPersonalHotLead
+			fx = &c
+		}
 		env := goldenSetupModels(t, fx)
 		env.server.PersonalHotLead = flag
 		ctx := context.Background()
@@ -208,18 +215,18 @@ func TestPersonalHotLeadGolden(t *testing.T) {
 	for _, name := range []string{"hot-official-pin-page1", "hot-official-pin-page2"} {
 		fx := load(name)
 		off := &stubUserFlag{}
-		if err := run(fx, off); err != nil {
+		if err := run(fx, off, false); err != nil {
 			t.Fatalf("%s, flag off: %v (reason %q), want served", name, err, fallback.Reason(err))
 		}
 		if got := off.asked(); !reflect.DeepEqual(got, want) {
 			t.Fatalf("%s, flag off: asked %v, want %v", name, got, want)
 		}
-		if err := run(fx, &stubUserFlag{on: true}); fallback.Reason(err) != ReasonPersonalHotLead {
+		if err := run(fx, &stubUserFlag{on: true}, true); fallback.Reason(err) != ReasonPersonalHotLead {
 			t.Fatalf("%s, flag on: %v, want %q", name, err, ReasonPersonalHotLead)
 		}
 	}
 	on := &stubUserFlag{on: true}
-	if err := run(load("hot-official-pin-signed-out"), on); err != nil {
+	if err := run(load("hot-official-pin-signed-out"), on, false); err != nil {
 		t.Fatalf("signed out: %v (reason %q), want served", err, fallback.Reason(err))
 	}
 	if n := len(on.asked()); n != 0 {

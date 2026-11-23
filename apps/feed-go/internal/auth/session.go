@@ -23,7 +23,7 @@ type SessionUser struct {
 	// The Flipt targeting properties buildFliptContext reads off the session user (flipt.TargetUser):
 	// Tier is `tier` (nil when absent or not a string), IsEarlyAdopter and AppBuilderApproved are
 	// `isEarlyAdopter` / `appBuilderApproved` (true only when the boolean true), Onboarding is
-	// `onboarding` (0 when absent or not an integer).
+	// `onboarding` (0 when absent, a string, or not an integer).
 	Tier               *string
 	IsEarlyAdopter     bool
 	AppBuilderApproved bool
@@ -179,8 +179,11 @@ func SessionUserFrom(id int, m map[string]any) (*SessionUser, error) {
 	}
 	u.IsEarlyAdopter, _ = m["isEarlyAdopter"].(bool)
 	u.AppBuilderApproved, _ = m["appBuilderApproved"].(bool)
+	// A number only: hydrate.Int also reads a numeric string, which Node's bitwise test never matches.
 	if v, ok := m["onboarding"]; ok {
-		u.Onboarding, _ = hydrate.Int(v)
+		if _, isStr := v.(string); !isStr {
+			u.Onboarding, _ = hydrate.Int(v)
+		}
 	}
 	if b, ok := m["bannedAt"]; ok && b != nil {
 		u.Banned = true
