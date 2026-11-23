@@ -171,8 +171,9 @@ type pageScope struct {
 }
 
 // resolveLevel is resolveRequestBrowsingLevels after applyDomainFeature: a signed-in caller with no
-// level gets their saved one (not read here: falls back), then the domain cap clamps it (an absent
-// or disjoint level becomes the cap). Uncapped and absent is a verified crawler's request.
+// level gets their saved one (not read here: falls back); a sent level is held to the viewer
+// (stripBlockedForNonModerator), then the domain cap clamps it (an absent or disjoint level becomes
+// the cap). Uncapped and absent is a verified crawler's request.
 func resolveLevel(in *Input, req Request) (int, error) {
 	if in.BrowsingLevel == nil {
 		if req.Viewer != nil || req.Cap == 0 {
@@ -180,10 +181,11 @@ func resolveLevel(in *Input, req Request) (int, error) {
 		}
 		return req.Cap, nil
 	}
+	level := browsing.ForViewer(*in.BrowsingLevel, req.Viewer != nil && req.Viewer.IsModerator)
 	if req.Cap != 0 {
-		return browsing.ClampToCap(*in.BrowsingLevel, req.Cap), nil
+		return browsing.ClampToCap(level, req.Cap), nil
 	}
-	return *in.BrowsingLevel, nil
+	return level, nil
 }
 
 type page struct {
@@ -1024,6 +1026,7 @@ func imagesForFace(images []superjson.Object, nsfw, hasSfwFace, showSfwFace bool
 
 // filterImagesForViewer is filterImagesForViewer (src/server/utils/model-getall-images.ts).
 func filterImagesForViewer[T imageRecord](images []T, level int, modelNsfw, disablePoi, disableMinor bool, viewer *Viewer) []T {
+	level = browsing.OnlySelectable(level)
 	maxLevel := 0
 	for bit := 1; bit <= level && bit > 0; bit <<= 1 {
 		if level&bit != 0 {

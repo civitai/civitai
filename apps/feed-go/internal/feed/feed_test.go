@@ -160,16 +160,24 @@ func TestApplyDomainCap(t *testing.T) {
 	r := 4
 	in := &Input{BrowsingLevel: &r}
 	// Signed out (cap PG): R & PG = 0 -> the cap.
-	if bl, _ := in.ApplyDomainCap(1); bl != 1 {
+	if bl, _ := in.ApplyDomainCap(1, false); bl != 1 {
 		t.Fatalf("signed-out level = %d, want 1", bl)
 	}
 	// Uncapped and absent: the schema default, 31.
-	if bl, _ := (&Input{}).ApplyDomainCap(0); bl != 31 {
+	if bl, _ := (&Input{}).ApplyDomainCap(0, false); bl != 31 {
 		t.Fatalf("uncapped default = %d, want 31", bl)
 	}
 	// Capped and absent: the cap (applyDomainFeature runs before the default).
-	if bl, _ := (&Input{}).ApplyDomainCap(3); bl != 3 {
+	if bl, _ := (&Input{}).ApplyDomainCap(3, false); bl != 3 {
 		t.Fatalf("capped default = %d, want 3", bl)
+	}
+	// Both levels are held to the selectable levels before the clamp, unless a moderator sent them.
+	lv, pre := 4|32, 2|32
+	if bl, pc := (&Input{BrowsingLevel: &lv, PreCapBrowsingLevel: &pre}).ApplyDomainCap(0, false); bl != 4 || pc == nil || *pc != 2 {
+		t.Fatalf("uncapped = %d %v, want 4 2", bl, pc)
+	}
+	if bl, pc := (&Input{BrowsingLevel: &lv, PreCapBrowsingLevel: &pre}).ApplyDomainCap(0, true); bl != 4|32 || pc == nil || *pc != 2|32 {
+		t.Fatalf("uncapped, moderator = %d %v, want 36 34", bl, pc)
 	}
 }
 
