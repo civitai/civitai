@@ -266,6 +266,15 @@ describe('/api/training-studio/studio/[route] body limit', () => {
   );
   const runtimeStage = dockerfile.slice(dockerfile.search(/^FROM .* AS runtime$/m));
   const studio = /^ENV BODY_SIZE_LIMIT=(\d+)M$/m.exec(runtimeStage);
+  // The Studio's own caps on a Start, read from its source: its modules do not load here.
+  const studioConst = (file: string, name: string) =>
+    Number(
+      new RegExp(`export const ${name} = ([0-9]+);`).exec(
+        readFileSync(resolve(process.cwd(), 'apps/training-studio/src/lib', file), 'utf8')
+      )?.[1]
+    );
+  const MAX_RUNS = studioConst('submit-limits.ts', 'MAX_RUNS');
+  const MAX_DATASET_BLOBS = studioConst('orchestrator-core.ts', 'MAX_DATASET_BLOBS');
 
   it("matches the Studio server's own limit, set in the image it runs", () => {
     expect(forward).not.toBeNull();
@@ -274,13 +283,20 @@ describe('/api/training-studio/studio/[route] body limit', () => {
     expect(Number(studio![1])).toBe(Number(forward![1]));
   });
 
-  it('holds a full training submit: five runs of 1,000 items with long captions', () => {
+  // The accepted limit (Site Maintenance, 2026-11-23): 16 MB holds the largest Start the Studio accepts at a
+  // realistic caption length; a longer-captioned one gets the "too large" answer instead.
+  it('the 16 MB limit holds the largest Start the Studio accepts, at 1,000-character captions', () => {
     const item = {
       air: `urn:air:other:other:orchestrator:blob@${'A'.repeat(26)}.jpeg`,
-      caption: 'c'.repeat(2000),
+      caption: 'c'.repeat(1000),
     };
-    const run = { items: Array.from({ length: 1000 }, () => item), prompts: ['p'.repeat(500)] };
-    const body = JSON.stringify({ runs: Array.from({ length: 5 }, () => run) });
+    const run = {
+      items: Array.from({ length: MAX_DATASET_BLOBS }, () => item),
+      prompts: ['p'.repeat(500)],
+    };
+    const body = JSON.stringify({ runs: Array.from({ length: MAX_RUNS }, () => run) });
+    expect([MAX_RUNS, MAX_DATASET_BLOBS]).toEqual([5, 2000]);
+    expect(Number(forward![1])).toBe(16);
     expect(Buffer.byteLength(body)).toBeLessThan(Number(forward![1]) * 1024 * 1024);
   });
 });

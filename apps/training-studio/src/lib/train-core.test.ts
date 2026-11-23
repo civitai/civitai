@@ -2295,14 +2295,16 @@ describe('the size of one Start', () => {
   });
 
   it('control: five runs of 2,000 items each are submitted', async () => {
-    const calls = submitWorkflow.mock.calls.length;
-    // The workflow mock returns nothing, so the submit fails after validation: it got that far.
-    const err = await submitTrainingBatch(
-      client,
-      Array.from({ length: 5 }, () => ({ ...baseRun(), items: items(2000) })),
-      { checkText }
-    ).catch((e: unknown) => e);
-    expect(err).not.toBeInstanceOf(TrainingBatchValidationError);
-    expect(submitWorkflow.mock.calls.length).toBeGreaterThan(calls);
+    submitWorkflow.mockResolvedValue({ data: { id: 'wf-full', cost: { total: 0 } } });
+    try {
+      const batch = await submitTrainingBatch(
+        client,
+        Array.from({ length: 5 }, () => ({ ...baseRun(), items: items(2000) })),
+        { checkText }
+      );
+      expect(batch.workflowIds).toHaveLength(5);
+    } finally {
+      submitWorkflow.mockReset();
+    }
   });
 });
