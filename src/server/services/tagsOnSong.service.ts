@@ -138,11 +138,9 @@ export function detachSongTag(imageId: number, tagId: number, tx?: TagWriteTrans
 }
 
 /**
- * Runs `write` in one transaction on a primary connection. Tag rows written through its `tx` commit
- * or roll back with everything else `write` does on `tx.client`. `write` must do nothing else
- * (no cache, no other pool) while the transaction holds its locks: the tag rules are read before
- * it begins. The writers' follow-up steps run after the commit, each on its own: one that fails is
- * logged, and neither stops the others nor undoes the committed write.
+ * `write` must do nothing else (no cache, no other pool) while the transaction holds its locks: the
+ * tag rules are read before it begins. The writers' follow-up steps run after the commit, each on
+ * its own: one that fails is logged, and neither stops the others nor undoes the committed write.
  */
 export async function inSongTagTransaction<T>(write: (tx: TagWriteTransaction) => Promise<T>) {
   const tagRules = await getTagRules();

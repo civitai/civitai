@@ -1046,10 +1046,16 @@ const songCoverSelect = {
 } satisfies Prisma.ImageSelect;
 export type SongCover = Prisma.ImageGetPayload<{ select: typeof songCoverSelect }>;
 
+/** The reads a song's cover and genre take, on either client. */
+type SongTrackDb = {
+  track: Pick<typeof dbRead.track, 'findMany'>;
+  image: Pick<typeof dbRead.image, 'findMany'>;
+};
+
 /** Each song's `Track` row: its cover link and genre. A song without one has neither. */
-async function readSongTracks(songIds: number[], db: typeof dbRead | typeof dbWrite) {
+async function readSongTracks(songIds: number[], db: SongTrackDb) {
   if (!songIds.length) return new Map<number, SongTrack>();
-  const rows = await (db as typeof dbRead).track.findMany({
+  const rows = await db.track.findMany({
     where: { imageId: { in: songIds } },
     select: { imageId: true, coverImageId: true, genre: true },
   });
@@ -1063,7 +1069,7 @@ type SongTrack = { coverImageId: number | null; genre?: string | null };
  */
 async function getSongCovers<S extends Prisma.ImageSelect = typeof songCoverSelect>(
   images: { id: number; type: MediaType; track?: SongTrack | null }[],
-  db: typeof dbRead | typeof dbWrite,
+  db: SongTrackDb,
   coverSelect: S = songCoverSelect as unknown as S
 ) {
   type Cover = Prisma.ImageGetPayload<{ select: S }>;
@@ -1073,14 +1079,14 @@ async function getSongCovers<S extends Prisma.ImageSelect = typeof songCoverSele
   });
   if (!links.length) return new Map<number, Cover>();
   // The songs come back too, for their owner: a cover must be theirs. Typed as the plain select so
-  // the generic `S` does not reach `findMany`'s inference (two Prisma client types, TS2719).
+  // the generic `S` does not reach `findMany`'s inference.
   const select: Prisma.ImageSelect = {
     ...coverSelect,
     id: true,
     userId: true,
     postId: true,
   };
-  const rows = (await (db as typeof dbRead).image.findMany({
+  const rows = (await db.image.findMany({
     where: { id: { in: links.flatMap(({ songId, coverId }) => [songId, coverId]) } },
     select,
   })) as unknown as ({
@@ -2570,7 +2576,6 @@ export async function suggestSongTags({
   user,
 }: SearchSongTagsInput & { user: SessionUser }) {
   assertCanStoreSongs(user);
-  // A genre's tag is attached only through the genre select.
   return (await searchSongTags(query)).filter((tag) => !isSongGenreTagName(tag.name));
 }
 
@@ -2585,8 +2590,7 @@ async function afterSongTagsChanged(song: { id: number; postId: number | null })
  * Stores the genre in the song's `Track` row and mirrors it as the song's image tag, so it reaches
  * the search documents like any tag. One transaction holds the genre, the new genre's tag and the
  * previous genre's tag coming off, with the Track row locked so a concurrent change waits and then
- * takes off this one's tag. The tests run on one PGlite session: they pin the statements and
- * their rollback, not the lock, which only two real connections exercise.
+ * takes off this one's tag.
  */
 export async function setSongGenre({ id, genre, user }: SetSongGenreInput & { user: SessionUser }) {
   const song = await readEditableSong(id, user);
@@ -2612,7 +2616,6 @@ export async function setSongGenre({ id, genre, user }: SetSongGenreInput & { us
     if (previous === genre) return;
     await tx.client.query(`UPDATE "Track" SET genre = $2 WHERE "imageId" = $1`, [song.id, genre]);
 
-    // Insert only: a row the song already has for the tag (a disabled one included) is kept.
     if (tag) await attachSongTag(song.id, tag.id, tx);
     if (previous) {
       const previousTag = (await readSongTagsIn(tx, songTagsQuery))

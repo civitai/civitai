@@ -44,11 +44,29 @@ export function toSongGenre(value: unknown): SongGenre | undefined {
 /** The image tag a genre is mirrored as (tag names are stored lowercase). */
 export const songGenreTagName = (genre: SongGenre) => genre.toLowerCase();
 
-/** Every genre's mirror tag name. Only the genre select puts one of these on a song. */
+/**
+ * Every genre's mirror tag name. An owner's tag edits and tag votes refuse these on a song: the
+ * genre select is the owner's one way to attach one.
+ */
 export const SONG_GENRE_TAG_NAMES: readonly string[] = SONG_GENRES.map(songGenreTagName);
-const GENRE_TAG_NAMES = new Set(SONG_GENRE_TAG_NAMES);
-/** Whether a tag name is a genre's mirror tag: only the genre select attaches those. */
-export const isSongGenreTagName = (name: string) => GENRE_TAG_NAMES.has(name.toLowerCase());
+export const isSongGenreTagName = (name: string) =>
+  SONG_GENRE_TAG_NAMES.includes(name.toLowerCase());
+
+/**
+ * SQL condition, built with the caller's `sql` tag (`Prisma.sql`): the vote of `tagId` on
+ * `imageId` is not on a song's genre tag. Votes neither record nor attach one.
+ */
+export function notSongGenreTagVote<S>(
+  sql: (strings: TemplateStringsArray, ...values: unknown[]) => S,
+  imageId: S,
+  tagId: S
+) {
+  return sql`NOT EXISTS (
+    SELECT 1 FROM "Image" song JOIN "Tag" genre_tag ON genre_tag.id = ${tagId}
+    WHERE song.id = ${imageId} AND song.type = 'audio'
+      AND genre_tag.name = ANY(${SONG_GENRE_TAG_NAMES}::text[])
+  )`;
+}
 
 /**
  * A feed song's genre, from its tag ids and each genre's mirror tag id (`image.getSongGenreTags`):

@@ -365,7 +365,7 @@ describe('setSongGenre', () => {
     expect(await tagNames()).toEqual(['pop']);
   });
 
-  // S6: "drop the genreTagAdded flag", so the previous genre's tag always comes off.
+  // The previous genre's tag always comes off.
   it("takes the previous genre's tag off even when its row was there before the genre", async () => {
     await insertTag(61, 'rock');
     await attach(61);

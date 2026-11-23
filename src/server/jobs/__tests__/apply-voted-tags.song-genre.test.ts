@@ -5,8 +5,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * The tag-vote job on PGlite: votes, tags, songs and the image tag rows are real rows, and the
- * job's own writer runs. A song's genre tag mirrors its owner's genre (S6), so votes never attach
- * one to a song.
+ * job's own writer runs. A song's genre tag mirrors its owner's genre, so votes never attach one
+ * to a song.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });

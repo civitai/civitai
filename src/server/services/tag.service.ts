@@ -45,8 +45,8 @@ import {
 } from '~/server/services/user-preferences.service';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { Flags } from '~/shared/utils/flags';
-import { MediaType, TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
-import { SONG_GENRE_TAG_NAMES } from '~/shared/constants/song-genres';
+import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
+import { notSongGenreTagVote } from '~/shared/constants/song-genres';
 import { bustCacheTag, fetchThroughCache, queryCache } from '~/server/utils/cache-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -772,17 +772,12 @@ export const addTagVotes = async ({
 }: TagVotingInput & { vote: number }) => {
   // Determine vote weight
   let isCreator = false;
-  let isSong = false;
   if (type === 'model') {
     const creator = await dbRead.model.findFirst({ where: { id }, select: { userId: true } });
     isCreator = creator?.userId === userId;
   } else if (type === 'image') {
-    const creator = await dbRead.image.findFirst({
-      where: { id },
-      select: { userId: true, type: true },
-    });
+    const creator = await dbRead.image.findFirst({ where: { id }, select: { userId: true } });
     isCreator = creator?.userId === userId;
-    isSong = creator?.type === MediaType.audio;
   }
   let voteWeight = 1;
   if (isModerator) voteWeight = MODERATOR_VOTE_WEIGHT;
@@ -793,10 +788,14 @@ export const addTagVotes = async ({
   const named = isTagIds
     ? Prisma.sql`"id" = ANY(${tags as number[]}::int[])`
     : Prisma.sql`"name" = ANY(${tags as string[]}::text[])`;
-  // A song's genre tag mirrors its owner's genre (the genre select): votes on one are not kept.
-  const tagMatch = isSong
-    ? Prisma.sql`${named} AND NOT "name" = ANY(${SONG_GENRE_TAG_NAMES as string[]}::text[])`
-    : named;
+  const tagMatch =
+    type === 'image'
+      ? Prisma.sql`${named} AND ${notSongGenreTagVote(
+          Prisma.sql,
+          Prisma.sql`${id}`,
+          Prisma.raw('"Tag".id')
+        )}`
+      : named;
   const voteTable = type === 'model' ? 'TagsOnModelsVote' : 'TagsOnImageVote';
   await dbWrite.$executeRaw(Prisma.sql`
     INSERT INTO "${Prisma.raw(voteTable)}" ("userId", "tagId", "${Prisma.raw(type)}Id", "vote")

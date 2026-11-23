@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
@@ -7,7 +8,7 @@ import {
   insertTagsOnImageNew,
   upsertTagsOnImageNew,
 } from '~/server/services/tagsOnImageNew.service';
-import { SONG_GENRE_TAG_NAMES } from '~/shared/constants/song-genres';
+import { notSongGenreTagVote } from '~/shared/constants/song-genres';
 
 const UPVOTE_TAG_THRESHOLD = constants.tagVoting.upvoteThreshold;
 const DOWNVOTE_TAG_THRESHOLD = 0;
@@ -33,12 +34,11 @@ async function applyUpvotes() {
           vote.vote > 0
         AND vote."createdAt" > ${lastApplied}
         AND applied."tagId" IS NULL
-        -- A song's genre tag mirrors its owner's genre; votes never attach one.
-        AND NOT EXISTS (
-          SELECT 1 FROM "Image" i JOIN "Tag" t ON t.id = vote."tagId"
-          WHERE i.id = vote."imageId" AND i.type = 'audio'
-            AND t.name = ANY(${SONG_GENRE_TAG_NAMES}::text[])
-        )
+        AND ${notSongGenreTagVote(
+          Prisma.sql,
+          Prisma.raw('vote."imageId"'),
+          Prisma.raw('vote."tagId"')
+        )}
     ), over_threshold AS (
       SELECT
         a."imageId",

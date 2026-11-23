@@ -5,8 +5,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as Caches from '~/server/redis/caches';
 
 /**
- * Tag votes on PGlite: the tags and the vote rows are real rows. A song's genre tag mirrors its
- * owner's genre (S6), so a vote on one is not kept; the vote job would otherwise attach it.
+ * Tag votes on PGlite: the images, tags and vote rows are real rows. A song's genre tag mirrors
+ * its owner's genre, so a vote on one is not kept; the vote job would otherwise attach it.
  */
 
 vi.setConfig({ hookTimeout: 60_000 });
@@ -36,6 +36,7 @@ const votedTagIds = async () =>
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
+    CREATE TABLE "Image" (id int PRIMARY KEY, type text NOT NULL);
     CREATE TABLE "Tag" (id int PRIMARY KEY, name text NOT NULL, type text NOT NULL DEFAULT 'UserGenerated');
     CREATE TABLE "TagsOnImageVote" (
       "userId" int NOT NULL, "tagId" int NOT NULL, "imageId" int NOT NULL, vote int NOT NULL,
@@ -55,13 +56,13 @@ afterAll(() => db.close());
 
 beforeEach(async () => {
   await db.exec(`
-    TRUNCATE "Tag", "TagsOnImageVote";
+    TRUNCATE "Image", "Tag", "TagsOnImageVote";
     INSERT INTO "Tag" (id, name) VALUES (${POP}, 'pop'), (${CHILL}, 'chill');
   `);
 });
 
 const onA = (type: 'audio' | 'image') =>
-  dbMock.dbRead.image.findFirst.mockResolvedValue({ userId: 9, type } as never);
+  db.query(`INSERT INTO "Image" (id, type) VALUES ($1, $2)`, [IMAGE, type]);
 
 describe('addTagVotes', () => {
   it.each([
@@ -70,7 +71,7 @@ describe('addTagVotes', () => {
   ])(
     "keeps no vote on a genre's tag for a song, voted %s, and keeps the others",
     async (_, tags) => {
-      onA('audio');
+      await onA('audio');
 
       await addTagVotes({ userId: VOTER, type: 'image', id: IMAGE, tags: tags as never, vote: 1 });
 
@@ -79,7 +80,7 @@ describe('addTagVotes', () => {
   );
 
   it('keeps a vote on a genre-named tag for an image that is not a song', async () => {
-    onA('image');
+    await onA('image');
 
     await addTagVotes({ userId: VOTER, type: 'image', id: IMAGE, tags: ['pop'], vote: 1 });
 

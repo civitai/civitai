@@ -26,11 +26,9 @@ type TagsOnImageNewArgs = {
 };
 
 /**
- * A caller's open transaction for `insertTagsOnImageNew` / `deleteTagsOnImageNew`: the rows are
- * written on `client` with the tag rules read before it began, so nothing but the row write runs
- * while it is open. The work that must follow the commit (cache busts, the rating recount, the
- * search queue) is pushed onto `afterCommit`, one independent step each, for the caller to run
- * once it has committed.
+ * A caller's open transaction: rows go on `client` with `tagRules` read before it began. Cache
+ * busts, the rating recount and the search queue are pushed onto `afterCommit` for the caller to
+ * run after it commits.
  */
 export type TagWriteTransaction = {
   client: Pick<PoolClient, 'query'>;
@@ -45,7 +43,6 @@ async function bustImageTagCaches(items: { imageId: number }[]) {
   await imageTagsCache.bust(imageIds);
 }
 
-/** The work that follows a tag write: the caches (in a transaction), ratings and search queue. */
 async function afterTagWrite(
   written: { imageId: number; tagId: number }[],
   imageIds: number[],

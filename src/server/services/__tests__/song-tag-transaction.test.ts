@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * `inSongTagTransaction`, the transaction `setSongGenre` writes a genre and its tag rows in, on a
@@ -59,13 +60,22 @@ describe('inSongTagTransaction', () => {
   });
 
   it('hands the write the tag rules read before the transaction began', async () => {
+    const stored = [{ fromId: 1, toId: 2, fromTag: 'a', toTag: 'b', type: 'Replace' }];
+    redisMock.redis.get.mockImplementation((async (key: string) => {
+      if (key !== 'system:tag-rules') return null;
+      mocks.events.push('rules');
+      return JSON.stringify(stored);
+    }) as never);
+    // Fresh modules: the rules' in-process memo holds what an earlier test read.
+    vi.resetModules();
+    const fresh = await import('~/server/services/tagsOnSong.service');
     let rules: unknown;
-    await inSongTagTransaction(async (tx) => {
+    await fresh.inSongTagTransaction(async (tx) => {
       rules = tx.tagRules;
     });
 
-    expect(Array.isArray(rules)).toBe(true);
-    expect(mocks.events[0]).toBe('BEGIN');
+    expect(rules).toEqual(stored);
+    expect(mocks.events).toEqual(['rules', 'BEGIN', 'COMMIT']);
   });
 
   it('rolls back a failing write, runs none of its follow-ups and releases the connection', async () => {
