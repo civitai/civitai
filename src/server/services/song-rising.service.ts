@@ -2,7 +2,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
-import { getImageIdsVisibleToViewer } from '~/server/services/image-visibility.service';
+import { getVisibleSongIds, isMusicEnabled } from '~/server/services/song-read.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 
 /**
@@ -18,7 +18,7 @@ export async function getRisingSongIds({
   features: { music?: boolean };
   user?: { id: number; isModerator?: boolean | null };
 }): Promise<number[]> {
-  if (!features.music) return [];
+  if (!isMusicEnabled(features)) return [];
   const ids = await fetchThroughCache(
     REDIS_KEYS.CACHES.RISING_SONGS as RedisKeyTemplateCache,
     async () => {
@@ -39,10 +39,6 @@ export async function getRisingSongIds({
     { ttl: CacheTTL.md }
   );
   if (!ids.length) return [];
-  const visible = await getImageIdsVisibleToViewer({
-    ids,
-    userId: user?.id,
-    isModerator: user?.isModerator ?? undefined,
-  });
-  return ids.filter((id) => visible.has(id));
+  const visible = await getVisibleSongIds({ ids, viewer: { features, user } });
+  return visible ? ids.filter((id) => visible.has(id)) : [];
 }
