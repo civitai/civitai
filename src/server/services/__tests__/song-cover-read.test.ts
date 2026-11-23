@@ -1,26 +1,52 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
-import type * as ImageVisibility from '~/server/services/image-visibility.service';
-import { getImageIdsVisibleToViewer } from '~/server/services/image-visibility.service';
+import { Prisma } from '@prisma/client';
+import type * as UserPreferences from '~/server/services/user-preferences.service';
 import { NsfwLevel } from '~/server/common/enums';
 import type { SessionUser } from '~/types/session';
 
 const mocks = vi.hoisted(() => ({ music: true, visible: new Set<number>() }));
+// The image visibility rule has its own tests; here it decides which songs the requester sees.
+const visibleRead = vi.fn(async ({ ids }: { ids: number[] }) => {
+  return new Set(ids.filter((id) => mocks.visible.has(id)));
+});
 
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
   getFeatureFlagsLazy: () => ({ music: mocks.music }),
 }));
-// The image visibility rule has its own tests; here it decides which songs the requester sees.
-vi.mock('~/server/services/image-visibility.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof ImageVisibility>()),
-  getImageIdsVisibleToViewer: vi.fn(async ({ ids }: { ids: number[] }) => {
-    return new Set(ids.filter((id) => mocks.visible.has(id)));
-  }),
-}));
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof UserPreferences>();
+  return {
+    ...actual,
+    BlockedByUsers: { ...actual.BlockedByUsers, getCached: vi.fn(async () => []) },
+  };
+});
 
 import { getSongCoversForPlayer } from '~/server/services/post.service';
+
+/**
+ * Answers the visibility read (`getImageIdsVisibleToViewer`'s SQL) through `visibleRead`, called
+ * with the ids and viewer read back from the query: the ids from `i.id IN (…)`, the viewer from
+ * `i."userId" = …`, a moderator by the absence of visibility conditions. Other raw reads get no rows.
+ */
+async function answerVisibilityRead(strings: TemplateStringsArray, ...values: Prisma.Sql[]) {
+  const query = Prisma.sql(strings, ...values);
+  if (!query.text.includes('LEFT JOIN "Post" p ON p.id = i."postId"')) return [];
+  const param = (placeholder: string) => query.values[Number(placeholder.slice(1)) - 1];
+  const idList = query.text.match(/i\.id IN \(([^)]*)\)/)?.[1] ?? '';
+  const ids = (idList.match(/\$\d+/g) ?? []).map((p) => param(p) as number);
+  const isModerator = !query.text.includes('"needsReview" IS NULL');
+  const userParam = query.text.match(/i\."userId" = (\$\d+)/)?.[1];
+  const userId = userParam ? (param(userParam) as number | undefined) : undefined;
+  const visible: Set<number> = await visibleRead({
+    ids,
+    userId,
+    isModerator: isModerator || (userId === undefined ? undefined : false),
+  });
+  return [...visible].map((id) => ({ id, userId: 0 }));
+}
 
 const OWNER = 5;
 const LISTENER = { id: 9 } as SessionUser;
@@ -71,6 +97,7 @@ const coverOf = (id: number, songId: number, values: Partial<Row> = {}) =>
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.music = true;
+  vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation(answerVisibilityRead);
   vi.mocked(dbMock.dbRead.image.findMany).mockImplementation((async ({
     where,
     select,
@@ -185,9 +212,7 @@ describe('the global player reads song covers', () => {
     mocks.visible = new Set([1]);
 
     expect(await read([1, 1, 1])).toHaveLength(1);
-    expect(vi.mocked(getImageIdsVisibleToViewer)).toHaveBeenCalledWith(
-      expect.objectContaining({ ids: [1] })
-    );
+    expect(visibleRead).toHaveBeenCalledWith(expect.objectContaining({ ids: [1] }));
   });
 
   it('refuses without the music flag, before reading anything', async () => {

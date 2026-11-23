@@ -2,7 +2,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
-import { getVisibleSongIds, isMusicEnabled } from '~/server/services/song-read.service';
+import { getVisibleSongIds, isMusicEnabled } from '~/server/services/image-visibility.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 
 /**

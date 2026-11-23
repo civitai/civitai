@@ -120,8 +120,10 @@ import { Flags } from '~/shared/utils/flags';
 import { hasCompleteSfwFace, imagesForFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { hasBlockMarker } from '~/server/common/image-visibility';
-import { getImageIdsVisibleToViewer } from '~/server/services/image-visibility.service';
-import { getVisibleSongIds } from '~/server/services/song-read.service';
+import {
+  getImageIdsVisibleToViewer,
+  getVisibleSongIds,
+} from '~/server/services/image-visibility.service';
 import { getModelIdsVisibleToViewer } from '~/server/services/model-visibility.service';
 import { invalidateHiddenImageMetadata } from '~/server/services/hidden-meta-invalidation.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';

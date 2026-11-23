@@ -103,11 +103,11 @@ import {
 import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
+  getVisibleSongIds,
   imageBlockedForConditions,
   reviewedGalleryImageConditions,
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
-import { getVisibleSongIds } from '~/server/services/song-read.service';
 import {
   type MediaViewer,
   viewerCanSeeImageMedia,

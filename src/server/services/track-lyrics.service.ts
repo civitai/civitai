@@ -3,7 +3,7 @@ import { imageReviewedSql } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
 import type { LyricLine } from '~/server/schema/media.schema';
 import { lyricLineSchema } from '~/server/schema/media.schema';
-import { getVisibleSongIds } from '~/server/services/song-read.service';
+import { getVisibleSongIds } from '~/server/services/image-visibility.service';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { SONGS_UNAVAILABLE_MESSAGE } from '~/shared/form-graph/generation/audio/song-metadata';
 import { MediaType } from '~/shared/utils/prisma/enums';
