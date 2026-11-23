@@ -18,6 +18,16 @@ export async function voteLockUntil(
   now: Date,
   limits: readonly VoteLimit[]
 ): Promise<Date | null> {
+  return (await voteLock(db, playerId, now, limits))?.until ?? null;
+}
+
+/** The ledger's pause: when it ends and the window whose end is the latest. */
+export async function voteLock(
+  db: Kysely<DB> | Transaction<DB>,
+  playerId: number,
+  now: Date,
+  limits: readonly VoteLimit[]
+): Promise<{ until: Date; windowSeconds: number } | null> {
   const ends = await Promise.all(
     limits.map(async ({ windowSeconds, max }) => {
       const since = new Date(now.getTime() - windowSeconds * 1000);
@@ -30,11 +40,13 @@ export async function voteLockUntil(
         .offset(max - 1)
         .limit(1)
         .executeTakeFirst();
-      return filling ? new Date(filling.createdAt.getTime() + windowSeconds * 1000) : null;
+      return filling
+        ? { until: new Date(filling.createdAt.getTime() + windowSeconds * 1000), windowSeconds }
+        : null;
     })
   );
-  return ends.reduce<Date | null>(
-    (latest, end) => (end && (!latest || end > latest) ? end : latest),
+  return ends.reduce<{ until: Date; windowSeconds: number } | null>(
+    (latest, end) => (end && (!latest || end.until > latest.until) ? end : latest),
     null
   );
 }

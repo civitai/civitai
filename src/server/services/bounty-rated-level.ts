@@ -95,8 +95,8 @@ export function bountyNsfwFlagLevel(b: BountyLevelInput, textRated: number | und
 }
 
 /**
- * The level one of a bounty's images is shown at: raised to the bounty's flag level, or XXX when
- * the flag carries no rating at all.
+ * The level one of a bounty's images is shown at: raised to the bounty's flag level, or to XXX when
+ * the flag carries no rating at all. Never lowered, so a Blocked image stays Blocked.
  */
 export function bountyImageNsfwLevel(
   b: BountyLevelInput,
@@ -106,5 +106,5 @@ export function bountyImageNsfwLevel(
   const flagLevel = bountyNsfwFlagLevel(b, textRated);
   if (flagLevel == null) return imageLevel;
   const unrated = b.moderatorNsfwLevel == null && textRated === undefined;
-  return unrated ? NsfwLevel.XXX : Math.max(imageLevel, flagLevel);
+  return Math.max(imageLevel, unrated ? NsfwLevel.XXX : flagLevel);
 }
