@@ -30,12 +30,14 @@
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
   import { dismissible } from '$lib/optimistic-dismiss.svelte';
   import { noticeKey } from './level-notice';
+  import { withSubmitter } from './submitter';
   import { closeGuide, guideShowing, openGuide, settleGuide, type GuideState } from './guide-dialog';
   import {
     MAX_EXCLUDED,
     createItemBuffer,
     createSerialQueue,
     createVoteTracker,
+    markPress,
     postVote,
     refillCount,
     refusalNote,
@@ -45,7 +47,7 @@
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
   import type { ActionData, PageData } from './$types';
   import type { PlayerStatsSignal } from '$lib/server/live/announce';
-  import { connectSignals, joinTopic, onSignal } from '$lib/signals';
+  import { connectSignals, joinTopic, onSignal, signalsAt } from '$lib/signals';
   import { liveStatus } from '$lib/live-status.svelte';
   import {
     PLAYER_STATS_EVENT,
@@ -192,7 +194,8 @@
     sound.play(correct ? 'trial-correct' : 'trial-wrong');
   }
 
-  const submitApprentice: SubmitFunction = ({ submitter }) => {
+  const submitApprentice: SubmitFunction = ({ submitter, formData }) => {
+    withSubmitter(formData, submitter);
     submitting = true;
     picked = answerOf(submitter);
     if (picked) sound.play('press');
@@ -232,15 +235,24 @@
     };
   };
 
+  // The live connection at a vote's press: the server logs it when the vote is refused as settled.
+  const pressSignals = () => signalsAt(stageTopics);
+
   const answerOf = (submitter: HTMLElement | null) =>
     submitter instanceof HTMLButtonElement && submitter.name === 'answer' ? submitter.value : null;
 
   const submit: SubmitFunction = ({ submitter, formData }) => {
+    withSubmitter(formData, submitter);
     submitting = true;
     picked = answerOf(submitter);
     if (picked === BLOCKED_ANSWER && blockReason) formData.set('blockReason', blockReason);
     blockReason = null;
     if (picked) sound.play('press');
+    if (picked) {
+      // A plain post starts at once: no vote is queued ahead of it.
+      const startPost = markPress(formData, pressSignals());
+      startPost();
+    }
     return async ({ result, update }) => {
       try {
         await update();
@@ -459,6 +471,7 @@
   function post(action: URL, body: FormData, key: string, counted: boolean) {
     // Read at the press: by the time the answer lands, the page data may already hold this vote's effect.
     const smitesBefore = shown.status.smites;
+    const started = counted ? markPress(body, pressSignals()) : undefined;
     const uncount = () => {
       if (counted && alive) inFlight.count = Math.max(0, inFlight.count - 1);
       counted = false;
@@ -469,6 +482,7 @@
       queue: votes,
       tracker,
       wait,
+      onStart: started,
       send: async (signal) => {
         try {
           const response = await fetch(action, {
@@ -545,6 +559,7 @@
     input.cancel();
     if (cooling || !tracker.claim(key, token, input.action.search.startsWith('?/vote'))) return;
     unstick();
+    withSubmitter(input.formData, input.submitter);
     const answer = answerOf(input.submitter);
     if (answer === BLOCKED_ANSWER && blockReason) input.formData.set('blockReason', blockReason);
     blockReason = null;
@@ -636,8 +651,10 @@
 
   // A primitive, so a page reload with the same stages does not leave and rejoin the topics.
   let stageList = $derived(data.mode === 'queue' ? data.live.stages.join(',') : '');
+  // The topics joined below; a vote's press also reads them (`pressSignals`). Empty outside queue mode.
+  let stageTopics = $derived(stageList ? stageList.split(',').map(queueTopic) : []);
   $effect(() => {
-    const leave = stageList ? stageList.split(',').map((stage) => joinTopic(queueTopic(stage))) : [];
+    const leave = stageTopics.map((topic) => joinTopic(topic));
     return () => leave.forEach((left) => left());
   });
 
@@ -869,7 +886,10 @@
       {@render levelToast(false)}
       <section class="lockout" role="status" aria-label="Judging paused">
         <h2>A moment of rest</h2>
-        <p>You have been judging faster than the Order can trust. Rest a little; the queue will wait.</p>
+        <p>
+          You reached the Order's pace limit: too many judgments in too short a time. It says
+          nothing about your accuracy. Rest a little; the queue will wait.
+        </p>
         <Countdown seconds={screen.seconds} label="Time until judging resumes" />
         <p class="muted">Judging resumes by itself.</p>
       </section>
@@ -985,8 +1005,9 @@
     rank={shown.progress.rank}
     level={shown.progress.level}
     levels={shown.progress.levels}
+    voteWeight={shown.progress.voteWeight}
     goldMultiplier={shown.progress.goldMultiplier}
-    previous={shown.progress.previous}
+    dailyGoldCap={shown.progress.dailyGoldCap}
     badge={shown.badges.large[shown.progress.rank]}
     message={form?.progressFailed && progress.failed ? form.message : null}
     submit={progress.submit}

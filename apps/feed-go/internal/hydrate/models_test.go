@@ -797,7 +797,7 @@ func TestVersionImagesSQLClauses(t *testing.T) {
 		`i."tosViolation" = FALSE`,
 		`(i."blockedFor" IS NULL)`,
 		`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`,
-		`i."nsfwLevel" != 0`,
+		`(i."nsfwLevel" & 31) != 0`,
 		ImageReviewedSQL("i"),
 		`(i."nsfwLevel" & 60) = 0`,
 		`OR NOT i."modelRestricted"`,

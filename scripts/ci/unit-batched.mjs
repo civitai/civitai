@@ -192,6 +192,32 @@ const repo = () => process.env.GITHUB_REPOSITORY;
 /** What the gate dispatches: this workflow, with this value for its `only` input. */
 export const DISPATCH = { workflow: 'lint.yml', only: 'unit' };
 
+/**
+ * The other suites of the main batch. lint.yml's `batch-suites` job (on the batch dispatch above)
+ * dispatches each on `main` with `batch: true` when a path in its workflow's `on.pull_request.paths`
+ * (else `on.push.paths`) changed since the last green batch, waits for them, and posts their
+ * verdict as the `Batch suites (main batch)` commit status (scripts/ci/batch-suites.mjs). One
+ * entry per line. `ownContext`: the workflow posts its own `(main batch)` status instead; the batch
+ * job still dispatches it and waits for that status, but leaves it out of its own verdict, e.g.
+ *   { workflow: 'apps.yml', ownContext: 'App tests (main batch)' },
+ *
+ * THE ONE LIST of the batch's other suites: lint.yml's `batch-suites` job dispatches from it, and
+ * full-ci.yml reads it (`node scripts/ci/unit-batched.mjs workflows`) to dispatch the same suites
+ * on a labelled PR, ready or draft, since no PR run of theirs covers them. Change it here only.
+ */
+export const BATCH_WORKFLOWS = [
+  { workflow: 'moderator-boot.yml' },
+  { workflow: 'ports.yml' },
+  { workflow: 'registry-adapter-image.yml' },
+  { workflow: 'storage-hook-runner-image.yml' },
+  { workflow: 'windows-dev-env.yml' },
+  { workflow: 'feed-go.yml' },
+  { workflow: 'beacon-go.yml' },
+  { workflow: 'app-index-go.yml' },
+  { workflow: 'app-data-go.yml' },
+  { workflow: 'content-policy-go.yml' },
+];
+
 /** The exact `gh` argv the gate runs to dispatch the batch on <ref>. */
 export function dispatchArgs(ref, repoName) {
   return [
@@ -459,9 +485,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (cmd === 'gate') gate(a);
   else if (cmd === 'verify') verify(a, b, c);
   else if (cmd === 'step') step(a);
+  // One BATCH_WORKFLOWS file name per line, for full-ci.yml.
+  else if (cmd === 'workflows') console.log(BATCH_WORKFLOWS.map((e) => e.workflow).join('\n'));
   else {
     console.error(
-      'usage: unit-batched.mjs gate <ref> | verify <unit-result> <reports-dir> <shards> | step <failed.json>'
+      'usage: unit-batched.mjs gate <ref> | verify <unit-result> <reports-dir> <shards> | step <failed.json> | workflows'
     );
     process.exit(2);
   }

@@ -85,6 +85,15 @@ export async function readFlagRaceConfig(event: string): Promise<FlagRaceConfig>
   return OFF;
 }
 
+/**
+ * The flagRace key's whole JSON, for a reader with its own schema over one field. Throws when the value
+ * is not JSON, so that reader can retry rather than read the field as absent.
+ */
+export async function readFlagRaceJson(event: string): Promise<unknown> {
+  const raw = await sysRedis.get(flagRaceConfigKey(event));
+  return raw ? JSON.parse(raw) : undefined;
+}
+
 type FreezeEvent = {
   name: string;
   startDate: Date;

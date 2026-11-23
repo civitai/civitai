@@ -63,13 +63,6 @@ export function kohyaFamily(
   }
 }
 
-/** The families Select offers on Kohya. Flux.1 is hidden while it fails at model load there.
- *  `kohyaFamily` still knows it: existing runs validate and replay. */
-export const kohyaSelectable = (ecosystem: string): boolean => {
-  const family = kohyaFamily(ecosystem);
-  return !!family && family !== 'flux1';
-};
-
 export const isKohyaFlow = (ecosystem: string): boolean =>
   ecosystem === 'flux1' || ecosystem === 'chroma' || ecosystem === 'anima';
 

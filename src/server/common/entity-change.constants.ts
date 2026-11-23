@@ -25,6 +25,9 @@ export const watchedEntityFields = {
     'allowCommercialUse',
     'allowDerivatives',
     'allowDifferentLicense',
+    // Cover changes, including the version showcase's, are audited through these fields.
+    'coverImageId',
+    'sfwCoverImageId',
   ],
   ModelVersion: [
     'description',

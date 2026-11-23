@@ -84,6 +84,7 @@ import {
   liftedNsfwLevelSql,
   liftKeptBlockedSql,
   unblockedMetadataSql,
+  scanKeepsRowSql,
 } from '~/server/common/image-visibility';
 import {
   BLOCKED_IMAGE_DELETE_QUEUE,
@@ -172,6 +173,15 @@ import {
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
+import {
+  bustVersionShowcasesForImages,
+  bustVersionShowcasesForPosts,
+  getCarouselShowcaseIds,
+} from '~/server/services/version-showcase.service';
+import {
+  carouselSource,
+  showcaseSiteForDomain,
+} from '~/shared/constants/version-showcase.constants';
 import { createLruCache } from '~/server/utils/lru-cache';
 import {
   fetchSharedContestCollectionItems,
@@ -1125,6 +1135,7 @@ async function invalidateDeletedImages({
     invalidateManyImageExistence(deletedIds),
     imageMetaCache.refresh(deletedIds),
     imageMetadataCache.refresh(deletedIds),
+    bustVersionShowcasesForImages(deletedIds),
     userImageVideoCountCaches.bust(uniq(rows.map((row) => row.userId))),
     bustCachesForPosts(postIds),
     postMetrics.queueUpdate(postIds),
@@ -2416,7 +2427,7 @@ function applyHideChallengesExclusion(input: {
  * narrow-scope key (`asModerator`/`asOwner` false) is neither a moderator nor the owner, so its
  * own feed keeps the exclusions too.
  */
-function feedViewer(input: {
+export function feedViewer(input: {
   user?: { id?: number; username?: string | null; isModerator?: boolean };
   asModerator?: boolean;
   asOwner?: boolean;
@@ -2426,6 +2437,23 @@ function feedViewer(input: {
     id: owner ? input.user?.id : undefined,
     username: owner ? input.user?.username ?? undefined : undefined,
     isModerator: input.asModerator === true && !!input.user?.isModerator,
+  };
+}
+
+/** A feed item's thumbnail fields for its viewer. */
+export function feedThumbnailFields(
+  thumbnail: { url: string; nsfwLevel: number; blockMarked?: boolean } | undefined,
+  imageNsfwLevel: number,
+  creatorId: number,
+  viewer: { ownerId?: number; isModerator: boolean }
+) {
+  return {
+    nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, imageNsfwLevel),
+    thumbnailUrl:
+      thumbnail &&
+      (thumbnail.blockMarked === false || creatorId === viewer.ownerId || viewer.isModerator)
+        ? thumbnail.url
+        : undefined,
   };
 }
 
@@ -2547,8 +2575,11 @@ const getAllImagesUncaptured = async (
   let cacheTime = 0;
   let isPersonalized = false;
   const userId = user?.id;
-  const isModerator = input.asModerator === true && !!user?.isModerator;
-  const ownerId = input.asOwner === true ? userId : undefined;
+  const { isModerator, id: ownerId } = feedViewer({
+    user,
+    asModerator: input.asModerator,
+    asOwner: input.asOwner,
+  });
   // Moderators opting into the "pending review" collection filter get the same
   // unscanned-content visibility as the existing `pending` flag (nsfwLevel = 0 allowed).
   const effectivePending = pending || (isModerator && !!pendingReviewOnly);
@@ -2589,6 +2620,9 @@ const getAllImagesUncaptured = async (
     prefetchedNewCreators,
     prefetchedCollectionPermissions,
     prefetchedCollectionSeed,
+    // A version whose creator curated its showcase (for this site, or else the other) serves that
+    // list, in its order, whichever branch the flag below picks for everyone else.
+    showcaseIds,
   ] = await Promise.all([
     hidden && userId
       ? dbRead.imageEngagement.findMany({
@@ -2615,6 +2649,16 @@ const getAllImagesUncaptured = async (
       ? getUserCollectionPermissionsById({ userId, isModerator, id: collectionId })
       : undefined,
     needsCollectionSeed ? getCollectionRandomSeed() : undefined,
+    prioritizedUserIds?.length && modelVersionId
+      ? getCarouselShowcaseIds({
+          modelVersionId,
+          site: showcaseSiteForDomain(domain),
+          ownerImageIds: async () =>
+            (
+              await imagesForModelVersionsCache.fetch([modelVersionId])
+            )[modelVersionId]?.images.map((image) => image.id) ?? [],
+        })
+      : null,
   ]);
 
   if (hidden) {
@@ -2639,12 +2683,23 @@ const getAllImagesUncaptured = async (
 
   // Hacked this to use the model version image cache instead
   const prioritizeUser = !!prioritizedUserIds?.length;
-  const useModelVersionCache = prioritizeUser && prefetchedIsFlipt;
-  if (prioritizeUser && useModelVersionCache) {
+  const carousel = carouselSource({
+    prioritizeUser,
+    versionCacheFlag: !!prefetchedIsFlipt,
+    showcaseIds,
+  });
+  const useModelVersionCache = carousel !== 'none' && carousel !== 'live';
+  if (useModelVersionCache) {
     if (cursor) throw throwBadRequestError('Cannot use cursor with prioritizedUserIds');
     if (!modelVersionId)
       throw throwBadRequestError('modelVersionId is required when using prioritizedUserIds');
-
+  }
+  if (carousel === 'empty') {
+    noteEmptyIdsPage(input, 'prioritized');
+    return { items: [], nextCursor: undefined };
+  }
+  if (carousel === 'curated') ids = showcaseIds!;
+  if (carousel === 'version-cache' && modelVersionId) {
     const cachedData = await imagesForModelVersionsCache.fetch([modelVersionId]);
     const versionData = cachedData[modelVersionId];
     if (!versionData || !versionData.images?.length) {
@@ -3059,6 +3114,8 @@ const getAllImagesUncaptured = async (
   if (cursorClause) AND.push(cursorClause);
   // A post's images can share an index. Appended after getCursor so the cursor stays `i."index"`.
   if (postId && !modelId) orderBy = `${orderBy}, i."id"`;
+  if (carousel === 'curated')
+    orderBy = `array_position(ARRAY[${showcaseIds!.join(',')}]::int[], i."id")`;
 
   if (prioritizeUser && !useModelVersionCache) {
     // [x]
@@ -3442,7 +3499,7 @@ const getAllImagesUncaptured = async (
         // "resolved-absent" the chip needs to NOT fall back.)
         model3dId: i.model3dId != null && visibleModel3DIds?.has(i.model3dId) ? i.model3dId : null,
         meta: imageMeta?.[i.id] ?? null,
-        nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
+        ...feedThumbnailFields(thumbnail, i.nsfwLevel, creatorId, { ownerId, isModerator }),
         // `modelVersionIds` is auto-detected only and `modelVersionIdsManual` is uploader-asserted,
         // matching what the search-index path serves — consumers gate on the difference.
         modelVersionIds:
@@ -3472,7 +3529,6 @@ const getAllImagesUncaptured = async (
         tagIds: tagIdsVar?.[i.id]?.tags,
         cosmetic: cosmetics?.[i.id] ?? null,
         eventDecoration: eventDecorations?.[i.id] ?? null,
-        thumbnailUrl: thumbnail?.url,
         judgeScore,
       };
     });
@@ -6621,7 +6677,10 @@ export async function raiseOwnImageNsfwLevel({
   if (!raised) return false;
 
   await Promise.all([refreshThumbnailCache(id), refreshProfilePicturesForImages([id])]);
-  if (raised.postId) await updatePostNsfwLevel(raised.postId);
+  if (raised.postId) {
+    await updatePostNsfwLevel(raised.postId);
+    await bustVersionShowcasesForPosts([raised.postId]);
+  }
   await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
   await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
@@ -6847,6 +6906,21 @@ async function authorizeImagesAction({
   }
 }
 
+/**
+ * Sends the images still awaiting verification back to Pending for another scan, decided on each
+ * row, and returns the rows it moved.
+ */
+export async function requeueUnverifiedImages(ids: number[]) {
+  if (!ids.length) return [];
+  return dbWrite.$queryRaw<IngestImageInput[]>`
+    UPDATE "Image" i SET ingestion = 'Pending'::"ImageIngestionStatus", "blockedFor" = NULL
+    WHERE i.id IN (${Prisma.join(ids)})
+      AND i."blockedFor" = ${BlockedReason.AiNotVerified}
+      AND NOT ${scanKeepsRowSql('i')}
+    RETURNING i.id, i.url, i.type, i.width, i.height, i.meta->>'prompt' AS prompt
+  `;
+}
+
 export async function addImageTools({
   data,
   user,
@@ -6856,20 +6930,7 @@ export async function addImageTools({
 }) {
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
   await dbWrite.imageTool.createMany({ data, skipDuplicates: true });
-  // Update these images if blocked:
-  const updated = await dbWrite.image.updateManyAndReturn({
-    where: { id: { in: data.map((x) => x.imageId) }, blockedFor: BlockedReason.AiNotVerified },
-    data: {
-      blockedFor: null,
-      // Ensures we do another run:
-      ingestion: 'Pending',
-    },
-    select: {
-      id: true,
-      url: true,
-      type: true,
-    },
-  });
+  const updated = await requeueUnverifiedImages(data.map((x) => x.imageId));
 
   enqueueImageIngestion({
     images: updated,

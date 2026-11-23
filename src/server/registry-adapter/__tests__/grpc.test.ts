@@ -408,7 +408,8 @@ describe('🔴 the wire: the spec proto’s field numbers', () => {
   // Hand-encoded from the spec's proto block, not from the code's schema: Event.live = 3,
   // Event.end = 4, Event.progress = 6, Event.upsert = 1; Upsert.entity = 1, .cursor = 2;
   // Entity.urn = 1, .schemas = 2, .rev = 3, .body = 4 (bytes: the body's JSON text, UTF-8).
-  // No event this source sends sets Entity.meta (5) or Event.meta (5): empty is absent.
+  // No event this source sends sets Entity.meta (5), and these set no Event.meta (5): empty is
+  // absent. A live or progress WITH meta is below.
   it.each<[string, StreamEvent, string]>([
     ['live', { type: 'live', cursor: 'ab' }, '1a040a026162'],
     ['progress', { type: 'progress', cursor: 'ab' }, '32040a026162'],
@@ -459,6 +460,21 @@ describe('🔴 the wire: the spec proto’s field numbers', () => {
     expect(decodeEvent(Buffer.from(hex, 'hex'))).toEqual(upsert(body));
   });
 
+  // Event.meta = 5 (bytes: a JSON object's text, UTF-8), here `{"head":{"seq":7}}` (18 bytes),
+  // encoded in field-number order: after live (3), before progress (6).
+  const META_HEX = '2a12' + '7b2268656164223a7b22736571223a377d7d';
+  it.each<[string, StreamEvent, string]>([
+    ['live', { type: 'live', cursor: 'ab', meta: { head: { seq: 7 } } }, '1a040a026162' + META_HEX],
+    [
+      'progress',
+      { type: 'progress', cursor: 'ab', meta: { head: { seq: 7 } } },
+      META_HEX + '32040a026162',
+    ],
+  ])('%s with meta: Event.meta is its JSON text, and decodes back', (_name, event, hex) => {
+    expect(encodeEvent(event).toString('hex')).toBe(hex);
+    expect(decodeEvent(Buffer.from(hex, 'hex'))).toEqual(event);
+  });
+
   it('a body JSON cannot hold is sent as JSON.stringify sends it, as over HTTP', () => {
     // `{"n":null}`: a non-finite number is null, an undefined property is dropped.
     expect(encodeEvent(upsert({ n: Number.NaN, gone: undefined })).toString('hex')).toBe(
@@ -479,6 +495,27 @@ describe('🔴 the HTTP binding is unchanged: its events carry JSON objects', ()
       'event: upsert\n' +
         'id: c\n' +
         'data: {"entity":{"urn":"u","schemas":["s"],"rev":"r","body":{"a":[1,true,null],"b":"é"}},"cursor":"c"}\n\n'
+    );
+  });
+
+  // INVARIANT GUARD (green before this change: the frame is the event's own fields): what the SSE
+  // consumer reads the head and a private record's seq from.
+  it("a live or progress frame carries the event's meta; a private entity's key and seq ride in the entity", () => {
+    expect(sseFrame({ type: 'live', cursor: 'c', meta: { head: { seq: 7 } } })).toBe(
+      'event: live\nid: c\ndata: {"cursor":"c","meta":{"head":{"seq":7}}}\n\n'
+    );
+    expect(sseFrame({ type: 'progress', cursor: 'c', meta: { head: { seq: 9 } } })).toBe(
+      'event: progress\nid: c\ndata: {"cursor":"c","meta":{"head":{"seq":9}}}\n\n'
+    );
+    expect(
+      sseFrame({
+        type: 'upsert',
+        entity: { urn: 'u', schemas: ['s'], rev: 'r', body: {}, key: 'k', seq: 12 },
+        cursor: 'c',
+      })
+    ).toBe(
+      'event: upsert\nid: c\n' +
+        'data: {"entity":{"urn":"u","schemas":["s"],"rev":"r","body":{},"key":"k","seq":12},"cursor":"c"}\n\n'
     );
   });
 

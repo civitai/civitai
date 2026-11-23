@@ -572,6 +572,7 @@ describe('an nsfw-flagged bounty in the feed', () => {
         hiddenLoading: false,
         moderatedTags: [],
         systemHiddenTags: new Map(),
+        moderatedHiddenImages: new Map(),
       },
       browsingLevel,
       currentUser: { id: 6 } as never,

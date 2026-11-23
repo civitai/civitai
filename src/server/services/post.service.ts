@@ -60,7 +60,7 @@ import {
   refreshHasReceivedReviews,
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { ImageSchema, IngestImageInput } from '~/server/schema/image.schema';
+import type { ImageSchema } from '~/server/schema/image.schema';
 import { externalMetaSchema } from '~/server/schema/image.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
@@ -106,6 +106,7 @@ import {
   queueImageSearchIndexUpdate,
   deleteImages,
   imagesPendingDeletion,
+  requeueUnverifiedImages,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/services/image.service';
 import { Flags } from '~/shared/utils/flags';
@@ -123,6 +124,7 @@ import type {
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
+import { bustVersionShowcasesForPosts } from '~/server/services/version-showcase.service';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { capPostGetInfiniteImages } from '~/server/utils/post-getinfinite-images';
 import {
@@ -1871,6 +1873,9 @@ export async function bustCachesForPosts(postIds: number | number[]) {
   const showcaseVersionIds = results
     .filter((x) => x.isShowcase && x.modelVersionId != null)
     .map((x) => x.modelVersionId as number);
+  // Before the return below, which covers only the owner showcase: a featured image is in someone
+  // else's post.
+  await bustVersionShowcasesForPosts(ids);
   if (!showcaseVersionIds.length) return;
 
   const showcaseModelIds = [
@@ -1976,15 +1981,14 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
           ? (meta as Prisma.JsonObject)
           : Prisma.JsonNull
         : undefined,
-      // If this image was blocked due to missing metadata, we need to set it back to pending
-      ingestion: shouldIngest ? 'Pending' : undefined,
-      blockedFor: shouldIngest ? null : undefined,
       metadata: {
         ...((currentImage.metadata as MixedObject) ?? {}),
       } as Prisma.JsonObject,
     },
     select: { id: true, url: true, userId: true, name: true, type: true },
   });
+  // Blocked for missing metadata: another scan, decided on the row as it stands now.
+  const requeued = shouldIngest ? await requeueUnverifiedImages([image.id]) : [];
   // Parallelize independent cache refreshes — none read what others write.
   // ingestImage stays sequential after: it does not read these caches but
   // does have ordering relative to the dbWrite.image.update above.
@@ -2005,14 +2009,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   }
   await Promise.all(cacheRefreshPromises);
 
-  if (shouldIngest) {
-    // Ensures a proper rescan of this image.
-    enqueueImageIngestion({
-      images: [result as IngestImageInput],
-      name: 'post-image-ingest',
-      userId: result.userId,
-    });
-  }
+  enqueueImageIngestion({ images: requeued, name: 'post-image-ingest', userId: result.userId });
 };
 
 /** Looks up a version an uploader may credit to their images, or throws not found. */

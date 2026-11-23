@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { syncReviewPublication } from '~/server/services/creator-service-deal-review-publish';
@@ -9,6 +10,7 @@ import {
   settleSkippedScan,
   type SkipReason,
 } from '~/server/services/text-scan/actions/settle-skipped';
+import { TEXT_MODERATION_RETRY_LIMIT } from '~/server/jobs/text-moderation-retry.constants';
 import { csamHoldBars } from '~/server/services/text-scan/csam-hold-bars';
 import {
   csamHoldState,
@@ -17,10 +19,16 @@ import {
 } from '~/server/services/text-scan/csam-hold-state';
 import {
   loadServiceDealReviewSubjects,
+  SERVICE_DEAL_REVIEW_PROFILES,
   SERVICE_DEAL_REVIEW_TEXTS,
   type ServiceDealReviewTextType,
 } from '~/server/services/text-scan/profiles/service-deal-review.profile';
+import { spendTextScanRetry } from '~/server/services/text-scan/adapter';
+import { rearmTextScanRetries, recordTextScanFailure } from '~/server/services/text-scan/record';
+import { textScanCanAskEveryLabel } from '~/server/services/text-scan/submit';
+import { unansweredTextScanLabels } from '~/server/services/text-scan/profiles';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
+import type { TextScanOutput } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 type TextType = ServiceDealReviewTextType;
@@ -63,6 +71,92 @@ async function settleReviewText(
   if (type === 'ServiceDealReview') await syncReviewPublication(reviewId);
 }
 
+type RawClient = Pick<Prisma.TransactionClient, '$executeRaw'>;
+
+/**
+ * Puts a text back to Pending with no check recorded, so it stays unshown until a check is sent
+ * again; `only` narrows which texts. The edit and reply writers and a restore set the same state
+ * inline, as part of their own write.
+ */
+function resetReviewTextToPending(
+  db: RawClient,
+  type: TextType,
+  reviewId: number,
+  from: 'unsettled' | 'blocked',
+  only: Prisma.Sql
+) {
+  const cols = SERVICE_DEAL_REVIEW_TEXTS[type];
+  return db.$executeRaw`
+    UPDATE "ServiceDealReview" r
+    SET ${cols.status} = 'Pending', ${cols.workflow} = NULL
+    WHERE r."id" = ${reviewId}::int
+      AND r.${cols.status} IN ${Prisma.raw(
+    from === 'blocked' ? "('Blocked')" : "('Pending', 'Error')"
+  )}
+      AND ${only}`;
+}
+
+/** Sends unsettled text back to its check: the one that produced `workflowId`, or this `text`. */
+function resendReviewText(
+  db: RawClient,
+  type: TextType,
+  reviewId: number,
+  { workflowId, text }: CurrentText
+) {
+  const cols = SERVICE_DEAL_REVIEW_TEXTS[type];
+  return resetReviewTextToPending(
+    db,
+    type,
+    reviewId,
+    'unsettled',
+    Prisma.sql`(${workflowId ?? null}::text IS NULL OR r.${cols.workflow} = ${
+      workflowId ?? null
+    }::text)
+      AND (${text ?? null}::text IS NULL OR r.${cols.text} = ${text ?? null}::text)`
+  );
+}
+
+/**
+ * A verdict that cannot settle its text hands the check's row to the retry job, which sends it again
+ * until its retries run out; the text stays Pending, so unshown, throughout and after. Scoped to the
+ * check that produced the verdict, so a newer check's row is left alone. One transaction: a text
+ * reset beside a row still Succeeded would be resent by the reconcile at once.
+ */
+async function leaveForRetry(
+  type: TextType,
+  reviewId: number,
+  workflowId: string,
+  unanswered: readonly string[]
+) {
+  const retryCount = await dbWrite.$transaction(async (tx) => {
+    await resendReviewText(tx, type, reviewId, { workflowId });
+    const failed = await recordTextScanFailure({
+      entityType: type,
+      entityId: reviewId,
+      workflowId,
+      status: EntityModerationStatus.Failed,
+      from: EntityModerationStatus.Succeeded,
+      db: tx,
+    });
+    if (!failed) return null;
+    const row = await tx.entityModeration.findUnique({
+      where: { entityType_entityId: { entityType: type, entityId: reviewId } },
+      select: { retryCount: true },
+    });
+    return row?.retryCount ?? null;
+  });
+  if (retryCount === TEXT_MODERATION_RETRY_LIMIT)
+    logToAxiom({
+      type: 'error',
+      name: 'service-deal-review-scan',
+      message: 'retries spent on verdicts that do not answer every label; text left unshown',
+      reviewId,
+      entityType: type,
+      workflowId,
+      payload: { labels: unanswered },
+    });
+}
+
 /** Settles a check, blocked instead while the csam queue holds the text. */
 async function settleUnlessHeld(
   type: TextType,
@@ -85,6 +179,11 @@ const settleSkipped = (type: TextType, reviewId: number, reason: SkipReason, tex
   // A hidden review is never shown, so its skipped scan has nothing to settle.
   reason === 'not-public'
     ? Promise.resolve()
+    : reason === 'incomplete'
+    ? Promise.all([
+        resendReviewText(dbWrite, type, reviewId, { text }),
+        spendTextScanRetry(type, reviewId),
+      ]).then(() => undefined)
     : settleSkippedScan(
         type,
         reviewId,
@@ -93,7 +192,8 @@ const settleSkipped = (type: TextType, reviewId: number, reason: SkipReason, tex
           stored
             ? settleStored(type, reviewId, text, level)
             : settleUnlessHeld(type, reviewId, { text }, { level }),
-        { reviewId }
+        { reviewId },
+        SERVICE_DEAL_REVIEW_PROFILES[type]
       );
 
 /**
@@ -104,8 +204,9 @@ const settleSkipped = (type: TextType, reviewId: number, reason: SkipReason, tex
 const declineFallback = async () => ({ id: null });
 
 /**
- * Records the check submitted for the text as it was read, unless the text changed since. A result
- * that landed before the check was recorded was matched to nothing, so it is applied here.
+ * Records the check submitted for the text as it was read, unless the text changed since or a later
+ * send (an edit, a restore, the retry job) took the check's row. A result that landed before the
+ * check was recorded was matched to nothing, so it is applied here.
  */
 async function trackSubmit(
   type: TextType,
@@ -120,7 +221,9 @@ async function trackSubmit(
   const recorded = await dbWrite.$executeRaw`
     UPDATE "ServiceDealReview" SET ${cols.workflow} = ${workflowId}
     WHERE "id" = ${reviewId}::int AND ${cols.text} = ${text}
-      AND ${cols.status} IN ('Pending', 'Error')`;
+      AND ${cols.status} IN ('Pending', 'Error')
+      AND EXISTS (SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = ${type}
+        AND em."entityId" = ${reviewId}::int AND em."workflowId" = ${workflowId})`;
   if (!recorded) return workflow;
   // primary: a result written moments ago, before the check was recorded.
   const early = await dbWrite.entityModeration.findFirst({
@@ -132,7 +235,13 @@ async function trackSubmit(
     },
     select: { blocked: true, nsfwLevel: true, triggeredLabels: true, result: true },
   });
-  if (early && (early.blocked || early.nsfwLevel !== null))
+  if (!early || (!early.blocked && early.nsfwLevel === null)) return workflow;
+  const answers = (early.result as { labels?: TextScanOutput } | null)?.labels;
+  const unanswered = early.blocked
+    ? []
+    : unansweredTextScanLabels(SERVICE_DEAL_REVIEW_PROFILES[type], answers);
+  if (unanswered.length) await leaveForRetry(type, reviewId, workflowId, unanswered);
+  else
     await settleUnlessHeld(
       type,
       reviewId,
@@ -140,6 +249,20 @@ async function trackSubmit(
       { blocked: !!early.blocked, level: early.nsfwLevel ?? NsfwLevel.PG, csam: early }
     );
   return workflow;
+}
+
+/**
+ * The review text types whose scan cannot ask every required label right now; a failed read counts
+ * as cannot. In active mode, sending such text is refused and spends a retry.
+ */
+export async function unaskableServiceDealReviewTypes() {
+  const types = Object.keys(SERVICE_DEAL_REVIEW_PROFILES) as TextType[];
+  const askable = await Promise.all(
+    types.map((type) =>
+      textScanCanAskEveryLabel(SERVICE_DEAL_REVIEW_PROFILES[type]).catch(() => false)
+    )
+  );
+  return types.filter((_, i) => !askable[i]);
 }
 
 /**
@@ -155,6 +278,9 @@ export async function scanServiceDealReviewText(
   const text = (await loadSubject(type, reviewId))?.fields[0]?.text;
   if (!text) return;
   try {
+    // Each send starts a full retry budget, even one refused before the scan reaches the row: text
+    // parked at the limit otherwise waits a day for the reconcile.
+    await rearmTextScanRetries({ entityType: type, entityId: reviewId });
     await trackSubmit(type, reviewId, text, () =>
       submitCheck({
         entityType: type,
@@ -190,11 +316,13 @@ export async function blockServiceDealReviewText(type: TextType, reviewId: numbe
  * stored verdict.
  */
 export async function requeueBlockedServiceDealReviewText(type: TextType, reviewId: number) {
-  const cols = SERVICE_DEAL_REVIEW_TEXTS[type];
-  await dbWrite.$executeRaw`
-    UPDATE "ServiceDealReview" SET ${cols.status} = 'Pending', ${cols.workflow} = NULL
-    WHERE "id" = ${reviewId}::int AND ${cols.status} = 'Blocked'
-      AND ${csamQueueClearSql(type, reviewId)}`;
+  await resetReviewTextToPending(
+    dbWrite,
+    type,
+    reviewId,
+    'blocked',
+    csamQueueClearSql(type, reviewId)
+  );
 }
 
 const createReviewTextAdapter = (type: TextType): ModerationAdapter => ({
@@ -242,15 +370,18 @@ const createReviewTextAdapter = (type: TextType): ModerationAdapter => ({
 const applyVerdict =
   (type: TextType) =>
   async ({ entityId, workflowId, outcome, textHash }: ApplyTextScanArgs) => {
-    if (!outcome.nsfw) {
+    const unanswered = unansweredTextScanLabels(SERVICE_DEAL_REVIEW_PROFILES[type], outcome);
+    if (unanswered.length || !outcome.nsfw) {
       logToAxiom({
         type: 'error',
         name: 'service-deal-review-scan',
-        message: 'verdict without an nsfw level; text left unshown',
+        message: 'verdict does not answer every label; text left unshown for the retry job',
         reviewId: entityId,
         entityType: type,
         workflowId,
+        payload: { labels: unanswered },
       });
+      await leaveForRetry(type, entityId, workflowId, unanswered);
       return;
     }
     await settleUnlessHeld(

@@ -97,9 +97,9 @@ export const freshApp = (tag: string) => `ab_${tag}_${(appSeq += 1)}`;
 export async function snapshot(h: Harness, appId: string) {
   const out: Record<string, unknown[]> = {};
   for (const t of APPDATA_TABLES) {
-    out[t] = await h.raw(`SELECT * FROM appdata.${t} WHERE app_id = $1 ORDER BY 1, 2, 3, 4, 5`, [
-      appId,
-    ]);
+    // Every column of the table's key, in order: `mark_head` has three columns in all.
+    const order = t === 'mark_head' ? '1, 2, 3' : '1, 2, 3, 4, 5';
+    out[t] = await h.raw(`SELECT * FROM appdata.${t} WHERE app_id = $1 ORDER BY ${order}`, [appId]);
   }
   return out;
 }
@@ -309,7 +309,11 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       );
       expect((await store.get(me, PREFS, 'k'))?.data).toEqual({ n: 2 });
       await expectCode(store.delete(me, PREFS, 'k', { ifVersion: 1 }), 'version_conflict');
-      expect(await store.delete(me, PREFS, 'k', { ifVersion: 2 })).toEqual({ deleted: true });
+      // The third write of the namespace: two puts, then this delete (refusals take no seq).
+      expect(await store.delete(me, PREFS, 'k', { ifVersion: 2 })).toEqual({
+        deleted: true,
+        seq: 3,
+      });
       expect(await store.delete(me, PREFS, 'k')).toEqual({ deleted: false });
       expect(await store.get(me, PREFS, 'k')).toBeNull();
       const again = await store.put(me, PREFS, 'k', { n: 4 }, { ifVersion: 0 });
@@ -358,7 +362,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       );
       expect(
         await store.increment(ctx(app, NS_PROD, VIEWER_1), PLAYS, 'col-1', 'plays', 3)
-      ).toEqual({ value: 3 });
+      ).toEqual({ value: 3, markSeq: 1 });
       const doc = await store.get(ctx(app, NS_PROD, null), PLAYS, 'col-1');
       expect(doc?.author).toEqual({ kind: 'app' });
       expect(doc?.counters).toEqual({ plays: 3 });
@@ -417,21 +421,27 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
     it('a mark is one per user; the count is the number of distinct markers', async () => {
       const app = freshApp('mark');
       await store.put(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', { status: 'a' });
+      // Each mark and unmark takes the namespace's next mark sequence, a repeat (no row changed)
+      // included.
       expect(await store.mark(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'vote')).toEqual({
         marked: true,
         count: 1,
+        markSeq: 1,
       });
       expect(await store.mark(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'vote')).toEqual({
         marked: true,
         count: 1,
+        markSeq: 2,
       });
       expect(await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'vote')).toEqual({
         marked: true,
         count: 2,
+        markSeq: 3,
       });
       expect(await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'star')).toEqual({
         marked: true,
         count: 1,
+        markSeq: 4,
       });
       const asV2 = await store.get(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k');
       expect(asV2?.marks).toEqual({ vote: 2, star: 1 });
@@ -439,10 +449,12 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       expect(await store.unmark(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'vote')).toEqual({
         marked: false,
         count: 1,
+        markSeq: 5,
       });
       expect(await store.unmark(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'vote')).toEqual({
         marked: false,
         count: 1,
+        markSeq: 6,
       });
       await expectCode(
         store.mark(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'undeclared'),
@@ -464,6 +476,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'vote');
       expect(await store.increment(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'vote', 100)).toEqual({
         value: 100,
+        markSeq: 2,
       });
       const doc = await store.get(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k');
       expect(doc?.marks.vote).toBe(1);
@@ -476,6 +489,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       expect(await store.mark(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k', 'report')).toEqual({
         marked: true,
         count: null,
+        markSeq: 1,
       });
       const doc = await store.get(ctx(app, NS_PROD, VIEWER_2), POSTS, 'k');
       expect(doc?.marks).toEqual({ vote: 0, star: 0 });
@@ -545,11 +559,14 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
         store.increment(ctx(app, NS_PROD, VIEWER_1), PREFS, 'k', 'views'),
         'invalid_request'
       );
+      // Refused requests take no mark sequence.
       expect(await store.increment(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'views')).toEqual({
         value: 1,
+        markSeq: 1,
       });
       expect(await store.increment(ctx(app, NS_PROD, VIEWER_1), POSTS, 'k', 'views', 41)).toEqual({
         value: 42,
+        markSeq: 2,
       });
     });
 
@@ -571,7 +588,12 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
     it('creates an empty, unowned version-1 doc, charged to its creator like any create; later increments only count', async () => {
       const app = freshApp('ctrcreate');
       const v1 = ctx(app, NS_PROD, VIEWER_1);
-      expect(await store.increment(v1, TALLIES, 'col-9', 'plays', 4)).toEqual({ value: 4 });
+      // The creating increment answers the document's seq too; the next one does not.
+      expect(await store.increment(v1, TALLIES, 'col-9', 'plays', 4)).toEqual({
+        value: 4,
+        markSeq: 1,
+        seq: 1,
+      });
       const doc = await store.get(ctx(app, NS_PROD, VIEWER_2), TALLIES, 'col-9');
       expect(doc).toMatchObject({
         key: 'col-9',
@@ -581,7 +603,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       });
       expect(doc?.author).toEqual({ kind: 'counter' });
       expect(await store.increment(ctx(app, NS_PROD, VIEWER_2), TALLIES, 'col-9', 'plays')).toEqual(
-        { value: 5 }
+        { value: 5, markSeq: 2 }
       );
       expect((await store.get(v1, TALLIES, 'col-9'))?.version).toBe(1);
       const [u] = await h.raw(
@@ -666,8 +688,11 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       await tight.increment(v1, TALLIES, 'b', 'plays');
       const err = await expectCode(tight.increment(v1, TALLIES, 'c', 'plays'), 'quota_exceeded');
       expect(err.details).toEqual({ ceiling: 'viewer' });
+      // The refused create rolled back both sequences it had taken.
       expect(await tight.increment(ctx(app, NS_PROD, VIEWER_2), TALLIES, 'c', 'plays')).toEqual({
         value: 1,
+        markSeq: 3,
+        seq: 3,
       });
       await assertUsageConsistent(h, app, NS_PROD);
     });
@@ -695,7 +720,10 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       );
       expect(err.details).toEqual({ ceiling: 'app' });
       expect(await tight.get(v1, TALLIES, 'second')).toBeNull();
-      expect(await tight.increment(v1, TALLIES, 'first', 'plays', 9)).toEqual({ value: 10 });
+      expect(await tight.increment(v1, TALLIES, 'first', 'plays', 9)).toEqual({
+        value: 10,
+        markSeq: 2,
+      });
       await assertUsageConsistent(h, app, NS_PROD);
     });
 
@@ -1226,7 +1254,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       });
       // Redeclared private again: the shared document stays on the app's ceiling.
       expect(await store.get(me, asPrivate, 's')).toBeNull();
-      expect(await store.delete(me, asPrivate, 'p')).toEqual({ deleted: true });
+      expect(await store.delete(me, asPrivate, 'p')).toEqual({ deleted: true, seq: 3 });
       expect(await store.usage(me)).toEqual({
         app: { bytes: 10, docs: 1 },
         viewer: { bytes: 10, docs: 1 },
@@ -1245,7 +1273,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
         app: { bytes: 19, docs: 1 },
         viewer: { bytes: 42, docs: 2 },
       });
-      expect(await store.delete(me, PREFS, 'a')).toEqual({ deleted: true });
+      expect(await store.delete(me, PREFS, 'a')).toEqual({ deleted: true, seq: 4 });
       const [u] = await h.raw(
         `SELECT bytes, docs, last_seq FROM appdata.usage_app WHERE app_id = $1 AND ns = $2`,
         [app, NS_PROD]
@@ -1274,7 +1302,8 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       });
       await expectCode(lowered.put(me, PREFS, 'a', { p: 'xxxxxxxxxxx' }), 'quota_exceeded');
       expect((await lowered.put(me, PREFS, 'a', { p: 'x' })).version).toBe(2);
-      expect(await lowered.delete(me, PREFS, 'b')).toEqual({ deleted: true });
+      // Three puts, the refused put (rolled back, no seq), the shrink (4), then this delete.
+      expect(await lowered.delete(me, PREFS, 'b')).toEqual({ deleted: true, seq: 5 });
       await assertUsageConsistent(h, app2, NS_PROD);
     });
 
@@ -1458,14 +1487,17 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       await store.put(author, PUB(), 'old', { legacy: true });
       expect(await store.increment(reader, PUB(NOTE_SCHEMA), 'old', 'views', 3)).toEqual({
         value: 3,
+        markSeq: 1,
       });
       expect(await store.mark(reader, PUB(NOTE_SCHEMA), 'old', 'vote')).toEqual({
         marked: true,
         count: 1,
+        markSeq: 2,
       });
       expect(await store.unmark(reader, PUB(NOTE_SCHEMA), 'old', 'vote')).toEqual({
         marked: false,
         count: 0,
+        markSeq: 3,
       });
       // Control: a document write to the same collection is checked.
       await expectCode(

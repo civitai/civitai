@@ -39,6 +39,9 @@ export const appealResolutionEmail = createEmail<AppealResolutionEmailData, neve
       )
       .join('');
     return renderEmailShell({
+      icon: approved ? '✅' : '⚖️',
+      accent: approved ? 'green' : 'gray',
+      eyebrow: 'Appeal',
       header: heading,
       body: `<p style="margin: 0 0 16px 0;">Hi ${escapeHtml(username)},</p>
         <p style="margin: 0 0 16px 0;">${intro}</p>
@@ -83,6 +86,9 @@ export const siteAppealResolutionEmail = createEmail<SiteAppealResolutionEmailDa
     const heading = approved ? 'Appeal Approved' : 'Appeal Decision';
     const text = siteAppealDecisionText({ category, approved, restored });
     return renderEmailShell({
+      icon: approved ? '✅' : '⚖️',
+      accent: approved ? 'green' : 'gray',
+      eyebrow: 'Appeal',
       header: heading,
       body: `<p style="margin: 0 0 16px 0;">Hi ${escapeHtml(username)},</p>
         <p style="margin: 0 0 16px 0;">${escapeHtml(text)}</p>

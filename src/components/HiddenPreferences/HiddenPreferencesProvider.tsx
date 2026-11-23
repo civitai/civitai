@@ -10,10 +10,14 @@ export type HiddenPreferencesState = {
   hiddenUsers: Map<number, boolean>;
   /** Blocks in either direction; also merged into `hiddenUsers`. Empty for moderators. */
   blockRelations: Map<number, boolean>;
+  /** Creators who blocked the viewer, a subset of `blockRelations`. Empty for moderators. */
+  blockedByUsers?: Map<number, boolean>;
   hiddenTags: Map<number, boolean>;
   hiddenModels: Map<number, boolean>;
   hiddenModel3Ds: Map<number, boolean>;
   hiddenImages: Map<number, boolean>;
+  /** The `hiddenImages` hidden by the viewer's vote on a moderated tag they hide. */
+  moderatedHiddenImages: Map<number, boolean>;
   hiddenLoading: boolean;
   moderatedTags: HiddenTag[];
   systemHiddenTags: Map<number, boolean>;
@@ -30,7 +34,22 @@ export function deriveHiddenUsers(
   return {
     hiddenUsers: toMap([...data.hiddenUsers, ...blocked]),
     blockRelations: toMap(blocked),
+    blockedByUsers: toMap(isModerator ? [] : data.blockedByUsers),
   };
+}
+
+/** Hidden images hidden by the viewer's vote on a moderated tag they hide. */
+export function deriveModeratedHiddenImages(
+  hiddenImages: { id: number; tagId?: number | null }[],
+  hiddenTags: Map<number, boolean>,
+  moderatedTags: { id: number }[]
+) {
+  const moderatedIds = new Set(moderatedTags.map((x) => x.id));
+  return new Map(
+    hiddenImages
+      .filter((x) => x.tagId && hiddenTags.get(x.tagId) && moderatedIds.has(x.tagId))
+      .map((x): [number, boolean] => [x.id, true])
+  );
 }
 
 const HiddenPreferencesContext = createContext<HiddenPreferencesState | null>(null);
@@ -56,16 +75,26 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
     const images = new Map(
       data.hiddenImages.filter((x) => !x.tagId || tags.get(x.tagId)).map((x) => [x.id, true])
     );
+    const moderatedHiddenImages = deriveModeratedHiddenImages(
+      data.hiddenImages,
+      tags,
+      moderatedTags
+    );
 
-    const { hiddenUsers, blockRelations } = deriveHiddenUsers(data, !!currentUser?.isModerator);
+    const { hiddenUsers, blockRelations, blockedByUsers } = deriveHiddenUsers(
+      data,
+      !!currentUser?.isModerator
+    );
 
     return {
       hiddenUsers,
       blockRelations,
+      blockedByUsers,
       hiddenModels: new Map(data.hiddenModels.map((x) => [x.id, true])),
       hiddenModel3Ds: new Map(data.hiddenModel3Ds.map((x) => [x.id, true])),
       hiddenTags: tags,
       hiddenImages: images,
+      moderatedHiddenImages,
       hiddenLoading: isLoading,
       moderatedTags,
       systemHiddenTags: new Map((settings?.excludedTagIds ?? []).map((id) => [id, true])),

@@ -45,6 +45,7 @@ import {
   imageNotRestrictedSql,
   imageRestrictedSql,
   imageReviewedSql,
+  hasBlockMarkerSql,
 } from '~/server/common/image-visibility';
 import type { QueueImage as SharedQueueImage } from '~/server/utils/queue-image';
 import { toQueueImage } from '~/server/utils/queue-image';
@@ -1314,11 +1315,12 @@ const hostIsMinor = (alias = 'i') => {
  * defaults rather than of this expression, and a NULL leaking through a future
  * `NOT` would drop rows silently instead of keeping them.
  */
-const hostIsShowable = (alias = 'i') => {
+export const hostIsShowable = (alias = 'i') => {
   const t = Prisma.raw(`"${alias}"`);
   return Prisma.sql`((
     ${t}."needsReview" IS NULL
     AND ${imageReviewedSql(alias)}
+    AND NOT ${hasBlockMarkerSql(alias)}
     AND NOT ${t}."tosViolation"
     AND ${t}."nsfwLevel" != ${NsfwLevel.Blocked}
     AND ${imageNotRestrictedSql({ alias })}

@@ -81,6 +81,7 @@ beforeAll(async () => {
       "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3)
     );
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3) DEFAULT now());
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       "userId" int,
