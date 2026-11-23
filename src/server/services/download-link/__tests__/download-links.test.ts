@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -19,6 +20,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const {
   mockIsFlipt,
+  mockFliptVariant,
   mockSessions,
   mockResolveDownloadUrl,
   mockModelVersionEvent,
@@ -27,6 +29,7 @@ const {
   world,
 } = vi.hoisted(() => ({
   mockIsFlipt: vi.fn(),
+  mockFliptVariant: vi.fn(),
   mockSessions: new Map<string, unknown>(),
   mockResolveDownloadUrl: vi.fn(),
   mockModelVersionEvent: vi.fn(),
@@ -39,7 +42,11 @@ const {
     paidAccess: new Map<number, { endsAt: Date | null }>(),
     grants: [] as { userId: number; versionId: number; permissions: number }[],
     users: new Map<number, { id: number; bannedAt: Date | null; deletedAt: Date | null }>(),
-    apiKeys: new Map<number, { expiresAt: Date | null }>(),
+    /** Rows without a scope read as Full. */
+    apiKeys: new Map<
+      number,
+      { expiresAt: Date | null; tokenScope?: number; tokenScopeWide?: bigint | null }
+    >(),
     /** Client-credentials token rows by id, as the minter's re-check reads them. */
     clientTokens: new Map<number, { expiresAt: Date | null }>(),
     clients: new Map<
@@ -56,8 +63,12 @@ const {
 }));
 
 vi.mock('~/server/flipt/client', () => ({
-  FLIPT_FEATURE_FLAGS: { DOWNLOAD_LINKS_ENABLED: 'download-links-enabled' },
+  FLIPT_FEATURE_FLAGS: {
+    DOWNLOAD_LINKS_ENABLED: 'download-links-enabled',
+    BEARER_SCOPE_TIGHTEN: 'bearer-scope-tighten',
+  },
   isFlipt: mockIsFlipt,
+  getFliptVariant: mockFliptVariant,
 }));
 // Keeps the real function's client-credentials gate: a token carrying a client-credentials-only
 // scope (DownloadLink is one) resolves to no session unless the caller opts in.
@@ -550,7 +561,15 @@ function wireDb() {
   dbMock.dbRead.apiKey.findUnique.mockImplementation(
     async ({ where }: { where: { id: number } }) => {
       const key = world.apiKeys.get(where.id);
-      return key ? { ...key, user: { bannedAt: null, deletedAt: null } } : null;
+      return key
+        ? {
+            tokenScope: 0,
+            tokenScopeWide: TokenScope.Full,
+            ...key,
+            type: 'System',
+            user: { bannedAt: null, deletedAt: null },
+          }
+        : null;
     }
   );
   dbMock.dbWrite.apiKey.findFirst.mockImplementation(
@@ -1495,5 +1514,86 @@ describe('provider links', () => {
       expect(await mintFor(PUBLIC_VERSION)).toBeNull();
       expect(store.size).toBe(0);
     });
+  });
+});
+
+describe('API-key minters under bearer-scope-tighten', () => {
+  beforeEach(() => {
+    mockFliptVariant.mockReset();
+  });
+
+  // The default system-account key's read scopes.
+  const SYSTEM_ACCOUNT_SCOPE = TokenScope.UserRead | TokenScope.ModelsRead | TokenScope.MediaRead;
+
+  function keyWithScope(tokenScope: bigint) {
+    mockSessions.set('tok-apikey', {
+      ...(mockSessions.get('tok-apikey') as object),
+      tokenScope,
+    });
+    world.apiKeys.set(555, { expiresAt: null, tokenScope: 0, tokenScopeWide: tokenScope });
+  }
+
+  it('enforce: 403s an allowlisted key with no model-read scope, and mints nothing', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    keyWithScope(TokenScope.UserRead);
+    expect((await mint([userItem(PUBLIC_VERSION)], 'tok-apikey')).status).toBe(403);
+    expect(store.size).toBe(0);
+  });
+
+  it('log: the same key still mints, and the shortfall is logged', async () => {
+    mockFliptVariant.mockResolvedValue('log');
+    keyWithScope(TokenScope.UserRead);
+    expect((await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey')).ok).toBe(true);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'bearer-scope-refused',
+        payload: expect.objectContaining({ route: 'download-link-mint', apiKeyId: 555 }),
+      })
+    );
+  });
+
+  it.each([
+    ['the default system-account key', SYSTEM_ACCOUNT_SCOPE],
+    ['a key holding AIServicesRead only', TokenScope.AIServicesRead],
+  ])('enforce: %s mints and its link is served', async (_label, scope) => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    keyWithScope(scope);
+    const { url } = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    expect((await fetchLink(url)).status).toBe(302);
+  });
+
+  it('enforce: narrowing the key after the mint ends its links', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    keyWithScope(SYSTEM_ACCOUNT_SCOPE);
+    const { url } = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    // The live check reads the row's wide column when set, as the mint's session does.
+    world.apiKeys.set(555, { expiresAt: null, tokenScope: 0, tokenScopeWide: TokenScope.UserRead });
+    expect((await fetchLink(url)).status).toBe(404);
+  });
+
+  it('enforce: the live check reads the legacy column when the wide one is unset', async () => {
+    mockFliptVariant.mockResolvedValue('enforce');
+    keyWithScope(SYSTEM_ACCOUNT_SCOPE);
+    const { url } = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    world.apiKeys.set(555, {
+      expiresAt: null,
+      tokenScope: Number(TokenScope.ModelsRead),
+      tokenScopeWide: null,
+    });
+    expect((await fetchLink(url)).status).toBe(302);
+  });
+
+  it('log: a narrowed key’s links are still served', async () => {
+    mockFliptVariant.mockResolvedValue('log');
+    keyWithScope(SYSTEM_ACCOUNT_SCOPE);
+    const { url } = await mintOne(userItem(PUBLIC_VERSION), 'tok-apikey');
+    world.apiKeys.set(555, { expiresAt: null, tokenScope: 0, tokenScopeWide: TokenScope.UserRead });
+    expect((await fetchLink(url)).status).toBe(302);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'bearer-scope-refused',
+        payload: expect.objectContaining({ route: 'download-link-fetch' }),
+      })
+    );
   });
 });

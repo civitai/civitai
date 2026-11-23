@@ -1,6 +1,6 @@
 import { defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { SDXL_FULL_AR, SEED } from '../defs';
+import { SDXL_FULL_AR, SEED, selectDef } from '../defs';
 import { familyScope, makeTextBlock, versionModeOf, type FamilyExt } from '../shared';
 import { comfyResourceBlock } from '../turbo';
 
@@ -23,6 +23,10 @@ const mossImageVersionOptions = [
 /** One lookup for the graph AND the handler — the lanes cannot drift. */
 export const mossImageModelOf = versionModeOf(mossImageVersionIds, 'sft');
 
+// Comfy names. The defaults are the orchestrator's own, so an untouched form runs as before.
+const mossImageSamplers = ['er_sde', 'euler', 'euler_ancestral', 'heun', 'dpm_2', 'dpmpp_2m'];
+const mossImageSchedules = ['simple', 'sgm_uniform'];
+
 export const mossImage = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>
     checkpointDef({
@@ -40,6 +44,8 @@ export const mossImage = defineGraph<FamilyExt>({ scope: familyScope })
       turbo: { lora: 3411385 },
     })
   )
+  .field('sampler', selectDef({ options: mossImageSamplers, default: 'er_sde' }))
+  .field('scheduler', selectDef({ options: mossImageSchedules, default: 'simple' }))
   .field('aspectRatio', SDXL_FULL_AR)
   .field('seed', SEED)
   .use(makeTextBlock({ negativePromptRegistersTarget: false }));
