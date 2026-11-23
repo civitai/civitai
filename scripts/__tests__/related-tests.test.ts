@@ -8,13 +8,12 @@ import {
   DEFAULT_CAP,
   SCANNERS_FILE,
   checkManifest,
-  fileWeights,
+  checkShardLists,
   forcedReason,
   importClosure,
   isSmoke,
   parseManifest,
   missingFromReport,
-  p50,
   parseNameStatus,
   planRun,
   splitShards,
@@ -363,9 +362,9 @@ describe('missingFromReport', () => {
   });
 });
 
-// The 2-way split the plan job hands both shards. Every file must land in exactly one shard (a
-// file in none is never run; a file in two runs twice and the ledger fails), and the split must
-// follow the timings when it has them and the count when it has none.
+// The 2-way split every shard computes for itself. Every file must land in exactly one shard (a
+// file in none is never run; a file in two runs twice), and the split must not depend on input
+// order, or two shards would disagree.
 describe('splitShards', () => {
   const files = [
     'src/a.test.ts',
@@ -374,78 +373,79 @@ describe('splitShards', () => {
     'src/d.test.ts',
     'src/e.test.ts',
   ];
-  const once = (shards: string[][]) => {
-    const all = shards.flat();
-    expect(all.sort()).toEqual([...files].sort());
-    expect(new Set(all).size).toBe(all.length);
-  };
 
   // Mutant: drop the round-robin and put everything in shard 1 (killed by the sizes).
-  it('with no timings splits by count, every file exactly once', () => {
-    const got = splitShards(files, new Map(), 2);
-    expect(got.by).toBe('count');
-    expect(got.shards.map((s) => s.length)).toEqual([3, 2]);
-    once(got.shards);
+  it('deals the sorted files round-robin, every file exactly once', () => {
+    const got = splitShards(files, 2);
+    expect(got).toEqual([
+      ['src/a.test.ts', 'src/c.test.ts', 'src/e.test.ts'],
+      ['src/b.test.ts', 'src/d.test.ts'],
+    ]);
+    const all = got.flat();
+    expect([...all].sort()).toEqual(files);
+    expect(new Set(all).size).toBe(all.length);
   });
 
-  // One heavy file outweighs four light ones: by count it would share a shard with two of them.
-  // Mutant: ignore the weights (count split) and shard 1 holds a, c, e (killed).
-  it('with timings puts the heavy file alone against the light ones', () => {
-    const w = new Map([
-      ['src/a.test.ts', 9000],
-      ['src/b.test.ts', 1000],
-      ['src/c.test.ts', 1100],
-      ['src/d.test.ts', 1200],
-      ['src/e.test.ts', 1300],
-    ]);
-    const got = splitShards(files, w, 2);
-    expect(got.by).toBe('timings');
-    expect(got.shards).toEqual([
-      ['src/a.test.ts'],
-      ['src/b.test.ts', 'src/c.test.ts', 'src/d.test.ts', 'src/e.test.ts'],
-    ]);
-    expect(got.loads).toEqual([9000, 4600]);
-    once(got.shards);
+  // Mutant: drop the sort, and a reversed input splits differently (killed).
+  it('is deterministic: input order and duplicates do not change it', () => {
+    expect(splitShards([...files].reverse().concat(files[0]), 2)).toEqual(splitShards(files, 2));
   });
 
-  // A file with no timing takes the median of the known ones, so it is neither free nor huge.
-  it('gives an untimed file the median weight', () => {
-    const w = new Map([
-      ['src/a.test.ts', 5000],
-      ['src/b.test.ts', 1000],
-      ['src/c.test.ts', 3000],
-    ]);
-    const got = splitShards(files, w, 2);
-    once(got.shards);
-    // weights a5000 c3000 d3000 e3000 b1000: a | c,d ... the totals stay within one file's weight
-    expect(Math.abs(got.loads[0] - got.loads[1])).toBeLessThanOrEqual(5000);
-    expect(got.loads[0] + got.loads[1]).toBe(5000 + 1000 + 3000 * 3);
-  });
-
-  it('is deterministic and ignores input order and duplicates', () => {
-    const w = new Map(files.map((f, i) => [f, 1000 + i]));
-    expect(splitShards([...files].reverse().concat(files[0]), w, 2)).toEqual(
-      splitShards(files, w, 2)
-    );
+  it('more shards than files leaves the rest empty', () => {
+    expect(splitShards(['src/a.test.ts'], 2)).toEqual([['src/a.test.ts'], []]);
   });
 });
 
-describe('fileWeights / p50', () => {
-  it('p50 is the lower middle', () => {
-    expect(p50([3, 1, 2])).toBe(2);
-    expect(p50([4, 1, 3, 2])).toBe(2);
+// The ledger's check that the shards, each planning alone, agreed and covered the plan.
+describe('checkShardLists', () => {
+  const plan = ['src/a.test.ts', 'src/b.test.ts', 'src/c.test.ts'];
+  const ok = [
+    { shard: 1, files: plan, mine: ['src/a.test.ts', 'src/c.test.ts'] },
+    { shard: 2, files: [...plan].reverse(), mine: ['src/b.test.ts'] },
+  ];
+
+  it('passes when both planned the same files and split them exactly', () => {
+    expect(checkShardLists(ok, 2)).toEqual({ errors: [], files: plan });
   });
 
-  // Mutant: average instead of p50, and one slow outlier run moves the weight (killed).
-  it('is the p50 over runs of each file test time, plus the overhead, repo-relative', () => {
-    const run = (ms: number) => [
-      { testResults: [{ name: '/r/src/a.test.ts', startTime: 1000, endTime: 1000 + ms }] },
-    ];
-    const w = fileWeights([run(100), run(200), run(9000)], '/r', 50);
-    expect(w).toEqual(new Map([['src/a.test.ts', 250]]));
+  // Each guard, shown failing. Mutant: return no errors, and every case below goes green.
+  it('names a missing shard', () => {
+    expect(checkShardLists([ok[0]], 2).errors).toEqual([
+      'shard 2/2: no plan uploaded (it did not finish its plan, or its upload failed)',
+    ]);
   });
 
-  it('skips results without times', () => {
-    expect(fileWeights([[{ testResults: [{ name: '/r/src/b.test.ts' }] }]], '/r').size).toBe(0);
+  it('names two shards that planned different files', () => {
+    const got = checkShardLists(
+      [ok[0], { shard: 2, files: ['src/b.test.ts'], mine: ['src/b.test.ts'] }],
+      2
+    );
+    expect(got.errors[0]).toBe(
+      'shard 2 planned 1 files, shard 1 planned 3 files: the shards computed different plans'
+    );
+  });
+
+  it('names a file in two shards, and a planned file in none', () => {
+    expect(
+      checkShardLists(
+        [
+          { shard: 1, files: plan, mine: ['src/a.test.ts', 'src/b.test.ts'] },
+          { shard: 2, files: plan, mine: ['src/b.test.ts'] },
+        ],
+        2
+      ).errors
+    ).toEqual(['src/b.test.ts: in shard 1 and shard 2', 'src/c.test.ts: planned, in no shard']);
+  });
+
+  it('names a file run that was not planned, and a shard outside the matrix', () => {
+    expect(
+      checkShardLists(
+        [...ok.slice(0, 1), { shard: 2, files: plan, mine: ['src/b.test.ts', 'src/x.test.ts'] }],
+        2
+      ).errors
+    ).toEqual(['src/x.test.ts: in a shard, not planned']);
+    expect(checkShardLists([...ok, { shard: 3, files: plan, mine: [] }], 2).errors).toContain(
+      'shard 3: outside 1..2'
+    );
   });
 });
