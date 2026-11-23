@@ -5957,7 +5957,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         rateLimit: {
           retryAfterSeconds: 7,
           retryAt: '2026-01-01T00:00:07.000Z',
-          id: 'apps.shared-storage',
+          id: 'apps.doc-store',
           kind: 'abuse',
         },
       },

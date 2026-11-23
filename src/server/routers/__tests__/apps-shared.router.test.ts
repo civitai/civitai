@@ -3143,6 +3143,8 @@ describe('rate-limit refusals carry machine-readable retry metadata', () => {
       expect((trpcError.cause as { rateLimit?: unknown } | undefined)?.rateLimit).toEqual({
         retryAfterSeconds: RETRY_AFTER,
         retryAt: RETRY_AT,
+        id: 'apps.shared-storage',
+        kind: 'abuse',
       });
     }
   );

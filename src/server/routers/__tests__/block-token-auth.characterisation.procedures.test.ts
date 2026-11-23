@@ -436,6 +436,7 @@ const REFUSAL_ID_BY_LIMITER: Record<string, string> = {
   checkSharedReportRateLimit: 'apps.shared-storage',
   checkSharedVoteRateLimit: 'apps.shared-storage',
   checkSharedWithdrawRateLimit: 'apps.shared-storage',
+  reserveSharedWrite: 'apps.shared-storage',
 };
 
 // ── population, derived from the routers themselves ──────────────────────────────────────
