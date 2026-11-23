@@ -60,6 +60,8 @@ const POST_LIMIT = 200;
 /** Posts re-read in the overlap per run, nearest the cursor first. */
 const OVERLAP_POST_LIMIT = 2000;
 const ENQUEUE_CHUNK = 1000;
+/** Images the sampler reads per statement. */
+const SAMPLE_READ_PAGE = 5000;
 
 /** The last post a run read, in publish order: `(publishedAt, id)`, so posts sharing one instant drain across runs. */
 export type PublishSampleCursor = { publishedAt: Date; postId: number };
@@ -166,7 +168,7 @@ export async function sampleNewlyLivePostsForKnights(
   return result;
 }
 
-/** The images a sampler reads: those of some posts, or some images by id. */
+/** The images a sampler reads: those of some posts, some images by id, or the posts of some model versions. */
 export type KnightsSampleScope =
   | { postIds: number[] }
   | { imageIds: number[] }
@@ -191,46 +193,61 @@ export async function sampleImagesForKnights(
   const { column, ids } = scopeFilter(scope);
   if (!config.enabled || ids.length === 0) return result;
 
-  const images = await db
-    .selectFrom('Image as img')
-    .innerJoin('Post as p', 'p.id', 'img.postId')
-    .select(['img.id', 'img.nsfwLevel'])
-    .where(column, 'in', ids)
-    .where(servableImageContent)
-    .where(postNotPrivate)
-    .where('img.ingestion', '=', 'Scanned')
-    .where('img.userId', '!=', FEEDBACK_CAPTURE_OWNER_ID)
-    .orderBy('img.id', 'asc')
-    .execute();
+  // Read in pages by id, so a scope with many images (every post of a model's versions) is never
+  // read or asked about in one statement; the read stops once one more image is due than fits.
+  const todo: { imageId: number; nsfw: boolean }[] = [];
+  let room: number | undefined;
+  let afterId = 0;
+  while (room === undefined || todo.length <= room) {
+    const images = await db
+      .selectFrom('Image as img')
+      .innerJoin('Post as p', 'p.id', 'img.postId')
+      .select(['img.id', 'img.nsfwLevel'])
+      .where(column, 'in', ids)
+      .where(servableImageContent)
+      .where(postNotPrivate)
+      .where('img.ingestion', '=', 'Scanned')
+      .where('img.userId', '!=', FEEDBACK_CAPTURE_OWNER_ID)
+      .where('img.id', '>', afterId)
+      .orderBy('img.id', 'asc')
+      .limit(SAMPLE_READ_PAGE)
+      .execute();
+    if (images.length === 0) break;
+    afterId = images[images.length - 1].id;
 
-  const drawn = images
-    .map(({ id, nsfwLevel }) => ({ imageId: id, nsfw: nsfwLevel > sfwBrowsingLevelsFlag }))
-    .filter(
-      ({ imageId, nsfw }) => knightsSampleDraw(imageId) < (nsfw ? config.nsfwRate : config.sfwRate)
-    );
-  if (drawn.length === 0) return result;
+    const drawn = images
+      .map(({ id, nsfwLevel }) => ({ imageId: id, nsfw: nsfwLevel > sfwBrowsingLevelsFlag }))
+      .filter(
+        ({ imageId, nsfw }) =>
+          knightsSampleDraw(imageId) < (nsfw ? config.nsfwRate : config.sfwRate)
+      );
+    if (drawn.length > 0) {
+      // `KnightsQueueItem_imageId_idx`: the overlap re-reads mostly images already asked about.
+      const asked = new Set(
+        (
+          await db
+            .selectFrom('KnightsQueueItem')
+            .select('imageId')
+            .where('questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
+            .where('isHiddenCheck', '=', false)
+            .where(
+              'imageId',
+              'in',
+              drawn.map((d) => d.imageId)
+            )
+            .execute()
+        ).map((row) => row.imageId)
+      );
+      todo.push(...drawn.filter((d) => !asked.has(d.imageId)));
+    }
+    if (todo.length > 0 && room === undefined) {
+      const maxOpen = knightsSourcesMaxOpen(config);
+      room = Math.max(0, maxOpen - (await countOpenServableKnightItems(db, maxOpen + 1)));
+    }
+    if (images.length < SAMPLE_READ_PAGE) break;
+  }
+  if (room === undefined || todo.length === 0) return result;
 
-  // `KnightsQueueItem_imageId_idx`: the overlap re-reads mostly images already asked about.
-  const asked = new Set(
-    (
-      await db
-        .selectFrom('KnightsQueueItem')
-        .select('imageId')
-        .where('questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
-        .where('isHiddenCheck', '=', false)
-        .where(
-          'imageId',
-          'in',
-          drawn.map((d) => d.imageId)
-        )
-        .execute()
-    ).map((row) => row.imageId)
-  );
-  const todo = drawn.filter((d) => !asked.has(d.imageId));
-  if (todo.length === 0) return result;
-
-  const maxOpen = knightsSourcesMaxOpen(config);
-  const room = Math.max(0, maxOpen - (await countOpenServableKnightItems(db, maxOpen + 1)));
   result.capped = todo.length > room;
   const admitted = todo.slice(0, room);
 

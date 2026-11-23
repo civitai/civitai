@@ -55,6 +55,18 @@ export const updateEntityAvailabilityHandler = async ({
   input: AvailabilityInput;
 }) => {
   try {
+    // Only a post leaving Private is offered to the Knights, as moveImagesToPost does. Read from the
+    // primary before the write, so a lagging replica cannot hide the old value.
+    const postLeavesPrivate =
+      entityType === 'Post' &&
+      availability !== Availability.Private &&
+      (
+        await dbWrite.post.findUnique({
+          where: { id: entityId },
+          select: { availability: true },
+        })
+      )?.availability === Availability.Private;
+
     await entityAvailabilityUpdate({
       availability,
       entityIds: [entityId],
@@ -109,8 +121,7 @@ export const updateEntityAvailabilityHandler = async ({
         );
         break;
       case 'Post':
-        if (availability !== Availability.Private)
-          void queueLeftPrivateForKnights({ postIds: [entityId] });
+        if (postLeavesPrivate) void queueLeftPrivateForKnights({ postIds: [entityId] });
         const images = await dbRead.image.findMany({
           where: { postId: entityId },
           select: { id: true },

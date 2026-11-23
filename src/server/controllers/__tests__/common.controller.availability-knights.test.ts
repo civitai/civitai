@@ -41,6 +41,7 @@ beforeEach(() => {
     key === REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES ? JSON.stringify({ enabled: true }) : null
   );
   dbMock.dbRead.image.findMany.mockResolvedValue([{ id: 50 }]);
+  dbMock.dbWrite.post.findUnique.mockResolvedValue({ availability: Availability.Private } as never);
 });
 
 describe('updateEntityAvailabilityHandler on a Post', () => {
@@ -53,6 +54,19 @@ describe('updateEntityAvailabilityHandler on a Post', () => {
       expect(read.values.filter((v) => typeof v === 'number')).toContain(5);
       expect(read.writesBefore).toBe(1);
     }
+  });
+
+  it.each([
+    ['Public to Unsearchable', Availability.Public, Availability.Unsearchable],
+    ['Public to Public', Availability.Public, Availability.Public],
+    ['Unsearchable to Public', Availability.Unsearchable, Availability.Public],
+  ])('offers nothing when the post was not Private: %s', async (_label, before, after) => {
+    dbMock.dbWrite.post.findUnique.mockResolvedValue({ availability: before } as never);
+    await setPost(after);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalled();
+    expect(imageReads()).toEqual([]);
   });
 
   it('offers nothing when the post is set to Private (control)', async () => {

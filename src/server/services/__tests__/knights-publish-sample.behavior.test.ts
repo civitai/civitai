@@ -376,7 +376,7 @@ describe('runKnightsPublishSampling', () => {
 
 describe('offerLeftPrivateImagesToKnights', () => {
   const offer = (
-    scope: { postIds: number[] } | { imageIds: number[] },
+    scope: Parameters<typeof offerLeftPrivateImagesToKnights>[1]['scope'],
     fields: Record<string, unknown> = { sfwRate: 1, nsfwRate: 1 }
   ) => offerLeftPrivateImagesToKnights(db, { scope, now: NOW, config: config(fields) });
   const ownerRating = (imageId: number, userId = 1) =>
@@ -442,6 +442,22 @@ describe('offerLeftPrivateImagesToKnights', () => {
     await offer({ modelVersionIds: [9] });
 
     expect((await queued()).map((i) => i.imageId)).toEqual([11]);
+  });
+
+  it('reads a scope larger than one page, and stops once more are due than fit', async () => {
+    await post(1, minutesAgo(300));
+    await pg.query(`UPDATE "Post" SET "modelVersionId" = 9 WHERE id = 1`);
+    await pg.query(
+      `INSERT INTO "Image" (id, "postId") SELECT g, 1 FROM generate_series(1, 5003) AS g`
+    );
+
+    const capped = await offer({ modelVersionIds: [9] }, { sfwRate: 1, nsfwRate: 1, maxOpen: 3 });
+    expect(capped).toEqual({ ownerRatings: 0, enqueued: 3, capped: true });
+    expect((await queued()).map((i) => i.imageId)).toEqual([1, 2, 3]);
+
+    const all = await offer({ modelVersionIds: [9] }, { sfwRate: 1, nsfwRate: 1, maxOpen: 10_000 });
+    expect(all).toEqual({ ownerRatings: 0, enqueued: 5000, capped: false });
+    expect((await queued()).map((i) => i.imageId)).toEqual(range(1, 5003));
   });
 
   it("queues the owner's rating as an owner rating, ahead of the draw, unless the image ever had an item or its level is locked", async () => {
