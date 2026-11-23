@@ -116,7 +116,6 @@ describe('apprentice action', () => {
     expect(answerApprentice).not.toHaveBeenCalled();
   });
 
-  // What Chrome < 112 sent before `withSubmitter`: the pressed answer button left out of the body.
   it('refuses a body with no answer before touching the ledger', async () => {
     const { answer: _answer, ...noAnswer } = valid;
     expect(await post(noAnswer)).toMatchObject({
