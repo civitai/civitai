@@ -6,7 +6,11 @@ import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
 import { canAccess } from '$lib/server/access';
 import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
 import { APPEAL_RULING_REFUSED } from '$lib/held-media';
-import { withheldImageIds, withheldRefusal } from '$lib/server/retracted-media';
+import {
+  withheldAccountRefusal,
+  withheldImageIds,
+  withheldRefusal,
+} from '$lib/server/retracted-media';
 import {
   getCsamQueueByUser,
   getImageReviewQueue,
@@ -340,6 +344,8 @@ export const imageQueueActions = {
     const form = await request.formData();
     const imageId = Number(form.get('imageId'));
     if (!imageId) return fail(400, { error: 'Missing image id.' });
+    const withheldBlock = await withheldRefusal(locals.user, [imageId]);
+    if (withheldBlock) return fail(403, { error: withheldBlock, imageId });
     const reportId = form.get('reportId') ? Number(form.get('reportId')) : undefined;
     if (reportId && !(await reportIsOnImage(reportId, imageId)))
       return fail(400, { error: REPORT_NOT_ON_IMAGE, imageId });
@@ -391,6 +397,8 @@ export const imageQueueActions = {
     );
     if (typeof input === 'string') return fail(400, { error: input });
     const { imageId } = input;
+    const withheldDismiss = await withheldRefusal(locals.user, [imageId]);
+    if (withheldDismiss) return fail(403, { error: withheldDismiss, imageId });
     const result = await dismissFromCsamQueue({ ...input, userId: locals.user.id });
     if (!result.ok)
       return fail(result.reason === 'unavailable' ? 503 : 409, {
@@ -415,6 +423,8 @@ export const imageQueueActions = {
       await request.formData()
     );
     if (typeof input === 'string') return fail(400, { error: input });
+    const withheldAccount = await withheldAccountRefusal(locals.user, input.userId);
+    if (withheldAccount) return fail(403, { error: withheldAccount });
     const result = await dismissUserFromCsamQueue({ ...input, moderatorId: locals.user.id });
     if (!result.ok)
       return fail({ unavailable: 503, capture: 400, changed: 409 }[result.reason], {
@@ -627,6 +637,8 @@ export const imageQueueActions = {
     const { request, locals } = event;
     const form = await request.formData();
     const imageIds = parseIds(form.get('imageIds'));
+    const withheldBulkBlock = await withheldRefusal(locals.user, imageIds);
+    if (withheldBulkBlock) return fail(403, { error: withheldBulkBlock });
     const posted = parseIds(form.get('reportIds'));
     const { reportIds, notMoved } = await boundReportIds(posted, imageIds);
     const violation = parseViolation(form);

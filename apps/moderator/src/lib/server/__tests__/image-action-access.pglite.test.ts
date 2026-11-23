@@ -6,7 +6,7 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 import { IMAGE_PAGES_SCHEMA } from './appeal-media-schema';
 
 /**
- * Pins the media access rule (`restrictedImageIds` in retracted-media.ts). Image actions refuse a batch with an image the media access rule withholds from this moderator,
+ * Pins the media access rule (`restrictedImageIds` in retracted-media.ts, civitai/civitai#10170). Image actions refuse a batch with an image the media access rule withholds from this moderator,
  * as the appeal rulings do, and Bulk Image Manager's load sends that image without its media. The
  * reads and the rule run against pglite; the writes an action makes are faked, as a test only needs
  * to see them reached or not.
@@ -48,13 +48,25 @@ vi.mock('../clickhouse', () => ({
     },
   }),
 }));
-const { updateImageNsfwLevel, acceptImage } = vi.hoisted(() => ({
+const {
+  updateImageNsfwLevel,
+  acceptImage,
+  blockImage,
+  dismissFromCsamQueue,
+  dismissUserFromCsamQueue,
+} = vi.hoisted(() => ({
   updateImageNsfwLevel: vi.fn(async (_input: unknown) => undefined),
   acceptImage: vi.fn(async (_input: unknown) => undefined),
+  blockImage: vi.fn(async (_input: unknown) => ({})),
+  dismissFromCsamQueue: vi.fn(async (_input: unknown) => ({ ok: true as const })),
+  dismissUserFromCsamQueue: vi.fn(async (_input: unknown) => ({ ok: true as const, dismissed: 1 })),
 }));
 vi.mock('../image-moderation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../image-moderation.service')>()),
   acceptImage,
+  blockImage,
+  dismissFromCsamQueue,
+  dismissUserFromCsamQueue,
   sendBulkAppealEmails: vi.fn(async () => undefined),
 }));
 vi.mock('../image-nsfw-level', () => ({ updateImageNsfwLevel }));
@@ -89,6 +101,9 @@ beforeEach(async () => {
   scanner.down = false;
   updateImageNsfwLevel.mockClear();
   acceptImage.mockClear();
+  blockImage.mockClear();
+  dismissFromCsamQueue.mockClear();
+  dismissUserFromCsamQueue.mockClear();
   db = await freshPglite();
   await db.exec(IMAGE_PAGES_SCHEMA);
   await db.exec(
@@ -371,6 +386,59 @@ describe("the image queues' accept actions", () => {
   it('bulk accept it for a grant holder', async () => {
     await queuePage.actions.bulkAccept(event(WITH_GRANT, { imageIds: String(WITHHELD) }));
     expect(acceptImage).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the image queues' removal and dismiss actions", () => {
+  const csam = (user: { id: number; roles: string[] }, fields: Record<string, string>) =>
+    ({ ...(event(user, fields) as object), params: { slug: 'csam' } } as never);
+
+  it('refuse to remove a withheld image without the grant', async () => {
+    const result = (await queuePage.actions.block(
+      event(WITHOUT_GRANT, { imageId: String(WITHHELD) })
+    )) as Result;
+    expect(result.status).toBe(403);
+    expect(blockImage).not.toHaveBeenCalled();
+  });
+
+  it('remove it for a grant holder', async () => {
+    await queuePage.actions.block(event(WITH_GRANT, { imageId: String(WITHHELD) }));
+    expect(blockImage).toHaveBeenCalledOnce();
+  });
+
+  it('refuse a bulk removal with one withheld image without the grant, removing none', async () => {
+    const result = (await queuePage.actions.bulkBlock(
+      event(WITHOUT_GRANT, { imageIds: `${CONTROL},${WITHHELD}` })
+    )) as Result;
+    expect(result.status).toBe(403);
+    expect(blockImage).not.toHaveBeenCalled();
+  });
+
+  it('refuse to dismiss a withheld image without the grant', async () => {
+    const result = (await queuePage.actions.dismissFlag(
+      csam(WITHOUT_GRANT, { imageId: String(WITHHELD), version: 'v' })
+    )) as Result;
+    expect(result.status).toBe(403);
+    expect(dismissFromCsamQueue).not.toHaveBeenCalled();
+  });
+
+  it("refuse to dismiss an account's images with one withheld without the grant", async () => {
+    const result = (await queuePage.actions.dismissUserFlags(
+      csam(WITHOUT_GRANT, { userId: '7', expectedCount: '2', version: 'v' })
+    )) as Result;
+    expect(result.status).toBe(403);
+    expect(dismissUserFromCsamQueue).not.toHaveBeenCalled();
+  });
+
+  it('dismiss them for a grant holder', async () => {
+    await queuePage.actions.dismissFlag(
+      csam(WITH_GRANT, { imageId: String(WITHHELD), version: 'v' })
+    );
+    await queuePage.actions.dismissUserFlags(
+      csam(WITH_GRANT, { userId: '7', expectedCount: '2', version: 'v' })
+    );
+    expect(dismissFromCsamQueue).toHaveBeenCalledOnce();
+    expect(dismissUserFromCsamQueue).toHaveBeenCalledOnce();
   });
 });
 

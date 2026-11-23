@@ -32,8 +32,8 @@ export type ImageDetail = {
   userBannedAt: Date | null;
   postId: number | null;
   type: MediaType | null;
-  /** Withheld from this moderator (`restrictedImageIds`): served without `url`, `type`, `width`,
-   *  `height`, `hash` or `pHash`. */
+  /** Withheld from this moderator (`restrictedImageIds`): served without anything the bytes could
+   *  be found by. */
   restricted: boolean;
   width: number | null;
   height: number | null;
