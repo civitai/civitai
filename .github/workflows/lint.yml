@@ -1897,12 +1897,13 @@ jobs:
       contents: read
       statuses: write
     steps:
-      # The script, the list, and the workflow files whose paths it reads. No credentials kept.
+      # The script, its imports, and the workflow files whose paths it reads. No credentials kept.
       - id: checkout
         uses: actions/checkout@v7
         with:
           sparse-checkout: |
             scripts/ci/batch-suites.mjs
+            scripts/ci/full-ci-paths.mjs
             scripts/ci/unit-batched.mjs
             .github/workflows/
             .nvmrc

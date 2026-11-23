@@ -546,7 +546,8 @@ jobs:
     name: feed-go benchmarks (allocs/op gate)
     runs-on: ubuntu-latest
     # Dispatch only (see the header). The base is the `base` input when one is given (the main batch
-    # passes the commit its last green batch verified, so the gate covers every merge since then),
+    # passes the newest GREEN batch commit, even after a red batch, so the gate covers every merge
+    # since then; the job summary names the base and why),
     # else the merge-base with main (a branch dispatch: the PR's own base), else HEAD^1 (a dispatch
     # on main without `base`: the last merge alone).
     if: github.event_name == 'workflow_dispatch'
@@ -577,10 +578,16 @@ jobs:
           if [ -n "$BASE_INPUT" ]; then
             base=$(git rev-parse --verify --quiet "${BASE_INPUT}^{commit}") \
               || { echo "::error::base input is not a commit in this repository: $BASE_INPUT"; exit 1; }
+            why="the base input (the main batch passes its last green batch commit)"
           else
             base=$(git merge-base origin/main HEAD)
+            why="no base input: the merge-base with main"
           fi
-          if [ "$base" = "$(git rev-parse HEAD)" ]; then base=$(git rev-parse HEAD^1); fi
+          if [ "$base" = "$(git rev-parse HEAD)" ]; then
+            base=$(git rev-parse HEAD^1)
+            why="$why, which is HEAD, so HEAD^1: only the last merge is compared"
+          fi
+          echo "Benchmark base: $(git rev-parse --short "$base") ($why)" >> "$GITHUB_STEP_SUMMARY"
           echo "head $(git rev-parse HEAD), base $base"
           git worktree add --detach "$RUNNER_TEMP/base" "$base"
 

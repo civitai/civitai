@@ -198,7 +198,12 @@ export const DISPATCH = { workflow: 'lint.yml', only: 'unit' };
  * (else `on.push.paths`) changed since the last green batch, waits for them, and posts their
  * verdict as the `Batch suites (main batch)` commit status (scripts/ci/batch-suites.mjs). One
  * entry per line. `ownContext`: the workflow posts its own `(main batch)` status instead; the batch
- * job still dispatches it and waits for that status, but leaves it out of its own verdict.
+ * job still dispatches it and waits for that status, but leaves it out of its own verdict, e.g.
+ *   { workflow: 'apps.yml', ownContext: 'App tests (main batch)' },
+ *
+ * THE ONE LIST of the batch's other suites: lint.yml's `batch-suites` job dispatches from it, and
+ * full-ci.yml reads it (`node scripts/ci/unit-batched.mjs workflows`) to dispatch the same suites
+ * on a labelled PR, ready or draft, since no PR run of theirs covers them. Change it here only.
  */
 export const BATCH_WORKFLOWS = [
   { workflow: 'moderator-boot.yml' },
@@ -480,9 +485,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (cmd === 'gate') gate(a);
   else if (cmd === 'verify') verify(a, b, c);
   else if (cmd === 'step') step(a);
+  // One BATCH_WORKFLOWS file name per line, for full-ci.yml.
+  else if (cmd === 'workflows') console.log(BATCH_WORKFLOWS.map((e) => e.workflow).join('\n'));
   else {
     console.error(
-      'usage: unit-batched.mjs gate <ref> | verify <unit-result> <reports-dir> <shards> | step <failed.json>'
+      'usage: unit-batched.mjs gate <ref> | verify <unit-result> <reports-dir> <shards> | step <failed.json> | workflows'
     );
     process.exit(2);
   }

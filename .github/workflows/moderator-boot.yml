@@ -5,17 +5,18 @@ name: Moderator boot smoke
 # server, so a defect that exists only in the build output (a moderator release once crashed at
 # startup with `ReferenceError: sql is not defined`) passes both of them.
 #
-# ── NOT ON PULL REQUESTS: A PUSH TO `main` THAT TOUCHES ITS PATHS, AND THE 2-HOUR MAIN BATCH ──
+# ── NOT ON PULL REQUESTS OR PUSHES: THE 2-HOUR MAIN BATCH ────────────────────────────────────
 #
-# Across 74 recent runs on PRs and `main` this caught nothing, so a PR no longer runs it. It runs:
-#   - on a push to `main` that touches the paths below (the same list as the pull_request trigger,
-#     one YAML anchor; until this change a push was unfiltered);
-#   - in the 2-hour main batch: lint.yml's `batch-suites` job dispatches it with `batch: true` when
-#     a path below changed since the last green batch, and a red run turns the
+# Across 74 recent runs on PRs and `main` this caught nothing, so neither a PR nor a push runs it.
+# It runs:
+#   - in the 2-hour main batch, which is what covers `main` (a push run as well would only build
+#     the same commits a second time): lint.yml's `batch-suites` job dispatches it with
+#     `batch: true` when a path below changed since the last green batch, and a red run turns the
 #     `Batch suites (main batch)` commit status red, which opens a CI-watch item naming the commit
 #     range (nothing bisects it automatically);
 #   - on a dispatch: `gh workflow run moderator-boot.yml -R civitai/civitai --ref <branch>`, which
-#     the `full-ci` label's dispatcher also does on a draft PR.
+#     the `full-ci` label's dispatcher also does on a labelled PR (draft or ready) whose files
+#     match the paths below.
 #
 # The pull_request trigger stays, with a job that skips on it, ONLY so the paths list keeps one
 # copy here: the batch and the `full-ci` dispatcher read `on.pull_request.paths`. A skipped job
@@ -24,7 +25,7 @@ on:
   pull_request:
     branches: [main, release]
     types: [opened, synchronize, reopened, ready_for_review]
-    paths: &moderator-inputs
+    paths:
       - 'apps/moderator/**'
       - 'packages/**'
       - 'package.json'
@@ -34,9 +35,6 @@ on:
       - 'patches/**'
       - 'scripts/ci/moderator-boot-smoke.mjs'
       - '.github/workflows/moderator-boot.yml'
-  push:
-    branches: [main]
-    paths: *moderator-inputs
   workflow_dispatch:
     inputs:
       # Set by the main batch (lint.yml, `batch-suites`), which keys the concurrency group on it.

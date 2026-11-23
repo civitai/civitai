@@ -28,16 +28,20 @@
 // workflow's `on.pull_request.paths`, else `on.push.paths` (GitHub's filter semantics: in order,
 // the last matching pattern decides, `!` negates). The BASE is the head commit of the newest
 // earlier batch run whose `Batch suites (main batch)` verdict was posted (success or failure):
-// a success makes it the base, a failure means there is none. No base, a compare that cannot
-// list every file, a pattern this matcher does not understand, or a workflow with no paths all
-// mean RUN: the filter only ever skips a suite whose inputs provably did not change since a
-// commit where it was green.
+// a success makes it the base, a failure means there is none. The matching is
+// scripts/ci/full-ci-paths.mjs's (the label's dispatcher uses the same module). No base, a compare
+// that cannot list every file, an unreadable workflow, or a workflow with no paths all mean RUN:
+// the filter only ever skips a suite whose inputs provably did not change since a commit where it
+// was green. feed-go's benchmarks get a different base: the newest GREEN batch commit, even after
+// a red one (decideBase).
 
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// The one paths matcher (GitHub's filter semantics), shared with full-ci.yml.
+import { decide } from './full-ci-paths.mjs';
 import { BATCH_WORKFLOWS, statusLine } from './unit-batched.mjs';
 
 export const SUITES_CONTEXT = 'Batch suites (main batch)';
@@ -49,76 +53,43 @@ const COMPARE_FILE_CAP = 300;
 const short = (wf) => wf.replace(/\.ya?ml$/, '');
 
 /**
- * One GitHub filter pattern as a RegExp over a repo-relative path, or null when it uses syntax
- * this matcher does not implement (`?`, `+`, `[]`, `{}`): the caller treats null as a match.
- * `**` matches any characters, `*` any characters but `/`.
- */
-export function globToRegExp(pattern) {
-  if (/[?+[\]{}]/.test(pattern)) return null;
-  let re = '';
-  for (let i = 0; i < pattern.length; i++) {
-    const c = pattern[i];
-    if (c === '*' && pattern[i + 1] === '*') {
-      re += '.*';
-      i++;
-    } else if (c === '*') re += '[^/]*';
-    else re += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
-  return new RegExp(`^${re}$`);
-}
-
-/** Does any of `files` pass the `paths` filter? Fails OPEN on a pattern it cannot read. */
-export function pathsMatch(patterns, files) {
-  const compiled = patterns.map((p) => {
-    const neg = p.startsWith('!');
-    return { neg, re: globToRegExp(neg ? p.slice(1) : p) };
-  });
-  if (compiled.some((c) => c.re === null)) return true;
-  return files.some((f) => {
-    let included = false;
-    for (const c of compiled) if (c.re.test(f)) included = !c.neg;
-    return included;
-  });
-}
-
-/** The paths a workflow filters on: `on.pull_request.paths`, else `on.push.paths`, else null. */
-export function workflowPaths(on) {
-  for (const trigger of ['pull_request', 'push']) {
-    const paths = on?.[trigger]?.paths;
-    if (Array.isArray(paths) && paths.length) return paths;
-  }
-  return null;
-}
-
-/**
- * The base of the path filter, from earlier batch runs newest first: [{ sha, state }] where state
- * is that run's posted `Batch suites (main batch)` verdict (or null/error when none was posted).
- * The newest POSTED verdict decides: success = that commit, failure = no base (run every suite).
+ * The bases, from earlier batch runs newest first: [{ sha, state }] where state is that run's
+ * posted `Batch suites (main batch)` verdict (or null/error when none was posted).
+ *   base   the path filter's: the newest POSTED verdict decides. Green = that commit; red = none
+ *          (every suite runs, so a red suite whose paths did not change still re-runs).
+ *   green  the benchmarks' (feed-go `bench`): the newest GREEN batch commit WHATEVER the latest
+ *          verdict, so after a red batch the allocs/op gate still covers every merge since the last
+ *          green one, not only the last merge. null only when no green batch is in the list.
  */
 export function decideBase(candidates) {
+  const green = candidates.find((c) => c.state === 'success')?.sha ?? null;
   for (const c of candidates) {
     if (c.state === 'success')
-      return { base: c.sha, reason: `last green batch ${c.sha.slice(0, 10)}` };
+      return { base: c.sha, green, reason: `last green batch ${c.sha.slice(0, 10)}` };
     if (c.state === 'failure')
-      return { base: null, reason: `the last batch verdict (${c.sha.slice(0, 10)}) was red` };
+      return {
+        base: null,
+        green,
+        reason: `the last batch verdict (${c.sha.slice(0, 10)}) was red`,
+      };
   }
-  return { base: null, reason: 'no earlier batch verdict' };
+  return { base: null, green, reason: 'no earlier batch verdict' };
 }
 
 /**
- * Which suites to dispatch. `entries`: [{ workflow, on, ownContext? }]; `files`: the changed
- * files since `base`, or null when they could not all be listed.
+ * Which suites to dispatch. `entries`: [{ workflow, on, ownContext? }] where `on` is the
+ * workflow's `on:` (undefined when it could not be read); `files`: the changed files since `base`,
+ * or null when they could not all be listed. The paths filter is applied by
+ * scripts/ci/full-ci-paths.mjs's `decide`, the same matcher full-ci.yml uses, so the batch and the
+ * label never disagree on what a workflow's filter selects. It fails open.
  */
 export function selectSuites({ entries, base, baseReason, files }) {
   return entries.map((e) => {
     const out = { workflow: e.workflow, ownContext: e.ownContext ?? null };
     if (!base) return { ...out, run: true, reason: `no base: ${baseReason}` };
     if (!files) return { ...out, run: true, reason: 'the changed files could not all be listed' };
-    const paths = workflowPaths(e.on);
-    if (!paths) return { ...out, run: true, reason: 'its workflow has no paths filter' };
-    return pathsMatch(paths, files)
-      ? { ...out, run: true, reason: `a path it filters on changed since ${base.slice(0, 10)}` }
-      : { ...out, run: false, reason: `nothing it filters on changed since ${base.slice(0, 10)}` };
+    const d = decide(files, e.on);
+    return { ...out, run: d.run, reason: `${d.reason} (since ${base.slice(0, 10)})` };
   });
 }
 
@@ -207,7 +178,7 @@ function readOn(workflow) {
   try {
     return JSON.parse(sh('yq', ['-o=json', '.on', `.github/workflows/${workflow}`]));
   } catch {
-    return null; // no paths => run
+    return undefined; // unreadable: decide() runs it
   }
 }
 
@@ -228,7 +199,11 @@ function postStatus(repoName, sha, { state, description }) {
   );
 }
 
-/** Newest-first earlier batch runs, read until one carries a posted verdict. */
+/**
+ * Newest-first earlier batch runs, read until one carries a GREEN verdict (decideBase needs the
+ * newest posted verdict for the path filter and the newest green one for the benchmarks), at most
+ * the 10 newest.
+ */
 function baseCandidates(repoName) {
   const q = new URLSearchParams({
     branch: 'main',
@@ -248,7 +223,7 @@ function baseCandidates(repoName) {
         (x.target_url ?? '').replace(/\/$/, '').endsWith(`/actions/runs/${r.id}`)
     );
     out.push({ sha: r.head_sha, state: s?.state ?? null });
-    if (s && ['success', 'failure'].includes(s.state)) break;
+    if (s?.state === 'success') break;
   }
   return out;
 }
@@ -308,12 +283,18 @@ function run() {
   } catch (err) {
     decided = {
       base: null,
+      green: null,
       reason: `could not read earlier verdicts (${String(err.message).split('\n')[0]})`,
     };
   }
-  const { base, reason: baseReason } = decided;
+  const { base, green, reason: baseReason } = decided;
   const files = base ? changedFiles(repoName, base, sha) : null;
   lines.push(`Base: ${base ? base.slice(0, 10) : 'none'} (${baseReason}).`);
+  lines.push(
+    green
+      ? `Benchmarks compare against the last green batch, ${green.slice(0, 10)}.`
+      : 'No green batch in the last 10: the benchmarks fall back to HEAD^1 (the last merge only).'
+  );
   if (base)
     lines.push(
       files
@@ -327,7 +308,7 @@ function run() {
   const suites = selectSuites({ entries, base, baseReason, files }).map((s) => {
     if (!s.run) return { ...s, state: 'skipped', url: '' };
     try {
-      gh(...suiteDispatchArgs(s.workflow, ons[s.workflow], repoName, base));
+      gh(...suiteDispatchArgs(s.workflow, ons[s.workflow], repoName, green));
       return { ...s, state: 'missing', url: '' };
     } catch (err) {
       return {

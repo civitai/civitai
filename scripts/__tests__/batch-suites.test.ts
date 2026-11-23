@@ -9,15 +9,13 @@ import {
   SUITES_CONTEXT,
   decideBase,
   findRun,
-  globToRegExp,
-  pathsMatch,
   runState,
   selectSuites,
   suiteDispatchArgs,
   verdict,
   waitDone,
-  workflowPaths,
 } from '../ci/batch-suites.mjs';
+import { filterOf } from '../ci/full-ci-paths.mjs';
 import { BATCH_WORKFLOWS } from '../ci/unit-batched.mjs';
 
 // scripts/ci/batch-suites.mjs is the only verdict the main batch's other suites get: they left
@@ -43,39 +41,47 @@ const HEAD = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
 const OTHER = 'c'.repeat(40);
 
-describe('the GitHub paths filter', () => {
+// The batch's path filter IS scripts/ci/full-ci-paths.mjs's `decide` (the label's dispatcher
+// uses the same module): these cases go through selectSuites, so a batch that grew a matcher of
+// its own and disagreed with it would fail here. Fixture patterns are the real workflows'.
+describe('the paths filter, through selectSuites', () => {
+  const pick = (on: unknown, files: string[]) =>
+    selectSuites({ entries: [{ workflow: 'w.yml', on }], base: BASE, baseReason: 'x', files })[0];
+  const pr = (paths: string[]) => ({ pull_request: { paths } });
+
   it('`**` crosses directories, `*` does not', () => {
-    expect(globToRegExp('apps/**')!.test('apps/feed-go/internal/x.go')).toBe(true);
-    expect(globToRegExp('packages/*/package.json')!.test('packages/a/package.json')).toBe(true);
+    expect(pick(pr(['apps/**']), ['apps/feed-go/internal/x.go']).run).toBe(true);
+    expect(pick(pr(['packages/*/package.json']), ['packages/a/package.json']).run).toBe(true);
     // Mutant: `*` compiled as `.*` would match this.
-    expect(globToRegExp('packages/*/package.json')!.test('packages/a/b/package.json')).toBe(false);
+    expect(pick(pr(['packages/*/package.json']), ['packages/a/b/package.json']).run).toBe(false);
   });
 
-  it('dots are literal', () => {
-    // Mutant: an unescaped `.` would let `tsconfigXjson` through.
-    expect(globToRegExp('tsconfig.json')!.test('tsconfigXjson')).toBe(false);
-    expect(globToRegExp('tsconfig.json')!.test('tsconfig.json')).toBe(true);
+  // GitHub's (and full-ci-paths.mjs's) `**/` also matches NO directory. A matcher that compiles
+  // `**/` to `.*/` misses the root file and skips a suite whose input changed.
+  it('`**/` matches zero directories as well as many', () => {
+    expect(pick(pr(['**/package.json']), ['package.json']).run).toBe(true);
+    expect(pick(pr(['**/package.json']), ['apps/a/package.json']).run).toBe(true);
+    expect(pick(pr(['**/package.json']), ['apps/a/package.jsonx']).run).toBe(false);
   });
 
-  it('a pattern is anchored at both ends', () => {
-    expect(globToRegExp('package.json')!.test('apps/x/package.json')).toBe(false);
-    expect(globToRegExp('apps/x')!.test('apps/x/y')).toBe(false);
-  });
-
-  it('syntax it does not implement compiles to null, and null fails OPEN', () => {
-    expect(globToRegExp('src/a?.ts')).toBeNull();
-    expect(globToRegExp('src/{a,b}.ts')).toBeNull();
-    expect(pathsMatch(['src/{a,b}.ts'], ['docs/unrelated.md'])).toBe(true);
+  it('dots are literal and a pattern is anchored at both ends', () => {
+    expect(pick(pr(['tsconfig.json']), ['tsconfigXjson']).run).toBe(false);
+    expect(pick(pr(['package.json']), ['apps/x/package.json']).run).toBe(false);
+    expect(pick(pr(['apps/x']), ['apps/x/y']).run).toBe(false);
   });
 
   it('the last matching pattern decides, `!` negates', () => {
-    expect(pathsMatch(['**', '!docs/**'], ['docs/a.md'])).toBe(false);
-    expect(pathsMatch(['**', '!docs/**'], ['docs/a.md', 'src/a.ts'])).toBe(true);
-    expect(pathsMatch(['!docs/**', 'docs/keep.md'], ['docs/keep.md'])).toBe(true);
+    expect(pick(pr(['**', '!docs/**']), ['docs/a.md']).run).toBe(false);
+    expect(pick(pr(['**', '!docs/**']), ['docs/a.md', 'src/a.ts']).run).toBe(true);
+    expect(pick(pr(['!docs/**', 'docs/keep.md']), ['docs/keep.md']).run).toBe(true);
   });
 
-  it('no file matches nothing', () => {
-    expect(pathsMatch(['apps/**'], [])).toBe(false);
+  it('pull_request first, then push, and no filter or an unreadable on: runs', () => {
+    const both = { pull_request: { paths: ['a/**'] }, push: { paths: ['b/**'] } };
+    expect(pick(both, ['b/x']).run).toBe(false);
+    expect(pick({ push: { paths: ['b/**'] } }, ['b/x']).run).toBe(true);
+    expect(pick({ workflow_dispatch: null }, ['z']).run).toBe(true);
+    expect(pick(undefined, ['z']).run).toBe(true);
   });
 
   // Against the real lists: a change a suite reads runs it, one it does not read skips it.
@@ -91,18 +97,7 @@ describe('the GitHub paths filter', () => {
     ['registry-adapter-image.yml', 'src/server/registry-adapter/catalog.ts', true],
     ['storage-hook-runner-image.yml', 'apps/registry-adapter/Dockerfile', false],
   ])('%s with %s changed: %s', (file, changed, want) => {
-    expect(pathsMatch(workflowPaths(load(file).on)!, [changed])).toBe(want);
-  });
-});
-
-describe('workflowPaths', () => {
-  it('prefers pull_request, falls back to push, else null', () => {
-    expect(workflowPaths({ pull_request: { paths: ['a/**'] }, push: { paths: ['b/**'] } })).toEqual(
-      ['a/**']
-    );
-    expect(workflowPaths({ push: { paths: ['b/**'] } })).toEqual(['b/**']);
-    expect(workflowPaths({ pull_request: null, push: { branches: ['main'] } })).toBeNull();
-    expect(workflowPaths(null)).toBeNull();
+    expect(pick(load(file).on, [changed]).run).toBe(want);
   });
 });
 
@@ -114,7 +109,7 @@ describe('decideBase: the commit the path filter compares against', () => {
         { sha: BASE, state: 'success' },
         { sha: HEAD, state: 'failure' },
       ])
-    ).toEqual({ base: BASE, reason: 'last green batch bbbbbbbbbb' });
+    ).toEqual({ base: BASE, green: BASE, reason: 'last green batch bbbbbbbbbb' });
   });
 
   // Mutant: skipping a red verdict to an older green would let a red suite whose paths did not
@@ -125,15 +120,34 @@ describe('decideBase: the commit the path filter compares against', () => {
         { sha: OTHER, state: 'failure' },
         { sha: BASE, state: 'success' },
       ])
-    ).toEqual({ base: null, reason: 'the last batch verdict (cccccccccc) was red' });
+    ).toEqual({
+      base: null,
+      green: BASE,
+      reason: 'the last batch verdict (cccccccccc) was red',
+    });
+  });
+
+  // The benchmarks' base. Mutant: deriving it from `base` (null after a red) makes the allocs/op
+  // gate compare HEAD^1..HEAD only, so a regression merged before the red batch is never flagged.
+  it('after a red batch the benchmarks still compare against the older GREEN commit', () => {
+    const got = decideBase([
+      { sha: HEAD, state: 'failure' },
+      { sha: OTHER, state: null },
+      { sha: BASE, state: 'success' },
+    ]);
+    expect(got.base).toBeNull();
+    expect(got.green).toBe(BASE);
   });
 
   it('no verdict at all means no base', () => {
     expect(decideBase([{ sha: BASE, state: null }])).toEqual({
       base: null,
+      green: null,
       reason: 'no earlier batch verdict',
     });
-    expect(decideBase([])).toEqual({ base: null, reason: 'no earlier batch verdict' });
+    expect(decideBase([])).toEqual({ base: null, green: null, reason: 'no earlier batch verdict' });
+    // red with no green anywhere: no benchmark base either (bench falls back and says so)
+    expect(decideBase([{ sha: HEAD, state: 'failure' }]).green).toBeNull();
   });
 });
 
@@ -152,7 +166,7 @@ describe('selectSuites', () => {
       ['img.yml', false],
       ['all.yml', true],
     ]);
-    expect(got[1].reason).toBe('nothing it filters on changed since bbbbbbbbbb');
+    expect(got[1].reason).toBe('no changed file matches on.pull_request.paths (since bbbbbbbbbb)');
   });
 
   // Mutant: treating "no base" or "files unknown" as "nothing changed" skips every suite.
@@ -431,16 +445,24 @@ describe('the batch workflows and lint.yml', () => {
   it.each(BATCH_WORKFLOWS.map((b) => b.workflow))(
     '%s has a paths filter the batch reads',
     (file) => {
-      expect(workflowPaths(load(file).on)?.length ?? 0).toBeGreaterThan(0);
+      const { filter } = filterOf(load(file).on);
+      expect(filter?.paths?.length ?? 0).toBeGreaterThan(0);
     }
   );
 
-  it('no batch workflow runs its batch jobs on a push any more, except moderator boot', () => {
-    // Moderator boot keeps a push trigger, filtered to its own paths.
-    const mod = load('moderator-boot.yml');
-    expect(mod.on?.push?.paths).toEqual(mod.on?.pull_request?.paths);
-    for (const f of ['ports.yml', 'registry-adapter-image.yml', 'storage-hook-runner-image.yml'])
-      expect(load(f).on && 'push' in (load(f).on ?? {}), f).toBe(false);
+  // The batch covers main, so a push run would build the same commits twice. Windows keeps a
+  // push trigger whose job skips on it, only to hold its paths list (pinned by the ledger above).
+  it('no batch-only workflow has a push trigger, except Windows for its paths list', () => {
+    for (const f of [
+      'moderator-boot.yml',
+      'ports.yml',
+      'registry-adapter-image.yml',
+      'storage-hook-runner-image.yml',
+    ])
+      expect('push' in (load(f).on ?? {}), f).toBe(false);
+    expect(load('windows-dev-env.yml').jobs?.smoke?.if).toBe(
+      "github.event_name == 'workflow_dispatch'"
+    );
   });
 
   describe('lint.yml `batch-suites`', () => {
@@ -456,6 +478,24 @@ describe('the batch workflows and lint.yml', () => {
 
     it('may dispatch and post statuses, nothing else', () => {
       expect(job?.permissions).toEqual({ actions: 'write', contents: 'read', statuses: 'write' });
+    });
+
+    // A module the script imports but the sparse checkout leaves out fails the job at load time.
+    it('checks out the script and every module it imports', () => {
+      const co = (job?.steps ?? []).find((st) =>
+        String((st as Record<string, unknown>).uses ?? '').startsWith('actions/checkout@')
+      ) as Record<string, any> | undefined;
+      const listed = String(co?.with?.['sparse-checkout'] ?? '');
+      const src = readFileSync(path.resolve(HERE, '../ci/batch-suites.mjs'), 'utf8');
+      const imports = [...src.matchAll(/from '\.\/([\w.-]+\.mjs)'/g)].map(
+        (x) => `scripts/ci/${x[1]}`
+      );
+      expect(imports.sort()).toEqual([
+        'scripts/ci/full-ci-paths.mjs',
+        'scripts/ci/unit-batched.mjs',
+      ]);
+      for (const f of ['scripts/ci/batch-suites.mjs', ...imports, '.github/workflows/'])
+        expect(listed, f).toContain(f);
     });
 
     it('runs the script, and posts error under the same context when it crashes', () => {
