@@ -1,6 +1,7 @@
 import {
   CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
   csamSignalImageSql,
+  heldImageKnownSql,
   heldImageSql,
   heldItemImageSql,
   unreadableImageSql,
@@ -49,6 +50,28 @@ function retractedEligibleSql(image: string, cdnLeg: boolean): string {
     ))`
     : `${image}.ingestion = 'Blocked'`;
   return eligible;
+}
+
+/**
+ * The rows a retracted-media read answers this moderator from. A moderator with the CSAM grant gets
+ * retracted media, and held media too on a route with a held leg (`heldLeg`). Any other moderator
+ * gets what the routes would serve were no owner held (`retractedOrOwnerHeldWhereSql`), so a held
+ * owner cannot be told apart; with `heldLeg`, also media held for itself, drawn as restricted.
+ */
+export function moderatorMediaWhereSql(
+  image: string,
+  {
+    cdnLeg = false,
+    csamReview,
+    heldLeg,
+  }: { cdnLeg?: boolean; csamReview: boolean; heldLeg: boolean }
+): string {
+  if (csamReview)
+    return heldLeg
+      ? `(${retractedImageWhereSql(image, { cdnLeg })} OR ${heldImageKnownSql(image)})`
+      : retractedImageWhereSql(image, { cdnLeg });
+  const openable = retractedOrOwnerHeldWhereSql(image, { cdnLeg });
+  return heldLeg ? `(${openable} OR COALESCE(${heldItemImageSql(image)}, false))` : openable;
 }
 
 /** At most this many other rows on a url are read; a url with more is refused (`siblingsServable`). */
