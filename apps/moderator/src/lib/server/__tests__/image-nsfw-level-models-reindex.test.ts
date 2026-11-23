@@ -17,7 +17,6 @@ vi.mock('../thumbnail-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof ThumbnailCache>()),
   invalidateThumbnails: vi.fn(async () => undefined),
 }));
-vi.mock('../kono', () => ({ syncKonoFinalize: vi.fn(async () => undefined) }));
 vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
 vi.mock('../image-models-reindex', () => ({
   queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
