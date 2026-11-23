@@ -40,6 +40,8 @@ export type BulkImage = {
   negativePrompt: string | null;
   isProfilePicture: boolean;
   hasConnection: boolean;
+  /** On a service review: removable, but its owner (the buyer) is not offered for a strike. */
+  isReviewImage: boolean;
   approvedAppeal: ApprovedAppealBadge;
 };
 
@@ -72,6 +74,9 @@ const extraColumns = [
   ),
   sql<boolean>`EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."imageId" = i."id")`.as(
     'hasConnection'
+  ),
+  sql<boolean>`EXISTS (SELECT 1 FROM "ServiceDealReviewImage" ri WHERE ri."imageId" = i."id")`.as(
+    'isReviewImage'
   ),
 ];
 
@@ -339,17 +344,55 @@ export async function countImagesForUser(userId: number): Promise<number> {
  * for it were one gesture. Owners are resolved SERVER-side from the ids rather than passed in — the
  * client is not trusted to name them, and a hand-built POST can carry any ids.
  */
+export type StrikeSummary = {
+  struck: number;
+  owners: number;
+  capturesSkipped: number;
+  /** Service review images in the batch, whose owners are not struck for them. */
+  reviewImagesSkipped: number;
+  error?: string;
+};
+
+/** Which of `imageIds` are images on a service review (`ServiceDealReviewImage`). */
+export async function reviewImageIdsAmong(imageIds: number[]): Promise<Set<number>> {
+  if (!imageIds.length) return new Set();
+  const rows = await dbRead
+    .selectFrom('ServiceDealReviewImage')
+    .select('imageId')
+    .where('imageId', 'in', imageIds)
+    .execute();
+  return new Set(rows.map((r) => r.imageId));
+}
+
+export function reviewImagesSkippedNote(reviewImagesSkipped: number): string {
+  if (!reviewImagesSkipped) return '';
+  return `${reviewImagesSkipped} service review image${
+    reviewImagesSkipped === 1 ? '' : 's'
+  } left out of the strike.`;
+}
+
 export async function strikeBatchOwners(input: {
   imageIds: number[];
   /** The user-facing strike description — the same canned message the removal was filed under. */
   description: string;
   moderatorId: number;
-}): Promise<{ struck: number; owners: number; capturesSkipped: number; error?: string }> {
-  const { owners, capturesSkipped } = await getBatchOwners(input.imageIds);
+}): Promise<StrikeSummary> {
+  // A service review image's owner is the buyer who posted it, not its maker: never struck for it.
+  const reviewImages = await reviewImageIdsAmong(input.imageIds);
+  const strikeable = input.imageIds.filter((id) => !reviewImages.has(id));
+  const reviewImagesSkipped = input.imageIds.length - strikeable.length;
+  if (!strikeable.length) return { struck: 0, owners: 0, capturesSkipped: 0, reviewImagesSkipped };
+  const { owners, capturesSkipped } = await getBatchOwners(strikeable);
   if (!owners.length)
     return capturesSkipped
-      ? { struck: 0, owners: 0, capturesSkipped }
-      : { struck: 0, owners: 0, capturesSkipped, error: 'no owners could be resolved' };
+      ? { struck: 0, owners: 0, capturesSkipped, reviewImagesSkipped }
+      : {
+          struck: 0,
+          owners: 0,
+          capturesSkipped,
+          reviewImagesSkipped,
+          error: 'no owners could be resolved',
+        };
 
   const results = await Promise.all(
     owners.map((userId) =>
@@ -366,6 +409,7 @@ export async function strikeBatchOwners(input: {
     struck: owners.length - failed.length,
     owners: owners.length,
     capturesSkipped,
+    reviewImagesSkipped,
     // The first reason, not a count: they share a cause (rate limit, endpoint down) far more often
     // than not, and a bare "3 failed" sends the moderator to the logs to find out why.
     error: failed.length ? failed[0].error : undefined,
@@ -398,7 +442,7 @@ export type RemoveBatchResult =
       alreadyBlocked: number;
       /** `null` when no flag was asked for. `applied: false` carries why. */
       flag: { flag: 'poi' | 'minor' | 'tag'; applied: boolean; error?: string } | null;
-      struck: { struck: number; owners: number; capturesSkipped: number; error?: string } | null;
+      struck: StrikeSummary | null;
       /** Removals held for a second moderator; neither flagged nor struck. */
       held: HeldSummary[];
     };

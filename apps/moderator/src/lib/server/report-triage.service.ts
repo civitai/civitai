@@ -27,6 +27,8 @@ export type SuspectImage = {
   negativePrompt: string | null;
   isProfilePicture: boolean;
   hasConnection: boolean;
+  /** On a service review (`BulkImage.isReviewImage`). */
+  isReviewImage: boolean;
 };
 
 /** Retool's "Images" and "Remaining" queue columns: `remaining` is what a colleague has not already
@@ -144,6 +146,9 @@ export async function getSuspectImages(
         ),
         sql<boolean>`EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."imageId" = "Image"."id")`.as(
           'hasConnection'
+        ),
+        sql<boolean>`EXISTS (SELECT 1 FROM "ServiceDealReviewImage" ri WHERE ri."imageId" = "Image"."id")`.as(
+          'isReviewImage'
         ),
       ])
       .orderBy('id', 'desc')

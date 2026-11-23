@@ -109,6 +109,9 @@
     { kind: 'search', key: 'q', label: 'Search prompt' },
   ];
 
+  const reviewImageIds = $derived(
+    new Set((data.batch?.items ?? []).filter((i) => i.isReviewImage).map((i) => i.id))
+  );
   const filteredItems = $derived(
     (data.batch?.items ?? []).filter((i) => {
       if (filters.rating && i.nsfwLevel !== Number(filters.rating)) return false;
@@ -390,6 +393,7 @@
       owners={selectedOwners}
       maxSelection={MAX_SELECTION}
       blockedIds={blockedIds}
+      {reviewImageIds}
       notify={data.canStrike}
       strike={data.canStrike}
     />
