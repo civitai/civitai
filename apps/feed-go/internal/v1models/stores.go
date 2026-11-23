@@ -227,6 +227,7 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 	imagesRead := d.Packed.QueueOrdered(b, KeyImagesForVersion, versionIDs, ttlDay)
 	filesRead := d.Packed.QueueOrdered(b, KeyFilesForVersion, versionIDs, ttlDay)
 	privacyRead := d.Packed.QueueOrdered(b, KeyMetricPrivacy, ownerIDs, 0)
+	showcaseRead := d.Packed.QueueShowcases(b, versionIDs)
 	b.Exec(ctx)
 
 	g := d.group(ctx)
@@ -290,6 +291,7 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 	p.images = map[int][]superjson.Object{}
 	imageEntries := imagesRead.Entries()
 	imageIDs := make([]int, 0, len(versionIDs)*8)
+	listed := make([]int, 0, len(versionIDs))
 	for _, vid := range versionIDs {
 		e, ok := imageEntries[vid]
 		if !ok {
@@ -301,6 +303,7 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 		if e.NotFound {
 			continue
 		}
+		listed = append(listed, vid)
 		list, _ := getVal(e.Value, "images").([]any)
 		cached := make([]superjson.Object, 0, len(list))
 		for _, x := range list {
@@ -327,6 +330,9 @@ func (d *Deps) versionParts(ctx context.Context, raws []*rawItem, in RawInput, n
 			}
 		}
 		p.images[vid] = imgs
+	}
+	if err := curatedShowcaseGuard(showcaseRead, listed); err != nil {
+		return nil, err
 	}
 	filter, err := d.showcaseFilter(ctx, in, imageIDs)
 	if err != nil {
@@ -606,4 +612,23 @@ func (d *Deps) showcaseFilter(ctx context.Context, in RawInput, imageIDs []int) 
 		}
 		return true
 	}, nil
+}
+
+// curatedShowcaseGuard stands in for withCuratedShowcases (src/server/services/version-showcase.service.ts),
+// which getModelsWithVersions runs over the images-for-version entries it read (`curate`): a version
+// whose creator curated its showcase serves that list in place of its own images. That is not ported,
+// so the request falls back unless every listed version (an images entry that is not a notFound
+// marker, Object.keys of Node's answer) has a fresh uncurated entry. Not gated on Node's
+// `model-version-showcase-serve` flag: off, a fallback here is only a lost answer, never a different
+// one (DESIGN.md §16.9).
+func curatedShowcaseGuard(r *hydrate.ShowcaseRead, listed []int) error {
+	switch r.State(listed) {
+	case hydrate.ShowcaseCurated:
+		return fallback.New("v1-models-curated-showcase")
+	case hydrate.ShowcaseUnknown:
+		return fallback.New("v1-models-showcase-miss")
+	case hydrate.ShowcaseStale:
+		return fallback.New("v1-models-showcase-stale")
+	}
+	return nil
 }
