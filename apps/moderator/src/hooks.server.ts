@@ -183,12 +183,9 @@ export const handle: Handle = async ({ event, resolve }) => {
     if (token.kind === 'refused') return token.response;
     if (token.kind === 'authenticated') {
       logCredentialAttribution(event, token.credential);
-      // 🔴 Stays the bare string, for BOTH credential classes. Which credential authenticated is a
-      // migration question and belongs in the log line above; it is NOT a privilege distinction, and
-      // three call sites compare this field strictly (`!== 'webhook'` in the two endpoint wrappers,
-      // truthiness in defineEndpoint). Widening it to carry the class would refuse every
-      // token-authenticated request at those sites without a type error anywhere.
-      event.locals.tokenClient = 'webhook';
+      // 'cases' is a distinct value so the existing wrappers don't admit it; only /api/mod/[action]
+      // does, and only for case actions.
+      event.locals.tokenClient = token.credential === 'MOD_CASES_TOKEN' ? 'cases' : 'webhook';
       event.locals.grants = {};
       return resolve(event);
     }

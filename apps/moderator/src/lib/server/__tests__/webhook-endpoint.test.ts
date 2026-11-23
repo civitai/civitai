@@ -57,15 +57,18 @@ function eventWith(
 function setEnv(vars: {
   WEBHOOK_TOKEN?: string;
   MOD_INBOUND_TOKEN?: string;
+  MOD_CASES_TOKEN?: string;
   KNIGHTS_TAG_REVIEW_TOKEN?: string;
 }) {
-  delete process.env.WEBHOOK_TOKEN;
-  delete process.env.MOD_INBOUND_TOKEN;
-  delete process.env.KNIGHTS_TAG_REVIEW_TOKEN;
-  if (vars.WEBHOOK_TOKEN !== undefined) process.env.WEBHOOK_TOKEN = vars.WEBHOOK_TOKEN;
-  if (vars.MOD_INBOUND_TOKEN !== undefined) process.env.MOD_INBOUND_TOKEN = vars.MOD_INBOUND_TOKEN;
-  if (vars.KNIGHTS_TAG_REVIEW_TOKEN !== undefined)
-    process.env.KNIGHTS_TAG_REVIEW_TOKEN = vars.KNIGHTS_TAG_REVIEW_TOKEN;
+  for (const k of [
+    'WEBHOOK_TOKEN',
+    'MOD_INBOUND_TOKEN',
+    'MOD_CASES_TOKEN',
+    'KNIGHTS_TAG_REVIEW_TOKEN',
+  ] as const) {
+    delete process.env[k];
+    if (vars[k] !== undefined) process.env[k] = vars[k];
+  }
 }
 
 /**
@@ -82,6 +85,7 @@ function refusalOf(result: WebhookAuthResult): Response {
 const saved = {
   WEBHOOK_TOKEN: process.env.WEBHOOK_TOKEN,
   MOD_INBOUND_TOKEN: process.env.MOD_INBOUND_TOKEN,
+  MOD_CASES_TOKEN: process.env.MOD_CASES_TOKEN,
   KNIGHTS_TAG_REVIEW_TOKEN: process.env.KNIGHTS_TAG_REVIEW_TOKEN,
 };
 
@@ -234,7 +238,7 @@ describe('authenticateWebhookToken', () => {
     // that class's name, so a `stringContaining` guard passes on exactly the message that would send
     // an operator to set the wrong variable.
     expect(body).toEqual({
-      message: 'MOD_INBOUND_TOKEN is not configured on this deployment.',
+      message: 'Neither MOD_INBOUND_TOKEN nor MOD_CASES_TOKEN is configured on this deployment.',
     });
   });
 

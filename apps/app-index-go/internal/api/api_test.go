@@ -211,12 +211,13 @@ func TestSearchRejectsBadParameters(t *testing.T) {
 	for _, q := range []string{
 		"kind=web", "limit=0", "limit=51", "limit=x",
 		"q=" + strings.Repeat("a", MaxQueryLen+1), "category=" + strings.Repeat("c", MaxFilterLen+1),
+		"mature=pg", "mature=R", "mature=r,", "mature=r,y", "mature=all",
 	} {
 		if code, body := get(t, s.URL+"/search?"+q); code != http.StatusBadRequest {
 			t.Errorf("%.40s: %d %s, want 400", q, code, body)
 		}
 	}
-	if got := testutil.ToFloat64(s.m.Searches.WithLabelValues("bad_request")); got != 6 {
+	if got := testutil.ToFloat64(s.m.Searches.WithLabelValues("bad_request")); got != 11 {
 		t.Fatalf("bad_request = %v", got)
 	}
 }
@@ -226,9 +227,76 @@ func TestParseQueryDefaults(t *testing.T) {
 	if err != nil || q.Limit != DefaultLimit || q.Text != "" {
 		t.Fatalf("no params: %+v %v", q, err)
 	}
+	if q.Mature != (store.Mature{}) {
+		t.Fatalf("no params is not the SFW audience: %+v", q.Mature)
+	}
 	q, err = ParseQuery(url.Values{"q": {"x"}, "limit": {"7"}, "kind": {"offsite"}, "category": {"game"}})
 	if err != nil || q != (store.Query{Text: "x", Limit: 7, Kind: "offsite", Category: "game"}) {
 		t.Fatalf("with params: %+v %v", q, err)
+	}
+}
+
+func TestParseQueryMature(t *testing.T) {
+	for in, want := range map[string]store.Mature{
+		"":          {},
+		"r":         {R: true},
+		"x":         {X: true},
+		"xxx":       {XXX: true},
+		"x,r":       {R: true, X: true},
+		"r,r":       {R: true},
+		"r,x,xxx":   {R: true, X: true, XXX: true},
+		"xxx,x,xxx": {X: true, XXX: true},
+	} {
+		q, err := ParseQuery(url.Values{"mature": {in}})
+		if err != nil || q.Mature != want {
+			t.Errorf("mature=%q: %+v %v, want %+v", in, q.Mature, err, want)
+		}
+	}
+}
+
+// The default (no `mature`) answers no app rated r, x or xxx.
+func TestSearchMature(t *testing.T) {
+	rated := func(slug, rating string) store.App {
+		body, _ := json.Marshal(map[string]any{"slug": slug, "name": slug, "kind": "onsite", "contentRating": rating})
+		a, err := store.AppFromEntity("urn:apps.civitai.com:app/"+slug, "r", body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	s := newServer(t, readyStore(t, rated("a-r", "r"), rated("b-x", "x"), rated("c-xxx", "xxx"),
+		rated("d-g", "g"), rated("e-pg", "pg"), rated("f-pg13", "pg13")))
+	search := func(query string) []string {
+		t.Helper()
+		code, body := get(t, s.URL+"/search?"+query)
+		if code != http.StatusOK {
+			t.Fatalf("%s: status %d %s", query, code, body)
+		}
+		var res struct {
+			Results []struct{ Slug string } `json:"results"`
+		}
+		if err := json.Unmarshal(body, &res); err != nil {
+			t.Fatal(err)
+		}
+		out := make([]string, 0, len(res.Results))
+		for _, r := range res.Results {
+			out = append(out, r.Slug)
+		}
+		return out
+	}
+	for query, want := range map[string][]string{
+		"":                 {"d-g", "e-pg", "f-pg13"},
+		"mature=":          {"d-g", "e-pg", "f-pg13"},
+		"mature=r":         {"a-r", "d-g", "e-pg", "f-pg13"},
+		"mature=x":         {"b-x", "d-g", "e-pg", "f-pg13"},
+		"mature=xxx":       {"c-xxx", "d-g", "e-pg", "f-pg13"},
+		"mature=r,x,xxx":   {"a-r", "b-x", "c-xxx", "d-g", "e-pg", "f-pg13"},
+		"mature=x&limit=2": {"b-x", "d-g"},
+		"mature=&limit=2":  {"d-g", "e-pg"},
+	} {
+		if got := search(query); !slices.Equal(got, want) {
+			t.Errorf("%q = %v, want %v", query, got, want)
+		}
 	}
 }
 

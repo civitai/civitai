@@ -16,10 +16,8 @@ export const APP_INDEX_SEARCH_REASONS = [
   'ok',
   // Not routed to the index: APP_INDEX_URL is unset.
   'no_url',
-  // Not routed: the viewer may see r/x listings, and the index holds the SFW audience only.
-  'mature_viewer',
   // Not routed: the viewer's audience floor is above `public` (testers, moderators), so the
-  // database grid may show them listings the anonymous registry audience does not carry.
+  // database grid may show them listings that are not public, which the index does not answer.
   'unsupported_viewer',
   // Not routed: a developer-filtered or paged request, which the index cannot answer.
   'unsupported_input',

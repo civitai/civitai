@@ -167,10 +167,10 @@ import {
   isCollaboratorRow,
 } from '~/server/services/collection-permission.utils';
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const modelService = () => import('~/server/services/model.service');
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const articleService = () => import('~/server/services/article.service');
 
 export type CollectionContributorPermissionFlags = {
@@ -4054,7 +4054,7 @@ export const bulkSaveItems = async ({
 
   // Check for challenge entry prize eligibility (Contest mode collections only)
   if (collection.mode === CollectionMode.Contest && count > 0) {
-    // Import dynamically to avoid circular dependencies
+    // Dynamic import, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
     const { checkAndAwardEntryPrize } = await import(
       '~/server/games/daily-challenge/challenge-prize'
     );

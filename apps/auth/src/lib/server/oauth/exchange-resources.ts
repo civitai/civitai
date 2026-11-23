@@ -14,6 +14,11 @@ import { carriesNonUserScope } from './scope';
 //   services      — service clients that may get a token for the resource as themselves (optional);
 //   serviceSubjects — service clients whose own token (no user) a relay may exchange for this resource
 //                   (client-exchange.ts; optional, default none, so by default no such token is exchanged).
+// and one capability:
+//   narrowsBlockClaims — `true` when the resource holds a block-exchange token's reads to its binding claims
+//                   (the ceiling, block and install; block-exchange.ts). Optional, default false: a resource
+//                   that does not declare it is only sent block-exchange tokens whose ceiling admits every
+//                   mature rating. Anything but `true` or `false` is a bad entry.
 // Validation is all or nothing: one bad entry and no resource is registered. `services` and
 // `serviceSubjects` are the exception: a bad one empties that resource's list only.
 
@@ -30,6 +35,12 @@ export interface ExchangeResource {
    * by one of its relays (client-exchange.ts). Empty unless listed.
    */
   serviceSubjects: string[];
+  /**
+   * Whether the resource narrows a block-exchange token by its binding claims (`civitai_max_browsing_level`,
+   * `civitai_app_block_id`, `civitai_block_instance_id`). Only such a resource is sent a block-exchange
+   * token whose ceiling leaves out a mature rating (block-exchange.ts). False unless declared.
+   */
+  narrowsBlockClaims: boolean;
 }
 
 /** A service client's token for one resource: what it may hold, and the identity its tokens carry. */
@@ -251,7 +262,20 @@ export function parseExchangeResources(
     }
     if (lists.apps.length === 0) return { error: `${resource}: apps must not be empty` };
 
-    resources.push({ resource, scopes, ...lists, services: [], serviceSubjects: [] });
+    // Absent is false; any other non-boolean (null included) is a bad entry.
+    const narrowsBlockClaims = e.narrowsBlockClaims === undefined ? false : e.narrowsBlockClaims;
+    if (typeof narrowsBlockClaims !== 'boolean') {
+      return { error: `${resource}: narrowsBlockClaims must be true or false` };
+    }
+
+    resources.push({
+      resource,
+      scopes,
+      ...lists,
+      services: [],
+      serviceSubjects: [],
+      narrowsBlockClaims,
+    });
     rawServices.push(e.services);
     rawServiceSubjects.push(e.serviceSubjects);
   }

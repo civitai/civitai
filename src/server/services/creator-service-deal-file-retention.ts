@@ -54,19 +54,14 @@ const parties = Prisma.sql`(d."buyerId", d."sellerId")`;
 export const dealFilesHeld = Prisma.sql`(
   ${ownerHeldSql(Prisma.sql`d."buyerId"`)}
   OR ${ownerHeldSql(Prisma.sql`d."sellerId"`)}
-  OR EXISTS (SELECT 1 FROM "CsamReport" c
-    WHERE c."userId" IN ${parties}
-      OR c."details" ->> 'secondaryUserId' IN (d."buyerId"::text, d."sellerId"::text))
   OR EXISTS (SELECT 1 FROM "ServiceOfferingReport" sr JOIN "Report" r ON r."id" = sr."reportId"
     WHERE sr."serviceOfferingId" = o."id" AND (r."status"::text IN ('Pending', 'Processing')
       OR GREATEST(r."createdAt", r."statusSetAt") + ${retentionWindow} > now()))
   OR EXISTS (SELECT 1 FROM "User" bu
-    WHERE bu."id" IN ${parties} AND (
-      bu."meta" -> 'banDetails' ->> 'reasonCode' IN (${Prisma.join([
+    WHERE bu."id" IN ${parties}
+      AND bu."meta" -> 'banDetails' ->> 'reasonCode' IN (${Prisma.join([
         ...banReasonsAlwaysRemovingMedia,
-      ])})
-      OR concat_ws(' ', bu."meta" -> 'banDetails' ->> 'detailsInternal',
-        bu."meta" -> 'banDetails' ->> 'detailsExternal') ~* '(csam|ncmec)'))
+      ])}))
   OR EXISTS (SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r."id" = ur."reportId"
     WHERE ur."userId" IN ${parties} AND r."status"::text IN ('Pending', 'Processing'))
   OR EXISTS (SELECT 1 FROM "Appeal" a
@@ -81,7 +76,6 @@ export async function markExpiredDealFiles({
   limit = 200,
   effectiveAt = SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT,
 }: { limit?: number; effectiveAt?: Date } = {}) {
-  // The off-switch for the whole retention clock.
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.SERVICE_DEAL_FILE_RETENTION))) return 0;
   const marked = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" SET "removedAt" = now()
@@ -100,7 +94,8 @@ export async function markExpiredDealFiles({
 /**
  * For a deleted account: marks the files the user uploaded (finals and previews as the seller,
  * attachments as the buyer) on their closed, settled deals as removed. A deal
- * still open or unsettled keeps them on its own retention clock, as it does the other party's.
+ * still open or unsettled keeps them, as it does the other party's, until it has closed and settled
+ * and its retention clock runs out.
  */
 export const markUserDealUploadsRemovedSql = (userId: number) => Prisma.sql`
   UPDATE "ServiceDealFile" f SET "removedAt" = now()

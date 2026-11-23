@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import {
+  hasBlockMarkerSql,
   imageNotRestrictedSql,
   imageReviewedSql,
   minorMatureImageVisibleSql,
@@ -11,7 +12,46 @@ import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+
+/**
+ * The reviewed-only part of `getImagesForModelVersion`'s filter (its non-pending branch): not held
+ * or minor-accepted, at a level in `browsingLevel`, and reviewed. Shared with `countableImageSql`
+ * so a public image count and the gallery it counts cannot disagree.
+ */
+export const reviewedGalleryImageConditions = (
+  browsingLevel: number = allBrowsingLevelsFlag
+): Prisma.Sql[] => [
+  Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`,
+  Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`,
+  imageReviewedSql(),
+];
+
+/**
+ * What `getImagesForModelVersion` shows a signed-out viewer at some browsing level, over `"Image" i`:
+ * its viewer-dependent terms (blocked-for, minor-mature, restricted base model) with no viewer.
+ */
+export const anonymousGalleryImageConditions = (): Prisma.Sql[] => [
+  ...imageBlockedForConditions({}),
+  ...reviewedGalleryImageConditions(),
+  minorMatureImageVisibleSql({}),
+  imageNotRestrictedSql(),
+];
+
+/**
+ * The images a model's image count counts: the signed-out gallery's, less any ToS violation or
+ * block marker the gallery's own terms do not already exclude.
+ */
+export const countableImageSql = () =>
+  Prisma.sql`(${Prisma.join(
+    [
+      ...anonymousGalleryImageConditions(),
+      Prisma.sql`NOT i."tosViolation"`,
+      Prisma.sql`NOT ${hasBlockMarkerSql()}`,
+    ],
+    ' AND '
+  )})`;
 
 /**
  * An image with any `blockedFor` reason is visible only to its owner and moderators, as SQL over
@@ -117,6 +157,7 @@ export function imageVisibilityConditions({
           AND a.status = 'Published'
           AND a."publishedAt" IS NOT NULL
           AND a.ingestion = 'Scanned'
+          AND (a.availability != 'Private' OR a."userId" = ${userId})
       ))
       OR (i."postId" IS NULL AND (
         EXISTS (
@@ -215,7 +256,7 @@ export async function assertImageVisibleToViewer({
   );
   if (!visible) throw throwNotFoundError();
   if (userId && !isModerator) {
-    // Imported here: user.service sits in the image.service import cycle.
+    // Imported here, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
     const { amIBlockedByUser } = await import('~/server/services/user.service');
     const blocked = await amIBlockedByUser({
       userId,

@@ -169,15 +169,27 @@ beforeEach(() => {
   mockDb.appListing.findFirst.mockResolvedValue(offsiteRow());
   // Honour `appListingId`, `status` AND `displayed` — a fake that ignored any of the
   // three would make the corresponding assertion below vacuous.
+  // The public read is batched (`appListingId: { in: [...] }`) and keys its answer by listing.
   mockDb.appCollaborator.findMany.mockImplementation(async (args: unknown) => {
-    const w = (args as { where: { appListingId?: string; status?: string; displayed?: boolean } })
-      .where;
+    const w = (
+      args as {
+        where: {
+          appListingId?: string | { in: string[] };
+          status?: string;
+          displayed?: boolean;
+        };
+      }
+    ).where;
+    const listing = w.appListingId;
     return SEATS.filter(
       (s) =>
-        (w.appListingId === undefined || s.appListingId === w.appListingId) &&
+        (listing === undefined ||
+          (typeof listing === 'string'
+            ? s.appListingId === listing
+            : listing.in.includes(s.appListingId))) &&
         (w.status === undefined || s.status === w.status) &&
         (w.displayed === undefined || s.displayed === w.displayed)
-    ).map((s) => ({ userId: s.userId }));
+    ).map((s) => ({ appListingId: s.appListingId, userId: s.userId }));
   });
   // 🔴 Honours `bannedAt` / `deletedAt` as well as the id set. A fake that ignored them
   // would make every assertion about those filters vacuous — and this fake DID ignore
@@ -282,7 +294,7 @@ describe('🔴 an OFF-SITE listing carries a public collaborator byline', () => 
     await getListingDetail({ slug: 'ext-app' }, { scope: 'public-external' });
     expect(mockDb.appCollaborator.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { appListingId: OFFSITE, status: 'accepted', displayed: true },
+        where: { appListingId: { in: [OFFSITE] }, status: 'accepted', displayed: true },
       })
     );
   });
@@ -360,13 +372,17 @@ describe('the ONSITE byline still works (regression guard)', () => {
       })
     );
     mockDb.appCollaborator.findMany.mockImplementation(async (args: unknown) => {
-      const w = (args as { where: { appListingId?: string } }).where;
-      return w.appListingId === ONSITE ? [{ userId: DISPLAYED }] : [];
+      const w = (args as { where: { appListingId?: { in: string[] } } }).where;
+      return w.appListingId?.in.includes(ONSITE)
+        ? [{ appListingId: ONSITE, userId: DISPLAYED }]
+        : [];
     });
     const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
     expect(detail!.collaborators.map((c) => c.id)).toEqual([DISPLAYED]);
     expect(mockDb.appCollaborator.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ appListingId: ONSITE }) })
+      expect.objectContaining({
+        where: expect.objectContaining({ appListingId: { in: [ONSITE] } }),
+      })
     );
   });
 });

@@ -279,7 +279,7 @@ func integWantUser(t *testing.T, u BasicUser, id int, username, image any, delet
 		}
 		return
 	}
-	if at, ok := u.DeletedAt.(time.Time); !ok || !at.Equal(*deletedAt) {
+	if at, ok := u.DeletedAt.(*time.Time); !ok || !at.Equal(*deletedAt) {
 		t.Fatalf("user %d deletedAt = %#v, want %v", id, u.DeletedAt, *deletedAt)
 	}
 }
@@ -302,7 +302,9 @@ func TestIntegrationCosmeticsAndUserCosmetics(t *testing.T) {
 	if ids := integKeys(got); !reflect.DeepEqual(ids, []int{1102001, 1102002}) {
 		t.Fatalf("ids = %v, want [1102001 1102002]", ids)
 	}
-	if s, want := integPlain(t, got[1102001]), `{"id":1102001,"name":"integ-cosmetic-hit","type":"Badge","data":{"animated":true,"url":"integ-badge"},"source":"Trophy","flags":3}`; s != want {
+	// The cached record's `data` keeps the order it was written in (Entry.Ordered); the replica row's
+	// json column below is decoded into a map, its keys sorted.
+	if s, want := integPlain(t, got[1102001]), `{"id":1102001,"name":"integ-cosmetic-hit","type":"Badge","data":{"url":"integ-badge","animated":true},"source":"Trophy","flags":3}`; s != want {
 		t.Fatalf("cache hit:\n got %s\nwant %s", s, want)
 	}
 	if s, want := integPlain(t, got[1102002]), `{"id":1102002,"name":"integ-cosmetic-db","type":"ContentDecoration","data":{"glow":2,"url":"integ-frame-db"},"source":"Purchase","flags":5}`; s != want {
@@ -323,7 +325,7 @@ func TestIntegrationCosmeticsAndUserCosmetics(t *testing.T) {
 		t.Fatalf("user ids = %v, want [1102101]", ids)
 	}
 	// The undefined `cosmetic` of the unknown record is omitted by Plain (JSON.stringify).
-	want := `[{"cosmeticId":1102001,"data":{"color":"integ-red"},"cosmetic":{"id":1102001,"name":"integ-cosmetic-hit","type":"Badge","data":{"animated":true,"url":"integ-badge"},"source":"Trophy","flags":3}},` +
+	want := `[{"cosmeticId":1102001,"data":{"color":"integ-red"},"cosmetic":{"id":1102001,"name":"integ-cosmetic-hit","type":"Badge","data":{"url":"integ-badge","animated":true},"source":"Trophy","flags":3}},` +
 		`{"cosmeticId":1102002,"data":null,"cosmetic":{"id":1102002,"name":"integ-cosmetic-db","type":"ContentDecoration","data":{"glow":2,"url":"integ-frame-db"},"source":"Purchase","flags":5}},` +
 		`{"cosmeticId":1102004,"data":null}]`
 	if s := integPlain(t, uc[1102101]); s != want {
@@ -604,6 +606,30 @@ func TestIntegrationUserIDByUsername(t *testing.T) {
 	}
 	if id, ok, err := e.src.UserIDByUsername(ctx, "integ_nobody"); err != nil || ok || id != 0 {
 		t.Fatalf("unknown = %d, %v, %v; want 0, false, nil", id, ok, err)
+	}
+}
+
+// TagIDByName is the one tag lookup by name model.getAll and /api/v1/models both read. "Tag".name is
+// citext, so a name in any case finds the tag, as getModelsRaw's findUnique does on the replica.
+func TestIntegrationTagIDByName(t *testing.T) {
+	e := integSetup(t, true)
+	integtest.Exec(t, e.pool, `DELETE FROM "Tag" WHERE id BETWEEN 1190000 AND 1190999;
+		INSERT INTO "Tag" (id, name) VALUES (1190001, 'integ-character'), (1190002, 'Integ Mixed Tag');`)
+	ctx := integtest.Ctx(t)
+	for name, want := range map[string]int{
+		"integ-character": 1190001, "Integ-Character": 1190001, "INTEG-CHARACTER": 1190001,
+		"Integ Mixed Tag": 1190002, "integ mixed tag": 1190002,
+	} {
+		id, found, err := TagIDByName(ctx, e.pool, name)
+		if err != nil || !found || id != want {
+			t.Errorf("%q = %d, %v, %v; want %d, true, nil", name, id, found, err, want)
+		}
+	}
+	// No such tag; and a near miss is no match (citext folds case, nothing else).
+	for _, name := range []string{"integ-nosuch", "integ-character ", "integ_character"} {
+		if id, found, err := TagIDByName(ctx, e.pool, name); err != nil || found || id != 0 {
+			t.Errorf("%q = %d, %v, %v; want 0, false, nil", name, id, found, err)
+		}
 	}
 }
 

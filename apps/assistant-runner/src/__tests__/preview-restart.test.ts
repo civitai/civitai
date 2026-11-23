@@ -3,12 +3,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../app';
 import {
+  CivitaiDevTunnels,
   DevTunnelError,
   type DevTunnels,
   type DevTunnelStartInput,
+  type PreviewOpenAnswer,
+  type PreviewOpenInput,
 } from '../app-assistant/dev-tunnel';
 import {
   PreviewRestarter,
+  TUNNEL_START_BUDGET_MS,
   restartGrantConversation,
   RESTART_LIMIT,
   RESTART_MESSAGES,
@@ -28,12 +32,17 @@ const HOST = 'dev-fedcba9876543210.civit.ai';
 const HOST_KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyRestartHostKey';
 const APP = 'my-shop';
 const MANIFEST_BLOCK = 'my-shop-block';
+const PREVIEW_ID = 'd'.repeat(32);
 
 /** civitai's dev-tunnel endpoints, recording what they were asked. */
 class FakeTunnels implements DevTunnels {
   readonly started: DevTunnelStartInput[] = [];
-  readonly kept: { host: string }[] = [];
+  readonly kept: ({ host: string } | { blockId: string })[] = [];
   readonly stopped: string[] = [];
+  readonly opens: PreviewOpenInput[] = [];
+  readonly blockStops: string[] = [];
+  /** What `preview/open` answers: `tunnel` (direct preview off) unless set. */
+  openAnswers: PreviewOpenAnswer[] = [];
   startError: unknown = null;
   /** Holds every start until released, so two restarts can overlap. */
   gate: Promise<void> | null = null;
@@ -45,12 +54,22 @@ class FakeTunnels implements DevTunnels {
     return { sessionId: SESSION, host: HOST, sshHostPublicKey: HOST_KEY };
   }
 
-  async keepalive(target: { host: string }) {
+  async open(input: PreviewOpenInput): Promise<PreviewOpenAnswer> {
+    this.opens.push(input);
+    return this.openAnswers[this.opens.length - 1] ?? { mode: 'tunnel' };
+  }
+
+  async keepalive(target: { host: string } | { blockId: string }) {
     this.kept.push(target);
   }
 
   async stop(sessionId: string) {
     this.stopped.push(sessionId);
+  }
+
+  async stopBlock(blockId: string) {
+    this.blockStops.push(blockId);
+    return true;
   }
 }
 
@@ -165,6 +184,88 @@ describe('PreviewRestarter', () => {
     // Its dev server already runs: nothing starts a second one.
     expect(fake.callsTo('dev_server_start')).toBe(0);
     expect(fake.callsTo('dev_server_restart')).toBe(0);
+  });
+
+  describe('direct preview (civitai serves it with no tunnel)', () => {
+    it('opens it through preview/open, takes no tunnel step, and answers its block with no host', async () => {
+      fake.add(APP).previewId = PREVIEW_ID;
+      tunnels.openAnswers = [{ mode: 'direct', sessionId: SESSION }];
+      const outcome = await restarter().restart('u-1', APP, 'test-preview-grant');
+      // No host: the session host is the preview's credential; the page fetches its frame by block.
+      expect(outcome).toEqual({ ok: true, blockId: MANIFEST_BLOCK });
+      expect(JSON.stringify(outcome)).not.toContain(SESSION);
+      expect(tunnels.opens).toEqual([
+        { blockId: MANIFEST_BLOCK, previewId: PREVIEW_ID, declaredScopes: ['models:read'] },
+      ]);
+      expect(tunnelCalls()).toEqual([]);
+      expect(tunnels.started).toEqual([]);
+      // No run is live: nothing kept alive.
+      expect(tunnels.kept).toEqual([]);
+      // The manifest declares scopes: the app's direct session was ended first, so the open wrote
+      // one with them (never a reused session with older ones).
+      expect(tunnels.blockStops).toEqual([MANIFEST_BLOCK]);
+    });
+
+    // The restart's grant leaves a fixed time for its tunnel start (`tunnelStartBy`): retrying a
+    // civitai that keeps answering `unavailable` must not use up what the tunnel fallback needs.
+    it('a preview/open that keeps answering unavailable is asked once, and the tunnel still opens', async () => {
+      fake.add(APP).previewId = PREVIEW_ID;
+      const opens: string[] = [];
+      const civitai = new CivitaiDevTunnels({
+        civitaiUrl: 'https://civitai.example',
+        secret: 'test-only-runner-secret',
+        log: quiet,
+        fetch: async (input) => {
+          const url = String(input);
+          if (url.endsWith('/preview/open')) {
+            opens.push(url);
+            return Response.json({ error: 'busy', code: 'unavailable' }, { status: 503 });
+          }
+          if (url.endsWith('/start'))
+            return Response.json({ sessionId: SESSION, host: HOST, sshHostPublicKey: HOST_KEY });
+          return Response.json({ stopped: false });
+        },
+      });
+      const restarts = new PreviewRestarter({
+        sandboxUrl: fake.url,
+        forGrant: (grant) => ({
+          tokens: async (purpose) => `test-token-${purpose}`,
+          tunnels: civitai.forRun(async () => grant),
+        }),
+        log: quiet,
+        pollMs: 5,
+      });
+      // About 2 s of headroom before the tunnel start's deadline: less than the open's retries.
+      const outcome = await restarts.restart(
+        'u-1',
+        APP,
+        'test-preview-grant',
+        new Date(Date.now() + TUNNEL_START_BUDGET_MS + 2_000)
+      );
+      expect(opens).toHaveLength(1);
+      expect(outcome).toEqual({ ok: true, blockId: MANIFEST_BLOCK, host: HOST });
+      expect(tunnelCalls()).toEqual(['tunnel_key', 'tunnel_connect']);
+    });
+
+    it('an id whose session ended is rotated once; a second `fresh` answers unavailable', async () => {
+      fake.add(APP).previewId = PREVIEW_ID;
+      tunnels.openAnswers = [
+        { mode: 'direct', fresh: true },
+        { mode: 'direct', fresh: true },
+      ];
+      const outcome = await restarter().restart('u-1', APP, 'test-preview-grant');
+      expect(outcome).toEqual({
+        ok: false,
+        error: 'unavailable',
+        message: RESTART_MESSAGES.unavailable,
+      });
+      expect(fake.rotations).toHaveLength(1);
+      expect(tunnels.opens.map((o) => o.previewId)).toEqual([
+        PREVIEW_ID,
+        fake.rotations[0]!.previewId,
+      ]);
+      expect(tunnelCalls()).toEqual([]);
+    });
   });
 
   it('never wakes a paused app, which would pause the one that runs', async () => {
@@ -746,6 +847,27 @@ describe('POST apps/:app/preview', () => {
     expect(JSON.parse(text)).toEqual({ v: 1, blockId: MANIFEST_BLOCK, host: HOST });
     // Control: civitai did hand the runner that id.
     expect(tunnels.started).toHaveLength(1);
+  });
+
+  it('end to end, direct preview: the browser gets the block alone, never the session host', async () => {
+    fake.add(APP).previewId = PREVIEW_ID;
+    tunnels.openAnswers = [{ mode: 'direct', sessionId: SESSION }];
+    const base = await serve(restarter());
+    const res = await fetch(`${base}/api/assistant-runner/apps/${APP}/preview`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${await signViewer(keys, 'u1')}`,
+        'x-run-grant': await previewGrant('u1', APP),
+      },
+      body: JSON.stringify({ v: 1 }),
+    });
+    const text = await res.text();
+    expect(res.status).toBe(200);
+    expect(JSON.parse(text)).toEqual({ v: 1, blockId: MANIFEST_BLOCK });
+    expect(text).not.toContain(SESSION);
+    // Control: civitai did answer the runner with that host.
+    expect(tunnels.opens).toHaveLength(1);
   });
 
   it('end to end: civitai’s 429 reaches the browser as a 429 with words for the user', async () => {

@@ -1,3 +1,5 @@
 # The Knights of New Order is a members-only app; nothing here is meant for search.
 User-agent: *
 Disallow: /dev/
+Disallow: /login
+Disallow: /api/auth

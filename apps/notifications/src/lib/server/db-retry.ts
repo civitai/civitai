@@ -2,42 +2,11 @@
 // pooler refuses or drops connections, and without a retry every request in that window fails.
 
 import type { QueryResultRow } from 'pg';
-import { dbUnavailableCause, isDbConnectionError, type AugmentedPool } from '@civitai/db';
+import { dbUnavailableCause, isTransientDbConnectionError, type AugmentedPool } from '@civitai/db';
 import { logToAxiom } from './clients/axiom';
 
 /** Base delay before each retry (ms); its length is the number of retries. Jittered, see withDbRetry. */
 export const DB_RETRY_BACKOFF_MS: readonly number[] = [100, 250, 500];
-
-// During a switchover the pooler can briefly fail its own login to the new primary and pass that on as
-// an auth failure, which isDbConnectionError (a connection-loss classifier) does not count.
-const PG_INVALID_PASSWORD = '28P01';
-
-// pg's own connect timeout. Each attempt can wait the pool's full connectionTimeoutMillis before this,
-// so retrying it would hold the caller far past its own deadline.
-const PG_CONNECT_TIMEOUT_MESSAGE = 'Connection terminated due to connection timeout';
-
-function hasConnectTimeoutInChain(err: unknown): boolean {
-  let cur = err as { message?: unknown; cause?: unknown } | null | undefined;
-  for (let depth = 0; depth < 4 && cur && typeof cur === 'object'; depth++) {
-    if (typeof cur.message === 'string' && cur.message.startsWith(PG_CONNECT_TIMEOUT_MESSAGE))
-      return true;
-    cur = cur.cause as typeof cur;
-  }
-  return false;
-}
-
-/**
- * isDbConnectionError (@civitai/db) plus the pooler's auth failure, minus pg's connect timeout. A raw
- * socket error counts only when createPool marked it as raised while connecting, so an ECONNRESET
- * mid-statement is not retried. Pool-wait timeouts are excluded too: retrying only queues behind a
- * saturated pool again.
- */
-export function isTransientDbConnectionError(err: unknown): boolean {
-  if (hasConnectTimeoutInChain(err)) return false;
-  if (isDbConnectionError(err)) return true;
-  const e = err as { code?: unknown; severity?: unknown } | null;
-  return typeof e?.severity === 'string' && e.code === PG_INVALID_PASSWORD;
-}
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 

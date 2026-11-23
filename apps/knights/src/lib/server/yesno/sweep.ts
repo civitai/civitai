@@ -60,7 +60,7 @@ export async function closeStrandedYesNo(
         .filter((p) => (p.source === MOD_TAG_REVIEW_SOURCE) === tagReview)
         .map((p) => p.id);
       if (ids.length === 0) continue;
-      for (const r of await playableItems(db, { tagReview })
+      for (const r of await playableItems(db, { forSweeps: true, tagReview })
         .select('i.id')
         .where('i.id', 'in', ids)
         .execute())

@@ -3,6 +3,7 @@
 import type { Prisma } from '@civitai/db-schema';
 import { PrismaClient } from '@civitai/db-schema';
 import { loadDbEnv, type DbConfig } from './env';
+import { withReadRetry, type ReadRetryOptions } from './read-retry';
 
 export type PrismaClients = { dbRead: PrismaClient; dbWrite: PrismaClient };
 
@@ -47,6 +48,12 @@ export type CreatePrismaClientsOptions = Partial<DbConfig> & {
   onLog?: (e: PrismaLogLine) => void;
   /** Writes every line this factory prints. Defaults to `console.log`. */
   print?: PrintLine;
+  /**
+   * Retry policy for reads across a brief failover (`withReadRetry`), or `false` for none. Default:
+   * retried, with the READ_RETRY_* constants, unless DB_READ_RETRY turns it off; the
+   * DB_READ_RETRY_* numbers override the constants and are overridden by this.
+   */
+  readRetry?: ReadRetryOptions | false;
 };
 
 export type PrintLine = (...args: unknown[]) => void;
@@ -130,7 +137,7 @@ export function slowQueryLogger({
  * that calls this. See the `~/server/db/client` shim.
  */
 export function createPrismaClients(options: CreatePrismaClientsOptions = {}): PrismaClients {
-  const { onSlowQuery, onLog, print = consoleLog, ...envOverrides } = options;
+  const { onSlowQuery, onLog, print = consoleLog, readRetry, ...envOverrides } = options;
   const config = { ...loadDbEnv(), ...envOverrides };
 
   const singleClient = config.replicaUrl === config.databaseUrl;
@@ -176,5 +183,16 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
     // @ts-ignore - necessary to get the query event
     dbRead.$on('query', logFor('read'));
 
-  return { dbRead, dbWrite };
+  // Last, after every `$on`: the extended client is a new object. A read on the write client
+  // (read-your-writes) is retried too; a write on either never is.
+  // DB_READ_RETRY=off (config.readRetryEnabled) turns it off without a release.
+  if (readRetry === false || !config.readRetryEnabled) return { dbRead, dbWrite };
+  const retryOptions = {
+    budgetMs: config.readRetryBudgetMs,
+    maxConcurrentRetries: config.readRetryMaxConcurrent,
+    ...readRetry,
+  };
+  const retryingWrite = withReadRetry(dbWrite, 'write', retryOptions);
+  const retryingRead = singleClient ? retryingWrite : withReadRetry(dbRead, 'read', retryOptions);
+  return { dbRead: retryingRead, dbWrite: retryingWrite };
 }

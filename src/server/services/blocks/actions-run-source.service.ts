@@ -164,29 +164,61 @@ export function publicActionsRunSource(
 }
 
 /**
+ * The block whose submitting run a listing's public detail shows, or null when none is read: the
+ * run is read only for an on-site listing with a block (an off-site listing has no submitted
+ * bundle, whatever block it carries). `getListingDetail` and the registry adapter's listing stream
+ * both decide by this.
+ */
+export function actionsRunSourceBlockId(listing: {
+  kind: string;
+  appBlockId: string | null;
+}): string | null {
+  return listing.kind === 'onsite' && listing.appBlockId ? listing.appBlockId : null;
+}
+
+/**
  * The run facts of the version an on-site app is SERVING, for its public store page: the approved
  * publish request whose platform commit is the block's current one (the link
  * `resolveLiveSourceCommit` uses), filtered to public repositories by {@link publicActionsRunSource}.
  * Null when the serving version has none, when the repository is not public, and on ANY error.
+ * It calls {@link readLiveActionsRunSourcesForBlocks} for that one block, so the store page and the
+ * registry adapter's listing stream read it with the same query.
  */
 export async function readLiveActionsRunSourceForListing(
   db: ActionsRunReadClient,
   appBlockId: string
 ): Promise<ListingActionsRunSource | null> {
+  return (await readLiveActionsRunSourcesForBlocks(db, [appBlockId])).get(appBlockId) ?? null;
+}
+
+/**
+ * The serving version's run facts for many blocks in one query: block id → the facts
+ * {@link readLiveActionsRunSourceForListing} describes. A block with none is absent; ANY error
+ * yields an empty map (logged unless it is the expected missing column).
+ */
+export async function readLiveActionsRunSourcesForBlocks(
+  db: ActionsRunReadClient,
+  appBlockIds: readonly string[]
+): Promise<Map<string, ListingActionsRunSource>> {
+  const out = new Map<string, ListingActionsRunSource>();
+  if (appBlockIds.length === 0) return out;
   try {
-    const rows = (await db.$queryRaw`SELECT ${SELECT_COLUMNS}
+    const rows = (await db.$queryRaw`SELECT DISTINCT ON (ab."id") ab."id" AS "id", ${SELECT_COLUMNS}
         FROM "app_block_publish_requests" pr
         JOIN "app_blocks" ab ON ab."id" = pr."app_block_id"
-        WHERE ab."id" = ${appBlockId}
+        WHERE ab."id" IN (${Prisma.join([...appBlockIds])})
           AND ab."current_version_sha" IS NOT NULL
           AND pr."status" = 'approved'
           AND pr."forgejo_commit_sha" = ab."current_version_sha"
-        ORDER BY pr."reviewed_at" DESC NULLS LAST
-        LIMIT 1`) as ActionsRunRow[] | null | undefined;
-    return publicActionsRunSource(rowToSource(Array.isArray(rows) ? rows[0] : undefined));
+        ORDER BY ab."id", pr."reviewed_at" DESC NULLS LAST`) as ActionsRunRow[] | null | undefined;
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const source = publicActionsRunSource(rowToSource(row));
+      if (source && typeof row.id === 'string') out.set(row.id, source);
+    }
+    return out;
   } catch (err) {
     if (!isMissingColumnError(err)) noteDegradedRead(ACTIONS_RUN_SOURCE_DEGRADED_EVENT, err);
-    return null;
+    return new Map();
   }
 }
 

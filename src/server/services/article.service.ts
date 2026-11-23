@@ -660,10 +660,7 @@ export const getArticles = async ({
         // This take prio over mod status just so mods can see the same as users.
         if (hidePrivateArticles && a.availability === Availability.Private) return false;
         // Whatever filter is set, a private article is only listed for its owner and staff.
-        if (a.availability === Availability.Private)
-          return !!sessionUser?.isModerator || a.userId === sessionUser?.id;
-
-        return true;
+        return canViewArticle(a, sessionUser);
       })
       .map(({ tags, user, userCosmetics, cursorV, storedCoverId, ...article }) => {
         const { profilePictureId, ...u } = user;
@@ -769,6 +766,7 @@ export const getCivitaiNews = async () => {
     WHERE c.name IN ('Newsroom', 'Updates') AND c."userId" = -1 AND a."createdAt" > now() - '1 year'::interval
       AND a."publishedAt" IS NOT NULL AND a.status = 'Published'::"ArticleStatus"
       AND a."ingestion" = 'Scanned'::"ArticleIngestionStatus"
+      AND a.availability != 'Private'
       AND (a."nsfwLevel" & ${publicBrowsingLevelsFlag}) != 0
     ORDER BY a."createdAt" DESC
     LIMIT 10
@@ -888,6 +886,15 @@ function modelHidesArticleImage(
   return withheld.has(image.id) && !(viewerId === articleUserId && image.userId === articleUserId);
 }
 
+/** The article availability rule for reads. */
+export function canViewArticle(
+  article: { availability: Availability; userId: number | null },
+  viewer: { id?: number; isModerator?: boolean } | undefined
+) {
+  if (article.availability !== Availability.Private) return true;
+  return !!viewer?.isModerator || (viewer?.id !== undefined && article.userId === viewer.id);
+}
+
 export const getArticleById = async ({
   id,
   userId,
@@ -924,7 +931,8 @@ export const getArticleById = async ({
       },
     });
 
-    if (!article) throw throwNotFoundError(`No article with id ${id}`);
+    if (!article || !canViewArticle(article, { id: userId, isModerator }))
+      throw throwNotFoundError(`No article with id ${id}`);
     if (userId && !isModerator) {
       const blocked = await amIBlockedByUser({ userId, targetUserId: article.userId });
       if (blocked) throw throwNotFoundError(`No article with id ${id}`);

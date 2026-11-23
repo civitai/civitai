@@ -13,6 +13,7 @@ import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
 import { FeedSearchSummary } from '~/components/Search/FeedSearchSummary';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
+import { isSearchRefusedError } from '~/components/Search/search-refusal';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
@@ -40,10 +41,16 @@ function SearchableBountiesFeed(props: Props) {
   const filters = useInfiniteBountyFilters(props);
   const searchText = useFeedSearchQuery();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
-  const { refusal, profanityMatches } = useSearchRefusal(searchText, 'bounties_semantic');
+  const { refusal, profanityMatches } = useSearchRefusal(
+    searchText,
+    'bounties_semantic',
+    'semantic'
+  );
   const search = useSemanticBountyFeed(filters, refusal ? undefined : searchText);
   useScrollToTopOnChange(search.searchKey);
-  if (refusal) return <SearchRefusalNotice refusal={refusal} profanityMatches={profanityMatches} />;
+  const shownRefusal = refusal ?? (isSearchRefusedError(search.error) ? 'profanity' : undefined);
+  if (shownRefusal)
+    return <SearchRefusalNotice refusal={shownRefusal} profanityMatches={profanityMatches} />;
   return searchText ? (
     <BountiesFeed {...props} search={{ text: searchText, ...search }} />
   ) : (
@@ -55,15 +62,18 @@ type FeedSearch = ReturnType<typeof useSemanticBountyFeed> & { text: string };
 
 function BountiesFeed({ showEof = true, search, ...props }: Props & { search?: FeedSearch }) {
   const filters = useInfiniteBountyFilters(props);
+  // A failed search must not show or page the keyword feed (no server profanity check): its
+  // fetchNextPage runs even while the query is disabled.
   const searchFailed = !!search?.isError;
   const searching = !!search && !searchFailed;
   const feed = useQueryBounties(
-    // The feed's own query is a keyword match, used only as the fallback.
     { ...filters, query: search?.text },
-    { keepPreviousData: true, enabled: !searching }
+    { keepPreviousData: true, enabled: !search }
   );
-  const { bounties, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    search && searching ? search : feed;
+  const shown = search && searching ? search : feed;
+  const { fetchNextPage, isRefetching, isFetching } = shown;
+  const bounties = searchFailed ? [] : shown.bounties;
+  const hasNextPage = !searchFailed && shown.hasNextPage;
 
   return (
     <>

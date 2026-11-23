@@ -1,4 +1,4 @@
-import { captureImageStateHeldSql } from '~/server/services/legal-hold.service';
+import { captureImageStateHeldSql, ownerHeldSql } from '~/server/services/legal-hold.service';
 import { constants } from '~/server/common/constants';
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
@@ -668,14 +668,15 @@ async function deleteFileObjects(
 
 /**
  * Whether a file must be kept when it is removed, judged from the row each time: its uploader is
- * named on a report, or a scan of it has not passed (an image in it, its own scan copy, or a
+ * held, or a scan of it has not passed (an image in it, its own scan copy, or a
  * processing step still running). `f` names the file row.
  */
-const mustKeep = (f: Prisma.Sql) => Prisma.sql`(${uploaderReported(f)} OR ${scanOpen(f)})`;
+const mustKeep = (f: Prisma.Sql) => Prisma.sql`(${uploaderHeld(f)} OR ${scanOpen(f)})`;
 
-const uploaderReported = (f: Prisma.Sql) => Prisma.sql`EXISTS (
-  SELECT 1 FROM "CsamReport" r JOIN "ServiceDeal" rd ON rd."id" = ${f}."dealId"
-  WHERE r."userId" = CASE WHEN ${f}."kind"::text = 'Attachment' THEN rd."buyerId" ELSE rd."sellerId" END
+const uploaderHeld = (f: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "ServiceDeal" rd WHERE rd."id" = ${f}."dealId" AND ${ownerHeldSql(
+  Prisma.sql`CASE WHEN ${f}."kind"::text = 'Attachment' THEN rd."buyerId" ELSE rd."sellerId" END`
+)}
 )`;
 
 const scanOpen = (f: Prisma.Sql) => Prisma.sql`(
@@ -692,8 +693,8 @@ const dealHeld = (f: Prisma.Sql) => Prisma.sql`EXISTS (
 )`;
 
 /**
- * A removed file whose scans finished clean (or that can never be judged), with an uploader not on
- * a report and its scan copies gone. Deal holds are not checked here; `purgeable` adds them. A
+ * A removed file whose scans finished clean (or that can never be judged), with an uploader not
+ * held and its scan copies gone. Deal holds are not checked here; `purgeable` adds them. A
  * removed file whose scan failed, or is still to come, stays for the moderators. `f` names the
  * file row.
  */

@@ -69,6 +69,7 @@ import {
 import { getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { getGenerationFile } from '~/server/utils/resource-air';
 import { withSpan } from '~/server/utils/otel-helpers';
+import { canAccessGenerationResource } from '~/server/utils/resource-access';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';
 
@@ -1249,7 +1250,6 @@ export function getResourceCanGenerate({
   hiddenGates: CanGenerateBlockedTargets;
 }): boolean {
   const isUnavailable = isGenerationDisabled(resource.flags);
-  const isOwnedByUser = !!user.id && user.id === resource.modelUserId;
   const covered =
     (resource.covered || explicitCoveredModelVersionIds.includes(resource.id)) && !isUnavailable;
 
@@ -1260,18 +1260,8 @@ export function getResourceCanGenerate({
   const hasValidStatus =
     validGenerationStatuses.includes(resource.status) ||
     (resource.status === 'Scheduled' && !!user.isModerator);
-  const isPrivate =
-    resource.availability === 'Private' || ['Draft', 'Training'].includes(resource.status);
 
-  let canGenerate = !!(
-    covered &&
-    hasValidStatus &&
-    (!isPrivate || isOwnedByUser || user.isModerator)
-  );
-
-  if (resource.usageControl === 'InternalGeneration' && !user.isModerator) {
-    canGenerate = false;
-  }
+  let canGenerate = !!(covered && hasValidStatus && canAccessGenerationResource(resource, user));
 
   if (isBaseModelGenerationDisabled(resource.baseModel)) canGenerate = false;
 

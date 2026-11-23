@@ -57,6 +57,42 @@ export const CONTENT_EXCLUDED_COLUMNS = {
   Collection: ['description', 'metadata'],
 };
 
+/** A positive integer from the environment, else the fallback (blank, malformed, zero or negative). */
+function positiveInt(raw: string | undefined, fallback: number) {
+  const n = raw?.trim() && /^\d+$/.test(raw.trim()) ? Number(raw) : NaN;
+  return n > 0 ? n : fallback;
+}
+
+export type SecondaryClickhouseConfig = {
+  /** True only when METRICS_SECONDARY_TEE_ENABLED is exactly 'true' AND a URL is set. */
+  enabled: boolean;
+  url: string;
+  username: string;
+  password: string;
+  database: string;
+  /** Rows held for the secondary destination (queued + in flight) before the oldest are dropped. */
+  maxQueueRows: number;
+};
+
+/**
+ * The optional secondary ClickHouse destination for metric events. Off unless BOTH the switch
+ * and the URL are set; read from the environment like every other event-engine setting, so
+ * turning it off is an env change plus a restart.
+ */
+export function secondaryClickhouseConfig(
+  env: NodeJS.ProcessEnv = process.env
+): SecondaryClickhouseConfig {
+  const url = env.CLICKHOUSE_SECONDARY_URL?.trim() ?? '';
+  return {
+    enabled: env.METRICS_SECONDARY_TEE_ENABLED === 'true' && url !== '',
+    url,
+    username: env.CLICKHOUSE_SECONDARY_USERNAME ?? 'default',
+    password: env.CLICKHOUSE_SECONDARY_PASSWORD ?? '',
+    database: env.CLICKHOUSE_SECONDARY_DATABASE?.trim() || 'metrics',
+    maxQueueRows: positiveInt(env.METRICS_SECONDARY_TEE_MAX_QUEUE_ROWS, 200_000),
+  };
+}
+
 export const config = {
   postgres: {
     connectionString: process.env.DATABASE_URL!,
@@ -71,6 +107,7 @@ export const config = {
   clickhouse: {
     url: process.env.CLICKHOUSE_URL!,
     metricEventsTable: process.env.CLICKHOUSE_METRIC_EVENTS_TABLE ?? 'entityMetricEvents_month',
+    secondary: secondaryClickhouseConfig(),
   },
   redis: {
     url: process.env.REDIS_URL!,
@@ -203,6 +240,14 @@ export const config = {
       .map((d) => d.trim())
       .filter(Boolean),
     pgPoolMax: vectorInt('VECTOR_PG_POOL_MAX', 4, 1),
+    // Without these a query on a half-open connection never settles: the flush awaiting it holds
+    // every later flush, and the consumer stops with nothing logged.
+    // Longer than the event processor's: a backfill page or a reconcile range read is bigger. 0 = off.
+    pgQueryTimeoutMs: envTimeoutMs(process.env.VECTOR_PG_QUERY_TIMEOUT_MS, 60_000),
+    // Backfill and reconcile Jobs read bigger slices (a reconcile bucket is 100k ids through the
+    // eligibility filter), and a slow one there only delays a Job, so their bound is looser.
+    pgBatchQueryTimeoutMs: envTimeoutMs(process.env.VECTOR_PG_BATCH_QUERY_TIMEOUT_MS, 300_000),
+    pgConnectionTimeoutMs: envTimeoutMs(process.env.VECTOR_PG_CONNECTION_TIMEOUT_MS, 30_000),
     // Off: nothing embeds (a paid call). The consumer and reconcile still delete and update
     // payloads; backfill refuses to run. Embedding also needs CDC_IMAGE_ENABLED, see
     // embedBlockedReason in vector-sync/sync.ts.

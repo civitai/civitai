@@ -130,7 +130,7 @@ describe('getImage postless authorization', () => {
     // behind `i."postId" IS NULL` so an image in an unpublished post can't borrow it. Anchored on
     // both ends so a conjunct appended to the branch can't hide beside a substring match.
     expect(sql).toContain(
-      `OR (i."postId" IS NULL AND i."userId" = NULL) OR (i."postId" IS NULL AND EXISTS ( SELECT 1 FROM "Article" a WHERE (a."coverId" = i.id OR a."bannerId" = i.id) AND a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned' )) OR (i."postId" IS NULL AND ( EXISTS (`
+      `OR (i."postId" IS NULL AND i."userId" = NULL) OR (i."postId" IS NULL AND EXISTS ( SELECT 1 FROM "Article" a WHERE (a."coverId" = i.id OR a."bannerId" = i.id) AND a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned' AND (a.availability != 'Private' OR a."userId" = NULL) )) OR (i."postId" IS NULL AND ( EXISTS (`
     );
   });
 

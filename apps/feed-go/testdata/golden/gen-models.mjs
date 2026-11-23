@@ -33,6 +33,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { importDep, mark, packMarked } from './pack.mjs';
+import { resetDevalueDir, writeDevalueBody } from './devalue-body.mjs';
 
 if (new Date(0).getTimezoneOffset() !== 0)
   throw new Error('run with TZ=UTC (the Node pods run in UTC)');
@@ -1699,6 +1700,7 @@ function dbTables() {
 const dir = join(HERE, 'model-getall');
 rmSync(dir, { recursive: true, force: true });
 mkdirSync(dir, { recursive: true });
+resetDevalueDir('model-getall');
 for (const spec of SPECS) {
   T = new Trace(spec.name, spec);
   // `spec.alsoCached`: cache keys the fixture holds although Node's answer reads none of them (an
@@ -1727,6 +1729,7 @@ for (const spec of SPECS) {
           envelope: JSON.parse(JSON.stringify(superjson.serialize(value))),
           writes: writeEntries(),
         };
+    if (!spec.fallback) writeDevalueBody('model-getall', spec.name, value);
   }
   writeFileSync(
     join(dir, `${spec.name}.json`),

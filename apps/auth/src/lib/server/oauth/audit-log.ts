@@ -18,6 +18,9 @@ export type OAuthEventType =
   | 'token.reuse_detected'
   | 'origin.rejected'
   | 'worker.token.issued'
+  // The block token exchange (block-exchange.ts): a registry token issued, or a request refused.
+  | 'block_exchange.issued'
+  | 'block_exchange.refused'
   | 'invite.sent'
   | 'invite.used';
 

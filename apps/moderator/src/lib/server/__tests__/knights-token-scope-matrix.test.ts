@@ -67,9 +67,15 @@ describe('KNIGHTS_TAG_REVIEW_TOKEN scope', () => {
       'authenticated'
     );
   });
-  it('same value in both: attributes to MOD (broadest), and works everywhere only via MOD', () => {
+  // The order follows main's rule for scoped credentials: a shared value resolves to the narrower class (last-match-wins),
+  // so on the scoped path it attributes to the Knights token, and elsewhere only MOD_INBOUND_TOKEN can match it.
+  it('same value in both: the scoped path attributes to the Knights token, every other path to MOD', () => {
     process.env.KNIGHTS_TAG_REVIEW_TOKEN = INBOUND;
     expect(authenticateWebhookToken(ev('/api/mod/image-tag-moderate', INBOUND))).toEqual({
+      kind: 'authenticated',
+      credential: 'KNIGHTS_TAG_REVIEW_TOKEN',
+    });
+    expect(authenticateWebhookToken(ev('/api/mod/image-moderate', INBOUND))).toEqual({
       kind: 'authenticated',
       credential: 'MOD_INBOUND_TOKEN',
     });

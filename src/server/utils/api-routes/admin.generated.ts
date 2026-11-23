@@ -79,14 +79,13 @@ export const routes: ApiRoutes = {
     import('~/server/api-routes/admin/temp/backfill-video-blurhash'),
   'temp/clamp-publishedat-bumps': () =>
     import('~/server/api-routes/admin/temp/clamp-publishedat-bumps'),
-  'temp/clear-user-image-keys': () =>
-    import('~/server/api-routes/admin/temp/clear-user-image-keys'),
   'temp/convert-model-rules': () => import('~/server/api-routes/admin/temp/convert-model-rules'),
   'temp/merge-moss-image-base': () =>
     import('~/server/api-routes/admin/temp/merge-moss-image-base'),
   'temp/migrate-article-images': () =>
     import('~/server/api-routes/admin/temp/migrate-article-images'),
   'temp/minor-hash-sweep': () => import('~/server/api-routes/admin/temp/minor-hash-sweep'),
+  'temp/model-image-count': () => import('~/server/api-routes/admin/temp/model-image-count'),
   'temp/model-text-moderation-backfill': () =>
     import('~/server/api-routes/admin/temp/model-text-moderation-backfill'),
   'temp/queue-accelerator-models-reindex': () =>

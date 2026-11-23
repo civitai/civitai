@@ -32,7 +32,7 @@ export const sweepHibernationObjectsJob = createJob(
     ]);
     const deps = await defaultHibernationDeps();
     if (!deps.store) return { skipped: 'no archive store configured' as const };
-    const [{ isMissingTableError }, { isAccountUnderLegalHold, areAccountsUnderLegalHold }] =
+    const [{ isMissingTableError }, { isContentRemovalHeld, areContentRemovalsHeld }] =
       await Promise.all([
         import('~/server/services/blocks/app-access.service'),
         import('~/server/services/legal-hold.service'),
@@ -42,8 +42,8 @@ export const sweepHibernationObjectsJob = createJob(
     const result = await sweepOrphanedArchives({
       ...deps,
       isMissingTable: isMissingTableError,
-      isUnderLegalHold: isAccountUnderLegalHold,
-      areUnderLegalHold: areAccountsUnderLegalHold,
+      isUnderLegalHold: isContentRemovalHeld,
+      areUnderLegalHold: areContentRemovalsHeld,
     });
     const summary = {
       scanned: result.scanned,

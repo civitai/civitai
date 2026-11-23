@@ -11,7 +11,10 @@ import {
   stickerAutoTrackRunsKey,
   submitCountedAutoTrack,
   startAutoTrack,
+  despikeStickerTrack,
+  buildStickerAutoTrackWorkflow,
 } from '~/server/utils/sticker-auto-track';
+import { type StickerTrackV1, sampleStickerTrack } from '~/shared/utils/sticker-track';
 
 const PLACER = 52;
 const OTHER = 63;
@@ -65,14 +68,17 @@ describe('readStickerAutoTrackWorkflow', () => {
     for (const status of ['failed', 'expired', 'canceled'])
       expect(readStickerAutoTrackWorkflow({ ...finished([]), status }, PLACER)).toEqual({
         status: 'failed',
+        reason: 'run',
+        runStatus: status,
       });
   });
 
   it('fails a run that reports success without a usable track file', () => {
     const unavailable = finished([{ id: 'a.json', url: BLOB_URL, available: false }]);
     const notJson = finished([{ id: 'a.png', url: BLOB_URL, available: true }]);
-    expect(readStickerAutoTrackWorkflow(unavailable, PLACER)).toEqual({ status: 'failed' });
-    expect(readStickerAutoTrackWorkflow(notJson, PLACER)).toEqual({ status: 'failed' });
+    const noFile = { status: 'failed', reason: 'no-file' };
+    expect(readStickerAutoTrackWorkflow(unavailable, PLACER)).toEqual(noFile);
+    expect(readStickerAutoTrackWorkflow(notJson, PLACER)).toEqual(noFile);
   });
 
   it('hands back the track file and where the run started', () => {
@@ -335,6 +341,27 @@ describe('startAutoTrack', () => {
     );
   });
 
+  it('points the tracker at the spot under the sticker when the video size is known', async () => {
+    const submitted = async (size: { width?: number; height?: number }) => {
+      const { submit, deps: d } = deps({
+        loadVideo: async () => ({
+          url: 'https://image.example/v.mp4',
+          durationSeconds: 30,
+          ...size,
+        }),
+      });
+      await startAutoTrack(d, input());
+      const [job] = submit.mock.calls[0] as unknown as [
+        { step: { input: { workflow: Record<string, { inputs: Record<string, unknown> }> } } }
+      ];
+      return job.step.input.workflow;
+    };
+    // A 1920x1080 video loads at 1024x576; the sticker sits at its middle.
+    const sized = await submitted({ width: 1920, height: 1080 });
+    expect(JSON.parse(sized['12'].inputs.positive_coords as string)).toEqual([{ x: 512, y: 288 }]);
+    expect((await submitted({}))['12']).toBeUndefined();
+  });
+
   it('refuses the 4th run of the day as rate limited, with the cap in the message', async () => {
     const { submit, deps: d } = deps();
     for (let i = 0; i < 3; i++) await startAutoTrack(d, input());
@@ -375,10 +402,22 @@ describe('pollAutoTrack', () => {
     });
     const withFile = (file: { ok: boolean; json: () => Promise<unknown> }) =>
       pollAutoTrack({ read: done, download: async () => file, maxScale: async () => 1 }, PLACER);
-    expect(await withFile({ ok: false, json: async () => TRACK })).toEqual({ status: 'failed' });
+    expect(await withFile({ ok: false, json: async () => TRACK })).toEqual({
+      status: 'failed',
+      reason: 'download',
+    });
     expect(await withFile({ ok: true, json: async () => ({ v: 2 }) })).toEqual({
       status: 'failed',
+      reason: 'bad-track',
     });
+  });
+
+  it('says which status a failed run ended in', async () => {
+    const ended = await poll(async () => ({
+      data: { ...finished([]), status: 'expired' },
+      status: 200,
+    }));
+    expect(ended).toEqual({ status: 'failed', reason: 'run', runStatus: 'expired' });
   });
 
   it('reports a 404 as no such run', async () => {
@@ -393,5 +432,166 @@ describe('pollAutoTrack', () => {
       status: 200,
     }));
     expect(result).toMatchObject({ status: 'succeeded', startMs: START });
+  });
+});
+
+/** Twenty ticks at scale 0.1; `at` sets other scales by tick. */
+const sized = (at: Record<number, number> = {}): StickerTrackV1 => ({
+  v: 1,
+  ms: 250,
+  x: [
+    [0, 0.2],
+    [19, 0.6],
+  ],
+  y: [[0, 0.5]],
+  s: Array.from({ length: 20 }, (_, i) => [i, at[i] ?? 0.1] as [number, number]),
+  r: [[0, 0]],
+});
+const scaleAt = (track: StickerTrackV1, tick: number) =>
+  track.s.reduce((value, [t, s]) => (t <= tick ? s : value), track.s[0][1]);
+
+describe('despikeStickerTrack', () => {
+  it('redraws up to three ticks where the sticker swells to three times its size', () => {
+    const out = despikeStickerTrack(sized({ 6: 0.3, 7: 0.31, 8: 0.29 }));
+    for (const tick of [6, 7, 8]) expect(scaleAt(out, tick)).toBeCloseTo(0.1);
+  });
+
+  it('redraws ticks where the sticker briefly collapses to a fraction of its size', () => {
+    const out = despikeStickerTrack(sized({ 6: 0.03, 7: 0.03 }));
+    for (const tick of [6, 7]) expect(scaleAt(out, tick)).toBeCloseTo(0.1);
+  });
+
+  it('keeps a four-tick swell, longer than a bad mask lasts', () => {
+    const track = sized({ 6: 0.3, 7: 0.3, 8: 0.3, 9: 0.3 });
+    expect(despikeStickerTrack(track)).toBe(track);
+  });
+
+  it('keeps a real size step, as at a cut to a close-up', () => {
+    const step = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i + 10, 0.2]));
+    const out = despikeStickerTrack(sized(step));
+    expect(scaleAt(out, 9)).toBeCloseTo(0.1);
+    expect(scaleAt(out, 10)).toBeCloseTo(0.2);
+  });
+
+  it('redraws position and rotation across the spike, turning the short way round', () => {
+    const track: StickerTrackV1 = {
+      ...sized({ 6: 0.3, 7: 0.31 }),
+      // x and y jump with the bad mask; rotation crosses 180 degrees.
+      x: [
+        [0, 0.2],
+        [5, 0.3],
+        [6, 0.9],
+        [7, 0.9],
+        [8, 0.36],
+        [19, 0.6],
+      ],
+      y: [
+        [0, 0.5],
+        [5, 0.5],
+        [6, 0.8],
+        [7, 0.8],
+        [8, 0.5],
+      ],
+      r: [
+        [0, 170],
+        [5, 170],
+        [6, 0],
+        [7, 0],
+        [8, -170],
+      ],
+    };
+    const out = despikeStickerTrack(track);
+    const at = (tick: number) => sampleStickerTrack(out, tick * out.ms);
+    expect(at(6).x).toBeCloseTo(0.32);
+    expect(at(7).x).toBeCloseTo(0.34);
+    expect(at(6).y).toBeCloseTo(0.5);
+    expect(at(7).y).toBeCloseTo(0.5);
+    // 170 to -170 is 20 degrees through 180, so ticks 6 and 7 sit near 180, not near 0.
+    expect(Math.abs(at(6).rotation)).toBeGreaterThan(170);
+    expect(Math.abs(at(7).rotation)).toBeGreaterThan(170);
+  });
+
+  it('does not bridge a spike across a hidden stretch', () => {
+    // Hidden at ticks 5-6: ticks 7-8 swell but start their run, so nothing sits either side.
+    const track: StickerTrackV1 = {
+      ...sized({ 7: 0.3, 8: 0.3 }),
+      show: [
+        [0, 1],
+        [5, 0],
+        [7, 1],
+      ],
+    };
+    const out = despikeStickerTrack(track);
+    expect(out).toBe(track);
+    expect(scaleAt(out, 7)).toBeCloseTo(0.3);
+  });
+
+  it('returns a track with an empty channel as it came, instead of throwing', () => {
+    const track = { ...sized({ 6: 0.3 }), r: [] };
+    expect(despikeStickerTrack(track)).toBe(track);
+  });
+
+  it('returns a track whose last tick is far past any video as it came', () => {
+    const track = { ...sized({ 6: 0.3 }), r: [[1e9, 0]] as [number, number][] };
+    expect(despikeStickerTrack(track)).toBe(track);
+  });
+
+  it('returns a track with no spike as it came', () => {
+    const track = sized();
+    expect(despikeStickerTrack(track)).toBe(track);
+  });
+
+  it('runs on every tracker result the app reads', () => {
+    const out = parseStickerAutoTrack(sized({ 6: 0.3 }), 1);
+    expect(scaleAt(out!, 6)).toBeCloseTo(0.1);
+  });
+});
+
+describe('buildStickerAutoTrackWorkflow', () => {
+  const pose = { x: 0.5, y: 0.25, scale: 0.2, rotation: 0 };
+  const graph = (frame?: { width: number; height: number }, at = pose) =>
+    (
+      buildStickerAutoTrackWorkflow({
+        videoAir: 'air',
+        pose: at,
+        startMs: 0,
+        maxMs: 1000,
+        frame,
+      }) as unknown as {
+        input: { workflow: Record<string, { inputs: Record<string, unknown> }> };
+      }
+    ).input.workflow;
+
+  it('also segments whatever is under the sticker, in pixels of the loaded frame', () => {
+    // A 1920x1080 video loads at 1024x576.
+    const workflow = graph({ width: 1920, height: 1080 });
+    expect(JSON.parse(workflow['12'].inputs.positive_coords as string)).toEqual([
+      { x: 512, y: 144 },
+    ]);
+    expect(workflow['6'].inputs).toMatchObject({ masks: ['5', 0], fallback_masks: ['12', 0] });
+  });
+
+  it('keeps a sticker on the face while its eyes are shut', () => {
+    // On, glasses and googly eyes vanish whenever the eyes close for about a second.
+    expect(graph()['9'].inputs.hide_when_eye_lost).toBe(false);
+  });
+
+  it('turns re-id off for a sticker that is not on a head', () => {
+    // Wired to a constant true, a lantern sticker jumps onto a person after a cut.
+    expect(graph({ width: 1920, height: 1080 })['9'].inputs.reid).toEqual(['6', 1]);
+  });
+
+  it('keeps a sticker on the bottom-right corner inside the frame', () => {
+    const workflow = graph({ width: 1920, height: 1080 }, { ...pose, x: 1, y: 1 });
+    expect(JSON.parse(workflow['12'].inputs.positive_coords as string)).toEqual([
+      { x: 1023, y: 575 },
+    ]);
+  });
+
+  it('picks from heads only when the video size is unknown', () => {
+    const workflow = graph();
+    expect(workflow['12']).toBeUndefined();
+    expect(workflow['6'].inputs.masks).toEqual(['5', 0]);
+    expect(workflow['6'].inputs.fallback_masks).toBeUndefined();
   });
 });

@@ -964,6 +964,35 @@ describe("a report's attached text", () => {
     expect(data.reportContext.webPageIncidents[0].additionalInfo).toContain('a & b <c> nul\uFFFD');
   });
 
+  it('keeps text of a source this build cannot send, raw, beside the incidents it could send', async () => {
+    seedDb(1);
+    const sendable = {
+      source: 'comment',
+      id: 11,
+      postId: 100,
+      authorId: 31,
+      authorIsReportedUser: false,
+      postedAt: '2026-10-03T14:05:00.000Z',
+      text: 'sent words',
+      capturedAt: '2026-10-08T14:05:00.000Z',
+      capturedById: 5,
+    };
+    const newer = {
+      source: 'fromANewerBuild',
+      id: 7,
+      text: 'kept words',
+      capturedAt: sendable.capturedAt,
+    };
+    const contextText = [sendable, newer, newer] as unknown as CsamContextText[];
+    await archiveCsamDataForReport({ ...report, details: { contextText } } as never);
+
+    const data = JSON.parse(storedObjects.get('data.json')!.body.toString('utf8'));
+    expect(data.reportContext.contextText).toEqual(contextText);
+    expect(data.reportContext.webPageIncidents).toEqual(
+      contextWebPageIncidents([sendable as CsamContextText])
+    );
+  });
+
   it('is left out of data.json for a report with none', async () => {
     seedDb(1);
     await archiveCsamDataForReport(report as never);

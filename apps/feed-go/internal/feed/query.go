@@ -61,9 +61,9 @@ type ImagesQuery struct {
 	// feed-service hydrate sets it, so a slow hydrate is not read as a page the filters emptied).
 	ThrowOnStatementTimeout bool
 	// PrioritizedUserIDs is getAllImages' prioritizeUser branch with the version cache off (image.getInfinite's
-	// `prioritizedUserIds`, never the system user alone: that sub-case falls back): no
-	// ImageResourceNew join for the model scope; `p."modelVersionId" = <version>` when there is one;
-	// only these creators' images; ordered oldest post first, then by index and id. The cursor
+	// `prioritizedUserIds`): no ImageResourceNew join for the model scope; `p."modelVersionId" =
+	// <version>` when there is one; only these creators' images, ordered oldest post first, then by
+	// index and id (PrioritizedSystemOrder replaces those two for the system user alone). The cursor
 	// column stays the one the sort chose (the cursor itself is refused by the caller). Never cached.
 	PrioritizedUserIDs []int
 	// Pending is the input's `pending`: no published-before-now clause, and for a moderator or a
@@ -88,7 +88,24 @@ type ImagesQuery struct {
 	// CollectionTagID is `collectionTagId` (with a CollectionID only; 0 = none): only the items
 	// carrying that tag.
 	CollectionTagID int
+	// NewCreators is image.getInfinite's `newCreators: true`: only the creators on the "new &
+	// upcoming" board (NewCreatorUserIDs, `i."userId" = ANY(<board>)`, Node's `IN (…)`), or no row at
+	// all for an empty board (`1 = 0`). Not personalized: the query keeps its cache policy.
+	NewCreators       bool
+	NewCreatorUserIDs []int
+	// Reactions is image.getInfinite's `reactions` for a signed-in viewer (ViewerID): only the images
+	// the viewer reacted to with one of them. Personalized: never cached. Without a viewer Node adds no
+	// clause, so the caller leaves it empty.
+	Reactions []string
+	// PrioritizedSystemOrder is the prioritizeUser branch for the system user alone (-1) with no post
+	// of its own on the version: no creator clause, and every creator's images ordered by
+	// `IIF(i."userId" IN (-1), i.index, 1000)` ahead of the sort's own order. Only with
+	// PrioritizedUserIDs = [-1].
+	PrioritizedSystemOrder bool
 }
+
+// reviewReactions is the ReviewReactions enum (the `reactions` schema's z.enum).
+var reviewReactions = map[string]bool{"Like": true, "Dislike": true, "Laugh": true, "Cry": true, "Heart": true}
 
 // Built is the SQL for one page plus its caching policy.
 type Built struct {
@@ -98,6 +115,9 @@ type Built struct {
 	CacheTags []string
 	// ThrowOnStatementTimeout: see ImagesQuery.
 	ThrowOnStatementTimeout bool
+	// PersonalizedViewerID is the viewer of a page only they see (their reactions, their own
+	// gallery), else 0: a statement timeout on it is a fallback, never an empty page (FetchRows).
+	PersonalizedViewerID int
 	// Collection: the SQL selects the collection item columns after "cursorId" (a CollectionID).
 	Collection bool
 }
@@ -221,6 +241,15 @@ func (q *ImagesQuery) Build() Built {
 		// `userId && followed && prefetchedUserFollows?.length`, after the creator clause as there.
 		and = append(and, `i."userId" = ANY(`+a.add(q.FollowedUserIDs)+`::int[])`)
 	}
+	if q.NewCreators {
+		// After the follow clause and before the tag scope, as in getAllImagesUncaptured: an empty
+		// board is no row at all, never the unfiltered feed.
+		if len(q.NewCreatorUserIDs) > 0 {
+			and = append(and, `i."userId" = ANY(`+a.add(q.NewCreatorUserIDs)+`::int[])`)
+		} else {
+			and = append(and, `1 = 0`)
+		}
+	}
 	if len(q.TagIDs) > 0 {
 		and = append(and, `i.id IN (
       SELECT "imageId"
@@ -244,9 +273,10 @@ func (q *ImagesQuery) Build() Built {
 	// The pending view of a moderator or a signed-in viewer (`effectivePending && (isModerator ||
 	// ownerId)`).
 	pendingView := q.Pending && (q.IsModerator || q.ViewerID != 0)
-	if q.TargetUserID != 0 || len(q.FollowedUserIDs) > 0 || len(q.TagIDs) > 0 || prioritized || pendingView {
+	reactions := len(q.Reactions) > 0 && q.ViewerID != 0
+	if q.TargetUserID != 0 || len(q.FollowedUserIDs) > 0 || len(q.TagIDs) > 0 || prioritized || pendingView || reactions {
 		// isPersonalized (the user-gallery path, a follow set, a tag combination, prioritizedUserIds,
-		// the pending view): never cached.
+		// the pending view, the viewer's own reactions): never cached.
 		cacheTTL, tags = 0, nil
 	}
 
@@ -283,13 +313,26 @@ func (q *ImagesQuery) Build() Built {
 		orderBy += `, i."id"`
 	}
 	if prioritized {
-		// After getCursor, so the cursor column is still the sort's. The system user alone (an IIF
-		// order over every creator when it has no post on the version) is a fallback upstream.
+		// After getCursor, so the cursor column is still the sort's.
 		if q.ModelVersionID != 0 {
 			and = append(and, `p."modelVersionId" = `+a.add(q.ModelVersionID))
 		}
-		and = append(and, `i."userId" = ANY(`+a.add(q.PrioritizedUserIDs)+`::int[])`)
-		orderBy = `(i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"` // oldest post first
+		if q.PrioritizedSystemOrder {
+			// The system user alone, with no post of its own on the version: every creator's images,
+			// the system user's first by their index. Node inlines the joined id list (`-1`).
+			orderBy = `IIF(i."userId" IN (-1), i.index, 1000),  ` + orderBy
+		} else {
+			and = append(and, `i."userId" = ANY(`+a.add(q.PrioritizedUserIDs)+`::int[])`)
+			orderBy = `(i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"` // oldest post first
+		}
+	}
+	if reactions {
+		// `userId && reactions?.length`, after the prioritizeUser branch: the viewer's own reactions,
+		// read first as an array (ARRAY(), as in Node, so the plan starts from them).
+		and = append(and, `i.id = ANY(ARRAY(
+      SELECT ir."imageId" FROM "ImageReaction" ir
+      WHERE ir."userId" = `+a.add(q.ViewerID)+` AND ir.reaction = ANY(`+a.add(q.Reactions)+`::text[]::"ReviewReactions"[])
+    ))`)
 	}
 	if len(q.Tools) > 0 {
 		// getAllImagesUncaptured's `tools` clause, after the prioritizeUser branch as there. The list
@@ -426,8 +469,12 @@ func (q *ImagesQuery) Build() Built {
     ORDER BY ` + orderBy + offset + `
     LIMIT ` + a.add(q.Limit+1)
 
+	personalizedViewer := 0
+	if reactions || (q.ViewerID != 0 && q.TargetUserID == q.ViewerID) {
+		personalizedViewer = q.ViewerID
+	}
 	return Built{SQL: sql, Args: a.args, CacheTTL: cacheTTL, CacheTags: tags, ThrowOnStatementTimeout: q.ThrowOnStatementTimeout,
-		Collection: collection}
+		PersonalizedViewerID: personalizedViewer, Collection: collection}
 }
 
 // collectionCTE is getAllImagesUncaptured's `ct` CTE for a collection page outside the Random sort

@@ -19,11 +19,12 @@ import { env } from '$env/dynamic/private';
 // There is NO USER behind the token. `locals.user` is deliberately never populated here, so anything
 // reached this way cannot attribute a write — which is what keeps `human_judgement` human-only.
 //
-// TWO CREDENTIALS ARE ACCEPTED INBOUND. MOD_INBOUND_TOKEN opens every token-callable route. It is
+// THREE CREDENTIALS ARE ACCEPTED INBOUND: MOD_INBOUND_TOKEN (general), MOD_CASES_TOKEN (case actions
+// only, below) and KNIGHTS_TAG_REVIEW_TOKEN (Knights' tag write-back only). MOD_INBOUND_TOKEN is
 // inbound-only — this app never presents it outbound — which is what lets a service that only calls IN
-// hold something narrower than the shared token it used to need. KNIGHTS_TAG_REVIEW_TOKEN is SCOPED:
-// it is a candidate only on the exact path in `CREDENTIAL_SCOPE` (Knights' tag write-back), compared for
-// equality, never as a prefix; on any other path it is an unknown token and gets the 401.
+// hold something narrower than the shared token it used to need. KNIGHTS_TAG_REVIEW_TOKEN is a candidate
+// only on the exact path in `CREDENTIAL_SCOPE`, compared for equality, never as a prefix; on any other
+// path it is an unknown token and gets the 401.
 //
 // 🔴 WEBHOOK_TOKEN IS NO LONGER ACCEPTED INBOUND, AND IS STILL REQUIRED. Those are two different
 // facts and collapsing them breaks this app. It was dropped from `acceptedTokens` once the runtime
@@ -46,8 +47,9 @@ import { env } from '$env/dynamic/private';
 // count. The removal waited for a window in which every inbound caller had actually called, including
 // the main app's own delegated moderation actions, which are human-driven and can be quiet for hours.
 //
-// The no-early-exit guard in `__tests__/webhook-endpoint-timing.test.ts` is armed again for the two
-// classes: on the scoped path both are candidates, and a match on either compares both.
+// A second, scoped class: MOD_CASES_TOKEN, accepted only for CASE_ACTIONS (see /api/mod/[action]).
+// A third, path-scoped class: KNIGHTS_TAG_REVIEW_TOKEN (`CREDENTIAL_SCOPE`).
+// The no-early-exit guard in `__tests__/webhook-endpoint-timing.test.ts` covers this loop.
 //
 // Operational rationale for the split lives in the private infra repo, not here.
 
@@ -70,24 +72,33 @@ function presentedToken(event: { url: URL; request: Request }): Buffer {
 }
 
 /**
- * The credential VARIABLE NAMES this app accepts inbound, narrowest first, broadest last.
+ * The credential VARIABLE NAMES this app accepts inbound, in the order the match loop resolves a shared
+ * value: the general credential first, the scoped ones last.
  *
- * The order decides which name the attribution record carries when a deployment sets two variables to
- * the SAME value (the match loop below is last-match-wins, so an ambiguous deployment attributes to the
- * BROADEST class — which can only overstate use of the credential that opens everything, never
- * understate it), and it is the order the 503 body lists them in.
+ * The ordering decides which name a request carries when a deployment sets two variables to the SAME
+ * value: the match loop below is last-match-wins. The scoped classes are last, so a shared value resolves
+ * to the NARROWER scope and the general endpoints refuse it: a misconfiguration fails closed rather than
+ * widening a scoped credential. It is also the order the 503 body lists them in.
  *
  * A credential class is a variable NAME, never a value. Nothing derived from a token's bytes — not a
  * prefix, a length, or a hash — may leave this module.
  */
-export const ACCEPTED_CREDENTIALS = ['KNIGHTS_TAG_REVIEW_TOKEN', 'MOD_INBOUND_TOKEN'] as const;
+export const ACCEPTED_CREDENTIALS = [
+  'MOD_INBOUND_TOKEN',
+  'MOD_CASES_TOKEN',
+  'KNIGHTS_TAG_REVIEW_TOKEN',
+] as const;
 
 export type AcceptedCredential = (typeof ACCEPTED_CREDENTIALS)[number];
 
-/** The one path a credential is a candidate on, matched exactly; `null` is every token-callable route. */
+/**
+ * The one path a credential is a candidate on, matched exactly; `null` is every token-callable route
+ * (MOD_CASES_TOKEN is narrowed after authentication, by `tokenClient` and the route's CASE_ACTIONS check).
+ */
 export const CREDENTIAL_SCOPE: Record<AcceptedCredential, string | null> = {
-  KNIGHTS_TAG_REVIEW_TOKEN: '/api/mod/image-tag-moderate',
   MOD_INBOUND_TOKEN: null,
+  MOD_CASES_TOKEN: null,
+  KNIGHTS_TAG_REVIEW_TOKEN: '/api/mod/image-tag-moderate',
 };
 
 /** One accepted credential: the class that identifies it, and the bytes to compare against. */
@@ -112,8 +123,9 @@ function acceptedTokens(path: string): AcceptedToken[] {
   // Record type is what forces this map to grow when ACCEPTED_CREDENTIALS does — adding a name there
   // and forgetting to read it here is a type error, not a credential that silently never matches.
   const values: Record<AcceptedCredential, string | undefined> = {
-    KNIGHTS_TAG_REVIEW_TOKEN: env.KNIGHTS_TAG_REVIEW_TOKEN,
     MOD_INBOUND_TOKEN: env.MOD_INBOUND_TOKEN,
+    MOD_CASES_TOKEN: env.MOD_CASES_TOKEN,
+    KNIGHTS_TAG_REVIEW_TOKEN: env.KNIGHTS_TAG_REVIEW_TOKEN,
   };
   return inScope(path)
     .map((credential) => ({
@@ -155,14 +167,10 @@ export function authenticateWebhookToken(event: { url: URL; request: Request }):
   const accepted = acceptedTokens(event.url.pathname);
   // Fails CLOSED — with NO secret configured every wrapped endpoint is unreachable rather than
   // unguarded. 503 rather than 401 so an operator reading logs sees a deployment problem, not a caller
-  // with a bad token. MOD_INBOUND_TOKEN is now the ONLY accepted inbound class, so it is also the only
-  // complete configuration; the legacy class was dropped once the runtime signal showed no caller
-  // presenting it (see the header). The body names every accepted class, derived from the list itself
-  // so the two cannot drift.
+  // with a bad token. Either class alone is a configuration (only MOD_INBOUND_TOKEN: no public
+  // intake; only MOD_CASES_TOKEN: no moderation actions).
   if (accepted.length === 0) {
-    // Phrased for EITHER list length: "Neither A nor B" is ungrammatical with one name, and this list
-    // is one name today. Keeping it derived rather than hardcoded is what stops the body drifting from
-    // the accepted set when a second class is added back.
+    // Names the classes accepted on this path, derived from the list itself so the two cannot drift.
     const candidates = inScope(event.url.pathname);
     const names = candidates.join(' nor ');
     const message =
@@ -185,11 +193,9 @@ export function authenticateWebhookToken(event: { url: URL; request: Request }):
   // assignment the boolean flag used to be, in the same branch, with no `break` and no `else`. Do not
   // add either.
   //
-  // No `else` also means LAST MATCH WINS, and ACCEPTED_CREDENTIALS is preference-DESCENDING — so a
-  // deployment holding the same value in both variables attributes to the LAST, i.e. the most legacy,
-  // class. Deliberate: one shared value is indistinguishable on the wire, and attributing it to the
-  // legacy credential can only OVERSTATE legacy use. A migration proof that errs toward "still in
-  // use" is safe; one that errs toward zero is the failure this signal exists to prevent.
+  // No `else` also means LAST MATCH WINS: a deployment holding the same value in both variables
+  // attributes to the LAST class, MOD_CASES_TOKEN. One shared value is indistinguishable on the wire,
+  // and resolving it to the narrower scope fails closed (the general endpoints then refuse it).
   let matched: AcceptedCredential | null = null;
   for (const candidate of accepted)
     if (provided.length === candidate.secret.length && timingSafeEqual(provided, candidate.secret))
@@ -204,13 +210,16 @@ export function authenticateWebhookToken(event: { url: URL; request: Request }):
 // Generic over the event so a route's own `RequestHandler` type survives the wrap — otherwise `params`
 // widens to `Partial<Record<string, string>>` and every `params.id` becomes possibly-undefined.
 export function WebhookEndpoint<E extends RequestEvent, R>(
-  handler: (event: E) => R
+  handler: (event: E) => R,
+  /** Also admit the scoped intake credential; the handler then decides what it may call. */
+  { alsoCases = false }: { alsoCases?: boolean } = {}
 ): (event: E) => R {
   return (event) => {
     // The hook already verified the token; this is the opt-in that makes THIS endpoint token-callable.
     // A signed-in moderator hitting it is refused too — like the main app's WebhookEndpoint, these are
     // service endpoints, and there is no user behind one.
-    if (event.locals.tokenClient !== 'webhook') error(401, SEND_A_TOKEN);
+    const client = event.locals.tokenClient;
+    if (client !== 'webhook' && !(alsoCases && client === 'cases')) error(401, SEND_A_TOKEN);
     return handler(event);
   };
 }

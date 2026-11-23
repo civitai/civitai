@@ -12,6 +12,7 @@ import {
   LEGAL_HOLD_REFUSAL,
   LEGAL_HOLD_STOPPED,
   LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
+  PURGE_ARCHIVE_REFUSAL,
 } from '$lib/legal-hold';
 import { PURGE_INCOMPLETE } from '$lib/purge-result';
 
@@ -143,6 +144,19 @@ describe('purgeAllContent and a legal hold', () => {
     expect(recordModActivity).toHaveBeenCalledWith(
       expect.objectContaining({ activity: 'purgeAllContent', entityId: TARGET })
     );
+  });
+});
+
+describe('purgeAllContent refused by a failed profile archive', () => {
+  it('says nothing was deleted, and records no purge', async () => {
+    purge = () => json({ message: PURGE_ARCHIVE_REFUSAL }, 503);
+    expect(await run()).toEqual({ ok: false, error: PURGE_ARCHIVE_REFUSAL });
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('still reads any other 503 as a purge that may be running', async () => {
+    purge = () => json({ message: 'Service Unavailable' }, 503);
+    expect(await run()).toEqual({ ok: false, error: PURGE_MAY_BE_RUNNING });
   });
 });
 

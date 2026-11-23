@@ -511,6 +511,8 @@ func TestServeInfiniteEmptyAnswers(t *testing.T) {
 		want     string // json|meta.values
 		trivial  bool
 		uncapped bool
+		viewer   *Viewer
+		noQuery  bool
 	}{
 		{
 			name:  "a withheld version",
@@ -543,6 +545,28 @@ func TestServeInfiniteEmptyAnswers(t *testing.T) {
 			want:  `{"items":[],"source":"db"}|{"nextCursor":["undefined"]}`, trivial: true,
 		},
 		{
+			name: "a moderator's level of unselectable bits only (Postgres path)",
+			m:    map[string]any{"postId": num("701"), "browsingLevel": num("32")},
+			want: `{"items":[],"source":"db"}|{"nextCursor":["undefined"]}`, trivial: true,
+			uncapped: true, viewer: &Viewer{ID: 7, IsModerator: true}, noQuery: true,
+		},
+		{
+			name: "a signed-in level asks the feed at its selectable part",
+			m:    map[string]any{"limit": num("2"), "browsingLevel": num("33")},
+			setup: func(f *infFixture) {
+				f.feed.answers["levels=1&excludedTags=9901&excludePoi=1&viewerId=7&sort=reactions&limit=2"] = feedsvc.Answer{Status: 200, NextCursor: "9|9"}
+			},
+			want: `{"items":[],"nextCursor":"feed:9:9","source":"feed"}|null`, trivial: true,
+			uncapped: true, viewer: &Viewer{ID: 7},
+		},
+		{
+			name:     "a signed-in level of unselectable bits only",
+			m:        map[string]any{"limit": num("2"), "browsingLevel": num("32")},
+			want:     `{"items":[],"source":"feed"}|{"nextCursor":["undefined"]}`,
+			trivial:  true,
+			uncapped: true, viewer: &Viewer{ID: 7},
+		},
+		{
 			name: "a shape the feed cannot express",
 			m:    map[string]any{"generation": []any{"txt2img"}},
 			want: `{"items":[],"source":"feed"}|{"nextCursor":["undefined"]}`, trivial: true,
@@ -565,6 +589,7 @@ func TestServeInfiniteEmptyAnswers(t *testing.T) {
 		if c.uncapped {
 			req.Cap = 0
 		}
+		req.Viewer = c.viewer
 		j, ann, ans, err := serveInf(t, f, c.m, req)
 		if err != nil {
 			t.Errorf("%s: %v", c.name, err)
@@ -572,6 +597,9 @@ func TestServeInfiniteEmptyAnswers(t *testing.T) {
 		}
 		jb, _ := json.Marshal(j)
 		ab, _ := json.Marshal(ann)
+		if c.noQuery && len(f.sql) != 0 {
+			t.Errorf("%s: page queries %d, want none", c.name, len(f.sql))
+		}
 		if got := string(jb) + "|" + string(ab); got != c.want || ans.Trivial != c.trivial {
 			t.Errorf("%s: %s trivial=%v, want %s trivial=%v", c.name, got, ans.Trivial, c.want, c.trivial)
 		}
@@ -714,10 +742,15 @@ func TestBuildInfiniteImagesAddsTheInfiniteWireFields(t *testing.T) {
 	if len(images) != 1 {
 		t.Fatalf("images = %d", len(images))
 	}
-	keys := wireKeys(images[0].Wire)
-	tail := keys[len(keys)-4:]
-	if !reflect.DeepEqual(tail, []string{"availability", "meta", "baseModel", "judgeScore"}) {
-		t.Fatalf("appended keys = %v", tail)
+	// The Node object's key order (an image.getInfinite item of the Node goldens): the devalue body
+	// writes keys in this order, so it is part of the bytes.
+	want := []string{"id", "name", "url", "nsfwLevel", "width", "height", "hash", "hasMeta", "hasPositivePrompt",
+		"onSite", "remixOfId", "createdAt", "sortAt", "type", "metadata", "ingestion", "blockedFor", "needsReview",
+		"postId", "index", "publishedAt", "modelVersionId", "model3dId", "availability", "minor", "poi", "restricted",
+		"meta", "modelVersionIds", "modelVersionIdsManual", "baseModel", "user", "stats", "reactions", "tags", "tagIds",
+		"cosmetic", "eventDecoration", "thumbnailUrl", "judgeScore"}
+	if keys := wireKeys(images[0].Wire); !reflect.DeepEqual(keys, want) {
+		t.Fatalf("keys = %v\nwant   %v", keys, want)
 	}
 	if v, _ := images[0].Wire.Get("availability"); v != "Public" {
 		t.Fatalf("availability = %v", v)

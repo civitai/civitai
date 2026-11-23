@@ -23,6 +23,8 @@ function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig
     v1ImagesUrl: 'http://feed-go.test:9090/internal/shadow/api/v1/images',
     infiniteUrl: 'http://feed-go.test:9090/internal/shadow/image.getInfinite',
     modelGetAllUrl: 'http://feed-go.test:9090/internal/shadow/model.getAll',
+    modelAssociatedUrl:
+      'http://feed-go.test:9090/internal/shadow/model.getAssociatedResourcesCardData',
     v1ModelsUrl: 'http://feed-go.test:9090/internal/shadow/api/v1/models',
     v1ModelsIdUrl: 'http://feed-go.test:9090/internal/shadow/api/v1/models/id',
     rate: 1,
@@ -72,6 +74,7 @@ function harness(
     enabledV1Images: () => true,
     enabledInfinite: () => true,
     enabledModelGetAll: () => true,
+    enabledModelAssociated: () => true,
     enabledProbe: () => opts.probe ?? true,
     random: opts.random ?? (() => 0),
     fetch: fetchMock as unknown as typeof fetch,
@@ -239,6 +242,20 @@ describe('the Go-first probe', () => {
     const calls = h.probeCalls();
     expect(calls).toHaveLength(1);
     expect(calls[0][0]).toBe(PROBE_MODELS_URL);
+  });
+
+  // feed-go has no probe for model.getAssociatedResourcesCardData: its sample is compared, never
+  // probed (no request of any kind leaves at the start of the request).
+  it('never probes a model.getAssociatedResourcesCardData sample', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(
+      request({ query: { trpc: 'model.getAssociatedResourcesCardData', input: INPUT } })
+    );
+    expect(sample?.endpoint).toBe('model-associated');
+    h.shadow.probe(sample);
+    await h.settle();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.probeOutcomes).toEqual([]);
   });
 
   it('runs at most once per sample, and never for a REST sample', async () => {

@@ -400,6 +400,8 @@ func run(log *slog.Logger) error {
 		Deps:    deps,
 		Sources: sources,
 		Blocked: blocked,
+		// `newCreators`: the "new & upcoming" boards' cached entries, read-only.
+		NewCreators: &feed.NewCreatorBoards{Cache: cache, Prefix: cfg.CacheKeyPrefix},
 	}
 	// The model.getAll shadow shares the replica, the cache readers, the gallery settings and the
 	// addons; its own flags are mirrored by FEED_GO_* variables (DESIGN.md §15.3).
@@ -417,8 +419,19 @@ func run(log *slog.Logger) error {
 			VisibleDecorationEvents: cfg.DecorationEvents,
 		},
 	}
+	// The model.getAssociatedResourcesCardData shadow shares model.getAll's deps, plus the viewer's
+	// hidden-user caches, the generation gate rules (system redis) and the creator-promotions mirror.
+	associated := &modelfeed.AssocDeps{
+		Deps:       models,
+		Prefs:      &modelfeed.PackedHiddenPrefs{Redis: cache, Prefix: cfg.CacheKeyPrefix},
+		Gates:      &modelfeed.SysGateRules{Sys: sys},
+		Promotions: feed.ParsePromotionAudience(cfg.CreatorPromotion),
+	}
 	// The REST /api/v1/models shadows read the replica and the caches (read-only) the same way.
 	mc := config.LoadV1Models()
+	if err := mc.Validate(); err != nil {
+		return err
+	}
 	v1Models := &server.V1ModelsDeps{
 		Deps: &v1models.Deps{
 			DB:      pool,
@@ -426,6 +439,7 @@ func run(log *slog.Logger) error {
 			Sources: sources,
 			Gallery: deps.Gallery,
 			Addons:  deps.Addons.Addons,
+			Blocked: blocked,
 			Config: v1models.Config{
 				ImageLocation:        cfg.ImageLocation,
 				BaseURL:              mc.BaseURL,
@@ -434,6 +448,7 @@ func run(log *slog.Logger) error {
 				ComputeMisses:        cfg.ComputeMisses,
 				ResponseCacheTTL:     mc.ResponseCacheTTL,
 				Production:           true,
+				RedHosts:             v1models.RedHosts(cfg.HostPrimaries["red"], cfg.Hosts["red"]),
 			},
 		},
 		Users: sources,
@@ -444,7 +459,9 @@ func run(log *slog.Logger) error {
 		Models:           models,
 		ServeModelGetAll: cfg.ServeModelGetAll,
 		ServeInfinite:    cfg.ServeInfinite,
+		WriteDevalue:     cfg.WriteDevalue,
 		Hosts:            cfg.Hosts,
+		HostPrimaries:    cfg.HostPrimaries,
 		RegionRules:      cfg.RegionRules,
 		// REGION_BLOCK_CONFIG, else the app's default list (apipolicy.json).
 		RegionBlockRules: cfg.RegionBlockRules,
@@ -457,6 +474,8 @@ func run(log *slog.Logger) error {
 		V1:             v1,
 		Infinite:       infinite,
 		V1Models:       v1Models,
+		ServeV1Models:  mc.Serve,
+		Associated:     associated,
 		RequestBudget:  cfg.RequestBudget,
 		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
 		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
@@ -476,10 +495,24 @@ func run(log *slog.Logger) error {
 			srv.NoteProxyError(r, reason, err)
 		}, prop)
 	}
+	// The public /api/v1/models routes hand their fallbacks to the Node app that serves /api/v1, a
+	// different upstream from the tRPC routes' (FEED_GO_V1_FALLBACK_URL; unset, the routes are not mounted).
+	if mc.FallbackURL != "" {
+		target, err := url.Parse(mc.FallbackURL)
+		if err != nil {
+			return err
+		}
+		srv.V1Fallback = fallbackProxy(target, fallbackIdleTimeout, func(r *http.Request, reason string, err error) {
+			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
+			srv.NoteProxyError(r, reason, err)
+		}, prop)
+	}
 
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll)
 	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
+	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil)
+	log.Info("public tRPC answers' write format", "TRPC_WRITE_DEVALUE", cfg.WriteDevalue)
 	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
 	// OpenMetrics on request only with tracing on: the exemplars ride in that format alone.
 	internal := server.InternalMux(srv, server.MetricsHandler(reg, tp != nil), cfg.Pprof)
@@ -492,7 +525,7 @@ func run(log *slog.Logger) error {
 	servers := []*http.Server{server.InternalHTTPServer(cfg.InternalAddr, internal)}
 	// Without a fallback the public route could only answer the ported shapes: shadow-only deployments
 	// do not listen publicly at all.
-	if srv.Fallback != nil {
+	if srv.Fallback != nil || srv.V1Fallback != nil {
 		servers = append(servers, server.PublicHTTPServer(cfg.Addr, public, cfg.RequestBudget))
 	}
 	errs := make(chan error, len(servers))

@@ -4,7 +4,6 @@ import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -106,7 +105,7 @@ beforeAll(async () => {
       SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
     CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected', 'Void');
     CREATE TABLE "Appeal" (id serial PRIMARY KEY, "userId" int NOT NULL, status "AppealStatus" NOT NULL);
-    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text NOT NULL);
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text NOT NULL, "createdAt" timestamp(3) NOT NULL DEFAULT now());
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1,
@@ -303,29 +302,32 @@ describe('holds', () => {
   const holds: [string, (party: number) => string][] = [
     ['an evidence hold', (p) => `INSERT INTO "EvidenceHold" ("userId") VALUES (${p})`],
     [
-      'a moderation report, long sent and archived',
-      (p) =>
-        `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES (${p}, ${daysAgo(
-          800
-        )}, ${daysAgo(700)})`,
+      'a moderation report archived long ago but never sent',
+      (p) => `INSERT INTO "CsamReport" ("userId", "archivedAt") VALUES (${p}, ${daysAgo(700)})`,
     ],
     [
-      'a moderation report naming them second, long sent and archived',
+      'a moderation report long sent but not archived',
+      (p) => `INSERT INTO "CsamReport" ("userId", "reportSentAt") VALUES (${p}, ${daysAgo(800)})`,
+    ],
+    [
+      'a moderation report sent and archived within the year',
       (p) =>
-        `INSERT INTO "CsamReport" (details, "reportSentAt", "archivedAt") VALUES ('{"secondaryUserId": "${p}"}', ${daysAgo(
-          800
-        )}, ${daysAgo(700)})`,
+        `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES (${p}, ${daysAgo(
+          300
+        )}, ${daysAgo(200)})`,
+    ],
+    [
+      'a moderation report naming them second, archived long ago but never sent',
+      (p) =>
+        `INSERT INTO "CsamReport" (details, "archivedAt") VALUES ('{"secondaryUserId": "${p}"}', ${daysAgo(
+          700
+        )})`,
     ],
     ['a pending appeal', (p) => `INSERT INTO "Appeal" ("userId", status) VALUES (${p}, 'Pending')`],
     [
       'a minor-safety ban',
       (p) =>
         `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "SexualMinor"}}' WHERE id = ${p}`,
-    ],
-    [
-      'ban notes naming a child-safety report',
-      (p) =>
-        `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "Harassment", "detailsInternal": "NCMEC report filed"}}' WHERE id = ${p}`,
     ],
     [
       'an image held for review',
@@ -365,6 +367,27 @@ describe('holds', () => {
     expect(await kept(finalId)).toBe(false);
   });
 
+  it.each([
+    ['naming them', (p: number) => `"userId" = ${p}`],
+    ['naming them second', (p: number) => `details = '{"secondaryUserId": "${p}"}'`],
+  ])(
+    'a moderation report %s, sent and archived over a year ago, keeps nothing',
+    async (_n, who) => {
+      const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
+      for (const p of [BUYER, SELLER]) {
+        await q(
+          `INSERT INTO "CsamReport" ("reportSentAt", "archivedAt") VALUES (${daysAgo(
+            400
+          )}, ${daysAgo(10)})`
+        );
+        await q(`UPDATE "CsamReport" SET ${who(p)} WHERE id = (SELECT max(id) FROM "CsamReport")`);
+      }
+      await sweepAndPurge();
+      expect(await kept(finalId)).toBe(false);
+      expect(await kept(attachmentId)).toBe(false);
+    }
+  );
+
   it.each(cases)('%s hides the deal files on schedule and keeps them', async (_name, sql) => {
     const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
     await holder.db.exec(sql);
@@ -403,6 +426,30 @@ describe('holds', () => {
     await sweepAndPurge();
     expect(await kept(finalId)).toBe(true);
     await q(`UPDATE "Report" SET status = 'Unactioned', "statusSetAt" = ${daysAgo(35)}`);
+    await sweepAndPurge();
+    expect(await kept(finalId)).toBe(false);
+  });
+
+  // A ban note alone is not a hold.
+  it.each([
+    [
+      'an internal ban note naming a child-safety report on the buyer',
+      BUYER,
+      'detailsInternal',
+      'NCMEC report filed',
+    ],
+    [
+      'an external ban note naming a child-safety report on the seller',
+      SELLER,
+      'detailsExternal',
+      'csam',
+    ],
+  ] as const)('%s keeps nothing', async (_name, party, field, note) => {
+    const { finalId } = await closedDeal('Cancelled', 40);
+    await q(`UPDATE "User" SET "bannedAt" = now(), meta = $2 WHERE id = $1`, [
+      party,
+      JSON.stringify({ banDetails: { reasonCode: 'Harassment', [field]: note } }),
+    ]);
     await sweepAndPurge();
     expect(await kept(finalId)).toBe(false);
   });
@@ -699,7 +746,7 @@ describe('the purge after the sweep', () => {
     expect(JSON.stringify(record)).not.toContain('portrait');
   });
 
-  it('takes a store without versioning (501) as a plain delete, with no warning', async () => {
+  it('takes a store without versioning (501) as a plain delete', async () => {
     const { dealId } = await closedDeal('Cancelled', 40);
     s3.purgeObjectVersions.mockRejectedValue(
       Object.assign(new Error('NotImplemented'), {
@@ -710,9 +757,6 @@ describe('the purge after the sweep', () => {
     await sweep();
     expect(await purge()).toBe(2);
     expect(s3.deleteObject).toHaveBeenCalledWith('bucket', `k/${dealId}/final`, expect.anything());
-    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'object versions may remain after delete' })
-    );
   });
 
   it('keeps the row and its pending record when the delete fails, and finishes it next run', async () => {
@@ -738,16 +782,12 @@ describe('the purge after the sweep', () => {
       ],
     ];
     for (const [, setUp] of runs) {
-      loggingMock.logToAxiom.mockClear();
       setUp();
       expect(await purge()).toBe(0);
       expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [finalId])).toHaveLength(1);
       expect(
         await q(`SELECT "fileId" FROM "ServiceDealFilePurge" WHERE "fileId" = $1`, [finalId])
       ).toEqual([{ fileId: finalId }]);
-      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ message: 'object versions may remain after delete' })
-      );
     }
     s3.purgeObjectVersions.mockResolvedValue({ versionsDeleted: 1, remaining: 0 });
     s3.deleteObject.mockResolvedValue(undefined);

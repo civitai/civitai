@@ -48,6 +48,7 @@ import {
   reviewServiceDeal,
   setServiceDealReviewHidden,
 } from '~/server/services/creator-service-deal-review.service';
+import { TRPCError } from '@trpc/server';
 import { rateLimit } from '~/server/middleware.trpc';
 import { domainServableLevels, getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { domainSpendType } from '~/server/utils/buzz-helpers';
@@ -73,6 +74,8 @@ export const creatorServiceDealRouter = router({
       expectedPrice: input.expectedPrice,
       expectedRevisionsIncluded: input.expectedRevisionsIncluded,
       expectedDeliveryDays: input.expectedDeliveryDays,
+      expectedLicense: input.expectedLicense,
+      licenseAgreed: input.licenseAgreed,
       requestText: input.requestText,
       disclosureVersion: input.disclosureVersion,
       buyerId: ctx.user.id,
@@ -130,13 +133,22 @@ export const creatorServiceDealRouter = router({
       })
     ),
   // Not behind the flag: moderation of what was published must outlast a brake.
-  hideReview: moderatorProcedure.input(hideServiceDealReviewSchema).mutation(({ input, ctx }) =>
-    setServiceDealReviewHidden({
-      reviewId: input.reviewId,
-      moderatorId: ctx.user.id,
-      hidden: input.hidden,
-    })
-  ),
+  hideReview: moderatorProcedure
+    .input(hideServiceDealReviewSchema)
+    .mutation(async ({ input, ctx }) => {
+      const changed = await setServiceDealReviewHidden({
+        reviewId: input.reviewId,
+        moderatorId: ctx.user.id,
+        hidden: input.hidden,
+      });
+      if (changed === 'held')
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message:
+            'The CSAM text-hold queue holds this review: it is restored only once decided there.',
+        });
+      return changed;
+    }),
   accept: gated
     .input(serviceDealActionSchema)
     .mutation(({ input, ctx }) =>

@@ -214,6 +214,8 @@ beforeAll(async () => {
       "blockedFor" text,
       "needsReview" text,
       minor boolean NOT NULL DEFAULT false,
+      "nsfwLevel" int NOT NULL DEFAULT 0,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       name text,
       type text NOT NULL DEFAULT 'image'
     );
@@ -225,6 +227,7 @@ beforeAll(async () => {
       "entityId" int,
       "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb DEFAULT '{}', "bannedAt" timestamp(3));
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY,
       "userId" int,
@@ -565,6 +568,26 @@ describe('image takedowns', () => {
     await reportCsamBlock(1);
     await syncCdnAccess();
     expect(calls.map(kind)).toEqual(['deny']);
+  });
+
+  it('access case 1', async () => {
+    await image(1);
+    await scannerBlock(1);
+    await syncCdnAccess();
+    await sql`UPDATE "Image" SET ingestion = 'Error' WHERE id = 1`;
+    expect((await queued()).n).toBe(1);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(await stateOf(u(1))).toBe('Denied');
+  });
+
+  it('access case 2', async () => {
+    await sql`INSERT INTO "Image" (id, "userId", url, ingestion, "blockedFor")
+              VALUES (1, ${OWNER}, ${u(1)}, 'Error', 'moderated')`;
+    await sql`SELECT queue_cdn_access_sync(1, 'Image', NULL)`;
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(await stateOf(u(1))).toBe('Denied');
   });
 
   it('an AiNotVerified block makes no call', async () => {

@@ -29,7 +29,7 @@ func TestListSendsTheCallersTokenAndReadsEveryPage(t *testing.T) {
 		}
 		_, _ = io.WriteString(w, `{"items":[{"key":"b","data":{"n":2},"version":5}],"nextCursor":null}`)
 	})
-	docs, err := c.List(context.Background(), "civitai_tok", "notes", "src-app")
+	docs, err := c.List(context.Background(), "civitai_tok", "notes", "src-app", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestListErrors(t *testing.T) {
 		w.WriteHeader(403)
 		_, _ = io.WriteString(w, `{"error":"import_not_granted"}`)
 	})
-	_, err := c.List(context.Background(), "t", "notes", "")
+	_, err := c.List(context.Background(), "t", "notes", "", "")
 	var re *Error
 	if !errors.As(err, &re) || re.Status != 403 || string(re.Body) != `{"error":"import_not_granted"}` || re.Error() != "rest: status 403" {
 		t.Fatalf("%v", err)
@@ -60,13 +60,13 @@ func TestListErrors(t *testing.T) {
 		w.WriteHeader(500)
 		_, _ = io.WriteString(w, `<html>`)
 	})
-	_, err = c.List(context.Background(), "t", "notes", "")
+	_, err = c.List(context.Background(), "t", "notes", "", "")
 	if !errors.As(err, &re) || re.Status != 500 || re.Body != nil {
 		t.Fatalf("a non-JSON error body must not be passed on: %v", err)
 	}
 
 	c = &Client{BaseURL: "http://127.0.0.1:1", MaxRecords: 10}
-	if _, err := c.List(context.Background(), "t", "notes", ""); !errors.As(err, &re) || re.Status != 0 {
+	if _, err := c.List(context.Background(), "t", "notes", "", ""); !errors.As(err, &re) || re.Status != 0 {
 		t.Fatalf("connect failure: %v", err)
 	}
 
@@ -80,7 +80,7 @@ func TestListErrors(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if _, err := c.List(ctx, "t", "notes", ""); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := c.List(ctx, "t", "notes", "", ""); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("deadline: %v", err)
 	}
 }
@@ -98,7 +98,7 @@ func TestListNeverFollowsARedirect(t *testing.T) {
 			http.Redirect(w, r, elsewhere.URL+"/api/v1/blocks/storage/notes", http.StatusFound)
 		})
 		c.HTTP = hc
-		_, err := c.List(context.Background(), "civitai_tok", "notes", "src-app")
+		_, err := c.List(context.Background(), "civitai_tok", "notes", "src-app", "")
 		var re *Error
 		if !errors.As(err, &re) || re.Status != http.StatusFound {
 			t.Fatalf("got %v, want the 302 as the answer", err)
@@ -106,5 +106,26 @@ func TestListNeverFollowsARedirect(t *testing.T) {
 	}
 	if n := reached.Load(); n != 0 {
 		t.Fatalf("🔴 the redirect target was reached %d times", n)
+	}
+}
+
+// A keyPrefix is sent as the store's own `keyPrefix` filter, on every page.
+func TestListSendsTheKeyPrefixOnEveryPage(t *testing.T) {
+	var seen []string
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.URL.RequestURI())
+		if r.URL.Query().Get("cursor") == "" {
+			_, _ = io.WriteString(w, `{"items":[{"key":"run:a","data":{},"version":1}],"nextCursor":"c2"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"items":[{"key":"run:b","data":{},"version":1}],"nextCursor":null}`)
+	})
+	if _, err := c.List(context.Background(), "t", "notes", "src-app", "run:"); err != nil {
+		t.Fatal(err)
+	}
+	want := "/api/v1/blocks/storage/notes?from=src-app&keyPrefix=run%3A&limit=100\n" +
+		"/api/v1/blocks/storage/notes?cursor=c2&from=src-app&keyPrefix=run%3A&limit=100"
+	if strings.Join(seen, "\n") != want {
+		t.Fatalf("requests:\n%s", strings.Join(seen, "\n"))
 	}
 }

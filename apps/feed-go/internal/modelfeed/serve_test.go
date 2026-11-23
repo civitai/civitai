@@ -74,7 +74,7 @@ func (r testRow) values() []any {
 type fakeSources struct {
 	mu        sync.Mutex
 	page      hydrate.ModelPage
-	images    map[int][]map[string]any
+	images    map[int][]superjson.Object
 	members   map[int]bool
 	users     map[string]int
 	versionRq [][]int
@@ -101,11 +101,11 @@ func (f *fakeSources) ModelPage(_ context.Context, _ hydrate.ModelPageRequest) (
 	return &p, nil
 }
 
-func (f *fakeSources) VersionImages(_ context.Context, ids []int) (map[int][]map[string]any, error) {
+func (f *fakeSources) VersionImages(_ context.Context, ids []int) (map[int][]superjson.Object, error) {
 	f.mu.Lock()
 	f.versionRq = append(f.versionRq, ids)
 	f.mu.Unlock()
-	out := map[int][]map[string]any{}
+	out := map[int][]superjson.Object{}
 	for _, id := range ids {
 		if l, ok := f.images[id]; ok {
 			out[id] = l
@@ -163,7 +163,7 @@ func newEnv(pages ...[]testRow) *env {
 			Data: map[int]hydrate.ModelData{}, Frames: map[int]superjson.Object{}, Decorations: map[int]superjson.Object{},
 			PrivacyDefaults: map[int]hydrate.PrivacyDefaults{},
 		},
-		images: map[int][]map[string]any{}, members: map[int]bool{}, users: map[string]int{},
+		images: map[int][]superjson.Object{}, members: map[int]bool{}, users: map[string]int{},
 	}}
 	var mu sync.Mutex
 	e.db = &testkit.DB{Routes: []testkit.Route{
@@ -218,21 +218,29 @@ func newEnv(pages ...[]testRow) *env {
 	return e
 }
 
-func version(id int, baseModel string, extra map[string]any) map[string]any {
+// version is a cached version record, its keys sorted (sortedRecord).
+func version(id int, baseModel string, extra map[string]any) superjson.Object {
 	v := map[string]any{"id": int64(id), "name": "v" + baseModel, "baseModel": baseModel, "status": "Published",
 		"availability": "Public", "nsfwLevel": int64(1), "flags": int64(0), "covered": true, "coveredNext": true}
 	for k, x := range extra {
 		v[k] = x
 	}
-	return v
+	return sortedRecord(v)
 }
 
-func image(id, owner, level int, extra map[string]any) map[string]any {
+// image is a cached showcase image record, its keys sorted (sortedRecord).
+func image(id, owner, level int, extra map[string]any) superjson.Object {
 	m := map[string]any{"id": int64(id), "userId": int64(owner), "nsfwLevel": int64(level), "tags": []any{}}
 	for k, x := range extra {
 		m[k] = x
 	}
-	return m
+	return sortedRecord(m)
+}
+
+// sortedRecord is m as an ordered record with its keys sorted: a record whose order the test does
+// not care about (hydrate.Entry.Ordered of an entry built in code).
+func sortedRecord(m map[string]any) superjson.Object {
+	return hydrate.Wire(m).(superjson.Object)
 }
 
 func serve(t *testing.T, e *env, in *Input, viewer *Viewer) (*Answer, error) {
@@ -288,14 +296,14 @@ func TestServeWholeAnswer(t *testing.T) {
 	s.page.Data[5001] = hydrate.ModelData{
 		Hashes:   []any{"ABCDEF"},
 		TagIDs:   []int{7},
-		Versions: []map[string]any{version(6001, "SDXL 1.0", map[string]any{"flags": int64(32)}), version(6002, "Pony", nil)},
+		Versions: []superjson.Object{version(6001, "SDXL 1.0", map[string]any{"flags": int64(32)}), version(6002, "Pony", nil)},
 	}
-	s.page.Data[5002] = hydrate.ModelData{Hashes: []any{}, TagIDs: []int{}, Versions: []map[string]any{version(6003, "Pony", map[string]any{"covered": false})}}
-	s.images[6001] = []map[string]any{
+	s.page.Data[5002] = hydrate.ModelData{Hashes: []any{}, TagIDs: []int{}, Versions: []superjson.Object{version(6003, "Pony", map[string]any{"covered": false})}}
+	s.images[6001] = []superjson.Object{
 		image(8001, 1001, 1, map[string]any{"url": "u1", "onSite": true, "hasMeta": true, "hasPositivePrompt": false, "modelVersionId": int64(6001), "availability": "Public", "tags": []any{int64(7)}}),
 		image(8002, 1001, 1, nil),
 	}
-	s.images[6003] = []map[string]any{image(8003, 1002, 1, nil)}
+	s.images[6003] = []superjson.Object{image(8003, 1002, 1, nil)}
 
 	ans, err := serve(t, e, baseInput(), nil)
 	if err != nil {
@@ -362,8 +370,8 @@ func TestServeLoopsAndKeepsThePreviousCursor(t *testing.T) {
 		[]testRow{{id: 4, owner: 9, cursor: "c4"}},
 	)
 	for _, id := range []int{1, 4} { // model 2 has no data entry: left out
-		e.sources.page.Data[id] = hydrate.ModelData{Versions: []map[string]any{version(id*10, "Pony", nil)}}
-		e.sources.images[id*10] = []map[string]any{image(id*100, 9, 1, nil)}
+		e.sources.page.Data[id] = hydrate.ModelData{Versions: []superjson.Object{version(id*10, "Pony", nil)}}
+		e.sources.images[id*10] = []superjson.Object{image(id*100, 9, 1, nil)}
 	}
 	ans, err := serve(t, e, baseInput(), nil)
 	if err != nil {
@@ -388,8 +396,8 @@ func TestServeLoopsAndKeepsThePreviousCursor(t *testing.T) {
 // A last page with no lookahead and no earlier cursor: nextCursor is undefined.
 func TestServeNoCursorIsUndefined(t *testing.T) {
 	e := newEnv([]testRow{{id: 1, owner: 9, cursor: "c1"}})
-	e.sources.page.Data[1] = hydrate.ModelData{Versions: []map[string]any{version(10, "Pony", nil)}}
-	e.sources.images[10] = []map[string]any{image(100, 9, 1, nil)}
+	e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+	e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil)}
 	ans, err := serve(t, e, baseInput(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -478,6 +486,16 @@ func TestResolveLevel(t *testing.T) {
 	if got, _ := resolveLevel(&Input{BrowsingLevel: &disjoint}, Request{Cap: 3}); got != 3 {
 		t.Errorf("disjoint level: %d, want the cap", got)
 	}
+	// A sent level is held to the selectable levels before the cap, unless a moderator sent it.
+	mixed := 1 | 32
+	for _, c := range []struct {
+		v         *Viewer
+		cap, want int
+	}{{&Viewer{ID: 5}, 0, 1}, {nil, 0, 1}, {&Viewer{ID: 5}, 3, 1}, {&Viewer{ID: 5, IsModerator: true}, 0, 1 | 32}} {
+		if got, err := resolveLevel(&Input{BrowsingLevel: &mixed}, Request{Viewer: c.v, Cap: c.cap}); err != nil || got != c.want {
+			t.Errorf("viewer %+v cap %d: %d %v, want %d", c.v, c.cap, got, err, c.want)
+		}
+	}
 }
 
 // A blocked tag name is an empty page with no query; a known tag adds its filter; an unknown name
@@ -559,10 +577,10 @@ func TestServeAddonsAndOwnScope(t *testing.T) {
 func TestServeShowcaseHold(t *testing.T) {
 	setup := func() *env {
 		e := newEnv([]testRow{{id: 1, owner: 9, sfwOnly: true, cursor: "x"}, {id: 2, owner: 8, minor: true, cursor: "y"}})
-		e.sources.page.Data[1] = hydrate.ModelData{Versions: []map[string]any{version(10, "Pony", nil)}}
-		e.sources.page.Data[2] = hydrate.ModelData{Versions: []map[string]any{version(20, "Pony", nil)}}
-		e.sources.images[10] = []map[string]any{image(101, 9, 4, nil), image(102, 9, 1, nil)}
-		e.sources.images[20] = []map[string]any{image(201, 8, 2, nil), image(202, 8, 1, nil)}
+		e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+		e.sources.page.Data[2] = hydrate.ModelData{Versions: []superjson.Object{version(20, "Pony", nil)}}
+		e.sources.images[10] = []superjson.Object{image(101, 9, 4, nil), image(102, 9, 1, nil)}
+		e.sources.images[20] = []superjson.Object{image(201, 8, 2, nil), image(202, 8, 1, nil)}
 		held, level := true, 1
 		e.deps.Gallery = &fakeGallery{settings: map[int]*feed.GallerySettings{
 			1: nil, // no settings: the flags' limit (SFW)
@@ -619,8 +637,8 @@ func TestServeMetricPrivacy(t *testing.T) {
 			{id: 2, owner: 8, cursor: "y"},
 		})
 		for _, id := range []int{1, 2} {
-			e.sources.page.Data[id] = hydrate.ModelData{Versions: []map[string]any{version(id*10, "Pony", nil)}}
-			e.sources.images[id*10] = []map[string]any{image(id*100, 9, 1, nil)}
+			e.sources.page.Data[id] = hydrate.ModelData{Versions: []superjson.Object{version(id*10, "Pony", nil)}}
+			e.sources.images[id*10] = []superjson.Object{image(id*100, 9, 1, nil)}
 		}
 		e.sources.page.PrivacyDefaults[9] = hydrate.PrivacyDefaults{Downloads: true}
 		e.sources.members[9] = member
@@ -657,9 +675,9 @@ func TestServeMetricPrivacy(t *testing.T) {
 func TestServeExcludedTags(t *testing.T) {
 	setup := func() *env {
 		e := newEnv([]testRow{{id: 1, owner: 9, cursor: "x"}, {id: 2, owner: 8, cursor: "y"}})
-		e.sources.page.Data[1] = hydrate.ModelData{TagIDs: []int{55}, Versions: []map[string]any{version(10, "Pony", nil)}}
-		e.sources.page.Data[2] = hydrate.ModelData{TagIDs: []int{1}, Versions: []map[string]any{version(20, "Pony", nil)}}
-		e.sources.images[20] = []map[string]any{image(201, 8, 1, map[string]any{"tags": []any{int64(56)}}), image(202, 8, 1, nil)}
+		e.sources.page.Data[1] = hydrate.ModelData{TagIDs: []int{55}, Versions: []superjson.Object{version(10, "Pony", nil)}}
+		e.sources.page.Data[2] = hydrate.ModelData{TagIDs: []int{1}, Versions: []superjson.Object{version(20, "Pony", nil)}}
+		e.sources.images[20] = []superjson.Object{image(201, 8, 1, map[string]any{"tags": []any{int64(56)}}), image(202, 8, 1, nil)}
 		return e
 	}
 	in := baseInput()
@@ -682,16 +700,16 @@ func TestServeExcludedTags(t *testing.T) {
 // non-Public versions dropped unless a creator is named, and a base-model filter selects.
 func TestServeVersionFilters(t *testing.T) {
 	e := newEnv([]testRow{{id: 1, owner: 9, cursor: "x"}, {id: 2, owner: 9, cursor: "y"}, {id: 3, owner: 9, cursor: "z"}})
-	e.sources.page.Data[1] = hydrate.ModelData{Versions: []map[string]any{
+	e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{
 		version(10, "SD 3.5", map[string]any{"nsfwLevel": int64(4)}), // mature-restricted on models
 		version(11, "Pony", map[string]any{"status": "Draft"}),
 		version(12, "Pony", map[string]any{"availability": "Private"}),
 		version(13, "Illustrious", nil),
 	}}
-	e.sources.page.Data[2] = hydrate.ModelData{Versions: []map[string]any{version(20, "Pony", map[string]any{"availability": "Private"})}}
-	e.sources.page.Data[3] = hydrate.ModelData{Versions: []map[string]any{version(30, "Pony", nil)}}
+	e.sources.page.Data[2] = hydrate.ModelData{Versions: []superjson.Object{version(20, "Pony", map[string]any{"availability": "Private"})}}
+	e.sources.page.Data[3] = hydrate.ModelData{Versions: []superjson.Object{version(30, "Pony", nil)}}
 	for _, v := range []int{13, 20, 30} {
-		e.sources.images[v] = []map[string]any{image(v*10, 9, 1, nil)}
+		e.sources.images[v] = []superjson.Object{image(v*10, 9, 1, nil)}
 	}
 	in := baseInput()
 	in.Limit = 3
@@ -708,8 +726,8 @@ func TestServeVersionFilters(t *testing.T) {
 	}
 	// A base-model filter keeps the matching versions only (an empty filter keeps none).
 	e = newEnv([]testRow{{id: 3, owner: 9, cursor: "z"}})
-	e.sources.page.Data[3] = hydrate.ModelData{Versions: []map[string]any{version(30, "Pony", nil), version(31, "Illustrious", nil)}}
-	e.sources.images[31] = []map[string]any{image(310, 9, 1, nil)}
+	e.sources.page.Data[3] = hydrate.ModelData{Versions: []superjson.Object{version(30, "Pony", nil), version(31, "Illustrious", nil)}}
+	e.sources.images[31] = []superjson.Object{image(310, 9, 1, nil)}
 	in = baseInput()
 	in.BaseModels = []string{"Illustrious"}
 	a, _ = serve(t, e, in, nil)
@@ -718,7 +736,7 @@ func TestServeVersionFilters(t *testing.T) {
 		t.Fatalf("base-model filter: %v", got)
 	}
 	e = newEnv([]testRow{{id: 3, owner: 9, cursor: "z"}})
-	e.sources.page.Data[3] = hydrate.ModelData{Versions: []map[string]any{version(30, "Pony", nil)}}
+	e.sources.page.Data[3] = hydrate.ModelData{Versions: []superjson.Object{version(30, "Pony", nil)}}
 	in.BaseModels = []string{}
 	a, _ = serve(t, e, in, nil)
 	if len(items(t, a)) != 0 {
@@ -730,7 +748,7 @@ func TestServeVersionFilters(t *testing.T) {
 func TestServeImageless(t *testing.T) {
 	setup := func() *env {
 		e := newEnv([]testRow{{id: 1, owner: 9, cursor: "x"}})
-		e.sources.page.Data[1] = hydrate.ModelData{Versions: []map[string]any{version(10, "Pony", nil)}}
+		e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
 		e.sources.users["artist"] = 9
 		return e
 	}
@@ -754,8 +772,8 @@ func TestServeImageless(t *testing.T) {
 // replica, as getCoverImages does.
 func TestServeCoverFromAnotherVersion(t *testing.T) {
 	e := newEnv([]testRow{{id: 1, owner: 9, cover: 777, mode: "TakenDown", cursor: "x"}})
-	e.sources.page.Data[1] = hydrate.ModelData{Versions: []map[string]any{version(10, "Pony", nil)}}
-	e.sources.images[11] = []map[string]any{image(777, 9, 1, nil)}
+	e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+	e.sources.images[11] = []superjson.Object{image(777, 9, 1, nil)}
 	e.covers = [][]any{{777, 9, 11, 1}}
 	a, err := serve(t, e, baseInput(), nil)
 	if err != nil {
@@ -770,8 +788,8 @@ func TestServeCoverFromAnotherVersion(t *testing.T) {
 	}
 	// Under a base-model filter the cover stays on the shown version: no replica lookup.
 	e = newEnv([]testRow{{id: 1, owner: 9, cover: 777, cursor: "x"}})
-	e.sources.page.Data[1] = hydrate.ModelData{Versions: []map[string]any{version(10, "Pony", nil)}}
-	e.sources.images[10] = []map[string]any{image(100, 9, 1, nil)}
+	e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+	e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil)}
 	in := baseInput()
 	in.BaseModels = []string{"Pony"}
 	if _, err := serve(t, e, in, nil); err != nil {
@@ -787,8 +805,8 @@ func TestServeCoverFromAnotherVersion(t *testing.T) {
 // A .com face: its name, its cover, its PG/PG-13 images, a blank version description.
 func TestServeSfwFace(t *testing.T) {
 	e := newEnv([]testRow{{id: 1, owner: 9, name: "Spicy", sfwName: "Safe", cover: 101, sfwCover: 102, nsfw: true, nsfwLevel: 1 | 4, cursor: "x"}})
-	e.sources.page.Data[1] = hydrate.ModelData{Versions: []map[string]any{version(10, "Pony", map[string]any{"description": "red"})}}
-	e.sources.images[10] = []map[string]any{image(101, 9, 4, nil), image(102, 9, 1, nil), image(103, 9, 2, nil)}
+	e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", map[string]any{"description": "red"})}}
+	e.sources.images[10] = []superjson.Object{image(101, 9, 4, nil), image(102, 9, 1, nil), image(103, 9, 2, nil)}
 	a, err := serve(t, e, baseInput(), nil) // level 1: a .com viewer
 	if err != nil {
 		t.Fatal(err)
@@ -807,7 +825,7 @@ func TestServeSfwFace(t *testing.T) {
 }
 
 func TestBuildGetAllModelImages(t *testing.T) {
-	imgs := make([]map[string]any, 0, 8)
+	imgs := make([]superjson.Object, 0, 8)
 	for i, lv := range []int{4, 4, 4, 4, 4, 4, 1, 2} {
 		imgs = append(imgs, image(i, 1, lv, map[string]any{"onSite": true, "availability": "Public"}))
 	}
@@ -835,14 +853,14 @@ func TestBuildGetAllModelImages(t *testing.T) {
 }
 
 func TestFilterImagesForViewer(t *testing.T) {
-	imgs := []map[string]any{
+	imgs := []superjson.Object{
 		image(1, 5, 0, nil), image(2, 5, 1, nil), image(3, 5, 8, nil), image(4, 6, 1, map[string]any{"poi": true}),
 		image(5, 6, 2, map[string]any{"minor": true}),
 	}
-	ids := func(l []map[string]any) []int {
+	ids := func(l []superjson.Object) []int {
 		out := make([]int, 0, len(l))
 		for _, m := range l {
-			n, _ := hydrate.Int(m["id"])
+			n, _ := hydrate.Int(hydrate.ObjectField(m, "id"))
 			out = append(out, n)
 		}
 		return out
@@ -856,6 +874,14 @@ func TestFilterImagesForViewer(t *testing.T) {
 	// A model marked nsfw keeps every image up to the highest level selected.
 	if got := ids(filterImagesForViewer(imgs, 1|8, true, false, false, &Viewer{ID: 1, IsModerator: true})); !reflect.DeepEqual(got, []int{1, 2, 3, 4, 5}) {
 		t.Fatalf("nsfw model, moderator: %v", got)
+	}
+	// The level is held to the selectable levels here too.
+	if got := ids(filterImagesForViewer(imgs, 1|32, true, false, false, &Viewer{ID: 1, IsModerator: true})); !reflect.DeepEqual(got, []int{1, 2, 4}) {
+		t.Fatalf("nsfw model, level 33: %v", got)
+	}
+	other := []superjson.Object{image(6, 5, 32, nil), image(7, 5, 1, nil)}
+	if got := ids(filterImagesForViewer(other, 1|32, false, false, false, &Viewer{ID: 1, IsModerator: true})); !reflect.DeepEqual(got, []int{7}) {
+		t.Fatalf("level 33: %v", got)
 	}
 }
 
@@ -981,8 +1007,8 @@ func TestServeCollectionAccess(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv([]testRow{{id: 1, owner: 9, cursor: "c1"}})
-			e.sources.page.Data[1] = hydrate.ModelData{Versions: []map[string]any{version(10, "Pony", nil)}}
-			e.sources.images[10] = []map[string]any{image(100, 9, 1, nil)}
+			e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{version(10, "Pony", nil)}}
+			e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil)}
 			reads := withCollections(e, testCollections)
 			ans, err := serve(t, e, collectionInput(t, `,"collectionId":`+c.collection), c.viewer)
 			if err != nil {
@@ -1027,8 +1053,8 @@ func TestServeCollectionPagesAndTag(t *testing.T) {
 		[]testRow{{id: 4, owner: 9, cursor: "c4"}},
 	)
 	for _, id := range []int{1, 4} {
-		e.sources.page.Data[id] = hydrate.ModelData{Versions: []map[string]any{version(id*10, "Pony", nil)}}
-		e.sources.images[id*10] = []map[string]any{image(id*100, 9, 1, nil)}
+		e.sources.page.Data[id] = hydrate.ModelData{Versions: []superjson.Object{version(id*10, "Pony", nil)}}
+		e.sources.images[id*10] = []superjson.Object{image(id*100, 9, 1, nil)}
 	}
 	reads := withCollections(e, testCollections)
 	ans, err := serve(t, e, collectionInput(t, `,"collectionId":42,"collectionTagId":88`), &Viewer{ID: 71})
@@ -1070,11 +1096,11 @@ func TestServeCollectionPagesAndTag(t *testing.T) {
 func TestServeCollectionShowsPrivateVersions(t *testing.T) {
 	run := func(extra string) any {
 		e := newEnv([]testRow{{id: 1, owner: 9, cursor: "c1"}})
-		e.sources.page.Data[1] = hydrate.ModelData{Versions: []map[string]any{
+		e.sources.page.Data[1] = hydrate.ModelData{Versions: []superjson.Object{
 			version(10, "Pony", map[string]any{"availability": "Private"}), version(11, "Pony", nil),
 		}}
-		e.sources.images[10] = []map[string]any{image(100, 9, 1, nil)}
-		e.sources.images[11] = []map[string]any{image(110, 9, 1, nil)}
+		e.sources.images[10] = []superjson.Object{image(100, 9, 1, nil)}
+		e.sources.images[11] = []superjson.Object{image(110, 9, 1, nil)}
 		withCollections(e, testCollections)
 		ans, err := serve(t, e, collectionInput(t, extra), nil)
 		if err != nil {

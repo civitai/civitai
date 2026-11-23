@@ -38,6 +38,9 @@ PROD_SELECTOR='pipeline=build-and-push,pipeline.jquad.rocks/git.repository.branc
 
 k() { kubectl --context "$CTX" "$@" 2>/dev/null; }
 
+# Status and event messages can quote URLs; print them without the query string.
+redact_queries() { sed -E 's/([^[:space:]])\?[^[:space:]"`<>]+/\1?<redacted>/g'; }
+
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 # ---- resolve the prod PipelineRun name from an optional tag|sha arg --------------
@@ -107,7 +110,7 @@ print_build() {
   echo "=== [1] BUILD (prod / release branch) ==="
   echo "  run:     $run"
   echo "  commit:  $(short "$commit")  ($commit)"
-  echo "  status:  $reason — $msg"
+  echo "  status:  $reason — $(redact_queries <<<"$msg")"
   echo "  tasks (notify-preparing -> github-create-deploy -> fetch-repository -> build-image -> migrations):"
   k -n "$NS_BUILD" get taskrun -l "tekton.dev/pipelineRun=$run" \
     --sort-by=.metadata.creationTimestamp \
@@ -144,7 +147,7 @@ print_canary() {
   echo "  recent rollback/warning events:"
   k -n "$NS_APP" get events --field-selector type=Warning --sort-by=.lastTimestamp \
     -o custom-columns='  TIME:.lastTimestamp,OBJ:.involvedObject.name,MSG:.message' --no-headers 2>/dev/null \
-    | grep -E "$CANARY_SSR|$CANARY_API" | tail -5 | sed 's/^/  /'
+    | grep -E "$CANARY_SSR|$CANARY_API" | tail -5 | redact_queries | sed 's/^/  /'
 }
 
 # ---- phase 5: primaries ---------------------------------------------------------

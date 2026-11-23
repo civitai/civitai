@@ -3257,6 +3257,9 @@ const REDIS_KEYS_UNPREFIXED = {
     STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
     // Training Studio dataset rating use per user per UTC day, key :<kind>:<userId>:<yyyy-mm-dd>.
     STUDIO_DATASET_RATING_DAILY: 'training:studio-dataset-rating-daily',
+    // Hash of source workflow id → 'retrain' | 'refund-only': the only runs `/api/mod/training/retrain-source`
+    // acts on, and how. Written by hand with an expiry; deleting it, or its eviction, refuses every call.
+    RETRAIN_ALLOWLIST: 'training:retrain-allowlist',
   },
   OAUTH: {
     AUTHORIZATION_CODES: 'packed:oauth:authorization-codes',
@@ -3396,6 +3399,7 @@ const REDIS_KEYS_UNPREFIXED = {
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
     PAID_ACCESS: 'packed:caches:paid-access',
     PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
+    FEATURE_PAGES_SERVICE_TOKEN: 'packed:caches:feature-pages-service-token',
     // `<prefix>:row:<surface>:<entityType>:<entityId>` (a cached space row) and
     // `<prefix>:written:<surface>:<entityType>:<entityId>` (when that row was last written) —
     // the display read of a placement space. See placement-space.service.ts.
@@ -3421,6 +3425,10 @@ const REDIS_KEYS_UNPREFIXED = {
     OVERVIEW_USERS: 'packed:caches:overview-users',
     FEATURED_MODELS: 'packed:featured-models-2',
     OFFICIAL_MODELS: 'packed:caches:official-models',
+    // Per viewer and browsing level: the model ids that lead their first page of Hot.
+    PERSONAL_HOT_LEAD: 'packed:caches:personal-hot-lead',
+    // Global: models with a recent new version, the lead's candidates.
+    PERSONAL_HOT_LEAD_CANDIDATES: 'packed:caches:personal-hot-lead-candidates',
     HOME_BLOCKS_PERMANENT: 'packed:caches:home-blocks-permanent',
     HOME_BLOCKS_SYSTEM: 'packed:caches:home-blocks-system',
     IMAGE_META: 'packed:caches:image-meta',
@@ -3640,7 +3648,7 @@ const REDIS_KEYS_UNPREFIXED = {
     PREV_MONTH_STATS: 'packed:caches:creator-program:prev-month-stats',
     POOL_VALUE: 'packed:caches:creator-program:pool-value',
     POOL_SIZE: 'packed:caches:creator-program:pool-size',
-    POOL_FORECAST: 'packed:caches:creator-program:pool-forecast',
+    POOL_FORECAST: 'packed:caches:creator-program:pool-forecast-v2',
   },
   NEW_ORDER: {
     RATED: 'new-order:rated',

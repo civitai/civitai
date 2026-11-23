@@ -93,7 +93,7 @@ import {
 } from '~/server/services/orchestrator/workflows';
 import {
   assertWorkflowOwner,
-  workflowOwnerId,
+  isWorkflowOwnedBy,
 } from '~/server/services/orchestrator/assert-workflow-owner';
 import {
   getAirEcosystem,
@@ -572,8 +572,7 @@ async function validateRawAirResources({
     // not a fall-through — every real workflow id parses, and assertBlockWorkflowMintedForViewer
     // set that rule for request-supplied workflow ids (the orchestrator has resolved a correct
     // token to the wrong user before). The token-scoped fetch below stays the authoritative guard.
-    const claimedOwner = workflowOwnerId(resource.workflowId);
-    if (claimedOwner === null || claimedOwner !== user.id) {
+    if (!isWorkflowOwnedBy(resource.workflowId, user.id)) {
       throw throwBadRequestError(`You do not have access to epoch resource "${label}".`);
     }
     const list = byWorkflow.get(resource.workflowId) ?? [];

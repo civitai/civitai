@@ -45,7 +45,7 @@ export async function gradeHiddenVotes(
     .forUpdate()
     .execute();
 
-  // A check whose image has since gone (removed, blocked, unpublished) is not graded: nothing is paid or penalised.
+  // A check whose image has since gone (removed, blocked, unpublished, Private post) is not graded: nothing is paid or penalised.
   const known = new Map(
     (
       await trx

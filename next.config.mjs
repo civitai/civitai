@@ -107,9 +107,17 @@ export default defineNextConfig(
     // Turbopack is the default bundler as of Next 16. The OpenTelemetry packages
     // that produced the `require-in-the-middle` webpack warnings are listed in
     // `serverExternalPackages` below, so Turbopack externalizes them and never
-    // emits those warnings — an empty config just acknowledges we're on Turbopack
-    // and silences Next's "webpack config with no turbopack config" build error.
-    turbopack: {},
+    // emits those warnings. Having a turbopack config also silences Next's
+    // "webpack config with no turbopack config" build error.
+    turbopack: {
+      // Production builds import the tRPC routers statically (one module graph used less than
+      // half the peak build memory of a loader chunk per router). Dev keeps the dynamic imports in
+      // ./loaders so a service edit rebuilds only its router's chunk.
+      resolveAlias:
+        process.env.NODE_ENV === 'production'
+          ? { '~/server/routers/loaders': './src/server/routers/loaders.static.ts' }
+          : {},
+    },
     // Per-branch build dir. Turbopack's dev filesystem cache (~8GB) is invalidated
     // wholesale by an in-place branch switch, so the dev daemon points each branch at
     // its own dir and keeps them warm instead of purging. Unset -> stock `.next`.

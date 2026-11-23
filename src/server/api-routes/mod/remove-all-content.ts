@@ -6,6 +6,8 @@ import {
   LegalHoldError,
   LegalHoldStoppedError,
   legalHoldMessage,
+  ProfileArchiveRefusedError,
+  PURGE_ARCHIVE_REFUSAL,
 } from '~/server/services/legal-hold.service';
 import { removeAllContent } from '~/server/services/user.service';
 import { handleEndpointError, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -32,6 +34,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       claimedModeratorId: moderatorId ?? null,
     }));
   } catch (e) {
+    // A 503 the moderator app tells apart from a lost answer by its message: nothing was deleted.
+    if (e instanceof ProfileArchiveRefusedError)
+      return res.status(503).json({ message: PURGE_ARCHIVE_REFUSAL });
     if (!(e instanceof LegalHoldError)) throw e;
     // Part of the account was deleted, so it is recorded like a wipe that finished.
     const stopped = e instanceof LegalHoldStoppedError;

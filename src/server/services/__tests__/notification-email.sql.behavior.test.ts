@@ -29,6 +29,7 @@ const migration = (dir: string) =>
 const db = { pg: null as unknown as PGlite };
 
 const DEAL = 'service-deal-requested';
+const REVIEW_DUE = serviceDealNotificationTypes.reviewDue;
 /** The types 20261203120100_deal_push_default_backfill granted. */
 const FIRST_DEAL_PUSH_TYPES: string[] = [
   'service-deal-requested',
@@ -153,15 +154,32 @@ describe('deal push backfill', () => {
     await later();
     await later();
 
-    // Exactly the deal types the first backfill did not cover, spelled as the registry spells them.
+    // Exactly the deal types neither the first backfill nor a later one covers, spelled as the
+    // registry spells them.
     expect((await pushTypes(1)).filter((t) => t !== 'service-deal-accepted')).toEqual(
       Object.values(serviceDealNotificationTypes)
-        .filter((t) => !FIRST_DEAL_PUSH_TYPES.includes(t))
+        .filter((t) => !FIRST_DEAL_PUSH_TYPES.includes(t) && t !== REVIEW_DUE)
         .sort()
     );
     // Deal push turned off, a choice already made about the new notices, and no subscription.
     expect(await pushTypes(2)).toEqual(['new-mention']);
     expect(await pushTypes(3)).toEqual(['service-deal-accepted', 'service-deal-overdue']);
     expect(await pushTypes(5)).toEqual(['service-deal-accepted']);
+  });
+
+  it('gives the review reminder to subscribers who still take deal push', async () => {
+    await db.pg.exec(`
+      INSERT INTO "PushSubscription" ("userId") VALUES (1), (2);
+      INSERT INTO "UserPushSetting" VALUES
+        (1, 'service-deal-completed'),
+        (2, 'new-mention'),
+        (3, 'service-deal-completed');
+    `);
+    await db.pg.exec(migration('20271120220000_review_due_push_backfill'));
+
+    expect(await pushTypes(1)).toEqual(['service-deal-completed', REVIEW_DUE]);
+    // Deal push turned off, and no subscription.
+    expect(await pushTypes(2)).toEqual(['new-mention']);
+    expect(await pushTypes(3)).toEqual(['service-deal-completed']);
   });
 });

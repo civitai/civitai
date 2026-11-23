@@ -198,7 +198,8 @@ beforeAll(async () => {
       "status"      "ArticleStatus" NOT NULL,
       "publishedAt" timestamp,
       "nsfwLevel"   integer NOT NULL,
-      "ingestion"   "ArticleIngestionStatus" NOT NULL DEFAULT 'Scanned'
+      "ingestion"   "ArticleIngestionStatus" NOT NULL DEFAULT 'Scanned',
+      "availability" "Availability" NOT NULL DEFAULT 'Public'
     );
 
     INSERT INTO "Collection" ("id","userId","mode") VALUES

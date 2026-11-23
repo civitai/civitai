@@ -3,6 +3,10 @@ import { env } from '$env/dynamic/private';
 import {
   MOD_ACTION,
   abuseReportInput,
+  caseDefinitionsInput,
+  caseIntakeInput,
+  casePartyActionInput,
+  casePartyViewInput,
   feedbackTriageInput,
   imageModerateInput,
   imageTagModerateInput,
@@ -11,6 +15,7 @@ import {
 import { hqTaskFromUrl } from '@civitai/shared/clickup-url';
 import {
   acceptImage,
+  isKeptForDeletedOwner,
   blockImage,
   ImageNotFoundError,
   ImageNotRestoredError,
@@ -19,12 +24,17 @@ import { CSAM_BLOCKLIST_RETRY, CsamBlocklistWriteError } from '../image-moderati
 import { recordAbuseRun } from '../abuse-detection.service';
 import { logToAxiom } from '../axiom';
 import { getClickhouse } from '../clickhouse';
-import { dbRead } from '../db';
+import { caseIntake, defaultCaseIntakeDeps } from '../cases/case-intake-action';
+import { casePartyAction, casePartyView, defaultCasePartyDeps } from '../cases/case-party';
+import { enabledDefinitions, publicDefinition } from '../cases/definitions';
+import { civitaiAppUrl } from '../civitai-url';
+import { dbRead, dbWrite } from '../db';
 import { triageFeedback } from '../feedback.service';
 import { getModeratorDb } from '../moderator-db';
 import { relabelBuildBatchAction } from '../relabel-batch-build';
 import { heldRemovalMessage, type HeldRemoval } from '../removal-hold';
 import { moderateImageTags } from '../image-tags.service';
+import { SYSTEM_USER_ID } from '../users.service';
 
 // The cross-app moderator-action registry. Each entry maps an action the main app invokes over
 // `/api/mod/[action]` to a spoke handler. The input SCHEMA is the shared `@civitai/moderation` contract
@@ -77,11 +87,13 @@ const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
     const notFound: number[] = [];
     const csamBlocklistFailed: number[] = [];
     const restored: number[] = [];
+    // Accepted but kept blocked while the owner is deleted: not restored.
+    const kept: number[] = [];
     for (const imageId of ids) {
       // Delegated accept uses the smart default (removeMinorFlag is a spoke-only, minor-page option).
       if (reviewAction === 'unblock')
         await acceptImage({ imageId, userId, restoreRemoved: true }).then(
-          () => restored.push(imageId),
+          async () => ((await isKeptForDeletedOwner(imageId)) ? kept : restored).push(imageId),
           (e) => {
             if (e instanceof ImageNotRestoredError) notRestored.push(imageId);
             else if (e instanceof ImageNotFoundError) notFound.push(imageId);
@@ -113,7 +125,7 @@ const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
       throw Object.assign(new Error(notRestoredMessage(notRestored, notFound, restored)), {
         status: 409,
       });
-    return { count: ids.length };
+    return { count: ids.length, restored: restored.length, kept: kept.length };
   },
 };
 
@@ -214,10 +226,52 @@ const imageTagModerate: ModAction<z.infer<typeof imageTagModerateInput>> = {
   },
 };
 
+/** The open takedown forms, as the public pages draw them: fields only, nothing moderator-side. */
+const caseDefinitions: ModAction<z.infer<typeof caseDefinitionsInput>> = {
+  schema: caseDefinitionsInput,
+  handler: async () => ({
+    definitions: (await enabledDefinitions()).map((d) => publicDefinition(d.definition)),
+  }),
+};
+
+/**
+ * A public takedown request from the main app's form. No acting user: the caller holds only the
+ * scoped intake credential, and `submitterUserId` is recorded, never trusted for access.
+ */
+const caseIntakeAction: ModAction<z.infer<typeof caseIntakeInput>> = {
+  schema: caseIntakeInput,
+  handler: (input) =>
+    caseIntake(
+      input,
+      defaultCaseIntakeDeps({
+        mainDb: dbWrite,
+        appUrl: civitaiAppUrl(),
+        systemUserId: SYSTEM_USER_ID,
+        log: ({ name, ...payload }) => void logToAxiom({ name, payload }),
+      })
+    ),
+};
+
+/** A party's own view of their case, opened by the link token the main app forwards on every call. */
+const casePartyViewAction: ModAction<z.infer<typeof casePartyViewInput>> = {
+  schema: casePartyViewInput,
+  handler: (input) => casePartyView(input, defaultCasePartyDeps(dbWrite)),
+};
+
+/** A party's public action on their case (adding information, reporting a suit), by the same token. */
+const casePartyActionAction: ModAction<z.infer<typeof casePartyActionInput>> = {
+  schema: casePartyActionInput,
+  handler: (input) => casePartyAction(input, defaultCasePartyDeps(dbWrite)),
+};
+
 export const modActions: Record<string, ModAction> = {
   [MOD_ACTION.imageModerate]: imageModerate,
   [MOD_ACTION.abuseReport]: abuseReport,
   [MOD_ACTION.relabelBuildBatch]: relabelBuildBatch,
   [MOD_ACTION.feedbackTriage]: feedbackTriage,
   [MOD_ACTION.imageTagModerate]: imageTagModerate,
+  [MOD_ACTION.caseDefinitions]: caseDefinitions,
+  [MOD_ACTION.caseIntake]: caseIntakeAction,
+  [MOD_ACTION.casePartyView]: casePartyViewAction,
+  [MOD_ACTION.casePartyAction]: casePartyActionAction,
 };

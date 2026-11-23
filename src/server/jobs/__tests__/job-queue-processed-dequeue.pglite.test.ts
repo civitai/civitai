@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
-import { deleteProcessedJobQueueItems } from '~/server/jobs/job-queue';
+import { deleteProcessedJobQueueItems, jobQueueJobs } from '~/server/jobs/job-queue';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 
 vi.setConfig({ hookTimeout: 60_000 });
@@ -73,6 +73,43 @@ describe('deleteProcessedJobQueueItems', () => {
       { entityId: 2, entityType: 'Model', type: 'UpdateNsfwLevel' },
       { entityId: 1, entityType: 'Post', type: 'CleanUp' },
       { entityId: 1, entityType: 'Post', type: 'UpdateNsfwLevel' },
+    ]);
+  });
+});
+
+describe('job-queue-cleanup', () => {
+  it('keeps a CleanUp row its replica read did not see', async () => {
+    // Row 1 is the one the replica returned; row 2 reached the primary but not yet the replica.
+    await db.exec(`
+      INSERT INTO "JobQueue" ("entityId", "entityType", type, "createdAt") VALUES
+        (2, 'Post', 'CleanUp', '${READ_AT}');
+    `);
+    dbMock.dbRead.jobQueue.findMany.mockResolvedValue([
+      {
+        entityId: 1,
+        entityType: EntityType.Post,
+        type: JobQueueType.CleanUp,
+        createdAt: new Date(`${READ_AT}Z`),
+      },
+    ] as never);
+    dbMock.dbWrite.jobQueue.deleteMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { type: string; createdAt: { lt: Date } };
+    }) => {
+      await db.query(
+        'DELETE FROM "JobQueue" WHERE type = $1::"JobQueueType" AND "createdAt" < $2',
+        [where.type, where.createdAt.lt.toISOString()]
+      );
+    }) as never);
+
+    const cleanup = jobQueueJobs.find((job) => job.name === 'job-queue-cleanup')!;
+    await cleanup.run({}).result;
+
+    expect(await remaining()).toEqual([
+      { entityId: 2, entityType: 'Model', type: 'UpdateNsfwLevel' },
+      { entityId: 1, entityType: 'Post', type: 'UpdateNsfwLevel' },
+      { entityId: 2, entityType: 'Post', type: 'CleanUp' },
     ]);
   });
 });

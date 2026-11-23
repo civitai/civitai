@@ -4,25 +4,42 @@
 package metrics
 
 import (
+	"log/slog"
+
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/civitai/civitai/apps/app-data-go/internal/exchange"
 )
 
 // Sources are the `source` values of app_data_reads_total: where a read's answer came from.
-// `none` is a read refused before either was asked (bad request, no token, overloaded).
+// `none` is a read refused before either was asked (bad request, no token, overloaded), or a
+// registry-only read the registry did not answer (outcome `registry_only`).
 var Sources = []string{"registry", "rest", "none"}
 
 // FallbackReasons are the `reason` values of app_data_fallbacks_total: why a read went to REST.
 // `empty` is a stream that holds nothing, which the origin also answers a token it refuses.
+// `unkeyed` is a `keyPrefix` read of a stream whose records carry no key (an adapter that predates
+// private keys), which cannot be filtered.
 var FallbackReasons = []string{
 	"registry_off", "token_not_exchangeable", "empty", "capacity", "token_capacity", "not_live", "stalled",
 	"cooling_down", "invalid_token", "exchange_refused", "not_private", "too_large", "ended", "failed", "closed",
+	"block_spent", "block_cache_full", "unkeyed",
 }
 
 // CloseReasons are the `reason` values of app_data_streams_closed_total (session.Close*).
-var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "revoked", "too_large", "end", "malformed", "error", "shutdown"}
+var CloseReasons = []string{"idle", "age", "expiry", "invalid_token", "exchange_refused", "not_private", "revoked", "too_large", "end", "malformed", "error", "shutdown", "block_spent", "block_cache_full"}
 
-// Outcomes are the `outcome` values of app_data_reads_total.
-var Outcomes = []string{"ok", "refused", "bad_request", "unauthenticated", "busy", "error"}
+// Outcomes are the `outcome` values of app_data_reads_total. `registry_only` is a read that asked for
+// the registry's answer only (api.RegistryOnlyHeader) and that the registry could not answer: REST
+// was not read, and the read is not counted in app_data_fallbacks_total.
+var Outcomes = []string{"ok", "refused", "bad_request", "unauthenticated", "busy", "error", "registry_only"}
+
+// BlockOutcomes are the `outcome` values of app_data_block_exchanges_total (exchange.Block*). Only
+// `refused` and `remembered` carry a refusal code in `error` (exchange.RefusalCodes); the rest `none`.
+var BlockOutcomes = []string{
+	exchange.BlockIssued, exchange.BlockReused, exchange.BlockRefused, exchange.BlockRemembered,
+	exchange.BlockFailed, exchange.BlockSpent, exchange.BlockFull, exchange.BlockUnverifiable,
+}
 
 // Metrics holds the series.
 type Metrics struct {
@@ -31,6 +48,9 @@ type Metrics struct {
 	StreamsOpened prometheus.Counter
 	StreamsClosed *prometheus.CounterVec
 	ReadTime      *prometheus.HistogramVec
+	// BlockExchanges counts App Block token exchanges by outcome and refusal code; zero while the block
+	// exchange is off.
+	BlockExchanges *prometheus.CounterVec
 }
 
 // Stats is what the session manager holds now (session.Stats), read at scrape time.
@@ -60,13 +80,17 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 			Help:    "Time to answer a read, by where the answer came from.",
 			Buckets: []float64{.001, .005, .01, .05, .1, .25, .5, 1, 2, 4, 8},
 		}, []string{"source"}),
+		BlockExchanges: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "app_data_block_exchanges_total",
+			Help: "App Block token exchanges at the hub, by outcome (issued, reused, refused, remembered, failed, spent, full, unverifiable) and the refusal code (local: refused here, never sent).",
+		}, []string{"outcome", "error"}),
 	}
 	gauge := func(name, help string, pick func(s, l, r, b int) int) prometheus.Collector {
 		return prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: name, Help: help}, func() float64 {
 			return float64(pick(stats()))
 		})
 	}
-	reg.MustRegister(m.Reads, m.Fallbacks, m.StreamsOpened, m.StreamsClosed, m.ReadTime,
+	reg.MustRegister(m.Reads, m.Fallbacks, m.StreamsOpened, m.StreamsClosed, m.ReadTime, m.BlockExchanges,
 		gauge("app_data_streams_open", "Per-user registry streams open now (each counts against the origin's subscription caps).",
 			func(s, _, _, _ int) int { return s }),
 		gauge("app_data_streams_live", "Open streams that have sent Live, so reads are answered from them.",
@@ -89,5 +113,29 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 	for _, r := range CloseReasons {
 		m.StreamsClosed.WithLabelValues(r)
 	}
+	for _, o := range BlockOutcomes {
+		if o != exchange.BlockRefused && o != exchange.BlockRemembered {
+			m.BlockExchanges.WithLabelValues(o, "none")
+			continue
+		}
+		for _, c := range exchange.RefusalCodes {
+			m.BlockExchanges.WithLabelValues(o, c)
+		}
+	}
 	return m
+}
+
+// ObserveBlockExchange is the exchange.BlockCache observer: it counts each outcome and logs every one
+// that sends the read to REST, with the hub's refusal code. Neither carries a token, user or app.
+func (m *Metrics) ObserveBlockExchange(log *slog.Logger) func(outcome, code string) {
+	return func(outcome, code string) {
+		m.BlockExchanges.WithLabelValues(outcome, code).Inc()
+		// A token refused here or not checkable here is counted, not logged: a flood of made-up tokens (or a
+		// JWKS outage) must not become a flood of log lines.
+		if log == nil || outcome == exchange.BlockIssued || outcome == exchange.BlockReused ||
+			outcome == exchange.BlockUnverifiable || code == exchange.LocalRefusalCode {
+			return
+		}
+		log.Info("block token not exchanged; the read goes to REST", "outcome", outcome, "error", code)
+	}
 }

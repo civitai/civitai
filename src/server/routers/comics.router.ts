@@ -50,10 +50,11 @@ import {
 import {
   imageNotRestrictedWhere,
   imageRestrictionSelect,
-  isImageNotRestricted,
+  isImageServable,
   withServableImage,
 } from '~/server/common/image-visibility';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { panelSourceImageUrl, viewerPanelMetadata } from '~/server/services/comics/panel-metadata';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
@@ -121,8 +122,9 @@ import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { getImageUploadBackend } from '~/utils/s3-utils';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
 import {
-  assertClientImageUrlsUsable,
-  assertClientKeysIssuedToCaller,
+  assertBareUploadKeys,
+  COVER_IMAGE_UNAVAILABLE_MESSAGE,
+  isBareUploadKey,
 } from '~/server/services/image-url-ownership';
 import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
 import {
@@ -340,12 +342,14 @@ const isChapterOwner = middleware(async ({ ctx, next, input = {} }) => {
 });
 
 // Schemas
+const uploadKeySchema = z.string().refine(isBareUploadKey, COVER_IMAGE_UNAVAILABLE_MESSAGE);
+
 const createProjectSchema = z.object({
   name: z.string().min(1).max(255),
   description: z.string().max(5000).optional(),
   genre: z.nativeEnum(ComicGenre).optional(),
-  coverUrl: z.string().optional(),
-  heroUrl: z.string().optional(),
+  coverUrl: uploadKeySchema.optional(),
+  heroUrl: uploadKeySchema.optional(),
   heroImagePosition: z.number().int().min(0).max(100).optional(),
 });
 
@@ -378,7 +382,7 @@ const addReferenceImagesSchema = z.object({
   images: z
     .array(
       z.object({
-        url: z.string().min(1),
+        url: uploadKeySchema,
         width: z.number().int().positive(),
         height: z.number().int().positive(),
       })
@@ -422,10 +426,8 @@ const createPanelSchema = z.object({
 
 const updatePanelSchema = z.object({
   panelId: z.number().int(),
-  status: z.nativeEnum(ComicPanelStatus).optional(),
+  status: z.literal(ComicPanelStatus.Generating).optional(),
   imageUrl: z.string().nullish(),
-  civitaiJobId: z.string().optional(),
-  errorMessage: z.string().nullish(),
 });
 
 const deletePanelSchema = z.object({
@@ -497,7 +499,7 @@ const enhancePanelSchema = z.object({
   chapterPosition: z.number().int().min(0),
   referenceIds: z.array(z.number().int()).optional(),
   selectedImageIds: z.array(z.number().int()).optional(),
-  sourceImageUrl: z.string().min(1),
+  sourceImageUrl: uploadKeySchema,
   sourceImageWidth: z.number().int().positive(),
   sourceImageHeight: z.number().int().positive(),
   prompt: z.string().max(2000).optional(),
@@ -546,7 +548,7 @@ const bulkCreatePanelsSchema = z.object({
         // For generation mode (text prompt -> image)
         prompt: z.string().max(2000).optional(),
         // For upload/enhance mode (source image -> comic panel)
-        sourceImageUrl: z.string().optional(),
+        sourceImageUrl: uploadKeySchema.optional(),
         sourceImageWidth: z.number().int().positive().optional(),
         sourceImageHeight: z.number().int().positive().optional(),
         // For import mode (existing image ID)
@@ -685,6 +687,14 @@ async function assertReferencePanelImageUnblocked(
 }
 
 // Shared helper: resolve a reference's images for generation
+async function primarySourceRows(urls: string[]) {
+  // primary: a block or re-rating must show up on the next read, not after replica lag.
+  return dbWrite.image.findMany({
+    where: { url: { in: urls } },
+    select: { url: true, ...imageRestrictionSelect },
+  });
+}
+
 async function getReferenceImages(referenceId: number) {
   const reference = await dbRead.comicReference.findUnique({
     where: { id: referenceId },
@@ -1038,7 +1048,7 @@ export const comicsRouter = router({
       for (const ref of references) {
         ref.images = ref.images.filter(
           (ri) =>
-            isImageNotRestricted(ri.image, ctx.user.id) &&
+            isImageServable(ri.image, ctx.user.id) &&
             (!ctx.features.isGreen ||
               !ri.image.nsfwLevel ||
               hasSafeBrowsingLevel(ri.image.nsfwLevel))
@@ -1176,7 +1186,33 @@ export const comicsRouter = router({
         stripNsfwPanelImages([chapter], true);
       }
 
-      return chapter;
+      // A source URL can match several Image rows; keep it only if every row may be shown.
+      const sources = [
+        ...new Set(
+          chapter.panels
+            .map((p) => panelSourceImageUrl(p.metadata))
+            .filter((v): v is string => v !== null)
+        ),
+      ];
+      const sourceRows = sources.length ? await primarySourceRows(sources) : [];
+      const keepSourceImage = (value: string) => {
+        const rows = sourceRows.filter((row) => row.url === value);
+        return (
+          rows.length > 0 &&
+          rows.every(
+            (row) =>
+              isImageServable(row, ctx.user.id) &&
+              (!ctx.features.isGreen || hasSafeBrowsingLevel(row.nsfwLevel))
+          )
+        );
+      };
+      return {
+        ...chapter,
+        panels: chapter.panels.map((panel) => ({
+          ...panel,
+          metadata: viewerPanelMetadata(panel.metadata, { isOwner, keepSourceImage }),
+        })),
+      };
     }),
 
   getProjectForReader: comicProtectedProcedure
@@ -1588,9 +1624,16 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(updateProjectSchema)
     .mutation(async ({ ctx, input }) => {
-      const project = await dbRead.comicProject.findUnique({
+      // primary: a lagging replica would show a just-saved cover as changed and refuse it.
+      const project = await dbWrite.comicProject.findUnique({
         where: { id: input.id },
-        select: { userId: true, coverImageId: true, heroImageId: true },
+        select: {
+          userId: true,
+          coverImageId: true,
+          heroImageId: true,
+          coverImage: { select: { url: true } },
+          heroImage: { select: { url: true } },
+        },
       });
       if (!project || project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
@@ -1608,7 +1651,21 @@ export const comicsRouter = router({
       if (input.heroImagePosition !== undefined) data.heroImagePosition = input.heroImagePosition;
       if (input.meta !== undefined) data.meta = input.meta;
 
-      // Cover image: accept either an existing Image ID or a CF URL (creates Image record)
+      const coverChanged =
+        input.coverImageId === undefined &&
+        input.coverUrl !== undefined &&
+        input.coverUrl !== project.coverImage?.url;
+      const heroChanged =
+        input.heroImageId === undefined &&
+        input.heroUrl !== undefined &&
+        input.heroUrl !== project.heroImage?.url;
+      // Both, before either image is created.
+      assertBareUploadKeys([
+        coverChanged ? input.coverUrl || null : null,
+        heroChanged ? input.heroUrl || null : null,
+      ]);
+
+      // Cover image: an existing Image ID, or an uploaded image (creates an Image record).
       if (input.coverImageId !== undefined) {
         // A route may only point at an image the caller may use. Clearing, or re-sending the
         // project's current image, needs no lookup.
@@ -1616,7 +1673,7 @@ export const comicsRouter = router({
           await getOwnedImageOrThrow(input.coverImageId, ctx.user.id);
         }
         data.coverImageId = input.coverImageId;
-      } else if (input.coverUrl !== undefined) {
+      } else if (coverChanged) {
         if (input.coverUrl) {
           const image = await createImage({
             url: input.coverUrl,
@@ -1630,13 +1687,13 @@ export const comicsRouter = router({
         }
       }
 
-      // Hero image: accept either an existing Image ID or a CF URL (creates Image record)
+      // Hero image: an existing Image ID, or an uploaded image (creates an Image record).
       if (input.heroImageId !== undefined) {
         if (input.heroImageId !== null && input.heroImageId !== project.heroImageId) {
           await getOwnedImageOrThrow(input.heroImageId, ctx.user.id);
         }
         data.heroImageId = input.heroImageId;
-      } else if (input.heroUrl !== undefined) {
+      } else if (heroChanged) {
         if (input.heroUrl) {
           const image = await createImage({
             url: input.heroUrl,
@@ -2435,7 +2492,8 @@ export const comicsRouter = router({
     .input(updatePanelSchema)
     .mutation(async ({ ctx, input }) => {
       // Verify ownership via chapter -> project
-      const panel = await dbRead.comicPanel.findUnique({
+      // primary: the image url check below compares against the value about to be overwritten.
+      const panel = await dbWrite.comicPanel.findUnique({
         where: { id: input.panelId },
         include: { chapter: { include: { project: { select: { userId: true } } } } },
       });
@@ -2443,18 +2501,16 @@ export const comicsRouter = router({
       if (!panel || panel.chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
-      if (input.imageUrl && input.imageUrl !== panel.imageUrl) {
-        await assertClientImageUrlsUsable({ urls: [input.imageUrl], userId: ctx.user.id });
-        await assertClientKeysIssuedToCaller({ urls: [input.imageUrl], userId: ctx.user.id });
+      if (input.imageUrl != null && input.imageUrl !== panel.imageUrl) {
+        throw throwBadRequestError('A panel image is changed through replacePanelImage');
       }
 
       const updated = await dbWrite.comicPanel.update({
         where: { id: input.panelId },
         data: {
           status: input.status,
-          imageUrl: input.imageUrl,
-          civitaiJobId: input.civitaiJobId,
-          errorMessage: input.errorMessage,
+          // Only clearing is written; any other value is the current one.
+          imageUrl: input.imageUrl === null ? null : undefined,
         },
       });
 
@@ -2465,13 +2521,23 @@ export const comicsRouter = router({
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(z.object({ panelId: z.number().int(), imageUrl: z.string().min(1) }))
     .mutation(async ({ ctx, input }) => {
-      const panel = await dbRead.comicPanel.findUnique({
+      // primary: a lagging replica would show a just-saved image as changed and refuse it.
+      const panel = await dbWrite.comicPanel.findUnique({
         where: { id: input.panelId },
-        include: { chapter: { include: { project: { select: { userId: true, id: true } } } } },
+        include: {
+          chapter: { include: { project: { select: { userId: true, id: true } } } },
+          image: { select: { url: true } },
+        },
       });
       if (!panel || panel.chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      const { chapter: _chapter, image: linked, ...stored } = panel;
+      const unchanged =
+        input.imageUrl === panel.imageUrl &&
+        (!isBareUploadKey(input.imageUrl) || linked?.url === input.imageUrl);
+      if (unchanged) return stored;
+      assertBareUploadKeys([input.imageUrl]);
 
       const image = await createImage({
         url: input.imageUrl,
