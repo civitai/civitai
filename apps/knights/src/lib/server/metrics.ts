@@ -51,6 +51,18 @@ const REFUSAL_KINDS = [...VOTE_KINDS, 'unknown'] as const;
 const REFUSAL_ACTIONS = ['vote', 'skip'] as const;
 export type RefusalKind = (typeof REFUSAL_KINDS)[number];
 export type RefusalAction = (typeof REFUSAL_ACTIONS)[number];
+
+/** What the client reported about a vote's press, untrusted; each field is null when missing or unreadable. */
+export type PressTiming = {
+  /** Client clock at the press, ms since the epoch. */
+  pressedAt: number | null;
+  /** Server arrival minus `pressedAt`: mixes two clocks, so skew is in it. */
+  pressGapMs: number | null;
+  /** How long the vote waited in the page's serial queue, measured on the client's own monotonic clock. */
+  waitedMs: number | null;
+  signalsConnected: boolean | null;
+  signalsSubscribed: boolean | null;
+};
 const TICK_FAILURE_STEPS = [
   'writeback',
   'moderator_ruled',
@@ -207,13 +219,14 @@ export const metrics = {
       if (count > 0) notificationsSent.inc({ kind: bounded(kind, NOTIFY_KINDS) }, count);
     }),
   // No table records a refused vote or skip, so each also leaves an Axiom event naming the player and the ledger item id
-  // (negative for a hidden check; null before the token is opened).
+  // (negative for a hidden check; null before the token is opened). `press` adds the client's press timing to the row.
   voteRefused: (
     reason: string,
     kind: RefusalKind,
     playerId: number,
     itemId: number | null,
-    action: RefusalAction
+    action: RefusalAction,
+    press?: PressTiming
   ) => {
     safely(() => voteRefusals.inc({ reason: bounded(reason, REFUSAL_REASONS), kind, action }));
     void logToAxiom({
@@ -221,7 +234,7 @@ export const metrics = {
       name: 'knights-vote-refused',
       message: `A ${action} was refused`,
       details: { reason, playerId },
-      payload: { kind, itemId, action },
+      payload: { kind, itemId, action, ...press },
     });
   },
   // No table records these three, so each also leaves one Axiom event.

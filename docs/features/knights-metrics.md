@@ -28,6 +28,15 @@ some inside a transaction, so a transaction that rolls back after that point can
 | `knights_unhandled_errors_total`        |                                                                                                                                                                                         | Server errors (status 500 and up) reaching `handleError` in `hooks.server.ts`                                                                                                                                                                                                 |
 | `knights_tick_item_failures_total`      | `step`: writeback, moderator_ruled, payout, yesno, reset, buzz_grant                                                                                                                    | Items that failed inside a tick step and wait for the next tick (the tick still answers 200)                                                                                                                                                                                  |
 
+A `knights-vote-refused` row for a `not-open` vote (the item settled before the vote arrived) also carries the client's
+report of the press, to tell a vote that waited in the page's serial queue from one pressed after the item settled:
+`pressedAt` (client clock, ms), `pressGapMs` (server arrival minus `pressedAt`; two clocks, so skew is in it), `waitedMs`
+(press to the start of the post on the client's monotonic clock: the time spent queued behind earlier votes, 0 for a plain
+form post), `signalsConnected` and `signalsSubscribed` (the live connection was open, and every stage topic the player
+judges was confirmed by the hub, at the press; [live updates](knights-live-updates.md)). Each is null when the body did not
+carry it or it did not parse. The values are untrusted: they are logged only, never used by the vote, the limits or the
+ledger, and an unreadable one never fails a vote. Other refusals log the row without them.
+
 Joins, rank-ups and career resets also log one Axiom event each (`knights-player-joined`, `knights-rank-up`,
 `knights-career-reset`, with its trigger), and `handleError` logs `knights-unhandled-error`. Live-update failures log
 `knights-live-update-failed`, `knights-live-token-failed` and `knights-live-announce-failed` ([live updates](knights-live-updates.md)).

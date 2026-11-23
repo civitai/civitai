@@ -3,7 +3,7 @@ import { isBlockReason } from '$lib/block-reasons';
 import { db } from '$lib/server/db';
 import { openItem } from '$lib/server/feed-token';
 import { imageUrl, THUMBNAIL_WIDTH } from '$lib/server/image-url';
-import { metrics } from '$lib/server/metrics';
+import { metrics, type PressTiming } from '$lib/server/metrics';
 import {
   answerHiddenCheck,
   dismissHiddenNotices,
@@ -228,15 +228,34 @@ type ParsedVote = {
   answer: string;
   blockReason: string | null;
   itemId: number;
+  press: PressTiming;
 };
 
+const MAX_WAITED_MS = 24 * 60 * 60 * 1000;
+
+/** The client's report of the press, logged on a not-open refusal: untrusted, so it never decides or fails a vote. */
+function readPress(form: FormData, arrivedAt: number): PressTiming {
+  const field = (name: string) => {
+    const value = form.get(name);
+    return typeof value === 'string' ? value : '';
+  };
+  const pressedAt = /^\d{10,16}$/.test(field('pressedAt')) ? Number(field('pressedAt')) : null;
+  const waited = /^\d{1,9}$/.test(field('waitedMs')) ? Number(field('waitedMs')) : null;
+  const signals = /^[01]{2}$/.test(field('signals')) ? field('signals') : null;
+  return {
+    pressedAt,
+    pressGapMs: pressedAt === null ? null : arrivedAt - pressedAt,
+    waitedMs: waited !== null && waited <= MAX_WAITED_MS ? waited : null,
+    signalsConnected: signals === null ? null : signals[0] === '1',
+    signalsSubscribed: signals === null ? null : signals[1] === '1',
+  };
+}
+
 /** Reads and checks the form without touching the database, so only real vote attempts reach the limits. */
-async function readVote({
-  request,
-  locals,
-}: VoteEvent): Promise<
-  { failure: ActionFailure<{ message: string }>; reason?: string } | ParsedVote
-> {
+async function readVote(
+  { request, locals }: VoteEvent,
+  arrivedAt: number
+): Promise<{ failure: ActionFailure<{ message: string }>; reason?: string } | ParsedVote> {
   const form = await request.formData();
   const token = form.get('item');
   const answer = form.get('answer');
@@ -270,20 +289,26 @@ async function readVote({
   if (ref.kind === 'yesno' && blockReason !== null) {
     return { failure: fail(400, { message: BLOCK_REASON_TEXT }), reason: 'bad-block-reason' };
   }
-  return { ref, answer, blockReason, itemId };
+  return { ref, answer, blockReason, itemId, press: readPress(form, arrivedAt) };
 }
 
 const kindOf = (ref: ParsedVote['ref']) =>
   ref.kind === 'hidden' ? 'hidden_check' : ref.kind === 'yesno' ? 'yesno' : 'rating';
 
 /** Logs and meters a refused vote under its ledger item id: a hidden check's is the negative of its reference id. */
-function refused(reason: string, vote: Pick<ParsedVote, 'ref' | 'itemId'> | null, userId: number) {
+function refused(
+  reason: string,
+  vote: Pick<ParsedVote, 'ref' | 'itemId'> | null,
+  userId: number,
+  press?: PressTiming
+) {
   metrics.voteRefused(
     reason,
     vote ? kindOf(vote.ref) : 'unknown',
     userId,
     vote ? (vote.ref.kind === 'hidden' ? hiddenItemId(vote.itemId) : vote.itemId) : null,
-    'vote'
+    'vote',
+    press
   );
 }
 
@@ -301,7 +326,10 @@ async function creditLate(userId: number, itemId: number, answer: string): Promi
   }
 }
 
-async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { locals }: VoteEvent) {
+async function recordVote(
+  { ref, answer, blockReason, itemId, press }: ParsedVote,
+  { locals }: VoteEvent
+) {
   try {
     const before =
       ref.kind === 'hidden' || !(await signalsEnabled().catch(() => false))
@@ -344,7 +372,9 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
       return limitedFailure(result.until);
     }
     if (result.status === 'rejected') {
-      refused(result.reason, { ref, itemId }, locals.user.id);
+      // Press timing only on not-open: it tells a vote that waited too long from an item that settled under the player.
+      const timing = result.reason === 'not-open' ? press : undefined;
+      refused(result.reason, { ref, itemId }, locals.user.id, timing);
       const watchCounted =
         ref.kind === 'queue' &&
         STALE_REASONS.has(result.reason) &&
@@ -367,6 +397,7 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
 export const actions: Actions = {
   // Every kind of vote (rating, yes/no, hidden check) passes the Redis vote limits here, before any database work.
   vote: async (event) => {
+    const arrivedAt = queueDeps.now().getTime();
     const userId = event.locals.user.id;
     if ((await getStanding(db, userId)).muted) {
       refused('muted', null, userId);
@@ -376,7 +407,7 @@ export const actions: Actions = {
       refused('no-consent', null, userId);
       return consentFailure();
     }
-    const parsed = await readVote(event);
+    const parsed = await readVote(event, arrivedAt);
     if ('failure' in parsed) {
       if (parsed.reason) refused(parsed.reason, null, userId);
       return parsed.failure;
