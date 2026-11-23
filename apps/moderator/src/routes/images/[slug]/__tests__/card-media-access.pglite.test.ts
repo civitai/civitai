@@ -6,8 +6,8 @@ import { pgliteDialect } from '$lib/server/__tests__/abuse-detection-pglite.harn
 import { APPEAL_MEDIA_SCHEMA as SCHEMA } from '$lib/server/__tests__/appeal-media-schema';
 
 /**
- * What the card load sends for an image kept to moderators with the restricted
- * review grant: the row, with nothing a tile or a link could load the image from. The tile asks the
+ * What the card load sends for an image withheld from a moderator without the restricted-review
+ * grant: the row, with nothing a tile or a link could load the image from. The tile asks the
  * CDN for whatever url the load gives it before the page hydrates, so the load is where it is
  * stripped, and these tests read the load's own return value.
  */

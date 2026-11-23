@@ -8,8 +8,8 @@ export const retractedMediaUrl = (imageId: number) => `/api/retracted-media/${im
 export const RETRACTED_REFUSED =
   'Not viewable here. It may need CSAM-queue access or be unavailable; ask a lead.';
 
-/** What an appeal card shows in place of the ruling form, and the image actions that check it answer, when the
- *  image is kept from this moderator. It names no reason. */
+/** The refusal shown, and returned by image actions, when the image is withheld from this
+ *  moderator. Names no reason. */
 export const APPEAL_RULING_REFUSED = 'Not ruled on here. Ask a lead.';
 
 /** Asks the route why it refused an image, without serving it, and returns the tile's line. */

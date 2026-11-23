@@ -597,8 +597,8 @@ export type AppealImageItem = {
   width: number | null;
   height: number | null;
   type: MediaType | null;
-  /** Kept to moderators with the CSAM grant: served without `url`, `width`, `height`, `type`,
-   *  `blockedFor`, `tosReason` or `reports`. */
+  /** Withheld from this moderator by the media access rule (`restrictedImageIds`): served without
+   *  `url`, `width`, `height`, `type`, `blockedFor`, `tosReason` or `reports`. */
   restricted: boolean;
   needsReview: string | null;
   minor: boolean;
