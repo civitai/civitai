@@ -4,7 +4,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { getCacheRedis, getSysRedis } from '../redis';
 import { createLimitsSource } from './config';
 import { createVoteGate, type GateClient, type Pause } from './gate';
-import { voteLockout, votePause } from './lockout';
+import { votePause } from './lockout';
 
 /** The moderators tune these live on the original game's key, so one setting paces both games. */
 export const limitsSource = createLimitsSource({
@@ -17,9 +17,6 @@ export const voteGate = createVoteGate({
   client: () => getCacheRedis() as unknown as GateClient,
   limits: () => limitsSource.load(),
 });
-
-export const lockoutFor = (db: Kysely<DB>, userId: number, now: Date, floor: Date | null = null) =>
-  voteLockout(db, userId, now, { gate: voteGate, limits: limitsSource }, floor);
 
 /** The pause in force and the window that set it, for copy that names the limit. */
 export const pauseFor = (db: Kysely<DB>, userId: number, now: Date, floor: Pause | null = null) =>

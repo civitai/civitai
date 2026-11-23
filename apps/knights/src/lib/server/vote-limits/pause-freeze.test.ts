@@ -1,4 +1,4 @@
-// The vote action, the real gate (its Lua over fake Redis) and the real `voteLockout`, with the ledger read
+// The vote action, the real gate (its Lua over fake Redis) and the real `votePause`, with the ledger read
 // (`voteLockUntil`) standing on an in-memory list of vote times: what a player is shown while paused.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { limitsFromConfig } from './config';
@@ -9,7 +9,7 @@ import { createVoteGate, type VoteGate } from './gate';
 const T0 = new Date('2026-12-15T12:00:00Z').getTime();
 const MIN = 60_000;
 const clock = vi.hoisted(() => ({ ms: 0 }));
-// `reads` counts the ledger reads behind `lockoutFor`; `failing` makes them throw (a degraded database).
+// `reads` counts the ledger reads behind `pauseFor`; `failing` makes them throw (a degraded database).
 const ledger = vi.hoisted(() => ({ rows: [] as number[], reads: 0, failing: false }));
 const live = vi.hoisted(() => ({ config: null as unknown }));
 const redisCtl = vi.hoisted(() => ({ down: false }));
@@ -70,7 +70,7 @@ vi.mock('$lib/server/queue/vote-rate', async (original) => ({
   },
 }));
 vi.mock('$lib/server/vote-limits/runtime', async () => {
-  const { voteLockout, votePause } = await import('$lib/server/vote-limits/lockout');
+  const { votePause } = await import('$lib/server/vote-limits/lockout');
   const { limitsFromConfig } = await import('$lib/server/vote-limits/config');
   const deps = () => ({
     gate: gate.current,
@@ -79,21 +79,13 @@ vi.mock('$lib/server/vote-limits/runtime', async () => {
   return {
     pauseFor: (db: unknown, userId: number, now: Date, floor: Pause | null = null) =>
       votePause(db as never, userId, now, deps(), floor),
-    lockoutFor: (db: unknown, userId: number, now: Date, floor: Date | null = null) =>
-      voteLockout(
-        db as never,
-        userId,
-        now,
-        { gate: gate.current, limits: { load: async () => limitsFromConfig(live.config) } },
-        floor
-      ),
     voteGate: new Proxy({}, { get: (_, key) => gate.current[key as keyof VoteGate] }),
   };
 });
 
 const { sealItem } = await import('$lib/server/feed-token');
 const { actions } = await import('../../../routes/play/+page.server');
-const { lockoutFor } = await import('$lib/server/vote-limits/runtime');
+const { pauseFor } = await import('$lib/server/vote-limits/runtime');
 
 type Answer =
   | { status?: number; data?: { lockoutSeconds?: number; busy?: true } }
@@ -121,7 +113,8 @@ const endOf = (res: Answer) =>
     ? clock.ms + res.data.lockoutSeconds * 1000
     : null;
 /** The end `/play` would show now, in ms. */
-const show = async () => (await lockoutFor({} as never, 7, new Date(clock.ms)))?.getTime() ?? null;
+const show = async () =>
+  (await pauseFor({} as never, 7, new Date(clock.ms)))?.until.getTime() ?? null;
 
 beforeEach(() => {
   store = fakeRedis();

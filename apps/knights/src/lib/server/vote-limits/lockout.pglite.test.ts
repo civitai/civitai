@@ -13,7 +13,7 @@ import {
 import type { VoteLimit } from '../queue/vote-rate';
 import { fakeRedis } from './fake-redis';
 import { createVoteGate, type GateClient, type Pause } from './gate';
-import { voteLockout, votePause } from './lockout';
+import { votePause } from './lockout';
 
 const Q = 'knights.image.nsfwLevel';
 const NOW = new Date('2026-12-15T12:00:00Z');
@@ -62,8 +62,18 @@ const gateWith = (cooldown: Date | null, windowSeconds: number | null = null) =>
   freeze: async (_userId: number, _now: Date, pause: Pause) => pause,
 });
 const limits = (live: VoteLimit[]) => ({ load: async () => live });
+/** The end alone, as the countdown shows it; `floor` is an unlabelled refusal end. */
+const voteLockout = async (
+  db_: Kysely<DB>,
+  userId: number,
+  now: Date,
+  deps: Parameters<typeof votePause>[3],
+  floor: Date | null = null
+) =>
+  (await votePause(db_, userId, now, deps, floor && { until: floor, windowSeconds: null }))
+    ?.until ?? null;
 
-describe('voteLockout', () => {
+describe('votePause end', () => {
   it('is the Redis cooldown when the ledger holds nothing back', async () => {
     expect(
       await voteLockout(db, 1, NOW, { gate: gateWith(at(600)), limits: limits(LIMITS) })

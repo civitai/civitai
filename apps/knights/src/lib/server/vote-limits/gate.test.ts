@@ -115,11 +115,11 @@ describe('vote gate windows', () => {
       until: new Date(10 * MINUTE),
       windowSeconds: 60,
     });
-    expect(await gate.cooldownUntil(7, at())).toEqual(new Date(10 * MINUTE));
+    expect((await gate.cooldown(7, at()))?.until ?? null).toEqual(new Date(10 * MINUTE));
 
     clock.now += 5 * MINUTE;
     expect(await gate.guard(7, at(), async () => 'ok')).toBe('ok');
-    expect(await gate.cooldownUntil(7, at())).toBeNull();
+    expect((await gate.cooldown(7, at()))?.until ?? null).toBeNull();
   });
 
   it('does not run the guarded work while a cooldown holds', async () => {
@@ -134,11 +134,13 @@ describe('vote gate windows', () => {
   it('cools down for an hour when the hour window trips and a day when the day window does', async () => {
     const hour = setup(limitsOf(1000, 2, 3000));
     for (let i = 0; i < 3; i++) await hour.gate.guard(7, hour.at(), async () => 'ok');
-    expect(await hour.gate.cooldownUntil(7, hour.at())).toEqual(new Date(60 * MINUTE));
+    expect((await hour.gate.cooldown(7, hour.at()))?.until ?? null).toEqual(new Date(60 * MINUTE));
 
     const day = setup(limitsOf(1000, 600, 2));
     for (let i = 0; i < 3; i++) await day.gate.guard(7, day.at(), async () => 'ok');
-    expect(await day.gate.cooldownUntil(7, day.at())).toEqual(new Date(24 * 60 * MINUTE));
+    expect((await day.gate.cooldown(7, day.at()))?.until ?? null).toEqual(
+      new Date(24 * 60 * MINUTE)
+    );
   });
 
   it('remembers which window set the cooldown, for every refusal while it runs', async () => {
@@ -193,7 +195,7 @@ describe('vote gate freeze', () => {
     expect(await gate.freeze(7, at(), pauseAt(90, 86400))).toEqual(pauseAt(90, 86400));
     expect(pttl(COOLDOWN)).toBe(90 * MINUTE);
     expect(await gate.cooldown(7, at())).toEqual(pauseAt(90, 86400));
-    expect(await gate.cooldownUntil(7, at())).toEqual(new Date(90 * MINUTE));
+    expect((await gate.cooldown(7, at()))?.until ?? null).toEqual(new Date(90 * MINUTE));
   });
 
   it('starts a cooldown that ends at the frozen time', async () => {
@@ -255,7 +257,7 @@ describe('vote gate when Redis is unavailable', () => {
 
     expect(await gate.guard(7, new Date(0), work)).toBe('ok');
     expect(work).toHaveBeenCalledOnce();
-    expect(await gate.cooldownUntil(7, new Date(0))).toBeNull();
+    expect((await gate.cooldown(7, new Date(0)))?.until ?? null).toBeNull();
     expect(log).toHaveBeenCalled();
   });
 

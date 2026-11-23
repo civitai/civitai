@@ -261,11 +261,6 @@ export function createVoteGate({ client, limits, timeoutMs = REDIS_TIMEOUT_MS }:
       }
     },
 
-    /** When a running cooldown ends, or null. */
-    async cooldownUntil(userId: number, now: Date): Promise<Date | null> {
-      return (await cooldown(userId, now))?.until ?? null;
-    },
-
     cooldown,
   };
 }

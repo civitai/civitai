@@ -684,9 +684,11 @@
     return { kind: shown.resetPending ? ('none' as const) : ('clear' as const), daily: shown.daily };
   });
   // The player's own clock and zone: rendered only in the browser, so the server's zone never shows.
+  // A primitive, so a stats signal that rebuilds `screen` does not move the time while the countdown holds still.
+  let pausedSeconds = $derived(screen.kind === 'lockout' ? screen.seconds : null);
   let reopensAt = $state<string | null>(null);
   $effect(() => {
-    const seconds = screen.kind === 'lockout' ? screen.seconds : null;
+    const seconds = pausedSeconds;
     reopensAt = seconds
       ? new Date(Date.now() + seconds * 1000).toLocaleString(undefined, {
           weekday: seconds > 12 * 3600 ? 'short' : undefined,
@@ -911,17 +913,11 @@
       {@render levelToast(false)}
       <section class="lockout" role="status" aria-label="Judging paused">
         <h2>A moment of rest</h2>
-        {#if screen.limit}
-          <p>
-            You reached {screen.limit}. It says nothing about your accuracy. Rest a little; the
-            queue will wait.
-          </p>
-        {:else}
-          <p>
-            You reached the Order's pace limit: too many judgments in too short a time. It says
-            nothing about your accuracy. Rest a little; the queue will wait.
-          </p>
-        {/if}
+        <p>
+          {#if screen.limit}You reached {screen.limit}.{:else}You reached the Order's pace limit: too
+            many judgments in too short a time.{/if} It says nothing about your accuracy. Rest a little;
+          the queue will wait.
+        </p>
         <Countdown seconds={screen.seconds} label="Time until judging resumes" />
         <p class="muted">
           {#if reopensAt}Voting reopens at {reopensAt}, by itself.{:else}Judging resumes by itself.{/if}

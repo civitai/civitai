@@ -9,29 +9,13 @@ type LockoutDeps = {
 };
 
 /**
- * When a player may vote again, or null: the latest of the Redis cooldown, what the ledger says and `floor` (the end a
- * vote refusal was given). The play page, the feed and every pace refusal answer this, so they show one countdown.
+ * When a player may vote again and the window that set it, or null: the latest of the Redis cooldown, what the ledger says
+ * and `floor` (the pause a refusal gave, with its window when it knew it). The play page, the feed and every pace refusal
+ * answer this, so they show one countdown and name one limit.
  *
  * It writes: an end past the running cooldown is frozen into it (`gate.freeze`), so the countdown never moves later during
  * a pause, however many refused votes arrive. A frozen end is fixed both ways: raising the limits does not release a
  * player already paused (as a running Redis cooldown never did); new limits apply to pauses that have not started.
- */
-export async function voteLockout(
-  db: Kysely<DB>,
-  userId: number,
-  now: Date,
-  deps: LockoutDeps,
-  floor: Date | null = null
-): Promise<Date | null> {
-  return (
-    (await votePause(db, userId, now, deps, floor && { until: floor, windowSeconds: null }))
-      ?.until ?? null
-  );
-}
-
-/**
- * `voteLockout` with the window that set the end, for copy that names the limit. `floor` is the pause a refusal gave,
- * with its window when the refusal knew it.
  */
 export async function votePause(
   db: Kysely<DB>,
