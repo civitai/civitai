@@ -183,7 +183,15 @@ function requestMeta(raw: string | Uint8Array | null | undefined): RequestMeta |
   } catch {
     return undefined;
   }
+  return jsonObjectOrUndefined(value);
+}
+
+/**
+ * A parsed JSON value as a `meta` (`RequestMeta`, `EventMeta`) holds it: a JSON object, else
+ * nothing (an array, `null` or a primitive). The one rule both bindings read a `meta` by.
+ */
+export function jsonObjectOrUndefined(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as RequestMeta)
+    ? (value as Record<string, unknown>)
     : undefined;
 }

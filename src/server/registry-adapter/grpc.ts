@@ -58,7 +58,11 @@ import type {
   RequestMeta,
   StreamEvent,
 } from '~/server/registry-adapter/protocol';
-import { ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
+import {
+  ProtocolError,
+  jsonObjectOrUndefined,
+  subscribeRequest,
+} from '~/server/registry-adapter/protocol';
 import type { PolicyEnforcer } from '~/server/registry-adapter/policy-enforce';
 import { decidePrincipal } from '~/server/registry-adapter/policy-enforce';
 import type { PolicyShadow } from '~/server/registry-adapter/policy-shadow';
@@ -237,10 +241,8 @@ type WireEvent = {
 
 /** `Event.meta` as a consumer reads it: a JSON object, or nothing when empty or not an object. */
 function eventMeta(bytes: Uint8Array | undefined): { meta?: EventMeta } {
-  const value = fromJsonBytes(bytes);
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? { meta: value as EventMeta }
-    : {};
+  const meta = jsonObjectOrUndefined(fromJsonBytes(bytes));
+  return meta ? { meta } : {};
 }
 
 /** One event off the wire, as a consumer reads it; `null` for a kind this source never sends. */
