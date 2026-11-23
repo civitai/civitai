@@ -12,7 +12,9 @@ import { Flags } from '~/shared/utils/flags';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 import { isImageNotRestricted } from '~/server/common/image-visibility';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
+import { heldUrlSql } from '@civitai/shared/held-url';
 import {
+  BLOCK_GENERATION_SOURCE_APP_ID_META_KEY,
   BLOCK_PUBLISHED_APP_ID_META_KEY,
   BLOCK_SHARED_UPLOAD_APP_ID_META_KEY,
 } from '~/shared/utils/block-provenance-metadata';
@@ -39,6 +41,11 @@ import {
  * 🔴 A SHARED-UPLOAD ROW (only the shared key matches) is judged at the viewer's
  * ceiling INTERSECTED WITH SFW, with no `ratingPending` owner branch: `pending` is
  * `hidden` for everyone, its uploader included.
+ *
+ * 🔴 A GENERATION-SOURCE ROW ({@link BLOCK_GENERATION_SOURCE_APP_ID_META_KEY}, an output the app
+ * kept privately with no publish confirm) is NOT cross-user: the SQL admits it only for its own
+ * author, from the app that kept it, and never when its url is held. Anything the clamp would not
+ * show is omitted rather than reported `hidden`.
  */
 
 /** Bound the read — a grid page never needs more, and each id is a row lookup. */
@@ -134,6 +141,8 @@ type GatedImageRow = Pick<
   /** The PUBLISHED key matches this app. Otherwise only
    *  {@link BLOCK_SHARED_UPLOAD_APP_ID_META_KEY} did (see the module note). */
   viaPublished: boolean | null;
+  /** Only {@link BLOCK_GENERATION_SOURCE_APP_ID_META_KEY} matched, which the SQL admits for the viewer's own rows only. */
+  viaSource: boolean | null;
 };
 
 export async function getBlockGatedImagesByIds(input: {
@@ -189,14 +198,25 @@ export async function getBlockGatedImagesByIds(input: {
       i."id", i."userId", i."url", i."nsfwLevel", i."ingestion", i."width", i."height",
       i."needsReview", i."poi", i."minor", i."tosViolation", i."acceptableMinor", i."blockedFor",
       i."modelRestricted",
-      (i."metadata"->>(${BLOCK_PUBLISHED_APP_ID_META_KEY}::text) IS NOT DISTINCT FROM ${input.appId})
-        AS "viaPublished"
+      (i."metadata"->>(${BLOCK_PUBLISHED_APP_ID_META_KEY}::text) IS NOT DISTINCT FROM ${
+    input.appId
+  })
+        AS "viaPublished",
+      (i."metadata"->>(${BLOCK_GENERATION_SOURCE_APP_ID_META_KEY}::text) IS NOT DISTINCT FROM ${
+    input.appId
+  })
+        AS "viaSource"
     FROM "Image" i
     WHERE i."id" = ANY(${orderedIds}::int[])
       AND i."postId" IS NULL
       AND (
         i."metadata"->>(${BLOCK_PUBLISHED_APP_ID_META_KEY}::text) = ${input.appId}
         OR i."metadata"->>(${BLOCK_SHARED_UPLOAD_APP_ID_META_KEY}::text) = ${input.appId}
+        OR (
+          i."metadata"->>(${BLOCK_GENERATION_SOURCE_APP_ID_META_KEY}::text) = ${input.appId}
+          AND i."userId" = ${input.userId}
+          AND NOT ${Prisma.raw(heldUrlSql('i."url"'))}
+        )
       )
       ${excludedUserFrag}
       ${excludedTagFrag}
@@ -209,6 +229,11 @@ export async function getBlockGatedImagesByIds(input: {
   for (const id of orderedIds) {
     const row = byId.get(id);
     if (!row) continue;
+    if (row.viaPublished !== true && row.viaSource === true) {
+      const source = ownSourceImage(row, input.browsingLevel);
+      if (source) images.push(source);
+      continue;
+    }
     if (!isImageNotRestricted(row, input.userId)) {
       images.push({ imageId: id, status: 'hidden' });
       continue;
@@ -280,4 +305,28 @@ export async function getBlockGatedImagesByIds(input: {
     });
   }
   return { images };
+}
+
+/**
+ * The viewer's own generation source (the SQL bound the row to them), clamped like a published
+ * row: a flagged, blocked or above-ceiling source is omitted, an unrated one is `ratingPending`.
+ */
+function ownSourceImage(row: GatedImageRow, browsingLevel: number): BlockGatedImage | null {
+  const verdict = classifyGatedImageForViewer(row, browsingLevel);
+  if (verdict.status === 'hidden') return null;
+  const shown = {
+    url: getEdgeUrl(row.url, { width: GATED_IMAGE_EDGE_WIDTH }),
+    width: row.width,
+    height: row.height,
+  };
+  if (verdict.status === 'pending') {
+    return { imageId: row.id, status: 'visible', ratingPending: true, ...shown };
+  }
+  return {
+    imageId: row.id,
+    status: 'visible',
+    nsfwLevel: row.nsfwLevel,
+    contentRating: contentRatingFromNsfwLevel(row.nsfwLevel),
+    ...shown,
+  };
 }
