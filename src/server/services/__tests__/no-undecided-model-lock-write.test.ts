@@ -41,6 +41,13 @@ type Decision =
   | { kind: 'exempt'; why: string };
 
 const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
+  'src/server/api-routes/admin/temp/model-nsfw-lock-backfill.ts': {
+    lockWrites: 1,
+    decision: {
+      kind: 'exempt',
+      why: 'lifts only the nsfw lock under a text-scan marker and keeps the marker, which an unlocked scan rating carries too (markScanRating)',
+    },
+  },
   'src/server/services/model.service.ts': {
     lockWrites: 18,
     decision: {

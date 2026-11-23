@@ -45,6 +45,8 @@ export const routes: ApiRoutes = {
   'send-discount': () => import('~/server/api-routes/admin/send-discount'),
   'system-account-api-key': () => import('~/server/api-routes/admin/system-account-api-key'),
   'system-account-profile': () => import('~/server/api-routes/admin/system-account-profile'),
+  'temp/__tests__/model-nsfw-lock-backfill.pglite.test': () =>
+    import('~/server/api-routes/admin/temp/__tests__/model-nsfw-lock-backfill.pglite.test'),
   'temp/app-doc-levels-backfill': () =>
     import('~/server/api-routes/admin/temp/app-doc-levels-backfill'),
   'temp/apply-models-index-displayed-attributes': () =>
@@ -88,6 +90,8 @@ export const routes: ApiRoutes = {
     import('~/server/api-routes/admin/temp/migrate-article-images'),
   'temp/minor-hash-sweep': () => import('~/server/api-routes/admin/temp/minor-hash-sweep'),
   'temp/model-image-count': () => import('~/server/api-routes/admin/temp/model-image-count'),
+  'temp/model-nsfw-lock-backfill': () =>
+    import('~/server/api-routes/admin/temp/model-nsfw-lock-backfill'),
   'temp/model-text-moderation-backfill': () =>
     import('~/server/api-routes/admin/temp/model-text-moderation-backfill'),
   'temp/queue-accelerator-models-reindex': () =>
