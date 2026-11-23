@@ -13,6 +13,7 @@
   import DataStepElements from './DataStepElements.svelte';
   import EditDataStep from './EditDataStep.svelte';
   import ReviewStep from './ReviewStep.svelte';
+  import ReviewStepElements from './ReviewStepElements.svelte';
   import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
   import {
     buildTrainingRuns,
@@ -59,6 +60,7 @@
   const elementsUi = $derived(useElements());
   const Select = $derived(elementsUi ? SelectStepElements : SelectStep);
   const Data = $derived(elementsUi ? DataStepElements : DataStep);
+  const Review = $derived(elementsUi ? ReviewStepElements : ReviewStep);
 
   const STEPS = [
     { n: 1, label: 'Select' },
@@ -487,7 +489,7 @@
       }}
     />
   {:else if step === 3 && selection}
-    <ReviewStep
+    <Review
       {selection}
       trigger={runTrigger}
       {labelMode}
