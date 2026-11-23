@@ -1,7 +1,6 @@
 import { ogImageUrl, modelOgEndpoint } from '~/components/Meta/og-image-url';
 import { env } from '~/env/server';
 import { purgeCache } from '~/server/cloudflare/client';
-import { bustPostCachesLazy } from '~/server/services/bust-post-caches-lazy';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
@@ -73,18 +72,25 @@ export const VISIBILITY_REPURGE_DELAY_MS = Math.max(env.REPLICATION_LAG_DELAY, 1
  * Drops the shared copies that can still show an image after a change to who may see it:
  * link-preview cards, the 404 gallery, its resources and the model galleries it is in. A viewer's
  * own copies expire on their short TTLs. Purges now and again after VISIBILITY_REPURGE_DELAY_MS.
- * Never throws: a failed step is logged and the others still run.
+ * Never throws: a failed step is logged and the others still run. `bustGalleries` is the
+ * caller's, so this module imports no service that imports it.
  */
-export async function invalidateImageVisibilityCaches(imageId: number) {
-  await purgeImageVisibilityCaches(imageId);
+export async function invalidateImageVisibilityCaches(
+  imageId: number,
+  { bustGalleries }: { bustGalleries: (imageId: number) => Promise<unknown> }
+) {
+  await purgeImageVisibilityCaches(imageId, bustGalleries);
   const repurge = setTimeout(
-    () => void purgeImageVisibilityCaches(imageId),
+    () => void purgeImageVisibilityCaches(imageId, bustGalleries),
     VISIBILITY_REPURGE_DELAY_MS
   );
   repurge.unref?.();
 }
 
-async function purgeImageVisibilityCaches(imageId: number) {
+async function purgeImageVisibilityCaches(
+  imageId: number,
+  bustGalleries: (imageId: number) => Promise<unknown>
+) {
   const logFailure = (name: string) => (error: unknown) =>
     logToAxiom({
       type: 'warning',
@@ -104,20 +110,6 @@ async function purgeImageVisibilityCaches(imageId: number) {
       await purgeCache({ urls, tags: [IMAGE_404_CACHE_TAG, imageResourcesEdgeTag(imageId)] });
     }),
     step('404 gallery', () => redis.purgeTags([IMAGE_404_CACHE_TAG])),
-    step('galleries', () => bustImageGalleryCaches(imageId)),
-  ]);
-}
-
-async function bustImageGalleryCaches(imageId: number) {
-  const image = await dbRead.image.findUnique({
-    where: { id: imageId },
-    select: { postId: true, post: { select: { modelVersionId: true } } },
-  });
-  // Lazy: image.service imports this module.
-  const { deleteImagesForModelVersionCache } = await import('~/server/services/image.service');
-  const modelVersionId = image?.post?.modelVersionId;
-  await Promise.all([
-    image?.postId ? bustPostCachesLazy(image.postId) : undefined,
-    modelVersionId ? deleteImagesForModelVersionCache(modelVersionId) : undefined,
+    step('galleries', () => bustGalleries(imageId)),
   ]);
 }

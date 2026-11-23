@@ -270,6 +270,7 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
+import { invalidateImageVisibilityCaches } from '~/server/services/image-visibility-invalidation.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
@@ -7740,14 +7741,23 @@ export async function updateImageAcceptableMinor({
     await invalidateManyImageExistence([id]);
   }
   if (before?.acceptableMinor !== acceptableMinor) {
-    // Lazy: the invalidation service imports this module.
-    const { invalidateImageVisibilityCaches } = await import(
-      '~/server/services/image-visibility-invalidation.service'
-    );
-    await invalidateImageVisibilityCaches(id);
+    await invalidateImageVisibilityCaches(id, { bustGalleries: bustImageGalleryCaches });
   }
 
   return image;
+}
+
+/** The post and model-version galleries an image appears in. */
+async function bustImageGalleryCaches(imageId: number) {
+  const image = await dbRead.image.findUnique({
+    where: { id: imageId },
+    select: { postId: true, post: { select: { modelVersionId: true } } },
+  });
+  const modelVersionId = image?.post?.modelVersionId;
+  await Promise.all([
+    image?.postId ? bustCachesForPosts(image.postId) : undefined,
+    modelVersionId ? deleteImagesForModelVersionCache(modelVersionId) : undefined,
+  ]);
 }
 
 export async function getImageResourcesFromImageId({
