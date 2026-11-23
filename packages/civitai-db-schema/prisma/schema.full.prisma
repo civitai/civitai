@@ -5686,6 +5686,8 @@ model CommentV3 {
   deletedAt     DateTime? @db.Timestamptz(6)
   tosViolation  Boolean   @default(false)
   hidden        Boolean   @default(false)
+  // When `hidden` last became true; a restore undoes only the hide that wrote this stamp.
+  hiddenAt      DateTime? @db.Timestamptz(6)
   locked        Boolean   @default(false)
   pinnedAt      DateTime? @db.Timestamptz(6)
   reactionCount Int       @default(0)

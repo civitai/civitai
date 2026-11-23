@@ -65,7 +65,7 @@ beforeAll(async () => {
     CREATE TABLE "CommentV3" (
       id int PRIMARY KEY, "userId" int, "entityType" "CommentEntityType", "entityId" int,
       hidden boolean NOT NULL DEFAULT false, "tosViolation" boolean NOT NULL DEFAULT false,
-      "pinnedAt" timestamptz, "deletedAt" timestamptz, "updatedAt" timestamptz
+      "pinnedAt" timestamptz, "deletedAt" timestamptz, "updatedAt" timestamptz, "hiddenAt" timestamptz
     );
   `);
 });
@@ -142,7 +142,8 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
     });
 
     expect(result).toEqual({ status: 'hidden', count: BLOCK_HIDE_MAX_COMMENTS, capped: true });
-    expect(dbMock.dbWrite.$queryRawUnsafe).toHaveBeenCalledTimes(10);
+    // Ten batches, each a row lock and then the update.
+    expect(dbMock.dbWrite.$queryRawUnsafe).toHaveBeenCalledTimes(20);
     // The ceiling's worth plus the one already hidden.
     const { rows } = await holder.db.query<{ n: number }>(
       `SELECT count(*)::int n FROM "CommentV3" WHERE "userId" = ${BLOCKED} AND hidden`
@@ -156,7 +157,10 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
       SELECT g, ${BLOCKED}, 'image', 10 FROM generate_series(20000, 22999) g;
     `);
     const translate = dbMock.dbWrite.$queryRawUnsafe.getMockImplementation()!;
+    // Two batches (lock, update each) land; the third batch's lock fails.
     dbMock.dbWrite.$queryRawUnsafe
+      .mockImplementationOnce(translate)
+      .mockImplementationOnce(translate)
       .mockImplementationOnce(translate)
       .mockImplementationOnce(translate)
       .mockRejectedValueOnce(new Error('canceling statement'));

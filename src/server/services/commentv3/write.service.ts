@@ -256,8 +256,17 @@ export async function deleteComments(db: SqlRunner, ids: number[]) {
 
 type Flags = { hidden?: boolean; tosViolation?: boolean; pinned?: boolean };
 
-/** Sets moderation flags on live comments; returns the rows it changed. */
-export async function setCommentFlags(db: SqlRunner, ids: number[], flags: Flags) {
+/**
+ * Sets moderation flags on live comments; returns the rows it changed. Locks every id first, in id
+ * order, so what the caller reads afterwards is read under the lock even when nothing changed. A
+ * hide stamps `hiddenAt` (the given one, else now) on the rows it turns hidden; a show clears it.
+ */
+export async function setCommentFlags(
+  db: SqlRunner,
+  ids: number[],
+  flags: Flags,
+  { hiddenAt }: { hiddenAt?: Date } = {}
+) {
   const sets: string[] = [];
   const params: unknown[] = [ids.join(',')];
   const changed: string[] = [];
@@ -266,11 +275,23 @@ export async function setCommentFlags(db: SqlRunner, ids: number[], flags: Flags
     sets.push(`${column} = ${set.replace('$', `$${params.length}`)}`);
     changed.push(`${column} IS DISTINCT FROM ${set.replace('$', `$${params.length}`)}`);
   };
-  if (flags.hidden !== undefined) add('hidden', flags.hidden, '$::boolean');
+  if (flags.hidden !== undefined) {
+    add('hidden', flags.hidden, '$::boolean');
+    const hide = `$${params.length}::boolean`;
+    params.push(hiddenAt ?? null);
+    // In SET, `hidden` is the value before this update.
+    sets.push(
+      `"hiddenAt" = CASE WHEN hidden IS DISTINCT FROM ${hide} THEN CASE WHEN ${hide} THEN COALESCE($${params.length}::timestamptz, now()) END ELSE "hiddenAt" END`
+    );
+  }
   if (flags.tosViolation !== undefined) add('"tosViolation"', flags.tosViolation, '$::boolean');
   if (flags.pinned !== undefined)
     add('"pinnedAt"', flags.pinned, 'CASE WHEN $::boolean THEN COALESCE("pinnedAt", now()) END');
   if (!sets.length || !ids.length) return [];
+  await db.query(
+    `SELECT id FROM "CommentV3" WHERE id = ANY(string_to_array($1, ',')::int[]) ORDER BY id FOR UPDATE`,
+    [params[0]]
+  );
   const { rows } = await db.query<{ id: number; userId: number }>(
     `UPDATE "CommentV3" SET ${sets.join(', ')}, "updatedAt" = now()
      WHERE id = ANY(string_to_array($1, ',')::int[]) AND "deletedAt" IS NULL AND (${changed.join(

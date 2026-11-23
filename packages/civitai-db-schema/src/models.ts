@@ -3227,6 +3227,7 @@ export interface CommentV3 {
   deletedAt: Date | null;
   tosViolation: boolean;
   hidden: boolean;
+  hiddenAt: Date | null;
   locked: boolean;
   pinnedAt: Date | null;
   reactionCount: number;

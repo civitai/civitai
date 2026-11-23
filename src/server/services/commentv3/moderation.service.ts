@@ -25,7 +25,9 @@ export async function bulkSetCommentV3TosViolation({
   ids: number[];
   actor: { id: number; ip?: string };
 }) {
-  const { flagged, already } = await dbWrite.$transaction(async (tx) => {
+  // Under the rows' lock (setCommentFlags takes it): a clear waits for this commit, then reopens
+  // exactly the reports actioned here.
+  const { flagged, already, reports } = await dbWrite.$transaction(async (tx) => {
     const flagged = await setCommentFlags(prismaRunner(tx), ids, { tosViolation: true });
     const already = ids.length
       ? await tx.$queryRaw<{ id: number; userId: number }[]>`
@@ -33,36 +35,34 @@ export async function bulkSetCommentV3TosViolation({
           WHERE id = ANY(${ids}::int[]) AND "tosViolation" AND "deletedAt" IS NULL
             AND id <> ALL(${flagged.map((f) => f.id)}::int[])`
       : [];
-    return { flagged, already };
+    const removed = [...flagged, ...already].map((c) => c.id);
+    // Through CommentV3Report, which also holds the mirrored links of a comment's older reports.
+    const reports = removed.length
+      ? await tx.$queryRaw<{ id: number; userId: number }[]>`
+          UPDATE "Report" r SET
+            status = ${ReportStatus.Actioned}::"ReportStatus",
+            "statusSetAt" = now(),
+            "statusSetBy" = ${actor.id}
+          FROM "CommentV3Report" c
+          WHERE c."reportId" = r.id
+            AND c."commentId" = ANY(${removed}::int[])
+            AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
+            AND r.status <> ${ReportStatus.Actioned}::"ReportStatus"
+          RETURNING r.id, r."userId"`
+      : [];
+    return { flagged, already, reports };
   });
   if (!flagged.length && !already.length) return { count: 0, notified: 0, rewardedReports: 0 };
   // Loaded on use: both modules import back into the comment services.
   const { reportAcceptedReward } = await import('~/server/rewards');
   const { createNotification } = await import('~/server/services/notification.service');
-  const newlyFlagged = new Set(flagged.map((f) => f.id));
-  let rewardedReports = 0;
+  await Promise.allSettled(
+    reports.map((report) =>
+      reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, { ip: actor.ip })
+    )
+  );
   let notified = 0;
-  for (const { id, userId } of [...flagged, ...already]) {
-    // Through CommentV3Report, which also holds the mirrored links of a comment's older reports.
-    const reports = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-      UPDATE "Report" r SET
-        status = ${ReportStatus.Actioned}::"ReportStatus",
-        "statusSetAt" = now(),
-        "statusSetBy" = ${actor.id}
-      FROM "CommentV3Report" c
-      WHERE c."reportId" = r.id
-        AND c."commentId" = ${id}
-        AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
-        AND r.status <> ${ReportStatus.Actioned}::"ReportStatus"
-      RETURNING r.id, r."userId"
-    `;
-    rewardedReports += reports.length;
-    await Promise.allSettled(
-      reports.map((report) =>
-        reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, { ip: actor.ip })
-      )
-    );
-    if (!newlyFlagged.has(id)) continue;
+  for (const { userId } of flagged) {
     await createNotification({
       userId,
       type: 'tos-violation',
@@ -73,7 +73,7 @@ export async function bulkSetCommentV3TosViolation({
       .then(() => (notified += 1))
       .catch(() => undefined);
   }
-  return { count: flagged.length + already.length, notified, rewardedReports };
+  return { count: flagged.length + already.length, notified, rewardedReports: reports.length };
 }
 
 /**
@@ -89,6 +89,7 @@ export async function bulkClearCommentV3TosViolation({ ids }: { ids: number[] })
         await tx.$queryRaw<{ id: number }[]>`
           SELECT c.id FROM "CommentV3" c
           WHERE c.id = ANY(${ids}::int[]) AND c."tosViolation" AND c."deletedAt" IS NULL
+          ORDER BY c.id
           FOR UPDATE`
       ).map((r) => r.id);
       const cleared = await setCommentFlags(prismaRunner(tx), candidates, { tosViolation: false });
