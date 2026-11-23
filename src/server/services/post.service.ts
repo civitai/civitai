@@ -65,11 +65,7 @@ import {
   refreshHasReceivedReviews,
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type {
-  ImageSchema,
-  IngestImageInput,
-  SetSongCoverInput,
-} from '~/server/schema/image.schema';
+import type { ImageSchema, SetSongCoverInput } from '~/server/schema/image.schema';
 import { externalMetaSchema } from '~/server/schema/image.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
@@ -115,6 +111,7 @@ import {
   queueImageSearchIndexUpdate,
   deleteImages,
   imagesPendingDeletion,
+  requeueUnverifiedImages,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/services/image.service';
 import { stageGenerationOutputImage } from '~/server/services/blocks/block-image-upload.service';
@@ -2307,9 +2304,6 @@ export const updatePostImage = async ({ title, allowRemix, ...image }: UpdatePos
             ? (meta as Prisma.JsonObject)
             : Prisma.JsonNull
           : undefined,
-        // If this image was blocked due to missing metadata, we need to set it back to pending
-        ingestion: shouldIngest ? 'Pending' : undefined,
-        blockedFor: shouldIngest ? null : undefined,
         // Omitted from the UPDATE: the input never writes metadata, and the stored keys stay.
         metadata: undefined,
       },
@@ -2320,6 +2314,8 @@ export const updatePostImage = async ({ title, allowRemix, ...image }: UpdatePos
     ...(title ? [writeSongTitle(image.id, title)] : title === '' ? [clearSongTitle(image.id)] : []),
     ...(allowRemix !== undefined ? [writeSongAllowRemix(image.id, allowRemix)] : []),
   ]);
+  // Blocked for missing metadata: another scan, decided on the row as it stands now.
+  const requeued = shouldIngest ? await requeueUnverifiedImages([image.id]) : [];
   // Parallelize independent cache refreshes — none read what others write.
   // ingestImage stays sequential after: it does not read these caches but
   // does have ordering relative to the dbWrite.image.update above.
@@ -2340,14 +2336,7 @@ export const updatePostImage = async ({ title, allowRemix, ...image }: UpdatePos
   }
   await Promise.all(cacheRefreshPromises);
 
-  if (shouldIngest) {
-    // Ensures a proper rescan of this image.
-    enqueueImageIngestion({
-      images: [result as IngestImageInput],
-      name: 'post-image-ingest',
-      userId: result.userId,
-    });
-  }
+  enqueueImageIngestion({ images: requeued, name: 'post-image-ingest', userId: result.userId });
 };
 
 /**

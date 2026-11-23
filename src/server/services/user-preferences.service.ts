@@ -5,6 +5,7 @@ import {
   LYRICS_HOLD_HIDING_STATUSES,
   SONG_LYRICS_HOLD,
 } from '~/server/common/image-visibility';
+import { hasBlockMarker } from '~/server/common/image-block-marker';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { setUserFollowCached, userFollowsCache } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
@@ -1255,6 +1256,7 @@ export async function getHiddenImagesForUser({
             tosViolation: true,
             needsReview: true,
             modelRestricted: true,
+            blockedFor: true,
             post: { select: { publishedAt: true, availability: true, userId: true } },
           },
         },
@@ -1296,8 +1298,16 @@ export async function getHiddenImagesForUser({
 
   return {
     items: engagements.slice(0, limit).map(({ image, createdAt }) => {
-      const { post, ingestion, nsfwLevelLocked, metadata, scanJobs, modelRestricted, ...rest } =
-        image;
+      const {
+        post,
+        ingestion,
+        nsfwLevelLocked,
+        metadata,
+        scanJobs,
+        modelRestricted,
+        blockedFor,
+        ...rest
+      } = image;
       const isProfileCover = coverImageIds.has(image.id);
       const isOwner = image.userId === userId;
 
@@ -1317,6 +1327,7 @@ export async function getHiddenImagesForUser({
             ?.nsfwLevelReason,
           scanJobs,
         }) &&
+          !hasBlockMarker({ ingestion, nsfwLevel: rest.nsfwLevel, blockedFor }) &&
           rest.nsfwLevel !== NsfwLevel.Blocked &&
           !rest.tosViolation &&
           !rest.needsReview &&

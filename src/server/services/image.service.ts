@@ -89,6 +89,7 @@ import {
   liftedNsfwLevelSql,
   liftKeptBlockedSql,
   unblockedMetadataSql,
+  scanKeepsRowSql,
 } from '~/server/common/image-visibility';
 import {
   BLOCKED_IMAGE_DELETE_QUEUE,
@@ -2433,7 +2434,7 @@ function applyHideChallengesExclusion(input: {
  * narrow-scope key (`asModerator`/`asOwner` false) is neither a moderator nor the owner, so its
  * own feed keeps the exclusions too.
  */
-function feedViewer(input: {
+export function feedViewer(input: {
   user?: { id?: number; username?: string | null; isModerator?: boolean };
   asModerator?: boolean;
   asOwner?: boolean;
@@ -2443,6 +2444,23 @@ function feedViewer(input: {
     id: owner ? input.user?.id : undefined,
     username: owner ? input.user?.username ?? undefined : undefined,
     isModerator: input.asModerator === true && !!input.user?.isModerator,
+  };
+}
+
+/** A feed item's thumbnail fields for its viewer. */
+export function feedThumbnailFields(
+  thumbnail: { url: string; nsfwLevel: number; blockMarked?: boolean } | undefined,
+  imageNsfwLevel: number,
+  creatorId: number,
+  viewer: { ownerId?: number; isModerator: boolean }
+) {
+  return {
+    nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, imageNsfwLevel),
+    thumbnailUrl:
+      thumbnail &&
+      (thumbnail.blockMarked === false || creatorId === viewer.ownerId || viewer.isModerator)
+        ? thumbnail.url
+        : undefined,
   };
 }
 
@@ -2564,8 +2582,11 @@ const getAllImagesUncaptured = async (
   let cacheTime = 0;
   let isPersonalized = false;
   const userId = user?.id;
-  const isModerator = input.asModerator === true && !!user?.isModerator;
-  const ownerId = input.asOwner === true ? userId : undefined;
+  const { isModerator, id: ownerId } = feedViewer({
+    user,
+    asModerator: input.asModerator,
+    asOwner: input.asOwner,
+  });
   // Moderators opting into the "pending review" collection filter get the same
   // unscanned-content visibility as the existing `pending` flag (nsfwLevel = 0 allowed).
   const effectivePending = pending || (isModerator && !!pendingReviewOnly);
@@ -3459,7 +3480,7 @@ const getAllImagesUncaptured = async (
         // "resolved-absent" the chip needs to NOT fall back.)
         model3dId: i.model3dId != null && visibleModel3DIds?.has(i.model3dId) ? i.model3dId : null,
         meta: imageMeta?.[i.id] ?? null,
-        nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
+        ...feedThumbnailFields(thumbnail, i.nsfwLevel, creatorId, { ownerId, isModerator }),
         // `modelVersionIds` is auto-detected only and `modelVersionIdsManual` is uploader-asserted,
         // matching what the search-index path serves — consumers gate on the difference.
         modelVersionIds:
@@ -3489,7 +3510,6 @@ const getAllImagesUncaptured = async (
         tagIds: tagIdsVar?.[i.id]?.tags,
         cosmetic: cosmetics?.[i.id] ?? null,
         eventDecoration: eventDecorations?.[i.id] ?? null,
-        thumbnailUrl: thumbnail?.url,
         judgeScore,
       };
     });
@@ -6918,6 +6938,21 @@ async function authorizeImagesAction({
   }
 }
 
+/**
+ * Sends the images still awaiting verification back to Pending for another scan, decided on each
+ * row, and returns the rows it moved.
+ */
+export async function requeueUnverifiedImages(ids: number[]) {
+  if (!ids.length) return [];
+  return dbWrite.$queryRaw<IngestImageInput[]>`
+    UPDATE "Image" i SET ingestion = 'Pending'::"ImageIngestionStatus", "blockedFor" = NULL
+    WHERE i.id IN (${Prisma.join(ids)})
+      AND i."blockedFor" = ${BlockedReason.AiNotVerified}
+      AND NOT ${scanKeepsRowSql('i')}
+    RETURNING i.id, i.url, i.type, i.width, i.height, i.meta->>'prompt' AS prompt
+  `;
+}
+
 export async function addImageTools({
   data,
   user,
@@ -6927,20 +6962,7 @@ export async function addImageTools({
 }) {
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
   await dbWrite.imageTool.createMany({ data, skipDuplicates: true });
-  // Update these images if blocked:
-  const updated = await dbWrite.image.updateManyAndReturn({
-    where: { id: { in: data.map((x) => x.imageId) }, blockedFor: BlockedReason.AiNotVerified },
-    data: {
-      blockedFor: null,
-      // Ensures we do another run:
-      ingestion: 'Pending',
-    },
-    select: {
-      id: true,
-      url: true,
-      type: true,
-    },
-  });
+  const updated = await requeueUnverifiedImages(data.map((x) => x.imageId));
 
   enqueueImageIngestion({
     images: updated,

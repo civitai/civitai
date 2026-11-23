@@ -26,12 +26,17 @@ const IMAGE_ID = 9001;
 const IMAGE_URL = 'abc123/def456.jpeg';
 const USER_ID = 5;
 
-const { mockBustImageDeliveryMetadataCache, mockInvalidateHiddenImageMetadata } = vi.hoisted(
-  () => ({
-    mockBustImageDeliveryMetadataCache: vi.fn(),
-    mockInvalidateHiddenImageMetadata: vi.fn(),
-  })
-);
+const {
+  mockBustImageDeliveryMetadataCache,
+  mockInvalidateHiddenImageMetadata,
+  mockRequeueUnverifiedImages,
+  mockEnqueueImageIngestion,
+} = vi.hoisted(() => ({
+  mockBustImageDeliveryMetadataCache: vi.fn(),
+  mockInvalidateHiddenImageMetadata: vi.fn(),
+  mockRequeueUnverifiedImages: vi.fn(),
+  mockEnqueueImageIngestion: vi.fn(),
+}));
 
 // --- infra scaffold (mirrors contest-entry-resource-gate.test.ts) ---------------------
 // `~/server/redis/client` is covered by the canonical mock registered in src/__tests__/setup.ts,
@@ -95,7 +100,8 @@ vi.mock('~/server/services/image.service', () => ({
   deleteImagesForModelVersionCache: vi.fn(),
   getImagesForPosts: vi.fn(),
   imagesForModelVersionsCache: { refresh: vi.fn() },
-  enqueueImageIngestion: vi.fn(),
+  enqueueImageIngestion: mockEnqueueImageIngestion,
+  requeueUnverifiedImages: mockRequeueUnverifiedImages,
   invalidateManyImageExistence: vi.fn(),
   purgeResizeCache: mockPurgeResizeCache,
   queueImageSearchIndexUpdate: vi.fn(),
@@ -312,5 +318,53 @@ describe('updatePostImage — Image.meta write semantics', () => {
 
     const meta = updateData().meta as { extra: Record<string, unknown> };
     expect(meta.extra).not.toHaveProperty('sourceImageIds');
+  });
+});
+
+describe('updatePostImage — another scan', () => {
+  const wire = (blockedFor: string | null) => {
+    mockFindUniqueOrThrow.mockResolvedValue({
+      hideMeta: false,
+      ingestion: 'Blocked',
+      blockedFor,
+      metadata: {},
+      nsfwLevel: 1,
+      meta: null,
+    });
+    mockImageUpdate.mockResolvedValue({ id: IMAGE_ID, url: IMAGE_URL, userId: USER_ID });
+  };
+
+  it('case 1', async () => {
+    wire('AiNotVerified');
+    const moved = [{ id: IMAGE_ID, url: IMAGE_URL, type: 'image' }];
+    mockRequeueUnverifiedImages.mockResolvedValue(moved);
+
+    await updatePostImage({ id: IMAGE_ID, meta: { prompt: 'p' } } as any);
+
+    const data = updateData();
+    expect('ingestion' in data && data.ingestion !== undefined).toBe(false);
+    expect('blockedFor' in data && data.blockedFor !== undefined).toBe(false);
+    expect(mockRequeueUnverifiedImages).toHaveBeenCalledWith([IMAGE_ID]);
+    expect(mockEnqueueImageIngestion).toHaveBeenCalledWith(
+      expect.objectContaining({ images: moved })
+    );
+  });
+
+  it('case 2', async () => {
+    wire('AiNotVerified');
+    mockRequeueUnverifiedImages.mockResolvedValue([]);
+
+    await updatePostImage({ id: IMAGE_ID, meta: { prompt: 'p' } } as any);
+
+    expect(mockEnqueueImageIngestion).toHaveBeenCalledWith(expect.objectContaining({ images: [] }));
+  });
+
+  it('case 3', async () => {
+    wire('moderated');
+
+    await updatePostImage({ id: IMAGE_ID, meta: { prompt: 'p' } } as any);
+
+    expect(mockRequeueUnverifiedImages).not.toHaveBeenCalled();
+    expect(updateData()).toBeDefined();
   });
 });

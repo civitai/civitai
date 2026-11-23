@@ -5,6 +5,7 @@ import { tagIdsForImagesCache } from '~/server/redis/caches';
 import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { isImageReviewed, lyricsHeldSql } from '~/server/common/image-visibility';
+import { hasBlockMarker } from '~/server/common/image-block-marker';
 import { getCreatorGalleryHiddenUserIds } from '~/server/services/creator-gallery-hidden-users.service';
 import {
   holdPlacementEscrow,
@@ -165,6 +166,7 @@ type PromotedPostImage = {
   acceptableMinor: boolean;
   poi: boolean;
   tosViolation: boolean;
+  blockedFor: string | null;
 };
 
 async function loadPromotedPost(postId: number) {
@@ -178,7 +180,7 @@ async function loadPromotedPost(postId: number) {
     SELECT i.id, i.type::text AS type, ${lyricsHeldSql()} AS "lyricsHeld", i."nsfwLevel", i.ingestion::text AS ingestion, i."nsfwLevelLocked",
            i.metadata->>'nsfwLevelReason' AS "nsfwLevelReason",
            i."scanJobs",
-           i."needsReview", i.minor, i."acceptableMinor", i.poi, i."tosViolation"
+           i."needsReview", i.minor, i."acceptableMinor", i.poi, i."tosViolation", i."blockedFor"
     FROM "Image" i
     WHERE i."postId" = ${postId}
   `;
@@ -223,6 +225,7 @@ async function assertGalleryPromotable({
     images.some(
       (image) =>
         !isImageReviewed(image) ||
+        hasBlockMarker(image) ||
         image.needsReview ||
         image.minor ||
         image.acceptableMinor ||

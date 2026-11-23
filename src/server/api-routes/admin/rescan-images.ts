@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
-import { ingestImageById } from '~/server/services/image.service';
+import { rescanImageById } from '~/server/services/image-rescan.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
@@ -11,7 +11,7 @@ const schema = z.object({
 export default WebhookEndpoint(async (req, res) => {
   const { imageIds } = schema.parse(req.query);
 
-  const results = await Promise.allSettled(imageIds.map((id) => ingestImageById({ id })));
+  const results = await Promise.allSettled(imageIds.map((id) => rescanImageById({ id })));
 
   const submitted: number[] = [];
   const notFound: number[] = [];

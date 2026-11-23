@@ -21,7 +21,6 @@ import {
   getImagesByUserIdForModeration,
   getMyImages,
   getSongPlayCounts,
-  ingestImageById,
   removeImageResource,
   removeImageTechniques,
   removeImageTools,
@@ -35,6 +34,7 @@ import { getSongCoversForPlayer, setSongCover } from '~/server/services/post.ser
 import { getSongGenreTagIds } from '~/server/services/song-genre.service';
 import { getRisingSongIds } from '~/server/services/song-rising.service';
 import { getSongLyrics } from '~/server/services/track-lyrics.service';
+import { rescanImageById } from '~/server/services/image-rescan.service';
 import {
   middleware,
   guardedProcedure,
@@ -180,7 +180,7 @@ export const imageRouter = router({
   removeResource: moderatorProcedure
     .input(removeImageResourceSchema)
     .mutation(({ input }) => removeImageResource(input)),
-  rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => ingestImageById(input)),
+  rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => rescanImageById(input)),
   getEntitiesCoverImage: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getEntitiesCoverImage)
