@@ -18,5 +18,5 @@ export const voteGate = createVoteGate({
   limits: () => limitsSource.load(),
 });
 
-export const lockoutFor = (db: Kysely<DB>, userId: number, now: Date) =>
-  voteLockout(db, userId, now, { gate: voteGate, limits: limitsSource });
+export const lockoutFor = (db: Kysely<DB>, userId: number, now: Date, floor: Date | null = null) =>
+  voteLockout(db, userId, now, { gate: voteGate, limits: limitsSource }, floor);

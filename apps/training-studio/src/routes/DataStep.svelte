@@ -31,12 +31,12 @@
   } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import { autoLabelAvailable, browser, hostConfig, hostLink, portalProps } from '$lib/host';
   import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
   import StickySummary from '$lib/components/StickySummary.svelte';
+  import HelpTip, { TAP_TARGET } from '$lib/components/HelpTip.svelte';
   import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { playOnHover, resetOnLeave } from '$lib/video-preview';
   import { extOfAir, extsOfMedia, mediaOfExt, mimeOfExt } from '$lib/media';
@@ -998,21 +998,17 @@
   {#if rating}
     {@const badgeClass = 'absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 font-mono text-xs font-semibold'}
     {#if isMature(img)}
-      <Tooltip.Provider>
-        <Tooltip.Root>
-          <Tooltip.Trigger class="{badgeClass} bg-buzz text-black" aria-label="Rated {rating}">
-            {rating}
-          </Tooltip.Trigger>
-          <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
-            {#if !buzzMode.blueFirst}
-              Rated {rating}. Mature content can't be paid with Green Buzz, so it is charged in Yellow.
-            {:else}
-              Rated {rating}. Mature content can't be paid with Green Buzz, so anything beyond your
-              Blue Buzz is charged in Yellow.
-            {/if}
-          </Tooltip.Content>
-        </Tooltip.Root>
-      </Tooltip.Provider>
+      <HelpTip label="Rated {rating}" class="{badgeClass} bg-buzz text-black">
+        {rating}
+        {#snippet content()}
+          {#if !buzzMode.blueFirst}
+            Rated {rating}. Mature content can't be paid with Green Buzz, so it is charged in Yellow.
+          {:else}
+            Rated {rating}. Mature content can't be paid with Green Buzz, so anything beyond your
+            Blue Buzz is charged in Yellow.
+          {/if}
+        {/snippet}
+      </HelpTip>
     {:else}
       <span class="{badgeClass} bg-black/60 text-on-accent" title="Rated {rating}">{rating}</span>
     {/if}
@@ -1874,20 +1870,17 @@
       <StickySummary class="order-first lg:order-none">
         <div class="flex items-center gap-1.5">
           <h3 class="m-0 font-mono text-xs uppercase tracking-widest text-dark-2">Trigger word</h3>
-          <Tooltip.Provider>
-            <Tooltip.Root>
-              <Tooltip.Trigger
-                class="grid h-4 w-4 place-items-center rounded-full border border-dark-4 font-mono text-xs text-dark-2"
-              >
-                ?
-              </Tooltip.Trigger>
-              <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
-                An optional word prepended to every label. The model learns to associate it with your
-                subject, so you type it in prompts to summon the LoRA. Less essential on modern caption
-                models; handy for characters. Some large/video models can't train it (no-op).
-              </Tooltip.Content>
-            </Tooltip.Root>
-          </Tooltip.Provider>
+          <HelpTip
+            label="About the trigger word"
+            class="{TAP_TARGET} grid h-4 w-4 place-items-center rounded-full border border-dark-4 font-mono text-xs text-dark-2"
+          >
+            ?
+            {#snippet content()}
+              An optional word prepended to every label. The model learns to associate it with your
+              subject, so you type it in prompts to summon the LoRA. Less essential on modern caption
+              models; handy for characters. Some large/video models can't train it (no-op).
+            {/snippet}
+          </HelpTip>
         </div>
         <Input bind:value={trigger} placeholder="optional, e.g. my_character" class="mt-2 font-mono" />
         <p class="mt-2 text-[12px] leading-snug text-dark-2">

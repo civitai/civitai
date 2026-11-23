@@ -475,13 +475,15 @@ async function runFixture(f: Fixture, extraHeaders: Record<string, string>, real
       const id = f.world.tagIdsByName?.[args?.where?.name];
       return id ? { id } : null;
     });
-    // trainingDataListing's statement (the only `$queryRaw` these routes send): captured, and
-    // answered with the fixture's rows of the candidate versions (`ANY($1::int[])`).
+    // trainingDataListing's statement: captured, and answered with the fixture's rows of the
+    // candidate versions (`ANY($1::int[])`). The versions' curated showcase read is answered empty:
+    // no fixture curates a showcase, so each version keeps its own images.
     dbMock.dbRead.$queryRaw.mockImplementation((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
     ) => {
       const sql = Prisma.sql(strings, ...values);
+      if (sql.text.includes('FROM "ModelVersionShowcaseItem"')) return [];
       state.trainingDataSql.push({ text: sql.text, values: sql.values });
       const candidates = (sql.values[0] ?? []) as number[];
       return (revive(f.world.trainingData ?? []) as Record<string, unknown>[])

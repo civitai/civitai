@@ -1,6 +1,6 @@
 import { createEmail } from '~/server/email/templates/base.email';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { renderEmailSummary, simpleEmailWithTemplate } from '~/server/email/templates/util';
 
 type PrepaidTokenUnlockedData = {
   user: {
@@ -15,18 +15,31 @@ const membershipUrl = () => getBaseUrl() + `/user/membership`;
 
 export const prepaidTokenUnlockedEmail = createEmail({
   header: ({ user, tokensUnlocked }: PrepaidTokenUnlockedData) => ({
-    subject: `${tokensUnlocked} Membership Token${tokensUnlocked !== 1 ? 's' : ''} Ready to Claim on Civitai`,
+    subject: `${tokensUnlocked} Membership Token${
+      tokensUnlocked !== 1 ? 's' : ''
+    } Ready to Claim on Civitai`,
     to: user.email,
   }),
   html({ user, tokensUnlocked, totalBuzz }: PrepaidTokenUnlockedData) {
     return simpleEmailWithTemplate({
+      icon: '🪙',
+      accent: 'violet',
+      eyebrow: 'Membership tokens',
       header: `Hey ${user.username}!`,
       body: `
-      <p>
-        Great news — <strong>${tokensUnlocked} membership token${tokensUnlocked !== 1 ? 's have' : ' has'}</strong> been unlocked on your account, worth a total of <strong>⚡${totalBuzz.toLocaleString()} Buzz</strong>.
+      <p style="margin: 0;">
+        Great news — <strong>${tokensUnlocked} membership token${
+        tokensUnlocked !== 1 ? 's have' : ' has'
+      }</strong> been unlocked on your account, worth a total of <strong>⚡${totalBuzz.toLocaleString()} Buzz</strong>.
       </p>
+      ${renderEmailSummary([
+        { label: 'Tokens unlocked', value: `${tokensUnlocked}` },
+        { label: 'Total value', value: `⚡${totalBuzz.toLocaleString()} Buzz` },
+      ])}
       <p>
-        Head to your membership page to claim ${tokensUnlocked !== 1 ? 'them' : 'it'} and add the Buzz to your balance.
+        Head to your membership page to claim ${
+          tokensUnlocked !== 1 ? 'them' : 'it'
+        } and add the Buzz to your balance.
       </p>
       <p>
         Best,<br />
@@ -37,7 +50,9 @@ export const prepaidTokenUnlockedEmail = createEmail({
     });
   },
   text({ tokensUnlocked, totalBuzz }: PrepaidTokenUnlockedData) {
-    return `${tokensUnlocked} membership token${tokensUnlocked !== 1 ? 's are' : ' is'} ready to claim (${totalBuzz.toLocaleString()} Buzz). Visit ${membershipUrl()} to claim.`;
+    return `${tokensUnlocked} membership token${
+      tokensUnlocked !== 1 ? 's are' : ' is'
+    } ready to claim (${totalBuzz.toLocaleString()} Buzz). Visit ${membershipUrl()} to claim.`;
   },
   testData: async () => ({
     user: {

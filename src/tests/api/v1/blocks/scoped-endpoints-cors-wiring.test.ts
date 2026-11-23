@@ -490,3 +490,40 @@ describe('scoped block endpoints — opaque-origin CORS wiring', () => {
     ).toEqual(scopedRoutesFromSource());
   });
 });
+
+/**
+ * The document store's INTERNAL route (app-data-go's forwarded writes,
+ * `src/server/services/apps/doc-store-internal-route.ts`) must hand `withBlockScope` the public
+ * route's options: the same required scope, refusal envelope, endpoint label and CORS. Compared
+ * as VALUES (functions by identity), so an option changed on one side only, whatever its
+ * spelling, fails here.
+ */
+describe('the internal storage route passes withBlockScope the public route’s options', () => {
+  it('deep-equals the public storage route’s options', { timeout: 60000 }, async () => {
+    for (const { module } of ENDPOINTS) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+      await import(module);
+    }
+    const publicIndex = ENDPOINTS.findIndex(
+      (e) => e.module === '~/pages/api/v1/blocks/storage/[[...path]]'
+    );
+    const publicOpts = captured[publicIndex];
+    expect(publicOpts?.requiredScope).toBe('apps:storage');
+
+    const { createInternalStorageRoute } = await import(
+      '~/server/services/apps/doc-store-internal-route'
+    );
+    const before = captured.length;
+    createInternalStorageRoute();
+    expect(captured).toHaveLength(before + 1);
+    const internalOpts = captured[before];
+
+    expect(Object.keys(internalOpts).sort()).toEqual(Object.keys(publicOpts).sort());
+    expect(internalOpts).toEqual(publicOpts);
+    // Negative control: the comparison sees a difference between two other routes' options.
+    const otherIndex = ENDPOINTS.findIndex(
+      (e) => e.module === '~/pages/api/v1/blocks/shared-storage/append'
+    );
+    expect(captured[otherIndex]).not.toEqual(publicOpts);
+  });
+});

@@ -132,6 +132,7 @@ import type {
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
+import { bustVersionShowcasesForPosts } from '~/server/services/version-showcase.service';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { capPostGetInfiniteImages } from '~/server/utils/post-getinfinite-images';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
@@ -2163,6 +2164,9 @@ export async function bustCachesForPosts(postIds: number | number[]) {
   const showcaseVersionIds = results
     .filter((x) => x.isShowcase && x.modelVersionId != null)
     .map((x) => x.modelVersionId as number);
+  // Before the return below, which covers only the owner showcase: a featured image is in someone
+  // else's post.
+  await bustVersionShowcasesForPosts(ids);
   if (!showcaseVersionIds.length) return;
 
   const showcaseModelIds = [

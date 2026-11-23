@@ -1,0 +1,50 @@
+{
+  "$comment": "Golden vectors for the app-data-go -> site internal storage route signature (apps/app-data-go/WRITES-DESIGN.md). Read by apps/app-data-go/internal/sign and by the site's doc-store-internal-route.test.ts; the same file exists at the same path in both. canonical = method, path, query, timestamp, sha256(body) hex, region line, joined by a newline; region line = the values of cf-ipcountry, cf-region-code and x-isuk joined by a comma, each empty when absent, and the whole line empty when all three are absent. signature = lowercase hex HMAC-SHA256(key, canonical). Computed with Python hmac, independently of both implementations.",
+  "vectors": [
+    {
+      "name": "put-with-body",
+      "key": "test-signing-key-0001-0123456789ab",
+      "method": "PUT",
+      "path": "/api/internal/blocks/storage/kv/run-01",
+      "query": "from=model-benchmarking",
+      "timestamp": "1795000000",
+      "region": {},
+      "regionLine": "",
+      "body": "{\"data\":{\"n\":1},\"ifVersion\":0}",
+      "bodySha256": "f5edde14e10252c60e896284b60e1ef276ae22fcc79e5c3ada8eaedf0cda2a3e",
+      "canonical": "PUT\n/api/internal/blocks/storage/kv/run-01\nfrom=model-benchmarking\n1795000000\nf5edde14e10252c60e896284b60e1ef276ae22fcc79e5c3ada8eaedf0cda2a3e\n",
+      "signature": "3bffdf777f2b7da28c11e84a08822354a1659584560fa917853998818eea4e45"
+    },
+    {
+      "name": "delete-empty-body",
+      "key": "test-signing-key-0001-0123456789ab",
+      "method": "DELETE",
+      "path": "/api/internal/blocks/storage/records/01JX",
+      "query": "from=model-benchmarking&ifVersion=3",
+      "timestamp": "1795000001",
+      "region": {},
+      "regionLine": "",
+      "body": "",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonical": "DELETE\n/api/internal/blocks/storage/records/01JX\nfrom=model-benchmarking&ifVersion=3\n1795000001\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n",
+      "signature": "8bf53e4b4ac5e3011f2ca39e1b547b47037199d77dd0bbfd9f34e6da953d1e2e"
+    },
+    {
+      "name": "post-with-region",
+      "key": "test-signing-key-0001-0123456789ab",
+      "method": "POST",
+      "path": "/api/internal/blocks/storage/records",
+      "query": "from=model-benchmarking",
+      "timestamp": "1795000002",
+      "region": {
+        "cf-ipcountry": "US",
+        "cf-region-code": "CA"
+      },
+      "regionLine": "US,CA,",
+      "body": "{\"data\":{\"title\":\"t\"}}",
+      "bodySha256": "3ae238f0fc600b317f3dfd7ec97ca918e677e7fa402274a020516dbc7900ff44",
+      "canonical": "POST\n/api/internal/blocks/storage/records\nfrom=model-benchmarking\n1795000002\n3ae238f0fc600b317f3dfd7ec97ca918e677e7fa402274a020516dbc7900ff44\nUS,CA,",
+      "signature": "c9235adbd75b167c1211078dbffe667fc714a51ad45b77d292231d68733e8571"
+    }
+  ]
+}

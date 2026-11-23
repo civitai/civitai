@@ -369,7 +369,7 @@ describe('blocking an image whose blocklist write fails', () => {
       (strings as unknown as string[]).join('?').includes('JOIN "ModelVersion"')
     );
     expect(lookup).toBeGreaterThanOrEqual(0);
-    expect(calls[lookup].slice(1)).toEqual([[FLAGGED_LIVE]]);
+    expect(calls[lookup].slice(1)).toEqual([[FLAGGED_LIVE], [FLAGGED_LIVE]]);
     expect(clickhouseInsert.mock.invocationCallOrder[0]).toBeLessThan(
       dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[lookup]
     );

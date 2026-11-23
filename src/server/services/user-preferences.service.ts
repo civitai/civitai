@@ -1139,6 +1139,13 @@ async function toggleBlockUser({
 
   await BlockedUsers.refreshCache({ userId });
   await BlockedByUsers.refreshCache({ userId: targetUserId });
+  const { bustVersionShowcasesForUser } = await import(
+    '~/server/services/version-showcase.service'
+  );
+  await Promise.all([
+    bustVersionShowcasesForUser(targetUserId, userId),
+    bustVersionShowcasesForUser(userId, targetUserId),
+  ]);
 
   // Every block cascades, not only a newly established one. `declinePlacementsOnBlock`
   // touches only `pending` rows and caps at 200 per run, so a user with a larger

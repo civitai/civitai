@@ -1,5 +1,4 @@
-import { Switch } from '@mantine/core';
-import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
+import { SettingSwitch } from '~/components/Account/SettingsLayout';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -44,27 +43,16 @@ export function ShowcaseOptOutSetting({ flat }: { flat?: boolean }) {
   const { setHidden, isPending } = useShowcaseOptOut();
   if (!features.creatorJourney) return null;
 
-  const control = (
-    <Switch
+  return (
+    <SettingSwitch
       name="hideFromCreatorShowcase"
-      aria-label={flat ? SHOWCASE_OPT_OUT_LABEL : undefined}
-      label={flat ? undefined : SHOWCASE_OPT_OUT_LABEL}
-      description={flat ? undefined : SHOWCASE_OPT_OUT_DESCRIPTION}
+      sectionTitle="Creator Showcase"
+      label={SHOWCASE_OPT_OUT_LABEL}
+      description={SHOWCASE_OPT_OUT_DESCRIPTION}
       checked={hideFromCreatorShowcase ?? false}
       disabled={isPending}
-      onChange={(e) => setHidden(e.target.checked)}
-      styles={flat ? undefined : { track: { flex: '0 0 1em' } }}
+      onChange={setHidden}
+      flat={flat}
     />
-  );
-
-  if (!flat) return control;
-  return (
-    <SettingsSection title="Creator Showcase">
-      <SettingRow
-        label={SHOWCASE_OPT_OUT_LABEL}
-        description={SHOWCASE_OPT_OUT_DESCRIPTION}
-        control={control}
-      />
-    </SettingsSection>
   );
 }

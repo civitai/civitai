@@ -24,7 +24,7 @@ import { votePartitionName } from './vote-partition';
 import { RANKS, rankIndex, type Rank } from '../ranks';
 import { heldSql } from '../conversion/held';
 import { metrics } from '../metrics';
-import { creditVote, insertVote, lockPlayerVoting } from './vote-record';
+import { creditVote, insertVote, lockPlayerVoting, notHiddenCreator } from './vote-record';
 import {
   ESCALATION_PATH,
   FEED_STRETCH_SIZE,
@@ -57,7 +57,7 @@ import {
   type WritebackDecision,
 } from './resolution';
 
-export { lockPlayerVoting };
+export { lockPlayerVoting, notHiddenCreator };
 
 export type ConsensusApplication = {
   questionKey: string;
@@ -172,6 +172,9 @@ END`;
 /** Rows the first round of a stage's normal-order scan reads; each later round reads twice as many as the one before. */
 export const STAGE_SCAN_FIRST_ROUND = FEED.bucketWindowSize * BUCKET_LEVELS.length * 2;
 
+/** The longest scan round that probes `notHiddenCreator` per row; longer rounds read faster as a parallel anti-join. */
+export const STAGE_SCAN_PER_ROW_PROBE_MAX = STAGE_SCAN_FIRST_ROUND * 4;
+
 /**
  * One stage's candidates: one read of the items escalated within the priority window (skipped at the entry stage, where
  * nothing is escalated), then the first `FEED.bucketWindowSize` items of each level bucket in the stage's normal order
@@ -192,10 +195,11 @@ async function stageWindow(
   exclude: number[],
   escalatedSince: Date
 ) {
-  const eligible = () =>
+  const eligible = (perRow = true) =>
     servableItems(db)
       .where('i.minRank', '=', stage)
       .where('img.userId', 'is distinct from', userId)
+      .where(notHiddenCreator(userId, { perRow }))
       .$if(exclude.length > 0, (qb) => qb.where('i.id', 'not in', exclude))
       .where((eb) =>
         eb.not(
@@ -242,7 +246,7 @@ async function stageWindow(
   let after: StageScanCursor | null = null;
   for (let size = STAGE_SCAN_FIRST_ROUND; ; size *= 2) {
     const cursor: StageScanCursor | null = after;
-    const rows = await eligible()
+    const rows = await eligible(size <= STAGE_SCAN_PER_ROW_PROBE_MAX)
       .select([
         'i.id',
         'i.priority',
@@ -664,6 +668,7 @@ export async function castVote(
 
         const item = await servableItems(trx)
           .where('i.id', '=', input.itemId)
+          .where(notHiddenCreator(input.userId))
           .select([
             'i.id',
             'i.questionKey',

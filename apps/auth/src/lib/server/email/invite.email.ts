@@ -1,4 +1,10 @@
-import { createEmail, emailTheme, EMAIL_MUTED_CLASS, renderEmailShell } from '@civitai/email';
+import {
+  createEmail,
+  emailTheme,
+  EMAIL_MUTED_CLASS,
+  renderEmailCallout,
+  renderEmailShell,
+} from '@civitai/email';
 import { escapeHtml } from '@civitai/shared/html-escape';
 
 // appName comes from the client's registration, never the request, so an app can't send invites in
@@ -18,9 +24,12 @@ export const inviteEmail = createEmail<InviteData, void>({
   header: (data) => ({ subject: headline(data), to: data.to }),
   html: (data) =>
     renderEmailShell({
+      icon: '💌',
+      accent: 'violet',
+      eyebrow: 'Invitation',
       header: escapeHtml(headline(data)),
       body: `${
-        data.message ? `<p style="margin: 0 0 16px 0;">${escapeHtml(data.message)}</p>` : ''
+        data.message ? renderEmailCallout(escapeHtml(data.message), { accent: 'violet' }) : ''
       }<p class="${EMAIL_MUTED_CLASS}" style="margin: 0; color: ${emailTheme.muted};">
           Accept to sign in to Civitai with this email address. If you don't have an account yet, one is
           created for you. This link expires in 7 days and can be used once.

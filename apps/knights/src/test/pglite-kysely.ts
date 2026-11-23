@@ -89,6 +89,14 @@ CREATE TABLE "User" (
   "deletedAt" TIMESTAMP(3),
   "muted" BOOLEAN NOT NULL DEFAULT false
 );
+CREATE TYPE "UserEngagementType" AS ENUM ('Follow', 'Hide', 'Block');
+CREATE TABLE "UserEngagement" (
+  "userId" INTEGER NOT NULL,
+  "targetUserId" INTEGER NOT NULL,
+  "type" "UserEngagementType" NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY ("userId", "targetUserId")
+);
 CREATE TABLE "Product" (
   "id" TEXT PRIMARY KEY,
   "metadata" JSONB NOT NULL DEFAULT '{}'

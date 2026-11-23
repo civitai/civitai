@@ -10,6 +10,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // session served by the sandbox service's preview gateway; off (or missing), the dev tunnel as
   // before. Evaluated with the user's context; fails closed.
   APP_ASSISTANT_DIRECT_PREVIEW = 'app-assistant-direct-preview',
+  // App Assistant session tracing (`~/server/services/app-assistant/session-tracing.service`). On:
+  // each finished server-runner turn upserts its chat ↔ app link row and emits one ClickHouse
+  // event, and a submit snapshots the linked chats. Off, missing or unreachable: every one of those
+  // writes is a no-op. Reads (moderator-only) do not depend on it. BOOLEAN ONLY: evaluated with no
+  // entity and no context, so a segment rule matches nothing. Create the key in Flipt (disabled)
+  // before this deploys: a missing key logs an error on every eval (once per finished turn).
+  APP_ASSISTANT_TRACING = 'app-assistant-tracing',
   // Mirrors the `articleRatingDispute` fliptKey in feature-flags.service.ts so
   // background paths (no request context) can gate on the same Flipt flag the
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.

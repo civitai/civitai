@@ -344,6 +344,18 @@ export type AppAccessRequest = {
   reviewedAt: Timestamp | null;
   reviewedById: number | null;
 };
+export type AppAssistantSessionLink = {
+  id: Generated<number>;
+  user_id: number;
+  conversation_id: string;
+  app_slug: string;
+  first_seen_at: Generated<Timestamp>;
+  last_seen_at: Generated<Timestamp>;
+  turn_count: Generated<number>;
+  last_model: string | null;
+  buzz_total: Generated<number>;
+  last_run_id: string | null;
+};
 export type AppBlock = {
   id: string;
   app_id: string;
@@ -747,6 +759,18 @@ export type AppPostIntent = {
   reviewed_by_id: number | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+};
+export type AppPublishRequestTrace = {
+  id: Generated<number>;
+  publish_request_id: string;
+  slug: string;
+  user_id: number;
+  conversation_ids: string[];
+  snapshots: unknown;
+  signals: unknown;
+  signals_version: number;
+  snapshot_error: string | null;
+  created_at: Generated<Timestamp>;
 };
 export type AppReviewAgentReport = {
   id: string;
@@ -4735,6 +4759,10 @@ export type ModelVersionShowcaseItem = {
   source: string;
   position: number | null;
   excluded: Generated<boolean>;
+  /**
+   * The image's author or a moderator removed it; kept so the owner can't add it back.
+   */
+  removed: Generated<boolean>;
   addedById: number;
   createdAt: Generated<Timestamp>;
 };
@@ -7092,6 +7120,7 @@ export type DB = {
   AnswerReaction: AnswerReaction;
   AnswerVote: AnswerVote;
   ApiKey: ApiKey;
+  app_assistant_session_links: AppAssistantSessionLink;
   app_block_build_attempts: AppBlockBuildAttempt;
   app_block_publish_requests: AppBlockPublishRequest;
   app_block_upload_batches: AppBlockUploadBatch;
@@ -7109,6 +7138,7 @@ export type DB = {
   app_ownership_events: AppOwnershipEvent;
   app_ownership_transfers: AppOwnershipTransfer;
   app_post_intents: AppPostIntent;
+  app_publish_request_traces: AppPublishRequestTrace;
   app_review_agent_report_checks: AppReviewAgentReportCheck;
   app_review_agent_reports: AppReviewAgentReport;
   app_sub_listing_parents: AppSubListingParent;

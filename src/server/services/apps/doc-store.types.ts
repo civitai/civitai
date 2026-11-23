@@ -102,6 +102,27 @@ export type DocRecord = {
   rating?: DocRating;
 };
 
+/**
+ * What a document write (`create`, `put`, `putIfUnchanged`) answers: the record, plus where the
+ * write sits in the app namespace's write order and which row it is. Internal to the store's API:
+ * the public storage route presents a {@link DocRecord}'s fields only (`presentDocs`), never these.
+ */
+export type WrittenDocRecord = DocRecord & {
+  /** The document's `seq` (`usage_app.last_seq` when it was written): the namespace's write order. */
+  seq: number;
+  /**
+   * The row's `record_id` (the id in a private record's URN, `app-record.ts`). Null only for a row
+   * written before the column's default existed and not yet backfilled.
+   */
+  recordId: string | null;
+};
+
+/**
+ * What `delete` answers. `seq` is the tombstone's: the namespace's write order of the delete. A
+ * delete that removed nothing wrote no tombstone and has none.
+ */
+export type DocDeleteResult = { deleted: true; seq: number } | { deleted: false };
+
 export type DocListQuery = {
   /** Equality on ONE declared index. */
   where?: Record<string, string | number | boolean>;

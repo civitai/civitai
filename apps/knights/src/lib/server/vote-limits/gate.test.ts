@@ -97,7 +97,7 @@ describe('vote gate windows', () => {
     }
 
     const tripped = await gate.guard(7, at(), async () => 'ok');
-    expect(tripped).toEqual({ status: 'limited', until: new Date(10 * MINUTE) });
+    expect(tripped).toEqual({ status: 'limited', until: new Date(10 * MINUTE), tripped: true });
 
     // Well after the minute window has rolled over, the cooldown still holds.
     clock.now += 5 * MINUTE;
@@ -136,6 +136,43 @@ describe('vote gate windows', () => {
     await gate.guard(7, at(), async () => 'ok');
     await gate.guard(7, at(), async () => 'ok');
     expect(await gate.guard(8, at(), async () => 'ok')).toBe('ok');
+  });
+});
+
+describe('vote gate freeze', () => {
+  it('extends a running cooldown but never shortens it', async () => {
+    const { gate, at, seed, pttl } = setup();
+    seed(COOLDOWN, '1', 60 * MINUTE);
+
+    expect(await gate.freeze(7, at(), new Date(22 * MINUTE))).toEqual(new Date(60 * MINUTE));
+    expect(pttl(COOLDOWN)).toBe(60 * MINUTE);
+    expect(await gate.freeze(7, at(), new Date(90 * MINUTE))).toEqual(new Date(90 * MINUTE));
+    expect(pttl(COOLDOWN)).toBe(90 * MINUTE);
+    expect(await gate.cooldownUntil(7, at())).toEqual(new Date(90 * MINUTE));
+  });
+
+  it('starts a cooldown that ends at the frozen time', async () => {
+    const { gate, at, clock } = setup(limitsOf(1000));
+    expect(await gate.freeze(7, at(), new Date(22 * MINUTE))).toEqual(new Date(22 * MINUTE));
+    expect(await gate.guard(7, at(), async () => 'ok')).toEqual({
+      status: 'limited',
+      until: new Date(22 * MINUTE),
+    });
+    clock.now = 22 * MINUTE;
+    expect(await gate.guard(7, at(), async () => 'ok')).toBe('ok');
+  });
+
+  it('answers the end it was given when Redis is down', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const down: GateClient = new Proxy({} as GateClient, {
+      get: () => async () => Promise.reject(new Error('down')),
+    });
+    const gate = createVoteGate({
+      client: () => down,
+      limits: async () => VOTE_LIMITS,
+      timeoutMs: 50,
+    });
+    expect(await gate.freeze(7, new Date(0), new Date(22 * MINUTE))).toEqual(new Date(22 * MINUTE));
   });
 });
 

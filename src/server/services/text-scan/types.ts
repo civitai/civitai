@@ -63,6 +63,11 @@ export type TextScanSubject = {
 export type TextScanProfile = {
   entityType: TextScanEntityType;
   labels: TextScanLabel[];
+  /**
+   * A verdict settles only when it answers every label in `labels`, and an active scan that cannot
+   * ask for one of them is not submitted: see `unansweredTextScanLabels`.
+   */
+  requireEveryLabel?: boolean;
   /** Compared against `subjectTextLength` (raw trimmed field text, no headings). */
   minChars?: number;
   /** Entities that no longer exist are absent from the map; ones that are not public are not. */

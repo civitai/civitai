@@ -26,6 +26,9 @@ export const emailVerificationEmail = createEmail({
     const url = escapeHtml(verificationUrl);
     const small = `font-size: 14px; line-height: 20px;`;
     return simpleEmailWithTemplate({
+      icon: '✉️',
+      accent: 'blue',
+      eyebrow: isEmailChange ? 'Confirm your new email' : 'Confirm your email',
       header: 'Email Address Verification',
       body: `<p style="margin: 0 0 16px 0;">Hi <strong>${escapeHtml(username)}</strong>,</p>
         <p style="margin: 0;">${
