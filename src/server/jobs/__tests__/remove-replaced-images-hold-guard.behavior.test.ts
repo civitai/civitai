@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
@@ -166,7 +167,7 @@ const SCHEMA = `
     );
     -- The DELETE queues each deleted image's stored file here, in the same statement.
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
-    CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
+    CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
     CREATE TABLE "JobQueue" (
       "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
       data jsonb, "createdAt" timestamp(3) NOT NULL DEFAULT now(),
@@ -185,6 +186,7 @@ beforeAll(async () => {
   setEnv({ DATABASE_IS_PROD: true });
   holder.db = new PGlite();
   await holder.db.exec(SCHEMA);
+  await holder.db.exec(imageUseTablesSql);
   await holder.db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
   // Off, so the guard is what keeps a held image rather than the marker's delete trigger, and so
   // the report fixtures write no markers of their own.
@@ -235,7 +237,7 @@ beforeEach(async () => {
   }) as never);
 
   await reset(
-    '"Image", "User", "CsamReport", "EvidenceHold", "EvidenceHoldImage", "Post", "EvidenceHoldPost", "Model", "JobQueue"'
+    '"Image", "User", "CsamReport", "EvidenceHold", "EvidenceHoldImage", "Post", "EvidenceHoldPost", "Model", "JobQueue", "Report", "ImageReport"'
   );
   await holder.db.exec(`
     INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor", ingestion) VALUES
@@ -305,6 +307,24 @@ describe('remove-replaced-images under an account hold', () => {
     await run();
 
     expect(sorted(holder.restamped)).toEqual(sorted(HELD));
+  });
+
+  it('leaves an image its child-safety case keeps in this queue, not as a pending delete', async () => {
+    const CASE_KEPT = 40;
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId") VALUES (${CASE_KEPT}, ${PLAIN_USER});
+      INSERT INTO "Report" (id, reason, status) VALUES (70, 'CSAM', 'Pending');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (${CASE_KEPT}, 70);
+    `);
+    dbMock.dbRead.jobQueue.findMany.mockResolvedValue([{ entityId: CASE_KEPT }]);
+
+    await run();
+
+    expect(await remaining()).toContain(CASE_KEPT);
+    // Still queued here, so the re-adoption check runs again before it goes.
+    expect(holder.restamped).toEqual([CASE_KEPT]);
+    const { rows } = await holder.db.query(`SELECT 1 FROM "JobQueue" WHERE type = 'PendingDelete'`);
+    expect(rows).toEqual([]);
   });
 
   it('holds every image when the marker table exists without its view', async () => {
