@@ -2387,8 +2387,9 @@ function buildDocStore(deps: DocStoreDeps) {
 
   /**
    * A shared `put` that would change no stored row, answered without writing: the stored document
-   * with its current seq and record id, as a write answers it, untouched (no version, seq or `updated_at` bump, no index sync, no usage charge, no
-   * `markRatingPending`, so a rating given for its version stands), when ALL of:
+   * with its current seq and record id, untouched (no version, seq or `updated_at` bump, no index
+   * sync, no usage charge, no `markRatingPending`, so a rating given for its version stands), when
+   * ALL of:
    * - a document is stored at `key` and `classifyPublish` calls it `unchanged` against `data` —
    *   the ONE rule a publish uses: the caller's own, not hidden, and the same content hash;
    * - its stored index rows are exactly the rows `indexRowsFor` derives from `data` under the
