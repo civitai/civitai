@@ -85,7 +85,8 @@ function AskForReview({
     <Stack gap="sm">
       <Text fw={600}>How did it turn out?</Text>
       <Text size="sm" c="dimmed">
-        Happy pays {seller} now. Not quite leaves the payment to the end of the report window
+        Happy pays {seller} now, and you can no longer report a problem. Not quite leaves the
+        payment to the end of the report window
         {until ? (
           <>
             , which closes in <Countdown endTime={until} />

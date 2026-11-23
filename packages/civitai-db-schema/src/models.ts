@@ -7238,6 +7238,8 @@ export interface ServiceDeal {
   licenseCustomText: string | null;
   licenseAllowResale: boolean;
   licenseAgreedAt: Date | null;
+  buyerDisclosureVersion: string | null;
+  buyerDisclosureLines: string[];
   maxNsfwLevel: number;
   status: ServiceDealStatus;
   heldAt: Date | null;

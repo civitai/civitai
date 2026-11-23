@@ -6,7 +6,10 @@ import { createRoot } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import type * as Mantine from '@mantine/core';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
+import {
+  BUYER_DISCLOSURE_VERSION,
+  SERVICES_TERMS_VERSION,
+} from '~/shared/constants/creator-service-terms.constants';
 import type * as Trpc from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 
@@ -164,7 +167,8 @@ describe('buyer request', () => {
     expect(mocks.request.mock.calls[0][0]).toMatchObject({
       offeringId: 9,
       requestText: 'please draw my cat',
-      disclosureVersion: SERVICES_TERMS_VERSION,
+      disclosureVersion: BUYER_DISCLOSURE_VERSION,
+      disclosureReviewEnabled: false,
     });
   });
 });

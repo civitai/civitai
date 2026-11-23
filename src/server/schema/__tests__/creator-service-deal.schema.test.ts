@@ -18,6 +18,7 @@ describe('requestServiceDealSchema', () => {
         expectedDeliveryDays: 3,
         requestText: ' draw my cat ',
         disclosureVersion: 'v1',
+        disclosureReviewEnabled: false,
         revisionsIncluded: 9,
         deliveryDays: 1,
         price: 1,
@@ -32,6 +33,7 @@ describe('requestServiceDealSchema', () => {
       expectedDeliveryDays: 3,
       requestText: 'draw my cat',
       disclosureVersion: 'v1',
+      disclosureReviewEnabled: false,
       // Unsent, they read as "shown no license, agreed to none".
       expectedLicense: { licensePreset: null, licenseCustomText: null, licenseAllowResale: false },
       licenseAgreed: false,
@@ -39,7 +41,13 @@ describe('requestServiceDealSchema', () => {
   });
 
   it('requires the revisions and delivery days the buyer was shown', () => {
-    const base = { offeringId: 1, expectedPrice: 500, requestText: 'x', disclosureVersion: 'v1' };
+    const base = {
+      offeringId: 1,
+      expectedPrice: 500,
+      requestText: 'x',
+      disclosureVersion: 'v1',
+      disclosureReviewEnabled: false,
+    };
     expect(requestServiceDealSchema.safeParse(base).success).toBe(false);
     expect(
       requestServiceDealSchema.safeParse({ ...base, expectedRevisionsIncluded: 0 }).success
@@ -63,9 +71,13 @@ it('requires the disclosure version the buyer was shown', () => {
     requestText: 'x',
   };
   expect(requestServiceDealSchema.safeParse(input).success).toBe(false);
-  expect(requestServiceDealSchema.safeParse({ ...input, disclosureVersion: 'v1' }).success).toBe(
-    true
-  );
+  expect(
+    requestServiceDealSchema.safeParse({
+      ...input,
+      disclosureVersion: 'v1',
+      disclosureReviewEnabled: false,
+    }).success
+  ).toBe(true);
 });
 
 describe('exit reasons', () => {

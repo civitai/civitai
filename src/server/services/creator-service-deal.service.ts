@@ -32,7 +32,11 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
+import {
+  BUYER_DISCLOSURE_VERSION,
+  buyerDisclosureItems,
+  buyerDisclosureLines,
+} from '~/shared/constants/creator-service-terms.constants';
 import type { ServiceLicense } from '~/shared/constants/creator-service-license.constants';
 import { NO_SERVICE_LICENSE } from '~/shared/constants/creator-service-license.constants';
 import {
@@ -337,6 +341,7 @@ export async function requestServiceDeal({
   buyerId,
   requestText,
   disclosureVersion,
+  disclosureReviewEnabled,
   buzzType,
   servableLevels,
   consentLevels,
@@ -355,6 +360,8 @@ export async function requestServiceDeal({
   requestText: string;
   /** The buyer-disclosure version shown before the hold. */
   disclosureVersion: string;
+  /** Which disclosure the buyer was shown: with reviews (line 5a) or without (5b). */
+  disclosureReviewEnabled: boolean;
   buzzType: string;
   /** What the request's domain may be served (`domainServableLevels`). */
   servableLevels: number;
@@ -365,8 +372,18 @@ export async function requestServiceDeal({
 }) {
   if (!isServiceDealBuzzType(buzzType))
     throw throwBadRequestError(`Services cannot be paid in ${buzzType} Buzz`);
-  if (disclosureVersion !== SERVICES_TERMS_VERSION)
+  // The buyer must have been shown this disclosure, in the variant this deal will run under.
+  if (disclosureVersion !== BUYER_DISCLOSURE_VERSION || disclosureReviewEnabled !== reviewEnabled)
     throw throwBadRequestError('Review the request terms before sending. Nothing was charged.');
+  // The pins below hold the offering to these terms, so these are the lines the buyer read.
+  const disclosureLines = buyerDisclosureLines(
+    buyerDisclosureItems({
+      price: expectedPrice,
+      revisionsIncluded: expectedRevisionsIncluded,
+      deliveryDays: expectedDeliveryDays,
+      reviewEnabled,
+    })
+  );
 
   await throwOnBlockedUserContent(requestText, { surface: 'creator-service-request' });
 
@@ -428,12 +445,13 @@ export async function requestServiceDeal({
       INSERT INTO "ServiceDeal" ("offeringId", "buyerId", "sellerId", "price", "buzzType",
         "feeAmount", "revisionsIncluded", "deliveryDays", "previewKind", "status", "requestText",
         "updatedAt", "maxNsfwLevel", "reviewEnabledAt", "licensePreset", "licenseCustomText",
-        "licenseAllowResale", "licenseAgreedAt")
+        "licenseAllowResale", "licenseAgreedAt", "buyerDisclosureVersion", "buyerDisclosureLines")
       SELECT o."id", ${buyerId}::int, o."sellerId", o."price", ${buzzType}::"ServiceBuzzType",
         0, o."revisionsIncluded", o."deliveryDays", o."previewKind", 'Requested'::"ServiceDealStatus",
         ${requestText}::text, now(), ${offeringLevel},
         CASE WHEN ${reviewEnabled}::boolean THEN now() END, o."licensePreset", o."licenseCustomText",
-        o."licenseAllowResale", CASE WHEN o."licensePreset" IS NULL THEN NULL ELSE now() END
+        o."licenseAllowResale", CASE WHEN o."licensePreset" IS NULL THEN NULL ELSE now() END,
+        ${BUYER_DISCLOSURE_VERSION}::text, ${disclosureLines}::text[]
       FROM "ServiceOffering" o
       WHERE o."id" = ${offeringId}::int
         AND o."status" = 'Active'::"ServiceOfferingStatus"
