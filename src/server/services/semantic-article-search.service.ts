@@ -257,6 +257,7 @@ export async function searchSemanticArticles({
     source: candidateSource,
     viewer: { isModerator: !!user?.isModerator },
     text: input.query,
+    spellcheck: input.spellcheck,
     filter,
     audit: (correction) => refusalOf(correction, 'correction'),
   });
