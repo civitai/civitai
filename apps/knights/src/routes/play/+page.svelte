@@ -35,6 +35,7 @@
     createItemBuffer,
     createSerialQueue,
     createVoteTracker,
+    markPress,
     postVote,
     refillCount,
     refusalNote,
@@ -44,7 +45,7 @@
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
   import type { ActionData, PageData } from './$types';
   import type { PlayerStatsSignal } from '$lib/server/live/announce';
-  import { connectSignals, joinTopic, onSignal } from '$lib/signals';
+  import { connectSignals, joinTopic, onSignal, signalsAt } from '$lib/signals';
   import { liveStatus } from '$lib/live-status.svelte';
   import {
     PLAYER_STATS_EVENT,
@@ -231,6 +232,9 @@
     };
   };
 
+  // The live connection at a vote's press: the server logs it when the vote is refused as settled.
+  const pressSignals = () => signalsAt(stageTopics);
+
   const answerOf = (submitter: HTMLElement | null) =>
     submitter instanceof HTMLButtonElement && submitter.name === 'answer' ? submitter.value : null;
 
@@ -241,6 +245,11 @@
     if (picked === BLOCKED_ANSWER && blockReason) formData.set('blockReason', blockReason);
     blockReason = null;
     if (picked) sound.play('press');
+    if (picked) {
+      // A plain post starts at once: no vote is queued ahead of it.
+      const startPost = markPress(formData, pressSignals());
+      startPost();
+    }
     return async ({ result, update }) => {
       try {
         await update();
@@ -459,6 +468,7 @@
   function post(action: URL, body: FormData, key: string, counted: boolean) {
     // Read at the press: by the time the answer lands, the page data may already hold this vote's effect.
     const smitesBefore = shown.status.smites;
+    const started = counted ? markPress(body, pressSignals()) : undefined;
     const uncount = () => {
       if (counted && alive) inFlight.count = Math.max(0, inFlight.count - 1);
       counted = false;
@@ -469,6 +479,7 @@
       queue: votes,
       tracker,
       wait,
+      onStart: started,
       send: async (signal) => {
         try {
           const response = await fetch(action, {
@@ -637,8 +648,10 @@
 
   // A primitive, so a page reload with the same stages does not leave and rejoin the topics.
   let stageList = $derived(data.mode === 'queue' ? data.live.stages.join(',') : '');
+  // The topics joined below; a vote's press also reads them (`pressSignals`). Empty outside queue mode.
+  let stageTopics = $derived(stageList ? stageList.split(',').map(queueTopic) : []);
   $effect(() => {
-    const leave = stageList ? stageList.split(',').map((stage) => joinTopic(queueTopic(stage))) : [];
+    const leave = stageTopics.map((topic) => joinTopic(topic));
     return () => leave.forEach((left) => left());
   });
 
