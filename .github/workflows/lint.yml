@@ -1167,8 +1167,8 @@ jobs:
   # every `node_modules` plus the gitignored slim schema the postinstall writes, keyed on the
   # lockfile, the workspace and package manifests, `.nvmrc`, `patches/` and the postinstall's
   # inputs (the full schema and its generator scripts), so a key can only ever hold what an
-  # install of those inputs produces. An exact hit skips setup-node's store cache and the install;
-  # a miss installs as before.
+  # install of those inputs produces. An exact hit skips setup-node's store cache and the install
+  # and runs only the apps' `prepare` (it writes from the checkout); a miss installs as before.
   #
   # 🔴 SAVED ONLY ON `main`, by `related-cache` on the batch dispatch, the rule the `unit` job's
   # Vite cache states: an entry saved by a PR is scoped to that PR's ref, readable by nothing else,
@@ -1231,6 +1231,15 @@ jobs:
       - name: Install
         if: steps.nm.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
+
+      # What an install writes OUTSIDE the cached tree, from the checkout rather than the
+      # lockfile: each app's `prepare` (`svelte-kit sync`, which writes `apps/*/.svelte-kit` from
+      # that app's routes and config, so it cannot be cached on the install key). Measured: without
+      # it the app-reading unit tests fail on a missing `.svelte-kit/tsconfig.json`. `--if-present`
+      # so an app with no `prepare` is skipped, and a new app's is run.
+      - name: App prepare scripts (cache hit)
+        if: steps.nm.outputs.cache-hit == 'true'
+        run: pnpm -r --filter './apps/*' --if-present run prepare
 
       - name: Plan, then run this shard
         env:
