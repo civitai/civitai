@@ -1,3 +1,4 @@
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { createEmail } from '~/server/email/templates/base.email';
 import { renderEmailCallout, simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -23,7 +24,7 @@ export const bountyRefundedEmail = createEmail({
       icon: '💸',
       accent: 'buzz',
       eyebrow: 'Bounty refunded',
-      header: `Your bounty <strong>${bounty.name}</strong> has been refunded.`,
+      header: `Your bounty <strong>${escapeHtml(bounty.name)}</strong> has been refunded.`,
       body: `
        <p style="margin: 0;">
           The Buzz you had put down for your bounty has been returned to your account and you can use it to create a new bounty expecting better results.

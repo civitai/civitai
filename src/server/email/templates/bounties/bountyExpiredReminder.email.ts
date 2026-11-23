@@ -1,3 +1,4 @@
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { createEmail } from '~/server/email/templates/base.email';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { renderEmailCallout, simpleEmailWithTemplate } from '~/server/email/templates/util';
@@ -35,7 +36,7 @@ export const bountyExpiredReminderEmail = createEmail({
       icon: '⏳',
       accent: 'buzz',
       eyebrow: 'Action needed',
-      header: `Reminder: Your bounty <strong>${bounty.name}</strong> has expired!`,
+      header: `Reminder: Your bounty <strong>${escapeHtml(bounty.name)}</strong> has expired!`,
       body: `
        <p>
           It looks like you still have not awarded a winner. Be sure to check out the entries and award the one that you like the most!

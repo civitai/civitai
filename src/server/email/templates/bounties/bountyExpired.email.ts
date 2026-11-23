@@ -1,3 +1,4 @@
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { createEmail } from '~/server/email/templates/base.email';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { renderEmailSummary, simpleEmailWithTemplate } from '~/server/email/templates/util';
@@ -25,7 +26,7 @@ export const bountyExpiredEmail = createEmail({
       icon: '⏰',
       accent: 'buzz',
       eyebrow: 'Bounty expired',
-      header: `It looks like your bounty <strong>${bounty.name}</strong> just expired!`,
+      header: `It looks like your bounty <strong>${escapeHtml(bounty.name)}</strong> just expired!`,
       body: `
         <p style="margin: 0;">
           It looks like your bounty received about ${
