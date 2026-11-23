@@ -36,6 +36,9 @@ describe('memberLimitNote', () => {
   it('tells a free account what membership raises the limit to', () => {
     expect(memberLimitNote(posts, 'free')).toBe('Members get 2x');
     expect(memberLimitNote(gifts, undefined)).toBe('Members get 15 to 60');
+    expect(memberLimitNote({ ...gifts, tiers: tiers(3, [15, 15, 15]) }, 'free')).toBe(
+      'Members get 15'
+    );
   });
   it('says nothing to a member', () => {
     expect(memberLimitNote(gifts, 'bronze')).toBeNull();

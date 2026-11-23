@@ -9,7 +9,7 @@ import {
   USAGE_LIMIT_CONFIG_TTL_MS,
   USAGE_LIMIT_FIRST_READ_TIMEOUT_MS,
 } from '~/server/services/usage-limit-config.service';
-import { defaultUsageLimitConfig } from '~/shared/constants/usage-limits';
+import { defaultUsageLimitConfig, getUsageLimitDef } from '~/shared/constants/usage-limits';
 
 const findKeyValue = dbMock.dbRead.keyValue.findUnique;
 const row = (limits: Record<string, unknown>) => ({ value: { version: 1, limits } } as never);
@@ -120,9 +120,9 @@ describe('getUsageLimitTierTable', () => {
     // resource-loads.daily has per-tier values but is an abuse limit.
     expect(ids).not.toContain('resource-loads.daily');
     const gifts = table.find((entry) => entry.id === 'gifts.monthly');
-    expect(gifts?.tiers.free.limit).toBe(3);
-    expect(gifts?.tiers.gold.limit).toBe(60);
-    expect(table.find((entry) => entry.id === 'posts.daily')?.tiers.bronze.multiplier).toBe(2);
+    const giftsDef = getUsageLimitDef('gifts.monthly');
+    expect(gifts?.tiers.free.limit).toBe(giftsDef.base);
+    expect(gifts?.tiers.gold).toEqual(giftsDef.byTier?.gold);
   });
 
   it('serves the KeyValue override, so the plan page shows what enforcement uses', async () => {

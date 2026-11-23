@@ -1,12 +1,9 @@
+import { lowerFirst } from 'lodash-es';
 import type { UsageLimitTierEntry } from '~/server/services/usage-limit-config.service';
 import type { UsageLimitTier } from '~/shared/constants/usage-limits';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 const PAID_TIERS = ['bronze', 'silver', 'gold'] as const;
-
-function lowerFirst(text: string) {
-  return text.charAt(0).toLowerCase() + text.slice(1);
-}
 
 /** A plan-page line, e.g. "2x posts per day" or "15 gift claims of your links per month". */
 export function planLimitText(entry: UsageLimitTierEntry, tier: string | undefined) {
