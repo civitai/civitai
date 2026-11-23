@@ -23,8 +23,8 @@ import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
 import {
   ACCENT_FILL,
   ACCENT_TEXT,
-  ACCENT_TEXT_SCHEME,
-  musicAccentVars,
+  musicSurface,
+  surfaceTint,
   withAlpha,
 } from '~/components/MusicPlayer/music-accent';
 import {
@@ -77,6 +77,7 @@ export function MusicNowPlayingSheet({
   const [settled, setSettled] = useState(false);
   // Back closes the latest layer first: the Up next sheet when it is open.
   useHistoryLayer(opened, onClose);
+  const surface = musicSurface(accent, 'nowPlayingSheet');
 
   return (
     <>
@@ -98,10 +99,10 @@ export function MusicNowPlayingSheet({
       >
         <Drawer.Content
           aria-label="Now playing"
-          className={ACCENT_TEXT_SCHEME}
+          className={surface.className}
           style={
             {
-              ...musicAccentVars(accent, 'nowPlayingSheet'),
+              ...surface.style,
               transform: dragY ? `translateY(${dragY}px)` : undefined,
             } as CSSProperties
           }
@@ -113,9 +114,9 @@ export function MusicNowPlayingSheet({
               className="absolute inset-0"
               style={{
                 background: accent
-                  ? `linear-gradient(180deg, ${withAlpha(accent.accent2, 0.8)} 0%, ${withAlpha(
-                      accent.accent,
-                      0.4
+                  ? `linear-gradient(180deg, ${withAlpha(accent.accent2, 0.8)} 0%, ${surfaceTint(
+                      'nowPlayingSheet',
+                      'wash'
                     )} 45%, transparent 100%)`
                   : undefined,
               }}

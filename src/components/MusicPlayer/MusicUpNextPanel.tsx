@@ -32,8 +32,9 @@ import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
 import {
   ACCENT_FILL,
   ACCENT_TEXT,
-  ACCENT_TEXT_SCHEME,
-  musicAccentVars,
+  musicSurface,
+  PRIMARY_TEXT,
+  surfaceTint,
 } from '~/components/MusicPlayer/music-accent';
 import {
   MUSIC_UP_NEXT_DRAG_Z_INDEX,
@@ -86,6 +87,7 @@ export function MusicUpNextPanel({
 }) {
   const [panel, setPanel] = useState<HTMLElement | null>(null);
   useClickOutside(onClose, null, [panel, ignore]);
+  const surface = musicSurface(accent, 'upNextPanel');
 
   return (
     <Portal>
@@ -94,11 +96,11 @@ export function MusicUpNextPanel({
         aria-label="Up next"
         className={clsx(
           'fixed right-5 flex w-[400px] max-w-[calc(100vw-40px)] flex-col overflow-hidden rounded-2xl border border-gray-4 bg-white shadow-[0_14px_36px_#000000AA] dark:border-dark-3 dark:bg-dark-5',
-          ACCENT_TEXT_SCHEME
+          surface.className
         )}
         style={
           {
-            ...musicAccentVars(accent, 'upNextPanel'),
+            ...surface.style,
             zIndex: MUSIC_UP_NEXT_Z_INDEX,
             bottom: `calc(${MUSIC_PLAYER_BAR_HEIGHT}px + var(--safe-area-inset-bottom) + 12px)`,
             maxHeight: `calc(100dvh - var(--header-height, 0px) - ${MUSIC_PLAYER_BAR_HEIGHT}px - var(--safe-area-inset-bottom) - 24px)`,
@@ -297,13 +299,13 @@ export function MusicUpNextList({
 function PanelHeader({ summary, sheet }: { summary: string | null; sheet: boolean }) {
   const shuffle = useMusicPlayerStore((s) => s.shuffle);
   const repeat = useMusicPlayerStore((s) => s.repeat);
-  // System toggles in the panel stay Civitai blue (Pencil `uGWPy`), at WCAG AA: blue 8 on white
-  // and on the gray-1 hover (blue 6 was 3.5:1), blue 4 in dark.
+  // System toggles in the panel stay Civitai blue (Pencil `uGWPy`).
   const toggle = (on: boolean) =>
     clsx(
       'flex size-[30px] items-center justify-center rounded-lg hover:bg-gray-1 dark:hover:bg-dark-4',
-      on ? 'text-blue-8 dark:text-blue-4' : dimmed
+      !on && dimmed
     );
+  const toggleColour = (on: boolean) => (on ? { color: PRIMARY_TEXT } : undefined);
   return (
     <div className="flex shrink-0 items-center gap-1 border-b border-gray-3 px-[18px] py-4 dark:border-dark-4">
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -325,6 +327,7 @@ function PanelHeader({ summary, sheet }: { summary: string | null; sheet: boolea
           aria-pressed={shuffle}
           onClick={() => store().toggleShuffle()}
           className={toggle(shuffle)}
+          style={toggleColour(shuffle)}
         >
           <IconArrowsShuffle size={16} />
         </button>
@@ -338,6 +341,7 @@ function PanelHeader({ summary, sheet }: { summary: string | null; sheet: boolea
           aria-pressed={repeat !== 'off'}
           onClick={() => store().cycleRepeat()}
           className={toggle(repeat !== 'off')}
+          style={toggleColour(repeat !== 'off')}
         >
           {repeat === 'one' ? <IconRepeatOnce size={16} /> : <IconRepeat size={16} />}
         </button>
@@ -345,8 +349,8 @@ function PanelHeader({ summary, sheet }: { summary: string | null; sheet: boolea
       <button
         type="button"
         onClick={() => store().clearUpNext()}
-        // Pencil `PPbvV`: blue 3 in dark; blue 8 in light for 4.5:1 on white.
-        className="ml-1 rounded px-1 text-[13px] font-semibold text-blue-8 hover:underline dark:text-blue-3"
+        className="ml-1 rounded px-1 text-[13px] font-semibold hover:underline"
+        style={{ color: PRIMARY_TEXT }}
       >
         Clear
       </button>
@@ -366,7 +370,12 @@ function NowPlaying({
   return (
     <div
       className="relative flex items-center gap-3 px-[18px] py-3.5"
-      style={{ background: `linear-gradient(90deg, ${accentAt(33)}, transparent)` }}
+      style={{
+        background: `linear-gradient(90deg, ${surfaceTint(
+          'upNextPanel',
+          'nowPlaying'
+        )}, transparent)`,
+      }}
     >
       <span
         aria-hidden

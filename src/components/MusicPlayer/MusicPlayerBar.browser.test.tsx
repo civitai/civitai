@@ -3,7 +3,7 @@
 import '../../../test/cascade-layer-order.css';
 import '@mantine/core/styles.layer.css';
 import '~/styles/globals.css';
-import { Modal } from '@mantine/core';
+import { DEFAULT_THEME, Modal } from '@mantine/core';
 import { encode } from 'blurhash';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -51,7 +51,12 @@ import {
 import { SignedOutSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { DialogProvider, useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { PRIMARY_FILL } from '~/components/MusicPlayer/music-accent';
+import {
+  ACCENT_FILL,
+  ACCENT_TEXT,
+  PRIMARY_FILL,
+  PRIMARY_TEXT,
+} from '~/components/MusicPlayer/music-accent';
 import { MusicPlayerBar } from '~/components/MusicPlayer/MusicPlayerBar';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 
@@ -265,6 +270,56 @@ describe('the global player bar', () => {
               (Math.max(text, lum(ground)) + 0.05) / (Math.min(text, lum(ground)) + 0.05);
             expect(ratio, name).toBeGreaterThanOrEqual(4.5);
           }
+
+          // The now-playing row's creator in Up next, on the row's tint at its strongest (left) edge.
+          const upNext = page.getByRole('region', { name: 'Up next' });
+          const panel = upNext.element() as HTMLElement;
+          const creator = upNext
+            .getByText(song.creator.username)
+            .elements()
+            .find((el) => el.closest('[style*="linear-gradient"]'))!;
+          const row = creator.closest<HTMLElement>('[style*="linear-gradient"]')!;
+          const tint = getComputedStyle(row).backgroundImage.match(
+            /rgba?\([^)]*\)|color\([^)]*\)/
+          )![0];
+          const rowGround = lum(over(parse(tint), parse(getComputedStyle(panel).backgroundColor)));
+          const creatorText = lum(parse(getComputedStyle(creator).color));
+          expect(
+            (Math.max(creatorText, rowGround) + 0.05) / (Math.min(creatorText, rowGround) + 0.05),
+            'the now-playing creator'
+          ).toBeGreaterThanOrEqual(4.5);
+
+          // No element picks a colour of its own: text in the accent's hue is the surface's
+          // ACCENT_TEXT, and blue text its PRIMARY_TEXT.
+          const probe = (root: HTMLElement, colour: string) => {
+            const el = root.appendChild(document.createElement('span'));
+            el.style.color = colour;
+            const computed = getComputedStyle(el).color;
+            el.remove();
+            return computed;
+          };
+          const roots = [bar(), panel];
+          const allowed = new Set(
+            roots.flatMap((root) => [probe(root, ACCENT_TEXT), probe(root, PRIMARY_TEXT)])
+          );
+          const picked = [
+            ACCENT_FILL,
+            'var(--music-accent-2, var(--mantine-primary-color-filled))',
+            ...DEFAULT_THEME.colors.blue,
+          ]
+            .map((colour) => probe(bar(), colour))
+            .filter((colour) => !allowed.has(colour));
+          // What paints in `color`: an icon, or an element with text of its own.
+          const paints = (el: Element) =>
+            el instanceof SVGSVGElement ||
+            [...el.childNodes].some(
+              (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()
+            );
+          const offenders = roots
+            .flatMap((root) => [...root.querySelectorAll('*')])
+            .filter((el) => paints(el) && picked.includes(getComputedStyle(el).color))
+            .map((el) => el.outerHTML.slice(0, 300));
+          expect(offenders).toEqual([]);
         } finally {
           document.documentElement.removeAttribute('data-mantine-color-scheme');
           noFade.remove();

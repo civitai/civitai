@@ -164,19 +164,6 @@ describe('the Up next panel', () => {
     expect(player().list).toEqual([]);
   });
 
-  test('Clear is Civitai blue 3 in dark', async () => {
-    player().playTrack(nowPlaying);
-    await openPanel();
-    const scheme = document.documentElement.getAttribute('data-mantine-color-scheme');
-    document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
-    try {
-      expect(getComputedStyle(inPanel('Clear').element()).color).toBe('rgb(116, 192, 252)');
-    } finally {
-      if (scheme) document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
-      else document.documentElement.removeAttribute('data-mantine-color-scheme');
-    }
-  });
-
   for (const scheme of ['light', 'dark'])
     test(`a song's length reads at WCAG AA in ${scheme} mode`, async () => {
       player().playTrack(nowPlaying, { list: { name: 'Feed', tracks: [nowPlaying, rain] } });

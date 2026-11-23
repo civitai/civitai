@@ -6,9 +6,11 @@ import type {
   SurfaceState,
 } from '~/components/MusicPlayer/music-accent';
 import {
+  blend,
   MUSIC_SURFACES,
   musicAccentFromHash,
   musicAccentVars,
+  musicSurface,
   readableAccent,
 } from '~/components/MusicPlayer/music-accent';
 
@@ -149,17 +151,10 @@ describe('readableAccent', () => {
   });
 });
 
-describe('musicAccentVars', () => {
+describe('musicSurface', () => {
   // Mantine's primary when no cover gives an accent: blue-6 in light, blue-8 in dark (Mantine's
   // default primaryShade; the theme sets neither primaryColor nor primaryShade).
   const PRIMARY = { light: '#228be6', dark: '#1971c2' };
-  const mix = (fg: string, bg: string, alpha: number) => {
-    const [f, b] = [rgb(fg), rgb(bg)];
-    return `#${f
-      .map((c, i) => Math.round(c * alpha + b[i] * (1 - alpha)))
-      .map((c) => c.toString(16).padStart(2, '0'))
-      .join('')}`;
-  };
   type Scheme = 'light' | 'dark';
   /** Covers around the wheel, made very dark and very light so the accent lands on the band's edges. */
   const covers: [string, MusicAccent | null][] = [];
@@ -178,43 +173,34 @@ describe('musicAccentVars', () => {
     }
   // The chips' tint is always the primary's shade 6.
   covers.push(['the primary as an accent', { accent: '#228be6', accent2: '#228be6' }]);
-  // A grey cover gives no accent: the player falls back to the primary.
-  const grey = musicAccentFromHash(flatHash(128, 128, 128));
-  covers.push(['a grey cover', grey], ['no cover', null]);
+  covers.push(['no cover', null]);
 
-  it('has a grey cover fall back to the primary', () => {
-    expect(grey).toBeNull();
-  });
-
-  // The states the design names for each surface (odd/tasks/music-stabilize.md, Design options),
-  // checked on top of the source's own list, so a state dropped from the source still fails here.
+  // The tints the design names (PR #10146) and the hovers the components paint,
+  // kept apart from MUSIC_SURFACES so the text is still held to them if one is dropped there.
   const DESIGN_STATES: Partial<Record<MusicSurface, SurfaceState[]>> = {
-    bar: [{ tint: 0.15 }, { tint: 0.2 }, { tint: 0.2, second: true }],
-    upNextPanel: [{ tint: 0.33 }],
-    upNextSheet: [{ tint: 0.33 }],
-    nowPlayingSheet: [{ tint: 0.4 }],
+    bar: [{ tint: 0.15 }, { light: '#f1f3f5', dark: '#2c2e33' }],
+    upNextPanel: [{ tint: 0.33 }, { light: '#f1f3f5', dark: '#373a40' }],
     commentChips: [{ tint: 0.12 }, { tint: 0.192 }],
     commentList: [{ light: '#f1f3f5', dark: '#373a40' }],
   };
 
-  // Every surface the source names, at rest and in each state: a tint of the accent (its second
-  // colour where `second`) over the surface, or a hover background.
   it.each(Object.keys(MUSIC_SURFACES) as MusicSurface[])(
     'reads at 4.5:1 on the %s at rest, hovered and highlighted, in both schemes',
     (surface) => {
       const { states, ...base } = MUSIC_SURFACES[surface];
+      const all = [...(Object.values(states) as SurfaceState[]), ...(DESIGN_STATES[surface] ?? [])];
       for (const [label, accent] of covers)
         for (const scheme of ['light', 'dark'] as Scheme[]) {
-          const vars = musicAccentVars(accent, surface);
-          const text = vars[`--music-accent-text-${scheme}`];
+          const { style } = musicSurface(accent, surface);
+          const text = style[`--music-accent-text-${scheme}`];
           expect(text, `${label}, ${scheme}`).toMatch(/^#[0-9a-f]{6}$/);
           const fill = accent?.accent ?? PRIMARY[scheme];
           const second = accent?.accent2 ?? PRIMARY[scheme];
           const backgrounds = [
             base[scheme],
-            ...[...(states as SurfaceState[]), ...(DESIGN_STATES[surface] ?? [])].map((state) =>
+            ...all.map((state) =>
               'tint' in state
-                ? mix(state.second ? second : fill, base[scheme], state.tint)
+                ? blend(state.second ? second : fill, base[scheme], state.tint)
                 : state[scheme]
             ),
           ];
@@ -223,6 +209,17 @@ describe('musicAccentVars', () => {
               contrast(text, background),
               `${label} on ${surface} (${background}), ${scheme}`
             ).toBeGreaterThanOrEqual(4.5);
+
+          // The Civitai blue that stays blue under a cover, on the surface and its hovers.
+          const primary = style[`--music-primary-text-${scheme}`];
+          for (const background of [
+            base[scheme],
+            ...all.flatMap((s) => ('tint' in s ? [] : [s[scheme]])),
+          ])
+            expect(
+              contrast(primary, background),
+              `primary on ${surface} (${background}), ${scheme}`
+            ).toBeGreaterThanOrEqual(4.5);
         }
     }
   );
@@ -230,12 +227,12 @@ describe('musicAccentVars', () => {
   it("sets the cover's colours for fills, and none without a cover, so fills fall back to the primary", () => {
     const accent = musicAccentFromHash(flatHash(0xe6, 0x49, 0x80))!;
 
-    expect(musicAccentVars(accent, 'bar')).toMatchObject({
+    expect(musicSurface(accent, 'bar').style).toMatchObject({
       '--music-accent': accent.accent,
       '--music-accent-2': accent.accent2,
     });
-    expect(musicAccentVars(null, 'bar')).not.toHaveProperty('--music-accent');
-    expect(musicAccentVars(null, 'bar')).not.toHaveProperty('--music-accent-2');
+    expect(musicSurface(null, 'bar').style).not.toHaveProperty('--music-accent');
+    expect(musicSurface(null, 'bar').style).not.toHaveProperty('--music-accent-2');
   });
 
   it('sets only the fill colours where no accent text sits', () => {

@@ -9,12 +9,7 @@ import {
   clusterTimedComments,
 } from '~/components/Music/TimedComments/timed-comments';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
-import {
-  ACCENT_FILL,
-  ACCENT_TEXT,
-  ACCENT_TEXT_SCHEME,
-  musicAccentVars,
-} from '~/components/MusicPlayer/music-accent';
+import { ACCENT_FILL, ACCENT_TEXT, musicSurface } from '~/components/MusicPlayer/music-accent';
 import { seekMusicPlayer } from '~/components/MusicPlayer/MusicPlayerAudio';
 import { MUSIC_PLAYER_FLOAT_Z_INDEX } from '~/components/MusicPlayer/MusicPlayerLayers';
 import { dimmed } from '~/components/MusicPlayer/MusicPlayerParts';
@@ -132,9 +127,8 @@ export function TimedCommentStrip({
     ? undefined
     : comments.find((comment) => comment.id === hovered.value) ??
       activeTimedComment(clusters, currentTime);
-  // What floats is portalled out of the bar, so it takes the accent along; times in the list read
-  // at 4.5:1 on its surface in each scheme.
-  const accentVars = musicAccentVars(accent, 'commentList') as CSSProperties;
+  // What floats is portalled out of the bar, so it takes the accent along.
+  const surface = musicSurface(accent, 'commentList');
 
   const refocus = (selector: string) => {
     refocusing.current = true;
@@ -187,7 +181,7 @@ export function TimedCommentStrip({
               key={first.id}
               opened={!!labelHere || isList}
               lift={layout.lift}
-              style={accentVars}
+              surface={surface}
               target={
                 cluster.comments.length === 1 ? (
                   <button
@@ -274,13 +268,13 @@ export function TimedCommentStrip({
 function FloatAbove({
   opened,
   lift,
-  style,
+  surface,
   target,
   children,
 }: {
   opened: boolean;
   lift: number;
-  style?: CSSProperties;
+  surface: ReturnType<typeof musicSurface>;
   target: ReactNode;
   children: ReactNode;
 }) {
@@ -299,7 +293,10 @@ function FloatAbove({
     >
       <Popover.Target>{target}</Popover.Target>
       {/* `unstyled` drops the dropdown's own positioning along with its surface. */}
-      <Popover.Dropdown className="absolute" style={style}>
+      <Popover.Dropdown
+        className={clsx('absolute', surface.className)}
+        style={surface.style as CSSProperties}
+      >
         {children}
       </Popover.Dropdown>
     </Popover>
@@ -468,10 +465,7 @@ function ClusterList({
         handlers.onKeyDown(event);
         moveFocus(event);
       }}
-      className={clsx(
-        'flex max-h-[22rem] w-80 flex-col gap-3 overflow-y-auto rounded-[14px] border border-gray-3 bg-white p-3.5 shadow-[0_12px_32px_#00000099] dark:border-dark-3 dark:bg-dark-5',
-        ACCENT_TEXT_SCHEME
-      )}
+      className="flex max-h-[22rem] w-80 flex-col gap-3 overflow-y-auto rounded-[14px] border border-gray-3 bg-white p-3.5 shadow-[0_12px_32px_#00000099] dark:border-dark-3 dark:bg-dark-5"
     >
       <div className="flex items-center justify-between gap-3">
         <span className="text-base font-bold text-black dark:text-white">{title}</span>

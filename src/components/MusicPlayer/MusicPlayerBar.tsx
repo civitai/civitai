@@ -21,8 +21,9 @@ import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
 import {
   ACCENT_FILL,
   ACCENT_TEXT,
-  ACCENT_TEXT_SCHEME,
   musicAccentVars,
+  musicSurface,
+  surfaceTint,
   withAlpha,
 } from '~/components/MusicPlayer/music-accent';
 import {
@@ -30,12 +31,7 @@ import {
   MUSIC_PLAYER_Z_INDEX,
   PlayerTooltip,
 } from '~/components/MusicPlayer/MusicPlayerLayers';
-import {
-  accentAt,
-  dimmed,
-  SongArt,
-  songCreatorHref,
-} from '~/components/MusicPlayer/MusicPlayerParts';
+import { dimmed, SongArt, songCreatorHref } from '~/components/MusicPlayer/MusicPlayerParts';
 import { MusicNowPlayingSheet } from '~/components/MusicPlayer/MusicNowPlayingSheet';
 import {
   hoverSurface,
@@ -198,6 +194,7 @@ function Bar({ track }: { track: MusicTrack }) {
   const playing = useMusicPlayerStore((s) => s.playing);
   const error = useMusicPlayerStore((s) => s.error);
   const { cover, accent } = useMusicPlayerCover(track.id);
+  const surface = musicSurface(accent, 'bar');
 
   return (
     <div
@@ -206,11 +203,11 @@ function Bar({ track }: { track: MusicTrack }) {
       aria-label="Music player"
       className={clsx(
         'relative flex shrink-0 items-center gap-3.5 overflow-hidden border-t border-gray-3 bg-gray-0 px-5 dark:border-dark-4 dark:bg-dark-6',
-        ACCENT_TEXT_SCHEME
+        surface.className
       )}
       style={
         {
-          ...musicAccentVars(accent, 'bar'),
+          ...surface.style,
           zIndex: MUSIC_PLAYER_Z_INDEX,
           // The last in-flow row of `#__next`: the viewport's bottom edge, as the ad bar was.
           height: `calc(${MUSIC_PLAYER_BAR_HEIGHT}px + var(--safe-area-inset-bottom))`,
@@ -322,6 +319,8 @@ function Cover({
   );
 }
 
+const toggledOn = { backgroundColor: surfaceTint('bar', 'toggleOn'), color: ACCENT_TEXT };
+
 function Controls({ track, accent }: { track: MusicTrack; accent: MusicAccent | null }) {
   const muted = useMusicPlayerStore((s) => s.muted);
   const volume = useMusicPlayerStore((s) => s.volume);
@@ -346,9 +345,7 @@ function Controls({ track, accent }: { track: MusicTrack; accent: MusicAccent | 
         label={showTimedComments ? 'Hide timed comments' : 'Show timed comments'}
         aria-pressed={showTimedComments}
         onClick={() => store().toggleTimedComments()}
-        style={
-          showTimedComments ? { backgroundColor: accentAt(15), color: ACCENT_TEXT } : undefined
-        }
+        style={showTimedComments ? toggledOn : undefined}
       >
         <IconMessage size={18} />
       </IconButton>
@@ -357,7 +354,7 @@ function Controls({ track, accent }: { track: MusicTrack; accent: MusicAccent | 
         label="Up next"
         aria-expanded={upNextOpen}
         onClick={() => setUpNextOpen((open) => !open)}
-        style={upNextOpen ? { backgroundColor: accentAt(15), color: ACCENT_TEXT } : undefined}
+        style={upNextOpen ? toggledOn : undefined}
       >
         <IconPlaylist size={18} />
       </IconButton>
