@@ -2,7 +2,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
-import { getVisibleSongIds, isMusicEnabled } from '~/server/services/image-visibility.service';
+import { getVisibleSongIds } from '~/server/services/image-visibility.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 
 /**
@@ -18,7 +18,7 @@ export async function getRisingSongIds({
   features: { music?: boolean };
   user?: { id: number; isModerator?: boolean | null };
 }): Promise<number[]> {
-  if (!isMusicEnabled(features)) return [];
+  if (!features.music) return [];
   const ids = await fetchThroughCache(
     REDIS_KEYS.CACHES.RISING_SONGS as RedisKeyTemplateCache,
     async () => {

@@ -56,12 +56,11 @@ vi.mock('~/components/Image/Infinite/ImagesInfinite', () => ({
   ),
 }));
 // The landing sections' songs, read by id through the image feed.
-vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  useQueryImages: (filters: { ids?: number[]; tags?: number[] }) => {
+vi.mock('~/components/Music/useSongList', () => ({
+  useSongList: (filters: { ids?: number[]; tags?: number[] }) => {
     landing.imageReads.push(filters);
     return {
-      images: (filters.ids ?? []).map((id) => ({
+      songs: (filters.ids ?? []).map((id) => ({
         id,
         url: `song-${id}.mp3`,
         type: 'audio',

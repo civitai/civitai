@@ -90,7 +90,6 @@ describe('an EdgeAudio and the global player', () => {
     expect(player().playing).toBe(false);
     expect(globalAudio().paused).toBe(true);
     expect(player().error).toBe(false);
-    // A caller's own play handler still runs.
     expect(onPlay).toHaveBeenCalledTimes(1);
   });
 
@@ -108,5 +107,23 @@ describe('an EdgeAudio and the global player', () => {
 
     expect(player().playing).toBe(true);
     expect(clip().paused).toBe(true);
+  });
+
+  test('a play event that arrives after the EdgeAudio was stopped leaves the global player playing', async () => {
+    await renderWithProviders(
+      <>
+        <MusicPlayerAudio />
+        <EdgeAudio src={CLIP_URL} data-testid="clip" />
+      </>
+    );
+    playSong();
+
+    act(() => {
+      Object.defineProperty(clip(), 'paused', { configurable: true, value: true });
+      clip().dispatchEvent(new Event('play'));
+    });
+
+    expect(player().playing).toBe(true);
+    expect(globalAudio().paused).toBe(false);
   });
 });
