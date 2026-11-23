@@ -36,6 +36,8 @@ import { normalizeText } from '~/utils/normalize-text';
 import { styleTags, tagsNeedingReview } from '~/libs/tags';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
+import { holdSongsOfCovers } from '~/server/services/csam-image-review';
+import { withRetries } from '~/utils/errorHandling';
 import {
   queueArticlesAndComicsForImages,
   queueDocumentsForBlockedImages,
@@ -617,6 +619,15 @@ async function logScanAfterReview(image: ScanImage, toUpdate: Prisma.ImageUpdate
   }
 }
 
+/** Never throws: the block has landed, and a failure leaves the song as it was. */
+async function holdSongOfCsamBlockedCover(imageId: number) {
+  // One immediate retry before logging.
+  await withRetries(() => dbWrite.$transaction((tx) => holdSongsOfCovers(tx, [imageId])), 1).catch(
+    (error: Error) =>
+      logToAxiom({ type: 'error', name: 'song-csam-hold', imageId, message: error.message })
+  );
+}
+
 /**
  * Resolve and persist the final state of the image row, returning the bits the
  * post-update side effects need. Three terminal shapes:
@@ -682,12 +693,11 @@ export async function resolveScanOutcome({
       axesSet,
       axesTarget
     );
-    return {
-      ingestion: ImageIngestionStatus.Blocked,
-      // The caller's block write keeps a stored CSAM reason, and `image` was loaded after it.
-      blockedFor: image.blockedFor === BlockedReason.CSAM ? BlockedReason.CSAM : blocked.reason,
-      reviewKey: null,
-    };
+    // The caller's block write keeps a stored CSAM reason, and `image` was loaded after it.
+    const blockedFor =
+      image.blockedFor === BlockedReason.CSAM ? BlockedReason.CSAM : blocked.reason;
+    if (blockedFor === BlockedReason.CSAM) await holdSongOfCsamBlockedCover(image.id);
+    return { ingestion: ImageIngestionStatus.Blocked, blockedFor, reviewKey: null };
   }
 
   // A collection judge's floor, read before the audit so its checks run at the level the image
@@ -1013,6 +1023,7 @@ export async function resolveScanOutcome({
     }
   }
 
+  if (toUpdate.blockedFor === BlockedReason.CSAM) await holdSongOfCsamBlockedCover(image.id);
   return {
     ingestion,
     nsfwLevel,

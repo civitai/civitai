@@ -31,7 +31,6 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
 
 const { handleTextScanCallback } = await import('~/server/services/text-scan/callback');
 const { getTextScanCsamMode } = await import('~/server/services/text-scan/mode');
-const { SONG_LYRICS_HOLD } = await import('~/server/common/image-visibility');
 const { getWorkflow } = await import('@civitai/orchestration-client');
 await import('~/server/services/text-scan/profiles/index');
 
@@ -145,7 +144,9 @@ describe('a csam detection in the lyrics of a song whose audio is clean, with cs
   it('holds the lyrics for a moderator, takes the song out of search, and still decides it at PG', async () => {
     await handleTextScanCallback({ workflowId: 'wf-lyrics', status: 'succeeded' });
 
-    expect(holds).toEqual([expect.objectContaining({ ...SONG_LYRICS_HOLD, entityId: SONG })]);
+    expect(holds).toEqual([
+      expect.objectContaining({ entityType: 'TrackLyrics', label: 'csam', entityId: SONG }),
+    ]);
     expect(queueSearch).toHaveBeenCalledWith({ ids: [SONG], action: 'Delete' });
     expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
       expect.objectContaining({ workflowId: 'wf-audio', fixed: { nsfwLevel: NsfwLevel.PG } })

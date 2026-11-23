@@ -79,9 +79,6 @@ const POST_ITEM_MINOR_R_FIRST = 8046;
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
-    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
-    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TABLE "Image" (
       "id"          integer PRIMARY KEY,
       "index"       integer,
@@ -96,15 +93,12 @@ beforeAll(async () => {
       "createdAt"   timestamp NOT NULL DEFAULT now(),
       "mimeType"    text,
       "scannedAt"   timestamp,
-      "type"        "MediaType" NOT NULL DEFAULT 'image',
+      "type"        text NOT NULL DEFAULT 'image',
       "meta"        jsonb,
       "userId"      integer NOT NULL DEFAULT 1,
-      "ingestion"   "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
+      "ingestion"   text NOT NULL DEFAULT 'Scanned',
       "needsReview" text,
       "blockedFor"  text,
-      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
-      "metadata"    jsonb,
-      "scanJobs"    jsonb,
       "tosViolation" boolean NOT NULL DEFAULT false,
       "poi"         boolean NOT NULL DEFAULT false,
       "minor"       boolean NOT NULL DEFAULT false

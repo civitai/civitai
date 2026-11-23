@@ -39,9 +39,6 @@ let db: PGlite;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
-    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
-    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
-    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan', 'PendingManualAssignment');
     CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL DEFAULT 'Published',
@@ -59,10 +56,8 @@ beforeAll(async () => {
     );
     CREATE TABLE "Image" (
       id int PRIMARY KEY, minor boolean NOT NULL DEFAULT false, "userId" int NOT NULL, "postId" int, index int NOT NULL DEFAULT 0,
-      ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
-      "nsfwLevel" int NOT NULL DEFAULT 1, "modelRestricted" boolean NOT NULL DEFAULT false, "tosViolation" boolean NOT NULL DEFAULT false,
-      type "MediaType" NOT NULL DEFAULT 'image', "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
-      metadata jsonb, "scanJobs" jsonb
+      ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
+      "nsfwLevel" int NOT NULL DEFAULT 1, "modelRestricted" boolean NOT NULL DEFAULT false, "tosViolation" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "bannerId" int, cover text, status text,

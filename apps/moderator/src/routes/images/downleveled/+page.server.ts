@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { getDownleveledImages } from '$lib/server/downleveled-review.service';
-import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
+import { SongRatingRefusedError, updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
 import { isRatingLevel } from '$lib/nsfw-levels';
 
 const querySchema = z.object({
@@ -34,12 +34,17 @@ export const actions: Actions = {
     if (!id) return fail(400, { error: 'Missing image id.' });
     if (!isRatingLevel(nsfwLevel)) return fail(400, { error: 'Invalid rating level.' });
 
-    await updateImageNsfwLevel({
-      id,
-      nsfwLevel,
-      reason: 'Moderator downleveled review',
-      userId: locals.user.id,
-    });
+    try {
+      await updateImageNsfwLevel({
+        id,
+        nsfwLevel,
+        reason: 'Moderator downleveled review',
+        userId: locals.user.id,
+      });
+    } catch (e) {
+      if (e instanceof SongRatingRefusedError) return fail(409, { error: e.message, id });
+      throw e;
+    }
     return { success: true, id, nsfwLevel };
   },
 };

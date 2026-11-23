@@ -8,9 +8,10 @@
   import { clearPaging } from '$lib/paging';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import { browsingLevels, NsfwLevel, getBrowsingLevelLabel } from '@civitai/shared';
-  import type { PageData } from './$types';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import type { ActionData, PageData } from './$types';
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData } = $props();
   type Item = PageData['items'][number];
 
   // Severity tint per level (green → red); used on the chip label when the chip isn't the set one.
@@ -68,6 +69,10 @@
     </select>
   </div>
 </header>
+
+{#if form?.error}
+  <ErrorAlert class="mb-4" message={form.error} />
+{/if}
 
 <div class="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
   <span class="inline-flex items-center gap-1.5"><span class="inline-block h-3 w-5 rounded bg-teal-600"></span> currently set</span>

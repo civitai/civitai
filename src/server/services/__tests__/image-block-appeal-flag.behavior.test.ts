@@ -95,6 +95,7 @@ const REVIEW_FLAGGED = 44;
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       "userId" int,
@@ -107,6 +108,7 @@ beforeAll(async () => {
       "updatedAt" timestamp(3),
       metadata jsonb
     );
+    CREATE TABLE "Track" ("imageId" int PRIMARY KEY, "coverImageId" int UNIQUE, genre text);
     -- Enums as in prod, so a literal outside the enum fails here too.
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
     CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');

@@ -300,6 +300,7 @@ describe('hiding an image refreshes the home blocks holding it', () => {
       CREATE TABLE "Image" (
         id int PRIMARY KEY,
         "userId" int NOT NULL,
+        "postId" int,
         ingestion "ImageIngestionStatus" NOT NULL,
         "blockedFor" text,
         "nsfwLevel" int NOT NULL DEFAULT 0,
@@ -308,6 +309,7 @@ describe('hiding an image refreshes the home blocks holding it', () => {
         metadata jsonb,
         "updatedAt" timestamp(3)
       );
+      CREATE TABLE "Track" ("imageId" int PRIMARY KEY, "coverImageId" int UNIQUE, genre text);
       CREATE TABLE "CsamQueueSetAside" ("imageId" int, outcome text);
       CREATE TABLE "Collection" (id int PRIMARY KEY, read text NOT NULL, "imageId" int);
       CREATE INDEX "Collection_imageId_idx" ON "Collection" ("imageId");

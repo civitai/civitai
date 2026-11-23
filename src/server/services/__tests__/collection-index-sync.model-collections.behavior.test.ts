@@ -26,15 +26,10 @@ beforeAll(async () => {
     );
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
     CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
-    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
-    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
-    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TABLE "Image" (
-      id int PRIMARY KEY, type "MediaType" NOT NULL DEFAULT 'image', minor boolean NOT NULL DEFAULT false, "postId" int,
-      ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
+      id int PRIMARY KEY, minor boolean NOT NULL DEFAULT false, "postId" int, ingestion text NOT NULL DEFAULT 'Scanned',
       "needsReview" text, "blockedFor" text, "tosViolation" boolean NOT NULL DEFAULT false,
-      "nsfwLevel" int NOT NULL DEFAULT 1, "modelRestricted" boolean NOT NULL DEFAULT false,
-      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, metadata jsonb, "scanJobs" jsonb
+      "nsfwLevel" int NOT NULL DEFAULT 1, "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, cover text, "coverId" int, "bannerId" int, "nsfwLevel" int NOT NULL DEFAULT 1

@@ -30,7 +30,6 @@ const SCHEMA = `
   CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
   CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
   CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
-  CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
   CREATE TABLE "Image" ( type "MediaType" NOT NULL DEFAULT 'audio',
     id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
     "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
@@ -68,17 +67,17 @@ beforeAll(async () => {
   await db.exec(SCHEMA);
   await db.exec(`
     INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (1, ${OWNER}, now() - interval '1 day');
+    INSERT INTO "Image" (id, "userId", "postId", type, ingestion, "blockedFor", "needsReview") VALUES
+      (201, ${OWNER}, 1, 'audio', 'Scanned', NULL, NULL),
+      (202, ${OWNER}, 1, 'audio', 'Scanned', NULL, 'csam'),
+      (212, ${OWNER}, 1, 'audio', 'Scanned', NULL, 'poi');
     INSERT INTO "Image" (id, "userId", "postId", type, ingestion, "blockedFor") VALUES
-      (201, ${OWNER}, 1, 'audio', 'Scanned', NULL),
-      (202, ${OWNER}, 1, 'audio', 'Scanned', NULL),
       (203, ${OWNER}, 1, 'audio', 'Blocked', NULL),
       (204, ${OWNER}, 1, 'audio', 'Pending', NULL),
       (205, ${OWNER}, 1, 'image', 'Scanned', NULL),
       (206, ${OWNER}, 1, 'audio', 'Scanned', NULL),
       (207, ${OWNER}, 1, 'audio', 'Scanned', 'AiNotVerified'),
-      (208, ${OWNER}, 1, 'audio', 'Scanned', NULL),
-      (210, ${OWNER}, 1, 'audio', 'Scanned', NULL),
-      (211, ${OWNER}, 1, 'audio', 'Scanned', NULL);
+      (208, ${OWNER}, 1, 'audio', 'Scanned', NULL);
     INSERT INTO "Image" (id, "userId", "postId", type, ingestion, "nsfwLevel") VALUES
       (209, ${OWNER}, 1, 'audio', 'Scanned', ${NsfwLevel.Blocked});
     INSERT INTO "TrackLyrics" ("imageId", text, lines) VALUES
@@ -90,12 +89,7 @@ beforeAll(async () => {
       (207, 'x', '${JSON.stringify(TIMED)}'),
       (208, 'x', '[{"t": "soon", "text": 1}]'),
       (209, 'x', '${JSON.stringify(TIMED)}'),
-      (210, 'x', '${JSON.stringify(TIMED)}'),
-      (211, 'x', '${JSON.stringify(TIMED)}');
-    INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES
-      ('TrackLyrics', 202, 'csam', 'Pending'),
-      ('TrackLyrics', 210, 'csam', 'Confirmed'),
-      ('TrackLyrics', 211, 'csam', 'Dismissed');
+      (212, 'x', '${JSON.stringify(TIMED)}');
   `);
   const raw = pgliteRaw(db);
   const queryRaw = ((s: TemplateStringsArray, ...v: unknown[]) => raw.queryRaw(s, ...v)) as never;
@@ -118,7 +112,7 @@ describe('getSongLyrics', () => {
     expect(await read(201, { user: undefined, features: { music: true } })).toEqual(TIMED);
   });
 
-  it('returns nothing for a song whose lyrics are held, that is blocked, or not yet reviewed', async () => {
+  it('returns nothing for a song held for csam review, that is blocked, or not yet reviewed', async () => {
     expect(await read(202)).toBeNull();
     expect(await read(203)).toBeNull();
     expect(await read(204)).toBeNull();
@@ -134,9 +128,12 @@ describe('getSongLyrics', () => {
     expect(await read(201, owner)).toEqual(TIMED);
   });
 
-  it('returns nothing for a confirmed lyrics hold, and the lines once a hold was dismissed', async () => {
-    expect(await read(210)).toBeNull();
-    expect(await read(211)).toEqual(TIMED);
+  it("returns a song's lines under another review to its owner only", async () => {
+    const owner = { user: { id: OWNER, isModerator: false }, features: { music: true } };
+    const moderator = { user: { id: VIEWER, isModerator: true }, features: { music: true } };
+    expect(await read(212, owner)).toEqual(TIMED);
+    expect(await read(212)).toBeNull();
+    expect(await read(212, moderator)).toBeNull();
   });
 
   it('keeps a blocked song lyric-less for the owner and moderators, whom visibility lets through', async () => {

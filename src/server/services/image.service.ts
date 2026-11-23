@@ -78,7 +78,6 @@ import {
   notHeldForReviewWhere,
   pendingLevelImageSql,
   pendingOthersImageConditions,
-  songReviewedSql,
   servableLevelWhere,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
   minorMatureImageVisibleSql,
@@ -139,7 +138,9 @@ import {
 import { poolCounters } from '~/server/games/new-order/utils';
 import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { flagImagesForCsamReview } from '~/server/services/csam-image-review';
+import { flagImagesForCsamReview, releaseSongCsamHold } from '~/server/services/csam-image-review';
+import { confirmedLyricsHoldSql } from '@civitai/shared/song-csam-hold';
+import { csamHeldImageSql } from '@civitai/shared/csam-held';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { isStatementTimeout } from '~/server/utils/statement-timeout';
@@ -1299,8 +1300,14 @@ export async function handleUnblockImages({
     const [, ...written] = await Promise.all([
       // Drops its blocks' deferred effects unfired.
       dbWrite.$executeRaw`DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${ids}::int[])`,
-      ...Object.entries(grouped).map(
-        ([needsReview, groupedIds]) => dbWrite.$queryRaw<{ id: number; keptBlocked: boolean }[]>`
+      // Each lift locks its rows in a statement of its own first, so the UPDATE reads a song's
+      // lyrics hold as committed by whoever held the row, not as it found it before waiting.
+      ...Object.entries(grouped).map(([needsReview, groupedIds]) =>
+        dbWrite.$transaction(async (tx) => {
+          await tx.$queryRaw`
+            SELECT id FROM "Image" WHERE id IN (${Prisma.join(groupedIds)}) ORDER BY id FOR UPDATE
+          `;
+          return tx.$queryRaw<{ id: number; keptBlocked: boolean; wasCsam: boolean }[]>`
           UPDATE "Image" SET
             "needsReview" = ${liftedNeedsReviewSql},
             "blockedFor" = ${liftedBlockedForSql},
@@ -1322,8 +1329,14 @@ export async function handleUnblockImages({
             "ingestion" = ${liftedIngestionSql}
           WHERE id IN (${Prisma.join(groupedIds)})
             AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
-          RETURNING id, ${liftKeptBlockedSql} AS "keptBlocked";
-        `
+            AND NOT ("needsReview" IS NOT DISTINCT FROM 'csam' AND ${Prisma.raw(
+              confirmedLyricsHoldSql('"Image"')
+            )})
+          RETURNING id, ${liftKeptBlockedSql} AS "keptBlocked",
+            -- The statement's snapshot: the value this update replaced, read on the primary.
+            COALESCE((SELECT pre."needsReview" = 'csam' FROM "Image" pre WHERE pre.id = "Image".id), false) AS "wasCsam";
+        `;
+        })
       ),
       upsertTagsOnImageNew(
         imageTagsForReview.map(({ imageId, tagId }) => ({
@@ -1338,11 +1351,35 @@ export async function handleUnblockImages({
     // From the UPDATE's RETURNING, so a row it skipped (a CSAM block racing in) is neither.
     const rows = written
       .flat()
-      .filter((row): row is { id: number; keptBlocked: boolean } => !!row && 'keptBlocked' in row);
+      .filter(
+        (row): row is { id: number; keptBlocked: boolean; wasCsam: boolean } =>
+          !!row && 'keptBlocked' in row
+      );
     const keptIds = new Set(rows.filter((row) => row.keptBlocked).map((row) => row.id));
     const restoredIds = rows.filter((row) => !row.keptBlocked).map((row) => row.id);
     const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
+    // A cover's csam review closed, so its song is re-decided once the lift is committed. A failure
+    // leaves the song held.
+    const coverIds = rows.filter((row) => row.wasCsam).map((row) => row.id);
+    const releasedSongs = coverIds.length
+      ? await dbWrite
+          .$transaction((tx) => releaseSongCsamHold(tx, { source: 'cover', coverIds }))
+          .catch((error) => {
+            logToAxiom({
+              type: 'error',
+              name: 'song-csam-hold-release',
+              message: 'release after unblock failed',
+              error: safeError(error),
+            });
+            return [] as number[];
+          })
+      : [];
     await Promise.all([
+      releasedSongs.length &&
+        queueImageSearchIndexUpdate({
+          ids: releasedSongs,
+          action: SearchIndexUpdateQueueAction.Update,
+        }),
       resetBlockedNsfwLevel(restoredIds),
       dropBlockedImageDeleteQueue(restoredIds),
       restartBlockedImageDeleteClock([...keptIds]),
@@ -1420,9 +1457,7 @@ export async function handleUnblockImages({
  * of a held image sends no owner notice and actions no report: for one under review they wait in
  * `ImageDeferredBlockEffect` for the review to close.
  */
-const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needsReview" = 'csam' AND NOT EXISTS (
-  SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = "Image".id AND s.outcome = 'Dismissed'
-)))`;
+const heldImageSql = Prisma.raw(csamHeldImageSql('"Image"'));
 
 /**
  * Returns the ids the block left held, and those under the moderator-only review flag, read on the
@@ -6201,7 +6236,7 @@ export const getEntityCoverImage = async ({
         ) t
     ) t
     JOIN "Image" i ON i.id = t."imageId"
-    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL AND ${songReviewedSql()}
+    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL
     -- An Article draws a row from its own branch (the cover) and one from CONNECTIONS (a
     -- content image). A UNION has no order of its own, so without this the lower image id
     -- came first and a content image could replace the cover. The connection is a fallback.
@@ -6572,9 +6607,14 @@ export async function updateImageNsfwLevel({
     // decides whether a rating may come down from it — a lagging replica would misreport it.
     const image = await dbWrite.image.findUnique({
       where: { id },
-      select: { metadata: true, postId: true, nsfwLevel: true },
+      select: { type: true, metadata: true, postId: true, nsfwLevel: true },
     });
     if (!image) throw throwNotFoundError('Image not found');
+    // The lock would count as the song's review, which only its own scan may give.
+    if (image.type === MediaType.audio)
+      throw throwBadRequestError(
+        'A song is published only by its own scan, which is retried automatically; it cannot be rated here.'
+      );
 
     const metadata = (image.metadata as ImageMetadata) ?? undefined;
     if (activity === 'setNsfwLevelKono' && !reason) reason = KNIGHTS_VOTE_NSFW_LEVEL_REASON;
@@ -6656,7 +6696,8 @@ export type KnightsNsfwLevelResult =
  * Writes a Knights consensus rating, but only onto an image nobody has taken out of the vote's
  * hands: it exists, carries no block marker, and is unlocked or locked by an earlier Knights vote.
  * The conditions sit in the UPDATE itself, so a moderator ruling or block landing between a read
- * and the write cannot be overwritten.
+ * and the write cannot be overwritten. A song is never rated here (only its own scan rates it); the
+ * miss is reported `locked`, or `blocked` if it carries a block marker.
  */
 export async function setImageNsfwLevelFromKnights({
   id,
@@ -6676,6 +6717,7 @@ export async function setImageNsfwLevelFromKnights({
         "updatedAt" = NOW()
     WHERE i."id" = ${id}
       AND NOT ${hasBlockMarkerSql('i')}
+      AND i."type" <> 'audio'
       AND (
         NOT i."nsfwLevelLocked"
         OR COALESCE(i."metadata"->>'nsfwLevelReason', '') = ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}

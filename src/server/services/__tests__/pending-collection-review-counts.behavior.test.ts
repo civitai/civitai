@@ -179,9 +179,7 @@ beforeAll(async () => {
       "availability" "Availability" NOT NULL DEFAULT 'Public',
       "metadata"    jsonb NOT NULL DEFAULT '{}'
     );
-        CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
-        CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
-CREATE TABLE "Image" ( type "MediaType" NOT NULL DEFAULT 'image',
+    CREATE TABLE "Image" (
       "id"              integer PRIMARY KEY,
       "postId"          integer,
       "userId"          integer DEFAULT 7777,

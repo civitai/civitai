@@ -585,6 +585,14 @@ type UpdateDecision =
 
 /** Every update site that can write `metadata`, keyed by enclosing function. */
 const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: number }> = {
+  'src/server/services/csam-image-review.ts#flagImagesForCsamReview': {
+    decision: 'raw-server-keys',
+    sites: 1,
+  },
+  'src/server/services/csam-image-review.ts#holdSongForCsam': {
+    decision: 'raw-server-keys',
+    sites: 1,
+  },
   'src/server/services/post.service.ts#updatePostImage': {
     decision: 'spread-metadata-omitted',
     sites: 1,

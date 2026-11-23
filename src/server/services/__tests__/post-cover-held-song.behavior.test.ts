@@ -2,7 +2,10 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-/** The post feed's images, run as SQL over seeded rows: a song whose lyrics are held is not a cover. */
+/**
+ * The post feed's images, run as SQL over seeded rows: a song held for csam review (its lyrics or
+ * cover held, PR #10162) is not a cover for anyone else.
+ */
 
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
@@ -25,28 +28,19 @@ let db: PGlite;
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
-    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "postId" int, "userId" int, name text, url text, "nsfwLevel" int,
-      width int, height int, hash text, type "MediaType" NOT NULL, metadata jsonb, meta jsonb,
+      width int, height int, hash text, type text NOT NULL, metadata jsonb, meta jsonb,
       minor boolean, poi boolean, ingestion "ImageIngestionStatus" NOT NULL, "needsReview" text,
       "acceptableMinor" boolean NOT NULL DEFAULT false, "blockedFor" text,
       "modelRestricted" boolean NOT NULL DEFAULT false, index int, "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       "scanJobs" jsonb
     );
-    CREATE TABLE "TextScanHold" (
-      id serial PRIMARY KEY, "entityType" text, "entityId" int, label text, status text
-    );
-    INSERT INTO "Image" (id, "postId", "userId", "nsfwLevel", type, ingestion, index) VALUES
-      (1, ${POST}, ${OWNER}, 1, 'audio', 'Scanned', 1),
-      (2, ${POST}, ${OWNER}, 1, 'audio', 'Scanned', 2),
-      (3, ${POST}, ${OWNER}, 1, 'audio', 'Scanned', 3),
-      (4, ${POST}, ${OWNER}, 1, 'image', 'Scanned', 4);
-    INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES
-      ('TrackLyrics', 1, 'csam', 'Pending'),
-      ('TrackLyrics', 2, 'csam', 'Confirmed'),
-      ('TrackLyrics', 3, 'csam', 'Dismissed');
+    INSERT INTO "Image" (id, "postId", "userId", "nsfwLevel", type, ingestion, index, "needsReview") VALUES
+      (1, ${POST}, ${OWNER}, 1, 'audio', 'Scanned', 1, 'csam'),
+      (3, ${POST}, ${OWNER}, 1, 'audio', 'Scanned', 3, NULL),
+      (4, ${POST}, ${OWNER}, 1, 'image', 'Scanned', 4, NULL);
   `);
 });
 afterAll(() => db.close());
@@ -77,7 +71,7 @@ describe('the images of a post in the feed', () => {
     ['within a browsing level', { browsingLevel: 1 }],
     ['with no browsing level', {}],
     ['for another signed-in user', { browsingLevel: 1, user: { id: 99 } as SessionUser }],
-  ])('leave out a song whose lyrics are held or confirmed for csam, %s', async (_label, args) => {
+  ])('leave out a song held for csam review, %s', async (_label, args) => {
     expect(await visible(args)).toEqual([3, 4]);
   });
 });

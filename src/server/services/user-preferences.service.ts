@@ -1,10 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
-import {
-  isImageReviewed,
-  LYRICS_HOLD_HIDING_STATUSES,
-  SONG_LYRICS_HOLD,
-} from '~/server/common/image-visibility';
+import { isImageReviewed } from '~/server/common/image-visibility';
 import { hasBlockMarker } from '~/server/common/image-block-marker';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { setUserFollowCached, userFollowsCache } from '~/server/redis/caches';
@@ -31,7 +27,6 @@ import {
 } from '~/server/services/user-engagement';
 import {
   Availability,
-  MediaType,
   ModelStatus,
   TagEngagementType,
   UserEngagementType,
@@ -1282,24 +1277,6 @@ export async function getHiddenImagesForUser({
   const coverImageIds = new Set(
     [profile?.coverImageId, profile?.sfwCoverImageId].filter(isDefined)
   );
-  const songIds = engagements
-    .slice(0, limit)
-    .filter(({ image }) => image.type === MediaType.audio)
-    .map(({ image }) => image.id);
-  const heldSongIds = new Set(
-    songIds.length
-      ? (
-          await dbRead.textScanHold.findMany({
-            where: {
-              ...SONG_LYRICS_HOLD,
-              entityId: { in: songIds },
-              status: { in: [...LYRICS_HOLD_HIDING_STATUSES] },
-            },
-            select: { entityId: true },
-          })
-        ).map((hold) => hold.entityId)
-      : []
-  );
   const now = new Date();
   const hasMore = engagements.length > limit;
 
@@ -1326,8 +1303,6 @@ export async function getHiddenImagesForUser({
       const canViewMedia =
         isOwner ||
         (isImageReviewed({
-          type: rest.type,
-          lyricsHeld: heldSongIds.has(image.id),
           ingestion,
           nsfwLevelLocked,
           nsfwLevelReason: (metadata as { nsfwLevelReason?: string | null } | null)

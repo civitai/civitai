@@ -46,6 +46,8 @@ import type { Kysely, RawBuilder, Transaction } from 'kysely';
 import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
 import { queueArticlesForCoverImages } from './article-cover-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
+import { confirmedLyricsHoldSql, releaseSongCsamHold } from '@civitai/shared/song-csam-hold';
+import { csamHeldImageSql } from '@civitai/shared/csam-held';
 
 // The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
 // not true, for every row with no flag, and would refuse every ordinary accept.
@@ -55,13 +57,44 @@ const BLOCKED_REASON_MODERATED = 'moderated';
 const BLOCKED_REASON_CSAM = 'CSAM';
 
 /**
- * Removed for CSAM, or under the review flag and not dismissed from its queue. A block of a held image
- * sends no owner notice and actions no report: for one under review they wait in
- * `ImageDeferredBlockEffect` for the review to close. The main app's twin is `heldImageSql`.
+ * `csamHeldImageSql`, shared with the main app. A block of a held image sends no owner notice and
+ * actions no report: for one under review they wait in `ImageDeferredBlockEffect` for the review to
+ * close.
  */
-const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM} OR ("needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} AND NOT EXISTS (
-  SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = "Image".id AND s.outcome = 'Dismissed'
-)))`;
+const HELD_IMAGE = sql<boolean>`${sql.raw(csamHeldImageSql('"Image"'))}`;
+
+/**
+ * Re-decides the songs of covers whose csam review just closed as not csam (`releaseSongCsamHold`),
+ * after that close committed, and re-indexes a released song. A failure leaves the song held. Returns
+ * the released song ids.
+ */
+export async function releaseSongsOfClearedCovers(coverIds: number[]): Promise<number[]> {
+  if (!coverIds.length) return [];
+  try {
+    const released = await dbWrite
+      .transaction()
+      .execute((trx) =>
+        releaseSongCsamHold(
+          async (text) =>
+            (
+              await sql.raw<{ id: number; released?: boolean }>(text).execute(trx)
+            ).rows,
+          { source: 'cover', coverIds }
+        )
+      );
+    for (const id of released)
+      syncSearchIndex({ entityType: 'image', entityId: id, action: 'update' });
+    return released;
+  } catch (e) {
+    console.error('[song-csam-hold] release failed', { coverIds, error: (e as Error).message });
+    return [];
+  }
+}
+
+/** A song under the review flag whose lyrics hold a moderator confirmed: no lift applies to it. */
+const CONFIRMED_SONG_HOLD = sql<boolean>`("needsReview" IS NOT DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK} AND ${sql.raw(
+  confirmedLyricsHoldSql('"Image"')
+)})`;
 
 /** Blocked by an automated moderation rule: it carries a rule's keys, unless that rule is a Hold rule and
  *  never was a Block rule. A Hold rule's keys can stay on an image a moderator later removed; a rule since deleted, or edited away from Block, still counts as the blocker.
@@ -237,6 +270,13 @@ export class ImageNotRestoredError extends Error {
   }
 }
 
+/** An accept of a song whose lyrics hold a moderator confirmed: it stays held. */
+export class ConfirmedSongHoldError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Song ${imageId} stays held by its confirmed lyrics`);
+  }
+}
+
 /** An explicit restore of an image that does not exist. */
 export class ImageNotFoundError extends Error {
   constructor(readonly imageId: number) {
@@ -288,50 +328,69 @@ export async function acceptImage({
       ? sql`(COALESCE("metadata", '{}'::jsonb) - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
       : sql`"metadata" - 'ruleId' - 'ruleReason'`
   );
-  // Refused in the statement itself, not off the replica read above.
-  const updated = await dbWrite
-    .updateTable('Image')
-    .set({
-      needsReview: LIFTED_NEEDS_REVIEW,
-      blockedFor: LIFTED_BLOCKED_FOR,
-      nsfwLevel: LIFTED_NSFW_LEVEL,
-      ingestion: LIFTED_INGESTION,
-      metadata: liftedMetadata(metadataExpr),
-      ...(nr === 'poi' ? { poi: false } : {}),
-      ...(nr === 'minor'
-        ? {
-            minor: removeMinorFlag
-              ? false
-              : sql<boolean>`CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END`,
-          }
-        : {}),
-      ...(nr && ['minor', 'poi', 'newUser', 'bestiality'].includes(nr)
-        ? { scannedAt: sql`now()` }
-        : {}),
-    })
-    .where('id', '=', imageId)
-    .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
-    .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
-    .$if(keepModeratorRemoved, (qb) =>
-      qb.where(
-        sql<boolean>`NOT (${REMOVED_BY_MODERATOR} OR ${BANNED_OWNER_BLOCKED}) AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
-      )
-    )
-    // Only a minor-queue accept reads the flag back. A subquery in RETURNING reads the statement's
-    // snapshot, so `wasMinor` is the value this update replaced, from the primary, not the replica.
-    .returning([
-      'id',
-      LIFT_KEPT_BLOCKED.as('keptBlocked'),
-      sql<boolean | null>`${nr === 'minor' ? sql`"minor"` : sql`NULL`}`.as('minor'),
-      sql<boolean | null>`${
-        nr === 'minor'
-          ? sql`(SELECT pre."minor" FROM "Image" pre WHERE pre."id" = ${imageId})`
-          : sql`NULL`
-      }`.as('wasMinor'),
-    ])
-    .executeTakeFirst();
+  // Refused in the statement itself, not off the replica read above. The row lock is taken in a
+  // statement of its own first, so the UPDATE reads every refusal (a lyrics hold included) as
+  // committed by whoever held the row, not as it found them before waiting.
+  const updated = await dbWrite.transaction().execute(async (trx) => {
+    await trx.selectFrom('Image').select('id').where('id', '=', imageId).forUpdate().execute();
+    return (
+      trx
+        .updateTable('Image')
+        .set({
+          needsReview: LIFTED_NEEDS_REVIEW,
+          blockedFor: LIFTED_BLOCKED_FOR,
+          nsfwLevel: LIFTED_NSFW_LEVEL,
+          ingestion: LIFTED_INGESTION,
+          metadata: liftedMetadata(metadataExpr),
+          ...(nr === 'poi' ? { poi: false } : {}),
+          ...(nr === 'minor'
+            ? {
+                minor: removeMinorFlag
+                  ? false
+                  : sql<boolean>`CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END`,
+              }
+            : {}),
+          ...(nr && ['minor', 'poi', 'newUser', 'bestiality'].includes(nr)
+            ? { scannedAt: sql`now()` }
+            : {}),
+        })
+        .where('id', '=', imageId)
+        .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
+        .where(sql<boolean>`NOT ${CONFIRMED_SONG_HOLD}`)
+        .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
+        .$if(keepModeratorRemoved, (qb) =>
+          qb.where(
+            sql<boolean>`NOT (${REMOVED_BY_MODERATOR} OR ${BANNED_OWNER_BLOCKED}) AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
+          )
+        )
+        // A subquery in RETURNING reads the statement's snapshot, so `wasMinor` and `wasCsam` are the
+        // values this update replaced, from the primary, not the replica. Only a minor-queue accept reads
+        // the minor flag back.
+        .returning([
+          'id',
+          LIFT_KEPT_BLOCKED.as('keptBlocked'),
+          sql<boolean>`COALESCE((SELECT pre."needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} FROM "Image" pre WHERE pre."id" = ${imageId}), false)`.as(
+            'wasCsam'
+          ),
+          sql<boolean | null>`${nr === 'minor' ? sql`"minor"` : sql`NULL`}`.as('minor'),
+          sql<boolean | null>`${
+            nr === 'minor'
+              ? sql`(SELECT pre."minor" FROM "Image" pre WHERE pre."id" = ${imageId})`
+              : sql`NULL`
+          }`.as('wasMinor'),
+        ])
+        .executeTakeFirst()
+    );
+  });
   if (!updated) {
     if (restoreRemoved) throw new ImageNotRestoredError(imageId);
+    const confirmed = await dbWrite
+      .selectFrom('Image')
+      .select('id')
+      .where('id', '=', imageId)
+      .where(CONFIRMED_SONG_HOLD)
+      .executeTakeFirst();
+    if (confirmed) throw new ConfirmedSongHoldError(imageId);
     if (keepModeratorRemoved) {
       // An image under the review flag, removed or not and dismissed or not, is the CSAM queue's.
       const flagged = await dbWrite
@@ -358,6 +417,7 @@ export async function acceptImage({
     throw new RemovedImageNotRestorableError(imageId);
   }
   const restored = !updated.keptBlocked;
+  if (updated.wasCsam) await releaseSongsOfClearedCovers([imageId]);
   if (restored) {
     await dropBlockedImageDeleteQueue(imageId);
     await resetBlockedNsfwLevel(imageId);
@@ -711,7 +771,10 @@ export async function dismissFromCsamQueue({
       ? ({ ok: true } as const)
       : ({ ok: false, reason: 'changed' } as const);
   });
-  if (result.ok) await fireDeferredBlockEffects(claimed, { moderatorId: userId });
+  if (result.ok) {
+    await fireDeferredBlockEffects(claimed, { moderatorId: userId });
+    await releaseSongsOfClearedCovers([imageId]);
+  }
   return result;
 }
 
@@ -741,6 +804,7 @@ export async function dismissUserFromCsamQueue({
   // Captures belong to no one; each is dismissed on its own, from its image.
   if (isFeedbackCaptureOwner(userId)) return { ok: false, reason: 'capture' };
   let claimed: DeferredBlockEffect[] = [];
+  let dismissedIds: number[] = [];
   try {
     const result = await dbWrite.transaction().execute(async (tx) => {
       const state = await setAsideState(tx);
@@ -755,6 +819,7 @@ export async function dismissUserFromCsamQueue({
       const dismissed = await insertDismissals(tx, rows, moderatorId);
       if (dismissed.count !== rows.length) throw new QueueChanged();
       claimed = dismissed.claimed;
+      dismissedIds = rows.map((r) => r.imageId);
       const { remaining } = await tx
         .selectFrom('Image as i')
         .select(sql<number>`count(*)::int`.as('remaining'))
@@ -765,6 +830,7 @@ export async function dismissUserFromCsamQueue({
       return { ok: true, dismissed: rows.length, remaining: Number(remaining) } as const;
     });
     await fireDeferredBlockEffects(claimed, { moderatorId });
+    await releaseSongsOfClearedCovers(dismissedIds);
     return result;
   } catch (e) {
     if (e instanceof QueueChanged) return { ok: false, reason: 'changed' };

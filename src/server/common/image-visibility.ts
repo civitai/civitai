@@ -13,7 +13,7 @@ import {
   nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import { Availability, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
+import { Availability, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
@@ -125,30 +125,11 @@ const ingestionStatesModRatingCannotOverride: ImageIngestionStatus[] = [
   ImageIngestionStatus.NotFound,
 ];
 
-/** A song's lyrics csam hold in `TextScanHold`, whose `entityId` is the song's image id. */
-export const SONG_LYRICS_HOLD = { entityType: 'TrackLyrics', label: 'csam' } as const;
-
-/** Statuses of a song's lyrics csam hold that keep the song hidden: awaiting a moderator, or confirmed. */
-export const LYRICS_HOLD_HIDING_STATUSES = ['Pending', 'Confirmed'] as const;
-
-export const lyricsHeldSql = (alias = 'i') => {
-  const t = Prisma.raw(`"${alias}"`);
-  return Prisma.sql`EXISTS (
-    SELECT 1 FROM "TextScanHold" h
-    WHERE h."entityType" = ${SONG_LYRICS_HOLD.entityType} AND h."entityId" = ${t}."id"
-      AND h."label" = ${SONG_LYRICS_HOLD.label}
-      AND h."status"::text IN (${Prisma.join([...LYRICS_HOLD_HIDING_STATUSES])})
-  )`;
-};
-
 /**
  * Scans stall. When one does, the image stays `Pending`/`Error` — even after a mod
  * rates it, because `updateImageNsfwLevel` sets the level but not the ingestion state.
  * A locked rating is a human decision, so it counts as reviewed here in place of a scan
  * that never arrived.
- *
- * A song is the exception: its scan is the only check of what it says, so a locked rating never
- * stands in for it and only `Scanned` counts.
  *
  * `Error` is stricter: a scan that errored never ran its minor/POI/prompt checks, so only
  * a moderator's lock stands in for it, and not when the media itself failed permanently.
@@ -156,12 +137,9 @@ export const lyricsHeldSql = (alias = 'i') => {
 export const imageReviewedSql = (alias = 'i') => {
   const t = Prisma.raw(`"${alias}"`);
   return Prisma.sql`(
-    (${t}."type" <> ${MediaType.audio}::"MediaType" OR NOT ${lyricsHeldSql(alias)})
-    AND (
     ${t}."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
     OR (
-      ${t}."type" <> ${MediaType.audio}::"MediaType"
-      AND ${t}."nsfwLevelLocked" = TRUE
+      ${t}."nsfwLevelLocked" = TRUE
       AND ${t}."ingestion" NOT IN (${Prisma.join(
     ingestionStatesModRatingCannotOverride.map((s) => Prisma.sql`${s}::"ImageIngestionStatus"`)
   )})
@@ -173,14 +151,7 @@ export const imageReviewedSql = (alias = 'i') => {
         )
       )
     )
-    )
   )`;
-};
-
-/** `imageReviewedSql` for songs alone, for reads that gate images and videos by level only. */
-export const songReviewedSql = (alias = 'i') => {
-  const t = Prisma.raw(`"${alias}"`);
-  return Prisma.sql`(${t}."type" <> ${MediaType.audio}::"MediaType" OR ${imageReviewedSql(alias)})`;
 };
 
 /**
@@ -434,24 +405,17 @@ export const pendingLevelImageSql = (userId: number, browsingLevel: number) =>
  * move together.
  */
 export const isImageReviewed = ({
-  type,
-  lyricsHeld,
   ingestion,
   nsfwLevelLocked,
   nsfwLevelReason,
   scanJobs,
 }: {
-  type: MediaType | string;
-  /** `lyricsHeldSql`: the song's lyrics are held for csam. */
-  lyricsHeld: boolean;
   ingestion: ImageIngestionStatus;
   nsfwLevelLocked: boolean;
   nsfwLevelReason: string | null | undefined;
   scanJobs: unknown;
 }) => {
-  if (type === MediaType.audio && lyricsHeld) return false;
   if (ingestion === ImageIngestionStatus.Scanned) return true;
-  if (type === MediaType.audio) return false;
   if (!nsfwLevelLocked || ingestionStatesModRatingCannotOverride.includes(ingestion)) return false;
   if (ingestion !== ImageIngestionStatus.Error) return true;
   return nsfwLevelReason !== KNIGHTS_VOTE_NSFW_LEVEL_REASON && !hasPermanentScanFailure(scanJobs);

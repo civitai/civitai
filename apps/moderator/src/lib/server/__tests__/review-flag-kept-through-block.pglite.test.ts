@@ -1,7 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { freshPglite } from '../../../test/pglite';
-import { DEFERRED_BLOCK_EFFECT_TABLE_SQL } from '../../../test/held-image-tables';
+import {
+  DEFERRED_BLOCK_EFFECT_TABLE_SQL,
+  TEXT_SCAN_HOLD_TABLE_SQL,
+} from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -77,6 +80,7 @@ const {
 } = await import('../image-moderation.service');
 
 const SCHEMA = `
+${TEXT_SCAN_HOLD_TABLE_SQL}
 CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
