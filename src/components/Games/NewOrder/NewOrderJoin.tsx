@@ -1,8 +1,7 @@
 import { Button } from '@mantine/core';
 import Image from 'next/image';
 import { useCallback, useMemo, useState } from 'react';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { useJoinKnightsNewOrder } from '~/components/Games/KnightsNewOrder.utils';
 import { NewOrderRulesModal } from '~/components/Games/NewOrder/NewOrderRulesModal';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -12,25 +11,22 @@ export function NewOrderJoin() {
   const [opened, setOpened] = useState(false);
 
   const handleJoin = useCallback(() => {
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: '⚠️ Sensitive Content Warning',
-        message: (
-          <>
-            <p>
-              This game contains explicit and sensitive content imagery, regardless of your on-site
-              browsing level settings, that may not be suitable for all players.
-            </p>
-            <p>
-              By continuing, you acknowledge that you are aware of the potential risks and agree to
-              proceed at your own discretion.
-            </p>
-          </>
-        ),
-        labels: { cancel: 'Cancel', confirm: 'Agree and Continue' },
-        onConfirm: async () => await join(),
-      },
+    openConfirm({
+      title: '⚠️ Sensitive Content Warning',
+      message: (
+        <>
+          <p>
+            This game contains explicit and sensitive content imagery, regardless of your on-site
+            browsing level settings, that may not be suitable for all players.
+          </p>
+          <p>
+            By continuing, you acknowledge that you are aware of the potential risks and agree to
+            proceed at your own discretion.
+          </p>
+        </>
+      ),
+      labels: { cancel: 'Cancel', confirm: 'Agree and Continue' },
+      onConfirm: async () => await join(),
     });
   }, [join]);
 

@@ -1,6 +1,8 @@
 import type {
   ComfyMossImageBaseCreateImageInput,
   ComfyMossImageSftCreateImageInput,
+  ComfySampler,
+  ComfyScheduler,
   ImageGenStepTemplate,
 } from '@civitai/orchestration-client';
 import {
@@ -40,6 +42,8 @@ export const createMossImageInput = defineHandler<
         height: data.aspectRatio?.height,
         steps: data.steps,
         cfgScale: data.cfgScale,
+        sampler: data.sampler as ComfySampler,
+        scheduler: data.scheduler as ComfyScheduler,
         quantity: data.quantity ?? 1,
         seed: data.seed,
         loras: resourcesToLoras(data.resources, ctx.airs),

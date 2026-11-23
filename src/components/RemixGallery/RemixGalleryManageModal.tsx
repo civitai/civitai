@@ -18,7 +18,6 @@ import {
   Text,
 } from '@mantine/core';
 import { Popover, Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -56,6 +55,7 @@ import { REMIX_GALLERY_MAX_PINNED, remixGalleryRemovableAt } from '~/shared/util
 import { daysFromNow, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 const A_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -396,9 +396,9 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                             className="shrink-0"
                             loading={declineOutOfBand.isPending}
                             onClick={() =>
-                              openConfirmModal({
+                              openConfirm({
                                 title: 'Decline everything out of band?',
-                                children: (
+                                message: (
                                   <Text size="sm">
                                     Every pending submission rated above{' '}
                                     {getBrowsingLevelLabel(acceptedMaxLevel)} is declined. Paid ones
@@ -733,9 +733,9 @@ export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
                         // submitter's Buzz, a moderator removal keeps it. Nothing
                         // undoes that, and the row records who did it.
                         if (!moderating) return remove();
-                        openConfirmModal({
+                        openConfirm({
                           title: 'Remove this entry',
-                          children: (
+                          message: (
                             <Text size="sm">
                               This removes the remix from{' '}
                               {isOwner ? 'your' : `${visibility?.ownerUsername ?? 'the creator'}'s`}{' '}

@@ -46,7 +46,6 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import type { Icon as TablerIcon } from '@tabler/icons-react';
-import { openConfirmModal } from '@mantine/modals';
 import type { ComponentProps, ReactNode } from 'react';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -107,6 +106,7 @@ import { MysteryPackReviewPanel } from '~/components/CreatorShop/MysteryPack/Mys
 import { reviewActions } from '~/components/CreatorShop/MysteryPack/review-actions';
 import { PackContentsPanel } from '~/components/CreatorShop/Pack/PackContentsPanel';
 import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 type PreviewCosmetic = ComponentProps<typeof CosmeticPreview>['cosmetic'];
 
@@ -578,9 +578,9 @@ function CreatorShopReviewPage() {
   const confirmDelete = () => {
     if (!selected) return;
     const purchases = selected._count?.purchases ?? 0;
-    openConfirmModal({
+    openConfirm({
       title: 'Delete shop item',
-      children: (
+      message: (
         <Stack gap="xs">
           <Text size="sm">
             Permanently delete <strong>{selected.title}</strong>? This can&apos;t be undone and
@@ -597,7 +597,6 @@ function CreatorShopReviewPage() {
       ),
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
-      centered: true,
       onConfirm: () => deleteItem.mutate({ id: selected.id }),
     });
   };
@@ -612,9 +611,9 @@ function CreatorShopReviewPage() {
         error: new Error('Add the takedown reason — buyers and the creator both see it.'),
       });
     const purchases = selected._count?.purchases ?? 0;
-    openConfirmModal({
+    openConfirm({
       title: 'Take down shop item',
-      children: (
+      message: (
         <Stack gap="xs">
           <Text size="sm">
             Remove <strong>{selected.title}</strong> from sale, refund all{' '}
@@ -630,7 +629,6 @@ function CreatorShopReviewPage() {
       ),
       labels: { confirm: 'Take down', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
-      centered: true,
       onConfirm: () => takedownItem.mutate({ id: selected.id, reason: reason.trim() }),
     });
   };
@@ -641,9 +639,9 @@ function CreatorShopReviewPage() {
     if (!selected) return;
     const takedown = (selected.meta as CosmeticShopItemMeta | null)?.takedown;
     if (!takedown) return;
-    openConfirmModal({
+    openConfirm({
       title: 'Retry takedown',
-      children: (
+      message: (
         <Text size="sm">
           Finish the takedown of <strong>{selected.title}</strong>: refund any buyer or box opener
           it still owes, then remove the cosmetic again. Nobody already refunded is paid twice.
@@ -651,7 +649,6 @@ function CreatorShopReviewPage() {
       ),
       labels: { confirm: 'Retry takedown', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
-      centered: true,
       onConfirm: () => takedownItem.mutate({ id: selected.id, reason: takedown.reason }),
     });
   };

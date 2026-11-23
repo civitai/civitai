@@ -871,7 +871,7 @@ export default function MergeVersions({ modelId }: { modelId: number }) {
       radius="md"
       onClose={handleClose}
       closeOnClickOutside={!mergeMutation.isPending}
-      closeOnEscape={!mergeMutation.isPending}
+      closeOnEscape={dialog.closeOnEscape && !mergeMutation.isPending}
       withCloseButton={!mergeMutation.isPending}
       closeButtonProps={{ 'aria-label': 'Close merge versions modal' }}
       size="75%"

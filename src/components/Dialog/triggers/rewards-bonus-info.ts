@@ -1,7 +1,10 @@
-import dynamic from 'next/dynamic';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-
-const RewardsBonusInfoModal = dynamic(() => import('~/components/Buzz/RewardsBonusInfoModal'));
+import { openDialog } from '~/components/Dialog/openDialog';
 
 export const openRewardsBonusInfo = () =>
-  dialogStore.trigger({ component: RewardsBonusInfoModal, id: 'rewards-bonus-info' });
+  openDialog(
+    () => import('~/components/Buzz/RewardsBonusInfoModal'),
+    {},
+    {
+      id: 'rewards-bonus-info',
+    }
+  );

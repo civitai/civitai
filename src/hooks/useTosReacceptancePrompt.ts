@@ -1,7 +1,6 @@
-import dynamic from 'next/dynamic';
 import { useCallback, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { useAppContext } from '~/providers/AppProvider';
@@ -10,8 +9,6 @@ import {
   stillRestrictedAfterAcceptance,
   TOS_REACCEPTANCE_SECTION,
 } from '~/server/common/tos-reacceptance';
-
-const TosModal = dynamic(() => import('~/components/ToSModal/TosModal'), { ssr: false });
 
 /**
  * Opens the ToS at the section a struck user broke; accepting it lifts a two-strike mute. Returns
@@ -29,12 +26,11 @@ export function useOpenTosReacceptance() {
 
   const open = useCallback(() => {
     if (!currentUser || !tosMeta) return;
-    dialogStore.trigger({
-      // Fixed id: the store de-dupes on it and defaults to `Date.now()`, so without this a second
-      // blocked click stacks a second copy of the same modal.
-      id: 'tos-reacceptance',
-      component: TosModal,
-      props: {
+    // Fixed id: the store de-dupes on it and defaults to `Date.now()`, so without this a second
+    // blocked click stacks a second copy of the same modal.
+    openDialog(
+      () => import('~/components/ToSModal/TosModal'),
+      {
         slug: 'tos',
         fieldKey: tosMeta.fieldKey,
         hashFieldKey: tosMeta.hashFieldKey,
@@ -62,7 +58,8 @@ export function useOpenTosReacceptance() {
           }
         },
       },
-    });
+      { id: 'tos-reacceptance' }
+    );
   }, [acceptTos, currentUser, queryUtils, tosMeta]);
 
   return currentUser && tosMeta ? open : undefined;

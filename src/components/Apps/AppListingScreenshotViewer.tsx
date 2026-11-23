@@ -70,17 +70,10 @@ import type { ListingGalleryScreenshot } from '~/server/schema/blocks/app-listin
  *
  *   REJECTED, each for a stated reason rather than by omission:
  *   - `dialogStore` + `DialogProvider` (the app's dialog stack, and already imported
- *     by `AppListingComments` on this very page). Two disqualifiers, both structural.
- *     (a) Props are a SNAPSHOT taken at `trigger()` time and the dialog renders
- *     outside this component's tree, so the viewer could not share the gallery's live
- *     broken-tile set — and keeping those two in step is the whole index-consistency
- *     requirement. (b) `DialogProviderInner` closes by REMOVING the dialog from the
- *     store, so the modal UNMOUNTS rather than toggling `opened` to `false`; Mantine's
- *     `useFocusReturn` restores focus from a `useDidUpdate` on `[opened]` and clears
- *     its own timeout in the unmount cleanup (`use-focus-return.mjs:12-28`), so
- *     `returnFocus` provably cannot fire on that path and focus return would have to
- *     be hand-rolled as a deferred `.focus()`. A controlled `Modal` keeps the
- *     component mounted, so the built-in does the work.
+ *     by `AppListingComments` on this very page). Props are a SNAPSHOT taken at
+ *     `trigger()` time and the dialog renders outside this component's tree, so the
+ *     viewer could not share the gallery's live broken-tile set — and keeping those
+ *     two in step is the whole index-consistency requirement.
  *   - `Embla` (`EmblaCarousel.tsx`), the carousel `GeneratedOutputLightbox` uses.
  *     Embla derives its snap points from MEASURED slide geometry, which here comes
  *     from Tailwind utility classes (`flex-[0_0_100%]`) — and the browser-mode

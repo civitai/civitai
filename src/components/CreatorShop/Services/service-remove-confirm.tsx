@@ -1,5 +1,5 @@
 import { Text } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 /** The seller's own Remove: the same confirmation wherever a service can be removed. */
 export function confirmRemoveService({
@@ -9,9 +9,9 @@ export function confirmRemoveService({
   title: string;
   onConfirm: () => void;
 }) {
-  openConfirmModal({
+  openConfirm({
     title: 'Remove service',
-    children: (
+    message: (
       <Text size="sm">
         &quot;{title}&quot; leaves your shop for good. Open deals are not affected.
       </Text>

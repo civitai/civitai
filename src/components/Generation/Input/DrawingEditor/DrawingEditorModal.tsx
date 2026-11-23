@@ -26,10 +26,9 @@ import styles from './DrawingEditor.module.scss';
 import { showErrorNotification } from '~/utils/notifications';
 
 // Dynamically import DrawingCanvas (uses react-konva which requires browser APIs)
-const DrawingCanvas = dynamic(
-  () => import('./DrawingCanvas').then((mod) => mod.DrawingCanvas),
-  { ssr: false }
-);
+const DrawingCanvas = dynamic(() => import('./DrawingCanvas').then((mod) => mod.DrawingCanvas), {
+  ssr: false,
+});
 
 const MAX_CANVAS_WIDTH = 700;
 const MAX_CANVAS_HEIGHT = 500;
@@ -205,19 +204,28 @@ export function DrawingEditorModal({
 
       // Limit file size to 10MB to avoid bloating undo history with huge data URLs
       if (file.size > 10 * 1024 * 1024) {
-        showErrorNotification({ title: 'Image too large', error: new Error('Please select an image under 10MB') });
+        showErrorNotification({
+          title: 'Image too large',
+          error: new Error('Please select an image under 10MB'),
+        });
         return;
       }
 
       const reader = new FileReader();
       reader.onerror = () => {
-        showErrorNotification({ title: 'Failed to read image', error: new Error('Could not read the selected file') });
+        showErrorNotification({
+          title: 'Failed to read image',
+          error: new Error('Could not read the selected file'),
+        });
       };
       reader.onload = () => {
         const dataUrl = reader.result as string;
         const img = new window.Image();
         img.onerror = () => {
-          showErrorNotification({ title: 'Invalid image', error: new Error('The selected file could not be loaded as an image') });
+          showErrorNotification({
+            title: 'Invalid image',
+            error: new Error('The selected file could not be loaded as an image'),
+          });
         };
         img.onload = () => {
           // Scale to max 40% of canvas
@@ -484,7 +492,7 @@ export function DrawingEditorModal({
       fullScreen={isMobile}
       onClose={handleCancel}
       closeOnClickOutside={!loading}
-      closeOnEscape={!textInput && !loading}
+      closeOnEscape={dialog.closeOnEscape && !textInput && !loading}
       padding={0}
       radius="md"
       className={styles.modal}
@@ -514,10 +522,20 @@ export function DrawingEditorModal({
           </div>
         </div>
 
-        <Alert variant="light" color="yellow" icon={<IconAlertTriangle size={16} />} mx="md" py="xs">
+        <Alert
+          variant="light"
+          color="yellow"
+          icon={<IconAlertTriangle size={16} />}
+          mx="md"
+          py="xs"
+        >
           <Text size="xs">
-            Sketch annotations produce varying results depending on the model used. For best results,
-            use <Text span fw={600}>Nano Banana</Text>.
+            Sketch annotations produce varying results depending on the model used. For best
+            results, use{' '}
+            <Text span fw={600}>
+              Nano Banana
+            </Text>
+            .
           </Text>
         </Alert>
 

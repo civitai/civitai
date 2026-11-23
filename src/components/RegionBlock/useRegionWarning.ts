@@ -2,8 +2,7 @@ import { getRegionBlockDate } from '~/server/utils/region-blocking';
 import { useEffect } from 'react';
 import { trpc } from '~/utils/trpc';
 import { useIsRegionBlocked } from '~/hooks/useIsRegionBlocked';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import dynamic from 'next/dynamic';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useAppContext } from '~/providers/AppProvider';
 
 export function useRegionWarning() {
@@ -34,10 +33,10 @@ export function useRegionWarning() {
     const isDismissed = localStorage.getItem(storageKey) === 'true';
     if (isDismissed) return;
 
-    dialogStore.trigger({
-      id: 'region-warning',
-      component: dynamic(() => import('~/components/RegionBlock/RegionWarningModal')),
-      props: { ...data, storageKey },
-    });
+    openDialog(
+      () => import('~/components/RegionBlock/RegionWarningModal'),
+      { ...data, storageKey },
+      { id: 'region-warning' }
+    );
   }, [storageKey, data]);
 }

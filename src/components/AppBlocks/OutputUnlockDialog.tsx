@@ -69,7 +69,7 @@ export default function OutputUnlockDialog({
       {...dialog}
       title={`Unlock a result from ${who}`}
       // While an unlock is in flight the dialog cannot be dismissed, so its result always lands.
-      closeOnEscape={!pending}
+      closeOnEscape={dialog.closeOnEscape && !pending}
       closeOnClickOutside={!pending}
       withCloseButton={!pending}
     >

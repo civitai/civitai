@@ -1,5 +1,5 @@
 import { Badge, Button, Group, Stack, Text } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { useEffect, useState } from 'react';
 import type { ScopeConsentState } from '~/components/Apps/scopeConsentRows';
 import {
@@ -34,19 +34,7 @@ import { trpc } from '~/utils/trpc';
  * `ScopeConsentList`.
  */
 
-/**
- * ⚠️ NO `SPEND_SCOPE` DECLARATION AND NO RE-EXPORT HERE — read `BLOCK_SPEND_SCOPE` in
- * `~/shared/constants/block-scope.constants` instead, which is what this file now imports.
- *
- * Phase 3 declared the literal here, then round 1 moved it to shared constants and left
- * `export const SPEND_SCOPE = BLOCK_SPEND_SCOPE` behind so `src/pages/apps/activity.tsx` would keep
- * working. Round 2's reuse lane showed that alias defeated the point: the finding was never "the
- * literal is in the wrong file", it was that the BUDGET EDITOR — which predates revoke and is
- * independent of it — took its spend-scope identity from a module that imports `@mantine/core`,
- * `@mantine/modals`, `trpc` and `formatDate` to render a revoke dialog. Re-exporting preserved that
- * dependency edge verbatim while the docblock above it claimed the edge was the reason for moving.
- * A rename is not a consolidation.
- */
+/** Do not declare or re-export `SPEND_SCOPE` here: the budget editor reads `BLOCK_SPEND_SCOPE` from `~/shared/constants/block-scope.constants`, so this file's imports stay out of its graph. */
 
 /**
  * What a revoke actually does, in the viewer's terms — the confirm step's body.
@@ -386,26 +374,11 @@ export function useScopeRevoke({
    * 🔴 NO `onSuccess`/`onError`/`onSettled` OPTIONS — THE OUTCOME IS HANDLED IN THE `onConfirm`
    * CLOSURE. THE REASON IS ORDERING (see the block on the chain below), NOT LIFECYCLE.
    *
-   * ⚠️ A PREVIOUS VERSION OF THIS DOCBLOCK GAVE A DIFFERENT AND FALSE REASON, AND IT IS RETRACTED
-   * RATHER THAN REWORDED. It said: *"the dialog outlives this component … react-query unsubscribes
-   * this `useMutation` observer, so confirming still fired the mutation SERVER-SIDE while none of
-   * the option callbacks ran … The permission changed and the viewer was told nothing."* Two lanes
-   * independently reported that hazard in round 1 and the round-2 correctness lane RETRACTED it
-   * after reading the installed source: in `@tanstack/query-core@5.101.0`, `Mutation.execute`
-   * awaits `this.options.onSuccess/onError/onSettled` **unconditionally**, with no reference to
-   * `#observers`. The only listener-gated path is `MutationObserver.#notify`, which fires
-   * `#mutateOptions` — the PER-CALL options passed as `mutate(vars, options)`, which this code
-   * never used. Hook options become the MUTATION's options (`useMutation` →
-   * `observer.setOptions` → `mutationCache.build(client, this.options)`), so they would have fired
-   * after unmount. There was nothing to fix.
+   * Not lifecycle: `openConfirm` renders in the global `DialogProvider`, so the dialog outlives this
+   * component, but hook options would still fire after unmount (`Mutation.execute` awaits them
+   * regardless of observers; only per-call `mutate(vars, options)` callbacks are listener-gated).
    *
-   * The premise about the dialog is still true — `openConfirmModal` renders into the global
-   * `CustomModalsProvider` in `src/pages/_app.tsx`, so it does outlive this component — but the
-   * conclusion drawn from it was wrong, and a comment asserting a library behaviour that does not
-   * exist is worse than no comment: the next reader trusts it, and the test fixture below was
-   * written to ENFORCE this shape on that false rationale.
-   *
-   * WHAT IS STILL TRUE AND IS THE REAL REASON TO KEEP THIS SHAPE: handling the outcome here is what
+   * The reason: handling the outcome here is what
    * lets the viewer be told BEFORE the cache is reconciled, which the option-callback form could not
    * express (`execute` awaits `onSuccess` before `onSettled`, so an `await invalidate()` inside
    * `onSuccess` necessarily delayed the spinner). React is 18.3.1, so the two `setState` calls are
@@ -415,9 +388,9 @@ export function useScopeRevoke({
   const mutation = trpc.blocks.revokeScopes.useMutation();
 
   const requestRevoke = (scope: string) => {
-    openConfirmModal({
+    openConfirm({
       title: `Remove “${blockScopeTitle(scope)}”?`,
-      children: <ScopeRevokeConfirmBody appName={appName} scope={scope} />,
+      message: <ScopeRevokeConfirmBody appName={appName} scope={scope} />,
       labels: { confirm: 'Remove permission', cancel: 'Keep it' },
       confirmProps: { color: 'red', 'data-testid': 'scope-revoke-confirm' },
       cancelProps: { 'data-testid': 'scope-revoke-cancel' },
@@ -529,9 +502,9 @@ export function useScopeRevoke({
    */
   const requestRevokeAll = (scopes: string[], keptCount: number) => {
     if (scopes.length === 0 || scopes.length > REVOKE_SCOPES_MAX_PER_CALL) return;
-    openConfirmModal({
+    openConfirm({
       title: `Remove ${scopes.length} permission${scopes.length === 1 ? '' : 's'}?`,
-      children: (
+      message: (
         <ScopeRevokeAllConfirmBody appName={appName} scopes={scopes} keptCount={keptCount} />
       ),
       labels: { confirm: 'Remove all', cancel: 'Keep them' },
