@@ -19,6 +19,7 @@ export function livePrivateDocSource(): PrivateDocSource {
   const feed = getDocStorePrivateFeed();
   return {
     head: (appId) => feed.privateHead(appId),
+    markHead: (appId) => feed.privateMarkHead(appId),
     versions: (appId, coll, userId, afterKey, limit) =>
       feed.privateVersions(appId, coll, userId, afterKey, limit),
     documents: (appId, coll, userId, afterKey, limit) =>

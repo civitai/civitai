@@ -1054,6 +1054,106 @@ const SQL_FEED_WITNESS_DOC = `SELECT d.seq FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
 const SQL_FEED_WITNESS_TOMB = `SELECT tb.seq FROM appdata.doc_tomb tb
   WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.coll = $3 AND tb.scope_uid = 0 AND tb.key = $4`;
+// The namespace's mark head (`SQL_TAKE_MARK_SEQ`): its newest mark sequence. Only where the
+// mark-sequence migration is applied (`withMarkHead`). $1 app, $2 ns
+const SQL_FEED_MARK_HEAD = `SELECT mh.last_mark_seq FROM appdata.mark_head mh
+  WHERE mh.app_id = $1 AND mh.ns = $2`;
+
+// LEVEL STREAMS (`registry-adapter/level-feed.ts`): the registry feed's reads for the shared-
+// collection level streams (`apps/app-data-go/WRITES-DESIGN.md`, "The shape: one stream per level
+// bit"). Shared documents (`scope_uid = 0`) of one collection of one app namespace, each with what
+// a level stream's entity carries: its timestamps and its raw tallies (presented, report
+// excluded, by `presentTallies`), never its author or anyone's marks. Three selectors, each its
+// own statement so every predicate is a literal:
+//   - BIT: rated for its current version at exactly the one level bit `$bit`, through THE level
+//     predicate (`sharedDocLevelVisible` with no viewer, so its author arm never applies: an
+//     unrated, pending or stale-rated document is on no bit's stream), never a counter document;
+//   - NONE: every visible document but counter documents (content levels OFF for the app: the
+//     adapter serves it only then);
+//   - COUNTERS: counter documents only (`author_kind = 'counter'`, visible at every level).
+// Hidden documents are never on a stream. The seq read flags each row `on_stream`, so a write
+// that moved a document off the stream reads as leaving it.
+const LEVEL_STREAM_COLUMNS = `d.key, d.data, d.version, d.seq, d.created_at, d.updated_at,
+    (SELECT jsonb_object_agg(t.kind || ':' || t.name, t.count) FROM appdata.doc_tally t
+      WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = d.coll AND t.key = d.key) AS tallies`;
+const LEVEL_ON_BIT = (bit: string) =>
+  `d.author_kind <> 'counter' AND ${sharedDocLevelVisible('NULL::int', bit, bit)}`;
+const LEVEL_ON_NONE = `d.author_kind <> 'counter'`;
+const LEVEL_ON_COUNTERS = `d.author_kind = 'counter'`;
+// The seq range (`after`, `upTo`]. $1 app, $2 ns, $3 coll, $4 after seq, $5 up to seq, $6 limit
+// (+ $7 the bit)
+const SQL_LEVEL_DOCS_SINCE_BIT = `SELECT ${LEVEL_STREAM_COLUMNS},
+    (d.hidden_at IS NULL AND ${LEVEL_ON_BIT('$7::int')}) AS on_stream
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.seq > $4::bigint AND d.seq <= $5::bigint
+  ORDER BY d.seq
+  LIMIT $6::int`;
+const SQL_LEVEL_DOCS_SINCE_NONE = `SELECT ${LEVEL_STREAM_COLUMNS},
+    (d.hidden_at IS NULL AND ${LEVEL_ON_NONE}) AS on_stream
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.seq > $4::bigint AND d.seq <= $5::bigint
+  ORDER BY d.seq
+  LIMIT $6::int`;
+const SQL_LEVEL_DOCS_SINCE_COUNTERS = `SELECT ${LEVEL_STREAM_COLUMNS},
+    (d.hidden_at IS NULL AND ${LEVEL_ON_COUNTERS}) AS on_stream
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.seq > $4::bigint AND d.seq <= $5::bigint
+  ORDER BY d.seq
+  LIMIT $6::int`;
+// The stream's documents at or below `upTo`, NEWEST KEY FIRST, keyset before `$4` ('' = from the
+// newest). $1 app, $2 ns, $3 coll, $4 before key, $5 up to seq, $6 limit (+ $7 the bit)
+const SQL_LEVEL_DOCS_DESC_BIT = `SELECT ${LEVEL_STREAM_COLUMNS}
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.hidden_at IS NULL AND d.seq <= $5::bigint AND ($4::text = '' OR d.key < $4::text)
+    AND ${LEVEL_ON_BIT('$7::int')}
+  ORDER BY d.key DESC
+  LIMIT $6::int`;
+const SQL_LEVEL_DOCS_DESC_NONE = `SELECT ${LEVEL_STREAM_COLUMNS}
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.hidden_at IS NULL AND d.seq <= $5::bigint AND ($4::text = '' OR d.key < $4::text)
+    AND ${LEVEL_ON_NONE}
+  ORDER BY d.key DESC
+  LIMIT $6::int`;
+const SQL_LEVEL_DOCS_DESC_COUNTERS = `SELECT ${LEVEL_STREAM_COLUMNS}
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.hidden_at IS NULL AND d.seq <= $5::bigint AND ($4::text = '' OR d.key < $4::text)
+    AND ${LEVEL_ON_COUNTERS}
+  ORDER BY d.key DESC
+  LIMIT $6::int`;
+// The named keys' documents as they stand now, on the stream only. $1 app, $2 ns, $3 coll, $4 keys
+// (+ $5 the bit)
+const SQL_LEVEL_DOCS_KEYS_BIT = `SELECT ${LEVEL_STREAM_COLUMNS}
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.key = ANY($4::text[]) AND d.hidden_at IS NULL AND ${LEVEL_ON_BIT('$5::int')}
+  ORDER BY d.key`;
+const SQL_LEVEL_DOCS_KEYS_NONE = `SELECT ${LEVEL_STREAM_COLUMNS}
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.key = ANY($4::text[]) AND d.hidden_at IS NULL AND ${LEVEL_ON_NONE}
+  ORDER BY d.key`;
+const SQL_LEVEL_DOCS_KEYS_COUNTERS = `SELECT ${LEVEL_STREAM_COLUMNS}
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.key = ANY($4::text[]) AND d.hidden_at IS NULL AND ${LEVEL_ON_COUNTERS}
+  ORDER BY d.key`;
+// The keys whose tallies a mark, unmark or increment changed in the mark-sequence range
+// (`after`, `upTo`], in mark order (`doc_tally.mark_seq`, stamped by `SQL_STAMP_TALLY`). Only where
+// the mark-sequence migration is applied (`withMarkHead`). No index covers `mark_seq`: the read
+// walks the collection's tally rows by the primary key's (app, ns, coll) prefix, so the level feed
+// runs it only for a poll whose mark head moved.
+// $1 app, $2 ns, $3 coll, $4 after mark seq, $5 up to mark seq, $6 limit
+const SQL_LEVEL_TALLY_KEYS = `SELECT t.key, t.mark_seq FROM appdata.doc_tally t
+  WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = $3
+    AND t.mark_seq > $4::bigint AND t.mark_seq <= $5::bigint
+  ORDER BY t.mark_seq
+  LIMIT $6::int`;
 
 // PRIVATE FEED (`createDocStorePrivateFeed`): ONE user's private documents (`scope_uid` = that
 // user, never 0, never another user's) of one collection of one app's production namespace, for
@@ -1506,26 +1606,41 @@ function rowAuthor(row: Record<string, unknown>, viewerUid: number | null): DocA
   return { kind: 'user', uid: authorUid, isViewer: authorUid === viewerUid };
 }
 
+/**
+ * A shared document's tallies as every reader is shown them, from the `kind:name → count` map its
+ * row aggregates (`docColumns`, `LEVEL_STREAM_COLUMNS`): each declared counter and mark (0 when it
+ * has no row), and every stored one. A `report` count is NEVER exposed to anyone. The one place
+ * that rule lives: the REST read and the registry level streams both present tallies here.
+ */
+function presentTallies(
+  raw: unknown,
+  declared: { counters?: readonly string[]; marks?: readonly string[] }
+): { counters: Record<string, number>; marks: Record<string, number> } {
+  const tallies = (raw ?? {}) as Record<string, number | string>;
+  const counters: Record<string, number> = {};
+  const marks: Record<string, number> = {};
+  for (const name of declared.counters ?? []) counters[name] = 0;
+  for (const name of declared.marks ?? []) if (name !== REPORT_MARK) marks[name] = 0;
+  for (const [k, v] of Object.entries(tallies)) {
+    const sep = k.indexOf(':');
+    const kind = k.slice(0, sep);
+    const name = k.slice(sep + 1);
+    // A report count is never exposed to anyone.
+    if (kind === 'counter') counters[name] = Number(v);
+    else if (kind === 'mark' && name !== REPORT_MARK) marks[name] = Number(v);
+  }
+  return { counters, marks };
+}
+
 function toDocRecord(
   row: Record<string, unknown>,
   ctx: DocStoreContext,
   coll: DocCollection
 ): DocRecord {
-  const tallies = (row.tallies ?? {}) as Record<string, number | string>;
-  const counters: Record<string, number> = {};
-  const marks: Record<string, number> = {};
-  if (coll.config.visibility === 'shared') {
-    for (const name of coll.config.counters ?? []) counters[name] = 0;
-    for (const name of coll.config.marks ?? []) if (name !== REPORT_MARK) marks[name] = 0;
-    for (const [k, v] of Object.entries(tallies)) {
-      const sep = k.indexOf(':');
-      const kind = k.slice(0, sep);
-      const name = k.slice(sep + 1);
-      // A report count is never exposed to anyone.
-      if (kind === 'counter') counters[name] = Number(v);
-      else if (kind === 'mark' && name !== REPORT_MARK) marks[name] = Number(v);
-    }
-  }
+  const { counters, marks } =
+    coll.config.visibility === 'shared'
+      ? presentTallies(row.tallies, coll.config)
+      : { counters: {}, marks: {} };
   return {
     key: row.key as string,
     data: row.data as Record<string, unknown>,
@@ -1794,6 +1909,39 @@ export type FeedDocument = {
 /** One page of `feedChanges`. */
 export type FeedChangesPage = {
   docs: Array<FeedDocument & { hidden: boolean }>;
+  tombs: Array<{ key: string; seq: number }>;
+};
+
+/**
+ * Which documents of a shared collection one level stream carries (`registry-adapter/level-feed.ts`):
+ * those rated at exactly one selectable level bit, every visible non-counter document (content
+ * levels off), or the counter documents.
+ */
+export type LevelSelector = { bit: number } | 'none' | 'counters';
+
+/** The five selectable level bits (PG, PG-13, R, X, XXX): a level stream's `bit`. */
+export const LEVEL_STREAM_BITS: readonly number[] = [1, 2, 4, 8, 16];
+
+/** The names a collection declares, which its tallies are presented with (`presentTallies`). */
+export type DeclaredTallies = { counters?: readonly string[]; marks?: readonly string[] };
+
+/**
+ * A shared document as a level stream carries it: never its author, nor anyone's marks. `tallies`
+ * are its counters and mark counts as every reader is shown them (a report count never).
+ */
+export type LevelStreamDocument = {
+  key: string;
+  data: Record<string, unknown>;
+  version: number;
+  seq: number;
+  createdAt: string;
+  updatedAt: string;
+  tallies: { counters: Record<string, number>; marks: Record<string, number> };
+};
+
+/** One page of `levelChanges`: each row flagged whether it is on the stream now. */
+export type LevelChangesPage = {
+  docs: Array<LevelStreamDocument & { onStream: boolean }>;
   tombs: Array<{ key: string; seq: number }>;
 };
 
@@ -4063,6 +4211,157 @@ function buildDocStore(deps: DocStoreDeps) {
     });
   }
 
+  /**
+   * The namespace's mark head: its newest mark sequence, 0 when no mark was ever taken, null where
+   * the mark-sequence migration is not applied (`withMarkHead`).
+   */
+  async function feedMarkHead(appId: string): Promise<number | null> {
+    const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: null };
+    return withTx(ctx, async (c) => {
+      const row = await withMarkHead(
+        c,
+        async () => (await c.query(SQL_FEED_MARK_HEAD, [ctx.appId, ctx.ns])).rows[0] ?? {}
+      );
+      if (row === null) return null;
+      return row.last_mark_seq === undefined ? 0 : seqOf(row.last_mark_seq);
+    });
+  }
+
+  const levelBit = (selector: LevelSelector): number | null => {
+    if (selector === 'none' || selector === 'counters') return null;
+    if (!LEVEL_STREAM_BITS.includes(selector.bit)) throw invalid('feed: not a level bit');
+    return selector.bit;
+  };
+  const levelSql = (selector: LevelSelector, bit: string, none: string, counters: string) =>
+    selector === 'none' ? none : selector === 'counters' ? counters : bit;
+  const levelRow = (
+    r: Record<string, unknown>,
+    declared: DeclaredTallies
+  ): LevelStreamDocument => ({
+    key: r.key as string,
+    data: r.data as Record<string, unknown>,
+    version: Number(r.version),
+    seq: seqOf(r.seq),
+    createdAt: new Date(r.created_at as string | Date).toISOString(),
+    updatedAt: new Date(r.updated_at as string | Date).toISOString(),
+    tallies: presentTallies(r.tallies, declared),
+  });
+
+  /**
+   * One page of what changed in a shared collection in the seq range (`after`, `upTo`], for one
+   * level stream: every document written (each flagged whether it is on the stream now: visible
+   * and selected) and every tombstone, each in seq order. One transaction, one app namespace.
+   */
+  async function levelChanges(
+    appId: string,
+    coll: string,
+    selector: LevelSelector,
+    after: number,
+    upTo: number,
+    limit: number,
+    declared: DeclaredTallies = {}
+  ): Promise<LevelChangesPage> {
+    const ctx = feedCtx(appId, coll);
+    const bit = levelBit(selector);
+    const params = [ctx.appId, ctx.ns, coll, feedSeq(after), feedSeq(upTo), feedLimit(limit)];
+    return withTx(ctx, async (c) => {
+      const sql = levelSql(
+        selector,
+        SQL_LEVEL_DOCS_SINCE_BIT,
+        SQL_LEVEL_DOCS_SINCE_NONE,
+        SQL_LEVEL_DOCS_SINCE_COUNTERS
+      );
+      const docs = (await c.query(sql, bit === null ? params : [...params, bit])).rows;
+      const tombs = (await c.query(SQL_FEED_TOMBS_SINCE, params)).rows;
+      return {
+        docs: docs.map((r) => ({ ...levelRow(r, declared), onStream: r.on_stream === true })),
+        tombs: tombs.map((r) => ({ key: r.key as string, seq: seqOf(r.seq) })),
+      };
+    });
+  }
+
+  /**
+   * One page of a level stream's documents at or below `upTo`, NEWEST KEY FIRST, before
+   * `beforeKey` ('' = from the newest).
+   */
+  async function levelDocuments(
+    appId: string,
+    coll: string,
+    selector: LevelSelector,
+    beforeKey: string,
+    upTo: number,
+    limit: number,
+    declared: DeclaredTallies = {}
+  ): Promise<LevelStreamDocument[]> {
+    const ctx = feedCtx(appId, coll);
+    const bit = levelBit(selector);
+    if (beforeKey !== '' && !B.key.test(beforeKey)) throw invalid('feed: malformed key');
+    const params = [ctx.appId, ctx.ns, coll, beforeKey, feedSeq(upTo), feedLimit(limit)];
+    const sql = levelSql(
+      selector,
+      SQL_LEVEL_DOCS_DESC_BIT,
+      SQL_LEVEL_DOCS_DESC_NONE,
+      SQL_LEVEL_DOCS_DESC_COUNTERS
+    );
+    const rows = await withTx(
+      ctx,
+      async (c) => (await c.query(sql, bit === null ? params : [...params, bit])).rows
+    );
+    return rows.map((r) => levelRow(r, declared));
+  }
+
+  /** The named keys' documents as they stand now, those on the stream only, by key. */
+  async function levelDocumentsByKeys(
+    appId: string,
+    coll: string,
+    selector: LevelSelector,
+    keys: readonly string[],
+    declared: DeclaredTallies = {}
+  ): Promise<LevelStreamDocument[]> {
+    const ctx = feedCtx(appId, coll);
+    const bit = levelBit(selector);
+    if (keys.length > FEED_MAX_PAGE) throw invalid('feed: too many keys');
+    for (const k of keys) if (!B.key.test(k)) throw invalid('feed: malformed key');
+    if (keys.length === 0) return [];
+    const params = [ctx.appId, ctx.ns, coll, [...keys]];
+    const sql = levelSql(
+      selector,
+      SQL_LEVEL_DOCS_KEYS_BIT,
+      SQL_LEVEL_DOCS_KEYS_NONE,
+      SQL_LEVEL_DOCS_KEYS_COUNTERS
+    );
+    const rows = await withTx(
+      ctx,
+      async (c) => (await c.query(sql, bit === null ? params : [...params, bit])).rows
+    );
+    return rows.map((r) => levelRow(r, declared));
+  }
+
+  /**
+   * One page of the keys whose tallies changed in the mark-sequence range (`after`, `upTo`], in
+   * mark order, each with the mark sequence it was last stamped at. Null where the mark-sequence
+   * migration is not applied (`withMarkHead`).
+   */
+  async function levelTallyKeys(
+    appId: string,
+    coll: string,
+    after: number,
+    upTo: number,
+    limit: number
+  ): Promise<Array<{ key: string; markSeq: number }> | null> {
+    const ctx = feedCtx(appId, coll);
+    const params = [ctx.appId, ctx.ns, coll, feedSeq(after), feedSeq(upTo), feedLimit(limit)];
+    return withTx(ctx, async (c) => {
+      const rows = await withMarkHead(
+        c,
+        async () => (await c.query(SQL_LEVEL_TALLY_KEYS, params)).rows
+      );
+      return rows === null
+        ? null
+        : rows.map((r) => ({ key: r.key as string, markSeq: seqOf(r.mark_seq) }));
+    });
+  }
+
   /** The private feed's bound values, checked before any of them reaches SQL. */
   function privateFeedParams(
     appId: string,
@@ -4126,10 +4425,26 @@ function buildDocStore(deps: DocStoreDeps) {
   return {
     store,
     lookup: { findSharedByKey },
-    feed: { feedHead, feedChanges, feedDocuments, feedWitness },
+    feed: {
+      feedHead,
+      feedChanges,
+      feedDocuments,
+      feedWitness,
+      feedMarkHead,
+      levelChanges,
+      levelDocuments,
+      levelDocumentsByKeys,
+      levelTallyKeys,
+    },
     // `privateHead` is the public feed's head read: the namespace's newest seq, one counter for
-    // every collection of the app, private and shared (`SQL_CHARGE_APP`).
-    privateFeed: { privateVersions, privateDocuments, privateHead: feedHead },
+    // every collection of the app, private and shared (`SQL_CHARGE_APP`); `privateMarkHead` its
+    // mark head (`feedMarkHead`), read by the same rule.
+    privateFeed: {
+      privateVersions,
+      privateDocuments,
+      privateHead: feedHead,
+      privateMarkHead: feedMarkHead,
+    },
     moderation: createModeration({ withTx, charge }),
     rater: createRater({ withTx, charge, raterLookupTx }),
     maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp, migrateDocuments },

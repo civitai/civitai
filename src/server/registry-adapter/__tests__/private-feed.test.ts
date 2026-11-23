@@ -152,8 +152,13 @@ let now: number;
 let store: ReturnType<typeof createMemorySnapshotStore>;
 /** The app namespace's write head the source answers. */
 let head: number;
+/**
+ * The app namespace's mark head the source answers; undefined: the source has no `markHead` read
+ * (every case written before the mark head existed runs so).
+ */
+let markHead: number | null | undefined;
 /** Every read the feed made of the source, in order. */
-let reads: Array<'head' | 'versions' | 'documents'>;
+let reads: Array<'head' | 'markHead' | 'versions' | 'documents'>;
 /** Run once, after the next `documents` read returns: a write that commits right after the keyset. */
 let afterDocumentsRead: (() => void) | null;
 
@@ -165,6 +170,14 @@ function privateFeed(relays = parsePrivateRelays(RELAY)) {
         reads.push('head');
         return head;
       },
+      ...(markHead !== undefined
+        ? {
+            markHead: async () => {
+              reads.push('markHead');
+              return markHead ?? null;
+            },
+          }
+        : {}),
       versions: async (...a) => {
         reads.push('versions');
         return page(...a);
@@ -336,6 +349,7 @@ beforeEach(() => {
   wakers = [];
   store = createMemorySnapshotStore();
   head = 97;
+  markHead = undefined;
   reads = [];
   afterDocumentsRead = null;
   rows = [
@@ -1068,6 +1082,37 @@ describe('a private record carries its seq, and the stream its head (read-your-w
     expect(upsertEntities(run.events.slice(mark)).map((e) => e.seq)).toEqual([131]);
     expect(positions(run.events.slice(mark))).toEqual([
       { type: 'progress', meta: { head: { seq: 131 } } },
+    ]);
+    run.stop();
+    wake();
+  });
+
+  it('🔴 both heads: live names the mark head beside the seq; a vote elsewhere in the app (mark head only) sends a progress; both are read before the keyset', async () => {
+    markHead = 53;
+    const run = subscribe(
+      composeAdapter(entities, publicFeed(), privateFeed()),
+      await principalOf('owner-own')
+    );
+    await settle(run);
+    expect(positions(run.events)).toEqual([
+      { type: 'live', meta: { head: { seq: 97, markSeq: 53 } } },
+    ]);
+    // A vote in a shared collection of the same app: only the mark head moves.
+    markHead = 58;
+    reads = [];
+    const quiet = run.events.length;
+    await poll(run);
+    expect(reads.slice(0, 2)).toEqual(['head', 'markHead']);
+    expect(run.events.slice(quiet).map((e) => e.type)).toEqual(['progress']);
+    expect(positions(run.events.slice(quiet))).toEqual([
+      { type: 'progress', meta: { head: { seq: 97, markSeq: 58 } } },
+    ]);
+    // A store without a mark sequence (its migration not applied): the mark head is omitted.
+    markHead = null;
+    const none = run.events.length;
+    await poll(run);
+    expect(positions(run.events.slice(none))).toEqual([
+      { type: 'progress', meta: { head: { seq: 97 } } },
     ]);
     run.stop();
     wake();

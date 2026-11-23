@@ -79,7 +79,17 @@ const LEDGER = {
     applyRating: 'exempt',
   },
   lookup: { findSharedByKey: 'read' },
-  feed: { feedHead: 'read', feedChanges: 'read', feedDocuments: 'read', feedWitness: 'read' },
+  feed: {
+    feedHead: 'read',
+    feedChanges: 'read',
+    feedDocuments: 'read',
+    feedWitness: 'read',
+    feedMarkHead: 'read',
+    levelChanges: 'read',
+    levelDocuments: 'read',
+    levelDocumentsByKeys: 'read',
+    levelTallyKeys: 'read',
+  },
   viewerData: {
     listViewerUsage: 'read',
     viewerHoldings: 'read',

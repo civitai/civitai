@@ -40,7 +40,7 @@ function functionBody(text: string, name: string): string {
 }
 
 const PREDICATE = 'sharedDocLevelVisible(';
-const READS_BODY = /\bd\.data\b|docColumns\(/;
+const READS_BODY = /\bd\.data\b|docColumns\(|LEVEL_STREAM_COLUMNS\b/;
 
 /** Read paths to other viewers: each has a `_LEVELS` twin that applies the predicate. */
 const GATED = ['SQL_FEED_DOCS_ALL', 'SQL_FEED_DOCS_SINCE', 'SQL_GET_MANY'];
@@ -72,6 +72,16 @@ const EXEMPT: Record<string, string> = {
     "the registry private stream: one user's OWN private documents (never a shared one), streamed only to that user's token",
 };
 
+/**
+ * The registry LEVEL STREAMS' reads (`registry-adapter/level-feed.ts`), one per selector. A `_BIT`
+ * statement serves one level bit and must apply the predicate (through `LEVEL_ON_BIT`); a `_NONE`
+ * one is every visible document, which the level feed serves only while content levels are OFF
+ * for the app; a `_COUNTERS` one is the counter documents, which the predicate admits at every
+ * level.
+ */
+const LEVEL_STREAMS = ['SQL_LEVEL_DOCS_SINCE', 'SQL_LEVEL_DOCS_DESC', 'SQL_LEVEL_DOCS_KEYS'];
+const LEVEL_SELECTORS = ['_BIT', '_NONE', '_COUNTERS'];
+
 describe('content-level seam ledger', () => {
   const consts = sqlConstants(source);
 
@@ -83,8 +93,26 @@ describe('content-level seam ledger', () => {
   it('every statement that reads a document body is gated or exempt, and the set is exactly this', () => {
     const reading = [...consts].filter(([, body]) => READS_BODY.test(body)).map(([name]) => name);
     const twins = GATED.map((n) => `${n}_LEVELS`);
-    expect(reading.sort()).toEqual([...GATED, ...twins, ...Object.keys(EXEMPT)].sort());
+    const levelStreams = LEVEL_STREAMS.flatMap((n) => LEVEL_SELECTORS.map((sel) => `${n}${sel}`));
+    expect(reading.sort()).toEqual(
+      [...GATED, ...twins, ...levelStreams, ...Object.keys(EXEMPT)].sort()
+    );
   });
+
+  it.each(LEVEL_STREAMS)(
+    '%s_BIT applies the predicate at its one bit; _NONE and _COUNTERS do not',
+    (name) => {
+      // LEVEL_ON_BIT is the predicate with no viewer, so the author arm never applies.
+      const onBit = /^const LEVEL_ON_BIT = [\s\S]*?;$/m.exec(source)?.[0] ?? '';
+      expect(onBit).toContain(PREDICATE);
+      expect(onBit).toContain("'NULL::int'");
+      expect(consts.get(`${name}_BIT`)).toContain('LEVEL_ON_BIT(');
+      for (const sel of ['_NONE', '_COUNTERS']) {
+        expect(consts.get(`${name}${sel}`)).not.toContain(PREDICATE);
+        expect(consts.get(`${name}${sel}`)).not.toContain('LEVEL_ON_BIT(');
+      }
+    }
+  );
 
   it.each(GATED)('%s has a _LEVELS twin that applies the predicate', (name) => {
     expect(consts.get(name)).not.toContain(PREDICATE);

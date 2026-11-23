@@ -49,14 +49,17 @@
  * another user. The public feeds carry none. The HTTP binding sends both (an SSE upsert is the whole
  * entity); the gRPC binding's `Entity` message has no field for them.
  *
- * THE HEAD. Each poll reads the app namespace's write head (`usage_app.last_seq`, one counter for
- * every collection of the app, `PrivateDocSource.head`) BEFORE its keyset, never after: every write
+ * THE HEADS. Each poll reads the app namespace's write head (`usage_app.last_seq`, one counter for
+ * every collection of the app, `PrivateDocSource.head`) and its mark head (`appdata.mark_head`, the
+ * newest mark sequence of a mark, unmark or increment of any collection of the app,
+ * `PrivateDocSource.markHead`) BEFORE its keyset, never after: every write
  * at or below the head had committed when the keyset was read, so it is in what the poll read. A
  * head read after the keyset could name a write that committed between the two reads and that the
- * keyset missed. The stream says it in `meta` ({@link headMeta}): on `live`, the head of the state
- * the cursor names (absent for a state saved before heads were kept, or one that holds nothing);
- * then a `progress` whenever a poll's head differs from the last one sent, after that poll's
- * changes. A refused poll (a stream that holds nothing) reads no head and sends none. A head
+ * keyset missed. The stream says it in `meta` ({@link headMeta}: `head.seq`, and `head.markSeq`
+ * where the store has a mark sequence): on `live`, the heads of the state the cursor names (absent
+ * for a state saved before heads were kept, or one that holds nothing); then a `progress` whenever
+ * a poll's heads differ from the last ones sent, after that poll's changes. A private entity
+ * carries no tallies, so the mark head is only a position a consumer meets a mark floor against. A refused poll (a stream that holds nothing) reads no head and sends none. A head
  * below the cursor state's, or below the last one sent, means the namespace's seqs restarted (its
  * usage row was wiped: an app deleted and restored), and the stream is `cursor_expired`, at resume
  * and mid-stream, as the public feed's is.
@@ -120,6 +123,12 @@ export function privateTokenGate(
 export type PrivateDocSource = {
   /** The app namespace's write head (`privateHead`): its newest seq, 0 when nothing was written. */
   head(appId: string): Promise<number>;
+  /**
+   * The app namespace's mark head (`privateMarkHead`): its newest mark sequence, 0 when no mark was
+   * ever taken, null where the store has no mark sequence (its migration is not applied). Absent:
+   * no mark head is read or sent.
+   */
+  markHead?(appId: string): Promise<number | null>;
   versions(
     appId: string,
     coll: string,
@@ -208,8 +217,16 @@ export const privateRev = (
     sortedKeyJson({ f: PRIVATE_BODY_FORMAT, key: d.key, seq: d.seq, rev: docRev(d, schemas) })
   ).slice(0, 16);
 
-/** The `meta` a private stream's `live` and `progress` carry for a head (see the file comment). */
-export const headMeta = (seq: number): EventMeta => ({ head: { seq } });
+/**
+ * The `meta` every document stream's `live` and `progress` carry for its heads (the private feed's
+ * here, the level streams' in `level-feed.ts`): `head.seq` is the app namespace's document head
+ * (`usage_app.last_seq`), `head.markSeq` its mark head (`appdata.mark_head.last_mark_seq`, the
+ * write's `markSeq` answers are compared with it), omitted where the store has none. A head says
+ * every write of its kind at or below it is in what the stream has sent.
+ */
+export const headMeta = (seq: number, markSeq?: number | null): EventMeta => ({
+  head: { seq, ...(markSeq !== undefined && markSeq !== null ? { markSeq } : {}) },
+});
 /** The cursor of a private stream that holds nothing; it names no stored state. */
 export const PRIVATE_EMPTY_CURSOR = `${STATE_FORMAT}.empty`;
 const CURSOR_RE = /^p1\.([0-9a-f]{32})$/;
@@ -234,6 +251,8 @@ type PrivateState = {
    * holds nothing, and in one saved before heads were kept.
    */
   head?: number;
+  /** The mark head that poll read (before its keyset); absent where none was read. */
+  markHead?: number;
   served: Array<[urn: string, rev: string]>;
 };
 
@@ -324,11 +343,17 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
     prev: PrivateState | null,
     reader: AdapterContext['reader'],
     audience: Audience
-  ): Promise<{ next: PrivateState; entities: Map<string, Entity>; head: number | null }> {
+  ): Promise<{
+    next: PrivateState;
+    entities: Map<string, Entity>;
+    head: number | null;
+    markHead: number | null;
+  }> {
     const nothing = () => ({
       next: emptyState(schema, audience),
       entities: new Map<string, Entity>(),
       head: null,
+      markHead: null,
     });
     if (privateTokenGate(opts.relays, reader) !== null) return nothing();
     const { subject, userId, clientId, block } = reader as Reader & { userId: number };
@@ -368,6 +393,7 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
     const digest = familyDigest(family);
     // Before the keyset, never after (see the file comment).
     const head = await opts.source.head(appId);
+    const markHead = opts.source.markHead ? await opts.source.markHead(appId) : null;
     // A head below the one this state was read at: the namespace was wiped and written again
     // (an app deleted and restored), so its seqs restarted, and nothing this state holds can be
     // compared with what is there now. As the public feed does.
@@ -384,7 +410,7 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
       })
     ).slice(0, 32);
     if (prev && prev.appId === appId && prev.family === digest && prev.read === read) {
-      return { next: prev, entities: new Map(), head };
+      return { next: prev, entities: new Map(), head, markHead };
     }
 
     const claims = claimer(family, digest);
@@ -416,12 +442,14 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
         read,
         issuedAt: 0,
         head,
+        ...(markHead !== null ? { markHead } : {}),
         served: [...entities.values()]
           .map((e) => [e.urn, e.rev] as [string, string])
           .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
       },
       entities,
       head,
+      markHead,
     };
   }
 
@@ -446,11 +474,12 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
     let state = loaded;
     let position = cursor;
     let pending: Awaited<ReturnType<typeof advance>> | null = first;
-    // The head `live` carried (the loaded state's), then the last one a `progress` carried.
+    // The heads `live` carried (the loaded state's), then the last ones a `progress` carried.
     let sentHead = loaded.head ?? null;
+    let sentMarkHead = loaded.markHead ?? null;
     while (!ctx.signal.aborted) {
       const before = state;
-      const { next, entities, head } =
+      const { next, entities, head, markHead } =
         pending ?? (await guarded(() => advance(schema, before, ctx.reader, audience)));
       pending = null;
       // The same, against the newest head this stream SENT (a head-only move is not saved in the
@@ -485,10 +514,11 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
         }
       }
       // After the poll's changes, so a consumer holds all of them when it reads the head.
-      if (head !== null && head !== sentHead) {
+      if (head !== null && (head !== sentHead || markHead !== sentMarkHead)) {
         if (ctx.signal.aborted) return;
         sentHead = head;
-        yield { progress: position, meta: headMeta(head) };
+        sentMarkHead = markHead;
+        yield { progress: position, meta: headMeta(head, markHead) };
       }
       await opts.sleep(opts.pollMs, ctx.signal);
     }
@@ -522,7 +552,7 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
       // `live` carries the head of the state the cursor names: what the consumer holds once it is
       // live. The first poll's changes, and its head, follow it.
       return Object.assign(follow(schema, cursor, state, first, ctx, audience), {
-        ...(state.head !== undefined ? { liveMeta: headMeta(state.head) } : {}),
+        ...(state.head !== undefined ? { liveMeta: headMeta(state.head, state.markHead) } : {}),
       });
     },
   };
