@@ -2721,7 +2721,9 @@ export async function previewVersionListingRating(
     select: { contentRating: true },
   });
   if (!listing || !block) return null;
-  const { resolveVersionListingRating } = await import('./app-listing-version-rating.service');
+  const { resolveVersionListingRating } = await import(
+    '~/server/services/blocks/app-listing-assets.service'
+  );
   const to = await resolveVersionListingRating(dbRead, {
     appListingId: listing.id,
     current: listing.contentRating,
@@ -2782,7 +2784,9 @@ async function resolveListingRatingResync(
     select: { id: true, slug: true, contentRating: true },
   });
   if (!listing) return null;
-  const { resolveVersionListingRating } = await import('./app-listing-version-rating.service');
+  const { resolveVersionListingRating } = await import(
+    '~/server/services/blocks/app-listing-assets.service'
+  );
   const to = await resolveVersionListingRating(db, {
     appListingId: listing.id,
     current: listing.contentRating,
@@ -4484,7 +4488,8 @@ async function approveRequestUnderClaim(
           // earlier approved version's declaration gives is a moderator's raise and is kept;
           // the last one is `priorVersion`, read before the update above.
           //
-          // Read on the PRIMARY. A missing row leaves the column out of the write.
+          // A missing row leaves the column out of the write.
+          // primary: the rating written below must be computed from the row as it is now.
           const ratingListing = await dbWrite.appListing.findFirst({
             where: { appBlockId, kind: 'onsite' },
             select: { id: true, contentRating: true },
@@ -4492,7 +4497,7 @@ async function approveRequestUnderClaim(
           let syncedRating: string | null = null;
           if (ratingListing) {
             const { resolveVersionListingRating } = await import(
-              './app-listing-version-rating.service'
+              '~/server/services/blocks/app-listing-assets.service'
             );
             syncedRating = await resolveVersionListingRating(dbWrite, {
               appListingId: ratingListing.id,

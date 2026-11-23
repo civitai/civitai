@@ -122,6 +122,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       blocks: {
         approveRequest: { useMutation: mutation('approve') },
         listPublishRequestHolds: { useQuery: () => ({ data: [] }) },
+        // The approve bar's version re-rate notice (renders nothing without data).
+        getVersionListingRatingPreview: { useQuery: () => ({ data: undefined }) },
         rejectRequest: { useMutation: mutation('reject') },
         getReviewStatus: { useQuery: () => ({ data: undefined, isLoading: false, error: null }) },
         previewRequest: { useMutation: mutation('preview') },
