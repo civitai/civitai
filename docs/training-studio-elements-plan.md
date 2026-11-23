@@ -1,6 +1,6 @@
 # Training Studio on Civitai Elements
 
-**Status:** in progress, behind the `training-studio-elements-ui` flag. The Select step (#9552), the Data step (#9878), the shell (#9902) and the Review step (#10185) are redesigned; the run page is in progress.
+**Status:** in progress, behind the `training-studio-elements-ui` flag. The Select step (#9552), the Data step (#9878), the shell (#9902) the Review step (#10185) and the run page (#10189) are redesigned; My trainings is in progress.
 Tracked in HQ as `training_studio_civitai_ww5n`; slice 0 is `elements_training_studio_d595`.
 
 ## Goal
@@ -68,6 +68,11 @@ Measured on the Select step (Media, Type and Engine rows, Continue button):
   step use a `civitai-text-input` committed on change instead.
 - **Links.** `civitai-button` takes an `href` but no `target`, so a link that must open the main app in a
   new tab (publish, model page, download weights) stays an `<a>` styled like a kit button.
+- **Boolean options with dashed names.** Svelte sets a dashed attribute such as `close-on-escape` as an
+  attribute, and `"false"` reads as on to Lit. Pass a changing boolean as the property instead
+  (`closeOnEscape={…}`).
+- **Selects.** `civitai-select` marks its choice with the `selected` attribute only, which a browser
+  ignores once the user has picked from that select; resetting one from code needs a remount.
 - **Datalists.** A `list=` id can't reach an `<input>` inside a shadow root, so a field with datalist
   suggestions (the Data step's tag filter) stays a native input.
 - **Not yet checked:** rendering inside the main-app embed. The spike was checked in the standalone

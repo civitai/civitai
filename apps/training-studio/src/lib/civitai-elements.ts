@@ -19,6 +19,7 @@ import '@civitai/components/civitai-number-input/define';
 import '@civitai/components/civitai-progress/define';
 import '@civitai/components/civitai-segmented-control/define';
 import '@civitai/components/civitai-select/define';
+import '@civitai/components/civitai-table/define';
 import '@civitai/components/civitai-textarea/define';
 import { defineStudioChipGroup } from './elements/studio-chip-group';
 import { defineStudioPopover } from './elements/studio-popover';
