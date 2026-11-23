@@ -101,10 +101,10 @@ export interface AccessTokenJwtClaims {
   /** A service token's user id at the resource. */
   civitai_uid?: number;
   /**
-   * A block-exchange token's App Block binding. Given, all four of its claims are written together
+   * A block-exchange token's App Block binding. Given, all five of its claims are written together
    * (never some of them): `civitai_token_kind: 'block-exchange'` (the marker),
-   * `civitai_app_block_id`, `civitai_block_instance_id` and `civitai_max_browsing_level`
-   * ({@link BLOCK_EXCHANGE_TOKEN_KIND}). Absent, none is.
+   * `civitai_app_block_id`, `civitai_block_instance_id`, `civitai_max_browsing_level` and
+   * `civitai_viewer_browsing_level` ({@link BLOCK_EXCHANGE_TOKEN_KIND}). Absent, none is.
    */
   block?: BlockExchangeBinding;
 }
@@ -117,6 +117,12 @@ export interface BlockExchangeBinding {
   blockInstanceId: string;
   /** The block token's `maxBrowsingLevel`: its maturity ceiling, a browsing-level bit flag. */
   maxBrowsingLevel: number;
+  /**
+   * The viewer's own browsing level the block token carries (its `viewerBrowsingLevel`), a
+   * browsing-level bit flag. With the ceiling it is the level the site's own reads use
+   * (`resolveViewerBrowsingLevel` in `src/server/services/blocks/block-viewer-ceiling.ts`).
+   */
+  viewerBrowsingLevel: number;
 }
 
 /** The `civitai_token_kind` of a token the hub's block exchange minted. */
@@ -219,6 +225,7 @@ export function createSessionSigner(config: SessionSignerConfig = {}): SessionSi
             civitai_app_block_id: claims.block.appBlockId,
             civitai_block_instance_id: claims.block.blockInstanceId,
             civitai_max_browsing_level: claims.block.maxBrowsingLevel,
+            civitai_viewer_browsing_level: claims.block.viewerBrowsingLevel,
           }
         : {}),
     })

@@ -699,24 +699,39 @@ describe('🔴 service tokens and the service-client allowlist', () => {
 });
 
 describe('🔴 block-exchange tokens: the block binding claims', () => {
-  const BLOCK = { appBlockId: 'apb-6f20', blockInstanceId: 'inst-c81d', maxBrowsingLevel: 3 };
+  // Ceiling PG | PG13 | R (7), viewer level PG | R (5): distinct from each other and from every constant
+  // the adapter names (PG 1, SFW 3, the mature bits 28, every level 31).
+  const BLOCK = {
+    appBlockId: 'apb-6f20',
+    blockInstanceId: 'inst-c81d',
+    maxBrowsingLevel: 7,
+    viewerBrowsingLevel: 5,
+  };
+  /** The four binding claims alone: a token the hub minted before it wrote the viewer level. */
   const rawClaims = {
     civitai_token_kind: 'block-exchange',
     civitai_app_block_id: 'apb-6f20',
     civitai_block_instance_id: 'inst-c81d',
-    civitai_max_browsing_level: 3,
+    civitai_max_browsing_level: 7,
   };
+  /** All five, as the hub writes them now. */
+  const rawClaims5 = { ...rawClaims, civitai_viewer_browsing_level: 5 };
   const signedWith = (extra: Record<string, unknown>) =>
     signRaw({ typ: 'at+jwt', kid: KID }, { ...claims({ act: { sub: RELAY_ID } }), ...extra });
 
-  it('reads the binding the hub writes as VerifiedToken.block', async () => {
+  it('reads the binding the hub writes as VerifiedToken.block, the viewer level included', async () => {
     const verified = await hubVerifier()(
       await mint({ scope: 'AppDataRead', act: { sub: RELAY_ID }, block: BLOCK })
     );
     expect(verified).toMatchObject({
       subject: `user:${USER_ID}/client:${CLIENT_ID}`,
       userId: USER_ID,
-      block: { appBlockId: 'apb-6f20', blockInstanceId: 'inst-c81d', maxBrowsingLevel: 3 },
+    });
+    expect(verified?.block).toEqual({
+      appBlockId: 'apb-6f20',
+      blockInstanceId: 'inst-c81d',
+      maxBrowsingLevel: 7,
+      viewerBrowsingLevel: 5,
     });
   });
 
@@ -729,8 +744,32 @@ describe('🔴 block-exchange tokens: the block binding claims', () => {
     expect(principal.token?.block).toEqual({
       appBlockId: 'apb-6f20',
       blockInstanceId: 'inst-c81d',
-      maxBrowsingLevel: 3,
+      maxBrowsingLevel: 7,
+      viewerBrowsingLevel: 5,
     });
+  });
+
+  it('accepts a four-claim token (minted before the viewer level) with no viewer level', async () => {
+    expect((await hubVerifier()(await signedWith(rawClaims)))?.block).toEqual({
+      appBlockId: 'apb-6f20',
+      blockInstanceId: 'inst-c81d',
+      maxBrowsingLevel: 7,
+      viewerBrowsingLevel: null,
+    });
+  });
+
+  it('accepts a five-claim token and exposes its viewer level, zero included', async () => {
+    for (const level of [5, 0, 31]) {
+      const verified = await hubVerifier()(
+        await signedWith({ ...rawClaims, civitai_viewer_browsing_level: level })
+      );
+      expect(verified?.block, String(level)).toEqual({
+        appBlockId: 'apb-6f20',
+        blockInstanceId: 'inst-c81d',
+        maxBrowsingLevel: 7,
+        viewerBrowsingLevel: level,
+      });
+    }
   });
 
   it('a user-exchange token (none of the claims) has no binding, exactly as before', async () => {
@@ -741,17 +780,31 @@ describe('🔴 block-exchange tokens: the block binding claims', () => {
     expect(principal.token).not.toHaveProperty('block');
   });
 
-  it('🔴 a block-exchange token missing any binding claim is refused (fail closed)', async () => {
-    // POSITIVE CONTROL: all four, as raw claims, are accepted.
-    expect((await hubVerifier()(await signedWith(rawClaims)))?.block).toEqual(BLOCK);
-    for (const missing of Object.keys(rawClaims)) {
-      const { [missing]: _drop, ...partial } = rawClaims as Record<string, unknown>;
-      expect(await hubVerifier()(await signedWith(partial)), missing).toBeNull();
+  it('🔴 a block-exchange token missing any binding claim is refused (fail closed), with or without the viewer level', async () => {
+    // POSITIVE CONTROL: all four, and all five, as raw claims, are accepted.
+    expect((await hubVerifier()(await signedWith(rawClaims)))?.block).toMatchObject({
+      maxBrowsingLevel: 7,
+    });
+    expect((await hubVerifier()(await signedWith(rawClaims5)))?.block).toMatchObject({
+      viewerBrowsingLevel: 5,
+    });
+    for (const base of [rawClaims, rawClaims5]) {
+      for (const missing of Object.keys(rawClaims)) {
+        const { [missing]: _drop, ...partial } = base as Record<string, unknown>;
+        const label = `${missing} of ${Object.keys(base).length}`;
+        expect(await hubVerifier()(await signedWith(partial)), label).toBeNull();
+      }
     }
     // The marker alone.
     expect(
       await hubVerifier()(await signedWith({ civitai_token_kind: 'block-exchange' }))
     ).toBeNull();
+  });
+
+  it('🔴 a viewer level with no binding is refused', async () => {
+    // POSITIVE CONTROL: the same token without it is a user-exchange token, accepted.
+    expect(await hubVerifier()(await signedWith({}))).not.toBeNull();
+    expect(await hubVerifier()(await signedWith({ civitai_viewer_browsing_level: 5 }))).toBeNull();
   });
 
   it('🔴 a malformed binding is refused: wrong marker, empty ids, a ceiling that is not a non-negative integer', async () => {
@@ -764,6 +817,25 @@ describe('🔴 block-exchange tokens: the block binding claims', () => {
       ['fractional ceiling', { civitai_max_browsing_level: 1.5 }],
     ] as const) {
       expect(await hubVerifier()(await signedWith({ ...rawClaims, ...over })), label).toBeNull();
+    }
+  });
+
+  it('🔴 a viewer level that is not a non-negative integer is refused', async () => {
+    // POSITIVE CONTROL: the well-formed five-claim token is accepted.
+    expect(await hubVerifier()(await signedWith(rawClaims5))).not.toBeNull();
+    for (const [label, level] of [
+      ['negative', -1],
+      ['fractional', 1.5],
+      ['a string', '5'],
+      ['null', null],
+      ['a boolean', true],
+    ] as const) {
+      expect(
+        await hubVerifier()(
+          await signedWith({ ...rawClaims, civitai_viewer_browsing_level: level })
+        ),
+        label
+      ).toBeNull();
     }
   });
 
