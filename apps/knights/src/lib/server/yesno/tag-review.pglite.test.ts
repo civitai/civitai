@@ -117,6 +117,16 @@ describe('creating tag review items', () => {
     expect(await items()).toEqual([]);
   });
 
+  it('with the switch off and no items, reads no tag table, so it runs without access to them', async () => {
+    // Stands in for a database role that cannot read the tag tables: a query naming the table fails before any row.
+    await pg.exec('ALTER TABLE "TagsOnImageNew" RENAME TO "TagsOnImageNew_hidden"');
+    try {
+      await expect(run({ enabled: false })).resolves.toMatchObject({ created: 0, ended: 0 });
+    } finally {
+      await pg.exec('ALTER TABLE "TagsOnImageNew_hidden" RENAME TO "TagsOnImageNew"');
+    }
+  });
+
   it('creates nothing when no Paladin is active', async () => {
     await pg.exec(`TRUNCATE "KnightsVote"`);
     expect(await run()).toMatchObject({ created: 0 });

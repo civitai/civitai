@@ -166,6 +166,19 @@ async function createEpisodes(
 }
 
 async function endEpisodes(db: Kysely<DB>, now: Date, limit: number, result: TagReviewResult) {
+  // Knights' database role may not read the tag tables yet (they are granted when the source is switched on), and a query
+  // naming one fails before it reads any row. So they are read only once an item is waiting to end.
+  const waiting = await db
+    .selectFrom('KnightsQueueItem as i')
+    .select('i.id')
+    .where('i.status', 'in', ['Open', 'Consensus', 'Closed'])
+    .where('i.minRank', '=', TAG_REVIEW_RANK)
+    .where('i.source', '=', MOD_TAG_REVIEW_SOURCE)
+    .where(sql<SqlBool>`NOT COALESCE(i.meta ? ${sql.lit(EPISODE_ENDED_META_KEY)}, false)`)
+    .limit(1)
+    .executeTakeFirst();
+  if (!waiting) return;
+
   const done = await db
     .selectFrom('KnightsQueueItem as i')
     .select(['i.id', 'i.status', 'i.externalId'])
