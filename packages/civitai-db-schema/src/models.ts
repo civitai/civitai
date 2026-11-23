@@ -108,7 +108,7 @@ export type PartnerPricingModel = "Duration" | "PerImage";
 
 export type ApiKeyType = "System" | "User" | "Access" | "Refresh" | "Worker";
 
-export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline" | "postText";
+export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline" | "postText" | "featurePage";
 
 export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
@@ -3196,6 +3196,41 @@ export interface AnswerMetric {
   crossCount: number;
   heartCount: number;
   commentCount: number;
+}
+
+export interface FeaturePageTopic {
+  id: number;
+  urn: string;
+  kind: string;
+  createdAt: Date;
+}
+
+export interface FeaturePageCommentMirror {
+  commentId: number;
+  userId: number;
+  requestId: string;
+  urn: string | null;
+  goneCause: string | null;
+  version: number;
+  pushedState: string | null;
+  pushedDigest: string | null;
+  platformDigest: string | null;
+  pendingDigest: string | null;
+  pushAttempts: number;
+  scanAttempts: number;
+  scanHash: string | null;
+  editRequestIds: string[];
+  postAttemptedAt: Date | null;
+  postSeq: number;
+  goneAt: Date | null;
+  subjectMissingAt: Date | null;
+  contentAt: Date;
+  removeWantedAt: Date | null;
+  restrictedAt: Date | null;
+  nextPushAt: Date | null;
+  leaseUntil: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface CommentTopic {

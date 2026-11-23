@@ -175,7 +175,7 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
       triggers: [{ cleanup: record }],
     } as never);
 
-    expect(await restoreScamCase(1)).toEqual({ restored: 0 });
+    expect(await restoreScamCase(1)).toEqual({ restored: 0, skipped: 0 });
     expect(await hiddenIds()).toEqual([1001]);
   });
 
@@ -195,7 +195,7 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
     await hideBlockedUserCommentsOnOwnContent({ ownerId: BLOCKER, blockedUserId: BLOCKED });
     expect(holder.afterRead, 'the hook ran').toBeNull();
 
-    expect(await restoreScamCase(1)).toEqual({ restored: 0 });
+    expect(await restoreScamCase(1)).toEqual({ restored: 0, skipped: 0 });
     expect(await hiddenIds()).toEqual([1001]);
   });
 
@@ -284,8 +284,13 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
 
 describe('SECTION_OWNERS', () => {
   // A comment section with no owner here is never hidden on a block.
-  it('resolves an owner for every comment entity type', () => {
-    expect(Object.keys(SECTION_OWNERS).sort()).toEqual(Object.values(CommentEntityType).sort());
+  // A Feature Pages topic has no civitai owner, so it has no arm (block-hide-comments.service.ts).
+  const OWNED_TYPES = Object.values(CommentEntityType)
+    .filter((t) => t !== 'featurePage')
+    .sort();
+
+  it('resolves an owner for every comment entity type that has one', () => {
+    expect(Object.keys(SECTION_OWNERS).sort()).toEqual(OWNED_TYPES);
   });
 
   // Each type's sections live in their own table, keyed by their own owner column. Every type gets
@@ -375,8 +380,8 @@ describe('SECTION_OWNERS', () => {
     `);
   });
 
-  it('covers every comment entity type', () => {
-    expect(SECTIONS.map(([type]) => type).sort()).toEqual(Object.values(CommentEntityType).sort());
+  it('covers every comment entity type that has an owner', () => {
+    expect(SECTIONS.map(([type]) => type).sort()).toEqual(OWNED_TYPES);
   });
 
   it("hides the comment on the blocker's section of every type, and none on another owner's", async () => {

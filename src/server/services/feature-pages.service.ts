@@ -11,6 +11,10 @@ import type {
 } from '~/server/schema/feature-pages.schema';
 import { fetchThroughCache, setFetchThroughCache } from '~/server/utils/cache-helpers';
 import { fetchTimeoutSignal, outboundFetch } from '~/server/utils/fetch-timeout';
+import {
+  PLATFORM_ROUTE_MISSING,
+  platformRefusalSchema,
+} from '~/server/services/feature-pages/platform-wire';
 
 // The data.civitai.com platform's internal write path (no ingress), and the audience of its tokens.
 const SIGNER_TOKEN_RESOURCE = 'https://data.civitai.com';
@@ -90,17 +94,43 @@ async function mintServiceToken({ clientId, clientSecret }: SignerConfig): Promi
 const tryAgain = () =>
   new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Feature pages: try again' });
 
-async function postToSigner(path: string, body: Record<string, unknown>): Promise<unknown> {
+/** The platform did not answer: no token, no connection, or a timeout. Safe to retry. */
+export class SignerUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super('feature pages signer unavailable', { cause });
+    this.name = 'SignerUnavailableError';
+  }
+}
+
+export type SignerReply = { status: number; body: unknown };
+
+/**
+ * One call to the platform's internal write path with a cached service token, re-minted once on a
+ * 401. Answers whatever status the platform gave; throws only when there was no answer.
+ */
+export async function callSigner(
+  path: string,
+  init:
+    | { method: 'POST'; body: Record<string, unknown> }
+    | { method: 'GET'; query: URLSearchParams }
+): Promise<SignerReply> {
   const config = signerConfig();
   if (!config)
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Feature pages are not set up' });
 
+  const url =
+    init.method === 'GET'
+      ? `${config.signerUrl}${path}?${init.query.toString()}`
+      : `${config.signerUrl}${path}`;
   const send = (token: string) =>
-    outboundFetch(`${config.signerUrl}${path}`, {
+    outboundFetch(url, {
       timeoutMs: SIGNER_TIMEOUT_MS,
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      method: init.method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(init.method === 'POST' ? { 'Content-Type': 'application/json' } : {}),
+      },
+      ...(init.method === 'POST' ? { body: JSON.stringify(init.body) } : {}),
     });
 
   let res: Response;
@@ -116,21 +146,57 @@ async function postToSigner(path: string, body: Record<string, unknown>): Promis
     }
   } catch (e) {
     log({ message: 'signer call failed', path, error: safeError(e) });
-    throw tryAgain();
+    throw new SignerUnavailableError(e);
   }
-
-  if (res.status === 401 || res.status >= 500) {
-    log({ message: 'signer error', path, status: res.status });
-    throw tryAgain();
-  }
-  if (res.status === 429) throw new TRPCError({ code: 'TOO_MANY_REQUESTS' });
-  if (!res.ok) throw new TRPCError({ code: 'FORBIDDEN', message: 'Refused' });
+  let body: unknown = null;
   try {
-    return await res.json();
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+  return { status: res.status, body };
+}
+
+/** The refusal code of a non-2xx answer (`{ code, message, details }`), if it has one. */
+export function signerErrorCode(reply: SignerReply): string | undefined {
+  const parsed = platformRefusalSchema.safeParse(reply.body);
+  return parsed.success ? parsed.data.code : undefined;
+}
+
+/**
+ * A 404 is a refusal only when the platform names the record it does not know. A 404 for a route
+ * it does not have (a deploy gap) is retried, and is an error worth seeing.
+ */
+export function isRouteMissing(reply: SignerReply) {
+  if (reply.status !== 404) return false;
+  const code = signerErrorCode(reply);
+  return !code || code === PLATFORM_ROUTE_MISSING;
+}
+
+async function postToSigner(path: string, body: Record<string, unknown>): Promise<unknown> {
+  let reply: SignerReply;
+  try {
+    reply = await callSigner(path, { method: 'POST', body });
   } catch (e) {
-    log({ message: 'signer reply unreadable', path, error: safeError(e) });
+    if (e instanceof SignerUnavailableError) throw tryAgain();
+    throw e;
+  }
+  const { status } = reply;
+  if (status === 401 || status >= 500) {
+    log({ message: 'signer error', path, status });
     throw tryAgain();
   }
+  if (isRouteMissing(reply)) {
+    log({ message: 'signer route missing', path, status });
+    throw tryAgain();
+  }
+  if (status === 429) throw new TRPCError({ code: 'TOO_MANY_REQUESTS' });
+  if (status < 200 || status >= 300) throw new TRPCError({ code: 'FORBIDDEN', message: 'Refused' });
+  if (reply.body === null) {
+    log({ message: 'signer reply unreadable', path });
+    throw tryAgain();
+  }
+  return reply.body;
 }
 
 const voteReplySchema = z.object({ votes: z.number().int().nonnegative() });

@@ -17,10 +17,12 @@ import { withDefiniteArticle } from '~/utils/string-helpers';
 
 /**
  * A live CommentV3 row written since the cursor. Tombstones keep their row and must not notify, and
- * neither does a row hidden for ToS.
+ * neither does a row hidden for ToS. Feature Pages threads live on the platform, so they never
+ * notify here (compared as text: the label may not exist yet).
  */
 export const liveV3Since = (lastSent: string) =>
-  `c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '${lastSent}'`;
+  `c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '${lastSent}'
+   AND c."entityType"::text <> 'featurePage'`;
 
 /**
  * The id a model-page notification addresses a comment by: its old Comment id when it has one, so

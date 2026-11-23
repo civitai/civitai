@@ -26,6 +26,7 @@ import {
   afterCommentsV3Deleted,
   bulkSetCommentV3TosViolation,
   deleteCommentsV3,
+  deleteOwnCommentV3,
 } from '~/server/services/commentv3/moderation.service';
 import {
   getStoredComment,
@@ -386,7 +387,13 @@ export async function deleteCommentV3Handler({
   const comment = await deletableComment(ctx, input.id);
   assertAuthorOrModerator(ctx, comment);
   assertNotRemovedForMember(ctx, comment);
-  afterCommentsV3Deleted(await dbWrite.$transaction((tx) => deleteCommentsV3(tx, [comment.id])));
+  afterCommentsV3Deleted(
+    await dbWrite.$transaction((tx) =>
+      comment.userId === ctx.user.id
+        ? deleteOwnCommentV3(tx, comment)
+        : deleteCommentsV3(tx, [comment.id])
+    )
+  );
   ctx.track.commentEvent({ type: 'Delete', commentId: comment.id }).catch(handleLogError);
   return { id: comment.id };
 }
@@ -402,13 +409,15 @@ export async function toggleHideCommentV3Handler({
   assertNotRemovedForMember(ctx, comment);
   await assertSectionOwnerOrModerator(ctx, comment);
   // Toggled from the row read under its lock: the read above may predate a hide since.
-  const hidden = await dbWrite.$transaction(async (tx) => {
+  const { hidden, refused } = await dbWrite.$transaction(async (tx) => {
     const row = await getStoredComment(prismaRunner(tx), comment.id, 'FOR UPDATE');
     if (!row || row.deletedAt) throw throwNotFoundError('Comment not found');
     const next = !row.hidden;
-    await setCommentFlags(prismaRunner(tx), [comment.id], { hidden: next });
-    return next;
+    const changed = await setCommentFlags(prismaRunner(tx), [comment.id], { hidden: next });
+    // setCommentFlags never unhides a Feature Pages comment.
+    return { hidden: next, refused: !next && !changed.length && row.entityType === 'featurePage' };
   });
+  if (refused) throw throwBadRequestError('This comment cannot be unhidden.');
   return { id: comment.id, hidden };
 }
 

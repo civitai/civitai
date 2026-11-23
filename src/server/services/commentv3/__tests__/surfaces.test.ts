@@ -85,6 +85,17 @@ describe('visibility', () => {
     });
     expect(m.storylineVisible).not.toHaveBeenCalled();
   });
+
+  it('keeps a Feature Pages thread from members with the discussion feature, and opens it to moderators without it', async () => {
+    m.flags = { storylines: true, featurePagesDiscussion: true } as never;
+    await expect(commentSurface('featurePage').assertVisible?.(1, member)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    m.flags = { storylines: true, featurePagesDiscussion: false } as never;
+    await expect(
+      commentSurface('featurePage').assertVisible?.(1, moderator)
+    ).resolves.toBeUndefined();
+  });
 });
 
 describe('a post', () => {
@@ -232,6 +243,14 @@ describe('writes', () => {
     expect(m.access).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: gated, entityIds: [4] })
     );
+  });
+
+  it('refuses every generic write on a Feature Pages thread, moderators too; a model takes them', async () => {
+    await expect(commentSurface('featurePage').assertWritable?.(1, member)).rejects.toThrow(
+      'feature page'
+    );
+    await expect(commentSurface('featurePage').assertWritable?.(1, moderator)).rejects.toThrow();
+    expect(commentSurface('model').assertWritable).toBeUndefined();
   });
 
   it('refuses a member on a storyline taken down for ToS; a moderator may', async () => {

@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { FP_RESTRICT_SET } from '@civitai/db-queries/feature-page-comments';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 /**
@@ -179,6 +180,9 @@ export async function updateCommentContent(
 
 export type RemovedCommentV3 = { id: number; userId: number; entityType: string; entityId: number };
 
+/** Who took a comment away, which the Feature Pages mirror pushes as a retraction or a removal. */
+export type CommentGoneCause = 'author' | 'moderator' | 'refused';
+
 /**
  * Deletes comments under D6: a comment with replies, or one a clamped reply answers, becomes a
  * tombstone (content blanked, author kept, `deletedAt` set); any other comment is removed, and a
@@ -189,7 +193,11 @@ export type RemovedCommentV3 = { id: number; userId: number; entityType: string;
  * waits out a reply being written under one (it holds the parent `FOR KEY SHARE`), so a reply that
  * commits first makes it a tombstone and one that commits after finds the parent gone.
  */
-export async function deleteComments(db: SqlRunner, ids: number[]) {
+export async function deleteComments(
+  db: SqlRunner,
+  ids: number[],
+  cause: CommentGoneCause = 'moderator'
+) {
   if (!ids.length) return [];
   const list = (xs: number[]) => xs.join(',');
   const IDS = `string_to_array($1, ',')::int[]`;
@@ -251,6 +259,14 @@ export async function deleteComments(db: SqlRunner, ids: number[]) {
         list(rows.map((r) => r.id)),
       ]);
   }
+  // Only Feature Pages rows touch the mirror table, so a delete elsewhere never reads it.
+  const mirrored = removed.filter((r) => r.entityType === 'featurePage').map((r) => r.id);
+  if (mirrored.length)
+    await db.query(
+      `UPDATE "FeaturePageCommentMirror" SET "goneCause" = $2, "goneAt" = now(), ${FP_RESTRICT_SET}
+       WHERE "commentId" = ANY(${IDS}) AND "goneCause" IS NULL`,
+      [list(mirrored), cause]
+    );
   return removed;
 }
 
@@ -287,6 +303,9 @@ export async function hideComments(db: SqlRunner, ids: number[]) {
  * Sets moderation flags on live comments; returns the rows it changed. Locks every id first, in id
  * order, so what the caller reads afterwards is read under the lock even when nothing changed. A
  * hide stamps `hiddenAt` (the given one, else now) on the rows it turns hidden; a show clears it.
+ * A Feature Pages comment is never unhidden or ToS-cleared here: it stays hidden until a lift exists
+ * that the platform can order. Hiding one owes the platform that restriction, recorded in the same
+ * transaction.
  */
 export async function setCommentFlags(
   db: SqlRunner,
@@ -316,15 +335,38 @@ export async function setCommentFlags(
     add('"pinnedAt"', flags.pinned, 'CASE WHEN $::boolean THEN COALESCE("pinnedAt", now()) END');
   if (!sets.length || !ids.length) return [];
   await lockComments(db, ids);
-  const { rows } = await db.query<{ id: number; userId: number }>(
-    `UPDATE "CommentV3" SET ${sets.join(', ')}, "updatedAt" = now()
-     WHERE id = ANY(string_to_array($1, ',')::int[]) AND "deletedAt" IS NULL AND (${changed.join(
-       ' OR '
-     )})
-     RETURNING id, "userId"`,
+  const lifts = flags.hidden === false || flags.tosViolation === false;
+  const hides = flags.hidden === true || flags.tosViolation === true;
+  // Compared as text, so it runs before the featurePage label exists.
+  const { rows } = await db.query<{
+    changed: { id: number; userId: number }[];
+    fp: number[] | null;
+  }>(
+    `WITH changed AS (
+       UPDATE "CommentV3" SET ${sets.join(', ')}, "updatedAt" = now()
+       WHERE id = ANY(string_to_array($1, ',')::int[]) AND "deletedAt" IS NULL AND (${changed.join(
+         ' OR '
+       )})${lifts ? ` AND "entityType"::text <> 'featurePage'` : ''}
+       RETURNING id, "userId")
+     SELECT
+       (SELECT coalesce(json_agg(json_build_object('id', id, 'userId', "userId")), '[]'::json)
+        FROM changed) AS changed,
+       ${
+         hides
+           ? `(SELECT array_agg(id) FROM "CommentV3"
+              WHERE id = ANY(string_to_array($1, ',')::int[]) AND "entityType"::text = 'featurePage')`
+           : 'NULL::int[]'
+       } AS fp`,
     params
   );
-  return rows;
+  const fp = rows[0]?.fp ?? [];
+  if (fp.length)
+    await db.query(
+      `UPDATE "FeaturePageCommentMirror" SET ${FP_RESTRICT_SET}
+       WHERE "commentId" = ANY(string_to_array($1, ',')::int[])`,
+      [fp.join(',')]
+    );
+  return rows[0]?.changed ?? [];
 }
 
 /** Flips a live comment's lock, which closes its subtree to replies. Undefined when it is gone. */
