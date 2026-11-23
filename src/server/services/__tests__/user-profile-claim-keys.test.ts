@@ -102,9 +102,9 @@ describe("a moderator's save keeps the images their editor could not show", () =
     const restricted = { nsfwLevel: 4, modelRestricted: true };
     dbMock.dbWrite.userProfile.findUnique.mockResolvedValue({
       coverImage: restricted,
-      sfwCoverImage: null,
+      sfwCoverImage: { nsfwLevel: 1, modelRestricted: false },
       backgroundImage: restricted,
-      sfwBackgroundImage: null,
+      sfwBackgroundImage: restricted,
     } as never);
   });
   const savedData = () => (update.mock.calls[0][0] as { data: Record<string, unknown> }).data;
@@ -116,10 +116,22 @@ describe("a moderator's save keeps the images their editor could not show", () =
       isModerator: true,
       coverImage: null,
       backgroundImage: null,
+      sfwBackgroundImage: null,
       profileRedesign: true,
     });
     expect(savedData().coverImage).toBeUndefined();
     expect(savedData().backgroundImage).toBeUndefined();
+    expect(savedData().sfwBackgroundImage).toBeUndefined();
+  });
+
+  it('still clears an image the moderator was shown', async () => {
+    await updateUserProfile({
+      userId: OWNER,
+      sessionUserId: 99,
+      isModerator: true,
+      sfwCoverImage: null,
+    });
+    expect(savedData().sfwCoverImage).toEqual({ disconnect: true });
   });
 
   it('still lets the owner clear them', async () => {
