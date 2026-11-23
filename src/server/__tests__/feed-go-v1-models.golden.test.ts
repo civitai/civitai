@@ -181,7 +181,9 @@ vi.mock('~/server/services/image.service', async (importOriginal) => {
     getImagesForModelVersionCache: vi.fn(async (ids: number[]) => {
       const out = records(state.world.images, ids);
       for (const entry of Object.values(out)) {
-        entry.images = entry.images.filter((image) => onlySelectableLevels(image.nsfwLevel) !== 0);
+        entry.images = entry.images.filter(
+          (image: { nsfwLevel: number }) => onlySelectableLevels(image.nsfwLevel) !== 0
+        );
         for (const image of entry.images) {
           const t = state.world.imageTags?.[image.id];
           image.tags = t && t !== 'notFound' ? t.tags : [];
