@@ -17,19 +17,83 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  */
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
-/** The content check's submit, passed in: it answers with the check's workflow. */
-const submitCheck = vi.fn(async (): Promise<{ id?: string | null } | null> => ({ id: 'wf-new' }));
+/**
+ * What a sent check does to its row before the submit answers: the row now names the check, Pending.
+ * A row already holding this check's result, its callback landed since, is left as it is.
+ */
+const markCheck = (entityType: string, entityId: number, workflowId: string) =>
+  holder.db.query(
+    `INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", status)
+     VALUES ($1, $2, $3, 'Pending')
+     ON CONFLICT ("entityType", "entityId") DO UPDATE SET "workflowId" = $3, status = 'Pending'
+       WHERE "EntityModeration"."workflowId" IS DISTINCT FROM $3`,
+    [entityType, entityId, workflowId]
+  );
+type SubmitArgs = { entityType: string; entityId: number };
+/** The content check's submit, passed in: it marks the check's row and answers with its workflow. */
+const sends =
+  (workflowId: string, before?: () => Promise<unknown>) =>
+  async ({ entityType, entityId }: SubmitArgs): Promise<{ id?: string | null } | null> => {
+    await before?.();
+    await markCheck(entityType, entityId, workflowId);
+    return { id: workflowId };
+  };
+const submitCheck = vi.fn(sends('wf-new'));
 
 type Raw = ReturnType<typeof pgliteRaw>;
 dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw']>) =>
   pgliteRaw(holder.db).executeRaw(...a)) as never);
 dbMock.dbWrite.$queryRaw.mockImplementation(((...a: Parameters<Raw['queryRaw']>) =>
   pgliteRaw(holder.db).queryRaw(...a)) as never);
-dbMock.dbWrite.$transaction.mockImplementation((async (fn: (tx: unknown) => Promise<unknown>) =>
-  holder.db.transaction((tx) => {
-    const raw = pgliteRaw(tx as unknown as PGlite);
-    return fn({ $executeRaw: raw.executeRaw, $queryRaw: raw.queryRaw });
-  })) as never);
+/** A transaction's client over one PGlite transaction. */
+const txClient = (conn: PGlite) => {
+  const raw = pgliteRaw(conn);
+  return {
+    $executeRaw: raw.executeRaw,
+    $queryRaw: raw.queryRaw,
+    // recordTextScanFailure's write, and the read of the count it left.
+    entityModeration: {
+      updateMany: async (args: {
+        where: { entityType: string; entityId: number; workflowId: string; status?: string };
+        data: { workflowId: string; status: string; retryCount: { increment: number } };
+      }) => ({
+        count:
+          (
+            await conn.query(
+              `UPDATE "EntityModeration" SET "workflowId" = $1, status = $2,
+                   "retryCount" = "retryCount" + $3, "updatedAt" = now()
+                 WHERE "entityType" = $4 AND "entityId" = $5 AND "workflowId" = $6
+                   AND ($7::text IS NULL OR status = $7)`,
+              [
+                args.data.workflowId,
+                args.data.status,
+                args.data.retryCount.increment,
+                args.where.entityType,
+                args.where.entityId,
+                args.where.workflowId,
+                args.where.status ?? null,
+              ]
+            )
+          ).affectedRows ?? 0,
+      }),
+      findUnique: async (args: {
+        where: { entityType_entityId: { entityType: string; entityId: number } };
+      }) =>
+        (
+          await conn.query(
+            `SELECT "retryCount" FROM "EntityModeration" WHERE "entityType" = $1 AND "entityId" = $2`,
+            [args.where.entityType_entityId.entityType, args.where.entityType_entityId.entityId]
+          )
+        ).rows[0] ?? null,
+    },
+  };
+};
+const transaction = (
+  fn: (tx: unknown) => Promise<unknown>,
+  alter = (tx: ReturnType<typeof txClient>) => tx
+) => holder.db.transaction((tx) => fn(alter(txClient(tx as unknown as PGlite))));
+dbMock.dbWrite.$transaction.mockImplementation(((fn: (tx: unknown) => Promise<unknown>) =>
+  transaction(fn)) as never);
 // The Prisma reads the adapter makes, answered from the same rows.
 dbMock.dbWrite.textScanHold.findMany.mockImplementation(
   (async (args: { where: { entityType: string; entityId: number } }) =>
@@ -115,7 +179,9 @@ const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
 const { reconcileServiceDealReviews } = await import(
   '~/server/services/creator-service-deal-review-reconcile'
 );
-const rescanUnsubmitted = () => reconcileServiceDealReviews({ limit: 10 });
+const rescanUnsubmitted = () => reconcileServiceDealReviews({ limit: 10, submitCheck });
+/** The texts the reconcile sent to their check, in order. */
+const sentTexts = () => submitCheck.mock.calls.map(([args]) => [args.entityType, args.entityId]);
 const { loadServiceDealReviewSubjects } = await import(
   '~/server/services/text-scan/profiles/service-deal-review.profile'
 );
@@ -260,7 +326,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  submitCheck.mockResolvedValue({ id: 'wf-new' });
+  submitCheck.mockImplementation(sends('wf-new'));
   promptStore(CSAM_PROMPT('CSAM DEF'));
   await holder.db.exec(`
     TRUNCATE "ServiceDealReview", "ServiceDeal", "ServiceOffering", "EntityModeration", "TextScanHold"
@@ -343,11 +409,10 @@ describe('a review text check', () => {
   it('records a submitted check only for the text it was submitted for', async () => {
     await seed(R);
     await q(`UPDATE "ServiceDealReview" SET "scanWorkflowId" = NULL`);
-    submitCheck.mockImplementationOnce(async () => {
+    submitCheck.mockImplementationOnce(
       // The buyer edits while the check is being submitted.
-      await q(`UPDATE "ServiceDealReview" SET comment = 'Edited'`);
-      return { id: 'wf-stale' };
-    });
+      sends('wf-stale', () => q(`UPDATE "ServiceDealReview" SET comment = 'Edited'`))
+    );
     await adapter.scanServiceDealReviewText('ServiceDealReview', REVIEW, submitCheck);
     const [row] = await q<{ scanWorkflowId: string | null }>(
       `SELECT "scanWorkflowId" FROM "ServiceDealReview"`
@@ -688,6 +753,56 @@ describe('a verdict that cannot settle its text is left to the retry job, within
     expect(await checkRow('ServiceDealReview')).toEqual({ status: 'Succeeded', retryCount: 0 });
   });
 
+  it('the same verdict applied twice spends one retry', async () => {
+    await seed(R);
+    await recordCheck('ServiceDealReview', 'wf-1');
+    await textScan({ everyLabel: false, workflowId: 'wf-1' });
+    await textScan({ everyLabel: false, workflowId: 'wf-1' });
+    expect(await checkRow('ServiceDealReview')).toEqual({ status: 'Failed', retryCount: 1 });
+  });
+
+  it.each(TYPES)(
+    '%s: a verdict left for the retry job whose row cannot be failed changes nothing',
+    async (type) => {
+      await seed(R);
+      await recordCheck(type, 'wf-1');
+      dbMock.dbWrite.$transaction.mockImplementationOnce(((fn: (tx: unknown) => Promise<unknown>) =>
+        transaction(fn, (tx) => ({
+          ...tx,
+          entityModeration: {
+            ...tx.entityModeration,
+            updateMany: () => Promise.reject(new Error('row write failed')),
+          },
+        }))) as never);
+      await expect(textScan({ type, everyLabel: false, workflowId: 'wf-1' })).rejects.toThrow(
+        'row write failed'
+      );
+      // Not Pending with no check beside a Succeeded row, which the reconcile would resend at once.
+      expect(await state(type)).toEqual({ status: 'Pending', workflow: 'wf-1' });
+      expect(await checkRow(type)).toEqual({ status: 'Succeeded', retryCount: 0 });
+    }
+  );
+
+  it.each(TYPES)(
+    '%s: a check whose row a later send took is not recorded on the text; the later one is',
+    async (type) => {
+      await seed(R);
+      await q(`UPDATE "ServiceDealReview" SET "${cols[type].workflow}" = NULL`);
+      // A restore sends the text while the retry job's send of it is still answering.
+      submitCheck.mockImplementationOnce(async () => {
+        await markCheck(type, REVIEW, 'wf-retry');
+        await markCheck(type, REVIEW, 'wf-restore');
+        return { id: 'wf-retry' };
+      });
+      await adapter.scanServiceDealReviewText(type, REVIEW, submitCheck);
+      expect(await state(type)).toEqual({ status: 'Pending', workflow: null });
+      await adapter.scanServiceDealReviewText(type, REVIEW, sends('wf-restore'));
+      expect(await state(type)).toEqual({ status: 'Pending', workflow: 'wf-restore' });
+      await textScan({ type, workflowId: 'wf-restore' });
+      expect((await state(type)).status).toBe('Scanned');
+    }
+  );
+
   it('the reconcile leaves text whose check row the retry job holds, and only that text', async () => {
     await seed(R);
     await q(
@@ -699,13 +814,8 @@ describe('a verdict that cannot settle its text is left to the retry job, within
        VALUES ('ServiceDealReview', $1, 'Failed', $2)`,
       [REVIEW, TEXT_MODERATION_RETRY_LIMIT]
     );
-    const rescans = vi.spyOn(adapter, 'scanServiceDealReviewText').mockResolvedValue(undefined);
-    try {
-      await rescanUnsubmitted();
-      expect(rescans.mock.calls).toEqual([['ServiceDealReviewReply', REVIEW]]);
-    } finally {
-      rescans.mockRestore();
-    }
+    await rescanUnsubmitted();
+    expect(sentTexts()).toEqual([['ServiceDealReviewReply', REVIEW]]);
   });
 
   it.each([
@@ -774,17 +884,12 @@ describe('a verdict that cannot settle its text is left to the retry job, within
     );
     // The cache read fails, and so does the database read behind it (no prompt table here).
     promptStore(new Error('prompts unreadable'));
-    const rescans = vi.spyOn(adapter, 'scanServiceDealReviewText').mockResolvedValue(undefined);
-    try {
-      await expect(rescanUnsubmitted()).resolves.toMatchObject({
-        rescanned: 0,
-        synced: 0,
-        eventsWithoutReview: 0,
-      });
-      expect(rescans).not.toHaveBeenCalled();
-    } finally {
-      rescans.mockRestore();
-    }
+    await expect(rescanUnsubmitted()).resolves.toMatchObject({
+      rescanned: 0,
+      synced: 0,
+      eventsWithoutReview: 0,
+    });
+    expect(submitCheck).not.toHaveBeenCalled();
     const said = loggingMock.logToAxiom.mock.calls.filter(([entry]) =>
       String((entry as { message?: string }).message).startsWith('review text scan cannot ask')
     );
@@ -945,15 +1050,15 @@ describe('a verdict that cannot settle its text is left to the retry job, within
         )
       )[0]
     ).toEqual({ status: 'Pending', retryCount: 1, workflowId: 'wf-c' });
-    // The old check then fails: its row is marked Failed and spent, matched by its workflow alone.
+    // The old check then fails, spending one more: its row is marked Failed, matched by its workflow.
     await q(
       `UPDATE "EntityModeration" SET status = 'Failed', "retryCount" = "retryCount" + 1
        WHERE "workflowId" = 'wf-c'`
     );
-    expect(await checkRow('ServiceDealReview')).toEqual({ status: 'Failed', retryCount: 2 });
+    expect(await retryJobSelects('ServiceDealReview')).toBe(true);
   });
 
-  it('a check lost in flight half an hour ago is sent again by the reconcile, its row keeping its age', async () => {
+  it('a check lost in flight is left to the retry job, not sent by the reconcile as well', async () => {
     await seed(R);
     await q(
       `UPDATE "ServiceDealReview" SET "scanWorkflowId" = NULL, "sellerReplyScanWorkflowId" = NULL,
@@ -965,26 +1070,71 @@ describe('a verdict that cannot settle its text is left to the retry job, within
        VALUES ('ServiceDealReview', $1, 'Pending', 1, now() - interval '31 minutes')`,
       [REVIEW]
     );
-    const real = adapter.scanServiceDealReviewText;
-    const scans = vi
-      .spyOn(adapter, 'scanServiceDealReviewText')
-      .mockImplementation((t, id) => real(t, id, submitCheck));
-    try {
-      await rescanUnsubmitted();
-      expect(scans.mock.calls).toContainEqual(['ServiceDealReview', REVIEW]);
-      expect(submitCheck).toHaveBeenCalledWith(
-        expect.objectContaining({ entityType: 'ServiceDealReview', entityId: REVIEW })
+    await rescanUnsubmitted();
+    expect(sentTexts()).toEqual([['ServiceDealReviewReply', REVIEW]]);
+  });
+
+  describe('text whose check spent its retries', () => {
+    /** Each text of the review unchecked an hour, its row at the limit since `hoursAgo`. */
+    const parked = async (
+      type: (typeof TYPES)[number],
+      { hoursAgo, status = 'Failed', text = 'Pending' }: Record<string, string | number>
+    ) => {
+      await seed(R);
+      await q(
+        `UPDATE "ServiceDealReview" SET "${cols[type].status}" = $1, "updatedAt" = now() - interval '1 hour'`,
+        [text]
       );
-    } finally {
-      scans.mockRestore();
-    }
-    // The submit's in-flight dedupe and the retry job's Pending timeout both read this age: a
-    // row made younger here would be skipped as in flight on every run.
-    const [row] = await q<{ minutesOld: number; retryCount: number }>(
-      `SELECT floor(extract(epoch FROM now() - "updatedAt") / 60)::int AS "minutesOld", "retryCount"
-       FROM "EntityModeration" WHERE "entityType" = 'ServiceDealReview'`
+      // A Pending text was sent back with no check recorded; an Error one keeps the check that failed.
+      await q(
+        `UPDATE "ServiceDealReview" SET "${cols[type].workflow}" = NULL WHERE $1 = 'Pending'`,
+        [text]
+      );
+      for (const each of TYPES)
+        await q(
+          `INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", status, "retryCount", "updatedAt")
+           VALUES ($1, $2, 'wf-old', $3, $4, now() - $5::int * interval '1 hour')`,
+          [
+            each,
+            REVIEW,
+            each === type ? status : 'Succeeded',
+            TEXT_MODERATION_RETRY_LIMIT,
+            hoursAgo,
+          ]
+        );
+    };
+
+    it.each([
+      ['ServiceDealReview', 'Failed', 'Pending'],
+      ['ServiceDealReviewReply', 'Expired', 'Pending'],
+      ['ServiceDealReview', 'Pending', 'Pending'],
+      ['ServiceDealReviewReply', 'Failed', 'Error'],
+    ] as const)(
+      '%s: a row %s at the limit for a day, its text %s, is sent again by the reconcile with a fresh budget',
+      async (type, status, text) => {
+        await parked(type, { hoursAgo: 25, status, text });
+        await rescanUnsubmitted();
+        expect(sentTexts()).toEqual([[type, REVIEW]]);
+        expect(await state(type)).toEqual({ status: text, workflow: 'wf-new' });
+        expect(await checkRow(type)).toEqual({ status: 'Pending', retryCount: 0 });
+        // Its result then shows the text.
+        await textScan({ type, workflowId: 'wf-new' });
+        expect((await state(type)).status).toBe('Scanned');
+      }
     );
-    expect(row).toEqual({ minutesOld: 31, retryCount: 0 });
+
+    it.each(TYPES)('%s: is left alone for the first day', async (type) => {
+      await parked(type, { hoursAgo: 23 });
+      await rescanUnsubmitted();
+      expect(submitCheck).not.toHaveBeenCalled();
+    });
+
+    it.each(TYPES)('%s: is left alone while its review is hidden', async (type) => {
+      await parked(type, { hoursAgo: 25 });
+      await q(`UPDATE "ServiceDealReview" SET "hiddenAt" = now()`);
+      await rescanUnsubmitted();
+      expect(submitCheck).not.toHaveBeenCalled();
+    });
   });
 
   it('a restore whose check row cannot be re-armed still succeeds, and leaves its text unshown', async () => {

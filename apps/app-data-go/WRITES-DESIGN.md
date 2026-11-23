@@ -124,12 +124,20 @@ with the same options (`requiredScope: 'apps:storage'`), for the write verbs and
 1. **Signature, before anything else.** The route lives on the same public-facing site processes as
    every other route, so a network policy cannot single it out; this signature is what keeps apps off
    it, and what makes the `via` count trustworthy. The request carries `x-app-data-ts` (unix seconds)
-   and `x-app-data-sig` = hex HMAC-SHA256, with a key only this service and the site hold, over these
-   five lines joined by `\n`: the method; the request path exactly as sent (no decoding or
-   normalisation); the full raw query string (empty when there is none); the timestamp; and the hex
-   SHA-256 of the raw body, which for an empty body is the SHA-256 of zero bytes
-   (`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`). A timestamp more than 60 s
-   from the site's clock, or a mismatch, is a `401` and nothing else runs.
+   and `x-app-data-sig` = hex HMAC-SHA256, with a key (at least 32 bytes) only this service and the
+   site hold, over these six lines joined by `\n`: the method; the request path exactly as sent (no
+   decoding or normalisation); the full raw query string (empty when there is none); the timestamp;
+   the hex SHA-256 of the raw body, which for an empty body is the SHA-256 of zero bytes
+   (`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`); and the forwarded region:
+   the values of `cf-ipcountry`, `cf-region-code` and `x-isuk` (the headers the site's `getRegion`
+   reads), in that order, joined by `,`, each empty when absent, the whole line empty when all three
+   are. This service copies those headers from the viewer's request (each `[A-Za-z0-9-]{1,16}`, sent
+   once, else it refuses the write `400`), so the site can apply the region decision to values the
+   signature covers. A timestamp more than 60 s from the site's clock, a malformed region header, or
+   a mismatch is a `401 service_signature` and nothing else runs; with no key configured the route
+   answers `404 service_route_off`. This service maps both to `503 not_forwarded` (they refuse before
+   anything runs), never to the viewer's own `401` or `404`. The golden vectors are one file both
+   sides' tests read (`internal/sign/testdata/vectors.json`).
 2. **The body, buffered once.** The route disables Next's body parser as the public one does
    (`[[...path]].ts:23`), reads the raw body itself up to `STORAGE_BODY_LIMIT_BYTES`
    (`doc-store-api.ts:483`; over it a `413` in the storage envelope), hashes it for the signature, and
@@ -153,7 +161,7 @@ with the same options (`requiredScope: 'apps:storage'`), for the write verbs and
    `501 not_supported_here`. The site must do this, not this service: only the site resolves which app
    the token was issued for, and this service never decodes a token.
 6. **Its answer adds what the overlay needs:** a create or put returns the record's `seq`,
-   `record_id`, `createdAt` and `updatedAt`; a delete returns its tombstone's `seq`; a mark or unmark
+   `recordId`, `createdAt` and `updatedAt`; a delete returns its tombstone's `seq`; a mark or unmark
    returns `{marked, count}` (as today) plus the mark's own sequence, `markSeq`; a publish or unpublish
    returns each changed key's `seq` ("Store changes").
 
@@ -410,7 +418,7 @@ counts `report` marks too, so it discloses report volume, which the tallies them
 
 **Store changes.** `DocRecord` (`doc-store.types.ts:90-103`) has no `seq` or `recordId`, `docColumns`
 (`doc-store.ts:691-700`) selects neither, and `delete` returns only `{deleted}` (`doc-store.ts:2440-2480`).
-So: `create` and `put` return `seq` and `record_id`; `delete` returns `{deleted: true, seq}`
+So: `create` and `put` return `seq` and `recordId` (the row's `record_id`); `delete` returns `{deleted: true, seq}`
 (`{deleted: false}` has no `seq`, wrote no tombstone, and the cache applies nothing); `mark`, `unmark`
 and `increment` take and return the mark sequence (an increment that creates its counter document
 returns its `seq` as well); `publishCopies` and `unpublishCopies` return each
@@ -567,6 +575,7 @@ The internal route runs the same chain, so each gate runs in the same order on t
 
 | Gate | Where | Applies to | What to watch |
 |---|---|---|---|
+| API region block | the proxy's `apiRegionBlockMiddleware` on the public route; the internal route's own `internalRegionGate` (`doc-store-internal-route.ts`), on the signed forwarded region | every call | the same decision function (`getApiRegionBlock(getRegion(req))`), answering the same `451`; the proxy's matcher does not cover `/api/internal/`, and the page-only region restriction runs on neither route |
 | Token, revocation, consent, `apps:storage` | `withBlockScope` (`block-scope.middleware.ts:1593`) | every call | the signature check runs before it and adds nothing to it |
 | Publish scope | `assertPublishScope` (`doc-store-api.ts:847`, called `:1224`) | shared create, put | `consent_required` flows unchanged |
 | Collection schema | `doc-store-api.ts:1236`, again in the store | create, put | none |

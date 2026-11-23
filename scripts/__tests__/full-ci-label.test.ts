@@ -8,6 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,6 +38,7 @@ import { dispatchArgs } from '../ci/unit-batched.mjs';
 // `if`: a clause that sits inside an `||` gates nothing.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const requireHere = createRequire(import.meta.url);
 const WORKFLOW_DIR = path.resolve(HERE, '../../.github/workflows');
 
 const FULL = "contains(github.event.pull_request.labels.*.name, 'full-ci')";
@@ -158,6 +160,16 @@ describe('the full-ci label', () => {
     expect(conjuncts(load(file).jobs?.[id]?.if ?? '')).toContain(DRAFT_GATE);
   });
 
+  // apps-ledger takes no draft gate of its own: it follows the shards, so it can never run over
+  // skipped shards (and go red) when their gate changes. Pinned whole, so a copied gate added back
+  // fails here.
+  it('apps.yml:apps-ledger runs exactly when the shards ran', () => {
+    expect(conjuncts(load('apps.yml').jobs?.['apps-ledger']?.if ?? '')).toEqual([
+      '!cancelled()',
+      "needs.apps.result != 'skipped'",
+    ]);
+  });
+
   // Ledger: the job set the assertions above were written against. A new job fails here so its
   // author decides which draft gate it takes.
   it.each([
@@ -176,7 +188,7 @@ describe('the full-ci label', () => {
         'unit-verify',
       ],
     ],
-    ['apps.yml', ['apps', 'apps-typecheck']],
+    ['apps.yml', ['apps', 'apps-ledger', 'apps-typecheck']],
     ['moderator-boot.yml', ['boot']],
   ])('%s has exactly the jobs this guard was written for', (file, ids) => {
     expect(Object.keys(load(file).jobs ?? {}).sort()).toEqual(ids);
@@ -502,14 +514,18 @@ describe('the full-ci label', () => {
       });
 
       // Runs the step itself, with a stand-in `gh` that records each call (and answers the
-      // unit-shard poll with a decided, skipped `Unit tests`, so it dispatches) and a no-op
-      // `sleep`, and reads which workflows it dispatched.
+      // unit-shard poll with a decided, skipped `Unit tests`, so it dispatches; and the PR files
+      // list with the case's fixture, or a failure), a stand-in `yq` that answers the one query
+      // the step makes (`-o=json '.on' <file>`, from the real workflow files via the `yaml`
+      // package, since a runner of this suite need not have yq) and a no-op `sleep`, and reads
+      // which workflows it dispatched.
       describe('run with a stand-in gh', () => {
         const tmp = mkdtempSync(path.join(tmpdir(), 'full-ci-dispatch-'));
         afterAll(() => rmSync(tmp, { recursive: true, force: true }));
         const bin = path.join(tmp, 'bin');
         mkdirSync(bin);
         const log = path.join(tmp, 'gh.log');
+        const files = path.join(tmp, 'files.txt');
         writeFileSync(
           path.join(bin, 'gh'),
           [
@@ -518,29 +534,46 @@ describe('the full-ci label', () => {
             'case "$*" in',
             '  *"/actions/workflows/lint.yml/runs"*) echo 1 ;;',
             '  *"/actions/runs/1/jobs"*) echo \'{"jobs":[{"name":"Unit tests","conclusion":"skipped"}]}\' ;;',
+            `  *"repos/o/r/pulls/1/files"*) [ "$FILES_FAIL" = 1 ] && exit 1; cat '${files}' ;;`,
             'esac',
+            '',
+          ].join('\n')
+        );
+        writeFileSync(
+          path.join(bin, 'yq'),
+          [
+            '#!/usr/bin/env node',
+            `const { parse } = require(${JSON.stringify(requireHere.resolve('yaml'))});`,
+            'const [flag, expr, file, ...rest] = process.argv.slice(2);',
+            "if (flag !== '-o=json' || expr !== '.on' || !file || rest.length) process.exit(2);",
+            "const doc = parse(require('fs').readFileSync(file, 'utf8'));",
+            'process.stdout.write(JSON.stringify(doc.on ?? null));',
             '',
           ].join('\n')
         );
         writeFileSync(path.join(bin, 'sleep'), '#!/usr/bin/env bash\n');
         chmodSync(path.join(bin, 'gh'), 0o755);
+        chmodSync(path.join(bin, 'yq'), 0o755);
         chmodSync(path.join(bin, 'sleep'), 0o755);
         const script = path.join(tmp, 'step.sh');
         writeFileSync(script, run);
 
-        const dispatched = (draft: string) => {
+        const dispatched = (draft: string, changed: string[] = [], filesFail = false) => {
           writeFileSync(log, '');
+          writeFileSync(files, changed.map((f) => `${f}\n`).join(''));
           execFileSync('bash', ['-e', script], {
             cwd: path.resolve(HERE, '../..'),
             env: {
               PATH: `${bin}:${process.env.PATH}`,
               GITHUB_STEP_SUMMARY: path.join(tmp, 'summary'),
+              RUNNER_TEMP: tmp,
               GH_TOKEN: 'x',
               HEAD_REF: 'some-branch',
               HEAD_SHA: 'a'.repeat(40),
               DRAFT: draft,
               PR: '1',
               REPO: 'o/r',
+              FILES_FAIL: filesFail ? '1' : '0',
             },
             stdio: ['ignore', 'ignore', 'pipe'],
           });
@@ -563,15 +596,49 @@ describe('the full-ci label', () => {
         ];
 
         it('on a ready PR, dispatches Lint and none of the nine', () => {
-          expect(dispatched('false')).toEqual(['lint.yml']);
+          expect(dispatched('false', ['.github/workflows/feed-go.yml'])).toEqual(['lint.yml']);
         });
 
-        it('on a draft PR, dispatches Lint and all nine', () => {
-          expect(dispatched('true')).toEqual(['lint.yml', ...NINE].sort());
+        // Each of the nine lists its own workflow file in its filter, so a PR changing all nine
+        // files reaches all nine.
+        const ALL_NINE_FILES = NINE.map((f) => `.github/workflows/${f}`);
+
+        it('on a draft PR whose change every filter reaches, dispatches Lint and all nine', () => {
+          expect(dispatched('true', ALL_NINE_FILES)).toEqual(['lint.yml', ...NINE].sort());
         });
 
-        it('dispatches all nine when the draft flag is anything but an exact false', () => {
-          expect(dispatched('')).toEqual(['lint.yml', ...NINE].sort());
+        it('dispatches when the draft flag is anything but an exact false', () => {
+          expect(dispatched('', ALL_NINE_FILES)).toEqual(['lint.yml', ...NINE].sort());
+        });
+
+        // REGRESSION: before the path check, a labelled draft dispatched all nine whatever it
+        // changed. A feed-go change reaches feed-go.yml and apps.yml (`apps/**`) only.
+        it("on a draft PR, dispatches only the workflows whose paths filter the PR's files reach", () => {
+          expect(dispatched('true', ['apps/feed-go/internal/feed/rank.go'])).toEqual([
+            'apps.yml',
+            'feed-go.yml',
+            'lint.yml',
+          ]);
+        });
+
+        it('on a docs-only draft PR, dispatches Lint alone', () => {
+          expect(dispatched('true', ['docs/testing/reading-ci-results.md'])).toEqual(['lint.yml']);
+        });
+
+        // A rename's old name counts too: it is in the list the step builds.
+        it('reads the PR files with the old name of a rename', () => {
+          dispatched('true', ['src/a.ts']);
+          expect(readFileSync(log, 'utf8')).toContain(
+            'api repos/o/r/pulls/1/files?per_page=100 --paginate --jq .[] | .filename, (.previous_filename // empty)'
+          );
+        });
+
+        // FAILS OPEN: no file list (a failed call, or none) dispatches all nine.
+        it.each([
+          ['the PR files call fails', true],
+          ['the PR files call answers nothing', false],
+        ])('on a draft PR, dispatches all nine when %s', (_label, fail) => {
+          expect(dispatched('true', [], fail)).toEqual(['lint.yml', ...NINE].sort());
         });
       });
 
@@ -636,7 +703,9 @@ describe('the full-ci label', () => {
       // The classifier must be on disk when the step runs, and the checkout must not leave the
       // dispatching token in the git config.
       const checkout = steps.slice(0, idx).find((s) => s.uses?.startsWith('actions/checkout@'));
-      expect(checkout?.with?.['sparse-checkout']).toBe('scripts/ci/full-ci-unit-shards.mjs');
+      expect(checkout?.with?.['sparse-checkout']).toBe(
+        'scripts/ci/full-ci-unit-shards.mjs\nscripts/ci/full-ci-paths.mjs\n.github/workflows/\n'
+      );
       expect(checkout?.with?.['persist-credentials']).toBe(false);
     });
 
