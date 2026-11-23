@@ -1,17 +1,13 @@
-import { Alert, Badge, Button, Group, Stack, Text } from '@mantine/core';
+import { Alert, Badge, Button, Group, Stack, Text, Textarea } from '@mantine/core';
 import { IconSend } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { openLoginHere } from '~/components/Login/requireLogin';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Form, InputTextArea, useForm } from '~/libs/form';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { useSession } from '~/providers/SessionProvider';
-import {
-  submitAppAccessRequestSchema,
-  type SubmitAppAccessRequestInput,
-} from '~/server/schema/app-access-request.schema';
+import { submitAppAccessRequestSchema } from '~/server/schema/app-access-request.schema';
 import {
   APP_ACCESS_WHAT_TO_BUILD_MAX,
   REQUEST_ACCESS_PARAM,
@@ -95,10 +91,8 @@ function AppAccessRequestForm({
 }) {
   const router = useRouter();
   const utils = trpc.useUtils();
-  const form = useForm({
-    schema: submitAppAccessRequestSchema,
-    defaultValues: { whatToBuild: '' },
-  });
+  const [whatToBuild, setWhatToBuild] = useState('');
+  const [invalid, setInvalid] = useState<string | null>(null);
 
   const submit = trpc.appAccessRequest.submit.useMutation({
     onSuccess: async (request) => {
@@ -118,17 +112,28 @@ function AppAccessRequestForm({
     },
   });
 
-  const onSubmit = (values: SubmitAppAccessRequestInput) => {
+  const onSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    const parsed = submitAppAccessRequestSchema.safeParse({ whatToBuild });
+    if (!parsed.success) {
+      setInvalid(parsed.error.issues[0]?.message ?? 'Check your answer.');
+      return;
+    }
+    setInvalid(null);
     onRequest?.();
-    submit.mutate(values);
+    submit.mutate(parsed.data);
   };
 
+  // A plain form rather than `~/libs/form`: one optional field needs no form library, and that
+  // module's barrel would pull every input it exports into the pitch page.
   return (
-    <Form form={form} onSubmit={onSubmit} style={{ width: '100%' }}>
+    <form onSubmit={onSubmit} style={{ width: '100%' }}>
       <Stack gap="sm" align="flex-start" data-testid="app-access-request-form">
-        <InputTextArea
-          name="whatToBuild"
+        <Textarea
           id={WHAT_TO_BUILD_ID}
+          value={whatToBuild}
+          onChange={(e) => setWhatToBuild(e.currentTarget.value)}
+          error={invalid}
           label="What do you want to build? (optional)"
           description="The idea, who it's for, and what it should do. Add links if they help — a sketch, a similar app, your work."
           autosize
@@ -151,7 +156,7 @@ function AppAccessRequestForm({
           {submitLabel}
         </Button>
       </Stack>
-    </Form>
+    </form>
   );
 }
 

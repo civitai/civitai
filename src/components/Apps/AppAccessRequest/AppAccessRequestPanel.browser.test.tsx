@@ -149,6 +149,7 @@ describe('AppAccessRequestPanel — a first request', () => {
 
   test('what the person writes is sent, short answers included', async () => {
     render();
+    await expect.element(whatToBuild()).toBeInTheDocument();
     await userEvent.fill(whatToBuild().element() as HTMLElement, IDEA);
     await page.getByRole('button', { name: 'Request access' }).click();
     await vi.waitFor(() => expect(mocks.submitted).toEqual([{ whatToBuild: IDEA }]));
