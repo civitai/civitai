@@ -36,7 +36,7 @@ beforeAll(async () => {
   `);
   await pg.exec(imageUseTablesSql);
   // Returned by `deleteImageRows`.
-  await pg.exec(`ALTER TABLE "Image" ADD COLUMN metadata jsonb`);
+  await pg.exec(`ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS metadata jsonb`);
 });
 afterAll(() => pg.close());
 

@@ -248,6 +248,13 @@ export class RemovedImageNotRestorableError extends Error {
   }
 }
 
+/** An accept refused because the image's review flag is no longer the one its page showed. */
+export class ImageChangedError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} changed since it was shown`);
+  }
+}
+
 /** A verdict on a report refused for an image under the CSAM review flag: that queue decides it. */
 export class CsamReviewImageError extends Error {
   constructor(readonly imageId: number) {
@@ -292,6 +299,7 @@ export async function acceptImage({
   deferAppealEmail = false,
   restoreRemoved = false,
   keepModeratorRemoved = false,
+  shownNeedsReview,
 }: {
   imageId: number;
   removeMinorFlag?: boolean;
@@ -304,6 +312,9 @@ export async function acceptImage({
    *  left cannot come back live from one; they throw `RemovedImageNotRestorableError` instead. Not even
    *  this lifts a CSAM block: it throws `ImageNotRestoredError`. */
   restoreRemoved?: boolean;
+  /** The review flag a queue page showed. When given (and this is not a report verdict), an image whose
+   *  flag has changed since is not accepted, and this throws `ImageChangedError`. */
+  shownNeedsReview?: string | null;
 }): Promise<ClosedAppeal | undefined> {
   const readImage = (db: Kysely<DB>) =>
     db
@@ -320,6 +331,9 @@ export async function acceptImage({
     return;
   }
   const nr = img.needsReview;
+  // A report verdict is already refused for a removed image (`keepModeratorRemoved`), and its page shows
+  // one image on several cards, so a second verdict there must not fail on the first one's flag change.
+  const checksShown = shownNeedsReview !== undefined && !keepModeratorRemoved;
 
   // remixSource: stamp remixSourceReviewed so the audit job doesn't re-flag it. COALESCE guards the usual
   // metadata=NULL — both `-` and `||` NULL-propagate, silently dropping the stamp otherwise.
@@ -359,6 +373,12 @@ export async function acceptImage({
         .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
         .where(sql<boolean>`NOT ${CONFIRMED_SONG_HOLD}`)
         .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
+        // A queue's accept rules on the flag its page showed. One that changed since (a moderator's
+        // removal clears it) is refused, rather than lifting the image and releasing a delete its
+        // child-safety case keeps.
+        .$if(checksShown, (qb) =>
+          qb.where('needsReview', 'is not distinct from', shownNeedsReview ?? null)
+        )
         .$if(keepModeratorRemoved, (qb) =>
           qb.where(
             sql<boolean>`NOT (${REMOVED_BY_MODERATOR} OR ${BANNED_OWNER_BLOCKED}) AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
@@ -384,6 +404,14 @@ export async function acceptImage({
     );
   });
   if (!updated) {
+    if (checksShown) {
+      const now = await dbWrite
+        .selectFrom('Image')
+        .select('needsReview')
+        .where('id', '=', imageId)
+        .executeTakeFirst();
+      if (now && now.needsReview !== shownNeedsReview) throw new ImageChangedError(imageId);
+    }
     if (restoreRemoved) throw new ImageNotRestoredError(imageId);
     const confirmed = await dbWrite
       .selectFrom('Image')
