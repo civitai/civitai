@@ -1,5 +1,5 @@
 {
-  "version": "2.21",
+  "version": "2.22",
   "children": [
     {
       "type": "frame",
@@ -1800,9 +1800,11 @@
                   "id": "AECSM",
                   "name": "Song Card",
                   "reusable": true,
+                  "clip": true,
                   "width": 213,
+                  "fill": "$bg-card",
+                  "cornerRadius": 14,
                   "layout": "vertical",
-                  "gap": 8,
                   "children": [
                     {
                       "type": "frame",
@@ -1829,7 +1831,6 @@
                           }
                         ]
                       },
-                      "cornerRadius": 14,
                       "justifyContent": "center",
                       "alignItems": "center",
                       "children": [
@@ -1876,7 +1877,7 @@
                           "type": "frame",
                           "id": "PJ18T",
                           "layoutPosition": "absolute",
-                          "x": 150,
+                          "x": 159,
                           "y": 160,
                           "name": "Duration",
                           "fill": "#00000099",
@@ -1901,160 +1902,171 @@
                       ]
                     },
                     {
-                      "type": "text",
-                      "id": "C7oCp7",
-                      "name": "Title",
-                      "fill": "$text-bright",
-                      "content": "Neon Prayer",
-                      "fontFamily": "$font-display",
-                      "fontSize": 17,
-                      "fontWeight": "700"
-                    },
-                    {
-                      "type": "text",
-                      "id": "WARwW",
-                      "name": "Creator",
-                      "fill": "$text-dimmed",
-                      "content": "neonwave",
-                      "fontFamily": "$font-body",
-                      "fontSize": 13,
-                      "fontWeight": "normal"
-                    },
-                    {
-                      "type": "text",
-                      "id": "N948j",
-                      "name": "Style",
-                      "fill": "$text-dimmed",
-                      "textGrowth": "fixed-width",
+                      "type": "frame",
+                      "id": "qxSyR",
+                      "name": "Body",
                       "width": "fill_container",
-                      "content": "dream pop, shimmering synths",
-                      "fontFamily": "$font-body",
-                      "fontSize": 12,
-                      "fontWeight": "normal",
-                      "fontStyle": "italic"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "R5BsLg",
-                      "name": "Stats",
-                      "gap": 10,
-                      "alignItems": "center",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
                       "children": [
                         {
-                          "type": "frame",
-                          "id": "r9QoUi",
-                          "name": "Stat headphones",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "icon",
-                              "id": "u5pdM",
-                              "name": "Icon",
-                              "width": 12,
-                              "height": 12,
-                              "icon": "headphones",
-                              "library": "lucide",
-                              "fill": "$text-dimmed"
-                            },
-                            {
-                              "type": "text",
-                              "id": "iYz8E",
-                              "name": "Value",
-                              "fill": "$text-dimmed",
-                              "content": "9.7k",
-                              "fontFamily": "$font-body",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "kofau",
-                          "name": "Stat thumbs-up",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "icon",
-                              "id": "v4wwl",
-                              "name": "Icon",
-                              "width": 12,
-                              "height": 12,
-                              "icon": "thumbs-up",
-                              "library": "lucide",
-                              "fill": "$text-dimmed"
-                            },
-                            {
-                              "type": "text",
-                              "id": "Xqu2c",
-                              "name": "Value",
-                              "fill": "$text-dimmed",
-                              "content": "590",
-                              "fontFamily": "$font-body",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "uysws",
-                          "name": "Stat message-square",
-                          "gap": 4,
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "icon",
-                              "id": "HxahT",
-                              "name": "Icon",
-                              "width": 12,
-                              "height": 12,
-                              "icon": "message-square",
-                              "library": "lucide",
-                              "fill": "$text-dimmed"
-                            },
-                            {
-                              "type": "text",
-                              "id": "QpnNQ",
-                              "name": "Value",
-                              "fill": "$text-dimmed",
-                              "content": "50",
-                              "fontFamily": "$font-body",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "rm7PT",
-                      "name": "Remix lineage",
-                      "gap": 4,
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "lxbC1",
-                          "name": "Icon",
-                          "width": 12,
-                          "height": 12,
-                          "icon": "git-fork",
-                          "library": "lucide",
-                          "fill": "$song-accent"
+                          "type": "text",
+                          "id": "C7oCp7",
+                          "name": "Title",
+                          "fill": "$text-bright",
+                          "content": "Neon Prayer",
+                          "fontFamily": "$font-display",
+                          "fontSize": 17,
+                          "fontWeight": "700"
                         },
                         {
                           "type": "text",
-                          "id": "H8mcV2",
-                          "name": "Label",
-                          "fill": "$song-accent",
-                          "content": "Remix of Midnight Arcade",
+                          "id": "WARwW",
+                          "name": "Creator",
+                          "fill": "$text-dimmed",
+                          "content": "neonwave",
+                          "fontFamily": "$font-body",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "N948j",
+                          "name": "Style",
+                          "fill": "$text-dimmed",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "dream pop, shimmering synths",
                           "fontFamily": "$font-body",
                           "fontSize": 12,
-                          "fontWeight": "normal"
+                          "fontWeight": "normal",
+                          "fontStyle": "italic"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "R5BsLg",
+                          "name": "Stats",
+                          "gap": 10,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "r9QoUi",
+                              "name": "Stat headphones",
+                              "gap": 4,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "u5pdM",
+                                  "name": "Icon",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "headphones",
+                                  "library": "lucide",
+                                  "fill": "$text-dimmed"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "iYz8E",
+                                  "name": "Value",
+                                  "fill": "$text-dimmed",
+                                  "content": "9.7k",
+                                  "fontFamily": "$font-body",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "kofau",
+                              "name": "Stat thumbs-up",
+                              "gap": 4,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "v4wwl",
+                                  "name": "Icon",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "thumbs-up",
+                                  "library": "lucide",
+                                  "fill": "$text-dimmed"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "Xqu2c",
+                                  "name": "Value",
+                                  "fill": "$text-dimmed",
+                                  "content": "590",
+                                  "fontFamily": "$font-body",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "uysws",
+                              "name": "Stat message-square",
+                              "gap": 4,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "HxahT",
+                                  "name": "Icon",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "message-square",
+                                  "library": "lucide",
+                                  "fill": "$text-dimmed"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "QpnNQ",
+                                  "name": "Value",
+                                  "fill": "$text-dimmed",
+                                  "content": "50",
+                                  "fontFamily": "$font-body",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "rm7PT",
+                          "name": "Remix lineage",
+                          "gap": 4,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "lxbC1",
+                              "name": "Icon",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "git-fork",
+                              "library": "lucide",
+                              "fill": "$song-accent"
+                            },
+                            {
+                              "type": "text",
+                              "id": "H8mcV2",
+                              "name": "Label",
+                              "fill": "$song-accent",
+                              "content": "Remix of Midnight Arcade",
+                              "fontFamily": "$font-body",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
                         }
                       ]
                     }
@@ -9834,27 +9846,6 @@
                                 },
                                 "ucVP3": {
                                   "content": "3:02"
-                                },
-                                "C7oCp7": {
-                                  "content": "Rain on Shibuya"
-                                },
-                                "WARwW": {
-                                  "content": "lofi_kat"
-                                },
-                                "N948j": {
-                                  "content": "soft rhodes, rain on glass"
-                                },
-                                "iYz8E": {
-                                  "content": "56.1k"
-                                },
-                                "Xqu2c": {
-                                  "content": "3.2k"
-                                },
-                                "QpnNQ": {
-                                  "content": "214"
-                                },
-                                "rm7PT": {
-                                  "enabled": false
                                 }
                               }
                             },
@@ -9896,27 +9887,6 @@
                                 },
                                 "ucVP3": {
                                   "content": "4:41"
-                                },
-                                "C7oCp7": {
-                                  "content": "Oathbreaker"
-                                },
-                                "WARwW": {
-                                  "content": "ironvell"
-                                },
-                                "N948j": {
-                                  "content": "orchestral metal, choir"
-                                },
-                                "iYz8E": {
-                                  "content": "21.7k"
-                                },
-                                "Xqu2c": {
-                                  "content": "2.1k"
-                                },
-                                "QpnNQ": {
-                                  "content": "98"
-                                },
-                                "rm7PT": {
-                                  "enabled": false
                                 }
                               }
                             },
@@ -9958,27 +9928,6 @@
                                 },
                                 "ucVP3": {
                                   "content": "3:50"
-                                },
-                                "C7oCp7": {
-                                  "content": "Palm Static"
-                                },
-                                "WARwW": {
-                                  "content": "tidewave"
-                                },
-                                "N948j": {
-                                  "content": "balearic house, steel drums"
-                                },
-                                "iYz8E": {
-                                  "content": "27.8k"
-                                },
-                                "Xqu2c": {
-                                  "content": "1.3k"
-                                },
-                                "QpnNQ": {
-                                  "content": "77"
-                                },
-                                "rm7PT": {
-                                  "enabled": false
                                 }
                               }
                             },
@@ -10020,27 +9969,6 @@
                                 },
                                 "ucVP3": {
                                   "content": "3:57"
-                                },
-                                "C7oCp7": {
-                                  "content": "Pinewood Morning"
-                                },
-                                "WARwW": {
-                                  "content": "oldoak"
-                                },
-                                "N948j": {
-                                  "content": "acoustic folk, banjo"
-                                },
-                                "iYz8E": {
-                                  "content": "15.0k"
-                                },
-                                "Xqu2c": {
-                                  "content": "1.2k"
-                                },
-                                "QpnNQ": {
-                                  "content": "47"
-                                },
-                                "rm7PT": {
-                                  "enabled": false
                                 }
                               }
                             },
@@ -10082,27 +10010,6 @@
                                 },
                                 "ucVP3": {
                                   "content": "4:02"
-                                },
-                                "C7oCp7": {
-                                  "content": "Blue Smoke"
-                                },
-                                "WARwW": {
-                                  "content": "saturnso.ai"
-                                },
-                                "N948j": {
-                                  "content": "smoky jazz, tenor sax"
-                                },
-                                "iYz8E": {
-                                  "content": "7.1k"
-                                },
-                                "Xqu2c": {
-                                  "content": "430"
-                                },
-                                "QpnNQ": {
-                                  "content": "16"
-                                },
-                                "rm7PT": {
-                                  "enabled": false
                                 }
                               }
                             },
@@ -10837,27 +10744,6 @@
                             },
                             "ucVP3": {
                               "content": "3:05"
-                            },
-                            "C7oCp7": {
-                              "content": "Neon Prayer"
-                            },
-                            "WARwW": {
-                              "content": "neonwave"
-                            },
-                            "N948j": {
-                              "content": "synthwave"
-                            },
-                            "iYz8E": {
-                              "content": "8.7k"
-                            },
-                            "Xqu2c": {
-                              "content": "392"
-                            },
-                            "QpnNQ": {
-                              "content": "35"
-                            },
-                            "rm7PT": {
-                              "enabled": false
                             }
                           }
                         },
@@ -10899,27 +10785,6 @@
                             },
                             "ucVP3": {
                               "content": "3:41"
-                            },
-                            "C7oCp7": {
-                              "content": "Afterglow Grid"
-                            },
-                            "WARwW": {
-                              "content": "vhs_dreams"
-                            },
-                            "N948j": {
-                              "content": "synthwave"
-                            },
-                            "iYz8E": {
-                              "content": "4.2k"
-                            },
-                            "Xqu2c": {
-                              "content": "256"
-                            },
-                            "QpnNQ": {
-                              "content": "36"
-                            },
-                            "rm7PT": {
-                              "enabled": false
                             }
                           }
                         },
@@ -10961,27 +10826,6 @@
                             },
                             "ucVP3": {
                               "content": "2:52"
-                            },
-                            "C7oCp7": {
-                              "content": "Laser Tag Love"
-                            },
-                            "WARwW": {
-                              "content": "pixelheart"
-                            },
-                            "N948j": {
-                              "content": "synthwave"
-                            },
-                            "iYz8E": {
-                              "content": "3.9k"
-                            },
-                            "Xqu2c": {
-                              "content": "300"
-                            },
-                            "QpnNQ": {
-                              "content": "27"
-                            },
-                            "rm7PT": {
-                              "enabled": false
                             }
                           }
                         },
@@ -11023,27 +10867,6 @@
                             },
                             "ucVP3": {
                               "content": "4:10"
-                            },
-                            "C7oCp7": {
-                              "content": "Outrun 1986"
-                            },
-                            "WARwW": {
-                              "content": "neonwave"
-                            },
-                            "N948j": {
-                              "content": "synthwave"
-                            },
-                            "iYz8E": {
-                              "content": "3.1k"
-                            },
-                            "Xqu2c": {
-                              "content": "164"
-                            },
-                            "QpnNQ": {
-                              "content": "17"
-                            },
-                            "rm7PT": {
-                              "enabled": false
                             }
                           }
                         },
@@ -11085,27 +10908,6 @@
                             },
                             "ucVP3": {
                               "content": "3:33"
-                            },
-                            "C7oCp7": {
-                              "content": "Sunset Drive"
-                            },
-                            "WARwW": {
-                              "content": "kairo"
-                            },
-                            "N948j": {
-                              "content": "synthwave"
-                            },
-                            "iYz8E": {
-                              "content": "2.6k"
-                            },
-                            "Xqu2c": {
-                              "content": "179"
-                            },
-                            "QpnNQ": {
-                              "content": "10"
-                            },
-                            "rm7PT": {
-                              "enabled": false
                             }
                           }
                         }
@@ -11905,27 +11707,6 @@
                             },
                             "ucVP3": {
                               "content": "3:05"
-                            },
-                            "C7oCp7": {
-                              "content": "Neon Prayer"
-                            },
-                            "WARwW": {
-                              "content": "neonwave"
-                            },
-                            "N948j": {
-                              "content": "synthwave"
-                            },
-                            "iYz8E": {
-                              "content": "8.7k"
-                            },
-                            "Xqu2c": {
-                              "content": "392"
-                            },
-                            "QpnNQ": {
-                              "content": "74"
-                            },
-                            "rm7PT": {
-                              "enabled": false
                             }
                           }
                         },
@@ -11967,27 +11748,6 @@
                             },
                             "ucVP3": {
                               "content": "3:41"
-                            },
-                            "C7oCp7": {
-                              "content": "Afterglow Grid"
-                            },
-                            "WARwW": {
-                              "content": "vhs_dreams"
-                            },
-                            "N948j": {
-                              "content": "synthwave"
-                            },
-                            "iYz8E": {
-                              "content": "4.2k"
-                            },
-                            "Xqu2c": {
-                              "content": "256"
-                            },
-                            "QpnNQ": {
-                              "content": "29"
-                            },
-                            "rm7PT": {
-                              "enabled": false
                             }
                           }
                         },
@@ -12029,27 +11789,6 @@
                             },
                             "ucVP3": {
                               "content": "2:52"
-                            },
-                            "C7oCp7": {
-                              "content": "Laser Tag Love"
-                            },
-                            "WARwW": {
-                              "content": "pixelheart"
-                            },
-                            "N948j": {
-                              "content": "synthwave"
-                            },
-                            "iYz8E": {
-                              "content": "3.9k"
-                            },
-                            "Xqu2c": {
-                              "content": "300"
-                            },
-                            "QpnNQ": {
-                              "content": "21"
-                            },
-                            "rm7PT": {
-                              "enabled": false
                             }
                           }
                         },
@@ -12091,27 +11830,6 @@
                             },
                             "ucVP3": {
                               "content": "4:10"
-                            },
-                            "C7oCp7": {
-                              "content": "Outrun 1986"
-                            },
-                            "WARwW": {
-                              "content": "neonwave"
-                            },
-                            "N948j": {
-                              "content": "synthwave"
-                            },
-                            "iYz8E": {
-                              "content": "3.1k"
-                            },
-                            "Xqu2c": {
-                              "content": "164"
-                            },
-                            "QpnNQ": {
-                              "content": "12"
-                            },
-                            "rm7PT": {
-                              "enabled": false
                             }
                           }
                         },
@@ -12153,27 +11871,6 @@
                             },
                             "ucVP3": {
                               "content": "3:33"
-                            },
-                            "C7oCp7": {
-                              "content": "Sunset Drive"
-                            },
-                            "WARwW": {
-                              "content": "kairo"
-                            },
-                            "N948j": {
-                              "content": "synthwave"
-                            },
-                            "iYz8E": {
-                              "content": "2.6k"
-                            },
-                            "Xqu2c": {
-                              "content": "179"
-                            },
-                            "QpnNQ": {
-                              "content": "22"
-                            },
-                            "rm7PT": {
-                              "enabled": false
                             }
                           }
                         }
@@ -45632,27 +45329,6 @@
                                           "fontWeight": "600"
                                         }
                                       ]
-                                    },
-                                    "C7oCp7": {
-                                      "content": "Midnight Arcade"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "synthwave"
-                                    },
-                                    "iYz8E": {
-                                      "content": "12.4k"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "558"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "87"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 },
@@ -45694,27 +45370,6 @@
                                     },
                                     "ucVP3": {
                                       "content": "3:05"
-                                    },
-                                    "C7oCp7": {
-                                      "content": "Neon Prayer"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "synthwave"
-                                    },
-                                    "iYz8E": {
-                                      "content": "8.7k"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "531"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "48"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 },
@@ -45756,27 +45411,6 @@
                                     },
                                     "ucVP3": {
                                       "content": "4:10"
-                                    },
-                                    "C7oCp7": {
-                                      "content": "Outrun 1986"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "synthwave"
-                                    },
-                                    "iYz8E": {
-                                      "content": "3.1k"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "239"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "12"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 },
@@ -45818,27 +45452,6 @@
                                     },
                                     "ucVP3": {
                                       "content": "3:22"
-                                    },
-                                    "C7oCp7": {
-                                      "content": "Glass City"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "electro"
-                                    },
-                                    "iYz8E": {
-                                      "content": "2.4k"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "127"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "20"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 }
@@ -45889,27 +45502,6 @@
                                     },
                                     "ucVP3": {
                                       "content": "2:49"
-                                    },
-                                    "C7oCp7": {
-                                      "content": "Cassette Ghost"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "chillwave"
-                                    },
-                                    "iYz8E": {
-                                      "content": "1.9k"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "131"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "13"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 },
@@ -45951,27 +45543,6 @@
                                     },
                                     "ucVP3": {
                                       "content": "5:01"
-                                    },
-                                    "C7oCp7": {
-                                      "content": "Arcade Ending"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "synthwave"
-                                    },
-                                    "iYz8E": {
-                                      "content": "1.2k"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "54"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "7"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 },
@@ -46013,27 +45584,6 @@
                                     },
                                     "ucVP3": {
                                       "content": "3:14"
-                                    },
-                                    "C7oCp7": {
-                                      "content": "VHS Heart"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "retrowave"
-                                    },
-                                    "iYz8E": {
-                                      "content": "980"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "60"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "4"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 },
@@ -46075,27 +45625,6 @@
                                     },
                                     "ucVP3": {
                                       "content": "2:58"
-                                    },
-                                    "C7oCp7": {
-                                      "content": "Last Credit"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "synthwave"
-                                    },
-                                    "iYz8E": {
-                                      "content": "712"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "55"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "6"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 }
@@ -65909,27 +65438,6 @@
                                 },
                                 "ucVP3": {
                                   "content": "3:02"
-                                },
-                                "C7oCp7": {
-                                  "content": "Rain on Shibuya"
-                                },
-                                "WARwW": {
-                                  "content": "lofi_kat"
-                                },
-                                "N948j": {
-                                  "content": "soft rhodes, rain on glass"
-                                },
-                                "iYz8E": {
-                                  "content": "56.1k"
-                                },
-                                "Xqu2c": {
-                                  "content": "3.2k"
-                                },
-                                "QpnNQ": {
-                                  "content": "214"
-                                },
-                                "rm7PT": {
-                                  "enabled": false
                                 }
                               }
                             },
@@ -65971,27 +65479,6 @@
                                 },
                                 "ucVP3": {
                                   "content": "4:41"
-                                },
-                                "C7oCp7": {
-                                  "content": "Oathbreaker"
-                                },
-                                "WARwW": {
-                                  "content": "ironvell"
-                                },
-                                "N948j": {
-                                  "content": "orchestral metal, choir"
-                                },
-                                "iYz8E": {
-                                  "content": "21.7k"
-                                },
-                                "Xqu2c": {
-                                  "content": "2.1k"
-                                },
-                                "QpnNQ": {
-                                  "content": "98"
-                                },
-                                "rm7PT": {
-                                  "enabled": false
                                 }
                               }
                             },
@@ -66033,27 +65520,6 @@
                                 },
                                 "ucVP3": {
                                   "content": "3:50"
-                                },
-                                "C7oCp7": {
-                                  "content": "Palm Static"
-                                },
-                                "WARwW": {
-                                  "content": "tidewave"
-                                },
-                                "N948j": {
-                                  "content": "balearic house, steel drums"
-                                },
-                                "iYz8E": {
-                                  "content": "27.8k"
-                                },
-                                "Xqu2c": {
-                                  "content": "1.3k"
-                                },
-                                "QpnNQ": {
-                                  "content": "77"
-                                },
-                                "rm7PT": {
-                                  "enabled": false
                                 }
                               }
                             },
@@ -66095,27 +65561,6 @@
                                 },
                                 "ucVP3": {
                                   "content": "3:57"
-                                },
-                                "C7oCp7": {
-                                  "content": "Pinewood Morning"
-                                },
-                                "WARwW": {
-                                  "content": "oldoak"
-                                },
-                                "N948j": {
-                                  "content": "acoustic folk, banjo"
-                                },
-                                "iYz8E": {
-                                  "content": "15.0k"
-                                },
-                                "Xqu2c": {
-                                  "content": "1.2k"
-                                },
-                                "QpnNQ": {
-                                  "content": "47"
-                                },
-                                "rm7PT": {
-                                  "enabled": false
                                 }
                               }
                             },
@@ -66157,27 +65602,6 @@
                                 },
                                 "ucVP3": {
                                   "content": "4:02"
-                                },
-                                "C7oCp7": {
-                                  "content": "Blue Smoke"
-                                },
-                                "WARwW": {
-                                  "content": "saturnso.ai"
-                                },
-                                "N948j": {
-                                  "content": "smoky jazz, tenor sax"
-                                },
-                                "iYz8E": {
-                                  "content": "7.1k"
-                                },
-                                "Xqu2c": {
-                                  "content": "430"
-                                },
-                                "QpnNQ": {
-                                  "content": "16"
-                                },
-                                "rm7PT": {
-                                  "enabled": false
                                 }
                               }
                             },
@@ -67157,27 +66581,6 @@
                                           "fontWeight": "600"
                                         }
                                       ]
-                                    },
-                                    "C7oCp7": {
-                                      "content": "Midnight Arcade"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "synthwave"
-                                    },
-                                    "iYz8E": {
-                                      "content": "12.4k"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "657"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "87"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 },
@@ -67219,27 +66622,6 @@
                                     },
                                     "ucVP3": {
                                       "content": "3:05"
-                                    },
-                                    "C7oCp7": {
-                                      "content": "Neon Prayer"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "synthwave"
-                                    },
-                                    "iYz8E": {
-                                      "content": "8.7k"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "600"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "48"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 },
@@ -67281,27 +66663,6 @@
                                     },
                                     "ucVP3": {
                                       "content": "4:10"
-                                    },
-                                    "C7oCp7": {
-                                      "content": "Outrun 1986"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "synthwave"
-                                    },
-                                    "iYz8E": {
-                                      "content": "3.1k"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "140"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "12"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 },
@@ -67343,27 +66704,6 @@
                                     },
                                     "ucVP3": {
                                       "content": "3:22"
-                                    },
-                                    "C7oCp7": {
-                                      "content": "Glass City"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "electro"
-                                    },
-                                    "iYz8E": {
-                                      "content": "2.4k"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "146"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "20"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 }
@@ -67414,27 +66754,6 @@
                                     },
                                     "ucVP3": {
                                       "content": "2:49"
-                                    },
-                                    "C7oCp7": {
-                                      "content": "Cassette Ghost"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "chillwave"
-                                    },
-                                    "iYz8E": {
-                                      "content": "1.9k"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "146"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "13"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 },
@@ -67476,27 +66795,6 @@
                                     },
                                     "ucVP3": {
                                       "content": "5:01"
-                                    },
-                                    "C7oCp7": {
-                                      "content": "Arcade Ending"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "synthwave"
-                                    },
-                                    "iYz8E": {
-                                      "content": "1.2k"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "64"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "7"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 },
@@ -67538,27 +66836,6 @@
                                     },
                                     "ucVP3": {
                                       "content": "3:14"
-                                    },
-                                    "C7oCp7": {
-                                      "content": "VHS Heart"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "retrowave"
-                                    },
-                                    "iYz8E": {
-                                      "content": "980"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "68"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "4"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 },
@@ -67600,27 +66877,6 @@
                                     },
                                     "ucVP3": {
                                       "content": "2:58"
-                                    },
-                                    "C7oCp7": {
-                                      "content": "Last Credit"
-                                    },
-                                    "WARwW": {
-                                      "content": "neonwave"
-                                    },
-                                    "N948j": {
-                                      "content": "synthwave"
-                                    },
-                                    "iYz8E": {
-                                      "content": "712"
-                                    },
-                                    "Xqu2c": {
-                                      "content": "32"
-                                    },
-                                    "QpnNQ": {
-                                      "content": "6"
-                                    },
-                                    "rm7PT": {
-                                      "enabled": false
                                     }
                                   }
                                 }
@@ -68340,6 +67596,776 @@
                       "fontFamily": "$font-body",
                       "fontSize": 14,
                       "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "jPFYF",
+      "x": 1680,
+      "y": 877,
+      "name": "11 Song Card variants",
+      "theme": {
+        "mode": "dark"
+      },
+      "fill": "#0b0c0e",
+      "layout": "vertical",
+      "gap": 32,
+      "padding": 60,
+      "children": [
+        {
+          "type": "text",
+          "id": "c4v7A",
+          "name": "Title",
+          "fill": "$text-bright",
+          "content": "Song Card variants",
+          "fontFamily": "$font-display",
+          "fontSize": 32,
+          "fontWeight": "700"
+        },
+        {
+          "type": "text",
+          "id": "Xa2cX",
+          "name": "Subtitle",
+          "fill": "$text-dimmed",
+          "textGrowth": "fixed-width",
+          "width": 820,
+          "content": "Demo feedback (rec 8973, 11:35): the card text sits bare under the cover. Three options at the feed's 213px column.",
+          "fontFamily": "$font-body",
+          "fontSize": 14,
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "aJQIB",
+          "name": "Variants",
+          "gap": 64,
+          "children": [
+            {
+              "type": "frame",
+              "id": "cibha",
+              "name": "A · Current",
+              "width": 240,
+              "layout": "vertical",
+              "gap": 16,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "uEy4c",
+                  "name": "Label",
+                  "fill": "$text-bright",
+                  "content": "A · Current",
+                  "fontFamily": "$font-body",
+                  "fontSize": 15,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "J5uUPy",
+                  "name": "Note",
+                  "fill": "$text-dimmed",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Cover with text below, no card surface. Today's build.",
+                  "lineHeight": 1.4,
+                  "fontFamily": "$font-body",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "id": "pwo5F",
+                  "type": "ref",
+                  "ref": "AECSM",
+                  "name": "Song Card"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "IRLYj",
+              "name": "B · Full-bleed",
+              "width": 240,
+              "layout": "vertical",
+              "gap": 16,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "D2cGhg",
+                  "name": "Label",
+                  "fill": "$text-bright",
+                  "content": "B · Full-bleed",
+                  "fontFamily": "$font-body",
+                  "fontSize": 15,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "Tro11",
+                  "name": "Note",
+                  "fill": "$text-dimmed",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Like model and article cards: the cover is the whole card, text on a dark scrim.",
+                  "lineHeight": 1.4,
+                  "fontFamily": "$font-body",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "i2vUB6",
+                  "name": "Song Card / Full-bleed",
+                  "clip": true,
+                  "width": 213,
+                  "height": 300,
+                  "fill": {
+                    "type": "gradient",
+                    "gradientType": "linear",
+                    "enabled": true,
+                    "rotation": 135,
+                    "size": {
+                      "height": 1
+                    },
+                    "colors": [
+                      {
+                        "color": "#5f3dc4",
+                        "position": 0
+                      },
+                      {
+                        "color": "#4dabf7",
+                        "position": 1
+                      }
+                    ]
+                  },
+                  "cornerRadius": 14,
+                  "layout": "none",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "fcj7v",
+                      "layoutPosition": "absolute",
+                      "x": 64,
+                      "y": 60,
+                      "name": "Glyph",
+                      "width": 84,
+                      "height": 84,
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "images/emoji/emoji_u1f319.png",
+                        "mode": "contain"
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "t0cccA",
+                      "layoutPosition": "absolute",
+                      "x": 12,
+                      "y": 12,
+                      "name": "Top",
+                      "width": 189,
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "xuzTc",
+                          "name": "Genre",
+                          "fill": "#00000080",
+                          "cornerRadius": 10,
+                          "padding": [
+                            3,
+                            8
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "iRImQ",
+                              "name": "Label",
+                              "fill": "#FFFFFF",
+                              "content": "Dream pop",
+                              "fontFamily": "$font-body",
+                              "fontSize": 11,
+                              "fontWeight": "600"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "KCY8R",
+                          "name": "Menu",
+                          "width": 26,
+                          "height": 26,
+                          "fill": "#00000099",
+                          "cornerRadius": 13,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "G2Lbf",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "ellipsis-vertical",
+                              "library": "lucide",
+                              "fill": "#FFFFFF"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "U3z4oS",
+                      "layoutPosition": "absolute",
+                      "x": 0,
+                      "y": 130,
+                      "name": "Scrim",
+                      "width": 213,
+                      "height": 170,
+                      "fill": {
+                        "type": "gradient",
+                        "gradientType": "linear",
+                        "enabled": true,
+                        "rotation": 180,
+                        "size": {
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#00000000",
+                            "position": 0
+                          },
+                          {
+                            "color": "#000000CC",
+                            "position": 0.55
+                          }
+                        ]
+                      },
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "justifyContent": "end",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "IoLYJ",
+                          "name": "Play row",
+                          "width": "fill_container",
+                          "justifyContent": "space_between",
+                          "alignItems": "end",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "BySzu",
+                              "name": "Play",
+                              "width": 36,
+                              "height": 36,
+                              "fill": "#FFFFFF",
+                              "cornerRadius": 18,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "EiOnB",
+                                  "name": "Icon",
+                                  "width": 16.2,
+                                  "height": 16.2,
+                                  "icon": "play",
+                                  "library": "lucide",
+                                  "fill": "#141517"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ra3Bs",
+                              "name": "Duration",
+                              "fill": "#00000099",
+                              "cornerRadius": 10,
+                              "padding": [
+                                3,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "FxJW4",
+                                  "name": "Label",
+                                  "fill": "#FFFFFF",
+                                  "content": "3:44",
+                                  "fontFamily": "$font-body",
+                                  "fontSize": 11,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "oTVlr",
+                          "name": "Title",
+                          "fill": "#FFFFFF",
+                          "content": "Neon Prayer",
+                          "fontFamily": "$font-display",
+                          "fontSize": 16,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "AwAH3",
+                          "name": "Creator",
+                          "gap": 6,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ZBv44",
+                              "name": "Avatar",
+                              "width": 16,
+                              "height": 16,
+                              "fill": "#e64980",
+                              "cornerRadius": 8
+                            },
+                            {
+                              "type": "text",
+                              "id": "lmvzX",
+                              "name": "Name",
+                              "fill": "#FFFFFFCC",
+                              "content": "neonwave",
+                              "fontFamily": "$font-body",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "KEkg0",
+                          "name": "Stats",
+                          "fill": "#FFFFFF1F",
+                          "cornerRadius": 10,
+                          "gap": 10,
+                          "padding": [
+                            3,
+                            8
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "krOwX",
+                              "name": "Stat headphones",
+                              "gap": 4,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "v6cKQ",
+                                  "name": "Icon",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "headphones",
+                                  "library": "lucide",
+                                  "fill": "#FFFFFF"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "qcxt0",
+                                  "name": "Value",
+                                  "fill": "#FFFFFF",
+                                  "content": "9.7k",
+                                  "fontFamily": "$font-body",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "PLKY9",
+                              "name": "Stat thumbs-up",
+                              "gap": 4,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "dXbow",
+                                  "name": "Icon",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "thumbs-up",
+                                  "library": "lucide",
+                                  "fill": "#FFFFFF"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "SZQ6P",
+                                  "name": "Value",
+                                  "fill": "#FFFFFF",
+                                  "content": "590",
+                                  "fontFamily": "$font-body",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "RKEzV",
+                              "name": "Stat message-square",
+                              "gap": 4,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "LX6Oa",
+                                  "name": "Icon",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "message-square",
+                                  "library": "lucide",
+                                  "fill": "#FFFFFF"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "EDett",
+                                  "name": "Value",
+                                  "fill": "#FFFFFF",
+                                  "content": "50",
+                                  "fontFamily": "$font-body",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "z6s0r",
+              "name": "C · Card surface",
+              "width": 240,
+              "layout": "vertical",
+              "gap": 16,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "wAbcM",
+                  "name": "Label",
+                  "fill": "$text-bright",
+                  "content": "C · Card surface (chosen)",
+                  "fontFamily": "$font-body",
+                  "fontSize": 15,
+                  "fontWeight": "700"
+                },
+                {
+                  "type": "text",
+                  "id": "KEHOK",
+                  "name": "Note",
+                  "fill": "$text-dimmed",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "content": "Current layout inside a card: the text gets the card background other cards have.",
+                  "lineHeight": 1.4,
+                  "fontFamily": "$font-body",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "SrNAz",
+                  "name": "Song Card / Surface",
+                  "clip": true,
+                  "width": 213,
+                  "fill": "$bg-card",
+                  "cornerRadius": 14,
+                  "layout": "vertical",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "DYNUt",
+                      "name": "Cover",
+                      "width": "fill_container",
+                      "height": 200,
+                      "fill": {
+                        "type": "gradient",
+                        "gradientType": "linear",
+                        "enabled": true,
+                        "rotation": 135,
+                        "size": {
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#5f3dc4",
+                            "position": 0
+                          },
+                          {
+                            "color": "#4dabf7",
+                            "position": 1
+                          }
+                        ]
+                      },
+                      "layout": "none",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "g5CBVX",
+                          "layoutPosition": "absolute",
+                          "x": 64,
+                          "y": 58,
+                          "name": "Glyph",
+                          "width": 84,
+                          "height": 84,
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "images/emoji/emoji_u1f319.png",
+                            "mode": "contain"
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "aUrmn",
+                          "layoutPosition": "absolute",
+                          "x": 175,
+                          "y": 12,
+                          "name": "Menu",
+                          "width": 26,
+                          "height": 26,
+                          "fill": "#00000099",
+                          "cornerRadius": 13,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "WrOEp",
+                              "name": "Icon",
+                              "width": 16,
+                              "height": 16,
+                              "icon": "ellipsis-vertical",
+                              "library": "lucide",
+                              "fill": "#FFFFFF"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "HZIqB",
+                          "layoutPosition": "absolute",
+                          "x": 12,
+                          "y": 148,
+                          "name": "Bottom",
+                          "width": 189,
+                          "justifyContent": "space_between",
+                          "alignItems": "end",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "r66iQy",
+                              "name": "Play",
+                              "width": 40,
+                              "height": 40,
+                              "fill": "#FFFFFF",
+                              "cornerRadius": 20,
+                              "justifyContent": "center",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "olVt6",
+                                  "name": "Icon",
+                                  "width": 18,
+                                  "height": 18,
+                                  "icon": "play",
+                                  "library": "lucide",
+                                  "fill": "#141517"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "hQLAM",
+                              "name": "Duration",
+                              "fill": "#00000099",
+                              "cornerRadius": 10,
+                              "padding": [
+                                3,
+                                8
+                              ],
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "VdOZh",
+                                  "name": "Label",
+                                  "fill": "#FFFFFF",
+                                  "content": "3:44",
+                                  "fontFamily": "$font-body",
+                                  "fontSize": 11,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "bGVON",
+                      "name": "Body",
+                      "width": "fill_container",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "v1c6aq",
+                          "name": "Title",
+                          "fill": "$text-bright",
+                          "content": "Neon Prayer",
+                          "fontFamily": "$font-display",
+                          "fontSize": 17,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Y3jfg",
+                          "name": "Creator",
+                          "fill": "$text-dimmed",
+                          "content": "neonwave",
+                          "fontFamily": "$font-body",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "yCkE0",
+                          "name": "Style",
+                          "fill": "$text-dimmed",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "dream pop, shimmering synths",
+                          "fontFamily": "$font-body",
+                          "fontSize": 12,
+                          "fontWeight": "normal",
+                          "fontStyle": "italic"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "mOFYy",
+                          "name": "Stats",
+                          "gap": 10,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "Tx2zV",
+                              "name": "Stat headphones",
+                              "gap": 4,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "iojt2",
+                                  "name": "Icon",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "headphones",
+                                  "library": "lucide",
+                                  "fill": "$text-dimmed"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "TlUk0",
+                                  "name": "Value",
+                                  "fill": "$text-dimmed",
+                                  "content": "9.7k",
+                                  "fontFamily": "$font-body",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ElSDV",
+                              "name": "Stat thumbs-up",
+                              "gap": 4,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "lXKiX",
+                                  "name": "Icon",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "thumbs-up",
+                                  "library": "lucide",
+                                  "fill": "$text-dimmed"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "NwrcL",
+                                  "name": "Value",
+                                  "fill": "$text-dimmed",
+                                  "content": "590",
+                                  "fontFamily": "$font-body",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "YIgfo",
+                              "name": "Stat message-square",
+                              "gap": 4,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "J3o6no",
+                                  "name": "Icon",
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "message-square",
+                                  "library": "lucide",
+                                  "fill": "$text-dimmed"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "V4XDp8",
+                                  "name": "Value",
+                                  "fill": "$text-dimmed",
+                                  "content": "50",
+                                  "fontFamily": "$font-body",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 }
