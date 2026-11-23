@@ -215,6 +215,7 @@ for (const [id, userId, versionId, publishedAt] of [
   [7008, 1002, 6002, day(3)],
   [7009, 1002, 6001, day(7)],
   [7010, 1001, null, day(6)],
+  [7020, 1002, null, day(6, 6)],
   [7101, 1002, 6301, day(2)],
   [7102, 1001, 6301, day(13)],
   [7103, 1002, 6301, day(1)],
@@ -295,6 +296,16 @@ image(8008, 7009, { minor: true });
 image(8009, 7010, {
   type: 'video',
   metadata: { width: 1280, height: 720, duration: 45, thumbnailId: 8909 },
+});
+// Two videos whose cached thumbnails are not servable: one marked, one cached before the field existed.
+image(8031, 7020, {
+  type: 'video',
+  metadata: { width: 1280, height: 720, duration: 12, thumbnailId: 8931 },
+});
+image(8032, 7020, {
+  index: 1,
+  type: 'video',
+  metadata: { width: 1280, height: 720, duration: 12, thumbnailId: 8932 },
 });
 // A post of eight, its images created on different weekdays (the createdAt string sort) and out of
 // index order (the Newest index sort).
@@ -397,6 +408,8 @@ const metaOf = (id) => (IMAGES[id].hideMeta ? null : prismaJson(META[id] ?? null
 const THUMBNAILS = {
   8005: { id: 8905, url: uuid(8905), width: 640, height: 360, nsfwLevel: 1, blockMarked: false, parentId: 8005 },
   8009: { id: 8909, url: uuid(8909), width: 640, height: 360, nsfwLevel: 2, blockMarked: false, parentId: 8009 },
+  8031: { id: 8931, url: uuid(8931), width: 640, height: 360, nsfwLevel: 1, blockMarked: true, parentId: 8031 },
+  8032: { id: 8932, url: uuid(8932), width: 640, height: 360, nsfwLevel: 1, parentId: 8032 },
 };
 // Tag ids per image (tagIdsForImagesCache). None are tags the addons exclude.
 const tagIdsOf = (id) => [501 + (id % 3), 520 + (id % 7)];
@@ -2567,6 +2580,11 @@ const V1 = [
     replies: { 'levels=1&excludedTags=9901&types=video&excludeMinor=1&excludePoi=1&sort=reactions&limit=5': { body: { items: [8005, 8009] } } },
   },
   {
+    name: 'video-thumbnails-unservable',
+    description: '`ids` of two videos whose cached thumbnails are not servable (one marked, one with no marker field): each falls back to a still cut from the video.',
+    query: 'ids=8031,8032&type=video',
+  },
+  {
     name: 'signed-in-moderator',
     description: 'A moderator session: no addons (excludedTags off), viewerId on the POI exclusion, moderator SQL.',
     query: 'browsingLevel=31&sort=Oldest&limit=3',
@@ -3162,6 +3180,20 @@ const INFINITE = [
     viewer: null,
     host: HOST.green,
     input: { ids: [8005, 8003, 8001], types: ['image'], browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'ids-video-thumbnails-unservable',
+    description: 'Two videos whose cached thumbnails are not servable (one marked, one with no marker field), signed out: no thumbnailUrl; the thumbnail still counts toward the level.',
+    viewer: null,
+    host: HOST.green,
+    input: { ids: [8031, 8032], types: ['video'], browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'ids-video-thumbnails-unservable-creator',
+    description: 'The same videos for their creator: the thumbnailUrl is served.',
+    viewer: 1002,
+    host: HOST.green,
+    input: { ids: [8031, 8032], types: ['video'], browsingLevel: 1, limit: 10 },
   },
   {
     name: 'ids-and-reactions-empty',
