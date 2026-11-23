@@ -18,10 +18,6 @@ import {
   removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
 import {
-  leaveQueuesAfterModeratorRating,
-  updatePendingImageRatings,
-} from '~/server/services/games/new-order.service';
-import {
   addBlockedImage,
   bulkRemoveBlockedImages,
   deleteImages,
@@ -1433,13 +1429,6 @@ export async function handleUpdateImageNsfwLevel({
       !isModerator &&
       (await raiseOwnImageNsfwLevel({ id: input.id, nsfwLevel: input.nsfwLevel, userId }));
     const updatedNsfwLevel = await updateImageNsfwLevel({ ...input, userId, isModerator });
-
-    if (isModerator) {
-      // Update knights of new order pending votes and remove it from new order queue. Not gated on the
-      // cutover: it settles v1 votes still pending while the old game drains, and is removed with it.
-      await updatePendingImageRatings({ imageId: input.id, rating: input.nsfwLevel });
-      await leaveQueuesAfterModeratorRating(input.id);
-    }
 
     return { nsfwLevel: updatedNsfwLevel, applied: isModerator || applied };
   } catch (error) {

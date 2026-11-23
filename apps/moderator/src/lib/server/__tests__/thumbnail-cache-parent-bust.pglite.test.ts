@@ -62,7 +62,6 @@ vi.mock('../mod-activity', () => ({
   recordModActivity: vi.fn(async () => undefined),
 }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn(), syncSearchIndexBulk }));
-vi.mock('../kono', () => ({ syncKonoFinalize: vi.fn(async () => undefined) }));
 
 const { invalidateThumbnails } = await import('../thumbnail-cache');
 const { acceptImage, blockImage } = await import('../image-moderation.service');

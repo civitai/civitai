@@ -59,7 +59,6 @@ vi.mock('../mod-activity', () => ({
   recordModActivity: vi.fn(async () => undefined),
 }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn(), syncSearchIndexBulk }));
-vi.mock('../kono', () => ({ syncKonoFinalize: vi.fn(async () => undefined) }));
 
 const { blockImage, acceptImage } = await import('../image-moderation.service');
 const { updateImageNsfwLevel } = await import('../image-nsfw-level');
