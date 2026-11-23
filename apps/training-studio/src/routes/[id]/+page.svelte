@@ -7,8 +7,8 @@
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
-  const elementsUi = useElementsUi();
-  const Run = $derived(elementsUi() ? RunDetailElements : RunDetail);
+  const useElements = useElementsUi();
+  const Run = $derived(useElements() ? RunDetailElements : RunDetail);
 </script>
 
 <StudioHeader username={data.username} image={data.image} logoutUrl={data.logoutUrl} buzz={data.buzz} />

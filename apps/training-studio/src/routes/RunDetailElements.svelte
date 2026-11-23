@@ -147,6 +147,14 @@
     renameError = '';
     renaming = true;
   }
+  // Links styled as kit buttons: civitai-button takes an href but no target, and these open the
+  // main app in a new tab from the standalone shell.
+  const LINK_FILLED =
+    'inline-flex h-[30px] items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90';
+  const LINK_OUTLINE =
+    'inline-flex h-[30px] items-center gap-1.5 rounded-md border border-primary px-3 text-sm font-semibold text-primary transition-colors hover:bg-primary/10';
+
+  // The kit field renders its <input> in a shadow root once it has updated.
   function focusInput(node: HTMLElement) {
     queueMicrotask(async () => {
       const field = node.querySelector<CivitaiTextInput>('civitai-text-input');
@@ -420,7 +428,7 @@
     return hostLink(toUrl(req));
   }
 
-  let furtherEpochs = $state(5);
+  let furtherEpochs = $state<number | ''>(5);
   let confirming = $state(false);
   let continuing = $state(false);
   let continueError = $state('');
@@ -616,7 +624,13 @@
     ownRights = false;
     shareDataset = false;
     shareTouched = false;
+    datasetOpen = null;
   });
+
+  // The Training data panel opens by default while a run trains; once toggled, the user's choice holds.
+  // A plain `open={…}` is re-applied whenever its template effect re-runs, which closed the panel on
+  // its own Download click.
+  let datasetOpen = $state<boolean | null>(null);
 </script>
 
 <!-- An edit run's samples are only readable next to the image they were rendered from. -->
@@ -631,8 +645,8 @@
 
 <!-- The one place the Generate affordance decides gated vs in-place action vs deep link — a render
      site that skipped the gate would silently un-gate non-members. When the host says this user
-     can't use unpublished weights, clicking the muted button (touch and keyboard included — a
-     tooltip's content is unreachable for both) explains the gate instead of silently doing nothing. -->
+     can't use unpublished weights, clicking the muted button (touch and keyboard included) explains
+     the gate instead of silently doing nothing. -->
 {#snippet epochGenerate(
   gen: { action: () => void } | ReturnType<typeof hostLink>,
   liveCls: string,
@@ -833,7 +847,7 @@
           {progressPct}%{#if d.plannedEpochs} · checkpoint {completedEpochs} / {d.plannedEpochs}{/if}
         </span>
       </div>
-      <civitai-progress value={progressPct} max={100} label="Training progress"></civitai-progress>
+      <civitai-progress value={progressPct} max={100}></civitai-progress>
     </civitai-card>
   {/if}
 
@@ -1069,7 +1083,7 @@
               {#if gen}
                 {@render epochGenerate(
                   gen,
-                  'inline-flex h-[30px] items-center gap-1.5 rounded-md border border-primary px-3 text-sm font-semibold text-primary transition-colors hover:bg-primary/10',
+                  LINK_OUTLINE,
                   'inline-flex h-[30px] items-center gap-1.5 rounded-md border border-dark-4 px-3 text-sm font-semibold',
                   14
                 )}
@@ -1077,7 +1091,7 @@
               <a
                 href={weightsHref(featured)}
                 download
-                class="inline-flex h-[30px] items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+                class={LINK_FILLED}
               >
 <IconDownload size={14} stroke={2} class="mr-1 inline" />Download weights
               </a>
@@ -1238,7 +1252,7 @@
                 value={String(furtherEpochs)}
                 disabled={confirming || continuing}
                 oninput={(e: Event) =>
-                  (furtherEpochs = (e.currentTarget as CivitaiNumberInput).valueAsNumber ?? 0)}
+                  (furtherEpochs = (e.currentTarget as CivitaiNumberInput).valueAsNumber ?? '')}
               ></civitai-number-input>
               {#if confirming}
                 <civitai-button
@@ -1303,7 +1317,7 @@
             <!-- State first, link second: a published run must never fall through to a Publish CTA —
                  older runs carry `published` without `modelId`, and a host may omit modelPageUrl. -->
             {#if link}
-              <a {...link} class="inline-flex h-[30px] items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90">
+              <a {...link} class={LINK_FILLED}>
                 <IconExternalLink size={14} stroke={2} />View your model page
               </a>
             {/if}
@@ -1335,11 +1349,11 @@
                 {/if}
               </p>
             </div>
-            <a {...publishLink} class="inline-flex h-[30px] items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90">
+            <a {...publishLink} class={LINK_FILLED}>
               <IconUpload size={14} stroke={2} />Publish a model page
             </a>
             {#if link}
-              <a {...link} class="inline-flex h-[30px] items-center gap-1.5 rounded-md border border-primary px-3 text-sm font-semibold text-primary transition-colors hover:bg-primary/10">
+              <a {...link} class={LINK_OUTLINE}>
                 <IconExternalLink size={14} stroke={2} />View draft
               </a>
               <p class="m-0 font-mono text-xs text-dark-2">
@@ -1357,7 +1371,7 @@
           {:else if link}
             <!-- A draft exists but there's nothing to publish from here — the weights expired, or
                  this host has no publish surface. The draft link must not hide behind either. -->
-            <a {...link} class="inline-flex h-[30px] items-center gap-1.5 rounded-md border border-primary px-3 text-sm font-semibold text-primary transition-colors hover:bg-primary/10">
+            <a {...link} class={LINK_OUTLINE}>
               <IconExternalLink size={14} stroke={2} />View draft
             </a>
             <p class="m-0 font-mono text-xs text-dark-2">
@@ -1390,7 +1404,10 @@
   {#if d.dataset.length}
     <!-- Below the epochs — the results are the point; the dataset is a reference. Open while training (when
          there are no epochs yet), collapsed once finished. -->
-    <details open={d.state === 'training'} class="overflow-hidden rounded-xl border border-dark-4 bg-dark-6">
+    <details
+      bind:open={() => datasetOpen ?? d.state === 'training', (v) => (datasetOpen = v)}
+      class="overflow-hidden rounded-xl border border-dark-4 bg-dark-6"
+    >
       <summary
         class="flex cursor-pointer select-none flex-wrap items-center gap-x-2 gap-y-2.5 whitespace-nowrap px-5 py-3 text-sm font-semibold text-dark-0 hover:bg-dark-5/40 [&::-webkit-details-marker]:hidden"
       >
@@ -1402,29 +1419,30 @@
             : mediaCount(d.dataset.length, d.media)}
         </span>
         <span class="ml-auto flex items-center gap-1.5 max-sm:grid max-sm:w-full max-sm:grid-cols-2 max-sm:gap-2">
-          <button
-            type="button"
-            onclick={(e) => {
+          <civitai-button
+            size="sm"
+            variant="subtle"
+            title="Start a new training with this dataset"
+            onclick={(e: Event) => {
               e.preventDefault();
               void reuseDataset();
             }}
-            class="inline-flex items-center justify-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-primary transition-colors max-sm:border max-sm:border-primary/40 max-sm:py-2 max-sm:text-sm hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            title="Start a new training with this dataset"
           >
-            <IconRepeat size={13} stroke={2} />Train again
-          </button>
-          <button
-            type="button"
-            onclick={(e) => {
+            <span slot="left"><IconRepeat size={13} stroke={2} /></span>Train again
+          </civitai-button>
+          <civitai-button
+            size="sm"
+            variant="subtle"
+            title="Download images + captions as a .zip"
+            loading={downloading}
+            disabled={downloading}
+            onclick={(e: Event) => {
               e.preventDefault();
               void downloadDataset();
             }}
-            disabled={downloading}
-            class="inline-flex items-center justify-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-dark-1 transition-colors max-sm:border max-sm:border-dark-4 max-sm:py-2 max-sm:text-sm hover:bg-dark-5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
-            title="Download images + captions as a .zip"
           >
-            <IconArchive size={13} stroke={2} />{downloading ? 'Zipping…' : 'Download'}
-          </button>
+            <span slot="left"><IconArchive size={13} stroke={2} /></span>{downloading ? 'Zipping…' : 'Download'}
+          </civitai-button>
           {#if downloadError}
             <span class="whitespace-normal font-mono text-xs text-red-400 max-sm:col-span-2">{downloadError}</span>
           {/if}

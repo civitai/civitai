@@ -6,8 +6,8 @@
   import type { TrainingDetail } from '$lib/data/trainingRows';
 
   let { workflowId }: { workflowId: string } = $props();
-  const elementsUi = useElementsUi();
-  const Run = $derived(elementsUi() ? RunDetailElements : RunDetail);
+  const useElements = useElementsUi();
+  const Run = $derived(useElements() ? RunDetailElements : RunDetail);
 
   // First load per run: a new workflowId derives a new promise and the template re-awaits it.
   const initial = $derived(backend().getRunDetail(workflowId));
