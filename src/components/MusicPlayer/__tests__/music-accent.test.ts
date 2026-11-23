@@ -1,6 +1,11 @@
 import { encode } from 'blurhash';
 import { describe, expect, it } from 'vitest';
-import { musicAccentFromHash, readableAccent } from '~/components/MusicPlayer/music-accent';
+import type { MusicAccent, MusicSurface } from '~/components/MusicPlayer/music-accent';
+import {
+  musicAccentFromHash,
+  musicAccentVars,
+  readableAccent,
+} from '~/components/MusicPlayer/music-accent';
 
 /** A blurhash of a flat image in one colour: its average is that colour. */
 function flatHash(r: number, g: number, b: number) {
@@ -136,5 +141,122 @@ describe('readableAccent', () => {
 
   it('leaves an accent that already reads alone', () => {
     expect(readableAccent('#0b3d91', '#ffffff')).toBe('#0b3d91');
+  });
+});
+
+describe('musicAccentVars', () => {
+  // Mantine's primary when no cover gives an accent: blue-6 in light, blue-8 in dark (Mantine's
+  // default primaryShade; the theme sets neither primaryColor nor primaryShade).
+  const PRIMARY = { light: '#228be6', dark: '#1971c2' };
+  const mix = (fg: string, bg: string, alpha: number) => {
+    const [f, b] = [rgb(fg), rgb(bg)];
+    return `#${f
+      .map((c, i) => Math.round(c * alpha + b[i] * (1 - alpha)))
+      .map((c) => c.toString(16).padStart(2, '0'))
+      .join('')}`;
+  };
+  type Scheme = 'light' | 'dark';
+  type State = { tint: number; second?: boolean } | { light: string; dark: string };
+  // The surfaces accent text sits on (odd/tasks/music-stabilize.md, Design options) and the states
+  // it must still read in: a tint of the accent (the second colour where `second`) over the surface,
+  // or a hover background.
+  const SURFACES: Record<MusicSurface, { light: string; dark: string; states: State[] }> = {
+    // Active toggle at 15%; the wash under Shuffle and Repeat (up to ~17% of the accent or its
+    // second colour); the small buttons' hover, gray-1 / dark-5.
+    bar: {
+      light: '#f8f9fa',
+      dark: '#25262b',
+      states: [
+        { tint: 0.15 },
+        { tint: 0.2 },
+        { tint: 0.2, second: true },
+        { light: '#f1f3f5', dark: '#2c2e33' },
+      ],
+    },
+    // The now-playing row: the accent at 33% at its left edge.
+    upNextPanel: { light: '#ffffff', dark: '#2c2e33', states: [{ tint: 0.33 }] },
+    upNextSheet: { light: '#2c2e33', dark: '#2c2e33', states: [{ tint: 0.33 }] },
+    // The cover's wash: the accent at 40% where the controls start.
+    nowPlayingSheet: { light: '#1a1b1e', dark: '#1a1b1e', states: [{ tint: 0.4 }] },
+    commentChips: { light: '#ffffff', dark: '#25262b', states: [{ tint: 0.12 }, { tint: 0.192 }] },
+    commentList: {
+      light: '#ffffff',
+      dark: '#2c2e33',
+      states: [{ light: '#f1f3f5', dark: '#373a40' }],
+    },
+  };
+
+  /** Covers around the wheel, made very dark and very light so the accent lands on the band's edges. */
+  const covers: [string, MusicAccent | null][] = [];
+  for (let h = 0; h < 360; h += 30)
+    for (const [label, l] of [
+      ['dark', 0.12],
+      ['light', 0.88],
+    ] as const) {
+      const k = (n: number) => (n + h / 30) % 12;
+      const a = 0.9 * Math.min(l, 1 - l);
+      const f = (n: number) =>
+        Math.round((l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))) * 255);
+      const accent = musicAccentFromHash(flatHash(f(0), f(8), f(4)));
+      expect(accent, `hue ${h} ${label}`).not.toBeNull();
+      covers.push([`hue ${h} ${label}`, accent]);
+    }
+  // The chips' tint is always the primary's shade 6.
+  covers.push(['the primary as an accent', { accent: '#228be6', accent2: '#228be6' }]);
+  // A grey cover gives no accent: the player falls back to the primary.
+  const grey = musicAccentFromHash(flatHash(128, 128, 128));
+  covers.push(['a grey cover', grey], ['no cover', null]);
+
+  it('has a grey cover fall back to the primary', () => {
+    expect(grey).toBeNull();
+  });
+
+  it.each(Object.keys(SURFACES) as MusicSurface[])(
+    'reads at 4.5:1 on the %s at rest, hovered and highlighted, in both schemes',
+    (surface) => {
+      const { states, ...base } = SURFACES[surface];
+      for (const [label, accent] of covers)
+        for (const scheme of ['light', 'dark'] as Scheme[]) {
+          const vars = musicAccentVars(accent, surface);
+          const text = vars[`--music-accent-text-${scheme}`];
+          expect(text, `${label}, ${scheme}`).toMatch(/^#[0-9a-f]{6}$/);
+          const fill = accent?.accent ?? PRIMARY[scheme];
+          const second = accent?.accent2 ?? PRIMARY[scheme];
+          const backgrounds = [
+            base[scheme],
+            ...states.map((state) =>
+              'tint' in state
+                ? mix(state.second ? second : fill, base[scheme], state.tint)
+                : state[scheme]
+            ),
+          ];
+          for (const background of backgrounds)
+            expect(
+              contrast(text, background),
+              `${label} on ${surface} (${background}), ${scheme}`
+            ).toBeGreaterThanOrEqual(4.5);
+        }
+    }
+  );
+
+  it("sets the cover's colours for fills, and none without a cover, so fills fall back to the primary", () => {
+    const accent = musicAccentFromHash(flatHash(0xe6, 0x49, 0x80))!;
+
+    expect(musicAccentVars(accent, 'bar')).toMatchObject({
+      '--music-accent': accent.accent,
+      '--music-accent-2': accent.accent2,
+    });
+    expect(musicAccentVars(null, 'bar')).not.toHaveProperty('--music-accent');
+    expect(musicAccentVars(null, 'bar')).not.toHaveProperty('--music-accent-2');
+  });
+
+  it('sets only the fill colours where no accent text sits', () => {
+    const accent = musicAccentFromHash(flatHash(0xe6, 0x49, 0x80))!;
+
+    expect(musicAccentVars(accent)).toEqual({
+      '--music-accent': accent.accent,
+      '--music-accent-2': accent.accent2,
+    });
+    expect(musicAccentVars(null)).toEqual({});
   });
 });

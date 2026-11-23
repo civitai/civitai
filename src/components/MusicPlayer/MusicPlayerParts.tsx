@@ -1,12 +1,14 @@
 import { IconMusic } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { ACCENT_FILL } from '~/components/MusicPlayer/music-accent';
 import styles from './MusicPlayerBar.module.scss';
 
 /** The global player's accent: the artwork's colour, set on the player root, else the Civitai primary. */
-export const ACCENT = 'var(--music-accent, var(--mantine-primary-color-filled))';
+export const ACCENT = ACCENT_FILL;
+/** `ACCENT_FILL` at `percent`% opacity, for tints and glows. */
 export const accentAt = (percent: number) =>
-  `color-mix(in srgb, ${ACCENT} ${percent}%, transparent)`;
+  `color-mix(in srgb, ${ACCENT_FILL} ${percent}%, transparent)`;
 
 // Secondary text (times, creator names) at WCAG AA on every player surface: gray-7 on the light
 // ones (gray-6 was 3.2:1), dark-1 on the dark ones (dark-2 was 4.25:1 on the Up next panel's dark-5).
@@ -26,7 +28,7 @@ export function Equalizer({ playing }: { playing: boolean }) {
         <span
           key={i}
           className={clsx('w-[3px] rounded-[1px]', styles.eqBar, playing && styles.eqPlaying)}
-          style={{ height, backgroundColor: playing ? ACCENT : accentAt(50) }}
+          style={{ height, backgroundColor: playing ? ACCENT_FILL : accentAt(50) }}
         />
       ))}
     </span>

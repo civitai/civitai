@@ -3,7 +3,12 @@ import { IconHourglass, IconPlayerPlayFilled } from '@tabler/icons-react';
 import { Tooltip } from '~/components/MantineOverlays';
 import type { SongTimeChoice } from '~/components/Music/TimedComments/SongCommentsContext';
 import { useSongComments } from '~/components/Music/TimedComments/SongCommentsContext';
-import { ACCENT_TEXT, accentTextVars, blend } from '~/components/MusicPlayer/music-accent';
+import {
+  ACCENT_TEXT,
+  ACCENT_TEXT_SCHEME,
+  blend,
+  musicAccentVars,
+} from '~/components/MusicPlayer/music-accent';
 import { useMusicPlayheadStore } from '~/store/music-player.store';
 import { formatPlaybackTime } from '~/utils/audio-player';
 
@@ -54,20 +59,20 @@ export function CommentTimeChip({ timestampSec }: { timestampSec: number }) {
       // Pencil `D16w5R`: radius 4, 11px bold.
       radius="sm"
       variant="light"
-      className={`text-[11px] font-bold ${ACCENT_TEXT} ${CHIP_BG}`}
-      // The primary darkened or lightened per scheme to 4.5:1 on the hover tint, the strongest the
-      // chip shows, so it reads at rest and under the pointer.
+      className={`text-[11px] font-bold ${ACCENT_TEXT_SCHEME} ${CHIP_BG}`}
+      // The primary darkened or lightened per scheme to 4.5:1 on the card and on both tints. The
+      // chip's tint is the primary's shade 6 in both schemes, so its text is computed from that.
       // The tint is pre-blended over the card so it is opaque: a highlighted comment's tint behind
       // the chip cannot lower that contrast.
       style={{
-        ...accentTextVars(primary, CARD, CHIP_HOVER_TINT),
+        ...musicAccentVars({ accent: primary, accent2: primary }, 'commentChips'),
         '--chip-bg-light': blend(primary, CARD.light, CHIP_TINT),
         '--chip-bg-dark': blend(primary, CARD.dark, CHIP_TINT),
         '--chip-hover-light': blend(primary, CARD.light, CHIP_HOVER_TINT),
         '--chip-hover-dark': blend(primary, CARD.dark, CHIP_HOVER_TINT),
         '--button-bg': 'var(--chip-bg)',
         '--button-hover': 'var(--chip-hover)',
-        '--button-color': 'var(--accent-text)',
+        '--button-color': ACCENT_TEXT,
       }}
       leftSection={<IconPlayerPlayFilled size={9} />}
       aria-label={`Play from ${time}`}

@@ -129,18 +129,93 @@ export function blend(fg: string, bg: string, alpha: number) {
   return toHex(f.map((c, i) => Math.round(c * alpha + b[i] * (1 - alpha))));
 }
 
+/** Fills (backgrounds, bars, borders) in the accent: the cover's colour, else the Civitai primary. */
+export const ACCENT_FILL = 'var(--music-accent, var(--mantine-primary-color-filled))';
+/** Text and icons in the accent, at 4.5:1 on the surface given to `musicAccentVars`. */
+export const ACCENT_TEXT = 'var(--music-accent-text)';
+/** Sets `--music-accent-text` to the scheme's colour; goes where `musicAccentVars` is spread. */
+export const ACCENT_TEXT_SCHEME =
+  '[--music-accent-text:var(--music-accent-text-light)] dark:[--music-accent-text:var(--music-accent-text-dark)]';
+
+// What `ACCENT_FILL` falls back to, `--mantine-primary-color-filled`: Mantine's blue at its default
+// primaryShade, 6 in light and 8 in dark (the theme sets neither primaryColor nor primaryShade).
+const PRIMARY_FILL = { light: '#228BE6', dark: '#1971C2' };
+
+type Scheme = 'light' | 'dark';
+/** A background the text sits on over the surface: the accent (or its second colour) at `tint`, or a hover. */
+type SurfaceState = { tint: number; second?: true } | Record<Scheme, string>;
+
 /**
- * CSS variables for text in the accent that reads in both schemes: the accent made readable on each
- * scheme's `surface`, under a tint of the accent at `tint` alpha when the text sits on one. Pair
- * with `ACCENT_TEXT`.
+ * The surfaces accent text sits on, per scheme, with the tints and hovers over them. A surface dark
+ * in both schemes still computes each scheme from that scheme's primary.
  */
-export function accentTextVars(accent: string, surface: { light: string; dark: string }, tint = 0) {
-  return {
-    '--accent-text-light': readableAccent(accent, blend(accent, surface.light, tint)),
-    '--accent-text-dark': readableAccent(accent, blend(accent, surface.dark, tint)),
-  } as Record<string, string>;
+const SURFACES = {
+  // gray-0 / dark-6. The active toggles' 15% tint; the wash under Shuffle and Repeat, at most ~17%
+  // of the accent or its second colour; the small buttons' hover, gray-1 / dark-5.
+  bar: {
+    light: '#f8f9fa',
+    dark: '#25262B',
+    states: [
+      { tint: 0.15 },
+      { tint: 0.2 },
+      { tint: 0.2, second: true },
+      { light: '#f1f3f5', dark: '#2C2E33' },
+    ],
+  },
+  // White / dark-5; the now-playing row is the accent at 33% at its left edge.
+  upNextPanel: { light: '#ffffff', dark: '#2C2E33', states: [{ tint: 0.33 }] },
+  // The phone's Up next sheet, dark-5 in both schemes, with the same now-playing row.
+  upNextSheet: { light: '#2C2E33', dark: '#2C2E33', states: [{ tint: 0.33 }] },
+  // dark-7 in both schemes, under the cover's wash: the accent at 40% where the controls start.
+  nowPlayingSheet: { light: '#1A1B1E', dark: '#1A1B1E', states: [{ tint: 0.4 }] },
+  // The comment card (Mantine Card); the chip's tint at rest and hovered.
+  commentChips: { light: '#ffffff', dark: '#25262b', states: [{ tint: 0.12 }, { tint: 0.192 }] },
+  // The player's cluster list: white / dark-5, rows hovered gray-1 / dark-4.
+  commentList: {
+    light: '#ffffff',
+    dark: '#2c2e33',
+    states: [{ light: '#f1f3f5', dark: '#373A40' }],
+  },
+} satisfies Record<string, Record<Scheme, string> & { states: SurfaceState[] }>;
+export type MusicSurface = keyof typeof SURFACES;
+
+/** `fill` made readable on every background of `surface` in `scheme`. */
+function textOn(surface: MusicSurface, scheme: Scheme, fill: string, second: string) {
+  const { states, ...base } = SURFACES[surface];
+  const backgrounds = [
+    base[scheme],
+    ...(states as SurfaceState[]).map((state) =>
+      'tint' in state
+        ? blend(state.second ? second : fill, base[scheme], state.tint)
+        : state[scheme]
+    ),
+  ];
+  // A scheme's backgrounds are all light or all dark, so each step only moves the text further from
+  // the ones already passed, and the last colour reads on all of them.
+  return backgrounds.reduce((text, background) => readableAccent(text, background), fill);
 }
 
-/** Sets `--accent-text` to the scheme's colour from `accentTextVars`. */
-export const ACCENT_TEXT =
-  '[--accent-text:var(--accent-text-light)] dark:[--accent-text:var(--accent-text-dark)]';
+/**
+ * The accent's CSS variables for a music surface: `--music-accent` and `--music-accent-2` for fills
+ * (unset without a cover, so fills fall back to the primary), and `--music-accent-text-light` /
+ * `-dark`, the cover's accent or the primary at 4.5:1 on `surface` in each scheme. Spread on the
+ * surface's root with `ACCENT_TEXT_SCHEME`; omit `surface` where no accent text sits.
+ */
+export function musicAccentVars(accent: MusicAccent | null, surface?: MusicSurface) {
+  const vars: Record<string, string> = {};
+  if (accent) {
+    vars['--music-accent'] = accent.accent;
+    vars['--music-accent-2'] = accent.accent2;
+  }
+  if (surface)
+    for (const scheme of ['light', 'dark'] as const) {
+      const fill = accent?.accent ?? PRIMARY_FILL[scheme];
+      vars[`--music-accent-text-${scheme}`] = textOn(
+        surface,
+        scheme,
+        fill,
+        accent?.accent2 ?? fill
+      );
+    }
+  return vars;
+}
