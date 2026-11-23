@@ -12,9 +12,10 @@
 --     in `doc-store.ts`), shared by every collection of the app, as `usage_app.last_seq` is for
 --     document writes. Its row is the store's lock (1c): taken after the document and its tally
 --     and mark rows, before `usage_app`, and never by a document write.
---   - `mark_seq` on `appdata.doc_tally` and `appdata.doc_mark`: the mark sequence of the last
---     mark, unmark or increment that changed the row. Nullable, no default and no backfill: NULL
---     is a row last changed before this existed. Nothing reads either column yet.
+--   - `mark_seq` on `appdata.doc_tally`: the mark sequence of the last mark, unmark or increment
+--     that changed the tally row. Nullable, no default and no backfill: NULL is a row last changed
+--     before this existed. Nothing reads it yet. (`doc_mark` gets no column: what a per-viewer
+--     reader needs from the viewer's own mark rows is the per-viewer stream's design to decide.)
 --   `doc.seq`, which moderation and the rater check as a document's revision, is not touched.
 --
 -- ROW-LEVEL SECURITY on the new table: the policies every other `appdata` table has: the
@@ -22,14 +23,14 @@
 --   is purged with its request). The existing grants do not reach a table created after them,
 --   so it is granted here.
 --
--- 🔴 ROLLOUT ORDER: this migration BEFORE the code that takes the sequence ships. That code
---   names `appdata.mark_head` and the two columns on every mark, unmark and increment, so a
---   release running against a database without this refuses every one of them. Apply it to each
---   environment (dev, then prod), then merge.
+-- ROLLOUT ORDER: safe before or after the code ships. Until this is applied the store finds
+--   the table missing (a savepoint probe, `withMarkHead` in `doc-store.ts`), takes no sequence
+--   and answers marks, unmarks and increments without one; once applied, it starts taking the
+--   sequence within a minute, with no restart. Apply it to each environment, dev then prod.
 --
--- Lock discipline as `20261116120000_appdata_doc_levels.sql`: the two ALTERs are catalog-only
---   (nullable, no default), each a brief ACCESS EXCLUSIVE lock, under a 1s lock_timeout below the
---   store's own 3s. If one times out, re-run the file.
+-- Lock discipline as `20261116120000_appdata_doc_levels.sql`: the ALTER is catalog-only
+--   (nullable, no default), a brief ACCESS EXCLUSIVE lock, under a 1s lock_timeout below the
+--   store's own 3s. If it times out, re-run the file.
 --
 -- IDEMPOTENT: IF NOT EXISTS, DROP POLICY IF EXISTS before each CREATE POLICY, and a GRANT that
 --   is already held is a no-op. ROLLBACK: the sibling `20261122120000_appdata_mark_head.down.sql`.
@@ -46,7 +47,6 @@ CREATE TABLE IF NOT EXISTS appdata.mark_head (
 );
 
 ALTER TABLE appdata.doc_tally ADD COLUMN IF NOT EXISTS mark_seq bigint;
-ALTER TABLE appdata.doc_mark ADD COLUMN IF NOT EXISTS mark_seq bigint;
 
 ALTER TABLE appdata.mark_head ENABLE ROW LEVEL SECURITY;
 ALTER TABLE appdata.mark_head FORCE ROW LEVEL SECURITY;

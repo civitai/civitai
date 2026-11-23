@@ -494,7 +494,7 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/migrations/20261119120000_appdata_doc_record_id.sql',
     'server/services/apps/migrations/20261119120100_appdata_doc_record_id_backfill.sql',
     'server/services/apps/migrations/20261119120200_appdata_doc_record_id_unique.sql',
-    // The mark sequence's table and its columns on doc_tally and doc_mark, and their rollback
+    // The mark sequence's table and its column on doc_tally, and their rollback
     // (DDL and policies only).
     'server/services/apps/migrations/20261122120000_appdata_mark_head.down.sql',
     'server/services/apps/migrations/20261122120000_appdata_mark_head.sql',

@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   createDocStore,
+  createDocStoreMaintenance,
   createDocStoreModeration,
   createDocStoreRater,
   type DocStore,
@@ -32,7 +33,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 /**
  * The MARK SEQUENCE (`apps/app-data-go/WRITES-DESIGN.md`, "Marks get their own sequence"): one
  * counter per (app, namespace) in `appdata.mark_head`, taken by every mark, unmark and increment
- * under lock (1c) and stamped on the tally and mark rows it changed, on the shipped migration, as
+ * under lock (1c) and stamped on the tally row it changed, on the shipped migration, as
  * `appdata_rw`. What is stamped is read back by the superuser with this file's own SQL; every
  * sequence is a literal (a fresh namespace numbers its marks 1, 2, 3, …). And what it must NOT
  * move: `doc.seq`, which moderation's `ifRevision` and the rater's binding check.
@@ -71,11 +72,11 @@ describe.each([{ rls: true }, { rls: false }])('the mark sequence (rls %o)', (op
   const marks = async (app: string) =>
     (
       await h.raw(
-        `SELECT mk.key, mk.name, mk.user_id, mk.mark_seq::int AS mark_seq
+        `SELECT mk.key, mk.name, mk.user_id
            FROM appdata.doc_mark mk WHERE mk.app_id = $1 ORDER BY mk.key, mk.name, mk.user_id`,
         [app]
       )
-    ).map((r) => [r.key, r.name, r.user_id, r.mark_seq]);
+    ).map((r) => [r.key, r.name, r.user_id]);
 
   it('mark, unmark and increment each take the next sequence and stamp the rows they changed', async () => {
     const app = freshApp('MSEQ');
@@ -94,7 +95,7 @@ describe.each([{ rls: true }, { rls: false }])('the mark sequence (rls %o)', (op
       ['posts', 'p', 'counter', 'views', 6, 3],
       ['posts', 'p', 'mark', 'vote', 1, 4],
     ]);
-    expect(await marks(app)).toEqual([['p', 'vote', VIEWER_2, 2]]);
+    expect(await marks(app)).toEqual([['p', 'vote', VIEWER_2]]);
   });
 
   it('a mark or unmark that changes nothing still takes a sequence, and stamps nothing', async () => {
@@ -113,7 +114,7 @@ describe.each([{ rls: true }, { rls: false }])('the mark sequence (rls %o)', (op
       markSeq: 3,
     });
     expect(await tallies(app)).toEqual([['posts', 'p', 'mark', 'star', 1, 1]]);
-    expect(await marks(app)).toEqual([['p', 'star', VIEWER_1, 1]]);
+    expect(await marks(app)).toEqual([['p', 'star', VIEWER_1]]);
     expect(await head(app)).toBe(3);
   });
 
@@ -125,7 +126,7 @@ describe.each([{ rls: true }, { rls: false }])('the mark sequence (rls %o)', (op
       count: null,
       markSeq: 1,
     });
-    expect(await marks(app)).toEqual([['p', 'report', VIEWER_2, 1]]);
+    expect(await marks(app)).toEqual([['p', 'report', VIEWER_2]]);
   });
 
   it('one counter for every collection of the app; another namespace and another app count on their own', async () => {
@@ -188,7 +189,6 @@ describe.each([{ rls: true }, { rls: false }])('the mark sequence (rls %o)', (op
         'doc_tally',
         'mark_head',
         'doc_tally',
-        'doc_mark',
       ]);
       expect(await tablesOf(app, () => store.unmark(v1, POSTS, 'p', 'vote'))).toEqual([
         'doc',
@@ -348,7 +348,7 @@ describe('the shipped migration (applied by hand, so it must re-run and roll bac
         `INSERT INTO appdata.mark_head (app_id, ns, last_mark_seq) VALUES ('ab_MIG', 'prod', 7)`
       );
       await h.raw(up);
-      expect(await state()).toEqual({ table: 1, columns: ['doc_mark', 'doc_tally'] });
+      expect(await state()).toEqual({ table: 1, columns: ['doc_tally'] });
       // Re-applying keeps the counter.
       expect(await h.raw(`SELECT last_mark_seq::int AS n FROM appdata.mark_head`)).toEqual([
         { n: 7 },
@@ -366,9 +366,79 @@ describe('the shipped migration (applied by hand, so it must re-run and roll bac
       await h.raw(down);
       expect(await state()).toEqual({ table: 0, columns: [] });
       await h.raw(up);
-      expect(await state()).toEqual({ table: 1, columns: ['doc_mark', 'doc_tally'] });
+      expect(await state()).toEqual({ table: 1, columns: ['doc_tally'] });
     } finally {
       await h.close();
+    }
+  });
+});
+
+describe('🔴 before the migration is applied: marks, unmarks and increments work and answer no sequence', () => {
+  let h: Harness;
+  let store: DocStore;
+
+  beforeAll(async () => {
+    h = await createPgliteHarness({ rls: true, markHead: false });
+    store = createDocStore({ db: h.db });
+  });
+  afterAll(async () => {
+    expect(h.violations).toEqual([]);
+    await h?.close();
+  });
+
+  it('every one succeeds exactly as before, with no markSeq; a creating increment still answers its seq', async () => {
+    const app = freshApp('MSEQABSENT');
+    const v1 = ctx(app, NS_PROD, VIEWER_1);
+    const v2 = ctx(app, NS_PROD, VIEWER_2);
+    await store.put(v1, POSTS, 'p', { status: 'open' });
+    expect(await store.mark(v2, POSTS, 'p', 'vote')).toEqual({ marked: true, count: 1 });
+    expect(await store.mark(v2, POSTS, 'p', 'vote')).toEqual({ marked: true, count: 1 });
+    expect(await store.mark(v1, POSTS, 'p', 'report')).toEqual({ marked: true, count: null });
+    expect(await store.increment(v2, POSTS, 'p', 'views', 3)).toEqual({ value: 3 });
+    expect(await store.unmark(v2, POSTS, 'p', 'vote')).toEqual({ marked: false, count: 0 });
+    expect(await store.increment(v1, TALLIES, 'song', 'plays')).toEqual({ value: 1, seq: 2 });
+    // The counts and marks are stored as they always were.
+    expect((await store.get(v2, POSTS, 'p'))?.counters).toEqual({ vote: 0, views: 3 });
+    expect(
+      (
+        await h.raw(`SELECT count(*)::int AS n FROM pg_catalog.pg_tables WHERE tablename = $1`, [
+          'mark_head',
+        ])
+      )[0].n
+    ).toBe(0);
+  });
+
+  it('an app purge (the namespace wipe) still runs without the table', async () => {
+    const app = freshApp('MSEQABSENTPURGE');
+    const v1 = ctx(app, NS_PROD, VIEWER_1);
+    await store.put(v1, POSTS, 'p', { status: 'open' });
+    await store.mark(v1, POSTS, 'p', 'vote');
+    const out = await createDocStoreMaintenance({ db: h.db }).purgeApp(app);
+    expect(out).toMatchObject({ done: true, stopped: false });
+    expect(
+      (await h.raw(`SELECT count(*)::int AS n FROM appdata.doc WHERE app_id = $1`, [app]))[0].n
+    ).toBe(0);
+  });
+
+  // Last in this block: it applies the migration.
+  it('once the migration is applied, a running store takes the sequence after its recheck, with no restart', async () => {
+    const app = freshApp('MSEQLATE');
+    const v1 = ctx(app, NS_PROD, VIEWER_1);
+    await store.put(v1, POSTS, 'p', { status: 'open' });
+    expect(await store.mark(v1, POSTS, 'p', 'vote')).toEqual({ marked: true, count: 1 });
+    await h.raw(readFileSync(MIGRATION_MARK_HEAD_UP, 'utf8'));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // Inside the recheck window it still answers from what it found: absent.
+      expect(await store.mark(v1, POSTS, 'p', 'star')).toEqual({ marked: true, count: 1 });
+      vi.setSystemTime(Date.now() + 61_000);
+      expect(await store.unmark(v1, POSTS, 'p', 'star')).toEqual({
+        marked: false,
+        count: 0,
+        markSeq: 1,
+      });
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

@@ -2559,6 +2559,45 @@ describe('the public mark and counter answers carry no mark sequence or seq', ()
     );
     expect(Number(mh.last_mark_seq)).toBe(6);
   });
+
+  it('🔴 before the mark-sequence migration is applied, the same calls answer the same bodies', async () => {
+    const absent = await createPgliteHarness({ rls: true, markHead: false });
+    try {
+      h.store = createDocStore({ db: absent.db });
+      const { A } = freshApps();
+      const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+      const other = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
+      expect(
+        (
+          await call({
+            token: t,
+            method: 'PUT',
+            path: '/posts/m1',
+            body: { data: { status: 'a' } },
+          })
+        ).status
+      ).toBe(200);
+      const answers = [
+        await call({ token: t, method: 'PUT', path: '/posts/m1/marks/vote' }),
+        await call({ token: t, method: 'PUT', path: '/posts/m1/marks/vote' }),
+        await call({ token: t, method: 'DELETE', path: '/posts/m1/marks/vote' }),
+        await call({ token: other, method: 'PUT', path: '/posts/m1/marks/report' }),
+        await call({ token: t, method: 'POST', path: '/posts/m1/counters/views' }),
+        await call({ token: t, method: 'POST', path: '/plays/new-one/counters/plays' }),
+      ];
+      expect(answers.map((r) => ({ status: r.status, body: r.body }))).toEqual([
+        { status: 200, body: { marked: true, count: 1 } },
+        { status: 200, body: { marked: true, count: 1 } },
+        { status: 200, body: { marked: false, count: 0 } },
+        { status: 200, body: { marked: true } },
+        { status: 200, body: { value: 1 } },
+        { status: 200, body: { value: 1 } },
+      ]);
+      expect(absent.violations).toEqual([]);
+    } finally {
+      await absent.close();
+    }
+  });
 });
 
 describe('shared-data moderation follows the per-app shadow / enforce flags', () => {

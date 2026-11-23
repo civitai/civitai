@@ -107,10 +107,11 @@
 // (1c).
 //
 // `markSeq` comes from `mark_head.last_mark_seq` (`SQL_TAKE_MARK_SEQ`), taken by
-// every mark, unmark and increment under (1c) and stamped on the tally and mark
-// rows it changed: per-(app, ns) mark order equals commit order, as `seq`'s does.
-// It never moves `doc.seq`, which moderation and the rater check as the
-// document's revision.
+// every mark, unmark and increment under (1c) and stamped on the tally row it
+// changed: per-(app, ns) mark order equals commit order, as `seq`'s does. It
+// never moves `doc.seq`, which moderation and the rater check as the document's
+// revision. Until the manual migration that adds `mark_head` is applied, nothing
+// is taken and no `markSeq` is answered (`withMarkHead`).
 //
 // `seq` comes from `usage_app.last_seq`, incremented in the same statement that
 // charges the quota and therefore row-locked until commit: per-(app, ns) seq
@@ -1086,7 +1087,9 @@ const SQL_MARK_COUNT = `SELECT t.count FROM appdata.doc_tally t
   WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = $3 AND t.key = $4 AND t.kind = 'mark' AND t.name = $5`;
 
 // The namespace's next mark sequence: lock (1c), held until commit, so mark order equals commit
-// order. Taken by every mark, unmark and increment, whether or not it changed a row. $1 app, $2 ns
+// order. Taken by every mark, unmark and increment, whether or not it changed a row. Only once the
+// manual migration `20261122120000_appdata_mark_head.sql` created the table and the column (see
+// `withMarkHead`). $1 app, $2 ns
 const SQL_TAKE_MARK_SEQ = `INSERT INTO appdata.mark_head AS mh (app_id, ns, last_mark_seq)
   VALUES ($1, $2, 1)
   ON CONFLICT (app_id, ns) DO UPDATE SET last_mark_seq = mh.last_mark_seq + 1
@@ -1095,11 +1098,6 @@ const SQL_TAKE_MARK_SEQ = `INSERT INTO appdata.mark_head AS mh (app_id, ns, last
 // $1 app, $2 ns, $3 coll, $4 key, $5 kind, $6 name, $7 mark seq
 const SQL_STAMP_TALLY = `UPDATE appdata.doc_tally t SET mark_seq = $7::bigint
   WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = $3 AND t.key = $4 AND t.kind = $5 AND t.name = $6`;
-// And on the viewer's mark row a mark inserted. $1 app, $2 ns, $3 coll, $4 key, $5 name, $6 user,
-// $7 mark seq
-const SQL_STAMP_MARK = `UPDATE appdata.doc_mark mk SET mark_seq = $7::bigint
-  WHERE mk.app_id = $1 AND mk.ns = $2 AND mk.coll = $3 AND mk.key = $4 AND mk.name = $5
-    AND mk.user_id = $6::int`;
 
 // Stored usage. $1 app, $2 ns (+ $3 user). A missing row is zero.
 const SQL_USAGE_APP = `SELECT u.bytes, u.docs FROM appdata.usage_app u
@@ -1846,6 +1844,10 @@ export const PUBLISHED_NS = 'prod';
 const PG_UNDEFINED_COLUMN = '42703';
 /** How long a store trusts "no `schema_major` column" before probing again. */
 const SCHEMA_MAJOR_RECHECK_MS = 60_000;
+/** How often a store that found `appdata.mark_head` absent looks for it again. */
+const MARK_HEAD_RECHECK_MS = 60_000;
+/** undefined_table: `appdata.mark_head` does not exist (its migration is not applied). */
+const PG_UNDEFINED_TABLE = '42P01';
 
 /** One shared document matched by `findSharedByKey`. */
 export type SharedKeyMatch = {
@@ -1866,6 +1868,51 @@ function buildDocStore(deps: DocStoreDeps) {
   // absent, probed again at most every SCHEMA_MAJOR_RECHECK_MS, so applying the migration starts
   // the stamping without a restart.
   let schemaMajorColumn: { present: boolean; at: number } | undefined;
+  // Whether `appdata.mark_head` and `doc_tally.mark_seq` exist (a manual migration), kept the same
+  // way: found once and kept; while absent, tried again at most every MARK_HEAD_RECHECK_MS.
+  let markHeadTable: { present: boolean; at: number } | undefined;
+
+  const isMarkHeadMissing = (err: unknown) => {
+    const code = (err as { code?: string } | null)?.code;
+    return code === PG_UNDEFINED_TABLE || code === PG_UNDEFINED_COLUMN;
+  };
+
+  /**
+   * Run `fn`, which names `appdata.mark_head` or `doc_tally.mark_seq`, only where they exist; null
+   * where they do not. Known present: run as is, and a table dropped since (a rollback of the
+   * migration) fails this one call and is looked for again on the next. Not known: run under a
+   * savepoint, so a missing table or column (42P01, 42703) rolls back to it and the transaction
+   * goes on without the sequence. Any other failure is the transaction's own and is thrown.
+   */
+  async function withMarkHead<T>(c: DocStoreClient, fn: () => Promise<T>): Promise<T | null> {
+    if (markHeadTable?.present) {
+      try {
+        return await fn();
+      } catch (err) {
+        if (isMarkHeadMissing(err)) markHeadTable = undefined;
+        throw err;
+      }
+    }
+    if (markHeadTable && Date.now() - markHeadTable.at < MARK_HEAD_RECHECK_MS) return null;
+    await c.query('SAVEPOINT mark_head_probe');
+    try {
+      const out = await fn();
+      await c.query('RELEASE SAVEPOINT mark_head_probe');
+      markHeadTable = { present: true, at: Date.now() };
+      return out;
+    } catch (err) {
+      if (!isMarkHeadMissing(err)) throw err;
+      await c.query('ROLLBACK TO SAVEPOINT mark_head_probe');
+      markHeadTable = { present: false, at: Date.now() };
+      return null;
+    }
+  }
+
+  /** One statement of a purge or wipe; the `mark_head` one only where that table exists. */
+  async function purgeRows(c: DocStoreClient, sql: string, params: unknown[]): Promise<number> {
+    const run = async () => Number((await c.query(sql, params)).rows[0]?.n ?? 0);
+    return /appdata\.mark_head\b/.test(sql) ? (await withMarkHead(c, run)) ?? 0 : run();
+  }
 
   /**
    * Whether this write can stamp `schema_major`. Probed inside the write's own transaction under
@@ -2522,8 +2569,9 @@ function buildDocStore(deps: DocStoreDeps) {
    * never changes the version, so concurrent increments never conflict with each other.
    *
    * Answers the counter's value and the mark sequence it took (`markSeq`, stamped on the counter's
-   * tally row); an increment that created its counter document also answers that document's
-   * `seq`. An increment of an existing document never moves its `seq`.
+   * tally row; absent before the mark-sequence migration is applied); an increment that created its
+   * counter document also answers that document's `seq`. An increment of an existing document
+   * never moves its `seq`.
    */
   async function increment(
     ctx: DocStoreContext,
@@ -2532,7 +2580,7 @@ function buildDocStore(deps: DocStoreDeps) {
     counter: string,
     by = 1,
     opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<{ value: number; markSeq: number; seq?: number }> {
+  ): Promise<{ value: number; markSeq?: number; seq?: number }> {
     const policy = assertCollection(coll);
     assertKey(key);
     assertIncrementRequest(coll, counter, by);
@@ -2557,7 +2605,7 @@ function buildDocStore(deps: DocStoreDeps) {
         if (doc.rows.length > 0) {
           assertTallyVersion(ifVersion, Number(doc.rows[0].version));
           const value = await bump();
-          return { value, markSeq: await stampMarkSeq(c, ctx, coll, key, 'counter', counter) };
+          return { value, ...(await stampMarkSeq(c, ctx, coll, key, 'counter', counter)) };
         }
         if (policy !== 'none') throw new DocStoreError('not_found', 'document not found');
         assertTallyVersion(ifVersion, 0);
@@ -2580,7 +2628,7 @@ function buildDocStore(deps: DocStoreDeps) {
         // viewer's own ceiling (labelled `viewer`: it is the caller's), then the seq. The mark
         // sequence first: (1c) before (2), the lock order.
         const value = await bump();
-        const markSeq = await stampMarkSeq(c, ctx, coll, key, 'counter', counter);
+        const marked = await stampMarkSeq(c, ctx, coll, key, 'counter', counter);
         const size = Number(ins.rows[0].size_bytes);
         const seq = await charge(
           c,
@@ -2589,7 +2637,7 @@ function buildDocStore(deps: DocStoreDeps) {
           { uid: viewer, bytes: size, docs: 1, ceiling: 'viewer' }
         );
         await stampWrittenDoc(c, ctx, coll, 0, key, seq, ctx.viewerUid);
-        return { value, markSeq, seq };
+        return { value, ...marked, seq };
       }
       throw new DocStoreError('version_conflict', 'concurrent write; retry', {
         currentVersion: null,
@@ -2601,7 +2649,9 @@ function buildDocStore(deps: DocStoreDeps) {
 
   /**
    * Lock (1c): take the namespace's next mark sequence, and stamp it on the tally row this
-   * transaction changed (a row it already holds), if it changed one. Returns the sequence.
+   * transaction changed (a row it already holds), if it changed one. Returns `{ markSeq }`, or `{}`
+   * before the mark-sequence migration is applied (`withMarkHead`), so the caller answers without
+   * one.
    */
   async function stampMarkSeq(
     c: DocStoreClient,
@@ -2610,20 +2660,23 @@ function buildDocStore(deps: DocStoreDeps) {
     key: string,
     kind: 'counter' | 'mark' | null,
     name: string
-  ): Promise<number> {
-    const markSeq = Number(
-      (await c.query(SQL_TAKE_MARK_SEQ, [ctx.appId, ctx.ns])).rows[0].last_mark_seq
-    );
-    if (kind !== null) {
-      await c.query(SQL_STAMP_TALLY, [ctx.appId, ctx.ns, coll.name, key, kind, name, markSeq]);
-    }
-    return markSeq;
+  ): Promise<{ markSeq?: number }> {
+    const markSeq = await withMarkHead(c, async () => {
+      const seq = Number(
+        (await c.query(SQL_TAKE_MARK_SEQ, [ctx.appId, ctx.ns])).rows[0].last_mark_seq
+      );
+      if (kind !== null) {
+        await c.query(SQL_STAMP_TALLY, [ctx.appId, ctx.ns, coll.name, key, kind, name, seq]);
+      }
+      return seq;
+    });
+    return markSeq === null ? {} : { markSeq };
   }
 
   /**
    * `count` is null for `report`, whose count is never exposed. `markSeq` is the mark sequence it
-   * took, stamped on the tally row and the viewer's mark row when it added them; a mark the viewer
-   * already held changes no row but still takes one.
+   * took, stamped on the tally row when it changed it; a mark the viewer already held changes no
+   * row but still takes one. Absent before the mark-sequence migration is applied.
    */
   async function mark(
     ctx: DocStoreContext,
@@ -2631,7 +2684,7 @@ function buildDocStore(deps: DocStoreDeps) {
     key: string,
     name: string,
     opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<{ marked: true; count: number | null; markSeq: number }> {
+  ): Promise<{ marked: true; count: number | null; markSeq?: number }> {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
@@ -2649,9 +2702,8 @@ function buildDocStore(deps: DocStoreDeps) {
       const added = ins.rows.length > 0;
       const res = added ? await c.query(SQL_MARK_UP, args) : await c.query(SQL_MARK_COUNT, args);
       const count = Number(res.rows[0]?.count ?? 0);
-      const markSeq = await stampMarkSeq(c, ctx, coll, key, added ? 'mark' : null, name);
-      if (added) await c.query(SQL_STAMP_MARK, [...args, viewer, markSeq]);
-      return { marked: true as const, count: name === REPORT_MARK ? null : count, markSeq };
+      const marked = await stampMarkSeq(c, ctx, coll, key, added ? 'mark' : null, name);
+      return { marked: true as const, count: name === REPORT_MARK ? null : count, ...marked };
     });
   }
 
@@ -2661,7 +2713,7 @@ function buildDocStore(deps: DocStoreDeps) {
     key: string,
     name: string,
     opts: { ifVersion?: number; hookPass?: HookPass } = {}
-  ): Promise<{ marked: false; count: number | null; markSeq: number }> {
+  ): Promise<{ marked: false; count: number | null; markSeq?: number }> {
     assertCollection(coll);
     assertKey(key);
     assertMarkName(coll, name);
@@ -2682,9 +2734,9 @@ function buildDocStore(deps: DocStoreDeps) {
         ? await c.query(SQL_MARK_DOWN, args)
         : await c.query(SQL_MARK_COUNT, args);
       const count = Number(res.rows[0]?.count ?? 0);
-      // The viewer's mark row is gone; only the tally row it decremented is stamped.
-      const markSeq = await stampMarkSeq(c, ctx, coll, key, removed ? 'mark' : null, name);
-      return { marked: false as const, count: name === REPORT_MARK ? null : count, markSeq };
+      // The tally row it decremented is stamped.
+      const marked = await stampMarkSeq(c, ctx, coll, key, removed ? 'mark' : null, name);
+      return { marked: false as const, count: name === REPORT_MARK ? null : count, ...marked };
     });
   }
 
@@ -2858,9 +2910,7 @@ function buildDocStore(deps: DocStoreDeps) {
   async function purgeReview(publishRequestId: string): Promise<{ rows: number }> {
     return maintenanceTx(publishRequestId, async (c) => {
       let rows = 0;
-      for (const sql of SQL_REVIEW_PURGE) {
-        rows += Number((await c.query(sql, [publishRequestId])).rows[0]?.n ?? 0);
-      }
+      for (const sql of SQL_REVIEW_PURGE) rows += await purgeRows(c, sql, [publishRequestId]);
       return { rows };
     });
   }
@@ -2921,7 +2971,7 @@ function buildDocStore(deps: DocStoreDeps) {
     return withTx(ctx, async (c) => {
       if (result.mode === 'namespace') {
         for (const sql of SQL_WIPE_NAMESPACE)
-          result.namespaceRows += n(await c.query(sql, [appId, ns]));
+          result.namespaceRows += await purgeRows(c, sql, [appId, ns]);
         return result;
       }
       const args = [appId, ns, userId];
@@ -3106,7 +3156,7 @@ function buildDocStore(deps: DocStoreDeps) {
       if (!(await proceed())) return { ...result, stopped: true };
       result.rows += await withTx(ctx, async (c) => {
         let rows = 0;
-        for (const sql of SQL_WIPE_NAMESPACE) rows += n(await c.query(sql, [appId, ns]));
+        for (const sql of SQL_WIPE_NAMESPACE) rows += await purgeRows(c, sql, [appId, ns]);
         return rows;
       });
     }
