@@ -1,6 +1,6 @@
 import { escape as escapeHtml } from 'he';
 import { createEmail } from '~/server/email/templates/base.email';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { renderEmailCallout, simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
 type TrainingCompleteEmailData = {
@@ -25,12 +25,17 @@ export const trainingFailEmail = createEmail({
   }),
   html({ user, model, mName }: TrainingCompleteEmailData) {
     return simpleEmailWithTemplate({
-      header: 'Your model failed to train 😞',
+      icon: '😞',
+      accent: 'red',
+      eyebrow: 'Training failed',
+      header: 'Your model failed to train',
       body: `<p style="margin: 0;">Unfortunately, this model ("${escapeHtml(
         model.name
-      )} - ${escapeHtml(
-        mName
-      )}") failed to train properly. If you have not yet received your refund, you should receive it within 24 hours.</p>`,
+      )} - ${escapeHtml(mName)}") failed to train properly.</p>
+        ${renderEmailCallout(
+          'If you have not yet received your refund, you should receive it within 24 hours.',
+          { accent: 'gray' }
+        )}`,
       btnUrl: escapeHtml(reviewUrl(user.username)),
       btnLabel: 'Go To Dashboard',
     });
