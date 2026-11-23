@@ -12,7 +12,7 @@ import {
   type KnightsWritebackReason,
 } from '@civitai/shared/new-order';
 import { INQUISITOR_FILTERS, type InquisitorFilter } from '$lib/knights/inquisitor-filters';
-import { BLOCKED_RATING_REFUSED } from '$lib/knights/inquisitor-ruling';
+import { BLOCKED_RATING_REFUSED, SONG_RATING_REFUSED } from '$lib/knights/inquisitor-ruling';
 import { isRatingLevel } from '$lib/nsfw-levels';
 import { logToAxiom } from '../axiom';
 import { dbRead, dbWrite } from '../db';
@@ -354,9 +354,20 @@ export async function ruleOnInquisitorItem(
   try {
     const image = await dbWrite
       .selectFrom('Image')
-      .select(['ingestion', 'blockedFor'])
+      .select(['ingestion', 'blockedFor', 'type'])
       .where('id', '=', claimed.imageId)
       .executeTakeFirst();
+    // A song is rated only by its own scan; left open, the refused rating would serve it again.
+    if (image?.type === 'audio') {
+      await dbWrite
+        .updateTable('KnightsQueueItem')
+        .set({ status: 'Closed', reason: 'song', nextAttemptAt: null, updatedAt: utc(now) })
+        .where('id', '=', itemId)
+        .where('status', '=', 'Ruling')
+        .where('resolvedBy', '=', moderatorId)
+        .execute();
+      return { ok: false, error: SONG_RATING_REFUSED };
+    }
     if (image && hasBlockMarker(image) && level !== NsfwLevel.Blocked) {
       await release(itemId, moderatorId, now);
       return { ok: false, error: BLOCKED_RATING_REFUSED };
