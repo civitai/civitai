@@ -203,6 +203,15 @@ describe('rescanArticle', () => {
     expect(await requeued()).toEqual([CLEAN.id]);
   });
 
+  it("leaves the author's images outside the article alone", async () => {
+    const elsewhere = image(20);
+    storeImages({ connected: [CLEAN], byId: [elsewhere] });
+
+    await rescanArticle({ id: ARTICLE_ID, isModerator: true });
+
+    expect(await requeued()).toEqual([CLEAN.id]);
+  });
+
   it.each(CHANGED_AFTER_READ)(
     'leaves an image alone when it %s between the read and the write',
     async (_, change) => {
