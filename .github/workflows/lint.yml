@@ -103,6 +103,11 @@ name: Lint
 # within about one cadence interval plus the run, instead of within minutes; that is the trade.
 # scripts/__tests__/main-branch-ci-coverage.test.ts pins this path instead of a push-reachable one.
 #
+# The same batch dispatch also runs the `batch-suites` job, which dispatches the suites that left
+# pull requests and pushes (Go fuzz / govulncheck / go.mod tidy / benchmarks, moderator boot, ports
+# manifest, both image builds, Windows dev-env) on `main` when their paths changed, and posts their
+# verdict as the `Batch suites (main batch)` commit status. See that job.
+#
 # The push path deliberately does NOT run every job here. `eslint` is diff-vs-
 # base by construction and is skipped; so are the sibling workflows schema-drift
 # and submodule-pin-guard, which are base-relative gates with nothing to compare
@@ -1865,3 +1870,76 @@ jobs:
             say "**Could not remove the \`full-ci\` label** from #$PR (${out//[$'\r\n']/ }); remove it by hand, or later pushes keep running the unit shards."
           fi
           say "To run the full suite again, re-add it: \`gh pr edit $PR --add-label full-ci\`"
+
+  # ── THE MAIN BATCH'S OTHER SUITES, AS ONE COMMIT STATUS ──────────────────────────────────────
+  #
+  # Only on the batch dispatch on `main` (unit-batched.yml dispatches this workflow as
+  # github-actions[bot] with `only: unit`); a person's dispatch, full-ci.yml's `only: all` dispatch
+  # and any other branch never reach it. It needs nothing from `unit`, so it runs beside it.
+  #
+  # The suites that do not run on pull requests or pushes any more (Go fuzz / govulncheck /
+  # go.mod tidy / benchmarks, moderator boot, ports manifest, both image builds, Windows dev-env;
+  # the list is BATCH_WORKFLOWS in scripts/ci/unit-batched.mjs): it dispatches each one whose
+  # paths changed since the last green batch on `main` with `batch: true`, waits for their runs at
+  # this commit, and posts `Batch suites (main batch)` on it (scripts/ci/batch-suites.mjs):
+  # success, failure naming the red suites, or error when a run was not found or did not finish.
+  # A red opens a CI-watch item naming the commit range; nothing bisects it automatically.
+  # If a step here fails, the last step posts `error` naming it, so a crash is not read as green.
+  batch-suites:
+    name: Batch suites verified (main batch)
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' && github.ref == 'refs/heads/main' }}
+    # The slowest suite (Windows) takes minutes; the rest is queueing behind other jobs.
+    timeout-minutes: 90
+    permissions:
+      # Dispatching a workflow needs actions: write; reading the runs, actions: read.
+      actions: write
+      contents: read
+      statuses: write
+    steps:
+      # The script, its imports, and the workflow files whose paths it reads. No credentials kept.
+      - id: checkout
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/ci/batch-suites.mjs
+            scripts/ci/full-ci-paths.mjs
+            scripts/ci/unit-batched.mjs
+            .github/workflows/
+            .nvmrc
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - id: node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Dispatch the batch suites, wait, post the verdict
+        id: verdict
+        # Under the job's 90: a step timeout FAILS the step, so the crash step below still runs.
+        timeout-minutes: 85
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BATCH_WAIT_MINUTES: '75'
+        run: node scripts/ci/batch-suites.mjs run
+
+      - name: Post error on HEAD if this job crashed
+        # cancelled() too: a job-level timeout cancels the job, and failure() is then false.
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOMES: >-
+            checkout=${{ steps.checkout.outcome }}
+            setup-node=${{ steps.node.outcome }}
+            post-verdict=${{ steps.verdict.outcome }}
+        run: |
+          step=unknown
+          for pair in $OUTCOMES; do
+            if [ "${pair#*=}" = failure ]; then step=${pair%%=*}; break; fi
+          done
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=error -f "context=Batch suites (main batch)" \
+            -f "description=Batch suites verification crashed at step: $step. No verdict at this commit." \
+            -f "target_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          echo "::error title=Batch suites verification crashed::step $step failed; posted error on ${GITHUB_SHA:0:10}"

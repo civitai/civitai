@@ -78,6 +78,16 @@ name: Full CI on label
 # paginated API call) and the PR's own copy of each workflow file; it fails open, so an
 # unreadable file list, workflow or filter dispatches.
 #
+# ── THE MAIN BATCH'S SUITES: READY OR DRAFT, WHEN THEIR PATHS MATCH ──────────────────────────
+#
+# The workflows in BATCH_WORKFLOWS (scripts/ci/unit-batched.mjs: Go fuzz/govulncheck/tidy/bench,
+# moderator boot, ports manifest, the image builds, Windows) no longer run on a pull request at
+# all, so "ON A READY PR, LINT ONLY" does not hold for them: on a ready PR too, each one is
+# dispatched when its own paths filter matches a file the PR changes, through the same
+# scripts/ci/full-ci-paths.mjs check as on a draft (the batch itself uses that module too). A
+# docs-only PR dispatches none of them. apps.yml, the one other workflow here, keeps the rules
+# above.
+#
 # Not for fork PRs: their branch is not in this repo, so there is nothing here to dispatch on,
 # and their token cannot dispatch anyway. The `if` skips them.
 #
@@ -131,6 +141,7 @@ jobs:
           sparse-checkout: |
             scripts/ci/full-ci-unit-shards.mjs
             scripts/ci/full-ci-paths.mjs
+            scripts/ci/unit-batched.mjs
             .github/workflows/
           sparse-checkout-cone-mode: false
           persist-credentials: false
@@ -196,23 +207,28 @@ jobs:
             gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true \
               || gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all
           fi
-          # The other workflows: each has the same draft gate as Lint, and the label lifts it. On a
-          # PR that is not a draft their own PR runs are not draft-gated, so none is dispatched (see
-          # the header, "ON A READY PR, LINT ONLY"). Only an exact `false` skips.
-          others=(apps.yml moderator-boot.yml feed-go.yml beacon-go.yml app-index-go.yml app-data-go.yml
-            content-policy-go.yml registry-adapter-image.yml storage-hook-runner-image.yml)
-          # On a draft, each one is dispatched only when its own `paths:` filter matches a file the
-          # PR changes (scripts/ci/full-ci-paths.mjs; see the header, "ONLY WHAT THE PR'S FILES
-          # REACH"). The file list is read once; a failed or empty read leaves it empty, and the
-          # script then answers `run` for every workflow.
+          # apps.yml: the same draft gate as Lint, and the label lifts it. On a PR that is not a draft
+          # its own PR run is not draft-gated, so it is not dispatched (see the header, "ON A READY
+          # PR, LINT ONLY"). Only an exact `false` skips.
+          others=(apps.yml)
+          # The main batch's suites (BATCH_WORKFLOWS, scripts/ci/unit-batched.mjs) left pull requests
+          # and pushes, so no PR run covers them, ready or draft: each is dispatched whenever its own
+          # paths filter matches a file the PR changes (see the header, "THE MAIN BATCH'S SUITES").
+          mapfile -t batch < <(node scripts/ci/unit-batched.mjs workflows)
+          if [ "${#batch[@]}" -eq 0 ]; then
+            echo "::error::scripts/ci/unit-batched.mjs workflows listed no batch workflow" >&2
+            exit 1
+          fi
+          # Each one is dispatched only when its own `paths:` filter matches a file the PR changes
+          # (scripts/ci/full-ci-paths.mjs; see the header, "ONLY WHAT THE PR'S FILES REACH"). The
+          # file list is read once, ready or draft (the batch suites need it on both); a failed or
+          # empty read leaves it empty, and the script then answers `run` for every workflow.
           changed="$RUNNER_TEMP/full-ci-changed-files.txt"
           : > "$changed"
-          if [ "$DRAFT" != false ]; then
-            gh api "repos/$REPO/pulls/$PR/files?per_page=100" --paginate \
-                --jq '.[] | .filename, (.previous_filename // empty)' > "$changed" \
-              || { echo "could not list the PR's files; every workflow is dispatched"; : > "$changed"; }
-            echo "the PR changes $(wc -l < "$changed") path(s)"
-          fi
+          gh api "repos/$REPO/pulls/$PR/files?per_page=100" --paginate \
+              --jq '.[] | .filename, (.previous_filename // empty)' > "$changed" \
+            || { echo "could not list the PR's files; every workflow is dispatched"; : > "$changed"; }
+          echo "the PR changes $(wc -l < "$changed") path(s)"
           declare -A verdict reason
           for wf in "${others[@]}"; do
             if [ "$DRAFT" = false ]; then
@@ -237,6 +253,19 @@ jobs:
               reason[$wf]="$why; ${paths#* }"
             fi
           done
+          for wf in "${batch[@]}"; do
+            on="$RUNNER_TEMP/full-ci-on-$wf.json"
+            yq -o=json '.on' ".github/workflows/$wf" > "$on" 2>/dev/null || : > "$on"
+            paths=$(node scripts/ci/full-ci-paths.mjs "$changed" "$on" 2>/dev/null || echo "run the path check failed")
+            if [ "${paths%% *}" = skip ]; then
+              verdict[$wf]=skip
+              reason[$wf]="a main batch suite, but its paths filter does not match the PR (${paths#* })"
+            else
+              verdict[$wf]=run
+              reason[$wf]="a main batch suite, which no PR run covers; ${paths#* }"
+            fi
+          done
+          others+=("${batch[@]}")
           for wf in "${others[@]}"; do
             if [ "${verdict[$wf]}" = skip ]; then
               echo "$wf: not dispatched: ${reason[$wf]}"
