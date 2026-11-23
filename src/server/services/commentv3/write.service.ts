@@ -264,14 +264,20 @@ function lockComments(db: SqlRunner, ids: number[]) {
   );
 }
 
-/** Stamps `hiddenAt` anew on live comments already hidden; returns the rows it stamped. */
-export async function restampHiddenComments(db: SqlRunner, ids: number[]) {
+/**
+ * Hides live comments and stamps every one of them `hiddenAt` now, hidden already or not: the hide
+ * is this caller's from here on. `wasHidden` says which were hidden before.
+ */
+export async function hideComments(db: SqlRunner, ids: number[]) {
   if (!ids.length) return [];
-  await lockComments(db, ids);
-  const { rows } = await db.query<{ id: number }>(
-    `UPDATE "CommentV3" SET "hiddenAt" = now(), "updatedAt" = now()
-     WHERE id = ANY(string_to_array($1, ',')::int[]) AND hidden AND "deletedAt" IS NULL
-     RETURNING id`,
+  const { rows } = await db.query<{ id: number; wasHidden: boolean }>(
+    `WITH locked AS (
+       SELECT id, hidden FROM "CommentV3" WHERE id = ANY(string_to_array($1, ',')::int[])
+       ORDER BY id FOR UPDATE
+     )
+     UPDATE "CommentV3" c SET hidden = true, "hiddenAt" = now(), "updatedAt" = now()
+     FROM locked WHERE c.id = locked.id AND c."deletedAt" IS NULL
+     RETURNING c.id, locked.hidden AS "wasHidden"`,
     [ids.join(',')]
   );
   return rows;

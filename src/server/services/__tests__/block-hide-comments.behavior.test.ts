@@ -10,14 +10,31 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+// `afterRead` runs once the candidate read has returned, before any write: what lands in between.
+const holder = vi.hoisted(() => ({
+  db: null as unknown as PGlite,
+  afterRead: null as null | (() => Promise<unknown>),
+  read: false,
+}));
 
 vi.mock('~/server/db/pgDb', () => ({
   pgDbReadLong: {},
   pgDbWrite: {},
   pgDbRead: {
     connect: async () => ({
-      query: (sql: string, params?: unknown[]) => holder.db.query(sql, params),
+      query: async (sql: string, params?: unknown[]) => {
+        const result = await holder.db.query(sql, params);
+        // After the read's own transaction ends, so what runs here commits on its own.
+        if (sql === 'COMMIT' && holder.read) {
+          holder.read = false;
+          // Once: the first read only.
+          const run = holder.afterRead;
+          holder.afterRead = null;
+          await run?.();
+        }
+        if (sql.includes('WITH owned')) holder.read = true;
+        return result;
+      },
       release: () => undefined,
     }),
   },
@@ -103,7 +120,8 @@ beforeEach(async () => {
       (3004, ${BLOCKED}, 'comicChapter', 63, false, NULL);
   `);
 
-  // The writes are `setCommentFlags`, whose SQL runs as written.
+  holder.afterRead = null;
+  // The writes run their SQL as written.
   dbMock.dbWrite.$queryRawUnsafe.mockReset();
   dbMock.dbWrite.$queryRawUnsafe.mockImplementation(
     (async (sql: string, ...params: unknown[]) => (await holder.db.query(sql, params)).rows) as any
@@ -161,6 +179,35 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
     expect(await hiddenIds()).toEqual([1001]);
   });
 
+  const cleanupRecord = async () => {
+    const record = await runScamCleanup('comments', BLOCKED);
+    dbMock.dbWrite.userRestriction.findUnique.mockResolvedValue({
+      userId: BLOCKED,
+      type: 'scam',
+      triggers: [{ cleanup: record }],
+    } as never);
+  };
+
+  it('a hide landing between the read and the write is stamped by the block', async () => {
+    await holder.db.exec(`TRUNCATE "CommentV3";
+      INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId") VALUES (1001, ${BLOCKED}, 'image', 10);`);
+    holder.afterRead = cleanupRecord;
+    await hideBlockedUserCommentsOnOwnContent({ ownerId: BLOCKER, blockedUserId: BLOCKED });
+
+    expect(await restoreScamCase(1)).toEqual({ restored: 0 });
+    expect(await hiddenIds()).toEqual([1001]);
+  });
+
+  it('a restore landing between the read and the write still leaves the block hidden', async () => {
+    await holder.db.exec(`TRUNCATE "CommentV3";
+      INSERT INTO "CommentV3" (id, "userId", "entityType", "entityId") VALUES (1001, ${BLOCKED}, 'image', 10);`);
+    await cleanupRecord();
+    holder.afterRead = () => restoreScamCase(1);
+    await hideBlockedUserCommentsOnOwnContent({ ownerId: BLOCKER, blockedUserId: BLOCKED });
+
+    expect(await hiddenIds()).toEqual([1001]);
+  });
+
   it("hides on another owner's sections only when they are the blocker", async () => {
     await hideBlockedUserCommentsOnOwnContent({ ownerId: OTHER_OWNER, blockedUserId: BLOCKED });
 
@@ -178,14 +225,14 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
       blockedUserId: BLOCKED,
     });
 
-    expect(result).toEqual({ status: 'hidden', count: BLOCK_HIDE_MAX_COMMENTS, capped: true });
-    // Ten batches, each a row lock and then the update; then one re-stamp batch for 2001.
-    expect(dbMock.dbWrite.$queryRawUnsafe).toHaveBeenCalledTimes(22);
+    // The ceiling counts candidates, and 2001, hidden already, is the first of them.
+    expect(result).toEqual({ status: 'hidden', count: BLOCK_HIDE_MAX_COMMENTS - 1, capped: true });
+    expect(dbMock.dbWrite.$queryRawUnsafe).toHaveBeenCalledTimes(10);
     // The ceiling's worth plus the one already hidden.
     const { rows } = await holder.db.query<{ n: number }>(
       `SELECT count(*)::int n FROM "CommentV3" WHERE "userId" = ${BLOCKED} AND hidden`
     );
-    expect(rows[0].n).toBe(BLOCK_HIDE_MAX_COMMENTS + 1);
+    expect(rows[0].n).toBe(BLOCK_HIDE_MAX_COMMENTS);
   });
 
   it('reports the rows already hidden when a later batch fails', async () => {
@@ -194,17 +241,15 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
       SELECT g, ${BLOCKED}, 'image', 10 FROM generate_series(20000, 22999) g;
     `);
     const translate = dbMock.dbWrite.$queryRawUnsafe.getMockImplementation()!;
-    // Two batches (lock, update each) land; the third batch's lock fails.
     dbMock.dbWrite.$queryRawUnsafe
-      .mockImplementationOnce(translate)
-      .mockImplementationOnce(translate)
       .mockImplementationOnce(translate)
       .mockImplementationOnce(translate)
       .mockRejectedValueOnce(new Error('canceling statement'));
 
     await expect(
       hideBlockedUserCommentsOnOwnContent({ ownerId: BLOCKER, blockedUserId: BLOCKED })
-    ).resolves.toEqual({ status: 'failed', count: 2000 });
+      // Two batches landed; the first held 2001, hidden already.
+    ).resolves.toEqual({ status: 'failed', count: 1999 });
   });
 
   it('reports failure instead of throwing when a write fails', async () => {
