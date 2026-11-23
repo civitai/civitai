@@ -83,14 +83,14 @@
     type TagFilter,
   } from './trainingFlow';
   import { groupTags } from './tagReplace';
-  import LabelEditorModal from './LabelEditorModal.svelte';
+  import LabelEditorModal from './LabelEditorModalElements.svelte';
   import TagEditor from './TagEditor.svelte';
-  import GenerationPickerModal from './GenerationPickerModal.svelte';
+  import GenerationPickerModal from './GenerationPickerModalElements.svelte';
   import { fileDrop, isZip, pickedFiles } from './fileDrop';
   import { inFlight, uploadedFields, uploadTile } from './tileUpload';
   import { datasetEpoch, planRemoval } from './datasetRemoval';
-  import ReuseDatasetModal from './ReuseDatasetModal.svelte';
-  import ManageTagsModal from './ManageTagsModal.svelte';
+  import ReuseDatasetModal from './ReuseDatasetModalElements.svelte';
+  import ManageTagsModal from './ManageTagsModalElements.svelte';
   import RepeatsStepper from './RepeatsStepper.svelte';
   import type { GenerationItem } from '$lib/data/trainingRows';
 
