@@ -39,7 +39,11 @@ const publishedAt = async () =>
   ).rows[0].publishedAt;
 
 /** An image of the post; a `genre` goes in the song's Track row, the rest in its metadata. */
-async function addImage(id: number, type: string, { genre, ...metadata }: { genre?: string }) {
+async function addImage(
+  id: number,
+  type: string,
+  { genre, ...metadata }: { genre?: string; title?: string }
+) {
   await pg.db.query(`INSERT INTO "Image" (id, "postId", type, metadata) VALUES ($1, $2, $3, $4)`, [
     id,
     POST,

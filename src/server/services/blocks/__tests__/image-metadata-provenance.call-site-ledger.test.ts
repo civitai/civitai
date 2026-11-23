@@ -607,17 +607,6 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-server-keys',
     sites: 2,
   },
-  'src/server/services/post.service.ts#setSongCover': { decision: 'raw-server-keys', sites: 1 },
-  // The generated cover's link, set only while the song has none.
-  'src/server/services/post.service.ts#linkGeneratedSongCover': {
-    decision: 'raw-server-keys',
-    sites: 1,
-  },
-  // The genre is a value from the fixed list, merged the same way as the title.
-  'src/server/services/post.service.ts#writeSongGenre': {
-    decision: 'raw-literal-keys-scalar-values',
-    sites: 1,
-  },
   'src/pages/api/webhooks/youtube-upload.ts#handler': {
     decision: 'raw-literal-key-text-value',
     sites: 1,
