@@ -34,7 +34,13 @@ const REPORTED_USER = 990910003;
 const CASE_DETAILS = '{"case": "csam-restriction"}';
 
 type Target = { id: number; url: string };
-export type CsamCase = { label: string; restricts: boolean; mark: (target: Target) => string };
+/** `held`: the case makes the target held media (`heldImageSql`), served only through a held leg. */
+export type CsamCase = {
+  label: string;
+  restricts: boolean;
+  held?: true;
+  mark: (target: Target) => string;
+};
 
 const sibling = (t: Target, columns: Record<string, string | number> = {}) => {
   const row: Record<string, string | number> = {
@@ -357,16 +363,19 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
         'Confirmed'
       )}`,
   },
-  // The owner's account, and the post's unpublish by a CSAM text hold, do not restrict the image itself.
+  // civitai/civitai#10202: item-level CSAM signals stay with the grant; owner, post, model and entity
+  // signals do not.
   {
     label: 'its owner named as the subject of a CSAM report',
     restricts: false,
+    held: true,
     mark: (t) =>
       `INSERT INTO "CsamReport" ("userId", details, images) SELECT "userId", '${CASE_DETAILS}', '[]' FROM "Image" WHERE id = ${t.id};`,
   },
   {
     label: 'its owner named as the secondary user of a CSAM report',
     restricts: false,
+    held: true,
     mark: (t) =>
       `INSERT INTO "CsamReport" ("userId", details, images)
         SELECT ${REPORTED_USER}, '${CASE_DETAILS}'::jsonb || jsonb_build_object('secondaryUserId', "userId"::text), '[]'
@@ -375,6 +384,7 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   {
     label: 'its owner under an evidence hold',
     restricts: false,
+    held: true,
     mark: (t) =>
       `INSERT INTO "EvidenceHeldUser" ("userId") SELECT "userId" FROM "Image" WHERE id = ${t.id};`,
   },

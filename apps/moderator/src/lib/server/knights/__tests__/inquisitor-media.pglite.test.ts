@@ -150,16 +150,11 @@ const media = async () => {
 describe('getInquisitorQueue media, by viewer', () => {
   it('sends a restricted image to the route for a moderator cleared for CSAM review', async () => {
     // Restricted by its block reason, and by the scanner: neither applies to them.
-    for (const blockedFor of ['unlisted']) {
-      await db.exec(`DELETE FROM "KnightsQueueItem"; DELETE FROM "Image";`);
-      await queued({ blockedFor });
-      expect({ blockedFor, media: await media() }).toEqual({ blockedFor, media: 'restricted' });
-      const [item] = await getInquisitorQueue('all', { csamReview: true });
-      expect({ blockedFor, media: item.media }).toEqual({ blockedFor, media: 'retracted' });
-    }
+    await queued({ blockedFor: 'unlisted' });
+    expect(await media()).toBe('restricted');
+    expect((await getInquisitorQueue('all', { csamReview: true }))[0].media).toBe('retracted');
     scanner.verdict = 'hit';
-    const [item] = await getInquisitorQueue('all', { csamReview: true });
-    expect(item.media).toBe('retracted');
+    expect((await getInquisitorQueue('all', { csamReview: true }))[0].media).toBe('retracted');
   });
 
   it('draws an unblocked image of a held owner from storage for any moderator, not from the public CDN', async () => {

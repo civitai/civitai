@@ -1,6 +1,7 @@
 import {
   CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
   csamSignalImageSql,
+  heldImageSql,
   heldItemImageSql,
   unreadableImageSql,
 } from './held-media';
@@ -10,8 +11,8 @@ import { blockedForSignal, type BlockedForPatterns, type ScannerVerdict } from '
 /** Whether the retracted-media routes may serve the "Image" row aliased `image` at all, to anyone:
  *  it is blocked (or, with `cdnLeg`, scanned with its url refused by the CDN, as for a post or model
  *  a moderator removed or an owner's ban, and its file not held: `heldUrlSql` with `owners: false`),
- *  and not itself in the CSAM queue or blocked as CSAM (`heldItemImageSql`), which only the
- *  held-media route serves. With `cdnLeg`, the url must also be the row's alone. Who among
+ *  and not held media (`heldImageSql`), which the held-media route and the moderator app's held
+ *  leg serve. With `cdnLeg`, the url must also be the row's alone. Who among
  *  moderators may see it is `csamRestrictedSql`'s call. */
 export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
@@ -33,7 +34,7 @@ export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): 
   return `(
     ${eligible}
     -- NULL for an image with no review flag or block reason, so COALESCE before the NOT.
-    AND NOT COALESCE(${heldItemImageSql(image)}, false)
+    AND NOT COALESCE(${heldImageSql(image)}, false)
   )`;
 }
 

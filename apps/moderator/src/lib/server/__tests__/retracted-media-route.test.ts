@@ -197,6 +197,25 @@ describe('/api/retracted-media', () => {
   });
 });
 
+describe('/api/retracted-media, held media for a moderator without the CSAM grant', () => {
+  beforeEach(() => {
+    getModeratorMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null, kind: 'held' });
+  });
+
+  // civitai/civitai#10202: the answer must not tell held media apart from retracted media.
+  it('answers as for retracted media, audited as a held view', async () => {
+    expect((await call()).status).toBe(200);
+    expect(recordHeldView).toHaveBeenCalledWith(42, 7, 'web');
+    fetchMock.mockResolvedValue(
+      new Response('x', {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg', 'content-length': String(300 * 1024 * 1024) },
+      })
+    );
+    expect((await call()).status).toBe(413);
+  });
+});
+
 describe('/api/retracted-media eligibility read failure', () => {
   it('answers 503, no-store, and touches no storage', async () => {
     getModeratorMedia.mockRejectedValue(new Error('canceling statement due to statement timeout'));

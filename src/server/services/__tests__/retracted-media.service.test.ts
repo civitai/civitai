@@ -302,12 +302,8 @@ describe('getRetractedMedia', () => {
   });
 
   it('never serves held media, which the held-media route serves', async () => {
-    // CSAM block, CSAM review flag.
-    await expectTiers('none', [11, 13]);
-  });
-
-  it("serves the image of a report's subject to any moderator", async () => {
-    await expectTiers('anyMod', [20]);
+    // CSAM block, CSAM review flag, an owner who is a report's subject.
+    await expectTiers('none', [11, 13, 20]);
   });
 
   it('refuses a missing id', async () => {
@@ -628,15 +624,11 @@ describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
 
   // The route answers a null with 404: a moderator not cleared for CSAM review must not reach the
   // image of a report's owner through this leg.
-  it('serves the image of a CsamReport owner to a moderator not cleared for CSAM review', async () => {
+  it('refuses the image of a CsamReport owner to a moderator not cleared for CSAM review', async () => {
     await pg.query(
       `INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100204, '{}', '[]')`
     );
-    expect(
-      await getRetractedMedia(ids.retracted, { csamReview: false, cdnLeg: true })
-    ).toMatchObject({
-      url: expect.any(String),
-    });
+    expect(await getRetractedMedia(ids.retracted, { csamReview: false, cdnLeg: true })).toBeNull();
   });
 
   // A minor-safety ban alone is a minor signal, open to any moderator.
@@ -690,7 +682,17 @@ describe('rows sharing its url, its post text and its articles', () => {
     }
   );
 
-  it.each(CSAM_RESTRICTION_CASES.filter((c) => !c.restricts))(
+  // The main app's route has no held leg.
+  it.each(CSAM_RESTRICTION_CASES.filter((c) => c.held))(
+    'never serves an image with $label, which is held media',
+    async ({ mark }) => {
+      await pg.exec(mark(target));
+      expect(await getRetractedMedia(target.id, { csamReview: false })).toBeNull();
+      expect(await getRetractedMedia(target.id, { csamReview: true })).toBeNull();
+    }
+  );
+
+  it.each(CSAM_RESTRICTION_CASES.filter((c) => !c.restricts && !c.held))(
     'serves an image with $label to any moderator',
     async ({ mark }) => {
       await pg.exec(mark(target));
@@ -701,7 +703,8 @@ describe('rows sharing its url, its post text and its articles', () => {
   );
 });
 
-describe("a held account's image outside the moderator view", () => {
+// civitai/civitai#10202: only the moderator app's reader opens a held account's media.
+describe("a held account's image outside the moderator app", () => {
   const OWNER = 990100300;
   const IMAGE = 990000300;
   beforeAll(async () => {
@@ -721,7 +724,7 @@ describe("a held account's image outside the moderator view", () => {
       `INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100301, '{"secondaryUserId": "${OWNER}"}', '[]')`,
     ],
     ['under an evidence hold', `INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER})`],
-  ])('stays held everywhere but the moderator view when its owner is %s', async (_, mark) => {
+  ])('stays held everywhere outside the moderator app when its owner is %s', async (_, mark) => {
     await pg.exec(mark);
     try {
       const { rows } = await pg.query(`SELECT ${heldImageSql('i')} AS held,
@@ -729,12 +732,7 @@ describe("a held account's image outside the moderator view", () => {
           ${heldUrlSql('i."url"')} AS cdn
         FROM "Image" i WHERE i.id = ${IMAGE}`);
       expect(rows).toEqual([{ held: true, semantic: true, owner: true, cdn: true }]);
-      // A moderator without the grant gets the media and nothing about the hold.
-      expect(await getRetractedMedia(IMAGE, { csamReview: false })).toEqual({
-        url: `key-${IMAGE}`,
-        type: 'image',
-        mimeType: null,
-      });
+      expect(await getRetractedMedia(IMAGE, { csamReview: false })).toBeNull();
     } finally {
       await pg.exec(`DELETE FROM "CsamReport" WHERE "userId" IN (${OWNER}, 990100301);
         DELETE FROM "EvidenceHeldUser" WHERE "userId" = ${OWNER}`);

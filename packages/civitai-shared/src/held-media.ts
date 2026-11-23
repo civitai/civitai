@@ -44,8 +44,8 @@ export function heldItemImageSql(image: string): string {
 }
 
 /**
- * Whether the "Image" row aliased `image` may be served: it is flagged for CSAM itself
- * (`heldItemImageSql`), or its owner is held (`heldUserSql`). The one definition both routes run, as plain SQL so each app wraps it in
+ * Whether the "Image" row aliased `image` may be served: it is flagged for CSAM itself, or its owner
+ * is held (`heldUserSql`). The one definition both routes run, as plain SQL so each app wraps it in
  * its own builder.
  *
  * The owner legs skip an AiNotVerified block, which the owner lifts by verifying, and never count the

@@ -568,8 +568,8 @@ describe('rows sharing its url, its post text and its articles', () => {
     'keeps an image with $label to cleared moderators',
     async ({ mark }) => {
       await db.exec(mark(target));
-      expect(await getRetractedMedia(target.id, { csamReview: false })).toBeNull();
-      expect(await getRetractedMedia(target.id, { csamReview: true })).toMatchObject({
+      expect(await getModeratorMedia(target.id, { csamReview: false })).toBeNull();
+      expect(await getModeratorMedia(target.id, { csamReview: true })).toMatchObject({
         url: target.url,
       });
     }
@@ -579,7 +579,7 @@ describe('rows sharing its url, its post text and its articles', () => {
     'serves an image with $label to any moderator',
     async ({ mark }) => {
       await db.exec(mark(target));
-      expect(await getRetractedMedia(target.id, { csamReview: false })).toMatchObject({
+      expect(await getModeratorMedia(target.id, { csamReview: false })).toMatchObject({
         url: target.url,
       });
     }
@@ -599,7 +599,8 @@ describe('recordRetractedView', () => {
   });
 });
 
-describe("a held account's unblocked image, through /api/retracted-media's reader", () => {
+// civitai/civitai#10202: a held account's ordinary media is open to any moderator.
+describe("a held account's image, through /api/retracted-media's reader", () => {
   const OWNER = 990100400;
   const IMAGE = 990000400;
   beforeAll(async () => {
@@ -617,7 +618,6 @@ describe("a held account's unblocked image, through /api/retracted-media's reade
       DELETE FROM "EvidenceHeldUser" WHERE "userId" = ${OWNER}`);
   });
 
-  // The route audits a 'held' answer as a held view.
   it('serves a scanned image in the POI queue to any moderator', async () => {
     expect(await getModeratorMedia(IMAGE, { csamReview: false })).toEqual({
       url: `key-${IMAGE}`,
@@ -634,6 +634,20 @@ describe("a held account's unblocked image, through /api/retracted-media's reade
       expect(await getModeratorMedia(IMAGE, { csamReview: true })).toMatchObject({ kind: 'held' });
     } finally {
       await db.exec(`UPDATE "Image" SET "needsReview" = 'poi' WHERE id = ${IMAGE}`);
+    }
+  });
+
+  it('answers a blocked image of the same account as held media', async () => {
+    await db.exec(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'moderated' WHERE id = ${IMAGE}`
+    );
+    try {
+      expect(await getModeratorMedia(IMAGE, { csamReview: false })).toMatchObject({ kind: 'held' });
+      expect(await getModeratorMedia(IMAGE, { csamReview: true })).toMatchObject({ kind: 'held' });
+    } finally {
+      await db.exec(
+        `UPDATE "Image" SET ingestion = 'Scanned', "blockedFor" = NULL WHERE id = ${IMAGE}`
+      );
     }
   });
 

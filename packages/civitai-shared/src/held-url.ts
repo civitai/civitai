@@ -125,10 +125,8 @@ export function imageCoveredText(image: string, user: string): string {
  * An unreadable fact fails the statement rather than reading as not held.
  * With `matureUnderage: false` a `mature-underage` unpublish alone does not hold: it takes the
  * media off the site but does not limit which moderators may view it.
- * With `owners: false` only a moderator delete on the url flagged for CSAM review, that no verified
- * report covers, holds: nothing about an owner, a post or a model, so a takedown never does. The
- * image rows on the url are the caller's (`csamRestrictedSql` reads their signals). For which
- * moderators may view the media, never for what cdn-access retracts.
+ * With `owners: false` only a moderator delete flagged for CSAM review that no verified report covers
+ * holds. Use it to decide which moderators may view media, never for what cdn-access retracts.
  */
 export function heldUrlSql(
   url: string,
