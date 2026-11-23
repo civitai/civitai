@@ -15,6 +15,15 @@ export type { Sleep } from './pacing';
 export { createEmail } from './create-email';
 export type { Email } from './create-email';
 export { removeTags } from './string';
-export { renderEmailShell, emailTheme, EMAIL_PREHEADER_CLASS, EMAIL_MUTED_CLASS } from './shell';
-export type { EmailShellInput } from './shell';
+export {
+  renderEmailShell,
+  renderEmailSummary,
+  renderEmailCallout,
+  emailTheme,
+  emailAccents,
+  EMAIL_PREHEADER_CLASS,
+  EMAIL_MUTED_CLASS,
+  EMAIL_DECORATION_CLASSES,
+} from './shell';
+export type { EmailShellInput, EmailAccent } from './shell';
 export { default as addressparser } from 'nodemailer/lib/addressparser/index.js';

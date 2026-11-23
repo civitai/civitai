@@ -1,6 +1,6 @@
 import { createEmail } from '~/server/email/templates/base.email';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { renderEmailCallout, simpleEmailWithTemplate } from '~/server/email/templates/util';
 
 type BountyExpiredData = {
   bounty: {
@@ -32,6 +32,9 @@ export const bountyExpiredReminderEmail = createEmail({
   html({ user, bounty }: BountyExpiredData) {
     const refundUrl = getRefundFormUrl({ user, bounty });
     return simpleEmailWithTemplate({
+      icon: '⏳',
+      accent: 'buzz',
+      eyebrow: 'Action needed',
       header: `Reminder: Your bounty <strong>${bounty.name}</strong> has expired!`,
       body: `
        <p>
@@ -40,7 +43,10 @@ export const bountyExpiredReminderEmail = createEmail({
        <p>
           If you don't like any of the entries, you can submit a bounty refund request using this <a href="${refundUrl}" target="_blank">request form</a>.
        </p>
-       <p style="color: red;">You have 24 hours to request a refund or award an entry. Otherwise, your bounty will be awarded to the entry with the most reactions.</p>
+       ${renderEmailCallout(
+         '<strong>You have 24 hours to request a refund or award an entry.</strong> Otherwise, your bounty will be awarded to the entry with the most reactions.',
+         { accent: 'red' }
+       )}
       `,
       btnLabel: 'Check out all entries!',
       btnUrl: bountyUrl(bounty),

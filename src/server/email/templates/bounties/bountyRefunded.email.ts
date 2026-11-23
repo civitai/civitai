@@ -1,5 +1,5 @@
 import { createEmail } from '~/server/email/templates/base.email';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { renderEmailCallout, simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
 type BountyExpiredData = {
@@ -20,13 +20,19 @@ export const bountyRefundedEmail = createEmail({
   }),
   html({ bounty }: BountyExpiredData) {
     return simpleEmailWithTemplate({
+      icon: '💸',
+      accent: 'buzz',
+      eyebrow: 'Bounty refunded',
       header: `Your bounty <strong>${bounty.name}</strong> has been refunded.`,
       body: `
-       <p>
+       <p style="margin: 0;">
           The Buzz you had put down for your bounty has been returned to your account and you can use it to create a new bounty expecting better results.
-       </p> 
-       <p>If you requested a refund for your bounties because you did not like any of the entries, try increasing the award amount so that more experienced creators jump in.  </p>
-       <p>If a refund was issued because no entries were posted, consider improving the bounty&rsquo;s description, details or prize pool.</p>
+       </p>
+       ${renderEmailCallout(
+         `<p style="margin: 0 0 8px 0;">If you requested a refund for your bounties because you did not like any of the entries, try increasing the award amount so that more experienced creators jump in.</p>
+         <p style="margin: 0;">If a refund was issued because no entries were posted, consider improving the bounty&rsquo;s description, details or prize pool.</p>`,
+         { accent: 'buzz' }
+       )}
       `,
       btnLabel: 'Go to my bounty',
       btnUrl: bountyUrl(bounty),

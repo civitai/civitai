@@ -1,5 +1,5 @@
 import { createEmail } from '~/server/email/templates/base.email';
-import { emailTheme, simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { renderEmailCallout, simpleEmailWithTemplate } from '~/server/email/templates/util';
 
 // Category 3 (unsupported / wrapped token, e.g. cbBTC): NP cannot convert the
 // funds to our USDC payout, so only NP can refund them and they require the
@@ -40,6 +40,9 @@ export const stuckCryptoDepositUserEmail = createEmail({
       .filter(Boolean)
       .join('\n');
     return simpleEmailWithTemplate({
+      icon: '🪙',
+      accent: 'buzz',
+      eyebrow: 'Crypto deposit',
       header: 'Your crypto deposit needs a refund from NowPayments',
       body: `
       <p>Hi ${username},</p>
@@ -59,9 +62,7 @@ export const stuckCryptoDepositUserEmail = createEmail({
         <li>A short <strong>video of your withdrawal record</strong> showing the TxID, payin address, token, amount, and date</li>
       </ul>
       <p style="margin-bottom:6px;">Your deposit details (copy and paste these to NowPayments):</p>
-      <div style="background:#f4f4f4; color:${
-        emailTheme.text
-      }; border-radius:6px; padding:12px; font-family:Menlo,Consolas,monospace; font-size:13px; line-height:20px; white-space:pre-wrap;">${details}</div>
+      ${renderEmailCallout(details, { accent: 'gray', mono: true })}
       <p>
         If you have any questions, just reach us at
         <a href="mailto:hello@civitai.com">hello@civitai.com</a> and we'll help however we can.
