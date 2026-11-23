@@ -244,6 +244,12 @@ describe('addSkillCheck', () => {
       expect(await rows()).toEqual([]);
     });
 
+    it('takes a child tag on an image rated below R', async () => {
+      await seedImage(pg, 1, { nsfwLevel: 2 });
+      await pg.query(`INSERT INTO "TagsOnImageDetails" ("imageId","tagId") VALUES (1,5351)`);
+      expect(await add(1, '2')).toBe('added');
+    });
+
     it('does not count a closed report or a decided appeal', async () => {
       await seedImage(pg, 1);
       await pg.query(`INSERT INTO "Report" ("id","status") VALUES (51,'Actioned')`);

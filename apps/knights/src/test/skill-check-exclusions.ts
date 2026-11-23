@@ -21,6 +21,15 @@ export const exclusionCases = (pg: () => PGlite): [string, (id: number) => Promi
       ]),
   ],
   [
+    'minor-signal',
+    async (id) => {
+      await pg().query(`UPDATE "Image" SET "nsfwLevel"=4 WHERE id=$1`, [id]);
+      await pg().query(`INSERT INTO "TagsOnImageDetails" ("imageId","tagId") VALUES ($1,5351)`, [
+        id,
+      ]);
+    },
+  ],
+  [
     'unreadable-image',
     (id) => pg().query(`UPDATE "Image" SET ingestion='Pending' WHERE id=$1`, [id]),
   ],
@@ -132,6 +141,32 @@ export const extraExclusionCases = (
     (id) => pg().query(`UPDATE "Image" SET "needsReview"='csam' WHERE id=$1`, [id]),
   ],
   [
+    'minor-signal, scan flag leg (minor detected)',
+    async (id) => {
+      const item = await pg().query<{ id: number }>(
+        `INSERT INTO "ScanLabelItem" ("imageId") VALUES ($1) RETURNING id`,
+        [id]
+      );
+      await pg().query(
+        `INSERT INTO "ScanLabelFlag" ("itemId","source","flaggerVersion","workflowId","flaggedAt","snapshot") VALUES ($1,'t','1','wf-minor',now(),'{"minorDetected":"true"}')`,
+        [item.rows[0].id]
+      );
+    },
+  ],
+  [
+    'minor-signal, moderator vote leg (minor reason)',
+    async (id) => {
+      const item = await pg().query<{ id: number }>(
+        `INSERT INTO "ScanLabelItem" ("imageId") VALUES ($1) RETURNING id`,
+        [id]
+      );
+      await pg().query(
+        `INSERT INTO "ScanLabelVote" ("itemId","userId","block","reason") VALUES ($1,9,true,'minor-realistic')`,
+        [item.rows[0].id]
+      );
+    },
+  ],
+  [
     'minor-or-poi-model, poi leg',
     async (id) => {
       await pg().query(`INSERT INTO "Model" ("id","poi") VALUES (62,true)`);
@@ -146,4 +181,4 @@ export const extraExclusionCases = (
 
 /** Every table the exclusion cases write, for a test's TRUNCATE. */
 export const EXCLUSION_TABLES =
-  '"EvidenceHoldImage","EvidenceHoldPost","ImageReport","PostReport","ModelReport","UserReport","Report","ImageFlag","Appeal","TextScanHold","CsamReport","EvidenceHeldUser","ImageCdnModeratorDelete","ImageResourceNew","ModelVersion","Model","User","ScanLabelItem","TagsOnImageDetails","BlockedImage"';
+  '"EvidenceHoldImage","EvidenceHoldPost","ImageReport","PostReport","ModelReport","UserReport","Report","ImageFlag","Appeal","TextScanHold","CsamReport","EvidenceHeldUser","ImageCdnModeratorDelete","ImageResourceNew","ModelVersion","Model","User","ScanLabelItem","ScanLabelFlag","ScanLabelVote","TagsOnImageDetails","BlockedImage"';

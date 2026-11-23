@@ -7,6 +7,7 @@ import {
   type Transaction,
 } from 'kysely';
 import { servableImage } from '@civitai/db/knights';
+import { childBrowsingTagIds, NsfwLevel } from '@civitai/shared';
 import type { DB } from '@civitai/db-schema/kysely';
 import { csamSignalImageSql, heldImageSql, unreadableImageSql } from '@civitai/shared/held-media';
 import { evidenceHeldUrlSql, reportListedUrlSql } from '@civitai/shared/held-url';
@@ -40,6 +41,54 @@ export const SKILL_CHECK_EXCLUSIONS: {
   {
     name: 'csam-signal',
     clause: () => sql<SqlBool>`NOT COALESCE(${sql.raw(csamSignalImageSql('img'))}, false)`,
+  },
+  // Kept here though main dropped them from the shared predicate (that change was about moderator media access; these
+  // images go to players): the legs of the former `suspectImageSql` that `csam-signal` and `servableImage` do not cover.
+  // (a) A child tag on an image rated R or above, or unrated; (b) a scan flag or moderator vote marking a minor.
+  {
+    name: 'minor-signal',
+    clause: (eb) =>
+      eb.and([
+        eb.or([
+          eb.and([eb('img.nsfwLevel', '!=', 0), eb('img.nsfwLevel', '<', NsfwLevel.R)]),
+          none(
+            eb,
+            eb
+              .selectFrom('TagsOnImageDetails as st')
+              .select(sql<number>`1`.as('one'))
+              .whereRef('st.imageId', '=', 'img.id')
+              .where('st.tagId', 'in', childBrowsingTagIds)
+              .where('st.disabled', '=', false)
+          ),
+        ]),
+        none(
+          eb,
+          eb
+            .selectFrom('ScanLabelItem as si')
+            .select(sql<number>`1`.as('one'))
+            .whereRef('si.imageId', '=', 'img.id')
+            .where((w) =>
+              w.or([
+                w.exists(
+                  w
+                    .selectFrom('ScanLabelFlag as sf')
+                    .select(sql<number>`1`.as('one'))
+                    .whereRef('sf.itemId', '=', 'si.id')
+                    .where(sql<SqlBool>`sf.snapshot ->> 'minorDetected' = 'true'`)
+                ),
+                w.exists(
+                  w
+                    .selectFrom('ScanLabelVote as sv')
+                    .select(sql<number>`1`.as('one'))
+                    .whereRef('sv.itemId', '=', 'si.id')
+                    .where((v) =>
+                      v.or([v('sv.reason', '=', 'school-nsfw'), v('sv.reason', 'like', 'minor-%')])
+                    )
+                ),
+              ])
+            )
+        ),
+      ]),
   },
   // The shared unscanned predicate: an image whose scan has not landed.
   {
