@@ -423,8 +423,8 @@ export async function expireBeyondCap(
 }
 
 /**
- * The next review for this moderator: one another moderator already voted on first, then the oldest, each read as one
- * bounded batch in `(status, createdAt)` order of reviews on images that pass the safety exclusions now. A candidate the
+ * The next review for this moderator: one another moderator already voted on first (oldest first), then the newest
+ * unvoted one, each read as one bounded batch of reviews on images that pass the safety exclusions now. A candidate the
  * per-image checks rule out for good is closed `excluded` on the way. `unreadable`: the safety exclusions could not be read
  * (fail closed: nothing is served).
  */
