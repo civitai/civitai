@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
-import { keepPermanentScanFailureSql } from '~/server/common/image-visibility';
+import { hasBlockMarkerSql, keepPermanentScanFailureSql } from '~/server/common/image-visibility';
 import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedown-activities';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob, type JobContext } from '~/server/jobs/job';
@@ -723,11 +723,25 @@ async function sendScanItems(
 
 export { MODERATOR_TAKEDOWN_ACTIVITIES };
 
+/** Blocked rows, plus Error rows that still carry a block marker. */
+const holdSelectionSql = (alias: string) => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`(${t}.ingestion = 'Blocked'::"ImageIngestionStatus"
+    OR (${t}.ingestion = 'Error'::"ImageIngestionStatus" AND ${hasBlockMarkerSql(alias)}))`;
+};
+
+/** The images of these legal-hold owners that the hold sets keep. */
+export const legalHeldImagesSql = (userIds: number[]) => Prisma.sql`
+  SELECT id FROM "Image"
+  WHERE "userId" = ANY(${userIds})
+    AND ${holdSelectionSql('Image')}
+`;
+
 /**
- * The Blocked images of accounts under an account hold, read over the owners those holds can name:
- * one with a CSAM review flag, a CSAM block, or an image a report lists. The owners are read first
- * and materialized: as an IN subquery the planner misjudges how many there are and hash-joins every
- * Blocked image.
+ * The images in the hold selection of accounts under an account hold, read over the owners those
+ * holds can name: one with a CSAM review flag, a CSAM block, or an image a report lists. The owners
+ * are read first and materialized: as an IN subquery the planner misjudges how many there are and
+ * hash-joins every Blocked image.
  */
 export const accountHeldBlockedImagesSql = Prisma.sql`
   WITH owners AS MATERIALIZED (
@@ -747,15 +761,19 @@ export const accountHeldBlockedImagesSql = Prisma.sql`
     WHERE ${accountHoldSql(Prisma.raw('c."userId"'), true)}
   )
   SELECT i.id FROM "Image" i
-  WHERE i.ingestion = 'Blocked'::"ImageIngestionStatus"
+  WHERE ${holdSelectionSql('i')}
     AND i."userId" = ANY (ARRAY(SELECT "userId" FROM owners))
 `;
 
-/** Blocked images a pending review or a CSAM block keeps out of the purge. Read on dbWrite. */
+/** Images in the hold selection that a pending review or a CSAM block keeps out of the purge. Read on dbWrite. */
 export const reviewHeldBlockedImagesSql = Prisma.sql`
   SELECT id, "needsReview", "blockedFor" FROM "Image"
   WHERE ("needsReview" IN ('appeal', 'csam') OR "blockedFor" = 'CSAM')
     AND ingestion = 'Blocked'::"ImageIngestionStatus"
+  UNION ALL
+  SELECT id, "needsReview", "blockedFor" FROM "Image"
+  WHERE ("needsReview" IN ('appeal', 'csam') OR "blockedFor" = 'CSAM')
+    AND ingestion = 'Error'::"ImageIngestionStatus" AND ${hasBlockMarkerSql('Image')}
 `;
 
 /**
@@ -840,13 +858,9 @@ export const removeBlockedImages = createJob(
       // Excluded from the batch rather than filtered out after: held rows stay queued forever, so
       // in an oldest-first window they would occupy the whole batch every run, stalling deletion
       // site-wide for every other user.
-      heldActive = (
-        await dbRead.$queryRaw<{ id: number }[]>`
-          SELECT id FROM "Image"
-          WHERE "userId" = ANY(${heldUserIds})
-            AND ingestion = 'Blocked'::"ImageIngestionStatus"
-        `
-      ).map((x) => x.id);
+      heldActive = (await dbRead.$queryRaw<{ id: number }[]>(legalHeldImagesSql(heldUserIds))).map(
+        (x) => x.id
+      );
 
       // The held images that are past retention, i.e. the ones this run would otherwise delete.
       const wouldSkip = heldActive.length
@@ -921,7 +935,7 @@ export const removeBlockedImages = createJob(
           await dbWrite.$queryRaw<{ id: number }[]>`
         SELECT id FROM "Image"
         WHERE "userId" = ANY(${evidenceHeldUserIds}::int[])
-          AND ingestion = 'Blocked'::"ImageIngestionStatus"
+          AND ${holdSelectionSql('Image')}
       `
         ).map((x) => x.id)
       : [];
