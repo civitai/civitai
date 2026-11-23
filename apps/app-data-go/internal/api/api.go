@@ -147,6 +147,8 @@ func cors(h http.Header) {
 	h.Set("Access-Control-Allow-Headers", "Authorization")
 	h.Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	h.Set("Access-Control-Max-Age", "600")
+	// A passed-on 429 names its delay; the frame reading it can see the header only if exposed.
+	h.Set("Access-Control-Expose-Headers", "Retry-After")
 }
 
 func preflight(w http.ResponseWriter, _ *http.Request) {
@@ -446,8 +448,12 @@ func (s *Server) restError(w http.ResponseWriter, start time.Time, err error) {
 	var re *rest.Error
 	switch {
 	case errors.As(err, &re) && re.Status >= 400 && re.Status < 500:
-		// The site's own refusal (401, 403, 404, 429…), passed on as it sent it.
+		// The site's own refusal (401, 403, 404, 429…), passed on as it sent it: its body (a 429's
+		// carries the `rateLimit` meta) and its Retry-After.
 		w.Header().Set("Content-Type", "application/json")
+		if re.RetryAfter != "" {
+			w.Header().Set("Retry-After", re.RetryAfter)
+		}
 		w.WriteHeader(re.Status)
 		body := re.Body
 		if body == nil {

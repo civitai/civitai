@@ -13,6 +13,7 @@ import { basicCredentials } from './http';
 import {
   chargeTokenExchangeFailure,
   checkTokenExchangeRateLimit,
+  oauthRateLimitRef,
   oauthRetryAfter,
   rateLimitedResponse,
 } from './rate-limit';
@@ -230,7 +231,9 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
     const headers = new Headers(NO_STORE);
     for (const [k, v] of new Headers(extra)) headers.set(k, v);
     if (error === 'rate_limited') {
-      return rateLimitedResponse(oauthRetryAfter('token-exchange'), headers, DESCRIPTION[error]);
+      return rateLimitedResponse(oauthRetryAfter('token-exchange'), headers, DESCRIPTION[error], {
+        limit: oauthRateLimitRef('token-exchange'),
+      });
     }
     return json(
       { error, error_description: DESCRIPTION[error] },
@@ -246,7 +249,8 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       return rateLimitedResponse(
         oauthRetryAfter('token-exchange'),
         new Headers(NO_STORE),
-        DESCRIPTION.rate_limited
+        DESCRIPTION.rate_limited,
+        { limit: oauthRateLimitRef('token-exchange-ip') }
       );
     }
     return refuse(
@@ -309,7 +313,8 @@ export async function handleBlockTokenExchange(input: BlockExchangeInput): Promi
       return rateLimitedResponse(
         oauthRetryAfter('token-exchange'),
         new Headers(NO_STORE),
-        DESCRIPTION.rate_limited
+        DESCRIPTION.rate_limited,
+        { limit: oauthRateLimitRef('token-exchange') }
       );
     }
     if (!allow.callers.has(caller.id)) {
