@@ -206,6 +206,48 @@ describe('the Up next panel', () => {
       }
     });
 
+  for (const scheme of ['light', 'dark'])
+    test(`its Shuffle, Repeat and Clear read at WCAG AA in ${scheme} mode, hovered too`, async () => {
+      useMusicPlayerStore.setState({ shuffle: true, repeat: 'all' });
+      player().playTrack(nowPlaying, { list: { name: 'Feed', tracks: [nowPlaying, rain] } });
+      const previous = document.documentElement.getAttribute('data-mantine-color-scheme');
+      try {
+        await openPanel();
+        document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
+        /** `[r, g, b, alpha]` of a computed `rgb()` / `rgba()`. */
+        const parse = (css: string) => {
+          const [r, g, b, a = 1] = css.match(/[\d.]+/g)!.map(Number);
+          return [r, g, b, css.startsWith('rgba') ? a : 1];
+        };
+        const lum = (c: number[]) =>
+          c
+            .slice(0, 3)
+            .map((v) => v / 255)
+            .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+            .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+        const surface = parse(getComputedStyle(panel().element()).backgroundColor);
+        // The scheme took effect: white in light, dark-5 in dark.
+        if (scheme === 'dark') expect(lum(surface)).toBeLessThan(0.05);
+        else expect(lum(surface)).toBeGreaterThan(0.9);
+        const ratio = (el: Element) => {
+          const [r, g, b, a] = parse(getComputedStyle(el).backgroundColor);
+          const ground = lum([r, g, b].map((c, i) => c * a + surface[i] * (1 - a)));
+          const text = lum(parse(getComputedStyle(el).color));
+          return (Math.max(text, ground) + 0.05) / (Math.min(text, ground) + 0.05);
+        };
+        for (const name of ['Shuffle', 'Repeat', 'Clear']) {
+          const control = inPanel(name).element();
+          expect(ratio(control), name).toBeGreaterThanOrEqual(4.5);
+          await userEvent.hover(control);
+          expect(ratio(control), `${name} hovered`).toBeGreaterThanOrEqual(4.5);
+        }
+      } finally {
+        if (previous) document.documentElement.setAttribute('data-mantine-color-scheme', previous);
+        else document.documentElement.removeAttribute('data-mantine-color-scheme');
+        useMusicPlayerStore.setState({ shuffle: false, repeat: 'off' });
+      }
+    });
+
   test('the drag handle says what it does in a tooltip over the panel', async () => {
     player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm, chrome] } });
     await openPanel();

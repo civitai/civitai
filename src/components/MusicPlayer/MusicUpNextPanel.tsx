@@ -297,11 +297,12 @@ export function MusicUpNextList({
 function PanelHeader({ summary, sheet }: { summary: string | null; sheet: boolean }) {
   const shuffle = useMusicPlayerStore((s) => s.shuffle);
   const repeat = useMusicPlayerStore((s) => s.repeat);
-  // System toggles in the panel stay Civitai blue (Pencil `uGWPy`).
+  // System toggles in the panel stay Civitai blue (Pencil `uGWPy`), at WCAG AA: blue 8 on white
+  // and on the gray-1 hover (blue 6 was 3.5:1), blue 4 in dark.
   const toggle = (on: boolean) =>
     clsx(
       'flex size-[30px] items-center justify-center rounded-lg hover:bg-gray-1 dark:hover:bg-dark-4',
-      on ? 'text-blue-6 dark:text-blue-4' : dimmed
+      on ? 'text-blue-8 dark:text-blue-4' : dimmed
     );
   return (
     <div className="flex shrink-0 items-center gap-1 border-b border-gray-3 px-[18px] py-4 dark:border-dark-4">
@@ -344,8 +345,8 @@ function PanelHeader({ summary, sheet }: { summary: string | null; sheet: boolea
       <button
         type="button"
         onClick={() => store().clearUpNext()}
-        // Pencil `PPbvV`: blue 3 in dark.
-        className="ml-1 rounded px-1 text-[13px] font-semibold text-blue-6 hover:underline dark:text-blue-3"
+        // Pencil `PPbvV`: blue 3 in dark; blue 8 in light for 4.5:1 on white.
+        className="ml-1 rounded px-1 text-[13px] font-semibold text-blue-8 hover:underline dark:text-blue-3"
       >
         Clear
       </button>
