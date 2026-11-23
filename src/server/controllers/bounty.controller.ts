@@ -39,7 +39,7 @@ import { handleLogError } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { publicBountyDetails } from '~/server/utils/bounty-details';
 import type { NsfwLevel } from '~/server/common/enums';
-import { isMinorMatureImage } from '~/server/common/image-visibility';
+import { minorMatureHidden } from '~/server/common/image-visibility';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
@@ -52,11 +52,11 @@ import {
 } from '~/server/services/bounty-rated-level';
 import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
 
-/** The minor content rule again, at the level a bounty's flag raised an image to. */
+/** Run after a bounty's flag raises an image's nsfwLevel: the SQL rule saw the stored level. */
 const keepsMinorRule =
   (viewer: { id: number; isModerator?: boolean } | undefined) =>
   (image: { minor?: boolean | null; nsfwLevel: number; userId?: number | null }) =>
-    !!viewer?.isModerator || image.userId === viewer?.id || !isMinorMatureImage(image);
+    !minorMatureHidden(image, viewer?.id, viewer?.isModerator);
 
 export const getInfiniteBountiesHandler = async ({
   input,

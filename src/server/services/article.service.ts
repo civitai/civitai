@@ -10,7 +10,7 @@ import { truncate } from 'lodash-es';
 import type { NsfwLevel } from '~/server/common/enums';
 import {
   hasBlockMarker,
-  isMinorMatureImage,
+  minorMatureHidden,
   withoutMinorFlag,
 } from '~/server/common/image-visibility';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
@@ -846,14 +846,6 @@ export const articleContentImageSelect = {
   modelRestricted: true,
 } satisfies Prisma.ImageSelect;
 
-/** A minor-flagged R+ image (`isMinorMatureImage`) is shown only to its uploader and moderators. */
-function minorMatureHidden(
-  image: { userId: number; minor?: boolean | null; nsfwLevel: number } | null | undefined,
-  viewerId?: number,
-  isModerator?: boolean
-) {
-  return !!image && !isModerator && image.userId !== viewerId && isMinorMatureImage(image);
-}
 
 /**
  * Whether a cover or banner its model withholds is hidden from this non-moderator viewer: only the
