@@ -5556,7 +5556,7 @@ describe('viewer-keyed documents', () => {
         'content_rejected'
       );
       expect((r.body as { details: { field: string } }).details.field).toBe('key');
-      expect((await vkRows(A, 'votes')).map((d) => d.key.split(':')[0])).toEqual([VK_P1]);
+      expect((await vkRows(A, 'votes')).map((d) => String(d.key).split(':')[0])).toEqual([VK_P1]);
     });
 
     it('a blocked body is refused as on any shared put', async () => {
