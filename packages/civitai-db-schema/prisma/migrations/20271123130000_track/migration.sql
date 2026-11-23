@@ -2,6 +2,8 @@
 -- "Image".metadata.genre.
 --
 -- MANUAL APPLY: a human applies this per environment BEFORE the code that writes the table ships.
+-- Then, on any environment that holds song data, run backfill.sql (this directory) right after it,
+-- dry run first. It is not in this file: where there are no songs it would only scan "Image".
 -- Additive: one new table, no change to "Image". The foreign keys briefly lock "Image"; the lock
 -- timeout makes a busy table fail fast so the statement can be retried. Idempotent.
 SET lock_timeout = '3s';
