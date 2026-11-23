@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
@@ -194,7 +195,7 @@ const BASE_SCHEMA = `
       "aiNsfwLevel" int,
       "trainingCopyState" text
     );
-    CREATE TYPE "JobQueueType" AS ENUM ('BlockedImageDelete', 'ImageScan', 'ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
+    CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'BlockedImageDelete', 'ImageScan', 'ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
     CREATE TABLE "JobQueue" (
       type "JobQueueType" NOT NULL,
@@ -209,6 +210,7 @@ const BASE_SCHEMA = `
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(BASE_SCHEMA);
+  await holder.db.exec(imageUseTablesSql);
   // Reports already sent when the migration runs, for its backfill.
   await holder.db.exec(`
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details) VALUES
@@ -637,6 +639,8 @@ describe('purgeHoldGuard on the delete', () => {
       await holder.db.exec(`
         INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel", "needsReview")
         VALUES (${LIVE_HELD}, ${MANUAL_USER}, 'Scanned', 1, 'csam');
+        -- Kept by the trigger, not by an open case.
+        INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES (${LIVE_HELD}, 'Dismissed');
       `);
 
       await imageService.deleteImages([LIVE_HELD], { actor: { system: 'test' } });
@@ -1200,12 +1204,13 @@ describe('purgeHoldGuard on the delete', () => {
   });
 
   // The positive control for the cases above: without the guard or the trigger the same call
-  // deletes every fixture row, so what they keep is the guard's or the trigger's doing.
-  it('deletes every listed image when no guard is given', async () => {
+  // deletes every fixture row but the one its child-safety case keeps, so what they keep is the
+  // guard's or the trigger's doing.
+  it('deletes every listed image but one in a child-safety case when no guard is given', async () => {
     await insertMarkedOwners();
     await imageService.deleteImages([...ALL, ...MARKED], { actor: { system: 'test' } });
 
-    expect(await remaining()).toEqual([]);
+    expect(await remaining()).toEqual([FLAGGED]);
   });
 });
 
@@ -1465,6 +1470,7 @@ describe('the migration backfill with a keep list', () => {
   beforeAll(async () => {
     db = new PGlite();
     await db.exec(BASE_SCHEMA);
+    await db.exec(imageUseTablesSql);
     await db.exec(`
       INSERT INTO "CsamReport" (id, "userId", "reportSentAt", details) VALUES
         (1, ${KEPT_USER}, now() - interval '400 days', '{"secondaryUserId": ${KEPT_SECONDARY_USER}}'),

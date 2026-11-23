@@ -7980,8 +7980,10 @@ enum JobQueueType {
   /// by that service's own database functions. No job in this app processes these rows; the
   /// moderator queue-health panel only counts them.
   CsamArchive
-  /// A delete that has to wait: an owner's own delete a child-safety case keeps, or a parent's cleanup
-  /// of an image something still keeps. `pending-deletes` carries it out once nothing blocks it.
+  /// A delete that has to wait: a delete a child-safety case keeps (the owner's, carried out as the
+  /// owner, or anyone else's, carried out as the system; `removeBlockedImages` keeps its own in its own
+  /// queue instead), or a parent's cleanup of an image something still keeps.
+  /// `pending-deletes` carries it out once nothing blocks it.
   PendingDelete
 }
 
@@ -8807,6 +8809,15 @@ model KnightsPlayer {
   startAtSeen DateTime?
   /// The player ticked "Don't show this again": the daily recap popup stays closed; the header button still opens it.
   recapPopupOptOut Boolean @default(false)
+}
+
+/// A UTC day on which the player voted in the original Knights game, filled once from its vote history. Counted with
+/// `KnightsPlayerDay` toward Paladin's days-played bar; nothing writes it after the backfill.
+model KnightsLegacyPlayerDay {
+  playerId Int
+  day      DateTime @db.Date
+
+  @@id([playerId, day])
 }
 
 /// One row per player per UTC day on which they voted. `goldRecorded` counts against the daily cap;

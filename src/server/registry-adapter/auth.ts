@@ -55,7 +55,8 @@ type VerifiedTokenBase = {
 
 /**
  * A block-exchange token's binding to its App Block token: its `civitai_app_block_id`,
- * `civitai_block_instance_id` and `civitai_max_browsing_level` claims.
+ * `civitai_block_instance_id` and `civitai_max_browsing_level` claims, and its
+ * `civitai_viewer_browsing_level` when it carries one.
  */
 export type TokenBlockBinding = {
   /** The block token's AppBlock.id. */
@@ -64,6 +65,12 @@ export type TokenBlockBinding = {
   blockInstanceId: string;
   /** The block token's maturity ceiling (`maxBrowsingLevel`), a browsing-level bit flag. */
   maxBrowsingLevel: number;
+  /**
+   * The viewer's own browsing level (`civitai_viewer_browsing_level`), a browsing-level bit flag; with
+   * the ceiling it resolves to the level the site's own reads use (`resolveViewerBrowsingLevel`).
+   * Null on a token minted before the hub wrote the claim: no viewer level is known.
+   */
+  viewerBrowsingLevel: number | null;
 };
 
 /** The user's browsing settings, which set a user token's {@link Audience}. */

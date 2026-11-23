@@ -222,7 +222,11 @@ import { POST as introspectPOST } from '../../../../routes/api/auth/oauth/intros
 import { GET as jwksGET } from '../../../../routes/.well-known/jwks.json/+server';
 import { WorkerTokenExchangeGrant } from '../worker-grant';
 import { invalidateRoleCache } from '../access';
-import { MATURE_BROWSING_LEVELS, parseBlockExchangeCallers } from '../block-exchange';
+import {
+  ABSENT_VIEWER_BROWSING_LEVEL,
+  MATURE_BROWSING_LEVELS,
+  parseBlockExchangeCallers,
+} from '../block-exchange';
 import { getSigner } from '../user-exchange';
 import { createLuaRedis } from '../../../../test/lua-sys-redis';
 import {
@@ -341,6 +345,8 @@ async function blockToken(
     ctx: {},
     scopes: ['apps:storage', 'user:read:self'],
     maxBrowsingLevel: 31, // minted on a mature-capable host: every rating
+    // The viewer's own level (PG | R | X): distinct from the ceiling and from every constant the exchange names.
+    viewerBrowsingLevel: 13,
     ...over,
   };
   for (const [k, v] of Object.entries(claims)) if (v === undefined) delete claims[k];
@@ -558,6 +564,7 @@ describe('block token exchange — what it issues', () => {
       'civitai_block_instance_id',
       'civitai_max_browsing_level',
       'civitai_token_kind',
+      'civitai_viewer_browsing_level',
       'client_id',
       'exp',
       'iat',
@@ -580,6 +587,7 @@ describe('block token exchange — what it issues', () => {
       civitai_app_block_id: 'apb_01notes',
       civitai_block_instance_id: 'inst-1',
       civitai_max_browsing_level: 31,
+      civitai_viewer_browsing_level: 13,
     });
 
     // The hub's record of it, as every exchanged token has, under its own kind.
@@ -1079,6 +1087,44 @@ describe('block token exchange — the app and the viewer', () => {
     }
   });
 
+  // The fifth claim: the viewer's own level, carried as the block token holds it, so a reader can resolve the
+  // site's own level (`resolveViewerBrowsingLevel` of the ceiling and the viewer level).
+  it("carries the block token's own viewer level as civitai_viewer_browsing_level, apart from the ceiling", async () => {
+    process.env.OAUTH_EXCHANGE_RESOURCES = registry({ narrowsBlockClaims: true });
+    for (const [maxBrowsingLevel, viewerBrowsingLevel] of [
+      [15, 6],
+      [31, 13],
+      [3, 0],
+      [31, 31],
+    ] as const) {
+      const label = `${maxBrowsingLevel}/${viewerBrowsingLevel}`;
+      const res = await exchange(await blockToken({ maxBrowsingLevel, viewerBrowsingLevel }));
+      expect(res.status, label).toBe(200);
+      const { payload } = await verifyLikeTheAdapter(String(res.body.access_token));
+      expect(payload.civitai_max_browsing_level, label).toBe(maxBrowsingLevel);
+      expect(payload.civitai_viewer_browsing_level, label).toBe(viewerBrowsingLevel);
+    }
+  });
+
+  it("a block token with no viewer level is given PG, the site's reading of an absent one", async () => {
+    const res = await exchange(await blockToken({ viewerBrowsingLevel: undefined }));
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const { payload } = await verifyLikeTheAdapter(String(res.body.access_token));
+    expect(payload.civitai_viewer_browsing_level).toBe(1);
+    expect(payload.civitai_max_browsing_level).toBe(31);
+  });
+
+  it('🔴 refuses a block token whose viewer level is present but not a non-negative integer, as the site does', async () => {
+    for (const viewerBrowsingLevel of [-1, 1.5, '13', null]) {
+      const label = JSON.stringify(viewerBrowsingLevel);
+      const res = await exchange(await blockToken({ viewerBrowsingLevel }));
+      expect(res.status, label).toBe(400);
+      expect(res.body.error, label).toBe('invalid_grant');
+      expect(lastReason(), label).toBe('block token claim shape');
+    }
+    expect(issued()).toEqual([]);
+  });
+
   it('🔴 a resource NOT declaring it (the default): refuses a ceiling short of every rating, issues one with all', async () => {
     for (const [maxBrowsingLevel, label] of [
       [3, 'PG | PG13'],
@@ -1236,6 +1282,24 @@ describe('block token verification follows the site', () => {
       'export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);'
     );
     expect(levels).toContain("    case 'red':\n      return allBrowsingLevelsFlag;");
+  });
+
+  it("writes the site's reading of an absent viewer level: PG", () => {
+    expect(ABSENT_VIEWER_BROWSING_LEVEL).toBe(1);
+    const levels = read(BROWSING_LEVEL_CONSTANTS);
+    expect(levels).toContain(
+      'export const publicBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.PG];'
+    );
+    expect(levels).toContain(
+      [
+        '  const viewer =',
+        "    typeof viewerBrowsingLevel === 'number' &&",
+        '    Number.isFinite(viewerBrowsingLevel) &&',
+        '    viewerBrowsingLevel >= 0',
+        '      ? viewerBrowsingLevel',
+        '      : publicBrowsingLevelsFlag;',
+      ].join('\n')
+    );
   });
 
   // The hub's one-approved-block rule (block-exchange.ts) is the registry feed's own resolution of an app from

@@ -76,6 +76,18 @@ const SHARED_MATURE = 207; // ANOTHER viewer's, shared with APP, R
 const SHARED_PENDING_OWN = 208; // viewer's, shared with APP, scan not finished
 const SHARED_PENDING_OTHER = 209; // ANOTHER viewer's, shared with APP, scan not finished
 const SHARED_FLAGGED = 210; // ANOTHER viewer's, shared with APP, scanned but flagged for review
+// Generation sources an app kept privately (`blockGenerationSourceAppId`), readable by their owner only.
+/** A viewer under an evidence hold: their media is held whatever its own flags say. */
+const HELD_VIEWER = 43;
+const SOURCE_OWN = 301; // viewer's, kept by APP, scanned PG
+const SOURCE_OTHER_USER = 302; // ANOTHER viewer's, kept by APP
+const SOURCE_OTHER_APP = 303; // viewer's, kept by OTHER_APP
+const SOURCE_PENDING_OWN = 304; // viewer's, kept by APP, scan not finished
+const SOURCE_CSAM_OWN = 305; // viewer's, kept by APP, CSAM-blocked
+const SOURCE_FLAGGED_OWN = 306; // viewer's, kept by APP, scanned but flagged for review
+const SOURCE_MATURE_OWN = 307; // viewer's, kept by APP, R (above the PG-only ceiling)
+const SOURCE_HELD_OWNER = 308; // HELD_VIEWER's, kept by APP, clean on its own flags
+const SOURCE_SHARED_PENDING_OTHER = 309; // ANOTHER viewer's, kept AND shared by APP, scan not finished
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -99,6 +111,16 @@ beforeAll(async () => {
       "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean);
+    -- What the held-url check reads, as minimal stand-ins.
+    CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int, metadata jsonb);
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, meta jsonb);
+    CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
+    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]', "reportSentAt" timestamp(3));
+    CREATE TABLE "ImageCdnModeratorDelete" (url text, "userId" int, "imageId" int, "csamReview" boolean NOT NULL DEFAULT false);
+    CREATE TABLE "ImageCdnShopTakedown" (url text, "userId" int);
+    INSERT INTO "EvidenceHeldUser" VALUES (${HELD_VIEWER});
   `);
 });
 
@@ -115,14 +137,20 @@ beforeEach(async () => {
     id: number,
     userId: number,
     metadata: Record<string, string>,
-    over: { postId?: number; nsfwLevel?: number; ingestion?: string; needsReview?: string } = {}
+    over: {
+      postId?: number;
+      nsfwLevel?: number;
+      ingestion?: string;
+      needsReview?: string;
+      blockedFor?: string;
+    } = {}
   ) =>
     `(${id}, ${userId}, 'key-${id}', ${over.postId ?? 'NULL'}, ${over.nsfwLevel ?? BROWSING},
       '${over.ingestion ?? 'Scanned'}', ${over.needsReview ? `'${over.needsReview}'` : 'NULL'},
-      '${JSON.stringify(metadata)}'::jsonb)`;
+      ${over.blockedFor ? `'${over.blockedFor}'` : 'NULL'}, '${JSON.stringify(metadata)}'::jsonb)`;
   await holder.db.exec(`
     TRUNCATE "Image";
-    INSERT INTO "Image" (id, "userId", url, "postId", "nsfwLevel", ingestion, "needsReview", metadata) VALUES
+    INSERT INTO "Image" (id, "userId", url, "postId", "nsfwLevel", ingestion, "needsReview", "blockedFor", metadata) VALUES
       ${[
         row(PUBLISHED_OWN, VIEWER, { blockPublishedAppId: APP }),
         row(UPLOADED_OWN, VIEWER, { blockUploadedAppId: APP }),
@@ -161,6 +189,36 @@ beforeEach(async () => {
           { nsfwLevel: 0, ingestion: 'Pending' }
         ),
         row(SHARED_FLAGGED, OTHER_USER, { blockSharedUploadAppId: APP }, { needsReview: 'poi' }),
+        // Generation sources an app kept privately (`blockGenerationSourceAppId`).
+        row(SOURCE_OWN, VIEWER, { blockGenerationSourceAppId: APP }),
+        row(SOURCE_OTHER_USER, OTHER_USER, { blockGenerationSourceAppId: APP }),
+        row(SOURCE_OTHER_APP, VIEWER, { blockGenerationSourceAppId: OTHER_APP }),
+        row(
+          SOURCE_PENDING_OWN,
+          VIEWER,
+          { blockGenerationSourceAppId: APP },
+          { nsfwLevel: 0, ingestion: 'Pending' }
+        ),
+        row(
+          SOURCE_CSAM_OWN,
+          VIEWER,
+          { blockGenerationSourceAppId: APP },
+          { ingestion: 'Blocked', needsReview: 'csam', blockedFor: 'CSAM' }
+        ),
+        row(
+          SOURCE_FLAGGED_OWN,
+          VIEWER,
+          { blockGenerationSourceAppId: APP },
+          { needsReview: 'poi' }
+        ),
+        row(SOURCE_MATURE_OWN, VIEWER, { blockGenerationSourceAppId: APP }, { nsfwLevel: MATURE }),
+        row(SOURCE_HELD_OWNER, HELD_VIEWER, { blockGenerationSourceAppId: APP }),
+        row(
+          SOURCE_SHARED_PENDING_OTHER,
+          OTHER_USER,
+          { blockGenerationSourceAppId: APP, blockSharedUploadAppId: APP },
+          { nsfwLevel: 0, ingestion: 'Pending' }
+        ),
       ].join(',\n')};
   `);
 });
@@ -374,5 +432,80 @@ describe('gated cross-user read: a mature image made with a restricted base mode
     expect(images).toEqual([
       expect.objectContaining({ imageId: RESTRICTED_OWN, status: 'visible' }),
     ]);
+  });
+});
+
+describe('gated read: an app’s private generation sources, for their owner only', () => {
+  it('POSITIVE CONTROL: returns the viewer’s own source kept by this app, with a moderated url', async () => {
+    const { images } = await gatedRead([SOURCE_OWN]);
+    expect(images).toEqual([
+      {
+        imageId: SOURCE_OWN,
+        status: 'visible',
+        nsfwLevel: BROWSING,
+        contentRating: expect.any(String),
+        url: `edge:key-${SOURCE_OWN}`,
+        width: null,
+        height: null,
+      },
+    ]);
+  });
+
+  // Mutant: the owner conjunct (`i."userId" = <viewer>`) dropped from the source arm.
+  it('🔴 never returns another viewer’s source, nor the viewer’s own to anyone else', async () => {
+    // The published row asked for in the same call is the control that the read ran.
+    const mine = await gatedRead([SOURCE_OTHER_USER, PUBLISHED_OTHER_USER]);
+    expect(mine.images.map((i) => i.imageId)).toEqual([PUBLISHED_OTHER_USER]);
+    const theirs = await gatedReadAs([SOURCE_OWN, PUBLISHED_OWN], { userId: OTHER_USER });
+    expect(theirs.images.map((i) => i.imageId)).toEqual([PUBLISHED_OWN]);
+  });
+
+  // Mutant: the same-app conjunct (`= <appId>`) loosened on the source arm.
+  it('🔴 never returns a source another app kept, even to its owner', async () => {
+    const { images } = await gatedRead([SOURCE_OTHER_APP, SOURCE_OWN]);
+    expect(images.map((i) => i.imageId)).toEqual([SOURCE_OWN]);
+    // Control: the app that kept it reads it.
+    const own = await gatedReadAs([SOURCE_OTHER_APP], { appId: OTHER_APP });
+    expect(own.images.map((i) => i.imageId)).toEqual([SOURCE_OTHER_APP]);
+  });
+
+  // Mutants: the moderation clamp skipped on the source arm; the held-url check dropped from it.
+  it('🔴 a blocked, flagged or held source returns nothing, even to its owner', async () => {
+    const { images } = await gatedRead([SOURCE_CSAM_OWN, SOURCE_FLAGGED_OWN, SOURCE_OWN]);
+    expect(images.map((i) => i.imageId)).toEqual([SOURCE_OWN]);
+    // Control: the same held viewer's read still returns a published row, so the read ran.
+    const held = await gatedReadAs([SOURCE_HELD_OWNER, PUBLISHED_OWN], { userId: HELD_VIEWER });
+    expect(held.images.map((i) => i.imageId)).toEqual([PUBLISHED_OWN]);
+  });
+
+  // Mutant: the source arm read at no ceiling, or a pending row shown with a rating claim.
+  it('🔴 the owner’s unrated source is ratingPending, and an above-ceiling one returns nothing', async () => {
+    const { images } = await gatedRead([SOURCE_PENDING_OWN, SOURCE_MATURE_OWN]);
+    expect(images).toEqual([
+      {
+        imageId: SOURCE_PENDING_OWN,
+        status: 'visible',
+        ratingPending: true,
+        url: `edge:key-${SOURCE_PENDING_OWN}`,
+        width: null,
+        height: null,
+      },
+    ]);
+  });
+
+  // Mutant: the owner check dropped from the source branch, so a row that also carries the shared
+  // key is read by other viewers with the owner-only treatment.
+  it('🔴 another viewer’s row carrying both the source and shared keys gets the shared treatment', async () => {
+    const { images } = await gatedRead([SOURCE_SHARED_PENDING_OTHER]);
+    expect(images).toEqual([{ imageId: SOURCE_SHARED_PENDING_OTHER, status: 'hidden' }]);
+    // Control: its owner gets the source treatment.
+    const own = await gatedReadAs([SOURCE_SHARED_PENDING_OTHER], { userId: OTHER_USER });
+    expect(own.images).toEqual([
+      expect.objectContaining({ imageId: SOURCE_SHARED_PENDING_OTHER, ratingPending: true }),
+    ]);
+  });
+
+  it('🔴 a private source is not postable, even by its owner', async () => {
+    await expectNotPostable(SOURCE_OWN);
   });
 });

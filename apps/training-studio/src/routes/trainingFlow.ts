@@ -47,7 +47,7 @@ import {
 import type { TagExcluder } from '$lib/autolabel-exclude';
 
 export const CUSTOM_VERSION_KEY = 'custom';
-export const MAX_RUNS = 5;
+export { MAX_RUNS } from '$lib/submit-limits';
 
 let runSeq = 0;
 /** Stable client id for a run — keeps `{#each}` keyed by identity, not index (duplicate

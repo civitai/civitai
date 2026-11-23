@@ -1,4 +1,5 @@
 import { decodeProtectedHeader, jwtVerify } from 'jose';
+import { isBrowsingLevelClaim } from '@civitai/auth/browsing-level-claim';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import type { BearerCredential } from '~/server/auth/full-user-credential';
@@ -1046,17 +1047,12 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       // unintended (wider) maturity. (Consumers ALSO fail closed on absence;
       // this is the upstream belt that keeps a malformed claim from ever
       // reaching them.) Same for the advisory `domain` string.
-      if (
-        claims.maxBrowsingLevel !== undefined &&
-        // A non-negative integer: an all-bits value like -1 would widen to every level.
-        !(Number.isInteger(claims.maxBrowsingLevel) && claims.maxBrowsingLevel >= 0)
-      ) {
+      if (claims.maxBrowsingLevel !== undefined && !isBrowsingLevelClaim(claims.maxBrowsingLevel)) {
         return null;
       }
       if (
         claims.viewerBrowsingLevel !== undefined &&
-        // A non-negative integer: an all-bits value like -1 would pass AND-ing unchanged.
-        !(Number.isInteger(claims.viewerBrowsingLevel) && claims.viewerBrowsingLevel >= 0)
+        !isBrowsingLevelClaim(claims.viewerBrowsingLevel)
       ) {
         return null;
       }
