@@ -67,6 +67,56 @@ describe('DialogProvider and Escape', () => {
   });
 });
 
+describe('DialogProvider and closing', () => {
+  beforeEach(() => dialogStore.closeAll());
+
+  const waitAFewFrames = () => new Promise((resolve) => setTimeout(resolve, 60));
+
+  test('a closed dialog plays its exit transition, then unmounts', async () => {
+    renderWithProviders(<DialogProvider />);
+    dialogStore.trigger({ component: NamedDialog, props: { name: 'Leaving' }, id: 'leaving' });
+    await expect.element(page.getByRole('dialog', { name: 'Leaving' })).toBeInTheDocument();
+
+    dialogStore.closeById('leaving');
+    // Closed at once for everything that reads the store...
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    await waitAFewFrames();
+    // ...but still on screen while Mantine's exit transition runs, rather than unmounted at once.
+    expect(document.body.textContent).toContain('Leaving');
+    // Removed when the Modal reports the transition ended, before the fallback timer.
+    await vi.waitFor(() => expect(useDialogStore.getState().closing).toHaveLength(0), {
+      timeout: 800,
+    });
+    await expect.element(page.getByRole('dialog', { name: 'Leaving' })).not.toBeInTheDocument();
+  });
+
+  test('Escape goes to the dialog below while the one above is still closing', async () => {
+    renderWithProviders(<DialogProvider />);
+    dialogStore.trigger({ component: NamedDialog, props: { name: 'Below' }, id: 'below' });
+    dialogStore.trigger({ component: NamedDialog, props: { name: 'Above' }, id: 'above' });
+    await expect.element(page.getByRole('dialog', { name: 'Above' })).toBeInTheDocument();
+
+    dialogStore.closeById('above');
+    await waitAFewFrames();
+    await userEvent.keyboard('{Escape}');
+    await expect.element(page.getByRole('dialog', { name: 'Below' })).not.toBeInTheDocument();
+  });
+
+  test('a dialog reopened under the same id while closing opens again', async () => {
+    renderWithProviders(<DialogProvider />);
+    dialogStore.trigger({ component: NamedDialog, props: { name: 'Again' }, id: 'again' });
+    await expect.element(page.getByRole('dialog', { name: 'Again' })).toBeInTheDocument();
+
+    dialogStore.closeById('again');
+    dialogStore.trigger({ component: NamedDialog, props: { name: 'Again' }, id: 'again' });
+    await vi.waitFor(() => expect(useDialogStore.getState().closing).toHaveLength(0), {
+      timeout: 2000,
+    });
+    expect(useDialogStore.getState().dialogs).toHaveLength(1);
+    await expect.element(page.getByRole('dialog', { name: 'Again' })).toBeInTheDocument();
+  });
+});
+
 describe('openDialog and openConfirm', () => {
   beforeEach(() => dialogStore.closeAll());
 

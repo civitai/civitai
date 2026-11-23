@@ -161,6 +161,11 @@ function renderDialogs() {
   );
   unmountDialogs = () => act(() => root.unmount());
 }
+/** Empties the page. Dialogs close at once first: one still playing its exit transition would unmount from under the wipe. */
+function clearPage() {
+  act(() => dialogStore.closeAll());
+  document.body.innerHTML = '';
+}
 /** A dialog opens on the tick after it is added to the store. */
 const dialogOpened = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
@@ -318,7 +323,7 @@ describe('StorylineEndOfChapter', () => {
       child(7, 'community', 'C'),
     ];
     expect(render().textContent).toContain('Other paths2');
-    document.body.innerHTML = '';
+    clearPage();
     mocks.children = [child(5, 'canon', 'A')];
     expect(render().textContent).not.toContain('Other paths');
   });
@@ -458,7 +463,7 @@ describe('StorylineEndOfChapter', () => {
     mocks.terms = { open: true, price: 0, closedReason: null };
     const sel = '[data-testid="storyline-continue-with-post"]';
     expect(render({ parentPostId: 15 }).querySelector(sel)).not.toBeNull();
-    document.body.innerHTML = '';
+    clearPage();
     expect(render({}).querySelector(sel)).toBeNull();
   });
 
@@ -473,7 +478,7 @@ describe('StorylineEndOfChapter', () => {
       container.querySelector('[data-testid="storyline-continue-with-post"]'),
       !!container.querySelector('[data-testid="storyline-write-next"]'),
     ]).toEqual([null, null, true]);
-    document.body.innerHTML = '';
+    clearPage();
     expect(
       render({ parentPostId: 15 }).querySelector('[data-testid="storyline-continue-closed"]')
         ?.textContent
@@ -501,7 +506,7 @@ describe('StorylineEndOfChapter', () => {
       [{ parentPostId: 15, parentChapterId: 4, atEnd: true }],
       [{ parentPostId: 15, parentChapterId: 4, mode: 'join', atEnd: true }],
     ]);
-    document.body.innerHTML = '';
+    clearPage();
     mocks.openContinue.mockClear();
     // A branch's end is not the main path's.
     const onBranch = render({ parentPostId: 15, isOwner: true, onMain: false });
@@ -511,10 +516,10 @@ describe('StorylineEndOfChapter', () => {
       [{ parentPostId: 15, parentChapterId: 4, atEnd: false }],
       [{ parentPostId: 15, parentChapterId: 4, mode: 'join', atEnd: false }],
     ]);
-    document.body.innerHTML = '';
+    clearPage();
     const reader = render({ parentPostId: 15 });
     expect([own, join].map((sel) => reader.querySelector(sel))).toEqual([null, null]);
-    document.body.innerHTML = '';
+    clearPage();
     const noPost = render({ isOwner: true });
     expect([own, join].map((sel) => noPost.querySelector(sel))).toEqual([null, null]);
   });
@@ -640,7 +645,7 @@ describe('StorylineEndOfChapter', () => {
       expect(mocks.openContinue.mock.calls).toEqual([
         [{ parentPostId: 120, parentChapterId: 12, atEnd: true }],
       ]);
-      document.body.innerHTML = '';
+      clearPage();
       mocks.openContinue.mockClear();
       // A branch's end is not the main path's: that one stays on the chapter the card read.
       const onBranch = render({ parentPostId: 15, isOwner: true, onMain: false });
@@ -666,7 +671,7 @@ describe('StorylineEndOfChapter', () => {
       expect(note(render({ parentPostId: 15 }))).toBe(
         'A side path after this chapter. The main path still goes on to Kept.'
       );
-      document.body.innerHTML = '';
+      clearPage();
       // Its own depth is another branch's (9): the card names it by its place after this one.
       mocks.children = [
         { ...child(5, 'canon', 'Kept', 9), post: null, tombstone: 'browsingLevel' },
@@ -706,7 +711,7 @@ describe('StorylineEndOfChapter', () => {
       expect(mocks.openContinue.mock.calls).toEqual([
         [{ parentPostId: 15, parentChapterId: 4, branch: true }],
       ]);
-      document.body.innerHTML = '';
+      clearPage();
       mocks.openContinue.mockClear();
       const contributor = await openBranchConfirm({});
       act(() => within(contributor.body, 'storyline-branch-use-post')?.click());
@@ -737,7 +742,7 @@ describe('StorylineEndOfChapter', () => {
         }));
       mocks.ahead = walk(STORYLINE_PATH_LIMIT - 2);
       expect(!!mainWay(render({ parentPostId: 15 }))).toBe(true);
-      document.body.innerHTML = '';
+      clearPage();
       mocks.ahead = walk(STORYLINE_PATH_LIMIT - 1);
       const capped = render({ parentPostId: 15 });
       expect([!!mainWay(capped), !!branch(capped)]).toEqual([false, true]);
@@ -773,7 +778,7 @@ describe('StorylineEndOfChapter', () => {
       !!within(loading, 'storyline-write-next'),
       !!within(loading, 'storyline-add-own-chapter'),
     ]).toEqual([false, false]);
-    document.body.innerHTML = '';
+    clearPage();
     // A failed read: not loading, and still no ways on.
     mocks.isLoading = false;
     mocks.children = undefined as never;
@@ -788,7 +793,7 @@ describe('StorylineEndOfChapter', () => {
     mocks.children = [];
     render({ parentPostId: 15 });
     expect(mocks.canonAheadFor.mock.calls.every(([id]) => id === undefined)).toBe(true);
-    document.body.innerHTML = '';
+    clearPage();
     mocks.canonAheadFor.mockClear();
     mocks.children = [child(5, 'canon', 'Kept')];
     render({ parentPostId: 15 });
@@ -827,7 +832,7 @@ describe('StorylineEndOfChapter', () => {
       expect(within(container, 'storyline-write-next-price')?.textContent).toBe(
         '50 Buzz when you publish'
       );
-      document.body.innerHTML = '';
+      clearPage();
       mocks.terms = { open: true, price: 0, closedReason: null };
       expect(within(render({ parentPostId: 15 }), 'storyline-write-next-price')?.textContent).toBe(
         'Free to submit'
@@ -847,7 +852,7 @@ describe('StorylineEndOfChapter', () => {
     it('waits for the terms before offering it, and needs a chapter with a post', () => {
       mocks.terms = null;
       expect(write(render({ parentPostId: 15 }))).toBeNull();
-      document.body.innerHTML = '';
+      clearPage();
       mocks.terms = { open: true, price: 0, closedReason: null };
       expect(write(render({}))).toBeNull();
     });
@@ -902,7 +907,7 @@ describe('StorylineContinueWithPost', () => {
     c.querySelector('[data-testid="storyline-continue-closed"]')?.textContent ?? null;
 
   beforeEach(() => {
-    document.body.innerHTML = '';
+    clearPage();
     mocks.openContinue.mockClear();
   });
 

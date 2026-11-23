@@ -102,6 +102,20 @@ lower dialog closed), and every dialog's `Modal`/`Drawer` now takes it from the 
 or `closeOnEscape={dialog.closeOnEscape && …}`, or `false`. The guard's third check holds that, and
 `DialogProvider.browser.test.tsx` pins the behaviour.
 
+## A closed dialog plays its exit transition
+
+Added during the build at Briant's request: closing removed the entry from the store at once, so the
+`Modal`/`Drawer` unmounted before its exit transition ran. `closeById` now moves the entry from
+`dialogs` to `closing`. Everything that reads `dialogs` (open checks, `useIsTopDialog`, Escape) sees it
+as closed at once, while `DialogProvider` keeps rendering it with `opened: false` and its last
+z-index. It unmounts when the component reports `onExitTransitionEnd` (Mantine's `ModalBase` takes it,
+and the `{...dialog}` spread passes it on), or after a 1s fallback. Each open gets its own `instance`
+key, so a dialog reopened under the same id while closing is a new one. `closeAll` skips the
+transition.
+
+Popovers and menus stay out of the store: they are anchored to a trigger and owned by its component.
+Sharing the z-index with them (a layer stack the dialogs hand down) is a separate plan.
+
 ## How it ships
 
 One PR, one end-state commit. No flag, phase or shim: nothing outside this repo calls these APIs, and
@@ -136,3 +150,4 @@ refactor practice, it lands as one diff rather than as stages.
 - The statically imported dialogs (the `no-unlisted-dialog-open` baseline): move them onto `openDialog` and shrink the baseline to empty.
 - `src/utils/comic-image-picker.ts` takes its modal as an argument (`openGeneratorImagePicker`); it moves to `openDialog` with that follow-up.
 - A store dialog opened from inside a confirm or content dialog would sit behind it (300 + index against their 401 floor). No caller does this today.
+- A layer stack for popovers, menus and selects inside dialogs, so they take the z-index above their dialog without one set at the call site. To be planned.

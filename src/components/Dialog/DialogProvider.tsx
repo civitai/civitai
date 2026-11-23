@@ -1,4 +1,12 @@
-import React, { createContext, memo, Suspense, useContext, useEffect, useState } from 'react';
+import React, {
+  createContext,
+  memo,
+  Suspense,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import type { Dialog } from '~/components/Dialog/dialogStore';
 import { DialogIdContext, useDialogId } from '~/components/Dialog/dialogId';
 import { dialogStore, useDialogStore, useIsTopDialog } from '~/components/Dialog/dialogStore';
@@ -12,7 +20,12 @@ type DialogState = {
   target?: string | HTMLElement;
   focused?: 'true';
   closeOnEscape?: boolean;
+  /** Mantine's `Modal`/`Drawer` call this when their exit transition ends; the spread passes it on. */
+  onExitTransitionEnd?: () => void;
 };
+
+/** How long a closing dialog that never reports the end of its exit transition stays mounted. */
+const exitFallbackMs = 1000;
 
 const DialogContext = createContext<DialogState>({
   opened: false,
@@ -24,25 +37,43 @@ export { useDialogId };
 const DialogProviderInner = memo(function DialogProviderInner({
   dialog,
   index,
+  closing,
 }: {
   dialog: Dialog;
   index: number;
+  closing: boolean;
 }) {
-  const [opened, setOpened] = useState(false);
-  const isTopDialog = useIsTopDialog(dialog.id);
+  const [mounted, setMounted] = useState(false);
+  const opened = mounted && !closing;
+  const isTopDialog = useIsTopDialog(dialog.id) && !closing;
+  // A closing dialog keeps the layer it had while open, so it doesn't drop behind its exit.
+  const zIndexRef = useRef(300 + index);
+  if (!closing) zIndexRef.current = 300 + index;
 
   const Dialog = dialog.component;
 
   function onClose() {
+    if (closing) return;
     dialog.options?.onClose?.();
     dialogStore.closeById(dialog.id);
   }
 
+  function onExitTransitionEnd() {
+    if (closing && dialog.instance !== undefined) dialogStore.removeClosing(dialog.instance);
+  }
+
   useEffect(() => {
     setTimeout(() => {
-      setOpened(true);
+      setMounted(true);
     }, 0);
   }, []);
+
+  useEffect(() => {
+    if (!closing || dialog.instance === undefined) return;
+    const instance = dialog.instance;
+    const timeout = setTimeout(() => dialogStore.removeClosing(instance), exitFallbackMs);
+    return () => clearTimeout(timeout);
+  }, [closing, dialog.instance]);
 
   // Over the mobile generator, Back closes the dialog first. Routed dialogs have their own entry.
   const overMobileGenerator = useMobileGeneratorStore((state) => state.showing);
@@ -53,9 +84,10 @@ const DialogProviderInner = memo(function DialogProviderInner({
       value={{
         opened,
         onClose,
-        zIndex: 300 + index,
+        zIndex: zIndexRef.current,
         target: dialog.target,
         closeOnEscape: isTopDialog,
+        onExitTransitionEnd,
       }}
     >
       <DialogIdContext.Provider value={dialog.id}>
@@ -70,10 +102,22 @@ const DialogProviderInner = memo(function DialogProviderInner({
 
 export const DialogProvider = () => {
   const dialogs = useDialogStore((state) => state.dialogs);
+  const closing = useDialogStore((state) => state.closing);
+  // One keyed list, so a dialog keeps its state (and its Modal its transition) as it moves from
+  // open to closing.
+  const entries = [
+    ...closing.map((dialog) => ({ dialog, index: 0, closing: true })),
+    ...dialogs.map((dialog, index) => ({ dialog, index, closing: false })),
+  ];
   return (
     <>
-      {dialogs.map((dialog, i) => (
-        <DialogProviderInner key={dialog.id.toString()} dialog={dialog} index={i} />
+      {entries.map(({ dialog, index, closing }) => (
+        <DialogProviderInner
+          key={dialog.instance}
+          dialog={dialog}
+          index={index}
+          closing={closing}
+        />
       ))}
     </>
   );
