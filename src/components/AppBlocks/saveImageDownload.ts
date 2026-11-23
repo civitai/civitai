@@ -30,9 +30,11 @@
  *                 (`.fbx`) 3D model that passes {@link isValidSaveModel3d}. Rate-limited per
  *                 host by {@link processSaveBytes}.
  *
- * The zip validator is `@civitai/app-sdk/save-zip` — the ONE copy, shared with the SDK's
- * `createMockHost` so a block's tests accept and refuse the zips this host does. Its rules and their
- * tests live there; a change to them is an app-sdk release plus a bump of the dependency here.
+ * The zip validator is `@civitai/app-sdk/save-zip` and the 3D model check is
+ * `@civitai/app-sdk/save-model3d` — each the ONE copy, shared with the SDK's `createMockHost` so a
+ * block's tests accept and refuse the files this host does. Their rules and their tests live there;
+ * a change to them is an app-sdk release plus a bump of the dependency here. This module owns only
+ * the order the checks run in, the caps and the window.
  */
 
 import { sniffImageFormat, type ImageMagicFormat } from '~/shared/utils/image-magic-bytes';
@@ -47,10 +49,10 @@ import {
 } from '@civitai/app-sdk/save-zip';
 import {
   isValidSaveModel3d,
-  SAVE_BYTES_MODEL_3D_EXTENSION,
-  sniffSaveModel3dCandidate,
-  type SaveBytesModel3dType,
-} from './saveBytesModel3d';
+  looksLikeSaveModel3d,
+  SAVE_MODEL3D_EXTENSION,
+  SAVE_MODEL3D_MAX_BYTES,
+} from '@civitai/app-sdk/save-model3d';
 
 /**
  * Civitai-owned image / orchestration-blob hostnames the download bridge may
@@ -118,11 +120,12 @@ export const SAVE_BYTES_MAX_PER_WINDOW = 5;
 export const SAVE_BYTES_MAX_BYTES_PER_WINDOW = 100 * 1024 * 1024; // 100 MB
 
 /**
- * A 3D model's (`.glb` / `.fbx`) own per-file cap. Generated meshes with embedded textures outgrow
- * 50 MB; 100 MB is still inside {@link SAVE_BYTES_MAX_BYTES_PER_WINDOW}, so a model at the cap is
- * the only save its window admits. It is checked against the regular window budget, not the zip one.
+ * A 3D model's (`.glb` / `.fbx`) own per-file cap, `@civitai/app-sdk/save-model3d`'s (so the SDK's
+ * `useSaveImage` pre-send cap is the same number). 100 MB is still inside
+ * {@link SAVE_BYTES_MAX_BYTES_PER_WINDOW}, so a model at the cap is the only save its window admits.
+ * It is checked against the regular window budget, not the zip one.
  */
-export const SAVE_BYTES_MODEL_3D_MAX_BYTES = 100 * 1024 * 1024; // 100 MB
+export const SAVE_BYTES_MODEL_3D_MAX_BYTES = SAVE_MODEL3D_MAX_BYTES; // 100 MB
 
 /** A zip's own per-file cap (the other types keep {@link SAVE_BYTES_MAX_BYTES}). */
 export const SAVE_BYTES_ZIP_MAX_BYTES = SAVE_ZIP_MAX_BYTES; // 256 MB
@@ -447,11 +450,10 @@ const SAVE_BYTES_EXTENSION = {
   'application/json': 'json',
   'text/plain': 'txt',
   'application/zip': 'zip',
-  ...SAVE_BYTES_MODEL_3D_EXTENSION,
+  ...SAVE_MODEL3D_EXTENSION,
 } as const;
 
 export type SaveBytesType = keyof typeof SAVE_BYTES_EXTENSION;
-export type { SaveBytesModel3dType };
 
 export const SAVE_BYTES_TOO_LARGE_ERROR = 'file exceeds the maximum save size';
 export const SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR = 'file type is not allowed';
@@ -493,10 +495,10 @@ export type SaveBytesClassification =
  *      fails is refused with the zip's reason and never falls through to text. A zip with a prefix
  *      (a self-extractor, a zip appended to anything but an image) does not start like a zip and
  *      falls to step 4, where its NUL bytes refuse it.
- *   3. a buffer that STARTS like a binary glTF or FBX ({@link sniffSaveModel3dCandidate}) must pass
- *      {@link isValidSaveModel3d}, which accounts for the whole buffer (a GLB's declared length and
- *      chunks; an FBX's top-level records and a footer-sized tail), so nothing rides along after
- *      the model; a candidate that fails is refused. Both prefixes hold a NUL byte, so a candidate
+ *   3. a buffer that STARTS like a binary glTF or FBX ({@link looksLikeSaveModel3d}) must pass
+ *      {@link isValidSaveModel3d} (`@civitai/app-sdk/save-model3d`), which accounts for the whole
+ *      buffer (a GLB's declared length and chunks; an FBX's top-level records and a footer-sized
+ *      tail), so nothing rides along after the model; a candidate that fails is refused. Both prefixes hold a NUL byte, so a candidate
  *      could never have passed step 4. A model with anything in front of it (a PNG + GLB polyglot)
  *      is not a candidate: an image prefix is step 1's, anything else step 4's to refuse.
  *   4. UTF-8 text without NUL; JSON only when the filename ends `.json` and the text parses.
@@ -515,7 +517,7 @@ export function classifySaveBytesContent(
     if (!zip.ok) return zip;
     return { ok: true, type: 'application/zip', deflated: zip.deflated };
   }
-  const model = sniffSaveModel3dCandidate(u8);
+  const model = looksLikeSaveModel3d(u8);
   if (model) {
     return isValidSaveModel3d(u8, model)
       ? { ok: true, type: model }
@@ -612,9 +614,7 @@ export function isZipSaveCandidate(bytes: ArrayBuffer): boolean {
  * buffer gets the 3D cap only if the classifier will then hold it to the 3D rules.
  */
 export function isModel3dSaveCandidate(bytes: ArrayBuffer): boolean {
-  return (
-    sniffSaveModel3dCandidate(new Uint8Array(bytes, 0, Math.min(21, bytes.byteLength))) !== null
-  );
+  return looksLikeSaveModel3d(new Uint8Array(bytes, 0, Math.min(21, bytes.byteLength))) !== null;
 }
 
 /**

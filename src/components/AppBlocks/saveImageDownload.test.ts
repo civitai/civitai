@@ -20,7 +20,6 @@ import {
   type SaveBytesClassification,
   type SaveBytesWindowEntry,
 } from './saveImageDownload';
-import { readFileSync } from 'node:fs';
 import {
   ab as abOf,
   buildFbx,
@@ -28,7 +27,6 @@ import {
   buildLargeFbx,
   concatBytes,
   FBX_MAGIC,
-  withU32,
 } from './__tests__/model3dFixtures';
 
 /** The classified type, or `null` for a refusal — what these cases assert on. */
@@ -732,112 +730,38 @@ describe('processSaveBytes (pre-check → classify → record)', () => {
   });
 });
 
-// Binary glTF / FBX `bytes` saves. The real files are an assimp 6 export of a
-// one-triangle OBJ; the builders make spec-shaped buffers that can be sized and broken one field at
-// a time.
+// Binary glTF / FBX `bytes` saves. The model check itself is @civitai/app-sdk/save-model3d's (the one
+// copy, tested there); these cases pin what this host does around it: the classification order, the
+// name, and that a failed candidate is refused rather than saved as another type.
 describe('classifySaveBytesContent — 3D models (.glb / .fbx)', () => {
-  const fixture = (name: string) =>
-    abOf(new Uint8Array(readFileSync(new URL(`./__tests__/fixtures/${name}`, import.meta.url))));
   const GLB = abOf(buildGlb({ binBytes: 36 }));
   const FBX = abOf(buildFbx());
 
-  it('real tool-written GLB and FBX files classify as 3D models', () => {
-    expect(classifiedType(fixture('tri.glb'), 'turnaround.png')).toBe('model/gltf-binary');
-    expect(classifiedType(fixture('tri.fbx'), 'turnaround.txt')).toBe('model/x-fbx');
-  });
-
-  it('the builders pass the same rules: a GLB with and without BIN, FBX 7400 and 7500', () => {
-    expect(classifiedType(GLB)).toBe('model/gltf-binary');
-    expect(classifiedType(abOf(buildGlb()))).toBe('model/gltf-binary');
-    expect(classifiedType(FBX)).toBe('model/x-fbx');
-    expect(classifiedType(abOf(buildFbx({ version: 7400, bodyBytes: 12 })))).toBe('model/x-fbx');
-  });
-
-  it('saves under .glb / .fbx whatever the filename says', () => {
-    expect(prepareSaveBytes({ bytes: fixture('tri.glb'), filename: 'mesh.exe' })).toEqual({
+  it('saves a GLB / FBX under .glb / .fbx whatever the filename says', () => {
+    expect(prepareSaveBytes({ bytes: GLB, filename: 'mesh.exe' })).toEqual({
       ok: true,
       type: 'model/gltf-binary',
       filename: 'mesh.glb',
     });
-    expect(prepareSaveBytes({ bytes: fixture('tri.fbx'), filename: 'a/../rig' })).toEqual({
+    expect(prepareSaveBytes({ bytes: FBX, filename: 'a/../rig' })).toEqual({
       ok: true,
       type: 'model/x-fbx',
       filename: 'rig.fbx',
     });
   });
 
-  it('a GLB whose magic or version is wrong is not a model (and its NUL bytes refuse it as text)', () => {
-    const glb = buildGlb({ binBytes: 4 });
-    const wrongMagic = glb.slice();
-    wrongMagic[3] = 0x66; // glTf
-    expect(classifiedType(abOf(wrongMagic), 'x.glb')).toBeNull();
-    expect(classifiedType(abOf(withU32(glb, 4, 1)), 'x.glb')).toBeNull(); // glTF 1.0 container
-  });
-
-  it('🔴 a GLB is refused unless its declared length is exactly the buffer length', () => {
-    const glb = buildGlb({ binBytes: 8 });
-    expect(classifiedType(abOf(withU32(glb, 8, glb.length + 4)))).toBeNull(); // claims more
-    expect(classifiedType(abOf(withU32(glb, 8, glb.length - 4)))).toBeNull(); // claims less
-    // Truncated: the header still claims the original length.
-    expect(classifiedType(abOf(glb.subarray(0, glb.length - 4)))).toBeNull();
-    // Anything appended — here a PNG — is outside the declared length.
-    expect(classifiedType(abOf(concatBytes(glb, new Uint8Array(PNG))))).toBeNull();
-  });
-
-  it('a GLB with a malformed chunk table or JSON chunk is refused', () => {
-    const glb = buildGlb({ binBytes: 8 });
-    const jsonLen = new DataView(glb.buffer).getUint32(12, true);
-    // JSON chunk length overrunning the file, and not a multiple of 4.
-    expect(classifiedType(abOf(withU32(glb, 12, glb.length)))).toBeNull();
-    expect(classifiedType(abOf(withU32(glb, 12, jsonLen - 1)))).toBeNull();
-    // First chunk is BIN, not JSON.
-    expect(classifiedType(abOf(withU32(glb, 16, 0x004e4942)))).toBeNull();
-    // Second chunk of an unknown type.
-    expect(classifiedType(abOf(withU32(glb, 20 + jsonLen + 4, 0x58595a57)))).toBeNull();
-    // JSON that is not a glTF document.
-    expect(classifiedType(abOf(buildGlb({ json: { scenes: [] } })))).toBeNull();
-    expect(classifiedType(abOf(buildGlb({ json: [{ asset: { version: '2.0' } }] })))).toBeNull();
-    // Chunks that tile the file exactly but break the 4-byte alignment rule (26 + 2 bytes).
-    const json26 = new TextEncoder().encode('{"asset":{"version":"2"}} '); // valid JSON
-    const unaligned = concatBytes(
-      new Uint8Array([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0, 56, 0, 0, 0, 26, 0, 0, 0]),
-      new Uint8Array([0x4a, 0x53, 0x4f, 0x4e]),
-      json26,
-      new Uint8Array([2, 0, 0, 0, 0x42, 0x49, 0x4e, 0, 0, 0])
-    );
-    expect(unaligned.length).toBe(56);
-    expect(classifiedType(abOf(unaligned))).toBeNull();
-    // A third chunk after JSON + BIN.
-    const third = concatBytes(glb, new Uint8Array([4, 0, 0, 0, 0x42, 0x49, 0x4e, 0, 0, 0, 0, 0]));
-    expect(classifiedType(abOf(withU32(third, 8, third.length)))).toBeNull();
-  });
-
-  it('a truncated or malformed FBX header is refused', () => {
-    const fbx = buildFbx();
-    // Magic only, then the 0x1A 0x00 but no version.
-    expect(classifiedType(abOf(fbx.subarray(0, 21)), 'x.fbx')).toBeNull();
-    expect(classifiedType(abOf(fbx.subarray(0, 25)), 'x.fbx')).toBeNull();
-    const noMarker = fbx.slice();
-    noMarker[21] = 0x00;
-    expect(classifiedType(abOf(noMarker))).toBeNull();
-    expect(classifiedType(abOf(withU32(fbx, 23, 5800)))).toBeNull(); // version below binary FBX
-    expect(classifiedType(abOf(withU32(fbx, 23, 9000)))).toBeNull();
-  });
-
-  it('an FBX whose node records do not reach the null record, or with a long tail, is refused', () => {
-    // Cut inside the node records.
-    expect(classifiedType(abOf(buildFbx().subarray(0, 60)))).toBeNull();
-    // An end offset pointing past the buffer.
-    expect(classifiedType(abOf(withU32(buildFbx(), 27, 0x7fffffff)))).toBeNull();
-    // A node name that is not printable ASCII.
-    expect(classifiedType(abOf(buildFbx({ names: ['Obj\u0001cts'] })))).toBeNull();
-    // No node before the null record.
-    expect(classifiedType(abOf(buildFbx({ names: [] })))).toBeNull();
-    // A second file after the footer.
-    const zipTail = concatBytes(new Uint8Array(160), new Uint8Array(512).fill(0x50));
-    expect(classifiedType(abOf(buildFbx({ tail: zipTail })))).toBeNull();
-    // A short tail is fine (a writer that omits part of the footer).
-    expect(classifiedType(abOf(buildFbx({ tail: new Uint8Array(0) })))).toBe('model/x-fbx');
+  it('🔴 a model candidate that fails the check is refused, never saved as another type', () => {
+    // A valid GLB with a PNG after it (bytes past its declared length), and an FBX magic with a
+    // truncated header. Both start like a model; neither may fall through to image or text.
+    for (const bytes of [
+      concatBytes(buildGlb({ binBytes: 8 }), new Uint8Array(PNG)),
+      concatBytes(FBX_MAGIC, new Uint8Array(8)),
+    ]) {
+      expect(classifySaveBytesContent(abOf(bytes), 'x.txt')).toEqual({
+        ok: false,
+        error: 'file type is not allowed',
+      });
+    }
   });
 
   it('🔴 a .glb / .fbx NAME never makes non-model bytes a model', () => {
@@ -848,7 +772,6 @@ describe('classifySaveBytesContent — 3D models (.glb / .fbx)', () => {
     });
     expect(classifiedType(textAb('glTF is a format'), 'x.glb')).toBe('text/plain');
     expect(classifiedType(textAb('Kaydara FBX Binary  '), 'x.fbx')).toBe('text/plain');
-    expect(classifiedType(abOf(concatBytes(FBX_MAGIC, new Uint8Array(8))), 'x.fbx')).toBeNull();
   });
 
   it('🔴 a PNG + GLB polyglot is a PNG (images first), and saves as .png', () => {

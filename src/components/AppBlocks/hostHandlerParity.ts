@@ -830,8 +830,9 @@ export const INVENTORY = {
   // UNSANDBOXED top frame + triggers the browser download (a sandboxed block has
   // no `allow-downloads`). Three variants: an origin-allowlisted OWN-output `url`,
   // a cross-user `imageId` routed through the gated per-viewer read, or block-made
-  // `bytes` classified by content (image / JSON / text, a validated .zip, or a binary
-  // glTF / FBX 3D model). PAGE-ONLY
+  // `bytes` classified by content (image / JSON / text, a .zip validated by
+  // @civitai/app-sdk/save-zip, or a binary glTF / FBX 3D model checked by
+  // @civitai/app-sdk/save-model3d — each the one copy, shared with the SDK's mock host). PAGE-ONLY
   // affordance today (the paid-output apps — gen-matrix / custom-generators /
   // model-benchmarking — are all page apps), so N/A for the model host, mirroring
   // the GET_IMAGES_BY_IDS / PUBLISH_GENERATION_OUTPUTS page-only exemption.

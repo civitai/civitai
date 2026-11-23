@@ -1,8 +1,7 @@
 /**
- * Minimal, spec-shaped binary glTF and FBX buffers for the SAVE_IMAGE `bytes` tests, built here so
- * a test can size them (the cap cases) and break one field at a time (the spoof cases). The real,
- * tool-written files beside them are `fixtures/tri.glb` and `fixtures/tri.fbx` (assimp 6 export of
- * a one-triangle OBJ); the unit test checks both builders against the same rules those pass.
+ * Minimal, spec-shaped binary glTF and FBX buffers for this host's SAVE_IMAGE `bytes` tests, sized
+ * for the cap cases. The model check and its own spoof cases live in `@civitai/app-sdk/save-model3d`;
+ * these only need files that check accepts, and a few that start like a model but are not one.
  */
 
 const enc = new TextEncoder();
@@ -47,13 +46,6 @@ export function buildGlb({
   out.set([...u32(jsonChunk.length), 0x4a, 0x53, 0x4f, 0x4e], 12);
   out.set(jsonChunk, 20);
   if (length > jsonPart) out.set([...u32(bin), 0x42, 0x49, 0x4e, 0x00], jsonPart);
-  return out;
-}
-
-/** Overwrite the u32 at `offset` (little-endian) in a copy of `u8`. */
-export function withU32(u8: Uint8Array, offset: number, value: number): Uint8Array {
-  const out = u8.slice();
-  new DataView(out.buffer).setUint32(offset, value, true);
   return out;
 }
 
