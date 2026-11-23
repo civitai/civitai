@@ -113,7 +113,6 @@ async function handler(
   // Not sampled: a text `query` (the Meilisearch path) and a signed-in caller, both of which feed-go
   // always answers with a fallback (`v1-models-query`, `v1-models-session`).
   const shadow = query || user ? undefined : beginFeedGoShadowV1Models(req, 'list');
-  // This build's Training Data rules, for feed-go's serve path (never awaited, never throws).
   publishTrainingDataRulesLive();
 
   // The query cursor is an opaque numeric OFFSET, not a model id: Meili's order

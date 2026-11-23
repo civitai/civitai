@@ -228,7 +228,6 @@ const baseHandler = PublicEndpoint(async function handler(
   // with an API credential (a block token included) is never mirrored. See
   // `~/server/trpc/feed-go-shadow`.
   const shadow = beginFeedGoShadowV1Models(req, 'id');
-  // This build's Training Data rules, for feed-go's serve path (never awaited, never throws).
   publishTrainingDataRulesLive();
   try {
     // Cache only when enabled (IS_DATAPACKET) AND this is the pure-public path.
