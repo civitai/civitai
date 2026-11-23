@@ -4,6 +4,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import { entityUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
@@ -39,7 +40,7 @@
     // `Updated` far from `Uploaded` is the tell that something touched it.
     ['Updated', dateTime(image.updatedAt)],
     ['Scanned', dateTime(image.scannedAt)],
-    ['Type', image.type],
+    ['Type', image.type ?? '—'],
     ['Dimensions', image.width && image.height ? `${num(image.width)}×${num(image.height)}` : '—'],
     ['NSFW level', `${image.nsfwLevel}${image.nsfwLevelLocked ? ' (locked)' : ''}`],
     ['Ingestion', image.ingestion],
@@ -160,11 +161,15 @@
   <div class="mt-4 flex flex-col gap-4 sm:flex-row">
     <!-- An image lookup that does not show the image makes the moderator open a second tab to answer
          "what am I even looking at". -->
-    <CdnOrRetractedMedia
-      item={{ id: image.id, url: image.url, type: image.type, name: image.name }}
-      alt="Image {image.id}"
-      class="max-h-64 w-auto shrink-0 rounded-lg border border-dark-4"
-    />
+    {#if image.restricted}
+      <div class="max-w-64 shrink-0 p-4 text-center text-xs text-dark-2">{RETRACTED_REFUSED}</div>
+    {:else}
+      <CdnOrRetractedMedia
+        item={{ id: image.id, url: image.url, type: image.type, name: image.name }}
+        alt="Image {image.id}"
+        class="max-h-64 w-auto shrink-0 rounded-lg border border-dark-4"
+      />
+    {/if}
 
     <dl class="grid flex-1 gap-x-8 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
       {#each fields as [label, value] (label)}

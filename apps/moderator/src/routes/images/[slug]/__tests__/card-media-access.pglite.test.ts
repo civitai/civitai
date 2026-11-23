@@ -26,9 +26,14 @@ vi.mock('$lib/server/db', () => ({
     return dbHandle.current;
   },
 }));
-// ClickHouse is the boundary: no removal reasons and no scanner rows.
+// ClickHouse is the boundary: a removal reason for the restricted image, and no scanner rows.
 vi.mock('$lib/server/clickhouse', () => ({
-  getClickhouse: () => ({ query: async () => ({ json: async () => [] }) }),
+  getClickhouse: () => ({
+    query: async ({ query }: { query: string }) => ({
+      json: async () =>
+        query.includes('tosReason') ? [{ imageId: 201, tosReason: 'removed' }] : [],
+    }),
+  }),
 }));
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
@@ -40,6 +45,9 @@ const RESTRICTED = 201;
 const CONTROL = 202;
 const SIGNAL = 203;
 const HELD = 204;
+const SHARED_URL = 205;
+const SIGNAL_SIBLING = 207;
+const CLEAN_SIBLING = 209;
 const KEY = 'restricted-key';
 
 const WITHOUT_GRANT = { id: 2, roles: [] };
@@ -51,16 +59,27 @@ beforeEach(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
   await db.exec(`
-    INSERT INTO "User" (id, username) VALUES (7, 'owner'), (8, 'other'), (9, 'third'), (10, 'fourth');
+    INSERT INTO "User" (id, username) VALUES (7, 'owner'), (8, 'other'), (9, 'third'), (10, 'fourth'), (11, 'fifth'), (12, 'sixth'), (14, 'seventh'), (15, 'eighth');
     INSERT INTO "Image" (id, url, type, ingestion, "needsReview", "blockedFor", width, height, "userId") VALUES
       (${RESTRICTED}, '${KEY}', 'video', 'Blocked', 'appeal', 'CSAM', 512, 768, 7),
       (${CONTROL}, 'control-key', 'image', 'Blocked', 'appeal', 'moderated', 640, 480, 8),
       (${SIGNAL}, 'signal-key', 'image', 'Blocked', 'appeal', 'CSAM,moderated', 300, 300, 9),
-      (${HELD}, 'held-key', 'image', 'Blocked', 'appeal', 'moderated', 300, 300, 10);
+      (${HELD}, 'held-key', 'image', 'Blocked', 'appeal', 'moderated', 300, 300, 10),
+      (${SHARED_URL}, 'shared-key', 'image', 'Blocked', 'appeal', 'moderated', 300, 300, 11),
+      (206, 'shared-key', 'image', 'Pending', NULL, NULL, 300, 300, 12),
+      (${SIGNAL_SIBLING}, 'signal-sibling-key', 'image', 'Blocked', 'appeal', 'moderated', 300, 300, 14),
+      (208, 'signal-sibling-key', 'image', 'Blocked', NULL, 'CSAM', 300, 300, 12),
+      (${CLEAN_SIBLING}, 'clean-sibling-key', 'image', 'Blocked', 'appeal', 'moderated', 300, 300, 15),
+      (210, 'clean-sibling-key', 'image', 'Scanned', NULL, NULL, 300, 300, 12);
     INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (${HELD});
     INSERT INTO "Appeal" ("userId", "entityType", "entityId") VALUES
-      (7, 'Image', ${RESTRICTED}), (8, 'Image', ${CONTROL}), (9, 'Image', ${SIGNAL}), (10, 'Image', ${HELD});
+      (7, 'Image', ${RESTRICTED}), (8, 'Image', ${CONTROL}), (9, 'Image', ${SIGNAL}), (10, 'Image', ${HELD}), (11, 'Image', ${SHARED_URL}),
+      (14, 'Image', ${SIGNAL_SIBLING}), (15, 'Image', ${CLEAN_SIBLING});
     INSERT INTO "Model3D" (id, name, status, "thumbnailImageId") VALUES (1, 'parent', 'Published', ${RESTRICTED});
+    INSERT INTO "User" (id, username) VALUES (13, 'reporter');
+    INSERT INTO "Report" (id, "userId", reason, status, details, "createdAt") VALUES
+      (1, 13, 'TOSViolation', 'Actioned', '{"comment": "x"}', '2026-09-01');
+    INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (${RESTRICTED}, 1);
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -99,6 +118,9 @@ describe('card load, without the grant', () => {
     ['height', null],
     ['type', null],
     ['model3d', null],
+    ['blockedFor', null],
+    ['tosReason', null],
+    ['reports', []],
   ])('serves no %s for it', async (field, empty) => {
     expect((await card(WITHOUT_GRANT, RESTRICTED))[field]).toEqual(empty);
   });
@@ -111,6 +133,31 @@ describe('card load, without the grant', () => {
 
   it('withholds a row the Postgres rule restricts, whatever its block reason', async () => {
     expect(await card(WITHOUT_GRANT, HELD)).toMatchObject({ restricted: true, url: '' });
+  });
+
+  // Bytes are per url: another row on it that has not finished its scan keeps this one too.
+  it('withholds a row whose url another row keeps', async () => {
+    expect(await card(WITHOUT_GRANT, SHARED_URL)).toMatchObject({ restricted: true, url: '' });
+  });
+
+  it('withholds a row whose url sibling carries a signal, and refuses its ruling', async () => {
+    expect(await card(WITHOUT_GRANT, SIGNAL_SIBLING)).toMatchObject({ restricted: true, url: '' });
+    const data = new FormData();
+    data.append('imageId', String(SIGNAL_SIBLING));
+    data.append('status', 'Approved');
+    data.append('resolvedReason', 'misclassified');
+    const result = (await actions.resolveAppeal({
+      request: { formData: async () => data },
+      locals: { user: WITHOUT_GRANT },
+    } as unknown as Parameters<(typeof actions)['resolveAppeal']>[0])) as { status: number };
+    expect(result.status).toBe(403);
+  });
+
+  it('serves a row whose url sibling carries no signal', async () => {
+    expect(await card(WITHOUT_GRANT, CLEAN_SIBLING)).toMatchObject({
+      restricted: false,
+      url: 'clean-sibling-key',
+    });
   });
 
   // The storage route's block-reason check, which the Postgres rule alone does not make.
@@ -177,6 +224,9 @@ describe('card load, with the grant', () => {
       height: 768,
       type: 'video',
       model3d: { id: 1 },
+      blockedFor: 'CSAM',
+      tosReason: 'removed',
+      reports: [expect.objectContaining({ id: 1 })],
     });
   });
 });

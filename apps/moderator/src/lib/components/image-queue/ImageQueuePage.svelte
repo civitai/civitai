@@ -484,7 +484,7 @@
       <div class="flex flex-col gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/5 p-2 text-xs">
         <div>
           <span class="font-semibold text-rose-400">Removed:</span>
-          {formatEnum(item.tosReason ?? item.blockedFor ?? 'TOS violation')}
+          {#if !item.restricted}{formatEnum(item.tosReason ?? item.blockedFor ?? 'TOS violation')}{/if}
           {#if item.removedAt}
             <span class="text-muted-foreground">
               · by {item.moderatorUsername ?? 'moderator'} · {fmt(item.removedAt)}

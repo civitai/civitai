@@ -597,7 +597,8 @@ export type AppealImageItem = {
   width: number | null;
   height: number | null;
   type: MediaType | null;
-  /** Kept to moderators with the CSAM grant: served without `url`, `width`, `height` or `type`. */
+  /** Kept to moderators with the CSAM grant: served without `url`, `width`, `height`, `type`,
+   *  `blockedFor`, `tosReason` or `reports`. */
   restricted: boolean;
   needsReview: string | null;
   minor: boolean;
@@ -772,6 +773,8 @@ export async function getAppealImageQueue({
     removedAt: r.removedAt,
     tosReason: tosByImage.get(r.id) ?? null,
     reports: reportsByImage.get(r.id) ?? [],
+    // Nor why it was removed: the card must not say why it is withheld.
+    ...(restricted.has(r.id) && { blockedFor: null, tosReason: null, reports: [] }),
   }));
   return { items, nextCursor };
 }

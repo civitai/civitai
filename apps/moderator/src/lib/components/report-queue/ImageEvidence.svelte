@@ -37,7 +37,8 @@
     paging,
     owners: pageOwners,
   }: {
-    images: BulkImage[];
+    /** `restricted`: withheld from this viewer, drawn as a placeholder and not selectable. */
+    images: (Omit<BulkImage, 'type'> & { type: BulkImage['type'] | null; restricted?: boolean })[];
     /** The viewer's action grants: the bar needs `images`, its strike-the-owners box `strike`. */
     can: ReportActionGrants;
     civitaiUrl: string;
@@ -133,7 +134,7 @@
     <ImageActionBar
       bare
       {selected}
-      selectable={images.map((i) => i.id)}
+      selectable={images.filter((i) => !i.restricted).map((i) => i.id)}
       owners={selectedOwners}
       onSubmit={form.enhance}
       submitting={form.submitting}
