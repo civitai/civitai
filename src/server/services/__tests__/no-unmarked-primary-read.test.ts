@@ -328,7 +328,7 @@ const BASELINE: Counts = {
   'src/server/services/user-link.service.ts': 1,
   'src/server/services/user-payment-configuration.service.ts': 2,
   'src/server/services/user-preferences.service.ts': 6,
-  'src/server/services/user-profile.service.ts': 4,
+  'src/server/services/user-profile.service.ts': 3,
   'src/server/services/user-referral-code.service.ts': 1,
   'src/server/services/user-restriction-resolve.service.ts': 3,
   'src/server/services/user.service.ts': 27,
