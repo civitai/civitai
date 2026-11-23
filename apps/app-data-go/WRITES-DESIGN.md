@@ -218,10 +218,14 @@ private ones, and `MAX_STREAMS` bounds a replica. So the board is split by who i
   an unreadable flag counts as on, `doc-levels.ts:38-41`), the feed's `docLevels` switch leaves the
   level gate out (`doc-feed.ts:103-108`), and there is **one** stream of every visible document: the
   subscription that names `level: none` in `meta`. **The adapter is authoritative for the mode:** every
-  level stream names it (`levels: on|off`) in its `Live` and `Progress` `meta`, and the adapter **ends**
-  a `level: none` subscription when levels are on for the app (an unreadable flag included). On that
-  end, or a `levels: on` in any stream's `meta`, app-data-go stops serving the single stream and fails
-  closed to the per-bit shape; a per-bit stream naming `levels: off` switches it back.
+  level stream names it (`levels: on|off`) in its `Live` and `Progress` `meta`. The adapter refuses a
+  `level: none` subscription before any snapshot while levels are on (an unreadable flag included),
+  ends one with reason `levels_on` when they turn on, and ends the per-bit streams when they turn off.
+  app-data-go serves the single stream only while its own latest `meta` says `levels: off`; on a
+  `levels_on` end it fails closed to the per-bit shape, and on any other end it reopens `level: none`.
+  During a switch, reads wait `LIVE_WAIT_MS` and then answer `503 not_live`. The off-to-on window (up to
+  one poll) is the public document feed's today, which also reads the mode per poll
+  (`doc-feed.ts:324`, `:347-351`).
 - **A per-viewer stream per (token, collection major)**, read under the viewer's exchanged token like
   the private streams. It carries only what differs for that viewer: their marks on the collection's
   documents, the keys they authored, and their own documents no level stream gives them (unrated,
@@ -233,7 +237,9 @@ A read is answered by the **union** of the level streams whose bits are in the v
 viewer's own extra documents, ordered by key and **deduplicated by key, keeping the higher `seq`** (a
 re-rating moves a document between bits, and the two streams may briefly both hold it). Counter
 documents (`author_kind = 'counter'`, visible at every level, `doc-store.ts:773`) are carried on one
-designated stream of their own, which every viewer reads, with `viewer.marks` and
+designated stream of their own, which every viewer reads (routed like a level stream under a
+`level: counters` name, sized with them, and served to signed-out viewers too; v1's app declares no
+counters, so it is empty), with `viewer.marks` and
 `author.isViewer` filled from the per-viewer stream. Signed-out viewers use the level streams alone
 ("Signed-out viewers").
 
@@ -276,14 +282,16 @@ viewer through the mask the per-viewer stream names.
 the gate. A signed-in viewer is served level streams only while their per-viewer stream is open and
 its latest `Live` or `Progress` named a mask. **A refusal is explicit:** when the adapter stops
 admitting the viewer (a revoked install, a withdrawn grant, a refused predicate), the per-viewer stream
-sends a `Progress` whose `meta` names no mask; it never just goes quiet or sends `Delete`s only. This is an adapter change: the private feed today answers a refusal with `nothing()`, deletes on
+sends a `Live` (at stream open) or a `Progress` whose `meta` names no mask; both mean `401 refused`.
+It never just goes quiet or sends `Delete`s only. This is an adapter change: the private feed today answers a refusal with `nothing()`, deletes on
 the next poll and keeps the stream open (`private-feed.ts:303-310`, `:404-420`), so a level-stream read would
 otherwise outlive a revoked install by up to the exchanged token's 15 minutes. On that signal
 app-data-go drops the viewer from every level stream at once and answers their reads `401 refused`,
 as REST refuses them; a later `Progress` naming a mask re-admits them on the same token. Anything else
 is not a refusal: a stream that **ends**, and a resolution failure (a schema that does not resolve, an
-app or collection that no longer matches, `private-feed.ts:306-307`, `:333-334`), stop serving and
-answer `503` while the stream is reopened. app-data-go never decides a signed-in viewer's level itself.
+app or collection that no longer matches, `private-feed.ts:306-307`, `:333-334`), which the adapter
+sends as an end with reason `not_resolved`, stop serving and answer `503` while the stream is reopened,
+so a catalog lag never reads as `401`. app-data-go never decides a signed-in viewer's level itself.
 
 **Feed routing.** The adapter routes by schema and token:
 
@@ -310,9 +318,10 @@ stream re-snapshots. A level stream's state binds its bit.
 **Size, count and alert.** The level streams partition the board, so together they hold it once.
 Before cutover, the board's size in records and bytes, read from the store, per level bit and in
 total, must fit the level-stream bound with headroom, and the per-viewer streams' count per replica must
-fit `MAX_STREAMS` with the private streams beside them, and (the level-stream bound × the streams per
-major × the collection's majors) plus (`MAX_STREAMS` × the raised private bound) fits the pod's memory
-limit with headroom. An alert fires when any level stream passes 75%
+fit `MAX_STREAMS` with the private streams beside them, and the sum over every cut-over app of (the
+level-stream byte bound × the streams per major × the collection's majors), plus (`MAX_STREAMS` × the
+raised private byte bound), each doubled for the old and new stream held during a reopen, fits the pod's
+memory limit with headroom. An alert fires when any level stream passes 75%
 of its bound, or the open-stream gauge passes 75% of `MAX_STREAMS`.
 
 **The bound is at least the app's own read.** The app reads at most 2,000 board rows (100 per page, 20
@@ -466,12 +475,16 @@ Answer: **no, not without routing**. The fix:
   - for a **block token**: max(the stream's head, the highest sequence of an acknowledgement this
     replica made **for this token** whose overlay it still holds) ≥ the floor. Its reads are served only
     here, so its writes normally are too. The residual: if routing moves away and back within one poll
-    and a write lands on the other replica, a read here can miss that write until the next poll;
-    accepted (rare, bounded by one poll);
+    and a write lands on the other replica, a read here can miss that write until this replica's next
+    poll or that write's overlay expiry there (one poll plus 30 s); accepted;
   - for a **hub token**: the stream's head alone ≥ the floor. A hub token is exchanged again on any
     replica, so its writes can land on several, and a write another replica acknowledged at a lower
     sequence could be missing here. The cost: a hub token's write-read-write-read inside one poll spends
-    the reopen and answers `503`. Accepted: model-benchmarking reads with block tokens.
+    the reopen (for a shared collection, a full re-snapshot of its level streams) and answers `503`.
+    Accepted: model-benchmarking reads with block tokens.
+
+  A union read compares each floor against the lowest head among the streams it reads (the level
+  streams in the mask, the counter stream and the per-viewer stream).
 
   When a floor is not met, the replica reopens the stream (a new snapshot, with fresh heads), at most
   once per (token, collection) per poll interval, within `LIVE_WAIT_MS`. If the reopened stream still
@@ -535,7 +548,9 @@ They are counted (`token_kind` on the site's counter, below), so the end state c
 
 **v1 forwards the user's token** to the site's internal route. The site is already that token's
 audience, and the read fallback already sends it there (`DESIGN.md:98-101`). This service checks
-shape only (slug, collection, key grammar, body size, op in scope), routes by token shape as reads do
+shape (slug, collection, key grammar, body size, op in scope) and verifies a block token locally, as for
+reads (`exchange.BlockVerifier`), before forwarding a write, so a forged or expired token is refused
+here (`401`, nothing forwarded); it routes by token shape as reads do
 (`exchange.KindOf`), and decides no write access of its own (`DESIGN.md:17-18`). The rate buckets and
 budgets stay per (app, principal) (`shared-storage-rate-limit.ts:139-190`). The site sees this
 service's address, not the client's; nothing in the write path keys on the client address, a test pins
@@ -587,8 +602,9 @@ A cut-over app's reads and writes go through this service or fail; there is no R
 the cutover window or after it. Availability comes from this service's own redundancy: two replicas
 spread across nodes, a disruption budget that keeps one serving through a rollout, readiness that
 turns false before a replica stops taking requests, and the sticky routing above re-hashing a lost
-replica's tokens to the other. A write refused before it was forwarded (a replica shutting down
-answers `503`) was never sent and is safe to resend. A write in flight on a replica that dies answers
+replica's tokens to the other. A write app-data-go refused before forwarding it (shutting down, or
+any check of its own) answers `503 not_forwarded`, and only that code is safe to resend; a `503` from
+the site (its unavailable codes, `doc-store-api.ts:283-287`) is treated as unknown. A write in flight on a replica that dies answers
 `504 outcome=unknown` (or the connection drops): it may or may not have been forwarded, and the client
 follows "Retries".
 
@@ -648,8 +664,10 @@ catalog), not this path: app-data-go reads the adapter directly, not through `re
    above the head reopens once, then answers `503`; for a block token, a read whose floor this replica
    acknowledged itself is answered without a reopen, and for a hub token it is not; a `kv` read after a
    vote meets the mark floor against the app-wide mark head; a block token's write is forwarded with the hub
-   unreachable; a levels-off stream ended by the adapter fails closed to the per-bit shape; a stream end
-   answers `503`, never `401`; a dev, review or
+   unreachable; a levels-off stream ended by the adapter fails closed to the per-bit shape; a stream end, and an
+   end with reason `not_resolved`, answer `503`, never `401`; a `Live` with no mask answers `401
+   refused`; only `503 not_forwarded` is resent; a direct request to app-data-go carrying a forged region
+   header has it stripped or is refused; a dev, review or
    private-run token is never given the service URL; a vote leaves the document's `seq` unchanged, and
    a moderator hide pinned to the pre-vote revision still applies.
 2. **Cutover: model-benchmarking, all of its storage, directly.** No shadow step.
@@ -659,7 +677,8 @@ catalog), not this path: app-data-go reads the adapter directly, not through `re
      total ("Size, count and alert"); every user's `kv` fits the private stream bounds, which are raised
      for the app to at least the largest tier's storage ceiling a user can hold (the default ceiling,
      2 MiB and 1,000 documents, `doc-store.types.ts:144-149`, equals the bounds today; a larger tier
-     ceiling would exceed them); and a positive control
+     ceiling would exceed them); the edge-only check, owned by the cutover operator: a request sent to
+     app-data-go directly with a forged region header has it stripped or is refused; and a positive control
      on the direct series: the app's `via="direct"` count is non-zero in the days before cutover, so a
      zero after it means the traffic moved, not that the counter is dead.
    - **The flag:** `app-data-writes-via-service` in Flipt, per app (entity the app block id, as the read
