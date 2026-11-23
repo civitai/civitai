@@ -2725,10 +2725,31 @@ export async function previewVersionListingRating(
   const to = await resolveVersionListingRating(dbRead, {
     appListingId: listing.id,
     current: listing.contentRating,
-    previousDeclared: block.contentRating,
+    earlierDeclared: [
+      block.contentRating,
+      ...(await approvedVersionRatings(dbRead, request.appBlockId)),
+    ],
     nextDeclared: manifestRatingOrDefault(request.manifest),
   });
   return { listingId: listing.id, from: listing.contentRating, to };
+}
+
+/**
+ * The ratings an app's APPROVED versions declared, newest first — the "earlier" declarations
+ * `resolveVersionListingRating` tells an approve's rating from a moderator's raise by. Bounded:
+ * the newest 200 versions.
+ */
+async function approvedVersionRatings(
+  db: Prisma.TransactionClient,
+  appBlockId: string
+): Promise<string[]> {
+  const rows = await db.appBlockPublishRequest.findMany({
+    where: { appBlockId, status: 'approved' },
+    orderBy: [{ reviewedAt: 'desc' }, { id: 'desc' }],
+    take: 200,
+    select: { manifest: true },
+  });
+  return rows.map((r) => manifestRatingOrDefault(r.manifest));
 }
 
 export type ListingRatingResync = { listingId: string; from: string | null; to: string | null };
@@ -2744,9 +2765,8 @@ export class ListingRatingResyncError extends Error {
 /**
  * The (3b-sync) rating an APPROVED app's approved on-site listing would get if its current
  * version were approved now: `resolveVersionListingRating` with the current version's declared
- * rating as the new one and the version approved before it as the previous one (a first
- * version is its own previous: its first approve rated the listing). `null` when the app is not
- * approved or has no approved on-site listing.
+ * rating as the new one and every approved version's as the earlier ones. `null` when the app is
+ * not approved or has no approved on-site listing.
  */
 async function resolveListingRatingResync(
   db: Prisma.TransactionClient,
@@ -2762,18 +2782,11 @@ async function resolveListingRatingResync(
     select: { id: true, slug: true, contentRating: true },
   });
   if (!listing) return null;
-  const approved = await db.appBlockPublishRequest.findMany({
-    where: { appBlockId, status: 'approved' },
-    orderBy: [{ reviewedAt: 'desc' }, { id: 'desc' }],
-    take: 2,
-    select: { manifest: true },
-  });
-  const previous = approved[1] ?? approved[0];
   const { resolveVersionListingRating } = await import('./app-listing-version-rating.service');
   const to = await resolveVersionListingRating(db, {
     appListingId: listing.id,
     current: listing.contentRating,
-    previousDeclared: previous ? manifestRatingOrDefault(previous.manifest) : block.contentRating,
+    earlierDeclared: [block.contentRating, ...(await approvedVersionRatings(db, appBlockId))],
     nextDeclared: block.contentRating,
   });
   return { listingId: listing.id, slug: listing.slug, from: listing.contentRating, to };
@@ -4467,9 +4480,9 @@ async function approveRequestUnderClaim(
           // rating (`AppBlock.contentRating`, written from it above), raised to the store
           // media's rating when that is more mature, so it LOWERS as well as raises (an app
           // that drops `x` → `pg13` is re-rated `pg13`). The approve bar shows the moderator
-          // the change first (`previewVersionListingRating`). A rating above what the
-          // PREVIOUS version's declaration gives is a moderator's raise and is kept; the
-          // previous declaration is `priorVersion`, read before the update above.
+          // the change first (`previewVersionListingRating`). A rating above what every
+          // earlier approved version's declaration gives is a moderator's raise and is kept;
+          // the last one is `priorVersion`, read before the update above.
           //
           // Read on the PRIMARY. A missing row leaves the column out of the write.
           const ratingListing = await dbWrite.appListing.findFirst({
@@ -4484,7 +4497,10 @@ async function approveRequestUnderClaim(
             syncedRating = await resolveVersionListingRating(dbWrite, {
               appListingId: ratingListing.id,
               current: ratingListing.contentRating,
-              previousDeclared: priorVersion?.block.contentRating ?? null,
+              earlierDeclared: [
+                priorVersion?.block.contentRating ?? null,
+                ...(await approvedVersionRatings(dbWrite, appBlockId)),
+              ],
               nextDeclared: ab.contentRating,
             });
           }

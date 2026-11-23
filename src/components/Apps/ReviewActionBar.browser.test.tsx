@@ -45,6 +45,7 @@ const mocks = vi.hoisted(() => ({
   holds: [] as unknown[],
   approveResult: undefined as unknown,
   versionPreview: undefined as unknown,
+  versionPreviewError: false,
   versionPreviewQuery: vi.fn(),
 }));
 
@@ -100,7 +101,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         'blocks.getVersionListingRatingPreview': {
           useQuery: (input: unknown, opts: unknown) => {
             mocks.versionPreviewQuery(input, opts);
-            return { data: mocks.versionPreview };
+            return { data: mocks.versionPreview, isError: mocks.versionPreviewError };
           },
         },
         'appListings.getAssets': {
@@ -126,6 +127,7 @@ beforeEach(() => {
   mocks.assetsQuery.mockClear();
   mocks.holds = [];
   mocks.versionPreview = undefined;
+  mocks.versionPreviewError = false;
   mocks.versionPreviewQuery.mockClear();
   showError.mockClear();
 });
@@ -153,6 +155,17 @@ describe('ReviewActionBar — a new version re-rates the live listing', () => {
     );
     // A notice, not a gate.
     await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeEnabled();
+  });
+
+  test('a failed check says so instead of looking like no change', async () => {
+    mocks.versionPreviewError = true;
+    bar();
+    await expect
+      .element(page.getByTestId('apps-version-listing-rerate-unchecked'))
+      .toHaveTextContent(
+        'Could not check whether approving re-rates the live store listing. Close and reopen this request to retry.'
+      );
+    expect(page.getByTestId('apps-version-listing-rerate').elements()).toHaveLength(0);
   });
 
   test('an unchanged rating says nothing', async () => {

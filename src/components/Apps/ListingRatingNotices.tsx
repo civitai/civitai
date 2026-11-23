@@ -116,13 +116,23 @@ export function OnsiteApproveRatingWarning({
 /**
  * Tells the moderator that approving this version re-rates the app's existing store listing
  * (`blocks.getVersionListingRatingPreview`, computed by the rule the approve writes with).
- * Renders nothing until it has loaded, or when the rating does not change.
+ * Renders nothing until it has loaded, or when the rating does not change; says so when the
+ * check failed.
  */
 export function VersionListingRatingNotice({ publishRequestId }: { publishRequestId: string }) {
-  const { data } = trpc.blocks.getVersionListingRatingPreview.useQuery(
+  const { data, isError } = trpc.blocks.getVersionListingRatingPreview.useQuery(
     { publishRequestId },
     { staleTime: 0, refetchOnMount: 'always', retry: false }
   );
+  // Not the same as "no change": this notice is how a moderator learns the approve lowers a
+  // live listing's rating.
+  if (isError)
+    return (
+      <Text size="xs" c="orange" data-testid="apps-version-listing-rerate-unchecked">
+        Could not check whether approving re-rates the live store listing. Close and reopen this
+        request to retry.
+      </Text>
+    );
   if (!data || data.from === data.to) return null;
   return <VersionListingRatingChange from={data.from} to={data.to} />;
 }

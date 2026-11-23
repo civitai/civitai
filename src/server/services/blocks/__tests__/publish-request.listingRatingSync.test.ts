@@ -362,6 +362,17 @@ describe('approveRequest (3b-sync) — the listing rating follows the approved m
     expect(recordRatingChange).not.toHaveBeenCalled();
   });
 
+  it('🔴 an approve heals a listing stuck at `x` behind an earlier `pg13` approve', async () => {
+    // v1 declared x, v2 declared pg13 and was approved before the sync existed; now v3 (pg13).
+    previousDeclared = 'pg13';
+    seedListings({ rating: 'x' });
+    db.write.appBlockPublishRequest.findMany.mockResolvedValue(
+      ['pg13', 'x'].map((r) => ({ manifest: { ...MANIFEST, contentRating: r } })) as never
+    );
+    await approve();
+    expect(row(LIVE).contentRating).toBe('pg13');
+  });
+
   it('a kept raise still rises with the app: the same listing goes to `x` when the version declares it', async () => {
     previousDeclared = 'pg13';
     seedListings({ rating: 'r' });
@@ -465,7 +476,7 @@ describe('resyncListingRating — the moderator re-sync of one approved listing'
         contentRating: versions[0],
       })) as never);
       client.appBlockPublishRequest.findMany.mockResolvedValue(
-        versions.slice(0, 2).map((r) => ({ manifest: { ...MANIFEST, contentRating: r } })) as never
+        versions.map((r) => ({ manifest: { ...MANIFEST, contentRating: r } })) as never
       );
     }
   }
@@ -489,23 +500,38 @@ describe('resyncListingRating — the moderator re-sync of one approved listing'
     });
   });
 
-  it('uses the approve’s own rule: both call resolveVersionListingRating with the same inputs', async () => {
+  it('uses the approve’s own rule: both go through resolveVersionListingRating', async () => {
     seedListings();
     await approve();
     expect(versionRatingSpy).toHaveBeenCalledTimes(1);
-    const fromApprove = versionRatingSpy.mock.calls[0][1];
+    expect(versionRatingSpy.mock.calls[0][1]).toEqual({
+      appListingId: LIVE,
+      current: 'x',
+      earlierDeclared: ['x'],
+      nextDeclared: 'pg13',
+    });
     seedListings();
     approvedApp(['pg13', 'x']);
     versionRatingSpy.mockClear();
     await resync();
     expect(versionRatingSpy).toHaveBeenCalledTimes(1);
-    expect(versionRatingSpy.mock.calls[0][1]).toEqual(fromApprove);
-    expect(fromApprove).toEqual({
+    expect(versionRatingSpy.mock.calls[0][1]).toEqual({
       appListingId: LIVE,
       current: 'x',
-      previousDeclared: 'x',
+      earlierDeclared: ['pg13', 'pg13', 'x'],
       nextDeclared: 'pg13',
     });
+  });
+
+  it('🔴 heals a listing stuck at `x` behind more than one later version (x, pg13, pg13)', async () => {
+    seedListings();
+    approvedApp(['pg13', 'pg13', 'x']);
+    expect(await previewListingRatingResync('apb_1')).toEqual({
+      listingId: LIVE,
+      from: 'x',
+      to: 'pg13',
+    });
+    expect(await resync()).toMatchObject({ from: 'x', to: 'pg13', changed: true });
   });
 
   it('keeps a moderator’s raise: an `r` listing on a `pg13` app is left as it is', async () => {
@@ -528,10 +554,16 @@ describe('resyncListingRating — the moderator re-sync of one approved listing'
   });
 
   it('refuses, writing nothing, when the rating moved between the read and the write', async () => {
-    seedListings();
+    // The re-sync reads `x`; by the time it writes, a moderator has set the row to `r`.
+    seedListings({ rating: 'r' });
     approvedApp(['pg13', 'x']);
-    db.write.appListing.updateMany.mockResolvedValueOnce({ count: 0 } as never);
+    db.write.appListing.findFirst.mockImplementationOnce((async () => ({
+      id: LIVE,
+      slug: 'cool-app',
+      contentRating: 'x',
+    })) as never);
     await expect(resync()).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(row(LIVE).contentRating).toBe('r');
     expect(recordRatingChange).not.toHaveBeenCalled();
   });
 
