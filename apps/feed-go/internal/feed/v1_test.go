@@ -275,11 +275,10 @@ type fakeV1Sources struct {
 	contributors     map[int]map[int][]string
 	collectionsErr   error
 	collectionsAsked [][2]int
-	// showcase answers VersionShowcase (zero: ShowcaseUncurated), with showcaseErr, unless
+	// showcase answers VersionShowcase (zero: ShowcaseUncurated), with no error, unless
 	// showcaseFrom is set, which then answers it (a real cache read and miss computation);
 	// showcaseAsked is each call's ids.
 	showcase      hydrate.Showcase
-	showcaseErr   error
 	showcaseFrom  *hydrate.Sources
 	showcaseAsked [][]int
 }
@@ -347,7 +346,7 @@ func (f *fakeV1Sources) VersionShowcase(ctx context.Context, ids []int) (hydrate
 	if f.showcaseFrom != nil {
 		return f.showcaseFrom.VersionShowcase(ctx, ids)
 	}
-	return f.showcase, f.showcaseErr
+	return f.showcase, nil
 }
 
 type fakeV1Gallery struct {

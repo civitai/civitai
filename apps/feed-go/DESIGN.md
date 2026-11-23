@@ -227,7 +227,7 @@ produce. `FEED_GO_COMPUTE_MISSES=false` restores the fallbacks.
 | `model-data-miss` | `dataForModelsCache` (`packed:caches:data-for-model-2:<modelId>`): model.getAll | `src/server/redis/caches.ts` lookupFn: a plain fetch's miss reads `getDbWithoutLagBatch('model', ids)` (`fromWrite`, the primary, is `refresh()` only) | the lookupFn's two statements on the database that decides: the versions (`ModelVersion` with the linked-VAE `RecommendedResource` subquery and `GenerationCoverage`, ordered by model and `index`) and the SHA256 model hashes (`ModelHash`); per model with a version `{modelId, hashes, tags: [], versions}`, a model with none left out and nothing written for it (`cacheNotFound: false`). With write-back on it reads the primary when any model carries the lag flag a recent write set (`lag-helper:model:<id>`, as Node's batch check; a failed flag read counts as unflagged), else the replica; with it off the replica. The appendFn's tags (below) are applied on read, as for a hit |
 | `model-tags-miss` | `modelTagCache` (`packed:caches:model-tags:<modelId>`): model.getAll, asked for the models the data cache answered (the data cache's appendFn) | the same file's lookupFn (a plain fetch's `dbRead`) | `TagsOnModels` of the models on the replica (with write-back on too), `{modelId, tagIds}` in row order, a `notFound` marker for a model with none (whose data entry then keeps its own `tags`); the tag records from `basic-tags` as for a hit |
 | `image-tags-miss` | `imageTagsCache` (`packed:caches:image-tags:<imageId>`): image.getInfinite with `include: ['tags']` | `src/server/redis/caches.ts` lookupFn: `readImageTagsForImages` → `listImageTagsForImages` (`packages/civitai-db-queries/src/hot-reads.db.ts`, the fetch's `kyselyRead`) | the `ImageTag` view's `imageTagCompositeSelect` columns on the replica, `score DESC, tagId ASC`, the numeric `score` and bigint vote counts read as numbers (as `@civitai/db/kysely` parses them), `lastUpvote` a Date; `{imageId, tags}` per image with a row, a `notFound` marker otherwise. ttl an hour, `staleWhileRevalidate` off (an entry is never stale). Not in `FEED_GO_CACHE_WRITEBACK`'s names: computed entries are never written (only kept in process for `recentTTL`) |
-| `v1-models-showcase-miss`, `prioritized-showcase-miss` | `getVersionShowcaseCache` (`packed:caches:version-showcase:<versionId>`): the curated-showcase guard of the model routes and image.getInfinite's carousel (§16.9) | `src/server/services/version-showcase.service.ts` lookupFn (`getDbWithoutLagBatch('modelVersion', ids)`), as `hasCuratedShowcase` reads it | only the decision: whether any of the missed versions has a `ModelVersionShowcaseItem` row that is not removed, one `LIMIT 1` query on the replica (never the primary: the replica-lag gap is in §16.9). No entry is built, written or kept in process; a row or a failed read (`<reason>-failed`) falls back |
+| `v1-models-showcase-miss`, `prioritized-showcase-miss` | `getVersionShowcaseCache` (`packed:caches:version-showcase:<versionId>`): the curated-showcase guard of the model routes and image.getInfinite's carousel (§16.9) | `src/server/services/version-showcase.service.ts` lookupFn (`getDbWithoutLagBatch('modelVersion', ids)`), as `curatedSiteFor` reads it for `withCuratedShowcases` and `getCarouselShowcaseIds` | only the decision: whether any of the missed versions has a `ModelVersionShowcaseItem` row that is not removed, one `LIMIT 1` query on the replica (never the primary), and none while any missed version carries its `lag-helper:modelVersion:<id>` flag or the flag read fails (it falls back as a miss; §16.9). No entry is built, written or kept in process; a row or a failed read (`<reason>-failed`) falls back. Counted as `version-showcase` in `feed_go_cache_miss_total` |
 | `user-follows-miss` | `userFollowsCache` (`packed:caches:user-follows:<userId>`): image.getInfinite with `followed: true`, signed in | `src/server/redis/caches.ts` lookupFn (a plain fetch's `dbRead`) | `UserEngagement` rows of type `Follow` on the replica, no `ORDER BY` (Prisma sends none), `{userId, follows}` with the target ids in row order, a `notFound` marker (no follows) for a user with none. ttl a day, `staleWhileRevalidate` off. Not in `FEED_GO_CACHE_WRITEBACK`'s names: computed entries are never written, and not kept in process either (the viewer's own follow set, read back after they change it) |
 
 The tag-ids values are `{imageId, tags}` with the tag ids in row order (Node's lookup has no `ORDER
@@ -2582,7 +2582,8 @@ a `prioritizedUserIds` request with a `modelVersionId` reads the version's showc
 the cache Node reads, `packed:caches:version-showcase:<versionId>` (getVersionShowcaseCache: one
 `{ modelVersionId, rows, community }` record per version, `rows` the version's ModelVersionShowcaseItem
 rows that are not removed, `rows: []` uncurated; `ttl: CacheTTL.hour`, stale-while-revalidate), and
-hand the request to Node, as `hasCuratedShowcase` decides, when they cannot answer it.
+hand the request to Node when they cannot answer it as `curatedSiteFor` would (the decision both
+paths take: a version is curated when its `rows` is non-empty, on either site).
 
 A stale entry is not one Node answers from. `createCachedArray`'s fetch serves a stale entry as it is
 only to a reader that misses the revalidate lock (`cache-lock:<key>:<id>`, `SET NX`, 10 s); the reader
@@ -2598,7 +2599,7 @@ from it. The fallback's own Node read takes the lock and rebuilds the entry, so 
 | `rows` empty and inside the hour, no `cachedAt` (`undefined < ttlExpiry` is false in Node), or a notFound marker (served before its `cachedAt` is looked at) | answered as before | |
 | `rows` non-empty (either site), no `rows` array, or the read failed | falls back | `v1-models-curated-showcase` / `prioritized-curated-showcase` |
 | no key or an undecodable value, with `FEED_GO_COMPUTE_MISSES` on | looked up on the replica, the decision Node's lookup computes: no `ModelVersionShowcaseItem` row that is not removed is uncurated and answered as before; a row (any site, source or `excluded`) falls back as curated; a failed read falls back | `v1-models-curated-showcase` / `prioritized-curated-showcase` for a row; `v1-models-showcase-miss-failed` / `prioritized-showcase-miss-failed` for a failed read |
-| the same with `FEED_GO_COMPUTE_MISSES` off, or a bust's debounce marker either way | falls back: Node computes the entry from the database (a lag-aware read), so an absence says nothing about the curation | `v1-models-showcase-miss` / `prioritized-showcase-miss` |
+| the same with `FEED_GO_COMPUTE_MISSES` off, or with a missed version's lag flag set or unreadable, or a bust's debounce marker either way | falls back: Node computes the entry from the database (a lag-aware read), so an absence says nothing about the curation | `v1-models-showcase-miss` / `prioritized-showcase-miss` |
 | `rows` empty, `cachedAt` older than the hour | falls back: the reader that wins the revalidate lock rebuilds it from the database | `v1-models-showcase-stale` / `prioritized-showcase-stale` |
 
 On the model routes the versions read are the ones whose images entry is not a notFound marker (the
@@ -2611,15 +2612,26 @@ when Node itself reads it, so once these reads are Go's most versions have none 
 With the miss computation on, the versions of a request that have no usable entry are answered by one
 query on the replica, `SELECT 1 FROM "ModelVersionShowcaseItem" WHERE "modelVersionId" = ANY($1) AND
 NOT "removed" LIMIT 1`: the first query of getVersionShowcaseCache's lookup, narrowed to what
-`hasCuratedShowcase` decides on (whether `rows` is non-empty; every row that is not removed counts).
-Nothing is written to the cache and no answer is kept in process, so each such request pays one
-primary-key lookup. A stale entry is not computed: it still falls back, as the reader that wins
-Node's revalidate lock rebuilds it. Nor is a bust's debounce marker: a bust usually follows a
-curation write, the window the replica is most likely not to show yet, so it falls back as a miss.
-The gap left: Node's lookup reads the primary for a version a recent write flagged
-(`getDbWithoutLagBatch`), and this read is the replica's, so a curation whose cache entry was never
-built, made within the replica's lag, can be read as uncurated and the version's own images served
-until the lag clears.
+`curatedSiteFor` decides on (whether `rows` is non-empty; every row that is not removed counts, on
+either site). Nothing is written to the cache and no answer is kept in process, so each such request
+pays one primary-key lookup; each computed decision counts its missed versions in
+`feed_go_cache_miss_total{cache="version-showcase"}` (`computed`, or `error` for a failed query). A
+stale entry is not computed: it still falls back, as the reader that wins Node's revalidate lock
+rebuilds it. Nor is a bust's debounce marker: a bust usually follows a curation write, the window the
+replica is most likely not to show yet, so it falls back as a miss.
+
+Node's lookup reads the primary for a version a recent write flagged (`getDbWithoutLagBatch`), where
+this read is the replica's. That gap is closed by the same flag: before the query the missed
+versions' `lag-helper:modelVersion:<id>` flags are read (one pipeline, the keys and non-empty-value
+test the version-images lookup's `lagAwareDB` reads), and any flag set, or a flag read that fails,
+leaves the request a miss (`*-showcase-miss`): Node reads the primary. `refreshVersionShowcases`, which
+the curation writes run once they commit (`afterShowcaseWrite`, version-showcase-curation.service.ts),
+sets exactly these flags (`preventReplicationLagBatch('modelVersion', ids)`) before it rebuilds the
+entries, each for `REPLICATION_LAG_DELAY` seconds (`markFresh`'s `EX`, packages/civitai-db/src/lag.ts).
+What remains is what Node's own lag-aware read shares: a curation whose flag expired before the
+replica caught up (a lag longer than `REPLICATION_LAG_DELAY`), or read between its commit and the flag
+being set, can be read as uncurated; with `REPLICATION_LAG_DELAY` 0 Node sets no flag and reads the
+replica itself.
 
 The flag `model-version-showcase-serve` (`modelVersionShowcaseServe`, on when the key is absent) is not
 read: on, Node curates and the check is needed; off, Node serves the uncurated list and a fallback here

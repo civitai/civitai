@@ -142,7 +142,7 @@ func TestCuratedShowcaseGuardSkipsVersionsWithoutImages(t *testing.T) {
 // serveBothComputed is serveBoth with the miss computation on and the replica answering the
 // version-showcase lookup (hydrate.Sources.ShowcaseState): a row when curated, an error when fail is
 // set. bound collects each lookup's version ids over both routes.
-func serveBothComputed(t *testing.T, edit func(*testWorld), curated bool, fail error) (detail, list []byte, detailErr, listErr error, bound [][]int) {
+func serveBothComputed(t *testing.T, edit func(*testWorld), curated bool, fail error) (detail, list []byte, bound [][]int, detailErr, listErr error) {
 	t.Helper()
 	run := func(serve func(d *Deps) (*Answer, error)) ([]byte, error) {
 		w := newTestWorld()
@@ -194,7 +194,7 @@ func TestCuratedShowcaseGuardMissComputed(t *testing.T) {
 		name string
 		edit func(*testWorld)
 	}{{"no entry", noEntry}} {
-		detail, list, dErr, lErr, bound := serveBothComputed(t, c.edit, false, nil)
+		detail, list, bound, dErr, lErr := serveBothComputed(t, c.edit, false, nil)
 		if dErr != nil || lErr != nil {
 			t.Fatalf("%s, no row: detail %v (%s), list %v (%s)", c.name, dErr, reason(dErr), lErr, reason(lErr))
 		}
@@ -219,7 +219,7 @@ func TestCuratedShowcaseGuardMissComputed(t *testing.T) {
 		{"a stale empty entry", func(w *testWorld) { w.entries[showcaseKey6001] = showcaseAged(61 * time.Minute) }, false, nil, "v1-models-showcase-stale", 0},
 		{"a bust's debounce marker", func(w *testWorld) { w.entries[showcaseKey6001] = meta("debounce", true) }, false, nil, "v1-models-showcase-miss", 0},
 	} {
-		_, _, dErr, lErr, bound := serveBothComputed(t, c.edit, c.curated, c.fail)
+		_, _, bound, dErr, lErr := serveBothComputed(t, c.edit, c.curated, c.fail)
 		if reason(dErr) != c.reason || reason(lErr) != c.reason {
 			t.Errorf("%s: detail %q (%v), list %q (%v), want %q", c.name, reason(dErr), dErr, reason(lErr), lErr, c.reason)
 		}
