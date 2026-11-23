@@ -1341,7 +1341,7 @@ export type ApplyScriptOptions = {
  * redirect chain to a file. It must never pipe the body into a reader that can exit before EOF
  * (`awk '…exit'`, `grep -q`, `head`): once the body outgrows the pipe buffer (~64 KB) the writer
  * takes SIGPIPE, pipefail makes the pipeline's status 141, and `set -e` ends the script with no
- * message, so the deploy fails as a bare "Deploy failed".
+ * message.
  */
 function buildSmokeProbes(label: string): string {
   return `# Probe 1: /healthz must return 200.
@@ -1351,8 +1351,7 @@ if [ "\${HZ}" != "200" ]; then
   exit 1
 fi
 
-# Probe 2: GET / must return 200 + text/html after at most one redirect. The body goes to
-# /dev/null and the headers of every hop to SMOKE_HDRS; status and type come from curl itself.
+# Probe 2: GET / must return 200 + text/html after at most one redirect.
 SMOKE_HDRS="$(mktemp)"
 ROOT=$(curl -sS -L --max-redirs 1 --max-time 15 -o /dev/null -D "\${SMOKE_HDRS}" \\
   -w '%{http_code} %{content_type}' "http://\${POD_IP}:8080/" || true)
@@ -1377,7 +1376,6 @@ esac
 # port (:8080) means nginx is leaking $server_port — under Traefik's
 # HTTPS terminator this becomes "http://<slug>.civit.ai:8080/..." in
 # the browser, which mixed-content-blocks the iframe. Reject hard.
-# awk reads the headers FILE, so its early exit cannot SIGPIPE a writer.
 BAD=$(awk 'tolower($0) ~ /^location:/ { v = substr($0, 10); sub(/^[ \\t]+/, "", v); sub(/\\r$/, "", v); if (index(v, ":8080")) { print v; exit } }' "\${SMOKE_HDRS}")
 if [ -n "\${BAD}" ]; then
   echo "${label}: redirect Location leaks the in-pod port — will trigger" >&2

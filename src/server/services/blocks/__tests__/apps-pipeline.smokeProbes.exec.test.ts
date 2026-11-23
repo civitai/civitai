@@ -27,9 +27,8 @@ import {
  * server (`/leak:8080/`), the same shape as production: the redirect is followed to a 200
  * text/html page and only the Location gives it away.
  *
- * The large-body cases are the regression: the probes used to pipe the whole `GET /` response
- * into `awk '…exit'`, so a body past the pipe buffer (~64 KB) killed the script with status 141
- * under pipefail and printed nothing.
+ * The large-body cases pin that a `GET /` body past the pipe buffer (~64 KB) neither ends the
+ * script nor changes any check's verdict.
  *
  * Unix only: the server runs in this process and the script under the system bash and curl.
  */

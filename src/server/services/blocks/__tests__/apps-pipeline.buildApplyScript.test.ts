@@ -13,11 +13,11 @@ import { describe, expect, it } from 'vitest';
  *   - the per-run shell vars (SLUG / SHA / IMAGE / APP_BLOCK_ID / APPS_DOMAIN)
  *     must stay SHELL expansions (`${SLUG}`), NOT be interpolated by JS — they
  *     come from the Job env at runtime, not from this builder;
- *   - the smoke-pod name is capped at an 8-char short sha to stay under the
- *     63-char DNS label limit (the 2026-05-30 incident class);
  *   - the three smoke probes (healthz 200, / 200 text/html, no :8080 port-leak
  *     redirect) and the cleanup trap must all be present — these are the
- *     gen-from-model mixed-content / ImagePullBackOff guards.
+ *     gen-from-model mixed-content / ImagePullBackOff guards. What the probes DO,
+ *     and the 8-char short-sha pod name, are pinned by running the script in
+ *     apps-pipeline.smokeProbes.exec.test.ts.
  *
  * Pure function → no mocks needed.
  */
@@ -97,10 +97,6 @@ describe('buildApplyScript', () => {
     expect(script).not.toContain('undefined');
   });
 
-  it('caps the smoke-pod name at an 8-char short sha (DNS 63-char label guard)', () => {
-    expect(script).toContain('SMOKE_POD="smoke-${SLUG}-${SHA:0:8}"');
-  });
-
   it('pins the smoke pod hardening: private-registry pull + non-root + drop-ALL caps', () => {
     expect(script).toContain('imagePullSecrets');
     expect(script).toContain('ghcr-cred');
@@ -120,8 +116,6 @@ describe('buildApplyScript', () => {
     expect(script).toContain('/healthz');
     expect(script).toContain('GET /healthz returned');
     expect(script).toContain('expected text/html');
-    // The mixed-content port-leak guard rejects any :8080 in a redirect Location.
-    expect(script).toContain('index(v, ":8080")');
     expect(script).toContain('leaks the in-pod port');
   });
 
