@@ -194,3 +194,82 @@ func TestTheBlockJWKSURL(t *testing.T) {
 		t.Fatalf("got %+v, %v; want the JWKS refused without the exchange", c, err)
 	}
 }
+
+// signingKey is a synthetic key over the 32-byte minimum, distinct from every URL fixture.
+const signingKey = "WRITES-KEY-5b0e-0123456789abcdefXYZ" //nolint:gosec // G101: a synthetic test fixture, not a credential
+
+// writesEnv is the writes on with everything they need, and neither the registry path nor the hub.
+func writesEnv() map[string]string {
+	return map[string]string{
+		"APP_DATA_REST_URL":           "https://rest-site.invalid",
+		"APP_DATA_WRITES":             "true",
+		"APP_DATA_WRITES_SIGNING_KEY": signingKey,
+		"APP_DATA_BLOCK_JWKS_URL":     "https://site.invalid/api/v1/block-tokens/jwks",
+	}
+}
+
+// Off by default: TestDefaults' whole-struct comparison pins Writes false and every write setting
+// empty. On, the site defaults to the REST site and the timeout to 10 s; no registry is needed.
+func TestTheWritesFlag(t *testing.T) {
+	for _, v := range []string{"true", "1"} {
+		kv := writesEnv()
+		kv["APP_DATA_WRITES"] = v
+		c, err := load(kv)
+		if err != nil {
+			t.Fatalf("%q: %v", v, err)
+		}
+		if !c.Writes || c.WritesSigningKey != signingKey || c.WritesSiteURL != "https://rest-site.invalid" ||
+			c.WritesTimeout != 10*time.Second || c.BlockJWKSURL != "https://site.invalid/api/v1/block-tokens/jwks" || c.RegistryURL != "" {
+			t.Fatalf("%q: %+v", v, c)
+		}
+	}
+	for _, v := range []string{"", "false", "0"} {
+		kv := map[string]string{"APP_DATA_REST_URL": "https://rest-site.invalid", "APP_DATA_WRITES": v}
+		if c, err := load(kv); err != nil || c.Writes || c.WritesTimeout != 0 || c.WritesSiteURL != "" {
+			t.Fatalf("%q: %+v, %v; want writes off", v, c, err)
+		}
+	}
+	kv := writesEnv()
+	kv["APP_DATA_WRITES_SITE_URL"] = "http://web.ns.svc.cluster.local:3000/prefix"
+	kv["APP_DATA_WRITES_TIMEOUT_MS"] = "2500"
+	c, err := load(kv)
+	if err != nil || c.WritesSiteURL != "http://web.ns.svc.cluster.local:3000/prefix" || c.WritesTimeout != 2500*time.Millisecond {
+		t.Fatalf("%+v, %v", c, err)
+	}
+}
+
+func TestInvalidWriteSettingsFailTheStart(t *testing.T) {
+	cases := map[string]struct {
+		set  map[string]string
+		want string
+	}{
+		"not a bool":                {map[string]string{"APP_DATA_WRITES": "on"}, "APP_DATA_WRITES must be true, 1, false or 0"},
+		"no signing key":            {map[string]string{"APP_DATA_WRITES_SIGNING_KEY": ""}, "needs APP_DATA_WRITES_SIGNING_KEY"},
+		"short signing key":         {map[string]string{"APP_DATA_WRITES_SIGNING_KEY": "WRITES-KEY-short"}, "at least 32 bytes"},
+		"no JWKS":                   {map[string]string{"APP_DATA_BLOCK_JWKS_URL": ""}, "APP_DATA_WRITES needs APP_DATA_BLOCK_JWKS_URL"},
+		"plain http site":           {map[string]string{"APP_DATA_WRITES_SITE_URL": "http://site.invalid"}, "APP_DATA_WRITES_SITE_URL must be"},
+		"site with a query":         {map[string]string{"APP_DATA_WRITES_SITE_URL": "https://site.invalid?x=1"}, "APP_DATA_WRITES_SITE_URL must be"},
+		"timeout under the hook's":  {map[string]string{"APP_DATA_WRITES_TIMEOUT_MS": "1999"}, "APP_DATA_WRITES_TIMEOUT_MS must be an integer from 2000 to 60000"},
+		"timeout over a minute":     {map[string]string{"APP_DATA_WRITES_TIMEOUT_MS": "60001"}, "APP_DATA_WRITES_TIMEOUT_MS must be an integer"},
+		"key with writes off":       {map[string]string{"APP_DATA_WRITES": "", "APP_DATA_BLOCK_JWKS_URL": ""}, "set with APP_DATA_WRITES off"},
+		"site with writes off":      {map[string]string{"APP_DATA_WRITES": "0", "APP_DATA_WRITES_SIGNING_KEY": "", "APP_DATA_BLOCK_JWKS_URL": "", "APP_DATA_WRITES_SITE_URL": "https://site.invalid"}, "set with APP_DATA_WRITES off"},
+		"timeout with writes off":   {map[string]string{"APP_DATA_WRITES": "false", "APP_DATA_WRITES_SIGNING_KEY": "", "APP_DATA_BLOCK_JWKS_URL": "", "APP_DATA_WRITES_TIMEOUT_MS": "5000"}, "set with APP_DATA_WRITES off"},
+		"JWKS with writes off only": {map[string]string{"APP_DATA_WRITES": "", "APP_DATA_WRITES_SIGNING_KEY": ""}, "set both or neither"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			kv := writesEnv()
+			for k, v := range tc.set {
+				kv[k] = v
+			}
+			c, err := load(kv)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %+v, %v; want an error containing %q", c, err, tc.want)
+			}
+			// No error ever carries the signing key.
+			if strings.Contains(err.Error(), "WRITES-KEY-") {
+				t.Fatalf("an error carries the signing key: %v", err)
+			}
+		})
+	}
+}

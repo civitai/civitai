@@ -1044,3 +1044,34 @@ func TestAReadOfAnEndingSessionWaitsForTheEnd(t *testing.T) {
 		t.Fatal("never returned after the end finished")
 	}
 }
+
+// Every upserted record's schemas reach the Schemas observer (the writes' current-major book), and a
+// deleted record (an upsert without a body) does not.
+func TestEveryUpsertedRecordsSchemasAreObserved(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	h := newHarness(t, Options{Schemas: func(s []string) {
+		mu.Lock()
+		defer mu.Unlock()
+		seen = append(seen, s...)
+	}})
+	h.o.records["tok-a"] = []registry.Entity{entity("urn:apps.civitai.com:todo-app/notes/r-s1", "S1")}
+	if _, err := read(t, h.m, "tok-a", schemaA); err != nil {
+		t.Fatal(err)
+	}
+	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Upsert, Entity: registry.Entity{
+		URN: "urn:apps.civitai.com:todo-app/notes/r-s2", Schemas: []string{"urn:schema:apps.civitai.com:todo-app/notes@v2"}}}})
+	h.o.last(t, "tok-a").push(t, step{ev: registry.Event{Type: registry.Upsert, Entity: registry.Entity{
+		URN: "urn:apps.civitai.com:todo-app/notes/r-s3", Rev: "r3", Body: []byte(`{"text":"S3"}`),
+		Schemas: []string{"urn:schema:apps.civitai.com:todo-app/notes@v3"}}}})
+	eventually(t, "the second record observed", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(seen) == 2
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(seen, ",") != schemaA+",urn:schema:apps.civitai.com:todo-app/notes@v3" {
+		t.Fatalf("observed %q", seen)
+	}
+}

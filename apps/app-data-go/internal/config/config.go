@@ -63,7 +63,27 @@ type Config struct {
 	// registry stalls every read falls back, and this keeps that from becoming unbounded load on the
 	// site. A read over it answers 503.
 	RESTMaxInFlight int
+
+	// Writes turns on the write routes and `info` (APP_DATA_WRITES: `true`/`1` on, unset/`false`/`0`
+	// off; default off). Off, every one of them answers 404, as an unregistered route does. On needs
+	// WritesSigningKey and BlockJWKSURL (block tokens are verified here before a write is forwarded),
+	// but neither the registry path nor the hub: a write is forwarded with the user's own token.
+	Writes bool
+	// WritesSigningKey is the HMAC key shared with the site, which signs every forward
+	// (APP_DATA_WRITES_SIGNING_KEY; at least 32 bytes). Required with Writes, refused without it.
+	WritesSigningKey string
+	// WritesSiteURL is the site the writes are forwarded to (APP_DATA_WRITES_SITE_URL; default
+	// RESTURL, the same site): `/api/internal/blocks/storage/…` is appended to its path.
+	WritesSiteURL string
+	// WritesTimeout bounds one forward (APP_DATA_WRITES_TIMEOUT_MS, default 10000, from 2000 to
+	// 60000). It must exceed the site's permission-hook client timeout (the hook's timeoutMs, at most
+	// 500, plus 450 ms: doc-store-hook.ts hookClientTimeoutMs), plus the rest of the store's chain; a
+	// forward past it answers 504 with its outcome unknown.
+	WritesTimeout time.Duration
 }
+
+// minSigningKeyBytes is the shortest signing key accepted: 256 bits, the HMAC-SHA256 block's half.
+const minSigningKeyBytes = 32
 
 // Relay is the hub client the service exchanges users' tokens as (exchange.Config).
 type Relay struct {
@@ -121,12 +141,17 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 	default:
 		return nil, errors.New("APP_DATA_BLOCK_EXCHANGE must be true, 1, false or 0")
 	}
+	if err := writesFromEnv(getenv, c); err != nil {
+		return nil, err
+	}
 	c.BlockJWKSURL = getenv("APP_DATA_BLOCK_JWKS_URL")
 	switch {
 	case c.BlockExchange && c.BlockJWKSURL == "":
 		return nil, errors.New("APP_DATA_BLOCK_EXCHANGE needs APP_DATA_BLOCK_JWKS_URL: block tokens are verified here before they are sent to the hub")
-	case !c.BlockExchange && c.BlockJWKSURL != "":
-		return nil, errors.New("APP_DATA_BLOCK_JWKS_URL is set without APP_DATA_BLOCK_EXCHANGE; set both or neither")
+	case c.Writes && c.BlockJWKSURL == "":
+		return nil, errors.New("APP_DATA_WRITES needs APP_DATA_BLOCK_JWKS_URL: block tokens are verified here before a write is forwarded")
+	case !c.BlockExchange && !c.Writes && c.BlockJWKSURL != "":
+		return nil, errors.New("APP_DATA_BLOCK_JWKS_URL is set without APP_DATA_BLOCK_EXCHANGE or APP_DATA_WRITES; set both or neither")
 	case c.BlockJWKSURL != "" && !secureURL(c.BlockJWKSURL):
 		return nil, errors.New("APP_DATA_BLOCK_JWKS_URL must be an https URL (http only to a cluster-local *.svc host)")
 	}
@@ -163,6 +188,43 @@ func FromEnv(getenv func(string) string, readFile func(string) ([]byte, error)) 
 		return nil, errors.New("APP_DATA_LIVE_WAIT_MS must be less than APP_DATA_REQUEST_DEADLINE_MS, so the REST fallback has time")
 	}
 	return c, nil
+}
+
+// writesFromEnv reads the write settings into c. Each needs APP_DATA_WRITES on, so a setting that
+// does nothing never reads as if it did.
+func writesFromEnv(getenv func(string) string, c *Config) error {
+	key, site, timeout := getenv("APP_DATA_WRITES_SIGNING_KEY"), getenv("APP_DATA_WRITES_SITE_URL"), getenv("APP_DATA_WRITES_TIMEOUT_MS")
+	switch v := getenv("APP_DATA_WRITES"); v {
+	case "", "false", "0":
+		if key != "" || site != "" || timeout != "" {
+			return errors.New("an APP_DATA_WRITES_* setting is set with APP_DATA_WRITES off; set it on or unset them")
+		}
+		return nil
+	case "true", "1":
+	default:
+		return errors.New("APP_DATA_WRITES must be true, 1, false or 0")
+	}
+	switch {
+	case key == "":
+		return errors.New("APP_DATA_WRITES needs APP_DATA_WRITES_SIGNING_KEY: every forward is signed with it")
+	case len(key) < minSigningKeyBytes:
+		// The length only; the key never appears.
+		return fmt.Errorf("APP_DATA_WRITES_SIGNING_KEY must be at least %d bytes", minSigningKeyBytes)
+	}
+	if site == "" {
+		site = c.RESTURL
+	}
+	// Every forward carries the user's bearer token.
+	if !secureURL(site) {
+		return errors.New("APP_DATA_WRITES_SITE_URL must be an https URL (http only to a cluster-local *.svc host)")
+	}
+	ms, err := intEnv(getenv, "APP_DATA_WRITES_TIMEOUT_MS", 10_000, 2_000, 60_000)
+	if err != nil {
+		return err
+	}
+	c.Writes, c.WritesSigningKey, c.WritesSiteURL = true, key, site
+	c.WritesTimeout = time.Duration(ms) * time.Millisecond
+	return nil
 }
 
 // relayFromEnv reads the relay client: nil when every setting is unset; an error when only some are,

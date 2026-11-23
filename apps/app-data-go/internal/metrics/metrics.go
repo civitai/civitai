@@ -41,6 +41,20 @@ var BlockOutcomes = []string{
 	exchange.BlockFailed, exchange.BlockSpent, exchange.BlockFull, exchange.BlockUnverifiable,
 }
 
+// WriteOps are the `op` values of app_data_writes_total and app_data_write_forward_seconds (the
+// write routes, WRITES-DESIGN.md "The API"; publish and unpublish are not served yet). A PATCH is
+// named by its operator ($inc increment, $mark mark, $unmark unmark); `patch` is a PATCH refused here
+// before its operator could be read (a body that is not exactly one operator).
+var WriteOps = []string{"create", "put", "delete", "mark", "unmark", "increment", "info", "patch"}
+
+// WriteOutcomes are the `outcome` values of app_data_writes_total. `2xx`, `4xx` and `501` are the
+// store's answer, passed on. `refused_here` is a request this service refused before forwarding it
+// (its shape, its token, a stale major); `unavailable` is `503 not_forwarded` (shutting down, the
+// block-token key set unavailable, the request could not be built), safe to resend; `unknown` is a
+// forward whose answer was lost (`504`, a site 5xx other than 501, a transport error, the timeout, a
+// redirect).
+var WriteOutcomes = []string{"2xx", "4xx", "501", "refused_here", "unknown", "unavailable"}
+
 // Metrics holds the series.
 type Metrics struct {
 	Reads         *prometheus.CounterVec
@@ -51,6 +65,11 @@ type Metrics struct {
 	// BlockExchanges counts App Block token exchanges by outcome and refusal code; zero while the block
 	// exchange is off.
 	BlockExchanges *prometheus.CounterVec
+	// Writes counts the write routes' answers by op and outcome (WriteOps, WriteOutcomes); zero while
+	// APP_DATA_WRITES is off.
+	Writes *prometheus.CounterVec
+	// WriteForward is the time of each forward to the site, by op: only requests that were sent.
+	WriteForward *prometheus.HistogramVec
 }
 
 // Stats is what the session manager holds now (session.Stats), read at scrape time.
@@ -84,6 +103,15 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 			Name: "app_data_block_exchanges_total",
 			Help: "App Block token exchanges at the hub, by outcome (issued, reused, refused, remembered, failed, spent, full, unverifiable) and the refusal code (local: refused here, never sent).",
 		}, []string{"outcome", "error"}),
+		Writes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "app_data_writes_total",
+			Help: "Write-route answers (and info), by op and outcome (2xx, 4xx, 501: the store's; refused_here; unavailable: 503 not_forwarded; unknown: 504, the outcome lost).",
+		}, []string{"op", "outcome"}),
+		WriteForward: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "app_data_write_forward_seconds",
+			Help:    "Time of one forward to the site's internal storage route, by op.",
+			Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60},
+		}, []string{"op"}),
 	}
 	gauge := func(name, help string, pick func(s, l, r, b int) int) prometheus.Collector {
 		return prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: name, Help: help}, func() float64 {
@@ -91,6 +119,7 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 		})
 	}
 	reg.MustRegister(m.Reads, m.Fallbacks, m.StreamsOpened, m.StreamsClosed, m.ReadTime, m.BlockExchanges,
+		m.Writes, m.WriteForward,
 		gauge("app_data_streams_open", "Per-user registry streams open now (each counts against the origin's subscription caps).",
 			func(s, _, _, _ int) int { return s }),
 		gauge("app_data_streams_live", "Open streams that have sent Live, so reads are answered from them.",
@@ -112,6 +141,12 @@ func New(reg prometheus.Registerer, stats Stats) *Metrics {
 	}
 	for _, r := range CloseReasons {
 		m.StreamsClosed.WithLabelValues(r)
+	}
+	for _, op := range WriteOps {
+		m.WriteForward.WithLabelValues(op)
+		for _, o := range WriteOutcomes {
+			m.Writes.WithLabelValues(op, o)
+		}
 	}
 	for _, o := range BlockOutcomes {
 		if o != exchange.BlockRefused && o != exchange.BlockRemembered {

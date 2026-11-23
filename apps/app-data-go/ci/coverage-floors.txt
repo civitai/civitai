@@ -5,11 +5,18 @@
 # measured value the "Coverage floors" step prints and set the floor to it. Never lower a floor to
 # get a red run green. Packages without unit tests (cmd/app-data-go, metrics) are not listed; they
 # count in the total.
+#
+# internal/majors, internal/sign and internal/writes came with the writes and were not measured
+# locally (tests run in CI only): their floors are set at or below the expected value; ratchet each to
+# the value the first CI run prints.
 total 89
 internal/api 99
 internal/config 98
 internal/exchange 100
+internal/majors 95
 internal/registry 98
 internal/rest 90
 internal/session 94
+internal/sign 100
 internal/urn 100
+internal/writes 95

@@ -24,6 +24,12 @@ With `X-App-Data-Registry-Only: 1` a read the registry cannot answer is not read
 answers `{"source":"none","reason":<why>,"items":[]}`. The site's shadow read of App Storage lists
 sends it, since the REST fallback is the site's own route (DESIGN.md, "P4: the site's shadow read").
 
+**Writes (dark, `APP_DATA_WRITES`, default off: every write route is `404`).** The write routes and
+`info` of [WRITES-DESIGN.md](WRITES-DESIGN.md) are checked for shape here (and a block token verified
+locally), then forwarded once, never retried, with the user's own token and an HMAC signature
+(`internal/sign`), to the site's internal storage route. A lost answer is `504 {outcome: "unknown"}`;
+`503 not_forwarded`, refused here before anything was sent, is the only answer safe to resend.
+
 ## Layout
 
 | Package             | What                                                                                      |
@@ -35,6 +41,9 @@ sends it, since the REST fallback is the site's own route (DESIGN.md, "P4: the s
 | `internal/registry` | the registry HTTP binding consumer, a byte-identical copy of app-index-go's (CI compares) |
 | `internal/rest`     | the document-store REST read                                                              |
 | `internal/urn`      | the collection schema URN, pinned to the adapter's by golden vectors                      |
+| `internal/writes`   | the write routes and `info`: shape checks, the signed forward to the site                 |
+| `internal/sign`     | the forward's signature, pinned to the site's by a golden vector                          |
+| `internal/majors`   | each collection's current schema major, from the schemas the streams carry                |
 | `internal/config`   | the environment ([.env.example](.env.example)), validated at start                        |
 | `internal/metrics`  | Prometheus series, `app_data_*`; no label holds a token, user, app or collection          |
 
