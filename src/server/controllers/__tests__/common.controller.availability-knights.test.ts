@@ -26,11 +26,16 @@ vi.mock('~/server/db/kyselyDb', async () => {
   return { kyselyWrite: kysely, kyselyRead: kysely };
 });
 
-const setPost = (availability: Availability) =>
-  updateEntityAvailabilityHandler({
+// The stored availability: `stored` until the availability write runs, then the value written, as the primary returns it.
+let stored: Availability;
+let written: Availability;
+const setPost = (availability: Availability) => {
+  written = availability;
+  return updateEntityAvailabilityHandler({
     ctx: {} as Context,
     input: { entityType: 'Post', entityId: 5, availability },
   });
+};
 const imageReads = () => statements.filter((s) => s.sql.includes('from "Image"'));
 
 beforeEach(() => {
@@ -41,7 +46,10 @@ beforeEach(() => {
     key === REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES ? JSON.stringify({ enabled: true }) : null
   );
   dbMock.dbRead.image.findMany.mockResolvedValue([{ id: 50 }]);
-  dbMock.dbWrite.post.findUnique.mockResolvedValue({ availability: Availability.Private } as never);
+  stored = Availability.Private;
+  dbMock.dbWrite.post.findUnique.mockImplementation((async () => ({
+    availability: dbMock.dbWrite.$executeRawUnsafe.mock.calls.length === 0 ? stored : written,
+  })) as never);
 });
 
 describe('updateEntityAvailabilityHandler on a Post', () => {
@@ -61,7 +69,7 @@ describe('updateEntityAvailabilityHandler on a Post', () => {
     ['Public to Public', Availability.Public, Availability.Public],
     ['Unsearchable to Public', Availability.Unsearchable, Availability.Public],
   ])('offers nothing when the post was not Private: %s', async (_label, before, after) => {
-    dbMock.dbWrite.post.findUnique.mockResolvedValue({ availability: before } as never);
+    stored = before;
     await setPost(after);
     await new Promise((resolve) => setTimeout(resolve, 20));
 

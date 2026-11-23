@@ -444,11 +444,13 @@ describe('offerLeftPrivateImagesToKnights', () => {
     expect((await queued()).map((i) => i.imageId)).toEqual([11]);
   });
 
-  it('reads a scope larger than one page, and stops once more are due than fit', async () => {
-    await post(1, minutesAgo(300));
-    await pg.query(`UPDATE "Post" SET "modelVersionId" = 9 WHERE id = 1`);
+  it('reads a version with more posts than one page, and stops once more are due than fit', async () => {
     await pg.query(
-      `INSERT INTO "Image" (id, "postId") SELECT g, 1 FROM generate_series(1, 5003) AS g`
+      `INSERT INTO "Post" (id, "publishedAt", "modelVersionId") SELECT g, $1, 9 FROM generate_series(1, 201) AS g`,
+      [ts(minutesAgo(300))]
+    );
+    await pg.query(
+      `INSERT INTO "Image" (id, "postId") SELECT g, g FROM generate_series(1, 201) AS g`
     );
 
     const capped = await offer({ modelVersionIds: [9] }, { sfwRate: 1, nsfwRate: 1, maxOpen: 3 });
@@ -456,8 +458,8 @@ describe('offerLeftPrivateImagesToKnights', () => {
     expect((await queued()).map((i) => i.imageId)).toEqual([1, 2, 3]);
 
     const all = await offer({ modelVersionIds: [9] }, { sfwRate: 1, nsfwRate: 1, maxOpen: 10_000 });
-    expect(all).toEqual({ ownerRatings: 0, enqueued: 5000, capped: false });
-    expect((await queued()).map((i) => i.imageId)).toEqual(range(1, 5003));
+    expect(all).toEqual({ ownerRatings: 0, enqueued: 198, capped: false });
+    expect((await queued()).map((i) => i.imageId)).toEqual(range(1, 201));
   });
 
   it("queues the owner's rating as an owner rating, ahead of the draw, unless the image ever had an item or its level is locked", async () => {
