@@ -385,7 +385,7 @@ describe('offerLeftPrivateImagesToKnights', () => {
       [imageId, userId]
     );
 
-  it('samples, once, the images of a post that left Private keeping its old date, which the sweep never reads again', async () => {
+  it('samples, once, the images of a post that became public', async () => {
     await post(1, minutesAgo(300));
     await images(1, [11]);
     await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 1`);

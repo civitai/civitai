@@ -246,9 +246,8 @@ export async function sampleImagesForKnights(
 }
 
 /**
- * For images whose post has just stopped being Private, which keeps its `publishedAt`, so the publish sweep does not read
- * it again. First the owner ratings refused while the post was Private: an image with the owner's `ImageRatingRequest` and
- * no item ever is queued as an owner rating. Then the rest are sampled as the sweep would have sampled them.
+ * For images whose post has just stopped being Private: queues the owner's own rating if it was never queued, then
+ * samples the rest as the publish sweep does.
  */
 export async function offerLeftPrivateImagesToKnights(
   db: Kysely<DB>,
