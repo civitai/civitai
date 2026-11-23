@@ -30,12 +30,10 @@ const VIEWER = 20;
 const OPTED_OUT_OWNER = 30;
 
 const SCHEMA = `
-  CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
-  CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
   CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
   CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
   CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
-  CREATE TABLE "Image" ( type "MediaType" NOT NULL DEFAULT 'image',
+  CREATE TABLE "Image" (
     minor boolean DEFAULT false,
     id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
     "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',

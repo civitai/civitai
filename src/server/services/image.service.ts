@@ -78,7 +78,6 @@ import {
   notHeldForReviewWhere,
   pendingLevelImageSql,
   pendingOthersImageConditions,
-  songReviewedSql,
   servableLevelWhere,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
   minorMatureImageVisibleSql,
@@ -6222,7 +6221,7 @@ export const getEntityCoverImage = async ({
         ) t
     ) t
     JOIN "Image" i ON i.id = t."imageId"
-    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL AND ${songReviewedSql()}
+    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL
     -- An Article draws a row from its own branch (the cover) and one from CONNECTIONS (a
     -- content image). A UNION has no order of its own, so without this the lower image id
     -- came first and a content image could replace the cover. The connection is a fallback.

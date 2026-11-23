@@ -2,6 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type { Prisma } from '@prisma/client';
+import type * as DbHelpers from '~/server/db/db-helpers';
 
 /**
  * A song is held for csam review as a video is: a csam hold on its lyrics, or a csam flag on its
@@ -12,11 +14,24 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 vi.setConfig({ hookTimeout: 120_000, testTimeout: 120_000 });
 
+// The feed's statement is captured at the query helper and run on PGlite below.
+const feed = vi.hoisted(() => ({ statement: null as Prisma.Sql | null }));
+const FEED_CAPTURED = new Error('feed statement captured');
+vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof DbHelpers>()),
+  queryWithTimeout: vi.fn(async (_db: unknown, _ms: number, statement: Prisma.Sql) => {
+    feed.statement = statement;
+    throw FEED_CAPTURED;
+  }),
+}));
+
 const { trackLyricsModerationAdapter } = await import(
   '~/server/services/track-lyrics-moderation.adapter'
 );
 const { decideCsamHold } = await import('~/server/services/text-scan/csam-hold-decision');
-const { reportCsamImages, handleUnblockImages } = await import('~/server/services/image.service');
+const { reportCsamImages, handleUnblockImages, getAllImages } = await import(
+  '~/server/services/image.service'
+);
 const { getImageIdsVisibleToViewer } = await import('~/server/services/image-visibility.service');
 const { resolveScanOutcome } = await import('~/server/services/image-scan-pipeline');
 
@@ -50,7 +65,9 @@ const SCHEMA = `
     metadata jsonb NOT NULL DEFAULT '{}', "scanJobs" jsonb, minor boolean NOT NULL DEFAULT false,
     poi boolean NOT NULL DEFAULT false, "acceptableMinor" boolean NOT NULL DEFAULT false,
     "modelRestricted" boolean NOT NULL DEFAULT false, "pHash" bigint, "scannedAt" timestamp,
-    "updatedAt" timestamp(3)
+    "updatedAt" timestamp(3), name text, url text, width int, height int, hash text, meta jsonb,
+    "hideMeta" boolean NOT NULL DEFAULT false, "createdAt" timestamp NOT NULL DEFAULT now(),
+    "mimeType" text, index int
   );
   CREATE TABLE "TextScanHold" (
     id serial PRIMARY KEY, "entityType" text NOT NULL, "entityId" int NOT NULL, label text NOT NULL,
@@ -68,7 +85,7 @@ const SCHEMA = `
   CREATE TABLE "ImageReport" ("imageId" int NOT NULL, "reportId" int NOT NULL);
   CREATE TABLE "ImageDeferredBlockEffect" ("imageId" int);
   CREATE TABLE "ImageTagForReview" ("imageId" int, "tagId" int);
-  CREATE TABLE "TagsOnImageDetails" ("imageId" int, disabled boolean);
+  CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean);
   CREATE TABLE "ModActivity" ("userId" int, "entityType" text, "entityId" int, activity text);
   CREATE TYPE "EntityType" AS ENUM ('Image');
   CREATE DOMAIN "JobQueueType" AS text;
@@ -76,7 +93,8 @@ const SCHEMA = `
     "createdAt" timestamp(3) NOT NULL DEFAULT now(), PRIMARY KEY ("entityType", "entityId", type));
   CREATE TABLE "Post" (
     id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
-    availability "Availability" DEFAULT 'Public', "collectionId" int
+    availability "Availability" DEFAULT 'Public', "collectionId" int, title text, metadata jsonb,
+    "modelVersionId" int, "model3dId" int
   );
   CREATE TABLE "Article" (
     id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text,
@@ -185,6 +203,25 @@ const visibleTo = async (userId?: number, isModerator = false) => [
   ...(await getImageIdsVisibleToViewer({ ids: [SONG], userId, isModerator })),
 ];
 
+/** The songs the music feed (`image.getInfinite`) lists for `userId`, run over the seeded rows. */
+const feedSongs = async (userId?: number) => {
+  feed.statement = null;
+  await expect(
+    getAllImages({
+      limit: 20,
+      period: 'AllTime',
+      periodMode: 'published',
+      sort: 'Newest',
+      browsingLevel: 31,
+      include: [],
+      types: ['audio'],
+      user: userId ? { id: userId, isModerator: false } : undefined,
+    } as never)
+  ).rejects.toBe(FEED_CAPTURED);
+  const { text, values } = feed.statement!;
+  return (await q<{ id: number }>(text, values)).map((row) => row.id);
+};
+
 describe('a csam hold on the lyrics', () => {
   it.each(['Pending', 'Scanned', 'Error'])(
     'flags a song whose ingestion is %s, records the hold as the source, and puts it back in the queue',
@@ -204,13 +241,16 @@ describe('a csam hold on the lyrics', () => {
     }
   );
 
-  it('hides the song from a stranger and a signed-out viewer on a by-id read', async () => {
+  it('hides the song from a stranger and a signed-out viewer on the feed and a by-id read', async () => {
     expect(await visibleTo(STRANGER)).toEqual([SONG]);
+    expect(await feedSongs(STRANGER)).toEqual([SONG]);
 
     await scanLyrics();
 
     expect(await visibleTo(STRANGER)).toEqual([]);
     expect(await visibleTo()).toEqual([]);
+    expect(await feedSongs(STRANGER)).toEqual([]);
+    expect(await feedSongs()).toEqual([]);
   });
 
   it('writes no hold when the flag write fails', async () => {

@@ -1,7 +1,9 @@
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { SONG_LYRICS_HOLD } from '~/server/common/image-visibility';
-import { submitTrackLyricsScan } from '~/server/services/audio-scan/track-lyrics';
+import {
+  submitTrackLyricsScan,
+  TRACK_LYRICS_ENTITY_TYPE,
+} from '~/server/services/audio-scan/track-lyrics';
 import { holdSongForCsam } from '~/server/services/csam-image-review';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { withCsamHold } from '~/server/services/text-scan/actions/csam-hold';
@@ -16,7 +18,12 @@ async function removeHeldSongFromSearch(imageId: number) {
   // A detection on text a moderator already ruled on writes no hold.
   // primary: the hold was written by this detection
   const held = await dbWrite.textScanHold.findFirst({
-    where: { ...SONG_LYRICS_HOLD, entityId: imageId, status: 'Pending' },
+    where: {
+      entityType: TRACK_LYRICS_ENTITY_TYPE,
+      label: 'csam',
+      entityId: imageId,
+      status: 'Pending',
+    },
     select: { id: true },
   });
   if (!held) return;

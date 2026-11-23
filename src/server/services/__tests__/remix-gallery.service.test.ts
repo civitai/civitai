@@ -4008,9 +4008,7 @@ describe('host media rows', () => {
     const db = new PGlite();
     await db.exec(`
       CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
-      CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
-      CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
-      CREATE TABLE "Image" (id int PRIMARY KEY, type "MediaType" NOT NULL DEFAULT 'image', ingestion "ImageIngestionStatus", "blockedFor" text,
+      CREATE TABLE "Image" (id int PRIMARY KEY, ingestion "ImageIngestionStatus", "blockedFor" text,
         "nsfwLevel" int NOT NULL, "nsfwLevelLocked" boolean NOT NULL, "needsReview" text,
         "tosViolation" boolean NOT NULL DEFAULT false, "modelRestricted" boolean NOT NULL DEFAULT false,
         "userId" int, metadata jsonb, "scanJobs" jsonb);
