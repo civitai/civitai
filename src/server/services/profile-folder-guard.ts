@@ -86,3 +86,18 @@ export async function onlyFolders(collectionIds: number[]) {
   const folderIds = new Set((await findFolders(ids)).map((folder) => folder.id));
   return ids.every((id) => folderIds.has(id));
 }
+
+/**
+ * Whether a save earns collect credit: the collector reward and the image's Collection metric.
+ * Filing your own work into your folders does not. Without the flag no folder can be written.
+ */
+export async function earnsCollectCredit({
+  collectionIds,
+  foldersEnabled,
+}: {
+  collectionIds: number[];
+  foldersEnabled: boolean;
+}) {
+  if (!foldersEnabled) return true;
+  return !(await onlyFolders(collectionIds));
+}

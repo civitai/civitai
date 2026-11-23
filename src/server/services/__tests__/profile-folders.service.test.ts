@@ -7,7 +7,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * tables that apply the where clauses they are given.
  */
 
-const { assertFolderWriteAllowed, onlyFolders } = await import(
+const { assertFolderWriteAllowed, earnsCollectCredit, onlyFolders } = await import(
   '~/server/services/profile-folder-guard'
 );
 const { setFolderRows, getProfileFolders } = await import(
@@ -56,9 +56,8 @@ beforeEach(() => {
   dbMock.dbWrite.collection.count.mockImplementation(
     (async ({ where }: never) => collections.filter((c) => matches(c, where)).length) as never
   );
-  dbMock.dbWrite.model.findMany.mockImplementation(
-    (async ({ where }: never) => models.filter((m) => matches(m, where))) as never
-  );
+  dbMock.dbWrite.model.findMany.mockImplementation((async ({ where }: never) =>
+    models.filter((m) => matches(m, where))) as never);
   dbMock.dbRead.userProfile.findUnique.mockImplementation((async () => ({ folderRows })) as never);
   dbMock.dbWrite.userProfile.update.mockImplementation((async ({ data }: never) => {
     folderRows = (data as { folderRows: unknown }).folderRows;
@@ -122,6 +121,17 @@ describe('onlyFolders', () => {
     expect(await onlyFolders([10, 20])).toBe(false);
     expect(await onlyFolders([20])).toBe(false);
     expect(await onlyFolders([])).toBe(false);
+  });
+});
+
+describe('earnsCollectCredit', () => {
+  it('gives no collect credit for filing into folders only', async () => {
+    expect(await earnsCollectCredit({ collectionIds: [10, 11], foldersEnabled: true })).toBe(false);
+  });
+
+  it('gives credit when any collection is not a folder, and always without the flag', async () => {
+    expect(await earnsCollectCredit({ collectionIds: [10, 20], foldersEnabled: true })).toBe(true);
+    expect(await earnsCollectCredit({ collectionIds: [10], foldersEnabled: false })).toBe(true);
   });
 });
 

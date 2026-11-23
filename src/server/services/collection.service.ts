@@ -8,6 +8,7 @@ import { assertFolderWriteAllowed } from '~/server/services/profile-folder-guard
 import type { CreateFolderInput } from '~/server/schema/profile-folders.schema';
 import { profileFolderLimits } from '~/server/schema/profile-folders.schema';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
+import { Limiter } from '~/server/utils/concurrency-helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
@@ -4298,17 +4299,22 @@ export const removeCollectionItem = async ({
   type,
   isModerator,
   folderAccess,
+  permissions: loadedPermissions,
 }: Omit<RemoveCollectionItemInput, 'itemIds'> & {
   itemId: number;
   userId: number;
   isModerator?: boolean;
   folderAccess?: FolderWriteAccess;
+  /** This user's permissions on this collection, when the caller already loaded them. */
+  permissions?: CollectionContributorPermissionFlags;
 }) => {
-  const permissions = await getUserCollectionPermissionsById({
-    id: collectionId,
-    userId,
-    isModerator,
-  });
+  const permissions =
+    loadedPermissions ??
+    (await getUserCollectionPermissionsById({
+      id: collectionId,
+      userId,
+      isModerator,
+    }));
   await assertFolderWriteAllowed({
     collectionIds: [collectionId],
     collections: [{ id: collectionId, mode: permissions.collectionMode, userId }],
@@ -4811,4 +4817,25 @@ export async function createFolder({
   if (created === null)
     throw throwConflictError('Another folder is still being created. Try again in a moment.');
   return created;
+}
+
+/**
+ * Removes several items of one collection. Each goes through `removeCollectionItem`, so each keeps
+ * its own authorization; the caller's permissions on the collection are read once.
+ */
+export async function removeCollectionItems({
+  itemIds,
+  ...input
+}: Omit<Parameters<typeof removeCollectionItem>[0], 'itemId' | 'permissions'> & {
+  itemIds: number[];
+}) {
+  const permissions = await getUserCollectionPermissionsById({
+    id: input.collectionId,
+    userId: input.userId,
+    isModerator: input.isModerator,
+  });
+  const removed = await Limiter({ batchSize: 1, limit: 10 }).process(itemIds, ([itemId]) =>
+    removeCollectionItem({ ...input, itemId, permissions })
+  );
+  return removed[removed.length - 1];
 }
