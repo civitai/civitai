@@ -12,6 +12,7 @@ const args = {
 describe('applying a text-scan verdict', () => {
   it('logs an error and applies nothing before the registry has loaded', async () => {
     vi.resetModules();
+    globalThis.__civitaiTextScanVerdictApplier = undefined;
     const { applyTextScanVerdict } = await import('~/server/services/text-scan/verdict-applier');
     await applyTextScanVerdict('Post', args);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
@@ -31,4 +32,17 @@ describe('applying a text-scan verdict', () => {
 
     expect(apply).toHaveBeenCalledWith(args);
   });
+});
+
+// The build emits verdict-applier.ts more than once; a setter reaching one copy must reach them all.
+it('is shared by every copy of the module, not only the one the registry set', async () => {
+  vi.resetModules();
+  const first = await import('~/server/services/text-scan/verdict-applier');
+  const apply = vi.fn();
+  first.setTextScanVerdictApplier(apply);
+  vi.resetModules();
+  const second = await import('~/server/services/text-scan/verdict-applier');
+  expect(second).not.toBe(first);
+  await second.applyTextScanVerdict('Article', args);
+  expect(apply).toHaveBeenCalledWith('Article', args);
 });

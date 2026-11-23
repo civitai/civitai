@@ -8,7 +8,12 @@ export async function register() {
     await import('./instrumentation.node');
 
     // The moderation adapter registry sets the applier text scan uses for its verdicts
-    // (text-scan/verdict-applier.ts); text scan no longer imports the registry itself.
-    await import('~/server/services/moderation-adapters');
+    // (text-scan/verdict-applier.ts); text scan no longer imports the registry itself. A failure
+    // here must not stop the server: an unset applier logs each verdict it could not apply.
+    try {
+      await import('~/server/services/moderation-adapters');
+    } catch (error) {
+      console.error('[instrumentation] moderation adapters failed to load', error);
+    }
   }
 }
