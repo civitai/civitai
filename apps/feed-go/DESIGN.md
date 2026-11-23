@@ -2597,8 +2597,8 @@ from it. The fallback's own Node read takes the lock and rebuilds the entry, so 
 |---|---|---|
 | `rows` empty and inside the hour, no `cachedAt` (`undefined < ttlExpiry` is false in Node), or a notFound marker (served before its `cachedAt` is looked at) | answered as before | |
 | `rows` non-empty (either site), no `rows` array, or the read failed | falls back | `v1-models-curated-showcase` / `prioritized-curated-showcase` |
-| no key, an undecodable value, a bust's debounce marker, with `FEED_GO_COMPUTE_MISSES` on | looked up on the replica, the decision Node's lookup computes: no `ModelVersionShowcaseItem` row that is not removed is uncurated and answered as before; a row (any site, source or `excluded`) falls back as curated; a failed read falls back | `v1-models-curated-showcase` / `prioritized-curated-showcase` for a row; `v1-models-showcase-miss-failed` / `prioritized-showcase-miss-failed` for a failed read |
-| the same, with `FEED_GO_COMPUTE_MISSES` off | falls back: Node computes the entry from the database (a lag-aware read), so an absence says nothing about the curation | `v1-models-showcase-miss` / `prioritized-showcase-miss` |
+| no key or an undecodable value, with `FEED_GO_COMPUTE_MISSES` on | looked up on the replica, the decision Node's lookup computes: no `ModelVersionShowcaseItem` row that is not removed is uncurated and answered as before; a row (any site, source or `excluded`) falls back as curated; a failed read falls back | `v1-models-curated-showcase` / `prioritized-curated-showcase` for a row; `v1-models-showcase-miss-failed` / `prioritized-showcase-miss-failed` for a failed read |
+| the same with `FEED_GO_COMPUTE_MISSES` off, or a bust's debounce marker either way | falls back: Node computes the entry from the database (a lag-aware read), so an absence says nothing about the curation | `v1-models-showcase-miss` / `prioritized-showcase-miss` |
 | `rows` empty, `cachedAt` older than the hour | falls back: the reader that wins the revalidate lock rebuilds it from the database | `v1-models-showcase-stale` / `prioritized-showcase-stale` |
 
 On the model routes the versions read are the ones whose images entry is not a notFound marker (the
@@ -2614,10 +2614,12 @@ NOT "removed" LIMIT 1`: the first query of getVersionShowcaseCache's lookup, nar
 `hasCuratedShowcase` decides on (whether `rows` is non-empty; every row that is not removed counts).
 Nothing is written to the cache and no answer is kept in process, so each such request pays one
 primary-key lookup. A stale entry is not computed: it still falls back, as the reader that wins
-Node's revalidate lock rebuilds it. The gap: Node's lookup reads the primary for a version a recent
-write flagged (`getDbWithoutLagBatch`), and this read is the replica's, so a curation made within
-the replica's lag (a bust's debounce marker is exactly that window) can be read as uncurated and the
-version's own images served until the lag clears.
+Node's revalidate lock rebuilds it. Nor is a bust's debounce marker: a bust usually follows a
+curation write, the window the replica is most likely not to show yet, so it falls back as a miss.
+The gap left: Node's lookup reads the primary for a version a recent write flagged
+(`getDbWithoutLagBatch`), and this read is the replica's, so a curation whose cache entry was never
+built, made within the replica's lag, can be read as uncurated and the version's own images served
+until the lag clears.
 
 The flag `model-version-showcase-serve` (`modelVersionShowcaseServe`, on when the key is absent) is not
 read: on, Node curates and the check is needed; off, Node serves the uncurated list and a fallback here

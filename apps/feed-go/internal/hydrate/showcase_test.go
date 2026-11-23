@@ -165,7 +165,9 @@ func (s *showcaseReplica) db() *testkit.DB {
 // computed: getVersionShowcaseCache's lookup (version-showcase.service.ts) builds `rows` from its
 // ModelVersionShowcaseItem rows that are not removed, and hasCuratedShowcase counts any row as
 // curated, a failed read as curated. One query covers every such version of the call; a stale entry
-// is not looked up (it still falls back), nor is anything once a cached entry says curated.
+// is not looked up (it still falls back), nor a bust's debounce marker (it stays unknown: a bust
+// usually follows a curation the replica may not show yet), nor anything once a cached entry says
+// curated.
 func TestVersionShowcaseMissComputed(t *testing.T) {
 	r := testkit.NewRedis()
 	r.SetString(KeyVersionShowcase+":7201", showcaseEntry(7201))                           // cached uncurated
@@ -183,7 +185,9 @@ func TestVersionShowcaseMissComputed(t *testing.T) {
 		{"a miss with no row", []int{7202}, ShowcaseUncurated, [][]int{{7202}}},
 		{"a miss with a row", []int{7203}, ShowcaseCurated, [][]int{{7203}}},
 		{"cached uncurated beside a miss with no row", []int{7201, 7202}, ShowcaseUncurated, [][]int{{7202}}},
-		{"every kind of miss, one query", []int{7208, 7201, 7205, 7202, 7207}, ShowcaseUncurated, [][]int{{7208, 7205, 7202, 7207}}},
+		{"every computed kind of miss, one query", []int{7208, 7201, 7202, 7207}, ShowcaseUncurated, [][]int{{7208, 7202, 7207}}},
+		{"a debounce marker: not looked up", []int{7205}, ShowcaseUnknown, nil},
+		{"a debounce marker beside a miss with no row: not looked up", []int{7202, 7205}, ShowcaseUnknown, nil},
 		{"a repeated miss is bound once", []int{7202, 7201, 7202}, ShowcaseUncurated, [][]int{{7202}}},
 		{"a row among the misses", []int{7202, 7203, 7201}, ShowcaseCurated, [][]int{{7202, 7203}}},
 		{"cached curated: no query", []int{7202, 7206}, ShowcaseCurated, nil},

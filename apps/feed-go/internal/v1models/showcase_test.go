@@ -183,18 +183,17 @@ func serveBothComputed(t *testing.T, edit func(*testWorld), curated bool, fail e
 	return
 }
 
-// With the miss computation on, a version with no showcase entry (or a bust's debounce marker) is
-// looked up on the replica, as getVersionShowcaseCache's lookup would: no row and both routes serve
-// the version's own images; a row falls back as curated; a failed lookup falls back as
-// v1-models-showcase-miss-failed. A stale entry still falls back without a lookup.
+// With the miss computation on, a version with no showcase entry is looked up on the replica, as
+// getVersionShowcaseCache's lookup would: no row and both routes serve the version's own images; a
+// row falls back as curated; a failed lookup falls back as v1-models-showcase-miss-failed. A stale
+// entry and a bust's debounce marker still fall back without a lookup.
 func TestCuratedShowcaseGuardMissComputed(t *testing.T) {
 	const image = `"url":"https://image.example.test/u1/original=true/8001.jpeg"`
 	noEntry := func(w *testWorld) { w.entries[showcaseKey6001] = nil }
-	debounce := func(w *testWorld) { w.entries[showcaseKey6001] = meta("debounce", true) }
 	for _, c := range []struct {
 		name string
 		edit func(*testWorld)
-	}{{"no entry", noEntry}, {"a debounce marker", debounce}} {
+	}{{"no entry", noEntry}} {
 		detail, list, dErr, lErr, bound := serveBothComputed(t, c.edit, false, nil)
 		if dErr != nil || lErr != nil {
 			t.Fatalf("%s, no row: detail %v (%s), list %v (%s)", c.name, dErr, reason(dErr), lErr, reason(lErr))
@@ -218,6 +217,7 @@ func TestCuratedShowcaseGuardMissComputed(t *testing.T) {
 		{"no entry, a row", noEntry, true, nil, "v1-models-curated-showcase", 2},
 		{"no entry, the lookup fails", noEntry, false, errors.New("replica down"), "v1-models-showcase-miss-failed", 2},
 		{"a stale empty entry", func(w *testWorld) { w.entries[showcaseKey6001] = showcaseAged(61 * time.Minute) }, false, nil, "v1-models-showcase-stale", 0},
+		{"a bust's debounce marker", func(w *testWorld) { w.entries[showcaseKey6001] = meta("debounce", true) }, false, nil, "v1-models-showcase-miss", 0},
 	} {
 		_, _, dErr, lErr, bound := serveBothComputed(t, c.edit, c.curated, c.fail)
 		if reason(dErr) != c.reason || reason(lErr) != c.reason {

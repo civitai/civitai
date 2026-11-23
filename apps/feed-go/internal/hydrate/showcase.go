@@ -62,7 +62,7 @@ func (p *PackedReader) QueueShowcases(b *Batch, ids []int) *ShowcaseRead {
 // the other entries say), then ShowcaseUnknown over ShowcaseStale. Sources.ShowcaseState answers the
 // ShowcaseUnknown versions from the replica instead.
 func (r *ShowcaseRead) State(ids []int) Showcase {
-	curated, missing, stale := r.classify(ids)
+	curated, missing, _, stale := r.classify(ids)
 	return showcaseOf(curated, len(missing) > 0, stale)
 }
 
@@ -81,10 +81,11 @@ func showcaseOf(curated, unknown, stale bool) Showcase {
 
 // classify sorts ids by their entries: curated when any entry says so (it ends the scan: nothing
 // else can change the answer), else missing (the ids with no entry Node's fetch would use as it
-// is, each once) and stale (some uncurated entry is past ShowcaseTTL).
-func (r *ShowcaseRead) classify(ids []int) (curated bool, missing []int, stale bool) {
+// is, each once), held (one of them is a bust's debounce marker) and stale (some uncurated entry is
+// past ShowcaseTTL).
+func (r *ShowcaseRead) classify(ids []int) (curated bool, missing []int, held, stale bool) {
 	if len(ids) == 0 {
-		return false, nil, false
+		return false, nil, false, false
 	}
 	var at map[int]int
 	var p *PackedReader
@@ -111,9 +112,12 @@ func (r *ShowcaseRead) classify(ids []int) (curated bool, missing []int, stale b
 		}
 		cmd := r.read.cmds[i]
 		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
-			return true, nil, false
+			return true, nil, false, false
 		}
 		e, st := entryState(cmd, ShowcaseTTL, now, false)
+		if st == stateHeld {
+			held = true
+		}
 		if st != stateEntry {
 			if !seen[id] {
 				seen[id] = true
@@ -128,13 +132,13 @@ func (r *ShowcaseRead) classify(ids []int) (curated bool, missing []int, stale b
 		if !ok || len(rows) > 0 {
 			// No `rows` array: `showcases[id]?.rows.length` throws in Node, which hasCuratedShowcase
 			// counts as curated. Either way the port cannot answer it.
-			return true, nil, false
+			return true, nil, false, false
 		}
 		if e.Stale {
 			stale = true
 		}
 	}
-	return false, missing, stale
+	return false, missing, held, stale
 }
 
 // sqlShowcaseCurated is the first query of getVersionShowcaseCache's lookupFn
@@ -146,20 +150,25 @@ func (r *ShowcaseRead) classify(ids []int) (curated bool, missing []int, stale b
 const sqlShowcaseCurated = `SELECT 1 FROM "ModelVersionShowcaseItem" WHERE "modelVersionId" = ANY($1::int[]) AND NOT "removed" LIMIT 1`
 
 // ShowcaseState is State over r for ids, with the versions it has no usable entry for (ShowcaseUnknown:
-// no key, an undecodable value, a debounce marker, an id not queued) answered from the replica when s
+// no key, an undecodable value, an id not queued) answered from the replica when s
 // computes misses (s.Compute): one query over all of them (sqlShowcaseCurated); no row and they are
 // uncurated, a row and the answer is ShowcaseCurated. A failed query is ShowcaseCurated with its
 // error, as hasCuratedShowcase counts a failed read (the caller falls back, `<reason>-miss-failed`).
 // Without s.Compute, or with no replica, they stay ShowcaseUnknown. A stale entry is not looked up:
-// Node's reader that wins the revalidate lock rebuilds it, and ShowcaseStale still falls back.
+// Node's reader that wins the revalidate lock rebuilds it, and ShowcaseStale still falls back. Nor is
+// a version whose entry is a bust's debounce marker: a bust usually follows a curation write, the
+// case the replica is most likely not to show yet, so it stays ShowcaseUnknown.
 //
 // The query reads the replica. Node's lookup reads the primary for a version a recent write flagged
 // (getDbWithoutLagBatch), so a curation made within the replica's lag can be read here as uncurated
 // (DESIGN.md §16.9). Nothing is written back to the cache, and no answer is kept in process.
 func (s *Sources) ShowcaseState(ctx context.Context, r *ShowcaseRead, ids []int) (Showcase, error) {
-	curated, missing, stale := r.classify(ids)
+	curated, missing, held, stale := r.classify(ids)
 	if curated || len(missing) == 0 {
 		return showcaseOf(curated, false, stale), nil
+	}
+	if held {
+		return ShowcaseUnknown, nil
 	}
 	if s == nil || s.Compute == nil || s.Replica == nil {
 		return ShowcaseUnknown, nil
