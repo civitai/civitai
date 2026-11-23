@@ -455,19 +455,20 @@ export const reviewKeptWhenLiftedSql = Prisma.sql`(CASE
 END)`;
 
 /**
- * Reviews only a moderator clears, so a scan never replaces one whatever it ranks. Known gap: an
- * appeal approved while a scan is in flight gets 'appeal' back from that scan, and keeps it until a
- * moderator clears it.
+ * Reviews only a moderator clears, so a scan never replaces one whatever it ranks. Known gaps, both
+ * leaving a review a moderator then clears: an appeal approved while a scan is in flight gets
+ * 'appeal' back from that scan, and a 'csam' review cleared while a scan is in flight gets 'csam'
+ * back from it.
  */
 const REVIEWS_ONLY_A_MODERATOR_CLEARS = ['csam', 'appeal'] as const;
 
 /**
- * `needsReview` after a write that sets `key`. A moderator's decision ('human': an unblock, an
- * approved appeal) writes `key` as it is. A scan that leaves the row blocked ('block') settles every
- * review but 'csam', as every block does, writing only a pending appeal's 'appeal'. Any other scan ('verdict') never clears or lowers a review: it keeps
- * 'csam', lets a pending appeal's 'appeal' take any other key, keeps
- * REVIEWS_ONLY_A_MODERATOR_CLEARS, and otherwise fills an empty column or raises the stored key by
- * IMAGE_REVIEW_PRECEDENCE.
+ * `needsReview` after a write that sets `key`, by who writes it: 'human' (an unblock, an approved
+ * appeal) writes `key`; 'block' (a scan that leaves the row blocked) settles every review but
+ * 'csam', keeping 'appeal' while an appeal is pending; 'verdict' (any other scan) never clears or
+ * lowers a review, and replaces a stored key only by one ranked higher, except that a pending
+ * appeal's 'appeal' takes any key but 'csam'. Its SQL reads "Image".id, so it is only for an
+ * UPDATE of "Image".
  */
 export function reviewKeyAfterSql(
   actor: 'verdict' | 'block' | 'human',
@@ -477,8 +478,14 @@ export function reviewKeyAfterSql(
     typeof key === 'string' || key === null ? Prisma.sql`${key}::text` : Prisma.sql`(${key})::text`;
   if (actor === 'human') return next;
   if (actor === 'block')
+    // Re-checked at write time: an appeal filed after the scan read the row keeps its flag.
     return Prisma.sql`(CASE WHEN "needsReview" = 'csam' THEN "needsReview"
-      WHEN ${next} = 'appeal' THEN ${next} END)`;
+      WHEN ${next} = 'appeal' OR EXISTS (
+        SELECT 1 FROM "Appeal" a
+        WHERE a."entityType" = 'Image'::"EntityType"
+          AND a."entityId" = "Image".id
+          AND a.status = 'Pending'::"AppealStatus"
+      ) THEN 'appeal' END)`;
   return Prisma.sql`(CASE
     WHEN "needsReview" = 'csam' THEN "needsReview"
     WHEN ${next} = 'appeal' THEN ${next}

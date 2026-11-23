@@ -171,7 +171,7 @@ beforeEach(async () => {
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);
   await holder.db.exec(`
-    TRUNCATE "Image", "Appeal", "EvidenceHoldImage";
+    TRUNCATE "Image", "Appeal", "EvidenceHoldImage", "CsamReport";
     INSERT INTO "Image" (id, ingestion, "blockedFor", "nsfwLevel", "needsReview") VALUES
       (${APPEALED}, 'Blocked', 'moderated', 32, 'appeal'),
       (${FLAGGED}, 'Rescan', NULL, 4, 'minor'),
@@ -409,6 +409,15 @@ type Stored = {
   loadedReview?: string | null;
   /** A hold blocked the image after the scan loaded it unblocked. */
   heldAfterLoad?: boolean;
+  /** The image is held by a CSAM block: one the scan loaded, or one set after it loaded the image. */
+  csamBlocked?: 'loaded' | 'afterLoad';
+  /**
+   * The CSAM report listing the image was sent and archived over a year ago, so it no longer holds
+   * the owner. Otherwise the block holds the owner, and a held owner's block is kept from the scan.
+   */
+  reportReleased?: boolean;
+  /** The pending appeal was filed after the scan read the image's appeals. */
+  appealAfterRead?: boolean;
 };
 
 /** Stores the image as a rescan finds it, runs the verdict `verdict` on it, and reads it back. */
@@ -429,7 +438,8 @@ const rescan = async (verdict: Verdict, stored: Stored = {}) => {
       },
     ] as never);
   await holder.db.query(
-    `INSERT INTO "Image" (id, ingestion, "nsfwLevel", "needsReview", minor, poi) VALUES ($1, 'Rescan', 1, $2, $3, $4)`,
+    // Owned by the loaded image's owner: a row with no owner reads as held, which keeps any block.
+    `INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel", "needsReview", minor, poi) VALUES ($1, 2, 'Rescan', 1, $2, $3, $4)`,
     [GRID_ID, stored.needsReview ?? null, stored.minor ?? false, stored.poi ?? false]
   );
   if (stored.appeal)
@@ -443,6 +453,24 @@ const rescan = async (verdict: Verdict, stored: Stored = {}) => {
     );
   if (stored.heldAfterLoad)
     await holder.db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES ($1)`, [GRID_ID]);
+  if (stored.csamBlocked)
+    await holder.db.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM', "nsfwLevel" = 32 WHERE id = $1;`,
+      [GRID_ID]
+    );
+  if (stored.reportReleased)
+    await holder.db.query(
+      `INSERT INTO "CsamReport" ("userId", images, "reportSentAt", "archivedAt")
+       VALUES (2, jsonb_build_array(jsonb_build_object('id', $1::int)), now() - interval '2 years', now() - interval '18 months')`,
+      [GRID_ID]
+    );
+  if (stored.appealAfterRead) {
+    // The scan's read of pending appeals finds none; the appeal is filed before its write.
+    dbMock.dbWrite.appeal.findMany.mockResolvedValueOnce([] as never);
+    await holder.db.query(`INSERT INTO "Appeal" ("entityType", "entityId") VALUES ('Image', $1)`, [
+      GRID_ID,
+    ]);
+  }
   const image = {
     id: GRID_ID,
     userId: 2,
@@ -453,9 +481,9 @@ const rescan = async (verdict: Verdict, stored: Stored = {}) => {
     metadata: {},
     postId: null,
     nsfwLevelLocked: false,
-    ingestion: 'Rescan',
-    nsfwLevel: 1,
-    blockedFor: null,
+    ...(stored.csamBlocked === 'loaded'
+      ? { ingestion: 'Blocked', nsfwLevel: 32, blockedFor: 'CSAM' }
+      : { ingestion: 'Rescan', nsfwLevel: 1, blockedFor: null }),
     needsReview:
       stored.loadedReview !== undefined ? stored.loadedReview : stored.needsReview ?? null,
     minor: stored.minor ?? false,
@@ -573,6 +601,73 @@ describe('the review a scan verdict leaves', () => {
     // Control: the hold kept the row blocked.
     expect(ingestion).toBe('Blocked');
     expect(row.needsReview).toBeNull();
+  });
+
+  // A CSAM block holds the row Blocked whatever the verdict, so its review settles as any block's.
+  it.each(
+    (
+      [
+        ['loaded', 'held'],
+        ['afterLoad', 'held'],
+        ['loaded', 'released'],
+        ['afterLoad', 'released'],
+      ] as const
+    ).flatMap(([when, owner]) =>
+      (
+        [
+          [null, 'minor'],
+          [null, 'poi'],
+          [null, 'tag'],
+          [null, 'hold'],
+          ['tag', 'minor'],
+          ['newUser', 'poi'],
+          ['modRule', 'minor'],
+          ['minor', 'clean'],
+          ['poi', 'clean'],
+        ] as const
+      ).map(([stored, verdict]) => [when, owner, stored, verdict] as const)
+    )
+  )(
+    'a CSAM block %s, owner %s, stored %s, %s verdict: no review',
+    async (when, owner, stored, verdict) => {
+      const row = await rescan(verdict as Verdict, {
+        needsReview: stored,
+        csamBlocked: when,
+        reportReleased: owner === 'released',
+      });
+      const { ingestion, blockedFor } = (
+        await holder.db.query<{ ingestion: string; blockedFor: string }>(
+          `SELECT ingestion, "blockedFor" FROM "Image" WHERE id = $1`,
+          [GRID_ID]
+        )
+      ).rows[0];
+      // Control: the CSAM block held.
+      expect({ ingestion, blockedFor }).toEqual({ ingestion: 'Blocked', blockedFor: 'CSAM' });
+      expect(row.needsReview).toBeNull();
+    }
+  );
+
+  it('a CSAM-blocked image keeps its csam review', async () => {
+    expect(
+      (await rescan('minor', { needsReview: 'csam', csamBlocked: 'loaded' })).needsReview
+    ).toBe('csam');
+  });
+
+  it('a blocking verdict keeps the appeal review of an appeal filed after the scan read appeals', async () => {
+    const row = await rescan('block', { needsReview: 'appeal', appealAfterRead: true });
+    // Control: the scan's read found no pending appeal, so only the write-time check keeps it.
+    expect(dbMock.dbWrite.appeal.findMany).toHaveBeenCalled();
+    expect(await dbMock.dbWrite.appeal.findMany.mock.results[0].value).toEqual([]);
+    expect(row.needsReview).toBe('appeal');
+  });
+
+  // Control for the row above: a stored appeal review whose appeal was decided is settled by the block.
+  it('a blocking verdict settles an appeal review whose appeal was decided', async () => {
+    await holder.db.query(
+      `INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Image', $1, 'Rejected')`,
+      [GRID_ID]
+    );
+    expect((await rescan('block', { needsReview: 'appeal' })).needsReview).toBeNull();
   });
 
   it('a blocking verdict on an image under appeal writes appeal', async () => {

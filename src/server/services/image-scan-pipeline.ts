@@ -811,11 +811,14 @@ export async function resolveScanOutcome({
         WHEN "nsfwLevelLocked" AND "nsfwLevel" <> 0
           AND ${scanLevel}::int <> ${Prisma.raw(String(NsfwLevel.Blocked))} THEN "nsfwLevel"
         ELSE ${scanLevel}::int END,
-      "needsReview" = ${reviewKeyAfterSql(
-        // Every way the row ends Blocked settles its review, as any block does.
+      -- Every way the row ends Blocked, a stored CSAM block included, settles its review as any block does.
+      "needsReview" = CASE WHEN ${csamBlocked} THEN ${reviewKeyAfterSql(
+        'block',
+        (toUpdate.needsReview as string) ?? null
+      )} ELSE ${reviewKeyAfterSql(
         lifting ? 'verdict' : 'block',
         (toUpdate.needsReview as string) ?? null
-      )},
+      )} END,
       "nsfwLevelLocked" = "nsfwLevelLocked" AND "nsfwLevel" <> 0,
       -- Only a moderator clears these.
       "minor" = "minor" OR ${(toUpdate.minor as boolean) ?? false},

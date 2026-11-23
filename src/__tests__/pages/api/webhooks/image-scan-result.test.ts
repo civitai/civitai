@@ -828,10 +828,11 @@ describe('image-scan-result webhook - pipeline tests', () => {
           // The scan's value is the ELSE arm, after the CSAM and locked-rating arms.
           `CASE WHEN "blockedFor" = 'CSAM' THEN \\d+[\\s\\S]*?ELSE \\$(\\d+)`
         ),
-        // The key the scan sets, which reviewKeyAfterSql weighs against the stored one.
+        // The key the scan sets, which reviewKeyAfterSql weighs against the stored one: the ELSE
+        // arm of the stored-CSAM guard.
         needsReview: param(
           'needsReview',
-          `\\(CASE\\s+WHEN "needsReview" = 'csam' THEN "needsReview"\\s+WHEN \\$(\\d+)::text`
+          `CASE WHEN "blockedFor" = 'CSAM' THEN[\\s\\S]*?ELSE \\(CASE\\s+WHEN "needsReview" = 'csam' THEN "needsReview"\\s+WHEN \\$(\\d+)::text`
         ),
         // What the scan ORs into the stored flag.
         minor: param('minor', `"minor" OR \\$(\\d+)`),
