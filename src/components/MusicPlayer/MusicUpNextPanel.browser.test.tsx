@@ -249,6 +249,19 @@ describe('the Up next panel', () => {
     expect(el.contains(document.elementFromPoint(left + width / 2, top + height / 2))).toBe(true);
   });
 
+  test('Clear is Civitai blue 3 in dark', async () => {
+    player().playTrack(nowPlaying);
+    await openPanel();
+    const scheme = document.documentElement.getAttribute('data-mantine-color-scheme');
+    document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
+    try {
+      expect(getComputedStyle(inPanel('Clear').element()).color).toBe('rgb(116, 192, 252)');
+    } finally {
+      if (scheme) document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
+      else document.documentElement.removeAttribute('data-mantine-color-scheme');
+    }
+  });
+
   test('Clear empties Up next and leaves the song playing', async () => {
     player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm] } });
     player().addToUpNext(rain);

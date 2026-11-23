@@ -137,6 +137,8 @@ const TEXT_SCHEME =
 // What `ACCENT_FILL` falls back to, `--mantine-primary-color-filled`: Mantine's blue at its default
 // primaryShade, 6 in light and 8 in dark (the theme sets neither primaryColor nor primaryShade).
 export const PRIMARY_FILL = { light: '#228BE6', dark: '#1971C2' };
+// Where `PRIMARY_TEXT` starts: the design's blue 8 in light and blue 3 in dark (Pencil `PPbvV`), moved only if a background needs it.
+const PRIMARY_TEXT_START = { light: '#1971C2', dark: '#74C0FC' };
 
 type Scheme = 'light' | 'dark';
 /** A background the text sits on over the surface: the accent (or its second colour) at `tint`, or a hover. */
@@ -221,7 +223,7 @@ export function surfaceBackground<S extends MusicSurface>(
 }
 
 /** `fill` made readable on every background of `surface` in `scheme`. */
-function textOn(surface: MusicSurface, scheme: Scheme, fill: string, second: string) {
+function textOn(surface: MusicSurface, scheme: Scheme, fill: string, second: string, start = fill) {
   const backgrounds = [
     MUSIC_SURFACES[surface][scheme],
     ...Object.keys(MUSIC_SURFACES[surface].states).map((state) =>
@@ -230,7 +232,7 @@ function textOn(surface: MusicSurface, scheme: Scheme, fill: string, second: str
   ];
   // A scheme's backgrounds are all light or all dark, so each step only moves the text further from
   // the ones already passed, and the last colour reads on all of them.
-  return backgrounds.reduce((text, background) => readableAccent(text, background), fill);
+  return backgrounds.reduce((text, background) => readableAccent(text, background), start);
 }
 
 /**
@@ -256,7 +258,13 @@ export function musicSurface(accent: MusicAccent | null, surface: MusicSurface) 
     const primary = PRIMARY_FILL[scheme];
     const fill = accent?.accent ?? primary;
     style[`--music-accent-text-${scheme}`] = textOn(surface, scheme, fill, accent?.accent2 ?? fill);
-    style[`--music-primary-text-${scheme}`] = textOn(surface, scheme, primary, primary);
+    style[`--music-primary-text-${scheme}`] = textOn(
+      surface,
+      scheme,
+      primary,
+      primary,
+      PRIMARY_TEXT_START[scheme]
+    );
   }
   return { className: TEXT_SCHEME, style };
 }
