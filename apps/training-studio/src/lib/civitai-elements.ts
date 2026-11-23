@@ -16,6 +16,7 @@ import '@civitai/components/civitai-menu-item/define';
 import '@civitai/components/civitai-menu-label/define';
 import '@civitai/components/civitai-modal/define';
 import '@civitai/components/civitai-number-input/define';
+import '@civitai/components/civitai-progress/define';
 import '@civitai/components/civitai-segmented-control/define';
 import '@civitai/components/civitai-select/define';
 import '@civitai/components/civitai-textarea/define';
