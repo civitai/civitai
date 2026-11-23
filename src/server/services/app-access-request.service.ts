@@ -93,6 +93,8 @@ export async function submitAppAccessRequest({
       FROM "User" u
       WHERE u."id" = ${userId}
         AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT u."muted"
+        -- No system account row (a fresh database): queue it rather than fail the FK.
+        AND EXISTS (SELECT 1 FROM "User" WHERE "id" = ${APP_ACCESS_AUTO_APPROVE_REVIEWER_ID})
         AND NOT EXISTS (
           SELECT 1 FROM "AppAccessRequest"
           WHERE "userId" = ${userId} AND "status" IN ('pending', 'declined')

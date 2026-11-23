@@ -691,6 +691,22 @@ describe('submitAppAccessRequest — the auto-approve flag', () => {
     });
   });
 
+  it('🔴 Flipt unreachable: the flag read throws and the request is queued, not failed', async () => {
+    isFlipt.mockRejectedValue(new Error('flipt down'));
+    const row = await submit(mira, MIRA_IDEA);
+    expect(row).toMatchObject({ status: 'pending', reviewedAt: null });
+    expect(isFlipt).toHaveBeenCalled();
+    expect(await isApproved(mira)).toBe(false);
+  });
+
+  it('ON with no system account row: the request is queued, not failed on the reviewer FK', async () => {
+    autoApprove.mockResolvedValue(true);
+    await pg.query('DELETE FROM "User" WHERE "id" = $1', [SYSTEM_USER_ID]);
+    const row = await submit(mira, MIRA_IDEA);
+    expect(row).toMatchObject({ status: 'pending', reviewedAt: null });
+    expect(await isApproved(mira)).toBe(false);
+  });
+
   it('ON: a failed session bust or notice does not fail or undo the approval', async () => {
     autoApprove.mockResolvedValue(true);
     refreshSession.mockRejectedValueOnce(new Error('sysRedis down'));
