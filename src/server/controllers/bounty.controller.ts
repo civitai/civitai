@@ -1,6 +1,7 @@
 import { isSessionOrFullUserKey } from '~/server/auth/full-user-credential';
 import { TRPCError } from '@trpc/server';
 import type { Context, ProtectedContext } from '../createContext';
+import { seesReportListed } from '~/server/utils/report-listed-viewer';
 import type { GetByIdInput } from '../schema/base.schema';
 import {
   addBenefactorUnitAmount,
@@ -52,10 +53,6 @@ import {
   mayBeTextRated,
 } from '~/server/services/bounty-rated-level';
 import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
-
-/** The held-media viewer (src/pages/api/mod/held-media): a moderator with the csamReports grant. */
-const seesReportListed = (ctx: Pick<Context, 'user' | 'features'>) =>
-  !!ctx.user?.isModerator && !!ctx.features?.csamReports;
 
 /** Run after a bounty's flag raises an image's nsfwLevel: the SQL rule saw the stored level. */
 const keepsMinorRule =
