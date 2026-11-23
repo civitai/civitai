@@ -2,7 +2,6 @@ import type { ModelMessage } from 'ai';
 import { describe, expect, it } from 'vitest';
 
 import {
-  chosenAppIn,
   CivitaiTurnReports,
   toolCallCounts,
   TURN_REPORT_PATH,
@@ -88,7 +87,9 @@ describe('turnReportOf', () => {
   it('does not count an app a failed or existing-app call named as chosen', () => {
     const existed = call('x1', 'create_app', {}, { app: 'taken-app-55', existed: true });
     const failed = call('x2', 'use_open_app', {}, { app: 'broken-app-62', error: 'nope' });
-    expect(chosenAppIn([...EARLIER, ...existed, ...failed])).toBe('first-app-71');
+    expect(
+      turnReportOf({ ...TURN, earlier: [...EARLIER, ...existed, ...failed], messages: [] }).app
+    ).toBe('first-app-71');
   });
 
   it('counts no tool calls for a reply that made none, and no Buzz when none was charged', () => {

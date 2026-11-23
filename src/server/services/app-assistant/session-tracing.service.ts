@@ -58,10 +58,25 @@ export async function isAppAssistantTracingOn(): Promise<boolean> {
 type RawWriter = Pick<PrismaClient, '$executeRaw'>;
 
 /**
- * Upserts the (user, conversation, app) link for one turn: first seen at the earliest turn's start,
- * last seen at the latest turn's end, one more turn and its Buzz, the turn's model. A report of the
- * same run delivered again (`last_run_id` already this run) moves nothing but the times, so a
- * duplicate delivery never counts twice. A Retry of a turn is a new run, and counts as a turn.
+ * The identity of one PASS of a run: the run id and when the pass began. A run that DBOS recovers
+ * after a crash runs a second pass under the same run id, with its own start and its own charge.
+ */
+export function passKey(report: Pick<AssistantTurnReport, 'runId' | 'startedAt'>): string {
+  return `${report.runId}@${report.startedAt.toISOString()}`;
+}
+
+/**
+ * Upserts the (user, conversation, app) link for one finished pass: first seen at the earliest
+ * pass's start, last seen at the latest pass's end, one more turn and the pass's Buzz, its model.
+ *
+ * Dedupe, exactly: `last_run_id` holds the last pass written (`passKey`), and a report of THAT SAME
+ * pass arriving again right after it moves nothing but the times. A second pass of the same run
+ * (recovered after a crash) is a different pass and counts, with its Buzz. A redelivery that arrives
+ * after another pass was written is NOT recognised and counts again: the runner sends each report
+ * once and never retries, so only a duplicate at the transport can repeat one.
+ *
+ * Only for a LIVE account: the statement inserts nothing (and so updates nothing) when the user is
+ * deleted, so a report arriving after `deleteUser` (a run grant outlives it) cannot bring the row back.
  */
 export async function upsertSessionLink(
   db: RawWriter,
@@ -71,9 +86,12 @@ export async function upsertSessionLink(
     INSERT INTO "app_assistant_session_links" AS l
       ("user_id", "conversation_id", "app_slug", "first_seen_at", "last_seen_at",
        "turn_count", "last_model", "buzz_total", "last_run_id")
-    VALUES
-      (${report.userId}, ${report.conversationId}, ${report.appSlug}, ${report.startedAt},
-       ${report.endedAt}, 1, ${report.model}, ${report.buzz}, ${report.runId})
+    SELECT ${report.userId}::int, ${report.conversationId}::text, ${report.appSlug}::text,
+           ${report.startedAt}::timestamptz, ${report.endedAt}::timestamptz, 1,
+           ${report.model}::text, ${report.buzz}::double precision, ${passKey(report)}::text
+    WHERE EXISTS (
+      SELECT 1 FROM "User" u WHERE u."id" = ${report.userId}::int AND u."deletedAt" IS NULL
+    )
     ON CONFLICT ("user_id", "conversation_id", "app_slug") DO UPDATE SET
       "turn_count" = l."turn_count"
         + CASE WHEN l."last_run_id" IS NOT DISTINCT FROM EXCLUDED."last_run_id" THEN 0 ELSE 1 END,
@@ -143,11 +161,29 @@ function logFailure(what: 'link' | 'event', report: AssistantTurnReport, err: un
   });
 }
 
+/** Whether the user exists and is not deleted. An error reads as not live: nothing is written. */
+async function isLiveAccount(userId: number): Promise<boolean> {
+  try {
+    const { dbWrite } = await import('~/server/db/client');
+    // primary: a deletion moments ago must already stop the write.
+    const user = await dbWrite.user.findUnique({
+      where: { id: userId },
+      select: { deletedAt: true },
+    });
+    return !!user && user.deletedAt === null;
+  } catch {
+    return false;
+  }
+}
+
 /** Records one finished turn: a no-op while the flag is off. Never throws. */
 export async function recordAssistantTurn(
   report: AssistantTurnReport
 ): Promise<AssistantTurnOutcome> {
   if (!(await isAppAssistantTracingOn())) return { tracing: false, linked: false, event: false };
+  // A run grant outlives an account deletion: a turn ending after `deleteUser` writes nothing. The
+  // link upsert checks again in its own statement, so a deletion landing in between still wins.
+  if (!(await isLiveAccount(report.userId))) return { tracing: true, linked: false, event: false };
   const { appSlug } = report;
   const [linked, event] = await Promise.all([
     appSlug

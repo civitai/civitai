@@ -106,6 +106,8 @@ beforeEach(() => {
     ASSISTANT_RUNNER_GRANT_TTL_SECONDS: 7800,
   });
   executeRaw().mockResolvedValue(1);
+  // A live account: the grant's user exists and is not deleted.
+  dbMock.dbWrite.user.findUnique.mockResolvedValue({ deletedAt: null });
   m.insert.mockResolvedValue(undefined);
 });
 
@@ -162,7 +164,8 @@ describe('POST /api/internal/app-assistant/turn', () => {
       new Date('2026-11-21T08:00:06.125Z'),
       'model-x9',
       17.5,
-      'run-5530',
+      'run-5530@2026-11-21T08:00:00.000Z',
+      USER,
     ]);
     expect(m.insert).toHaveBeenCalledTimes(1);
     expect(m.insert.mock.calls[0]![0]).toEqual({
@@ -215,5 +218,21 @@ describe('POST /api/internal/app-assistant/turn', () => {
       status: 200,
       json: { tracing: true, linked: false, event: false },
     });
+  });
+
+  it('a report arriving after the account was deleted (its grant outlives deleteUser) writes nothing', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({
+      deletedAt: new Date('2026-11-21T08:00:03Z'),
+    });
+    expect(await call(report(await grantFor()))).toEqual({
+      status: 200,
+      json: { tracing: true, linked: false, event: false },
+    });
+    expect(executeRaw()).not.toHaveBeenCalled();
+    expect(m.insert).not.toHaveBeenCalled();
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(null);
+    await call(report(await grantFor()));
+    expect(executeRaw()).not.toHaveBeenCalled();
+    expect(m.insert).not.toHaveBeenCalled();
   });
 });
