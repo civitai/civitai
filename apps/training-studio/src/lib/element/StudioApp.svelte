@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import MyTrainings from '../../routes/MyTrainings.svelte';
+  import MyTrainingsElements from '../../routes/MyTrainingsElements.svelte';
   import TrainingFlow from '../../routes/TrainingFlow.svelte';
   import RunView from './RunView.svelte';
   import { backend, navigate, type StudioLocation } from '$lib/host';
@@ -21,7 +22,9 @@
   // spend confirmation had no Blue balance to compare against in the embed and never fired.
   onMount(() => void buzzBalance.refresh());
 
-  setElementsUi(() => enabledModelFlags.includes(ELEMENTS_UI_FLAG_KEY));
+  const elementsUi = $derived(enabledModelFlags.includes(ELEMENTS_UI_FLAG_KEY));
+  setElementsUi(() => elementsUi);
+  const List = $derived(elementsUi ? MyTrainingsElements : MyTrainings);
 
   // `reloadTick` is the host-context refresh(): bumping it rebuilds the promises, so "server data is
   // stale" re-reads the current view. Entering a view re-derives too, so home is always fresh after
@@ -50,7 +53,7 @@
   {#await rowsPromise}
     <p class="p-6 font-mono text-sm text-dark-2">Loading trainings…</p>
   {:then rows}
-    <MyTrainings {rows} onNew={() => navigate({ view: 'new' })} />
+    <List {rows} onNew={() => navigate({ view: 'new' })} />
   {:catch err}
     <p class="p-6 font-mono text-sm text-red-400">
       Could not load trainings: {err instanceof Error ? err.message : String(err)}
