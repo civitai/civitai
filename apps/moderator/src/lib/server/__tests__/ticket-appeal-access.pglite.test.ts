@@ -6,7 +6,7 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 import { APPEAL_MEDIA_SCHEMA } from './appeal-media-schema';
 
 /**
- * A ruling on an image appeal from a ticket answers as the appeals queue does: refused for an image
+ * Pins the media access rule (`restrictedImageIds` in retracted-media.ts). A ruling on an image appeal from a ticket answers as the appeals queue does: refused for an image
  * the queue sends this moderator without media. The ticket's reads and the access rule run against
  * pglite; the help desk (which ticket links to whom, the note) is faked, and so is the ruling's
  * write, which a test only needs to see reached.

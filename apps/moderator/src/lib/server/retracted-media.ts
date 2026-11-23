@@ -87,12 +87,36 @@ export async function readRetractedMedia(
     for (const row of rows) viewable.set(row.id, media(row));
     return { eligible, viewable };
   }
+  const open = await viewableToNonGrant(
+    rows.filter((row) => row.retracted),
+    readVerdicts
+  );
+  for (const row of rows) if (open.has(row.id)) viewable.set(row.id, media(row));
+  return { eligible, viewable };
+}
+
+type AccessRow = ScannerRow & {
+  blockedFor: string | null;
+  restricted: boolean;
+  siblings: UrlSibling[];
+};
+
+/**
+ * Which of `rows` a moderator without `csamReview` may see: the one decision behind
+ * `readRetractedMedia` and `restrictedImageIds`. A row Postgres refuses (`restricted`, a `blockedFor`
+ * signal) is not read from the scanner; the rest go to `retractedViewable`, with `readVerdicts` for
+ * the rows and one scanner read for their url siblings. A verdict that could not be read refuses.
+ */
+async function viewableToNonGrant(
+  rows: AccessRow[],
+  readVerdicts: (rows: ScannerRow[]) => Promise<Map<number, ScannerVerdict | null> | null>
+): Promise<Set<number>> {
+  const viewable = new Set<number>();
   const patterns = blockedForPatterns();
   const candidates = rows.filter(
-    (row) => row.retracted && !row.restricted && !blockedForSignal(row.blockedFor, patterns)
+    (row) => !row.restricted && !blockedForSignal(row.blockedFor, patterns)
   );
-  if (!candidates.length) return { eligible, viewable };
-  // The candidates' url siblings in one scanner read, not one read per row.
+  if (!candidates.length) return viewable;
   const siblingIds = [...new Set(candidates.flatMap((row) => row.siblings.map((s) => s.id)))];
   const [verdicts, siblingVerdicts] = await Promise.all([
     readVerdicts(candidates),
@@ -104,64 +128,52 @@ export async function readRetractedMedia(
       readVerdict: async () => verdicts?.get(row.id) ?? null,
       readVerdicts: async () => siblingVerdicts,
     });
-    if (ok) viewable.set(row.id, media(row));
+    if (ok) viewable.add(row.id);
   }
-  return { eligible, viewable };
+  return viewable;
 }
 
+/** Ids `restrictedImageIds` reads in one go, so a large selection is several bounded reads. */
+const RESTRICTED_READ_PAGE = 200;
+
 /**
- * Which of these images a moderator without `csamReview` is refused, by `readRetractedMedia`'s own
- * rule (`retractedAccessColumnsSql` and `retractedViewable`, the scanner included) applied to every
- * row, not only the eligible ones: a caller that lists a row without its media withholds what that
- * route would refuse. One scanner read for the rows and their url siblings; a read the scanner cannot
- * answer withholds. Postgres is read on the primary for the same reason as `readRetractedMedia`.
- * None for a moderator with the grant; a Postgres read that fails throws.
+ * Which of these images a moderator without `csamReview` is refused: `viewableToNonGrant`, applied to
+ * every row rather than only the ones `/api/retracted-media` serves, so a caller that lists a row
+ * without its media withholds what that route would refuse. An id the primary does not have is
+ * withheld too. Read on the primary, as `readRetractedMedia`, a page of ids at a time. None for a
+ * moderator with the grant; a Postgres read that fails throws.
  */
 export async function restrictedImageIds(
   imageIds: number[],
   { csamReview }: { csamReview: boolean }
 ): Promise<Set<number>> {
-  if (csamReview || !imageIds.length) return new Set();
-  const access = retractedAccessColumnsSql('i', { csamReview });
-  const rows = await dbWrite.transaction().execute(async (trx) => {
-    await sql.raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`).execute(trx);
-    return trx
-      .selectFrom((eb) =>
-        eb.selectFrom('Image').selectAll().where('id', 'in', imageIds).offset(0).as('i')
-      )
-      .select(['i.id', 'i.blockedFor'])
-      .select(sql<boolean>`${sql.raw(access.restricted)}`.as('restricted'))
-      .select(sql<UrlSibling[]>`${sql.raw(access.siblings)}`.as('siblings'))
-      .execute();
-  });
-  const patterns = blockedForPatterns();
-  // An id the primary no longer has is withheld: its row may still be on the replica a caller read.
-  const found = new Set(rows.map((row) => row.id));
-  const kept = new Set(imageIds.filter((id) => !found.has(id)));
-  // The scanner is read only for the rows Postgres has not already refused, as `readRetractedMedia`.
-  const candidates = rows.filter((row) => {
-    const refused = row.restricted || blockedForSignal(row.blockedFor, patterns);
-    if (refused) kept.add(row.id);
-    return !refused;
-  });
-  if (!candidates.length) return kept;
-  const verdicts = await readScannerCsamVerdicts([
-    ...new Set(candidates.flatMap((row) => [row.id, ...row.siblings.map((s) => s.id)])),
-  ]);
-  for (const row of candidates) {
-    const ok = await retractedViewable(row, {
-      patterns,
-      readVerdict: async () => verdicts?.get(row.id) ?? null,
-      readVerdicts: async () => verdicts,
+  const kept = new Set<number>();
+  if (csamReview) return kept;
+  for (let i = 0; i < imageIds.length; i += RESTRICTED_READ_PAGE) {
+    const page = imageIds.slice(i, i + RESTRICTED_READ_PAGE);
+    const access = retractedAccessColumnsSql('i', { csamReview });
+    const rows = await dbWrite.transaction().execute(async (trx) => {
+      await sql
+        .raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`)
+        .execute(trx);
+      return trx
+        .selectFrom((eb) =>
+          eb.selectFrom('Image').selectAll().where('id', 'in', page).offset(0).as('i')
+        )
+        .select(['i.id', 'i.blockedFor', 'i.ingestion'])
+        .select(sql<boolean>`${sql.raw(access.restricted)}`.as('restricted'))
+        .select(sql<UrlSibling[]>`${sql.raw(access.siblings)}`.as('siblings'))
+        .execute();
     });
-    if (!ok) kept.add(row.id);
+    const viewable = await viewableToNonGrant(rows, (candidates) =>
+      readScannerCsamVerdicts(candidates.map((row) => row.id))
+    );
+    for (const id of page) if (!viewable.has(id)) kept.add(id);
   }
   return kept;
 }
 
-/** The images among these withheld from `user` (`restrictedImageIds`). Asked by the appeal rulings
- *  (queue and ticket), the report and Bulk Image Manager remove, restore and flag actions, account
- *  removal, Image Lookup's flag, and the image queues' accept, rating and flag actions. */
+/** The images among these withheld from `user` (`restrictedImageIds`). */
 export async function withheldImageIds(user: App.Locals['user'] | undefined, imageIds: number[]) {
   return [
     ...(await restrictedImageIds(imageIds, { csamReview: canAccess(user, HELD_MEDIA_PAGE) })),
@@ -177,10 +189,9 @@ export async function withheldRefusal(user: App.Locals['user'] | undefined, imag
     : null;
 }
 
-/** The most images of one account `withheldAccountRefusal` reads, a page at a time; an account
- *  with more is refused to a moderator without the grant rather than read in full. */
+/** The most images of one account `withheldAccountRefusal` reads; an account with more is refused
+ *  to a moderator without the grant rather than read in full. */
 export const ACCOUNT_CHECK_CAP = 1000;
-const ACCOUNT_CHECK_PAGE = 200;
 
 /** The refusal for an action on every image `userId` owns when any of them is withheld from `user`,
  *  or there are more than `ACCOUNT_CHECK_CAP` to check; `null` otherwise. */
@@ -194,12 +205,10 @@ export async function withheldAccountRefusal(user: App.Locals['user'] | undefine
     .execute();
   if (rows.length > ACCOUNT_CHECK_CAP)
     return `${APPEAL_RULING_REFUSED} This account has too many images to check — nothing was changed.`;
-  const ids = rows.map((r) => r.id);
-  for (let i = 0; i < ids.length; i += ACCOUNT_CHECK_PAGE) {
-    const error = await withheldRefusal(user, ids.slice(i, i + ACCOUNT_CHECK_PAGE));
-    if (error) return error;
-  }
-  return null;
+  return withheldRefusal(
+    user,
+    rows.map((r) => r.id)
+  );
 }
 
 /** Each row's verdict, one read per row: a scanned image can be rescanned, so it is read fresh; a

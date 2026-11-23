@@ -6,7 +6,7 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 import { IMAGE_PAGES_SCHEMA } from './appeal-media-schema';
 
 /**
- * Image actions refuse a batch with an image the media access rule withholds from this moderator,
+ * Pins the media access rule (`restrictedImageIds` in retracted-media.ts). Image actions refuse a batch with an image the media access rule withholds from this moderator,
  * as the appeal rulings do, and Bulk Image Manager's load sends that image without its media. The
  * reads and the rule run against pglite; the writes an action makes are faked, as a test only needs
  * to see them reached or not.
@@ -38,8 +38,15 @@ vi.mock('../user-actions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../user-actions.service')>()),
   ...writes,
 }));
+// ClickHouse is the boundary: the scanner has no rows, or cannot answer while `scanner.down`.
+const { scanner } = vi.hoisted(() => ({ scanner: { down: false } }));
 vi.mock('../clickhouse', () => ({
-  getClickhouse: () => ({ query: async () => ({ json: async () => [] }) }),
+  getClickhouse: () => ({
+    query: async () => {
+      if (scanner.down) throw new Error('scanner unavailable');
+      return { json: async () => [] };
+    },
+  }),
 }));
 const { updateImageNsfwLevel, acceptImage } = vi.hoisted(() => ({
   updateImageNsfwLevel: vi.fn(async (_input: unknown) => undefined),
@@ -79,6 +86,7 @@ let db: PGlite;
 
 beforeEach(async () => {
   for (const write of Object.values(writes)) write.mockClear();
+  scanner.down = false;
   updateImageNsfwLevel.mockClear();
   acceptImage.mockClear();
   db = await freshPglite();
@@ -126,6 +134,15 @@ describe('report image actions, without the grant', () => {
     expect(result.status).toBe(403);
     expect(result.data?.error).toContain(String(WITHHELD));
     expect(write).not.toHaveBeenCalled();
+  });
+
+  it('refuses a clean image while the scanner cannot answer', async () => {
+    scanner.down = true;
+    const result = (await reportActions.restore(
+      event(WITHOUT_GRANT, { imageIds: String(CONTROL) })
+    )) as Result;
+    expect(result.status).toBe(403);
+    expect(writes.restoreImages).not.toHaveBeenCalled();
   });
 
   it('restores a batch with nothing withheld', async () => {
@@ -236,6 +253,20 @@ describe("Bulk Image Manager's account-wide removal", () => {
     });
   });
 
+  it('refuses an account whose withheld image is past the first page read', async () => {
+    await db.exec(`
+      INSERT INTO "User" (id, username) VALUES (11, 'paged');
+      INSERT INTO "Image" (id, url, ingestion, "userId")
+        SELECT 990100000 + n, 'paged-' || n, 'Scanned', 11 FROM generate_series(1, 250) n;
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
+        (990100999, 'paged-withheld', 'Blocked', 'CSAM', 11);
+    `);
+    const result = await removeAll(WITHOUT_GRANT, 11, 'paged');
+    expect(result.status).toBe(403);
+    expect(result.data?.error).toContain('990100999');
+    expect(writes.removeAllImagesForUser).not.toHaveBeenCalled();
+  });
+
   it('removes the account with the withheld image for a grant holder', async () => {
     await removeAll(WITH_GRANT, 7, 'owner');
     expect(writes.removeAllImagesForUser).toHaveBeenCalledOnce();
@@ -310,7 +341,7 @@ describe("the image queues' flag and rating actions", () => {
     await queuePage.actions.setRating(
       event(WITH_GRANT, { imageIds: String(WITHHELD), nsfwLevel: '1' })
     );
-    expect(updateImageNsfwLevel).toHaveBeenCalled();
+    expect(updateImageNsfwLevel).toHaveBeenCalledOnce();
   });
 });
 
