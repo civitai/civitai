@@ -40,6 +40,7 @@ const SKILL_CHECK_READ_SITES = [
   'review',
   'review-serve',
   'review-stats',
+  'review-sweep',
   'notice',
   'recap',
 ] as const;

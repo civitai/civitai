@@ -212,8 +212,9 @@ export type ReviewOffer = {
   votes: number;
 };
 
-/** Candidates read per serve from each of the two queues. */
-const SERVE_BATCH = 20;
+const SERVE_BATCH_PER_QUEUE = 20;
+/** Reviews the tick closes at most per run. */
+export const INELIGIBLE_SWEEP_BATCH = 100;
 
 /**
  * Open reviews this moderator may vote on: not claimed by another, not their own image, not voted on by them, and on an
@@ -258,35 +259,51 @@ const hasVote = (exists: boolean) => (qb: ReturnType<typeof servableReviews>) =>
   });
 
 /**
- * Closes, oldest first and a bounded number at a time, open reviews whose image fails an exclusion that never lifts on its
- * own: they can never produce a check. Run on every serve, so they drain without a job.
+ * Closes, oldest first and at most `limit` per run, open reviews whose image fails an exclusion that never lifts on its own:
+ * they can never produce a check. Run by the tick; unreadable, it closes nothing (fail closed). Returns how many it closed.
  */
-async function closeIneligible(db: Kysely<DB>, now: Date): Promise<void> {
-  const closed = await db
-    .updateTable('KnightsInquisitorReview')
-    .set({ status: 'excluded', closedAt: utc(now), claimedBy: null, claimExpiresAt: null })
-    .where(
-      'id',
-      'in',
-      db
-        .selectFrom('KnightsInquisitorReview as r')
-        .leftJoin('Image as img', 'img.id', 'r.imageId')
-        .leftJoin('Post as p', 'p.id', 'img.postId')
-        .select('r.id')
-        .where('r.status', '=', 'open')
-        .where((eb) => eb.or([eb('p.id', 'is', null), eb.not(skillCheckLasting(eb as never))]))
-        .orderBy('r.createdAt', 'asc')
-        .limit(SERVE_BATCH)
-    )
-    .executeTakeFirst();
-  for (let n = Number(closed.numUpdatedRows); n > 0; n--) metrics.reviewClosed('excluded');
+export async function closeIneligibleReviews(
+  db: Kysely<DB>,
+  { now, limit = INELIGIBLE_SWEEP_BATCH }: { now: Date; limit?: number }
+): Promise<number> {
+  const closed = await failClosed(
+    db,
+    'review-sweep',
+    async () =>
+      Number(
+        (
+          await db
+            .updateTable('KnightsInquisitorReview')
+            .set({ status: 'excluded', closedAt: utc(now), claimedBy: null, claimExpiresAt: null })
+            .where(
+              'id',
+              'in',
+              db
+                .selectFrom('KnightsInquisitorReview as r')
+                .leftJoin('Image as img', 'img.id', 'r.imageId')
+                .leftJoin('Post as p', 'p.id', 'img.postId')
+                .select('r.id')
+                .where('r.status', '=', 'open')
+                .where((eb) =>
+                  eb.or([eb('p.id', 'is', null), eb.not(skillCheckLasting(eb as never))])
+                )
+                .orderBy('r.createdAt', 'asc')
+                .limit(limit)
+            )
+            .executeTakeFirst()
+        ).numUpdatedRows
+      ),
+    0
+  );
+  for (let n = closed; n > 0; n--) metrics.reviewClosed('excluded');
+  return closed;
 }
 
 /**
  * The next review for this moderator: one another moderator already voted on first, then the oldest, each read as one
- * bounded batch in `(status, createdAt)` order of reviews on images that pass the safety exclusions now. Reviews that can
- * never produce a check are closed `excluded` on the way. `unreadable`: the safety exclusions could not be read (fail
- * closed: nothing is served).
+ * bounded batch in `(status, createdAt)` order of reviews on images that pass the safety exclusions now. A candidate the
+ * per-image checks rule out for good is closed `excluded` on the way. `unreadable`: the safety exclusions could not be read
+ * (fail closed: nothing is served).
  */
 export async function nextReview(
   db: Kysely<DB>,
@@ -297,7 +314,6 @@ export async function nextReview(
     db,
     'review-serve',
     async () => {
-      await closeIneligible(db, now);
       for (const voted of [true, false]) {
         const batch = await servableReviews(db, moderatorId, now)
           .$call(hasVote(voted))
@@ -313,7 +329,7 @@ export async function nextReview(
           ])
           .orderBy('r.createdAt', 'asc')
           .orderBy('r.id', 'asc')
-          .limit(SERVE_BATCH)
+          .limit(SERVE_BATCH_PER_QUEUE)
           .execute();
         for (const row of batch) {
           const exclusion = await exclusionOf(db, row);

@@ -6,7 +6,6 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
 </script>
 
-<!-- Moderators play the in-game inquisitor queue; everyone else plays their rank's game. -->
 {#if data.mode === 'inquisitor'}
   <InquisitorPlay {data} {form} />
 {:else}

@@ -41,8 +41,8 @@ Moderator votes earn no XP, gold or Watch, need no player record, and never chan
 ## Excluded and held reviews
 
 A review is closed `excluded`, with no vote recorded, when the image is gone, was blocked, moved off the players' level, was
-ruled on by a moderator, or fails one of the skill-check pool's safety predicates that do not lift on their own (each serve
-closes a bounded batch of these). A review whose image fails one that lifts in time (an open report or appeal, a scan hold, a
+ruled on by a moderator, or fails one of the skill-check pool's safety predicates that do not lift on their own (the tick
+closes a bounded batch of these per run, `reviewsClosed` in its response). A review whose image fails one that lifts in time (an open report or appeal, a scan hold, a
 scan still running, an Inquisitor ruling under way) stays open: it is not served, and a vote on it is refused, until that
 clears. Serving reads only reviews whose image passes the predicates now, so held reviews never crowd out servable ones, and
 the waiting count counts only those. If the predicates cannot be read, the page says the queue cannot load and nothing is

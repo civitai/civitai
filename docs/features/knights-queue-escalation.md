@@ -22,7 +22,7 @@ An item at a stage nobody can serve is not extended. It is handed up as rule 1 s
 
 An expired item whose image's post is Private goes to the Inquisitors as `blocked` when the counted votes of the latest stage that has any (its current stage first) pick Blocked (ties go high), at any stage and vote count; every other item follows the rules above.
 
-The tick response carries `escalated`, `toInquisitor`, `extended`, `expired` and `rerated`; each expiry also counts as `knights_escalations_total{reason="expired"}`. It also reports `reviewsOpened`, the [inquisitor reviews](knights-inquisitor.md) its sweep opened. A moderator's "Send to Inquisitor" from a review opens a new `blocked` item here, source `inquisitor-review`.
+The tick response carries `escalated`, `toInquisitor`, `extended`, `expired` and `rerated`; each expiry also counts as `knights_escalations_total{reason="expired"}`. It also reports `reviewsOpened` and `reviewsClosed`, the [inquisitor reviews](knights-inquisitor.md) its sweeps opened and closed. A moderator's "Send to Inquisitor" from a review opens a new `blocked` item here, source `inquisitor-review`.
 
 ## Rule 4: a split at the end of the path is re-rated
 

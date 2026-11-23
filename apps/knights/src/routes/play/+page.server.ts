@@ -122,7 +122,6 @@ async function acolyteLevelCard(progress: Notice | null, userId: number): Promis
 
 export const load: PageServerLoad = async ({ locals, depends }) => {
   depends('app:play');
-  // Moderators play the in-game inquisitor queue: settled player ratings to confirm as skill checks.
   if (locals.user.isModerator && (await skillChecks()).enabled)
     return inquisitorView(locals.user.id);
   const [status, { muted }] = await Promise.all([

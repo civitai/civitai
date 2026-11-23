@@ -13,6 +13,7 @@ const runLabelPass = vi.hoisted(() => vi.fn());
 const retryPendingPurchases = vi.hoisted(() => vi.fn());
 const closeStrandedYesNo = vi.hoisted(() => vi.fn());
 const sweepMissingReviews = vi.hoisted(() => vi.fn());
+const closeIneligibleReviews = vi.hoisted(() => vi.fn());
 const inquisitorOn = vi.hoisted(() => ({ value: true }));
 vi.mock('$lib/server/db', () => ({ db: {} }));
 const logToAxiom = vi.hoisted(() => vi.fn());
@@ -29,7 +30,10 @@ vi.mock('$lib/server/conversion/label-pass', () => ({ runLabelPass }));
 vi.mock('$lib/server/shop/purchase', () => ({ retryPendingPurchases }));
 vi.mock('$lib/server/shop/main-app', () => ({ getMainAppPort: () => ({}) }));
 vi.mock('$lib/server/yesno/sweep', () => ({ closeStrandedYesNo }));
-vi.mock('$lib/server/inquisitor/review.service', () => ({ sweepMissingReviews }));
+vi.mock('$lib/server/inquisitor/review.service', () => ({
+  sweepMissingReviews,
+  closeIneligibleReviews,
+}));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ maxAgeDays: 14 }) }));
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
 vi.mock('$lib/server/queue/runtime', () => ({
@@ -92,6 +96,8 @@ beforeEach(() => {
   runLabelPass.mockResolvedValue({ done: true, labelsWritten: 0, labelFailures: 0 });
   sweepMissingReviews.mockReset();
   sweepMissingReviews.mockResolvedValue(0);
+  closeIneligibleReviews.mockReset();
+  closeIneligibleReviews.mockResolvedValue(0);
   tickItemFailures.mockReset();
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
@@ -101,6 +107,7 @@ describe('POST /api/jobs/tick', () => {
     escalateExpired.mockResolvedValue({ escalated: 2, toInquisitor: 1, extended: 3 });
     applyPendingResolutions.mockResolvedValue({ applied: 1 });
     sweepMissingReviews.mockResolvedValue(2);
+    closeIneligibleReviews.mockResolvedValue(3);
 
     const response = await run();
 
@@ -123,6 +130,7 @@ describe('POST /api/jobs/tick', () => {
       conversionsRetried: 0,
       purchasesRetried: 0,
       reviewsOpened: 2,
+      reviewsClosed: 3,
       labels: { done: true, labelsWritten: 0, labelFailures: 0 },
     });
   });
@@ -132,8 +140,9 @@ describe('POST /api/jobs/tick', () => {
     applyPendingResolutions.mockResolvedValue({ applied: 0 });
     inquisitorOn.value = false;
     try {
-      expect(await (await run()).json()).toMatchObject({ reviewsOpened: 0 });
+      expect(await (await run()).json()).toMatchObject({ reviewsOpened: 0, reviewsClosed: 0 });
       expect(sweepMissingReviews).not.toHaveBeenCalled();
+      expect(closeIneligibleReviews).not.toHaveBeenCalled();
     } finally {
       inquisitorOn.value = true;
     }

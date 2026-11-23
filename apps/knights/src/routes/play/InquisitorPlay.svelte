@@ -44,8 +44,6 @@
     };
   };
 
-  // The number keys vote the levels in order, as in the player game. Typing in a field, holding a modifier, a pending
-  // vote or the send confirmation leaves the key alone; nothing here is bound to Space.
   function onkeydown(event: KeyboardEvent) {
     if (!review || submitting || confirmingSend) return;
     if (event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;

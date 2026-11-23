@@ -13,6 +13,7 @@ import {
 } from '../queue/queue.service';
 import {
   castReviewVote,
+  closeIneligibleReviews,
   nextReview,
   openReview,
   sendToInquisitor,
@@ -561,12 +562,13 @@ describe('excluding reviews', () => {
   ];
 
   it.each(permanent)(
-    'closes the review at serve when %s, and serves the next one',
+    'never serves the review when %s, serves the next one, and has it closed by the next tick at the latest',
     async (_label, cause) => {
       const id = await reviewed(1);
       const next = await reviewed(2);
       await cause();
       expect(reviewIdOf(await nextReview(db, { moderatorId: MOD_A }))).toBe(next);
+      await closeIneligibleReviews(db, { now: NOW });
       expect((await reviewRow(id)).status).toBe('excluded');
     }
   );
@@ -622,15 +624,31 @@ describe('a backlog of held reviews', () => {
     });
   });
 
-  it('closes reviews whose image can never become a check, and keeps open those whose hold may lift', async () => {
+  it('the tick sweep closes reviews whose image can never become a check, and keeps open those whose hold may lift', async () => {
     const lasting = await reviewed(1);
     const lifting = await reviewed(2);
     await pg.query(`UPDATE "Image" SET "tosViolation"=true WHERE id=1`);
     await pg.query(`INSERT INTO "Report" ("id","status") VALUES (200,'Pending')`);
     await pg.query(`INSERT INTO "ImageReport" ("reportId","imageId") VALUES (200,2)`);
+    // Serving reads only: it skips both and closes neither.
     expect(await nextReview(db, { moderatorId: MOD_A })).toBeNull();
+    expect((await reviewRow(lasting)).status).toBe('open');
+
+    expect(await closeIneligibleReviews(db, { now: NOW })).toBe(1);
     expect((await reviewRow(lasting)).status).toBe('excluded');
     expect((await reviewRow(lifting)).status).toBe('open');
+    expect(await closeIneligibleReviews(db, { now: NOW })).toBe(0);
+  });
+
+  it('the tick sweep closes at most its limit per run, oldest first', async () => {
+    for (const id of [1, 2, 3]) {
+      await reviewed(id);
+      await pg.query(`UPDATE "Image" SET "tosViolation"=true WHERE id=$1`, [id]);
+    }
+    expect(await closeIneligibleReviews(db, { now: NOW, limit: 2 })).toBe(2);
+    expect(
+      (await pg.query(`SELECT id FROM "KnightsInquisitorReview" WHERE status='open'`)).rows
+    ).toEqual([{ id: 3 }]);
   });
 });
 
