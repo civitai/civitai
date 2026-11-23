@@ -385,6 +385,8 @@ const LOOKUP_FAILURE_SERVE_RATIONALE: Record<string, string> = {
 const DELIBERATELY_UNWRAPPED: Record<string, string> = {
   'src/pages/api/v1/me.ts':
     'NOT a block route. AuthedEndpoint (session cookie / API key / OAuth token). Wrapping it would dead-code the block path — the inner session check 401s before block claims do anything — so blocks use the dedicated /api/v1/blocks/me, which IS wrapped. Nothing here reads a block token, so there is no app to approve.',
+  'src/pages/api/internal/blocks/storage/[[...path]].ts':
+    'WRAPPED, one module away. The document store’s internal route (app-data-go’s forwarded writes) is the public storage route’s exact chain, withBlockScope included with the same options, behind a caller signature that must run BEFORE the middleware; so the chain is built in src/server/services/apps/doc-store-internal-route.ts and the page re-exports it. The entries into that chain are pinned there by doc-store-internal-route.test.ts, which fails if the set grows or shrinks.',
 };
 
 /** The file extensions Next.js dispatches as an API page. */

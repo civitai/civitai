@@ -696,6 +696,10 @@ export const serverSchema = z
     APP_DATA_SHADOW_SAMPLE: z.coerce.number().min(0).max(1).default(1),
     APP_DATA_SHADOW_MAX_IN_FLIGHT: z.coerce.number().int().min(1).max(64).default(4),
     APP_DATA_SHADOW_TIMEOUT_MS: z.coerce.number().int().min(50).max(10_000).default(2000),
+    // The HMAC key app-data-go signs its forwarded writes with (the document store's internal
+    // route, `doc-store-internal-route.ts`). Unset or empty = that route does not exist (404 on every
+    // path). It authenticates the caller only; the user's own token is still the authority.
+    APP_DATA_WRITES_SIGNING_KEY: z.string().optional(),
     // With the `app-listings-read-model` flag at its `serve` variant: how long a store grid or
     // public REST list page waits for the read model before it is read from the database instead.
     APP_LISTINGS_READ_MODEL_SERVE_TIMEOUT_MS: z.coerce
