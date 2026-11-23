@@ -192,6 +192,27 @@ const repo = () => process.env.GITHUB_REPOSITORY;
 /** What the gate dispatches: this workflow, with this value for its `only` input. */
 export const DISPATCH = { workflow: 'lint.yml', only: 'unit' };
 
+/**
+ * The other suites of the main batch. lint.yml's `batch-suites` job (on the batch dispatch above)
+ * dispatches each on `main` with `batch: true` when a path in its workflow's `on.pull_request.paths`
+ * (else `on.push.paths`) changed since the last green batch, waits for them, and posts their
+ * verdict as the `Batch suites (main batch)` commit status (scripts/ci/batch-suites.mjs). One
+ * entry per line. `ownContext`: the workflow posts its own `(main batch)` status instead; the batch
+ * job still dispatches it and waits for that status, but leaves it out of its own verdict.
+ */
+export const BATCH_WORKFLOWS = [
+  { workflow: 'moderator-boot.yml' },
+  { workflow: 'ports.yml' },
+  { workflow: 'registry-adapter-image.yml' },
+  { workflow: 'storage-hook-runner-image.yml' },
+  { workflow: 'windows-dev-env.yml' },
+  { workflow: 'feed-go.yml' },
+  { workflow: 'beacon-go.yml' },
+  { workflow: 'app-index-go.yml' },
+  { workflow: 'app-data-go.yml' },
+  { workflow: 'content-policy-go.yml' },
+];
+
 /** The exact `gh` argv the gate runs to dispatch the batch on <ref>. */
 export function dispatchArgs(ref, repoName) {
   return [

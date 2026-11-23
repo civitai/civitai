@@ -18,7 +18,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { classifyUnitJobs } from '../ci/full-ci-unit-shards.mjs';
 import { SUITES } from '../ci/lint-dispatch-passed.mjs';
-import { dispatchArgs } from '../ci/unit-batched.mjs';
+import { BATCH_WORKFLOWS, dispatchArgs } from '../ci/unit-batched.mjs';
 
 // The `full-ci` PR label: lint.yml, apps.yml and moderator-boot.yml read it on every PR run, and
 // full-ci.yml dispatches all three when it is added.
@@ -155,7 +155,6 @@ describe('the full-ci label', () => {
     ['lint.yml', 'component-ledger'],
     ['apps.yml', 'apps'],
     ['apps.yml', 'apps-typecheck'],
-    ['moderator-boot.yml', 'boot'],
   ])('%s:%s runs on a labeled draft', (file, id) => {
     expect(conjuncts(load(file).jobs?.[id]?.if ?? '')).toContain(DRAFT_GATE);
   });
@@ -168,6 +167,15 @@ describe('the full-ci label', () => {
       '!cancelled()',
       "needs.apps.result != 'skipped'",
     ]);
+  });
+
+  // Moderator boot left pull requests for the main batch: it runs on a push (path-filtered) and on
+  // a dispatch (the batch, a hand dispatch, the full-ci dispatcher on a draft), never on a PR run,
+  // labelled or not. Pinned whole, so a clause that brings PR runs back fails here.
+  it('moderator-boot.yml:boot never runs on a pull_request event', () => {
+    expect(norm(load('moderator-boot.yml').jobs?.boot?.if ?? '')).toBe(
+      "github.event_name != 'pull_request'"
+    );
   });
 
   // Ledger: the job set the assertions above were written against. A new job fails here so its
@@ -186,7 +194,8 @@ describe('the full-ci label', () => {
         'typecheck-tests',
         'unit',
         'unit-verify',
-      ],
+        'batch-suites',
+      ].sort(),
     ],
     ['apps.yml', ['apps', 'apps-ledger', 'apps-typecheck']],
     ['moderator-boot.yml', ['boot']],
@@ -642,8 +651,11 @@ describe('the full-ci label', () => {
         });
       });
 
-      // A ledger, so a new draft-gated workflow is either dispatched here or exempted here.
-      it('are exactly the draft-gated, dispatchable workflows other than Lint', () => {
+      // A ledger, so a new draft-gated workflow is either dispatched here or exempted here. A
+      // workflow that left pull requests for the main batch (BATCH_WORKFLOWS) has no draft gate
+      // any more, and may still be dispatched here: on a draft that runs the batch suite on the
+      // branch. Both directions are checked, so neither side can grow alone.
+      it('are exactly the draft-gated, dispatchable workflows other than Lint, plus batch ones', () => {
         const EXEMPT: Record<string, string> = {
           'lint.yml': 'dispatched first, with its own inputs, and never filtered',
           'feed-go-release.yml':
@@ -659,7 +671,22 @@ describe('the full-ci label', () => {
         for (const f of Object.keys(EXEMPT)) expect(gated, f).toContain(f);
         const others = /others=\(([^)]*)\)/.exec(run)?.[1].split(/\s+/).filter(Boolean) ?? [];
         expect(others.length).toBeGreaterThan(0);
-        expect([...others].sort()).toEqual(gated.filter((f) => !(f in EXEMPT)).sort());
+        const batch = new Set(BATCH_WORKFLOWS.map((b) => b.workflow));
+        for (const f of gated.filter((g) => !(g in EXEMPT)))
+          expect(others, `${f} is draft-gated but not dispatched`).toContain(f);
+        for (const f of others)
+          expect(
+            gated.includes(f) || batch.has(f),
+            `${f} is dispatched but neither draft-gated nor a batch suite`
+          ).toBe(true);
+        // The batch workflows this dispatcher still lists are exactly the ones that lost their
+        // draft gate to the batch (moderator boot and the two image builds); pinned so the
+        // exception above cannot quietly cover a new one.
+        expect(others.filter((f) => !gated.includes(f)).sort()).toEqual([
+          'moderator-boot.yml',
+          'registry-adapter-image.yml',
+          'storage-hook-runner-image.yml',
+        ]);
       });
     });
 
