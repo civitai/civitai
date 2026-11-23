@@ -208,7 +208,7 @@ export async function setServiceDealReviewHidden({
   moderatorId: number;
   hidden: boolean;
 }) {
-  return dbWrite.$transaction(async (tx) => {
+  const outcome = await dbWrite.$transaction(async (tx) => {
     const [target] = await tx.$queryRaw<{ dealId: number }[]>`
       SELECT "dealId" FROM "ServiceDealReview" WHERE "id" = ${reviewId}::int`;
     if (!target) return false;
@@ -232,8 +232,9 @@ export async function setServiceDealReviewHidden({
     if (!review) return false;
     // A scan skipped while hidden failed its text to Error: a restore sends it back to its check. A
     // check still in flight is left to land.
-    if (!hidden)
-      await tx.$executeRaw`
+    const [unchecked] = hidden
+      ? []
+      : await tx.$queryRaw<{ comment: boolean; reply: boolean }[]>`
         UPDATE "ServiceDealReview" SET
           "scanStatus" = CASE WHEN "scanStatus" = 'Error' THEN 'Pending' ELSE "scanStatus" END,
           "scanWorkflowId" = CASE WHEN "scanStatus" = 'Error' THEN NULL ELSE "scanWorkflowId" END,
@@ -241,10 +242,21 @@ export async function setServiceDealReviewHidden({
             THEN 'Pending' ELSE "sellerReplyScanStatus" END,
           "sellerReplyScanWorkflowId" = CASE WHEN "sellerReplyScanStatus" = 'Error'
             THEN NULL ELSE "sellerReplyScanWorkflowId" END
-        WHERE "id" = ${reviewId}::int`;
+        WHERE "id" = ${reviewId}::int
+        RETURNING
+          ("scanStatus" = 'Pending' AND "scanWorkflowId" IS NULL AND "comment" IS NOT NULL)
+            AS "comment",
+          ("sellerReplyScanStatus" = 'Pending' AND "sellerReplyScanWorkflowId" IS NULL
+            AND "sellerReply" IS NOT NULL) AS "reply"`;
     await syncDealReviewPublication(tx, review.dealId);
-    return true;
+    return { unchecked };
   });
+  if (typeof outcome !== 'object') return outcome;
+  // Sent here, after the commit, as an edit sends its text: the retry job does not resend a check
+  // row it parked while the review was hidden, and the reconcile leaves a row the retry job holds.
+  if (outcome.unchecked?.comment) await scanServiceDealReviewText('ServiceDealReview', reviewId);
+  if (outcome.unchecked?.reply) await scanServiceDealReviewText('ServiceDealReviewReply', reviewId);
+  return true;
 }
 
 /**

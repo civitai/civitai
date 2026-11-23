@@ -91,6 +91,7 @@ async function resendReviewText(
  * until its retries run out; the text stays Pending, so unshown, throughout and after. Scoped to the
  * check that produced the verdict, so a newer check's row is left alone.
  */
+// Raw, not recordEntityModerationFailure: this needs the Succeeded guard and the new retryCount.
 async function leaveForRetry(
   type: TextType,
   reviewId: number,

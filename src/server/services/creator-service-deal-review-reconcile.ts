@@ -9,6 +9,8 @@ import {
   syncDealReviewPublication,
 } from '~/server/services/creator-service-deal-review-publish';
 import { scanServiceDealReviewText } from '~/server/services/service-deal-review-moderation.adapter';
+import { SERVICE_DEAL_REVIEW_PROFILES } from '~/server/services/text-scan/profiles/service-deal-review.profile';
+import { textScanCanAskEveryLabel } from '~/server/services/text-scan/submit';
 import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-services.constants';
 
 /**
@@ -19,6 +21,22 @@ import { SERVICE_DEAL_DISPUTE_WINDOW_MS } from '~/shared/constants/creator-servi
  * rather than resent every run.
  */
 async function rescanUnsubmittedTexts(limit: number) {
+  // Every text would be refused at submit while a required label cannot be asked, and reselected on
+  // every run ahead of the rows behind it.
+  const askable = await Promise.all(
+    // A failed read counts as cannot ask, so the publication and read-back steps still run.
+    Object.values(SERVICE_DEAL_REVIEW_PROFILES).map((profile) =>
+      textScanCanAskEveryLabel(profile).catch(() => false)
+    )
+  );
+  if (askable.includes(false)) {
+    logToAxiom({
+      type: 'warning',
+      name: 'service-deal-review-reconcile',
+      message: 'review text scan cannot ask every required label; no texts rescanned',
+    });
+    return 0;
+  }
   const rows = await dbWrite.$queryRaw<
     { id: number; type: 'ServiceDealReview' | 'ServiceDealReviewReply' }[]
   >`

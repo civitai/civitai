@@ -141,6 +141,7 @@ const publish = await import('~/server/services/creator-service-deal-review-publ
 const reviewReports = await import('~/server/services/service-deal-review-report.service');
 const reconcile = await import('~/server/services/creator-service-deal-review-reconcile');
 const reviewScan = await import('~/server/services/service-deal-review-moderation.adapter');
+const textScanSubmit = await import('~/server/services/text-scan/submit');
 const { creatorServiceNotifications } = await import(
   '~/server/notifications/creator-service.notifications'
 );
@@ -4362,6 +4363,8 @@ describe('review publishing and counters', () => {
         [id]
       );
       const scans = vi.spyOn(reviewScan, 'scanServiceDealReviewText');
+      // The scan can ask every label; the content-check suite covers when it cannot.
+      const askable = vi.spyOn(textScanSubmit, 'textScanCanAskEveryLabel').mockResolvedValue(true);
       try {
         await reconcile.reconcileServiceDealReviews({ limit: 10 });
         expect(scans).toHaveBeenCalledOnce();
@@ -4373,6 +4376,7 @@ describe('review publishing and counters', () => {
         expect(scans).not.toHaveBeenCalled();
       } finally {
         scans.mockRestore();
+        askable.mockRestore();
       }
     });
   });

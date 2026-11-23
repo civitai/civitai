@@ -6,9 +6,16 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as PromptModule from '~/server/services/text-scan/prompt';
 import { TEXT_MODERATION_RETRY_LIMIT } from '~/server/jobs/text-moderation-retry.constants';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
+  ...(await importOriginal<typeof PromptModule>()),
+  getActiveTextScanPrompts: vi.fn(),
+}));
 
 /**
  * The content check of a service deal review's two texts, the buyer's comment and the seller's
@@ -62,7 +69,40 @@ dbMock.dbWrite.entityModeration.findFirst.mockImplementation((async (args: {
   return row && (row as { status: string }).status === args.where.status ? row : null;
 }) as never);
 
+// The retry spend, on the same rows.
+dbMock.dbWrite.entityModeration.updateMany.mockImplementation((async (args: {
+  where: { entityType: { in: string[] }; entityId: number; status: { not: string } };
+  data: { retryCount: { increment: number } };
+}) => ({
+  count:
+    (
+      await holder.db.query(
+        `UPDATE "EntityModeration" SET "retryCount" = "retryCount" + $1
+         WHERE "entityType" = ANY($2) AND "entityId" = $3 AND status <> $4`,
+        [
+          args.data.retryCount.increment,
+          args.where.entityType.in,
+          args.where.entityId,
+          args.where.status.not,
+        ]
+      )
+    ).affectedRows ?? 0,
+})) as never);
+
 const adapter = await import('~/server/services/service-deal-review-moderation.adapter');
+const { setServiceDealReviewHidden } = await import(
+  '~/server/services/creator-service-deal-review.service'
+);
+const { getActiveTextScanPrompts } = await import('~/server/services/text-scan/prompt');
+const { resetTextScanRolloutCache } = await import('~/server/services/text-scan/mode');
+/** The csam gate and its prompt, which decide whether a review scan can ask every label. */
+const csamAskable = ({ gate = 'review', prompt = 'CSAM DEF' } = {}) => {
+  redisMock.sysRedis.hGetAll.mockResolvedValue((gate ? { csam: gate } : {}) as never);
+  resetTextScanRolloutCache();
+  vi.mocked(getActiveTextScanPrompts).mockResolvedValue({
+    'label:csam': { id: 3, key: 'label:csam', content: prompt },
+  } as never);
+};
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
 const { reconcileServiceDealReviews } = await import(
   '~/server/services/creator-service-deal-review-reconcile'
@@ -534,6 +574,10 @@ describe('a verdict that does not answer every label the profile requires', () =
     async (type) => {
       await seed(R);
       await q(`UPDATE "ServiceDealReview" SET "${cols[type].status}" = 'Error'`);
+      await q(
+        `INSERT INTO "EntityModeration" ("entityType", "entityId", status) VALUES ($1, $2, 'Failed')`,
+        [type, REVIEW]
+      );
       const incomplete = vi.fn(
         async (args: { onActiveSkip?: (r: 'incomplete') => Promise<void> }) => {
           await args.onActiveSkip?.('incomplete');
@@ -543,15 +587,14 @@ describe('a verdict that does not answer every label the profile requires', () =
       await adapter.scanServiceDealReviewText(type, REVIEW, incomplete as never);
       expect(await state(type)).toEqual(RESENDABLE);
       // Its failed check row is spent toward its limit, or the retry job would reselect it forever.
-      expect(dbMock.dbWrite.entityModeration.updateMany).toHaveBeenCalledWith({
-        where: {
-          entityType: { in: [type, `${type}:shadow`] },
-          entityId: REVIEW,
-          status: { not: 'Succeeded' },
-        },
-        data: { retryCount: { increment: 1 } },
-      });
-      expect(dbMock.dbWrite.entityModeration.updateMany).toHaveBeenCalledTimes(1);
+      expect(
+        (
+          await q<{ retryCount: number }>(
+            `SELECT "retryCount" FROM "EntityModeration" WHERE "entityType" = $1`,
+            [type]
+          )
+        )[0]
+      ).toEqual({ retryCount: 1 });
     }
   );
 });
@@ -596,6 +639,7 @@ describe('a verdict that cannot settle its text is left to the retry job, within
     );
     await q(`UPDATE "ServiceDealReview" SET "${cols[type].workflow}" = $1`, [workflowId]);
   };
+  beforeEach(() => csamAskable());
   const spentLogs = () =>
     loggingMock.logToAxiom.mock.calls.filter(([entry]) =>
       String((entry as { message?: string }).message).startsWith('retries spent')
@@ -654,6 +698,64 @@ describe('a verdict that cannot settle its text is left to the retry job, within
       rescans.mockRestore();
     }
   });
+
+  it.each([
+    ['csam gate closed', { gate: '' }],
+    ['csam prompt blank', { prompt: ' ' }],
+  ])('%s: the reconcile sends no review text, and says so once', async (_cause, askable) => {
+    await seed(R);
+    await q(
+      `UPDATE "ServiceDealReview" SET "scanWorkflowId" = NULL, "sellerReplyScanWorkflowId" = NULL,
+         "updatedAt" = now() - interval '1 hour'`
+    );
+    csamAskable(askable);
+    const rescans = vi.spyOn(adapter, 'scanServiceDealReviewText').mockResolvedValue(undefined);
+    try {
+      await rescanUnsubmitted();
+      expect(rescans).not.toHaveBeenCalled();
+    } finally {
+      rescans.mockRestore();
+    }
+    const said = loggingMock.logToAxiom.mock.calls.filter(([entry]) =>
+      String((entry as { message?: string }).message).startsWith('review text scan cannot ask')
+    );
+    expect(said).toHaveLength(1);
+    expect(said[0][0]).toMatchObject({ type: 'warning' });
+  });
+
+  it.each(TYPES)(
+    '%s: text whose check failed while its review was hidden is checked again on restore, and can show',
+    async (type) => {
+      await seed(R);
+      const wf = type === 'ServiceDealReview' ? 'wf-c' : 'wf-r';
+      await q(`UPDATE "ServiceDealReview" SET "hiddenAt" = now()`);
+      await (type === 'ServiceDealReview'
+        ? adapter.serviceDealReviewModerationAdapter
+        : adapter.serviceDealReviewReplyModerationAdapter
+      ).applyFailure!({ entityId: REVIEW, workflowId: wf } as never);
+      // The retry job found the review hidden and parked the row at its limit.
+      await q(
+        `INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", status, "retryCount")
+         VALUES ($1, $2, $3, 'Failed', $4)`,
+        [type, REVIEW, wf, TEXT_MODERATION_RETRY_LIMIT]
+      );
+      const real = adapter.scanServiceDealReviewText;
+      const scans = vi
+        .spyOn(adapter, 'scanServiceDealReviewText')
+        .mockImplementation((t, id) => real(t, id, submitCheck));
+      try {
+        expect(
+          await setServiceDealReviewHidden({ reviewId: REVIEW, moderatorId: SELLER, hidden: false })
+        ).toBe(true);
+      } finally {
+        scans.mockRestore();
+      }
+      expect(await state(type)).toEqual({ status: 'Pending', workflow: 'wf-new' });
+      await recordCheck(type, 'wf-new');
+      await textScan({ type, workflowId: 'wf-new' });
+      expect((await state(type)).status).toBe('Scanned');
+    }
+  );
 
   it('an edit to text past its limit is scanned again', async () => {
     await seed(R);

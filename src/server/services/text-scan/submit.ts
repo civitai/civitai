@@ -43,6 +43,7 @@ import type {
   TextScanLabel,
   TextScanMode,
   TextScanOutput,
+  TextScanProfile,
   TextScanSubject,
 } from '~/server/services/text-scan/types';
 
@@ -312,6 +313,26 @@ export function planTextScanPasses(
     ...(mainLabels.length ? [{ mode, labels: mainLabels }] : []),
     { mode: searchMode, labels: searchLabels, variant: 'web-search' as const },
   ];
+}
+
+/**
+ * Whether a scan of this profile can ask every label it requires right now: the csam gate and the
+ * csam prompt are global, so this holds or fails for every entity of the profile at once.
+ */
+export async function textScanCanAskEveryLabel(
+  profile: Pick<TextScanProfile, 'labels' | 'labelsFor' | 'requireEveryLabel'>
+) {
+  if (!profile.requireEveryLabel) return true;
+  let labels = await resolveTextScanProfileLabels(profile);
+  if (
+    labels.includes('csam') &&
+    !(await getActiveTextScanPrompts())[CSAM_PROMPT_KEY]?.content?.trim()
+  )
+    labels = labels.filter((label) => label !== 'csam');
+  return !unansweredTextScanLabels(
+    profile,
+    Object.fromEntries(labels.map((label) => [label, true]))
+  ).length;
 }
 
 export async function scanEntity({
