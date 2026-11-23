@@ -699,7 +699,7 @@ describe('GET /api/v1/blocks/submissions', () => {
       code: 'TOO_MANY_REQUESTS',
       rateLimit: { retryAfterSeconds: 60, id: 'apps.listing-submissions', kind: 'abuse' },
     });
-    expect(Object.keys(res._getJSONData().rateLimit).sort()).toEqual([
+    expect(Object.keys((res._getJSONData() as { rateLimit: object }).rateLimit).sort()).toEqual([
       'id',
       'kind',
       'retryAfterSeconds',

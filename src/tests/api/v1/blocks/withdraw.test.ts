@@ -378,7 +378,7 @@ describe('POST /api/v1/blocks/withdraw', () => {
       code: 'TOO_MANY_REQUESTS',
       rateLimit: { retryAfterSeconds: 60, id: 'apps.listing-withdrawals', kind: 'abuse' },
     });
-    expect(Object.keys(res._getJSONData().rateLimit).sort()).toEqual([
+    expect(Object.keys((res._getJSONData() as { rateLimit: object }).rateLimit).sort()).toEqual([
       'id',
       'kind',
       'retryAfterSeconds',
