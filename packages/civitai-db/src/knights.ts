@@ -1,7 +1,11 @@
 import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import * as shared from '@civitai/shared';
-import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, heldImageSql } from '@civitai/shared/held-media';
+import {
+  CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
+  heldImageSql,
+  OPEN_REPORT_STATUSES_SQL,
+} from '@civitai/shared/held-media';
 import { withheldCosmeticIds } from '@civitai/shared/knights-shop';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 
@@ -101,7 +105,7 @@ export const modReviewEligibleImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'
     sql<SqlBool>`(img.id)::text NOT IN (${sql.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})`,
     sql<SqlBool>`NOT EXISTS (
       SELECT 1 FROM "ImageReport" ir JOIN "Report" r ON r.id = ir."reportId"
-      WHERE ir."imageId" = img.id AND r.status IN ('Pending', 'Processing')
+      WHERE ir."imageId" = img.id AND r.status IN (${sql.raw(OPEN_REPORT_STATUSES_SQL)})
     )`,
   ]);
 

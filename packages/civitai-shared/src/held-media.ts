@@ -167,6 +167,11 @@ export const csamReportListedImageIdsSql = (filter?: CsamReportFilter) => `SELEC
  *  view is this query as written (knights-exclusion-views.test.ts keeps the two identical). */
 export const CSAM_REPORT_LISTED_IMAGE_IDS_SQL = csamReportListedImageIdsSql();
 
+/** The `Report` statuses that still count as open, as a SQL list. An image with an open report is kept out of
+ *  Knights tag review (`modReviewEligibleImage`), and the "KnightsOpenReportImage" view filters on this list as
+ *  written (knights-exclusion-views.test.ts keeps the two identical). */
+export const OPEN_REPORT_STATUSES_SQL = `'Pending', 'Processing'`;
+
 /**
  * The users a CsamReport passing `filter` names, as its subject or its secondary user. One distinct
  * `"userId"` text per row, never null, since the secondary user is read out of the report's details.

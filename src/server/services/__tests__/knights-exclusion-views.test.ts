@@ -1,7 +1,11 @@
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, heldUserSql } from '@civitai/shared/held-media';
+import {
+  CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
+  heldUserSql,
+  OPEN_REPORT_STATUSES_SQL,
+} from '@civitai/shared/held-media';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -14,7 +18,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  *   - subject leg dropped: SUBJECT is missing.
  *   - its `IS NOT NULL` dropped: the report with no user adds a NULL row.
  *   - secondary leg dropped: SECONDARY (text) and SECONDARY_NUMBER (a JSON number) are missing.
- *   - its pattern filter dropped or loosened: the non-numeric and 21-digit secondary users reach the
+ *   - its pattern filter dropped or loosened: the non-numeric, 19-digit (past the bigint maximum) and
+ *     21-digit secondary users reach the
  *     cast and reading the view throws, or (with the CASE kept) add a NULL row. Dropping only the
  *     CASE is not caught here: on tables this small the filter runs first. The CASE is for plans
  *     that cast before filtering, as in `heldUserSql`.
@@ -77,7 +82,7 @@ const REPORT_UNACTIONED = 304;
 
 // The open-report leg of the Knights eligibility check, as the app runs it on the base tables.
 const OPEN_REPORT_IMAGE_IDS_SQL = `SELECT ir."imageId" FROM "ImageReport" ir JOIN "Report" r ON r.id = ir."reportId"
-  WHERE r.status IN ('Pending', 'Processing')`;
+  WHERE r.status IN (${OPEN_REPORT_STATUSES_SQL})`;
 
 const VIEWS = {
   KnightsHeldUser: { column: 'userId', type: 'bigint' },
@@ -110,6 +115,7 @@ beforeAll(async () => {
       (NULL, '{"secondaryUserId": ${SECONDARY_NUMBER}}', '{"id": ${IN_NON_ARRAY_OBJECT}}'),
       (NULL, '{"secondaryUserId": "${NON_NUMERIC_PREFIX}abc"}', '"${IN_NON_ARRAY_STRING}"'),
       (NULL, '{"secondaryUserId": "123456789012345678901"}', '[]'),
+      (NULL, '{"secondaryUserId": "9999999999999999999"}', '[]'),
       (NULL, '{"secondaryUserId": null}', '[]'),
       (NULL, '{}', '[]');
 
@@ -171,6 +177,10 @@ describe('Knights exclusion views', () => {
     const base = await column(OPEN_REPORT_IMAGE_IDS_SQL);
     expect(base).toEqual(ids(REPORT_PENDING, REPORT_PROCESSING));
     expect(await column('SELECT "imageId" FROM "KnightsOpenReportImage"')).toEqual(base);
+    // The view filters on the shared status list as written, the list modReviewEligibleImage uses.
+    expect(normalize(VIEWS_MIGRATION)).toContain(
+      normalize(`WHERE r.status IN (${OPEN_REPORT_STATUSES_SQL})`)
+    );
   });
 
   it('each view has exactly its one id column and is a security barrier', async () => {

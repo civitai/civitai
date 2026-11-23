@@ -7453,20 +7453,20 @@ model EvidenceHeldUser {
   heldUntil DateTime?
 }
 
-/// @view
 /// Id-only, for the Knights app: the users `heldUserSql` treats as held. An id can repeat.
+/// @view
 model KnightsHeldUser {
   userId BigInt @id
 }
 
-/// @view
 /// Id-only, for the Knights app: every image id (text) listed on any `CsamReport`. An id can repeat.
+/// @view
 model KnightsCsamListedImage {
   imageId String @id
 }
 
-/// @view
 /// Id-only, for the Knights app: every image with a Pending or Processing report. An id can repeat.
+/// @view
 model KnightsOpenReportImage {
   imageId Int @id
 }
