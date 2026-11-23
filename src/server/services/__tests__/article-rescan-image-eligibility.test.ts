@@ -67,6 +67,8 @@ const CHANGED_AFTER_READ: [string, Partial<Img>][] = [
   ['takes the Blocked level', { nsfwLevel: 32 }],
   ['takes a block reason', { blockedFor: 'tos' }],
   ['has its rating locked', { nsfwLevelLocked: true }],
+  ['passes to another owner', { userId: SOMEONE_ELSE }],
+  ['starts scanning', { ingestion: 'Pending' }],
 ];
 
 /** The columns a Prisma `select` asked for, so a column the code stops selecting reads undefined. */
