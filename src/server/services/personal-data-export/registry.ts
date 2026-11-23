@@ -270,6 +270,7 @@ export const EXCLUDED: Record<string, string> = {
   EvidenceHoldImage: 'legal hold record; never exported',
   EvidenceHoldPost: 'legal hold record; never exported',
   EvidenceHeldUser: 'legal hold record (a view); never exported',
+  KnightsHeldUser: 'safety and legal hold ids (a view); never exported',
   PurchasableReward:
     'catalog item; names the user only as its staff author (purchases are exported)',
   ImageCdnModeratorDelete: 'moderation internals',
