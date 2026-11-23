@@ -403,6 +403,12 @@ describe('a scan settles only on a verdict that answers every label its profile 
       });
       expect(scanLabels()).toEqual(['nsfw']);
     });
+
+    it('can ask every label it requires even while the prompts are unreadable', async () => {
+      csamMode('review');
+      vi.mocked(getActiveTextScanPrompts).mockRejectedValue(new Error('prompts unreadable'));
+      await expect(textScanCanAskEveryLabel(getTextScanProfile(entityType)!)).resolves.toBe(true);
+    });
   });
 
   describe('whether a profile that requires every label can ask them all', () => {
