@@ -12,7 +12,7 @@ import {
 } from '@civitai/shared/post-scheduling';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BackButton } from '~/components/BackButton/BackButton';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
   FileUploadProvider,
@@ -575,19 +575,16 @@ function ReviewScreen({
 
   const handleSubmit = () => {
     const first = posts[0]?.publishedAt;
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: `Schedule ${posts.length} ${posts.length === 1 ? 'post' : 'posts'}?`,
-        message: `The first goes live ${
-          first ? formatDate(first, 'ddd MMM D, h:mm A') : 'soon'
-        }. You can move or unschedule any of them from your posts.`,
-        labels: { confirm: 'Schedule', cancel: 'Cancel' },
-        onConfirm: () => {
-          setHardFailure(null);
-          onSubmitted();
-          setSubmitting(posts.map((post) => ({ ...post })));
-        },
+    openConfirm({
+      title: `Schedule ${posts.length} ${posts.length === 1 ? 'post' : 'posts'}?`,
+      message: `The first goes live ${
+        first ? formatDate(first, 'ddd MMM D, h:mm A') : 'soon'
+      }. You can move or unschedule any of them from your posts.`,
+      labels: { confirm: 'Schedule', cancel: 'Cancel' },
+      onConfirm: () => {
+        setHardFailure(null);
+        onSubmitted();
+        setSubmitting(posts.map((post) => ({ ...post })));
       },
     });
   };

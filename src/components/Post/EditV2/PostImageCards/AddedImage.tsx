@@ -18,7 +18,6 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import { Menu, Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconArrowBackUp,
@@ -47,6 +46,7 @@ import React, {
   useState,
 } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -582,10 +582,9 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
 
   const handleRemoveResource = () => {
     if (!canAdd || !modelVersionId) return;
-    openConfirmModal({
-      centered: true,
+    openConfirm({
       title: 'Remove Resource',
-      children: detected
+      message: detected
         ? 'This resource was detected from the image metadata. Remove it if it is not what you used.'
         : 'Are you sure you want to remove this resource from this image?',
       labels: { confirm: 'Yes, remove it', cancel: 'Cancel' },
@@ -599,10 +598,9 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
 
   const handleCopyResource = () => {
     if (!otherAvailableIDs.length || !modelVersionId) return;
-    openConfirmModal({
-      centered: true,
+    openConfirm({
       title: 'Copy to All',
-      children: `Add this resource to all other valid images (${otherAvailableIDs.length})?`,
+      message: `Add this resource to all other valid images (${otherAvailableIDs.length})?`,
       labels: { confirm: 'Yep!', cancel: 'Cancel' },
       confirmProps: { color: 'green' },
       onConfirm: () => {

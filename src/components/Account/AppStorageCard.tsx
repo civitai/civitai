@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { Badge, Button, Checkbox, Group, Paper, Progress, Stack, Text } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconDatabase } from '@tabler/icons-react';
 import { CardOrSection } from '~/components/Account/SettingsLayout';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -215,9 +215,9 @@ export function AppStorageCard({ flat }: { flat?: boolean } = {}) {
 
   const handleEmpty = (app: MyAppStorageApp) => {
     includeSharedRef.current = false;
-    openConfirmModal({
+    openConfirm({
       title: 'Empty your app data?',
-      children: (
+      message: (
         <EmptyConfirmBody
           app={app}
           onIncludeSharedChange={(value) => {

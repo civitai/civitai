@@ -1,7 +1,6 @@
 import { EventCosmeticsPreview } from '~/providers/BrowserSettingsProvider';
 import { Button, Center, Grid, Group, Loader, Modal, Paper, Stack } from '@mantine/core';
 import { useEffect } from 'react';
-import { openConfirmModal } from '@mantine/modals';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { IconArrowRight } from '@tabler/icons-react';
 import * as z from 'zod';
@@ -22,6 +21,7 @@ import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
 import classes from './CardDecorationModal.module.scss';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 const schema = z.object({
   cosmetic: cosmeticInputSchema.nullish(),
@@ -65,13 +65,12 @@ export default function CardDecorationModal({
     }
 
     if (selectedItem && selectedItem.inUse) {
-      return openConfirmModal({
+      return openConfirm({
         title: 'Reassign Content Decoration',
-        children:
+        message:
           'This content decoration is being used on another post. Are you sure you want to reassign it?',
         labels: { confirm: 'Continue', cancel: 'No, go back' },
         onConfirm: completeSubmission,
-        zIndex: 310,
       });
     }
 
@@ -121,7 +120,7 @@ export default function CardDecorationModal({
       }}
       size="lg"
       closeOnClickOutside={!isLoading}
-      closeOnEscape={!isLoading}
+      closeOnEscape={dialog.closeOnEscape && !isLoading}
     >
       <Form form={form} onSubmit={handleSubmit}>
         <Grid gutter="xl">

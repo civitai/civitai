@@ -11,7 +11,6 @@ import {
   Title,
 } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import { IconDownload, IconRefresh, IconTrash } from '@tabler/icons-react';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
@@ -19,6 +18,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export const getServerSideProps = createServerSideProps({
   requireModerator: true,
@@ -190,9 +190,9 @@ function SuspiciousAuditMatchesPage() {
   });
 
   const handleClear = () => {
-    openConfirmModal({
+    openConfirm({
       title: 'Clear suspicious matches',
-      children: (
+      message: (
         <Text size="sm">
           This will remove all flagged suspicious matches from Redis. This cannot be undone.
         </Text>

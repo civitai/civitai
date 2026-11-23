@@ -1,11 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { imageDetailDialog } from '~/components/Dialog/routed-dialog/image-detail.dialog';
 
-vi.mock('next/dynamic', () => ({ default: () => () => null }));
-
-import { routedDialogDictionary } from '~/components/Dialog/routed-dialog/utils';
-import '~/components/Dialog/routed-dialog/image-detail.dialog';
-
-const { resolve } = routedDialogDictionary.getItems().imageDetail;
+const { resolve } = imageDetailDialog;
 
 describe('imageDetail route', () => {
   it('puts the storyline chapter in the URL, where storyline mode reads it, not in dialog state', () => {

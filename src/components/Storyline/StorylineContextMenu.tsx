@@ -1,6 +1,5 @@
 import { ActionIcon, Text } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import { IconDotsVertical, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { openReportModal } from '~/components/Dialog/triggers/report';
@@ -10,6 +9,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 /**
  * A chapter is reported as its post or image; this reports the storyline itself (its title). Its
@@ -45,9 +45,9 @@ export function StorylineContextMenu({
   if (isOwner && !canDelete) return null;
 
   const confirmDelete = () =>
-    openConfirmModal({
+    openConfirm({
       title: 'Delete storyline',
-      children: (
+      message: (
         <Text size="sm">
           Delete <strong>{storyline.title}</strong>? Every chapter&apos;s post stays published on
           its own; the storyline, its chapter order and its comments are gone for good.

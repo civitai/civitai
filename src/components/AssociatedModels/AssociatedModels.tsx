@@ -3,7 +3,6 @@ import { Button, Group, LoadingOverlay, Stack, Text, ThemeIcon, Title } from '@m
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { IconRocketOff } from '@tabler/icons-react';
 import React from 'react';
-import dynamic from 'next/dynamic';
 import { useQueryRecommendedResources } from '~/components/AssociatedModels/recommender.utils';
 
 import { ArticleCard } from '~/components/Cards/ArticleCard';
@@ -12,14 +11,9 @@ import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
-
-const AssociateModelsModal = dynamic(() => import('~/components/Modals/AssociateModelsModal'), {
-  ssr: false,
-});
-const openAssociateModelsModal = createDialogTrigger(AssociateModelsModal);
 
 export function AssociatedModels({
   fromId,
@@ -50,7 +44,7 @@ export function AssociatedModels({
   const allHiddenByFilters = !!savedResources?.length;
 
   const handleManageClick = () => {
-    openAssociateModelsModal({ props: { fromId, type, ownerId } });
+    openDialog(() => import('~/components/Modals/AssociateModelsModal'), { fromId, type, ownerId });
   };
 
   if (!isOwnerOrModerator && !recommendedResources.length) return null;

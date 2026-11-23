@@ -1,8 +1,7 @@
-import type { ComponentProps } from 'react';
 import React, { cloneElement } from 'react';
 import Router, { useRouter } from 'next/router';
-import type { DialogKey } from './routed-dialog/registry';
-import { dialogs } from './routed-dialog/registry';
+import type { DialogKey, DialogState } from './routed-dialog/registry';
+import { getRoutedDialog } from './routed-dialog/registry';
 import { getBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import type { NextRouter } from 'next/dist/shared/lib/router/router';
 import { resolveHref } from 'next/dist/client/resolve-href';
@@ -15,16 +14,16 @@ export function triggerRoutedDialog<T extends DialogKey>({
   state,
 }: {
   name: T;
-  state: ComponentProps<(typeof dialogs)[T]['component']>;
+  state: DialogState<T>;
 }) {
   const browserRouter = getBrowserRouter();
   const query = browserRouter.query ?? {};
 
   // Skip if the dialog is already open with the same params
   const currentDialogs = ([] as DialogKey[]).concat(query.dialog ?? []);
-  if (currentDialogs.includes(name)) {
-    const dialog = dialogs[name];
-    const result = dialog.resolve(query, state) as { query: Record<string, unknown> };
+  const dialog = getRoutedDialog(name);
+  if (dialog && currentDialogs.includes(name)) {
+    const result = dialog.resolve(query, state);
     if (QS.stringify(result.query) === QS.stringify(query)) return;
   }
 
@@ -47,8 +46,8 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   'aria-label': ariaLabel,
 }: {
   name: T;
-  state: ComponentProps<(typeof dialogs)[T]['component']>;
-  getState?: () => ComponentProps<(typeof dialogs)[T]['component']>;
+  state: DialogState<T>;
+  getState?: () => DialogState<T>;
   passHref?: TPassHref;
   className?: string;
   children: TPassHref extends true ? React.ReactElement : React.ReactNode;
@@ -116,10 +115,10 @@ const getAsPath = (query: Record<string, any>, router: NextRouter) => {
 function resolveDialog<T extends DialogKey>(
   name: T,
   query: Record<string, any> = {},
-  state: ComponentProps<(typeof dialogs)[T]['component']>,
+  state: DialogState<T>,
   router: NextRouter = Router
 ) {
-  const dialog = dialogs[name];
+  const dialog = getRoutedDialog(name);
   if (!dialog) throw new Error('invalid dialog name');
 
   const result = dialog.resolve(
@@ -128,7 +127,7 @@ function resolveDialog<T extends DialogKey>(
       dialog: ([] as DialogKey[]).concat(query.dialog ?? []).concat(name),
     },
     state
-  ) as { query: Record<string, unknown>; asPath?: any; state?: any }; // eslint-disable-line
+  );
 
   const resolvedQuery = result.query;
   const asPath = result.asPath ?? getAsPath(resolvedQuery, router);

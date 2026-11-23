@@ -57,10 +57,9 @@ name: Windows dev-env smoke
 #
 # ── THE pnpm STORE CACHE: ONE ENTRY, ON `main` ───────────────────────────────
 #
-# `setup-node` with `cache: pnpm` writes an Actions cache entry keyed
-# `node-cache-Windows-x64-pnpm-<lockfile-hash>`. Actions caches are SCOPED TO A
-# REF: a run can READ an entry saved on the default branch, and it saves into
-# its own ref's scope.
+# The store is cached under `node-cache-Windows-x64-pnpm-<lockfile-hash>` (the key
+# setup-node's `cache: pnpm` used). Actions caches are SCOPED TO A REF: a run can
+# READ an entry saved on the default branch, and it saves into its own ref's scope.
 #
 # When this workflow was `pull_request`-only there was no entry on
 # `refs/heads/main` to restore from, so EVERY PR missed and saved its own
@@ -71,6 +70,15 @@ name: Windows dev-env smoke
 # the same `main` scope and keep that one entry fresh; a dispatch on a branch
 # restores from it. Do not move the batch dispatch to another ref: that is the
 # leak again.
+#
+# That still leaked while setup-node did the caching: its post step saves on ANY
+# run that misses, and a branch dispatch misses whenever its lockfile differs from
+# the last one `main` saved (a branch that changed it, or every branch between a
+# lockfile change landing and the next batch). Measured 2026-11-23: three branch
+# dispatches had each saved their own ~526 MB copy of one new key. So the store is
+# now restored by ./.github/actions/pnpm-store-restore and saved by
+# ./.github/actions/pnpm-store-save, which saves only on `main`; a branch run that
+# misses installs from the registry and saves nothing.
 #
 # The two matrix shells share one cache key (same OS, arch and lockfile), so on
 # `main` they race to save it and one logs "another job may be creating this
@@ -192,7 +200,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       # Report rather than assume. `engines.node` is ADVISORY — pnpm prints
       # `WARN Unsupported engine` and exits 0 on a wrong major — so a mismatch here
@@ -205,6 +214,8 @@ jobs:
       # THE STEP UNDER TEST. Both lifecycle hooks run here.
       - name: pnpm install (runs preinstall + postinstall)
         run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/pnpm-store-save
 
       # POSITIVE CONTROL — the half that makes the green mean something.
       #

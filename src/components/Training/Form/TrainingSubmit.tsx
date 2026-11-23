@@ -17,7 +17,6 @@ import {
   Title,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import {
   IconAlertTriangle,
@@ -111,6 +110,7 @@ import {
 } from '~/components/Training/Form/trainingSamplePrompts';
 import { isDefined } from '~/utils/type-guards';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 const maxRuns = 5;
 
@@ -712,9 +712,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       setConfirmOpen(true);
       let confirmed = false;
 
-      return openConfirmModal({
+      return openConfirm({
         title: 'Confirm Buzz Transaction',
-        children: (
+        message: (
           <Stack pt="md">
             <Group>
               <Text span inline>
@@ -751,7 +751,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           </Stack>
         ),
         labels: { cancel: 'Cancel', confirm: 'Confirm' },
-        centered: true,
         onConfirm: () => {
           if (confirmed) return;
           confirmed = true;

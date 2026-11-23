@@ -1,9 +1,9 @@
-import { openConfirmModal } from '@mantine/modals';
 import { useCallback, useEffect } from 'react';
 import type { EventType, FieldPath, UseFormReturn } from 'react-hook-form';
 import type * as z from 'zod';
 import { useDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 /**
  * How long a persisted draft stays offerable.
@@ -232,13 +232,11 @@ export function useFormStorage<TSchema extends z.ZodObject, TContext>({
       // A failed restore keeps the draft rather than deleting the text the author came back
       // for. A successful one needs no copy: `form.reset` fires the watch, which re-persists.
       let keepStored = false;
-      openConfirmModal({
-        modalId: 'restore-confirm',
-        centered: true,
+      openConfirm({
+        id: 'restore-confirm',
         title: 'Restore unsaved changes?',
-        children: 'Would you like to restore the unsaved changes from your previous session',
+        message: 'Would you like to restore the unsaved changes from your previous session',
         labels: { cancel: `No`, confirm: `Yes` },
-        closeOnConfirm: true,
         onClose: () => {
           if (!keepStored) localStorage.removeItem(key);
         },

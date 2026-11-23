@@ -1,6 +1,7 @@
 import type { ActionIconProps, MenuProps } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { IconBell, IconEdit, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useRef } from 'react';
@@ -14,6 +15,8 @@ import {
   useTrackedChallengeIds,
 } from '~/components/Challenge/challenge.utils';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
+
+const DELETE_CHALLENGE_DIALOG_ID = 'delete-challenge';
 
 type Props = MenuProps & {
   challenge: { id: number; createdById: number; source: ChallengeSource; status: ChallengeStatus };
@@ -93,10 +96,10 @@ export function ChallengeContextMenu({ challenge, buttonProps, ...menuProps }: P
             onClick={(e: React.MouseEvent) => {
               e.stopPropagation();
               e.preventDefault();
-              openConfirmModal({
+              openConfirm({
+                id: DELETE_CHALLENGE_DIALOG_ID,
                 title: 'Delete challenge',
-                children: deleteMessage,
-                centered: true,
+                message: deleteMessage,
                 closeOnConfirm: false,
                 labels: { cancel: 'No, keep it', confirm: 'Delete challenge' },
                 confirmProps: { color: 'red' },
@@ -105,7 +108,7 @@ export function ChallengeContextMenu({ challenge, buttonProps, ...menuProps }: P
                   deletingRef.current = true;
                   try {
                     await deleteChallenge(challenge.id);
-                    closeAllModals();
+                    dialogStore.closeById(DELETE_CHALLENGE_DIALOG_ID);
                     const atDetails = router.pathname === '/challenges/[id]/[[...slug]]';
                     if (atDetails) await router.push('/challenges');
                   } catch {

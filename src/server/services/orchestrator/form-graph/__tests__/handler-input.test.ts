@@ -1059,6 +1059,8 @@ describe('moss-image.handler', () => {
       aspectRatio: '16:9',
       steps: 40,
       cfgScale: 4,
+      sampler: 'dpmpp_2m',
+      scheduler: 'sgm_uniform',
       seed: 42,
       quantity: 2,
       resources: [{ id: 111, baseModel: 'MOSS Image', model: { type: 'LORA' }, strength: 0.8 }],
@@ -1073,6 +1075,8 @@ describe('moss-image.handler', () => {
       height: 768,
       steps: 40,
       cfgScale: 4,
+      sampler: 'dpmpp_2m',
+      scheduler: 'sgm_uniform',
       seed: 42,
       quantity: 2,
     });

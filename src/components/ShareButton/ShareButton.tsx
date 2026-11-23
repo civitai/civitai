@@ -3,7 +3,6 @@ import { Popover } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import { IconBrandX } from '@tabler/icons-react';
 import React from 'react';
-import dynamic from 'next/dynamic';
 import { SocialIconChat } from '~/components/ShareButton/Icons/SocialIconChat';
 import { SocialIconCollect } from '~/components/ShareButton/Icons/SocialIconCollect';
 import { SocialIconCopy } from '~/components/ShareButton/Icons/SocialIconCopy';
@@ -16,12 +15,7 @@ import { QS } from '~/utils/qs';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { requireLogin } from '~/components/Login/requireLogin';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
-
-const ChatShareModal = dynamic(() => import('~/components/Chat/ChatShareModal'), {
-  ssr: false,
-});
-const openChatShareModal = createDialogTrigger(ChatShareModal);
+import { openDialog } from '~/components/Dialog/openDialog';
 
 export function ShareButton({
   children,
@@ -98,7 +92,10 @@ export function ShareButton({
     shareLinks.unshift({
       type: 'Send Chat',
       onClick: (e: React.MouseEvent) =>
-        requireLogin({ uiEvent: e, cb: () => openChatShareModal({ props: { message: url } }) }),
+        requireLogin({
+          uiEvent: e,
+          cb: () => openDialog(() => import('~/components/Chat/ChatShareModal'), { message: url }),
+        }),
       render: <SocialIconChat />,
     });
   }

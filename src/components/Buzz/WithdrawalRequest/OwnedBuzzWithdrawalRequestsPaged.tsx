@@ -15,7 +15,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconCloudOff } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import React, { useEffect, useState } from 'react';
@@ -58,10 +58,9 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
   //#endregion
 
   const handleCancelRequest = (id: string) => {
-    openConfirmModal({
+    openConfirm({
       title: 'Cancel withdrawal request',
-      children: <Text size="sm">Are you sure you want to cancel this withdrawal request?</Text>,
-      centered: true,
+      message: <Text size="sm">Are you sure you want to cancel this withdrawal request?</Text>,
       labels: { confirm: 'Cancel request', cancel: "No, don't cancel it" },
       confirmProps: { color: 'red' },
       closeOnConfirm: true,

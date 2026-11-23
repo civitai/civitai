@@ -49,7 +49,7 @@ import {
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
-import { closeModal, openModal } from '@mantine/modals';
+import { openContentDialog } from '~/components/Dialog/Common/ContentDialog';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
@@ -351,8 +351,8 @@ function CollectionListForm({
           ) {
             const [collection] = collections;
             if (collection.read === CollectionReadConfiguration.Public) {
-              openModal({
-                modalId: SHOWCASE_COLLECTION_MODAL_ID,
+              openContentDialog({
+                id: SHOWCASE_COLLECTION_MODAL_ID,
                 title: 'Set Showcase Collection',
                 centered: true,
                 children: (
@@ -632,8 +632,8 @@ function NewCollectionForm({
           result.read === CollectionReadConfiguration.Public &&
           result.isOwner
         ) {
-          openModal({
-            modalId: SHOWCASE_COLLECTION_MODAL_ID,
+          openContentDialog({
+            id: SHOWCASE_COLLECTION_MODAL_ID,
             title: 'Set Showcase Collection',
             centered: true,
             children: <ConfirmSetShowcaseCollection modelId={modelId} collectionId={result.id} />,
@@ -782,8 +782,9 @@ function ConfirmSetShowcaseCollection({
   modelId: number;
   collectionId: number;
 }) {
+  const { onClose } = useDialogContext();
   const setShowcaseCollectionMutation = trpc.model.setCollectionShowcase.useMutation({
-    onSuccess: () => closeModal(SHOWCASE_COLLECTION_MODAL_ID),
+    onSuccess: () => onClose(),
   });
 
   const handleSetShowcase = () => {
@@ -794,7 +795,7 @@ function ConfirmSetShowcaseCollection({
     <div className="flex flex-col gap-4">
       <Text>Would you like to set this collection as this model&apos;s showcase collection?</Text>
       <div className="flex justify-end gap-2">
-        <Button variant="default" onClick={() => closeModal(SHOWCASE_COLLECTION_MODAL_ID)}>
+        <Button variant="default" onClick={() => onClose()}>
           No
         </Button>
         <Button onClick={handleSetShowcase} loading={setShowcaseCollectionMutation.isPending}>

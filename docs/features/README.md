@@ -24,6 +24,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Buzz Accounts | [docs/features/buzz-accounts.md](buzz-accounts.md) |
 | Monetization rules (paid access / fees / donation goals) | [docs/features/monetization-rules.md](monetization-rules.md) |
 | Model gift links (free claims of gated versions) | [docs/features/model-gift-links.md](model-gift-links.md) |
+| Usage limits: adding a new limit (registry, 429, /me/limits) | [docs/features/usage-limits.md](usage-limits.md) |
 | Comped membership gifts (moderator, no charge) | [docs/features/membership-gift-comps.md](membership-gift-comps.md) |
 | Notifications | [docs/features/notifications.md](notifications.md) |
 | Message as Civitai Moderation (shared moderator chat account) | [docs/features/message-as-civitai.md](message-as-civitai.md) |

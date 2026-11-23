@@ -212,7 +212,7 @@ export function MaskEditorModal({
       fullScreen={isMobile}
       onClose={handleCancel}
       closeOnClickOutside={!loading}
-      closeOnEscape={!loading}
+      closeOnEscape={dialog.closeOnEscape && !loading}
       padding={0}
       radius="md"
     >

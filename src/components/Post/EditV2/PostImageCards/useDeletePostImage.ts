@@ -1,5 +1,4 @@
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { notifyDeleteNotice } from '~/components/Image/hooks/useDeleteImage';
 import { showErrorNotification } from '~/utils/notifications';
@@ -35,15 +34,12 @@ export function useDeletePostImage(imageId: number, mediaType?: MediaType, isBlo
 
   const onDelete = () => {
     if (isBlocked) return deleteImageMutation.mutate({ id: imageId });
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: `Delete ${noun}`,
-        message: `Are you sure you want to delete this ${noun}?`,
-        labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-        confirmProps: { color: 'red', loading: deleteImageMutation.isPending },
-        onConfirm: async () => await deleteImageMutation.mutateAsync({ id: imageId }),
-      },
+    openConfirm({
+      title: `Delete ${noun}`,
+      message: `Are you sure you want to delete this ${noun}?`,
+      labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+      confirmProps: { color: 'red', loading: deleteImageMutation.isPending },
+      onConfirm: async () => await deleteImageMutation.mutateAsync({ id: imageId }),
     });
   };
 

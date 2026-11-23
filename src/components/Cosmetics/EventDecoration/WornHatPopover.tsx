@@ -1,9 +1,8 @@
 import { Badge, Button, Group, Skeleton, Stack, Text } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
 import { IconArrowsMove } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import type { ReactNode } from 'react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { teamRosterHref } from '~/components/Events/event-promos';
 import { useEventPromos } from '~/components/Events/useEventPromos';
 import { useTeamColor } from '~/components/Events/events.utils';
@@ -17,10 +16,6 @@ import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-
-const PlaceHatModal = dynamic(() => import('~/components/Events/ScoredEvent/PlaceHatModal'), {
-  ssr: false,
-});
 
 /** The content a worn event decoration sits on. */
 export type EventDecorationEntity = { entityType: CosmeticEntity; entityId: number };
@@ -169,7 +164,11 @@ function WornHatDetails({
           h.placedOn.entityId === wornOn.entityId
       );
       if (!mineHere) throw new Error('This hat has already moved.');
-      dialogStore.trigger({ component: PlaceHatModal, props: { event, hat: mineHere, myHats } });
+      openDialog(() => import('~/components/Events/ScoredEvent/PlaceHatModal'), {
+        event,
+        hat: mineHere,
+        myHats,
+      });
     } catch (error) {
       showErrorNotification({ title: "Couldn't move this hat", error: error as Error });
     }
