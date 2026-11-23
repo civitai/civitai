@@ -116,6 +116,16 @@ describe('apprentice action', () => {
     expect(answerApprentice).not.toHaveBeenCalled();
   });
 
+  // What Chrome < 112 sent before `withSubmitter`: the pressed answer button left out of the body.
+  it('refuses a body with no answer before touching the ledger', async () => {
+    const { answer: _answer, ...noAnswer } = valid;
+    expect(await post(noAnswer)).toMatchObject({
+      status: 400,
+      data: { message: 'Pick an answer.' },
+    });
+    expect(answerApprentice).not.toHaveBeenCalled();
+  });
+
   it('answers 500 rather than a verdict when the ledger throws', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     answerApprentice.mockRejectedValue(new Error('down'));
