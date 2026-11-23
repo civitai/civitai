@@ -68,7 +68,8 @@
     "./knights-shop": "./src/knights-shop.ts",
     "./sensitive-block-scopes": "./src/sensitive-block-scopes.ts",
     "./usage-limit-view": "./src/usage-limit-view.ts",
-    "./html-escape": "./src/html-escape.ts"
+    "./html-escape": "./src/html-escape.ts",
+    "./song-csam-hold": "./src/song-csam-hold.ts"
   },
   "scripts": {
     "test": "vitest run",

@@ -139,7 +139,7 @@ import {
 import { poolCounters } from '~/server/games/new-order/utils';
 import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { flagImagesForCsamReview } from '~/server/services/csam-image-review';
+import { flagImagesForCsamReview, releaseSongCsamHold } from '~/server/services/csam-image-review';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { isStatementTimeout } from '~/server/utils/statement-timeout';
@@ -1342,7 +1342,28 @@ export async function handleUnblockImages({
     const keptIds = new Set(rows.filter((row) => row.keptBlocked).map((row) => row.id));
     const restoredIds = rows.filter((row) => !row.keptBlocked).map((row) => row.id);
     const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
+    // A cover's csam review closed, so its song is re-decided once the lift is committed. A failure
+    // leaves the song held.
+    const coverIds = rows.map((row) => row.id).filter((id) => grouped.csam?.includes(id));
+    const releasedSongs = coverIds.length
+      ? await dbWrite
+          .$transaction((tx) => releaseSongCsamHold(tx, { source: 'cover', coverIds }))
+          .catch((error) => {
+            logToAxiom({
+              type: 'error',
+              name: 'song-csam-hold-release',
+              message: 'release after unblock failed',
+              error: safeError(error),
+            });
+            return [] as number[];
+          })
+      : [];
     await Promise.all([
+      releasedSongs.length &&
+        queueImageSearchIndexUpdate({
+          ids: releasedSongs,
+          action: SearchIndexUpdateQueueAction.Update,
+        }),
       resetBlockedNsfwLevel(restoredIds),
       dropBlockedImageDeleteQueue(restoredIds),
       restartBlockedImageDeleteClock([...keptIds]),

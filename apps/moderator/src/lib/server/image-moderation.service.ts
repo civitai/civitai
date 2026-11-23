@@ -46,6 +46,7 @@ import type { Kysely, RawBuilder, Transaction } from 'kysely';
 import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
 import { queueArticlesForCoverImages } from './article-cover-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
+import { lockSongCsamHoldSql, releaseSongCsamHoldSql } from '@civitai/shared/song-csam-hold';
 
 // The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
 // not true, for every row with no flag, and would refuse every ordinary accept.
@@ -62,6 +63,31 @@ const BLOCKED_REASON_CSAM = 'CSAM';
 const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM} OR ("needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} AND NOT EXISTS (
   SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = "Image".id AND s.outcome = 'Dismissed'
 )))`;
+
+/**
+ * Re-decides the songs of covers whose csam review just closed as not csam (`releaseSongCsamHoldSql`),
+ * after that close committed, and re-indexes a released song. A failure leaves the song held. Returns
+ * the released song ids.
+ */
+export async function releaseSongsOfClearedCovers(coverIds: number[]): Promise<number[]> {
+  const lock = lockSongCsamHoldSql({ source: 'cover', coverIds });
+  const release = releaseSongCsamHoldSql({ source: 'cover', coverIds });
+  if (!lock || !release) return [];
+  try {
+    const released = await dbWrite.transaction().execute(async (trx) => {
+      const { rows: locked } = await sql.raw<{ id: number }>(lock).execute(trx);
+      if (!locked.length) return [];
+      const { rows } = await sql.raw<{ id: number; released: boolean }>(release).execute(trx);
+      return rows.filter((row) => row.released).map((row) => row.id);
+    });
+    for (const id of released)
+      syncSearchIndex({ entityType: 'image', entityId: id, action: 'update' });
+    return released;
+  } catch (e) {
+    console.error('[song-csam-hold] release failed', { coverIds, error: (e as Error).message });
+    return [];
+  }
+}
 
 /** Blocked by an automated moderation rule: it carries a rule's keys, unless that rule is a Hold rule and
  *  never was a Block rule. A Hold rule's keys can stay on an image a moderator later removed; a rule since deleted, or edited away from Block, still counts as the blocker.
@@ -358,6 +384,7 @@ export async function acceptImage({
     throw new RemovedImageNotRestorableError(imageId);
   }
   const restored = !updated.keptBlocked;
+  if (nr === FLAG_KEPT_THROUGH_BLOCK) await releaseSongsOfClearedCovers([imageId]);
   if (restored) {
     await dropBlockedImageDeleteQueue(imageId);
     await resetBlockedNsfwLevel(imageId);
@@ -711,7 +738,10 @@ export async function dismissFromCsamQueue({
       ? ({ ok: true } as const)
       : ({ ok: false, reason: 'changed' } as const);
   });
-  if (result.ok) await fireDeferredBlockEffects(claimed, { moderatorId: userId });
+  if (result.ok) {
+    await fireDeferredBlockEffects(claimed, { moderatorId: userId });
+    await releaseSongsOfClearedCovers([imageId]);
+  }
   return result;
 }
 
@@ -741,6 +771,7 @@ export async function dismissUserFromCsamQueue({
   // Captures belong to no one; each is dismissed on its own, from its image.
   if (isFeedbackCaptureOwner(userId)) return { ok: false, reason: 'capture' };
   let claimed: DeferredBlockEffect[] = [];
+  let dismissedIds: number[] = [];
   try {
     const result = await dbWrite.transaction().execute(async (tx) => {
       const state = await setAsideState(tx);
@@ -755,6 +786,7 @@ export async function dismissUserFromCsamQueue({
       const dismissed = await insertDismissals(tx, rows, moderatorId);
       if (dismissed.count !== rows.length) throw new QueueChanged();
       claimed = dismissed.claimed;
+      dismissedIds = rows.map((r) => r.imageId);
       const { remaining } = await tx
         .selectFrom('Image as i')
         .select(sql<number>`count(*)::int`.as('remaining'))
@@ -765,6 +797,7 @@ export async function dismissUserFromCsamQueue({
       return { ok: true, dismissed: rows.length, remaining: Number(remaining) } as const;
     });
     await fireDeferredBlockEffects(claimed, { moderatorId });
+    await releaseSongsOfClearedCovers(dismissedIds);
     return result;
   } catch (e) {
     if (e instanceof QueueChanged) return { ok: false, reason: 'changed' };

@@ -339,7 +339,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text, "nsfwLevel" int NOT NULL DEFAULT 0,
-      "tosViolation" boolean NOT NULL DEFAULT false);
+      "tosViolation" boolean NOT NULL DEFAULT false, metadata jsonb, type text, "userId" int, "postId" int);
   `);
   // The review text check reads the csam queue's rows.
   await holder.db.exec(`

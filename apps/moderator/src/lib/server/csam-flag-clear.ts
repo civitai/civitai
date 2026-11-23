@@ -9,7 +9,7 @@ import {
   fireDeferredBlockEffects,
   type DeferredBlockEffect,
 } from './deferred-block-effects';
-import { keepPendingAppealFlags } from './image-moderation.service';
+import { keepPendingAppealFlags, releaseSongsOfClearedCovers } from './image-moderation.service';
 import { BAN_REASONS_ALWAYS_REMOVING_MEDIA } from '$lib/enforcement';
 
 /**
@@ -170,6 +170,7 @@ export async function clearUserCsamFlags({
   moderatorId: number;
 }): Promise<ClearUserFlagsResult> {
   let claimed: DeferredBlockEffect[] = [];
+  let clearedIds: number[] = [];
   try {
     const result = await dbWrite.transaction().execute(async (trx) => {
       const marker = await holdMarkerState(trx);
@@ -188,10 +189,12 @@ export async function clearUserCsamFlags({
       });
       claimed = await claimDeferredBlockEffects(trx, cleared);
       await keepPendingAppealFlags(trx, cleared);
+      clearedIds = cleared;
       const remaining = await flaggedCount(trx, userId);
       return { ok: true, cleared: cleared.length, remaining } as const;
     });
     await fireDeferredBlockEffects(claimed, { moderatorId });
+    await releaseSongsOfClearedCovers(clearedIds);
     return result;
   } catch (e) {
     if (e instanceof QueueChanged) return { ok: false, reason: 'changed' };
@@ -241,6 +244,7 @@ export async function releaseHeldUserCsamFlags(
   if (!reason) throw new Error('A release needs a reason.');
   let legs: FlagClearHoldLeg[] = [];
   let claimed: DeferredBlockEffect[] = [];
+  let releasedIds: number[] = [];
   try {
     const result = await dbWrite.transaction().execute(async (trx) => {
       const { rows } = await sql<{ present: unknown }>`
@@ -279,9 +283,11 @@ export async function releaseHeldUserCsamFlags(
       });
       claimed = await claimDeferredBlockEffects(trx, released);
       await keepPendingAppealFlags(trx, released);
+      releasedIds = released;
       return { ok: true, dryRun: false, count: released.length, remaining, legs } as const;
     });
     await fireDeferredBlockEffects(claimed, { moderatorId });
+    await releaseSongsOfClearedCovers(releasedIds);
     return result;
   } catch (e) {
     if (e instanceof DryRun)

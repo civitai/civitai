@@ -38,6 +38,12 @@ function contentAtOf(meta: Record<string, unknown> | undefined) {
 
 type PendingHoldWrite = 'created' | 'updated' | 'unchanged' | 'skipped';
 
+/** Runs inside the transaction that leaves `holdId` the entity's pending hold; a throw rolls it back. */
+export type OnPendingHold = (
+  tx: Prisma.TransactionClient,
+  hold: { entityId: number; holdId: number }
+) => Promise<unknown>;
+
 /**
  * Thrown when new csam text cannot replace a pending hold because a moderator is mid-decision on it. The
  * detection is recorded nowhere else, so the callback must fail and let the retry cron's rescan redo it;
@@ -82,19 +88,24 @@ type PendingRow = {
  * again unless a different text is pending, which it replaces; changed text after a ruling is held once
  * more and marked as re-detected.
  */
-async function writePendingHold(hold: {
-  entityType: string;
-  entityId: number;
-  textHash: string;
-  userId: number | null;
-  text: string;
-  reason: string;
-  workflowId: string | undefined;
-  promptId: number | null;
-  contentAt: Date | null;
-  meta: Record<string, unknown>;
-}): Promise<{ holdId: number | null; write: PendingHoldWrite; priorHoldId: number | null }> {
+async function writePendingHold(
+  hold: {
+    entityType: string;
+    entityId: number;
+    textHash: string;
+    userId: number | null;
+    text: string;
+    reason: string;
+    workflowId: string | undefined;
+    promptId: number | null;
+    contentAt: Date | null;
+    meta: Record<string, unknown>;
+  },
+  onPendingHold?: OnPendingHold
+): Promise<{ holdId: number | null; write: PendingHoldWrite; priorHoldId: number | null }> {
   return dbWrite.$transaction(async (tx) => {
+    const pendingHold = (holdId: number) =>
+      onPendingHold?.(tx, { entityId: hold.entityId, holdId });
     await lockCsamHold(tx, hold.entityType, hold.entityId);
     // A hold the migration superseded was never ruled on, so it neither blocks nor marks a re-detection.
     const decided = await tx.$queryRaw<{ id: number; textHash: string; status: string }[]>`
@@ -130,11 +141,14 @@ async function writePendingHold(hold: {
           ${meta}::jsonb, now())
         RETURNING "id"
       `;
+      await pendingHold(row.id);
       return { holdId: row.id, write: 'created', priorHoldId };
     }
 
-    if (pending.textHash === hold.textHash)
+    if (pending.textHash === hold.textHash) {
+      await pendingHold(pending.id);
       return { holdId: null, write: 'unchanged', priorHoldId };
+    }
     // Leave a hold mid-decision alone: swapping the text would apply the ruling to text the moderator never saw. A claim is live for 30 min, well past the 5 a decision waits.
     if (pending.claimed) throw new CsamHoldBusyError();
 
@@ -174,6 +188,7 @@ async function writePendingHold(hold: {
           OR coalesce(("meta"->'decisionClaim'->>'at')::timestamptz < now() - interval '30 minutes', false))
     `;
     if (!updated) throw new CsamHoldBusyError();
+    await pendingHold(pending.id);
     return { holdId: pending.id, write: 'updated', priorHoldId };
   });
 }
@@ -215,7 +230,8 @@ export async function applyCsamHold({
   workflowId,
   textHash,
   promptIds,
-}: ApplyTextScanArgs & { entityType: TextScanEntityType }) {
+  onPendingHold,
+}: ApplyTextScanArgs & { entityType: TextScanEntityType; onPendingHold?: OnPendingHold }) {
   if (!outcome.csam?.detected) return;
 
   const { userId, text } = pendingCsamHoldFields(subject);
@@ -259,18 +275,21 @@ export async function applyCsamHold({
       }
     }
   } else {
-    ({ holdId, write, priorHoldId } = await writePendingHold({
-      entityType,
-      entityId,
-      textHash,
-      userId,
-      text,
-      reason,
-      workflowId,
-      promptId,
-      contentAt,
-      meta: (meta ?? {}) as Record<string, unknown>,
-    }));
+    ({ holdId, write, priorHoldId } = await writePendingHold(
+      {
+        entityType,
+        entityId,
+        textHash,
+        userId,
+        text,
+        reason,
+        workflowId,
+        promptId,
+        contentAt,
+        meta: (meta ?? {}) as Record<string, unknown>,
+      },
+      onPendingHold
+    ));
   }
 
   logToAxiom({
@@ -288,14 +307,19 @@ export async function applyCsamHold({
   });
 }
 
-/** Hold first: a failed write throws before the entity action, so the retry cron's rescan redoes both. */
+/**
+ * Hold first: a failed write throws before the entity action, so the retry cron's rescan redoes both.
+ * `onPendingHold` runs in the hold's transaction whenever it leaves a pending hold (not for text a
+ * moderator already ruled on), and its failure fails the hold.
+ */
 export function withCsamHold(
   entityType: TextScanEntityType,
-  apply: (args: ApplyTextScanArgs) => Promise<unknown>
+  apply: (args: ApplyTextScanArgs) => Promise<unknown>,
+  { onPendingHold }: { onPendingHold?: OnPendingHold } = {}
 ) {
   return async (args: ApplyTextScanArgs) => {
     try {
-      await applyCsamHold({ entityType, ...args });
+      await applyCsamHold({ entityType, ...args, onPendingHold });
     } catch (error) {
       // Code and name only: a Prisma message can echo the arguments, which here are the held text.
       logToAxiom({

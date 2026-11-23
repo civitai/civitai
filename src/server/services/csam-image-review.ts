@@ -1,14 +1,15 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import {
+  lockSongCsamHoldSql,
+  releaseSongCsamHoldSql,
+  SONG_CSAM_HOLD_KEY,
+  songIdOfCoverSql,
+} from '@civitai/shared/song-csam-hold';
 import { logToAxiom } from '~/server/logging/client';
 
-/**
- * Puts images in the CSAM review queue: flags them `needsReview = 'csam'` and takes them off its
- * set-aside list, inside the caller's transaction. Files no CsamReport and no external report.
- */
-export async function flagImagesForCsamReview(
-  tx: Pick<Prisma.TransactionClient, 'image' | '$queryRaw' | '$executeRaw'>,
-  imageIds: number[]
-) {
+type FlagClient = Pick<Prisma.TransactionClient, 'image' | '$queryRaw' | '$executeRaw'>;
+
+async function flagRows(tx: FlagClient, imageIds: number[]) {
   await tx.image.updateMany({
     where: { id: { in: imageIds } },
     data: { needsReview: 'csam' },
@@ -28,4 +29,80 @@ export async function flagImagesForCsamReview(
       name: 'csam-queue-set-aside-not-deletable',
       message: 'the table exists but this role may not delete from it; grant DELETE',
     });
+}
+
+/**
+ * Puts images in the CSAM review queue: flags them `needsReview = 'csam'` and takes them off its
+ * set-aside list, inside the caller's transaction. Files no CsamReport and no external report. A
+ * flagged song cover also flags its song (`holdSongForCsam`), and a song flagged here directly is
+ * the caller's from then on: its hold marker comes off, so no lyrics or cover decision lifts it.
+ */
+export async function flagImagesForCsamReview(tx: FlagClient, imageIds: number[]) {
+  await flagRows(tx, imageIds);
+  await tx.$executeRaw`
+    UPDATE "Image" SET "metadata" = "metadata" - 'csamHold'
+    WHERE id = ANY(${imageIds}::int[]) AND "metadata" ? 'csamHold'`;
+  await holdSongsOfCovers(tx, imageIds);
+}
+
+/**
+ * Holds the song each of `coverIds` is the cover of (`holdSongForCsam`), with that cover as the
+ * source, for a cover that was just flagged or removed for CSAM. A song among `coverIds` itself is
+ * left to the caller.
+ */
+export async function holdSongsOfCovers(tx: FlagClient, coverIds: number[]) {
+  const covers = await tx.$queryRaw<{ coverId: number; songId: number | null }[]>`
+    SELECT c.id AS "coverId", ${Prisma.raw(songIdOfCoverSql('c'))} AS "songId"
+    FROM "Image" c WHERE c.id = ANY(${coverIds}::int[])`;
+  for (const { coverId, songId } of covers)
+    if (songId && !coverIds.includes(songId)) await holdSongForCsam(tx, songId, { cover: coverId });
+}
+
+/**
+ * Flags a song for its lyrics hold or its cover's flag, the way `flagImagesForCsamReview` flags any
+ * image, and records the source on the song's hold marker: a new marker when this turns the song
+ * from unflagged to flagged, an added source while a marker exists. A song already flagged without
+ * one was flagged by a moderator and stays theirs. Read under the song's row lock.
+ */
+export async function holdSongForCsam(
+  tx: FlagClient,
+  songId: number,
+  source: { lyrics: number } | { cover: number }
+) {
+  const lyrics = 'lyrics' in source ? source.lyrics : null;
+  const cover = 'cover' in source ? source.cover : null;
+  const [song] = await tx.$queryRaw<{ flagged: boolean; marked: boolean }[]>`
+    SELECT "needsReview" IS NOT DISTINCT FROM 'csam' AS flagged,
+      COALESCE(jsonb_typeof("metadata" -> ${SONG_CSAM_HOLD_KEY}) = 'object', false) AS marked
+    FROM "Image" WHERE id = ${songId} AND type = 'audio' FOR UPDATE`;
+  if (!song) return;
+  // Before the flag write: an unflagged song gets a new marker, a marked one this source added.
+  if (!song.flagged || song.marked)
+    await tx.$executeRaw`
+      UPDATE "Image" SET "metadata" = jsonb_set(
+        CASE WHEN jsonb_typeof("metadata") = 'object' THEN "metadata" ELSE '{}'::jsonb END,
+        '{csamHold}',
+        CASE WHEN "needsReview" = 'csam' THEN "metadata" -> 'csamHold' ELSE '{}'::jsonb END
+          || jsonb_strip_nulls(jsonb_build_object('lyrics', ${lyrics}::int, 'cover', ${cover}::int)))
+      WHERE id = ${songId}`;
+  await flagRows(tx, [songId]);
+}
+
+type ReleaseClient = Pick<Prisma.TransactionClient, '$queryRaw'>;
+
+/**
+ * Re-decides the songs a closed lyrics hold or cleared cover review reaches
+ * (`releaseSongCsamHoldSql`), inside the caller's transaction. Returns the ids it released.
+ */
+export async function releaseSongCsamHold(
+  tx: ReleaseClient,
+  target: Parameters<typeof releaseSongCsamHoldSql>[0]
+): Promise<number[]> {
+  const lock = lockSongCsamHoldSql(target);
+  const release = releaseSongCsamHoldSql(target);
+  if (!lock || !release) return [];
+  const locked = await tx.$queryRaw<{ id: number }[]>`${Prisma.raw(lock)}`;
+  if (!locked.length) return [];
+  const rows = await tx.$queryRaw<{ id: number; released: boolean }[]>`${Prisma.raw(release)}`;
+  return rows.filter((row) => row.released).map((row) => row.id);
 }
