@@ -38,7 +38,7 @@ vi.mock('$lib/server/vote-limits/runtime', async () => {
   const { createVoteGate } = await import('$lib/server/vote-limits/gate');
   const { limitsFromConfig } = await import('$lib/server/vote-limits/config');
   return {
-    lockoutFor: vi.fn(),
+    pauseFor: vi.fn(),
     voteGate: createVoteGate({
       client: () => redis.current as never,
       limits: async () => limitsFromConfig(live.config),
@@ -106,6 +106,18 @@ describe('vote action Redis limits', () => {
     expect(await submit('hidden')).toMatchObject({ status: 429, data: { lockoutSeconds: 600 } });
     expect(castVote).not.toHaveBeenCalled();
     expect(answerHiddenCheck).not.toHaveBeenCalled();
+  });
+
+  it('names the limit that tripped in the refusal, and keeps naming it while the pause runs', async () => {
+    live.config = { perMinute: 1000, perHour: 600, perDay: 2 };
+    await submit();
+    await submit();
+    const tripped = {
+      status: 429,
+      data: { message: expect.stringContaining('the daily vote limit') },
+    };
+    expect(await submit()).toMatchObject(tripped);
+    expect(await submit()).toMatchObject(tripped);
   });
 
   it('counts only real vote attempts: a malformed form never uses up the limits', async () => {

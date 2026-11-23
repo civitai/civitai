@@ -1,6 +1,6 @@
 # Training Studio on Civitai Elements
 
-**Status:** in progress, behind the `training-studio-elements-ui` flag. The Select step (#9552), the Data step (#9878) and the shell (#9902) are redesigned; the Review step is in progress.
+**Status:** in progress, behind the `training-studio-elements-ui` flag. The Select step (#9552), the Data step (#9878), the shell (#9902) and the Review step (#10185) are redesigned; the run page is in progress.
 Tracked in HQ as `training_studio_civitai_ww5n`; slice 0 is `elements_training_studio_d595`.
 
 ## Goal
@@ -66,6 +66,8 @@ Measured on the Select step (Media, Type and Engine rows, Continue button):
 - **Number fields.** `civitai-number-input` writes its value back into the input on every keystroke,
   which clears `1e` on the way to `1e-4` and turns `0.000` into `0`. Decimal parameters on the Review
   step use a `civitai-text-input` committed on change instead.
+- **Links.** `civitai-button` takes an `href` but no `target`, so a link that must open the main app in a
+  new tab (publish, model page, download weights) stays an `<a>` styled like a kit button.
 - **Datalists.** A `list=` id can't reach an `<input>` inside a shadow root, so a field with datalist
   suggestions (the Data step's tag filter) stays a native input.
 - **Not yet checked:** rendering inside the main-app embed. The spike was checked in the standalone
