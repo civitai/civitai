@@ -3391,6 +3391,10 @@ export const toggleBan = async ({
   void (bannedAt ? onStorySparkPostsRestored : onStorySparkPostsHidden)({ authorId: id });
   const { afterAccountBanChanged } = await import('~/server/services/account-standing.service');
   await afterAccountBanChanged(id);
+  const { bustVersionShowcasesForUser } = await import(
+    '~/server/services/version-showcase.service'
+  );
+  await bustVersionShowcasesForUser(id).catch(() => null);
   // The creator card carries the links, which public reads drop for a banned user.
   await bustUserCreator(id, { usernames: user.username ? [user.username] : [] }).catch(
     handleLogError

@@ -203,6 +203,7 @@ export const routes: ApiRoutes = {
   'user/toggle-moderator': () => import('~/server/api-routes/mod/user/toggle-moderator'),
   'user/unmute': () => import('~/server/api-routes/mod/user/unmute'),
   'user/update-identity': () => import('~/server/api-routes/mod/user/update-identity'),
+  'version-showcase/remove': () => import('~/server/api-routes/mod/version-showcase/remove'),
   whoami: () => import('~/server/api-routes/mod/whoami'),
   'withdraw-from-bank': () => import('~/server/api-routes/mod/withdraw-from-bank'),
 };

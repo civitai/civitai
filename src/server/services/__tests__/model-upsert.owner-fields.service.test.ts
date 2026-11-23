@@ -1195,6 +1195,38 @@ describe('cover gate', () => {
       expect.objectContaining({ modelId: MODEL_ID, ownerId: OWNER_ID, coverImageId: 9 })
     );
   });
+
+  // The form sends both covers; an unchanged featured one a reader skips for now must not refuse
+  // the edit to the other.
+  it('validates only the cover the save changes', async () => {
+    mockStored({ coverImageId: null, sfwCoverImageId: 7 });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, coverImageId: 9, sfwCoverImageId: 7 });
+
+    expect(mockAssertCoverImagesValid).toHaveBeenCalledWith(
+      expect.objectContaining({ coverImageId: 9, sfwCoverImageId: undefined })
+    );
+  });
+});
+
+describe('a change in maturity', () => {
+  // `updateModelNsfwLevels` recomputes the level; it is seen here as its UPDATE.
+  const recomputed = () =>
+    mockDbWrite.$queryRaw.mock.calls.some(([query]) =>
+      ((query as { strings?: string[] })?.strings ?? []).join('').includes('SET "nsfwLevel" = (')
+    );
+
+  it('recomputes the model level when the owner marks the model mature', async () => {
+    mockStored({ nsfw: false });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: true });
+    expect(recomputed()).toBe(true);
+  });
+
+  it('does not recompute it when maturity, the face and the covers are unchanged', async () => {
+    mockStored({ nsfw: false });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false });
+    expect(recomputed()).toBe(false);
+  });
 });
 
 describe('.com face re-check after a listing edit', () => {
@@ -1312,6 +1344,16 @@ describe('.com face re-check after a listing edit', () => {
     mockLocked({ sfwCoverImageId: null });
     await expect(upsert({ id: MODEL_ID, userId: OWNER_ID, sfwCoverImageId: 5 })).rejects.toThrow(
       'civitai.com card changed while you were editing'
+    );
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses an owner’s save whose .red cover changed after the save read it', async () => {
+    // The version showcase writes this cover too.
+    mockStored({ coverImageId: 4 });
+    mockLocked({ coverImageId: 9 });
+    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID, coverImageId: 7 })).rejects.toThrow(
+      'cover changed while you were editing'
     );
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });

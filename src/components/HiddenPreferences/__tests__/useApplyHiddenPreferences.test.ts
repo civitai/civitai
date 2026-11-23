@@ -69,6 +69,7 @@ const BROWSING_LEVEL = 1;
 
 const emptyPrefs = (): HiddenPreferencesState => ({
   hiddenUsers: new Map(),
+  blockRelations: new Map(),
   hiddenTags: new Map(),
   hiddenModels: new Map(),
   hiddenModel3Ds: new Map(),
@@ -445,6 +446,44 @@ describe("filterPreferences — 'comics' gates on ALL aggregate bits within the 
     );
     expect(items.map((c) => c.id)).toEqual([1]);
     expect(hidden.browsingLevel).toBe(1);
+  });
+});
+
+describe('filterPreferences: a cover featured from someone else', () => {
+  // A model whose card image is by another author: a cover the creator featured in its showcase.
+  const featuredCover = (authorId: number) => ({
+    id: 1,
+    user: { id: 9999 },
+    nsfwLevel: 1,
+    nsfw: false,
+    name: 'm',
+    images: [
+      { id: 10, nsfwLevel: 1, userId: authorId },
+      { id: 11, nsfwLevel: 1, userId: 9999 },
+    ],
+  });
+  const run = (model: ReturnType<typeof featuredCover>, hiddenUserId: number) =>
+    filterPreferences({
+      type: 'models',
+      data: [model],
+      hiddenPreferences: { ...emptyPrefs(), hiddenUsers: new Map([[hiddenUserId, true]]) },
+      browsingLevel: BROWSING_LEVEL,
+      currentUser: null as never,
+      canViewNsfw: true,
+    });
+
+  it("drops the image of an author the viewer hid, keeping the creator's", () => {
+    const { items } = run(featuredCover(77), 77);
+    expect((items[0] as ReturnType<typeof featuredCover>).images.map((image) => image.id)).toEqual([
+      11,
+    ]);
+  });
+
+  it('keeps it when the viewer hid someone else', () => {
+    const { items } = run(featuredCover(77), 78);
+    expect((items[0] as ReturnType<typeof featuredCover>).images.map((image) => image.id)).toEqual([
+      10, 11,
+    ]);
   });
 });
 

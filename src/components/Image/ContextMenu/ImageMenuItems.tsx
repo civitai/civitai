@@ -1,4 +1,5 @@
 import { Menu } from '~/components/MantineOverlays';
+import { RemoveFromVersionShowcasesMenuItem } from '~/components/Model/VersionShowcase/RemoveFromVersionShowcasesMenuItem';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import {
   IconAlertTriangle,
@@ -102,6 +103,7 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
       {isOwner && (
         <>
           <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />
+          <RemoveFromVersionShowcasesMenuItem imageId={imageId} />
           {isImage && (
             <>
               <AddArtFrameMenuItem
@@ -189,6 +191,7 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
       )}
       {isModerator && (
         <>
+          {!isOwner && <RemoveFromVersionShowcasesMenuItem imageId={imageId} asModerator />}
           <Menu.Item
             leftSection={<IconFlag size={14} stroke={1.5} />}
             onClick={() =>
