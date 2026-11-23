@@ -46,7 +46,7 @@ vi.mock('../review-batch', () => ({
       : new Map(ids.map((id) => [id, scanner.hits.has(id) ? 'hit' : scanner.verdict])),
 }));
 
-const { getRetractedMedia, recordRetractedView, scannerVerdicts } = await import(
+const { getModeratorMedia, getRetractedMedia, recordRetractedView, scannerVerdicts } = await import(
   '../retracted-media'
 );
 const { URL_SIBLING_CAP } = await import('@civitai/shared/retracted-media-tier');
@@ -596,5 +596,49 @@ describe('recordRetractedView', () => {
       entityId: 7,
       activity: 'retractedMedia:view',
     });
+  });
+});
+
+describe("a held account's unblocked image, through /api/retracted-media's reader", () => {
+  const OWNER = 990100400;
+  const IMAGE = 990000400;
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, url, "userId", ingestion, "needsReview") VALUES
+        (${IMAGE}, 'key-${IMAGE}', ${OWNER}, 'Scanned', 'poi');
+      INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER});
+    `);
+  });
+  beforeEach(() => {
+    scanner.verdict = 'clear';
+  });
+  afterAll(async () => {
+    await db.exec(`DELETE FROM "Image" WHERE id = ${IMAGE};
+      DELETE FROM "EvidenceHeldUser" WHERE "userId" = ${OWNER}`);
+  });
+
+  // The route audits a 'held' answer as a held view.
+  it('serves a scanned image in the POI queue to any moderator', async () => {
+    expect(await getModeratorMedia(IMAGE, { csamReview: false })).toEqual({
+      url: `key-${IMAGE}`,
+      type: 'image',
+      mimeType: null,
+      kind: 'held',
+    });
+  });
+
+  it('keeps the same image in the CSAM queue to cleared moderators', async () => {
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${IMAGE}`);
+    try {
+      expect(await getModeratorMedia(IMAGE, { csamReview: false })).toBeNull();
+      expect(await getModeratorMedia(IMAGE, { csamReview: true })).toMatchObject({ kind: 'held' });
+    } finally {
+      await db.exec(`UPDATE "Image" SET "needsReview" = 'poi' WHERE id = ${IMAGE}`);
+    }
+  });
+
+  it('keeps it to cleared moderators while the scanner marks it', async () => {
+    scanner.verdict = 'hit';
+    expect(await getModeratorMedia(IMAGE, { csamReview: false })).toBeNull();
   });
 });

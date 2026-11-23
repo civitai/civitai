@@ -52,7 +52,7 @@ vi.mock('../../mod-activity', () => ({ insertModActivity: vi.fn() }));
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 
 const { getInquisitorQueue } = await import('../inquisitor.service');
-const { getRetractedMedia, scannerVerdicts } = await import('../../retracted-media');
+const { getModeratorMedia, scannerVerdicts } = await import('../../retracted-media');
 
 const MIGRATIONS = path.resolve(
   __dirname,
@@ -138,7 +138,7 @@ const media = async () => {
   expect(item.imageKey === '').toBe(item.media === 'restricted');
   if (item.media !== 'cdn') {
     scannerVerdicts.clear();
-    const served = await getRetractedMedia(item.imageId, { csamReview: false });
+    const served = await getModeratorMedia(item.imageId, { csamReview: false });
     expect({ media: item.media, served: served !== null }).toEqual({
       media: item.media,
       served: item.media === 'retracted',
@@ -162,10 +162,10 @@ describe('getInquisitorQueue media, by viewer', () => {
     expect(item.media).toBe('retracted');
   });
 
-  it('draws an unblocked image of a held owner restricted, not from the public CDN', async () => {
+  it('draws an unblocked image of a held owner from storage for any moderator, not from the public CDN', async () => {
     await queued({ ingestion: 'Scanned', blockedFor: null });
     await db.query(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES ($1)`, [OWNER]);
-    expect(await media()).toBe('restricted');
+    expect(await media()).toBe('retracted');
     const [item] = await getInquisitorQueue('all', { csamReview: true });
     expect(item.media).toBe('retracted');
   });

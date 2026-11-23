@@ -26,7 +26,8 @@ export type RetractedMedia = {
   mimeType: string | null;
 };
 
-/** Held media is `heldImageSql`'s, served here only with `orHeld` to a moderator with the CSAM grant. */
+/** Held media is `heldImageSql`'s, read here only with `orHeld`. A moderator without the CSAM grant
+ *  is served it by the same rule as retracted media, which keeps an image held for itself from them. */
 export type ModeratorMedia = RetractedMedia & { kind: 'retracted' | 'held' };
 
 type ScannerRow = { id: number; ingestion: string };
@@ -56,8 +57,7 @@ export async function readRetractedMedia(
   if (!imageIds.length) return { eligible, viewable };
   const access = retractedAccessColumnsSql('i', { csamReview });
   const retracted = retractedImageWhereSql('i', { cdnLeg: retractedMediaCdnLeg() });
-  // Held rows are read for every viewer, so a caller can draw them as restricted, and served only to
-  // one with the grant.
+  // Held rows are read for every viewer, so a caller can draw them as restricted.
   const held = orHeld ? `COALESCE(${heldImageSql('i')}, false)` : 'false';
   const rows = await dbWrite.transaction().execute(async (trx) => {
     await sql.raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`).execute(trx);
@@ -86,7 +86,7 @@ export async function readRetractedMedia(
   }
   const patterns = blockedForPatterns();
   const candidates = rows.filter(
-    (row) => row.retracted && !row.restricted && !blockedForSignal(row.blockedFor, patterns)
+    (row) => !row.restricted && !blockedForSignal(row.blockedFor, patterns)
   );
   if (!candidates.length) return { eligible, viewable };
   // The candidates' url siblings in one scanner read, not one read per row.
