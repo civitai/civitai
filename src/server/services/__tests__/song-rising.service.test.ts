@@ -11,8 +11,8 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
   };
 });
 
-import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { answerVisibilityRead } from '~/__tests__/mocks/visibility-read.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import '~/__tests__/mocks/logging.mock';
 import { CacheTTL } from '~/server/common/constants';
@@ -20,27 +20,6 @@ import { getRisingSongIds } from '../song-rising.service';
 
 const VIEWER = { id: 4, isModerator: false };
 const MUSIC_ON = { features: { music: true }, user: VIEWER };
-/**
- * Answers the visibility read (`getImageIdsVisibleToViewer`'s SQL) through `visibleMock`, called with the
- * ids and viewer read back from the query: the ids from `i.id IN (…)`, the viewer from
- * `i."userId" = …`, a moderator by the absence of visibility conditions. Other raw reads get no rows.
- */
-async function answerVisibilityRead(strings: TemplateStringsArray, ...values: Prisma.Sql[]) {
-  const query = Prisma.sql(strings, ...values);
-  if (!query.text.includes('LEFT JOIN "Post" p ON p.id = i."postId"')) return [];
-  const param = (placeholder: string) => query.values[Number(placeholder.slice(1)) - 1];
-  const idList = query.text.match(/i\.id IN \(([^)]*)\)/)?.[1] ?? '';
-  const ids = (idList.match(/\$\d+/g) ?? []).map((p) => param(p) as number);
-  const isModerator = !query.text.includes('"needsReview" IS NULL');
-  const userParam = query.text.match(/i\."userId" = (\$\d+)/)?.[1];
-  const userId = userParam ? (param(userParam) as number | undefined) : undefined;
-  const visible: Set<number> = await visibleMock({
-    ids,
-    userId,
-    isModerator: isModerator || (userId === undefined ? undefined : false),
-  });
-  return [...visible].map((id) => ({ id, userId: 0 }));
-}
 
 const sqlOf = () => (queryMock.mock.calls[0][0] as TemplateStringsArray).join('?');
 
@@ -56,7 +35,7 @@ describe('getRisingSongIds', () => {
     });
     redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true);
     visibleMock.mockImplementation(async ({ ids }: { ids: number[] }) => new Set(ids));
-    dbMock.dbRead.$queryRaw.mockImplementation(answerVisibilityRead);
+    dbMock.dbRead.$queryRaw.mockImplementation(answerVisibilityRead(visibleMock));
   });
 
   it('ranks songs by plays over today and the 6 days before, ties newest first', async () => {

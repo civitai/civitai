@@ -319,7 +319,7 @@ export async function getVisibleSongIds({
 }): Promise<Set<number> | null> {
   if (!isMusicEnabled(viewer.features)) return null;
   return getImageIdsVisibleToViewer({
-    ids: [...new Set(ids)],
+    ids,
     userId: viewer.user?.id,
     isModerator: viewer.user?.isModerator ?? undefined,
   });

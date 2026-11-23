@@ -14,7 +14,10 @@ import { trpc } from '~/utils/trpc';
  * an aborted query on every song.
  */
 export function useSongList(
-  filters: Omit<GetInfiniteImagesInput, 'types' | 'browsingLevel'> & { browsingLevel: number },
+  filters: Omit<
+    GetInfiniteImagesInput,
+    'types' | 'browsingLevel' | 'excludedTagIds' | 'disablePoi' | 'disableMinor' | 'hidden'
+  > & { browsingLevel: number },
   { enabled = true } = {}
 ) {
   const currentUser = useCurrentUser();
