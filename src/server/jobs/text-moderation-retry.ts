@@ -3,6 +3,7 @@ import { createJob } from '~/server/jobs/job';
 import {
   TEXT_MODERATION_PENDING_TIMEOUT_MINUTES,
   TEXT_MODERATION_RETRY_LIMIT,
+  TEXT_MODERATION_RETRY_STATUSES,
 } from '~/server/jobs/text-moderation-retry.constants';
 import { logToAxiom } from '~/server/logging/client';
 import { getModerationAdapter } from '~/server/services/moderation-adapters';
@@ -51,13 +52,7 @@ export const retryFailedTextModeration = createJob(
         retryCount: { lt: TEXT_MODERATION_RETRY_LIMIT },
         OR: [
           {
-            status: {
-              in: [
-                EntityModerationStatus.Failed,
-                EntityModerationStatus.Expired,
-                EntityModerationStatus.Canceled,
-              ],
-            },
+            status: { in: TEXT_MODERATION_RETRY_STATUSES },
             updatedAt: { lte: retryBefore },
           },
           {

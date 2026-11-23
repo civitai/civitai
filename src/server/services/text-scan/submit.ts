@@ -338,10 +338,11 @@ export async function textScanCanAskEveryLabel(
   profile: Pick<TextScanProfile, 'labels' | 'labelsFor' | 'requireEveryLabel'>
 ) {
   if (!profile.requireEveryLabel) return true;
-  const labels = withoutPromptlessLabels(
-    await resolveTextScanProfileLabels(profile),
-    await getActiveTextScanPrompts()
-  );
+  const resolved = await resolveTextScanProfileLabels(profile);
+  // Only csam needs its prompt read; a failed read must not refuse a profile that never asks it.
+  const labels = resolved.includes('csam')
+    ? withoutPromptlessLabels(resolved, await getActiveTextScanPrompts())
+    : resolved;
   return !unansweredTextScanLabels(
     profile,
     Object.fromEntries(labels.map((label) => [label, true]))

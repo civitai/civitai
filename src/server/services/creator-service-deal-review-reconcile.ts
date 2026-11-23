@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
+import { textModerationRetryStatusSql } from '~/server/jobs/text-moderation-retry.constants';
 import { logToAxiom } from '~/server/logging/client';
 import {
   happySortKey,
@@ -41,7 +42,7 @@ async function rescanUnsubmittedTexts(limit: number) {
         AND "updatedAt" < now() - interval '15 minutes'
         AND NOT EXISTS (SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = 'ServiceDealReview'
           AND em."entityId" = "ServiceDealReview"."id"
-          AND em."status" IN ('Failed', 'Expired', 'Canceled'))
+          AND em."status" IN ${textModerationRetryStatusSql})
       ORDER BY "id" LIMIT ${limit})
     UNION ALL
     (SELECT "id", 'ServiceDealReviewReply' AS "type" FROM "ServiceDealReview"
@@ -50,7 +51,7 @@ async function rescanUnsubmittedTexts(limit: number) {
         AND "updatedAt" < now() - interval '15 minutes'
         AND NOT EXISTS (SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = 'ServiceDealReviewReply'
           AND em."entityId" = "ServiceDealReview"."id"
-          AND em."status" IN ('Failed', 'Expired', 'Canceled'))
+          AND em."status" IN ${textModerationRetryStatusSql})
       ORDER BY "id" LIMIT ${limit})`;
   for (const { id, type } of rows) await scanServiceDealReviewText(type, id);
   return rows.length;

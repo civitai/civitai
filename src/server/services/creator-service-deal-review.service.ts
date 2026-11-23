@@ -13,6 +13,7 @@ import { getReviewImages } from '~/server/services/creator-service-deal-review-i
 import { scanServiceDealReviewText } from '~/server/services/service-deal-review-moderation.adapter';
 import { liveCsamTextHoldText } from '@civitai/shared/held-url';
 import { csamQueueClearSql } from '~/server/services/text-scan/csam-hold-state';
+import { textModerationRetryStatusSql } from '~/server/jobs/text-moderation-retry.constants';
 import { SERVICE_DEAL_REVIEW_EDIT_MS } from '~/shared/constants/creator-services.constants';
 import type { ServiceDealReviewVerdict } from '~/shared/utils/prisma/enums';
 
@@ -241,7 +242,7 @@ export async function setServiceDealReviewHidden({
               FROM "EntityModeration" em WHERE em."entityType" = 'ServiceDealReview'
                 AND em."entityId" = "ServiceDealReview"."id"
                 AND em."workflowId" = "ServiceDealReview"."scanWorkflowId"
-                AND em."status" IN ('Failed', 'Expired', 'Canceled'))
+                AND em."status" IN ${textModerationRetryStatusSql})
             THEN NULL ELSE "scanWorkflowId" END,
           "sellerReplyScanStatus" = CASE WHEN "sellerReplyScanStatus" = 'Error'
             THEN 'Pending' ELSE "sellerReplyScanStatus" END,
@@ -250,7 +251,7 @@ export async function setServiceDealReviewHidden({
               FROM "EntityModeration" em WHERE em."entityType" = 'ServiceDealReviewReply'
                 AND em."entityId" = "ServiceDealReview"."id"
                 AND em."workflowId" = "ServiceDealReview"."sellerReplyScanWorkflowId"
-                AND em."status" IN ('Failed', 'Expired', 'Canceled'))
+                AND em."status" IN ${textModerationRetryStatusSql})
             THEN NULL ELSE "sellerReplyScanWorkflowId" END
         WHERE "id" = ${reviewId}::int
         RETURNING

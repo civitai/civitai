@@ -6,6 +6,10 @@ import {
   TEXT_MODERATION_RETRY_LIMIT,
 } from '~/server/jobs/text-moderation-retry';
 import {
+  TEXT_MODERATION_RETRY_STATUSES,
+  textModerationRetryStatusSql,
+} from '~/server/jobs/text-moderation-retry.constants';
+import {
   blockServiceOffering,
   scanServiceOffering,
   settleOrHoldServiceOffering,
@@ -20,12 +24,6 @@ const STUCK_THRESHOLD_MINUTES = 10;
 export const EXHAUSTED_RESUBMIT_AFTER_HOURS = 24;
 const FETCH_LIMIT = 200;
 const CONCURRENCY = 5;
-
-const TERMINAL: EntityModerationStatus[] = [
-  EntityModerationStatus.Failed,
-  EntityModerationStatus.Expired,
-  EntityModerationStatus.Canceled,
-];
 
 export type ReconcileAction = 'submit' | 'resubmit-exhausted' | 'settle' | 'block' | 'leave';
 
@@ -59,7 +57,7 @@ export function reconcileAction(
   if (moderation.status === EntityModerationStatus.Pending && moderation.updatedAt < pendingBefore)
     return 'submit';
   if (
-    TERMINAL.includes(moderation.status) &&
+    TEXT_MODERATION_RETRY_STATUSES.includes(moderation.status) &&
     moderation.retryCount >= TEXT_MODERATION_RETRY_LIMIT &&
     moderation.updatedAt < exhaustedBefore
   )
@@ -109,7 +107,7 @@ export async function serviceOfferingReconcileCandidates({
         em."entityId" IS NULL
         OR em.status = 'Succeeded'
         OR (em.status = 'Pending' AND em."updatedAt" < ${pendingBefore})
-        OR (em.status IN ('Failed', 'Expired', 'Canceled')
+        OR (em.status IN ${textModerationRetryStatusSql}
           AND em."retryCount" >= ${TEXT_MODERATION_RETRY_LIMIT}
           AND em."updatedAt" < ${exhaustedBefore})
       )

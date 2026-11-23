@@ -18,7 +18,7 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   getTextScanConfig: vi.fn(),
 }));
 
-const { scanEntity } = await import('~/server/services/text-scan/submit');
+const { scanEntity, textScanCanAskEveryLabel } = await import('~/server/services/text-scan/submit');
 const { registerTextScanProfile, resolveTextScanProfileLabels } = await import(
   '~/server/services/text-scan/profiles'
 );
@@ -30,9 +30,7 @@ const { getActiveTextScanPrompts, getTextScanConfig } = await import(
   '~/server/services/text-scan/prompt'
 );
 const { settleSkippedScan } = await import('~/server/services/text-scan/actions/settle-skipped');
-const { getTextScanProfile, unansweredTextScanLabels } = await import(
-  '~/server/services/text-scan/profiles'
-);
+const { getTextScanProfile } = await import('~/server/services/text-scan/profiles');
 // The real profiles, so each type's own setting is what is under test; only their loads are faked.
 await import('~/server/services/text-scan/profiles/service-deal-review.profile');
 await import('~/server/services/text-scan/profiles/service-offering.profile');
@@ -405,13 +403,25 @@ describe('a scan settles only on a verdict that answers every label its profile 
       });
       expect(scanLabels()).toEqual(['nsfw']);
     });
+  });
 
-    it('counts a stored verdict that answers only some labels as complete', () => {
-      expect(
-        unansweredTextScanLabels(getTextScanProfile(entityType)!, {
-          nsfw: { level: 'none', reason: '' },
-        })
-      ).toEqual([]);
+  describe('whether a profile that requires every label can ask them all', () => {
+    const unreadable = () =>
+      vi.mocked(getActiveTextScanPrompts).mockRejectedValue(new Error('prompts unreadable'));
+
+    it('does not depend on the prompts when it never asks for csam', async () => {
+      unreadable();
+      await expect(
+        textScanCanAskEveryLabel({ labels: ['nsfw', 'scam'], requireEveryLabel: true })
+      ).resolves.toBe(true);
+    });
+
+    it('cannot be answered when it asks for csam and the prompts are unreadable', async () => {
+      csamMode('review');
+      unreadable();
+      await expect(
+        textScanCanAskEveryLabel({ labels: ['nsfw', 'csam'], requireEveryLabel: true })
+      ).rejects.toThrow('prompts unreadable');
     });
   });
 
