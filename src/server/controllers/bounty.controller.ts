@@ -39,17 +39,25 @@ import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { publicBountyDetails } from '~/server/utils/bounty-details';
-import { NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
+import { minorMatureHidden } from '~/server/common/image-visibility';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
 import { capNestedImages } from '~/server/utils/browsing-level';
 import {
+  bountyImageNsfwLevel,
   bountyNsfwFlagLevel,
   getTextRatedBountyLevels,
   mayBeTextRated,
 } from '~/server/services/bounty-rated-level';
 import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
+
+/** Run after a bounty's flag raises an image's nsfwLevel: the SQL rule saw the stored level. */
+const keepsMinorRule =
+  (viewer: { id: number; isModerator?: boolean } | undefined) =>
+  (image: { minor?: boolean | null; nsfwLevel: number; userId: number }) =>
+    !minorMatureHidden(image, viewer?.id, viewer?.isModerator);
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -126,18 +134,19 @@ export const getInfiniteBountiesHandler = async ({
             { ...item, moderatorNsfwLevel },
             textRated.get(item.id)
           );
-          const unrated = moderatorNsfwLevel == null && !textRated.has(item.id);
           const itemImages = capNestedImages(
-            (images[item.id] ?? []).filter(showsImage).map((image) => ({
-              ...image,
-              tagIds: image.tags.map((x) => x.id),
-              nsfwLevel:
-                flagLevel == null
-                  ? image.nsfwLefel
-                  : unrated
-                  ? NsfwLevel.XXX
-                  : Math.max(image.nsfwLefel, flagLevel),
-            })),
+            (images[item.id] ?? [])
+              .filter(showsImage)
+              .map((image) => ({
+                ...image,
+                tagIds: image.tags.map((x) => x.id),
+                nsfwLevel: bountyImageNsfwLevel(
+                  { ...item, moderatorNsfwLevel },
+                  textRated.get(item.id),
+                  image.nsfwLefel
+                ),
+              }))
+              .filter(keepsMinorRule(ctx.user)),
             ctx
           );
           // if there are no images, we don't want to show the bounty
@@ -236,10 +245,12 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       images: capNestedImages(
         ratedFlagLevel == null
           ? shownImages
-          : shownImages.map((image) => ({
-              ...image,
-              nsfwLevel: Math.max(image.nsfwLevel, ratedFlagLevel) as NsfwLevel,
-            })),
+          : shownImages
+              .map((image) => ({
+                ...image,
+                nsfwLevel: Math.max(image.nsfwLevel, ratedFlagLevel) as NsfwLevel,
+              }))
+              .filter(keepsMinorRule(ctx.user)),
         ctx
       ).map((image) => ({
         ...image,

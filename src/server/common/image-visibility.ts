@@ -579,6 +579,13 @@ export const withoutMinorFlag = <T extends { minor?: boolean | null }>({
 export const isMinorMatureImage = (image: { minor?: boolean | null; nsfwLevel: number }) =>
   isMinorContentRestricted({ minor: image.minor === true, nsfwLevel: image.nsfwLevel });
 
+/** A minor-flagged image the minor content rule restricts, as this viewer sees it: hidden unless they uploaded it or moderate. */
+export const minorMatureHidden = (
+  image: { userId: number; minor?: boolean | null; nsfwLevel: number } | null | undefined,
+  viewerId?: number,
+  isModerator?: boolean
+) => !!image && !isModerator && image.userId !== viewerId && isMinorMatureImage(image);
+
 /**
  * A minor-flagged image the minor content rule restricts is shown only to its owner and
  * moderators, whatever the viewer's browsing settings, as SQL over `"Image" i`. With no viewer it

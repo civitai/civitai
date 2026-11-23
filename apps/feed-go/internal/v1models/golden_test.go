@@ -29,6 +29,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/jspack"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
@@ -235,6 +236,7 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	for key, e := range fx.Redis {
 		setGolden(t, cache, key, e)
 	}
+	seedUncuratedShowcases(cache, fx)
 	for key, e := range fx.SysRedis {
 		setGolden(t, sys, key, e)
 	}
@@ -382,6 +384,29 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	}
 	env.users = sources
 	return env
+}
+
+// seedUncuratedShowcases writes, for every version the fixture caches images for, the
+// version-showcase entry getVersionShowcaseCache's lookup writes for an uncurated version: the Node
+// golden test answers that lookup's ModelVersionShowcaseItem read with no rows (no fixture curates a
+// showcase), so Node read each of them as uncurated. A fixture's own entry is kept.
+func seedUncuratedShowcases(r *testkit.Redis, fx *goldenFixture) {
+	prefix := KeyImagesForVersion + ":"
+	for key := range fx.Redis {
+		id, ok := strings.CutPrefix(key, prefix)
+		if !ok {
+			continue
+		}
+		showcase := hydrate.KeyVersionShowcase + ":" + id
+		if _, own := fx.Redis[showcase]; own {
+			continue
+		}
+		n, err := strconv.Atoi(id)
+		if err != nil {
+			continue
+		}
+		r.SetString(showcase, jspack.Pack(jspack.O("modelVersionId", n, "rows", []any{}, "community", []any{})))
+	}
 }
 
 func setGolden(t *testing.T, r *testkit.Redis, key string, e goldenEntry) {

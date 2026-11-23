@@ -99,6 +99,8 @@ func newTestWorld() *testWorld {
 			// The default addons exclude tags at every level, so the images' tag ids are read.
 			KeyTagIDsForImages + ":8001": append(meta("imageId", int64(8001), "tags", []any{int64(1)}), cached),
 			KeyMetricPrivacy + ":1001":   meta("hideModelBuzz", false, "hideModelDownloads", false, "hideModelGenerations", false),
+			// The version's showcase as getVersionShowcaseCache writes an uncurated one.
+			hydrate.KeyVersionShowcase + ":6001": append(meta("modelVersionId", int64(6001), "rows", []any{}, "community", []any{}), cached),
 		},
 		raw: map[string]string{},
 		modelRow: map[string]any{
