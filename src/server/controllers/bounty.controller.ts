@@ -40,7 +40,7 @@ import { handleLogError } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { publicBountyDetails } from '~/server/utils/bounty-details';
 import type { NsfwLevel } from '~/server/common/enums';
-import { minorMatureHidden } from '~/server/common/image-visibility';
+import { minorMatureHidden, withoutMinorFlag } from '~/server/common/image-visibility';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
@@ -58,6 +58,22 @@ const keepsMinorRule =
   (viewer: { id: number; isModerator?: boolean } | undefined) =>
   (image: { minor?: boolean | null; nsfwLevel: number; userId: number }) =>
     !minorMatureHidden(image, viewer?.id, viewer?.isModerator);
+
+type ModerationFields = 'minor' | 'poi' | 'needsReview' | 'blockedFor' | 'ingestion';
+/** An image's moderation state goes only to its uploader and moderators. */
+const withoutOthersModerationFields =
+  (viewer: { id: number; isModerator?: boolean } | undefined) =>
+  <T extends { userId: number } & Partial<Record<ModerationFields, unknown>>>(image: T) => {
+    if (viewer?.isModerator || image.userId === viewer?.id) return image;
+    const {
+      poi: _poi,
+      needsReview: _needsReview,
+      blockedFor: _blockedFor,
+      ingestion: _ingestion,
+      ...rest
+    } = withoutMinorFlag(image);
+    return rest as Omit<T, ModerationFields> & Partial<Pick<T, ModerationFields>>;
+  };
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -146,7 +162,8 @@ export const getInfiniteBountiesHandler = async ({
                   image.nsfwLefel
                 ),
               }))
-              .filter(keepsMinorRule(ctx.user)),
+              .filter(keepsMinorRule(ctx.user))
+              .map(withoutOthersModerationFields(ctx.user)),
             ctx
           );
           // if there are no images, we don't want to show the bounty
@@ -249,7 +266,8 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
               image.nsfwLevel
             ) as NsfwLevel,
           }))
-          .filter(keepsMinorRule(ctx.user)),
+          .filter(keepsMinorRule(ctx.user))
+          .map(withoutOthersModerationFields(ctx.user)),
         ctx
       ).map((image) => ({
         ...image,
