@@ -881,7 +881,7 @@ function assertPublishScope(access: StorageAccess, coll: DocCollection): void {
  * as a create or put does — whatever the collection's write policy, `none` included. An app's
  * own tallies are unchanged (`apps:storage` covers them); a private collection has none.
  */
-export function assertImportTallyPublishScope(access: StorageAccess, shared: boolean): void {
+function assertImportTallyPublishScope(access: StorageAccess, shared: boolean): void {
   if (access.importedFrom === undefined || !shared) return;
   if (access.scopes.includes(APP_STORAGE_PUBLISH_SCOPE)) return;
   throw publishRefusal(access);
@@ -906,7 +906,7 @@ function publishRefusal(access: StorageAccess): DocStoreError {
 }
 
 /** The min-trust gate, on every viewer write into a shared collection. Returns the subject. */
-export async function assertTrusted(uid: number): Promise<SessionUser> {
+async function assertTrusted(uid: number): Promise<SessionUser> {
   const user = (await sessionClient.getSessionUserById(uid)) as SessionUser | null;
   const linked = user ? await hasLinkedOAuthAccount(user) : false;
   const refusal = sharedWriteTrustRefusal(user, linked);
@@ -914,6 +914,25 @@ export async function assertTrusted(uid: number): Promise<SessionUser> {
     throw new DocStoreError('not_eligible', refusal.message, { reason: refusal.reason });
   }
   return user as SessionUser;
+}
+
+/**
+ * THE REPORT GATE, shared by the `report` mark and the report API (`doc-store-report-api.ts`), in
+ * this order: a signed-in viewer; through an import, the viewer's publish consent in the source; the
+ * `report` bucket (one daily budget for both paths, same key); then, on a shared collection, the
+ * trust gate. The mark path has already passed the first two and spent its tally token; re-running
+ * them here is pure. Returns the viewer.
+ */
+export async function assertReportGate(
+  access: StorageAccess,
+  req: NextApiRequest,
+  shared: boolean
+): Promise<number> {
+  const uid = requireViewer(access);
+  assertImportTallyPublishScope(access, shared);
+  await charge('report', access, req);
+  if (shared) await assertTrusted(uid);
+  return uid;
 }
 
 export async function charge(
@@ -1405,8 +1424,11 @@ async function run(
       assertImportTallyPublishScope(access, shared);
       if (route.op === 'mark') parseBody(markBody, body);
       await charge('tally', access, req);
-      if (route.op === 'mark' && route.name === REPORT_MARK) await charge('report', access, req);
-      if (shared) await assertTrusted(uid);
+      if (route.op === 'mark' && route.name === REPORT_MARK) {
+        await assertReportGate(access, req, shared);
+      } else if (shared) {
+        await assertTrusted(uid);
+      }
       // The permission hook. A `report` is exempt (`gateHook` returns null for it, and the store
       // asks no pass for it): a hook must never be able to silence moderation reports.
       const grant = await gateHook({

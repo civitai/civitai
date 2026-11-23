@@ -2797,11 +2797,8 @@ function buildDocStore(deps: DocStoreDeps) {
   }
 
   /**
-   * THE REPORT API's write (`doc-store-report-api.ts`): the viewer's report of one visible shared
-   * document, as a `doc_mark` row named `report` — the row the `report` mark writes — and nothing
-   * else: no `doc_tally` row, no mark sequence. One per (document, viewer): a repeat changes
-   * nothing (`added: false`). No HookPass is asked for: a hook must never be able to silence a
-   * report. There is no withdrawal. The moderator queue reads these rows (`sqlModOpenReported`).
+   * The report API's write: the `report` mark's `doc_mark` row, but no `doc_tally` row and no mark
+   * sequence. No HookPass is asked for: a hook must never be able to silence a report.
    */
   async function report(
     ctx: DocStoreContext,

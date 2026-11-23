@@ -1381,6 +1381,8 @@ describe('no unguarded block-REST token verification', () => {
     'src/pages/api/v1/blocks/entitlements.ts',
     'src/pages/api/v1/blocks/goods/purchase.ts',
     'src/pages/api/v1/blocks/me.ts',
+    // The report moderation API: files a report in the viewer's name.
+    'src/pages/api/v1/blocks/moderation/reports.ts',
     'src/pages/api/v1/blocks/shared-storage/append.ts',
     'src/pages/api/v1/blocks/shared-storage/counts.ts',
     'src/pages/api/v1/blocks/shared-storage/increment.ts',

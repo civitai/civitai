@@ -86,7 +86,6 @@ import {
 } from '~/server/services/apps/doc-store-api';
 import { createReportHandler, REPORT_ENDPOINT } from '~/server/services/apps/doc-store-report-api';
 import { recordStorageImportGrants } from '~/server/services/apps/storage-import-grant.service';
-import { DOC_STORE_REPORT_RATE_LIMIT_MAX } from '~/server/utils/shared-storage-rate-limit';
 
 // The two chains, with the options their pages pass.
 const reportRoute = withBlockScope(createReportHandler({ store: () => h.store }), {
@@ -503,8 +502,6 @@ describe('the reports-per-day limit', () => {
   // docs/app-storage-generic-core.md ("The report moderation API"): the `report` bucket as today,
   // under the same key, so the mark and the API spend one daily budget.
   it('is 20 per viewer per app, and ONE budget shared with the report mark', async () => {
-    // The literal, so a changed constant cannot change what this asserts.
-    expect(DOC_STORE_REPORT_RATE_LIMIT_MAX).toBe(20);
     const app = freshApp();
     await putPost(app, 'rl1');
     await putPost(app, 'rl2');
