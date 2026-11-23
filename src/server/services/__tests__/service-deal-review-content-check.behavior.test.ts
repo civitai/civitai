@@ -757,6 +757,80 @@ describe('a verdict that cannot settle its text is left to the retry job, within
     }
   );
 
+  it('a failed read of the labels: the reconcile sends no review text, says so once, and the job runs on', async () => {
+    await seed(R);
+    await q(
+      `UPDATE "ServiceDealReview" SET "scanWorkflowId" = NULL, "sellerReplyScanWorkflowId" = NULL,
+         "updatedAt" = now() - interval '1 hour'`
+    );
+    vi.mocked(getActiveTextScanPrompts).mockRejectedValue(new Error('prompts unreadable'));
+    const rescans = vi.spyOn(adapter, 'scanServiceDealReviewText').mockResolvedValue(undefined);
+    try {
+      await expect(rescanUnsubmitted()).resolves.toMatchObject({
+        rescanned: 0,
+        synced: 0,
+        eventsWithoutReview: 0,
+      });
+      expect(rescans).not.toHaveBeenCalled();
+    } finally {
+      rescans.mockRestore();
+    }
+    const said = loggingMock.logToAxiom.mock.calls.filter(([entry]) =>
+      String((entry as { message?: string }).message).startsWith('review text scan cannot ask')
+    );
+    expect(said).toHaveLength(1);
+  });
+
+  it.each(TYPES)(
+    '%s: text whose verdict landed while its review was hidden is checked again on restore, and can show',
+    async (type) => {
+      await seed(R);
+      const wf = type === 'ServiceDealReview' ? 'wf-c' : 'wf-r';
+      expect(
+        await setServiceDealReviewHidden({ reviewId: REVIEW, moderatorId: SELLER, hidden: true })
+      ).toBe(true);
+      // The callback found the review not public: its row Failed, the text left Pending on its check.
+      // Then the retry job found the review hidden and parked the row at its limit.
+      await q(
+        `INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", status, "retryCount")
+         VALUES ($1, $2, $3, 'Failed', $4)`,
+        [type, REVIEW, wf, TEXT_MODERATION_RETRY_LIMIT]
+      );
+      expect(await state(type)).toEqual({ status: 'Pending', workflow: wf });
+      const real = adapter.scanServiceDealReviewText;
+      const scans = vi
+        .spyOn(adapter, 'scanServiceDealReviewText')
+        .mockImplementation((t, id) => real(t, id, submitCheck));
+      try {
+        expect(
+          await setServiceDealReviewHidden({ reviewId: REVIEW, moderatorId: SELLER, hidden: false })
+        ).toBe(true);
+        expect(scans.mock.calls).toEqual([[type, REVIEW]]);
+      } finally {
+        scans.mockRestore();
+      }
+      expect(await state(type)).toEqual({ status: 'Pending', workflow: 'wf-new' });
+      await recordCheck(type, 'wf-new');
+      await textScan({ type, workflowId: 'wf-new' });
+      expect((await state(type)).status).toBe('Scanned');
+    }
+  );
+
+  it('a check still in flight when its review is restored is left to land', async () => {
+    await seed(R);
+    await setServiceDealReviewHidden({ reviewId: REVIEW, moderatorId: SELLER, hidden: true });
+    await recordCheck('ServiceDealReview', 'wf-c');
+    await q(`UPDATE "EntityModeration" SET status = 'Pending'`);
+    const scans = vi.spyOn(adapter, 'scanServiceDealReviewText').mockResolvedValue(undefined);
+    try {
+      await setServiceDealReviewHidden({ reviewId: REVIEW, moderatorId: SELLER, hidden: false });
+      expect(scans).not.toHaveBeenCalled();
+    } finally {
+      scans.mockRestore();
+    }
+    expect(await state('ServiceDealReview')).toEqual({ status: 'Pending', workflow: 'wf-c' });
+  });
+
   it('an edit to text past its limit is scanned again', async () => {
     await seed(R);
     await recordCheck('ServiceDealReview', 'wf-1');

@@ -230,17 +230,27 @@ export async function setServiceDealReviewHidden({
       WHERE "id" = ${reviewId}::int AND ("hiddenAt" IS NULL) = ${hidden}
       RETURNING "dealId"`;
     if (!review) return false;
-    // A scan skipped while hidden failed its text to Error: a restore sends it back to its check. A
-    // check still in flight is left to land.
+    // A scan skipped while hidden failed its text to Error, and a verdict dropped while hidden failed
+    // its check: a restore sends either back to its check. A check still in flight is left to land.
     const [unchecked] = hidden
       ? []
       : await tx.$queryRaw<{ comment: boolean; reply: boolean }[]>`
         UPDATE "ServiceDealReview" SET
           "scanStatus" = CASE WHEN "scanStatus" = 'Error' THEN 'Pending' ELSE "scanStatus" END,
-          "scanWorkflowId" = CASE WHEN "scanStatus" = 'Error' THEN NULL ELSE "scanWorkflowId" END,
+          "scanWorkflowId" = CASE WHEN "scanStatus" = 'Error' OR "scanStatus" = 'Pending' AND EXISTS (SELECT 1
+              FROM "EntityModeration" em WHERE em."entityType" = 'ServiceDealReview'
+                AND em."entityId" = "ServiceDealReview"."id"
+                AND em."workflowId" = "ServiceDealReview"."scanWorkflowId"
+                AND em."status" IN ('Failed', 'Expired', 'Canceled'))
+            THEN NULL ELSE "scanWorkflowId" END,
           "sellerReplyScanStatus" = CASE WHEN "sellerReplyScanStatus" = 'Error'
             THEN 'Pending' ELSE "sellerReplyScanStatus" END,
           "sellerReplyScanWorkflowId" = CASE WHEN "sellerReplyScanStatus" = 'Error'
+            OR "sellerReplyScanStatus" = 'Pending' AND EXISTS (SELECT 1
+              FROM "EntityModeration" em WHERE em."entityType" = 'ServiceDealReviewReply'
+                AND em."entityId" = "ServiceDealReview"."id"
+                AND em."workflowId" = "ServiceDealReview"."sellerReplyScanWorkflowId"
+                AND em."status" IN ('Failed', 'Expired', 'Canceled'))
             THEN NULL ELSE "sellerReplyScanWorkflowId" END
         WHERE "id" = ${reviewId}::int
         RETURNING
