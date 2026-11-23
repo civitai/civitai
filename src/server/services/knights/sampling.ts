@@ -19,6 +19,7 @@ import {
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export const KNIGHTS_SOURCE_SCAN_SAMPLE = 'scan-sample';
+export const KNIGHTS_SOURCE_OWNER_RATING = 'owner-rating';
 
 /**
  * Both samplers (a scan result, the publish sweep): only a live post, and an image is asked about at most once ever, so a
@@ -27,6 +28,12 @@ export const KNIGHTS_SOURCE_SCAN_SAMPLE = 'scan-sample';
 export const KNIGHTS_SAMPLE_ENQUEUE_OPTIONS: EnqueueOptions = {
   requirePublished: true,
   oncePerImage: true,
+};
+
+/** An owner's own rating: only a live post, still images only (Knights serves only those). */
+export const KNIGHTS_OWNER_RATING_ENQUEUE_OPTIONS: EnqueueOptions = {
+  requirePublished: true,
+  stillImagesOnly: true,
 };
 
 /**
@@ -154,11 +161,34 @@ export async function sampleNewlyLivePostsForKnights(
   const postIds = [...fresh, ...overlap].map((p) => p.id);
   if (postIds.length === 0) return result;
 
+  const sampled = await sampleImagesForKnights(db, { scope: { postIds }, now, config });
+  result.enqueued = sampled.enqueued;
+  result.capped = sampled.capped;
+  return result;
+}
+
+/** The images a sampler reads: those of some posts, or some images by id. */
+export type KnightsSampleScope = { postIds: number[] } | { imageIds: number[] };
+
+/**
+ * Samples the images in `scope` the way the publish sweep does: scanned, `servableImageContent` still images on a post that
+ * is not Private, SFW and NSFW split on `Image.nsfwLevel`, each drawn with `knightsSampleDraw` against its pool's rate.
+ * Images that already had an item are dropped before the cap is counted; at most as many are queued as keep the open count
+ * within `maxOpen`.
+ */
+export async function sampleImagesForKnights(
+  db: Kysely<DB>,
+  { scope, now, config }: { scope: KnightsSampleScope; now: Date; config: KnightsSourcesConfig }
+): Promise<{ enqueued: number; capped: boolean }> {
+  const result = { enqueued: 0, capped: false };
+  const ids = 'postIds' in scope ? scope.postIds : scope.imageIds;
+  if (!config.enabled || ids.length === 0) return result;
+
   const images = await db
     .selectFrom('Image as img')
     .innerJoin('Post as p', 'p.id', 'img.postId')
     .select(['img.id', 'img.nsfwLevel'])
-    .where('img.postId', 'in', postIds)
+    .where('postIds' in scope ? 'img.postId' : 'img.id', 'in', ids)
     .where(servableImageContent)
     .where(postNotPrivate)
     .where('img.ingestion', '=', 'Scanned')
@@ -213,6 +243,57 @@ export async function sampleNewlyLivePostsForKnights(
     result.enqueued += outcomes.filter((o) => o.outcome === 'enqueued').length;
   }
   return result;
+}
+
+/**
+ * For images whose post has just stopped being Private, which keeps its `publishedAt`, so the publish sweep does not read
+ * it again. First the owner ratings refused while the post was Private: an image with the owner's `ImageRatingRequest` and
+ * no item ever is queued as an owner rating. Then the rest are sampled as the sweep would have sampled them.
+ */
+export async function offerLeftPrivateImagesToKnights(
+  db: Kysely<DB>,
+  { scope, now, config }: { scope: KnightsSampleScope; now: Date; config: KnightsSourcesConfig }
+): Promise<{ ownerRatings: number; enqueued: number; capped: boolean }> {
+  const ids = 'postIds' in scope ? scope.postIds : scope.imageIds;
+  if (!config.enabled || ids.length === 0) return { ownerRatings: 0, enqueued: 0, capped: false };
+
+  const rated = await db
+    .selectFrom('Image as img')
+    .innerJoin('ImageRatingRequest as r', (join) =>
+      join.onRef('r.imageId', '=', 'img.id').onRef('r.userId', '=', 'img.userId')
+    )
+    .select('img.id')
+    .where('postIds' in scope ? 'img.postId' : 'img.id', 'in', ids)
+    .where((eb) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('KnightsQueueItem as k')
+            .select('k.id')
+            .whereRef('k.imageId', '=', 'img.id')
+            .where('k.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
+            .where('k.isHiddenCheck', '=', false)
+        )
+      )
+    )
+    .orderBy('img.id', 'asc')
+    .execute();
+  let ownerRatings = 0;
+  for (let i = 0; i < rated.length; i += ENQUEUE_CHUNK) {
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: KNIGHTS_SOURCE_OWNER_RATING,
+        questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
+        items: rated.slice(i, i + ENQUEUE_CHUNK).map(({ id }) => ({ imageId: id, priority: 1 })),
+      },
+      now,
+      { ...KNIGHTS_OWNER_RATING_ENQUEUE_OPTIONS, oncePerImage: true }
+    );
+    ownerRatings += outcomes.filter((o) => o.outcome === 'enqueued').length;
+  }
+
+  return { ownerRatings, ...(await sampleImagesForKnights(db, { scope, now, config })) };
 }
 
 /**

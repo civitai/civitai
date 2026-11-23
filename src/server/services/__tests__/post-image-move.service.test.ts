@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   userPostCountRefresh: vi.fn(),
   preventReplicationLag: vi.fn(),
   bustCacheTag: vi.fn(),
+  queueLeftPrivateForKnights: vi.fn(),
 }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
@@ -31,6 +32,9 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
   bustCachesForPosts: mocks.bustCachesForPosts,
   updatePostNsfwLevel: mocks.updatePostNsfwLevel,
+}));
+vi.mock('~/server/services/knights/sources', () => ({
+  queueLeftPrivateForKnights: mocks.queueLeftPrivateForKnights,
 }));
 vi.mock('~/server/metrics', async (importOriginal) => ({
   ...(await importOriginal<typeof Metrics>()),
@@ -139,6 +143,24 @@ beforeEach(() => {
 });
 
 describe('moveImagesToPost', () => {
+  const moveInto = async (from: Availability, to: Availability) => {
+    mockPosts(postRow({ availability: from }), postRow({ id: 2, availability: to }));
+    await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, toPostId: 2, userId: USER });
+  };
+
+  it('offers the moved images to Knights when they leave a Private post for one that is not', async () => {
+    await moveInto(Availability.Private, Availability.Public);
+
+    expect(mocks.queueLeftPrivateForKnights.mock.calls).toEqual([[{ imageIds: [100, 101] }]]);
+  });
+
+  it('offers nothing when the images were not on a Private post, or stay Private (controls)', async () => {
+    await moveInto(Availability.Public, Availability.Public);
+    await moveInto(Availability.Private, Availability.Private);
+
+    expect(mocks.queueLeftPrivateForKnights).not.toHaveBeenCalled();
+  });
+
   it('repoints the images, appends them after the target images, and queues both posts', async () => {
     mockPosts(
       postRow(),

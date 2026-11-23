@@ -13,13 +13,16 @@ import {
   type EnqueueOptions,
 } from '~/server/services/knights/enqueue.service';
 import {
+  KNIGHTS_OWNER_RATING_ENQUEUE_OPTIONS,
   KNIGHTS_SAMPLE_ENQUEUE_OPTIONS,
+  KNIGHTS_SOURCE_OWNER_RATING,
   KNIGHTS_SOURCE_SCAN_SAMPLE,
   knightsSampleDraw,
+  offerLeftPrivateImagesToKnights,
+  type KnightsSampleScope,
 } from '~/server/services/knights/sampling';
 
-export { KNIGHTS_SOURCE_SCAN_SAMPLE };
-export const KNIGHTS_SOURCE_OWNER_RATING = 'owner-rating';
+export { KNIGHTS_SOURCE_OWNER_RATING, KNIGHTS_SOURCE_SCAN_SAMPLE };
 
 export { parseKnightsSourcesConfig, type KnightsSourcesConfig };
 
@@ -195,7 +198,24 @@ export function queueOwnerRatingForKnights(imageId: number): Promise<void> {
     'knights-v2-owner-rating-error',
     KNIGHTS_SOURCE_OWNER_RATING,
     { imageId, priority: 1 },
-    { requirePublished: true, stillImagesOnly: true },
+    KNIGHTS_OWNER_RATING_ENQUEUE_OPTIONS,
     () => true
   );
+}
+
+/**
+ * Call once the write that took a post (or images) out of Private has committed. Never throws into the caller: a failure is
+ * logged and the images stay unoffered.
+ */
+export async function queueLeftPrivateForKnights(scope: KnightsSampleScope): Promise<void> {
+  try {
+    const config = await getKnightsSourcesConfig();
+    if (!config.enabled) return;
+    await offerLeftPrivateImagesToKnights(kyselyWrite, { scope, now: new Date(), config });
+  } catch (error) {
+    logToAxiom(
+      { type: 'knights-v2-left-private-error', scope, error: (error as Error).message },
+      'knights-v2-sources'
+    );
+  }
 }

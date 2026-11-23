@@ -8,6 +8,7 @@ import type {
 } from '~/server/schema/base.schema';
 import { supportedAvailabilityResources } from '~/server/schema/base.schema';
 import { entityAvailabilityUpdate, hasEntityAccess } from '~/server/services/common.service';
+import { queueLeftPrivateForKnights } from '~/server/services/knights/sources';
 import { throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { dbRead, dbWrite } from '../db/client';
@@ -108,6 +109,8 @@ export const updateEntityAvailabilityHandler = async ({
         );
         break;
       case 'Post':
+        if (availability !== Availability.Private)
+          await queueLeftPrivateForKnights({ postIds: [entityId] });
         const images = await dbRead.image.findMany({
           where: { postId: entityId },
           select: { id: true },

@@ -9,6 +9,7 @@ import { userPostCountCache } from '~/server/redis/caches';
 import type { MoveImagesToPostInput } from '~/server/schema/post.schema';
 import { createImageResources, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { enqueueJobs } from '~/server/services/job-queue.service';
+import { queueLeftPrivateForKnights } from '~/server/services/knights/sources';
 import { assertAccountNotUnderLegalHold } from '~/server/services/legal-hold.service';
 import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
@@ -22,8 +23,12 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import type { Availability } from '~/shared/utils/prisma/enums';
-import { EntityType, ImageIngestionStatus, JobQueueType } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  EntityType,
+  ImageIngestionStatus,
+  JobQueueType,
+} from '~/shared/utils/prisma/enums';
 import type { ImageMoveRefusal, MovePostRow } from '~/server/services/post-image-move.rules';
 import { getImageMoveRefusal, IMAGES_NOT_MOVABLE } from '~/server/services/post-image-move.rules';
 
@@ -45,35 +50,36 @@ export async function moveImagesToPost({
     throw throwBadRequestError(IMAGES_NOT_MOVABLE);
   });
 
-  const { targetPostId, targetModelVersionId } = await dbWrite.$transaction(async (tx) => {
-    // A split publishes a new post on the source's version, so it reads the takedown as createPost
-    // does. Locked before the posts: a takedown locks the version and then its posts.
-    const [splitVersion] = toPostId
-      ? []
-      : await tx.$queryRaw<{ modelVersionId: number; ownsModel: boolean }[]>`
+  const { targetPostId, targetModelVersionId, leftPrivate } = await dbWrite.$transaction(
+    async (tx) => {
+      // A split publishes a new post on the source's version, so it reads the takedown as createPost
+      // does. Locked before the posts: a takedown locks the version and then its posts.
+      const [splitVersion] = toPostId
+        ? []
+        : await tx.$queryRaw<{ modelVersionId: number; ownsModel: boolean }[]>`
           SELECT p."modelVersionId", m."userId" = p."userId" AS "ownsModel"
           FROM "Post" p
           JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
           JOIN "Model" m ON m.id = mv."modelId"
           WHERE p.id = ${fromPostId}
         `;
-    const splitVersionDowned = splitVersion
-      ? await readDownedVersion(
-          tx,
-          splitVersion.modelVersionId,
-          splitVersion.ownsModel ? 'share' : false
-        )
-      : false;
+      const splitVersionDowned = splitVersion
+        ? await readDownedVersion(
+            tx,
+            splitVersion.modelVersionId,
+            splitVersion.ownsModel ? 'share' : false
+          )
+        : false;
 
-    const postIds = toPostId ? [fromPostId, toPostId] : [fromPostId];
-    // Locked so concurrent moves into the same post cannot both pass the image cap.
-    const posts = await tx.$queryRaw<
-      (MovePostRow & {
-        modelVersionId: number | null;
-        availability: Availability;
-        unlisted: boolean;
-      })[]
-    >`
+      const postIds = toPostId ? [fromPostId, toPostId] : [fromPostId];
+      // Locked so concurrent moves into the same post cannot both pass the image cap.
+      const posts = await tx.$queryRaw<
+        (MovePostRow & {
+          modelVersionId: number | null;
+          availability: Availability;
+          unlisted: boolean;
+        })[]
+      >`
       SELECT p.id, p."userId", p."publishedAt", p."tosViolation", p."modelVersionId",
              p.availability, p.unlisted,
              COALESCE(c.mode = 'Contest'::"CollectionMode", false) AS "isContest",
@@ -84,117 +90,124 @@ export async function moveImagesToPost({
       ORDER BY p.id
       FOR UPDATE OF p
     `;
-    const source = posts.find((p) => p.id === fromPostId);
-    const target = toPostId ? posts.find((p) => p.id === toPostId) : null;
+      const source = posts.find((p) => p.id === fromPostId);
+      const target = toPostId ? posts.find((p) => p.id === toPostId) : null;
 
-    const images = await tx.image.findMany({
-      where: { id: { in: imageIds } },
-      select: {
-        id: true,
-        userId: true,
-        postId: true,
-        tosViolation: true,
-        ingestion: true,
-        needsReview: true,
-      },
-    });
-    const sourceImageCount = await tx.image.count({ where: { postId: fromPostId } });
-    const targetImageCount = target ? await tx.image.count({ where: { postId: target.id } }) : 0;
-
-    const refusal = getImageMoveRefusal({
-      userId,
-      imageIds,
-      source,
-      target,
-      images,
-      sourceImageCount,
-      targetImageCount,
-    });
-    if (refusal) throwRefusal(refusal);
-    // Narrowed by the refusal check above.
-    const sourcePost = source as NonNullable<typeof source> & { publishedAt: Date };
-    if (!toPostId && sourcePost.modelVersionId !== (splitVersion?.modelVersionId ?? null))
-      throw throwBadRequestError('The post changed while moving; try again');
-    if (splitVersionDowned) throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
-
-    let destination = target;
-    if (!destination) {
-      const created = await tx.post.create({
-        data: {
-          userId,
-          availability: sourcePost.availability,
-          unlisted: sourcePost.unlisted,
-          modelVersionId: sourcePost.modelVersionId,
+      const images = await tx.image.findMany({
+        where: { id: { in: imageIds } },
+        select: {
+          id: true,
+          userId: true,
+          postId: true,
+          tosViolation: true,
+          ingestion: true,
+          needsReview: true,
         },
-        select: { id: true },
       });
-      // Published by UPDATE rather than on insert so the publish triggers
-      // (`publish_post_metrics`, `post_nsfw_level_change`) fire as for any other post.
-      await tx.post.update({
-        where: { id: created.id },
-        data: { publishedAt: sourcePost.publishedAt },
+      const sourceImageCount = await tx.image.count({ where: { postId: fromPostId } });
+      const targetImageCount = target ? await tx.image.count({ where: { postId: target.id } }) : 0;
+
+      const refusal = getImageMoveRefusal({
+        userId,
+        imageIds,
+        source,
+        target,
+        images,
+        sourceImageCount,
+        targetImageCount,
       });
-      destination = {
-        ...sourcePost,
-        id: created.id,
-        isContest: false,
-        isChapter: false,
-        tosViolation: false,
+      if (refusal) throwRefusal(refusal);
+      // Narrowed by the refusal check above.
+      const sourcePost = source as NonNullable<typeof source> & { publishedAt: Date };
+      if (!toPostId && sourcePost.modelVersionId !== (splitVersion?.modelVersionId ?? null))
+        throw throwBadRequestError('The post changed while moving; try again');
+      if (splitVersionDowned) throw throwBadRequestError(TAKEN_DOWN_PUBLISH_ERROR);
+
+      let destination = target;
+      if (!destination) {
+        const created = await tx.post.create({
+          data: {
+            userId,
+            availability: sourcePost.availability,
+            unlisted: sourcePost.unlisted,
+            modelVersionId: sourcePost.modelVersionId,
+          },
+          select: { id: true },
+        });
+        // Published by UPDATE rather than on insert so the publish triggers
+        // (`publish_post_metrics`, `post_nsfw_level_change`) fire as for any other post.
+        await tx.post.update({
+          where: { id: created.id },
+          data: { publishedAt: sourcePost.publishedAt },
+        });
+        destination = {
+          ...sourcePost,
+          id: created.id,
+          isContest: false,
+          isChapter: false,
+          tosViolation: false,
+        };
+      }
+
+      // After the destination's last item, its storyline text items included.
+      const {
+        _max: { index: maxImageIndex },
+      } = await tx.image.aggregate({ where: { postId: destination.id }, _max: { index: true } });
+      const {
+        _max: { index: maxTextIndex },
+      } = await tx.postText.aggregate({ where: { postId: destination.id }, _max: { index: true } });
+      const firstIndex = Math.max(maxImageIndex ?? -1, maxTextIndex ?? -1) + 1;
+      for (const [i, id] of imageIds.entries()) {
+        // Image rows are not locked, so the write re-checks what the refusal read.
+        const { count } = await tx.image.updateMany({
+          where: {
+            id,
+            userId,
+            postId: fromPostId,
+            tosViolation: false,
+            needsReview: null,
+            ingestion: ImageIngestionStatus.Scanned,
+          },
+          data: { postId: destination.id, index: firstIndex + i },
+        });
+        if (count !== 1) throw throwBadRequestError('An image changed while moving; try again');
+      }
+
+      // The source post's version is an undetected resource on its images only because they sat
+      // in that post. Detected rows came from the image itself and stay.
+      if (sourcePost.modelVersionId && destination.modelVersionId !== sourcePost.modelVersionId)
+        await tx.imageResourceNew.deleteMany({
+          where: {
+            imageId: { in: imageIds },
+            modelVersionId: sourcePost.modelVersionId,
+            detected: false,
+          },
+        });
+
+      // A postId change fires no nsfw trigger, and `update-nsfw-levels` is the only writer of
+      // Post.nsfwLevel (and walks on to the model version and model).
+      await enqueueJobs(
+        [
+          { entityId: fromPostId, entityType: EntityType.Post, type: JobQueueType.UpdateNsfwLevel },
+          {
+            entityId: destination.id,
+            entityType: EntityType.Post,
+            type: JobQueueType.UpdateNsfwLevel,
+          },
+          { entityId: fromPostId, entityType: EntityType.Post, type: JobQueueType.CleanIfEmpty },
+        ],
+        tx
+      );
+
+      return {
+        targetPostId: destination.id,
+        targetModelVersionId: target?.modelVersionId ?? null,
+        leftPrivate:
+          sourcePost.availability === Availability.Private &&
+          destination.availability !== Availability.Private,
       };
     }
-
-    // After the destination's last item, its storyline text items included.
-    const {
-      _max: { index: maxImageIndex },
-    } = await tx.image.aggregate({ where: { postId: destination.id }, _max: { index: true } });
-    const {
-      _max: { index: maxTextIndex },
-    } = await tx.postText.aggregate({ where: { postId: destination.id }, _max: { index: true } });
-    const firstIndex = Math.max(maxImageIndex ?? -1, maxTextIndex ?? -1) + 1;
-    for (const [i, id] of imageIds.entries()) {
-      // Image rows are not locked, so the write re-checks what the refusal read.
-      const { count } = await tx.image.updateMany({
-        where: {
-          id,
-          userId,
-          postId: fromPostId,
-          tosViolation: false,
-          needsReview: null,
-          ingestion: ImageIngestionStatus.Scanned,
-        },
-        data: { postId: destination.id, index: firstIndex + i },
-      });
-      if (count !== 1) throw throwBadRequestError('An image changed while moving; try again');
-    }
-
-    // The source post's version is an undetected resource on its images only because they sat
-    // in that post. Detected rows came from the image itself and stay.
-    if (sourcePost.modelVersionId && destination.modelVersionId !== sourcePost.modelVersionId)
-      await tx.imageResourceNew.deleteMany({
-        where: {
-          imageId: { in: imageIds },
-          modelVersionId: sourcePost.modelVersionId,
-          detected: false,
-        },
-      });
-
-    // A postId change fires no nsfw trigger, and `update-nsfw-levels` is the only writer of
-    // Post.nsfwLevel (and walks on to the model version and model).
-    await enqueueJobs(
-      [
-        { entityId: fromPostId, entityType: EntityType.Post, type: JobQueueType.UpdateNsfwLevel },
-        {
-          entityId: destination.id,
-          entityType: EntityType.Post,
-          type: JobQueueType.UpdateNsfwLevel,
-        },
-        { entityId: fromPostId, entityType: EntityType.Post, type: JobQueueType.CleanIfEmpty },
-      ],
-      tx
-    );
-
-    return { targetPostId: destination.id, targetModelVersionId: target?.modelVersionId ?? null };
-  });
+  );
 
   const postIds = [fromPostId, targetPostId];
   const results = await Promise.allSettled([
@@ -218,6 +231,7 @@ export async function moveImagesToPost({
       toPostId: targetPostId,
       errors: failures.map((f) => safeError(f.reason)),
     });
+  if (leftPrivate) await queueLeftPrivateForKnights({ imageIds });
 
   return { postId: targetPostId };
 }

@@ -1,4 +1,5 @@
 import type { withCuratedShowcases } from '~/server/services/version-showcase.service';
+import { queueLeftPrivateForKnights } from '~/server/services/knights/sources';
 import { deletePostRows } from '@civitai/db-queries/content-deletion';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
 import { PLATFORM_REVENUE_SOURCES_SQL } from '@civitai/buzz';
@@ -8370,6 +8371,11 @@ export const publishPrivateModel = async (
       'Post',
       posts.map((p) => p.id)
     );
+    const leftPrivate = await dbWrite.post.findMany({
+      where: { modelVersionId: { in: versionIds } },
+      select: { id: true },
+    });
+    await queueLeftPrivateForKnights({ postIds: leftPrivate.map((p) => p.id) });
   }
 
   return { versionIds, held: false };

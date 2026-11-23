@@ -79,6 +79,7 @@ vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersionCache: {},
   queueImageSearchIndexUpdate: vi.fn(),
 }));
+vi.mock('~/server/services/knights/sources', () => ({ queueLeftPrivateForKnights: vi.fn() }));
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: vi.fn(),
@@ -143,6 +144,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import { deleteBidsForModel } from '~/server/services/auction.service';
+import { queueLeftPrivateForKnights } from '~/server/services/knights/sources';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
@@ -1006,6 +1008,29 @@ describe('publishPrivateModel', () => {
     takenDownMeanwhile({ model: true });
 
     await expect(publish(true)).resolves.toEqual({ versionIds: [1], held: false });
+  });
+
+  it('offers every post of the published versions to Knights once the publish has committed', async () => {
+    mockPrivateModel({});
+    mockDbWrite.post.findMany.mockImplementation((async (args: { where: { userId?: number } }) =>
+      args.where.userId === undefined
+        ? [{ id: 70 }, { id: 71 }]
+        : [{ id: 70, modelVersionId: 1 }]) as never);
+
+    await publish(false);
+
+    expect(vi.mocked(queueLeftPrivateForKnights).mock.calls).toEqual([[{ postIds: [70, 71] }]]);
+    expect(vi.mocked(queueLeftPrivateForKnights).mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockDbWrite.$transaction.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('offers nothing when the versions go back to drafts (control)', async () => {
+    mockPrivateModel({});
+
+    await publish(false, false);
+
+    expect(queueLeftPrivateForKnights).not.toHaveBeenCalled();
   });
 
   it("republishes only the owner's posts", async () => {
