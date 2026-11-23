@@ -5,7 +5,6 @@ import { page } from 'vitest/browser';
 import '@mantine/core/styles.css';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import type * as DialogStoreModule from '~/components/Dialog/dialogStore';
-import type * as AuthHelpersModule from '~/utils/auth-helpers';
 import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -15,7 +14,6 @@ import { ServiceOfferingMenu } from './ServiceOfferingMenu';
 const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   openReportModal: vi.fn(),
-  openLoginPopup: vi.fn(),
   trigger: vi.fn(),
   notifyError: vi.fn(),
   getMine: vi.fn(),
@@ -50,16 +48,14 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
   showErrorNotification: mocks.notifyError,
 }));
 vi.mock('~/components/Dialog/triggers/report', () => ({ openReportModal: mocks.openReportModal }));
-// LoginRedirect and requireLogin are the real ones; only the session flag, the router, the tour
-// context and the login popup, the boundaries they read and open, are stood in for.
-vi.mock('~/utils/auth-helpers', async (importOriginal) => ({
-  ...(await importOriginal<typeof AuthHelpersModule>()),
-  openLoginPopup: mocks.openLoginPopup,
-}));
+// LoginRedirect and requireLogin are the real ones; only the session flag, the router and the tour
+// context, the boundaries they read, are stood in for, and the login popup is a window.open spy.
 vi.mock('~/components/Tours/ToursProvider', () => ({
   useTourContext: () => ({ running: false, pauseTour: vi.fn(), activeTour: null }),
 }));
 vi.mock('next/router', () => ({ useRouter: () => ({ asPath: '/services/42' }) }));
+
+const openWindow = vi.spyOn(window, 'open').mockReturnValue({ closed: true } as Window);
 
 const offering = { id: 42, title: 'Portrait commission' };
 const open = async (props: {
@@ -80,6 +76,7 @@ describe('ServiceOfferingMenu', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.isAuthed = true;
+    openWindow.mockClear();
   });
 
   test('a visitor can report and not delete', async () => {
@@ -99,7 +96,7 @@ describe('ServiceOfferingMenu', () => {
     await open({ isOwner: false, isModerator: false });
     await expect.element(item('Report this service')).toBeVisible();
     await item('Report this service').click();
-    expect(mocks.openLoginPopup).toHaveBeenCalledTimes(1);
+    expect(openWindow).toHaveBeenCalledTimes(1);
     expect(mocks.openReportModal).not.toHaveBeenCalled();
   });
 

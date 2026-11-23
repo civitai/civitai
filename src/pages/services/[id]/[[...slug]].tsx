@@ -6,7 +6,6 @@ import * as z from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
-import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import {
@@ -17,6 +16,7 @@ import {
   ServiceOfferingLicense,
   ServiceRequestModal,
 } from '~/components/CreatorShop/Services/deals/ServiceRequestModal';
+import { useServiceBuzzType } from '~/components/CreatorShop/Services/useServiceBuzzType';
 import { SERVICE_LICENSE_PRESET_LABELS } from '~/shared/constants/creator-service-license.constants';
 import {
   BlurCaption,
@@ -71,7 +71,7 @@ export const getServerSideProps = createServerSideProps({
 
 function ServicePage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
-  const [buzzType] = useAvailableBuzz();
+  const buzzType = useServiceBuzzType();
   const { data: offering, isLoading } = trpc.creatorService.getById.useQuery({ id });
 
   if (isLoading) return <PageLoader />;

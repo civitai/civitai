@@ -15,9 +15,12 @@ import type { ReactNode } from 'react';
 import { useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { useServiceBuzzType } from '~/components/CreatorShop/Services/useServiceBuzzType';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
-import { serviceTermsLine } from '~/components/CreatorShop/Services/creator-service.util';
+import {
+  serviceHoldButtonProps,
+  serviceTermsLine,
+} from '~/components/CreatorShop/Services/creator-service.util';
 import {
   ServiceLicenseTerms,
   hasServiceLicense,
@@ -64,7 +67,7 @@ export function ServiceRequestModal({
 }) {
   const dialog = useDialogContext();
   const features = useOptionalFeatureFlags();
-  const [buzzType] = useAvailableBuzz();
+  const buzzType = useServiceBuzzType();
   const router = useRouter();
   const utils = trpc.useUtils();
   const [text, setText] = useState('');
@@ -159,13 +162,7 @@ export function ServiceRequestModal({
             <BuzzTransactionButton
               buzzAmount={offering.price}
               colorType={buzzType}
-              // The badge carries the amount, so the label is the short form; the full legal text
-              // stays as the accessible name.
-              label="Hold and send request"
-              aria-label={buyerHoldButtonLabel(offering.price)}
-              // A buyer who is short buys Buzz, then clicks again: the hold is never placed on the
-              // back of a purchase.
-              performTransactionOnPurchase={false}
+              {...serviceHoldButtonProps(offering.price)}
               disabled={disabled}
               loading={request.isPending}
               onPerformTransaction={sendRequest}
