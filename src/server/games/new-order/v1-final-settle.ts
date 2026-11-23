@@ -41,9 +41,9 @@ export async function countPendingV1Votes() {
   };
 }
 
-/** Payout-blocked players with v1 judgments the nightly grant held back (it held from two days
- *  before the block). Clearing their block no longer pays those, so they stay held. */
-export async function countHeldV1Players() {
+/** Payout-blocked players with v1 judgments nothing pays: the nightly grant held from two days before
+ *  the block, and `pay` skips a blocked player from `from` on. Clearing the block no longer pays them. */
+export async function countHeldV1Players(from?: Date) {
   const blocked = await dbRead.newOrderPlayer.findMany({
     where: { payoutBlockedAt: { not: null } },
     select: { userId: true, payoutBlockedAt: true },
@@ -52,10 +52,10 @@ export async function countHeldV1Players() {
   const conditions = blocked
     .map(
       (p) =>
-        `(userId = ${p.userId} AND createdAt >= parseDateTimeBestEffort('${dayjs(p.payoutBlockedAt!)
-          .startOf('day')
-          .subtract(2, 'day')
-          .toISOString()}'))`
+        `(userId = ${p.userId} AND createdAt >= parseDateTimeBestEffort('${heldFrom(
+          p.payoutBlockedAt!,
+          from
+        ).toISOString()}'))`
     )
     .join(' OR ');
   const [row] = await requireClickhouse().$query<{ players: number }>`
@@ -65,6 +65,13 @@ export async function countHeldV1Players() {
       AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}')
   `;
   return { blocked: blocked.length, withHeldJudgments: Number(row?.players ?? 0) };
+}
+
+function heldFrom(blockedAt: Date, from?: Date) {
+  const nightlyHeldFrom = dayjs(blockedAt).startOf('day').subtract(2, 'day');
+  return from && dayjs(from).isBefore(nightlyHeldFrom)
+    ? dayjs(from).startOf('day').toDate()
+    : nightlyHeldFrom.toDate();
 }
 
 /** Settles every vote still Pending as Inconclusive, as the daily rating-slot purge did. Those pay
