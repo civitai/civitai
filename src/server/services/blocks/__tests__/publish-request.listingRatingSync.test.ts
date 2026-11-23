@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AppListingAssets from '~/server/services/blocks/app-listing-assets.service';
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
+import type * as VersionRating from '~/server/services/blocks/app-listing-version-rating.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
 
@@ -87,15 +88,30 @@ vi.mock('~/utils/bundle-s3', () => ({
   getBundleBucket: () => 'bundles',
   getBundleS3Client: () => s3,
 }));
+// The real rule, watched: the approve and the moderator re-sync must both go through it.
+const { versionRatingSpy } = vi.hoisted(() => ({ versionRatingSpy: vi.fn() }));
+vi.mock('~/server/services/blocks/app-listing-version-rating.service', async (importOriginal) => {
+  const real = await importOriginal<typeof VersionRating>();
+  return {
+    ...real,
+    resolveVersionListingRating: (...a: Parameters<typeof real.resolveVersionListingRating>) => {
+      versionRatingSpy(...a);
+      return real.resolveVersionListingRating(...a);
+    },
+  };
+});
 // The scan-clean gate is a no-op here; the RATING FLOOR is the real one.
 vi.mock('~/server/services/blocks/app-listing-assets.service', async (importOriginal) => ({
   ...(await importOriginal<typeof AppListingAssets>()),
   assertListingAssetsScanCleanInTx: vi.fn(async () => undefined),
 }));
 
-const { approveRequest, previewVersionListingRating } = await import(
-  '~/server/services/blocks/publish-request.service'
-);
+const {
+  approveRequest,
+  previewVersionListingRating,
+  previewListingRatingResync,
+  resyncListingRating,
+} = await import('~/server/services/blocks/publish-request.service');
 const { NsfwLevel } = await import('~/server/common/enums');
 const { createSplitDb } = await import('./listing-media-split.harness');
 
@@ -229,6 +245,8 @@ beforeEach(async () => {
   vi.clearAllMocks();
   screenshots = {};
   previousDeclared = 'x';
+  db.read.appBlockPublishRequest.findMany.mockResolvedValue([] as never);
+  db.write.appBlockPublishRequest.findMany.mockResolvedValue([] as never);
   db.write.appBlockPublishRequest.update.mockImplementation(
     async (a: { data?: unknown }) => a?.data ?? {}
   );
@@ -432,5 +450,102 @@ describe('previewVersionListingRating — what the approve bar shows the moderat
       manifest: MANIFEST,
     } as never);
     expect(await previewVersionListingRating('req_1')).toBeNull();
+  });
+});
+
+/**
+ * The moderator action that re-runs the sync for an app approved before it existed. The app is
+ * live at its current version (`pg13`); the approved versions are read newest first.
+ */
+describe('resyncListingRating — the moderator re-sync of one approved listing', () => {
+  function approvedApp(versions: string[]) {
+    for (const client of [db.read, db.write]) {
+      client.appBlock.findUnique.mockImplementation((async () => ({
+        status: 'approved',
+        contentRating: versions[0],
+      })) as never);
+      client.appBlockPublishRequest.findMany.mockResolvedValue(
+        versions.slice(0, 2).map((r) => ({ manifest: { ...MANIFEST, contentRating: r } })) as never
+      );
+    }
+  }
+  const resync = () => resyncListingRating({ appBlockId: 'apb_1', actorUserId: MOD });
+
+  it('🔴 re-rates an `x` listing whose current version declares `pg13`, as the approve would, and records it', async () => {
+    seedListings();
+    approvedApp(['pg13', 'x']);
+    const preview = await previewListingRatingResync('apb_1');
+    expect(preview).toEqual({ listingId: LIVE, from: 'x', to: 'pg13' });
+    expect(await resync()).toEqual({ listingId: LIVE, from: 'x', to: 'pg13', changed: true });
+    // The preview and the write agree.
+    expect(row(LIVE).contentRating).toBe(preview!.to);
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: LIVE,
+      slug: 'cool-app',
+      before: 'x',
+      after: 'pg13',
+      actorUserId: MOD,
+    });
+  });
+
+  it('uses the approve’s own rule: both call resolveVersionListingRating with the same inputs', async () => {
+    seedListings();
+    await approve();
+    expect(versionRatingSpy).toHaveBeenCalledTimes(1);
+    const fromApprove = versionRatingSpy.mock.calls[0][1];
+    seedListings();
+    approvedApp(['pg13', 'x']);
+    versionRatingSpy.mockClear();
+    await resync();
+    expect(versionRatingSpy).toHaveBeenCalledTimes(1);
+    expect(versionRatingSpy.mock.calls[0][1]).toEqual(fromApprove);
+    expect(fromApprove).toEqual({
+      appListingId: LIVE,
+      current: 'x',
+      previousDeclared: 'x',
+      nextDeclared: 'pg13',
+    });
+  });
+
+  it('keeps a moderator’s raise: an `r` listing on a `pg13` app is left as it is', async () => {
+    seedListings({ rating: 'r' });
+    approvedApp(['pg13', 'pg13']);
+    expect(await previewListingRatingResync('apb_1')).toEqual({
+      listingId: LIVE,
+      from: 'r',
+      to: 'r',
+    });
+    expect(await resync()).toEqual({ listingId: LIVE, from: 'r', to: 'r', changed: false });
+    expect(row(LIVE).contentRating).toBe('r');
+    expect(recordRatingChange).not.toHaveBeenCalled();
+  });
+
+  it('a first version is its own previous version', async () => {
+    seedListings({ rating: 'x' });
+    approvedApp(['x']);
+    expect(await resync()).toMatchObject({ from: 'x', to: 'x', changed: false });
+  });
+
+  it('refuses, writing nothing, when the rating moved between the read and the write', async () => {
+    seedListings();
+    approvedApp(['pg13', 'x']);
+    db.write.appListing.updateMany.mockResolvedValueOnce({ count: 0 } as never);
+    await expect(resync()).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(recordRatingChange).not.toHaveBeenCalled();
+  });
+
+  it('NOT_FOUND for an app with no approved on-site listing, or an app that is not approved', async () => {
+    seedListings({ kind: 'offsite' });
+    approvedApp(['pg13', 'x']);
+    await expect(resync()).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(await previewListingRatingResync('apb_1')).toBeNull();
+    seedListings();
+    db.write.appBlock.findUnique.mockImplementation((async () => ({
+      status: 'suspended',
+      contentRating: 'pg13',
+    })) as never);
+    await expect(resync()).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(row(LIVE).contentRating).toBe('x');
   });
 });

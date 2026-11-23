@@ -2731,6 +2731,123 @@ export async function previewVersionListingRating(
   return { listingId: listing.id, from: listing.contentRating, to };
 }
 
+export type ListingRatingResync = { listingId: string; from: string | null; to: string | null };
+
+/** Typed failure from {@link resyncListingRating}; `code` drives the tRPC mapping. */
+export class ListingRatingResyncError extends Error {
+  constructor(public code: 'NOT_FOUND' | 'CONFLICT', message: string) {
+    super(message);
+    this.name = 'ListingRatingResyncError';
+  }
+}
+
+/**
+ * The (3b-sync) rating an APPROVED app's approved on-site listing would get if its current
+ * version were approved now: `resolveVersionListingRating` with the current version's declared
+ * rating as the new one and the version approved before it as the previous one (a first
+ * version is its own previous: its first approve rated the listing). `null` when the app is not
+ * approved or has no approved on-site listing.
+ */
+async function resolveListingRatingResync(
+  db: Prisma.TransactionClient,
+  appBlockId: string
+): Promise<(ListingRatingResync & { slug: string }) | null> {
+  const block = await db.appBlock.findUnique({
+    where: { id: appBlockId },
+    select: { status: true, contentRating: true },
+  });
+  if (!block || block.status !== 'approved') return null;
+  const listing = await db.appListing.findFirst({
+    where: { appBlockId, kind: 'onsite', status: 'approved' },
+    select: { id: true, slug: true, contentRating: true },
+  });
+  if (!listing) return null;
+  const approved = await db.appBlockPublishRequest.findMany({
+    where: { appBlockId, status: 'approved' },
+    orderBy: [{ reviewedAt: 'desc' }, { id: 'desc' }],
+    take: 2,
+    select: { manifest: true },
+  });
+  const previous = approved[1] ?? approved[0];
+  const { resolveVersionListingRating } = await import('./app-listing-version-rating.service');
+  const to = await resolveVersionListingRating(db, {
+    appListingId: listing.id,
+    current: listing.contentRating,
+    previousDeclared: previous ? manifestRatingOrDefault(previous.manifest) : block.contentRating,
+    nextDeclared: block.contentRating,
+  });
+  return { listingId: listing.id, slug: listing.slug, from: listing.contentRating, to };
+}
+
+/** MOD: what {@link resyncListingRating} would do to this app's listing (read on the replica). */
+export async function previewListingRatingResync(
+  appBlockId: string
+): Promise<ListingRatingResync | null> {
+  const { dbRead } = await import('~/server/db/client');
+  const target = await resolveListingRatingResync(dbRead, appBlockId);
+  return target ? { listingId: target.listingId, from: target.from, to: target.to } : null;
+}
+
+/**
+ * MOD: re-run the subsequent-version rating sync for one approved app's on-site listing, without
+ * approving anything — for a listing approved before the sync existed. Same rule and helper as
+ * the approve ({@link resolveListingRatingResync}). The write is guarded on the rating it was
+ * computed from, so a rating that moved in between refuses (CONFLICT) instead of being
+ * overwritten. A change is recorded as a `rating-change` event by the acting moderator, and
+ * the catalog cache is busted.
+ */
+export async function resyncListingRating(args: {
+  appBlockId: string;
+  actorUserId: number;
+}): Promise<ListingRatingResync & { changed: boolean }> {
+  const { dbWrite } = await import('~/server/db/client');
+  const target = await resolveListingRatingResync(dbWrite, args.appBlockId);
+  if (!target)
+    throw new ListingRatingResyncError(
+      'NOT_FOUND',
+      'No approved app with an approved on-site listing for that id.'
+    );
+  const result = { listingId: target.listingId, from: target.from, to: target.to };
+  if (target.to === target.from) return { ...result, changed: false };
+  const written = await dbWrite.appListing.updateMany({
+    where: {
+      id: target.listingId,
+      appBlockId: args.appBlockId,
+      kind: 'onsite',
+      status: 'approved',
+      contentRating: target.from,
+    },
+    data: { contentRating: target.to },
+  });
+  if (written.count === 0)
+    throw new ListingRatingResyncError(
+      'CONFLICT',
+      'The listing changed while it was being re-rated. Check the preview again.'
+    );
+  await recordListingRatingChangeAfterCommit({
+    appListingId: target.listingId,
+    slug: target.slug,
+    before: target.from,
+    after: target.to,
+    actorUserId: args.actorUserId,
+  });
+  try {
+    const { bustAppListingCatalogCache } = await import(
+      '~/server/services/blocks/app-listing.service'
+    );
+    await bustAppListingCatalogCache();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[resyncListingRating] catalog cache bust failed (listing=${target.listingId}); ` +
+        `the store grid self-corrects within CacheTTL.sm: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+    );
+  }
+  return { ...result, changed: true };
+}
+
 /** The rating a manifest declares; an app that declares none is approved as `g`. */
 function manifestRatingOrDefault(manifest: unknown): string {
   const rating = (manifest as { contentRating?: unknown } | null)?.contentRating;
