@@ -168,6 +168,29 @@ describe('signalsAt', () => {
     expect(signals.signalsAt(['knights-queue:Knight']).subscribed).toBe(false);
   });
 
+  it('ignores a confirmation asked for before a reconnect, and counts the one asked for after it', async () => {
+    signals.joinTopic('knights-queue:Knight');
+    await open();
+    const before = hub.state.invokes.find((c) => c.topic === 'knights-queue:Knight')!;
+
+    hub.state.state = 'Reconnecting';
+    hub.state.reconnecting.forEach((fn) => fn());
+    hub.state.state = 'Connected';
+    hub.state.reconnected.forEach((fn) => fn());
+    before.call.resolve();
+    await flush();
+    expect(signals.signalsAt(['knights-queue:Knight']).subscribed).toBe(false);
+
+    hub.state.invokes.at(-1)!.call.resolve();
+    await flush();
+    expect(signals.signalsAt(['knights-queue:Knight']).subscribed).toBe(true);
+  });
+
+  it('never reports subscribed when there is no topic to wait on', async () => {
+    await open();
+    expect(signals.signalsAt([])).toEqual({ connected: true, subscribed: false });
+  });
+
   it('reports not connected before the connection opens', () => {
     signals.joinTopic('knights-queue:Knight');
     expect(signals.signalsAt(['knights-queue:Knight'])).toEqual({

@@ -231,7 +231,7 @@
   };
 
   // The live connection at a vote's press: the server logs it when the vote is refused as settled.
-  const pressSignals = () => signalsAt(data.mode === 'queue' ? data.live.stages.map(queueTopic) : []);
+  const pressSignals = () => signalsAt(stageTopics);
 
   const answerOf = (submitter: HTMLElement | null) =>
     submitter instanceof HTMLButtonElement && submitter.name === 'answer' ? submitter.value : null;
@@ -242,8 +242,11 @@
     if (picked === BLOCKED_ANSWER && blockReason) formData.set('blockReason', blockReason);
     blockReason = null;
     if (picked) sound.play('press');
-    // A plain post leaves at once, so it waited for nothing.
-    if (picked) markPress(formData, pressSignals())();
+    if (picked) {
+      // A plain post starts at once: no vote is queued ahead of it.
+      const startPost = markPress(formData, pressSignals());
+      startPost();
+    }
     return async ({ result, update }) => {
       try {
         await update();
@@ -641,8 +644,10 @@
 
   // A primitive, so a page reload with the same stages does not leave and rejoin the topics.
   let stageList = $derived(data.mode === 'queue' ? data.live.stages.join(',') : '');
+  // The topics joined below; a vote's press also reads them (`pressSignals`). Empty outside queue mode.
+  let stageTopics = $derived(stageList ? stageList.split(',').map(queueTopic) : []);
   $effect(() => {
-    const leave = stageList ? stageList.split(',').map((stage) => joinTopic(queueTopic(stage))) : [];
+    const leave = stageTopics.map((topic) => joinTopic(topic));
     return () => leave.forEach((left) => left());
   });
 

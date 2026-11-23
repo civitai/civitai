@@ -6,6 +6,7 @@ import {
   KNIGHTS_STAGE_RANKS,
   KNIGHTS_WRITEBACK_REASONS,
 } from '@civitai/shared/new-order';
+import type { PressTiming } from '$lib/press';
 import { logToAxiom } from './axiom';
 import { loadGaugeSnapshot, registerGauges } from './metrics/gauges';
 
@@ -52,17 +53,6 @@ const REFUSAL_ACTIONS = ['vote', 'skip'] as const;
 export type RefusalKind = (typeof REFUSAL_KINDS)[number];
 export type RefusalAction = (typeof REFUSAL_ACTIONS)[number];
 
-/** What the client reported about a vote's press, untrusted; each field is null when missing or unreadable. */
-export type PressTiming = {
-  /** Client clock at the press, ms since the epoch. */
-  pressedAt: number | null;
-  /** Server arrival minus `pressedAt`: mixes two clocks, so skew is in it. */
-  pressGapMs: number | null;
-  /** How long the vote waited in the page's serial queue, measured on the client's own monotonic clock. */
-  waitedMs: number | null;
-  signalsConnected: boolean | null;
-  signalsSubscribed: boolean | null;
-};
 const TICK_FAILURE_STEPS = [
   'writeback',
   'moderator_ruled',

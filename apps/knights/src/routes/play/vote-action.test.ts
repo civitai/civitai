@@ -5,18 +5,10 @@ const feedSecretMock = vi.hoisted(() => vi.fn(() => 'secret'));
 const answerHiddenCheck = vi.hoisted(() => vi.fn());
 const castYesNoVote = vi.hoisted(() => vi.fn());
 const getStanding = vi.hoisted(() => vi.fn());
-const voteRefused = vi.hoisted(() => vi.fn());
-// The real `voteRefused`, so a test can read the Axiom row it writes.
-const realMetrics = vi.hoisted(() => ({ voteRefused: (..._args: unknown[]) => undefined }));
 const logToAxiom = vi.hoisted(() => vi.fn(async () => undefined));
 const creditLateJudgment = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/queue/vote-record', () => ({ creditLateJudgment }));
 vi.mock('$lib/server/axiom', () => ({ logToAxiom }));
-vi.mock('$lib/server/metrics', async (original) => {
-  const real = await original<typeof import('$lib/server/metrics')>();
-  realMetrics.voteRefused = real.metrics.voteRefused as (...args: unknown[]) => undefined;
-  return { ...real, metrics: { ...real.metrics, voteRefused } };
-});
 vi.mock('$lib/server/standing', async (original) => ({
   ...(await original<typeof import('$lib/server/standing')>()),
   getStanding,
@@ -49,6 +41,22 @@ vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ share: 0, st
 
 const { sealItem } = await import('$lib/server/feed-token');
 const { actions } = await import('./+page.server');
+const { markPress } = await import('./optimistic');
+
+// The `knights-vote-refused` rows written to Axiom, in order.
+type Row = { name: string; details: Record<string, unknown>; payload: Record<string, unknown> };
+const refusedRowsFull = () =>
+  (logToAxiom.mock.calls as unknown as [Row][])
+    .map(([row]) => row)
+    .filter((row) => row.name === 'knights-vote-refused');
+const refusedRows = () =>
+  refusedRowsFull().map(({ details, payload }) => ({
+    reason: details.reason,
+    kind: payload.kind,
+    playerId: details.playerId,
+    itemId: payload.itemId,
+    action: payload.action,
+  }));
 
 const queueItem = (id: number) => sealItem('secret', 7, { kind: 'queue', id });
 const hiddenItem = (id: number) => sealItem('secret', 7, { kind: 'hidden', id });
@@ -70,8 +78,6 @@ beforeEach(() => {
   castVote.mockReset();
   answerHiddenCheck.mockReset();
   castYesNoVote.mockReset();
-  voteRefused.mockReset();
-  voteRefused.mockImplementation((...args: unknown[]) => realMetrics.voteRefused(...args));
   logToAxiom.mockClear();
   creditLateJudgment.mockReset();
 });
@@ -232,25 +238,11 @@ describe('vote action', () => {
     await submit({ item: queueItem(3), answer: '4' });
     await submit({ item: hiddenItem(5), answer: '8' });
 
-    expect(voteRefused).toHaveBeenNthCalledWith(
-      1,
-      'not-open',
-      'rating',
-      7,
-      3,
-      'vote',
-      expect.anything()
-    );
-    // A hidden check is logged under its ledger id, the negative of its reference id.
-    expect(voteRefused).toHaveBeenNthCalledWith(
-      2,
-      'already-voted',
-      'hidden_check',
-      7,
-      -5,
-      'vote',
-      undefined
-    );
+    expect(refusedRows()).toEqual([
+      { reason: 'not-open', kind: 'rating', playerId: 7, itemId: 3, action: 'vote' },
+      // A hidden check is logged under its ledger id, the negative of its reference id.
+      { reason: 'already-voted', kind: 'hidden_check', playerId: 7, itemId: -5, action: 'vote' },
+    ]);
   });
 
   it('records a vote the Redis gate turns away, busy or limited', async () => {
@@ -259,16 +251,10 @@ describe('vote action', () => {
     guard.mockResolvedValueOnce({ until: new Date('2026-12-15T12:01:00Z') });
     await submit({ item: hiddenItem(5), answer: '4' });
 
-    expect(voteRefused).toHaveBeenNthCalledWith(1, 'busy', 'rating', 7, 3, 'vote', undefined);
-    expect(voteRefused).toHaveBeenNthCalledWith(
-      2,
-      'limited',
-      'hidden_check',
-      7,
-      -5,
-      'vote',
-      undefined
-    );
+    expect(refusedRows()).toEqual([
+      { reason: 'busy', kind: 'rating', playerId: 7, itemId: 3, action: 'vote' },
+      { reason: 'limited', kind: 'hidden_check', playerId: 7, itemId: -5, action: 'vote' },
+    ]);
   });
 
   it('records a muted player and a token that does not open', async () => {
@@ -276,22 +262,16 @@ describe('vote action', () => {
     await submit({ item: queueItem(3), answer: '4' });
     await submit({ item: 'not-a-token', answer: '4' });
 
-    expect(voteRefused).toHaveBeenNthCalledWith(1, 'muted', 'unknown', 7, null, 'vote', undefined);
-    expect(voteRefused).toHaveBeenNthCalledWith(
-      2,
-      'bad-token',
-      'unknown',
-      7,
-      null,
-      'vote',
-      undefined
-    );
+    expect(refusedRows()).toEqual([
+      { reason: 'muted', kind: 'unknown', playerId: 7, itemId: null, action: 'vote' },
+      { reason: 'bad-token', kind: 'unknown', playerId: 7, itemId: null, action: 'vote' },
+    ]);
   });
 
   it('records nothing for a vote that was recorded', async () => {
     castVote.mockResolvedValue({ status: 'recorded' });
     await submit({ item: queueItem(3), answer: '4' });
-    expect(voteRefused).not.toHaveBeenCalled();
+    expect(refusedRows()).toEqual([]);
   });
 
   it('refuses a hidden check with the same message and status as a vote', async () => {
@@ -445,10 +425,7 @@ describe('a judgment on an item that settled before it arrived', () => {
 
 describe('press timing on a refused vote (log only)', () => {
   const NOW = Date.parse('2026-12-15T12:00:00Z');
-  const refusedRow = () =>
-    (logToAxiom.mock.calls as unknown as [Record<string, unknown>][])
-      .map(([row]) => row)
-      .find((row) => row.name === 'knights-vote-refused');
+  const refusedRow = () => refusedRowsFull()[0];
 
   it('logs when the vote was pressed, how long it took to arrive and the live connection then, on not-open', async () => {
     castVote.mockResolvedValue({ status: 'rejected', reason: 'not-open' });
@@ -506,6 +483,34 @@ describe('press timing on a refused vote (log only)', () => {
       payload: { kind: 'rating', itemId: 3, action: 'vote' },
     });
     expect(refusedRow()?.payload).toEqual({ kind: 'rating', itemId: 3, action: 'vote' });
+  });
+
+  it('logs the press fields exactly as the page writes them', async () => {
+    castVote.mockResolvedValue({ status: 'rejected', reason: 'not-open' });
+    const body = new FormData();
+    const now = { wall: NOW - 9_000, mono: 100 };
+    const start = markPress(
+      body,
+      { connected: true, subscribed: true },
+      {
+        wall: () => now.wall,
+        mono: () => now.mono,
+      }
+    );
+    now.mono += 8_200;
+    start();
+    await submit({ item: queueItem(3), answer: '4', ...Object.fromEntries(body) } as Record<
+      string,
+      string
+    >);
+
+    expect(refusedRow()?.payload).toMatchObject({
+      pressedAt: NOW - 9_000,
+      pressGapMs: 9_000,
+      waitedMs: 8_200,
+      signalsConnected: true,
+      signalsSubscribed: true,
+    });
   });
 
   // The press fields come from the client: they are logged and never decide anything.

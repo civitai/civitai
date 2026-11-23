@@ -37,9 +37,9 @@ and the page reads its data again after each vote.
 
 ## Connection state on a vote
 
-`$lib/signals` keeps the topics the hub confirmed (added when `subscribe` resolves on the current connection, removed on
-leaving, cleared while reconnecting and on close; a reconnect re-subscribes and re-confirms them). `signalsAt(topics)` reads
-it, and /play sends the result with each vote (`signals`), so a vote refused because its item had already settled shows
+`$lib/signals` keeps the topics the hub confirmed (added when `subscribe` resolves, removed on leaving, cleared while
+reconnecting and on close; a confirmation asked for before a reconnect or close is ignored, and a reconnect re-subscribes
+and re-confirms them). `signalsAt(topics)` reads it (never subscribed for an empty list), and /play sends the result with each vote (`signals`), so a vote refused because its item had already settled shows
 whether the page could have heard that drop ([metrics](knights-metrics.md)).
 
 ## Failure

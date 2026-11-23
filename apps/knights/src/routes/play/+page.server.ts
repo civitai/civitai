@@ -3,7 +3,8 @@ import { isBlockReason } from '$lib/block-reasons';
 import { db } from '$lib/server/db';
 import { openItem } from '$lib/server/feed-token';
 import { imageUrl, THUMBNAIL_WIDTH } from '$lib/server/image-url';
-import { metrics, type PressTiming } from '$lib/server/metrics';
+import { metrics } from '$lib/server/metrics';
+import { readPress, type PressTiming } from '$lib/press';
 import {
   answerHiddenCheck,
   dismissHiddenNotices,
@@ -230,26 +231,6 @@ type ParsedVote = {
   itemId: number;
   press: PressTiming;
 };
-
-const MAX_WAITED_MS = 24 * 60 * 60 * 1000;
-
-/** The client's report of the press, logged on a not-open refusal: untrusted, so it never decides or fails a vote. */
-function readPress(form: FormData, arrivedAt: number): PressTiming {
-  const field = (name: string) => {
-    const value = form.get(name);
-    return typeof value === 'string' ? value : '';
-  };
-  const pressedAt = /^\d{10,16}$/.test(field('pressedAt')) ? Number(field('pressedAt')) : null;
-  const waited = /^\d{1,9}$/.test(field('waitedMs')) ? Number(field('waitedMs')) : null;
-  const signals = /^[01]{2}$/.test(field('signals')) ? field('signals') : null;
-  return {
-    pressedAt,
-    pressGapMs: pressedAt === null ? null : arrivedAt - pressedAt,
-    waitedMs: waited !== null && waited <= MAX_WAITED_MS ? waited : null,
-    signalsConnected: signals === null ? null : signals[0] === '1',
-    signalsSubscribed: signals === null ? null : signals[1] === '1',
-  };
-}
 
 /** Reads and checks the form without touching the database, so only real vote attempts reach the limits. */
 async function readVote(

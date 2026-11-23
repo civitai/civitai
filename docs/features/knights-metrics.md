@@ -33,8 +33,9 @@ report of the press, to tell a vote that waited in the page's serial queue from 
 `pressedAt` (client clock, ms), `pressGapMs` (server arrival minus `pressedAt`; two clocks, so skew is in it), `waitedMs`
 (press to the start of the post on the client's monotonic clock: the time spent queued behind earlier votes, 0 for a plain
 form post), `signalsConnected` and `signalsSubscribed` (the live connection was open, and every stage topic the player
-judges was confirmed by the hub, at the press; [live updates](knights-live-updates.md)). Each is null when the body did not
-carry it or it did not parse. The values are untrusted: they are logged only, never used by the vote, the limits or the
+judges was confirmed by the hub, at the press; false when there was no topic to wait on;
+[live updates](knights-live-updates.md)). Each is null when the body did not carry it, it did not parse, or it is out of
+range (`waitedMs` over 24 hours). The wire format is `$lib/press.ts`. The values are untrusted: they are logged only, never used by the vote, the limits or the
 ledger, and an unreadable one never fails a vote. Other refusals log the row without them.
 
 Joins, rank-ups and career resets also log one Axiom event each (`knights-player-joined`, `knights-rank-up`,

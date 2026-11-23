@@ -1,3 +1,5 @@
+import { encodeSignals, PRESS_FIELDS, type PressSignals } from '$lib/press';
+
 /** What the page shows for one thing to judge: the question, the sealed item, and a banner when the question changed, and the category of a yes/no question. */
 export type PickedItem = {
   question: {
@@ -264,22 +266,20 @@ export type PressClock = { wall: () => number; mono: () => number };
 const systemClock: PressClock = { wall: () => Date.now(), mono: () => performance.now() };
 
 /**
- * Stamps a vote body at the press with the press time and the live connection's state then (`signals`: connected, then
- * every stage topic confirmed, each `1` or `0`). Returns the call that adds `waitedMs`, the time from the press to the
- * start of the post on the monotonic clock, so no clock skew is in it; it records the first call only. The server logs
- * these and never acts on them.
+ * Stamps a vote body with the press fields. `waitedMs` uses the monotonic clock, so unlike the wall-clock gap the server
+ * works out it has no skew in it; the returned call sets it once, at the first start of the post (a resend keeps it).
  */
 export function markPress(
   body: FormData,
-  signals: { connected: boolean; subscribed: boolean },
+  signals: PressSignals,
   clock: PressClock = systemClock
 ): () => void {
   const pressed = clock.mono();
-  body.set('pressedAt', String(clock.wall()));
-  body.set('signals', `${signals.connected ? 1 : 0}${signals.subscribed ? 1 : 0}`);
+  body.set(PRESS_FIELDS.pressedAt, String(clock.wall()));
+  body.set(PRESS_FIELDS.signals, encodeSignals(signals));
   return () => {
-    if (!body.has('waitedMs'))
-      body.set('waitedMs', String(Math.max(0, Math.round(clock.mono() - pressed))));
+    if (body.has(PRESS_FIELDS.waitedMs)) return;
+    body.set(PRESS_FIELDS.waitedMs, String(Math.max(0, Math.round(clock.mono() - pressed))));
   };
 }
 
