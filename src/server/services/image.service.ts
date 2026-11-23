@@ -6593,9 +6593,14 @@ export async function updateImageNsfwLevel({
     // decides whether a rating may come down from it — a lagging replica would misreport it.
     const image = await dbWrite.image.findUnique({
       where: { id },
-      select: { metadata: true, postId: true, nsfwLevel: true },
+      select: { type: true, metadata: true, postId: true, nsfwLevel: true },
     });
     if (!image) throw throwNotFoundError('Image not found');
+    // The lock would count as the song's review, which only its own scan may give.
+    if (image.type === MediaType.audio)
+      throw throwBadRequestError(
+        'A song is published only by its own scan, which is retried automatically; it cannot be rated here.'
+      );
 
     const metadata = (image.metadata as ImageMetadata) ?? undefined;
     if (activity === 'setNsfwLevelKono' && !reason) reason = KNIGHTS_VOTE_NSFW_LEVEL_REASON;
@@ -6676,6 +6681,7 @@ export type KnightsNsfwLevelResult =
 /**
  * Writes a Knights consensus rating, but only onto an image nobody has taken out of the vote's
  * hands: it exists, carries no block marker, and is unlocked or locked by an earlier Knights vote.
+ * A song is reported `locked`: only its own scan rates it.
  * The conditions sit in the UPDATE itself, so a moderator ruling or block landing between a read
  * and the write cannot be overwritten.
  */
@@ -6697,6 +6703,7 @@ export async function setImageNsfwLevelFromKnights({
         "updatedAt" = NOW()
     WHERE i."id" = ${id}
       AND NOT ${hasBlockMarkerSql('i')}
+      AND i."type" <> 'audio'
       AND (
         NOT i."nsfwLevelLocked"
         OR COALESCE(i."metadata"->>'nsfwLevelReason', '') = ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}

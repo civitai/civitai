@@ -12,6 +12,9 @@ import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
+const SONG_RATING_REFUSAL =
+  'A song is published only by its own scan, which is retried automatically; it cannot be rated here.';
+
 // Don't mirror the main app's single-image Meilisearch update: that index locks specially on a single-image
 // change.
 export async function updateImageNsfwLevel({
@@ -29,10 +32,12 @@ export async function updateImageNsfwLevel({
 }): Promise<void> {
   const image = await dbWrite
     .selectFrom('Image')
-    .select(['metadata', 'postId', thumbnailParentId.as('parentId')])
+    .select(['type', 'metadata', 'postId', thumbnailParentId.as('parentId')])
     .where('id', '=', id)
     .executeTakeFirst();
   if (!image) throw new Error('Image not found');
+  // The lock would count as the song's review, which only its own scan may give.
+  if (image.type === 'audio') throw new Error(SONG_RATING_REFUSAL);
 
   const metadata = {
     ...((image.metadata as Record<string, unknown> | null) ?? {}),
