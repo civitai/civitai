@@ -1,0 +1,548 @@
+# App Storage: a generic collections core
+
+**Status:** design, decided (see "Decisions"); nothing built. The "Inventory (pending)" section is
+filled in before step 2 of the rollout starts. Code citations are to `main` at `f9cad06bca`.
+
+App Storage (the document store behind `/api/v1/blocks/storage`, `src/server/services/apps/doc-store.ts`)
+grew feature-specific primitives next to its collections: marks, counters, tallies on every document,
+server-side publish, and the `report` mark. This document reduces the core to **generic collections**,
+adds **one** generic feature (viewer-keyed documents), moves `report` to a platform moderation API, and
+plans the migration of the data and SDK calls that use what is removed.
+
+## Decisions
+
+1. **The core is generic collections only**, private and shared. Removed from the core: marks
+   (`$mark` / `$unmark`, declared `marks`), counters (`$inc`, declared `counters`, `write: "none"` and
+   its counter documents), tallies on presented documents (`counters`, `marks`, `viewer.marks`; list
+   `sort=counter:` / `sort=mark:` and `markedBy=me&mark=`), and server-side publish / unpublish.
+2. **`report` leaves storage** for a platform moderation API: a document is reported by its identity;
+   the count is never exposed to apps; reports feed the existing moderator queue; the rate limit, the
+   "cannot be withdrawn" rule and the dismissal semantics are kept.
+3. **One generic addition: viewer-keyed documents.** A shared collection may declare that its document
+   key is derived by the server from the verified viewer, optionally combined with a parent key the
+   client supplies, so each viewer has at most one document per (parent) key and cannot write another
+   viewer's. Votes, likes, ratings and per-user entries become ordinary documents. There are no
+   server-side aggregates; apps count by listing (a count read is an open question, below).
+4. **Migration: inventory first, then deprecate.** Ship the replacement, migrate each using app's data
+   and SDK calls, and remove the primitives once their usage is measured at zero. The known user is
+   model-benchmarking (a shared `records` collection with `marks: ["vote"]`, plus `report`).
+5. **Platform policies stay as they are:** moderation hide and delete, the shared-write content scan,
+   content levels, write hooks, collection schemas, `ownedModelVersions`, `showAuthor`, imports, quotas
+   and rate limits, namespaces.
+
+## Where this doc lives, and what it supersedes
+
+Here in `docs/`, because the repo puts plans there (`CLAUDE.md`, "How to work with us") and this one
+spans the site's store and REST route, the moderator surface, the registry adapter, `apps/app-data-go`
+and the SDK; an app's own `DESIGN.md` covers that app only. When a step ships, the behaviour moves
+into `docs/features/app-blocks.md` and the developer docs, and this plan's status line moves with it.
+
+It changes the plan in `apps/app-data-go/WRITES-DESIGN.md` (see "Registry and app-data-go impact");
+that file is updated in its own PR once this is accepted.
+
+Out of scope: the legacy per-app stores (`app_<slug>.shared_kv` with its `votes`, `counters` and
+`shared_kv_reports` tables), already refused to apps behind `app-blocks-legacy-stores-removed`
+(`legacy-store-shutdown.ts`).
+
+## The core after the change
+
+### Collections and write policies
+
+Unchanged, minus `write: "none"`:
+
+| Visibility                              | Key space                                     | Who writes                                                                                  |
+| --------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `private`                               | one per viewer (`doc.scope_uid` = the viewer) | the viewer                                                                                  |
+| `shared`, `write: "own"`                | one per app namespace (`scope_uid = 0`)       | eligible viewers create; only a document's author updates or deletes it (`assertMayModify`) |
+| `shared`, `write: "anyone"` / `"owner"` | as above                                      | still behind `APP_STORAGE_ENABLED_FEATURES` (`anyoneWrites`, `ownerWrites`); unchanged      |
+
+`write: "none"` is removed: it exists only so counters can create unowned documents
+(`APP_STORAGE_WRITE_POLICIES`, `assertShareWritable` in `doc-store.ts`).
+
+A shared collection's key is today either chosen by the client (`PUT /:c/:key`, an upsert; under
+`own`, the first writer of a key owns it) or minted by the server (`POST /:c`, a ULID, or the hook's
+pre-generated key). Viewer-keyed collections add a third way, below.
+
+### Operations
+
+| Route (under `/api/v1/blocks/storage`)                              | Op                                            | Change                                                                                                                                       |
+| ------------------------------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /`                                                             | info                                          | `counters`, `marks` leave each collection; `keyedBy` is added; `rate.marksAndCountersPerMinute` and `rate.reportsPerDay` leave `limits.rate` |
+| `GET /:c`                                                           | list                                          | `markedBy`, `mark`, `sort=counter:*`, `sort=mark:*` removed                                                                                  |
+| `POST /:c`                                                          | create                                        | refused on a viewer-keyed collection                                                                                                         |
+| `POST /_get/:c`                                                     | get many                                      | unchanged                                                                                                                                    |
+| `GET /:c/:key`                                                      | get                                           | unchanged                                                                                                                                    |
+| `PUT /:c/:key`, `DELETE /:c/:key`                                   | put, delete                                   | refused on a viewer-keyed collection (use `@me`)                                                                                             |
+| `GET`, `PUT`, `DELETE /:c/@me`                                      | the viewer's document                         | **new**, `keyedBy: "viewer"`                                                                                                                 |
+| `GET`, `PUT`, `DELETE /:c/@me/:parent`                              | the viewer's document for `parent`            | **new**, `keyedBy: "parent+viewer"`                                                                                                          |
+| `PATCH /:c/:key` (`$inc`, `$mark`, `$unmark`)                       | tallies                                       | **removed**                                                                                                                                  |
+| `POST /:c/:key/counters/:name`, `PUT`/`DELETE /:c/:key/marks/:name` | tallies (already deprecated)                  | **removed**                                                                                                                                  |
+| `POST /_publish/:to`, `POST /_unpublish/:to`                        | publish (behind `app-blocks-storage-publish`) | **removed**                                                                                                                                  |
+
+`@me` cannot collide with a key: `@` is outside the key grammar (`DOC_STORE_BOUNDS.key`,
+`[A-Za-z0-9._:-]{1,128}`), so `matchStorageRoute` can route it before key parsing. It joins
+`STORAGE_RESERVED_SEGMENTS`. A three-segment path is unused today.
+
+List after the change: one `where[<index>]` equality, `sort=[-]key|createdAt|updatedAt|<index>`,
+`author=me`, `keyPrefix`, `limit`, `cursor`, all combinable as today (`list` in `doc-store.ts`).
+
+### The presented document
+
+`PresentedDoc` (`doc-store-api.ts`) after the change. `level` and `ratingStatus` appear only while
+content levels are on for the app, as today; `username` only on a `showAuthor` collection:
+
+```json
+{
+  "key": "01JD3Q8M5Z4X2V7K9C6B1N0RTA:gq4z7m2k5w6c3t6y7b2d4f7h3j",
+  "data": { "value": 1 },
+  "version": 2,
+  "level": 1,
+  "ratingStatus": "rated",
+  "createdAt": "2026-11-23T10:00:00.000Z",
+  "updatedAt": "2026-11-23T10:05:00.000Z",
+  "author": { "kind": "user", "isViewer": true, "username": "someone" }
+}
+```
+
+`author.kind` is `user` or `app`; `counter` is removed with counter documents (`DocAuthor`,
+`PresentedAuthor`). `counters`, `marks` and `viewer` are removed. During the compatibility window
+(rollout step 3) they are still sent, as `{}`, `{}` and `{"marks": []}` (`null` for an anonymous
+viewer), on collections that declare no marks or counters, so a client reading them does not break
+before it upgrades.
+
+The internal route (`via === 'service'`, used by app-data-go) keeps adding `seq` and `recordId` to
+write answers; `markSeq` goes with the tally ops.
+
+### Viewer-keyed documents
+
+**Declaration.** One new field on a shared collection:
+
+```json
+"storage": {
+  "collections": {
+    "records": { "visibility": "shared", "write": "own", "indexes": { "createdBy": "string" } },
+    "votes": {
+      "visibility": "shared",
+      "write": "own",
+      "keyedBy": "parent+viewer",
+      "schema": { "type": "object", "properties": { "value": { "type": "integer", "minimum": -1, "maximum": 1 } }, "additionalProperties": false }
+    }
+  }
+}
+```
+
+- `keyedBy`: `"viewer"` (at most one document per viewer in the collection) or `"parent+viewer"`
+  (at most one per viewer per parent key). Absent: today's keys.
+- Shared collections only, and only with `write: "own"`; the parser refuses it on a private
+  collection (already one key space per viewer) and with any other write policy.
+- **Immutable once approved:** submit refuses adding, removing or changing `keyedBy` on a collection
+  the previous approved version declared, because it changes what every stored key means. Declare a
+  new collection instead. This is a new check beside the schema-migration diff
+  (`storage-schema-migrations.ts`).
+
+**Key derivation.** The key is never taken from the request:
+
+- `parent`: 1 to 96 characters of `[A-Za-z0-9._-]` (the key grammar without `:`), not only dots
+  (`DOT_ONLY_KEY`). A document key or a ULID fits, so a parent can name another collection's document.
+- `d` = the first 128 bits of HMAC-SHA256 over the length-prefixed tuple (app id, namespace,
+  collection, mode, parent or empty, viewer user id), under a server-held derivation key, as 26
+  characters of lowercase RFC 4648 base32 without padding.
+- The key is `d` (`keyedBy: "viewer"`) or `<parent>:<d>` (`"parent+viewer"`): at most
+  96 + 1 + 26 = 123 characters, inside the existing grammar, so the table, indexes, cursors, feeds and
+  URNs need no change. Because `:` is not in the parent grammar, `keyPrefix=<parent>:` lists exactly
+  one parent's documents.
+- Why a keyed digest and not the user id: every reader of a shared collection sees its keys, and no
+  response may carry a numeric user id (`presentDocs`; the storage contract's runner rule in
+  `public/schemas/app-block/storage-contract.v1.json`). A digest per (collection, parent) also keeps one
+  viewer's documents unlinkable across parents and apps unless the collection declares `showAuthor`.
+- What the derivation key protects is that unlinkability only. Authorization never depends on it:
+  every `@me` op resolves the viewer from the verified token, and raw-key writes to a viewer-keyed
+  collection are refused, so knowing the key grants no write.
+- **Anonymous viewers are refused:** every `@me` op, reads included, answers `401 sign_in_required`
+  (`requireViewer`). Reads of the collection by key or by list are open to anonymous viewers as on any
+  shared collection.
+
+**Semantics of each op.**
+
+| Op                                            | Behaviour                                                                                                                       |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /:c/@me[/:parent]`                       | the viewer's document, or `404 not_found`                                                                                       |
+| `PUT /:c/@me[/:parent]` `{data, ifVersion?}`  | upsert at the derived key, exactly a `put` (`writeDoc`): `ifVersion: 0` means must not exist; `200` with the presented document |
+| `DELETE /:c/@me[/:parent]` `[?ifVersion=N]`   | exactly a `delete` (`remove`): tombstone, refunds, `{deleted}`                                                                  |
+| `POST /:c`, `PUT /:c/:key`, `DELETE /:c/:key` | `400 invalid_request`, `details.reason: "viewer_keyed"`                                                                         |
+| `GET /:c/:key`, `POST /_get/:c`, `GET /:c`    | unchanged reads; `author=me` lists the viewer's own documents, `keyPrefix=<parent>:` one parent's                               |
+
+"Did I vote on these?" is `GET /:c?author=me` (or `&keyPrefix=<parent>:`), served by
+`doc_author_idx`. "How many votes does a record have?" is a list of `keyPrefix=<parent>:`, or the
+count read if it is adopted (open question 1).
+
+**Interaction with each platform policy** (all unchanged; this is where each one applies):
+
+- `write: "own"`: the viewer is always the author of the key they address, so `assertMayModify`
+  always passes for their own key and no other key is reachable to them.
+- Publish scope and trust gate: a `@me` PUT is a shared create or update, so it needs
+  `apps:storage:publish` and passes `assertTrusted`; a `@me` DELETE needs only `apps:storage`, as any
+  delete.
+- Rate limits: a `@me` PUT spends the shared-write budget (`DOC_STORE_SHARED_WRITE_BUDGET`: burst 30,
+  300 per day per viewer per app); a DELETE spends the `write` bucket.
+- Content scan: the shared-write scan runs on `data` and on the key, as for any put; the parent is the
+  only client text in the key.
+- Hooks: the hook is called with `op` `put` or `delete` and the derived key, plus one additive request
+  field, `parent` (string or null), so a hook can check the parent without parsing the key.
+- Schema and `ownedModelVersions`: checked on every PUT, as any put.
+- Content levels: a vote is a shared document, so it is `pending` until rated and visible only to its
+  author meanwhile (`sharedDocLevelVisible`). A body with no text rates PG (`doc-rater.service.ts`,
+  `too-short`), but asynchronously, so a count by listing can lag new votes (Risks).
+- Moderation: hide, unhide, delete and the report API apply as to any shared document. A PUT to a key a
+  moderator hid answers `404 not_found` (`writeDoc`'s VISIBLE rule), so that viewer cannot re-vote on
+  that parent while it is hidden.
+- Quotas: each document counts toward the app's shared ceiling and its author's per-viewer ceiling
+  (`DEFAULT_DOC_STORE_LIMITS`: 1,000 documents per viewer per app by default, private documents
+  included). Marks count toward neither today (Risks, open question 5).
+- Imports: through a `readwrite` import a `@me` op runs in the source app as the viewer; the digest
+  uses the source app's id, so the viewer reaches the same document as in the source app.
+- Account wipe: viewer-keyed documents are user-authored shared documents, so `wipeAccount` deletes
+  them as it deletes every authored shared document, and the viewer's `usage_user` row is how the wipe
+  finds the namespace.
+- Registry export (`registry: "public"`): exported as any document; the key is opaque.
+
+**Errors.** No new code. New `details.reason` values on `400 invalid_request`: `viewer_keyed`
+(a raw-key write, or a create), `parent_required` (`/@me` on a `parent+viewer` collection),
+`parent_not_allowed` (`/@me/:parent` on a `viewer` collection), `invalid_parent`; and
+`401 sign_in_required` for an anonymous `@me`. Every other refusal is today's error table
+(`STORAGE_ERROR_STATUS`).
+
+## What is removed, and what replaces it
+
+### Routes, ops, parameters
+
+| Removed                                                                                             | Where                                | Replacement                                                                                                                                        |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PATCH /:c/:key` with `$inc` / `$mark` / `$unmark` (`parseTallyPatch`)                              | `doc-store-api.ts`                   | a viewer-keyed collection (`PUT /:c/@me/:parent`); counters: nothing                                                                               |
+| `POST /:c/:key/counters/:name` (deprecated, `LEGACY_TALLY_HEADERS`)                                 | same                                 | as above                                                                                                                                           |
+| `PUT` / `DELETE /:c/:key/marks/:name` (deprecated)                                                  | same                                 | `PUT` / `DELETE /:c/@me/:parent`; for `report`, the report API                                                                                     |
+| `POST /_publish/:to`, `POST /_unpublish/:to` (`runPublish`, `runUnpublish`, `isPublishRouteServed`) | same                                 | the client reads its private documents and writes shared ones one by one (`put`, `delete`), as the SDK already advises when publish is unavailable |
+| list `sort=counter:<n>`, `sort=mark:<n>`, `markedBy=me`, `mark=<n>` (`parseListQuery`, `parseSort`) | `doc-store-api.ts`, `doc-store.ts`   | `author=me` and `keyPrefix` on the viewer-keyed collection; no "top N by count"                                                                    |
+| info `counters`, `marks` per collection; `rate.marksAndCountersPerMinute`, `rate.reportsPerDay`     | `presentDeclaration`, `run` (`info`) | `keyedBy`; the report limit is documented with the report API                                                                                      |
+
+### Manifest fields
+
+| Removed                             | Where                                                                                                                                                                                                                                                           | Replacement |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `counters`, `marks` on a collection | `COLLECTION_KEYS`, `parseTallyNames`, `APP_STORAGE_TALLY_NAME_RE`, `APP_STORAGE_MAX_COUNTERS`, `APP_STORAGE_MAX_MARKS`, `APP_STORAGE_BUILTIN_MARKS` in `block-storage.constants.ts`; `public/schemas/app-block/v1.json` and its byte-mirrors in the CLI and SDK | `keyedBy`   |
+| `write: "none"`                     | `APP_STORAGE_WRITE_POLICIES` and its cross-field rule                                                                                                                                                                                                           | nothing     |
+
+**These stay parseable forever in approved history.** Approved manifests are replayed for their shape
+with every feature on (`APP_STORAGE_ALL_FEATURES_ON`), and `deriveCollectionMajors` skips a manifest
+whose storage does not parse, which would shift every later major of the app. So submit refuses them
+(a new feature switch, off) while the parser keeps accepting them on replay, and the store ignores them
+once the ops are gone. `v1.json` marks them `deprecated` rather than deleting them.
+
+### Store code, types and tables
+
+| Removed                                                                                                                                                                                                                               | Notes                                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `increment`, `mark`, `unmark`, `stampMarkSeq`, `withMarkHead`, `SQL_TAKE_MARK_SEQ`, the tally and mark SQL, the tally sort and `markedBy` join in `list` (`doc-store.ts`)                                                             | lock order goes back to (1) document, (2) `usage_app`, (3) `usage_user`             |
+| `previewPublish`, `publishCopies`, `unpublishCopies`, `readPublishTargets`, `readPublishRows`, `assertPublishKeys`, `assertPublishPair`, `assertNotHooked`, `DOC_STORE_PUBLISH_BOUNDS`, the `Publish*` types                          | `classifyPublish` stays: the free unchanged put (`putIfUnchanged`) uses it          |
+| `DocRecord.counters`, `.marks`, `.viewer`; `DocAuthor` `counter`; `DocListQuery.markedBy`, `.mark`; `REPORT_MARK`; `DOC_STORE_BOUNDS.incrementMax`; `AccountWipeNamespaceResult.counterDocsReleased`, `.marks` (`doc-store.types.ts`) |                                                                                     |
+| `HookOp` `increment`, `mark`, `unmark`; `Tally` in `apps/storage-hook-runner/src/contract.ts`                                                                                                                                         | hooks keep `create`, `put`, `delete`                                                |
+| `DOC_STORE_TALLY_RATE_LIMIT_MAX`, `DOC_STORE_PUBLISH_BUDGET`, buckets `tally` and `publish` (`shared-storage-rate-limit.ts`)                                                                                                          | the `report` bucket moves to the report API, same numbers and key                   |
+| `civitai_app_block_doc_store_tally_ops_total` (`recordStorageTallyOp`)                                                                                                                                                                | kept until removal: with `app_storage_requests_total`, it is the zero-usage measure |
+| Flipt flag `app-blocks-storage-publish`                                                                                                                                                                                               |                                                                                     |
+| Counter documents' special cases: `SQL_WIPE_RELEASE_COUNTER_DOCS`, the rater's `counter` status, "counters you started" in `src/shared/utils/app-storage-usage.ts`                                                                    |                                                                                     |
+| `appdata.doc_tally` (with `mark_seq`, `doc_tally_top_idx`)                                                                                                                                                                            | final manual DDL, after usage is zero                                               |
+| `appdata.doc_mark` (with `doc_mark_name_idx`, `doc_mark_user_idx`, its account-wipe read policy)                                                                                                                                      | same; its report rows are copied out first                                          |
+| `appdata.mark_head`                                                                                                                                                                                                                   | same                                                                                |
+| `'counter'` in the `doc_author_kind` CHECK                                                                                                                                                                                            | narrowed once no row has it                                                         |
+| `appdata.doc.reports_dismissed_at`                                                                                                                                                                                                    | **kept**: the report API uses it unchanged                                          |
+
+### SDK (`packages/civitai-sdk/src/doc-store` in the app starters repo)
+
+| Removed                                                                                                                   | Replacement                                |
+| ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `StorageDocument.counters`, `.marks`, `.viewer`; `DocumentAuthor` `{kind: 'counter'}`                                     | nothing                                    |
+| `DocumentListQuery.markedBy`, `.mark`, the `counter:` / `mark:` sorts                                                     | `author: 'me'`, `keyPrefix`                |
+| `StorageCollection.update` and its op types (`StorageIncrementOp`, `StorageMarkOp`, `StorageUnmarkOp`, `StorageUpdateOp`) | `getMine`, `putMine`, `deleteMine` (below) |
+| `increment`, `mark`, `unmark` (already `@deprecated`)                                                                     | same                                       |
+| `publish`, `unpublish`, `StoragePublish*`, the local `publish_unavailable` code                                           | `get` + `put` / `delete`                   |
+| `StorageCollectionInfo.counters`, `.marks`; `StorageLimits.rate.marksAndCountersPerMinute`, `.reportsPerDay`              | `StorageCollectionInfo.keyedBy`            |
+
+Added: `collection(c).getMine(parent?)`, `.putMine(data, { parent?, ifVersion? })`,
+`.deleteMine({ parent?, ifVersion? })`, a `parentOf(key)` helper, and `app.moderation.report({ collection,
+key, from? })`. The SDK's fake (`doc-store/fake.ts`) and local preview implement the same, and the
+storage contract (`storage-contract.v1.json`) gains viewer-keyed cases and loses the tally and publish
+ones, so the fake and the host stay pinned to one behaviour.
+
+## The report moderation API
+
+**Endpoint.** `POST /api/v1/blocks/moderation/reports`, its own page beside the storage catch-all and,
+like it, behind `withBlockScope`:
+
+```json
+{ "collection": "records", "key": "01JD3Q8M5Z4X2V7K9C6B1N0RTA", "from": "other-app" }
+```
+
+`from` is optional (open question 10). The answer is `200 {"reported": true}`, the same whether or not
+the viewer had already reported the document; no count, ever.
+
+**Identity.** (app, namespace) from the verified token, as every storage call; then `collection` and
+`key`. Only a declared shared collection is reportable (`collection_not_declared`, or
+`invalid_request` for a private one), and only a visible document (`404 not_found` otherwise, as a
+`report` mark answers today, `SQL_SHARE_LOCK_DOC`).
+
+**Auth.** The block token, as for the report mark today: a signed-in viewer (`401 sign_in_required`
+for an anonymous one), the `apps:storage` scope every app with collections already holds
+(consent-exempt), and the shared-write trust gate (`assertTrusted`). No publish scope: a report is not
+content other viewers read. A site-session path for host chrome is open question 7.
+
+**Rate limit.** The `report` bucket as today, 20 per viewer per app per day
+(`DOC_STORE_REPORT_RATE_LIMIT_MAX`), under the same Redis key shape, so windows in flight carry over at
+cutover. The marks-and-counters bucket a report also spends today goes away with that bucket.
+
+**Kept semantics.** A report is one per (document, viewer). It cannot be withdrawn: the API has no
+delete (today `refuseReportWithdrawal`). Hooks never see reports (today an exemption in
+`requireHookPass` and `gateHook`; after the change, structural). Deleting a document deletes its
+reports, as `remove` and the moderator delete delete its marks today.
+
+**Storage and the moderator queue.** A new table in the App Blocks datastore, `appdata.doc_report
+(app_id, ns, coll, key, user_id, reason, created_at)`, primary key `(app_id, ns, coll, key, user_id)`,
+with the same row-level policies as `doc_mark` (the (app, namespace) scope, review maintenance's read
+and delete, and the account-wipe read of one user's rows), and an index `(app_id, ns, coll, key)`. It
+stays in the datastore, not the main database, because the queue joins each report to its document's
+`reports_dismissed_at` and hidden state in one app-scoped transaction (`sqlModOpenReported`,
+`SQL_MOD_HIDDEN_UNREPORTED`, `SQL_MOD_GET`, `SQL_MOD_OPEN_REPORTS`). Those statements change only their
+source: `doc_report` instead of `doc_mark ... WHERE name = 'report'`. The moderator procedures
+(`apps.mod.docStore.*`, `doc-store-moderation.service.ts`) and their audit rows are unchanged except
+`reportsTotal`, which counts `doc_report` rows instead of the `report` mark.
+
+**Dismissal.** Unchanged: `reports_dismissed_at` stays on `appdata.doc`; a report counts as open when
+made after it.
+
+**Existing report rows.** A manual, idempotent copy, per environment, of every `doc_mark` row whose
+`name = 'report'` into `doc_report`, keeping `created_at` (so the open/dismissed split is exactly what
+it was) and `reason`, with `ON CONFLICT DO NOTHING`. It runs once before the queue reads `doc_report`
+and once more after `report` marks are refused, so a report filed in between is not lost. The source
+rows are left in `doc_mark` until its final drop. What the reporter loses is "I reported this" in
+`viewer.marks` (open question 9).
+
+**Account wipe.** The wipe's enumeration (`listAccountNamespaces`) reads `usage_user` and `doc_mark`
+today, so a viewer who only reported is still found. It reads `doc_report` instead of `doc_mark`, and
+`wipeAccountNamespace` deletes the user's report rows as it deletes their marks today (open question 11).
+
+## Data migration
+
+Every step is per app, runs in one (app, namespace) at a time through the store's own transactions
+(`withTx`, row-level security bound), is idempotent, and is started by a human. Every DDL change is a
+manual-apply SQL file under `src/server/services/apps/migrations/`, applied by hand to each environment
+with its rollback file beside it; nothing applies one automatically.
+
+### `doc_mark` votes to viewer-keyed documents
+
+For each (source collection `c`, mark name `m`) the inventory lists, the app ships a manifest version
+declaring a target collection `t` with `keyedBy: "parent+viewer"` (for model-benchmarking: `votes`,
+from `records` / `vote`). Then:
+
+1. **Copy.** A new maintenance op, `migrateMarksToDocs(appId, ns, { from: c, mark: m, to: t, data })`,
+   beside `migrateDocuments` (the schema-migration runner). For each `doc_mark` row (c, k, m, u,
+   created_at), in primary-key order with a keyset cursor and a batch size, it inserts a document at
+   key `<k>:<d(u, k)>` with body `data` (a constant the person running it gives, checked against `t`'s schema;
+   `{}` for a plain vote), `author_kind = 'user'`, `author_uid = u`, `created_at` = the mark's,
+   `version = 1`, the next `seq`, its index rows, and usage charged to `usage_app` and `u`'s
+   `usage_user`. `INSERT ... ON CONFLICT DO NOTHING` on the derived key makes a re-run a no-op. It is a
+   platform operation like `migrateDocuments`: no hook, trust gate, budget or scan. A mark whose source
+   document is hidden is copied too (the vote existed).
+2. **Freeze.** The store refuses `$mark` / `$unmark` of `m` on `c` for that app (`410`, below), so old
+   clients cannot change a mark the copy already read. Then the copy runs again for marks made since
+   step 1.
+3. **Verify.** Per parent, the count of `doc_mark` rows equals the count of `t` documents with
+   `keyPrefix=<k>:`; per user, the counts agree. A mismatch stops the rollout for that app.
+4. **Rate.** With content levels on, run the app's levels backfill (`app-doc-levels-backfill`) so the
+   copied documents are rated before the app's reads move to `t` (otherwise every copied vote is
+   pending, visible only to its voter).
+5. **Switch reads.** The app's new version reads counts from `t`.
+
+**Rollback** until the final drop: unfreeze (the flag), the app reverts to its previous approved
+version, and the copied documents are deleted by a per-collection purge of `t` in that namespace
+(tombstones and refunds as a moderator delete). `doc_mark` and `doc_tally` were never written, so
+nothing needs restoring.
+
+### `doc_tally`
+
+Mark tallies (`kind = 'mark'`) are derived from `doc_mark` and are dropped, not migrated. Counter
+tallies (`kind = 'counter'`) are aggregates with no per-viewer history, so no generic document can be
+built from them; model-benchmarking does not call counters (`apps/app-data-go/WRITES-DESIGN.md`, "What
+the app does with its storage"). The inventory decides; open question 12 has the default.
+
+### Counter documents (`write: "none"`, `author_kind = 'counter'`)
+
+Their `data` is always empty and their only content is their counters (above). Each is deleted with
+its collection's counters, refunding the usage charged to the viewer whose increment created it.
+
+### Publish
+
+Nothing to migrate: a published copy is an ordinary shared document authored by its viewer, and stays.
+Only the calls go.
+
+### Reports
+
+The copy into `doc_report` above.
+
+### Final cleanup
+
+After usage is zero (rollout step 6): one manual SQL file dropping `appdata.doc_tally`,
+`appdata.doc_mark`, `appdata.mark_head` and the account-wipe policy on `doc_mark`, and narrowing
+`doc_author_kind`, preceded by a dump of the three tables kept for a stated retention. Its rollback
+re-creates empty tables; it cannot restore rows without that dump, which is why the drop is last.
+
+## Manifest, schema majors and the SDK
+
+- **Majors.** A major is minted only by a non-additive change of a collection's `schema`
+  (`isAdditive`, `deriveCollectionMajors` in `storage-schema-majors.ts`). `keyedBy`, `marks`,
+  `counters` and `write` are not part of `schema`, so neither adding `keyedBy` nor dropping `marks`
+  bumps a major. That is why `keyedBy` is made immutable at submit instead: a major is the wrong tool
+  for a change that reinterprets keys, and a new collection is the right one.
+- **Submit.** Adding `marks`, `counters` or `write: "none"` to a collection is refused once the
+  replacement ships; a collection that already declares them in the previous approved version may keep
+  them until its data is migrated, then drop them.
+- **The published schema.** `v1.json` gains `keyedBy` and marks `marks`, `counters` and the `none`
+  write policy `deprecated`; the CLI and SDK mirrors are re-vendored (the drift guards pin them).
+- **Deprecation headers.** The per-tally routes already send `Deprecation: @1794182400` and a `Link`
+  (`LEGACY_TALLY_HEADERS`), with no `Sunset`. Step 3 adds the same `Deprecation` and `Link` to every
+  other removed route (the tally `PATCH`, `_publish`, `_unpublish`) and to a list that uses a removed
+  parameter. `Sunset` is set on all of them at step 5.
+- **SDK.** One minor release adds the viewer-keyed methods and the report call and marks every removed
+  method and field `@deprecated`; the major release after the routes are removed deletes them.
+
+## Rollout
+
+Each step names what ends it.
+
+1. **Inventory.** Fill "Inventory (pending)". Ends when every row is filled.
+2. **Ship the replacement, dark.** Viewer-keyed collections (parser, store, routes, SDK minor, contract
+   cases) and the report API with `doc_report` (manual migration, copy). Both behind per-app flags.
+   Ends when the contract suite and the store's PGlite suite are green on `main` with the flags on.
+3. **Deprecate.** Submit refuses new tally and publish declarations; `Deprecation` headers on every
+   removed route; developer docs updated. Ends when it is deployed.
+4. **Migrate each using app** (model-benchmarking first): its new manifest version, the vote copy,
+   freeze, verify, rate, switch; its reports through the API. Ends per app when its verify step passes
+   and its old calls stop.
+5. **Measure zero, then sunset.** Zero means: `civitai_app_block_doc_store_tally_ops_total` flat (it
+   has no app label), `app_storage_requests_total{op}` flat for `increment`, `mark`, `unmark`, `patch`,
+   `publish` and `unpublish` (its `app` label names the app; `recordAppStorageRequest`), and no
+   `doc_mark` or `doc_tally` row written, for 14 consecutive days.
+   Then `Sunset` is set 30 days ahead.
+6. **Remove.** After the sunset date the routes answer `410` (code `removed`, linking the guide) for one
+   release, then leave the route table; the code, types, SDK surface (major release) and Flipt flag go;
+   the final cleanup SQL runs.
+
+## Registry and app-data-go impact
+
+`apps/app-data-go/WRITES-DESIGN.md` simplifies:
+
+- **Level streams carry plain documents:** `key`, `data`, `version`, `createdAt`, `updatedAt`, `seq`.
+  No `tallies`, so a vote is a document change on the votes collection's own stream, ordered by `seq`
+  like every write.
+- **One sequence.** No mark sequence, no `mark_head`, no `meta.head.markSeq`, no `minMarkSeq` floor, and
+  no count or held overlays: the record overlay at `seq` covers a vote as it covers any put. The lock
+  order loses (1b) and (1c). The "Accepted" note that the mark head discloses report volume no longer
+  applies: reports leave storage.
+- **No `doc_tally` scan.** The mark-sequence range read over `doc_tally.mark_seq`, which no index covers,
+  disappears.
+- **The per-viewer stream** carries only the viewer's authored keys and their own documents no level
+  stream gives them. Their votes are their own documents, so "viewer marks" need no stream of their
+  own, and the `level: counters` stream has nothing to carry.
+- **Writes service API:** the `PATCH` (`$inc`, `$mark`, `$unmark`) and `publish` / `unpublish` routes
+  leave; `PUT` / `DELETE .../records/@me[/:parent]` join.
+- **What does not get simpler:** a votes collection can outgrow a level stream's bound (2,500 records
+  by default in #10165) long before its board does, so counting votes by reading a stream does not
+  scale (open question 17).
+
+Disposition of the work already done:
+
+| Work                                                                             | State        | Becomes unused                                                                                                                                                  | Recommended                                                                                                                                                                                                                    |
+| -------------------------------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| #10165, adapter level streams                                                    | open, paused | `tallies` on entities, `meta.head.markSeq`, the `counters` level, `feedMarkHead`, `privateMarkHead`, `levelTallyKeys` and the mark-range poll, `presentTallies` | revise before it resumes: strip the mark half, keep level streams, `seq` heads, routing, bindings and the bound                                                                                                                |
+| #10130, the mark sequence and `mark_head` migration                              | merged, dark | all of it: `mark_head`, `doc_tally.mark_seq`, `SQL_TAKE_MARK_SEQ`, `withMarkHead`, lock (1c)                                                                    | keep dark (its probe makes it inert where the migration is absent); do not apply the migration to an environment that has not applied it; remove the code with the tally ops in step 6 and drop the table in the final cleanup |
+| #10128, `seq` and `recordId` in write answers; the private feed's `seq` and head | merged       | nothing                                                                                                                                                         | keep: the record overlay and floors need it                                                                                                                                                                                    |
+| #10142, the signed internal route (answers `seq`, `recordId`, `markSeq`)         | merged, dark | `markSeq` in tally answers                                                                                                                                      | keep; `markSeq` goes with the tally ops in step 6                                                                                                                                                                              |
+| #10143, app-data-go write routes                                                 | merged, dark | the `PATCH` operator forwarding (`patchOp` in `internal/writes/writes.go`) and `publish` / `unpublish` forwarding                                               | remove now if model-benchmarking's votes are migrated before its app-data-go cutover (recommended order); otherwise keep dark until its migration                                                                              |
+| #10158, read-your-writes overlay                                                 | merged, dark | nothing: it ships record overlays only, and lists marks overlays and the mark floor as not built                                                                | keep                                                                                                                                                                                                                           |
+
+## Risks
+
+- **Votes become content.** Each vote now takes the publish scope (a consent prompt where an app did
+  not have it), the trust gate, the shared-write budget (300 per viewer per app per day, where marks
+  allowed 30 a minute) and the content scan. A heavy voter can hit limits a mark never hit.
+- **Quota.** Votes count toward the per-viewer ceiling (1,000 documents per app by default, private
+  documents included) and the app's 1M-document ceiling. The inventory's per-user maximum shows who
+  would exceed it at migration.
+- **Counts lag rating.** With content levels on, a new vote is pending until the rater job reaches it,
+  so others' counts trail. The migration avoids a cliff by rating before the switch; steady state lags
+  by the job's cadence.
+- **Counting by listing costs.** A board of 2,000 records listing each record's votes at 100 per page
+  is unworkable; without a count read (open question 1) an app cannot show per-item counts at scale,
+  and "top N by votes" is no longer a server query at all.
+- **Orphans.** Deleting a record leaves its votes, still charged to their voters (open question 4).
+- **History replay.** Removing `marks` / `counters` from the parser outright would make old approved
+  manifests fail to parse and shift every later major; they must stay parseable (see "Manifest
+  fields").
+- **Derivation key loss or leak.** Losing it orphans every viewer-keyed document from its `@me` routes;
+  leaking it lets the holder link documents to user ids. Neither grants a write (open question 3).
+- **Migration divergence.** A mark changed between the copy and the freeze is caught only by the
+  re-copy and the verify step; the freeze must precede the last copy.
+
+## Open questions
+
+Each has a proposed default, which applies unless it is overruled before the step that needs it.
+
+1. **A count read?** Proposed: yes, one, `POST /_count/:c` with `{ "keyPrefixes": [...] }` (at most 100),
+   answering `{ "counts": { "<prefix>": { "count": n, "capped": false } } }`: documents visible to this
+   viewer under each prefix, exact up to 10,000 (`capped: true` past it), charged to the read bucket.
+   Not a sum, average or top-N.
+2. **Digest per document, or a stable per-app viewer handle?** Proposed: the per-(collection, parent)
+   digest above, so documents are unlinkable unless `showAuthor` says otherwise.
+3. **Rotating the derivation key.** Proposed: never rotated; it guards unlinkability only. Rotation, if
+   ever needed, is a re-key migration of every viewer-keyed collection.
+4. **Parent integrity.** Proposed: no existence check on write and no cascade on the parent's delete in
+   v1; an app filters orphans, and a viewer can list (`author=me`) and delete their own.
+5. **Do viewer-keyed documents count toward the per-viewer ceiling?** Proposed: yes, like every
+   document; revisit only if the inventory shows users who would exceed it.
+6. **Publish scope and shared-write budget for votes.** Proposed: unchanged (policies stay).
+7. **A site-session report path for host chrome** (a report button outside the app's frame).
+   Proposed: not in v1; block token only.
+8. **A `reason` on reports.** Proposed: none in v1 (today's mark takes none, and free text would need
+   its own scan); the column stays nullable.
+9. **The reporter's own "reported" state** (today `report` in `viewer.marks`). Proposed: not exposed; the
+   API answers `{reported: true}` idempotently and an app keeps local state.
+10. **Reports through imports (`from`).** Proposed: accepted, resolved through the declared import
+    (read access suffices), filed against the source app's document.
+11. **A reporter's account wipe.** Proposed: their reports are deleted, as today.
+12. **Counter tallies, if the inventory finds any.** Proposed: export to the app's owner on request,
+    then drop; no on-platform conversion.
+13. **Removed-route answer.** Proposed: `410` with code `removed` for one release, then unknown route.
+14. **Quota during the vote copy.** Proposed: charged but never refused; users left over their ceiling
+    are reported, not trimmed.
+15. **Where report rows live.** Proposed: `appdata.doc_report` in the App Blocks datastore (see the
+    report API).
+16. **Vote documents' body in the copy.** Proposed: `{}`, with an app able to name another constant
+    body that its target schema accepts.
+17. **Counts in the registry-only end state.** Proposed: the count read is forwarded through the signed
+    internal route, as `info` is, and not served from a stream. This departs from "reads stay on the
+    streams" in WRITES-DESIGN, which gets the exception written down.
+
+## Inventory (pending)
+
+To be filled from production before step 2. Per app namespace (`prod` unless noted), one row per
+primitive in use. App identifiers here are app slugs, never user data.
+
+| App (slug) | Collection | Primitive       | Name     | Declared in approved manifest        | Rows                              | Distinct users | Distinct documents | Max per user | Last write | Calls, last 30 days                   | SDK calls in app source             |
+| ---------- | ---------- | --------------- | -------- | ------------------------------------ | --------------------------------- | -------------- | ------------------ | ------------ | ---------- | ------------------------------------- | ----------------------------------- |
+|            |            | `mark`          |          |                                      | `doc_mark` rows                   |                |                    |              |            |                                       | `update({$mark})`, `mark`, `unmark` |
+|            |            | `report`        | `report` | built-in                             | `doc_mark` rows, open / dismissed |                |                    |              |            |                                       | `update({$mark:'report'})`, `mark`  |
+|            |            | `counter`       |          |                                      | `doc_tally` `kind='counter'` rows |                |                    |              |            |                                       | `update({$inc})`, `increment`       |
+|            |            | `write: "none"` |          |                                      | counter documents                 |                |                    |              |            |                                       |                                     |
+|            |            | `publish`       |          | flag `app-blocks-storage-publish` on | copies                            |                |                    |              |            | `_publish`, `_unpublish`              | `publish`, `unpublish`              |
+|            |            | list by tally   |          |                                      |                                   |                |                    |              |            | `sort=counter:` / `mark:`, `markedBy` | `list({sort, markedBy, mark})`      |
+
+Plus, per app with marks: the users whose current `usage_user.docs` plus their marks to be copied
+exceed their per-viewer document ceiling (a count, not ids).
