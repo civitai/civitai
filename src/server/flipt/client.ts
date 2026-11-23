@@ -476,6 +476,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF — absent or Flipt unreachable, every shared write spends and scans as before. See
   // `putIfUnchanged` in `doc-store.ts`.
   APP_BLOCKS_STORAGE_UNCHANGED_WRITES_FREE = 'app-blocks-storage-unchanged-writes-free',
+  // The per-collection MIGRATION SWITCH of a viewer-keyed collection (`keyedBy`; `GET /storage`
+  // reports it as the collection's `open`): off, every `@me` write to it answers `403 write_policy`
+  // and reads still work, so an app moves its votes over (copy, verify, rate) before anyone writes
+  // (docs/app-storage-generic-core.md, "The per-target switch"). EVALUATED PER APP AND COLLECTION:
+  // entityId = the app block id of the app whose collection it is (the SOURCE app through an
+  // import), context = `{ collection }`; open one target with a segment on both. Production
+  // namespace only: development and review namespaces are always open. DEFAULT-OFF — absent or
+  // Flipt unreachable reads as closed. See `doc-store-viewer-keyed.ts`.
+  APP_BLOCKS_STORAGE_VIEWER_KEYED_OPEN = 'app-blocks-storage-viewer-keyed-open',
   // Who may DECLARE an App Storage permission hook (`storage.collections.<c>.hook`): checked at
   // submit, on the git-push path and at approve, for a hook that is new or changed against the
   // approved manifest, on the actor who introduced it (the submitter, or the pusher on the git-push

@@ -234,6 +234,30 @@ Code: `src/shared/constants/block-storage.constants.ts` (`parseCollectionSchema`
 collection and schema text). The published shape is the `storage.collections.*.schema`
 property of `public/schemas/app-block/v1.json` (`$defs.storageCollectionSchema`).
 
+### Document store: viewer-keyed documents (dark)
+
+Plan: `docs/app-storage-generic-core.md` (#10203). A shared `write: "own"` collection may declare
+`keyedBy: "viewer"` or `"parent+viewer"`: the server derives each document's key from the
+verified viewer (and a client-named parent), so each viewer has at most one document per
+(parent) key. Served at `GET|PUT|DELETE /storage/:c/@me[/:parent]`, each run as the ordinary get,
+put or delete at the derived key; a create or a write by key to such a collection is `400`
+`viewer_keyed`, and every `@me` op by an anonymous viewer is `401 sign_in_required`.
+
+- **Dark, three ways:** submit refuses `keyedBy` while `viewerKeyedDocs` is off in
+  `APP_STORAGE_ENABLED_FEATURES`; every `@me` op is `503` while `APP_STORAGE_VIEWER_KEY_SECRET`
+  is unset (no fallback key); and in production each collection's writes wait on its own
+  switch, the Flipt flag `app-blocks-storage-viewer-keyed-open` (per app, context
+  `{ collection }`), reported as `open` in `GET /storage`. Closed, `@me` writes are
+  `403 write_policy`; reads still work.
+- **Immutable once approved:** submit and approve refuse adding, removing or changing `keyedBy` on
+  a collection any approved version declared (`keyedByChangeErrors`).
+- **Policies:** as any shared write (publish scope, trust gate, shared-write budget, schema,
+  hook, levels, moderation), except the content scan sees the parent, never the derived key, and
+  a hook is also given `parent`.
+
+Code: `src/server/services/apps/doc-store-viewer-keyed.ts` (derivation; golden vectors in its
+test), `viewerKeyedRoute` in `doc-store-api.ts`.
+
 ## Feature flag
 
 `appBlocks` (Flipt key: `app-blocks-enabled`) gates the BlockSlot mount

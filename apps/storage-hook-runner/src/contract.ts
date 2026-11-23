@@ -75,6 +75,9 @@ export const HookInput = z
     app: z.strictObject({ blockId: Name }),
     /** The importing app's blockId on a `?from=` write, else null. */
     from: Name.nullable(),
+    /** On a viewer-keyed collection only: the parent key a `@me` write names (null under
+     *  `keyedBy: "viewer"`). Absent on every other collection. */
+    parent: z.string().min(1).max(96).nullable().optional(),
   })
   .refine(
     (i) => {

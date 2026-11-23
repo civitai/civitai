@@ -381,7 +381,7 @@
     },
     "storage": {
       "type": "object",
-      "description": "Optional APP STORAGE declaration — every collection of JSON documents your app keeps, and who may read and write each one. Manifest-governed and REVIEW-GATED: a collection that is not declared here does not exist at runtime, and the moderator sees each collection's visibility, write policy, counters, marks and indexes. Declaring any collection also requires the `apps:storage` scope; declaring a shared collection that viewers write (`write` of \"own\" or \"anyone\") also requires the sensitive, consent-gated `apps:storage:publish` scope with a `scopeJustifications` entry; declaring any `imports` also requires the sensitive, consent-gated `apps:storage:import` scope with a `scopeJustifications` entry (and `apps:storage`); and requesting any of these scopes with nothing here for it to reach is rejected. At least one of `collections` and `imports` is required. This schema describes the WHOLE declaration, including features the platform does not accept yet: today the server's manifest validation refuses `kind` \"log\", `ttlSeconds`, `dailyWritesPerAuthor`, `write` \"anyone\" and `write` \"owner\" with a message saying they are not available yet, so those validate offline and are rejected at submit. Kept in lockstep with src/shared/constants/block-storage.constants.ts (a drift-guard test enforces equality); the imperative validator in that module is authoritative.",
+      "description": "Optional APP STORAGE declaration — every collection of JSON documents your app keeps, and who may read and write each one. Manifest-governed and REVIEW-GATED: a collection that is not declared here does not exist at runtime, and the moderator sees each collection's visibility, write policy, counters, marks and indexes. Declaring any collection also requires the `apps:storage` scope; declaring a shared collection that viewers write (`write` of \"own\" or \"anyone\") also requires the sensitive, consent-gated `apps:storage:publish` scope with a `scopeJustifications` entry; declaring any `imports` also requires the sensitive, consent-gated `apps:storage:import` scope with a `scopeJustifications` entry (and `apps:storage`); and requesting any of these scopes with nothing here for it to reach is rejected. At least one of `collections` and `imports` is required. This schema describes the WHOLE declaration, including features the platform does not accept yet: today the server's manifest validation refuses `kind` \"log\", `ttlSeconds`, `dailyWritesPerAuthor`, `keyedBy`, `write` \"anyone\" and `write` \"owner\" with a message saying they are not available yet, so those validate offline and are rejected at submit. Kept in lockstep with src/shared/constants/block-storage.constants.ts (a drift-guard test enforces equality); the imperative validator in that module is authoritative.",
       "additionalProperties": false,
       "anyOf": [{ "required": ["collections"] }, { "required": ["imports"] }],
       "properties": {
@@ -536,6 +536,11 @@
                   "maxItems": 32,
                   "items": { "$ref": "#/$defs/storageMigrationOp" }
                 },
+                "keyedBy": {
+                  "type": "string",
+                  "description": "RESERVED — civitai.com refuses this field until viewer-keyed documents are enabled, so do not declare it yet. Shared collections with `write` \"own\" only (not kind \"log\"). The server derives each document's key from the signed-in viewer, so each viewer has at most one document (\"viewer\") or at most one per parent key the app names (\"parent+viewer\"), and no viewer can write another's. The app reads and writes it at `/:collection/@me` or `/:collection/@me/:parent`, where a parent is 1 to 96 characters of A-Z, a-z, 0-9, `.`, `_` or `-` (not only dots); a \"parent+viewer\" key is `<parent>:<digest>`, so listing with `keyPrefix=<parent>:` returns one parent's documents. Writing such a collection by key, and creating in it, are refused. Cannot be added, removed or changed on a collection any approved version declared: declare a new collection instead.",
+                  "enum": ["viewer", "parent+viewer"]
+                },
                 "hook": {
                   "description": "Optional, in a limited rollout: civitai.com accepts a new or changed hook only from authors the rollout includes, and refuses it otherwise. A permission hook: one ES module of the bundle whose default export decides, for every write to this collection, whether the write is allowed. It runs after the collection `schema` check, never instead of it. `file` is the hook's path in the submitted bundle, shipped verbatim — a committed source file, not a build output, so it must not be inside `outputDir` or `node_modules`; one self-contained module with no imports, at most 65536 bytes of UTF-8 text. `sha256` is the SHA-256 of that file's bytes as 64 lowercase hex characters: submit, the git-push path and approve each refuse a version whose file is missing or does not match it. `timeoutMs` is the most time one call may take, from 1 to 500 (omitted means 50). One file used by several collections must be pinned with the same sha256 in each.",
                   "$ref": "#/$defs/storageCollectionHook"
@@ -565,7 +570,8 @@
                       "showAuthor": false,
                       "dailyWritesPerAuthor": false,
                       "ownedModelVersions": false,
-                      "registry": false
+                      "registry": false,
+                      "keyedBy": false
                     }
                   }
                 },
@@ -592,6 +598,19 @@
                     "properties": { "write": { "enum": ["anyone", "owner", "none"] } }
                   },
                   "then": { "properties": { "ownedModelVersions": false } }
+                },
+                {
+                  "$comment": "A viewer-keyed collection's viewer is the author of every key they address, so it is declared only under write:\"own\" (private collections are refused above); log entries have server keys.",
+                  "if": {
+                    "anyOf": [
+                      {
+                        "required": ["write"],
+                        "properties": { "write": { "enum": ["anyone", "owner", "none"] } }
+                      },
+                      { "required": ["kind"], "properties": { "kind": { "const": "log" } } }
+                    ]
+                  },
+                  "then": { "properties": { "keyedBy": false } }
                 },
                 {
                   "$comment": "A write:\"none\" collection is written only through counters and marks, so it must declare at least one.",

@@ -836,6 +836,18 @@ describe('reserved path segments cannot collide with a collection name or a docu
         expect(APP_STORAGE_COLLECTION_NAME_RE.test(segment), segment).toBe(false);
         expect(matchStorageRoute('GET', [segment])).toBeNull();
       }
+      if (position === 1) {
+        // At the KEY position (`@me`): outside the key alphabet, so never a stored key, and routed
+        // as the viewer's own document instead.
+        expect(DOC_STORE_BOUNDS.key.test(segment), segment).toBe(false);
+        expect(matchStorageRoute('GET', ['c', segment])).toEqual({
+          route: { op: 'getMine', collection: 'c', parent: null },
+        });
+        expect(matchStorageRoute('PUT', ['c', segment, 'p1'])).toEqual({
+          route: { op: 'putMine', collection: 'c', parent: 'p1' },
+        });
+        continue;
+      }
       // As a document KEY (the second segment) every reserved word is a valid key and is
       // parsed as exactly that key, on every document route.
       expect(DOC_STORE_BOUNDS.key.test(segment), segment).toBe(true);

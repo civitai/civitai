@@ -17,6 +17,7 @@ import {
   APP_STORAGE_IMPORT_FROM_RE,
   APP_STORAGE_INDEX_PATH_RE,
   APP_STORAGE_INDEX_TYPES,
+  APP_STORAGE_KEYED_BY,
   APP_STORAGE_KINDS,
   APP_STORAGE_LOG_MAX_ENTRIES,
   APP_STORAGE_MAX_COLLECTIONS,
@@ -175,6 +176,20 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
   ],
   ['exportable false', priv({ exportable: false }), true],
   ['exportable true on shared', shared({ exportable: true }), true],
+  // Viewer-keyed documents (docs/app-storage-generic-core.md): shared `own` only, phased.
+  ['keyedBy viewer on shared own', shared({ keyedBy: 'viewer' }), true, true],
+  ['keyedBy parent+viewer on shared own', shared({ keyedBy: 'parent+viewer' }), true, true],
+  ['keyedBy unknown mode', shared({ keyedBy: 'parent' }), false],
+  ['keyedBy not a string', shared({ keyedBy: true }), false],
+  ['keyedBy on private', priv({ keyedBy: 'viewer' }), false],
+  ['keyedBy with write none', shared({ write: 'none', marks: ['vote'], keyedBy: 'viewer' }), false],
+  ['keyedBy with write anyone', shared({ write: 'anyone', keyedBy: 'viewer' }), false],
+  [
+    'keyedBy with write owner',
+    shared({ write: 'owner', counters: ['plays'], keyedBy: 'viewer' }),
+    false,
+  ],
+  ['keyedBy on a log collection', shared({ kind: 'log', keyedBy: 'viewer' }), false],
   ['imports only', imports(imp()), true],
   ['imports beside collections', { ...priv(), ...imports(imp({ access: 'readwrite' })) }, true],
   [
@@ -617,6 +632,7 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     expect(p.registry.enum).toEqual([...APP_STORAGE_REGISTRY_AUDIENCES]);
     expect(p.visibility.enum).toEqual([...APP_STORAGE_VISIBILITIES]);
     expect(p.write.enum).toEqual([...APP_STORAGE_WRITE_POLICIES]);
+    expect(p.keyedBy.enum).toEqual([...APP_STORAGE_KEYED_BY]);
 
     for (const [field, max] of [
       ['counters', APP_STORAGE_MAX_COUNTERS],

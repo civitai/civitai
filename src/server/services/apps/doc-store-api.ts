@@ -16,12 +16,15 @@
 //   ['_get', c]                      POST   get many  { keys }
 //   [c, key]                         GET    get     PUT put     DELETE delete
 //                                    PATCH  one update operator: $inc, $mark or $unmark
+//   [c, '@me']                       GET    getMine PUT putMine DELETE deleteMine  (keyedBy viewer)
+//   [c, '@me', parent]               the same, for keyedBy parent+viewer (`viewerKeyedRoute`)
 //   [c, key, 'counters', name]       POST   increment         (deprecated: PATCH $inc)
 //   [c, key, 'marks', name]          PUT    mark    DELETE unmark  (deprecated: PATCH $mark/$unmark)
 //   ['_publish', to]                 POST   publish   { from, keys, prune? }
 //   ['_unpublish', to]               POST   unpublish { keys }
 // `_publish` / `_unpublish` exist only while the per-app Flipt flag `app-blocks-storage-publish`
 // is on; off, they answer exactly as an unknown route (see PUBLISH below).
+// `@me` sits at the KEY position and is outside the key grammar (`@`), so it is never a key.
 // `_get` is a POST with a body (not a GET query) because 100 keys of 128 characters do not
 // fit in a URL every proxy accepts.
 //
@@ -109,6 +112,12 @@ import type {
 } from '~/server/services/apps/doc-store.types';
 import { withDocLevelGate } from '~/server/services/apps/doc-levels';
 import {
+  isViewerKeyedOpen,
+  refuseRawKeyWrite,
+  VIEWER_KEYED_SEGMENT,
+  viewerKeyedDocKey,
+} from '~/server/services/apps/doc-store-viewer-keyed';
+import {
   DOC_STORE_BOUNDS,
   DOC_STORE_PUBLISH_BOUNDS,
   DocStoreError,
@@ -173,6 +182,7 @@ export const STORAGE_RESERVED_SEGMENTS = [
   { segment: UNPUBLISH_SEGMENT, position: 0 },
   { segment: COUNTERS_SEGMENT, position: 2 },
   { segment: MARKS_SEGMENT, position: 2 },
+  { segment: VIEWER_KEYED_SEGMENT, position: 1 },
 ] as const;
 
 export type StorageRoute =
@@ -182,6 +192,9 @@ export type StorageRoute =
   // Server-side publish and unpublish into the shared collection `collection` (PUBLISH below).
   | { op: 'publish' | 'unpublish'; collection: string }
   | { op: 'get' | 'put' | 'delete'; collection: string; key: string }
+  // The viewer's own document in a viewer-keyed collection; run as get / put / delete at the
+  // derived key (`viewerKeyedRoute`). `parent` is the raw path segment, checked there.
+  | { op: 'getMine' | 'putMine' | 'deleteMine'; collection: string; parent: string | null }
   | { op: 'increment'; collection: string; key: string; name: string }
   | { op: 'mark' | 'unmark'; collection: string; key: string; name: string }
   // An update operator on one document; translated by `parseTallyPatch` before it runs.
@@ -201,6 +214,12 @@ export function matchStorageRoute(method: string, segments: readonly string[]): 
   const [a, b, c, d] = segments;
   const pick = (table: Record<string, StorageRoute>): Match =>
     table[method] ? { route: table[method] } : { methods: Object.keys(table) };
+  const pickMine = (collection: string, parent: string | null): Match =>
+    pick({
+      GET: { op: 'getMine', collection, parent },
+      PUT: { op: 'putMine', collection, parent },
+      DELETE: { op: 'deleteMine', collection, parent },
+    });
   switch (segments.length) {
     case 0:
       return pick({ GET: { op: 'info' } });
@@ -212,12 +231,16 @@ export function matchStorageRoute(method: string, segments: readonly string[]): 
       if (a === PUBLISH_SEGMENT) return pick({ POST: { op: 'publish', collection: b } });
       if (a === UNPUBLISH_SEGMENT) return pick({ POST: { op: 'unpublish', collection: b } });
       if (a.startsWith('_')) return null;
+      if (b === VIEWER_KEYED_SEGMENT) return pickMine(a, null);
       return pick({
         GET: { op: 'get', collection: a, key: b },
         PUT: { op: 'put', collection: a, key: b },
         DELETE: { op: 'delete', collection: a, key: b },
         PATCH: { op: 'patch', collection: a, key: b },
       });
+    case 3:
+      if (a.startsWith('_') || b !== VIEWER_KEYED_SEGMENT) return null;
+      return pickMine(a, c);
     case 4:
       if (a.startsWith('_')) return null;
       if (c === COUNTERS_SEGMENT) {
@@ -240,8 +263,9 @@ export function storageEndpointLabel(req: NextApiRequest): DocStoreEndpoint {
   const m = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
   const op = m && 'route' in m ? m.route.op : 'info';
   if (op === 'info') return 'storage_info';
-  if (op === 'list' || op === 'get' || op === 'getMany') return 'storage_read';
+  if (op === 'list' || op === 'get' || op === 'getMany' || op === 'getMine') return 'storage_read';
   if (op === 'create' || op === 'put' || op === 'delete') return 'storage_write';
+  if (op === 'putMine' || op === 'deleteMine') return 'storage_write';
   if (op === 'publish' || op === 'unpublish') return 'storage_write';
   // increment, mark, unmark, and `patch` (whose only operators are tallies).
   return 'storage_tally';
@@ -799,7 +823,8 @@ async function presentDoc(doc: DocRecord, decl: DeclaredStorageCollection) {
   return (await presentDocs([doc], decl))[0] as PresentedDoc;
 }
 
-function presentDeclaration(decl: DeclaredStorageCollection) {
+/** `open`: a viewer-keyed collection's migration switch (`isViewerKeyedOpen`); else unused. */
+function presentDeclaration(decl: DeclaredStorageCollection, open: boolean) {
   return {
     kind: decl.kind,
     visibility: decl.visibility,
@@ -808,6 +833,7 @@ function presentDeclaration(decl: DeclaredStorageCollection) {
     marks: [...decl.marks],
     indexes: Object.fromEntries(decl.indexes),
     showAuthor: decl.showAuthor,
+    ...(decl.keyedBy ? { keyedBy: decl.keyedBy, open } : {}),
   };
 }
 
@@ -1149,10 +1175,46 @@ async function withSharedWriteBudget<T>(
 
 type Reply = { status: number; body: unknown };
 
+type ViewerKeyedOp = Extract<StorageRoute, { op: 'getMine' | 'putMine' | 'deleteMine' }>;
+/** A route `run`'s switch executes: a `@me` route is translated into a document route first. */
+type DocRoute = Exclude<OperationRoute, { op: 'info' } | ViewerKeyedOp>;
+
+const isViewerKeyedOp = (route: StorageRoute): route is ViewerKeyedOp =>
+  route.op === 'getMine' || route.op === 'putMine' || route.op === 'deleteMine';
+
+const VIEWER_KEYED_DOC_OP = { getMine: 'get', putMine: 'put', deleteMine: 'delete' } as const;
+
+/**
+ * VIEWER-KEYED DOCUMENTS (`doc-store-viewer-keyed.ts`). A `@me` route becomes exactly the get, put
+ * or delete of the viewer's own document at the derived key, so every gate below applies to it as
+ * to any document write; `keyed.parent` is what a write's content scan and hook see in place of
+ * the derived key. A create, or a write by key, to a viewer-keyed collection is refused.
+ */
+async function viewerKeyedRoute(
+  route: Exclude<OperationRoute, { op: 'info' }>,
+  access: StorageAccess,
+  coll: DocCollection
+): Promise<{ route: DocRoute; keyed: { parent: string | null } | null }> {
+  if (!isViewerKeyedOp(route)) {
+    if (route.op === 'create' || route.op === 'put' || route.op === 'delete') {
+      refuseRawKeyWrite(coll);
+    }
+    return { route, keyed: null };
+  }
+  const op = VIEWER_KEYED_DOC_OP[route.op];
+  const key = await viewerKeyedDocKey({
+    ctx: access.ctx,
+    coll,
+    parent: route.parent,
+    write: op !== 'get',
+  });
+  return { route: { op, collection: route.collection, key }, keyed: { parent: route.parent } };
+}
+
 async function run(
   req: NextApiRequest,
   body: unknown,
-  route: OperationRoute,
+  requested: OperationRoute,
   access: StorageAccess,
   store: DocStore,
   via: AppStorageVia
@@ -1167,12 +1229,19 @@ async function run(
   // the viewer's own usage and `viewerBytes`/`viewerDocs` only (`DocStoreUsage`).
   // Every read is charged first, so a read of an undeclared collection is limited too.
   // Writes are charged below, once the collection says which bucket they spend.
-  if (route.op === 'info') requireViewer(access);
-  if (route.op === 'info' || route.op === 'list' || route.op === 'get' || route.op === 'getMany') {
+  // Every `@me` op, reads included, is the signed-in viewer's own: anonymous is refused first.
+  if (requested.op === 'info' || isViewerKeyedOp(requested)) requireViewer(access);
+  if (
+    requested.op === 'info' ||
+    requested.op === 'list' ||
+    requested.op === 'get' ||
+    requested.op === 'getMany' ||
+    requested.op === 'getMine'
+  ) {
     await charge('read', access, req);
   }
 
-  if (route.op === 'info') {
+  if (requested.op === 'info') {
     // The per-viewer figures are the ceiling the store charges this viewer's writes against
     // (`store.viewerLimits`: in production their membership tier's); the app ceilings are fixed.
     const [usage, viewerLimits] = await Promise.all([
@@ -1180,10 +1249,17 @@ async function run(
       store.viewerLimits(requireViewer(access)),
     ]);
     const L = store.limits;
+    const collections = await Promise.all(
+      [...access.collections].map(
+        async ([name, decl]) =>
+          [
+            name,
+            presentDeclaration(decl, decl.keyedBy ? await isViewerKeyedOpen(ctx, name) : false),
+          ] as const
+      )
+    );
     return ok({
-      collections: Object.fromEntries(
-        [...access.collections].map(([name, decl]) => [name, presentDeclaration(decl)])
-      ),
+      collections: Object.fromEntries(collections),
       limits: {
         docBytes: DOC_STORE_BOUNDS.docBytes,
         appBytes: L.appBytes,
@@ -1208,9 +1284,10 @@ async function run(
     });
   }
 
-  const coll = collectionOf(access, route.collection);
+  const coll = collectionOf(access, requested.collection);
   const decl = coll.config;
   const shared = decl.visibility === 'shared';
+  const { route, keyed } = await viewerKeyedRoute(requested, access, coll);
   const written = async (doc: WrittenDocRecord) => {
     const presented = await presentDoc(doc, decl);
     return service ? { ...presented, seq: doc.seq, recordId: doc.recordId } : presented;
@@ -1269,6 +1346,7 @@ async function run(
           key: writeKey,
           after: newData,
           ifVersion: putIn?.ifVersion ?? deleteVersion,
+          ...(keyed ? { parent: keyed.parent } : {}),
         });
       const write = async (user: SessionUser | null, landed: () => void): Promise<Reply> => {
         const grant = await decide();
@@ -1286,8 +1364,10 @@ async function run(
         }
         if (putIn && route.op === 'put') {
           const { data, ifVersion } = putIn;
+          // A viewer-keyed document's key is a digest, not client text: only its parent is scanned.
+          const scannedKey = keyed ? keyed.parent ?? undefined : route.key;
           const afterCommit = user
-            ? await moderate(access, user, 'update', route.key, { data, key: route.key })
+            ? await moderate(access, user, 'update', route.key, { data, key: scannedKey })
             : nothingAfterCommit;
           const doc = await store.put(ctx, await withSchemaMajor(access, coll), route.key, data, {
             ifVersion,
@@ -1660,10 +1740,19 @@ function otherAppSource(from: string | null, own: Pick<StorageAccess, 'blockId'>
  * Every one but a read is refused through a read-only import.
  */
 function importOpOf(route: Exclude<StorageRoute, { op: 'info' }>): ImportOp {
-  if (route.op === 'list' || route.op === 'get' || route.op === 'getMany') return 'read';
+  if (
+    route.op === 'list' ||
+    route.op === 'get' ||
+    route.op === 'getMany' ||
+    route.op === 'getMine'
+  ) {
+    return 'read';
+  }
   // `patch` carries only tally operators, each an authoring write like the routes it replaces.
   // (`publish` / `unpublish` never reach an import: `assertNoStrayQuery` refuses their `from`.)
-  return route.op === 'delete' || route.op === 'unpublish' ? 'delete' : 'author';
+  return route.op === 'delete' || route.op === 'deleteMine' || route.op === 'unpublish'
+    ? 'delete'
+    : 'author';
 }
 
 /**
@@ -1673,7 +1762,7 @@ function importOpOf(route: Exclude<StorageRoute, { op: 'info' }>): ImportOp {
  */
 function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute, via: AppStorageVia): void {
   if (route.op === 'list') return;
-  const own = route.op === 'delete' ? ['path', 'ifVersion'] : ['path'];
+  const own = route.op === 'delete' || route.op === 'deleteMine' ? ['path', 'ifVersion'] : ['path'];
   // A publish names its source in the BODY and runs in this app only: no `?from=` import.
   const allowed =
     (route.op === 'info' && via === 'direct') || route.op === 'publish' || route.op === 'unpublish'
