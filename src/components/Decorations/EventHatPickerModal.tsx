@@ -325,7 +325,7 @@ export default function EventHatPickerModal({ entityType, entityId, image, event
       size="xl"
       radius="md"
       closeOnClickOutside={!equipping && !joining}
-      closeOnEscape={!equipping && !joining}
+      closeOnEscape={dialog.closeOnEscape && !equipping && !joining}
     >
       {body}
     </Modal>

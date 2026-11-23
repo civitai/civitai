@@ -43,6 +43,7 @@ import {
   createAccessTokenJwtVerifier,
   isAccessTokenJwt,
 } from '@civitai/auth';
+import { isBrowsingLevelClaim } from '@civitai/auth/browsing-level-claim';
 import { ALL_SCOPES, TokenScope } from '~/shared/constants/token-scope.constants';
 import type {
   TokenBlockBinding,
@@ -132,9 +133,6 @@ const BLOCK_CLAIMS = [
 /** The block-exchange token's viewer level. Optional until every live token carries it. */
 const VIEWER_LEVEL_CLAIM = 'civitai_viewer_browsing_level';
 
-const isNonNegativeInteger = (v: unknown): v is number =>
-  typeof v === 'number' && Number.isInteger(v) && v >= 0;
-
 /**
  * A token's block binding: `none` when it carries none of the four block-exchange claims (nor the
  * viewer level), the binding when it carries all four well-formed (the marker `block-exchange`, two
@@ -150,7 +148,7 @@ export function blockBindingOf(
     // A viewer level with no binding to read it with is not a token the hub mints.
     return viewerLevel === undefined ? { kind: 'none' } : { kind: 'invalid' };
   }
-  if (viewerLevel !== undefined && !isNonNegativeInteger(viewerLevel)) return { kind: 'invalid' };
+  if (viewerLevel !== undefined && !isBrowsingLevelClaim(viewerLevel)) return { kind: 'invalid' };
   const {
     civitai_token_kind: kind,
     civitai_app_block_id: appBlockId,
@@ -163,7 +161,7 @@ export function blockBindingOf(
     appBlockId === '' ||
     typeof blockInstanceId !== 'string' ||
     blockInstanceId === '' ||
-    !isNonNegativeInteger(maxBrowsingLevel)
+    !isBrowsingLevelClaim(maxBrowsingLevel)
   ) {
     return { kind: 'invalid' };
   }

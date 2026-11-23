@@ -1,6 +1,6 @@
 import { Menu } from '~/components/MantineOverlays';
 import { IconArrowBackUp, IconPhotoUp } from '@tabler/icons-react';
-import { openRemixSourcesModal } from '~/components/Dialog/triggers/remix-sources';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useRemixSources } from '~/components/RemixGallery/RemixSourcesList';
@@ -60,7 +60,16 @@ function SubmitRemixMenuItem({ imageId, published }: { imageId: number; publishe
   return (
     <Menu.Item
       leftSection={<IconPhotoUp size={14} stroke={1.5} />}
-      onClick={() => openRemixSourcesModal({ imageId, published })}
+      onClick={() =>
+        openDialog(
+          () => import('~/components/RemixGallery/RemixSourcesModal'),
+          'RemixSourcesModal',
+          {
+            imageId,
+            published,
+          }
+        )
+      }
     >
       Submit this remix
     </Menu.Item>

@@ -503,6 +503,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF: off, absent or Flipt unreachable, the token is ignored and nothing is stored.
   // See `github-actions-oidc.service.ts`.
   APP_BLOCKS_OIDC_VERIFIED_SUBMIT = 'app-blocks-oidc-verified-submit',
+  // App Blocks "Request access" (`submitAppAccessRequest`). On for a requester whose account
+  // passes `isEligibleForAutoApproval`: the request is written APPROVED, which is the builder
+  // grant, instead of waiting in the moderator queue. EVALUATED PER REQUESTER — entityId = the
+  // user id, context = `buildFliptContext(user)`. DEFAULT-OFF: off, absent or Flipt unreachable,
+  // every request lands pending, as before.
+  APP_ACCESS_AUTO_APPROVE = 'app-access-auto-approve',
   // App Block host media serving, per viewer. See `decideBlockMediaServing` in
   // `block-media-serving.ts`, including what happens with no flag answer.
   APP_BLOCKS_WORKFLOW_MEDIA_SERVE = 'app-blocks-workflow-media-serve',

@@ -1,8 +1,8 @@
 import { Button, Paper, Text } from '@mantine/core';
 import { IconPhoto } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import type { ComponentProps, ReactNode } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import cardStyles from '~/components/CardTemplates/AspectRatioCard.module.scss';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
@@ -32,10 +32,6 @@ type ServiceCoverImage = Pick<
 type ServiceCardSeller = ComponentProps<typeof UserAvatar>['user'];
 
 export const COVER_ASPECT_RATIO = 4 / 3;
-
-const ServiceBuyerPreviewModal = dynamic(
-  () => import('~/components/CreatorShop/Services/ServiceBuyerPreviewModal')
-);
 
 /**
  * Whether ImageGuard draws its own level chip on the cover: always while blurred, and on a
@@ -246,10 +242,10 @@ export function ServiceOfferingCard({
                 color="gray"
                 fullWidth
                 onClick={() =>
-                  dialogStore.trigger({
-                    component: ServiceBuyerPreviewModal,
-                    props: { offering, seller, sellerId, sellerUsername, slotsOpen, canRequest },
-                  })
+                  openDialog(
+                    () => import('~/components/CreatorShop/Services/ServiceBuyerPreviewModal'),
+                    { offering, seller, sellerId, sellerUsername, slotsOpen, canRequest }
+                  )
                 }
               >
                 Preview as buyer

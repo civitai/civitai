@@ -65,7 +65,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       # One toolchain for every module: their go.mod files name the same Go version.
       - uses: actions/setup-go@v6
@@ -78,6 +79,8 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/pnpm-store-save
 
       # Counted: vitest given a file it does not match runs the rest and still exits 0.
       - name: Generator tests
@@ -117,7 +120,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       - uses: actions/setup-go@v6
         with:

@@ -1,4 +1,5 @@
-import { ModalsProvider } from '@mantine/modals';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // The seam test renders TWO trees in one test and has to tear the first one down —
@@ -312,8 +313,8 @@ import { renderWithProviders } from '../../../test/component-setup';
 /**
  * 🔴 EACH SURFACE EXPOSES ITS ELEMENT AS WELL AS A `render()`, SO AN ARM CAN FORCE A GENUINE
  * RE-RENDER WITH THE NEW FIXTURE. Nothing else in this file needed it, and its absence made one
- * assertion VACUOUS: `ModalsProvider` receives `children` as a prop, so toggling a modal re-renders
- * the provider but React bails out on the SAME child element and the permissions subtree never
+ * assertion VACUOUS: a dialog renders in the `DialogProvider` beside the surface, so toggling one
+ * re-renders only that provider and the permissions subtree never
  * re-reads `listMyScopeGrants`. An arm that changed `m.grants` and then opened/cancelled a dialog to
  * "force a render" therefore measured the PREVIOUS payload — and passed, because the local override
  * happened to produce the same mark count. `rerender(element())` is the only thing here that really
@@ -323,22 +324,24 @@ const SURFACES = [
   {
     name: 'drawer',
     element: () => (
-      <ModalsProvider>
+      <>
         <AppPermissionsActivityDrawer
           appBlockId={GRANT.appBlockId}
           appName={GRANT.name}
           opened
           onClose={vi.fn()}
         />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     ),
   },
   {
     name: 'activity page',
     element: () => (
-      <ModalsProvider>
+      <>
         <ScopeGrantsPanel defaultOpened />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     ),
   },
 ].map((surface) => ({ ...surface, render: () => renderWithProviders(surface.element()) }));
@@ -351,6 +354,8 @@ function revokableScopesOnScreen(): string[] {
 }
 
 beforeEach(() => {
+  // The dialog store is global; each test renders a fresh DialogProvider.
+  dialogStore.closeAll();
   m.grants = [GRANT];
   m.revokeCalls = [];
   m.revokeError = null;

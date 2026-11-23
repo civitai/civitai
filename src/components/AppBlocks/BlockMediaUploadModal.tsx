@@ -47,14 +47,16 @@ export default function BlockMediaUploadModal({
   const copy = COPY[kind];
   const accept = MEDIA_UPLOAD_ACCEPT[kind];
 
-  // A late upload must not resolve a modal that unmounted or was superseded by a newer pick.
+  // A late upload must not resolve a modal that closed (it stays mounted through its exit
+  // transition) or was superseded by a newer pick.
   const epochRef = useRef(0);
   useEffect(() => {
+    if (!dialog.opened) return;
     return () => {
       // eslint-disable-next-line react-hooks/exhaustive-deps -- the live epoch counter, not a DOM node
       epochRef.current++;
     };
-  }, []);
+  }, [dialog.opened]);
 
   async function handleFile(picked: File | null) {
     if (!picked || requireSignIn()) return;

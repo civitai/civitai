@@ -26,8 +26,21 @@ import type * as RedisClient from '@civitai/redis/client';
  * importing the router doesn't drag in the generated Prisma client.
  */
 
-const { mockIsAppBlocksEnabled, mockRetrigger } = vi.hoisted(() => ({
+const { mockIsAppBlocksEnabled, mockRetrigger, mockResync, mockPreview } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn(),
+  // `blocks.resyncListingRating` / `blocks.getListingRatingResyncPreview` share this harness
+  // (the describes at the end of the file).
+  mockResync: vi.fn<(...a: any[]) => Promise<unknown>>(async () => ({
+    listingId: 'apl_1',
+    from: 'x',
+    to: 'pg13',
+    changed: true,
+  })),
+  mockPreview: vi.fn<(...a: any[]) => Promise<unknown>>(async () => ({
+    listingId: 'apl_1',
+    from: 'x',
+    to: 'pg13',
+  })),
   mockRetrigger: vi.fn<(...a: any[]) => Promise<unknown>>(async () => ({
     publishRequestId: 'pubreq_1',
     appBlockId: 'apb_x',
@@ -47,6 +60,8 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 // export under test plus the handful the module graph needs.
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   retriggerBuild: mockRetrigger,
+  resyncListingRating: mockResync,
+  previewListingRatingResync: mockPreview,
 }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: vi.fn(),
@@ -263,5 +278,64 @@ describe('blocks.retriggerBuild — typed error mapping', () => {
     await expect(caller.retriggerBuild({ publishRequestId: REQ_ID })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     });
+  });
+});
+
+const APP = 'apb_1';
+
+const serviceErr = (code: string, message: string) =>
+  Object.assign(new Error(message), { name: 'ListingRatingResyncError', code });
+
+describe('blocks.resyncListingRating — moderator gate', () => {
+  it('a NON-MODERATOR is rejected; the service is never reached', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(tester) as never);
+    await expect(caller.resyncListingRating({ appBlockId: APP })).rejects.toBeInstanceOf(TRPCError);
+    expect(mockResync).not.toHaveBeenCalled();
+  });
+
+  it('an ANONYMOUS caller is rejected; the service is never reached', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
+    await expect(caller.resyncListingRating({ appBlockId: APP })).rejects.toBeInstanceOf(TRPCError);
+    expect(mockResync).not.toHaveBeenCalled();
+  });
+
+  it('a MODERATOR runs it, as the SESSION user — a client-supplied actor is dropped', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(mod) as never);
+    await expect(
+      caller.resyncListingRating({ appBlockId: APP, actorUserId: 9999 } as never)
+    ).resolves.toEqual({ listingId: 'apl_1', from: 'x', to: 'pg13', changed: true });
+    expect(mockResync).toHaveBeenCalledWith({ appBlockId: APP, actorUserId: mod.id });
+  });
+
+  it.each([
+    ['NOT_FOUND', 'NOT_FOUND'],
+    ['CONFLICT', 'CONFLICT'],
+    ['SOMETHING_ELSE', 'INTERNAL_SERVER_ERROR'],
+  ])('maps a service %s to %s', async (serviceCode, trpcCode) => {
+    mockResync.mockRejectedValueOnce(serviceErr(serviceCode, 'nope'));
+    const caller = blocksRouter.createCaller(fakeCtx(mod) as never);
+    await expect(caller.resyncListingRating({ appBlockId: APP })).rejects.toMatchObject({
+      code: trpcCode,
+    });
+  });
+});
+
+describe('blocks.getListingRatingResyncPreview — moderator gate', () => {
+  it('a NON-MODERATOR is rejected; the service is never reached', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(tester) as never);
+    await expect(caller.getListingRatingResyncPreview({ appBlockId: APP })).rejects.toBeInstanceOf(
+      TRPCError
+    );
+    expect(mockPreview).not.toHaveBeenCalled();
+  });
+
+  it('a MODERATOR gets the preview', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(mod) as never);
+    await expect(caller.getListingRatingResyncPreview({ appBlockId: APP })).resolves.toEqual({
+      listingId: 'apl_1',
+      from: 'x',
+      to: 'pg13',
+    });
+    expect(mockPreview).toHaveBeenCalledWith(APP);
   });
 });

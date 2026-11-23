@@ -43,7 +43,6 @@ import {
   IconUsersGroup,
   IconX,
 } from '@tabler/icons-react';
-import { openConfirmModal } from '@mantine/modals';
 import clsx from 'clsx';
 import { Fragment, useMemo, useState } from 'react';
 import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
@@ -60,6 +59,7 @@ import {
   RECRUITER_RANK_ACCENT,
   type ReferralDashboardProps,
 } from './dashboard.types';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 const tierLabels: Record<string, string> = {
   bronze: 'Bronze',
@@ -887,9 +887,9 @@ function ShopTierCard({
         tierLabels[activeMembership.tier] ?? activeMembership.tier ?? 'Membership';
       const targetTier = tierLabels[tier] ?? tier;
       const expiresOn = new Date(activeMembership.currentPeriodEnd).toLocaleDateString();
-      openConfirmModal({
+      openConfirm({
         title: `Redeem ${targetTier} on top of your active ${existingTier} plan?`,
-        children: (
+        message: (
           <Stack gap="xs">
             <Text size="sm">
               Your paid {existingTier} membership runs until <strong>{expiresOn}</strong>. Redeemed

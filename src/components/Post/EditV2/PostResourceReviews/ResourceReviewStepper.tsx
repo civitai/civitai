@@ -353,6 +353,7 @@ export function ResourceReviewStepper({
     return (
       <Drawer
         opened={dialog.opened}
+        closeOnEscape={dialog.closeOnEscape}
         onClose={dialog.onClose}
         zIndex={dialog.zIndex}
         position="bottom"
@@ -375,6 +376,7 @@ export function ResourceReviewStepper({
   return (
     <Modal
       opened={dialog.opened}
+      closeOnEscape={dialog.closeOnEscape}
       onClose={dialog.onClose}
       zIndex={dialog.zIndex}
       size={900}

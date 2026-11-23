@@ -1,0 +1,49 @@
+/**
+ * Knights v1 retirement: the old in-app game's last settlement, once its nightly grant and its
+ * moderator-rating hooks are gone. Deleted with the rest of the v1 code.
+ *
+ * Run after the main app has finished rolling out: status, then pay.
+ *
+ * POST /api/admin/temp/knights-v1-final-settle   (moderator session or `Authorization: Bearer <moderator API key>`)
+ *   { "action": "status", "from"?: "2026-11-21" }
+ *       v1 votes still Pending, and payout-blocked players whose held v1 Buzz nothing pays any more.
+ *       Pass the `from` you will give `pay`, and run it right before `pay`.
+ *   { "action": "pay", "from": "2026-11-21" }
+ *       Pays every day from `from` through today. Use the first day the nightly grant had not paid:
+ *       an already-paid day is rejected as a duplicate, but a player unbanned since would be paid it.
+ */
+import * as z from 'zod';
+import {
+  countHeldV1Players,
+  countPendingV1Votes,
+  payV1Days,
+} from '~/server/games/new-order/v1-final-settle';
+import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
+import dayjs from '~/shared/utils/dayjs';
+
+const from = z.coerce
+  .date()
+  .refine((d) => dayjs().diff(d, 'day') <= 14, 'from must be within the last 14 days');
+
+const schema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('status'), from: from.optional() }),
+  z.object({ action: z.literal('pay'), from }),
+]);
+
+export default defineModeratorEndpoint('knights.v1FinalSettle', {
+  method: 'POST',
+  summary: 'Knights v1 retirement: pay the last days of v1 judgments.',
+  returns: '{ pending, held } for status, { days } for pay',
+  rateLimit: { max: 10, windowSeconds: 60 },
+  input: schema,
+  async handler(input) {
+    if (input.action === 'status') {
+      const [pending, held] = await Promise.all([
+        countPendingV1Votes(),
+        countHeldV1Players(input.from),
+      ]);
+      return { pending, held };
+    }
+    return payV1Days(input.from);
+  },
+});

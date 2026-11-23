@@ -1,10 +1,10 @@
 import React from 'react';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { ModalsProvider } from '@mantine/modals';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import '@mantine/core/styles.css';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import type * as DialogStoreModule from '~/components/Dialog/dialogStore';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -14,7 +14,6 @@ import { ServiceOfferingMenu } from './ServiceOfferingMenu';
 const mocks = vi.hoisted(() => ({
   remove: vi.fn(),
   openReportModal: vi.fn(),
-  trigger: vi.fn(),
   notifyError: vi.fn(),
   getMine: vi.fn(),
   getSellEligibility: vi.fn(),
@@ -39,10 +38,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     }
   ),
 }));
-vi.mock('~/components/Dialog/dialogStore', async (importOriginal) => ({
-  ...(await importOriginal<typeof DialogStoreModule>()),
-  dialogStore: { trigger: mocks.trigger },
-}));
 vi.mock('~/utils/notifications', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationsModule>()),
   showErrorNotification: mocks.notifyError,
@@ -64,9 +59,10 @@ const open = async (props: {
   placement?: 'card' | 'title';
 }) => {
   renderWithProviders(
-    <ModalsProvider>
+    <>
       <ServiceOfferingMenu offering={offering} {...props} />
-    </ModalsProvider>
+      <DialogProvider />
+    </>
   );
   await page.getByLabelText('Service options').click();
 };
@@ -77,6 +73,11 @@ describe('ServiceOfferingMenu', () => {
     vi.clearAllMocks();
     window.isAuthed = true;
     openWindow.mockClear();
+  });
+  afterEach(() => {
+    // Only the trigger spies a test installs: the module-scope window.open spy stays.
+    if (vi.isMockFunction(dialogStore.trigger)) vi.mocked(dialogStore.trigger).mockRestore();
+    dialogStore.closeAll();
   });
 
   test('a visitor can report and not delete', async () => {
@@ -130,18 +131,21 @@ describe('ServiceOfferingMenu', () => {
     const fullRow = { ...offering, description: 'Full text.', price: 2500, maxOpenDeals: 4 };
     mocks.getMine.mockResolvedValue({ items: [fullRow], hiddenOffDomain: 0 });
     mocks.getSellEligibility.mockResolvedValue({ canSell: true });
+    // Recorded, not opened: the form modal is not what this test is about.
+    const trigger = vi.spyOn(dialogStore, 'trigger').mockImplementation(() => undefined);
     await open({ isOwner: true, isModerator: false });
     await item('Duplicate').click();
-    await vi.waitFor(() => expect(mocks.trigger).toHaveBeenCalledTimes(1));
-    expect(mocks.trigger.mock.calls[0][0].props).toEqual({ copyOf: fullRow });
+    await vi.waitFor(() => expect(trigger).toHaveBeenCalledTimes(1));
+    expect(trigger.mock.calls[0][0].props).toEqual({ copyOf: fullRow });
   });
 
   test('a seller who cannot sell is told why, and gets no form', async () => {
     mocks.getMine.mockResolvedValue({ items: [offering], hiddenOffDomain: 0 });
     mocks.getSellEligibility.mockResolvedValue({ canSell: false });
+    const trigger = vi.spyOn(dialogStore, 'trigger');
     await open({ isOwner: true, isModerator: false });
     await item('Duplicate').click();
     await vi.waitFor(() => expect(mocks.notifyError).toHaveBeenCalledTimes(1));
-    expect(mocks.trigger).not.toHaveBeenCalled();
+    expect(trigger).not.toHaveBeenCalled();
   });
 });

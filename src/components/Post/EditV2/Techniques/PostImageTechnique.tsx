@@ -1,8 +1,7 @@
 import { ActionIcon, Collapse, Text, Textarea } from '@mantine/core';
 import { IconMessagePlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { usePendingSave, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import type { PostEditImageDetail } from '~/server/services/post.service';
@@ -37,18 +36,15 @@ export function PostImageTechnique({
       removeTechniqueMutation.mutate({ data: [{ imageId: image.id, techniqueId: technique.id }] });
     // trigger confirm dialog when technique has notes
     else
-      dialogStore.trigger({
-        component: ConfirmDialog,
-        props: {
-          title: 'Remove technique',
-          message: 'Are you sure you want to remove this technique?',
-          labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-          confirmProps: { color: 'red', loading: removeTechniqueMutation.isPending },
-          onConfirm: async () =>
-            await removeTechniqueMutation.mutateAsync({
-              data: [{ imageId: image.id, techniqueId: technique.id }],
-            }),
-        },
+      openConfirm({
+        title: 'Remove technique',
+        message: 'Are you sure you want to remove this technique?',
+        labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+        confirmProps: { color: 'red', loading: removeTechniqueMutation.isPending },
+        onConfirm: async () =>
+          await removeTechniqueMutation.mutateAsync({
+            data: [{ imageId: image.id, techniqueId: technique.id }],
+          }),
       });
   };
 
@@ -75,7 +71,8 @@ export function PostImageTechnique({
         updateImage(imageId, (image) => {
           const technique = image.techniques.find((x) => x.id === techniqueId);
           if (!technique || !previous || !(techniqueId in previous)) return;
-          if (technique.notes === (notes?.length ? notes : null)) technique.notes = previous[techniqueId];
+          if (technique.notes === (notes?.length ? notes : null))
+            technique.notes = previous[techniqueId];
         });
       }
       showErrorNotification({ error: new Error(error.message) });
