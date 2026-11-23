@@ -153,8 +153,8 @@ export type SurfaceState = { tint: number; second?: true } | Record<Scheme, stri
 const NOW_PLAYING = { tint: 0.33 };
 
 export const MUSIC_SURFACES = {
-  // gray-0 / dark-6. `wash`: the cover's wash under Shuffle and Repeat reaches at most ~17% of the
-  // accent or its second colour there.
+  // gray-0 / dark-6. `wash`: the cover's wash under Shuffle and Repeat; 0.2 is an upper bound there,
+  // so re-measure if the wash or the controls move.
   bar: {
     light: '#f8f9fa',
     dark: '#25262B',
