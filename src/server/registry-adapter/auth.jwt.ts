@@ -33,6 +33,10 @@
  * user's token, unnarrowed. A token that carries none is a user-exchange token, exactly as before.
  * The marker is explicit although the other three would identify the token: what a token is is never
  * inferred from which optional claims happen to be present.
+ *
+ * The hub also writes a fifth claim, `civitai_viewer_browsing_level` (the viewer's own level), checked
+ * on its own: absent, the binding has no viewer level (a token minted before the hub wrote it);
+ * present and not a non-negative integer, the token is refused; on a token with no binding, refused.
  */
 import {
   BLOCK_EXCHANGE_TOKEN_KIND,
@@ -125,15 +129,28 @@ const BLOCK_CLAIMS = [
   'civitai_max_browsing_level',
 ] as const;
 
+/** The block-exchange token's viewer level. Optional until every live token carries it. */
+const VIEWER_LEVEL_CLAIM = 'civitai_viewer_browsing_level';
+
+const isNonNegativeInteger = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 0;
+
 /**
- * A token's block binding: `none` when it carries none of the four block-exchange claims, the
- * binding when it carries all four well-formed (the marker `block-exchange`, two non-empty ids, a
- * non-negative integer ceiling), and `invalid` otherwise, which refuses the token.
+ * A token's block binding: `none` when it carries none of the four block-exchange claims (nor the
+ * viewer level), the binding when it carries all four well-formed (the marker `block-exchange`, two
+ * non-empty ids, a non-negative integer ceiling), and `invalid` otherwise, which refuses the token.
+ * The viewer level is checked on its own: absent is `viewerBrowsingLevel: null`, present and not a
+ * non-negative integer is `invalid`.
  */
 export function blockBindingOf(
   payload: Record<string, unknown>
 ): { kind: 'none' } | { kind: 'block'; block: TokenBlockBinding } | { kind: 'invalid' } {
-  if (BLOCK_CLAIMS.every((c) => payload[c] === undefined)) return { kind: 'none' };
+  const viewerLevel = payload[VIEWER_LEVEL_CLAIM];
+  if (BLOCK_CLAIMS.every((c) => payload[c] === undefined)) {
+    // A viewer level with no binding to read it with is not a token the hub mints.
+    return viewerLevel === undefined ? { kind: 'none' } : { kind: 'invalid' };
+  }
+  if (viewerLevel !== undefined && !isNonNegativeInteger(viewerLevel)) return { kind: 'invalid' };
   const {
     civitai_token_kind: kind,
     civitai_app_block_id: appBlockId,
@@ -146,13 +163,19 @@ export function blockBindingOf(
     appBlockId === '' ||
     typeof blockInstanceId !== 'string' ||
     blockInstanceId === '' ||
-    typeof maxBrowsingLevel !== 'number' ||
-    !Number.isInteger(maxBrowsingLevel) ||
-    maxBrowsingLevel < 0
+    !isNonNegativeInteger(maxBrowsingLevel)
   ) {
     return { kind: 'invalid' };
   }
-  return { kind: 'block', block: { appBlockId, blockInstanceId, maxBrowsingLevel } };
+  return {
+    kind: 'block',
+    block: {
+      appBlockId,
+      blockInstanceId,
+      maxBrowsingLevel,
+      viewerBrowsingLevel: viewerLevel === undefined ? null : viewerLevel,
+    },
+  };
 }
 
 /** The acting party of a delegated token (RFC 8693 `act.sub`), or null. */
