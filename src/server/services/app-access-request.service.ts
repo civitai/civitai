@@ -118,7 +118,9 @@ async function isEligibleForAutoApproval(userId: number): Promise<boolean> {
  * While `app-access-auto-approve` is on for the requester and their account passes the checks, the
  * request is written APPROVED instead — the grant, with a review time and no reviewer — and their
  * session is busted so the next page load has builder access. A pending request they already have
- * is approved in place rather than joined by a second row, so they still hold one request. No
+ * is NOT approved by a submit: it stays for a moderator, and the submit is the same "waiting for
+ * review" CONFLICT as with the flag off. After a revoke a new submit is approved again: a revoke
+ * removes access until the person asks again, not for good. No
  * "approved" notification is sent for it: the person is looking at the page that shows the
  * result. Off, unreadable or failing a check: the pending insert below, exactly as before.
  */
@@ -134,31 +136,28 @@ export async function submitAppAccessRequest({
     throw new TRPCError({ code: 'CONFLICT', message: APP_ACCESS_ALREADY_APPROVED });
 
   if ((await isAutoApproveOn(user)) && (await isEligibleForAutoApproval(userId))) {
-    // One statement: approve the person's pending row if they have one, otherwise insert an
-    // approved row. Both CTEs see the same snapshot, so at most one of them writes. `reviewedById`
-    // stays NULL — no moderator decided this. The insert re-checks for an approved row so a grant
-    // that landed since the read above is a CONFLICT, not a second row; two submits racing each
-    // other can still leave two approved rows, which the revoke sweep in `decide` covers.
+    // Inserted approved only when the person holds NO pending row and NO approved one. A pending
+    // request keeps waiting for a moderator — the same "waiting for review" CONFLICT as with the
+    // flag off — and a grant that landed since the read above is a CONFLICT, not a second row.
+    // Two submits racing each other can still leave two approved rows, which the revoke sweep in
+    // `decide` covers. `reviewedById` stays NULL — no moderator decided this.
     const [row] = await dbWrite.$queryRaw<AppAccessRequestView[]>(Prisma.sql`
-      WITH promoted AS (
-        UPDATE "AppAccessRequest"
-        SET "status" = 'approved', "reviewedAt" = CURRENT_TIMESTAMP
-        WHERE "userId" = ${userId} AND "status" = 'pending'
-        RETURNING ${VIEW_COLUMNS}
-      ), inserted AS (
-        INSERT INTO "AppAccessRequest" ("userId", "whatToBuild", "status", "reviewedAt")
-        SELECT ${userId}::int, ${input.whatToBuild}::text, 'approved', CURRENT_TIMESTAMP
-        WHERE NOT EXISTS (SELECT 1 FROM promoted)
-          AND NOT EXISTS (
-            SELECT 1 FROM "AppAccessRequest" WHERE "userId" = ${userId} AND "status" = 'approved'
-          )
-        RETURNING ${VIEW_COLUMNS}
+      INSERT INTO "AppAccessRequest" ("userId", "whatToBuild", "status", "reviewedAt")
+      SELECT ${userId}::int, ${input.whatToBuild}::text, 'approved', CURRENT_TIMESTAMP
+      WHERE NOT EXISTS (
+        SELECT 1 FROM "AppAccessRequest"
+        WHERE "userId" = ${userId} AND "status" IN ('pending', 'approved')
       )
-      SELECT ${VIEW_COLUMNS} FROM promoted
-      UNION ALL
-      SELECT ${VIEW_COLUMNS} FROM inserted
+      RETURNING ${VIEW_COLUMNS}
     `);
-    if (!row) throw new TRPCError({ code: 'CONFLICT', message: APP_ACCESS_ALREADY_APPROVED });
+    if (!row) {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: (await hasApprovedAppAccessRequest(userId))
+          ? APP_ACCESS_ALREADY_APPROVED
+          : APP_ACCESS_ALREADY_PENDING,
+      });
+    }
     // Best-effort, after the commit, as in `decide`: a failed bust is bounded by the session TTL.
     await refreshSession(userId, { caller: 'profile' }).catch(handleLogError);
     return row;

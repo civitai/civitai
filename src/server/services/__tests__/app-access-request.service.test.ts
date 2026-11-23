@@ -299,21 +299,45 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
     expect(readFliptBoolean).toHaveBeenCalledTimes(1);
   });
 
-  it('🔴 an existing PENDING request is approved in place: still one row, same id', async () => {
+  it('🔴 an existing PENDING request is NOT approved by a submit: the same "waiting for review" CONFLICT, nothing written', async () => {
     const pending = await submit(mira, MIRA_IDEA);
     expect(pending.status).toBe('pending');
 
     flag.on.add(String(mira));
-    const approved = await submit(mira, MIRA_IDEA_AGAIN);
-    expect(approved).toMatchObject({ id: pending.id, status: 'approved' });
-    expect(approved.reviewedAt).toBeInstanceOf(Date);
+    await expect(submit(mira, MIRA_IDEA_AGAIN)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: APP_ACCESS_ALREADY_PENDING,
+    });
     expect(await rowsFor(mira)).toEqual([
-      { id: pending.id, status: 'approved', whatToBuild: MIRA_IDEA },
+      { id: pending.id, status: 'pending', whatToBuild: MIRA_IDEA },
     ]);
-    expect((await reviewOf(pending.id)).reviewedById).toBeNull();
+    expect(await reviewOf(pending.id)).toMatchObject({ reviewedAt: null, reviewedById: null });
+    expect(await isApproved(mira)).toBe(false);
+    expect(refreshSession).not.toHaveBeenCalled();
+    expect(await countPendingAppAccessRequests()).toBe(1);
+
+    // Positive control: the flag and the checks were live — the same flag state approves an
+    // eligible person who has no pending request.
+    flag.on.add(String(tomasz));
+    await expect(submit(tomasz, TOMASZ_IDEA)).resolves.toMatchObject({ status: 'approved' });
+  });
+
+  it('🔴 after a REVOKE, a new submit with the flag on is approved again (operator decision: re-grant is fine)', async () => {
+    flag.on.add(String(mira));
+    const first = await submit(mira, MIRA_IDEA);
+    await decide(first.id, 'declined');
+    expect(await isApproved(mira)).toBe(false);
+    refreshSession.mockClear();
+
+    const again = await submit(mira, MIRA_IDEA_AGAIN);
+    expect(again).toMatchObject({ status: 'approved', whatToBuild: MIRA_IDEA_AGAIN });
+    expect(again.id).not.toBe(first.id);
+    expect(await rowsFor(mira)).toEqual([
+      { id: first.id, status: 'declined', whatToBuild: MIRA_IDEA },
+      { id: again.id, status: 'approved', whatToBuild: MIRA_IDEA_AGAIN },
+    ]);
     expect(await isApproved(mira)).toBe(true);
     expect(refreshSession).toHaveBeenCalledWith(mira, { caller: 'profile' });
-    expect(await countPendingAppAccessRequests()).toBe(0);
   });
 
   it('🔴 already approved (by a moderator or automatically): a submit is the same CONFLICT and writes nothing', async () => {
