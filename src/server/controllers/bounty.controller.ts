@@ -53,6 +53,10 @@ import {
 } from '~/server/services/bounty-rated-level';
 import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
 
+/** The held-media viewer (src/pages/api/mod/held-media): a moderator with the csamReports grant. */
+const seesReportListed = (ctx: Pick<Context, 'user' | 'features'>) =>
+  !!ctx.user?.isModerator && !!ctx.features?.csamReports;
+
 /** Run after a bounty's flag raises an image's nsfwLevel: the SQL rule saw the stored level. */
 const keepsMinorRule =
   (viewer: { id: number; isModerator?: boolean } | undefined) =>
@@ -119,6 +123,7 @@ export const getInfiniteBountiesHandler = async ({
         bountyIds: bountIds,
         userId: user?.id,
         isModerator: user?.isModerator,
+        seesReportListed: seesReportListed(ctx),
       }),
       getTextRatedBountyLevels(items.filter(mayBeTextRated).map((bounty) => bounty.id)),
       getRequestImageFilter(ctx),
@@ -219,6 +224,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
         id: bounty.id,
         userId: user?.id,
         isModerator: user?.isModerator,
+        seesReportListed: seesReportListed(ctx),
       }),
       mayBeTextRated(bounty) ? getTextRatedBountyLevels([bounty.id]) : new Map<number, number>(),
       getRequestImageFilter(ctx),
