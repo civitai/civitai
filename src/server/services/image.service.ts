@@ -81,6 +81,7 @@ import {
   liftedBlockedForSql,
   liftedIngestionSql,
   liftedNeedsReviewSql,
+  reviewKeyAfterSql,
   liftedNsfwLevelSql,
   liftKeptBlockedSql,
   unblockedMetadataSql,
@@ -1296,7 +1297,7 @@ export async function handleUnblockImages({
       ...Object.entries(grouped).map(
         ([needsReview, groupedIds]) => dbWrite.$queryRaw<{ id: number; keptBlocked: boolean }[]>`
           UPDATE "Image" SET
-            "needsReview" = ${liftedNeedsReviewSql},
+            "needsReview" = ${reviewKeyAfterSql('human', liftedNeedsReviewSql)},
             "blockedFor" = ${liftedBlockedForSql},
             "nsfwLevel" = ${liftedNsfwLevelSql},
             "metadata" = ${unblockedMetadataSql},

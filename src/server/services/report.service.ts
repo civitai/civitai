@@ -7,6 +7,7 @@ import {
   liftedIngestionSql,
   liftedMetadataSql,
   liftedNeedsReviewSql,
+  reviewKeyAfterSql,
   liftedNsfwLevelSql,
   liftKeptBlockedSql,
 } from '~/server/common/image-visibility';
@@ -1984,7 +1985,7 @@ export async function settleResolvedAppeals(
           const [updated] = approved
             ? await dbWrite.$queryRaw<Written[]>`
                 UPDATE "Image"
-                SET "needsReview" = ${liftedNeedsReviewSql},
+                SET "needsReview" = ${reviewKeyAfterSql('human', liftedNeedsReviewSql)},
                     "blockedFor" = ${liftedBlockedForSql},
                     "nsfwLevel" = ${liftedNsfwLevelSql},
                     ingestion = ${liftedIngestionSql},

@@ -16,7 +16,10 @@ import { Flags } from '~/shared/utils/flags';
 import { Availability, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
-import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
+import {
+  IMAGE_REVIEW_PRECEDENCE,
+  REVIEWS_KEPT_WHEN_LIFTED,
+} from '@civitai/shared/image-review-types';
 import { LIFT_WHILE_OWNER_DELETED } from '@civitai/shared/account-deletion-grace';
 import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
 import {
@@ -450,6 +453,42 @@ export const reviewKeptWhenLiftedSql = Prisma.sql`(CASE
   WHEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text = ANY(${REVIEWS_KEPT_WHEN_LIFTED}::text[])
   THEN "metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
 END)`;
+
+/**
+ * Reviews only a moderator clears, so a scan never replaces one whatever it ranks. Known gap: an
+ * appeal approved while a scan is in flight gets 'appeal' back from that scan, and keeps it until a
+ * moderator clears it.
+ */
+const REVIEWS_ONLY_A_MODERATOR_CLEARS = ['csam', 'appeal'] as const;
+
+/**
+ * `needsReview` after a write that sets `key`. A moderator's decision ('human': an unblock, an
+ * approved appeal) writes `key` as it is. A scan that leaves the row blocked ('block') settles every
+ * review but 'csam', as every block does, writing only a pending appeal's 'appeal'. Any other scan ('verdict') never clears or lowers a review: it keeps
+ * 'csam', lets a pending appeal's 'appeal' take any other key, keeps
+ * REVIEWS_ONLY_A_MODERATOR_CLEARS, and otherwise fills an empty column or raises the stored key by
+ * IMAGE_REVIEW_PRECEDENCE.
+ */
+export function reviewKeyAfterSql(
+  actor: 'verdict' | 'block' | 'human',
+  key: string | null | Prisma.Sql
+) {
+  const next =
+    typeof key === 'string' || key === null ? Prisma.sql`${key}::text` : Prisma.sql`(${key})::text`;
+  if (actor === 'human') return next;
+  if (actor === 'block')
+    return Prisma.sql`(CASE WHEN "needsReview" = 'csam' THEN "needsReview"
+      WHEN ${next} = 'appeal' THEN ${next} END)`;
+  return Prisma.sql`(CASE
+    WHEN "needsReview" = 'csam' THEN "needsReview"
+    WHEN ${next} = 'appeal' THEN ${next}
+    WHEN "needsReview" IS NULL THEN ${next}
+    WHEN "needsReview" = ANY(${REVIEWS_ONLY_A_MODERATOR_CLEARS}::text[]) THEN "needsReview"
+    WHEN array_position(${IMAGE_REVIEW_PRECEDENCE}::text[], ${next})
+      < array_position(${IMAGE_REVIEW_PRECEDENCE}::text[], "needsReview") THEN ${next}
+    ELSE "needsReview"
+  END)`;
+}
 
 /** `metadata` without the grace-block breadcrumbs. A non-object value is left as it is. */
 export const withoutGraceMarkersSql = (metadata: Prisma.Sql = Prisma.sql`"metadata"`) =>
