@@ -12,7 +12,7 @@ import {
   TextInput,
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconPhoto, IconPhotoUp, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
 import type { ComicProjectMeta } from '~/server/schema/comics.schema';
 import dynamic from 'next/dynamic';
@@ -386,9 +386,9 @@ export function ProjectSettingsModal({
             leftSection={<IconTrash size={14} />}
             onClick={() => {
               onClose();
-              openConfirmModal({
+              openConfirm({
                 title: 'Delete Project',
-                children:
+                message:
                   'Are you sure you want to delete this comic project? This action cannot be undone.',
                 labels: { confirm: 'Delete', cancel: 'Cancel' },
                 confirmProps: { color: 'red' },

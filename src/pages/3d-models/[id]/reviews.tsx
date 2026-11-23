@@ -14,7 +14,6 @@ import {
   Title,
 } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconDotsVertical,
   IconFlag,
@@ -48,6 +47,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { trpc } from '~/utils/trpc';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 /**
  * Model3D reviews page.
@@ -137,10 +137,9 @@ function Model3DReviewsPage({ id }: InferGetServerSidePropsType<typeof getServer
     },
   });
   const confirmDeleteReview = (reviewId: number) =>
-    openConfirmModal({
+    openConfirm({
       title: 'Remove review',
-      children: 'This review will be permanently removed. Continue?',
-      centered: true,
+      message: 'This review will be permanently removed. Continue?',
       labels: { confirm: 'Remove', cancel: 'Cancel' },
       confirmProps: { color: 'red', loading: deleteReviewMutation.isPending },
       onConfirm: () => deleteReviewMutation.mutate({ id: reviewId }),

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { StorylineCollaboratorsPanel } from '~/components/Storyline/manage/StorylineCollaboratorsPanel';
 import {
   StorylineInviteAlert,
@@ -27,6 +29,7 @@ vi.mock('~/components/UserAvatar/UserAvatar', () => ({
 }));
 
 beforeEach(() => {
+  dialogStore.closeAll();
   mocks.accept.mockReset();
   mocks.decline.mockReset();
 });
@@ -45,16 +48,20 @@ describe("the invitee's answer", () => {
   });
 });
 
-// Confirms at once.
-vi.mock('@mantine/modals', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  openConfirmModal: ({ onConfirm }: { onConfirm: () => void }) => onConfirm(),
-}));
-
 describe('a collaborator leaving', () => {
   test('leaves this storyline after confirming', async () => {
-    renderWithProviders(<StorylineLeaveCollaboration storylineId={4} />);
+    renderWithProviders(
+      <>
+        <StorylineLeaveCollaboration storylineId={4} />
+        <DialogProvider />
+      </>
+    );
     await page.getByRole('button', { name: 'Leave' }).click();
+    expect(mocks.decline).not.toHaveBeenCalled();
+    await page
+      .getByRole('dialog', { name: 'Leave as collaborator' })
+      .getByRole('button', { name: 'Leave' })
+      .click();
     expect(mocks.decline).toHaveBeenCalledWith({ storylineId: 4 });
   });
 });

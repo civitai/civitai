@@ -8,7 +8,7 @@ import { useIsMutating } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
 import { useMemo, useRef, useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
@@ -237,26 +237,25 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     const reviewCount = imagesInReview.length;
     const isPlural = reviewCount > 1;
     const hasReview = reviewCount > 0;
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: hasReview ? 'Images pending review' : params.confirmTitle,
-        message: hasReview ? (
-          <>
-            <Text>
-              {reviewCount} image{isPlural ? 's' : ''} in this post {isPlural ? 'are' : 'is'}{' '}
-              currently flagged for moderation review and will remain hidden from other users until
-              approved.
-            </Text>
-            {params.confirmMessage && <Text mt="sm">{params.confirmMessage}</Text>}
-            <Text mt="sm">Do you want to publish anyway?</Text>
-          </>
-        ) : (
-          params.confirmMessage ?? 'Are you sure you want to publish this post?'
-        ),
-        labels: hasReview ? { confirm: 'Publish anyway', cancel: 'Cancel' } : undefined,
-        onConfirm: () => publish(date),
-      },
+    openConfirm({
+      title: hasReview ? 'Images pending review' : params.confirmTitle,
+      message: hasReview ? (
+        <>
+          <Text>
+            {reviewCount} image{isPlural ? 's' : ''} in this post {isPlural ? 'are' : 'is'}{' '}
+            currently flagged for moderation review and will remain hidden from other users until
+            approved.
+          </Text>
+          {params.confirmMessage && <Text mt="sm">{params.confirmMessage}</Text>}
+          <Text mt="sm">Do you want to publish anyway?</Text>
+        </>
+      ) : (
+        params.confirmMessage ?? 'Are you sure you want to publish this post?'
+      ),
+      labels: hasReview
+        ? { confirm: 'Publish anyway', cancel: 'Cancel' }
+        : { confirm: 'Yes', cancel: 'No' },
+      onConfirm: () => publish(date),
     });
   };
 

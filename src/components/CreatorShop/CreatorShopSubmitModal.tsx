@@ -20,7 +20,7 @@ import { IconAlertTriangle, IconBolt, IconCheck, IconInfoCircle } from '@tabler/
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
@@ -133,17 +133,14 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
 
   const handleCancel = () => {
     if (!isDirty) return dialog.onClose();
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Discard changes?',
-        message: isEdit
-          ? 'Your changes to this item will be lost.'
-          : 'Your uploaded artwork and details will be lost.',
-        labels: { cancel: 'Keep editing', confirm: 'Discard' },
-        confirmProps: { color: 'red' },
-        onConfirm: () => dialog.onClose(),
-      },
+    openConfirm({
+      title: 'Discard changes?',
+      message: isEdit
+        ? 'Your changes to this item will be lost.'
+        : 'Your uploaded artwork and details will be lost.',
+      labels: { cancel: 'Keep editing', confirm: 'Discard' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => dialog.onClose(),
     });
   };
 

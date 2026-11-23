@@ -1,7 +1,8 @@
 import { Text } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
   IconBell,
   IconBellOff,
@@ -33,6 +34,8 @@ import { trpc } from '~/utils/trpc';
 import { useCommentSection } from './CommentSectionContext';
 import type { CommentV3Comment } from './types';
 import { useCommentMutations } from './useCommentMutations';
+
+const TOS_REMOVE_DIALOG_ID = 'comment-tos-remove';
 
 export function useCommentAbilities(comment: CommentV3Comment, lockedAbove: boolean) {
   const { ownerId, isMuted, forceLocked } = useCommentSection();
@@ -84,29 +87,28 @@ export function CommentMenu({
   if (!author) return null;
 
   const confirmDelete = () =>
-    openConfirmModal({
+    openConfirm({
       title: 'Delete comment',
-      children: (
+      message: (
         <Text size="sm">
           Are you sure you want to delete this comment? This action is destructive and cannot be
           reverted.
         </Text>
       ),
-      centered: true,
       labels: { confirm: 'Delete comment', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => void mutations.delete(comment).catch(() => null),
     });
   const confirmTos = () =>
-    openConfirmModal({
+    openConfirm({
+      id: TOS_REMOVE_DIALOG_ID,
       title: 'Remove as ToS violation',
-      children: (
+      message: (
         <Text size="sm">
           This flags the comment as a Terms of Service violation, actions any matching reports and
           notifies the author. Are you sure?
         </Text>
       ),
-      centered: true,
       labels: { confirm: 'Remove as ToS violation', cancel: 'Cancel' },
       confirmProps: { color: 'red', loading: mutations.settingTos },
       closeOnConfirm: false,
@@ -114,7 +116,7 @@ export function CommentMenu({
         mutations
           .removeAsTos(comment)
           .catch(() => null)
-          .finally(() => closeAllModals()),
+          .finally(() => dialogStore.closeById(TOS_REMOVE_DIALOG_ID)),
     });
 
   return (

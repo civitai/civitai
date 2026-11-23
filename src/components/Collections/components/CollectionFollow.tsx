@@ -1,6 +1,6 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Group, Text } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconLogout, IconMinus, IconPlus, IconProgress } from '@tabler/icons-react';
 import React from 'react';
 import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
@@ -100,9 +100,9 @@ export const CollectionFollowAction = ({
           e.stopPropagation();
           if (!currentUser) return;
 
-          openConfirmModal({
+          openConfirm({
             title: 'Leave this collection?',
-            children: (
+            message: (
               <Text size="sm">
                 You will lose your collaborator role and stop following this collection. You can
                 only rejoin if someone invites you again.

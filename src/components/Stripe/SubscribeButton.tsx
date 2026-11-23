@@ -6,7 +6,6 @@ import { trpc } from '~/utils/trpc';
 import Router from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Button, Stack, Text } from '@mantine/core';
-import { openContextModal } from '@mantine/modals';
 import { showErrorNotification } from '~/utils/notifications';
 import { usePaddle } from '~/providers/PaddleProvider';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
@@ -204,16 +203,8 @@ export function SubscribeButton({ children, priceId, onSuccess, disabled, forceP
 
   const provider = forceProvider ?? subscriptionPaymentProvider ?? paymentProvider;
 
-  const handleAddEmail = () => {
-    openContextModal({
-      modal: 'onboarding',
-      title: 'Your Account',
-      withCloseButton: false,
-      closeOnClickOutside: false,
-      closeOnEscape: false,
-      innerProps: {},
-    });
-  };
+  // The account page's profile card is where a user sets their email.
+  const handleAddEmail = () => Router.push('/user/account');
 
   if (currentUser && !currentUser.email)
     return (

@@ -1,8 +1,4 @@
-import dynamic from 'next/dynamic';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 
-const BrowsingLevelGuide = dynamic(() => import('~/components/BrowsingLevel/BrowsingLevelGuide'), {
-  ssr: false,
-});
-
-export const openBrowsingLevelGuide = () => dialogStore.trigger({ component: BrowsingLevelGuide });
+export const openBrowsingLevelGuide = () =>
+  openDialog(() => import('~/components/BrowsingLevel/BrowsingLevelGuide'));

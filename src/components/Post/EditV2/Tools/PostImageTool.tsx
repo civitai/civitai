@@ -1,8 +1,7 @@
 import { ActionIcon, Collapse, Text, Textarea } from '@mantine/core';
 import { IconMessagePlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { usePendingSave, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import type { PostEditImageDetail } from '~/server/services/post.service';
@@ -37,18 +36,15 @@ export function PostImageTool({
     if (!tool.notes) removeToolMutation.mutate({ data: [{ imageId: image.id, toolId: tool.id }] });
     // trigger confirm dialog when tool has notes
     else
-      dialogStore.trigger({
-        component: ConfirmDialog,
-        props: {
-          title: 'Remove tool',
-          message: 'Are you sure you want to remove this tool?',
-          labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-          confirmProps: { color: 'red', loading: removeToolMutation.isPending },
-          onConfirm: async () =>
-            await removeToolMutation.mutateAsync({
-              data: [{ imageId: image.id, toolId: tool.id }],
-            }),
-        },
+      openConfirm({
+        title: 'Remove tool',
+        message: 'Are you sure you want to remove this tool?',
+        labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+        confirmProps: { color: 'red', loading: removeToolMutation.isPending },
+        onConfirm: async () =>
+          await removeToolMutation.mutateAsync({
+            data: [{ imageId: image.id, toolId: tool.id }],
+          }),
       });
   };
 
