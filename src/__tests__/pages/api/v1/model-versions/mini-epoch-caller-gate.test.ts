@@ -703,3 +703,49 @@ describe('mini/[id] a deleted or unpublished parent, whatever the gate', () => {
     expect(body).toHaveProperty('defaultFileId', PLAIN_FILE.id);
   });
 });
+
+/**
+ * The status rule is not behind the flag, so it must never refuse a caller the route served before:
+ * the owner and the service token on a draft, unpublished or still-training version, epochs included.
+ */
+describe('mini/[id] unreleased versions stay served to the owner and the service token', () => {
+  const PLAIN_FILE = { ...TRAINING_FILE, visibility: 'Public', metadata: { format: 'SafeTensor' } };
+  const rows = [
+    ['a draft version of a draft model', { status: 'Draft', modelStatus: 'Draft' }],
+    ['a version still training', { status: 'Training', modelStatus: 'Training' }],
+    ['a published version of a model still training', { modelStatus: 'Training' }],
+    ['an unpublished version', { status: 'Unpublished', modelStatus: 'Unpublished' }],
+    ['a version released in the future', { publishedAt: new Date(Date.now() + 86_400_000) }],
+  ] as const;
+  const servedCallers = [
+    ['the owner', owner],
+    ['the owner by personal API key', { ...owner, authorization: 'Bearer k', subject: 'apiKey' }],
+    ['the service token', service],
+  ] as const;
+
+  for (const [shape, row] of rows)
+    for (const mode of [null, 'log', 'enforce', 'enforce-anon']) {
+      it.each(servedCallers)(
+        `${shape}, gate ${mode ?? 'off'}: the epoch url to %s`,
+        async (_l, caller) => {
+          h.variant.value = mode;
+          const { status, body } = await request(caller, row);
+          expect(status ?? 200).toBe(200);
+          expect(body.downloadUrls).toEqual([EPOCH_URL]);
+        }
+      );
+      it.each(servedCallers)(
+        `${shape}, gate ${mode ?? 'off'}: a public file to %s`,
+        async (_l, caller) => {
+          h.variant.value = mode;
+          const { status, body } = await request(
+            caller,
+            { ...row, availability: 'Public' },
+            PLAIN_FILE
+          );
+          expect(status ?? 200).toBe(200);
+          expect(body).toHaveProperty('defaultFileId', PLAIN_FILE.id);
+        }
+      );
+    }
+});
