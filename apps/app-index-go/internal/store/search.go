@@ -2,6 +2,7 @@ package store
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -16,7 +17,42 @@ type Query struct {
 	Text     string
 	Kind     string // "" = any
 	Category string // "" = any
-	Limit    int
+	// Mature is the mature ratings the caller asks for (Mature.Admits). Its zero value answers no
+	// app rated r, x or xxx.
+	Mature Mature
+	Limit  int
+}
+
+// Mature is which mature content ratings a request may be shown. Its zero value is the SFW
+// audience. Admits is the one rating rule of this service: search (Query.Mature) and the listing
+// gate (listingread.Admits) both apply it.
+type Mature struct {
+	R, X, XXX bool
+}
+
+// hidden is the lower-cased mature ratings m does not admit. Both search stores filter by it, the
+// Postgres one in its query, so the limit counts only admitted rows.
+func (m Mature) hidden() []string {
+	var out []string
+	if !m.R {
+		out = append(out, "r")
+	}
+	if !m.X {
+		out = append(out, "x")
+	}
+	if !m.XXX {
+		out = append(out, "xxx")
+	}
+	return out
+}
+
+// Admits reports whether a request allowed m may be shown an app rated rating ("" for none).
+//
+// Mirrors the site's matureRatingAllowed / listingMatureFilter (app-listing-store-gate.ts), not the
+// registry's audienceAdmits, which is stricter for an unknown or missing rating: this service answers
+// in the database path's place. Only r, x and xxx are mature.
+func (m Mature) Admits(rating string) bool {
+	return !slices.Contains(m.hidden(), strings.ToLower(rating))
 }
 
 // Result is one app as search returns it.

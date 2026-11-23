@@ -4,7 +4,12 @@ import { env } from '$env/dynamic/private';
 import { isAccessTokenJwt } from '@civitai/auth';
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { db } from '$lib/server/db/db';
-import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
+import {
+  checkOAuthRateLimit,
+  oauthRetryAfter,
+  rateLimitedResponse,
+  type OAuthRateLimitBucket,
+} from '$lib/server/oauth/rate-limit';
 import { basicCredentials, parseBody } from '$lib/server/oauth/http';
 import { apiKeyRowScope, carriesClientCredentialsOnlyScope } from '$lib/server/oauth/scope';
 import { getClientIp } from '$lib/server/auth/request';
@@ -45,13 +50,16 @@ export const POST: RequestHandler = async ({ request }) => {
   const clientSecret =
     basic?.secret ?? (typeof body.client_secret === 'string' ? body.client_secret : '');
 
-  const rateLimited = () => json({ error: 'rate_limited' }, { status: 429, headers: NO_STORE });
+  const rateLimited = (bucket: OAuthRateLimitBucket) =>
+    rateLimitedResponse(oauthRetryAfter(bucket), NO_STORE, 'Too many introspection requests');
   const invalidClient = () => json({ error: 'invalid_client' }, { status: 401, headers: NO_STORE });
 
   // Pre-auth work is charged per IP, never to the client id — that id is attacker-supplied until the
   // secret check below passes, so charging it here would let a flood against a guessed id exhaust the
   // real client's budget and block Link pairing.
-  if (!(await checkOAuthRateLimit('introspect-anon', getClientIp(request)))) return rateLimited();
+  if (!(await checkOAuthRateLimit('introspect-anon', getClientIp(request)))) {
+    return rateLimited('introspect-anon');
+  }
 
   const seesAccess = clientIdList(env.OAUTH_INTROSPECTION_CLIENT_IDS).has(clientId);
   const seesWorker = clientIdList(env.OAUTH_WORKER_INTROSPECTION_CLIENT_IDS).has(clientId);
@@ -79,9 +87,8 @@ export const POST: RequestHandler = async ({ request }) => {
     return invalidClient();
   }
 
-  if (!(await checkOAuthRateLimit(seesWorker ? 'introspect-worker' : 'introspect', clientId))) {
-    return rateLimited();
-  }
+  const clientBucket = seesWorker ? 'introspect-worker' : 'introspect';
+  if (!(await checkOAuthRateLimit(clientBucket, clientId))) return rateLimited(clientBucket);
 
   if (!token) return json({ active: false }, { headers: NO_STORE });
 
@@ -166,7 +173,11 @@ async function introspectExchangedJwt(
     return json({ error: 'invalid_client' }, { status: 401, headers: NO_STORE });
   }
   if (!(await checkOAuthRateLimit('introspect-jwt', client.id))) {
-    return json({ error: 'rate_limited' }, { status: 429, headers: NO_STORE });
+    return rateLimitedResponse(
+      oauthRetryAfter('introspect-jwt'),
+      NO_STORE,
+      'Too many introspection requests'
+    );
   }
 
   const result = await introspectAccessTokenJwt(token, client.id);

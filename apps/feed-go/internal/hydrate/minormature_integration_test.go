@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/integtest"
+	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
 // Every (minor, nsfwLevel, owner) row, for a moderator, a signed-out viewer and viewer 1180042: the
@@ -148,11 +149,11 @@ func TestIntegrationVersionImagesLeaveOutMinorMature(t *testing.T) {
 	if err := e.src.fillVersionImages(ctx, ids, got, writable); err != nil {
 		t.Fatal(err)
 	}
-	images := asList(got[1180711].Value["images"])
+	images := asList(ObjectField(got[1180711].Ordered(), "images"))
 	kept := make([]int, 0, len(images))
 	for _, img := range images {
-		m, _ := img.(map[string]any)
-		id, _ := Int(m["id"])
+		m, _ := img.(superjson.Object)
+		id, _ := Int(ObjectField(m, "id"))
 		kept = append(kept, id)
 	}
 	if want := []int{1180732, 1180733}; !reflect.DeepEqual(kept, want) {

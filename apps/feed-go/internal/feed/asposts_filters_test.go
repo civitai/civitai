@@ -47,7 +47,7 @@ func TestParseNoLongerFallsBackOnTagsAndTechniques(t *testing.T) {
 			`{"techniques":[3,2147483648]}`: "input-techniques",
 			`{"techniques":[-2147483649]}`:  "input-techniques",
 			// Another unported key still names the fallback.
-			`{"tags":[501],"techniques":[3],"reactions":["Like"]}`: "input-reactions",
+			`{"tags":[501],"techniques":[3],"hidden":true}`: "input-hidden",
 		} {
 			if err := parse(parseObj(t, input)); fallback.Reason(err) != want {
 				t.Errorf("%s %s: reason %q (err %v), want %q", name, input, fallback.Reason(err), err, want)
@@ -232,5 +232,42 @@ func TestServeGalleryTagsAndTechniques(t *testing.T) {
 	}
 	if _, err := Serve(context.Background(), &Deps{Feed: feed, Config: Config{ImageIndexFeed: true}}, Request{Input: in, Cap: 1}); err != nil || !reflect.DeepEqual(feed.queries, []string{plain}) {
 		t.Fatalf("no tags, no reader: err %v, feed queries %v", err, feed.queries)
+	}
+}
+
+// The gallery's level is held to the viewer before the feed is asked.
+func TestServeGalleryLevelForViewer(t *testing.T) {
+	listed := testkit.NewRedis()
+	listed.SetString(BlockedTagsKey, []byte(`[{"id":5161,"name":"a"}]`))
+	for _, c := range []struct {
+		viewer *Viewer
+		want   string
+	}{{&Viewer{ID: 9}, "levels=1&"}, {&Viewer{ID: 9, IsModerator: true}, "levels=1%2C32&"}} {
+		feed := &fakeFeed{answers: map[string]feedsvc.Answer{}}
+		d := &Deps{Feed: feed, Blocked: &BlockedTags{Cache: listed}, Config: Config{ImageIndexFeed: true, LazyPostImages: true}, Now: func() time.Time { return time.Unix(0, 0) }}
+		in, err := Parse(parseObj(t, `{"model3dId":5,"limit":10,"browsingLevel":33}`))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		_, _ = Serve(context.Background(), d, Request{Input: in, Viewer: c.viewer})
+		if len(feed.queries) != 1 || !strings.HasPrefix(feed.queries[0], c.want) {
+			t.Errorf("viewer %+v: feed queries %v, want one starting %s", c.viewer, feed.queries, c.want)
+		}
+	}
+}
+
+// A signed-in level of unselectable bits only is held to nothing: an empty gallery, no feed call.
+func TestServeGalleryLevelOfNoSelectableBits(t *testing.T) {
+	listed := testkit.NewRedis()
+	listed.SetString(BlockedTagsKey, []byte(`[{"id":5161,"name":"a"}]`))
+	feed := &fakeFeed{answers: map[string]feedsvc.Answer{}}
+	d := &Deps{Feed: feed, Blocked: &BlockedTags{Cache: listed}, Config: Config{ImageIndexFeed: true, LazyPostImages: true}, Now: func() time.Time { return time.Unix(0, 0) }}
+	in, err := Parse(parseObj(t, `{"model3dId":5,"limit":10,"browsingLevel":32}`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	res, err := Serve(context.Background(), d, Request{Input: in, Viewer: &Viewer{ID: 9}})
+	if err != nil || res == nil || len(res.Items) != 0 || len(feed.queries) != 0 {
+		t.Fatalf("result %+v, err %v, feed queries %v; want an empty gallery and no feed call", res, err, feed.queries)
 	}
 }

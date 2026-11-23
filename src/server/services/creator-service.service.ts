@@ -61,8 +61,10 @@ import {
   ImageIngestionStatus,
   ServiceOfferingIngestionStatus,
   ServiceOfferingStatus,
+  ServiceLicensePreset,
   StrikeStatus,
 } from '~/shared/utils/prisma/enums';
+import { normalizeServiceLicense } from '~/shared/constants/creator-service-license.constants';
 
 export const serviceOfferingSelect = {
   id: true,
@@ -73,10 +75,15 @@ export const serviceOfferingSelect = {
   deliveryDays: true,
   revisionsIncluded: true,
   maxOpenDeals: true,
+  licensePreset: true,
+  licenseCustomText: true,
+  licenseAllowResale: true,
   maxNsfwLevel: true,
   status: true,
   createdAt: true,
   updatedAt: true,
+  happyCount: true,
+  reviewCount: true,
   coverImage: { select: { ...profileImageSelect, modelRestricted: true } },
 } satisfies Prisma.ServiceOfferingSelect;
 
@@ -87,6 +94,7 @@ const ownServiceOfferingSelect = {
   declaredNsfwLevel: true,
   ingestion: true,
   sellerAffirmation: true,
+  allowReviewWork: true,
 } satisfies Prisma.ServiceOfferingSelect;
 
 /**
@@ -361,18 +369,33 @@ export async function getShopServiceOfferings({
  * hid); its seller also sees it unlisted (Draft, Paused, under review) and moderators see any
  * status. Nobody is sent a rating the domain may not serve.
  */
-export async function getServiceOfferingById({
-  id,
-  browsingLevel,
-  servable,
-  viewerId,
-  isModerator,
-}: GetServiceOfferingByIdInput & {
+export async function getServiceOfferingById(input: ServiceOfferingViewerInput) {
+  const offering = await findViewableServiceOffering(input, {
+    ...serviceOfferingSelect,
+    seller: { select: { ...userWithCosmeticsSelect, createdAt: true } },
+  });
+  const [[withSlots], record] = await Promise.all([
+    withOpenSlots([withServableImage(offering, 'coverImage')]),
+    getServiceDealRecord({ sellerId: offering.seller.id, offeringId: input.id }),
+  ]);
+  return { ...withSlots, record };
+}
+
+type ServiceOfferingViewerInput = GetServiceOfferingByIdInput & {
   /** What this domain may be sent: `domainServableLevels(ctx)`. */
   servable: number;
   viewerId?: number;
   isModerator?: boolean;
-}) {
+};
+
+/** Not found unless this viewer may open the offering's page; the reviews on it follow the same rule. */
+export async function assertServiceOfferingViewable(input: ServiceOfferingViewerInput) {
+  await findViewableServiceOffering(input, { id: true, seller: { select: { id: true } } });
+}
+
+async function findViewableServiceOffering<
+  S extends Prisma.ServiceOfferingSelect & { seller: { select: { id: true } } }
+>({ id, browsingLevel, servable, viewerId, isModerator }: ServiceOfferingViewerInput, select: S) {
   const offering = await dbRead.serviceOffering.findFirst({
     where: {
       id,
@@ -388,32 +411,26 @@ export async function getServiceOfferingById({
             ],
           }),
     },
-    select: {
-      ...serviceOfferingSelect,
-      seller: { select: { ...userWithCosmeticsSelect, createdAt: true } },
-    },
+    select,
   });
   if (!offering) throw throwNotFoundError('Service not found');
 
-  const sellerId = offering.seller.id;
+  const sellerId = (offering as { seller: { id: number } }).seller.id;
   const seesUnlisted = isModerator || viewerId === sellerId;
   await assertCreatorShopVisible({ userId: sellerId, viewerId, isModerator });
   if (!seesUnlisted && viewerId) {
     const hidden = await getHiddenOrBlockedUserIds(viewerId);
     if (hidden.includes(sellerId)) throw throwNotFoundError('Service not found');
   }
-
-  const [[withSlots], record] = await Promise.all([
-    withOpenSlots([withServableImage(offering, 'coverImage')]),
-    getServiceDealRecord({ sellerId, offeringId: id }),
-  ]);
-  return { ...withSlots, record };
+  return offering;
 }
 
 const feedOrderBy = {
   newest: [{ createdAt: 'desc' }, { id: 'desc' }],
   price_asc: [{ price: 'asc' }, { id: 'asc' }],
   price_desc: [{ price: 'desc' }, { id: 'desc' }],
+  // -1 below SERVICE_HAPPY_MIN_REVIEWS, so offerings without a share sort after those with one.
+  happy: [{ happySortKey: 'desc' }, { id: 'desc' }],
 } satisfies Record<ServiceOfferingFeedSort, Prisma.ServiceOfferingOrderByWithRelationInput[]>;
 
 /**
@@ -475,21 +492,45 @@ export async function getServiceOfferingFeed({
   };
 }
 
+const LICENSE_REQUIRED = 'Pick license terms to publish this service.';
+
 export async function upsertServiceOffering({
   sellerId,
   input,
+  licenseEditor = false,
 }: {
   sellerId: number;
   input: UpsertServiceOfferingInput;
+  /** `creatorServicesNext`: the seller sets the license, and publishing needs one. */
+  licenseEditor?: boolean;
 }) {
-  const { id, publish, affirmedTermsVersion, coverImage, ...fields } = input;
+  const {
+    id,
+    publish,
+    affirmedTermsVersion,
+    coverImage,
+    licensePreset,
+    licenseCustomText,
+    licenseAllowResale,
+    ...rest
+  } = input;
+  // Outside the rollout the license is left as it is: terms a seller set stay in force.
+  const license =
+    licenseEditor && licensePreset !== undefined
+      ? normalizeServiceLicense({ licensePreset, licenseCustomText, licenseAllowResale })
+      : undefined;
+  if (license?.licensePreset === ServiceLicensePreset.Custom && !license.licenseCustomText)
+    throw throwBadRequestError('Write your license terms, or pick a preset.');
+  const fields = { ...rest, ...license };
   await assertCanSellServices(sellerId);
-  await throwOnBlockedUserContent([fields.title, fields.description], {
-    surface: 'creator-service-offering',
-  });
+  await throwOnBlockedUserContent(
+    [fields.title, fields.description, license?.licenseCustomText ?? ''].filter(Boolean),
+    { surface: 'creator-service-offering' }
+  );
 
   if (!id) {
     if (publish) {
+      if (licenseEditor && !license?.licensePreset) throw throwBadRequestError(LICENSE_REQUIRED);
       // Checked before the cap so a missing tick never reads as a cap error.
       affirmationForPublish({ sellerId, offeringId: 0, existing: null, affirmedTermsVersion });
       await assertUnderActiveOfferingCap(sellerId);
@@ -531,11 +572,15 @@ export async function upsertServiceOffering({
       description: true,
       ingestion: true,
       coverImageId: true,
+      licensePreset: true,
+      licenseCustomText: true,
     },
   });
   if (!existing) throw throwNotFoundError('Service not found');
   const textChanged =
-    existing.title !== fields.title || existing.description !== fields.description;
+    existing.title !== fields.title ||
+    existing.description !== fields.description ||
+    (license !== undefined && existing.licenseCustomText !== license.licenseCustomText);
   const coverImageId =
     coverImage === undefined
       ? undefined
@@ -548,6 +593,15 @@ export async function upsertServiceOffering({
         });
 
   const activating = publish && existing.status !== ServiceOfferingStatus.Active;
+  if (activating && licenseEditor && !(license ?? existing).licensePreset)
+    throw throwBadRequestError(LICENSE_REQUIRED);
+  if (
+    existing.status === ServiceOfferingStatus.Active &&
+    existing.licensePreset &&
+    license &&
+    !license.licensePreset
+  )
+    throw throwBadRequestError('A published service keeps license terms. Pick one to save.');
   const affirmation = activating
     ? affirmationForPublish({
         sellerId,
@@ -616,9 +670,12 @@ async function afterServiceOfferingWrite(id: number, { textChanged }: { textChan
 export async function setServiceOfferingStatus({
   sellerId,
   input: { id, status, affirmedTermsVersion },
+  licenseRequired = false,
 }: {
   sellerId: number;
   input: SetServiceOfferingStatusInput;
+  /** `creatorServicesNext`: publishing needs license terms. */
+  licenseRequired?: boolean;
 }) {
   const from =
     status === ServiceOfferingStatus.Active
@@ -630,9 +687,10 @@ export async function setServiceOfferingStatus({
     await assertCanSellServices(sellerId);
     const existing = await dbWrite.serviceOffering.findFirst({
       where: { id, sellerId, status: { in: from } },
-      select: { sellerAffirmation: true },
+      select: { sellerAffirmation: true, licensePreset: true },
     });
     if (!existing) throw throwNotFoundError('Service not found');
+    if (licenseRequired && !existing.licensePreset) throw throwBadRequestError(LICENSE_REQUIRED);
     affirmation = affirmationForPublish({
       sellerId,
       offeringId: id,

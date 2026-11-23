@@ -1,4 +1,5 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { MIN_MANAGED_PROFANITY_ENTRIES } from '@civitai/mod-utils/profanity/word-rules';
 import { TRPCError } from '@trpc/server';
 import type * as FliptClient from '~/server/flipt/client';
 
@@ -499,13 +500,18 @@ describe('getClientBenignLists', () => {
   });
 
   describe('the managed blocked list', () => {
+    // Synthetic entries, as many as the floor asks for.
+    const atFloor = Array.from(
+      { length: MIN_MANAGED_PROFANITY_ENTRIES },
+      (_, i) => `zorb${String.fromCharCode(97 + (i % 26))}${'q'.repeat(Math.floor(i / 26))}`
+    );
     let blockedRow: { id: number; data: string[] } | null;
     let whitelist: string[];
     let blockedReadFails: boolean;
 
     beforeEach(() => {
       managedListFlag.on = true;
-      blockedRow = { id: 31, data: ['zorblat'] };
+      blockedRow = { id: 31, data: atFloor };
       whitelist = ['spreadsheet'];
       blockedReadFails = false;
       dbMock.dbWrite.blocklist.findMany.mockImplementation(
@@ -526,49 +532,24 @@ describe('getClientBenignLists', () => {
       managedListFlag.on = false;
     });
 
-    it('is served with a version naming its row when the flag is on', async () => {
-      const result = await getClientBenignLists();
-      expect(result.profanityBlockedWords).toEqual(['zorblat']);
-      expect(result.profanityListVersion).toMatch(/^31:/);
+    it('never carries a managed word, whatever the row holds', async () => {
+      const served = JSON.stringify(await getClientBenignLists());
+      expect(atFloor.filter((word) => served.includes(word))).toEqual([]);
     });
 
-    it('is withheld while the flag is off, so the browser keeps the shipped list', async () => {
-      managedListFlag.on = false;
-      const result = await getClientBenignLists();
-      expect(result.profanityBlockedWords).toBeNull();
-      expect(result.profanityListVersion).toBeNull();
+    it('carries the benign lists and nothing about the managed one', async () => {
+      expect(Object.keys(await getClientBenignLists()).sort()).toEqual([
+        'available',
+        'profanityWords',
+        'prompt',
+      ]);
     });
 
-    it('falls back to the shipped list for an emptied row, unlike the benign words', async () => {
-      blockedRow = { id: 31, data: [] };
-      const result = await getClientBenignLists();
-      expect(result.profanityBlockedWords).toBeNull();
-    });
-
-    it('falls back on a failed read without emptying the benign lists, uncacheable', async () => {
+    it('stays cacheable when the managed row cannot be read, since it no longer reads it', async () => {
       blockedReadFails = true;
       const result = await getClientBenignLists();
-      expect(result.profanityBlockedWords).toBeNull();
+      expect(result.available).toBe(true);
       expect(result.profanityWords).toEqual(['spreadsheet']);
-      expect(result.available).toBe(false);
-    });
-
-    it('is cacheable when the managed list read succeeds', async () => {
-      expect((await getClientBenignLists()).available).toBe(true);
-    });
-
-    it('falls back when no entry in the row is one the filter can use', async () => {
-      blockedRow = { id: 31, data: ['z', '42', 'zq'] };
-      expect((await getClientBenignLists()).profanityBlockedWords).toBeNull();
-    });
-
-    it('changes version when either profanity list changes', async () => {
-      const first = (await getClientBenignLists()).profanityListVersion;
-      whitelist = ['spreadsheet', 'cockpit'];
-      const afterWhitelistEdit = (await getClientBenignLists()).profanityListVersion;
-      blockedRow = { id: 31, data: ['zorblat', 'quaxle'] };
-      const afterBlockedEdit = (await getClientBenignLists()).profanityListVersion;
-      expect(new Set([first, afterWhitelistEdit, afterBlockedEdit]).size).toBe(3);
     });
   });
 });

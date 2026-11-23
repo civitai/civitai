@@ -1809,11 +1809,14 @@ describe('AppListingCard — acquisition telemetry', () => {
     query: 'pixel',
   };
 
-  function storeActions() {
+  // Clicks only: a card visible past the 1 s dwell also queues its own `impression`, which a slow
+  // run reaches before the assertion.
+  function clickActions() {
     return trackMocks.enqueue.mock.calls
       .map(([event]) => event)
       .filter((e: any) => e?.kind === 'action' && e.data?.type === 'AppStore_Action')
-      .map((e: any) => e.data.details);
+      .map((e: any) => e.data.details)
+      .filter((d: any) => d.action !== 'impression');
   }
 
   test('a tracked off-site Visit goes through /apps/go with its surface, never the raw URL', async () => {
@@ -1837,7 +1840,7 @@ describe('AppListingCard — acquisition telemetry', () => {
     await expect.element(visit).toHaveAttribute('href', 'https://ext.app');
     visit.element().addEventListener('click', (e) => e.preventDefault());
     await visit.click();
-    expect(storeActions()).toEqual([]);
+    expect(clickActions()).toEqual([]);
   });
 
   test('clicking the CTA records ONE cta_click carrying the grid state', async () => {
@@ -1847,7 +1850,7 @@ describe('AppListingCard — acquisition telemetry', () => {
     // Keep the test page in place: the anchor would otherwise open a tab.
     visit.element().addEventListener('click', (e) => e.preventDefault());
     await visit.click();
-    expect(storeActions()).toEqual([
+    expect(clickActions()).toEqual([
       {
         action: 'cta_click',
         listingId: 'l1',
@@ -1869,7 +1872,7 @@ describe('AppListingCard — acquisition telemetry', () => {
     await expect.element(visit).toBeInTheDocument();
     visit.element().addEventListener('click', (e) => e.preventDefault());
     await visit.click();
-    expect(storeActions()).toEqual([]);
+    expect(clickActions()).toEqual([]);
     // The link itself is unaffected: the visit is still counted server-side.
     await expect.element(visit).toHaveAttribute('href', '/apps/go/l1?src=store_card');
   });
@@ -1880,7 +1883,7 @@ describe('AppListingCard — acquisition telemetry', () => {
     await expect.element(title).toHaveAttribute('href', '/apps/store-preview/my-app');
     title.element().addEventListener('click', (e) => e.preventDefault());
     await title.click();
-    expect(storeActions()).toEqual([
+    expect(clickActions()).toEqual([
       {
         action: 'card_click',
         listingId: 'l1',
@@ -1900,6 +1903,6 @@ describe('AppListingCard — acquisition telemetry', () => {
     await expect.element(visit).toBeInTheDocument();
     visit.element().addEventListener('click', (e) => e.preventDefault());
     await visit.click();
-    expect(storeActions()).toEqual([]);
+    expect(clickActions()).toEqual([]);
   });
 });

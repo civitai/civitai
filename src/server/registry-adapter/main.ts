@@ -46,6 +46,11 @@
  *                                  tokens may read authorized PRIVATE document streams
  *                                  (`private-feed.ts`). Unset or empty, the default: no private
  *                                  stream exists, and every document stream is public
+ *   REGISTRY_ADAPTER_LISTING_RELAYS
+ *                                  the relays (OAuth client ids, a token's `act.sub`; comma- or
+ *                                  space-separated) whose subscriptions may read the `store-listing@v1`
+ *                                  stream (`listing-stream.ts`). Unset or empty, the default: the
+ *                                  schema is not served, and the catalog read is unchanged
  *   REGISTRY_ADAPTER_TRUST_META    "1" to judge the region from a request's `meta` as well as its
  *                                  headers; set only once the gateway sets those keys itself
  *                                  (`request-origin.ts`)
@@ -89,6 +94,7 @@ import {
 } from '~/server/registry-adapter/private-feed';
 import {
   liveDecideCollectionRead,
+  liveInstanceRevoked,
   livePrivateDocSource,
   liveRunGateReadable,
 } from '~/server/registry-adapter/private-feed.live';
@@ -96,10 +102,18 @@ import { STATES_KEPT_PER_STREAM } from '~/server/registry-adapter/cursor';
 import { isSharedDocLevelsOn } from '~/server/services/apps/doc-levels';
 import {
   APP_SEARCH_URN,
-  SERVED_SCHEMAS,
   buildEntitiesPerRead,
   parseAppSearchUrl,
+  servedSchemas,
 } from '~/server/registry-adapter/entities';
+import {
+  createListingStreamMetrics,
+  gateListings,
+  parseListingRelays,
+  reportSubListingsCapped,
+} from '~/server/registry-adapter/listing-stream';
+import { MAX_STREAM_SUB_LISTINGS } from '~/server/registry-adapter/catalog-media';
+import { Registry } from 'prom-client';
 import type { ResourceConfig } from '~/server/registry-adapter/auth';
 import {
   createCivitaiTokenVerifier,
@@ -110,6 +124,7 @@ import {
   subscriptionLimitsFromEnv,
 } from '~/server/registry-adapter/limits';
 import { startPolicy } from '~/server/registry-adapter/policy-enforce';
+import { DEFAULT_METRICS_PORT, createMetricsServer } from '~/server/registry-adapter/policy-shadow';
 import { createRegistryServer, keepAliveTimeoutFromEnv } from '~/server/registry-adapter/serve';
 import { describeRegionConfig } from '~/server/registry-adapter/request-origin';
 import { createRedisSnapshotStore } from '~/server/registry-adapter/snapshot-store.redis';
@@ -178,19 +193,57 @@ function main() {
   // Shadow mode: off unless REGISTRY_ADAPTER_POLICY_URL is set; it never changes a decision.
   // Enforcement: off unless REGISTRY_ADAPTER_POLICY_ENFORCE=1 as well. A misconfiguration of
   // either never stops the adapter (`startPolicy`).
-  const { shadow: policyShadow, enforce: policyEnforce } = startPolicy(process.env);
+  const {
+    shadow: policyShadow,
+    enforce: policyEnforce,
+    registry: policyRegistry,
+  } = startPolicy(process.env);
   const auth = { verifyToken, resource, limiter, onRegion, policyShadow, policyEnforce };
 
-  const deps = liveCatalogReadDeps();
+  const listingRelays = parseListingRelays(process.env.REGISTRY_ADAPTER_LISTING_RELAYS);
+  const listings = listingRelays.size > 0;
+  console.log(
+    listings
+      ? `registry-adapter: listing stream ON for relays: ${[...listingRelays].join(', ')}`
+      : 'registry-adapter: listing stream off (REGISTRY_ADAPTER_LISTING_RELAYS unset)'
+  );
+  const served = servedSchemas({ listings });
+  // The listing stream's cap counter, on the policy shadow's /metrics when it is on, else on a
+  // /metrics of its own (REGISTRY_ADAPTER_METRICS_PORT), only while the listing stream is.
+  let onSubListingsCapped: ((listingId: string, omitted: number) => void) | undefined;
+  if (listings) {
+    const { dropped, registry } = createListingStreamMetrics(policyRegistry ?? new Registry());
+    if (!policyRegistry) {
+      const metricsPort = Number(process.env.REGISTRY_ADAPTER_METRICS_PORT) || DEFAULT_METRICS_PORT;
+      createMetricsServer(registry)
+        .on('error', (err: NodeJS.ErrnoException) =>
+          console.warn(
+            `registry-adapter: WARNING: listing /metrics not served on :${metricsPort} (${
+              err.code ?? err.message
+            })`
+          )
+        )
+        .listen(metricsPort, () =>
+          console.log(`registry-adapter: listing stream /metrics on :${metricsPort}`)
+        );
+    }
+    onSubListingsCapped = reportSubListingsCapped(
+      dropped,
+      (line) => console.warn(line),
+      MAX_STREAM_SUB_LISTINGS
+    );
+  }
+  const deps = liveCatalogReadDeps({ listings, onSubListingsCapped });
   // Every subscription polls; they share one catalog read per half poll interval.
-  const readApps = sharedRead(() => readCatalog(deps), pollMs / 2);
+  const readApps = sharedRead(() => readCatalog(deps, { listings, onError }), pollMs / 2);
   const store = createRedisSnapshotStore();
-  const entities = createPollingAdapter({
+  const polling = createPollingAdapter({
     namespace: REGISTRY_NAMESPACE,
-    serves: SERVED_SCHEMAS,
+    serves: served,
     read: buildEntitiesPerRead(readApps, {
       baseUrl,
       appSearchUrl,
+      listings,
       onSkip: (reason) => console.warn('registry-adapter:', reason),
     }),
     store,
@@ -198,6 +251,7 @@ function main() {
     sleep: abortableSleep,
     onError,
   });
+  const entities = listings ? gateListings(polling, listingRelays) : polling;
   const docs = createDocFeed({
     source: liveSharedDocSource(),
     // Export only what content levels gate: an app whose levels flag is off publishes nothing.
@@ -224,6 +278,7 @@ function main() {
           resolve: resolvePrivateFromCatalog(readApps),
           decide: liveDecideCollectionRead,
           runGateReadable: liveRunGateReadable,
+          instanceRevoked: liveInstanceRevoked,
           store: createRedisSnapshotStore(
             undefined,
             STATES_KEPT_PER_STREAM,
@@ -242,9 +297,7 @@ function main() {
     keepAliveTimeoutMs: keepAliveTimeoutFromEnv(process.env),
   });
   server.listen(port, () =>
-    console.log(
-      `registry-adapter: ${REGISTRY_NAMESPACE} serving ${SERVED_SCHEMAS.join(', ')} on :${port}`
-    )
+    console.log(`registry-adapter: ${REGISTRY_NAMESPACE} serving ${served.join(', ')} on :${port}`)
   );
   const grpcServer = createGrpcServer(adapter, { onError, ...auth });
   listenGrpc(grpcServer, grpcPort).then(

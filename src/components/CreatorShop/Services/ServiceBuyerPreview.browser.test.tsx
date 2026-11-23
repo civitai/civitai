@@ -52,6 +52,9 @@ const offering = {
   revisionsIncluded: 1,
   maxNsfwLevel: 1,
   status: 'Active',
+  licensePreset: null,
+  licenseCustomText: null,
+  licenseAllowResale: false,
 };
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({

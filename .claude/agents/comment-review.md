@@ -54,7 +54,8 @@ means the code already says it — or should.
 ## Keep
 
 A rationale, tradeoff, gotcha, invariant or workaround the reader **cannot recover from the code**.
-Link an issue/PR where relevant.
+Link an issue/PR where relevant. A test's citation of the decision it pins (a PR or doc) is a keeper,
+not change-log narration: it is how a later rule change finds the test.
 
 Worked example that passes, from `scripts/prisma-enum-generator.mjs`: the note saying the output is
 prettier-formatted because the committed copy is wrapped, so raw output fails `db:check-generated` and
@@ -107,6 +108,11 @@ a failed job, so we check the body" — that is a keeper, not a naming problem.
   behaviour elsewhere — confirm it still resolves. This is where the highest-value findings are, and it
   is grep work, not judgment.
 - **A `TODO` with an owner or an issue is not noise.** A bare `TODO` with neither is.
+- **A comment that states a rule is checked against every branch that decides it.** "The same rules as
+  X", "only when Y", "X alone does not Z", "always", "never": read X, and every branch of the function
+  (and of X) that decides the outcome. One branch that contradicts the claim makes the comment **FALSE**;
+  report it with the contradicting `file:line`. Say whether the code or the comment is wrong when the
+  diff, PR or a doc settles it; otherwise say it is unsettled, and don't guess.
 
 ## Restraint
 

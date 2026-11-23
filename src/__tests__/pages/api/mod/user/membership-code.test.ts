@@ -61,7 +61,7 @@ vi.mock('~/server/services/moderator-grants', () => ({
   hasModeratorGrant: (...a: unknown[]) => hasModeratorGrant(...a),
 }));
 
-import handler from '~/pages/api/mod/user/membership-code';
+import handler from '~/server/api-routes/mod/user/membership-code';
 
 const TARGET = 8675309;
 const VALID = { userId: TARGET, tier: 'silver', months: 2, reason: 'Support ticket 123' };

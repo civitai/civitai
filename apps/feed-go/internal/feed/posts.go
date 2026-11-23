@@ -191,7 +191,7 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 	if req.Viewer != nil {
 		viewer = *req.Viewer
 	}
-	browsingLevel, preCap := in.ApplyDomainCap(req.Cap)
+	browsingLevel, preCap := in.ApplyDomainCap(req.Cap, viewer.IsModerator)
 
 	// Model-gallery gates: settings, the held level of minor / SFW-only models, taken-down models.
 	var modelIDs []int
@@ -576,7 +576,7 @@ func buildPost(postID int, images []Image, sortBy string, reviews map[int]Review
 		{Key: "nsfwLevel", Val: int64(nsfw)},
 		{Key: "modelVersionId", Val: first.ModelVerID},
 		{Key: "publishedAt", Val: first.PublishedAt},
-		{Key: "sortAt", Val: first.SortAt},
+		{Key: "sortAt", Val: first.SortAtWire()},
 		{Key: "createdAt", Val: createdAt},
 		{Key: "user", Val: first.User},
 	}

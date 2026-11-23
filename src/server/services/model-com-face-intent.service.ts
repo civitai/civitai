@@ -34,12 +34,15 @@ export function comFaceIntentFields({
 export const comFaceIntentTextHash = (listing: ComFaceIntentListing) =>
   textScanTextHash({ fields: comFaceIntentFields(listing), declared: {} });
 
-/** The id of the intent prompt version in use; undefined when it cannot be read. */
-export async function activeComFaceIntentPromptId(): Promise<number | undefined> {
+/** The id of a label's prompt version in use; undefined when it cannot be read. */
+export async function activeTextScanPromptId(label: string): Promise<number | undefined> {
   return getActiveTextScanPrompts()
-    .then((prompts) => prompts['label:model-com-face-intent']?.id)
+    .then((prompts) => prompts[`label:${label}`]?.id)
     .catch(() => undefined);
 }
+
+/** The id of the intent prompt version in use; undefined when it cannot be read. */
+export const activeComFaceIntentPromptId = () => activeTextScanPromptId('model-com-face-intent');
 
 /** The stored verdict for this exact text. A new or restored prompt version retires the check's own
  *  verdicts, never a moderator's overturn. */

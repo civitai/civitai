@@ -6,7 +6,11 @@ import {
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 
-const querySchema = z.object({ blockId: z.string().min(1).max(64) });
+const querySchema = z.object({
+  blockId: z.string().min(1).max(64),
+  // `check=1`: the pane's liveness poll, which must not count as preview activity.
+  check: z.unknown().optional(),
+});
 
 /**
  * GET ?blockId= → the preview pane's frame: the caller's own app over its live dev tunnel, with a
@@ -22,7 +26,12 @@ export default AuthedEndpoint(async (req, res, user) => {
   if (!query.success) return res.status(400).json({ error: 'blockId is required' });
 
   res.setHeader('Cache-Control', 'no-store');
-  const preview = await getAppAssistantPreview({ user, req, blockId: query.data.blockId });
+  const preview = await getAppAssistantPreview({
+    user,
+    req,
+    blockId: query.data.blockId,
+    check: query.data.check === '1',
+  });
   switch (preview.status) {
     case 'ok':
       return res.json(preview.frame);

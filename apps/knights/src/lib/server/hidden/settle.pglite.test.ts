@@ -270,6 +270,7 @@ describe('grading hidden checks', () => {
   it.each([
     ['unpublished', `UPDATE "Post" SET "publishedAt"=NULL WHERE id=10`],
     ['blocked', `UPDATE "Image" SET "ingestion"='Blocked' WHERE id=10`],
+    ['put on a Private post', `UPDATE "Post" SET availability='Private' WHERE id=10`],
   ])(
     'grades a check inconclusive, with no cost, when its image was %s since',
     async (_label, change) => {
@@ -440,6 +441,17 @@ describe('naming the check behind a notice', () => {
     // The warning names both judgments in its own words.
     expect(notice).toMatchObject(warningNotice(notice.correctLabel, notice.answerLabel));
     expect(notice.answerLabel).not.toBe(notice.correctLabel);
+    expect(notice.correctLabel).toBeTruthy();
+  });
+
+  it('hides the image of a check on a Private post but still names the answers', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await reference(10, '4');
+    await answer(1, ref, '16');
+    await settle(minutes(31));
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 10`);
+    const [notice] = await readHiddenNotices(db, 1);
+    expect(notice.imageKey).toBeNull();
     expect(notice.correctLabel).toBeTruthy();
   });
 

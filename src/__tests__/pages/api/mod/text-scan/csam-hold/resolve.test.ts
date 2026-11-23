@@ -1,4 +1,5 @@
 import type * as ModerationModule from '~/server/services/commentv3/moderation.service';
+import type * as UserService from '~/server/services/user.service';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { recordTx, useTxClients } from '~/__tests__/tx-client';
@@ -73,11 +74,12 @@ const hold = dbMock.dbWrite.textScanHold;
 const updateMany = hold.updateMany;
 const findFirst = hold.findFirst;
 
-import handler from '~/pages/api/mod/text-scan/csam-hold/resolve';
-import markReportedHandler from '~/pages/api/mod/text-scan/csam-hold/mark-reported';
-import referHandler from '~/pages/api/mod/text-scan/csam-hold/refer';
-import setReportChoiceHandler from '~/pages/api/mod/text-scan/csam-hold/set-report-choice';
+import handler from '~/server/api-routes/mod/text-scan/csam-hold/resolve';
+import markReportedHandler from '~/server/api-routes/mod/text-scan/csam-hold/mark-reported';
+import referHandler from '~/server/api-routes/mod/text-scan/csam-hold/refer';
+import setReportChoiceHandler from '~/server/api-routes/mod/text-scan/csam-hold/set-report-choice';
 import { decideCsamHold } from '~/server/services/text-scan/csam-hold-decision';
+import { archiveUserProfile } from '~/server/services/csam.service-new';
 
 function call(body: Record<string, unknown>, endpoint: typeof handler = handler) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];
@@ -368,7 +370,14 @@ describe('textScan.resolveCsamHold', () => {
     it('clears the profile text of a user profile hold', async () => {
       findFirst.mockResolvedValue(pendingHold({ entityType: 'UserProfile', entityId: 900 }));
       await call({ holdId: 12, textHash: 'h-1', decision: 'remove', reportChoice: 'none' });
-      expect(mocks.clearUserProfileFields).toHaveBeenCalledWith({ userId: 900 });
+      expect(mocks.clearUserProfileFields).toHaveBeenCalledTimes(1);
+      expect(mocks.clearUserProfileFields).toHaveBeenCalledWith({
+        userId: 900,
+        fields: ['location', 'bio', 'message', 'showcaseSections'],
+        actorId: 7,
+        archive: archiveUserProfile,
+        alwaysArchive: true,
+      });
     });
 
     it('soft-deletes a chat message as a moderator, auditing it', async () => {
@@ -384,6 +393,32 @@ describe('textScan.resolveCsamHold', () => {
       const { audit } = mocks.deleteChatMessage.mock.calls[0][0];
       await audit({ type: 'delete' });
       expect(mocks.tracker.chatAudit).toHaveBeenCalledWith({ type: 'delete' });
+    });
+
+    it('leaves a user profile hold undecided when the clear’s record fails to write', async () => {
+      const actual = await vi.importActual<typeof UserService>('~/server/services/user.service');
+      mocks.clearUserProfileFields.mockImplementationOnce(actual.clearUserProfileFields);
+      findFirst.mockResolvedValue(pendingHold({ entityType: 'UserProfile', entityId: 900 }));
+      // No stored text or links, so the archive has nothing to upload.
+      dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(null);
+      dbMock.dbWrite.userLink.findMany.mockResolvedValue([]);
+      dbMock.dbWrite.userProfile.updateMany.mockResolvedValue({ count: 1 });
+      dbMock.dbWrite.$executeRaw.mockImplementation((async (s: readonly string[]) => {
+        if (s.join('?').includes('"ModActivity"')) throw new Error('db blip');
+        return 0;
+      }) as never);
+
+      const res = await call({
+        holdId: 12,
+        textHash: 'h-1',
+        decision: 'remove',
+        reportChoice: 'none',
+      });
+
+      // The clear and its record share a transaction, so the clear rolls back with it.
+      expect(dbMock.dbWrite.userProfile.updateMany).toHaveBeenCalledTimes(1);
+      expect(res.status).toBe(500);
+      expect(labelCalls()).toHaveLength(0);
     });
 
     it('deletes every message of the judged chat window, the held one included', async () => {

@@ -11,6 +11,7 @@ import {
   REFERENCE_SOURCE,
   REFERENCE_STATUS,
   servableImage,
+  servableImageForSweeps,
 } from '@civitai/db/knights';
 import { HARVEST, type HarvestConfig, type HarvestSettings } from './config';
 import { takeAgreementIntake } from './agreement-intake.service';
@@ -231,7 +232,7 @@ async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Pr
               .whereRef('img.id', '=', 'r.imageId')
               .whereRef(sql`"img"."nsfwLevel"::text`, '=', 'r.answer')
               .where('img.nsfwLevelLocked', '=', true)
-              .where(servableImage)
+              .where(servableImageForSweeps)
           )
         ),
       ])

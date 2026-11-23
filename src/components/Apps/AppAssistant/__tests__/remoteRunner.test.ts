@@ -294,6 +294,16 @@ describe('restartRunnerPreview', () => {
     });
   });
 
+  it('a direct preview’s answer has no host: it is shown by its block alone', async () => {
+    const { run } = restart(() => Response.json({ v: 1, blockId: 'my-shop' }));
+    expect(await run()).toEqual({ blockId: 'my-shop', host: '' });
+    // Still refused: no block, or a host that is there but is not one.
+    const noBlock = restart(() => Response.json({ v: 1 }));
+    await expect(noBlock.run()).rejects.toBeInstanceOf(RunnerPreviewError);
+    const badHost = restart(() => Response.json({ v: 1, blockId: 'my-shop', host: '' }));
+    await expect(badHost.run()).rejects.toBeInstanceOf(RunnerPreviewError);
+  });
+
   it('says why civitai would not sign the grant, and asks the runner nothing', async () => {
     const { run, sent } = restart(() => Response.json({}), {
       grant: async () => {

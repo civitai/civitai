@@ -116,6 +116,11 @@ A requirement can be technically satisfied and still miss. Ask:
   SQL. That is not a defect, but an intent review that doesn't surface it lets "done" mean two
   different things. Name the file and say it is unapplied.
 - **Was anything the doc listed as explicitly out of scope built anyway?**
+- **Is a changed rule changed everywhere it is decided?** When the request changes a rule (who may see or
+  do something, a limit, a default), the requirement is the rule, not the first call site. Grep for every
+  place that decides it: the predicate's name, the columns or flags it reads, and the old behaviour (its
+  literal, its old condition). List each with `file:line`. A decider left on the old rule, with no reason
+  given in the PR body or the intent doc, makes the requirement **Partially met**; name it.
 
 ## Update the doc
 

@@ -29,8 +29,17 @@ const (
 	AllLevels = PG | PG13 | R | X | XXX
 )
 
-// OnlySelectable strips the Blocked bit (onlySelectableLevels).
-func OnlySelectable(level int) int { return level &^ Blocked }
+// OnlySelectable is onlySelectableLevels: the level held to AllLevels.
+func OnlySelectable(level int) int { return level & AllLevels }
+
+// ForViewer is stripBlockedForNonModerator on one requested level: a moderator's is kept as sent,
+// anyone else's is held to the selectable levels. It runs before the domain clamp.
+func ForViewer(level int, isModerator bool) int {
+	if isModerator {
+		return level
+	}
+	return OnlySelectable(level)
+}
 
 // DomainCap is domainBrowsingLevelCap: signed out -> PG, signed in where NSFW is not viewable -> PG/PG13,
 // otherwise no cap (returned as 0).
@@ -148,18 +157,42 @@ type HostColors map[string][]string
 // ColorOf returns the color whose host list contains host (port stripped, case-insensitive), walking
 // green, blue, red in order as getRequestDomainColor does, or "" when no color matches.
 func (h HostColors) ColorOf(host string) string {
+	for _, color := range []string{"green", "blue", "red"} {
+		if h.hasHost(color, host) {
+			return color
+		}
+	}
+	return ""
+}
+
+// hasHost reports whether color's host list holds host (port stripped, case-insensitive): the one
+// host match ColorOf and BoardColorOf both read.
+func (h HostColors) hasHost(color, host string) bool {
 	host = strings.ToLower(host)
 	if i := strings.IndexByte(host, ':'); i >= 0 {
 		host = host[:i]
 	}
-	for _, color := range []string{"green", "blue", "red"} {
-		for _, candidate := range h[color] {
-			if strings.EqualFold(candidate, host) {
-				return color
-			}
+	for _, candidate := range h[color] {
+		if strings.EqualFold(candidate, host) {
+			return true
 		}
 	}
-	return ""
+	return false
+}
+
+// BoardColorOf is getRequestBoardDomainColor (src/server/utils/server-domain.ts): "red" for a host on
+// red's list, or for a host whose walked color (ColorOf) has a primary on red's list (a blue alias
+// whose blue primary is the red host); otherwise the walked color ("" when none matches). primaries
+// is each color's SERVER_DOMAIN_<COLOR>.
+func (h HostColors) BoardColorOf(host string, primaries map[string]string) string {
+	if host != "" && h.hasHost("red", host) {
+		return "red"
+	}
+	walked := h.ColorOf(host)
+	if p := primaries[walked]; walked != "" && p != "" && h.hasHost("red", p) {
+		return "red"
+	}
+	return walked
 }
 
 // RegionRule is one REGION_RESTRICTION_CONFIG entry: a region (country, or "US:<state>") restricted from

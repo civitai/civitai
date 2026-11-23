@@ -72,16 +72,28 @@ export const servableImageContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>)
     eb('img.minor', '=', false),
   ]);
 
+/** The post is not Private. Unsearchable and EarlyAccess posts stay served, as the site serves them. */
+export const postNotPrivate = (eb: ExpressionBuilder<Joined, 'p'>) =>
+  eb('p.availability', '!=', 'Private');
+
 /**
- * Images Knights may show players: `servableImageContent` on a published post. Expects `Image as img` joined to
+ * `servableImageContent` on a published post, without the rules that must only hide an image (`postNotPrivate`): for
+ * sweeps that would otherwise retire a reference or close a question over them. Expects `Image as img` joined to
  * `Post as p`.
  */
-export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
+export const servableImageForSweeps = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
   eb.and([
     servableImageContent(eb),
     eb('p.publishedAt', 'is not', null),
     eb('p.publishedAt', '<', sql<Date>`(now() AT TIME ZONE 'utc')`),
   ]);
+
+/**
+ * Images Knights may show players: `servableImageForSweeps` on a post that is not Private. Expects `Image as img`
+ * joined to `Post as p`.
+ */
+export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
+  eb.and([servableImageForSweeps(eb), postNotPrivate(eb)]);
 
 /**
  * Open Knight-stage rating items that players can be served, counted up to `limit` (the intake cap reads `maxOpen + 1`).

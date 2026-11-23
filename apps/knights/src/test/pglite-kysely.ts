@@ -133,7 +133,8 @@ CREATE TABLE "TextScanHold" (
 );
 CREATE TABLE "Post" (
   "id" INTEGER PRIMARY KEY,
-  "publishedAt" TIMESTAMP(3)
+  "publishedAt" TIMESTAMP(3),
+  "availability" TEXT NOT NULL DEFAULT 'Public'
 );
 CREATE TABLE "NewOrderPlayer" (
   "userId" INTEGER PRIMARY KEY,

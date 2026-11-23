@@ -7,7 +7,8 @@ export type CsamSupplementalDetails = {
   unreviewedImageIds: number[];
 };
 
-const CONFIRMED = 'A Civitai reviewer confirmed the attached image(s).';
+const CONFIRMED =
+  "A Civitai reviewer confirmed the reported image(s). Where a file is reported as not viewed, Civitai can't confirm that it is identical to the copy the reviewer saw.";
 
 export function supplementalReportText(unreviewed: number) {
   if (unreviewed === 0) return CONFIRMED;

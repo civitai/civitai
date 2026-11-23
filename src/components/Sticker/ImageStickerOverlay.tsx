@@ -174,7 +174,9 @@ export function ImageStickerOverlay({
           {isPlacing && <DraftStickerLayer />}
         </div>
       )}
-      {isPlacing && video && <StickerMotionEditor video={video} />}
+      {isPlacing && video && (
+        <StickerMotionEditor video={video} autoTrack={features.stickerAutoTrack} />
+      )}
     </div>
   );
 }

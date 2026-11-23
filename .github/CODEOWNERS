@@ -11,3 +11,8 @@
 /apps/assistant-runner/src/app-assistant/preview.ts @ZacxDev @koenbeuk
 /apps/assistant-runner/src/app-assistant/preview-restart.ts @ZacxDev @koenbeuk
 /src/components/Apps/AppAssistant/previewTunnelStatus* @ZacxDev @koenbeuk
+# App Assistant direct preview: the same session record, minted and revoked without a tunnel.
+/src/server/services/blocks/preview-session-host* @ZacxDev @koenbeuk
+/src/server/services/blocks/preview-revoke* @ZacxDev @koenbeuk
+/src/server/services/blocks/direct-preview* @ZacxDev @koenbeuk
+/src/pages/api/internal/app-assistant/preview/ @ZacxDev @koenbeuk

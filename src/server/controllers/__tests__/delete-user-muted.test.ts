@@ -92,7 +92,7 @@ describe('user.delete (tRPC) refuses a muted account', () => {
 
     await deleteUserHandler({ ctx, input: { id: SELF } });
 
-    expect(deleteUser).toHaveBeenCalledWith({ id: SELF });
+    expect(deleteUser).toHaveBeenCalledWith({ id: SELF, actorId: SELF });
     expect(row.email).toBeNull();
     expect(row.accounts).toEqual([]);
     expect(trackUserActivity).toHaveBeenCalledWith(

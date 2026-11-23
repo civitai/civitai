@@ -199,7 +199,14 @@ export async function unservableReason(
   const image = await db
     .selectFrom('Image as img')
     .leftJoin('Post as p', 'p.id', 'img.postId')
-    .select(['img.ingestion', 'img.blockedFor', 'img.poi', 'img.minor', 'p.publishedAt'])
+    .select([
+      'img.ingestion',
+      'img.blockedFor',
+      'img.poi',
+      'img.minor',
+      'p.publishedAt',
+      'p.availability',
+    ])
     .where('img.id', '=', imageId)
     .executeTakeFirst();
   if (!image) return `Image ${imageId} was not found.`;
@@ -213,6 +220,9 @@ export async function unservableReason(
   }
   if (!image.publishedAt || image.publishedAt > new Date()) {
     return `Image ${imageId} is not published, so Acolytes could not see it.`;
+  }
+  if (image.availability === 'Private') {
+    return `Image ${imageId} is on a Private post, so Knights does not show it.`;
   }
   return `Image ${imageId} cannot be shown to Acolytes: it must be a rated image with no review hold.`;
 }

@@ -55,7 +55,7 @@ vi.mock('~/server/services/moderator-grants', () => ({
   hasModeratorGrant: (...a: unknown[]) => hasModeratorGrant(...a),
 }));
 
-import handler from '~/pages/api/mod/user/creator-program-ban';
+import handler from '~/server/api-routes/mod/user/creator-program-ban';
 
 const MODERATOR = 990000007;
 const TARGET = 8675309;

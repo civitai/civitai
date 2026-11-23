@@ -404,7 +404,7 @@ func TestResolve(t *testing.T) {
 		{"bearer wins over a valid cookie", map[string]string{"Authorization": "Bearer abc", "Cookie": "__Secure-civ-token=" + good}, "/x", want{reason: "bearer-token"}},
 		{"shared-slot cookie", map[string]string{"Cookie": "a=1; __Secure-civ-token=" + good}, "/x", want{id: 42, moderator: true}},
 		{"host-slot cookie", map[string]string{"Cookie": "__Host-civ-token=" + good}, "/x", want{id: 42, moderator: true}},
-		{"both slots", map[string]string{"Cookie": "__Secure-civ-token=" + good + "; __Host-civ-token=" + good}, "/x", want{reason: "multiple-session-cookies"}},
+		{"both slots: the first name read wins", map[string]string{"Cookie": "__Secure-civ-token=" + good + "; __Host-civ-token=not.a.token"}, "/x", want{id: 42, moderator: true}},
 		{"unconfigured cookie name ignored", map[string]string{"Cookie": "civ-token=" + good}, "/x", want{}},
 		{"invalid token", map[string]string{"Cookie": "__Secure-civ-token=not.a.token"}, "/x", want{}},
 		{"expired token", map[string]string{"Cookie": "__Secure-civ-token=" + f.token(t, func(m map[string]any) { m["exp"] = f.now.Add(-time.Minute).Unix() })}, "/x", want{}},

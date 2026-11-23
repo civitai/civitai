@@ -1335,25 +1335,37 @@ describe('AppListingDetailBody', () => {
   // ── Screenshot gallery ─────────────────────────────────────────────────────
 
   test('a screenshot tile hides ITSELF on load error', async () => {
+    // Both sources RESOLVE, so no `error` fires unless this test fires it. Unresolvable
+    // URLs made the browser fail both tiles on its own clock, and under load both were
+    // already gone before the positive control below ran (expected 2, got 0).
+    const loadable = (n: number) =>
+      `data:image/svg+xml;base64,${btoa(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" data-n="${n}"/>`
+      )}`;
     const { container, within } = await renderScoped(
       <AppListingDetailBody
         detail={base({
           screenshots: [
-            { url: 'https://cdn.example/missing.png', caption: null },
-            { url: 'https://cdn.example/other.png', caption: null },
+            { url: loadable(1), caption: null },
+            { url: loadable(2), caption: null },
           ],
         })}
       />
     );
+    const srcs = () =>
+      Array.from(container.querySelectorAll('img')).map((img) => img.getAttribute('src'));
     // POSITIVE CONTROL: the gallery and BOTH tiles are there before any error fires.
     await expect.element(within.getByText('Screenshots')).toBeInTheDocument();
-    expect(container.querySelectorAll('img')).toHaveLength(2);
-    // Both URLs are unresolvable, so the browser fires `error` on its own; wait for the
-    // component to react rather than asserting against a still-loading DOM.
-    await vi.waitUntil(() => container.querySelectorAll('img').length === 0, {
-      timeout: 10000,
-      interval: 25,
-    });
+    expect(srcs()).toEqual([loadable(1), loadable(2)]);
+
+    // Error the FIRST tile only: it goes, and the other stays.
+    container.querySelectorAll('img')[0].dispatchEvent(new Event('error'));
+    await vi.waitUntil(() => srcs().length === 1, { timeout: 10000, interval: 25 });
+    expect(srcs()).toEqual([loadable(2)]);
+
+    // Then the second.
+    container.querySelectorAll('img')[0].dispatchEvent(new Event('error'));
+    await vi.waitUntil(() => srcs().length === 0, { timeout: 10000, interval: 25 });
 
     // 🔴 MEASURED, AND IT IS NOT WHAT THE DOCSTRING IMPLIES: the "Screenshots" HEADING
     // SURVIVES once every tile has errored. `ScreenshotGallery` decides whether to

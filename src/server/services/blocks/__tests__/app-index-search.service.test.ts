@@ -24,6 +24,7 @@ const {
   storeGridRequest,
   APP_INDEX_SEARCH_TIMEOUT_MS,
   IndexBreaker,
+  indexMature,
 } = await import('~/server/services/blocks/app-index-search.service');
 
 // The database reads are passed in (the service's `reads` parameter), never module-mocked, and
@@ -360,17 +361,23 @@ describe('listStoreGrid', () => {
     expect(await requestsMoved()).toEqual(['db_fallback/db_error:1']);
   });
 
-  it('a viewer who may see r/x listings is never sent to the index', async () => {
-    for (const viewerBrowsingLevel of [NsfwLevel.R, NsfwLevel.X, NsfwLevel.PG | NsfwLevel.R]) {
-      const res = await listStoreGrid(
-        INPUT,
-        { ...SFW_OPTS, redCapable: true, viewerBrowsingLevel },
-        { indexSearch: true }
-      );
-      expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: false });
-    }
-    expect(await requestsMoved()).toEqual(['db_fallback/mature_viewer:3']);
-    expect(fetchCalls).toEqual([]);
+  // The index holds every rating, so a mature-allowing viewer is routed, and the call names
+  // exactly the mature ratings the viewer may see.
+  it.each<[string, number, string]>([
+    ['every mature level', NsfwLevel.PG | NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX, 'r,x,xxx'],
+    ['X only', NsfwLevel.X, 'x'],
+    ['PG and R', NsfwLevel.PG | NsfwLevel.R, 'r'],
+  ])('a viewer who may see %s is sent to the index with mature=%s', async (_, level, want) => {
+    const res = await listStoreGrid(
+      INPUT,
+      { ...SFW_OPTS, redCapable: true, viewerBrowsingLevel: level },
+      { indexSearch: true }
+    );
+    expect(res.search).toBe('index');
+    expect(res.indexSearchRoutable).toBe(true);
+    expect(fetchCalls).toHaveLength(1);
+    expect(new URL(fetchCalls[0]).searchParams.getAll('mature')).toEqual([want]);
+    expect(await requestsMoved()).toEqual(['index/ok:1']);
   });
 
   it('an SFW level on a mature-capable host is still routed', async () => {
@@ -380,6 +387,38 @@ describe('listStoreGrid', () => {
       { indexSearch: true }
     );
     expect(res.search).toBe('index');
+  });
+
+  it('an SFW viewer’s index call carries no mature parameter: the index’s SFW default', async () => {
+    for (const opts of [
+      SFW_OPTS,
+      { ...SFW_OPTS, viewerBrowsingLevel: undefined },
+      { ...SFW_OPTS, redCapable: true, viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.PG13 },
+    ]) {
+      await listStoreGrid(INPUT, opts, { indexSearch: true });
+    }
+    expect(fetchCalls).toHaveLength(3);
+    for (const url of fetchCalls) expect(new URL(url).searchParams.has('mature')).toBe(false);
+  });
+
+  it.each<[string, Partial<ListAvailableListingsOpts>, string | null]>([
+    ['anonymous (no level)', { redCapable: false, viewerBrowsingLevel: undefined }, null],
+    [
+      'an SFW level',
+      { redCapable: true, viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.PG13 },
+      null,
+    ],
+    ['R off a red-capable host', { redCapable: false, viewerBrowsingLevel: NsfwLevel.R }, null],
+    ['R', { redCapable: true, viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.R }, 'r'],
+    ['X without R', { redCapable: true, viewerBrowsingLevel: NsfwLevel.X }, 'x'],
+    ['XXX alone', { redCapable: true, viewerBrowsingLevel: NsfwLevel.XXX }, 'xxx'],
+    [
+      'every mature level',
+      { redCapable: true, viewerBrowsingLevel: NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX },
+      'r,x,xxx',
+    ],
+  ])('the index’s mature parameter for %s', (_, opts, want) => {
+    expect(indexMature({ ...SFW_OPTS, ...opts })).toBe(want);
   });
 
   it.each<[string, Partial<ListAppListingsInput>, () => void, AppIndexSearchReason, boolean]>([
@@ -503,6 +542,67 @@ describe('listStoreGrid', () => {
 });
 
 // The `/apps` store grid always asks for sub-listing cards; the index holds none.
+/**
+ * The store grid passes the listings read model's serving read as `reads.gridPage`
+ * (`serveListingPage`): it answers only a page the index does not search. A search, and every
+ * database read it makes (its fallbacks included), stays on the reads it had before.
+ */
+describe('listStoreGrid with a gridPage read', () => {
+  const SERVED_PAGE = { items: [card(DELTA)], nextCursor: 'served-cursor' };
+  const gridPage = vi.fn();
+  const withGridPage = (...args: Parameters<typeof listStoreGridWith>) =>
+    listStoreGridWith(
+      args[0],
+      args[1],
+      args[2],
+      {
+        listAvailableListings: h.listAvailableListings,
+        listStoreListingsBySlugs: h.listStoreListingsBySlugs,
+        gridPage,
+      },
+      breaker
+    );
+  beforeEach(() => {
+    gridPage.mockReset().mockResolvedValue(SERVED_PAGE);
+  });
+
+  it('index switch off: the gridPage answer, and no database page', async () => {
+    const opts = { ...SFW_OPTS };
+    const res = await withGridPage(INPUT, opts, { indexSearch: false });
+    expect(res).toBe(SERVED_PAGE);
+    expect(gridPage).toHaveBeenCalledTimes(1);
+    expect(gridPage.mock.calls[0][0]).toBe(INPUT);
+    expect(gridPage.mock.calls[0][1]).toBe(opts);
+    expect(h.listAvailableListings).not.toHaveBeenCalled();
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it('index switch on without a query: the gridPage answer, with the routability', async () => {
+    const res = await withGridPage({ ...INPUT, query: '  ' }, SFW_OPTS, { indexSearch: true });
+    expect(res).toEqual({ ...SERVED_PAGE, indexSearchRoutable: true });
+    expect(h.listAvailableListings).not.toHaveBeenCalled();
+    expect(fetchCalls).toEqual([]);
+  });
+
+  it('a search the index answers never reads the gridPage', async () => {
+    setEnv({ APP_INDEX_URL: INDEX_URL, APP_INDEX_SEARCH_COMPARE_SAMPLE: 0 });
+    const res = await withGridPage({ ...INPUT, includeSubListings: false }, SFW_OPTS, {
+      indexSearch: true,
+    });
+    expect(res.search).toBe('index');
+    expect(res.items.map((c) => (c as ListingCard).slug)).toEqual(['delta', 'beta', 'alpha']);
+    expect(gridPage).not.toHaveBeenCalled();
+  });
+
+  it("a search's fallback is the database page, not the gridPage", async () => {
+    stubIndex(() => new Response('{}', { status: 500 }));
+    const res = await withGridPage(INPUT, SFW_OPTS, { indexSearch: true });
+    expect(res).toEqual({ ...DB_PAGE, indexSearchRoutable: true });
+    expect(gridPage).not.toHaveBeenCalled();
+    expect(h.listAvailableListings).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('listStoreGrid with sub-listing cards on the page', () => {
   const subCard = (id: string, name: string, tagline: string | null): StoreGridItem =>
     ({ id, cardType: 'sub-listing', name, tagline } as unknown as StoreGridItem);
@@ -683,6 +783,27 @@ describe('the store grid request, end to end', () => {
     expect(await requestsMoved()).toEqual(['index/ok:1']);
   });
 
+  it('a red-capable viewer at R and X: the same search, naming those ratings', async () => {
+    const res = await grid(
+      { ...STORE_INPUT, query: 'lumen' },
+      {
+        ...SFW_VIEWER,
+        redCapable: true,
+        viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.R | NsfwLevel.X,
+      }
+    );
+    expect(fetchCalls).toEqual([
+      'http://app-index.invalid/base/search?q=lumen&limit=48&mature=r%2Cx',
+    ]);
+    expect(res).toEqual({
+      items: [ORBIT, LUMEN, SUB_LUMEN],
+      nextCursor: undefined,
+      search: 'index',
+      indexSearchRoutable: true,
+    });
+    expect(await requestsMoved()).toEqual(['index/ok:1']);
+  });
+
   it('sub-listings flag off: an index answer carries no sub-listing card', async () => {
     const res = await grid(
       { ...STORE_INPUT, query: 'lumen' },
@@ -710,11 +831,6 @@ describe('the store grid request, end to end', () => {
   });
 
   it.each<[string, Partial<StoreGridViewer>, AppIndexSearchReason]>([
-    [
-      'a viewer who may see R listings',
-      { redCapable: true, viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.R },
-      'mature_viewer',
-    ],
     [
       'a moderator',
       { floor: 'moderators', viewer: { userId: 1, isModerator: true } },

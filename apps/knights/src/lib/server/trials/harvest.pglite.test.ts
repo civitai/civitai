@@ -555,3 +555,15 @@ describe('a moderator ruling on an image players agreed on', () => {
     ]);
   });
 });
+
+describe('references on a Private post', () => {
+  it('are only hidden: a fresh item is not retired over it', async () => {
+    await image(3, { level: 4 });
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 3`);
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source") VALUES (3,'trials','4','harvested')`
+    );
+    await harvestRulings(db, { now: NOW });
+    expect((await references()).map((r) => [r.imageId, r.status])).toEqual([[3, 'active']]);
+  });
+});

@@ -1,5 +1,9 @@
 import { ilikeContains } from '~/server/utils/ilike';
-import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-deletion';
+import {
+  deletePostRows,
+  ownPostDeleteBlocked,
+  type DeleteActor,
+} from '@civitai/db-queries/content-deletion';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { Prisma } from '@prisma/client';
 import {
@@ -101,6 +105,7 @@ import {
   enqueueImageIngestion,
   queueImageSearchIndexUpdate,
   deleteImages,
+  imagesPendingDeletion,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy, ImagesForModelVersions } from '~/server/services/image.service';
 import { Flags } from '~/shared/utils/flags';
@@ -817,13 +822,20 @@ type PostEditInput = GetByIdInput & {
   user: SessionUser;
   /** `requestServableLevels(ctx)`: the editor takes no level, so the domain cap is applied here. */
   servableLevels: number;
+  /** The request carries the owner's view (`credentialViews`): the user's own held images show. */
+  ownerSeesHeld?: boolean;
 };
 
-export const getPostEditDetail = async ({ id, user, servableLevels }: PostEditInput) => {
+export const getPostEditDetail = async ({
+  id,
+  user,
+  servableLevels,
+  ownerSeesHeld,
+}: PostEditInput) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
   const [editImages, texts] = await Promise.all([
-    getPostEditImages({ id, user, servableLevels }),
+    getPostEditImages({ id, user, servableLevels, ownerSeesHeld }),
     getPostEditTexts(id),
   ]);
   const images = await withReactionCounts(editImages, post.publishedAt);
@@ -981,13 +993,18 @@ async function getPostEditTexts(postId: number) {
   });
 }
 
-export const getPostEditImages = async ({ id, user, servableLevels }: PostEditInput) => {
+export const getPostEditImages = async ({
+  id,
+  user,
+  servableLevels,
+  ownerSeesHeld = false,
+}: PostEditInput) => {
   const db = await getDbWithoutLag('postImages', id);
   const images = await db.image.findMany({
     where: {
       postId: id,
       AND: [
-        user.isModerator ? {} : notHeldForReviewWhere(),
+        user.isModerator ? {} : notHeldForReviewWhere(ownerSeesHeld ? user.id : undefined),
         servableLevelOrOwnUnratedWhere(servableLevels, user.id),
       ],
     },
@@ -1440,7 +1457,20 @@ export const deletePost = async ({
     images.filter((image) => image.deletable).map((image) => image.id),
     { actor, moderatorDelete: !!viewerIsModerator, updatePosts: false }
   );
-  const [post] = await deletePostRows(kyselyOver(dbWrite), { ids: [id], actor });
+  // The deleter's own post under a child-safety report stays, as a pending delete, until the report
+  // is ruled on.
+  const deletedById = 'id' in actor ? actor.id : undefined;
+  const [post] = await deletePostRows(kyselyOver(dbWrite), {
+    ids: [id],
+    actor,
+    pending:
+      deletedById === undefined
+        ? undefined
+        : { blocked: ownPostDeleteBlocked(deletedById), data: { ownerId: deletedById } },
+  });
+  // Only the deleter's own images: the notice is for an owner's delete.
+  const ownImageIds = images.filter((image) => image.userId === deletedById).map((x) => x.id);
+  const deleteAfterReview = (await imagesPendingDeletion(ownImageIds)).size > 0;
 
   // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
   // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
@@ -1459,7 +1489,7 @@ export const deletePost = async ({
   });
 
   // Orphans keep their rows, with `postId` nulled; they leave the index too.
-  if (orphanedImageIds.length)
+  if (post && orphanedImageIds.length)
     await queueImageSearchIndexUpdate({
       ids: orphanedImageIds,
       action: SearchIndexUpdateQueueAction.Delete,
@@ -1469,7 +1499,10 @@ export const deletePost = async ({
   await bustCachesForPosts(id);
   await userImageVideoCountCaches.bust(imageOwnerIds);
 
-  return post ? { ...post, deletedImageIds } : post;
+  if (post) return { ...post, deletedImageIds, deleteAfterReview };
+  // Kept, with an image of theirs blocked where they can see it: the one generic notice. Otherwise it
+  // answers as if nothing was deleted.
+  return deleteAfterReview ? { deleteAfterReview } : undefined;
 };
 
 type PostQueryResult = { id: number; name: string; isCategory: boolean }[];
@@ -2158,7 +2191,7 @@ export const removeResourceFromPostImage = async ({
   return deleted;
 };
 
-type Editor = { user: SessionUser; servableLevels: number };
+type Editor = { user: SessionUser; servableLevels: number; ownerSeesHeld?: boolean };
 
 /**
  * Whether an image counts, or will once scanned, toward the version level
@@ -2168,15 +2201,16 @@ const countsTowardVersionLevel = (nsfwLevel: number) => nsfwLevel !== NsfwLevel.
 
 /**
  * The post's images this editor may not move (`ids`, `indexes`): those it did not list, and those
- * `getPostEditImages` does not serve it (held for review unless a moderator, or outside the
- * request's levels and not the editor's own unrated upload) even if it lists them. They keep their
+ * `getPostEditImages` does not serve it (held for review unless a moderator, or the image's own
+ * uploader with the owner's view; or outside the request's levels and not the editor's own unrated
+ * upload) even if it lists them. They keep their
  * index. `movable` holds the others the editor listed, with their current index and whether the
  * version level counts them.
  */
 async function editorHiddenImages(
   postId: number,
   listedIds: number[],
-  { user, servableLevels }: Editor
+  { user, servableLevels, ownerSeesHeld = false }: Editor
 ) {
   // primary: decides which indexes the reorder write that follows may take
   const images = await dbWrite.image.findMany({
@@ -2186,7 +2220,9 @@ async function editorHiddenImages(
   const listed = new Set(listedIds);
   const isHidden = (image: (typeof images)[number]) =>
     !listed.has(image.id) ||
-    (!user.isModerator && isHeldForReview(image.needsReview)) ||
+    (!user.isModerator &&
+      !(ownerSeesHeld && image.userId === user.id) &&
+      isHeldForReview(image.needsReview)) ||
     !isServableLevelOrOwnUnrated(image, servableLevels, user.id);
   const hidden = images.filter(isHidden);
   const movable = new Map(

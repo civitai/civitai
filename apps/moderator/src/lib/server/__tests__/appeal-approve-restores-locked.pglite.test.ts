@@ -61,14 +61,18 @@ vi.mock('../clickhouse', () => ({ getClickhouse: () => ({ query: chQuery, insert
 const { acceptImage, resolveImageAppeal } = await import('../image-moderation.service');
 const { refundAppealFee, notifyAppealResolved } = await import('../image-moderation-effects');
 const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
+const { syncSearchIndex } = await import('../search-index');
 
 // The stand-in keeps the real function's skip of nsfwLevelLocked rows; without it the reset assertions pass vacuously.
 const SCHEMA = `
+-- The real enum, so a write that does not cast to it fails here as it would in production.
+CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
+  "userId" INTEGER,
   "needsReview" TEXT,
   "blockedFor" TEXT,
-  "ingestion" TEXT,
+  "ingestion" "ImageIngestionStatus",
   "metadata" JSONB,
   "pHash" BIGINT,
   "postId" INTEGER,
@@ -82,8 +86,9 @@ CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
 CREATE TABLE "ModActivity" ("entityType" TEXT, "entityId" INTEGER, "activity" TEXT);
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   PRIMARY KEY ("entityType", "entityId", "type"));
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "deletedAt" TIMESTAMP(3));
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -234,6 +239,127 @@ describe('approving an appeal on an image an account deletion blocked', () => {
       metadata: unknown;
     }>(`SELECT "needsReview", "ingestion", "metadata" FROM "Image" WHERE "id" = $1`, [IMAGE_ID]);
     expect(rows[0]).toEqual({ needsReview: flag, ingestion: 'Scanned', metadata: { keep: 1 } });
+  });
+});
+
+// Policy: LIFT_WHILE_OWNER_DELETED in @civitai/shared/account-deletion-grace: a deleted owner's image is never served.
+describe('approving an appeal while the image owner is deleted', () => {
+  const OWNER_ID = 7;
+  const activities = async () =>
+    (
+      await db.query<{ activity: string }>(
+        `SELECT "activity" FROM "ModActivity" WHERE "entityId" = $1 AND "activity" IN ('review', 'bulkRemove', 'reviewOwnerDeleted')`,
+        [IMAGE_ID]
+      )
+    ).rows.map((r) => r.activity);
+  beforeEach(() => vi.mocked(syncSearchIndex).mockClear());
+  const seed = async (deletedAt: string | null) => {
+    await db.query(`INSERT INTO "User" ("id", "deletedAt") VALUES ($1, $2)`, [OWNER_ID, deletedAt]);
+    await db.query(
+      `UPDATE "Image" SET "userId" = $2, "nsfwLevel" = 4, "metadata" = jsonb_build_object(
+         'accountDeletionPriorIngestion', 'Blocked',
+         'accountDeletionPriorBlockedFor', 'moderated',
+         'accountDeletionPriorNeedsReview', 'minor',
+         'keep', 1)
+       WHERE "id" = $1`,
+      [IMAGE_ID, OWNER_ID]
+    );
+    await db.query(
+      `INSERT INTO "JobQueue" ("type", "entityType", "entityId", "createdAt") VALUES ('BlockedImageDelete', 'Image', $1, '2026-01-01')`,
+      [IMAGE_ID]
+    );
+  };
+  const row = async () =>
+    (
+      await db.query<{
+        ingestion: string;
+        blockedFor: string | null;
+        needsReview: string | null;
+        metadata: unknown;
+      }>(
+        `SELECT "ingestion", "blockedFor", "needsReview", "metadata" FROM "Image" WHERE "id" = $1`,
+        [IMAGE_ID]
+      )
+    ).rows[0];
+
+  it('keeps it Blocked, recorded as Scanned for an account restore, and settles the appeal', async () => {
+    await seed('2026-11-20 00:00:00');
+
+    await expect(approve()).resolves.toBeDefined();
+
+    expect(await row()).toEqual({
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+      needsReview: null,
+      metadata: {
+        keep: 1,
+        accountDeletionPriorIngestion: 'Scanned',
+        accountDeletionPriorBlockedFor: null,
+        accountDeletionPriorNeedsReview: 'minor',
+      },
+    });
+    const { rows } = await db.query<{ status: string }>(`SELECT "status" FROM "Appeal"`);
+    expect(rows).toEqual([{ status: 'Approved' }]);
+    // The rating lock stays and the purge clock starts again; the pHash leaves the blocklist.
+    expect(await imageRow()).toMatchObject({ nsfwLevel: 32, nsfwLevelLocked: true });
+    const queued = await db.query<{ fresh: boolean }>(
+      `SELECT "createdAt" > now() - interval '1 hour' AS fresh FROM "JobQueue" WHERE "entityId" = $1`,
+      [IMAGE_ID]
+    );
+    expect(queued.rows).toEqual([{ fresh: true }]);
+    expect(unblocklisted()).toEqual([{ hash: PHASH, reason: 'TOS', disabled: true }]);
+    expect(vi.mocked(syncSearchIndex).mock.calls.at(-1)?.[0]).toMatchObject({ action: 'delete' });
+  });
+
+  it('an accept also keeps it Blocked, restarts its purge clock and closes the appeal', async () => {
+    await seed('2026-11-20 00:00:00');
+
+    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+
+    expect(await row()).toEqual({
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+      needsReview: null,
+      metadata: {
+        keep: 1,
+        accountDeletionPriorIngestion: 'Scanned',
+        accountDeletionPriorBlockedFor: null,
+        accountDeletionPriorNeedsReview: 'minor',
+      },
+    });
+    expect(await imageRow()).toMatchObject({ nsfwLevel: 32, nsfwLevelLocked: true });
+    const queued = await db.query<{ fresh: boolean }>(
+      `SELECT "createdAt" > now() - interval '1 hour' AS fresh FROM "JobQueue" WHERE "entityId" = $1`,
+      [IMAGE_ID]
+    );
+    expect(queued.rows).toEqual([{ fresh: true }]);
+    const { rows } = await db.query<{ status: string }>(`SELECT "status" FROM "Appeal"`);
+    expect(rows).toEqual([{ status: 'Approved' }]);
+    expect(vi.mocked(syncSearchIndex).mock.calls.at(-1)?.[0]).toMatchObject({ action: 'delete' });
+    // No takedown activity ('review'), which the CDN sync and the purge read as a moderator removal.
+    expect(await activities()).toEqual(['reviewOwnerDeleted']);
+  });
+
+  it('an accept restores it when the owner is not deleted', async () => {
+    await seed(null);
+
+    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+
+    expect(await row()).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+    expect(await activities()).toEqual(['review']);
+  });
+
+  it('restores it when the owner is not deleted', async () => {
+    await seed(null);
+
+    await approve();
+
+    expect(await row()).toEqual({
+      ingestion: 'Scanned',
+      blockedFor: null,
+      needsReview: 'minor',
+      metadata: { keep: 1 },
+    });
   });
 });
 

@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vmihailenco/msgpack/v5"
-
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/jspack"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
@@ -53,11 +51,7 @@ func newModelFixture() *modelFixture {
 
 func (f *modelFixture) put(t *testing.T, key string, id int, v any) {
 	t.Helper()
-	b, err := msgpack.Marshal(v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.entries[pageNS+key+":"+strconv.Itoa(id)] = b
+	f.entries[pageNS+key+":"+strconv.Itoa(id)] = packSorted(t, v)
 }
 
 // record notes a replica read (the readers run concurrently).
@@ -224,7 +218,7 @@ func TestModelPage(t *testing.T) {
 	if !reflect.DeepEqual(md.TagIDs, []int{7, 8}) || !reflect.DeepEqual(md.Hashes, []any{"H1"}) || len(md.Versions) != 2 {
 		t.Fatalf("5001: %+v", md)
 	}
-	if id, _ := Int(md.Versions[1]["id"]); id != 6002 {
+	if id, _ := Int(ObjectField(md.Versions[1], "id")); id != 6002 {
 		t.Fatalf("versions in cache order: %v", md.Versions)
 	}
 	if p.Basic[1001].Username != "artist_one" {
@@ -350,8 +344,8 @@ func TestVersionImages(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 	// The cached `tags` is replaced by the image-tag cache's ids; a notFound entry is [].
-	if !reflect.DeepEqual(got[6001][0]["tags"], []any{int64(1), int64(2)}) || !reflect.DeepEqual(got[6001][1]["tags"], []any{}) {
-		t.Fatalf("tags %v %v", got[6001][0]["tags"], got[6001][1]["tags"])
+	if !reflect.DeepEqual(ObjectField(got[6001][0], "tags"), []any{int64(1), int64(2)}) || !reflect.DeepEqual(ObjectField(got[6001][1], "tags"), []any{}) {
+		t.Fatalf("tags %v %v", ObjectField(got[6001][0], "tags"), ObjectField(got[6001][1], "tags"))
 	}
 	f.del(KeyTagIDs, 8002)
 	s = f.sources()
@@ -578,8 +572,8 @@ func TestVersionImagesComputesTagIDsMiss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VersionImages: %v (%q)", err, fallback.Reason(err))
 	}
-	if !reflect.DeepEqual(got[6001][1]["tags"], []any{int64(31)}) || !reflect.DeepEqual(got[6001][0]["tags"], []any{int64(1), int64(2)}) {
-		t.Fatalf("tags %v %v, want [31] computed and [1 2] cached", got[6001][1]["tags"], got[6001][0]["tags"])
+	if !reflect.DeepEqual(ObjectField(got[6001][1], "tags"), []any{int64(31)}) || !reflect.DeepEqual(ObjectField(got[6001][0], "tags"), []any{int64(1), int64(2)}) {
+		t.Fatalf("tags %v %v, want [31] computed and [1 2] cached", ObjectField(got[6001][1], "tags"), ObjectField(got[6001][0], "tags"))
 	}
 	if !reflect.DeepEqual(f.queries, []string{"tagrows", "tagrecords"}) {
 		t.Fatalf("replica reads %v, want the tag rows and the tag records", f.queries)
@@ -648,12 +642,12 @@ func TestVersionImagesComputesMiss(t *testing.T) {
 			if len(got) != 2 || len(got[6001]) != 2 || len(got[6003]) != 1 {
 				t.Fatalf("versions %v, want 6001 (2 images) and 6003 (1)", got)
 			}
-			id, _ := Int(got[6001][1]["id"])
-			if remix, _ := Int(got[6001][1]["remixOfId"]); id != 8102 || remix != 123 || got[6001][1]["name"] != nil || got[6003][0]["remixOfId"] != nil {
+			id, _ := Int(ObjectField(got[6001][1], "id"))
+			if remix, _ := Int(ObjectField(got[6001][1], "remixOfId")); id != 8102 || remix != 123 || ObjectField(got[6001][1], "name") != nil || ObjectField(got[6003][0], "remixOfId") != nil {
 				t.Fatalf("6001's second image %v", got[6001][1])
 			}
-			if fmt.Sprint(got[6001][0]["tags"]) != "[101]" || fmt.Sprint(got[6003][0]["tags"]) != "[301]" {
-				t.Fatalf("tags %v %v, want the image-tag cache's", got[6001][0]["tags"], got[6003][0]["tags"])
+			if fmt.Sprint(ObjectField(got[6001][0], "tags")) != "[101]" || fmt.Sprint(ObjectField(got[6003][0], "tags")) != "[301]" {
+				t.Fatalf("tags %v %v, want the image-tag cache's", ObjectField(got[6001][0], "tags"), ObjectField(got[6003][0], "tags"))
 			}
 			if o := obs.get(); o["version-images/computed"] != 3 {
 				t.Fatalf("observed %v, want 3 computed version-images ids", o)
@@ -710,7 +704,7 @@ func TestVersionImagesLagFlagReadsPrimary(t *testing.T) {
 // under the revalidation lock, its value replaced (a plain SET) and the lock released; with the lock
 // held elsewhere the stale entry is served and nothing is queried.
 func TestVersionImagesStaleRevalidated(t *testing.T) {
-	stale := jspack.Pack(jspack.O("modelVersionId", 6003, "images", []any{jspack.O("id", 8399)}, "cachedAt", pageNow.Add(-25*time.Hour)))
+	stale := jspack.Pack(jspack.O("modelVersionId", 6003, "images", []any{jspack.O("id", 8399, "nsfwLevel", 1)}, "cachedAt", pageNow.Add(-25*time.Hour)))
 	lock := pageNS + "cache-lock:" + pageNS + missKey(KeyVersionImages, 6003)
 	t.Run("lock taken", func(t *testing.T) {
 		f := showcaseFixture(t)
@@ -720,7 +714,7 @@ func TestVersionImagesStaleRevalidated(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if id, _ := Int(got[6003][0]["id"]); id != 8301 {
+		if id, _ := Int(ObjectField(got[6003][0], "id")); id != 8301 {
 			t.Fatalf("6003 = %v, want the looked-up 8301", got[6003])
 		}
 		wantPacked(t, r, missKey(KeyVersionImages, 6003), wantVersion6003, 48*time.Hour)
@@ -738,7 +732,7 @@ func TestVersionImagesStaleRevalidated(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if id, _ := Int(got[6003][0]["id"]); id != 8399 || len(f.queries) != 0 {
+		if id, _ := Int(ObjectField(got[6003][0], "id")); id != 8399 || len(f.queries) != 0 {
 			t.Fatalf("6003 = %v, queries %v: want the stale entry served, nothing queried", got[6003], f.queries)
 		}
 	})

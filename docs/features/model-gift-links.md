@@ -108,7 +108,7 @@ maxRedemptions`. The second is a backstop behind the claim's conditional update.
 **Applying them.** They are hand-applied, never `prisma migrate deploy`. For each writable environment,
 apply each before the code that reads it deploys:
 
-1. Dry run: run the file inside `BEGIN; … ROLLBACK;`.
+1. Dry run: strip the file's own top-level transaction control (`BEGIN`, `COMMIT`, `END`, `ROLLBACK`) before wrapping it in `BEGIN; … ROLLBACK;`; see "After applying a migration" in `packages/civitai-db-schema/src/schema-drift/README.md` for the full recipe.
 2. Apply it.
 3. Run the scoped drift check, read-only:
    `DATABASE_URL=<target, read-only role> pnpm --filter @civitai/db-schema drift --migration prisma/migrations/<dir>/migration.sql`.

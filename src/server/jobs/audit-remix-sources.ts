@@ -1,4 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
+import { evictHomeBlocksForImages } from '~/server/services/home-block-cache.service';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { extModeration } from '~/server/integrations/moderation';
@@ -92,7 +93,7 @@ export const auditRemixSourcesJob = createJob(
         let isProblematic = false;
 
         // Regex-based audit
-        const regex = auditPromptEnriched(prompt ?? '', negativePrompt, false);
+        const regex = auditPromptEnriched(prompt ?? '', negativePrompt);
         let success = regex.success;
         let classified = false;
         const [firstTrigger] = regex.triggers;
@@ -105,7 +106,7 @@ export const auditRemixSourcesJob = createJob(
           });
           if (!decision.block) {
             classified = true;
-            ({ success } = auditPromptEnriched(decision.withoutAge, negativePrompt, false));
+            ({ success } = auditPromptEnriched(decision.withoutAge, negativePrompt));
           }
         }
         if (!success) {
@@ -139,6 +140,7 @@ export const auditRemixSourcesJob = createJob(
             select: { postId: true },
           });
           if (!updated) continue;
+          await evictHomeBlocksForImages({ imageIds: [imageId] });
           // Flagged images need to disappear from the model-version showcase.
           if (updated.postId) await bustCachesForPosts(updated.postId);
           flagged++;

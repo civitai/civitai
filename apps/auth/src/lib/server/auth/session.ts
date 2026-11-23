@@ -154,9 +154,7 @@ export async function mintSession(
     { jti: tokenId, expiresIn: sessionExpiresIn(lineage, now) }
   );
   // Best-effort: track the token so it can be invalidated later (logout / ban). A redis blip must not fail.
-  await sessions.trackToken(tokenId, user.id).catch(() => {
-    // Swallowed on purpose: see above.
-  });
+  await sessions.trackToken(tokenId, user.id).catch(() => undefined);
   return { token, family: familyId({ sid: lineage.sid, jti: tokenId }) ?? tokenId };
 }
 
@@ -350,10 +348,9 @@ export async function establishSession(
  *    hub-relative returnUrl anyway.
  * 3. The landing is the spoke's `/api/auth/authorize` — the ONE shape that produces the second hop where the
  *    pending record gets consumed. Without this, an app that sends the raw current page URL to /login as
- *    returnUrl (no `createSpokeGuard` app does now: they go through their own authorize) on a foreign domain
- *    would hand off, receive no cookie, land on a page that finds no session, bounce back to /login with the
- *    same returnUrl, and loop forever with no error. Trust
- *    is a `TrustedSpokeDomain` DB row, so that app needs no code change to appear.
+ *    returnUrl on a foreign domain would hand off, receive no cookie, land on a page that finds no session,
+ *    bounce back to /login with the same returnUrl, and loop forever with no error.
+ *    Trust is a `TrustedSpokeDomain` DB row, so that app needs no code change to appear.
  */
 async function foreignScopeSpokeDomain(returnUrl?: string): Promise<string | undefined> {
   if (!returnUrl) return undefined;

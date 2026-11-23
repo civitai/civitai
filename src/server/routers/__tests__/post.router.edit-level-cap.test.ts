@@ -110,3 +110,64 @@ describe.each([
     expect(servedLevels(mock)).toEqual([...browsingLevels]);
   });
 });
+
+// The owner's view (their own held images) is passed only on a session or a full-access key; a
+// MediaRead-scoped key reads the post as anyone else does.
+const scopedKey = {
+  apiKeyId: 7,
+  apiKeyType: 'User',
+  subject: { type: 'apiKey', id: 7 },
+  tokenScope: TokenScope.MediaRead,
+};
+function ownerCaller(scoped: boolean) {
+  return postRouter.createCaller({
+    user: { id: OWNER, tier: 'free', username: 'owner', muted: false, onboarding: 0xff },
+    acceptableOrigin: true,
+    tokenScope: TokenScope.Full,
+    apiKeyId: null,
+    ...(scoped ? scopedKey : {}),
+    req: { headers: {} },
+    res: { setHeader: () => undefined },
+    cache: { edgeTTL: 0 },
+    features: { canViewNsfw: true, postPlanner: true, trpcFlagGuardPerRequest: true },
+    track: { action: vi.fn(() => Promise.resolve(true)) },
+  } as never);
+}
+const ownerViewOf = (mock: ReturnType<typeof vi.fn>) =>
+  (mock.mock.calls.at(-1) as [{ ownerSeesHeld?: boolean }])[0].ownerSeesHeld;
+
+describe.each([
+  ['post.getEdit', (scoped: boolean) => ownerCaller(scoped).getEdit({ id: 1 }), mockEditDetail],
+  [
+    'post.getScheduled',
+    (scoped: boolean) =>
+      ownerCaller(scoped).getScheduled({
+        from: new Date('2026-11-01T00:00:00Z'),
+        to: new Date('2026-11-08T00:00:00Z'),
+      }),
+    mockScheduled,
+  ],
+  [
+    'post.reorderImages handler',
+    (scoped: boolean) =>
+      reorderPostImagesHandler({
+        input: { id: 1, imageIds: [2, 3] },
+        ctx: {
+          user: { id: OWNER },
+          features: { canViewNsfw: true },
+          ...(scoped ? scopedKey : {}),
+        } as never,
+      }),
+    mockReorder,
+  ],
+] as const)("%s and the owner's view", (_name, call, mock) => {
+  it('passes it on a session', async () => {
+    await call(false);
+    expect(ownerViewOf(mock)).toBe(true);
+  });
+
+  it('withholds it on a MediaRead-scoped key', async () => {
+    await call(true);
+    expect(ownerViewOf(mock)).toBe(false);
+  });
+});

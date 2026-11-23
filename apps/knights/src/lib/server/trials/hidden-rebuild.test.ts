@@ -8,12 +8,15 @@ describe('parseRebuildArgs', () => {
       printSql: true,
       excludeImageIds: [3, 41],
       ids: [7],
+      pool: 'hiddenCheck',
     });
+    expect(parseRebuildArgs(['--print-sql', '--pool', 'trials']).pool).toBe('trials');
     expect(parseRebuildArgs([])).toEqual({
       apply: false,
       printSql: false,
       excludeImageIds: [],
       ids: null,
+      pool: 'hiddenCheck',
     });
   });
 
@@ -26,6 +29,9 @@ describe('parseRebuildArgs', () => {
     [['--exclude', '3', 'stray']],
     [['--apply', '--print-sql']],
     [['--ids', '7']],
+    [['--pool']],
+    [['--pool', 'core']],
+    [['--pool', 'Trials']],
   ])('refuses %j rather than drop an id', (argv) => {
     expect(() => parseRebuildArgs(argv)).toThrow();
   });

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { ltree } from '@electric-sql/pglite/contrib/ltree';
 import { Prisma } from '@prisma/client';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -153,6 +153,7 @@ import {
   LegalHoldError,
   LegalHoldStoppedError,
   LegalHoldUnconfirmedError,
+  ProfileArchiveRefusedError,
 } from '~/server/services/legal-hold.service';
 import { removeAllContent } from '~/server/services/user.service';
 import {
@@ -165,8 +166,8 @@ import { refundBidsForVersions } from '~/server/services/auction.service';
 import { KEPT_MODEL_STATUS } from '~/server/utils/legal-hold';
 import { restoreModelRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
 import { purgeUserAppStorageForAccountWipe } from '~/server/services/apps/user-storage-purge.service';
-import deleteUserImages from '~/pages/api/mod/delete-user-images';
-import removeAllContentWebhook from '~/pages/api/mod/remove-all-content';
+import deleteUserImages from '~/server/api-routes/mod/delete-user-images';
+import removeAllContentWebhook from '~/server/api-routes/mod/remove-all-content';
 
 const CLEAN = 1;
 const HELD = 2; // named on a pending report
@@ -226,6 +227,7 @@ beforeAll(async () => {
       minor boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb DEFAULT '{}', "bannedAt" timestamp(3));
     ${[...SEEDED_TABLES, ...QA_DATA]
       .map((t) => `CREATE TABLE "${t}" (id serial PRIMARY KEY, "userId" int NOT NULL);`)
       .join('\n')}
@@ -641,6 +643,20 @@ describe('removeAllContent', () => {
     expect(await remaining(userId)).toEqual(before);
     expect(dbMock.dbWrite.imageReaction.deleteMany).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  // A ban note alone is not a hold.
+  it('wipes an account banned with a note naming CSAM or NCMEC and no hold', async () => {
+    await holder.db.query(
+      `INSERT INTO "User" (id, meta, "bannedAt") VALUES ($1, $2, now() - interval '1 day')`,
+      [CLEAN, JSON.stringify({ banDetails: { detailsExternal: 'Reported to NCMEC' } })]
+    );
+    try {
+      await removeAllContent({ id: CLEAN });
+      expect(await remaining(CLEAN)).toEqual(all(0));
+    } finally {
+      await holder.db.exec(`DELETE FROM "User"`);
+    }
   });
 
   it('refuses when the hold cannot be checked', async () => {
@@ -1439,9 +1455,9 @@ describe('removeAllContent', () => {
 });
 
 /**
- * The moderator app's real body reader and refusal texts, loaded across the app boundary by path (both
- * modules are import-free for this). It matches the reason against its own constants by equality, so
- * a reworded constant on either side, or a body-shape drift, turns a refusal into a generic failure.
+ * The moderator app's real body reader and refusal texts, loaded across the app boundary by path. It
+ * matches the reason against those texts by equality, so a body-shape drift, or a text one app stops
+ * taking from `@civitai/shared/legal-hold-texts`, turns a refusal into a generic failure.
  */
 const moderator = {} as {
   restErrorReason: (body: unknown, status: number) => string | null;
@@ -1449,6 +1465,7 @@ const moderator = {} as {
   LEGAL_HOLD_STOPPED: string;
   LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE: string;
   HOLD_UNKNOWN_REFUSAL: string;
+  PURGE_ARCHIVE_REFUSAL: string;
   purgeWarning: (body: unknown) => string | undefined;
   PURGE_INCOMPLETE: string;
 };
@@ -1465,6 +1482,7 @@ beforeAll(async () => {
     LEGAL_HOLD_STOPPED: texts.LEGAL_HOLD_STOPPED,
     LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE: texts.LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
     HOLD_UNKNOWN_REFUSAL: texts.HOLD_UNKNOWN_REFUSAL,
+    PURGE_ARCHIVE_REFUSAL: texts.PURGE_ARCHIVE_REFUSAL,
     purgeWarning: purge.purgeWarning,
     PURGE_INCOMPLETE: purge.PURGE_INCOMPLETE,
   });
@@ -2035,5 +2053,123 @@ describe('an open bounty with supporters, in a content wipe', () => {
     await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
     expect(payout.claimed).toEqual([BOUNTY]);
     expect((await remaining(CLEAN)).Bounty).toBe(1);
+  });
+});
+
+// A wipe archives the profile and links of any account a CSAM report names, held or not, before
+// deleting; a failed archive deletes nothing.
+describe('removeAllContent and the profile archive', () => {
+  const OLD_REPORT = 4; // named only on a report sent over a year ago and archived: no hold
+  const PROFILE = { bio: 'zzbio', message: null };
+  const LINKS = [{ id: 41, url: 'https://example.com/zz', type: 'Social' }];
+
+  beforeEach(async () => {
+    await holder.db.exec(`
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt")
+        VALUES (${OLD_REPORT}, now() - interval '400 days', now());
+      INSERT INTO "Image" (id, "userId", "postId") VALUES (${
+        OLD_REPORT * 100
+      }, ${OLD_REPORT}, NULL);
+      ${SEEDED_TABLES.map((t) => `INSERT INTO "${t}" ("userId") VALUES (${OLD_REPORT});`).join(
+        '\n'
+      )}
+    `);
+    vi.mocked(dbMock.dbWrite.userProfile.findUnique).mockResolvedValue(PROFILE as never);
+    vi.mocked(dbMock.dbWrite.userLink.findMany).mockResolvedValue(LINKS as never);
+  });
+
+  it('archives the profile and links of an account an unheld report names, before any delete', async () => {
+    const archive = vi.fn(async () => undefined);
+
+    await removeAllContent({ id: OLD_REPORT, actorUserId: 9, archive });
+
+    expect(archive).toHaveBeenCalledTimes(1);
+    expect(archive).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: OLD_REPORT, actorId: 9, profile: PROFILE, links: LINKS })
+    );
+    expect(await remaining(OLD_REPORT)).toEqual(all(0));
+    const archivedAt = archive.mock.invocationCallOrder[0];
+    // From the wipe's first read of what it deletes to its last delete.
+    for (const del of [
+      dbMock.dbWrite.model.findMany,
+      deleteImages,
+      dbMock.dbWrite.imageReaction.deleteMany,
+      dbMock.dbWrite.userLink.deleteMany,
+      dbMock.dbWrite.userProfile.deleteMany,
+    ])
+      expect(vi.mocked(del).mock.invocationCallOrder[0]).toBeGreaterThan(archivedAt);
+  });
+
+  // The wipe does not ban, so the owner can still add a link while the rest of it runs.
+  it('never deletes a link the archive did not see, when one is added later in the wipe', async () => {
+    const live = [...LINKS];
+    const archived: number[] = [];
+    const deletedUnarchived: number[] = [];
+    vi.mocked(dbMock.dbWrite.userLink.findMany).mockImplementation((async () => [
+      ...live,
+    ]) as never);
+    vi.mocked(dbMock.dbWrite.userLink.deleteMany).mockImplementation((async () => {
+      deletedUnarchived.push(...live.map((l) => l.id).filter((l) => !archived.includes(l)));
+      const count = live.length;
+      live.length = 0;
+      return { count };
+    }) as never);
+    const readModels = vi.mocked(dbMock.dbWrite.model.findMany).getMockImplementation() as (
+      args: unknown
+    ) => Promise<unknown>;
+    vi.mocked(dbMock.dbWrite.model.findMany).mockImplementation((async (args: unknown) => {
+      live.push({ id: 42, url: 'https://example.com/added', type: 'Social' });
+      return readModels(args);
+    }) as never);
+    const archive = vi.fn(async (snapshot: { links: { id: number }[] }) => {
+      archived.push(...snapshot.links.map((l) => l.id));
+    });
+
+    await removeAllContent({ id: OLD_REPORT, actorUserId: 9, archive });
+
+    expect(archived).toEqual([41]);
+    expect(deletedUnarchived).toEqual([]);
+  });
+
+  it('deletes nothing when the archive fails', async () => {
+    const archive = vi.fn(async () => {
+      throw new Error('bucket down');
+    });
+
+    await expect(
+      removeAllContent({ id: OLD_REPORT, actorUserId: 9, archive })
+    ).rejects.toBeInstanceOf(ProfileArchiveRefusedError);
+
+    expect(await remaining(OLD_REPORT)).toEqual(all(1));
+    expect(dbMock.dbWrite.imageReaction.deleteMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.userLink.deleteMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.userProfile.deleteMany).not.toHaveBeenCalled();
+  });
+
+  // The webhook takes the real archive, which fails here: the evidence bucket is not configured.
+  it('the webhook refuses with the text the moderator app shows, when the archive fails', async () => {
+    const res = fakeRes();
+    await removeAllContentWebhook(
+      {
+        method: 'POST',
+        query: { token: 'test-webhook-token', userId: String(OLD_REPORT) },
+        headers: {},
+        cookies: {},
+      } as never,
+      res as never
+    );
+
+    expect(res.statusCode).toBe(503);
+    expect(moderatorReads(res)).toBe(moderator.PURGE_ARCHIVE_REFUSAL);
+    expect(await remaining(OLD_REPORT)).toEqual(all(1));
+  });
+
+  it('wipes an account no report names without archiving it', async () => {
+    const archive = vi.fn(async () => undefined);
+
+    await removeAllContent({ id: CLEAN, archive });
+
+    expect(archive).not.toHaveBeenCalled();
+    expect(await remaining(CLEAN)).toEqual(all(0));
   });
 });

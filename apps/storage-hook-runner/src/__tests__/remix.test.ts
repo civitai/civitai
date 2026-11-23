@@ -183,6 +183,105 @@ export default defineRemixApp({
   });
 });
 
+describe('POST /v1/remix/replay: auto-answers the app cannot steer', () => {
+  it.each([
+    ['a workflow', "ctx.workflow({ kind: 'upscale', image: ctx.source, scale: 2 });"],
+    ['an ask', "ctx.ask({ kind: 'text', prompt: 'Who?', maxLength: 40 });"],
+    // It then throws, once: the catch around the read stops the run too, and records the same.
+    [
+      'a workflow, then throws,',
+      "if (!thrown) { thrown = true; ctx.workflow({ kind: 'upscale', image: ctx.source, scale: 2 }); throw new Error('x'); }",
+    ],
+  ])(
+    'records no step %s taken by an option getter, and leaves the ask unanswered',
+    async (_, inner) => {
+      const app = (getter: boolean) => `
+export default defineRemixApp({
+  async run(ctx) {
+    let thrown = false;
+    const option = { label: 'A' };
+    Object.defineProperty(option, 'value', { enumerable: true, get() {
+      ${getter ? inner : ''}
+      return 'a';
+    } });
+    await ctx.ask({ kind: 'choice', prompt: 'Which?', options: [option] });
+    return [];
+  },
+});`;
+      // POSITIVE CONTROL: without the step, the ask is auto-answered.
+      const [plain] = await results(app(false), { autoAnswer: 'first' });
+      expect(plain.effects).toEqual([expect.objectContaining({ type: 'ask', answer: 'a' })]);
+      const [result] = await results(app(true), { autoAnswer: 'first' });
+      expect(result.effects).toEqual([
+        { type: 'ask', spec: expect.objectContaining({ kind: 'choice' }) },
+      ]);
+    }
+  );
+
+  it('ends as the invalid result, never a short record, when a step runs the stack out', async () => {
+    // The depth to step from comes from the log, so one call replays the same app at many depths
+    // from the stack's end; at some, the loop's own calls overflow while the step is recorded.
+    const deep = `
+export default defineRemixApp({
+  async run(ctx) {
+    const d = Number(await ctx.ask({ kind: 'text', prompt: 'depth', maxLength: 5 }));
+    let max = 0;
+    const probe = (n) => { max = n; probe(n + 1); };
+    try { probe(0); } catch {}
+    const at = (n) => (n > 0 ? at(n - 1) : ctx.ask({ kind: 'text', prompt: 'deep', maxLength: 5 }));
+    try { await at(max - d); } catch {}
+    await ctx.ask({ kind: 'text', prompt: 'last', maxLength: 5 });
+    return [];
+  },
+});`;
+    const outcomes: Record<string, unknown>[] = [];
+    for (let from = 0; from < 96; from += 12) {
+      const branches = Array.from({ length: 12 }, (_, i) => [
+        { type: 'ask', answer: String(from + i) },
+      ]);
+      outcomes.push(...(await results(deep, { branches })).slice(1));
+    }
+    const broken = outcomes.filter((o) => o.cause === 'invalid_result');
+    // POSITIVE CONTROL: some depth reached the guard, so the rest prove nothing was lost.
+    expect(broken.length).toBeGreaterThan(0);
+    for (const o of broken) expect(o.detail).toContain('while a step was recorded');
+    // Every other depth recorded both its asks: the depth, then the one with no log entry.
+    for (const o of outcomes.filter((x) => !('cause' in x)))
+      expect((o.effects as unknown[]).length).toBe(2);
+  });
+
+  it('records its steps whatever accessor the app put on Object.prototype', async () => {
+    const asker = `Object.defineProperty(Object.prototype, 'get', { configurable: true, get() { throw 1; } });
+export default defineRemixApp({
+  async run(ctx) {
+    await ctx.ask({ kind: 'text', prompt: 'Who?', maxLength: 40 });
+    return [];
+  },
+});`;
+    const [result] = await results(asker);
+    expect(result.effects).toEqual([
+      { type: 'ask', spec: expect.objectContaining({ kind: 'text' }) },
+    ]);
+  });
+
+  it('auto-answers only when the caller asks, whatever Object.prototype claims', async () => {
+    const asker = `Object.prototype.autoAnswer = 'first';
+export default defineRemixApp({
+  async run(ctx) {
+    await ctx.ask({ kind: 'text', prompt: 'Who?', maxLength: 40 });
+    return [];
+  },
+});`;
+    const [result] = await results(asker);
+    expect(result.effects).toEqual([
+      { type: 'ask', spec: expect.objectContaining({ kind: 'text' }) },
+    ]);
+    // POSITIVE CONTROL: asked by the caller, the same ask is answered.
+    const [asked] = await results(asker, { autoAnswer: 'first' });
+    expect(asked.effects).toEqual([expect.objectContaining({ type: 'ask', answer: 'remix' })]);
+  });
+});
+
 describe('POST /v1/remix/replay: a pure function of its input', () => {
   it('has no Date and no Math.random', async () => {
     expect(await reported('typeof Date + " " + typeof Math.random')).toBe('undefined undefined');

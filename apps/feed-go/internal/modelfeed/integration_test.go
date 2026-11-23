@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/integtest"
 )
 
@@ -269,7 +270,7 @@ func TestIntegrationModelLookups(t *testing.T) {
 		t.Fatalf("gates %+v", gates)
 	}
 	for name, want := range map[string]int{"INTEG-ANIME": 3101801, "integ-anime": 3101801, "nope-" + strconv.Itoa(3101): 0} {
-		id, err := tagIDByName(integtest.Ctx(t), pool, name)
+		id, _, err := hydrate.TagIDByName(integtest.Ctx(t), pool, name)
 		if err != nil || id != want {
 			t.Fatalf("tag %q: %d %v, want %d", name, id, err, want)
 		}

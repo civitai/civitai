@@ -20,6 +20,7 @@ import { ModelType } from '@civitai/db-schema/enums';
 import {
   baseModelRecords,
   ecosystems,
+  isBaseModelGenerationDisabled,
   isBaseModelGenerationSupported,
   isModelLockedBaseModel,
 } from '@civitai/shared/basemodel.constants';
@@ -53,6 +54,9 @@ export function buildFeedGoBaseModels() {
     modelTypes,
     generation,
     modelLocked: names.filter((name) => isModelLockedBaseModel(name)),
+    // getResourceCanGenerate's isBaseModelGenerationDisabled (model.getAssociatedResourcesCardData's
+    // canGenerate): a disabled base model, or ANY disabled generation override on it.
+    generationDisabled: names.filter((name) => isBaseModelGenerationDisabled(name)),
     matureRestrictedModels: [
       ...new Set(
         baseModelRecords

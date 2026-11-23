@@ -429,15 +429,44 @@ export function connectScopesSubsetOfCeiling(requested: bigint, allowedScopes: b
 }
 
 /**
+ * The reserved justification key for an OAuth-connect listing's OFFLINE-ACCESS declaration: the
+ * OAuth scope name itself (`offline_access` asks for a refresh token, so the app can act while
+ * the user is away). Present with a non-blank rationale ⇔ the listing declares it. It is never a
+ * TokenScope key (those are PascalCase) and is not part of the requested-scope mask, because
+ * offline access is a grant, not a bit.
+ */
+export const OFFLINE_ACCESS_JUSTIFICATION_KEY = 'offline_access';
+
+/**
+ * The ONE rule for whether a connect listing declares offline access, read from its stored
+ * justification map (any JSON): the reserved key carries a non-blank string. Shared by the main app
+ * (forms, approve gate, agent review) and the auth hub, so the two cannot disagree. The hub offers
+ * offline access to a LISTED client (one with a listing that has been live) only while one of its
+ * approved listings declares it.
+ */
+export function offlineAccessJustification(justifications: unknown): string | null {
+  if (!justifications || typeof justifications !== 'object' || Array.isArray(justifications)) {
+    return null;
+  }
+  const raw = (justifications as Record<string, unknown>)[OFFLINE_ACCESS_JUSTIFICATION_KEY];
+  const text = typeof raw === 'string' ? raw.trim() : '';
+  return text.length > 0 ? text : null;
+}
+
+/**
  * Validate an OAuth-connect listing's per-scope justifications against its
  * requested-scope mask. Returns an array of human-readable error strings (empty
  * ⇒ valid). Mirrors the App Blocks manifest justification loop
- * (`block-manifest-validator.service.ts`): every key must be a valid single-bit
- * `TokenScope` enum-key, every key's bit must be set in `requestedScopes` (keys
- * ⊆ requested), and every value must be a non-empty string
- * ≤ SCOPE_JUSTIFICATION_MAX_LENGTH. An empty map (`{}`) is valid — this only
- * CAPTURES the dev's stated rationale, it does not verify it. Justifications for
- * scopes NOT requested are rejected so no dangling rationale reaches the mod.
+ * (`block-manifest-validator.service.ts`): every key OTHER THAN
+ * {@link OFFLINE_ACCESS_JUSTIFICATION_KEY} must be a valid single-bit `TokenScope` enum-key
+ * whose bit is set in `requestedScopes` (keys ⊆ requested), with a non-empty string value
+ * ≤ SCOPE_JUSTIFICATION_MAX_LENGTH. An empty map (`{}`) is valid — this only CAPTURES the dev's
+ * stated rationale, it does not verify it. Justifications for scopes NOT requested are rejected
+ * so no dangling rationale reaches the mod.
+ *
+ * {@link OFFLINE_ACCESS_JUSTIFICATION_KEY} is the offline-access declaration, not a scope: it is
+ * accepted whatever the mask, and its value must be NON-BLANK (whitespace alone is refused, the
+ * same test {@link offlineAccessJustification} applies) and ≤ SCOPE_JUSTIFICATION_MAX_LENGTH.
  */
 export function validateConnectScopeJustifications(
   requestedScopes: bigint,
@@ -445,6 +474,16 @@ export function validateConnectScopeJustifications(
 ): string[] {
   const errors: string[] = [];
   for (const [key, value] of Object.entries(justifications)) {
+    if (key === OFFLINE_ACCESS_JUSTIFICATION_KEY) {
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        errors.push(`scopeJustifications["${key}"] must be a non-empty string`);
+      } else if (value.length > SCOPE_JUSTIFICATION_MAX_LENGTH) {
+        errors.push(
+          `scopeJustifications["${key}"] must be ≤${SCOPE_JUSTIFICATION_MAX_LENGTH} chars`
+        );
+      }
+      continue;
+    }
     const bit = Object.hasOwn(TokenScope, key)
       ? TokenScope[key as keyof typeof TokenScope]
       : undefined;

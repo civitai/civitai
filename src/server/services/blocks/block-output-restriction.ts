@@ -3,6 +3,8 @@ import { isUnratedOutput } from '~/shared/orchestrator/workflow-data';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   allowMatureContentForCeiling,
+  IMAGE_RATING_LADDER,
+  NSFW_LEVEL_BY_IMAGE_RATING,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { resolveViewerBrowsingLevel } from '~/server/services/blocks/block-viewer-ceiling';
@@ -259,7 +261,7 @@ const restricted = (reason: 'pool' | 'ceiling' | 'unrated'): BlockWorkflowOutput
   reason,
 });
 
-const RATING_ORDER: readonly BlockWorkflowOutputRating[] = ['pg', 'pg13', 'r', 'x', 'xxx'];
+const RATING_ORDER: readonly BlockWorkflowOutputRating[] = IMAGE_RATING_LADDER;
 
 const MATURE_RATINGS: ReadonlySet<BlockWorkflowOutputRating> = new Set<BlockWorkflowOutputRating>([
   'r',
@@ -281,13 +283,8 @@ const RATING_BY_SPELLING: ReadonlyMap<string, BlockWorkflowOutputRating> = new M
   ['xxx', 'xxx'],
 ]);
 
-const LEVEL_BY_RATING: Readonly<Record<BlockWorkflowOutputRating, number>> = {
-  pg: NsfwLevel.PG,
-  pg13: NsfwLevel.PG13,
-  r: NsfwLevel.R,
-  x: NsfwLevel.X,
-  xxx: NsfwLevel.XXX,
-};
+const LEVEL_BY_RATING: Readonly<Record<BlockWorkflowOutputRating, number>> =
+  NSFW_LEVEL_BY_IMAGE_RATING;
 
 /** Every rating's bit, PG through XXX. */
 const ALL_RATINGS_FLAG = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX;

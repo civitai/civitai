@@ -1,13 +1,29 @@
 {
   "_comment": "Type errors in the files tsconfig.json quarantines out of the scripts/ typecheck. Entries may shrink or disappear freely; adding one, or raising a count, is a deliberate act visible in review. Regenerate with: node scripts/ci/typecheck-scripts-gate.mjs --write-baseline",
   "config": "tsconfig.scripts.json",
-  "scriptFilesInProgram": 75,
-  "totalErrors": 38,
+  "scriptFilesInProgram": 206,
+  "totalErrors": 88,
   "files": {
+    "scripts/__tests__/app-suite-scope.test.ts": 3,
+    "scripts/__tests__/bug-report-context-checks.test.ts": 3,
+    "scripts/__tests__/decision-eval-cli-moderation.test.ts": 1,
+    "scripts/__tests__/decision-eval-runner.test.ts": 2,
+    "scripts/__tests__/decision-eval-support-topic.test.ts": 1,
+    "scripts/__tests__/dev-feed-go.test.ts": 7,
+    "scripts/__tests__/dev-server-app-env-refresh.test.ts": 1,
+    "scripts/__tests__/dev-server-daemon-http.test.ts": 1,
     "scripts/__tests__/dev-server-daemon-port.test.ts": 4,
-    "scripts/__tests__/dev-server-env-modes.test.ts": 14,
+    "scripts/__tests__/dev-server-env-modes.test.ts": 8,
     "scripts/__tests__/dev-server-port-reservation.test.ts": 7,
+    "scripts/__tests__/dev-server-test-queue-spawn.test.ts": 1,
+    "scripts/__tests__/hide-lost-original-images.test.ts": 2,
+    "scripts/__tests__/lighthouse-mint-cookie.test.ts": 1,
+    "scripts/__tests__/official-model-admin-attach-url.test.ts": 1,
+    "scripts/__tests__/ports-touched.test.ts": 5,
+    "scripts/__tests__/pr-review-nudge.test.ts": 2,
+    "scripts/__tests__/sweep-com-faces.test.ts": 2,
+    "scripts/__tests__/test-cache-core.test.ts": 7,
     "scripts/__tests__/typecheck-tests-gate.test.ts": 11,
-    "scripts/local-dev/gen_seed.ts": 2
+    "scripts/__tests__/unit-batched.test.ts": 18
   }
 }

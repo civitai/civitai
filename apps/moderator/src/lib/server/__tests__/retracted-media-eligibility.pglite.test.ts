@@ -82,7 +82,7 @@ CREATE TABLE "CsamReport" (
 );
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "EvidenceHoldImage" ("imageId" INTEGER PRIMARY KEY);
-CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL);
+CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL, "textHash" TEXT, meta JSONB);
 `;
 
 let db: PGlite;
@@ -129,14 +129,16 @@ beforeAll(async () => {
       (25, 'key-25', 325, 'Scanned', 25, false),
       (26, 'key-26', 326, 'Scanned', 26, false),
       (27, 'key-27', 327, 'Scanned', NULL, false),
-      (24, 'key-24', 324, 'Scanned', NULL, false);
+      (24, 'key-24', 324, 'Scanned', NULL, false),
+      (40, 'key-40', 340, 'Scanned', 40, true);
     INSERT INTO "ImageCdnAccess" (url, state) VALUES
       ('key-7', 'Retracted'), ('key-8', 'Denied'), ('key-10', 'Retracted'), ('key-11', 'Retracted'),
       ('key-12', 'Retracted'), ('key-13', 'Retracted'), ('key-14', 'Retracted'),
       ('key-15', 'Retracted'), ('key-16', 'Retracted'), ('key-17', 'Retracted'),
       ('key-18', 'Retracted'), ('key-19', 'Retracted'), ('key-20', 'Retracted'),
       ('key-21', 'Retracted'), ('key-23', 'Retracted'), ('key-24', 'Retracted'),
-      ('key-25', 'Retracted'), ('key-26', 'Retracted'), ('key-27', 'Retracted');
+      ('key-25', 'Retracted'), ('key-26', 'Retracted'), ('key-27', 'Retracted'),
+      ('key-40', 'Denied');
     INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt") VALUES
       ('key-28', 'Retracted', now() - interval '5 minutes', now()), ('key-29', 'Retracted', now(), NULL),
       ('key-30', 'Retracted', now() - interval '30 seconds', now()),
@@ -146,13 +148,15 @@ beforeAll(async () => {
       ('key-33', 'Retracted', now(), now() - interval '5 milliseconds');
     INSERT INTO "Model" (id, meta) VALUES
       (15, '{"unpublishedReason": "mature-underage"}'), (99, '{}'),
-      (26, '{"unpublishedReason": "photo-real-underage"}');
+      (26, '{"unpublishedReason": "photo-real-underage"}'), (40, '{"unpublishedReason": "mature-underage"}');
     INSERT INTO "ModelVersion" (id, meta, "modelId") VALUES
       (14, '{"unpublishedReason": "mature-underage"}', 99), (15, '{}', 15),
-      (25, '{"unpublishedReason": "photo-real-underage"}', 99), (26, '{}', 26);
+      (25, '{"unpublishedReason": "photo-real-underage"}', 99), (26, '{}', 26),
+      (40, '{"unpublishedReason": "mature-underage"}', 40);
     INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES
       (13, '{"unpublishedReason": "csam-text-hold"}', NULL), (14, '{}', 14), (15, '{}', 15),
-      (20, '{"unpublishedReason": "photo-real-underage"}', NULL), (25, '{}', 25), (26, '{}', 26);
+      (20, '{"unpublishedReason": "photo-real-underage"}', NULL), (25, '{}', 25), (26, '{}', 26),
+      (40, '{}', 40);
     INSERT INTO "User" (id, meta) VALUES (321, '{"banDetails": {"reasonCode": "SexualMinor"}}');
     -- 16: a delete on the url with no owner recorded (held). 17: a delete of a clean owner (not held).
     -- 23 and 24: a CSAM-review delete whose owner is on a sent report that lists it, verified or not.
@@ -216,9 +220,13 @@ describe('retracted media eligibility', () => {
     expect(await tierOf(3)).toBe('cleared');
   });
 
-  it('never serves held media, an unblocked image, an evidence-held one or a missing id', async () => {
-    for (const id of [4, 5, 6, 999])
+  it('never serves held media, an unblocked image or a missing id', async () => {
+    for (const id of [4, 5, 999])
       expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
+  });
+
+  it('keeps an image under an evidence hold to cleared moderators', async () => {
+    expect(await tierOf(6)).toBe('cleared');
   });
 });
 
@@ -250,8 +258,8 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
     }
   });
 
-  it('takes only a retracted url: not a denied one, and not one the CDN serves', async () => {
-    expect(await tierOf(8)).toBe('none');
+  it('takes a denied or retracted url, not one the CDN serves', async () => {
+    expect(await tierOf(8)).toBe('anyMod');
     expect(await tierOf(9)).toBe('none');
   });
 
@@ -264,9 +272,13 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
   // Its delete and takedown legs are pinned by the cdn-access parity suite, since a delete or
   // takedown row on the url is refused here before them.
   it('refuses a url cdn-access holds', async () => {
-    // A csam-hold post removal; mature-underage on the version, then on the model.
-    for (const id of [13, 14, 15])
-      expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
+    expect(await tierOf(13)).toBe('none');
+  });
+
+  it('serves a mature-underage removal to any moderator, though cdn-access holds its url', async () => {
+    // On the version, then on the model; then a minor-flagged image of a removed model, url denied.
+    for (const id of [14, 15, 40])
+      expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'anyMod' });
   });
 
   // A deleted or taken-down copy shares the bytes but not this row's signals, so it refuses the url
@@ -281,11 +293,10 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
     expect(await tierOf(19)).toBe('none');
   });
 
-  it('serves a minor unpublish reason to any moderator, and keeps a minor-safety ban of the owner to cleared ones', async () => {
+  it('serves a minor unpublish reason, and a minor-safety ban of the owner, to any moderator', async () => {
     // On the post, on the version, on the model; then the ban.
-    for (const id of [20, 25, 26])
+    for (const id of [20, 25, 26, 21])
       expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'anyMod' });
-    expect(await tierOf(21)).toBe('cleared');
   });
 
   it("reads a scanned image's verdict fresh each time, since a rescan can change it", async () => {
@@ -317,7 +328,7 @@ describe('the eligibility read', () => {
     // Inside the transaction and before the read, so the read is the statement it bounds.
     const begin = seen.findIndex((q) => /^\s*begin/i.test(q));
     const set = seen.findIndex((q) => /SET LOCAL statement_timeout = \d+/.test(q));
-    const read = seen.findIndex((q) => /from "Image" as "i"/i.test(q));
+    const read = seen.findIndex((q) => /from \(select \* from "Image"/i.test(q));
     expect(begin).toBeGreaterThanOrEqual(0);
     expect(set).toBeGreaterThan(begin);
     expect(read).toBeGreaterThan(set);
@@ -434,12 +445,14 @@ describe('a model version unpublished for its subject', () => {
         (990000127, 'key-990000127', 'Blocked', 'moderated', 990100127, NULL),
         (990000128, 'key-990000127', 'Scanned', NULL, 990100128, 990400126);
     `);
-    // Removed by a moderator for its subject alone: the image itself is open, and an image whose
-    // url a row on that model shares is kept, by the held-url rule.
+    // Removed by a moderator for its subject alone: the image itself is open, and so is an image
+    // whose url a row on that model shares.
     expect(await getRetractedMedia(990000126, { csamReview: false })).toMatchObject({
       url: 'key-990000126',
     });
-    expect(await getRetractedMedia(990000127, { csamReview: false })).toBeNull();
+    expect(await getRetractedMedia(990000127, { csamReview: false })).toMatchObject({
+      url: 'key-990000127',
+    });
     // A hold that does not mark this model as CSAM leaves it open.
     for (const hold of [
       `('Model', 990500126, 'csam', 'Dismissed')`,
@@ -488,14 +501,13 @@ describe('a model version unpublished for its subject', () => {
     }
   });
 
-  it('keeps an image whose url a row with that reason shares to cleared moderators', async () => {
+  it('leaves an image whose url a row with that reason shares open to any moderator', async () => {
     await db.exec(`
       INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "postId") VALUES
         (990000122, 'key-990000122', 'Blocked', 'moderated', 990100122, NULL),
         (990000123, 'key-990000122', 'Scanned', NULL, 990100123, 990400121)
     `);
-    expect(await getRetractedMedia(990000122, { csamReview: false })).toBeNull();
-    expect(await getRetractedMedia(990000122, { csamReview: true })).toMatchObject({
+    expect(await getRetractedMedia(990000122, { csamReview: false })).toMatchObject({
       url: 'key-990000122',
     });
   });

@@ -65,7 +65,7 @@ type Handler = {
   input: z.ZodType;
   handler: (input: { removed: Removed[] }) => Promise<unknown>;
 };
-const endpoint = (await import('~/pages/api/mod/cosmetic/holdings-removed'))
+const endpoint = (await import('~/server/api-routes/mod/cosmetic/holdings-removed'))
   .default as unknown as Handler;
 const { syncOwnerEventHats } = await import('~/server/events/points/sync');
 const { eventPointKeys } = await import('~/server/events/points/keys');

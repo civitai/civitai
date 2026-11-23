@@ -69,7 +69,7 @@ func TestModelGetAllShadowSample(t *testing.T) {
 	if got := nameDiffs() - before; got != 1 {
 		t.Fatalf("name diffs of the fields sample = %v, want 1", got)
 	}
-	if _, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointAsPosts, "result": "match"}); found {
+	if v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointAsPosts, "result": "match"}); v != 0 {
 		t.Fatal("a model-getall sample must not be counted under as-posts")
 	}
 }

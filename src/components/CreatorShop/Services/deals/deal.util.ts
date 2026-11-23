@@ -102,5 +102,16 @@ export function useServiceDealMutations(dealId: number) {
     acceptDelivery: trpc.creatorServiceDeal.acceptDelivery.useMutation(options),
     requestRevision: trpc.creatorServiceDeal.requestRevision.useMutation(options),
     openDispute: trpc.creatorServiceDeal.openDispute.useMutation(options),
+    review: trpc.creatorServiceDeal.review.useMutation(options),
+    editReview: trpc.creatorServiceDeal.editReview.useMutation(options),
+    replyToReview: trpc.creatorServiceDeal.replyToReview.useMutation(options),
+    attachReviewImage: trpc.creatorServiceDeal.attachReviewImage.useMutation({
+      ...options,
+      onSuccess: async () => {
+        await refresh();
+        await utils.creatorServiceDeal.reviewAttachableFinals.invalidate({ id: dealId });
+      },
+    }),
+    hideReview: trpc.creatorServiceDeal.hideReview.useMutation(options),
   };
 }

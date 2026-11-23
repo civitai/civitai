@@ -78,6 +78,31 @@
       "nodeDeletion": null
     },
     {
+      "id": "model.getAssociatedResourcesCardData",
+      "kind": "trpc",
+      "service": "feed-go",
+      "metricEndpoint": "model-associated",
+      "status": "shadow",
+      "routes": ["/api/trpc/model.getAssociatedResourcesCardData"],
+      "nodeEntry": {
+        "file": "src/server/routers/model.router.ts",
+        "symbol": "modelRouter.getAssociatedResourcesCardData"
+      },
+      "goHandler": [
+        "apps/feed-go/internal/server/associated.go",
+        "apps/feed-go/internal/modelfeed/assoc.go"
+      ],
+      "goRoots": ["apps/feed-go/internal/modelfeed"],
+      "flags": {
+        "shadow": "feed-go-shadow-model-associated",
+        "transport": null,
+        "probe": null
+      },
+      "holdout": null,
+      "soak": null,
+      "nodeDeletion": null
+    },
+    {
       "id": "GET /api/v1/images",
       "kind": "rest",
       "service": "feed-go",

@@ -3,12 +3,23 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { SignalMessages } from '~/server/common/enums';
 import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
+import type * as FliptClient from '~/server/flipt/client';
 
 /** Sending as an Invited member joins the chat, as pressing Join would. Ids are invented. */
 
 const h = vi.hoisted(() => ({
   signals: [] as { url: string; body: string }[],
 }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const original = await importOriginal<typeof FliptClient>();
+  return {
+    ...original,
+    // Masking runs only with the managed list on.
+    isFlipt: async (flag: string, ...rest: unknown[]) =>
+      flag === original.FLIPT_FEATURE_FLAGS.PROFANITY_MANAGED_LIST ||
+      (original.isFlipt as (...a: unknown[]) => Promise<boolean>)(flag, ...rest),
+  };
+});
 vi.mock('~/server/signals/wrapper', () => ({
   withSignals: (fn: () => Promise<unknown>) => fn(),
 }));
@@ -33,6 +44,13 @@ vi.mock('~/server/utils/rate-limiting', () => ({
 }));
 
 const { createMessage } = await import('~/server/services/chat.service');
+const { setProfanityListReaderForTests } = await import('~/server/services/profanity-list.service');
+
+// A synthetic token on no real list, enforced as the managed list: this repository is public.
+const TOKEN = 'zqvoxmaskedtoken';
+const maskingList = {
+  read: async () => ({ blocked: [TOKEN], allowed: null, source: 'managed' as const }),
+};
 
 const CHAT = 77;
 const OWNER = 10;
@@ -104,6 +122,38 @@ beforeEach(() => {
 const send = (userId: number, content = 'hello') =>
   createMessage({ chatId: CHAT, userId, content, contentType: 'Markdown' } as never);
 const agent = () => members.find((m) => m.userId === AGENT)!;
+
+// Viewers get the masked copy from the chat signal and reads; the write response has none.
+describe('createMessage response', () => {
+  it('carries no masked copy for the sender, even when the list masks the text', async () => {
+    setProfanityListReaderForTests(maskingList);
+    try {
+      const result = await send(OWNER, `a ${TOKEN} b`);
+      expect(result).toMatchObject({ content: `a ${TOKEN} b` });
+      expect(result).not.toHaveProperty('maskedContent');
+    } finally {
+      setProfanityListReaderForTests();
+    }
+  });
+
+  it('keeps the masked copy of a quoted message, which the sender did not write', async () => {
+    setProfanityListReaderForTests(maskingList);
+    const create = dbMock.dbWrite.chatMessage.create.getMockImplementation()!;
+    dbMock.dbWrite.chatMessage.create.mockImplementationOnce((async (args: never) => ({
+      ...(await (create as (a: never) => Promise<object>)(args)),
+      referenceMessage: { id: 9, userId: AGENT, content: `q ${TOKEN} q` },
+    })) as never);
+    try {
+      const result = (await send(OWNER, 'reply')) as {
+        referenceMessage?: { maskedContent?: string | null };
+      };
+      expect(typeof result.referenceMessage?.maskedContent).toBe('string');
+      expect(result.referenceMessage?.maskedContent).not.toContain(TOKEN);
+    } finally {
+      setProfanityListReaderForTests();
+    }
+  });
+});
 
 describe('createMessage from an Invited member', () => {
   it('joins them, with the join notice ahead of their first message', async () => {

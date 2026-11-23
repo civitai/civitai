@@ -994,6 +994,77 @@ describe('ModelVersionUpsertForm — licensing lineage pre-selection', () => {
 
     expect((await save()).licensingSourceVersionId ?? null).toBeNull();
   });
+
+  // A restricted root's own version is still a root even though the picker hides restricted roots: read
+  // as a derivative, it would be stamped with the ecosystem default as its parent and charge that fee.
+  test("a restricted root's own version gets no parent stamped", async () => {
+    licensingRoots.respond = () => ({
+      roots: [
+        { id: 456, modelId: 123, versionName: 'v1.0', isDefault: false, restricted: true },
+        { ...ANIMA_CHECKPOINT_ROOT, restricted: false },
+      ],
+      defaultVersionId: ANIMA_CHECKPOINT_ROOT.id,
+    });
+    renderForm();
+
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    expect(page.getByRole('textbox', { name: 'Fine-tuned from' }).elements()).toHaveLength(0);
+    expect((await save()).licensingSourceVersionId ?? null).toBeNull();
+  });
+
+  test('a creator is not offered a restricted root', async () => {
+    // Served synchronously by the useQuery mock, but counted so the absence below is read only after the
+    // roots have been handed to the form.
+    let served = 0;
+    licensingRoots.respond = () => {
+      served++;
+      return {
+        roots: [
+          { id: 777, modelId: 9, versionName: 'Restricted', isDefault: false, restricted: true },
+        ],
+        defaultVersionId: null,
+      };
+    };
+    renderNew();
+    await vi.waitFor(() => expect(served).toBeGreaterThan(0));
+    await expect.element(page.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(page.getByRole('textbox', { name: 'Fine-tuned from' }).elements()).toHaveLength(0);
+  });
+
+  test('a version already linked to a restricted root is still shown its link', async () => {
+    licensingRoots.respond = () => ({
+      roots: [
+        { id: 777, modelId: 9, versionName: 'Restricted', isDefault: false, restricted: true },
+      ],
+      defaultVersionId: null,
+    });
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        version={{ ...(version as object), licensingSourceVersionId: 777 } as typeof version}
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+    await expect
+      .element(page.getByRole('textbox', { name: 'Fine-tuned from' }))
+      .toBeInTheDocument();
+  });
+
+  test('a moderator is offered a restricted root (control)', async () => {
+    currentUser.value = { id: 1, tier: 'free', isModerator: true, meta: {} };
+    licensingRoots.respond = () => ({
+      roots: [
+        { id: 777, modelId: 9, versionName: 'Restricted', isDefault: false, restricted: true },
+      ],
+      defaultVersionId: null,
+    });
+    renderNew();
+    await expect
+      .element(page.getByRole('textbox', { name: 'Fine-tuned from' }))
+      .toBeInTheDocument();
+  });
 });
 
 // A creator releasing model after model re-entered the same pricing every time. The last charging save
@@ -1220,5 +1291,182 @@ describe('ModelVersionUpsertForm — back in the wizard from a template', () => 
     expect(payload).toMatchObject({ id: 456, licensingFee: 2 });
     expect(payload.paidAccess).toBeTruthy();
     expect(payload.templateId).toBeUndefined();
+  });
+});
+
+// A percent-of-compute fee is staff-set and stores a percent. This editor speaks Buzz per N generations,
+// so it must never present that number as Buzz: an owner "lowering" it here would save a percent they
+// never meant. Shown read-only on purpose, with the fee switch still able to clear it (the server lets an
+// owner clear a percent fee). Before you make this editable, the server rule (percentOfComputeFeeRefusal
+// in @civitai/buzz) and the Creator Studio lock both assume no owner-facing editor writes a percent.
+describe('ModelVersionUpsertForm — a staff-set percent-of-compute fee', () => {
+  const percentVersion = {
+    ...(chargingVersion as object),
+    licensingFee: 35,
+    licensingFeeType: 'PercentOfCompute',
+    paidAccess: null,
+  } as unknown as React.ComponentProps<typeof ModelVersionUpsertForm>['version'];
+
+  const renderPercentForm = () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm model={model} version={percentVersion} onSubmit={vi.fn()}>
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+  };
+
+  beforeEach(() => {
+    useMonetizationDefaultsStore.setState({ byModelType: {} });
+  });
+
+  test('shows the fee as a percent, with no Buzz input to edit it in', async () => {
+    renderPercentForm();
+
+    await expect
+      .element(page.getByText('35% of the compute cost of each generation', { exact: true }))
+      .toBeInTheDocument();
+    expect(feeInput().elements()).toHaveLength(0);
+  });
+
+  test('saves the stored percent unchanged, and remembers no Buzz fee from it', async () => {
+    renderPercentForm();
+
+    await expect.element(page.getByTestId('percent-of-compute-fee')).toBeInTheDocument();
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({
+      licensingFee: 35,
+      licensingFeeType: 'PercentOfCompute',
+    });
+    // Remembering it would offer "35 Buzz per generation" on the creator's next new LORA version.
+    expect(useMonetizationDefaultsStore.getState().byModelType.LORA).toBeUndefined();
+  });
+
+  test('turning the fee off clears it', async () => {
+    renderPercentForm();
+
+    await expect.element(feeSwitch()).toBeChecked();
+    await userEvent.click(feeSwitch());
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({ licensingFee: 0 });
+  });
+
+  // A percent version whose fee was cleared keeps its type, so turning the fee back on must not drop a
+  // Buzz suggestion or a remembered Buzz fee into it: either would be saved as a percent.
+  test('a cleared percent fee re-opens with no fee, without a Buzz suggestion or remembered fee', async () => {
+    monetizationDefaultsStore.set('LORA', { fee: { buzz: 7, images: 10 }, paidAccess: null });
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        version={{ ...(percentVersion as object), licensingFee: 0 } as typeof percentVersion}
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await userEvent.click(chargeSwitch());
+    // A remembered fee would switch the fee on by itself here (and the click below would turn it off).
+    await expect.element(feeSwitch()).not.toBeChecked();
+    await userEvent.click(feeSwitch());
+
+    await expect.element(page.getByText(/^No fee is set\./)).toBeInTheDocument();
+    expect(feeInput().elements()).toHaveLength(0);
+  });
+  test('switching the fee off and on again shows and saves the stored percent', async () => {
+    renderPercentForm();
+
+    await expect.element(feeSwitch()).toBeChecked();
+    await userEvent.click(feeSwitch());
+    await userEvent.click(feeSwitch());
+
+    // The editor is read-only, so the only fee it can switch back on is the stored one; a form value
+    // left at 0 would show "0%" beside a line saying staff set it.
+    await expect
+      .element(page.getByText('35% of the compute cost of each generation', { exact: true }))
+      .toBeInTheDocument();
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({ licensingFee: 35 });
+  });
+
+  test('a save that remembers its gate keeps the Buzz fee remembered before', async () => {
+    const REMEMBERED_FEE = { buzz: 7, images: 10 };
+    monetizationDefaultsStore.set('LORA', { fee: REMEMBERED_FEE, paidAccess: null });
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        version={
+          {
+            ...(percentVersion as object),
+            paidAccess: (chargingVersion as { paidAccess: unknown }).paidAccess,
+          } as typeof percentVersion
+        }
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await expect.element(page.getByTestId('percent-of-compute-fee')).toBeInTheDocument();
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    // The gate is remembered; the fee half is the one this creator saved before, not 0 or 35.
+    await vi.waitFor(() =>
+      expect(useMonetizationDefaultsStore.getState().byModelType.LORA).toMatchObject({
+        fee: REMEMBERED_FEE,
+        paidAccess: expect.anything(),
+      })
+    );
+  });
+});
+
+// A staff-locked fee is a rate agreed with Civitai: the owner sees it but has no control that changes or
+// clears it (the server refuses one anyway). A moderator still edits it.
+describe('ModelVersionUpsertForm — a staff-locked licence fee', () => {
+  const lockedVersion = {
+    ...(chargingVersion as object),
+    licensingFee: 0.25,
+    licensingFeeSettlementCurrency: 'Cash',
+    licensingFeeLocked: true,
+    paidAccess: null,
+  } as unknown as React.ComponentProps<typeof ModelVersionUpsertForm>['version'];
+
+  const renderLocked = () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm model={model} version={lockedVersion} onSubmit={vi.fn()}>
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+  };
+
+  test('shows the owner the rate read-only, with no control that changes or clears it', async () => {
+    renderLocked();
+
+    await expect.element(page.getByTestId('locked-licensing-fee')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('5 Buzz per 20 generations', { exact: true }))
+      .toBeInTheDocument();
+    expect(feeInput().elements()).toHaveLength(0);
+    await expect.element(feeSwitch()).toBeDisabled();
+    await expect.element(chargeSwitch()).toBeDisabled();
+  });
+
+  test('a moderator gets the ordinary editor (control)', async () => {
+    currentUser.value = { id: 1, tier: 'free', isModerator: true, meta: {} };
+    renderLocked();
+
+    await expect.element(feeInput()).toBeInTheDocument();
+    expect(page.getByTestId('locked-licensing-fee').elements()).toHaveLength(0);
   });
 });

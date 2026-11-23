@@ -46,7 +46,7 @@ const SEEN_CAP = 20_000;
 // what makes the number deduplicable at read time despite an at-least-once
 // transport.
 let sessionKey: string | null = null;
-function getSessionKey(): string {
+export function getImpressionSessionKey(): string {
   if (!sessionKey) sessionKey = generateToken(16);
   return sessionKey;
 }
@@ -161,7 +161,7 @@ export function flushImpressions(viaBeacon = false): void {
   pending.clear();
   pendingCount = 0;
 
-  const key = getSessionKey();
+  const key = getImpressionSessionKey();
   for (const [surface, entityMap] of surfaces) {
     const entities = Array.from(entityMap.values());
     for (let i = 0; i < entities.length; i += IMPRESSION_ENTITIES_MAX) {
@@ -215,3 +215,15 @@ export const __impressionBufferTestHooks = {
   },
   constants: { FLUSH_INTERVAL_MS, FLUSH_AT_SIZE, SEEN_CAP },
 };
+
+/**
+ * THE gate for impression telemetry (the `feedImpressions` Flipt dial). Exported so a surface
+ * that also records clicks against its impressions (the app store funnel) can put every event
+ * of the funnel behind the SAME gate — otherwise turning the dial changes the denominator
+ * while the numerator keeps flowing, and every ratio silently breaks.
+ */
+export function impressionTelemetryOn(
+  features: { feedImpressions?: boolean } | null | undefined
+): boolean {
+  return !!features?.feedImpressions;
+}

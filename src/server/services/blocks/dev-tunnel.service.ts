@@ -8,6 +8,7 @@ import {
   withSysReadDeadline,
 } from '~/server/redis/client';
 import { boundedClusterCall } from '~/server/utils/cluster-window-count';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { newBlockInstanceId } from '~/server/utils/app-block-ids';
 import {
   getDp1Target,
@@ -19,9 +20,17 @@ import {
   DEV_TUNNEL_SESSION_BUZZ_CAP,
   fingerprintSshPublicKey,
   generateDevHostLabel,
-  isValidDevHost,
+  isValidSessionHost,
   normalizeSshPublicKey,
+  sessionHostDomains,
+  sessionHostKind,
 } from '~/server/services/blocks/dev-tunnel-session';
+import {
+  drainPreviewRevokeQueue,
+  PREVIEW_REVOKE_MAX_AGE_MS,
+  revokePreviewSession,
+} from '~/server/services/blocks/preview-revoke.service';
+import { previewHostHash } from '~/server/services/blocks/preview-session-host';
 import {
   recordDevTunnelDnsGc,
   recordDevTunnelMint,
@@ -30,6 +39,7 @@ import {
   type DevTunnelTeardownReason,
 } from '~/server/prom/dev-tunnel.metrics';
 import { clampTunnelDeclaredScopes } from '~/server/services/blocks/dev-scoped-mint.service';
+import type { DevTunnelRefusal } from '~/server/services/blocks/dev-tunnel-access.service';
 
 /** App Dev Tunnel — bounds on the self-declared scope list stored on a session
  *  (defense-in-depth over the tRPC zod input bound; mirrors `block-tokens`'
@@ -113,6 +123,28 @@ const clientStartKey = (userId: number, clientKey: string) =>
   `${USER_PREFIX}:client-start:{${userId}}:${clientKey}` as const;
 const clientCancelledKey = (userId: number, clientKey: string) =>
   `${USER_PREFIX}:client-cancelled:{${userId}}:${clientKey}` as const;
+/**
+ * App Assistant direct preview: a preview id that has had a session. Written by
+ * `openDirectPreviewSession` once the open is counted and BEFORE any of the session's records, in
+ * the user's slot, and never deleted by teardown: an id whose session ended must not open another
+ * (`openDirectPreviewSession` answers `fresh` instead, and the runner rotates the id). Written
+ * first so that an open which fails part-way (a record write, the listing) still leaves the id
+ * marked: its teardown revokes the id, so a later session on it would be killed by that revoke.
+ */
+const directUsedKey = (userId: number, previewId: string) =>
+  `${USER_PREFIX}:direct-used:{${userId}}:${previewId}` as const;
+/**
+ * How long a `used` marker lives: the session cap (the latest its session can end and queue a
+ * revoke) plus the longest a queued revoke is kept and retried. Shorter, and a revoke sent from
+ * the queue after the marker expired could end a new session opened on the same id.
+ */
+export const DIRECT_USED_MARKER_SECONDS =
+  DEV_TUNNEL_HARD_SECONDS + Math.ceil(PREVIEW_REVOKE_MAX_AGE_MS / 1000);
+/**
+ * App Assistant direct preview: every live direct session's id, so the reaper can find them. A
+ * direct session has no IngressRoute or Middleware, which is all the route sweep discovers.
+ */
+const directSessionsKey = `${USER_PREFIX}:direct-sessions` as const;
 /** One bounded cache-cluster call; throws on a failure, a timeout or an open breaker. */
 const cluster = <T>(fn: string, op: () => Promise<T>) => boundedClusterCall(`devTunnel.${fn}`, op);
 /**
@@ -169,6 +201,14 @@ export type DevTunnelSessionRecord = {
    *  reaper falls back to `createdAt` so a CLI that dies before the browser ever
    *  loads still idle-reaps. */
   lastActivityAt?: number;
+  /**
+   * App Assistant direct preview: `"direct"` when the preview is served by the sandbox service's
+   * preview gateway, with no tunnel: `host` is then a session host under
+   * APP_ASSISTANT_PREVIEW_DOMAIN and `fingerprint` is empty. ABSENT on every tunnel session.
+   */
+  transport?: 'direct';
+  /** App Assistant direct preview: the Sandbox preview id the session host carries. */
+  previewId?: string;
 };
 
 /** The subset of the credential the sish authz callback needs. Stored separately
@@ -857,6 +897,20 @@ export const INVALID_SSH_PUBLIC_KEY = 'invalid SSH public key';
 /** What `startDevTunnel` throws for a start its caller cancelled (`cancelDevTunnelStart`). */
 export const DEV_TUNNEL_START_CANCELLED = 'dev tunnel start cancelled';
 
+/** The self-declared scopes, sanitized: strings only, trimmed, deduped, bounded. */
+function sanitizeDeclaredScopes(raw: unknown): string[] {
+  return Array.isArray(raw)
+    ? Array.from(
+        new Set(
+          raw
+            .filter((s): s is string => typeof s === 'string')
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0 && s.length <= DEV_TUNNEL_SCOPE_MAX_LEN)
+        )
+      ).slice(0, DEV_TUNNEL_SCOPE_MAX_COUNT)
+    : [];
+}
+
 /**
  * Whether the start under `clientKey` was already cancelled when it began: an early way out, so
  * a cancelled start renders nothing. Not the check that decides: the script that lists a tunnel
@@ -905,16 +959,7 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
   // WRITE (`clampTunnelDeclaredScopes`) so the stored `grantedScopes` is what every
   // reader grants — an allowlist change can never retroactively widen a live
   // session, and a reader that forgets to re-clamp still gets an already-safe set.
-  const declaredScopes = Array.isArray(params.declaredScopes)
-    ? Array.from(
-        new Set(
-          params.declaredScopes
-            .filter((s): s is string => typeof s === 'string')
-            .map((s) => s.trim())
-            .filter((s) => s.length > 0 && s.length <= DEV_TUNNEL_SCOPE_MAX_LEN)
-        )
-      ).slice(0, DEV_TUNNEL_SCOPE_MAX_COUNT)
-    : [];
+  const declaredScopes = sanitizeDeclaredScopes(params.declaredScopes);
   const grantedScopes = clampTunnelDeclaredScopes(declaredScopes);
 
   const session: DevTunnelSessionRecord = {
@@ -948,46 +993,7 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
   // failed mint leaves nothing behind.
   await renderDevTunnelRoute(host, sessionId);
 
-  // Every write settles before any failure is acted on, so the teardown below runs after the
-  // last of them: a credential the sish authz accepts must not outlive a start that failed.
-  const persisted = await Promise.allSettled([
-    sysRedis.set(credKey(fingerprint), JSON.stringify(credential), { EX: DEV_TUNNEL_HARD_SECONDS }),
-    sysRedis.set(sessionKey(sessionId), JSON.stringify(session), { EX: DEV_TUNNEL_HARD_SECONDS }),
-    sysRedis.set(hostKey(host), sessionId, { EX: DEV_TUNNEL_HARD_SECONDS }),
-    ...(clientKey
-      ? [
-          cluster('start.clientKey', () =>
-            redis.set(clientStartKey(params.userId, clientKey), sessionId, {
-              EX: DEV_TUNNEL_CLIENT_KEY_SECONDS,
-            })
-          ),
-        ]
-      : []),
-  ]);
-  // Counted before any teardown below, which decrements the same gauge.
-  recordDevTunnelMint();
-  const failed = persisted.find((r): r is PromiseRejectedResult => r.status === 'rejected');
-  if (failed) {
-    await teardownSession(session, 'stop');
-    throw failed.reason;
-  }
-
-  // The (user, block) pointer and the ban index are written by ONE script that writes neither
-  // once this start is cancelled: a check and a write made apart let a cancel land between them.
-  // This start records its session under its key and THEN runs the script; a cancel sets the
-  // mark and THEN reads the key, so at least one of the two sees the other's write.
-  let listed: boolean;
-  try {
-    listed = await listDevTunnel(session, clientKey);
-  } catch {
-    // Fail CLOSED: an unlisted tunnel is invisible to a ban, and the caller can retry a start.
-    await teardownSession(session, 'stop');
-    throw new Error('dev tunnel could not be listed');
-  }
-  if (!listed) {
-    await teardownSession(session, 'stop');
-    throw new Error(DEV_TUNNEL_START_CANCELLED);
-  }
+  await persistSession(session, credential, clientKey);
 
   // eslint-disable-next-line no-console
   console.log(
@@ -1013,6 +1019,72 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
     // CLI fails closed). Non-secret, so it rides the mint response directly.
     sshHostPublicKey: env.APPS_DEV_TUNNEL_SSH_HOST_PUBKEY ?? '',
   };
+}
+
+/**
+ * Persists a session the caller has built: its records, then its listing (the (user, block)
+ * pointer and the ban index; for a direct session also its place in the reaper's direct-session
+ * set). The one writer both a tunnel start and a direct preview session go through. Throws,
+ * after tearing the session down, when any write fails or the start was cancelled
+ * (`DEV_TUNNEL_START_CANCELLED`).
+ *
+ * `credential` is the sish authz record; a direct session has none.
+ */
+async function persistSession(
+  session: DevTunnelSessionRecord,
+  credential: DevTunnelCredentialRecord | null,
+  clientKey?: string
+): Promise<void> {
+  const { sessionId, host } = session;
+  // Every write settles before any failure is acted on, so the teardown below runs after the
+  // last of them: a credential the sish authz accepts must not outlive a start that failed.
+  const persisted = await Promise.allSettled([
+    ...(credential
+      ? [
+          sysRedis.set(credKey(session.fingerprint), JSON.stringify(credential), {
+            EX: DEV_TUNNEL_HARD_SECONDS,
+          }),
+        ]
+      : []),
+    sysRedis.set(sessionKey(sessionId), JSON.stringify(session), { EX: DEV_TUNNEL_HARD_SECONDS }),
+    sysRedis.set(hostKey(host), sessionId, { EX: DEV_TUNNEL_HARD_SECONDS }),
+    ...(clientKey
+      ? [
+          cluster('start.clientKey', () =>
+            redis.set(clientStartKey(session.userId, clientKey), sessionId, {
+              EX: DEV_TUNNEL_CLIENT_KEY_SECONDS,
+            })
+          ),
+        ]
+      : []),
+  ]);
+  // Counted before any teardown below, which decrements the same gauge.
+  recordDevTunnelMint();
+  const failed = persisted.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failed) {
+    await teardownSession(session, 'stop');
+    throw failed.reason;
+  }
+
+  // The (user, block) pointer and the ban index are written by ONE script that writes neither
+  // once this start is cancelled: a check and a write made apart let a cancel land between them.
+  // This start records its session under its key and THEN runs the script; a cancel sets the
+  // mark and THEN reads the key, so at least one of the two sees the other's write.
+  let listed: boolean;
+  try {
+    listed =
+      session.transport === 'direct'
+        ? await listDirectSession(session)
+        : await listDevTunnel(session, clientKey);
+  } catch {
+    // Fail CLOSED: an unlisted tunnel is invisible to a ban, and the caller can retry a start.
+    await teardownSession(session, 'stop');
+    throw new Error('dev tunnel could not be listed');
+  }
+  if (!listed) {
+    await teardownSession(session, 'stop');
+    throw new Error(DEV_TUNNEL_START_CANCELLED);
+  }
 }
 
 /**
@@ -1051,6 +1123,33 @@ async function listDevTunnel(
   return Number(reply) === 1;
 }
 
+/** SADD to the direct-session set, with the same TTL floor as the ban index. */
+const ADD_DIRECT_SESSION = `
+  redis.call('SADD', KEYS[1], ARGV[1])
+  if redis.call('TTL', KEYS[1]) < tonumber(ARGV[2]) then redis.call('EXPIRE', KEYS[1], ARGV[2]) end
+  return 1
+`;
+
+/**
+ * Lists a direct session (`LIST_DEV_TUNNEL`, with no cancel mark: it has no client key), then adds
+ * it to the reaper's direct-session set. The set's key is not in the user's slot, so it is a
+ * second call, made AFTER the session record exists: the reaper reads a member whose record is
+ * absent as expired, never as one being written. Throws on a Redis error (the caller tears the
+ * session down: one the reaper cannot find must not stay open). The preview id's `used` marker is
+ * not written here: `openDirectPreviewSession` wrote it before any record.
+ */
+async function listDirectSession(session: DevTunnelSessionRecord): Promise<boolean> {
+  if (!session.previewId) throw new Error('a direct session needs its preview id');
+  if (!(await listDevTunnel(session))) return false;
+  await cluster('addDirect', () =>
+    redis.eval(ADD_DIRECT_SESSION, {
+      keys: [directSessionsKey],
+      arguments: [session.sessionId, String(DEV_TUNNEL_HARD_SECONDS)],
+    })
+  );
+  return true;
+}
+
 /**
  * Removes the session's (user, block) pointer, but only while it still names this session: another
  * start of the same app may have taken it since (a newer, live tunnel). True when it was this
@@ -1068,12 +1167,17 @@ async function releaseUserBlockPointer(session: DevTunnelSessionRecord): Promise
 }
 
 /** Delete all state + the route for a session (used by stop + reap). Best-effort;
- *  never throws. `reason` labels the teardown metric. */
+ *  never throws. `reason` labels the teardown metric.
+ *
+ *  A direct preview session has no route or DNS record to delete. Instead it leaves the reaper's
+ *  direct-session set and its preview id is revoked at the preview gateway (tried now, queued
+ *  for the reaper on failure), so the session host stops serving. Its `used` marker stays. */
 async function teardownSession(
   session: DevTunnelSessionRecord,
   reason: DevTunnelTeardownReason
 ): Promise<void> {
-  await deleteDevTunnelRoute(session.sessionId).catch(() => {});
+  const direct = session.transport === 'direct';
+  if (!direct) await deleteDevTunnelRoute(session.sessionId).catch(() => undefined);
   const [ownedPointer] = await Promise.all([
     releaseUserBlockPointer(session),
     sysRedis.del(credKey(session.fingerprint)).catch(() => {}),
@@ -1093,6 +1197,19 @@ async function teardownSession(
     } catch {
       // best-effort
     }
+  if (direct) {
+    try {
+      await cluster('unlistDirect', () => redis.sRem(directSessionsKey, session.sessionId));
+    } catch {
+      // best-effort: the sweep drops a member whose record is gone
+    }
+    if (session.previewId)
+      await revokePreviewSession({
+        userId: session.userId,
+        previewId: session.previewId,
+        reason: `teardown:${reason}`,
+      });
+  }
   recordDevTunnelTeardown(reason);
   // eslint-disable-next-line no-console
   console.log(
@@ -1101,7 +1218,10 @@ async function teardownSession(
       sessionId: session.sessionId,
       userId: session.userId,
       blockId: session.blockId,
-      host: session.host,
+      // A direct session host is the session's credential: logged only as a hash.
+      ...(direct
+        ? { hostHash: previewHostHash(session.host), transport: 'direct' }
+        : { host: session.host }),
       reason,
     })
   );
@@ -1212,7 +1332,7 @@ export async function getActiveDevTunnel(
   const session = await readJson<DevTunnelSessionRecord>(sessionKey(sessionId));
   // Cross-check ownership + freshness (fail-closed on a stale/foreign index).
   if (!session || session.userId !== userId || session.blockId !== blockId) return null;
-  if (session.host && !isValidDevHost(session.host, env.APPS_DOMAIN)) return null;
+  if (session.host && !isValidSessionHost(session, sessionHostDomains())) return null;
   if (session.hardExpiresAt <= nowSec()) return null;
   return session;
 }
@@ -1305,13 +1425,18 @@ export async function keepAliveDevTunnel(
  *
  * Ownership-checked like `keepAliveDevTunnel`: the record the host names must be `userId`'s and
  * still be at that host. `not_found` covers no such tunnel, another author's, and one past its
- * hard cap, so a caller learns nothing about a tunnel that is not its own.
+ * hard cap, so a caller learns nothing about a tunnel that is not its own. A direct preview session
+ * host is `not_found` here too, its own session included.
  */
 export async function keepAliveDevTunnelAtHost(
   userId: number,
   host: string
 ): Promise<DevTunnelKeepAlive> {
-  if (!isValidDevHost(host, env.APPS_DOMAIN)) return { status: 'not_found' };
+  // Tunnel hosts only. A direct session host is the session's credential, so this path never
+  // takes one (it would land in the keepalive's request logs); a direct session is kept alive by
+  // its block id (`keepAliveDevTunnelForUserBlock`).
+  const domains = sessionHostDomains();
+  if (sessionHostKind(host, domains) !== 'tunnel') return { status: 'not_found' };
   let sessionId: unknown;
   try {
     sessionId = await withSysReadDeadline(sysRedis.get(hostKey(host)));
@@ -1323,7 +1448,8 @@ export async function keepAliveDevTunnelAtHost(
   if (read.status === 'error') return { status: 'unavailable' };
   if (read.status === 'absent') return { status: 'not_found' };
   const session = read.session;
-  if (session.userId !== userId || session.host !== host) return { status: 'not_found' };
+  if (session.userId !== userId || session.host !== host || !isValidSessionHost(session, domains))
+    return { status: 'not_found' };
   let stamped: number | null;
   try {
     stamped = await stampSessionActivity(session);
@@ -1332,6 +1458,200 @@ export async function keepAliveDevTunnelAtHost(
   }
   if (stamped === null) return { status: 'not_found' };
   return { status: 'kept', lastActivityAt: stamped, hardExpiresAt: session.hardExpiresAt };
+}
+
+/**
+ * The session for `userId`'s (user, block) pointer, telling "none" apart from "could not read".
+ * Ownership, block and the hard cap are checked as `getActiveDevTunnel` does.
+ */
+async function readOwnSessionForUserBlock(userId: number, blockId: string): Promise<ReaperRead> {
+  let sessionId: unknown;
+  try {
+    sessionId = await cluster('pointer', () => redis.get(userBlockKey(userId, blockId)));
+  } catch {
+    return { status: 'error' };
+  }
+  if (!sessionId || typeof sessionId !== 'string') return { status: 'absent' };
+  const read = await readSessionForReap(sessionId);
+  if (read.status !== 'ok') return read;
+  const { session } = read;
+  if (session.userId !== userId || session.blockId !== blockId) return { status: 'absent' };
+  if (session.hardExpiresAt <= nowSec()) return { status: 'absent' };
+  return read;
+}
+
+/**
+ * Keep `userId`'s session for `blockId` from idling out, whichever transport it uses: the same
+ * stamp as `keepAliveDevTunnel`, for App Assistant's runner, which knows the app's block id but,
+ * for a direct preview, holds no session id or host it could name (there is no sandbox-side
+ * tunnel to ask). Never creates anything and never extends the 8 h hard cap.
+ *
+ * `transport: 'direct'` keeps only a direct session: a tunnel session for the pair is left alone
+ * and answered `not_found`, as if there were none.
+ */
+export async function keepAliveDevTunnelForUserBlock(
+  userId: number,
+  blockId: string,
+  { transport }: { transport?: 'direct' } = {}
+): Promise<DevTunnelKeepAlive> {
+  const read = await readOwnSessionForUserBlock(userId, blockId);
+  if (read.status === 'error') return { status: 'unavailable' };
+  if (read.status === 'absent') return { status: 'not_found' };
+  if (transport === 'direct' && read.session.transport !== 'direct') return { status: 'not_found' };
+  let stamped: number | null;
+  try {
+    stamped = await stampSessionActivity(read.session);
+  } catch {
+    return { status: 'unavailable' };
+  }
+  if (stamped === null) return { status: 'not_found' };
+  return { status: 'kept', lastActivityAt: stamped, hardExpiresAt: read.session.hardExpiresAt };
+}
+
+/**
+ * `stopOwnDevTunnel` by (user, block): for App Assistant's runner stopping a direct preview it did
+ * not open in this run. `unavailable` means nothing was closed and it may still be live: ask again.
+ * `transport: 'direct'` closes only a direct session: a tunnel session is left alone and answered
+ * `not_found`, as if there were none.
+ */
+export async function stopOwnDevTunnelForUserBlock(
+  userId: number,
+  blockId: string,
+  { transport }: { transport?: 'direct' } = {}
+): Promise<'stopped' | 'not_found' | 'unavailable'> {
+  const read = await readOwnSessionForUserBlock(userId, blockId);
+  if (read.status === 'error') return 'unavailable';
+  if (read.status === 'absent') return 'not_found';
+  if (transport === 'direct' && read.session.transport !== 'direct') return 'not_found';
+  await teardownSession(read.session, 'stop');
+  return 'stopped';
+}
+
+/**
+ * App Assistant direct preview: record activity on `userId`'s direct session for `blockId` when
+ * the page (re)mints its preview frame, the direct path's equivalent of the tunnel gate's
+ * entry-document stamp. A tunnel session is left alone (its gate stamps it). Best-effort.
+ */
+export async function stampDirectPreviewActivity(userId: number, blockId: string): Promise<void> {
+  try {
+    const session = await getActiveDevTunnel(userId, blockId);
+    if (session?.transport === 'direct') await stampSessionActivity(session);
+  } catch {
+    // best-effort: a lost stamp can only make the session idle out sooner
+  }
+}
+
+export type OpenDirectPreviewParams = {
+  userId: number;
+  /** The RESOLVED block id (`authorizeDevTunnelStart`'s), never the raw input. */
+  blockId: string;
+  /** The Sandbox's current preview id, 32 lowercase hex. */
+  previewId: string;
+  declaredScopes?: string[];
+  declaredAuth?: DevTunnelDeclaredAuth;
+  /**
+   * Counts this open as a start against the caller's limits, or refuses it. Called ONLY on the
+   * branch that writes a new session: reusing a session, or answering `fresh`, is not a start.
+   */
+  claimStart: () => Promise<DevTunnelRefusal | null>;
+  /** The session host for these fields (the mint), e.g. `mintPreviewSessionHost`. */
+  mintHost: (fields: { previewId: string; userId: number; exp: number }) => string;
+};
+
+export type OpenDirectPreviewResult =
+  | { kind: 'reused' | 'written'; session: DevTunnelSessionRecord }
+  /** The id has had a session that has ended: nothing written. Rotate the id and ask again. */
+  | { kind: 'fresh' }
+  | { kind: 'refused'; refusal: DevTunnelRefusal };
+
+/**
+ * App Assistant direct preview: open (or reuse) the preview session for `previewId`, in exactly
+ * one of three ways:
+ *   1. an active direct session for (user, block) holds this preview id: reuse it, stamping its
+ *      activity (one already idle-expired is torn down and answered as in 3);
+ *   2. no such session and the id was never used: write a new session (the same record and the
+ *      same writer as a tunnel start, `transport: "direct"`, with the id's `used` marker), after
+ *      `claimStart` counts it;
+ *   3. no such session but the id was used (its session ended): `fresh`, writing nothing.
+ * A new session replaces whatever session the (user, block) pair had, as a tunnel start does.
+ * Throws on a Redis error, and the caller answers "unavailable". Before the `used` marker is
+ * written no session record is; after it, a failed write tears the session down and the id stays
+ * used.
+ */
+export async function openDirectPreviewSession(
+  params: OpenDirectPreviewParams
+): Promise<OpenDirectPreviewResult> {
+  const { userId, blockId, previewId } = params;
+  const existing = await readOwnSessionForUserBlock(userId, blockId);
+  if (existing.status === 'error') throw new Error('dev tunnel session could not be read');
+  if (
+    existing.status === 'ok' &&
+    existing.session.transport === 'direct' &&
+    existing.session.previewId === previewId &&
+    isValidSessionHost(existing.session, sessionHostDomains())
+  ) {
+    // A reuse is activity, or the reaper could end the preview just reopened. One already past the
+    // idle window has ended: torn down here, it gets the used id's answer below (`fresh`).
+    if (isIdleExpired(existing.session, nowSec())) {
+      await teardownSession(existing.session, 'reap-idle');
+    } else {
+      const stamped = await stampSessionActivity(existing.session);
+      if (stamped !== null)
+        return { kind: 'reused', session: { ...existing.session, lastActivityAt: stamped } };
+      // Gone between the read and the stamp (a teardown, or the hard cap): it has ended.
+    }
+  }
+
+  const used = await cluster('directUsed', () => redis.exists(directUsedKey(userId, previewId)));
+  if (Number(used) > 0) return { kind: 'fresh' };
+
+  const refusal = await params.claimStart();
+  if (refusal) return { kind: 'refused', refusal };
+
+  // A failure here throws with no session record written, so the id stays openable.
+  await cluster('directUsed.mark', () =>
+    redis.set(directUsedKey(userId, previewId), '1', { EX: DIRECT_USED_MARKER_SECONDS })
+  );
+
+  await stopDevTunnelForUserBlock(userId, blockId).catch(() => false);
+
+  const sessionId = newBlockInstanceId();
+  const created = nowSec();
+  const hardExpiresAt = created + DEV_TUNNEL_HARD_SECONDS;
+  const declaredScopes = sanitizeDeclaredScopes(params.declaredScopes);
+  const session: DevTunnelSessionRecord = {
+    sessionId,
+    userId,
+    blockId,
+    host: params.mintHost({ previewId, userId, exp: hardExpiresAt }),
+    fingerprint: '',
+    createdAt: created,
+    hardExpiresAt,
+    spendCapBuzz: DEV_TUNNEL_SESSION_BUZZ_CAP,
+    declaredScopes,
+    grantedScopes: clampTunnelDeclaredScopes(declaredScopes),
+    ...(params.declaredAuth === 'oauth' || params.declaredAuth === 'block-token'
+      ? { declaredAuth: params.declaredAuth }
+      : {}),
+    lastActivityAt: created,
+    transport: 'direct',
+    previewId,
+  };
+  await persistSession(session, null);
+  // eslint-disable-next-line no-console
+  console.log(
+    JSON.stringify({
+      event: 'app-blocks.dev-tunnel.start',
+      sessionId,
+      userId,
+      blockId,
+      // The session host is the session's credential: logged only as a hash.
+      hostHash: previewHostHash(session.host),
+      transport: 'direct',
+      expiresAt: hardExpiresAt,
+    })
+  );
+  return { kind: 'written', session };
 }
 
 // ---------------------------------------------------------------------------
@@ -1499,6 +1819,65 @@ function isIdleExpired(session: DevTunnelSessionRecord, now: number): boolean {
   return now - activity > DEV_TUNNEL_IDLE_SECONDS;
 }
 
+export type DirectSweepResult = { swept: number; reaped: number; skipped: number };
+
+/** Direct sessions the sweep reads and tears down at once. */
+const DIRECT_SWEEP_CONCURRENCY = 5;
+
+/**
+ * App Assistant direct preview: the reaper's sweep of the direct-session set. For each member:
+ *   - its record could not be read: skipped, the member kept (a Redis blip never reaps);
+ *   - its record is absent (expired): the member is removed. No revoke is needed, since the
+ *     session host expired with it, and a member is only ever added after its record is written,
+ *     so an absent record is never one mid-write;
+ *   - hard- or idle-expired (the route sweep's own predicate): torn down, which revokes it.
+ * Never throws.
+ */
+export async function sweepDirectSessions(now: number = nowSec()): Promise<DirectSweepResult> {
+  const out: DirectSweepResult = { swept: 0, reaped: 0, skipped: 0 };
+  let members: unknown;
+  try {
+    members = await cluster('sweepDirect', () => redis.sMembers(directSessionsKey));
+  } catch {
+    return out;
+  }
+  if (!Array.isArray(members)) return out;
+  const sweepOne = async (sessionId: string) => {
+    out.swept += 1;
+    const read = await readSessionForReap(sessionId);
+    if (read.status === 'error') {
+      out.skipped += 1;
+      return;
+    }
+    if (read.status === 'absent') {
+      try {
+        await cluster('dropDirect', () => redis.sRem(directSessionsKey, sessionId));
+      } catch {}
+      return;
+    }
+    const session = read.session;
+    const hardExpired = session.hardExpiresAt <= now;
+    if (hardExpired || isIdleExpired(session, now)) {
+      await teardownSession(session, hardExpired ? 'reap-maxttl' : 'reap-idle').catch(
+        () => undefined
+      );
+      out.reaped += 1;
+    }
+  };
+  // A teardown can wait on its inline revoke (up to its send timeout), so several run at once.
+  // Each task swallows its own errors: `limitConcurrency` rejects on the first throw.
+  await limitConcurrency(
+    members
+      .filter((m): m is string => typeof m === 'string')
+      .map((sessionId) => () => sweepOne(sessionId).catch(() => undefined)),
+    DIRECT_SWEEP_CONCURRENCY
+  );
+  if (out.reaped > 0 || out.skipped > 0)
+    // eslint-disable-next-line no-console
+    console.log(JSON.stringify({ event: 'app-blocks.dev-tunnel.direct-sweep', ...out }));
+  return out;
+}
+
 /**
  * Discriminated result of one reaper sweep — matches the sibling reaper-schedule
  * contract (civitai #2928) BYTE-FOR-BYTE so its `reap-dev-tunnels` job + the
@@ -1557,6 +1936,17 @@ const LIST_UNREACHABLE_STATUS = 0;
  *   - apiserver-clock: the min-age + idle windows use the LIST response Date header.
  */
 export async function reapExpiredDevTunnels(): Promise<ReapResult> {
+  // App Assistant direct preview: its sessions have no route, so the route LIST below never finds
+  // them. Swept FIRST, from Redis alone, so a Kubernetes API outage (the early returns below) does not
+  // also stop direct sessions idling out; then the revoke retry queue is drained.
+  await sweepDirectSessions();
+  const drained = await drainPreviewRevokeQueue();
+  if (drained.sent + drained.dropped + drained.retrying > 0)
+    // eslint-disable-next-line no-console
+    console.log(
+      JSON.stringify({ event: 'app-blocks.dev-tunnel.preview-revoke-drain', ...drained })
+    );
+
   const ns = env.APPS_DEV_TUNNEL_ROUTE_NAMESPACE;
   const selector = encodeURIComponent(`${DEV_TUNNEL_LABEL}=true`);
   const listPaths = [
