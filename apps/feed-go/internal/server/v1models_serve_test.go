@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -739,6 +740,98 @@ func TestV1ModelsTrainingDataRulesReadPerRequestThatNeedsThem(t *testing.T) {
 	_, err = s.computeV1ModelsID(ctx, r.WithContext(withSampled(ctx)))
 	if got := fallback.Reason(err); got != "v1-models-training-data-unread" || live.Calls != 2 {
 		t.Fatalf("sample: %q after %d reads, want %q after 2", got, live.Calls, "v1-models-training-data-unread")
+	}
+}
+
+// The list route is vouched for as `[id]` is: on a public request the published rule sets
+// (V1ModelsDeps.Rules) decide a page with a Training Data candidate, so only exactly this build's
+// lets the listing go on to the replica (`v1-models-training-data-unread`: its rows route fails
+// here); none, or another build's, falls back before the read (`v1-models-training-data-drift`).
+// One model, one version with a Training Data file: the cases differ only in the live hash.
+func TestV1ModelsListTrainingDataVouchedByPublishedRules(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	at := now.Add(-time.Minute)
+	cache := testkit.NewRedis()
+	for k, v := range map[string]jspack.Obj{
+		v1models.KeyDataForModel + ":5001": {{K: "modelId", V: int64(5001)}, {K: "hashes", V: []any{}}, {K: "tags", V: []any{}}, {K: "versions", V: []any{jspack.Obj{
+			{K: "id", V: int64(6001)}, {K: "index", V: int64(0)}, {K: "name", V: "v1"}, {K: "earlyAccessTimeFrame", V: int64(0)},
+			{K: "baseModel", V: "SDXL 1.0"}, {K: "status", V: "Published"}, {K: "flags", V: int64(0)}, {K: "availability", V: "Public"},
+			{K: "nsfwLevel", V: int64(1)}, {K: "description", V: "d"}, {K: "trainedWords", V: []any{}}, {K: "covered", V: true}, {K: "coveredNext", V: false},
+		}}}, {K: "cachedAt", V: at}},
+		v1models.KeyModelTags + ":5001":         {{K: "modelId", V: int64(5001)}, {K: "tagIds", V: []any{int64(11)}}, {K: "cachedAt", V: at}},
+		v1models.KeyBasicTags + ":11":           {{K: "id", V: int64(11)}, {K: "name", V: "style"}, {K: "cachedAt", V: at}},
+		hydrate.KeyBasicUsers + ":1001":         {{K: "id", V: int64(1001)}, {K: "username", V: "artist_one"}, {K: "deletedAt", V: nil}, {K: "image", V: nil}, {K: "cachedAt", V: at}},
+		hydrate.KeyProfilePictures + ":1001":    {{K: "notFound", V: true}},
+		v1models.KeyPaidAccessVersion + ":6001": {{K: "entityId", V: int64(6001)}, {K: "endsAtMs", V: nil}, {K: "timeframeDays", V: nil}, {K: "cachedAt", V: at}},
+		v1models.KeyImagesForVersion + ":6001": {{K: "modelVersionId", V: int64(6001)}, {K: "images", V: []any{jspack.Obj{
+			{K: "id", V: int64(8001)}, {K: "url", V: "u1"}, {K: "nsfwLevel", V: int64(1)}, {K: "type", V: "image"}, {K: "poi", V: false}, {K: "minor", V: false},
+		}}}, {K: "cachedAt", V: at}},
+		v1models.KeyFilesForVersion + ":6001": {{K: "modelVersionId", V: int64(6001)}, {K: "files", V: []any{
+			jspack.Obj{{K: "id", V: int64(7001)}, {K: "name", V: "a.safetensors"}, {K: "type", V: "Model"}, {K: "visibility", V: "Public"},
+				{K: "modelVersionId", V: int64(6001)}, {K: "hashes", V: []any{}}, {K: "metadata", V: jspack.Obj{{K: "format", V: "SafeTensor"}}}},
+			jspack.Obj{{K: "id", V: int64(7002)}, {K: "name", V: "d.zip"}, {K: "type", V: "Training Data"}, {K: "visibility", V: "Public"},
+				{K: "modelVersionId", V: int64(6001)}, {K: "hashes", V: []any{}}, {K: "metadata", V: jspack.Obj{}}},
+		}}, {K: "cachedAt", V: at}},
+		// The default addons exclude tags at every level, so the image's tag ids are read.
+		v1models.KeyTagIDsForImages + ":8001": {{K: "imageId", V: int64(8001)}, {K: "tags", V: []any{int64(1)}}, {K: "cachedAt", V: at}},
+		v1models.KeyMetricPrivacy + ":1001":   {{K: "hideModelBuzz", V: false}, {K: "hideModelDownloads", V: false}, {K: "hideModelGenerations", V: false}},
+	} {
+		cache.SetString(k, jspack.Pack(v))
+	}
+	rows := testkit.NewRows
+	none := func(cols ...string) func([]any) (*testkit.Rows, error) {
+		return func([]any) (*testkit.Rows, error) { return rows(cols), nil }
+	}
+	var reads [][]int // the candidates each Training Data read bound
+	db := &testkit.DB{Routes: []testkit.Route{
+		{Match: `as "cursorId"`, Rows: func([]any) (*testkit.Rows, error) {
+			return rows([]string{"id", "name", "allowCommercialUse", "type", "nsfwLevel", "status", "availability", "userId", "cursorId", "meta", "minor", "sfwOnly"},
+				[]any{int32(5001), "M", "{Image}", "Checkpoint", int32(1), "Published", "Public", int32(1001), "1|1|5001", map[string]any{}, false, false}), nil
+		}},
+		{Match: `AS deadline`, Rows: none("modelId")},
+		{Match: `FROM "RecommendedResource"`, Rows: none("sourceId", "resourceId", "settings")},
+		{Match: `FROM "ModelVersionMetric"`, Rows: none("modelVersionId", "downloadCount", "thumbsUpCount", "thumbsDownCount")},
+		{Match: `SELECT id, meta FROM "ModelVersion"`, Rows: none("id", "meta")},
+		{Match: `FROM "ModelMetric" WHERE`, Rows: none("modelId", "downloadCount", "thumbsUpCount", "thumbsDownCount", "commentCount", "tippedAmountCount")},
+		{Match: `AS restricted`, Rows: func(args []any) (*testkit.Rows, error) {
+			ids, _ := args[0].([]int)
+			reads = append(reads, ids)
+			return nil, errors.New("no Training Data rows here")
+		}},
+	}}
+	packed := &hydrate.PackedReader{Redis: cache, Now: func() time.Time { return now }}
+	s := &Server{Resolver: &auth.Resolver{}, V1Models: &V1ModelsDeps{Deps: &v1models.Deps{
+		DB: db, Packed: packed, Sources: &hydrate.Sources{Packed: packed, Cache: cache, Replica: db},
+		Gallery: &feed.GalleryStore{Cache: cache, DB: db},
+		Addons:  (&feed.AddonSource{Sys: testkit.NewRedis()}).Addons,
+		Config:  v1models.Config{ImageLocation: "https://i.example", BaseURL: "https://s.example", ResponseCacheTTL: 180 * time.Second},
+		Now:     func() time.Time { return now },
+	}}}
+	ctx := context.Background()
+	for _, c := range []struct {
+		name   string
+		live   map[string]string // the Node builds' published rule sets (nil: none)
+		reason string
+		reads  int
+	}{
+		{"the Node builds publish this build's rules", map[string]string{v1models.TrainingDataSQLHash: "1"}, "v1-models-training-data-unread", 1},
+		{"no Node build has published", nil, "v1-models-training-data-drift", 0},
+		{"the Node builds publish another build's rules", map[string]string{"0000000000000000000000000000000000000000000000000000000000000000;rules=1": "1"}, "v1-models-training-data-drift", 0},
+	} {
+		live := testkit.NewRedis()
+		if c.live != nil {
+			live.SetHash(v1models.KeyTrainingDataRulesLive, c.live)
+		}
+		s.V1Models.Rules = &v1models.TrainingDataRules{Redis: live}
+		reads = nil
+		_, err := s.computeV1Models(ctx, v1Request("/api/v1/models?limit=2", nil))
+		if got := fallback.Reason(err); got != c.reason {
+			t.Errorf("%s: %q (%v), want %q", c.name, got, err, c.reason)
+		}
+		// The published rules are read once, for the page's one candidate; the replica only when vouched.
+		if live.Calls != 1 || len(reads) != c.reads || (c.reads == 1 && !reflect.DeepEqual(reads[0], []int{6001})) {
+			t.Errorf("%s: %d reads of the published rules, Training Data reads %v; want 1 and %d", c.name, live.Calls, reads, c.reads)
+		}
 	}
 }
 
