@@ -23,6 +23,7 @@ const UNRATED = 2;
 const CLEAN = 3;
 const TOS_VIOLATION = 4;
 const BLOCKED_THEN_CLEAN = 5;
+const REPORT_LISTED = 6;
 const rows = [
   { id: 11, bountyId: BLOCKED_FOR, url: 'img-blocked', blockedFor: 'tos' },
   { id: 12, bountyId: UNRATED, url: 'img-unrated', nsfwLevel: 0 },
@@ -30,6 +31,7 @@ const rows = [
   { id: 14, bountyId: TOS_VIOLATION, url: 'img-tos', tosViolation: true },
   { id: 15, bountyId: BLOCKED_THEN_CLEAN, url: 'img-first-blocked', blockedFor: 'tos' },
   { id: 16, bountyId: BLOCKED_THEN_CLEAN, url: 'img-second-clean' },
+  { id: 17, bountyId: REPORT_LISTED, url: 'img-listed' },
 ].map((r) => ({
   userId: 5,
   type: 'image',
@@ -56,6 +58,8 @@ beforeAll(async () => {
       "acceptableMinor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, images jsonb NOT NULL DEFAULT '[]');
+    INSERT INTO "CsamReport" (images) VALUES ('[{"id": 17}]');
   `);
   for (const r of rows) {
     await db.query(
@@ -141,6 +145,8 @@ describe('/api/og?type=bounty image', () => {
     ['carries a block reason', BLOCKED_FOR],
     ['is unrated', UNRATED],
     ['violates the ToS', TOS_VIOLATION],
+    // The bounty search index's exclusion.
+    ['is listed on a report', REPORT_LISTED],
   ])('shows no image that %s', async (_, bountyId) => {
     expect(await cardImage(bountyId)).toEqual([]);
   });
