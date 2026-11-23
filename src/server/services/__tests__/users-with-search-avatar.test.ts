@@ -20,10 +20,11 @@ async function hitFor(hit: Record<string, unknown>) {
 }
 
 describe('getUsersWithSearch avatar rating', () => {
-  it('rates the unrated image fallback 0, not PG', async () => {
+  it('serves no avatar, rather than the unrated legacy image, when there is no profile picture', async () => {
     const user = await hitFor({ image: 'unrated.png' });
-    expect(user.avatarUrl).toBe('unrated.png');
-    expect(user.avatarNsfw).toBe(0);
+    expect(user.avatarUrl).toBeUndefined();
+    expect(user).not.toHaveProperty('image');
+    expect(mockSearch.mock.calls.at(-1)?.[1].attributesToRetrieve).not.toContain('image');
   });
 
   it("carries the profile picture's own rating (control)", async () => {

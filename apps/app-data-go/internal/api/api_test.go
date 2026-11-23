@@ -46,12 +46,14 @@ type fakeRegistry struct {
 	wide       atomic.Int32 // subscriptions whose token holds more than AppDataRead
 	notPrivate map[string]bool
 	schemas    sync.Map // token → schema last asked
+	// heads is the head a token's Live names in its meta, as the adapter's private feed does.
+	heads map[string]int64
 }
 
 func newFakeRegistry(t *testing.T) *fakeRegistry {
 	t.Helper()
 	f := &fakeRegistry{records: map[string][]registry.Entity{}, stall: map[string]bool{},
-		revokes: map[string][]chan string{}, notPrivate: map[string]bool{}}
+		revokes: map[string][]chan string{}, notPrivate: map[string]bool{}, heads: map[string]int64{}}
 	t.Cleanup(func() {
 		if n := f.raw.Load(); n != 0 {
 			t.Errorf("🔴 the adapter was shown %d tokens the hub did not issue", n)
@@ -81,6 +83,7 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 		f.mu.Lock()
 		// The adapter's wire form: every cursor wrapped as b1.<24 hex binding>.<inner>.
 		recs, stall, cursor := f.records[tok], f.stall[tok], "b1.0a1b2c3d4e5f60718293a4b5.p1.empty"
+		head, hasHead := f.heads[tok]
 		if f.notPrivate[tok] {
 			cursor = "b1.0a1b2c3d4e5f60718293a4b5.f1.0123456789abcdef0123456789abcdef"
 		}
@@ -92,7 +95,11 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			raw, _ := json.Marshal(map[string]any{"entity": e, "cursor": ""})
 			_, _ = fmt.Fprintf(w, "event: upsert\ndata: %s\n\n", raw)
 		}
-		if !stall {
+		switch {
+		case stall:
+		case hasHead:
+			_, _ = fmt.Fprintf(w, "event: live\ndata: {\"cursor\":%q,\"meta\":{\"head\":{\"seq\":%d}}}\n\n", cursor, head)
+		default:
 			_, _ = fmt.Fprintf(w, "event: live\ndata: {\"cursor\":%q}\n\n", cursor)
 		}
 		fl.Flush()
@@ -766,6 +773,7 @@ func TestEveryStreamErrorHasAFallbackReason(t *testing.T) {
 		session.ErrNotPrivate:    "not_private",
 		session.ErrBlockSpent:    "block_spent",
 		session.ErrBlockFull:     "block_cache_full",
+		session.ErrCursorExpired: "cursor_expired",
 	} {
 		got := fallbackReason(err)
 		if got != want {

@@ -1,3 +1,5 @@
+import http from 'node:http';
+import { getRequest } from '@sveltejs/kit/node';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The two Studio routes that charge Buzz: how a trigger word verdict reaches the browser, and that a
@@ -113,5 +115,55 @@ describe('POST /api/train with a checkpoint to continue from', () => {
     );
     expect(status).toBe(400);
     expect(train.submitTrainingBatch).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/train with a body over the server limit', () => {
+  // Through the adapter's own request conversion, which errors an over-limit body instead of refusing it.
+  async function throughNode(bytes: number, raw?: string) {
+    let outcome: unknown;
+    const server = http.createServer(async (req, res) => {
+      const request = await getRequest({
+        request: req,
+        base: 'http://localhost',
+        bodySizeLimit: 1024,
+      });
+      outcome = await Promise.resolve()
+        .then(() => trainPost({ locals: { user: { id: 7 }, devPreview: false }, request } as never))
+        .catch((e: unknown) => e);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as { port: number };
+    const body = raw ?? JSON.stringify({ runs: [], pad: 'x'.repeat(bytes) });
+    await fetch(`http://127.0.0.1:${port}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    return outcome;
+  }
+
+  it('answers 413 saying the dataset is too large, not that the batch is empty', async () => {
+    train.submitTrainingBatch.mockReset();
+    expect(await throughNode(4096)).toMatchObject({
+      status: 413,
+      body: { message: expect.stringContaining('too large') },
+    });
+    expect(train.submitTrainingBatch).not.toHaveBeenCalled();
+  });
+
+  it('control: a malformed body under the limit is not called too large', async () => {
+    train.submitTrainingBatch.mockReset().mockResolvedValue({ workflowIds: ['w'], failure: null });
+    expect(await throughNode(16, '{not json')).not.toMatchObject({ status: 413 });
+    expect(train.submitTrainingBatch).toHaveBeenCalledTimes(1);
+    expect(train.submitTrainingBatch.mock.calls[0][1]).toBeUndefined();
+  });
+
+  it('control: a body under the limit reaches the submit', async () => {
+    train.submitTrainingBatch.mockReset().mockResolvedValue({ workflowIds: ['w'], failure: null });
+    await throughNode(16);
+    expect(train.submitTrainingBatch).toHaveBeenCalledTimes(1);
   });
 });

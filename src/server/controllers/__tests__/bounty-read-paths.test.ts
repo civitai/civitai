@@ -703,6 +703,93 @@ describe('an nsfw-flagged bounty page', () => {
   });
 });
 
+describe('a minor-flagged image a bounty flag raises into the mature range', () => {
+  beforeEach(() => dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([]));
+  const MINOR = 10;
+  const CONTROL = 11;
+  const viewers = {
+    stranger,
+    owner: { user: { id: 5 }, ...uncapped } as never,
+    moderator: { user: { id: 7, isModerator: true }, ...uncapped } as never,
+  };
+  const listed = async (ctx: never) => {
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([
+      {
+        id: 1,
+        name: 'B',
+        nsfw: true,
+        nsfwLevel: 60,
+        moderatorNsfwLevel: null,
+        tags: [],
+        user: { id: 5 },
+      },
+    ]);
+    mockImagesForBounties.mockResolvedValue({
+      1: [
+        {
+          id: MINOR,
+          userId: 5,
+          minor: true,
+          nsfwLevel: NsfwLevel.PG,
+          nsfwLefel: NsfwLevel.PG,
+          tags: [],
+        },
+        {
+          id: CONTROL,
+          userId: 5,
+          minor: false,
+          nsfwLevel: NsfwLevel.PG,
+          nsfwLefel: NsfwLevel.PG,
+          tags: [],
+        },
+      ],
+    });
+    const { items } = await getInfiniteBountiesHandler({
+      input: { limit: 10, period: 'AllTime', sort: 'Newest' } as never,
+      ctx,
+    });
+    return (items[0]?.images ?? []).map((i: { id: number }) => i.id);
+  };
+  const paged = async (ctx: never) => {
+    mockAssert.mockResolvedValue(undefined);
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      id: 9,
+      name: 'B',
+      availability: 'Public',
+      poi: false,
+      nsfw: true,
+      nsfwLevel: 60,
+      moderatorNsfwLevel: NsfwLevel.R,
+      user: { id: 5 },
+      details: null,
+      tags: [],
+      meta: {},
+    });
+    mockBountyImages.mockResolvedValue([
+      { id: MINOR, userId: 5, minor: true, nsfwLevel: NsfwLevel.PG, tags: [] },
+      { id: CONTROL, userId: 5, minor: false, nsfwLevel: NsfwLevel.PG, tags: [] },
+    ]);
+    const bounty = await getBountyHandler({ input: { id: 9 }, ctx });
+    return bounty.images.map((i) => i.id);
+  };
+
+  it.each([
+    ['feed', listed],
+    ['page', paged],
+  ] as const)('is withheld from a stranger on the %s, beside a served control', async (_, read) => {
+    expect(await read(viewers.stranger)).toEqual([CONTROL]);
+  });
+
+  it.each([
+    ['feed', 'owner', listed],
+    ['feed', 'moderator', listed],
+    ['page', 'owner', paged],
+    ['page', 'moderator', paged],
+  ] as const)('is served on the %s to its %s', async (_, who, read) => {
+    expect(await read(viewers[who])).toEqual([MINOR, CONTROL]);
+  });
+});
+
 describe('entry detail image count', () => {
   const OWNER = 5;
   const twelve = Array.from({ length: 12 }, (_, i) => ({
@@ -909,7 +996,8 @@ describe("bounty entry images and the owner's view, against the real image query
         "needsReview" text, "blockedFor" text, "userId" int DEFAULT ${OWNER}, index int DEFAULT 0,
         poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
         "modelRestricted" boolean NOT NULL DEFAULT false,
-        "acceptableMinor" boolean NOT NULL DEFAULT false
+        "acceptableMinor" boolean NOT NULL DEFAULT false,
+        "tosViolation" boolean NOT NULL DEFAULT false
       );
       CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
       INSERT INTO "Image" (id, "needsReview", index) VALUES (${CLEAN}, NULL, 0), (${HELD}, 'csam', 1);

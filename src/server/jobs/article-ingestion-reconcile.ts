@@ -1,5 +1,10 @@
 import { dbRead } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
+import {
+  TEXT_MODERATION_PENDING_TIMEOUT_MINUTES,
+  TEXT_MODERATION_RETRY_LIMIT,
+  TEXT_MODERATION_RETRY_STATUSES,
+} from '~/server/jobs/text-moderation-retry.constants';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
@@ -26,12 +31,6 @@ const STUCK_THRESHOLD_MINUTES = 15;
 const MAX_FORCED_RESUBMITS = 3;
 const FORCED_RESUBMITS_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-// After this long without a webhook, a Pending EntityModeration row is
-// considered lost. Matches TEXT_MODERATION_PENDING_TIMEOUT_MINUTES in
-// `text-moderation-retry.ts` so both cron paths agree.
-const PENDING_MODERATION_TIMEOUT_MINUTES = 30;
-
-const MODERATION_RETRY_LIMIT = 9;
 const FETCH_LIMIT = 500;
 const RECONCILE_CONCURRENCY = 5;
 
@@ -75,7 +74,7 @@ export const articleIngestionReconcile = createJob(
     const stuckBefore = decreaseDate(now, STUCK_THRESHOLD_MINUTES, 'minutes');
     const pendingModerationBefore = decreaseDate(
       now,
-      PENDING_MODERATION_TIMEOUT_MINUTES,
+      TEXT_MODERATION_PENDING_TIMEOUT_MINUTES,
       'minutes'
     );
 
@@ -169,10 +168,8 @@ export const articleIngestionReconcile = createJob(
           const shouldResubmit =
             !moderation ||
             verdictForOtherText ||
-            (moderation.retryCount < MODERATION_RETRY_LIMIT &&
-              (moderation.status === EntityModerationStatus.Failed ||
-                moderation.status === EntityModerationStatus.Expired ||
-                moderation.status === EntityModerationStatus.Canceled ||
+            (moderation.retryCount < TEXT_MODERATION_RETRY_LIMIT &&
+              (TEXT_MODERATION_RETRY_STATUSES.includes(moderation.status) ||
                 (moderation.status === EntityModerationStatus.Pending &&
                   moderation.updatedAt < pendingModerationBefore)));
 

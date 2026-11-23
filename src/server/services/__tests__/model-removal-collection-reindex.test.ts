@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { DELETED_ROW_COLUMNS_SQL } from './deleted-row-columns.fixture';
 import { PGlite } from '@electric-sql/pglite';
 import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
@@ -524,13 +525,14 @@ describe('permaDeleteModelById — legal hold', () => {
         images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'
       );
       CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
-      CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
+      CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
       CREATE TABLE "JobQueue" (
         "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
         data jsonb, "createdAt" timestamp(3) NOT NULL DEFAULT now(),
         UNIQUE ("entityType", "entityId", type)
       );
     `);
+    await db.exec(imageUseTablesSql);
     await db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
     await db.exec(readFileSync(OWNERSHIP_MIGRATION, 'utf8'));
     await db.exec(heldCopiesSchemaSql());

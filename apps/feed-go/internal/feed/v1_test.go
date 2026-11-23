@@ -275,6 +275,9 @@ type fakeV1Sources struct {
 	contributors     map[int]map[int][]string
 	collectionsErr   error
 	collectionsAsked [][2]int
+	// showcase answers VersionShowcase (zero: ShowcaseUncurated); showcaseAsked is each call's ids.
+	showcase      hydrate.Showcase
+	showcaseAsked [][]int
 }
 
 func pickIDs[V any](m map[int]V, ids []int) map[int]V {
@@ -333,6 +336,11 @@ func (f *fakeV1Sources) CollectionPermission(_ context.Context, collectionID, vi
 		c.Contributor = f.contributors[collectionID][viewerID]
 	}
 	return &c, nil
+}
+
+func (f *fakeV1Sources) VersionShowcase(_ context.Context, ids []int) hydrate.Showcase {
+	f.showcaseAsked = append(f.showcaseAsked, ids)
+	return f.showcase
 }
 
 type fakeV1Gallery struct {

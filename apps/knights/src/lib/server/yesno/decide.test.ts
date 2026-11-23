@@ -70,3 +70,26 @@ describe('what counts as a vote', () => {
     });
   });
 });
+
+describe('decideYesNo when a "no" may not settle on the minimum (a rating-lowering tag removal)', () => {
+  const strict = { noSettlesAtNeeded: false };
+
+  it('keeps two "no" at Paladin pending, then settles at 3-0 or 3-1 and is exhausted at 2-2', () => {
+    expect(decideYesNo(votes(0, 2), 'Paladin', strict)).toEqual({ kind: 'pending' });
+    expect(decideYesNo(votes(0, 3), 'Paladin', strict)).toEqual({ kind: 'consensus', value: 'no' });
+    expect(decideYesNo(votes(1, 2), 'Paladin', strict)).toEqual({ kind: 'pending' });
+    expect(decideYesNo(votes(1, 3), 'Paladin', strict)).toEqual({ kind: 'consensus', value: 'no' });
+    expect(decideYesNo(votes(2, 2), 'Paladin', strict)).toEqual({ kind: 'exhausted' });
+  });
+
+  it('still settles a "yes" on the minimum', () => {
+    expect(decideYesNo(votes(2, 0), 'Paladin', strict)).toEqual({
+      kind: 'consensus',
+      value: 'yes',
+    });
+  });
+
+  it('leaves the default rule as it was', () => {
+    expect(decideYesNo(votes(0, 2), 'Paladin')).toEqual({ kind: 'consensus', value: 'no' });
+  });
+});
