@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  BATCH_WORKFLOWS,
+  SUITES,
   decideRun,
+  pickBase,
+  postedVerdict,
+  rerunArgs,
+  stepInput,
+  suiteOf,
   headVerdict,
   classifyRed,
   isFlaky,
@@ -346,5 +353,180 @@ describe('report and bisect parsing', () => {
     // The quoted form newer git prints, copied from a live CI run; older git does not quote.
     expect(parseFirstBad(`${BAD} is the first 'bad' commit\ncommit ${BAD}`)).toBe(BAD);
     expect(parseFirstBad('There are only skipped commits left to test.')).toBeNull();
+  });
+});
+
+// The component and app suites are verified by the same code, through a suite descriptor. The
+// unit suite's strings above are the ones it has always posted; these pin that the others get
+// their own context and wording, and that nothing defaults a component or app verdict to `unit`.
+describe('the batched suites other than unit', () => {
+  it('each posts its own commit status context, under its own verify job', () => {
+    expect(
+      Object.fromEntries(
+        Object.entries(SUITES).map(([k, s]) => [k, [s.context, s.verifyJob, s.workflow]])
+      )
+    ).toEqual({
+      unit: ['Unit tests (main batch)', 'Unit verified (main batch)', 'lint.yml'],
+      component: ['Component tests (main batch)', 'Component verified (main batch)', 'lint.yml'],
+      apps: ['App tests (main batch)', 'App tests verified (main batch)', 'apps.yml'],
+    });
+  });
+
+  it('word their statuses by suite', () => {
+    expect(
+      statusTarget({ unitResult: 'success', head: HEAD, suite: SUITES.component })?.description
+    ).toBe('Component suite passed at this commit.');
+    expect(
+      statusTarget({ unitResult: 'cancelled', head: HEAD, suite: SUITES.apps })?.description
+    ).toBe('App suite did not finish (cancelled); the next batch run re-verifies.');
+    expect(
+      statusTarget({ unitResult: 'failure', head: HEAD, failed: [], suite: SUITES.apps })
+        ?.description
+    ).toBe('An app shard failed with no failing test file (setup or timeout). See the run.');
+  });
+
+  // The HEAD status of a bisected red keeps the prefix the CI-watch reader parses, for every suite.
+  it('a bisected component red names the first bad commit on HEAD the same way', () => {
+    expect(
+      statusTargets({
+        unitResult: 'failure',
+        head: HEAD,
+        failed: ['src/x.browser.test.tsx'],
+        firstBad: BAD,
+        suite: SUITES.component,
+      })[1]
+    ).toEqual({
+      sha: HEAD,
+      state: 'failure',
+      description: 'Failing since first bad commit cccccccccc: src/x.browser.test.tsx',
+    });
+  });
+
+  it('re-runs the failed files under the suite projects', () => {
+    expect(rerunArgs(['src/a.test.ts'])).toEqual([
+      'exec',
+      'vitest',
+      'run',
+      '--project',
+      'unit*',
+      '--passWithNoTests',
+      'src/a.test.ts',
+    ]);
+    expect(rerunArgs(['src/b.browser.test.tsx'], SUITES.component)).toEqual([
+      'exec',
+      'vitest',
+      'run',
+      '--project',
+      'component',
+      '--project',
+      'geometry',
+      '--passWithNoTests',
+      'src/b.browser.test.tsx',
+    ]);
+    expect(rerunArgs(['apps/auth/src/c.test.ts'], SUITES.apps).slice(3, 5)).toEqual([
+      '--project',
+      'app:*',
+    ]);
+  });
+
+  // The bisect step reads failed.json from a COPY of this file, so the format is a contract:
+  // a bare array is the unit suite (what bisect has always written for it).
+  it('the bisect step reads its suite from failed.json', () => {
+    expect(stepInput(['src/a.test.ts'])).toEqual({ suite: SUITES.unit, files: ['src/a.test.ts'] });
+    expect(stepInput({ suite: 'apps', files: ['apps/x.test.ts'] })).toEqual({
+      suite: SUITES.apps,
+      files: ['apps/x.test.ts'],
+    });
+    expect(() => stepInput({ suite: 'nope', files: [] })).toThrow(/unknown suite: nope/);
+    expect(() => suiteOf('Unit')).toThrow(/unknown suite/);
+  });
+
+  // apps.yml is a main batch suite with its own verdict: lint.yml's `batch-suites` dispatches it
+  // and waits for (and re-posts) that status rather than folding it into `Batch suites`.
+  it('apps.yml is in BATCH_WORKFLOWS with the app suite context as its own', () => {
+    expect(BATCH_WORKFLOWS.filter((b) => b.workflow === 'apps.yml')).toEqual([
+      { workflow: 'apps.yml', ownContext: SUITES.apps.context },
+    ]);
+  });
+});
+
+// The bisect base is per suite, from the verdict that suite POSTED, never from the run's
+// conclusion: the unit and component suites share one lint.yml run, so one of them red makes the
+// run `failure` while the other is green. Fixture runs are pairwise distinct, newest first.
+describe('pickBase: the last green verified run, per suite', () => {
+  const url = (id: number) => `https://github.com/o/r/actions/runs/${id}`;
+  const st = (context: string, state: string, id: number) => ({
+    context,
+    state,
+    target_url: url(id),
+  });
+  const jobsOf = (...names: string[]) => names.map((name) => ({ name, conclusion: 'success' }));
+  const BOTH = jobsOf('Unit verified (main batch)', 'Component verified (main batch)');
+  // r3 (newest): unit green, component RED. r2: unit RED, component green. r1: both green.
+  const cands = () => [
+    {
+      run: { id: 3, status: 'completed', conclusion: 'failure', head_sha: 'c3' },
+      jobs: BOTH,
+      statuses: [
+        st('Unit tests (main batch)', 'success', 3),
+        st('Component tests (main batch)', 'failure', 3),
+      ],
+    },
+    {
+      run: { id: 2, status: 'completed', conclusion: 'failure', head_sha: 'c2' },
+      jobs: BOTH,
+      statuses: [
+        st('Unit tests (main batch)', 'failure', 2),
+        st('Component tests (main batch)', 'success', 2),
+      ],
+    },
+    {
+      run: { id: 1, status: 'completed', conclusion: 'success', head_sha: 'c1' },
+      jobs: BOTH,
+      statuses: [
+        st('Unit tests (main batch)', 'success', 1),
+        st('Component tests (main batch)', 'success', 1),
+      ],
+    },
+  ];
+
+  // Mutation: read run.conclusion instead of the posted verdict, and unit lands on r1 (killed).
+  it('a red component does not move the unit base', () => {
+    expect(pickBase(cands(), SUITES.unit)?.id).toBe(3);
+  });
+
+  // Mutation: use the unit context for every suite, and component lands on r3 (killed).
+  it('a red unit does not move the component base', () => {
+    expect(pickBase(cands(), SUITES.component)?.id).toBe(2);
+  });
+
+  it('a run whose verify job did not run is never a base, whatever it posted', () => {
+    const c = cands();
+    c[0].jobs = [{ name: 'Unit verified (main batch)', conclusion: 'skipped' }, BOTH[1]];
+    expect(pickBase(c, SUITES.unit)?.id).toBe(1);
+  });
+
+  it('a status naming another run does not count for this one', () => {
+    const c = cands();
+    c[0].statuses = [st('Unit tests (main batch)', 'success', 99)];
+    expect(pickBase(c, SUITES.unit)?.id).toBe(1);
+    expect(postedVerdict({ id: 3 }, c[0].statuses, SUITES.unit)).toBeNull();
+  });
+
+  it('a run still in progress is skipped; nothing green is null', () => {
+    const c = cands();
+    c[0].run.status = 'in_progress';
+    expect(pickBase(c, SUITES.unit)?.id).toBe(1);
+    expect(pickBase([c[1]], SUITES.unit)).toBeNull();
+  });
+
+  // Reads lazily: once a base is found, older runs' jobs and statuses are not fetched.
+  it('reads jobs and statuses lazily, newest first', () => {
+    let older = 0;
+    const c = cands().map((x, i) =>
+      i === 0 ? x : { ...x, jobs: () => (older++, x.jobs), statuses: () => (older++, x.statuses) }
+    );
+    expect(pickBase(c, SUITES.unit)?.id).toBe(3);
+    expect(older).toBe(0);
   });
 });

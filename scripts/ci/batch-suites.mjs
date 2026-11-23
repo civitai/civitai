@@ -15,6 +15,12 @@
 //         error    a suite was not dispatched, its run was never found at this commit, or it
 //                  did not finish (cancelled, still running at the deadline): no verdict, so it
 //                  reads as undecided, never as green.
+//       A suite with an `ownContext` (apps.yml: `App tests (main batch)`) posts that status itself,
+//       from its own run, and is left out of the verdict above. Once it is posted on this commit,
+//       this job RE-POSTS it unchanged (state and description) with this lint run as its
+//       target_url (repostStatuses), so every `(main batch)` verdict on this commit names the
+//       same run: the one CI-watch lists. A suite whose paths did not change is not dispatched,
+//       so nothing is posted or re-posted for it at this commit.
 //
 // NOTHING IS BISECTED HERE. A red names the suites and the range (last green batch .. this
 // commit); the CI-watch item it opens carries that range, and whoever holds the item bisects.
@@ -158,6 +164,24 @@ export function verdict({ suites, base }) {
   };
 }
 
+/**
+ * The own-context statuses to re-post with this run as target_url (see the header). `statuses`:
+ * the commit's statuses, newest first. For each dispatched suite with an ownContext, the newest
+ * status in that context, when it is a verdict (success / failure / error) and does not already
+ * name `runUrl`. Returns [{ context, state, description }].
+ */
+export function repostStatuses({ suites, statuses, runUrl }) {
+  const out = [];
+  for (const s of suites) {
+    if (!s.ownContext || !s.run || s.state === 'not-dispatched') continue;
+    const newest = (statuses ?? []).find((st) => st.context === s.ownContext);
+    if (!newest || !['success', 'failure', 'error'].includes(newest.state)) continue;
+    if ((newest.target_url ?? '').replace(/\/$/, '') === runUrl) continue;
+    out.push({ context: s.ownContext, state: newest.state, description: newest.description ?? '' });
+  }
+  return out;
+}
+
 /** Is the wait over? Every dispatched run finished, and every awaited own context is posted. */
 export function waitDone({ suites, postedContexts }) {
   return suites.every((s) => {
@@ -182,7 +206,10 @@ function readOn(workflow) {
   }
 }
 
-function postStatus(repoName, sha, { state, description }) {
+const runUrl = (repoName) =>
+  `${process.env.GITHUB_SERVER_URL}/${repoName}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+
+function postStatus(repoName, sha, { state, description, context = SUITES_CONTEXT }) {
   gh(
     'api',
     '-X',
@@ -191,11 +218,11 @@ function postStatus(repoName, sha, { state, description }) {
     '-f',
     `state=${state}`,
     '-f',
-    `context=${SUITES_CONTEXT}`,
+    `context=${context}`,
     '-f',
     `description=${description}`,
     '-f',
-    `target_url=${process.env.GITHUB_SERVER_URL}/${repoName}/actions/runs/${process.env.GITHUB_RUN_ID}`
+    `target_url=${runUrl(repoName)}`
   );
 }
 
@@ -355,6 +382,19 @@ function run() {
   for (const s of suites)
     if (s.ownContext && s.run && !posted.has(s.ownContext))
       lines.push(`\`${s.ownContext}\` was not posted on this commit before the deadline.`);
+  if (suites.some((s) => s.run && s.ownContext)) {
+    try {
+      const statuses = api(`repos/${repoName}/commits/${sha}/statuses?per_page=100`);
+      for (const r of repostStatuses({ suites, statuses, runUrl: runUrl(repoName) })) {
+        lines.push(`Re-posting \`${r.context}\` = ${r.state} with this run as its target.`);
+        postStatus(repoName, sha, r);
+      }
+    } catch (err) {
+      lines.push(
+        `Could not re-post the own-context statuses: ${String(err.message).split('\n')[0]}`
+      );
+    }
+  }
   done(verdict({ suites, base }));
 }
 

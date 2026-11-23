@@ -9,6 +9,7 @@ import {
   SUITES_CONTEXT,
   decideBase,
   findRun,
+  repostStatuses,
   runState,
   selectSuites,
   suiteDispatchArgs,
@@ -377,6 +378,71 @@ describe('waitDone', () => {
     expect(waitDone({ suites: own, postedContexts: new Set(['App tests (main batch)']) })).toBe(
       true
     );
+  });
+});
+
+// An own-context verdict (apps.yml's `App tests (main batch)`) is posted from its own run; the
+// batch re-posts it with the lint batch run as its target_url, so a reader that lists lint batch
+// runs and keeps statuses naming THAT run finds it (lint.yml's header, the status contract).
+describe('repostStatuses', () => {
+  const RUN = 'https://github.com/o/r/actions/runs/500';
+  const APPS = 'https://github.com/o/r/actions/runs/777';
+  const CTX = 'App tests (main batch)';
+  const suite = (over: Record<string, unknown> = {}) => ({
+    workflow: 'apps.yml',
+    ownContext: CTX,
+    run: true,
+    state: 'green',
+    ...over,
+  });
+  const st = (state: string, target_url: string, description = `d-${state}`) => ({
+    context: CTX,
+    state,
+    target_url,
+    description,
+  });
+
+  // Mutant: re-post the OLDEST status (or drop the state) and the bisected red's HEAD line is lost.
+  it('re-posts the newest own-context verdict, state and description unchanged', () => {
+    expect(
+      repostStatuses({
+        suites: [suite()],
+        statuses: [
+          st('failure', APPS, 'Failing since first bad commit cccccccccc: apps/a.test.ts'),
+          st('error', APPS),
+        ],
+        runUrl: RUN,
+      })
+    ).toEqual([
+      {
+        context: CTX,
+        state: 'failure',
+        description: 'Failing since first bad commit cccccccccc: apps/a.test.ts',
+      },
+    ]);
+  });
+
+  it('does not re-post one that already names this run, nor a pending one, nor none', () => {
+    expect(
+      repostStatuses({ suites: [suite()], statuses: [st('success', `${RUN}/`)], runUrl: RUN })
+    ).toEqual([]);
+    expect(
+      repostStatuses({ suites: [suite()], statuses: [st('pending', APPS)], runUrl: RUN })
+    ).toEqual([]);
+    expect(repostStatuses({ suites: [suite()], statuses: [], runUrl: RUN })).toEqual([]);
+  });
+
+  // A suite not dispatched at this commit (paths unchanged) gets nothing re-posted: an older
+  // status in that context on this commit, if any, is not this batch's.
+  it('only for dispatched suites that have an own context', () => {
+    const statuses = [st('success', APPS)];
+    expect(repostStatuses({ suites: [suite({ run: false })], statuses, runUrl: RUN })).toEqual([]);
+    expect(
+      repostStatuses({ suites: [suite({ state: 'not-dispatched' })], statuses, runUrl: RUN })
+    ).toEqual([]);
+    expect(
+      repostStatuses({ suites: [suite({ ownContext: null })], statuses, runUrl: RUN })
+    ).toEqual([]);
   });
 });
 
