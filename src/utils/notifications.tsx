@@ -86,7 +86,7 @@ export function showErrorNotification({
       ))}
     </ul>
   ) : (
-    reason ?? <RateLimitedMessage message={error.message} rateLimit={getRateLimit(error)} />
+    reason ?? rateLimitedMessage(error.message, getRateLimit(error))
   );
 
   const text = Array.isArray(error)
@@ -259,16 +259,10 @@ export function showExpiredCaptchaTokenNotification({
   });
 }
 
-/** A refusal's message with when to retry, and for a plan limit, where to see it. */
-function RateLimitedMessage({
-  message,
-  rateLimit,
-}: {
-  message: string;
-  rateLimit: ReturnType<typeof getRateLimit>;
-}) {
+/** A refusal's message with when to retry, and for a plan limit, a link to where to see it. */
+function rateLimitedMessage(message: string, rateLimit: ReturnType<typeof getRateLimit>) {
   const text = withRetryText(message, rateLimit);
-  if (rateLimit?.kind !== 'product') return <>{text}</>;
+  if (rateLimit?.kind !== 'product') return text;
   return (
     <>
       {text}{' '}
