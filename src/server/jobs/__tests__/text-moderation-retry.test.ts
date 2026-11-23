@@ -127,9 +127,15 @@ describe('review text while its scan cannot ask every label (civitai/civitai#101
         retryCount: 1,
       },
     ];
-    dbMock.dbRead.entityModeration.findMany.mockImplementation((async () =>
+    // The job's selection, rows oldest first: types left out, retries left, the first `take`.
+    dbMock.dbRead.entityModeration.findMany.mockImplementation((async (args: {
+      where: { entityType?: { notIn: string[] } };
+      take: number;
+    }) =>
       rows
+        .filter((r) => !args.where.entityType?.notIn.includes(r.entityType))
         .filter((r) => r.retryCount < TEXT_MODERATION_RETRY_LIMIT)
+        .slice(0, args.take)
         .map(({ retryCount: _, ...r }) => r)) as never);
     dbMock.dbWrite.entityModeration.updateMany.mockImplementation((async (args: {
       where: { id: { in: number[] } };
@@ -160,15 +166,31 @@ describe('review text while its scan cannot ask every label (civitai/civitai#101
       for (let pass = 0; pass < TEXT_MODERATION_RETRY_LIMIT + 2; pass++) {
         submit.mockClear();
         loggingMock.logToAxiom.mockClear();
-        expect(await run()).toMatchObject({ retried: 1, skipped: 2 });
+        expect(await run()).toMatchObject({ processed: 1, retried: 1 });
         expect(submit.mock.calls.map(([args]) => args.entityId)).toEqual([3]);
         expect(said()).toHaveLength(1);
       }
       askable();
       submit.mockClear();
       expect(rows.map((r) => r.retryCount)).toEqual([1, 1, 1]);
-      expect(await run()).toMatchObject({ retried: 3, skipped: 0 });
+      expect(await run()).toMatchObject({ processed: 3, retried: 3 });
       expect(submit.mock.calls.map(([args]) => args.entityId).sort()).toEqual([3, 7, 8]);
     }
   );
+
+  it('a full batch of older review rows does not hold other text back while the labels are out', async () => {
+    rows = [
+      ...Array.from({ length: 500 }, (_, i) => ({
+        id: 1000 + i,
+        entityType: 'ServiceDealReview',
+        entityId: 1000 + i,
+        status: 'Failed',
+        retryCount: 1,
+      })),
+      { id: 202, entityType: 'Model', entityId: 3, status: 'Failed', retryCount: 1 },
+    ];
+    askable('gate closed');
+    expect(await run()).toMatchObject({ processed: 1, retried: 1 });
+    expect(submit.mock.calls.map(([args]) => args.entityId)).toEqual([3]);
+  });
 });

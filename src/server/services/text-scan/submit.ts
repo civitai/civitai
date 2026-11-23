@@ -317,7 +317,8 @@ export function planTextScanPasses(
 
 /**
  * Drops csam while its prompt is blank: the gate can open before the prompt exists. A profile that
- * tolerates it scans the other labels; a requireEveryLabel one is refused (see scanEntity).
+ * tolerates it scans the other labels; a requireEveryLabel profile is refused in active mode (see
+ * scanEntity).
  */
 function withoutPromptlessLabels(
   labels: TextScanLabel[],

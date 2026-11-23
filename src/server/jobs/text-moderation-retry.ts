@@ -33,8 +33,21 @@ export const retryFailedTextModeration = createJob(
       'minutes'
     );
 
+    // Review text is left out while its scan cannot ask every label: a refused submit spends a
+    // retry, and the row would drop out for good. Left out of the query, not dropped after it, or
+    // those untouched oldest rows would fill every batch ahead of other types.
+    const unaskable = await unaskableServiceDealReviewTypes();
+    if (unaskable.length)
+      logToAxiom({
+        name: 'retry-failed-text-moderation',
+        type: 'warning',
+        message: 'review text scan cannot ask every required label; rows left for a later run',
+        payload: { entityTypes: unaskable },
+      });
+
     const rows = await dbRead.entityModeration.findMany({
       where: {
+        ...(unaskable.length ? { entityType: { notIn: unaskable } } : {}),
         retryCount: { lt: TEXT_MODERATION_RETRY_LIMIT },
         OR: [
           {
@@ -91,21 +104,6 @@ export const retryFailedTextModeration = createJob(
       if (active.length) byType.set(entityType, active);
       else byType.delete(entityType);
     }
-
-    // Skip review text while its scan cannot ask every label: a refused submit spends a retry, and
-    // the row would drop out for good.
-    const unaskable = (await unaskableServiceDealReviewTypes()).filter((type) => byType.has(type));
-    for (const type of unaskable) {
-      skipped += byType.get(type)?.length ?? 0;
-      byType.delete(type);
-    }
-    if (unaskable.length)
-      logToAxiom({
-        name: 'retry-failed-text-moderation',
-        type: 'warning',
-        message: 'review text scan cannot ask every required label; rows left for a later run',
-        payload: { entityTypes: unaskable },
-      });
 
     // Pre-increment retryCount on Pending-timeout rows. Terminal-failure rows
     // (Failed/Expired/Canceled) had their retryCount bumped by
