@@ -3099,7 +3099,7 @@
   "src/server/services/text-scan/__tests__/scan-model-and-rules.test.ts": 3,
   "src/server/services/text-scan/__tests__/storyline-text-scan.test.ts": 2,
   "src/server/services/text-scan/__tests__/submit-label-gate.test.ts": 3,
-  "src/server/services/text-scan/__tests__/submit.test.ts": 4,
+  "src/server/services/text-scan/__tests__/submit.test.ts": 3,
   "src/server/services/text-scan/__tests__/track-lyrics-verdict.e2e.test.ts": 4,
   "src/server/services/text-scan/__tests__/web-search.callback.test.ts": 3,
   "src/server/services/text-scan/__tests__/web-search.submit.test.ts": 3,

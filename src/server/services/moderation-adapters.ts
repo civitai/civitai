@@ -1,3 +1,4 @@
+import { setTextScanVerdictApplier } from '~/server/services/text-scan/verdict-applier';
 import '~/server/services/text-scan/profiles/index';
 import { articleModerationAdapter } from '~/server/services/article-moderation.adapter';
 import { bountyModerationAdapter } from '~/server/services/bounty-moderation.adapter';
@@ -68,3 +69,8 @@ export function getModerationAdapter(entityType: string): ModerationAdapter | un
 export function getSupportedModerationEntityTypes(): string[] {
   return Object.keys(moderationAdapters);
 }
+
+// Text scan applies verdicts through this without importing the registry (verdict-applier.ts).
+setTextScanVerdictApplier(async (entityType, args) => {
+  await getModerationAdapter(entityType)?.applyTextScan?.(args);
+});

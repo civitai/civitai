@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromptModule from '~/server/services/text-scan/prompt';
 import type * as ModeModule from '~/server/services/text-scan/mode';
-import type * as AdaptersModule from '~/server/services/moderation-adapters';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -12,10 +11,6 @@ vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   getTextScanMode: vi.fn(),
-}));
-vi.mock('~/server/services/moderation-adapters', async (importOriginal) => ({
-  ...(await importOriginal<typeof AdaptersModule>()),
-  getModerationAdapter: vi.fn(),
 }));
 vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   ...(await importOriginal<typeof PromptModule>()),
@@ -28,7 +23,7 @@ const { scanEntity, scanEntitiesInBackground, textScanExternalId, textScanConten
 const { segmentUserText } = await import('~/server/services/text-scan/segment');
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { submitWorkflow } = await import('@civitai/orchestration-client');
-const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
+const { setTextScanVerdictApplier } = await import('~/server/services/text-scan/verdict-applier');
 const { getTextScanMode } = await import('~/server/services/text-scan/mode');
 const { getActiveTextScanPrompts, getTextScanConfig, textScanTextHash } = await import(
   '~/server/services/text-scan/prompt'
@@ -169,7 +164,8 @@ describe('scanEntity', () => {
       load.mockResolvedValue(
         new Map([[7, { fields: [{ heading: 'Detail', text: '' }], declared: { nsfwLevel: 1 } }]])
       );
-      vi.mocked(getModerationAdapter).mockReturnValue({ applyTextScan } as any);
+      // The applier the adapter registry sets at server start (verdict-applier.ts).
+      setTextScanVerdictApplier(async (entityType, args) => applyTextScan(entityType, args));
     });
 
     it('replaces an active raising verdict with a clean one and re-applies it', async () => {
@@ -184,6 +180,7 @@ describe('scanEntity', () => {
       expect(data).toMatchObject({ status: 'Succeeded', triggeredLabels: [] });
       expect(data.nsfwLevel ?? 1).toBeLessThanOrEqual(1);
       expect(applyTextScan).toHaveBeenCalledWith(
+        'Post',
         expect.objectContaining({ entityId: 7, workflowId: 'wf-9' })
       );
       expect(submitWorkflow).not.toHaveBeenCalled();

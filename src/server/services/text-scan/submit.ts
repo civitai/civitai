@@ -3,6 +3,7 @@ import { submitWorkflow } from '@civitai/orchestration-client';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { applyTextScanVerdict } from '~/server/services/text-scan/verdict-applier';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
@@ -275,9 +276,7 @@ async function clearStaleVerdict({
   });
   if (!recorded || mode !== 'active') return;
 
-  // Imported here: moderation-adapters reaches this module through the text-scan adapter.
-  const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
-  await getModerationAdapter(entityType)?.applyTextScan?.({
+  await applyTextScanVerdict(entityType, {
     entityId,
     workflowId: existing.workflowId,
     outcome,
