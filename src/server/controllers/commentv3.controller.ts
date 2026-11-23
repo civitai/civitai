@@ -403,9 +403,9 @@ export async function toggleHideCommentV3Handler({
   await assertSectionOwnerOrModerator(ctx, comment);
   // Toggled from the row read under its lock: the read above may predate a hide since.
   const hidden = await dbWrite.$transaction(async (tx) => {
-    const [row] = await tx.$queryRaw<{ hidden: boolean }[]>`
-      SELECT hidden FROM "CommentV3" WHERE id = ${comment.id} FOR UPDATE`;
-    const next = !(row?.hidden ?? comment.hidden);
+    const row = await getStoredComment(prismaRunner(tx), comment.id, 'FOR UPDATE');
+    if (!row || row.deletedAt) throw throwNotFoundError('Comment not found');
+    const next = !row.hidden;
     await setCommentFlags(prismaRunner(tx), [comment.id], { hidden: next });
     return next;
   });
