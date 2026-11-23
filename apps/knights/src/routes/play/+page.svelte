@@ -893,7 +893,10 @@
       {@render levelToast(false)}
       <section class="lockout" role="status" aria-label="Judging paused">
         <h2>A moment of rest</h2>
-        <p>You have been judging faster than the Order can trust. Rest a little; the queue will wait.</p>
+        <p>
+          You reached the Order's pace limit: too many judgments in too short a time. It says
+          nothing about your accuracy. Rest a little; the queue will wait.
+        </p>
         <Countdown seconds={screen.seconds} label="Time until judging resumes" />
         <p class="muted">Judging resumes by itself.</p>
       </section>

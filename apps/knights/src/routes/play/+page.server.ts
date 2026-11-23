@@ -215,6 +215,16 @@ const limitedFailure = (until: Date) =>
     lockoutSeconds: Math.max(1, Math.ceil((until.getTime() - queueDeps.now().getTime()) / 1000)),
   });
 
+/** The pause a refusal answers: the one `/play` shows, so refused votes never give a different countdown. */
+async function pauseEnd(userId: number, refusedUntil: Date) {
+  try {
+    return (await lockoutFor(db, userId, queueDeps.now(), refusedUntil)) ?? refusedUntil;
+  } catch (error) {
+    console.error('knights: could not read the vote lockout', { userId, error });
+    return refusedUntil;
+  }
+}
+
 const busyFailure = () =>
   fail(429, { message: 'The Order is catching up. Try that answer again.', busy: true });
 
@@ -346,7 +356,7 @@ async function recordVote(
     void announceMoves(db, before);
     if (result.status === 'limited') {
       refused('limited', { ref, itemId }, locals.user.id);
-      return limitedFailure(result.until);
+      return limitedFailure(await pauseEnd(locals.user.id, result.until));
     }
     if (result.status === 'rejected') {
       // Press timing only on not-open: it tells a vote that waited too long from an item that settled under the player.
@@ -394,7 +404,9 @@ export const actions: Actions = {
     });
     if (!('until' in outcome)) return outcome;
     refused(outcome.busy ? 'busy' : 'limited', parsed, userId);
-    return outcome.busy ? busyFailure() : limitedFailure(outcome.until);
+    if (outcome.busy) return busyFailure();
+    // A running cooldown already covers the shown end (pauses are frozen into it): only a fresh trip reads the ledger.
+    return limitedFailure(outcome.tripped ? await pauseEnd(userId, outcome.until) : outcome.until);
   },
 
   // Moves a player past an item without judging it: no vote, pay, accuracy or Watch credit, and it is not served to them
