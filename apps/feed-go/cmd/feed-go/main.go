@@ -452,6 +452,7 @@ func run(log *slog.Logger) error {
 			},
 		},
 		Users: sources,
+		Rules: &v1models.TrainingDataRules{Redis: cache, Prefix: cfg.CacheKeyPrefix},
 	}
 	srv := &server.Server{
 		Resolver:         resolver,
