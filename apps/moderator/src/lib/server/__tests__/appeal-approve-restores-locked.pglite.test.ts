@@ -3,6 +3,7 @@ import { freshPglite } from '../../../test/pglite';
 import {
   DEFERRED_BLOCK_EFFECT_TABLE_SQL,
   SET_ASIDE_TABLE_SQL,
+  TEXT_SCAN_HOLD_TABLE_SQL,
 } from '../../../test/held-image-tables';
 import type { DB } from '@civitai/db-schema/kysely';
 import { Kysely } from 'kysely';
@@ -81,6 +82,7 @@ CREATE TABLE "Image" (
   "scanJobs" JSONB
 );
 ${SET_ASIDE_TABLE_SQL}
+${TEXT_SCAN_HOLD_TABLE_SQL}
 ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);

@@ -46,11 +46,8 @@ import type { Kysely, RawBuilder, Transaction } from 'kysely';
 import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
 import { queueArticlesForCoverImages } from './article-cover-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
-import {
-  confirmedLyricsHoldSql,
-  lockSongCsamHoldSql,
-  releaseSongCsamHoldSql,
-} from '@civitai/shared/song-csam-hold';
+import { confirmedLyricsHoldSql, releaseSongCsamHold } from '@civitai/shared/song-csam-hold';
+import { csamHeldImageSql } from '@civitai/shared/csam-held';
 
 // The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
 // not true, for every row with no flag, and would refuse every ordinary accept.
@@ -60,30 +57,31 @@ const BLOCKED_REASON_MODERATED = 'moderated';
 const BLOCKED_REASON_CSAM = 'CSAM';
 
 /**
- * Removed for CSAM, or under the review flag and not dismissed from its queue. A block of a held image
- * sends no owner notice and actions no report: for one under review they wait in
- * `ImageDeferredBlockEffect` for the review to close. The main app's twin is `heldImageSql`.
+ * `csamHeldImageSql`, shared with the main app. A block of a held image sends no owner notice and
+ * actions no report: for one under review they wait in `ImageDeferredBlockEffect` for the review to
+ * close.
  */
-const HELD_IMAGE = sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM} OR ("needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} AND NOT EXISTS (
-  SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = "Image".id AND s.outcome = 'Dismissed'
-)))`;
+const HELD_IMAGE = sql<boolean>`${sql.raw(csamHeldImageSql('"Image"'))}`;
 
 /**
- * Re-decides the songs of covers whose csam review just closed as not csam (`releaseSongCsamHoldSql`),
+ * Re-decides the songs of covers whose csam review just closed as not csam (`releaseSongCsamHold`),
  * after that close committed, and re-indexes a released song. A failure leaves the song held. Returns
  * the released song ids.
  */
 export async function releaseSongsOfClearedCovers(coverIds: number[]): Promise<number[]> {
-  const lock = lockSongCsamHoldSql({ source: 'cover', coverIds });
-  const release = releaseSongCsamHoldSql({ source: 'cover', coverIds });
-  if (!lock || !release) return [];
+  if (!coverIds.length) return [];
   try {
-    const released = await dbWrite.transaction().execute(async (trx) => {
-      const { rows: locked } = await sql.raw<{ id: number }>(lock).execute(trx);
-      if (!locked.length) return [];
-      const { rows } = await sql.raw<{ id: number; released: boolean }>(release).execute(trx);
-      return rows.filter((row) => row.released).map((row) => row.id);
-    });
+    const released = await dbWrite
+      .transaction()
+      .execute((trx) =>
+        releaseSongCsamHold(
+          async (text) =>
+            (
+              await sql.raw<{ id: number; released?: boolean }>(text).execute(trx)
+            ).rows,
+          { source: 'cover', coverIds }
+        )
+      );
     for (const id of released)
       syncSearchIndex({ entityType: 'image', entityId: id, action: 'update' });
     return released;
@@ -92,6 +90,11 @@ export async function releaseSongsOfClearedCovers(coverIds: number[]): Promise<n
     return [];
   }
 }
+
+/** A song under the review flag whose lyrics hold a moderator confirmed: no lift applies to it. */
+const CONFIRMED_SONG_HOLD = sql<boolean>`("needsReview" IS NOT DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK} AND ${sql.raw(
+  confirmedLyricsHoldSql('"Image"')
+)})`;
 
 /** Blocked by an automated moderation rule: it carries a rule's keys, unless that rule is a Hold rule and
  *  never was a Block rule. A Hold rule's keys can stay on an image a moderator later removed; a rule since deleted, or edited away from Block, still counts as the blocker.
@@ -267,6 +270,13 @@ export class ImageNotRestoredError extends Error {
   }
 }
 
+/** An accept of a song whose lyrics hold a moderator confirmed: it stays held. */
+export class ConfirmedSongHoldError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Song ${imageId} stays held by its confirmed lyrics`);
+  }
+}
+
 /** An explicit restore of an image that does not exist. */
 export class ImageNotFoundError extends Error {
   constructor(readonly imageId: number) {
@@ -341,21 +351,22 @@ export async function acceptImage({
     })
     .where('id', '=', imageId)
     .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
-    // A song whose lyrics hold was confirmed stays held, as a video removed for CSAM does.
-    .$if(nr === FLAG_KEPT_THROUGH_BLOCK, (qb) =>
-      qb.where(sql<boolean>`NOT ${sql.raw(confirmedLyricsHoldSql('"Image"'))}`)
-    )
+    .where(sql<boolean>`NOT ${CONFIRMED_SONG_HOLD}`)
     .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
     .$if(keepModeratorRemoved, (qb) =>
       qb.where(
         sql<boolean>`NOT (${REMOVED_BY_MODERATOR} OR ${BANNED_OWNER_BLOCKED}) AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
       )
     )
-    // Only a minor-queue accept reads the flag back. A subquery in RETURNING reads the statement's
-    // snapshot, so `wasMinor` is the value this update replaced, from the primary, not the replica.
+    // A subquery in RETURNING reads the statement's snapshot, so `wasMinor` and `wasCsam` are the
+    // values this update replaced, from the primary, not the replica. Only a minor-queue accept reads
+    // the minor flag back.
     .returning([
       'id',
       LIFT_KEPT_BLOCKED.as('keptBlocked'),
+      sql<boolean>`COALESCE((SELECT pre."needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} FROM "Image" pre WHERE pre."id" = ${imageId}), false)`.as(
+        'wasCsam'
+      ),
       sql<boolean | null>`${nr === 'minor' ? sql`"minor"` : sql`NULL`}`.as('minor'),
       sql<boolean | null>`${
         nr === 'minor'
@@ -366,6 +377,13 @@ export async function acceptImage({
     .executeTakeFirst();
   if (!updated) {
     if (restoreRemoved) throw new ImageNotRestoredError(imageId);
+    const confirmed = await dbWrite
+      .selectFrom('Image')
+      .select('id')
+      .where('id', '=', imageId)
+      .where(CONFIRMED_SONG_HOLD)
+      .executeTakeFirst();
+    if (confirmed) throw new ConfirmedSongHoldError(imageId);
     if (keepModeratorRemoved) {
       // An image under the review flag, removed or not and dismissed or not, is the CSAM queue's.
       const flagged = await dbWrite
@@ -392,7 +410,7 @@ export async function acceptImage({
     throw new RemovedImageNotRestorableError(imageId);
   }
   const restored = !updated.keptBlocked;
-  if (nr === FLAG_KEPT_THROUGH_BLOCK) await releaseSongsOfClearedCovers([imageId]);
+  if (updated.wasCsam) await releaseSongsOfClearedCovers([imageId]);
   if (restored) {
     await dropBlockedImageDeleteQueue(imageId);
     await resetBlockedNsfwLevel(imageId);

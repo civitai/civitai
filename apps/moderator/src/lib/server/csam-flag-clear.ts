@@ -135,7 +135,6 @@ export async function clearRemovedFlagsUnlessHeld(
     .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
     .where('ingestion', '=', 'Blocked')
     .where(sql<boolean>`NOT ${anyHold(sql<number>`${userId}::int`, marker, overriding)}`)
-    // A song whose lyrics hold was confirmed stays held, as a video removed for CSAM does.
     .where(sql<boolean>`NOT ${sql.raw(confirmedLyricsHoldSql('"Image"'))}`)
     .returning('id')
     .execute();

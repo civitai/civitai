@@ -45,8 +45,8 @@ const images: Record<string, ImageRow> = {
     ingestion: 'Scanned',
     modelRestricted: true,
   },
-  // A song held for csam by its lyrics or cover (D4, music stabilization). Other media under a
-  // review keep their image, as before.
+  // A song held for csam by its lyrics or cover (PR #10162). Other media under a review keep
+  // their image, as before.
   'song held for csam review': {
     nsfwLevel: NsfwLevel.PG,
     ingestion: 'Scanned',

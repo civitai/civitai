@@ -29,7 +29,9 @@ export async function getSongLyrics({
     SELECT i.type,
       (${imageReviewedSql()} AND i."blockedFor" IS NULL AND i."nsfwLevel" != ${
     NsfwLevel.Blocked
-  } AND (i."needsReview" IS NULL OR i."userId" = ${ctx.user?.id ?? null}::int)) AS reviewed,
+  } AND (i."needsReview" IS NULL OR (i."userId" = ${
+    ctx.user?.id ?? null
+  }::int AND i."needsReview" <> 'csam'))) AS reviewed,
       tl.lines
     FROM "Image" i
     LEFT JOIN "TrackLyrics" tl ON tl."imageId" = i.id

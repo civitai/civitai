@@ -97,8 +97,8 @@ export function isChallengeHiddenByCoverScan(
   );
 }
 
-// The image state `winnerImageFields` needs, as columns over `"Image" i`. A song under review (held
-// for csam by its lyrics or cover) counts as unreviewed, so its image is withheld.
+// The image state `winnerImageFields` needs, as columns over `"Image" i`. A song under any
+// needsReview counts as unreviewed, so its image is withheld.
 export const winnerImageStateSql = Prisma.sql`
   i.ingestion AS "imageIngestion",
   i."blockedFor" AS "imageBlockedFor",

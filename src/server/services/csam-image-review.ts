@@ -1,8 +1,8 @@
 import { Prisma } from '@prisma/client';
 import {
-  lockSongCsamHoldSql,
-  releaseSongCsamHoldSql,
+  releaseSongCsamHold as releaseSongCsamHoldWith,
   SONG_CSAM_HOLD_KEY,
+  type SongCsamReleaseTarget,
   songIdOfCoverSql,
 } from '@civitai/shared/song-csam-hold';
 import { logToAxiom } from '~/server/logging/client';
@@ -76,8 +76,7 @@ export async function holdSongForCsam(
       COALESCE(jsonb_typeof("metadata" -> ${SONG_CSAM_HOLD_KEY}) = 'object', false) AS marked
     FROM "Image" WHERE id = ${songId} AND type = 'audio' FOR UPDATE`;
   if (!song) return;
-  // Before the flag write: an unflagged song gets a new marker, holding the review the flag replaces
-  // for a release to put back; a marked one gets this source added.
+  // Before flagRows: it overwrites the needsReview that a new marker records as prior.
   if (!song.flagged || song.marked)
     await tx.$executeRaw`
       UPDATE "Image" SET "metadata" = jsonb_set(
@@ -92,19 +91,10 @@ export async function holdSongForCsam(
 
 type ReleaseClient = Pick<Prisma.TransactionClient, '$queryRaw'>;
 
-/**
- * Re-decides the songs a closed lyrics hold or cleared cover review reaches
- * (`releaseSongCsamHoldSql`), inside the caller's transaction. Returns the ids it released.
- */
-export async function releaseSongCsamHold(
-  tx: ReleaseClient,
-  target: Parameters<typeof releaseSongCsamHoldSql>[0]
-): Promise<number[]> {
-  const lock = lockSongCsamHoldSql(target);
-  const release = releaseSongCsamHoldSql(target);
-  if (!lock || !release) return [];
-  const locked = await tx.$queryRaw<{ id: number }[]>`${Prisma.raw(lock)}`;
-  if (!locked.length) return [];
-  const rows = await tx.$queryRaw<{ id: number; released: boolean }[]>`${Prisma.raw(release)}`;
-  return rows.filter((row) => row.released).map((row) => row.id);
+/** Runs in the caller's transaction. Returns the ids it released. */
+export function releaseSongCsamHold(tx: ReleaseClient, target: SongCsamReleaseTarget) {
+  return releaseSongCsamHoldWith(
+    (text) => tx.$queryRaw<{ id: number; released?: boolean }[]>`${Prisma.raw(text)}`,
+    target
+  );
 }

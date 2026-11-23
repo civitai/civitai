@@ -37,6 +37,7 @@ import { styleTags, tagsNeedingReview } from '~/libs/tags';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
 import { holdSongsOfCovers } from '~/server/services/csam-image-review';
+import { withRetries } from '~/utils/errorHandling';
 import {
   queueArticlesAndComicsForImages,
   queueDocumentsForBlockedImages,
@@ -618,26 +619,13 @@ async function logScanAfterReview(image: ScanImage, toUpdate: Prisma.ImageUpdate
   }
 }
 
-/**
- * A song cover the scan left removed for CSAM holds its song, as a cover flagged for CSAM review
- * does. Never throws: the block has landed, and a failure leaves the song as it was.
- */
+/** Never throws: the block has landed, and a failure leaves the song as it was. */
 async function holdSongOfCsamBlockedCover(imageId: number) {
   // One immediate retry: the hold is not retried later, and the song stays public without it.
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      await dbWrite.$transaction((tx) => holdSongsOfCovers(tx, [imageId]));
-      return;
-    } catch (error) {
-      if (attempt === 2)
-        logToAxiom({
-          type: 'error',
-          name: 'song-csam-hold',
-          imageId,
-          message: (error as Error).message,
-        });
-    }
-  }
+  await withRetries(() => dbWrite.$transaction((tx) => holdSongsOfCovers(tx, [imageId])), 1).catch(
+    (error: Error) =>
+      logToAxiom({ type: 'error', name: 'song-csam-hold', imageId, message: error.message })
+  );
 }
 
 /**

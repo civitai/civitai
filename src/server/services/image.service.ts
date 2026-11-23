@@ -140,6 +140,7 @@ import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { flagImagesForCsamReview, releaseSongCsamHold } from '~/server/services/csam-image-review';
 import { confirmedLyricsHoldSql } from '@civitai/shared/song-csam-hold';
+import { csamHeldImageSql } from '@civitai/shared/csam-held';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { isStatementTimeout } from '~/server/utils/statement-timeout';
@@ -1300,7 +1301,9 @@ export async function handleUnblockImages({
       // Drops its blocks' deferred effects unfired.
       dbWrite.$executeRaw`DELETE FROM "ImageDeferredBlockEffect" WHERE "imageId" = ANY(${ids}::int[])`,
       ...Object.entries(grouped).map(
-        ([needsReview, groupedIds]) => dbWrite.$queryRaw<{ id: number; keptBlocked: boolean }[]>`
+        ([needsReview, groupedIds]) => dbWrite.$queryRaw<
+          { id: number; keptBlocked: boolean; wasCsam: boolean }[]
+        >`
           UPDATE "Image" SET
             "needsReview" = ${liftedNeedsReviewSql},
             "blockedFor" = ${liftedBlockedForSql},
@@ -1322,13 +1325,12 @@ export async function handleUnblockImages({
             "ingestion" = ${liftedIngestionSql}
           WHERE id IN (${Prisma.join(groupedIds)})
             AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
-            ${
-              // A song whose lyrics hold was confirmed stays held, as a video removed for CSAM does.
-              needsReview === 'csam'
-                ? Prisma.sql`AND NOT ${Prisma.raw(confirmedLyricsHoldSql('"Image"'))}`
-                : Prisma.empty
-            }
-          RETURNING id, ${liftKeptBlockedSql} AS "keptBlocked";
+            AND NOT ("needsReview" IS NOT DISTINCT FROM 'csam' AND ${Prisma.raw(
+              confirmedLyricsHoldSql('"Image"')
+            )})
+          RETURNING id, ${liftKeptBlockedSql} AS "keptBlocked",
+            -- The statement's snapshot: the value this update replaced, read on the primary.
+            COALESCE((SELECT pre."needsReview" = 'csam' FROM "Image" pre WHERE pre.id = "Image".id), false) AS "wasCsam";
         `
       ),
       upsertTagsOnImageNew(
@@ -1344,13 +1346,16 @@ export async function handleUnblockImages({
     // From the UPDATE's RETURNING, so a row it skipped (a CSAM block racing in) is neither.
     const rows = written
       .flat()
-      .filter((row): row is { id: number; keptBlocked: boolean } => !!row && 'keptBlocked' in row);
+      .filter(
+        (row): row is { id: number; keptBlocked: boolean; wasCsam: boolean } =>
+          !!row && 'keptBlocked' in row
+      );
     const keptIds = new Set(rows.filter((row) => row.keptBlocked).map((row) => row.id));
     const restoredIds = rows.filter((row) => !row.keptBlocked).map((row) => row.id);
     const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
     // A cover's csam review closed, so its song is re-decided once the lift is committed. A failure
     // leaves the song held.
-    const coverIds = rows.map((row) => row.id).filter((id) => grouped.csam?.includes(id));
+    const coverIds = rows.filter((row) => row.wasCsam).map((row) => row.id);
     const releasedSongs = coverIds.length
       ? await dbWrite
           .$transaction((tx) => releaseSongCsamHold(tx, { source: 'cover', coverIds }))
@@ -1447,9 +1452,7 @@ export async function handleUnblockImages({
  * of a held image sends no owner notice and actions no report: for one under review they wait in
  * `ImageDeferredBlockEffect` for the review to close.
  */
-const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needsReview" = 'csam' AND NOT EXISTS (
-  SELECT 1 FROM "CsamQueueSetAside" s WHERE s."imageId" = "Image".id AND s.outcome = 'Dismissed'
-)))`;
+const heldImageSql = Prisma.raw(csamHeldImageSql('"Image"'));
 
 /**
  * Returns the ids the block left held, and those under the moderator-only review flag, read on the
@@ -6687,9 +6690,9 @@ export type KnightsNsfwLevelResult =
 /**
  * Writes a Knights consensus rating, but only onto an image nobody has taken out of the vote's
  * hands: it exists, carries no block marker, and is unlocked or locked by an earlier Knights vote.
- * A song is reported `locked`: only its own scan rates it.
  * The conditions sit in the UPDATE itself, so a moderator ruling or block landing between a read
- * and the write cannot be overwritten.
+ * and the write cannot be overwritten. A song is never rated here (only its own scan rates it); the
+ * miss is reported `locked`, or `blocked` if it carries a block marker.
  */
 export async function setImageNsfwLevelFromKnights({
   id,

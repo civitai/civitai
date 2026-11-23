@@ -300,6 +300,7 @@ describe('hiding an image refreshes the home blocks holding it', () => {
       CREATE TABLE "Image" (
         id int PRIMARY KEY,
         "userId" int NOT NULL,
+        "postId" int,
         ingestion "ImageIngestionStatus" NOT NULL,
         "blockedFor" text,
         "nsfwLevel" int NOT NULL DEFAULT 0,

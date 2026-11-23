@@ -8,7 +8,7 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 /**
  * A song is published only by its own scan. A moderator's rating locks the level, and a locked level
  * counts as reviewed, so the rating writer refuses a song and writes nothing. A picture's rating is
- * covered in image-nsfw-level-models-reindex.test.ts.
+ * covered in image-nsfw-level-models-reindex.test.ts. Pins the decision of PR #10162.
  */
 
 vi.setConfig({ hookTimeout: 60_000 });
@@ -40,7 +40,7 @@ vi.mock('../image-models-reindex', () => ({
   queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
 }));
 
-const { updateImageNsfwLevel } = await import('../image-nsfw-level');
+const { SongRatingRefusedError, updateImageNsfwLevel } = await import('../image-nsfw-level');
 
 const SCHEMA = `
 CREATE TABLE "Image" (
@@ -85,9 +85,9 @@ const row = async (id: number) =>
 
 describe("a moderator's rating", () => {
   it('refuses a song and writes nothing', async () => {
-    await expect(updateImageNsfwLevel({ id: SONG, nsfwLevel: 8, userId: 1 })).rejects.toThrow(
-      /A song is published only by its own scan/
-    );
+    await expect(
+      updateImageNsfwLevel({ id: SONG, nsfwLevel: 8, userId: 1 })
+    ).rejects.toBeInstanceOf(SongRatingRefusedError);
 
     expect(await row(SONG)).toEqual({ nsfwLevel: 1, nsfwLevelLocked: false, metadata: {} });
   });

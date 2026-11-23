@@ -95,6 +95,7 @@ const REVIEW_FLAGGED = 44;
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       "userId" int,

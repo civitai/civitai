@@ -20,6 +20,7 @@ import {
   RemovedImageNotRestorableError,
   ModeratorRemovedImageError,
   CsamReviewImageError,
+  ConfirmedSongHoldError,
   AppealRestoreRefusedError,
   APPEAL_RESTORE_REFUSED,
   resolveImageAppeal,
@@ -45,7 +46,7 @@ import {
 import { violationInputSchema } from '$lib/violations';
 import { parseImageFlagValue } from '$lib/image-flags';
 import { isRatingLevel } from '$lib/nsfw-levels';
-import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
+import { SongRatingRefusedError, updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
 import { setImageFlag } from '$lib/server/user-actions.service';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
@@ -247,6 +248,8 @@ async function reportIdsByImage(reportIds: number[]): Promise<Map<number, number
 const UNDER_CSAM_REVIEW =
   'This image is under CSAM review, so its report stays open for that queue. Nothing was changed.';
 const REPORT_NOT_ON_IMAGE = 'That report is not on this image. Nothing was changed. Reload.';
+const CONFIRMED_SONG_HOLD =
+  'This song stays held: its lyrics were confirmed in review. Nothing was changed.';
 /** A verdict moves only a report filed on the image it rules on. */
 async function reportIsOnImage(reportId: number, imageId: number) {
   return !!(await reportIdsByImage([reportId])).get(imageId)?.includes(reportId);
@@ -306,6 +309,8 @@ export const imageQueueActions = {
           closedReportIds: [reportId],
         };
       }
+      if (e instanceof ConfirmedSongHoldError)
+        return fail(409, { error: CONFIRMED_SONG_HOLD, imageId });
       if (e instanceof CsamReviewImageError)
         return fail(409, { error: UNDER_CSAM_REVIEW, imageId });
       if (e instanceof RemovedImageNotRestorableError)
@@ -473,6 +478,8 @@ export const imageQueueActions = {
     // Sequential, and the failures are named: a partial batch the moderator cannot see is worse than
     // a refusal, because the images it did rate are indistinguishable from the ones it did not.
     const failed: number[] = [];
+    const songs: number[] = [];
+    let songRefusal = '';
     for (const id of imageIds) {
       try {
         await updateImageNsfwLevel({
@@ -482,18 +489,27 @@ export const imageQueueActions = {
           userId: locals.user.id,
         });
       } catch (e) {
+        if (e instanceof SongRatingRefusedError) {
+          songs.push(id);
+          songRefusal = e.message;
+          continue;
+        }
         console.error('[images] setRating failed', { id, error: e });
         failed.push(id);
       }
     }
-    if (failed.length)
+    if (songs.length === imageIds.length) return fail(409, { error: songRefusal });
+    if (failed.length || songs.length)
       return fail(400, {
-        error:
+        error: [
           failed.length === imageIds.length
             ? 'Could not set that rating — reload the queue.'
-            : `Rated ${imageIds.length - failed.length} of ${
-                imageIds.length
-              }. Failed: ${failed.join(', ')}.`,
+            : `Rated ${imageIds.length - failed.length - songs.length} of ${imageIds.length}.`,
+          failed.length && failed.length < imageIds.length ? `Failed: ${failed.join(', ')}.` : '',
+          songs.length ? `Not rated: ${songs.join(', ')}. ${songRefusal}` : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
       });
     return { success: true, nsfwLevel };
   },
@@ -528,6 +544,7 @@ export const imageQueueActions = {
     const refused: number[] = [];
     const removed: number[] = [];
     const underCsamReview: number[] = [];
+    const confirmedSongs: number[] = [];
     const unpaidImages = new Set<number>();
     // Emails only the appeals this request closed, once per appellant instead of per image.
     const closed = await Promise.all(
@@ -546,6 +563,10 @@ export const imageQueueActions = {
           }
           if (e instanceof CsamReviewImageError) {
             underCsamReview.push(imageId);
+            return undefined;
+          }
+          if (e instanceof ConfirmedSongHoldError) {
+            confirmedSongs.push(imageId);
             return undefined;
           }
           if (!(e instanceof RemovedImageNotRestorableError)) throw e;
@@ -576,18 +597,25 @@ export const imageQueueActions = {
       ...(notMoved && { notMoved }),
     };
     // A partial batch moves no other report: the refused images' reports stay open.
-    if (refused.length || underCsamReview.length)
+    if (refused.length || underCsamReview.length || confirmedSongs.length)
       return fail(409, {
         ...notice,
         error: [
-          `${imageIds.length - refused.length - underCsamReview.length - removed.length} of ${
-            imageIds.length
-          } accepted.`,
+          `${
+            imageIds.length -
+            refused.length -
+            underCsamReview.length -
+            confirmedSongs.length -
+            removed.length
+          } of ${imageIds.length} accepted.`,
           reportIds.length ? `No ${closedReportIds.length ? 'other ' : ''}report was moved.` : '',
           refused.length ? `Not accepted (${REMOVED_REASON}): ${refused.join(', ')}.` : '',
           refused.length ? REMOVED_REMEDY : '',
           underCsamReview.length
             ? `Not accepted (under CSAM review, left to that queue): ${underCsamReview.join(', ')}.`
+            : '',
+          confirmedSongs.length
+            ? `Not accepted (songs held by their confirmed lyrics): ${confirmedSongs.join(', ')}.`
             : '',
         ]
           .filter(Boolean)

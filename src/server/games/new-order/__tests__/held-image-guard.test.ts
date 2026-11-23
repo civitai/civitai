@@ -87,7 +87,7 @@ const SANITY_HELD = 11;
 const BLOCKED = 4;
 const BLOCKED_LEVEL = 5;
 const BLOCKED_REASON = 6;
-// A song: rated only by its own scan, so never a Knights sample (D4, music stabilization).
+// A song: rated only by its own scan, so never a Knights sample (PR #10162).
 const SONG = 7;
 
 const rows: Record<

@@ -5,12 +5,14 @@ import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type { Prisma } from '@prisma/client';
 import type * as DbHelpers from '~/server/db/db-helpers';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * A song is held for csam review as a video is: a csam hold on its lyrics, or a csam flag on its
  * cover, flags the song's own row, and every read hides it by that flag. Released only when this
  * mechanism set the flag and no other csam reason remains. Run on PGlite through the entry points:
- * the lyrics scan's adapter, Report CSAM, the hold decision and the main app's unblock.
+ * the lyrics scan's adapter, Report CSAM, the hold decision and the main app's unblock. Pins the
+ * decision of PR #10162.
  */
 
 vi.setConfig({ hookTimeout: 120_000, testTimeout: 120_000 });
@@ -252,9 +254,7 @@ describe('a csam hold on the lyrics', () => {
     expect(await visibleTo()).toEqual([]);
     expect(await feedSongs(STRANGER)).toEqual([]);
     expect(await feedSongs()).toEqual([]);
-    // A moderator still opens it by id, as a held video, to review it.
     expect(await visibleTo(MOD, true)).toEqual([SONG]);
-    // As for a held video, these two reads hide a csam hold from its owner too.
     expect(await visibleTo(OWNER)).toEqual([]);
     expect(await feedSongs(OWNER)).toEqual([]);
   });
@@ -321,6 +321,8 @@ describe('a csam flag on the cover', () => {
     expect((await song(COVER)).needsReview).toBe('csam');
     expect(await song()).toEqual({ needsReview: 'csam', marker: { cover: COVER } });
     expect(await visibleTo(STRANGER)).toEqual([]);
+    expect(await feedSongs(STRANGER)).toEqual([]);
+    expect(await feedSongs()).toEqual([]);
   });
 
   it("flags nothing else for a picture, a video's thumbnail, or another user's row naming the song", async () => {
@@ -416,6 +418,57 @@ describe("the scan's CSAM block of the cover", () => {
 
     expect(await song()).toEqual({ needsReview: null, marker: null });
   });
+
+  /** Fails the next `failures` writes to the song row, then lets them through. */
+  const failSongWrites = async (failures: number) => {
+    await h.pg.exec(`
+      CREATE SEQUENCE song_write_attempt;
+      CREATE FUNCTION refuse_song_write() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF nextval('song_write_attempt') <= ${failures} THEN RAISE EXCEPTION 'refused'; END IF;
+          RETURN NEW;
+        END $$;
+      CREATE TRIGGER refuse_song_write BEFORE UPDATE ON "Image" FOR EACH ROW
+        WHEN (NEW.id = ${SONG}) EXECUTE FUNCTION refuse_song_write();
+    `);
+    // The socket drops Prisma's connection on a failed statement; recover it as a real pool would.
+    dbMock.dbWrite.$transaction.mockImplementation(((fn: (tx: unknown) => unknown) =>
+      h.prisma.$transaction(fn as never).catch(async (error: unknown) => {
+        await h.recover();
+        throw error;
+      })) as never);
+  };
+  const restoreSongWrites = async () => {
+    await h.pg.exec(`DROP TRIGGER refuse_song_write ON "Image"; DROP FUNCTION refuse_song_write();
+      DROP SEQUENCE song_write_attempt;`);
+    dbMock.dbWrite.$transaction.mockImplementation(((fn: (tx: unknown) => unknown) =>
+      h.prisma.$transaction(fn as never)) as never);
+  };
+
+  it('holds the song on its retry when the first hold write fails', async () => {
+    await failSongWrites(1);
+    try {
+      expect(await blockForCsam(COVER)).toMatchObject({ blockedFor: 'CSAM' });
+
+      expect(await song()).toEqual({ needsReview: 'csam', marker: { cover: COVER } });
+    } finally {
+      await restoreSongWrites();
+    }
+  });
+
+  it('keeps the scan outcome and logs the failure when both hold writes fail', async () => {
+    await failSongWrites(2);
+    try {
+      expect(await blockForCsam(COVER)).toMatchObject({ blockedFor: 'CSAM' });
+
+      expect(await song()).toEqual({ needsReview: null, marker: null });
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', name: 'song-csam-hold', imageId: COVER })
+      );
+    } finally {
+      await restoreSongWrites();
+    }
+  });
 });
 
 describe('a lyrics hold decision', () => {
@@ -446,6 +499,17 @@ describe('a lyrics hold decision', () => {
     expect((await song()).needsReview).toBe('csam');
   });
 
+  it('releases the song past a closed CSAM report and an open report for another reason', async () => {
+    await scanLyrics();
+    await h.pg.exec(`INSERT INTO "Report" (id, reason, status) VALUES (1, 'CSAM', 'Actioned'),
+        (2, 'TOSViolation', 'Pending');
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (${SONG}, 1), (${SONG}, 2);`);
+
+    await decide('dismiss');
+
+    expect(await song()).toEqual({ needsReview: null, marker: null });
+  });
+
   it("never lifts a moderator's Report CSAM on the song, made after the hold flagged it", async () => {
     await scanLyrics();
     await reportCsamImages({ imageIds: [SONG], user: moderator });
@@ -453,6 +517,31 @@ describe('a lyrics hold decision', () => {
     await decide('dismiss');
 
     expect(await song()).toEqual({ needsReview: 'csam', marker: null });
+  });
+
+  it('flags the song again on a confirmation, after its flag was cleared while the hold was pending', async () => {
+    await scanLyrics();
+    const [hold] = await holds();
+    dbMock.dbRead.image.findMany.mockResolvedValueOnce([
+      {
+        id: SONG,
+        userId: OWNER,
+        pHash: null,
+        postId: null,
+        nsfwLevel: 1,
+        blockedFor: null,
+        needsReview: 'csam',
+      },
+    ] as never);
+    await handleUnblockImages({ ids: [SONG], moderatorId: MOD } as never);
+    expect((await song()).needsReview).toBeNull();
+
+    await decide('remove');
+
+    expect(await song()).toEqual({ needsReview: 'csam', marker: { lyrics: hold.id } });
+    expect(await visibleTo(STRANGER)).toEqual([]);
+    expect(await visibleTo()).toEqual([]);
+    expect(await feedSongs(STRANGER)).toEqual([]);
   });
 
   it('keeps the flag on a confirmation', async () => {
@@ -467,7 +556,7 @@ describe('a lyrics hold decision', () => {
 });
 
 describe("the main app's unblock of a cover", () => {
-  const unblock = (id: number) => {
+  const unblock = (id: number, replicaNeedsReview: string | null = 'csam') => {
     dbMock.dbRead.image.findMany.mockResolvedValueOnce([
       {
         id,
@@ -476,7 +565,7 @@ describe("the main app's unblock of a cover", () => {
         postId: null,
         nsfwLevel: 1,
         blockedFor: null,
-        needsReview: 'csam',
+        needsReview: replicaNeedsReview,
       },
     ] as never);
     return handleUnblockImages({ ids: [id], moderatorId: MOD } as never);
@@ -488,6 +577,14 @@ describe("the main app's unblock of a cover", () => {
     await unblock(COVER);
 
     expect((await song(COVER)).needsReview).toBeNull();
+    expect(await song()).toEqual({ needsReview: null, marker: null });
+  });
+
+  it('releases the song when the replica has not yet seen the cover flagged', async () => {
+    await reportCsamImages({ imageIds: [COVER], user: moderator });
+
+    await unblock(COVER, null);
+
     expect(await song()).toEqual({ needsReview: null, marker: null });
   });
 
@@ -513,7 +610,7 @@ describe("the main app's unblock of a cover", () => {
 });
 
 describe("the main app's unblock of the song itself", () => {
-  const unblockSong = () => {
+  const unblockSong = (replicaNeedsReview: string | null = 'csam') => {
     dbMock.dbRead.image.findMany.mockResolvedValueOnce([
       {
         id: SONG,
@@ -522,7 +619,7 @@ describe("the main app's unblock of the song itself", () => {
         postId: null,
         nsfwLevel: 1,
         blockedFor: null,
-        needsReview: 'csam',
+        needsReview: replicaNeedsReview,
       },
     ] as never);
     return handleUnblockImages({ ids: [SONG], moderatorId: MOD } as never);
@@ -533,6 +630,16 @@ describe("the main app's unblock of the song itself", () => {
     await decide('remove');
 
     const { restored, kept } = await unblockSong();
+
+    expect([restored, kept]).toEqual([[], []]);
+    expect((await song()).needsReview).toBe('csam');
+  });
+
+  it('refuses it whatever review the replica read', async () => {
+    await scanLyrics();
+    await decide('remove');
+
+    const { restored, kept } = await unblockSong(null);
 
     expect([restored, kept]).toEqual([[], []]);
     expect((await song()).needsReview).toBe('csam');

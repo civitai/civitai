@@ -11,7 +11,7 @@ import type { ArticleMetadata } from '~/server/schema/article.schema';
 import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
 import { unpublishArticleById } from '~/server/services/article.service';
 import { TRACK_LYRICS_ENTITY_TYPE } from '~/server/services/audio-scan/track-lyrics';
-import { releaseSongCsamHold } from '~/server/services/csam-image-review';
+import { holdSongForCsam, releaseSongCsamHold } from '~/server/services/csam-image-review';
 import { violationMetadata } from '~/server/services/text-scan/public-content';
 import { deleteChatMessage } from '~/server/services/chat.service';
 import {
@@ -398,9 +398,11 @@ export async function decideCsamHold(args: DecideArgs) {
           where: { id: hold.entityId },
           data: { csamHeld: status === 'Confirmed' },
         });
-      // The hold flagged the song; a dismissal lifts that flag unless something else still holds it.
-      if (status === 'Dismissed' && hold.entityType === TRACK_LYRICS_ENTITY_TYPE)
-        await releaseSongCsamHold(tx, { source: 'lyrics', songIds: [hold.entityId] });
+      // A confirm flags the song again: its flag may have been cleared while the hold was Pending.
+      if (hold.entityType === TRACK_LYRICS_ENTITY_TYPE) {
+        if (status === 'Confirmed') await holdSongForCsam(tx, hold.entityId, { lyrics: holdId });
+        else await releaseSongCsamHold(tx, { source: 'lyrics', songIds: [hold.entityId] });
+      }
 
       // Records nothing and returns NULL on bad input rather than raising, so a bad record never undoes the
       // decision; it lands in `label_store.record_failure`.

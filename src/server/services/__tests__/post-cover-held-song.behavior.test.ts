@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 /**
  * The post feed's images, run as SQL over seeded rows: a song held for csam review (its lyrics or
- * cover held, D4 of the music stabilization) is not a cover for anyone else.
+ * cover held, PR #10162) is not a cover for anyone else.
  */
 
 vi.mock('../../../../event-engine-common/services/metrics', () => ({

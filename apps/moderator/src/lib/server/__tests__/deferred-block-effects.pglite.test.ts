@@ -1,7 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { freshPglite } from '../../../test/pglite';
-import { DEFERRED_BLOCK_EFFECT_TABLE_SQL } from '../../../test/held-image-tables';
+import {
+  DEFERRED_BLOCK_EFFECT_TABLE_SQL,
+  TEXT_SCAN_HOLD_TABLE_SQL,
+} from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -71,7 +74,7 @@ const { clearUserCsamFlags } = await import('../csam-flag-clear');
 const { DEFERRED_NOTICE_LOG } = await import('../deferred-block-effects');
 
 const SCHEMA = `
-CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
+${TEXT_SCAN_HOLD_TABLE_SQL}
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
 CREATE DOMAIN "ImageIngestionStatus" AS TEXT;

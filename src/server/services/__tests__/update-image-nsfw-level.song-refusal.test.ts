@@ -6,7 +6,7 @@ import { NsfwLevel } from '~/server/common/enums';
  * A song is published only by its own scan. A moderator's rating locks the level, and a locked level
  * counts as reviewed, so a lock on a song would publish it without that scan: the moderator branch
  * refuses a song before it writes. The rating level and lock of a picture are covered in
- * update-image-nsfw-level.listing-rating.test.ts.
+ * update-image-nsfw-level.listing-rating.test.ts. Pins the decision of PR #10162.
  */
 
 const { updateImageNsfwLevel } = await import('../image.service');

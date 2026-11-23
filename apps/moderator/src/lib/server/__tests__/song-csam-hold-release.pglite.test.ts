@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
-import { DEFERRED_BLOCK_EFFECT_TABLE_SQL } from '../../../test/held-image-tables';
+import {
+  DEFERRED_BLOCK_EFFECT_TABLE_SQL,
+  TEXT_SCAN_HOLD_TABLE_SQL,
+} from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,20 +15,20 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 /**
  * A song flagged because its cover was flagged for csam is released when the moderator app closes
  * the cover's review as not csam (accept, queue dismissal, bulk flag clear), and only when this
- * mechanism set the song's flag and nothing else still holds it.
+ * mechanism set the song's flag and nothing else still holds it. Pins the decision of PR #10162.
  */
 
 vi.setConfig({ hookTimeout: 60_000 });
 
 const { dbHandle, syncSearchIndex } = vi.hoisted(() => ({
-  dbHandle: { current: null as unknown },
+  dbHandle: { current: null as unknown, replica: null as unknown },
   syncSearchIndex: vi.fn(),
 }));
 
 vi.mock('../db', () => ({
   get dbRead() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
-    return dbHandle.current;
+    return dbHandle.replica ?? dbHandle.current;
   },
   get dbWrite() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
@@ -69,9 +72,8 @@ vi.mock('../article-cover-reindex', () => ({
   queueArticlesForCoverImages: vi.fn(async () => undefined),
 }));
 
-const { acceptImage, dismissFromCsamQueue, dismissUserFromCsamQueue } = await import(
-  '../image-moderation.service'
-);
+const { acceptImage, ConfirmedSongHoldError, dismissFromCsamQueue, dismissUserFromCsamQueue } =
+  await import('../image-moderation.service');
 const { clearUserCsamFlags, releaseHeldUserCsamFlags } = await import('../csam-flag-clear');
 const { imagesVersion, removedNotDismissed } = await import('../csam-queue-set-aside');
 
@@ -114,7 +116,7 @@ CREATE TABLE "CsamQueueSetAside" (
   "createdAt" TIMESTAMP(3) NOT NULL
 );
 ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
-CREATE TABLE "TextScanHold" ("entityType" TEXT, "entityId" INTEGER, "label" TEXT, "status" TEXT);
+${TEXT_SCAN_HOLD_TABLE_SQL}
 CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "status" TEXT NOT NULL, "reason" TEXT NOT NULL);
 CREATE TABLE "ImageReport" ("imageId" INTEGER, "reportId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
@@ -143,18 +145,35 @@ const SONG = 990000101;
 const COVER = 990000102;
 
 let db: PGlite;
+// A replica that has not seen the csam flags: the image row with no review on it.
+let replica: PGlite;
 
 beforeAll(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
   await db.exec(RELEASE_TABLE_SQL);
   dbHandle.current = new Kysely<DB>({ dialect: pgliteDialect(db) });
+  replica = await freshPglite();
+  await replica.exec(SCHEMA);
 });
 
 afterAll(async () => {
   dbHandle.current = null;
   await db.close();
+  await replica.close();
 });
+
+/** Runs `fn` with reads that go to the replica seeing `imageId` unflagged. */
+async function withStaleReplica(imageId: number, fn: () => Promise<unknown>) {
+  await replica.exec(`TRUNCATE "Image";
+    INSERT INTO "Image" ("id", "userId") VALUES (${imageId}, ${OWNER});`);
+  dbHandle.replica = new Kysely<DB>({ dialect: pgliteDialect(replica) });
+  try {
+    return await fn();
+  } finally {
+    dbHandle.replica = null;
+  }
+}
 
 /** A song held by its flagged cover (`marker`), the cover under review, live or removed. */
 async function seed({
@@ -208,6 +227,15 @@ describe("closing a song cover's csam review", () => {
       entityId: SONG,
       action: 'update',
     });
+    expect(syncSearchIndex.mock.calls.filter(([call]) => call.entityId === SONG)).toHaveLength(1);
+  });
+
+  it('releases the song on accept when the replica has not yet seen the cover flagged', async () => {
+    await seed();
+
+    await withStaleReplica(COVER, accept);
+
+    expect(await song()).toEqual({ needsReview: null, marker: null });
   });
 
   it('keeps the song held while its lyrics hold is pending, dropping only the cover', async () => {
@@ -318,7 +346,20 @@ describe('lifting the song itself', () => {
     await seed({ marker: { lyrics: 5 } });
     await lyricsHold('Confirmed');
 
-    await expect(acceptImage({ imageId: SONG, userId: MOD })).rejects.toThrow();
+    await expect(acceptImage({ imageId: SONG, userId: MOD })).rejects.toBeInstanceOf(
+      ConfirmedSongHoldError
+    );
+
+    expect((await song()).needsReview).toBe('csam');
+  });
+
+  it('refuses it whatever review the replica read', async () => {
+    await seed({ marker: { lyrics: 5 } });
+    await lyricsHold('Confirmed');
+
+    await expect(
+      withStaleReplica(SONG, () => acceptImage({ imageId: SONG, userId: MOD }))
+    ).rejects.toBeInstanceOf(ConfirmedSongHoldError);
 
     expect((await song()).needsReview).toBe('csam');
   });

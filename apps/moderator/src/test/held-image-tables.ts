@@ -18,3 +18,7 @@ CREATE TABLE IF NOT EXISTS "ImageDeferredBlockEffect" (
   "blockedBy" int,
   "createdAt" timestamp(3) NOT NULL DEFAULT now()
 );`;
+
+/** The text-scan holds a lift's confirmed-song guard reads (`confirmedLyricsHoldSql`). */
+export const TEXT_SCAN_HOLD_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS "TextScanHold" ("entityType" text, "entityId" int, label text, status text);`;

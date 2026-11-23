@@ -12,8 +12,14 @@ import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
-const SONG_RATING_REFUSAL =
-  'A song is published only by its own scan, which is retried automatically; it cannot be rated here.';
+/** A rating refused because the image is a song. Its message is the moderator-facing copy. */
+export class SongRatingRefusedError extends Error {
+  constructor(readonly imageId: number) {
+    super(
+      'A song is published only by its own scan, which is retried automatically; it cannot be rated here.'
+    );
+  }
+}
 
 // Don't mirror the main app's single-image Meilisearch update: that index locks specially on a single-image
 // change.
@@ -37,7 +43,7 @@ export async function updateImageNsfwLevel({
     .executeTakeFirst();
   if (!image) throw new Error('Image not found');
   // The lock would count as the song's review, which only its own scan may give.
-  if (image.type === 'audio') throw new Error(SONG_RATING_REFUSAL);
+  if (image.type === 'audio') throw new SongRatingRefusedError(id);
 
   const metadata = {
     ...((image.metadata as Record<string, unknown> | null) ?? {}),
