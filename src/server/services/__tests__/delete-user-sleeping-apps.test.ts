@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as HibernationRepoModule from '~/server/services/app-hibernation/hibernation.repo';
 import type * as ArchiveS3 from '~/utils/app-archive-s3';
 import type * as HibernationDeps from '~/server/services/app-hibernation/hibernation-deps';
@@ -253,5 +254,52 @@ describe('deleteUser — sleeping apps', () => {
     await expect((await sweepHibernationObjectsJob.run({} as never)).result).rejects.toThrow(
       /database unavailable/
     );
+  });
+});
+
+/**
+ * App Assistant's chat ↔ app links go with the account: `deleteUser` is a soft delete, so the
+ * table's FK cascade never fires, and its `delete-app-assistant-links` step removes them. Held while
+ * content removal is held; a table not applied yet is nothing to delete, never a logged failure.
+ */
+describe('deleteUser — App Assistant session links', () => {
+  const links = () => dbMock.dbWrite.appAssistantSessionLink.deleteMany;
+  const stepErrors = () =>
+    loggingMock.logToAxiom.mock.calls.filter(
+      ([entry]) =>
+        (entry as { name?: string; type?: string }).name === 'delete-app-assistant-links' &&
+        (entry as { type?: string }).type === 'error'
+    );
+
+  it('deletes the deleted user’s link rows, and only theirs', async () => {
+    links().mockResolvedValue({ count: 2 });
+    await UserService.deleteUser({ id: USER_ID, actorId: USER_ID });
+    expect(links()).toHaveBeenCalledTimes(1);
+    expect(links()).toHaveBeenCalledWith({ where: { userId: USER_ID } });
+    expect(stepErrors()).toEqual([]);
+  });
+
+  it('a hold landing after the check keeps the link rows', async () => {
+    h.lateHold = true;
+    await UserService.deleteUser({ id: USER_ID, actorId: USER_ID });
+    expect(dbMock.dbWrite.account.deleteMany).toHaveBeenCalled();
+    expect(links()).not.toHaveBeenCalled();
+  });
+
+  it('the table not applied yet is nothing to delete: no failure is logged', async () => {
+    links().mockRejectedValue(
+      Object.assign(new Error('The table `app_assistant_session_links` does not exist'), {
+        code: 'P2021',
+      })
+    );
+    await expect(UserService.deleteUser({ id: USER_ID, actorId: USER_ID })).resolves.toBeDefined();
+    expect(links()).toHaveBeenCalledTimes(1);
+    expect(stepErrors()).toEqual([]);
+  });
+
+  it('any other failure is logged and the deletion still completes', async () => {
+    links().mockRejectedValue(new Error('connection reset'));
+    await expect(UserService.deleteUser({ id: USER_ID, actorId: USER_ID })).resolves.toBeDefined();
+    expect(stepErrors()).toHaveLength(1);
   });
 });

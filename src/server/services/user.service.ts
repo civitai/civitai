@@ -1564,6 +1564,28 @@ export const deleteUser = async ({
     }
     await deleteSleepingAppsOfDeletedAccount(user.id);
   });
+  // App Assistant's chat ↔ app links go with the account (the FK cascade never fires on this soft
+  // delete). Held, like the sleeping apps, while content removal is held.
+  await runStep('delete-app-assistant-links', async () => {
+    if ((await isContentRemovalHeld(user.id)) !== false) {
+      logToAxiom({
+        name: 'delete-app-assistant-links',
+        type: 'info',
+        source: 'deleteUser',
+        userId: user.id,
+        message: 'App Assistant links kept: content removal held',
+      });
+      return;
+    }
+    const [{ deleteSessionLinksOfAccount }, { isMissingTableError }] = await Promise.all([
+      import('~/server/services/app-assistant/session-tracing.service'),
+      import('~/server/services/blocks/app-access.service'),
+    ]);
+    await deleteSessionLinksOfAccount(user.id, {
+      db: dbWrite,
+      isMissingTable: isMissingTableError,
+    });
+  });
   await runStep('refresh-profile-picture', () => refreshProfilePicturesForUsers([user.id]));
   await runStep('close-pending-restrictions', () =>
     closeGenerationRestrictionsOfDeletedAccount(user.id)
