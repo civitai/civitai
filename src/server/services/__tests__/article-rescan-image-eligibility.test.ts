@@ -41,6 +41,7 @@ const image = (id: number, over: Record<string, unknown> = {}) => ({
   nsfwLevel: 1,
   nsfwLevelLocked: false,
   blockedFor: null as string | null,
+  needsReview: null as string | null,
   ...over,
 });
 
@@ -52,6 +53,8 @@ const BLOCK_REASON_ONLY = image(13, { ingestion: 'Error', blockedFor: 'tos' });
 const FOREIGN = image(14, { userId: SOMEONE_ELSE });
 const PENDING = image(15, { ingestion: 'Pending' });
 const LOCKED = image(16, { nsfwLevelLocked: true });
+const AWAITING_MINOR_REVIEW = image(21, { needsReview: 'minor' });
+const AWAITING_SOURCE_REVIEW = image(22, { needsReview: 'remixSource' });
 
 const SKIPPED: [string, Img][] = [
   ['a blocked image', BLOCKED],
@@ -60,6 +63,8 @@ const SKIPPED: [string, Img][] = [
   ["another owner's image", FOREIGN],
   ['an image still in flight', PENDING],
   ['an image whose rating a moderator locked', LOCKED],
+  ['an image awaiting a minor review', AWAITING_MINOR_REVIEW],
+  ['an image awaiting a source review', AWAITING_SOURCE_REVIEW],
 ];
 
 const CHANGED_AFTER_READ: [string, Partial<Img>][] = [
@@ -69,6 +74,7 @@ const CHANGED_AFTER_READ: [string, Partial<Img>][] = [
   ['has its rating locked', { nsfwLevelLocked: true }],
   ['passes to another owner', { userId: SOMEONE_ELSE }],
   ['starts scanning', { ingestion: 'Pending' }],
+  ['goes to review', { needsReview: 'minor' }],
 ];
 
 /** The columns a Prisma `select` asked for, so a column the code stops selecting reads undefined. */
@@ -171,6 +177,10 @@ describe('rescanArticle', () => {
     await rescanArticle({ id: ARTICLE_ID, isModerator: true });
 
     expect(await requeued()).toEqual([CLEAN.id]);
+    // Refused on the read, so the write never sees them.
+    expect(dbMock.dbWrite.image.updateManyAndReturn).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: { in: [CLEAN.id] } }) })
+    );
   });
 
   it('re-queues a clean cover that is not among the connected images', async () => {
@@ -238,6 +248,7 @@ describe('rescanArticleImage', () => {
       await expect(rescan(img)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
       expect(await requeued()).toEqual([]);
+      expect(dbMock.dbWrite.image.updateManyAndReturn).not.toHaveBeenCalled();
       // A refusal does not use one of the day's attempts.
       expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
     }

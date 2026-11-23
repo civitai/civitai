@@ -3335,13 +3335,15 @@ const rescanImageSelect = {
   nsfwLevel: true,
   nsfwLevelLocked: true,
   blockedFor: true,
+  needsReview: true,
 } as const;
 
 /**
  * Whether an article rescan may re-queue this image. Skipped: one still in flight; a locked
  * rating, which is a moderator's override; a blocked image, since a clean scan result would lift
- * the block, which only a moderator decides; and an image someone other than the article's author
- * owns, which the author has no say over.
+ * the block, which only a moderator decides; an image awaiting review, whose flag a clean scan
+ * result would clear; and an image someone other than the article's author owns, which the author
+ * has no say over.
  */
 function canRescanArticleImage(
   image: {
@@ -3350,6 +3352,7 @@ function canRescanArticleImage(
     nsfwLevel: number;
     nsfwLevelLocked: boolean;
     blockedFor: string | null;
+    needsReview: string | null;
   },
   articleUserId: number
 ) {
@@ -3357,17 +3360,19 @@ function canRescanArticleImage(
     image.userId === articleUserId &&
     image.ingestion !== ImageIngestionStatus.Pending &&
     !image.nsfwLevelLocked &&
+    image.needsReview === null &&
     !hasBlockMarker(image)
   );
 }
 
 /**
- * `canRescanArticleImage` as the Rescan write's filter, so a block that lands after the row was
- * read is not overwritten: the scan result would then lift it. Change the two together.
+ * `canRescanArticleImage` as the Rescan write's filter, so a block or review flag that lands after
+ * the row was read is not overwritten: the scan result would then clear it. Change the two together.
  */
 const rescanArticleImageWhere = (articleUserId: number): Prisma.ImageWhereInput => ({
   userId: articleUserId,
   nsfwLevelLocked: false,
+  needsReview: null,
   AND: [{ ingestion: { not: ImageIngestionStatus.Pending } }, noBlockMarkerWhere()],
 });
 
