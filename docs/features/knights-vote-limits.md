@@ -12,9 +12,11 @@ check and form validation, so only real vote attempts count. Moderators are neve
 - In flight: at most `IN_FLIGHT_CAP` (3) votes at once per player. The slot is freed in `finally`; one that is never freed (a check that timed
   out and was abandoned, a crashed request) expires 30 s after it was taken. Over the cap is a 429 marked `busy` (no lockout): the page sends votes one at a time from a queue (`createSerialQueue`, `routes/play/optimistic.ts`) and resends a busy vote after 0.4 s, 1.2 s and 3 s, so only a script reaches the cap. A reached limit is the 429 "judging too quickly" answer with `lockoutSeconds`.
 - Windows: a counter per minute, hour and day, each with its expiry set inside the script. Tripping one sets the old game's fixed cooldown:
-  minute 10 min, hour 1 h, day 24 h. While it runs every vote is refused before the vote transaction starts (its answer still reads the ledger, below).
-- `/play`, `/play/next` and every pace refusal (429) answer one end, through `lockoutFor` (`runtime.ts`, `voteLockout` in `lockout.ts`):
-  the latest of the cooldown's remaining TTL, the ledger's `voteLockUntil` and, for a refusal, the end it was refused with.
+  minute 10 min, hour 1 h, day 24 h. While it runs every vote is refused before the vote transaction starts, answered from the cooldown alone (no ledger read).
+- `/play`, `/play/next` and every pace refusal (429) answer one end. `lockoutFor` (`runtime.ts`, `voteLockout` in `lockout.ts`) takes the
+  latest of the cooldown's remaining TTL, the ledger's `voteLockUntil` and, for a refusal, the end it was refused with; a refusal by the
+  ledger or by a window tripping now goes through it. A refusal during a running cooldown answers that cooldown, which already holds the
+  frozen end. If the ledger cannot be read, a refusal answers its own end (still a 429).
 - `voteLockout` writes. An end past the running cooldown is frozen into the cooldown key (`freeze`: never shortens it, TTL the time left),
   so the countdown never moves later during a pause: later votes are refused at the cooldown before they count toward a fixed window
   and trip a longer one. This happens the first time a pause is shown, whether by `/play` load, `/play/next` or a refusal.

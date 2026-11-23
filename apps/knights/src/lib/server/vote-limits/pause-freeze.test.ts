@@ -8,7 +8,8 @@ import { createVoteGate, type VoteGate } from './gate';
 const T0 = new Date('2026-12-15T12:00:00Z').getTime();
 const MIN = 60_000;
 const clock = vi.hoisted(() => ({ ms: 0 }));
-const ledger = vi.hoisted(() => ({ rows: [] as number[] }));
+// `reads` counts the ledger reads behind `lockoutFor`; `failing` makes them throw (a degraded database).
+const ledger = vi.hoisted(() => ({ rows: [] as number[], reads: 0, failing: false }));
 const live = vi.hoisted(() => ({ config: null as unknown }));
 const redisCtl = vi.hoisted(() => ({ down: false }));
 const castVote = vi.hoisted(() => vi.fn());
@@ -59,7 +60,11 @@ vi.mock('$lib/server/queue/vote-rate', async (original) => ({
     _player: number,
     now: Date,
     limits: { windowSeconds: number; max: number }[]
-  ) => ledgerLock(now.getTime(), limits),
+  ) => {
+    ledger.reads++;
+    if (ledger.failing) throw new Error('database unavailable');
+    return ledgerLock(now.getTime(), limits);
+  },
 }));
 vi.mock('$lib/server/vote-limits/runtime', async () => {
   const { voteLockout } = await import('$lib/server/vote-limits/lockout');
@@ -113,6 +118,8 @@ beforeEach(() => {
   store = fakeRedis();
   setNow(T0);
   ledger.rows = [];
+  ledger.reads = 0;
+  ledger.failing = false;
   redisCtl.down = false;
   live.config = null;
   const real = store.client;
@@ -281,6 +288,27 @@ describe('the countdown never moves later during a pause', () => {
     redisCtl.down = true;
     expect(await submit()).toMatchObject({ status: 429, data: { lockoutSeconds: 22 * 60 } });
     expect(await show()).toBe(T0 + 22 * MIN);
+  });
+
+  it('answers a vote refused during a running cooldown from the cooldown, without reading the ledger', async () => {
+    live.config = HOUR3;
+    seedFullHour();
+    expect(await show()).toBe(T0 + 22 * MIN);
+    ledger.reads = 0;
+
+    expect(await submit()).toMatchObject({ status: 429, data: { lockoutSeconds: 22 * 60 } });
+    expect(ledger.reads).toBe(0);
+    expect(castVote).not.toHaveBeenCalled();
+  });
+
+  it('answers a ledger refusal with its own end when the lockout cannot be read', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    live.config = HOUR3;
+    seedFullHour();
+    ledger.failing = true;
+
+    expect(await submit()).toMatchObject({ status: 429, data: { lockoutSeconds: 22 * 60 } });
+    expect(log).toHaveBeenCalledWith('knights: could not read the vote lockout', expect.anything());
   });
 
   it('records no vote while paused', async () => {
