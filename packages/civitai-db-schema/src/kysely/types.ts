@@ -6831,6 +6831,11 @@ export type UserProfile = {
    * Profile folder rows: [{ id, name, folders: [{ id, hidden? }] }]. Not part of the general profile read.
    */
   folderRows: unknown | null;
+  backgroundImageId: number | null;
+  sfwBackgroundImageId: number | null;
+  cardColor: string | null;
+  cardOpacity: number | null;
+  about: string | null;
 };
 export type UserPurchasedRewards = {
   buzzTransactionId: string;

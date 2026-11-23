@@ -7,17 +7,27 @@ import {
   IconBookmark,
   IconCategory,
   IconCube,
+  IconId,
   IconLayoutList,
   IconPencilMinus,
   IconPhoto,
+  IconSettings,
   IconShoppingBag,
   IconSticker,
   IconTrophy,
   IconVideo,
 } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useProfileAchievements } from '~/components/CreatorJourney/useProfileAchievements';
+import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { canShowProfileAppsTab } from '~/components/Profile/profile-apps-tab';
+import {
+  applyHiddenProfileTabs,
+  isProfileHideableTab,
+} from '~/components/Profile/profile-hidden-tabs';
+import type { ProfileHiddenTabsModalProps } from '~/components/Profile/ProfileHiddenTabsModal';
 import { trpc } from '~/utils/trpc';
 import type { DataItem } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
@@ -25,7 +35,17 @@ import homeStyleClasses from '~/components/HomeContentToggle/HomeStyleSegmentedC
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
 import { getDisplayName, postgresSlugify } from '~/utils/string-helpers';
+
+const ProfileHiddenTabsModal = dynamic(
+  () => import('~/components/Profile/ProfileHiddenTabsModal'),
+  {
+    ssr: false,
+  }
+);
+const openProfileHiddenTabs =
+  createDialogTrigger<ProfileHiddenTabsModalProps>(ProfileHiddenTabsModal);
 
 type ProfileNavigationProps = {
   username: string;
@@ -58,6 +78,12 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       url: `${baseUrl}/`,
       icon: (props) => <IconAssembly {...props} />,
       label: 'Overview',
+    },
+    about: {
+      url: `${baseUrl}/about`,
+      icon: (props) => <IconId {...props} />,
+      label: 'About',
+      disabled: !features.profileRedesign,
     },
     models: {
       url: `${baseUrl}/models`,
@@ -154,13 +180,54 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
     },
   };
 
-  return (
+  const privacySettings = user?.profile?.privacySettings as
+    | PrivacySettingsSchema
+    | null
+    | undefined;
+  const tabs = applyHiddenProfileTabs(opts, {
+    hiddenTabs: privacySettings?.hiddenTabs,
+    viewerSeesAll: isProfileOwner || isModerator,
+    enabled: !!features.profileRedesign,
+  });
+
+  const segmentedControl = (
     <HomeStyleSegmentedControl
-      data={opts}
+      data={tabs}
       value={activePath}
       // The user decides which tabs exist, so the row waits for it too before picking its density.
       loading={isInitialLoading || isRefetching || userLoading}
       keepLabels={settings.navigation?.keepProfileLabels}
     />
+  );
+
+  if (!features.profileRedesign || !isProfileOwner || !user) return segmentedControl;
+
+  // Only the tabs this profile shows for other reasons; hiding one that never renders means nothing.
+  const hideableTabs = Object.entries(opts).flatMap(([key, tab]) =>
+    isProfileHideableTab(key) && !tab.disabled
+      ? [{ key, label: tab.label ?? getDisplayName(key) }]
+      : []
+  );
+
+  return (
+    <div className="flex items-start gap-1 pr-2">
+      <div className="min-w-0 flex-1">{segmentedControl}</div>
+      <LegacyActionIcon
+        size={32}
+        radius="xl"
+        variant="subtle"
+        // The main nav gear's colour (SubNavSettingsButton), level with the pills' top padding.
+        c="var(--mantine-color-bright)"
+        className="mt-1 shrink-0"
+        aria-label="Choose profile tabs"
+        onClick={() =>
+          openProfileHiddenTabs({
+            props: { userId: user.id, username, privacySettings, tabs: hideableTabs },
+          })
+        }
+      >
+        <IconSettings size={16} />
+      </LegacyActionIcon>
+    </div>
   );
 };

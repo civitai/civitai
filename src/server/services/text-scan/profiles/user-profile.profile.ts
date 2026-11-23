@@ -22,6 +22,7 @@ registerTextScanProfile({
         sfwMessage: true,
         showcaseSections: true,
         folderRows: true,
+        about: true,
       },
     });
     const eligible = await scamEligibleAuthors(rows.map((row) => row.userId));
@@ -40,6 +41,7 @@ registerTextScanProfile({
             },
             { heading: 'Showcase sections', text: showcaseSectionsText(row.showcaseSections) },
             { heading: 'Folder rows', text: folderRowsText(row.folderRows) },
+            { heading: 'About', text: scamTextFromHtml(row.about) },
           ]),
         ])
     );

@@ -252,6 +252,7 @@ describe('scam profiles', () => {
       { heading: 'Profile announcement (SFW domain)', text: '' },
       { heading: 'Showcase sections', text: 'T\nL\n/u' },
       { heading: 'Folder rows', text: 'Row one\nRow two' },
+      { heading: 'About', text: '' },
     ]);
     expect(subject?.userId).toBe(7);
     expect(subject?.meta).toEqual({ subjectUserId: 7 });

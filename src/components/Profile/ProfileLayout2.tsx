@@ -23,6 +23,7 @@ import { useRouter } from 'next/router';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import { ProfileHeader } from '~/components/Profile/ProfileHeader';
+import { ProfilePageCustomization } from '~/components/Profile/ProfilePageCustomization';
 import { usePathname } from 'next/navigation';
 import { profileSchemaImageUrl } from '~/components/Meta/safe-schema-image';
 import { ogImageUrl } from '~/components/Meta/og-image-url';
@@ -189,7 +190,10 @@ export function ProfileLayout2({
         notFound={!user || !user.username}
         left={
           blockedByThem || deferredShell ? null : (
-            <div className="scroll-area relative min-h-full w-[320px] border-r border-gray-3 bg-gray-0 @max-sm:hidden dark:border-dark-4 dark:bg-dark-6 [&:has([data-profile-redesign])]:overscroll-none">
+            <div
+              data-profile-card
+              className="scroll-area relative min-h-full w-[320px] border-r border-gray-3 bg-gray-0 @max-sm:hidden dark:border-dark-4 dark:bg-dark-6 [&:has([data-profile-redesign])]:overscroll-none"
+            >
               <ProfileSidebar username={username} />
             </div>
           )
@@ -197,7 +201,7 @@ export function ProfileLayout2({
         subNav={blockedByThem ? null : <ProfileNavigation username={username} />}
         announcements={false}
       >
-        <div className="px-3">
+        <div className="min-h-full px-3" data-profile-content>
           {blockedByThem && user ? (
             <BlockedByThemPanel user={user} />
           ) : isBlocked ? (
@@ -208,6 +212,7 @@ export function ProfileLayout2({
             <PageLoader />
           ) : (
             <>
+              {user && <ProfilePageCustomization userId={user.id} />}
               <ProfileHeader username={username} />
               {children}
             </>

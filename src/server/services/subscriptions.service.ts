@@ -31,6 +31,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   BUZZ_AMOUNT_TO_TIER,
   TIER_BUZZ_AMOUNTS,
@@ -474,6 +475,36 @@ export const getCapTierViaKysely = async (userId: number): Promise<string | null
   })) as UserSubscriptionRow[];
   return capTierOf(rows.map(toUserSubscription).filter((sub) => sub !== null));
 };
+
+/**
+ * Whether the user is a paying or comped member, as their session counts it: a good-standing
+ * subscription (`getCapTier`) or a non-free `UserMembershipOverride`, which the session ranks
+ * alongside subscriptions. Reading subscriptions alone would show a comped member the member
+ * controls and then refuse their save.
+ */
+export const isMemberTier = async (userId: number): Promise<boolean> => {
+  const [capTier, override] = await Promise.all([
+    getCapTier(userId),
+    // primary: a comp granted moments ago must already count, as it does on the session.
+    dbWrite.userMembershipOverride.findUnique({ where: { userId }, select: { tier: true } }),
+  ]);
+  return (!!capTier && capTier !== 'free') || (!!override && override.tier !== 'free');
+};
+
+const profileMemberTierKey = (userId: number) =>
+  `${REDIS_KEYS.CACHES.PROFILE_MEMBER_TIER}:${userId}` as RedisKeyTemplateCache;
+
+/**
+ * `isMemberTier` for showing a profile's members-only customisation to its visitors, cached so a
+ * popular profile does not query subscriptions on every view. A subscription change busts it; a
+ * membership override granted or revoked shows within the TTL. Writes check `isMemberTier` itself.
+ */
+export const isMemberTierCached = async (userId: number) =>
+  !!(await fetchThroughCache(profileMemberTierKey(userId), () => isMemberTier(userId), {
+    ttl: CacheTTL.sm,
+  }));
+
+export const bustMemberTierCache = (userId: number) => redis.del(profileMemberTierKey(userId));
 
 const capTierOf = (subscriptions: NonNullable<ReturnType<typeof toUserSubscription>>[]) =>
   pickHighestTier(subscriptions.filter((s) => !s.isBadState))?.tier ?? null;

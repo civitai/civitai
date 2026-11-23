@@ -25,6 +25,7 @@ import {
   IconShoppingBag,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import clsx from 'clsx';
 import React, { useMemo, useState } from 'react';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
@@ -39,6 +40,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserContextMenu } from '~/components/Profile/UserContextMenu';
+import { SidebarBackgroundArt } from '~/components/Profile/SidebarBackgroundArt';
 import { UserStats } from '~/components/Profile/UserStats';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { Username } from '~/components/User/Username';
@@ -54,6 +56,7 @@ import { trpc } from '~/utils/trpc';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
+import type { SidebarBackgroundCosmetic } from '~/server/selectors/cosmetic.selector';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -156,6 +159,9 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const { profile, stats } = user;
   const shouldDisplayStats = stats && !!Object.values(stats).find((stat) => stat !== 0);
   const equippedCosmetics = user?.cosmetics.filter((c) => !!c.equippedAt);
+  const sidebarBackground = redesign
+    ? equippedCosmetics.find((c) => c.cosmetic.type === CosmeticType.SidebarBackground)?.cosmetic
+    : undefined;
 
   const privacy = profile.privacySettings as PrivacySettingsSchema | null | undefined;
   const { highlightedBadges, otherBadges } = splitProfileBadges(badges, privacy, getBadgeImageUrl);
@@ -388,13 +394,20 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
   return (
     <Stack
-      className={className}
+      // Isolated so the sidebar art can sit behind the header without leaving the sidebar.
+      className={clsx(className, redesign && 'isolate')}
       gap={sizeOpts.spacing}
       p="md"
       pt={hatPaddingTop}
       pos={redesign ? 'relative' : undefined}
       data-profile-redesign={redesign || undefined}
     >
+      {sidebarBackground && (
+        <SidebarBackgroundArt
+          data={sidebarBackground.data as SidebarBackgroundCosmetic['data']}
+          className="absolute inset-x-0 top-0 -z-10 h-60"
+        />
+      )}
       {redesign ? (
         <>
           <Group

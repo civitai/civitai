@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { showcaseHiddenOnMask } from '~/shared/constants/profile-showcase.constants';
 import { constants } from '~/server/common/constants';
 import { imageReferenceInputSchema } from '~/server/schema/image.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { LinkType } from '~/shared/utils/prisma/enums';
 import { creatorCardStatsPreferences, profilePictureSchema } from './user.schema';
@@ -142,6 +143,43 @@ export const showcaseItemSchema = z.object({
   entityId: z.number(),
 });
 
+export const profileAboutMaxLength = 5000;
+const profileAboutAllowedTags = [
+  'p',
+  'br',
+  'h1',
+  'h2',
+  'h3',
+  'strong',
+  'em',
+  'u',
+  's',
+  'ul',
+  'ol',
+  'li',
+  'a',
+  'blockquote',
+  'code',
+];
+export const profileCardOpacityDefault = 80;
+
+/** Profile tabs an owner may hide; Overview, About and Shop always show. */
+export const profileHideableTabs = [
+  'models',
+  'posts',
+  'images',
+  'videos',
+  '3d-models',
+  'articles',
+  'comics',
+  'storylines',
+  'apps',
+  'achievements',
+  'collections',
+  'sticker-book',
+] as const;
+export type ProfileHideableTab = (typeof profileHideableTabs)[number];
+
 export type PrivacySettingsSchema = z.infer<typeof privacySettingsSchema>;
 
 export const privacySettingsSchema = z.object({
@@ -156,6 +194,8 @@ export const privacySettingsSchema = z.object({
   highlightedBadgeIds: z.array(z.number()).optional(),
   // Cosmetic ids of badges the user chose not to display on their profile.
   hiddenBadgeIds: z.array(z.number()).optional(),
+  // Profile tabs hidden from visitors' nav. The pages themselves still resolve.
+  hiddenTabs: z.array(z.enum(profileHideableTabs)).max(profileHideableTabs.length).optional(),
 });
 
 export type UserProfileUpdateSchema = z.infer<typeof userProfileUpdateSchema>;
@@ -175,6 +215,18 @@ export const userProfileUpdateSchema = z.object({
   sfwMessage: z.string().nullish(),
   sfwBio: z.string().nullish(),
   sfwCoverImage: imageReferenceInputSchema.nullish(),
+  // Profile redesign. Background, card colour and opacity are members only; `null` clears.
+  backgroundImage: imageReferenceInputSchema.nullish(),
+  sfwBackgroundImage: imageReferenceInputSchema.nullish(),
+  cardColor: z
+    .string()
+    .regex(/^#[0-9a-f]{6}$/i)
+    .nullish(),
+  cardOpacity: z.number().int().min(60).max(100).nullish(),
+  // Text only: media here would never be scanned or rated, and shows on every domain.
+  about: getSanitizedStringSchema({ allowedTags: profileAboutAllowedTags })
+    .refine((html) => html.length <= profileAboutMaxLength, 'Your About text is too long')
+    .nullish(),
   socialLinks: z
     .array(
       z.object({
@@ -194,4 +246,16 @@ export const userProfileUpdateSchema = z.object({
     )
     .optional(),
   creatorCardStatsPreferences: creatorCardStatsPreferences.optional(),
+});
+
+export type SetProfileBackgroundSchema = z.infer<typeof setProfileBackgroundSchema>;
+export const setProfileBackgroundSchema = z.object({ imageId: z.number().int().positive() });
+
+export type GetProfilePartSchema = z.infer<typeof getProfilePartSchema>;
+export const getProfilePartSchema = z.object({ userId: z.number().int().positive() });
+
+export type GetProfileCustomizationSchema = z.infer<typeof getProfileCustomizationSchema>;
+export const getProfileCustomizationSchema = getProfilePartSchema.extend({
+  // The viewer's browsing level: a background outside it is not sent.
+  browsingLevel: z.number().int().min(0).optional(),
 });

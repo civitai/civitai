@@ -2288,6 +2288,8 @@ model Image {
   connections         ImageConnection[]
   UserProfile         UserProfile[]
   userProfileSfwCover UserProfile[]         @relation("UserProfileSfwCoverImage")
+  userProfileBackground    UserProfile[] @relation("UserProfileBackgroundImage")
+  userProfileSfwBackground UserProfile[] @relation("UserProfileSfwBackgroundImage")
   announcementCovers  Announcement[]        @relation("AnnouncementCover")
   clubCover           Club[]                @relation("coverImage")
   clubHeader          Club[]                @relation("headerImage")
@@ -5900,6 +5902,8 @@ enum CosmeticType {
   ChatTheme
   // A glow around the creator card; its own slot, so it stacks with a badge.
   CardDecoration
+  // Art behind the profile sidebar header (redesign); not the creator card background.
+  SidebarBackground
 }
 
 enum CosmeticSource {
@@ -9860,12 +9864,22 @@ model UserProfile {
   showcaseSections        Json      @default("[]")
   /// Profile folder rows: [{ id, name, folders: [{ id, hidden? }] }]. Not part of the general profile read.
   folderRows              Json?
+  // Members-only page customisation (profile redesign). The sfw* image overrides on civitai.com.
+  backgroundImageId       Int?
+  backgroundImage         Image?    @relation("UserProfileBackgroundImage", fields: [backgroundImageId], references: [id], onDelete: SetNull)
+  sfwBackgroundImageId    Int?
+  sfwBackgroundImage      Image?    @relation("UserProfileSfwBackgroundImage", fields: [sfwBackgroundImageId], references: [id], onDelete: SetNull)
+  cardColor               String?
+  cardOpacity             Int?
+  about                   String?
 
   @@id([userId])
   // Serves the ON DELETE SET NULL referential-integrity trigger for the
   // sfwCoverImage relation. Without it every Image delete sequentially scans this
   // whole table. Prisma does not index relation scalars on its own.
   @@index([sfwCoverImageId])
+  @@index([backgroundImageId])
+  @@index([sfwBackgroundImageId])
 }
 
 /// @view

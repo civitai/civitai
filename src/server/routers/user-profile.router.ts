@@ -2,14 +2,20 @@ import { guardedProcedure, isFlagProtected, publicProcedure, router } from '~/se
 import {
   addEntityToShowcaseHandler,
   addToShowcaseSectionHandler,
+  getProfileAboutHandler,
+  getProfileCustomizationHandler,
   getUserContentOverviewHandler,
   getUserProfileHandler,
   setShowcaseSectionsHandler,
+  setProfileBackgroundHandler,
   updateUserProfileHandler,
 } from '~/server/controllers/user-profile.controller';
 import {
   addToShowcaseSectionSchema,
+  getProfileCustomizationSchema,
+  getProfilePartSchema,
   getUserProfileSchema,
+  setProfileBackgroundSchema,
   setShowcaseSectionsSchema,
   showcaseItemSchema,
   userProfileUpdateSchema,
@@ -25,6 +31,21 @@ export const userProfileRouter = router({
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getUserProfileSchema)
     .query(getUserContentOverviewHandler),
+  customization: publicProcedure
+    .use(isFlagProtected('profileRedesign'))
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(getProfileCustomizationSchema)
+    .query(getProfileCustomizationHandler),
+  about: publicProcedure
+    .use(isFlagProtected('profileRedesign'))
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(getProfilePartSchema)
+    .query(getProfileAboutHandler),
+  setBackground: guardedProcedure
+    .use(isFlagProtected('profileRedesign'))
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(setProfileBackgroundSchema)
+    .mutation(setProfileBackgroundHandler),
   update: guardedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(userProfileUpdateSchema)

@@ -64,3 +64,16 @@ describe('userProfileUpdateSchema showcaseItems', () => {
       ).toContainEqual({ code: 'too_big', path: ['showcaseItems'] });
   });
 });
+
+describe('the About text', () => {
+  it('keeps text formatting and links but drops media', () => {
+    const { about } = userProfileUpdateSchema.parse({
+      about:
+        '<h2>Hi</h2><p><strong>me</strong> <a href="https://x.test">x</a></p><img src="a.png"><iframe src="https://www.youtube.com/embed/1"></iframe>',
+    });
+    expect(about).toContain('<h2>Hi</h2>');
+    expect(about).toContain('<strong>me</strong>');
+    expect(about).toContain('href="https://x.test"');
+    expect(about).not.toMatch(/<img|<iframe/);
+  });
+});

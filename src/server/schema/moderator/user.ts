@@ -8,5 +8,6 @@ export const PROFILE_CLEAR_FIELDS = [
   'message',
   'showcaseSections',
   'folderRows',
+  'about',
 ] as const;
 export const displayName = z.string().trim().max(128);
