@@ -19,6 +19,9 @@ export function UsageLimitsPane() {
   const limits = trpc.user.getUsageLimits.useQuery(undefined, { staleTime: STALE_MS });
   const active = trpc.user.getActiveLimits.useQuery(undefined, { staleTime: STALE_MS });
   const appBuzz = trpc.user.getAppBuzzUsage.useQuery(undefined, {
+    staleTime: STALE_MS,
+    retry: false,
+  });
   const freeUsage = trpc.user.getOrchestrationFreeUsage.useQuery(undefined, {
     staleTime: STALE_MS,
     retry: false,
