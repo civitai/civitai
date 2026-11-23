@@ -6,7 +6,7 @@ import {
 } from '@civitai/shared/new-order';
 import { countOpenServableKnightItems } from '@civitai/db/knights';
 import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   enqueueKnightsItems,
@@ -216,7 +216,7 @@ export async function queueLeftPrivateForKnights(scope: KnightsSampleScope): Pro
       {
         type: 'knights-v2-left-private-error',
         ids: ('postIds' in scope ? scope.postIds : scope.imageIds).slice(0, 20),
-        error: (error as Error).message,
+        error: safeError(error),
       },
       'knights-v2-sources'
     );
