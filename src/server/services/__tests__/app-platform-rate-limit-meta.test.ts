@@ -82,20 +82,39 @@ const RECORDERS = new Set([
 ]);
 
 /**
- * Reviewed spellings that are not a 429 without meta, keyed `file :: function :: spelling`.
+ * Reviewed spellings that are not a 429 without meta, keyed `file :: function :: spelling`, each
+ * with HOW MANY such spellings that function holds. The count is part of the exemption: a second
+ * bare 429 added beside an exempt one (in the same function, or at a module's top level) moves the
+ * count, so it fails rather than hiding under the first one's reason.
  * Closing condition for each: the PR that removes the spelling (the entry then fails as stale).
  */
-const EXEMPT: Readonly<Record<string, string>> = {
-  'src/server/services/apps/doc-store-api.ts :: <module> :: 429':
-    "The document store's code-to-status table. `sendError` attaches the meta to every `rate_limited` reply (pinned by the doc-store REST tests).",
-  'src/server/services/blocks/dev-tunnel-access.service.ts :: <module> :: 429':
-    "The dev-tunnel refusal code-to-status table. A TOO_MANY_REQUESTS refusal's type requires its meta, which `devTunnelRefusalAnswer` sends.",
-  'src/server/services/blocks/pass-through-quote-failure.ts :: <module> :: 429':
-    "Classifies an UPSTREAM provider's status (which failures are the viewer's); it never answers one.",
+const EXEMPT: Readonly<Record<string, { count: number; reason: string }>> = {
+  'src/server/services/apps/doc-store-api.ts :: <module> :: 429': {
+    count: 1,
+    reason:
+      "The document store's code-to-status table. `sendError` attaches the meta to every `rate_limited` reply (pinned by the doc-store REST tests).",
+  },
+  'src/server/services/blocks/dev-tunnel-access.service.ts :: <module> :: 429': {
+    count: 1,
+    reason:
+      "The dev-tunnel refusal code-to-status table. A TOO_MANY_REQUESTS refusal's type requires its meta, which `devTunnelRefusalAnswer` sends.",
+  },
+  'src/server/services/blocks/pass-through-quote-failure.ts :: <module> :: 429': {
+    count: 2,
+    reason:
+      "Classifies an UPSTREAM provider's status (which failures are the viewer's); it never answers one.",
+  },
   'src/server/services/blocks/rate-limit-refusal.service.ts :: recordBridgeRateLimitRefusal :: 429':
-    'The refusal recorder: the status it logs when a caller names none (a parameter default).',
-  'src/pages/api/v1/blocks/images.ts :: handler :: 429':
-    "A paging bound, not a rate limit: a page past 1000 items is refused whatever the wait, mirroring the public images endpoint's status. No retry can succeed, so it names no retry time.",
+    {
+      count: 1,
+      reason:
+        'The refusal recorder: the status it logs when a caller names none (a parameter default).',
+    },
+  'src/pages/api/v1/blocks/images.ts :: handler :: 429': {
+    count: 1,
+    reason:
+      "A paging bound, not a rate limit: a page past 1000 items is refused whatever the wait, mirroring the public images endpoint's status. No retry can succeed, so it names no retry time.",
+  },
 };
 
 function appPlatformFiles(): string[] {
@@ -158,9 +177,15 @@ function holdsMeta(node: ts.Node): boolean {
   walk(node, (n) => {
     if (found) return;
     if (ts.isCallExpression(n) && META_BUILDERS.has(calleeName(n) ?? '')) found = true;
+    if (ts.isShorthandPropertyAssignment(n) && n.name.text === 'rateLimit') found = true;
+    // A `rateLimit` property only holds a meta when its value can be one: `undefined`, `null` and
+    // `void …` cannot.
     if (
-      (ts.isPropertyAssignment(n) || ts.isShorthandPropertyAssignment(n)) &&
-      n.name.getText() === 'rateLimit'
+      ts.isPropertyAssignment(n) &&
+      n.name.getText() === 'rateLimit' &&
+      !(ts.isIdentifier(n.initializer) && n.initializer.text === 'undefined') &&
+      n.initializer.kind !== ts.SyntaxKind.NullKeyword &&
+      !ts.isVoidExpression(n.initializer)
     )
       found = true;
   });
@@ -296,12 +321,15 @@ describe('the App Platform population', () => {
 
 describe('every App Platform 429 carries the rateLimit meta', () => {
   it('nothing spells a 429 without the meta except what EXEMPT names (and every one of those exists)', () => {
-    const found = VIOLATIONS.map(keyOf);
     const unexempt = VIOLATIONS.filter((v) => !(keyOf(v) in EXEMPT)).map(
       (v) => `${keyOf(v)} (line ${v.line})`
     );
     expect(unexempt).toEqual([]);
-    expect([...new Set(found)].sort()).toEqual(Object.keys(EXEMPT).sort());
+    const counts: Record<string, number> = {};
+    for (const v of VIOLATIONS) counts[keyOf(v)] = (counts[keyOf(v)] ?? 0) + 1;
+    expect(counts).toEqual(
+      Object.fromEntries(Object.entries(EXEMPT).map(([key, { count }]) => [key, count]))
+    );
   });
 });
 
@@ -361,6 +389,31 @@ describe('the classifier can go red', () => {
         res.status(429).json({ error: 'too many pages' });
       }`)
     ).toEqual(['429']);
+  });
+
+  it('POSITIVE CONTROL — a `rateLimit` sibling that holds no value does not meter a 429', () => {
+    expect(
+      verdict(`function refuse(message) {
+        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message, cause: { rateLimit: undefined } });
+      }`)
+    ).toEqual(['TOO_MANY_REQUESTS']);
+  });
+
+  it('POSITIVE CONTROL ON THE REAL TREE — a second bare 429 beside an exempt one fails', () => {
+    const file = 'src/pages/api/v1/blocks/images.ts';
+    const text = read(file);
+    const site =
+      /sendAppRateLimited\(\s*res,\s*appRateLimitMeta\('apps\.catalog', rateLimit\.retryAfterSeconds\),\s*'Rate limit exceeded, please retry shortly\.'\s*\);/;
+    expect(site.test(text), 'images.ts no longer refuses the way this control expects').toBe(true);
+    const reverted = text.replace(
+      site,
+      `res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });`
+    );
+    const n = allViolations({ file, text: reverted }).filter(
+      (v) => keyOf(v) === `${file} :: handler :: 429`
+    ).length;
+    expect(n).toBe(2);
+    expect(n).not.toBe(EXEMPT[`${file} :: handler :: 429`].count);
   });
 
   it('NEGATIVE CONTROL — a comment or a string containing the characters is not a spelling', () => {
