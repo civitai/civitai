@@ -224,13 +224,12 @@ const deps: HealDeps = {
 export const SONG_HOLD_CAP = 200;
 
 /**
- * A cover removed for CSAM whose song is not under csam review. A song a moderator has acted on is
- * left to the moderator.
+ * A cover removed for CSAM whose song is not under csam review. Held whatever else a moderator did
+ * on the song: to show it again, the cover comes off the song.
  */
 const UNHELD_SONG_OF_COVER = `FROM "Image" c JOIN "Image" s ON s.id = ${songIdOfCoverSql('c')}
   WHERE c."blockedFor" = 'CSAM' AND c."postId" IS NULL AND s.type = 'audio'
-    AND s."needsReview" IS DISTINCT FROM 'csam'
-    AND NOT EXISTS (SELECT 1 FROM "ModActivity" m WHERE m."entityType" = 'image' AND m."entityId" = s.id)`;
+    AND s."needsReview" IS DISTINCT FROM 'csam'`;
 
 /** One more than the cap, so a run can tell it was capped. */
 export const UNHELD_SONG_COVERS_SQL = `SELECT c.id ${UNHELD_SONG_OF_COVER}

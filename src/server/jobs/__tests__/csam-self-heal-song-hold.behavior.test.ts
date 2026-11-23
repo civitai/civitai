@@ -113,13 +113,13 @@ describe('the CSAM self-heal job, on songs of covers removed for CSAM', () => {
       expect(await row(id)).toEqual({ needsReview: null, marker: null });
   });
 
-  it('leaves a song a moderator has acted on to the moderator', async () => {
+  it('holds the song even after an earlier moderator action on it', async () => {
     await h.pg.exec(`INSERT INTO "ModActivity" ("userId", "entityType", "entityId", activity)
       VALUES (${MOD}, 'image', ${SONG}, 'review')`);
 
     const { songHolds } = await runCsamBlocklistSelfHeal();
 
-    expect(songHolds).toMatchObject({ candidates: 0, held: 0 });
-    expect(await row(SONG)).toEqual({ needsReview: null, marker: null });
+    expect(songHolds).toMatchObject({ candidates: 1, held: 1 });
+    expect((await row(SONG)).needsReview).toBe('csam');
   });
 });
