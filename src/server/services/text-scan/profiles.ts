@@ -21,6 +21,19 @@ export function isTextScanEntityType(value: string): value is TextScanEntityType
 }
 
 /**
+ * The labels of `profile` that `answers` has no answer for, when it requires every label; empty for
+ * every other profile. Takes the profile itself, not a registry lookup, so an unregistered profile
+ * cannot read as complete.
+ */
+export function unansweredTextScanLabels(
+  profile: Pick<TextScanProfile, 'labels' | 'requireEveryLabel'>,
+  answers: Partial<Record<TextScanLabel, unknown>> | null | undefined
+): TextScanLabel[] {
+  if (!profile.requireEveryLabel) return [];
+  return profile.labels.filter((label) => answers?.[label] == null);
+}
+
+/**
  * The labels a scan of this profile asks for: csam only while its gate is `review`, then narrowed by
  * `labelsFor` when a subject is given. Dropped before prompts and the content hash, so a closed gate
  * needs no csam prompt and leaves every hash as it was.

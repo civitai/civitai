@@ -9,6 +9,7 @@ import {
   settleSkippedScan,
   type SkipReason,
 } from '~/server/services/text-scan/actions/settle-skipped';
+import { TEXT_MODERATION_RETRY_LIMIT } from '~/server/jobs/text-moderation-retry.constants';
 import { csamHoldBars } from '~/server/services/text-scan/csam-hold-bars';
 import {
   csamHoldState,
@@ -17,10 +18,16 @@ import {
 } from '~/server/services/text-scan/csam-hold-state';
 import {
   loadServiceDealReviewSubjects,
+  SERVICE_DEAL_REVIEW_PROFILES,
   SERVICE_DEAL_REVIEW_TEXTS,
   type ServiceDealReviewTextType,
 } from '~/server/services/text-scan/profiles/service-deal-review.profile';
+import { spendTextScanRetry } from '~/server/services/text-scan/adapter';
+import { rearmTextScanRetries } from '~/server/services/text-scan/record';
+import { textScanCanAskEveryLabel } from '~/server/services/text-scan/submit';
+import { unansweredTextScanLabels } from '~/server/services/text-scan/profiles';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
+import type { TextScanOutput } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 type TextType = ServiceDealReviewTextType;
@@ -63,6 +70,51 @@ async function settleReviewText(
   if (type === 'ServiceDealReview') await syncReviewPublication(reviewId);
 }
 
+/** Puts a text back to Pending with no check recorded, so it stays unshown until a check is sent again. */
+async function resendReviewText(
+  type: TextType,
+  reviewId: number,
+  { workflowId, text }: CurrentText
+) {
+  const cols = SERVICE_DEAL_REVIEW_TEXTS[type];
+  await dbWrite.$executeRaw`
+    UPDATE "ServiceDealReview" r
+    SET ${cols.status} = 'Pending', ${cols.workflow} = NULL
+    WHERE r."id" = ${reviewId}::int AND r.${cols.status} IN ('Pending', 'Error')
+      AND (${workflowId ?? null}::text IS NULL OR r.${cols.workflow} = ${workflowId ?? null}::text)
+      AND (${text ?? null}::text IS NULL OR r.${cols.text} = ${text ?? null}::text)`;
+}
+
+/**
+ * A verdict that cannot settle its text hands the check's row to the retry job, which sends it again
+ * until its retries run out; the text stays Pending, so unshown, throughout and after. Scoped to the
+ * check that produced the verdict, so a newer check's row is left alone. Raw, not
+ * recordEntityModerationFailure: this needs the Succeeded guard and the new retryCount.
+ */
+async function leaveForRetry(
+  type: TextType,
+  reviewId: number,
+  workflowId: string,
+  unanswered: readonly string[]
+) {
+  const [row] = await dbWrite.$queryRaw<{ retryCount: number }[]>`
+    UPDATE "EntityModeration"
+    SET "status" = 'Failed', "retryCount" = "retryCount" + 1, "updatedAt" = now()
+    WHERE "entityType" = ${type} AND "entityId" = ${reviewId}::int
+      AND "workflowId" = ${workflowId} AND "status" = 'Succeeded'
+    RETURNING "retryCount"`;
+  if (row?.retryCount === TEXT_MODERATION_RETRY_LIMIT)
+    logToAxiom({
+      type: 'error',
+      name: 'service-deal-review-scan',
+      message: 'retries spent on verdicts that do not answer every label; text left unshown',
+      reviewId,
+      entityType: type,
+      workflowId,
+      payload: { labels: unanswered },
+    });
+}
+
 /** Settles a check, blocked instead while the csam queue holds the text. */
 async function settleUnlessHeld(
   type: TextType,
@@ -85,6 +137,11 @@ const settleSkipped = (type: TextType, reviewId: number, reason: SkipReason, tex
   // A hidden review is never shown, so its skipped scan has nothing to settle.
   reason === 'not-public'
     ? Promise.resolve()
+    : reason === 'incomplete'
+    ? Promise.all([
+        resendReviewText(type, reviewId, { text }),
+        spendTextScanRetry(type, reviewId),
+      ]).then(() => undefined)
     : settleSkippedScan(
         type,
         reviewId,
@@ -93,7 +150,8 @@ const settleSkipped = (type: TextType, reviewId: number, reason: SkipReason, tex
           stored
             ? settleStored(type, reviewId, text, level)
             : settleUnlessHeld(type, reviewId, { text }, { level }),
-        { reviewId }
+        { reviewId },
+        SERVICE_DEAL_REVIEW_PROFILES[type]
       );
 
 /**
@@ -132,7 +190,15 @@ async function trackSubmit(
     },
     select: { blocked: true, nsfwLevel: true, triggeredLabels: true, result: true },
   });
-  if (early && (early.blocked || early.nsfwLevel !== null))
+  if (!early || (!early.blocked && early.nsfwLevel === null)) return workflow;
+  const answers = (early.result as { labels?: TextScanOutput } | null)?.labels;
+  const unanswered = early.blocked
+    ? []
+    : unansweredTextScanLabels(SERVICE_DEAL_REVIEW_PROFILES[type], answers);
+  if (unanswered.length) {
+    await resendReviewText(type, reviewId, { workflowId });
+    await leaveForRetry(type, reviewId, workflowId, unanswered);
+  } else
     await settleUnlessHeld(
       type,
       reviewId,
@@ -140,6 +206,20 @@ async function trackSubmit(
       { blocked: !!early.blocked, level: early.nsfwLevel ?? NsfwLevel.PG, csam: early }
     );
   return workflow;
+}
+
+/**
+ * The review text types whose scan cannot ask every required label right now; a failed read counts
+ * as cannot. Sending such text is refused and spends a retry.
+ */
+export async function unaskableServiceDealReviewTypes() {
+  const types = Object.keys(SERVICE_DEAL_REVIEW_PROFILES) as TextType[];
+  const askable = await Promise.all(
+    types.map((type) =>
+      textScanCanAskEveryLabel(SERVICE_DEAL_REVIEW_PROFILES[type]).catch(() => false)
+    )
+  );
+  return types.filter((_, i) => !askable[i]);
 }
 
 /**
@@ -155,6 +235,8 @@ export async function scanServiceDealReviewText(
   const text = (await loadSubject(type, reviewId))?.fields[0]?.text;
   if (!text) return;
   try {
+    // An edit or restore is how text whose check ran out of retries comes back.
+    await rearmTextScanRetries({ entityType: type, entityId: reviewId });
     await trackSubmit(type, reviewId, text, () =>
       submitCheck({
         entityType: type,
@@ -242,15 +324,19 @@ const createReviewTextAdapter = (type: TextType): ModerationAdapter => ({
 const applyVerdict =
   (type: TextType) =>
   async ({ entityId, workflowId, outcome, textHash }: ApplyTextScanArgs) => {
-    if (!outcome.nsfw) {
+    const unanswered = unansweredTextScanLabels(SERVICE_DEAL_REVIEW_PROFILES[type], outcome);
+    if (unanswered.length || !outcome.nsfw) {
       logToAxiom({
         type: 'error',
         name: 'service-deal-review-scan',
-        message: 'verdict without an nsfw level; text left unshown',
+        message: 'verdict does not answer every label; text left unshown for the retry job',
         reviewId: entityId,
         entityType: type,
         workflowId,
+        payload: { labels: unanswered },
       });
+      await resendReviewText(type, entityId, { workflowId });
+      await leaveForRetry(type, entityId, workflowId, unanswered);
       return;
     }
     await settleUnlessHeld(

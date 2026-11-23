@@ -410,3 +410,29 @@ func TestNextReadsAPrivateDocumentsKey(t *testing.T) {
 		}
 	}
 }
+
+// INVARIANT GUARD (green before the adapter sent either; it must stay green): the adapter's private
+// feed sends each record's `seq` beside its key, and a head in the `meta` of `live` and `progress`
+// (src/server/registry-adapter/private-feed.ts). Neither is read here yet; both are ignored, never a
+// Malformed event, and everything else in those events is read as before.
+func TestNextToleratesSeqAndHeadMeta(t *testing.T) {
+	s := streamOf("" +
+		"event: upsert\ndata: {\"entity\":{\"urn\":\"urn:apps.civitai.com:app/notes/r1\",\"schemas\":[\"s\"],\"rev\":\"r1\",\"body\":{\"t\":1},\"key\":\"note-7e3\",\"seq\":41},\"cursor\":\"\"}\n\n" +
+		"event: live\nid: p1.c3\ndata: {\"cursor\":\"p1.c3\",\"meta\":{\"head\":{\"seq\":97}}}\n\n" +
+		"event: progress\nid: p1.c4\ndata: {\"cursor\":\"p1.c4\",\"meta\":{\"head\":{\"seq\":102}}}\n\n")
+	want := []Event{
+		{Type: Upsert, Entity: Entity{URN: "urn:apps.civitai.com:app/notes/r1", Schemas: []string{"s"}, Rev: "r1", Body: []byte(`{"t":1}`), Key: "note-7e3"}},
+		{Type: Live, Cursor: "p1.c3"},
+		{Type: Progress, Cursor: "p1.c4"},
+	}
+	for i, w := range want {
+		got, err := s.Next()
+		if err != nil {
+			t.Fatalf("event %d: %v", i, err)
+		}
+		if got.Type != w.Type || got.Cursor != w.Cursor || got.Entity.URN != w.Entity.URN ||
+			got.Entity.Key != w.Entity.Key || string(got.Entity.Body) != string(w.Entity.Body) {
+			t.Fatalf("event %d = %+v, want %+v", i, got, w)
+		}
+	}
+}

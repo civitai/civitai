@@ -309,7 +309,11 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       );
       expect((await store.get(me, PREFS, 'k'))?.data).toEqual({ n: 2 });
       await expectCode(store.delete(me, PREFS, 'k', { ifVersion: 1 }), 'version_conflict');
-      expect(await store.delete(me, PREFS, 'k', { ifVersion: 2 })).toEqual({ deleted: true });
+      // The third write of the namespace: two puts, then this delete (refusals take no seq).
+      expect(await store.delete(me, PREFS, 'k', { ifVersion: 2 })).toEqual({
+        deleted: true,
+        seq: 3,
+      });
       expect(await store.delete(me, PREFS, 'k')).toEqual({ deleted: false });
       expect(await store.get(me, PREFS, 'k')).toBeNull();
       const again = await store.put(me, PREFS, 'k', { n: 4 }, { ifVersion: 0 });
@@ -1250,7 +1254,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       });
       // Redeclared private again: the shared document stays on the app's ceiling.
       expect(await store.get(me, asPrivate, 's')).toBeNull();
-      expect(await store.delete(me, asPrivate, 'p')).toEqual({ deleted: true });
+      expect(await store.delete(me, asPrivate, 'p')).toEqual({ deleted: true, seq: 3 });
       expect(await store.usage(me)).toEqual({
         app: { bytes: 10, docs: 1 },
         viewer: { bytes: 10, docs: 1 },
@@ -1269,7 +1273,7 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
         app: { bytes: 19, docs: 1 },
         viewer: { bytes: 42, docs: 2 },
       });
-      expect(await store.delete(me, PREFS, 'a')).toEqual({ deleted: true });
+      expect(await store.delete(me, PREFS, 'a')).toEqual({ deleted: true, seq: 4 });
       const [u] = await h.raw(
         `SELECT bytes, docs, last_seq FROM appdata.usage_app WHERE app_id = $1 AND ns = $2`,
         [app, NS_PROD]
@@ -1298,7 +1302,8 @@ export function defineFunctionalSuite(makeHarness: () => Promise<Harness>) {
       });
       await expectCode(lowered.put(me, PREFS, 'a', { p: 'xxxxxxxxxxx' }), 'quota_exceeded');
       expect((await lowered.put(me, PREFS, 'a', { p: 'x' })).version).toBe(2);
-      expect(await lowered.delete(me, PREFS, 'b')).toEqual({ deleted: true });
+      // Three puts, the refused put (rolled back, no seq), the shrink (4), then this delete.
+      expect(await lowered.delete(me, PREFS, 'b')).toEqual({ deleted: true, seq: 5 });
       await assertUsageConsistent(h, app2, NS_PROD);
     });
 

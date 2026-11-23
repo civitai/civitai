@@ -1292,7 +1292,8 @@ async function run(
             authorUserId: uid,
           });
         }
-        return ok(result);
+        // `{ deleted }` only: the store's tombstone `seq` is internal to its API, not this route's.
+        return ok({ deleted: result.deleted });
       };
       if (!shared || route.op === 'delete') {
         await charge('write', access, req);

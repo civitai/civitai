@@ -25,8 +25,10 @@ describe('the document-store private feed is reachable from the registry private
     ]);
   });
 
-  it('the private feed is exactly its two reads; neither the public feed nor the block-token store carries them', () => {
-    const PRIVATE = ['privateDocuments', 'privateVersions'];
+  it('the private feed is exactly its two reads and the head; neither the public feed nor the block-token store carries them', () => {
+    // `privateHead` reads no user's documents (the namespace's write head, as the public feed's
+    // `feedHead` does); it is here so a private stream reads it from the object it already holds.
+    const PRIVATE = ['privateDocuments', 'privateHead', 'privateVersions'];
     expect(Object.keys(createDocStorePrivateFeed({ db: null })).sort()).toEqual(PRIVATE);
     for (const other of [createDocStore({ db: null }), createDocStoreFeed({ db: null })]) {
       expect(Object.keys(other).filter((k) => PRIVATE.includes(k))).toEqual([]);

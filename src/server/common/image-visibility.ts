@@ -545,3 +545,22 @@ export const isImageNotFlagged = (image: {
   minor: boolean | null;
   nsfwLevel: number;
 }) => !image.acceptableMinor && !isMinorMatureImage(image);
+
+/**
+ * An image with any `blockedFor` reason is visible only to its owner and moderators, as SQL over
+ * `"Image" i`. Empty for a moderator.
+ */
+export function imageBlockedForConditions({
+  userId,
+  isModerator,
+}: {
+  userId?: number;
+  isModerator?: boolean;
+}): Prisma.Sql[] {
+  if (isModerator) return [];
+  return [
+    userId
+      ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
+      : Prisma.sql`(i."blockedFor" IS NULL)`,
+  ];
+}

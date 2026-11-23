@@ -49,7 +49,7 @@ export const missedNotificationsDigestEmail = createEmail({
       .map(({ message, url }) => {
         const link = absoluteUrl(url);
         const text = escapeHtml(message);
-        return `<li style="margin-bottom: 8px;">${
+        return `<li style="margin: 0 0 10px 0;">${
           link
             ? `<a href="${escapeHtml(link)}" style="color: ${emailTheme.link};">${text}</a>`
             : text
@@ -67,10 +67,13 @@ export const missedNotificationsDigestEmail = createEmail({
       emailTheme.link
     };">unsubscribe from this one</a>.`;
     return simpleEmailWithTemplate({
+      icon: '📬',
+      accent: 'blue',
+      eyebrow: 'Weekly digest',
       header: escapeHtml(`Notifications you missed this week`),
-      body: `<p>${escapeHtml(
+      body: `<p style="margin: 0;">${escapeHtml(
         `You have ${countLabel(data)} on Civitai you haven't seen.`
-      )}</p><ul style="text-align: left; padding-left: 20px;">${list}</ul>${
+      )}</p><ul style="margin: 16px 0; text-align: left; padding-left: 20px;">${list}</ul>${
         more ? `<p>${escapeHtml(more)}</p>` : ''
       }`,
       btnUrl: escapeHtml(notificationsPageUrl()),

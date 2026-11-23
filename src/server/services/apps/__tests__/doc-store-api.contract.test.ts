@@ -2273,6 +2273,76 @@ describe('the App Store card follows the author deleting a shared document', () 
   });
 });
 
+// INVARIANT GUARD (green before the store's writes answered a seq, and must stay green): the store
+// now answers each write's `seq` and `recordId` and each delete's tombstone `seq` (`WrittenDocRecord`,
+// `DocDeleteResult`), for the app-data service's internal route. The public route answers none of
+// them: every write's body is exactly the fields it always had.
+describe('the public write answers carry no store seq or record id', () => {
+  afterEach(() => {
+    h.unchangedWritesApps = new Set();
+  });
+  // A presented document, levels off: exactly these top-level fields.
+  const DOC_FIELDS = [
+    'author',
+    'counters',
+    'createdAt',
+    'data',
+    'key',
+    'marks',
+    'updatedAt',
+    'version',
+    'viewer',
+  ];
+  const expectPublicDoc = (r: Reply, status: number) => {
+    expect(r.status).toBe(status);
+    expect(Object.keys(r.body as object).sort()).toEqual(DOC_FIELDS);
+    expect(JSON.stringify(r.body)).not.toMatch(/"(seq|recordId|record_id)"/);
+  };
+
+  it('create, put (private and shared), an unchanged put, and delete', async () => {
+    const { A } = freshApps();
+    h.unchangedWritesApps = new Set([A.id]);
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    expectPublicDoc(
+      await call({ token: t, method: 'POST', path: '/prefs', body: { data: { n: 1 } } }),
+      201
+    );
+    expectPublicDoc(
+      await call({ token: t, method: 'POST', path: '/notes', body: { data: { t: 'one' } } }),
+      201
+    );
+    expectPublicDoc(
+      await call({ token: t, method: 'PUT', path: '/prefs/p7', body: { data: { n: 2 } } }),
+      200
+    );
+    const put = { token: t, method: 'PUT', path: '/notes/n7', body: { data: { t: 'two' } } };
+    expectPublicDoc(await call(put), 200);
+    const before = await harness.raw(
+      `SELECT u.last_seq FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = 'prod'`,
+      [A.id]
+    );
+    // The same body again, the unchanged-writes flag on: answered by `putIfUnchanged`, which
+    // writes nothing (the head stays), and presented the same way.
+    expectPublicDoc(await call(put), 200);
+    expect(
+      await harness.raw(
+        `SELECT u.last_seq FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = 'prod'`,
+        [A.id]
+      )
+    ).toEqual(before);
+    for (const path of ['/prefs/p7', '/notes/n7']) {
+      const del = await call({ token: t, method: 'DELETE', path });
+      expect({ status: del.status, body: del.body }).toEqual({
+        status: 200,
+        body: { deleted: true },
+      });
+    }
+    expect((await call({ token: t, method: 'DELETE', path: '/notes/n7' })).body).toEqual({
+      deleted: false,
+    });
+  });
+});
+
 describe('ownedModelVersions: a manifest-declared ownership rule on document data', () => {
   const POINTER = '/workflow/modelVersionId';
   // Model version id → owner. Distinct from every viewer id, and from each other.

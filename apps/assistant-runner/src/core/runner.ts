@@ -56,6 +56,7 @@ import type {
   OpenTools,
   RunGrant,
   ToolProvider,
+  TurnEnded,
 } from './interfaces';
 import { createPool } from './pg-pool';
 import { ProgressWriter, runAfterSaved } from './progress';
@@ -174,6 +175,12 @@ export interface RunnerDeps {
    * a first start naming any other model keeps it in the new head. Unset: every first start's model is kept.
    */
   defaultModel?: string;
+  /**
+   * Told of each pass of a reply as it ends, once its end is journaled (civitai: per-turn analytics).
+   * Called synchronously and never awaited: an implementation must return at once and do its work
+   * in the background. Whatever it throws is logged and dropped; it never changes how a reply ends.
+   */
+  turnEnded?: (turn: TurnEnded) => void;
 }
 
 export interface LaunchOptions {
@@ -763,6 +770,7 @@ export class Runner implements RunService {
   async #pass(input: ReplyInput, begun: Begun, stop: AbortSignal, why: Why): Promise<ReplyOutput> {
     const { runId, userId, conversationId, seq } = input;
     const { store, log } = this.#deps;
+    const passStartedAt = new Date();
     const journal = await this.#readJournal(runId);
     const head = await store.load(userId, conversationId);
     const turn = savedTurn(head, seq);
@@ -811,7 +819,13 @@ export class Runner implements RunService {
     const end = async (
       status: RunEndStatus,
       reply: EndedReply,
-      outcome: Partial<AgentCoreOutcome> = {}
+      outcome: Partial<AgentCoreOutcome> = {},
+      /**
+       * Whether this end is a turn the model worked on, so `turnEnded` hears of it. Not for a pass
+       * that never asked the model (stopped before it started, or out of time already) nor for one a
+       * newer run of the same turn took over: those are not turns of their own.
+       */
+      { reported = true }: { reported?: boolean } = {}
     ): Promise<ReplyOutput> => {
       // An end that could not be saved after its retries is kept with the grant, so it lands later.
       if (!(await progress.end(reply)))
@@ -838,6 +852,22 @@ export class Runner implements RunService {
       });
       await emitter.drain();
       emitter.close();
+      if (reported)
+        this.#reportTurn(() => ({
+          userId,
+          runId,
+          conversationId,
+          seq,
+          model: input.model,
+          status,
+          ...(progress.chargedSoFar !== undefined ? { buzz: progress.chargedSoFar } : {}),
+          startedAt: passStartedAt,
+          endedAt: new Date(),
+          messages: reply.messages,
+          earlier: (head?.turns ?? [])
+            .filter((saved) => saved.seq < seq)
+            .flatMap((saved) => turnFrom(saved).assistant.messages),
+        }));
       return { status, steps, ...(outcome.resume ? { resume: outcome.resume } : {}) };
     };
 
@@ -845,19 +875,27 @@ export class Runner implements RunService {
     // A retry of the same turn took it over (this run was recovered late): it is that run's now, and
     // this one ends without writing to it (its saves are refused).
     if (turn && !ownedBy(turn, runId))
-      return end('stopped', { messages: carried, status: 'aborted' });
+      return end('stopped', { messages: carried, status: 'aborted' }, {}, { reported: false });
     if (begun.stoppedBeforeStart || stop.aborted) {
-      return end(why.reason === 'ran_out' ? 'ran_out' : 'stopped', {
-        messages: carried,
-        status: 'aborted',
-      });
+      return end(
+        why.reason === 'ran_out' ? 'ran_out' : 'stopped',
+        { messages: carried, status: 'aborted' },
+        {},
+        { reported: false }
+      );
     }
     // Progress saved with every step it may take: there is nothing left to ask without starting over.
     if (turn?.assistant?.status === 'running' && !from && turn.assistant.messages.length > 0) {
       return end('ran_out', { messages: shownMessages(turn), status: 'done', ranOut: true });
     }
     const remaining = begun.deadline - Date.now();
-    if (remaining <= 0) return end('ran_out', { messages: carried, status: 'done', ranOut: true });
+    if (remaining <= 0)
+      return end(
+        'ran_out',
+        { messages: carried, status: 'done', ranOut: true },
+        {},
+        { reported: false }
+      );
 
     // The pass's tools now. A rebuild mid-reply (`reopenTools`) opens new ones: every set opened is
     // closed once, whichever of the rebuild, a Stop or the pass's end comes to it first.
@@ -1022,6 +1060,21 @@ export class Runner implements RunService {
       },
       outcome
     );
+  }
+
+  /**
+   * Tells the deployment's `turnEnded` of a pass that ended; nothing it does reaches the reply. The
+   * report is BUILT inside the try too: reading the earlier turns (`turnFrom`) throws on a malformed
+   * saved turn, and that must not fail the pass after its end was journaled.
+   */
+  #reportTurn(build: () => TurnEnded): void {
+    const { turnEnded, log } = this.#deps;
+    if (!turnEnded) return;
+    try {
+      turnEnded(build());
+    } catch (error) {
+      log.warn({ err: error }, 'reporting a finished turn failed');
+    }
   }
 
   #model(
