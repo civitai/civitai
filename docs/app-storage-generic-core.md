@@ -407,7 +407,9 @@ keyMap? })`, beside `migrateDocuments` (the schema-migration runner). For each `
 **Rollback.** Valid only before step 6. Unfreeze, revert the app to its previous approved version, and
 delete `t`'s copied documents with the per-collection purge (a new maintenance op, built in rollout
 step 2: `doc-store-purge.ts` has only a viewer and an app purge today) that deletes every document of
-one collection in one namespace with tombstones and refunds, as a moderator delete does. `doc_mark` and
+one collection in one namespace through the moderator delete path (`deleteLockedSharedDocs`, which
+writes tombstones and refunds each document's author, not the caller as the author `remove` does).
+`doc_mark` and
 `doc_tally` were never written, so nothing needs restoring. After step 6 a rollback would lose every
 vote made through `@me`, which were never written to `doc_mark`, so past that point the only way back
 is forward: fix the new version.
@@ -425,18 +427,23 @@ Their `data` is always empty and their only content is their counters (above). P
 all in `playable-collections`' `popular_plays`. They are deleted by the **per-collection purge**, the
 maintenance op built in rollout step 2 for the vote rollback, run on the counter collection in rollout
 step 4, per app, after that app's migration. The purge deletes every document of the collection in
-one namespace through the ordinary delete path, which also deletes each document's tally and mark
-rows, writes tombstones, and refunds the usage charged to `usage_app` and to the `usage_user` of the
-viewer whose increment created the document (`author_uid`; nothing per user when an account wipe
-already cleared it). The rows it deletes are dumped first, as the final cleanup's are. It runs only
-when both of these hold:
+one namespace through the moderator delete path (`deleteLockedSharedDocs`), not the author `remove`,
+which refuses a `write: "none"` collection and refunds the caller. That path deletes each document's
+tally rows and **every** `doc_mark` row on it, `report` rows included, writes tombstones, and refunds
+the usage charged to `usage_app` and to the `usage_user` of the viewer whose increment created the
+document (`author_uid`; nothing per user when an account wipe already cleared it). The rows it
+deletes are dumped first, as the final cleanup's are, and the dump includes any (dismissed) report
+rows deleted with their document. It runs only when all of these hold:
 
 - **No increment can re-create a document.** The app's new approved version no longer declares the
-  collection's counters, and the store refuses `$inc` on it (`410`), because the first increment of a
-  counter creates its document (`SQL_INSERT_COUNTER_DOC`).
+  collection's counters, so the store refuses `$inc` on it (`400 invalid_request`, counter no longer
+  declared), because the first increment of a counter creates its document (`SQL_INSERT_COUNTER_DOC`).
 - **Every mark on the collection has been migrated.** Each of its marks' targets has passed verify
   and has its switch open (steps 3 to 6 above), because deleting a document deletes its marks, and a
   closed target's app still reads them.
+- **No report on the collection's documents is open.** An open report is a `report` row newer than
+  its document's `reports_dismissed_at`; a moderator resolves every open one first, so the purge
+  never deletes a report nobody has looked at.
 
 `playable-collections` is migrated as open question 10 specifies: its `played` marks are copied into
 the viewer-keyed `plays` target, and only after that target's switch is open is `popular_plays`
@@ -501,9 +508,10 @@ Each step names what ends it.
    and `dataset-commons` ("Inventory (2026-11-23)"): each one's new manifest version, then per target:
    key check, freeze, copy, verify, rate, open the switch; then, for an app with counter documents
    (`playable-collections`), the per-collection purge of its counter collection ("Counter
-   documents"). The other apps that declare tallies hold none and only change their manifests. Ends
+   documents"), once a moderator has resolved every open report on that collection's documents. The
+   other apps that declare tallies hold none and only change their manifests. Ends
    per target when its switch is open and its old calls stop, and per app when none of its
-   documents has `author_kind = 'counter'`.
+   documents has `author_kind = 'counter'`, removed by a purge that ran with no open report on them.
 5. **Remove when usage is zero for 7 days.** Zero means: `civitai_app_block_doc_store_tally_ops_total`
    flat (it has no app label), `app_storage_requests_total{op}` flat for `increment`, `mark`, `unmark`,
    `patch`, `publish` and `unpublish` (its `app` label names the app; `recordAppStorageRequest`), and no
@@ -566,8 +574,8 @@ Disposition of the work already done:
   `keyPrefix=<parent>:`, at most 100 per page, so a board costs one list request per item shown, plus
   one extra page for every further 100 votes on an item. Sort by count is not available. That is
   cheap at today's volume (the busiest item set in production holds 43 marks). The practical limit is
-  a board page of about 50 items, or any item with more than 100 votes: past either, one page view
-  costs dozens of list requests. **Trigger:** before migrating any app whose boards exceed that limit,
+  a board page of about 50 items (about 50 list requests per page view), or any item with more than
+  100 votes (one more page per further 100). **Trigger:** before migrating any app whose boards exceed that limit,
   revisit the aggregate decision for it. Until then the decision stands: no server-side aggregates.
 - **Orphans.** Deleting a record leaves its votes, still charged to their voters (open question 2).
 - **History replay.** Removing `marks` / `counters` from the parser outright would make old approved
