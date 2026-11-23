@@ -24,6 +24,8 @@
 // not read from REST: the answer is `{"source":"none","reason":<the fallback reason>,"items":[]}`.
 // The site's shadow caller sends it (DESIGN.md, "P4: the site's shadow read").
 //
+// With APP_DATA_WRITES on, also the write routes and `info` (package writes; WRITES-DESIGN.md).
+//
 // Also /healthz, /readyz and /metrics.
 package api
 
@@ -47,6 +49,7 @@ import (
 	"github.com/civitai/civitai/apps/app-data-go/internal/rest"
 	"github.com/civitai/civitai/apps/app-data-go/internal/session"
 	"github.com/civitai/civitai/apps/app-data-go/internal/urn"
+	"github.com/civitai/civitai/apps/app-data-go/internal/writes"
 )
 
 // RegistryOnlyHeader, set to "1", asks for the registry's answer only. The site sends it from its
@@ -85,13 +88,30 @@ type Server struct {
 	RESTSlots chan struct{}
 	// Ready reports whether the service takes reads (false while it shuts down); nil is always.
 	Ready func() bool
+	// Writes, when set (APP_DATA_WRITES on), adds the write routes and `info` (writes.Forwarder).
+	// Nil registers none of them: each answers 404, as any path the mux does not know.
+	Writes Routes
+}
+
+// Routes registers a set of routes on the API's mux.
+type Routes interface {
+	Register(mux *http.ServeMux)
 }
 
 // Handler routes the API.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/apps/{slug}/collections/{collection}/records", s.records)
-	mux.HandleFunc("OPTIONS /v1/apps/{slug}/collections/{collection}/records", preflight)
+	if s.Writes == nil {
+		mux.HandleFunc("OPTIONS /v1/apps/{slug}/collections/{collection}/records", preflight)
+		// Writes off: a POST (the create) to the read's path is the mux's own 404, as every other write
+		// path is, not the 405 the mux would answer for a path it serves under another method.
+		mux.HandleFunc("/v1/apps/{slug}/collections/{collection}/records", http.NotFound)
+	} else {
+		// The collection path also takes the create (POST): its preflight is the write paths'.
+		mux.HandleFunc("OPTIONS /v1/apps/{slug}/collections/{collection}/records", writes.Preflight)
+		s.Writes.Register(mux)
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
 		if s.Ready != nil && !s.Ready() {

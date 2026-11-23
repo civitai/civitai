@@ -43,3 +43,10 @@ func CollectionSchema(slug, collection string, major int) (string, error) {
 	}
 	return fmt.Sprintf("urn:schema:%s:%s/%s@v%d", Namespace, slug, collection, major), nil
 }
+
+// ValidSlug reports whether slug is an app slug the adapter would name (urn.ts SLUG_RE).
+func ValidSlug(slug string) bool { return slugRE.MatchString(slug) }
+
+// ValidCollection reports whether collection is a collection name the adapter would name
+// (urn.ts COLLECTION_RE).
+func ValidCollection(collection string) bool { return collectionRE.MatchString(collection) }
