@@ -2635,7 +2635,7 @@ export async function setSongGenre({ id, genre, user }: SetSongGenreInput & { us
  */
 export async function addSongTag({ id, name, user }: AddSongTagInput & { user: SessionUser }) {
   const song = await readEditableSong(id, user);
-  // Every genre's tag, not only the song's own: the genre select is the one way to attach those.
+  // Every genre's tag, not only the song's own: the owner attaches one only through the genre select.
   if (isSongGenreTagName(name)) throw throwBadRequestError(SONG_TAG_UNAVAILABLE_MESSAGE);
   const { genre } = song;
 
