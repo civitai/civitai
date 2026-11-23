@@ -13,10 +13,20 @@
  * A missing or unreadable shard report fails the merge and names the shard (aborted shard,
  * failed upload, or matrix and `/N` drifted apart); the on-disk ledger alone could not say which.
  *
+ * A shard whose report holds no executed test fails the merge too, naming it: an empty shard
+ * means the matrix and the `/N` denominator drifted apart or files stopped being collected, and
+ * the union ledger alone can still read green over it.
+ *
+ * Also merges the sharded `App unit tests` reports (apps.yml), whose ledger
+ * (`assert-workspace-suites-ran.mjs`) likewise needs every shard's files. Same layout under a
+ * different name, hence `[report-name]`.
+ *
  * Usage:  node scripts/ci/merge-component-shard-reports.mjs <reports-dir> <shard-total> <out>
+ *           [report-name]
  *
  * `<reports-dir>` is what `actions/download-artifact` writes for a pattern download without
- * `merge-multiple`: one sub-directory per artifact, `component-report-<i>/component-report.json`.
+ * `merge-multiple`: one sub-directory per artifact, `<name>-<i>/<name>.json`, `<name>` being
+ * `[report-name]` (default `component-report`).
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,9 +34,11 @@ import { fileURLToPath } from 'node:url';
 
 import { tally } from './assert-component-suite-ran.mjs';
 
+export const DEFAULT_REPORT_NAME = 'component-report';
+
 /** Where shard `i`'s report lands under `<reports-dir>`. One place, so the workflow and this agree. */
-export function shardReportPath(dir, i) {
-  return join(dir, `component-report-${i}`, 'component-report.json');
+export function shardReportPath(dir, i, name = DEFAULT_REPORT_NAME) {
+  return join(dir, `${name}-${i}`, `${name}.json`);
 }
 
 /**
@@ -40,7 +52,13 @@ export function mergeShardReports(reports, total) {
   const lines = [];
   let ok = true;
   const testResults = [];
-  const sums = { numFailedTestSuites: 0, numFailedTests: 0, numTotalTests: 0 };
+  const sums = {
+    numFailedTestSuites: 0,
+    numFailedTests: 0,
+    numTotalTests: 0,
+    numTotalTestSuites: 0,
+    numPendingTests: 0,
+  };
 
   const byShard = new Map(reports.map((r) => [r.shard, r]));
   for (let i = 1; i <= total; i++) {
@@ -60,6 +78,14 @@ export function mergeShardReports(reports, total) {
       `shard ${i}/${total}: ${counts.executed} executed, ${counts.skipped} skipped, across ` +
         `${counts.files} files`
     );
+    if (counts.executed === 0) {
+      ok = false;
+      lines.push(
+        `🔴 shard ${i}/${total}: EXECUTED ZERO TESTS. A \`--shard\` that selects no files exits 0, ` +
+          'so this is a silent failure, not a pass: check that the matrix and the `/N` ' +
+          'denominator agree and that the suite is not skipping itself wholesale.'
+      );
+    }
     testResults.push(...(report.testResults ?? []));
     for (const k of Object.keys(sums)) sums[k] += Number(report[k] ?? 0);
   }
@@ -68,8 +94,8 @@ export function mergeShardReports(reports, total) {
 }
 
 /** Read shard `i`'s report from disk as `{ shard, report, problem }`. */
-export function readShardReport(dir, i) {
-  const p = shardReportPath(dir, i);
+export function readShardReport(dir, i, name = DEFAULT_REPORT_NAME) {
+  const p = shardReportPath(dir, i, name);
   if (!existsSync(p)) return { shard: i, report: null, problem: `${p} does not exist` };
   try {
     return { shard: i, report: JSON.parse(readFileSync(p, 'utf8')) };
@@ -79,16 +105,16 @@ export function readShardReport(dir, i) {
 }
 
 function main(argv) {
-  const [dir, totalRaw, out] = argv.slice(2);
+  const [dir, totalRaw, out, name = DEFAULT_REPORT_NAME, ...extra] = argv.slice(2);
   const total = Number(totalRaw);
-  if (!dir || !out || !Number.isInteger(total) || total < 1) {
+  if (!dir || !out || !name || extra.length > 0 || !Number.isInteger(total) || total < 1) {
     console.error(
-      'usage: merge-component-shard-reports.mjs <reports-dir> <shard-total> <out-report>'
+      'usage: merge-component-shard-reports.mjs <reports-dir> <shard-total> <out-report> [report-name]'
     );
     return 2;
   }
   const reports = [];
-  for (let i = 1; i <= total; i++) reports.push(readShardReport(dir, i));
+  for (let i = 1; i <= total; i++) reports.push(readShardReport(dir, i, name));
   const { ok, merged, lines } = mergeShardReports(reports, total);
   writeFileSync(out, JSON.stringify(merged));
   for (const line of lines) (ok ? console.log : console.error)(line);

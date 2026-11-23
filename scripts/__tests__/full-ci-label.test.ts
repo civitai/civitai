@@ -152,6 +152,7 @@ describe('the full-ci label', () => {
     ['lint.yml', 'component'],
     ['lint.yml', 'component-ledger'],
     ['apps.yml', 'apps'],
+    ['apps.yml', 'apps-ledger'],
     ['apps.yml', 'apps-typecheck'],
     ['moderator-boot.yml', 'boot'],
   ])('%s:%s runs on a labeled draft', (file, id) => {
@@ -176,7 +177,7 @@ describe('the full-ci label', () => {
         'unit-verify',
       ],
     ],
-    ['apps.yml', ['apps', 'apps-typecheck']],
+    ['apps.yml', ['apps', 'apps-ledger', 'apps-typecheck']],
     ['moderator-boot.yml', ['boot']],
   ])('%s has exactly the jobs this guard was written for', (file, ids) => {
     expect(Object.keys(load(file).jobs ?? {}).sort()).toEqual(ids);

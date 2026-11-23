@@ -92,6 +92,40 @@ describe('mergeShardReports', () => {
     expect(lines.join('\n')).toContain('shard 2/3: NO REPORT (x is not valid JSON)');
   });
 
+  // Every other shard executes tests, so only the zero check can turn this red: the union still
+  // holds files from shards 1 and 3.
+  it('fails, naming the shard, when a shard executed zero tests', () => {
+    const empty = report([file('/r/src/e.browser.test.tsx', ['skipped', 'skipped'])], 0, 0);
+    const { ok, lines } = mergeShardReports(
+      [
+        { shard: 1, report: S1 },
+        { shard: 2, report: empty },
+        { shard: 3, report: S3 },
+      ],
+      3
+    );
+    expect(ok).toBe(false);
+    expect(lines.join('\n')).toContain('shard 2/3: EXECUTED ZERO TESTS');
+    expect(lines.join('\n')).not.toContain('shard 1/3: EXECUTED ZERO TESTS');
+  });
+
+  it('sums the suite and skipped totals the apps ledger prints', () => {
+    const withTotals = (r: ReturnType<typeof report>, suites: number, pending: number) => ({
+      ...r,
+      numTotalTestSuites: suites,
+      numPendingTests: pending,
+    });
+    const { merged } = mergeShardReports(
+      [
+        { shard: 1, report: withTotals(S1, 3, 5) },
+        { shard: 2, report: withTotals(S2, 11, 17) },
+      ],
+      2
+    );
+    expect(merged.numTotalTestSuites).toBe(14);
+    expect(merged.numPendingTests).toBe(22);
+  });
+
   it('ignores a report for a shard index outside 1..total', () => {
     const { ok, merged } = mergeShardReports(
       [
@@ -131,6 +165,18 @@ describe('readShardReport', () => {
     expect(readShardReport(dir, 2)).toMatchObject({ report: null });
     expect(readShardReport(dir, 2).problem).toContain('does not exist');
     expect(readShardReport(dir, 3).problem).toContain('not valid JSON');
+  });
+
+  it('reads another report name from the same layout', () => {
+    dir = mkdtempSync(join(tmpdir(), 'merge-component-shards-'));
+    const p2 = shardReportPath(dir, 2, 'app-unit-report');
+    mkdirSync(dirname(p2), { recursive: true });
+    writeFileSync(p2, JSON.stringify(S2));
+
+    expect(p2).toBe(join(dir, 'app-unit-report-2', 'app-unit-report.json'));
+    expect(readShardReport(dir, 2, 'app-unit-report').report).toEqual(S2);
+    // The default name does not see it.
+    expect(readShardReport(dir, 2).problem).toContain('does not exist');
   });
 });
 
@@ -176,5 +222,25 @@ describe('the CLI', () => {
 
     expect(spawnSync(process.execPath, [script, dir, '2', out]).status).toBe(0);
     expect(spawnSync(process.execPath, [script, dir, 'x', out]).status).toBe(2);
+    expect(spawnSync(process.execPath, [script, dir, '2', out, 'a', 'b']).status).toBe(2);
+  });
+
+  it('merges reports under the name given as the fourth argument', () => {
+    dir = mkdtempSync(join(tmpdir(), 'merge-component-cli-'));
+    for (const [i, r] of [S1, S2].entries()) {
+      const p = shardReportPath(dir, i + 1, 'app-unit-report');
+      mkdirSync(dirname(p), { recursive: true });
+      writeFileSync(p, JSON.stringify(r));
+    }
+    const out = join(dir, 'merged.json');
+
+    const run = spawnSync(process.execPath, [script, dir, '2', out, 'app-unit-report'], {
+      encoding: 'utf8',
+    });
+
+    expect(run.status).toBe(0);
+    expect(JSON.parse(readFileSync(out, 'utf8')).numTotalTests).toBe(8);
+    // Without the name it looks for component-report-<i> and finds nothing.
+    expect(spawnSync(process.execPath, [script, dir, '2', out]).status).toBe(1);
   });
 });
