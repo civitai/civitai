@@ -322,7 +322,6 @@ async function handler(
   )
     return modelNotFound(res);
 
-  // A Private model or version goes through the caller gate.
   let privateCaller: { callerClass: MiniEpochCallerClass } | undefined;
   if (
     modelVersion.availability === Availability.Private ||
@@ -340,8 +339,6 @@ async function handler(
         mode,
         scopeRefused: await isScopeRefused(),
       });
-      // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
-      // 404 to a caller who would be served.
       if (caller.withhold) return modelNotFound(res);
       privateCaller = caller;
     }

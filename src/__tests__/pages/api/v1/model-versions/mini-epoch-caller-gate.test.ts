@@ -665,6 +665,7 @@ describe('mini/[id] a Private parent outside the epoch arm', () => {
   });
 });
 
+// The version status rule from #10174: only the owner, a moderator or the service token sees a hidden parent.
 describe('mini/[id] a deleted or unpublished parent, whatever the gate', () => {
   const PLAIN_FILE = { ...TRAINING_FILE, visibility: 'Public', metadata: { format: 'SafeTensor' } };
   const rows = [
@@ -706,6 +707,8 @@ describe('mini/[id] a deleted or unpublished parent, whatever the gate', () => {
     const hidden = await request(stranger, rows[0][1], PLAIN_FILE);
     const unknown = await request(stranger, rows[0][1], PLAIN_FILE, []);
     expect(hidden.status).toBe(404);
+    expect(hidden.cacheControl).toBe('private, no-store');
+    expect(unknown.cacheControl).toBe('private, no-store');
     expect(hidden).toEqual(unknown);
   });
 
