@@ -1213,9 +1213,6 @@
     color: var(--io-gold);
   }
 
-  kbd {
-    font-family: inherit;
-  }
   /* The image failed: Skip is the one way forward, so it stops being quiet. */
   .controls.failed .quiet:not(.guide) {
     color: var(--io-gold);

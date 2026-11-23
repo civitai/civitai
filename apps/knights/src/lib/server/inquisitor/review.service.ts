@@ -292,14 +292,15 @@ export async function nextReview(
   db: Kysely<DB>,
   { moderatorId, now = new Date() }: { moderatorId: number; now?: Date }
 ): Promise<ReviewOffer | 'unreadable' | null> {
-  const unreadable = Symbol('unreadable');
-  const served = await failClosed(
+  const unreadable = 'unreadable' as const;
+  const served = await failClosed<ReviewOffer | typeof unreadable | null>(
     db,
     'review-serve',
     async () => {
       await closeIneligible(db, now);
       for (const voted of [true, false]) {
         const batch = await servableReviews(db, moderatorId, now)
+          .$call(hasVote(voted))
           .select([
             'r.id',
             'r.queueItemId',
@@ -310,7 +311,6 @@ export async function nextReview(
             'img.height',
             'img.nsfwLevel',
           ])
-          .$call(hasVote(voted))
           .orderBy('r.createdAt', 'asc')
           .orderBy('r.id', 'asc')
           .limit(SERVE_BATCH)
@@ -340,7 +340,7 @@ export async function nextReview(
     },
     unreadable
   );
-  return served === unreadable ? 'unreadable' : served;
+  return served;
 }
 
 export type ReviewVoteRejection =

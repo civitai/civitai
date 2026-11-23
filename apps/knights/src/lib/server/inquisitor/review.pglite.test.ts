@@ -108,6 +108,9 @@ const pool = async () =>
       `SELECT "imageId",pool,source,answer FROM "KnightsReferenceImage" ORDER BY "imageId"`
     )
   ).rows;
+/** The id of the review served, or undefined when none was (or the queue could not be read). */
+const reviewIdOf = (offer: Awaited<ReturnType<typeof nextReview>>) =>
+  offer && offer !== 'unreadable' ? offer.reviewId : undefined;
 const vote = (reviewId: number, moderatorId: number, answer: string) =>
   castReviewVote(db, { reviewId, moderatorId, answer }, voteDeps);
 
@@ -190,11 +193,11 @@ describe('serving reviews to moderators', () => {
     await vote(voted, MOD_B, '4');
     await vote(first, MOD_A, '4');
 
-    expect((await nextReview(db, { moderatorId: MOD_C }))?.reviewId).toBe(first);
-    expect((await nextReview(db, { moderatorId: MOD_A }))?.reviewId).toBe(voted);
-    expect((await nextReview(db, { moderatorId: MOD_B }))?.reviewId).toBe(first);
+    expect(reviewIdOf(await nextReview(db, { moderatorId: MOD_C }))).toBe(first);
+    expect(reviewIdOf(await nextReview(db, { moderatorId: MOD_A }))).toBe(voted);
+    expect(reviewIdOf(await nextReview(db, { moderatorId: MOD_B }))).toBe(first);
     await vote(first, MOD_B, '4');
-    expect((await nextReview(db, { moderatorId: MOD_B }))?.reviewId).toBe(second);
+    expect(reviewIdOf(await nextReview(db, { moderatorId: MOD_B }))).toBe(second);
   });
 
   it('never serves a moderator a review of their own image', async () => {
@@ -563,7 +566,7 @@ describe('excluding reviews', () => {
       const id = await reviewed(1);
       const next = await reviewed(2);
       await cause();
-      expect((await nextReview(db, { moderatorId: MOD_A }))?.reviewId).toBe(next);
+      expect(reviewIdOf(await nextReview(db, { moderatorId: MOD_A }))).toBe(next);
       expect((await reviewRow(id)).status).toBe('excluded');
     }
   );
@@ -585,7 +588,7 @@ describe('excluding reviews', () => {
       const id = await reviewed(1);
       const next = await reviewed(2);
       await cause();
-      expect((await nextReview(db, { moderatorId: MOD_A }))?.reviewId).toBe(next);
+      expect(reviewIdOf(await nextReview(db, { moderatorId: MOD_A }))).toBe(next);
       expect((await reviewRow(id)).status).toBe('open');
     }
   );

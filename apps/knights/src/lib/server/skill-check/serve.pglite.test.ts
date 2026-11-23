@@ -12,7 +12,12 @@ import {
 import { ACOLYTE_WRONG_ANSWER_SMITE } from '../smites/config';
 import { DEFAULT_HIDDEN_CHECKS } from '../hidden/config';
 import { answerHiddenCheck, pickHiddenCheck, readHiddenNotices } from '../hidden/hidden.service';
-import { castVote, enqueueItem, ensureVotePartitions } from '../queue/queue.service';
+import {
+  castVote,
+  enqueueItem,
+  ensureVotePartitions,
+  type QueueDeps,
+} from '../queue/queue.service';
 import {
   EXCLUSION_TABLES,
   exclusionCases,
@@ -26,6 +31,11 @@ const NOW = new Date('2026-12-15T12:00:00Z');
 const SECRET = 'test-secret';
 const settings = { ...DEFAULT_HIDDEN_CHECKS, settleDelayMinutes: 0 };
 const resetPlayer = vi.fn(async () => undefined);
+/** Votes here never settle an item, so the write-back is never called. */
+const queueDeps: QueueDeps = {
+  applyConsensus: async () => ({ outcome: 'applied' }),
+  now: () => NOW,
+};
 
 let pg: PGlite;
 let db: Kysely<DB>;
@@ -82,7 +92,7 @@ const answer = (
 /** The player judged the image in the queue: a ledger vote on a real queue item. */
 async function judgedInQueue(userId: number, imageId: number) {
   const itemId = await enqueueItem(db, { questionKey: Q, imageId, source: 'test' }, NOW);
-  expect(await castVote(db, { userId, itemId, answer: '4' }, { now: () => NOW })).toMatchObject({
+  expect(await castVote(db, { userId, itemId, answer: '4' }, queueDeps)).toMatchObject({
     status: 'recorded',
   });
 }
@@ -295,7 +305,7 @@ describe('one judgment per image for the other votes', () => {
     const id = await skillCheck(10);
     await answer(1, id, '4', true);
     const itemId = await enqueueItem(db, { questionKey: Q, imageId: 10, source: 'test' }, NOW);
-    expect(await castVote(db, { userId: 1, itemId, answer: '4' }, { now: () => NOW })).toEqual({
+    expect(await castVote(db, { userId: 1, itemId, answer: '4' }, queueDeps)).toEqual({
       status: 'rejected',
       reason: 'already-voted',
     });

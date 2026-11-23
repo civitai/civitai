@@ -257,11 +257,16 @@ async function drawHiddenCheck(
   };
   // Only the reads that apply the mod-confirmed pool's safety exclusions fail closed: unreadable, the draw falls back to
   // the other pool alone (`failClosed` logs the error).
-  const unreadable = Symbol('unreadable');
+  const UNREADABLE = 'unreadable' as const;
   const found = input.skillChecks
-    ? await failClosed(db, 'knight-serve', () => find(checkPools(true)), unreadable)
+    ? await failClosed<Awaited<ReturnType<typeof find>> | typeof UNREADABLE>(
+        db,
+        'knight-serve',
+        () => find(checkPools(true)),
+        UNREADABLE
+      )
     : await find(checkPools(false));
-  const row = found === unreadable ? await find(checkPools(false)) : found;
+  const row = found === UNREADABLE ? await find(checkPools(false)) : found;
 
   if (!row || unit(digest, 0) >= input.rate) return null;
   return {

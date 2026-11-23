@@ -17,7 +17,7 @@ type Joined = DB & { img: DB['Image']; p: DB['Post'] };
 type Builder = ExpressionBuilder<Joined, 'img' | 'p'>;
 
 /** A report still waiting on a moderator. */
-const OPEN_REPORT = ['Pending', 'Processing'];
+const OPEN_REPORT = ['Pending', 'Processing'] as const;
 
 const none = (eb: Builder, query: Expression<unknown>) => eb.not(eb.exists(query as never));
 

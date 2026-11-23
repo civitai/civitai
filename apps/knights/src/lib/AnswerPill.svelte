@@ -129,6 +129,7 @@
     white-space: nowrap;
   }
   .key {
+    font-family: inherit;
     display: grid;
     place-items: center;
     width: 20px;

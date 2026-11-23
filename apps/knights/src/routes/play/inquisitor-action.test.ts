@@ -231,7 +231,7 @@ describe('inquisitorView', () => {
     expect(view.mode).toBe('inquisitor');
     expect(view.levels.map((l) => l.value)).toEqual(['1', '2', '4', '8', '16']);
     expect(JSON.stringify(view)).not.toMatch(/"reviewId"|"queueItemId"/);
-    expect(view.review?.token).toBeTypeOf('string');
+    expect(view.review).toMatchObject({ token: expect.any(String) });
   });
 
   it('says the queue cannot load, instead of showing it empty, when the safety reads fail', async () => {
