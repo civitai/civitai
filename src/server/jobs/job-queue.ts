@@ -320,6 +320,9 @@ const handleJobQueueCleanIfEmpty = createJob(
             -- Text items are content: a post with them is not empty.
             AND NOT EXISTS (SELECT 1 FROM "PostText" t WHERE t."postId" = "Post".id)
             AND NOT ${contentRemovalHeldSql(Prisma.raw('"Post"."userId"'), true)}`),
+          // A post its child-safety case keeps stays: a pending delete would take it unchecked, even
+          // after its owner filled it again.
+          queueKept: false,
         });
       });
 
