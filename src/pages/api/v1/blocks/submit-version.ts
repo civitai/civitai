@@ -10,7 +10,10 @@ import {
 } from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { SUBMIT_RATE_LIMIT, takeSubmitSlot } from '~/server/services/blocks/submit-rate-limit';
-import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
+import {
+  APP_BLOCKS_CLI_KEY_REFUSED,
+  checkAppBlocksCliCredential,
+} from '~/server/auth/bearer-scope-tighten';
 import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
@@ -32,7 +35,8 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *     `getSessionFromBearerToken`, which hashes the credential with the same
  *     `generateSecretHash` the public REST API uses and looks it up in the
  *     `ApiKey` table — NO new key system).
- *   - Token type: a PERSONAL key always passes the type gate (unchanged). An
+ *   - Token type: a Full Access personal key passes; any other personal key passes
+ *     unless the `bearer-scope-tighten` flag enforces (`checkAppBlocksCliCredential`). An
  *     OAuth-client-issued token passes ONLY if it carries the dedicated
  *     `TokenScope.AppBlocksSubmit` bit. That scope is opt-in, off-by-default, and
  *     EXCLUDED from `TokenScope.Full`, so only a client that explicitly lists it
@@ -110,8 +114,9 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // authorized), and `{ type: 'apiKey', id }` for a user-type personal-access
   // key.
   //
-  //  - PERSONAL key (`subject.type !== 'oauth'`, i.e. clientId == null): pass.
-  //    The downstream author + flag gates still apply.
+  //  - PERSONAL key (`subject.type !== 'oauth'`, i.e. clientId == null): a Full Access key
+  //    passes; a narrower one passes unless `bearer-scope-tighten` enforces. The downstream
+  //    author + flag gates still apply.
   //
   //  - OAUTH token (`subject.type === 'oauth'`): pass ONLY if the token carries
   //    the dedicated `TokenScope.AppBlocksSubmit` bit. `oauthClient.create` is an
@@ -128,14 +133,18 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // The moderator + not-banned gate (step 2) applies to BOTH paths — a scoped
   // OAuth token from a NON-moderator is still rejected there. Ordered after auth
   // (401) and before the mod gate so an un-scoped OAuth key gets 403, never a leak.
-  if (session.subject?.type === 'oauth') {
-    if (!hasScope(session.tokenScope, TokenScope.AppBlocksSubmit)) {
-      res.status(403).json({
-        message:
-          'Submitting an App requires a personal API key or an OAuth token with the Apps submit scope',
-      });
-      return;
-    }
+  const credentialCheck = await checkAppBlocksCliCredential(
+    '/api/v1/blocks/submit-version',
+    session
+  );
+  if (credentialCheck !== 'ok') {
+    res.status(403).json({
+      message:
+        credentialCheck === 'oauth-refused'
+          ? 'Submitting an App requires a personal API key or an OAuth token with the Apps submit scope'
+          : APP_BLOCKS_CLI_KEY_REFUSED,
+    });
+    return;
   }
 
   // 2. Author gate — App Blocks authoring is capability-gated on the dedicated
