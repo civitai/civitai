@@ -13,7 +13,6 @@ import type {
 } from '~/server/search-index/base.search-index';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { USER_SEARCH_INDEX_ELIGIBILITY } from '~/server/search-index/user-index-eligibility';
-import { fallbackUserImageColumn } from '~/server/services/profile-picture.sql';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 
 import { isDefined } from '~/utils/type-guards';
@@ -83,7 +82,6 @@ type BaseUser = {
   id: number;
   username: string | null;
   createdAt: Date;
-  image: string | null;
   deletedAt: Date | null;
 };
 type UserMetric = {
@@ -116,7 +114,7 @@ type UserRank = {
 export const buildUsersIndexWhere = (...narrowing: (Prisma.Sql | undefined)[]) =>
   [...USER_SEARCH_INDEX_ELIGIBILITY, ...narrowing].filter(isDefined);
 
-const transformData = async ({
+export const transformData = async ({
   users,
   metrics,
   ranks,
@@ -132,6 +130,9 @@ const transformData = async ({
   const records = users.map((user) => {
     return {
       ...user,
+      // Null, not absent: an update merges into the stored document, so an absent key would keep
+      // the image an earlier version stored.
+      image: null,
       profilePicture: profilePictures[user.id] ?? null,
       rank: ranks.find((r) => r.userId === user.id),
       metrics: metrics.find((m) => m.userId === user.id),
@@ -217,8 +218,7 @@ export const pullUsersData = async (
           u.id,
           u.username,
           u."deletedAt",
-          u."createdAt",
-          ${Prisma.raw(fallbackUserImageColumn)} AS image
+          u."createdAt"
         FROM "User" u
         WHERE ${Prisma.join(where, ' AND ')}
       `;
