@@ -3342,7 +3342,7 @@ const rescanImageSelect = {
  * Whether an article rescan may re-queue this image. Skipped: one still in flight; a locked
  * rating, which is a moderator's override; a blocked image, since a clean scan result would lift
  * the block, which only a moderator decides; an image awaiting review, whose flag a clean scan
- * result would clear; and an image someone other than the article's author owns, which the author
+ * result could clear; and an image someone other than the article's author owns, which the author
  * has no say over.
  */
 function canRescanArticleImage(

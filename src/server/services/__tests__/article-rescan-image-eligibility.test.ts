@@ -75,6 +75,7 @@ const CHANGED_AFTER_READ: [string, Partial<Img>][] = [
   ['passes to another owner', { userId: SOMEONE_ELSE }],
   ['starts scanning', { ingestion: 'Pending' }],
   ['goes to review', { needsReview: 'minor' }],
+  ['goes to a source review', { needsReview: 'remixSource' }],
 ];
 
 /** The columns a Prisma `select` asked for, so a column the code stops selecting reads undefined. */
