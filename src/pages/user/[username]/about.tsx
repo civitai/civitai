@@ -35,10 +35,12 @@ export const getServerSideProps = createServerSideProps({
     const user = await getUserBannedAtByUsername(username);
     if (user?.bannedAt) return { redirect: { destination: `/user/${username}`, permanent: false } };
 
-    await Promise.all([
-      ssg?.userProfile.get.prefetch({ username }),
+    const [profile] = await Promise.all([
+      ssg?.userProfile.get.fetch({ username }).catch(() => null),
       ssg?.userProfile.overview.prefetch({ username }),
     ]);
+    // The About text is keyed by id, which only the profile read knows.
+    if (profile?.id) await ssg?.userProfile.about.prefetch({ userId: profile.id });
   },
 });
 

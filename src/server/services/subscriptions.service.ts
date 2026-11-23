@@ -31,6 +31,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   BUZZ_AMOUNT_TO_TIER,
   TIER_BUZZ_AMOUNTS,
@@ -489,6 +490,21 @@ export const isMemberTier = async (userId: number): Promise<boolean> => {
   ]);
   return (!!capTier && capTier !== 'free') || (!!override && override.tier !== 'free');
 };
+
+const profileMemberTierKey = (userId: number) =>
+  `${REDIS_KEYS.CACHES.PROFILE_MEMBER_TIER}:${userId}` as RedisKeyTemplateCache;
+
+/**
+ * `isMemberTier` for showing a profile's members-only customisation to its visitors, cached so a
+ * popular profile does not query subscriptions on every view. A subscription change busts it; a
+ * membership override granted or revoked shows within the TTL. Writes check `isMemberTier` itself.
+ */
+export const isMemberTierCached = async (userId: number) =>
+  !!(await fetchThroughCache(profileMemberTierKey(userId), () => isMemberTier(userId), {
+    ttl: CacheTTL.sm,
+  }));
+
+export const bustMemberTierCache = (userId: number) => redis.del(profileMemberTierKey(userId));
 
 const capTierOf = (subscriptions: NonNullable<ReturnType<typeof toUserSubscription>>[]) =>
   pickHighestTier(subscriptions.filter((s) => !s.isBadState))?.tier ?? null;

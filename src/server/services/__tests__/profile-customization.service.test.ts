@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { NsfwLevel } from '~/server/common/enums';
 
 /**
@@ -42,6 +43,9 @@ const scannedImage = (nsfwLevel: number, over: Record<string, unknown> = {}) => 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // A cold member cache: visitors' reads fall through to the tables below.
+  redisMock.redis.packed.get.mockResolvedValue(null as never);
+  redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true as never);
   subscriptions = [];
   override = null;
   dbMock.dbWrite.customerSubscription.findMany.mockImplementation(
@@ -103,8 +107,9 @@ describe('assertPageCustomizationAllowed', () => {
 });
 
 describe('getProfileCustomization', () => {
-  const stored = (over: Record<string, unknown> = {}) =>
-    dbMock.dbWrite.userProfile.findUnique.mockResolvedValue({
+  // Visitors read the replica, the owner the primary; both answer from the same row here.
+  const stored = (over: Record<string, unknown> = {}) => {
+    const row = {
       backgroundImageId: 70,
       sfwBackgroundImageId: null,
       cardColor: '#112233',
@@ -112,7 +117,10 @@ describe('getProfileCustomization', () => {
       backgroundImage: scannedImage(NsfwLevel.PG),
       sfwBackgroundImage: null,
       ...over,
-    } as never);
+    };
+    dbMock.dbRead.userProfile.findUnique.mockResolvedValue(row as never);
+    dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(row as never);
+  };
 
   it("shows a member's background and colours to a visitor", async () => {
     subscriptions = [subscription('gold')];
@@ -145,8 +153,34 @@ describe('getProfileCustomization', () => {
       const result = await getProfileCustomization({ userId: OWNER, viewerId, domain: 'green' });
       expect(result.background).toBeNull();
     }
-    const red = await getProfileCustomization({ userId: OWNER, viewerId: VISITOR, domain: 'red' });
+    const red = await getProfileCustomization({
+      userId: OWNER,
+      viewerId: VISITOR,
+      domain: 'red',
+      browsingLevel: NsfwLevel.PG | NsfwLevel.R,
+    });
     expect(red.background).toMatchObject({ id: 70 });
+  });
+
+  it("does not send a background outside the visitor's browsing level", async () => {
+    subscriptions = [subscription('gold')];
+    stored({ backgroundImage: scannedImage(NsfwLevel.R) });
+    const sfwVisitor = await getProfileCustomization({
+      userId: OWNER,
+      viewerId: VISITOR,
+      domain: 'red',
+      browsingLevel: NsfwLevel.PG,
+    });
+    expect(sfwVisitor.background).toBeNull();
+    // Logged out, with no level sent, it is the public level.
+    expect((await getProfileCustomization({ userId: OWNER, domain: 'red' })).background).toBeNull();
+    const owner = await getProfileCustomization({
+      userId: OWNER,
+      viewerId: OWNER,
+      domain: 'red',
+      browsingLevel: NsfwLevel.PG,
+    });
+    expect(owner.background).toMatchObject({ id: 70 });
   });
 
   it('uses the civitai.com override there', async () => {

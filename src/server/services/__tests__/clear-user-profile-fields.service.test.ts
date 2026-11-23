@@ -98,6 +98,18 @@ describe('clearUserProfileFields', () => {
     expect(data).not.toHaveProperty('showcaseSections');
   });
 
+  it('clears the About text only when it is named', async () => {
+    await clear({ fields: ['about'] });
+    expect(db.userProfile.updateMany).toHaveBeenCalledWith({
+      where: { userId: USER },
+      data: { about: null },
+    });
+    db.userProfile.updateMany.mockClear();
+    await clear({ fields: ['bio'] });
+    const { data } = db.userProfile.updateMany.mock.calls[0][0] as { data: object };
+    expect(data).not.toHaveProperty('about');
+  });
+
   it('archives again when the text changes during the upload', async () => {
     reportNames(true);
     const edited = { ...stored, bio: 'edited' };

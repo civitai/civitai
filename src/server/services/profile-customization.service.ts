@@ -1,11 +1,14 @@
 import type { ColorDomain } from '~/shared/constants/domain.constants';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import type { UserProfileUpdateSchema } from '~/server/schema/user-profile.schema';
-import { isMemberTier } from '~/server/services/subscriptions.service';
+import { isMemberTier, isMemberTierCached } from '~/server/services/subscriptions.service';
 import { isImageOwner } from '~/server/services/util.service';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { Flags } from '~/shared/utils/flags';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
@@ -101,22 +104,26 @@ export type ProfileCustomization = Awaited<ReturnType<typeof getProfileCustomiza
 /**
  * The redesign's page customisation as this viewer may see it. Everything is null unless the
  * owner is a member now: lapsed values are kept, not shown. The background is the one for this
- * domain, withheld while unservable (owners still see their own), and on civitai.com dropped
- * unless it is SFW, so its url never reaches a page that may not show it.
+ * domain, withheld while unservable or outside the viewer's browsing level (owners still see
+ * their own), and on civitai.com dropped unless it is SFW, so its url never reaches a page that
+ * may not show it.
  */
 export async function getProfileCustomization({
   userId,
   viewerId,
   isModerator,
   domain,
+  browsingLevel = publicBrowsingLevelsFlag,
 }: {
   userId: number;
   viewerId?: number;
   isModerator?: boolean;
   domain?: ColorDomain;
+  browsingLevel?: number;
 }) {
-  // primary: the owner's save is read back at once.
-  const profile = await dbWrite.userProfile.findUnique({
+  const sameUser = viewerId === userId;
+  // primary: only for the owner, whose save is read back at once.
+  const profile = await (sameUser ? dbWrite : dbRead).userProfile.findUnique({
     where: { userId },
     select: {
       backgroundImageId: true,
@@ -127,7 +134,6 @@ export async function getProfileCustomization({
       sfwBackgroundImage: { select: backgroundImageSelect },
     },
   });
-  const sameUser = viewerId === userId;
   const empty = {
     background: null,
     cardColor: null,
@@ -155,7 +161,7 @@ export async function getProfileCustomization({
     : null;
 
   // Fail closed: a failed membership lookup hides the values rather than failing the page.
-  const member = await isMemberTier(userId).catch(() => false);
+  const member = await (sameUser ? isMemberTier : isMemberTierCached)(userId).catch(() => false);
   if (!member) return { ...empty, stored };
 
   const green = domain === 'green';
@@ -167,6 +173,8 @@ export async function getProfileCustomization({
     if (!image) return null;
     if (green && !Flags.intersects(image.nsfwLevel, sfwBrowsingLevelsFlag)) return null;
     if (sameUser) return image;
+    // No blur to reveal a backdrop behind, so one outside the viewer's level is not sent at all.
+    if (!Flags.intersects(image.nsfwLevel, browsingLevel)) return null;
     const hidden = isModerator ? isRestrictedImage(image) : !servableArticleImage(image);
     return hidden ? null : image;
   })();

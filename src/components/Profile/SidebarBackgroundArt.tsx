@@ -31,7 +31,7 @@ export function SidebarBackgroundArt({
         type={data.type ?? 'image'}
         alt=""
         anim
-        // The sidebar is 320px wide; 450 covers it on a high-density screen, as the creator card does.
+        // 450 covers the sidebar on a high-density screen, as the creator card does.
         width={450}
         optimized
         loading={loading}

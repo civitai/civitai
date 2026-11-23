@@ -12,6 +12,7 @@ import {
 } from '~/server/controllers/user-profile.controller';
 import {
   addToShowcaseSectionSchema,
+  getProfileCustomizationSchema,
   getProfilePartSchema,
   getUserProfileSchema,
   setProfileBackgroundSchema,
@@ -33,7 +34,7 @@ export const userProfileRouter = router({
   customization: publicProcedure
     .use(isFlagProtected('profileRedesign'))
     .meta({ requiredScope: TokenScope.UserRead })
-    .input(getProfilePartSchema)
+    .input(getProfileCustomizationSchema)
     .query(getProfileCustomizationHandler),
   about: publicProcedure
     .use(isFlagProtected('profileRedesign'))

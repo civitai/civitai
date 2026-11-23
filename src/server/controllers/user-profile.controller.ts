@@ -14,6 +14,7 @@ import {
 } from '~/server/services/user-profile.service';
 import type {
   AddToShowcaseSectionSchema,
+  GetProfileCustomizationSchema,
   GetProfilePartSchema,
   GetUserProfileSchema,
   SetProfileBackgroundSchema,
@@ -284,7 +285,7 @@ export const getProfileCustomizationHandler = async ({
   input,
   ctx,
 }: {
-  input: GetProfilePartSchema;
+  input: GetProfileCustomizationSchema;
   ctx: Context;
 }) => {
   try {
@@ -295,6 +296,7 @@ export const getProfileCustomizationHandler = async ({
       viewerId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,
       domain: ctx.domain,
+      browsingLevel: input.browsingLevel,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

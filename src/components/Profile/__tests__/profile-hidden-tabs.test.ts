@@ -12,7 +12,6 @@ const visibleKeys = (result: Record<string, { disabled?: boolean }>) =>
     .filter(([, tab]) => !tab.disabled)
     .map(([key]) => key);
 
-// Hidden tabs: profile-redesign plan v3, Design step 4.
 describe('applyHiddenProfileTabs', () => {
   it('drops a hidden tab from a visitor’s nav and keeps the rest', () => {
     const result = applyHiddenProfileTabs(tabs, {

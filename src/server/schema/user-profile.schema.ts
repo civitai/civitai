@@ -235,3 +235,9 @@ export const setProfileBackgroundSchema = z.object({ imageId: z.number().int().p
 
 export type GetProfilePartSchema = z.infer<typeof getProfilePartSchema>;
 export const getProfilePartSchema = z.object({ userId: z.number().int().positive() });
+
+export type GetProfileCustomizationSchema = z.infer<typeof getProfileCustomizationSchema>;
+export const getProfileCustomizationSchema = getProfilePartSchema.extend({
+  // The viewer's browsing level: a background outside it is not sent.
+  browsingLevel: z.number().int().min(0).optional(),
+});

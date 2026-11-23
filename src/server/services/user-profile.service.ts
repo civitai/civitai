@@ -536,7 +536,7 @@ export const updateUserProfile = async ({
   userId: number;
   isModerator?: boolean;
   domain?: ColorDomain;
-  /** Without it the redesign's settings are kept as stored, whatever the input says. */
+  /** Without it a save touching the redesign's page fields is refused, and hidden tabs stay as stored. */
   profileRedesign?: boolean;
   /** Who saved it: a moderator may save another user's profile, and is answered as a viewer. */
   sessionUserId: number;

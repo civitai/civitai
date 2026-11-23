@@ -14,7 +14,7 @@ export function ProfilePageCustomization({ userId }: { userId: number }) {
   const features = useFeatureFlags();
   const browsingLevel = useBrowsingLevelDebounced();
   const { data } = trpc.userProfile.customization.useQuery(
-    { userId },
+    { userId, browsingLevel },
     { enabled: !!features.profileRedesign }
   );
   if (!features.profileRedesign || !data) return null;

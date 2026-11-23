@@ -1,3 +1,4 @@
+import { constants } from '~/server/common/constants';
 import { Box, Center, Group, Loader, Paper, Stack, Text, UnstyledButton } from '@mantine/core';
 import { useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -112,8 +113,7 @@ export const CosmeticPreview = ({
               Preview
             </Text>
           )}
-          {/* The profile sidebar's width. */}
-          <Box w="100%" maw={320}>
+          <Box w="100%" maw={constants.profile.sidebarWidth}>
             <CosmeticSample cosmetic={cosmetic} size="lg" />
           </Box>
           {descriptionBox}
