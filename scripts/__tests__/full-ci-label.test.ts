@@ -160,6 +160,16 @@ describe('the full-ci label', () => {
     expect(conjuncts(load(file).jobs?.[id]?.if ?? '')).toContain(DRAFT_GATE);
   });
 
+  // apps-ledger takes no draft gate of its own: it follows the shards, so it can never run over
+  // skipped shards (and go red) when their gate changes. Pinned whole, so a copied gate added back
+  // fails here.
+  it('apps.yml:apps-ledger runs exactly when the shards ran', () => {
+    expect(conjuncts(load('apps.yml').jobs?.['apps-ledger']?.if ?? '')).toEqual([
+      '!cancelled()',
+      "needs.apps.result != 'skipped'",
+    ]);
+  });
+
   // Ledger: the job set the assertions above were written against. A new job fails here so its
   // author decides which draft gate it takes.
   it.each([
@@ -178,7 +188,7 @@ describe('the full-ci label', () => {
         'unit-verify',
       ],
     ],
-    ['apps.yml', ['apps', 'apps-typecheck']],
+    ['apps.yml', ['apps', 'apps-ledger', 'apps-typecheck']],
     ['moderator-boot.yml', ['boot']],
   ])('%s has exactly the jobs this guard was written for', (file, ids) => {
     expect(Object.keys(load(file).jobs ?? {}).sort()).toEqual(ids);
