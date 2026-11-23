@@ -134,7 +134,7 @@ describe('the ledger limit behind the Redis gate', () => {
   });
 });
 
-// HQ knights_pace_limit_b6kj: "a running 22 minute lockout kept ticking back up".
+// The countdown never moves later during a pause, however many refused votes arrive.
 describe('a pause the player is shown', () => {
   const HOUR: VoteLimit[] = [{ windowSeconds: 3600, max: 3 }];
   const HOUR_COUNTER = 'knights:vote-limit:{1}:w3600';
@@ -172,6 +172,28 @@ describe('a pause the player is shown', () => {
     expect(redis.get(HOUR_COUNTER)).toBeUndefined();
   });
 
+  it('keeps one end for concurrent refused votes and records none of them', async () => {
+    const { redis, gate, shown } = redisGate();
+    for (let i = 0; i < 3; i++) await vote(HOUR, undefined, at(-38 * 60));
+    const first = (await shown())!;
+    expect(first).toEqual(at(22 * 60));
+
+    // What the vote action answers a pace refusal: the shown end, with the refusal's as a floor.
+    const attempt = async () => {
+      const out = await vote(HOUR, gate);
+      if (out.status !== 'limited' || ('busy' in out && out.busy)) return null;
+      return voteLockout(db, 1, NOW, { gate, limits: limits(HOUR) }, out.until);
+    };
+    const ends = await Promise.all(Array.from({ length: 9 }, attempt));
+    for (const end of ends) if (end) expect(end.getTime()).toBeLessThanOrEqual(first.getTime());
+    expect(await shown()).toEqual(first);
+    expect(await ledgerRows()).toBe(3);
+
+    redis.clock.now = first.getTime();
+    expect(await shown(first)).toBeNull();
+    expect(await vote(HOUR, gate, first)).toMatchObject({ status: 'recorded' });
+  });
+
   it('ends at the time it showed, and voting resumes', async () => {
     const { redis, gate, shown } = redisGate();
     for (let i = 0; i < 3; i++) await vote(HOUR, undefined, at(-38 * 60));
@@ -183,9 +205,8 @@ describe('a pause the player is shown', () => {
     expect(await vote(HOUR, gate, at(22 * 60))).toMatchObject({ status: 'recorded' });
   });
 
-  // H3, the sliding limit working as configured (limit values are moderator config, out of scope):
-  // when a pause ends the window holds max - 1 votes, so the next vote fills it and a new, shorter
-  // pause runs until the next-oldest vote leaves.
+  // The sliding limit as configured: when a pause ends the window holds max - 1 votes, so the next
+  // vote fills it and a new, shorter pause runs until the next-oldest vote leaves.
   it('starts a new, shorter pause after the next vote at the cap', async () => {
     const { redis, gate, shown } = redisGate();
     await vote(HOUR, undefined, at(-50 * 60));

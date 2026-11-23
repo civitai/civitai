@@ -212,15 +212,15 @@ async function standingOnCard(form: FormData, userId: number) {
   }
 }
 
-/** A pace refusal. Its end is frozen first, so this countdown, the page's and every later refusal's are one end. */
-async function limitedFailure(userId: number, until: Date) {
-  const now = queueDeps.now();
-  const end = await voteGate.freeze(userId, now, until);
-  return fail(429, {
+const limitedFailure = (until: Date) =>
+  fail(429, {
     message: 'You are judging too quickly. Rest a little.',
-    lockoutSeconds: Math.max(1, Math.ceil((end.getTime() - now.getTime()) / 1000)),
+    lockoutSeconds: Math.max(1, Math.ceil((until.getTime() - queueDeps.now().getTime()) / 1000)),
   });
-}
+
+/** The pause a refusal answers: the one `/play` shows, so refused votes never give a different countdown. */
+const pauseEnd = async (userId: number, refusedUntil: Date) =>
+  (await lockoutFor(db, userId, queueDeps.now(), refusedUntil)) ?? refusedUntil;
 
 const busyFailure = () =>
   fail(429, { message: 'The Order is catching up. Try that answer again.', busy: true });
@@ -345,7 +345,7 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
     void announceMoves(db, before);
     if (result.status === 'limited') {
       refused('limited', { ref, itemId }, locals.user.id);
-      return await limitedFailure(locals.user.id, result.until);
+      return limitedFailure(await pauseEnd(locals.user.id, result.until));
     }
     if (result.status === 'rejected') {
       refused(result.reason, { ref, itemId }, locals.user.id);
@@ -390,17 +390,7 @@ export const actions: Actions = {
     });
     if (!('until' in outcome)) return outcome;
     refused(outcome.busy ? 'busy' : 'limited', parsed, userId);
-    if (outcome.busy) return busyFailure();
-    let until = outcome.until;
-    if (outcome.tripped) {
-      // A window that trips now can sit inside a longer ledger lock: the pause is the later of the two.
-      try {
-        until = (await lockoutFor(db, userId, queueDeps.now())) ?? until;
-      } catch (error) {
-        console.error('knights: could not read the vote lockout', { userId, error });
-      }
-    }
-    return limitedFailure(userId, until);
+    return outcome.busy ? busyFailure() : limitedFailure(await pauseEnd(userId, outcome.until));
   },
 
   // Moves a player past an item without judging it: no vote, pay, accuracy or Watch credit, and it is not served to them
