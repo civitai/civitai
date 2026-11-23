@@ -522,6 +522,10 @@ describe('keyedBy (viewer-keyed documents)', () => {
       { visibility: 'shared', write: 'own', keyedBy: 'parent' },
       'storage.collections.votes.keyedBy must be one of viewer, parent+viewer',
     ],
+    [
+      { visibility: 'shared', write: 'own', keyedBy: 'parent+viewer', marks: ['vote'] },
+      "storage.collections.votes.keyedBy cannot be combined with counters or marks — each viewer's document is itself their vote or entry",
+    ],
   ])('refused: %o', (decl, error) => {
     expect(parse(decl).errors).toEqual([error]);
   });

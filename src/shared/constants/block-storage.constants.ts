@@ -1044,6 +1044,10 @@ function parseCollection(
       );
     } else if (kind === 'log') {
       errors.push(`${at}.keyedBy does not apply to kind "log" — log entries have server keys`);
+    } else if (raw.counters !== undefined || raw.marks !== undefined) {
+      errors.push(
+        `${at}.keyedBy cannot be combined with counters or marks — each viewer's document is itself their vote or entry`
+      );
     } else if (!features.viewerKeyedDocs) {
       errors.push(notYet(`${at}.keyedBy`, 'viewer-keyed documents', 'remove keyedBy for now'));
     } else {

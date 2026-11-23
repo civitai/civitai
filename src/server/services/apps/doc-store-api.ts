@@ -84,6 +84,7 @@ import {
   assertShareWritable,
   PUBLISHED_NS,
   refuseReportWithdrawal,
+  refuseViewerKeyed,
   type DocStore,
 } from '~/server/services/apps/doc-store';
 import {
@@ -113,7 +114,6 @@ import type {
 import { withDocLevelGate } from '~/server/services/apps/doc-levels';
 import {
   isViewerKeyedOpen,
-  refuseRawKeyWrite,
   VIEWER_KEYED_SEGMENT,
   viewerKeyedDocKey,
 } from '~/server/services/apps/doc-store-viewer-keyed';
@@ -1197,7 +1197,7 @@ async function viewerKeyedRoute(
 ): Promise<{ route: DocRoute; keyed: { parent: string | null } | null }> {
   if (!isViewerKeyedOp(route)) {
     if (route.op === 'create' || route.op === 'put' || route.op === 'delete') {
-      refuseRawKeyWrite(coll);
+      refuseViewerKeyed(coll, 'writing by key');
     }
     return { route, keyed: null };
   }
@@ -1662,6 +1662,8 @@ async function runUnpublish(
   assertShareWritable(to);
   // A hooked collection's documents are deleted one at a time, each decided by its hook.
   assertNotHooked(to, 'unpublish');
+  // Before the `write` bucket is spent; the store refuses it again itself.
+  refuseViewerKeyed(to, 'unpublish');
   // Like a delete: `apps:storage` only, no trust gate, the `write` bucket once per call.
   await charge('write', access, req);
   const result = await store.unpublishCopies(access.ctx, to, keys);

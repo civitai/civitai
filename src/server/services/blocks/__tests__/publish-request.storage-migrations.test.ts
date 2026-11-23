@@ -208,3 +208,39 @@ describe('submitVersion — App Storage schema migrations', () => {
     expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
   });
 });
+
+// docs/app-storage-generic-core.md, "Viewer-keyed documents": `keyedBy` is immutable against
+// EVERY approved version. The only approval that declared `votes` is the 51st newest, outside the
+// capped schema-diff history, so only `baseline.approved` at this call site can see it.
+describe('submitVersion — keyedBy immutability against every approval', () => {
+  const VOTES_NOW = {
+    collections: {
+      cards: { visibility: 'private', schema: V1_SCHEMA },
+      votes: { visibility: 'shared', write: 'none', counters: ['n'] },
+    },
+  };
+  const OLD_VOTES = {
+    blockId: SLUG,
+    version: '0.1.0',
+    storage: {
+      collections: { votes: { visibility: 'shared', write: 'own', keyedBy: 'viewer' } },
+    },
+  };
+  const approvals = (withOld: boolean) => [
+    ...Array.from({ length: 50 }, (_, i) => ({ id: `pubreq_r${i}`, manifest: V1_MANIFEST })),
+    ...(withOld ? [{ id: 'pubreq_old', manifest: OLD_VOTES }] : []),
+  ];
+
+  it('🔴 refuses dropping keyedBy a 51st-newest approval declared, before anything is inserted', async () => {
+    dbMock.dbWrite.appBlockPublishRequest.findMany.mockResolvedValue(approvals(true));
+    await expect(submit(VOTES_NOW)).rejects.toThrow(
+      'storage.collections.votes: an approved version declared it with keyedBy "viewer"'
+    );
+    expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('positive control: without that approval the same submit is accepted', async () => {
+    dbMock.dbWrite.appBlockPublishRequest.findMany.mockResolvedValue(approvals(false));
+    await expect(submit(VOTES_NOW)).resolves.toBeDefined();
+  });
+});

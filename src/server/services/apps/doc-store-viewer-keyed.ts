@@ -13,15 +13,14 @@
 // hashing every id. What the secret protects is unlinkability only: authorization never depends
 // on it (the viewer comes from the verified token, and raw-key writes here are refused).
 //
-// DARK. Declaring `keyedBy` waits on the `viewerKeyedDocs` feature switch
-// (`APP_STORAGE_ENABLED_FEATURES`). Every `@me` op refuses `503` while the secret is unset (there
-// is no fallback key). Writes to a collection wait on its own Flipt switch in production (below).
+// DARK, three gates: `viewerKeyedDocs`, APP_STORAGE_VIEWER_KEY_SECRET, the collection's switch.
 import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import { PUBLISHED_NS } from '~/server/services/apps/doc-store';
+import { PUBLISHED_NS, refuseViewerKeyed } from '~/server/services/apps/doc-store';
 import type { DocCollection, DocStoreContext } from '~/server/services/apps/doc-store.types';
 import { DocStoreError } from '~/server/services/apps/doc-store.types';
+import { base32Encode } from '~/server/utils/base32';
 import type { AppStorageKeyedBy } from '~/shared/constants/block-storage.constants';
 
 /** The path segment, after a collection, that names the viewer's own document. Not a key: `@`. */
@@ -52,25 +51,6 @@ export type ViewerKeyTuple = {
   viewerUid: number;
 };
 
-const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567';
-
-/** RFC 4648 base32, lowercase, no padding. */
-function base32(bytes: Uint8Array): string {
-  let out = '';
-  let acc = 0;
-  let bits = 0;
-  for (const byte of bytes) {
-    acc = (acc << 8) | byte;
-    bits += 8;
-    while (bits >= 5) {
-      out += BASE32[(acc >>> (bits - 5)) & 31];
-      bits -= 5;
-    }
-  }
-  if (bits > 0) out += BASE32[(acc << (5 - bits)) & 31];
-  return out;
-}
-
 /** Each field as its UTF-8 bytes behind a 4-byte big-endian length, so no two tuples collide. */
 function lengthPrefixed(fields: readonly string[]): Buffer {
   return Buffer.concat(
@@ -90,7 +70,7 @@ export function deriveViewerKey(secret: string, t: ViewerKeyTuple): string {
       lengthPrefixed([t.appId, t.ns, t.collection, t.mode, t.parent ?? '', String(t.viewerUid)])
     )
     .digest();
-  const d = base32(mac.subarray(0, 16));
+  const d = base32Encode(mac.subarray(0, 16));
   return t.mode === 'parent+viewer' ? `${t.parent}:${d}` : d;
 }
 
@@ -119,19 +99,6 @@ export async function isViewerKeyedOpen(
   return isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_VIEWER_KEYED_OPEN, ctx.appId, {
     collection,
   });
-}
-
-/**
- * Refuses a create, or a write BY KEY, to a viewer-keyed collection (`400`, `viewer_keyed`): its
- * keys are the server's to derive, so the only writes are the `@me` ones.
- */
-export function refuseRawKeyWrite(coll: DocCollection): void {
-  if (coll.config.keyedBy === undefined) return;
-  throw refuse(
-    'viewer_keyed',
-    `collection ${coll.name} is viewer-keyed: write the viewer's own document at /${coll.name}/${VIEWER_KEYED_SEGMENT}`,
-    coll.name
-  );
 }
 
 /**

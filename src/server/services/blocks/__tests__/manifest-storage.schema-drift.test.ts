@@ -190,6 +190,9 @@ const CASES: Array<[string, unknown, boolean, boolean?]> = [
     false,
   ],
   ['keyedBy on a log collection', shared({ kind: 'log', keyedBy: 'viewer' }), false],
+  ['keyedBy with marks', shared({ keyedBy: 'parent+viewer', marks: ['vote'] }), false],
+  ['keyedBy with counters', shared({ keyedBy: 'viewer', counters: ['plays'] }), false],
+  ['keyedBy with an empty marks list', shared({ keyedBy: 'viewer', marks: [] }), false],
   ['imports only', imports(imp()), true],
   ['imports beside collections', { ...priv(), ...imports(imp({ access: 'readwrite' })) }, true],
   [

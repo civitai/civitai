@@ -538,7 +538,7 @@
                 },
                 "keyedBy": {
                   "type": "string",
-                  "description": "RESERVED — civitai.com refuses this field until viewer-keyed documents are enabled, so do not declare it yet. Shared collections with `write` \"own\" only (not kind \"log\"). The server derives each document's key from the signed-in viewer, so each viewer has at most one document (\"viewer\") or at most one per parent key the app names (\"parent+viewer\"), and no viewer can write another's. The app reads and writes it at `/:collection/@me` or `/:collection/@me/:parent`, where a parent is 1 to 96 characters of A-Z, a-z, 0-9, `.`, `_` or `-` (not only dots); a \"parent+viewer\" key is `<parent>:<digest>`, so listing with `keyPrefix=<parent>:` returns one parent's documents. Writing such a collection by key, and creating in it, are refused. Cannot be added, removed or changed on a collection any approved version declared: declare a new collection instead.",
+                  "description": "RESERVED — civitai.com refuses this field until viewer-keyed documents are enabled, so do not declare it yet. Shared collections with `write` \"own\" only (not kind \"log\"). The server derives each document's key from the signed-in viewer, so each viewer has at most one document (\"viewer\") or at most one per parent key the app names (\"parent+viewer\"), and no viewer can write another's. The app reads and writes it at `/:collection/@me` or `/:collection/@me/:parent`, where a parent is 1 to 96 characters of A-Z, a-z, 0-9, `.`, `_` or `-` (not only dots); a \"parent+viewer\" key is `<parent>:<digest>`, so listing with `keyPrefix=<parent>:` returns one parent's documents. Writing such a collection by key, creating in it, publishing into it and counters or marks on it are refused (it declares none). Cannot be added, removed or changed on a collection any approved version declared: declare a new collection instead.",
                   "enum": ["viewer", "parent+viewer"]
                 },
                 "hook": {
@@ -611,6 +611,11 @@
                     ]
                   },
                   "then": { "properties": { "keyedBy": false } }
+                },
+                {
+                  "$comment": "A viewer-keyed document is itself the viewer's vote or entry, so a viewer-keyed collection declares no counters or marks.",
+                  "if": { "required": ["keyedBy"] },
+                  "then": { "properties": { "counters": false, "marks": false } }
                 },
                 {
                   "$comment": "A write:\"none\" collection is written only through counters and marks, so it must declare at least one.",

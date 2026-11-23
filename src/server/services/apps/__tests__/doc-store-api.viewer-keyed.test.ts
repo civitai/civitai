@@ -46,12 +46,15 @@ const SHADOW_FLAG = 'app-blocks-shared-data-moderation';
 const ENFORCE_FLAG = 'app-blocks-shared-data-moderation-enforce';
 const LEVELS_FLAG = 'app-blocks-shared-doc-levels';
 const OPEN_FLAG = 'app-blocks-storage-viewer-keyed-open';
+const PUBLISH_FLAG = 'app-blocks-storage-publish';
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const real = await importOriginal<typeof FliptClient>();
   const isFlipt = async (flag: string, entityId?: string, context?: unknown) => {
     if (flag === SHADOW_FLAG) return false;
     if (flag === ENFORCE_FLAG) return true;
     if (flag === LEVELS_FLAG) return false;
+    // On, so `_publish` / `_unpublish` are routes and their viewer-keyed refusal is reachable.
+    if (flag === PUBLISH_FLAG) return true;
     if (flag === OPEN_FLAG) {
       h.openEvaluations.push({ entityId, context });
       const collection = (context as { collection?: string } | undefined)?.collection ?? '';
@@ -105,6 +108,7 @@ vi.mock('~/server/services/apps/shared-data-moderation', async (importOriginal) 
 
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { createDocStore } from '~/server/services/apps/doc-store';
+import type { DocCollection } from '~/server/services/apps/doc-store.types';
 import { OnboardingSteps } from '~/server/common/enums';
 import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
 import { envMock } from '~/__tests__/mocks/env.mock';
@@ -133,6 +137,7 @@ const MANIFEST = {
       votes: { visibility: 'shared', write: 'own', keyedBy: 'parent+viewer' },
       likes: { visibility: 'shared', write: 'own', keyedBy: 'viewer' },
       records: { visibility: 'shared', write: 'own' },
+      drafts: { visibility: 'private' },
       plays: { visibility: 'shared', write: 'none', counters: ['plays'] },
     },
   },
@@ -637,5 +642,78 @@ describe('platform policies on @me writes', () => {
       'content_rejected'
     );
     expect(await rows(A, 'votes')).toEqual([]);
+  });
+});
+
+describe('🔴 no path writes a viewer-keyed collection at a key the client names', () => {
+  it('the route: publish into it, unpublish from it, and every tally route are 400 viewer_keyed', async () => {
+    const A = freshApp();
+    const t1 = await mint(A, V1);
+    const key = `${P1}:${'b'.repeat(26)}`;
+    await expectOk(call(t1, 'PUT', ['drafts', key], { body: { data: { value: 1 } } }));
+    const refusals: Promise<Reply>[] = [
+      call(t1, 'POST', ['_publish', 'votes'], { body: { from: 'drafts', keys: [key] } }),
+      call(t1, 'POST', ['_unpublish', 'votes'], { body: { keys: [key] } }),
+      call(t1, 'PATCH', ['votes', key], { body: { $mark: 'vote' } }),
+      call(t1, 'PATCH', ['votes', key], { body: { $unmark: 'vote' } }),
+      call(t1, 'PATCH', ['likes', key], { body: { $inc: { plays: 1 } } }),
+      call(t1, 'PUT', ['votes', key, 'marks', 'vote']),
+      call(t1, 'POST', ['likes', key, 'counters', 'plays'], { body: { by: 1 } }),
+    ];
+    for (const r of refusals) await expectRefused(r, 400, 'invalid_request', 'viewer_keyed');
+    expect(await rows(A, 'votes')).toEqual([]);
+    // Control: the same publish into a collection without keyedBy lands.
+    const published = await expectOk(
+      call(t1, 'POST', ['_publish', 'records'], { body: { from: 'drafts', keys: [key] } })
+    );
+    expect((published.body as { created: string[] }).created).toEqual([key]);
+  });
+
+  it('the store, for every caller: publish, unpublish, increment, mark and unmark refuse, even with tallies declared; a report does not', async () => {
+    const A = freshApp();
+    const ctx = { appId: A.id, ns: 'prod', viewerUid: V1 };
+    // Declared as no manifest can be any more (the parser refuses tallies beside keyedBy): the
+    // store's own refusal must not depend on that.
+    const keyed: DocCollection = {
+      name: 'votes',
+      config: {
+        kind: 'docs',
+        visibility: 'shared',
+        write: 'own',
+        counters: ['plays'],
+        marks: ['vote'],
+        indexes: new Map(),
+        showAuthor: false,
+        keyedBy: 'parent+viewer',
+      },
+    };
+    const drafts: DocCollection = {
+      name: 'drafts',
+      config: {
+        kind: 'docs',
+        visibility: 'private',
+        counters: [],
+        marks: [],
+        indexes: new Map(),
+        showAuthor: false,
+      },
+    };
+    const reasonOf = (p: Promise<unknown>) =>
+      p.then(
+        () => 'resolved',
+        (e: { code?: string; details?: { reason?: string } }) => `${e.code}:${e.details?.reason}`
+      );
+    const key = `${P2}:${'c'.repeat(26)}`;
+    expect(
+      await Promise.all([
+        reasonOf(h.store.publishCopies(ctx, drafts, keyed, { keys: [key], checked: new Map() })),
+        reasonOf(h.store.unpublishCopies(ctx, keyed, [key])),
+        reasonOf(h.store.increment(ctx, keyed, key, 'plays', 1)),
+        reasonOf(h.store.mark(ctx, keyed, key, 'vote')),
+        reasonOf(h.store.unmark(ctx, keyed, key, 'vote')),
+      ])
+    ).toEqual(Array(5).fill('invalid_request:viewer_keyed'));
+    // A report stays possible on a viewer-keyed document: it passes the check and finds no document.
+    expect(await reasonOf(h.store.mark(ctx, keyed, key, 'report'))).toBe('not_found:undefined');
   });
 });
