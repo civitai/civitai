@@ -315,6 +315,16 @@ export function planTextScanPasses(
   ];
 }
 
+/** The csam gate can open before its prompt exists; that must not stop the other labels. */
+function withoutPromptlessLabels(
+  labels: TextScanLabel[],
+  prompts: Awaited<ReturnType<typeof getActiveTextScanPrompts>>
+) {
+  return labels.includes('csam') && !prompts[CSAM_PROMPT_KEY]?.content?.trim()
+    ? labels.filter((label) => label !== 'csam')
+    : labels;
+}
+
 /**
  * Whether a scan of this profile can ask every label it requires right now: the csam gate and the
  * csam prompt are global, so this holds or fails for every entity of the profile at once.
@@ -323,12 +333,10 @@ export async function textScanCanAskEveryLabel(
   profile: Pick<TextScanProfile, 'labels' | 'labelsFor' | 'requireEveryLabel'>
 ) {
   if (!profile.requireEveryLabel) return true;
-  let labels = await resolveTextScanProfileLabels(profile);
-  if (
-    labels.includes('csam') &&
-    !(await getActiveTextScanPrompts())[CSAM_PROMPT_KEY]?.content?.trim()
-  )
-    labels = labels.filter((label) => label !== 'csam');
+  const labels = withoutPromptlessLabels(
+    await resolveTextScanProfileLabels(profile),
+    await getActiveTextScanPrompts()
+  );
   return !unansweredTextScanLabels(
     profile,
     Object.fromEntries(labels.map((label) => [label, true]))
@@ -399,14 +407,14 @@ export async function scanEntity({
   }
 
   const [config, prompts] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
-  // The csam gate can open before its prompt exists; that must not stop the other labels.
-  if (labels.includes('csam') && !prompts[CSAM_PROMPT_KEY]?.content?.trim()) {
+  const askable = withoutPromptlessLabels(labels, prompts);
+  if (askable.length < labels.length) {
     await logMissingPrompts({ entityType, entityId, keys: [CSAM_PROMPT_KEY] }).catch(() => null);
-    labels = labels.filter((label) => label !== 'csam');
+    labels = askable;
     passes = planPasses(labels);
     if (!passes.length) return { status: 'skipped', reason: 'off' };
   }
-  // A verdict that cannot answer every required label cannot settle the entity, so do not submit.
+  // Only an active scan settles the entity; shadow scans record verdicts without settling.
   if (mode === 'active') {
     const unanswerable = unansweredTextScanLabels(
       profile,

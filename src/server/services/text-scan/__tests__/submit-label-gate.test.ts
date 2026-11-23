@@ -362,7 +362,7 @@ describe('a scan settles only on a verdict that answers every label its profile 
     gate('review');
   });
 
-  describe('a profile that requires every label', () => {
+  describe('a profile that requires every label (civitai/civitai#10118)', () => {
     it.each(REQUIRING)('%s submits with every label when all can be asked', async (entityType) => {
       expect(await scanEntity({ entityType, entityId: 1 })).toEqual({
         status: 'submitted',

@@ -69,7 +69,7 @@ dbMock.dbWrite.entityModeration.findFirst.mockImplementation((async (args: {
   return row && (row as { status: string }).status === args.where.status ? row : null;
 }) as never);
 
-// The retry spend, on the same rows.
+// spendTextScanRetry: bumps retryCount on the same fake rows the lookup mock reads.
 dbMock.dbWrite.entityModeration.updateMany.mockImplementation((async (args: {
   where: { entityType: { in: string[] }; entityId: number; status: { not: string } };
   data: { retryCount: { increment: number } };
@@ -813,6 +813,28 @@ describe('a verdict that cannot settle its text is left to the retry job, within
       await recordCheck(type, 'wf-new');
       await textScan({ type, workflowId: 'wf-new' });
       expect((await state(type)).status).toBe('Scanned');
+    }
+  );
+
+  it.each(TYPES)(
+    "%s: an older check's failure does not send text back on restore while its own check is out",
+    async (type) => {
+      await seed(R);
+      const wf = type === 'ServiceDealReview' ? 'wf-c' : 'wf-r';
+      await setServiceDealReviewHidden({ reviewId: REVIEW, moderatorId: SELLER, hidden: true });
+      await q(
+        `INSERT INTO "EntityModeration" ("entityType", "entityId", "workflowId", status, "retryCount")
+         VALUES ($1, $2, 'wf-older', 'Failed', $3)`,
+        [type, REVIEW, TEXT_MODERATION_RETRY_LIMIT]
+      );
+      const scans = vi.spyOn(adapter, 'scanServiceDealReviewText').mockResolvedValue(undefined);
+      try {
+        await setServiceDealReviewHidden({ reviewId: REVIEW, moderatorId: SELLER, hidden: false });
+        expect(scans).not.toHaveBeenCalled();
+      } finally {
+        scans.mockRestore();
+      }
+      expect(await state(type)).toEqual({ status: 'Pending', workflow: wf });
     }
   );
 

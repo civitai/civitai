@@ -6,6 +6,8 @@ import {
 } from '~/server/jobs/text-moderation-retry.constants';
 import { logToAxiom } from '~/server/logging/client';
 import { getModerationAdapter } from '~/server/services/moderation-adapters';
+import { SERVICE_DEAL_REVIEW_PROFILES } from '~/server/services/text-scan/profiles/service-deal-review.profile';
+import { textScanCanAskEveryLabel } from '~/server/services/text-scan/submit';
 import {
   TEXT_SCAN_ENTITY_GONE,
   TEXT_SCAN_ENTITY_NOT_PUBLIC,
@@ -90,6 +92,24 @@ export const retryFailedTextModeration = createJob(
       if (active.length) byType.set(entityType, active);
       else byType.delete(entityType);
     }
+
+    // Likewise review text while its scan cannot ask every label: each submit would be refused and
+    // spend a retry, and the row would drop out for good before the labels came back.
+    const unaskable: string[] = [];
+    for (const [entityType, profile] of Object.entries(SERVICE_DEAL_REVIEW_PROFILES)) {
+      const items = byType.get(entityType);
+      if (!items || (await textScanCanAskEveryLabel(profile).catch(() => false))) continue;
+      skipped += items.length;
+      byType.delete(entityType);
+      unaskable.push(entityType);
+    }
+    if (unaskable.length)
+      logToAxiom({
+        name: 'retry-failed-text-moderation',
+        type: 'warning',
+        message: 'review text scan cannot ask every required label; rows left for a later run',
+        payload: { entityTypes: unaskable },
+      });
 
     // Pre-increment retryCount on Pending-timeout rows. Terminal-failure rows
     // (Failed/Expired/Canceled) had their retryCount bumped by
