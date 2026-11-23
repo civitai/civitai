@@ -126,8 +126,11 @@ import { ensureRegisterAppBlockRuntimeMetrics } from '~/server/metrics/app-block
 import {
   APP_DATA_SIG_HEADER,
   APP_DATA_TS_HEADER,
+  appDataRegionLine,
   signAppDataRequest,
 } from '~/server/services/apps/app-data-signature';
+import { getApiRegionBlock } from '~/server/middleware/api-request-policy';
+import { getRegion } from '~/server/utils/region-blocking';
 import { DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX } from '~/server/utils/shared-storage-rate-limit';
 
 void loggingMock;
@@ -752,7 +755,7 @@ describe('scope: shared puts only', () => {
 // route needs, so driving both routes side by side costs no new mock.
 // ---------------------------------------------------------------------------
 
-const SIGNING_KEY = 'internal-route-test-key-5521';
+const SIGNING_KEY = 'internal-route-test-key-5521-abcdefghij';
 const VOTE_MANIFEST = {
   scopes: SCOPES,
   storage: {
@@ -775,13 +778,20 @@ async function send(opts: {
   body?: unknown;
   /** Internal only: sign the request (default true). */
   signed?: boolean;
+  /** Region headers, sent and (internal) signed. */
+  region?: Record<string, string>;
+  /** Headers added AFTER signing (a tampered forward). */
+  unsigned?: Record<string, string>;
 }): Promise<Routed> {
   const segments = opts.path.split('/').filter(Boolean);
   const text = opts.body === undefined ? '' : JSON.stringify(opts.body);
   const qs = opts.query ? new URLSearchParams(opts.query).toString() : '';
   const prefix = opts.internal ? '/api/internal/blocks/storage' : '/api/v1/blocks/storage';
   const target = `${prefix}${opts.path}`;
-  const headers: Record<string, string> = { authorization: `Bearer ${opts.token}` };
+  const headers: Record<string, string> = {
+    authorization: `Bearer ${opts.token}`,
+    ...(opts.region ?? {}),
+  };
   if (opts.internal && opts.signed !== false) {
     const timestamp = String(Math.floor(Date.now() / 1000));
     headers[APP_DATA_TS_HEADER] = timestamp;
@@ -791,8 +801,10 @@ async function send(opts: {
       query: qs,
       timestamp,
       body: Buffer.from(text),
+      region: appDataRegionLine(opts.region ?? {}) ?? '',
     });
   }
+  Object.assign(headers, opts.unsigned ?? {});
   const req = Object.assign(Readable.from(text ? [Buffer.from(text)] : []), {
     method: opts.method,
     url: qs ? `${target}?${qs}` : target,
@@ -801,12 +813,10 @@ async function send(opts: {
     socket: { remoteAddress: '198.51.100.9' },
   }) as unknown as NextApiRequest;
   const resHeaders: Record<string, unknown> = {};
-  let status = 0;
   let body: unknown;
   const res = {
     statusCode: 0,
     status(code: number) {
-      status = code;
       res.statusCode = code;
       return res;
     },
@@ -814,7 +824,11 @@ async function send(opts: {
       body = payload;
       return res;
     },
-    end: () => res,
+    // The region gate answers with `statusCode` + `end(body)`, as the proxy's block does.
+    end(chunk?: unknown) {
+      if (typeof chunk === 'string') body = JSON.parse(chunk);
+      return res;
+    },
     send: () => res,
     setHeader(k: string, v: unknown) {
       resHeaders[k.toLowerCase()] = v;
@@ -827,8 +841,12 @@ async function send(opts: {
   };
   const route = opts.internal ? internalStorageRoute : storageRoute;
   await route(req, res as unknown as NextApiResponse);
-  return { status, body, headers: resHeaders };
+  return { status: res.statusCode, body, headers: resHeaders };
 }
+
+/** Every document-store rate bucket the app's viewer has spent (read, write, tally, report). */
+const docBuckets = (app: AppRow) =>
+  [...kv.keys()].filter((k) => k.includes(':docs-') && k.includes(`:${app.id}:`)).sort();
 
 /** A private document's row, or undefined. */
 async function draftRow(app: AppRow, key: string) {
@@ -857,7 +875,7 @@ describe('the signed internal route', () => {
   beforeEach(() => envMock.set({ APP_DATA_WRITES_SIGNING_KEY: SIGNING_KEY }));
   afterEach(() => envMock.set({ APP_DATA_WRITES_SIGNING_KEY: undefined }));
 
-  it('is absent while APP_DATA_WRITES_SIGNING_KEY is unset: 404, nothing written', async () => {
+  it('is off while APP_DATA_WRITES_SIGNING_KEY is unset: 404 service_route_off, nothing written', async () => {
     envMock.set({ APP_DATA_WRITES_SIGNING_KEY: undefined });
     const A = freshApp();
     const t = await mint(A, V1);
@@ -870,7 +888,7 @@ describe('the signed internal route', () => {
       body: { data: { n: 11 } },
     });
     expect(r.status).toBe(404);
-    expect((r.body as { code: string }).code).toBe('not_found');
+    expect((r.body as { code: string }).code).toBe('service_route_off');
     expect(await draftRow(A, 'absent-1')).toBeUndefined();
   });
 
@@ -888,7 +906,7 @@ describe('the signed internal route', () => {
     });
     expect(r.status).toBe(401);
     expect(r.body).toEqual({
-      code: 'unauthenticated',
+      code: 'service_signature',
       message: 'invalid service signature',
       error: 'invalid service signature',
     });
@@ -1072,7 +1090,13 @@ describe('the signed internal route', () => {
       message: 'imports are not served on this route',
       error: 'imports are not served on this route',
     });
+    // Nothing charged: no read bucket (the import's own charge, `charge('read', own, req)` just
+    // below the refusal in the handler), no write bucket, no other document-store bucket.
+    expect(
+      kv.get(`${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:docs-read:${A.id}:u:${V1}`)
+    ).toBeUndefined();
     expect(writeBucket(A)).toBeNull();
+    expect(docBuckets(A)).toEqual([]);
     expect(await draftRow(A, 'imp-1')).toBeUndefined();
     expect(await draftRow(B, 'imp-1')).toBeUndefined();
     // `from` naming the token's own app is an own call.
@@ -1110,6 +1134,117 @@ describe('the signed internal route', () => {
       send({ internal: true, token: t, method: 'GET', path: '', query: { from: A.blockId } })
     );
     expect(Object.keys(info.body as object).sort()).toEqual(['collections', 'limits', 'usage']);
+  });
+
+  it('applies the API region block to the signed region, exactly as the proxy does on the public route', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    // What the public route's proxy (`apiRegionBlockMiddleware`) answers a request from GB: the
+    // same decision function on the same headers. Positive control: GB is blocked here.
+    const expected = getApiRegionBlock(getRegion({ headers: { 'cf-ipcountry': 'GB' } } as never));
+    expect(expected).not.toBeNull();
+    const blocked = await send({
+      internal: true,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/geo-1',
+      query: { from: A.blockId },
+      region: { 'cf-ipcountry': 'GB' },
+      body: { data: { n: 101 } },
+    });
+    expect({ status: blocked.status, body: blocked.body }).toEqual({
+      status: expected?.status,
+      body: JSON.parse(expected?.body ?? 'null'),
+    });
+    expect(blocked.headers['content-type']).toBe(expected?.contentType);
+    expect(await draftRow(A, 'geo-1')).toBeUndefined();
+    expect(docBuckets(A)).toEqual([]);
+    // The UK override header the edge sets is part of the same decision.
+    const uk = await send({
+      internal: true,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/geo-1',
+      query: { from: A.blockId },
+      region: { 'cf-ipcountry': 'FR', 'x-isuk': 'true' },
+      body: { data: { n: 101 } },
+    });
+    expect(uk.status).toBe(expected?.status);
+    // An allowed region is served.
+    await expectOk(
+      send({
+        internal: true,
+        token: t,
+        method: 'PUT',
+        path: '/drafts/geo-1',
+        query: { from: A.blockId },
+        region: { 'cf-ipcountry': 'US', 'cf-region-code': 'TX' },
+        body: { data: { n: 101 } },
+      })
+    );
+  });
+
+  it('a region header changed after signing is a signature mismatch, not a region decision', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    const r = await send({
+      internal: true,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/geo-2',
+      query: { from: A.blockId },
+      region: { 'cf-ipcountry': 'GB' },
+      unsigned: { 'cf-ipcountry': 'US' },
+      body: { data: { n: 102 } },
+    });
+    expect(r.status).toBe(401);
+    expect((r.body as { code: string }).code).toBe('service_signature');
+    expect(await draftRow(A, 'geo-2')).toBeUndefined();
+  });
+
+  it('refuses a named major that is not the current one 409 stale_major; the current one is served', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    const stale = await send({
+      internal: true,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/maj-1',
+      query: { from: A.blockId, major: '7' },
+      body: { data: { n: 111 } },
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.body).toMatchObject({ code: 'stale_major', details: { currentMajor: 1 } });
+    expect(await draftRow(A, 'maj-1')).toBeUndefined();
+    await expectOk(
+      send({
+        internal: true,
+        token: t,
+        method: 'PUT',
+        path: '/drafts/maj-1',
+        query: { from: A.blockId, major: '1' },
+        body: { data: { n: 111 } },
+      })
+    );
+    const bad = await send({
+      internal: true,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/maj-2',
+      query: { from: A.blockId, major: 'v1' },
+      body: { data: { n: 112 } },
+    });
+    expect(bad.status).toBe(400);
+    // The public route takes no major at all.
+    const direct = await send({
+      internal: false,
+      token: t,
+      method: 'PUT',
+      path: '/drafts/maj-3',
+      query: { major: '1' },
+      body: { data: { n: 113 } },
+    });
+    expect(direct.status).toBe(400);
   });
 
   it('counts each request by via, and creates the other via at 0', async () => {

@@ -262,7 +262,9 @@ export type StorageApiCode =
   | 'internal_error'
   | 'method_not_allowed'
   /** The signed internal route refuses an import (`from` naming another app), before any write. */
-  | 'not_supported_here';
+  | 'not_supported_here'
+  /** The signed internal route: the request named a schema `major` that is not the current one. */
+  | 'stale_major';
 
 export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   invalid_request: 400,
@@ -296,6 +298,7 @@ export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   internal_error: 500,
   method_not_allowed: 405,
   not_supported_here: 501,
+  stale_major: 409,
 };
 
 export type StorageErrorBody = {
@@ -1615,6 +1618,18 @@ function deleteIfVersion(req: NextApiRequest): number | undefined {
 }
 
 const FROM_PARAM = 'from';
+/** The schema major a write names, on the internal route only (WRITES-DESIGN.md, D2). */
+const MAJOR_PARAM = 'major';
+
+/** The named `major`, or null when none is named. */
+function namedMajorOf(req: NextApiRequest): number | null {
+  const raw = req.query[MAJOR_PARAM];
+  if (raw === undefined) return null;
+  if (Array.isArray(raw) || !/^[1-9][0-9]{0,5}$/.test(raw)) {
+    throw invalid(`${MAJOR_PARAM} must be a positive integer, given once`);
+  }
+  return Number(raw);
+}
 
 const noSuchRoute = () => new DocStoreError('not_found', 'no such storage route');
 
@@ -1663,6 +1678,8 @@ function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute, via: AppSt
   const allowed =
     (route.op === 'info' && via === 'direct') || route.op === 'publish' || route.op === 'unpublish'
       ? own
+      : via === 'service' && route.op !== 'info'
+      ? [...own, FROM_PARAM, MAJOR_PARAM]
       : [...own, FROM_PARAM];
   const stray = Object.keys(req.query).find((k) => !allowed.includes(k));
   if (stray) throw invalid(`unknown query parameter ${stray}`);
@@ -1807,6 +1824,32 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
           envelope('not_supported_here', 'imports are not served on this route')
         );
         return;
+      }
+      if (via === 'service' && route.op !== 'info') {
+        // A write naming a schema major must name the collection's current one, the major the
+        // store stamps (`withSchemaMajor`); none named means current. A collection with no
+        // resolved major is at major 1 (apps/app-data-go/DESIGN.md), so a resolution failure can
+        // only refuse a named major, never stamp a wrong one.
+        const named = namedMajorOf(req);
+        if (named !== null && own.ctx.ns === PUBLISHED_NS) {
+          const current =
+            (await resolveSchemaMajor({
+              appBlockId: own.ctx.appId,
+              head: own.enforcedManifest,
+              collection: route.collection,
+            })) ?? 1;
+          if (current !== named) {
+            sendEnvelope(
+              req,
+              res,
+              STORAGE_ERROR_STATUS.stale_major,
+              envelope('stale_major', 'the named schema major is not the current one', {
+                currentMajor: current,
+              })
+            );
+            return;
+          }
+        }
       }
       if (from !== null) await charge('read', own, req);
       const access =

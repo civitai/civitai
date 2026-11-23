@@ -9,13 +9,19 @@
 // body limit.
 //
 // THE SCHEME. `x-app-data-ts` is unix seconds; `x-app-data-sig` is the lowercase hex
-// HMAC-SHA256, under a key only app-data-go and the site hold, of five lines joined by `\n`:
+// HMAC-SHA256, under a key only app-data-go and the site hold, of six lines joined by `\n`:
 //   1. the method;
 //   2. the request path exactly as sent (no decoding or normalisation);
 //   3. the full raw query string, without the `?` (empty when there is none);
 //   4. the timestamp, as sent;
-//   5. the lowercase hex SHA-256 of the raw body (of zero bytes when there is none).
-// A timestamp more than 60 s from this clock, or a mismatch, is a 401 and nothing else runs.
+//   5. the lowercase hex SHA-256 of the raw body (of zero bytes when there is none);
+//   6. the forwarded region: the values of `cf-ipcountry`, `cf-region-code` and `x-isuk` (the
+//      headers `getRegion` reads), in that order, joined by `,`, each empty when absent; the whole
+//      line is empty when all three are. Each present value is `[A-Za-z0-9-]{1,16}`, sent once.
+// A timestamp more than 60 s from this clock, a malformed region header, or a mismatch is a
+// `401 service_signature` and nothing else runs. With no key the route answers
+// `404 service_route_off`. The golden vectors are one fixture file shared with app-data-go
+// (`apps/app-data-go/internal/sign/testdata/vectors.json`).
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 
@@ -37,15 +43,48 @@ export type AppDataSignedParts = {
   /** The timestamp exactly as sent in `x-app-data-ts`. */
   timestamp: string;
   body: Buffer;
+  /** The region line (`appDataRegionLine`); empty when no region header was forwarded. */
+  region: string;
 };
+
+/** The region headers app-data-go forwards and signs, in canonical order. */
+export const APP_DATA_REGION_HEADERS = ['cf-ipcountry', 'cf-region-code', 'x-isuk'] as const;
+const REGION_VALUE_RE = /^[A-Za-z0-9-]{1,16}$/;
+
+/**
+ * The region line of a request's headers, or null when one of them is malformed (repeated, or
+ * outside the grammar): such a request cannot have been signed by app-data-go, which refuses them.
+ */
+export function appDataRegionLine(
+  headers: Record<string, string | string[] | undefined>
+): string | null {
+  const values: string[] = [];
+  for (const name of APP_DATA_REGION_HEADERS) {
+    const v = headers[name];
+    if (v === undefined) {
+      values.push('');
+      continue;
+    }
+    if (typeof v !== 'string' || !REGION_VALUE_RE.test(v)) return null;
+    values.push(v);
+  }
+  return values.every((v) => v === '') ? '' : values.join(',');
+}
 
 export function sha256Hex(body: Buffer): string {
   return createHash('sha256').update(body).digest('hex');
 }
 
-/** The five signed lines, joined by `\n` (no trailing newline). */
+/** The six signed lines, joined by `\n` (no trailing newline). */
 export function appDataCanonicalString(parts: AppDataSignedParts): string {
-  return [parts.method, parts.path, parts.query, parts.timestamp, sha256Hex(parts.body)].join('\n');
+  return [
+    parts.method,
+    parts.path,
+    parts.query,
+    parts.timestamp,
+    sha256Hex(parts.body),
+    parts.region,
+  ].join('\n');
 }
 
 export function signAppDataRequest(key: string, parts: AppDataSignedParts): string {
@@ -91,10 +130,13 @@ export function verifyAppDataSignature(input: {
   timestamp: string | undefined;
   signature: string | undefined;
   body: Buffer;
+  /** The region line, or null when the region headers were malformed. */
+  region: string | null;
   nowSeconds: number;
 }): AppDataSignatureVerdict {
   const headers = checkAppDataHeaders(input.timestamp, input.signature, input.nowSeconds);
   if (!headers.ok) return headers;
+  if (input.region === null) return { ok: false, reason: 'malformed' };
   const { path, query } = splitRequestTarget(input.rawUrl);
   const expected = Buffer.from(
     signAppDataRequest(input.key, {
@@ -103,6 +145,7 @@ export function verifyAppDataSignature(input: {
       query,
       timestamp: input.timestamp as string,
       body: input.body,
+      region: input.region,
     }),
     'hex'
   );
@@ -164,7 +207,7 @@ function reinjectBody(req: NextApiRequest, body: Buffer): void {
 }
 
 export type AppDataSignatureOpts = {
-  /** The HMAC key, read per request. Unset or empty: the route does not exist (404). */
+  /** The HMAC key, read per request. Unset or empty: `404 service_route_off`. */
   signingKey: () => string | undefined;
   /** The internal route's path prefix, as received (`/api/internal/blocks/storage`). */
   internalPrefix: string;
@@ -174,7 +217,16 @@ export type AppDataSignatureOpts = {
   bodyLimit: number;
   /** Unix seconds. Injectable for the replay-window tests. */
   now?: () => number;
+  /**
+   * Runs after the signature is verified and before the chain: answers the request itself and
+   * returns true to stop it (the internal route's region block), else false.
+   */
+  gate?: (req: NextApiRequest, res: NextApiResponse) => boolean;
 };
+
+/** The two refusals app-data-go maps to `503 not_forwarded`, never to the user's own 401/404. */
+export const SERVICE_SIGNATURE_CODE = 'service_signature';
+export const SERVICE_ROUTE_OFF_CODE = 'service_route_off';
 
 /**
  * The internal route's front: the signature before anything else, the body buffered once, then
@@ -187,7 +239,7 @@ export function withAppDataSignature(handler: NextApiHandler, opts: AppDataSigna
   return async function appDataSignedRoute(req: NextApiRequest, res: NextApiResponse) {
     const key = opts.signingKey();
     if (!key) {
-      refuse(res, 404, 'not_found', 'no such storage route');
+      refuse(res, 404, SERVICE_ROUTE_OFF_CODE, 'the internal storage route is not configured');
       return;
     }
     const rawUrl = req.url ?? '';
@@ -198,9 +250,11 @@ export function withAppDataSignature(handler: NextApiHandler, opts: AppDataSigna
     }
     const timestamp = header(req, APP_DATA_TS_HEADER);
     const signature = header(req, APP_DATA_SIG_HEADER);
-    // The checks that need no body first, so an unsigned caller is refused before anything is read.
+    // Presence, shape and the replay window are checked before the body is read, so a request
+    // without a well-formed, current signature is refused unread. A well-formed but WRONG one is
+    // refused only after the body (up to the limit) has been read and hashed below.
     if (!checkAppDataHeaders(timestamp, signature, now()).ok) {
-      refuse(res, 401, 'unauthenticated', 'invalid service signature');
+      refuse(res, 401, SERVICE_SIGNATURE_CODE, 'invalid service signature');
       return;
     }
     let body: Buffer;
@@ -221,12 +275,14 @@ export function withAppDataSignature(handler: NextApiHandler, opts: AppDataSigna
       timestamp,
       signature,
       body,
+      region: appDataRegionLine(req.headers),
       nowSeconds: now(),
     });
     if (!verdict.ok) {
-      refuse(res, 401, 'unauthenticated', 'invalid service signature');
+      refuse(res, 401, SERVICE_SIGNATURE_CODE, 'invalid service signature');
       return;
     }
+    if (opts.gate?.(req, res)) return;
     reinjectBody(req, body);
     req.url = `${opts.publicPrefix}${path.slice(opts.internalPrefix.length)}${
       query ? `?${query}` : ''

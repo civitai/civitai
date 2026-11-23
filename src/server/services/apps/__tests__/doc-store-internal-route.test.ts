@@ -7,6 +7,7 @@ import {
   APP_DATA_SIG_HEADER,
   APP_DATA_TS_HEADER,
   appDataCanonicalString,
+  appDataRegionLine,
   EMPTY_BODY_SHA256,
   sha256Hex,
   signAppDataRequest,
@@ -17,41 +18,91 @@ import {
 /**
  * The caller signature of the document store's internal route (apps/app-data-go/WRITES-DESIGN.md,
  * "The internal route", steps 1 to 3), and the ledger of the entries into the storage chain.
- * The chain behind the signature (the block-token middleware, the handler, the store) is driven
- * end to end in `doc-store-api.unchanged-writes.test.ts`.
+ * The chain behind the signature (the region gate, the block-token middleware, the handler, the
+ * store) is driven end to end in `doc-store-api.unchanged-writes.test.ts`.
  */
 
-// The vector app-data-go's Go test pins too (apps/app-data-go): computed with `openssl dgst
-// -sha256 -hmac` and Python's hmac over the canonical string below, never by this module.
-const GOLDEN = {
-  key: 'test-signing-key-0001',
-  method: 'PUT',
-  path: '/api/internal/blocks/storage/kv/run-01',
-  query: 'from=model-benchmarking',
-  timestamp: '1795000000',
-  body: Buffer.from('{"data":{"n":1},"ifVersion":0}'),
-  bodySha256: 'f5edde14e10252c60e896284b60e1ef276ae22fcc79e5c3ada8eaedf0cda2a3e',
-  signature: '47db374505acbf36f3fce466ff71b2cb1a7ab014831408122a1c52cd4a7a880d',
+const REPO_SRC = path.resolve(__dirname, '../../../..');
+const REPO_ROOT = path.resolve(REPO_SRC, '..');
+
+// The golden vectors, ONE file read by this test and by app-data-go's Go test
+// (`apps/app-data-go/internal/sign`). Computed with Python's hmac (and one cross-checked with
+// `openssl dgst -sha256 -hmac`), never by either implementation.
+type Vector = {
+  name: string;
+  key: string;
+  method: string;
+  path: string;
+  query: string;
+  timestamp: string;
+  region: Record<string, string>;
+  regionLine: string;
+  body: string;
+  bodySha256: string;
+  canonical: string;
+  signature: string;
 };
-const NOW = 1_795_000_000;
+const VECTORS: Vector[] = JSON.parse(
+  readFileSync(path.join(REPO_ROOT, 'apps/app-data-go/internal/sign/testdata/vectors.json'), 'utf8')
+).vectors;
+
+const partsOf = (v: Vector) => ({
+  method: v.method,
+  path: v.path,
+  query: v.query,
+  timestamp: v.timestamp,
+  body: Buffer.from(v.body, 'utf8'),
+  region: v.regionLine,
+});
+
+const GOLDEN = VECTORS[0];
+const NOW = Number(GOLDEN.timestamp);
 
 describe('the signature scheme', () => {
-  it('matches the golden vector, line by line', () => {
-    expect(sha256Hex(GOLDEN.body)).toBe(GOLDEN.bodySha256);
-    expect(appDataCanonicalString(GOLDEN)).toBe(
-      `PUT\n/api/internal/blocks/storage/kv/run-01\nfrom=model-benchmarking\n1795000000\n${GOLDEN.bodySha256}`
-    );
-    expect(signAppDataRequest(GOLDEN.key, GOLDEN)).toBe(GOLDEN.signature);
+  it('reads the shared vectors: a body, an empty body, and a region line (positive control)', () => {
+    expect(VECTORS.map((v) => v.name)).toEqual([
+      'put-with-body',
+      'delete-empty-body',
+      'post-with-region',
+    ]);
+    expect(VECTORS.some((v) => v.body === '')).toBe(true);
+    expect(VECTORS.some((v) => v.regionLine !== '')).toBe(true);
   });
+
+  it.each(VECTORS.map((v) => [v.name, v] as const))(
+    'matches the golden vector %s, line by line',
+    (_name, v) => {
+      expect(appDataRegionLine(v.region)).toBe(v.regionLine);
+      expect(sha256Hex(Buffer.from(v.body, 'utf8'))).toBe(v.bodySha256);
+      expect(appDataCanonicalString(partsOf(v))).toBe(v.canonical);
+      expect(signAppDataRequest(v.key, partsOf(v))).toBe(v.signature);
+    }
+  );
 
   it('hashes an empty body as the SHA-256 of zero bytes', () => {
     expect(EMPTY_BODY_SHA256).toBe(
       'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
     );
     expect(sha256Hex(Buffer.alloc(0))).toBe(EMPTY_BODY_SHA256);
-    expect(appDataCanonicalString({ ...GOLDEN, body: Buffer.alloc(0) }).split('\n')[4]).toBe(
-      EMPTY_BODY_SHA256
+    expect(
+      appDataCanonicalString({ ...partsOf(GOLDEN), body: Buffer.alloc(0) }).split('\n')[4]
+    ).toBe(EMPTY_BODY_SHA256);
+  });
+
+  it('builds the region line from the three headers, in order, empty when none', () => {
+    expect(appDataRegionLine({})).toBe('');
+    expect(appDataRegionLine({ 'cf-ipcountry': 'DE' })).toBe('DE,,');
+    expect(appDataRegionLine({ 'x-isuk': 'true' })).toBe(',,true');
+    expect(appDataRegionLine({ 'cf-ipcountry': 'US', 'cf-region-code': 'NY', 'x-isuk': '0' })).toBe(
+      'US,NY,0'
     );
+    // Unrelated headers are not part of it.
+    expect(appDataRegionLine({ 'cf-connecting-ip': '1', host: 'h' })).toBe('');
+    // A repeated or out-of-grammar value cannot have been signed by app-data-go.
+    expect(appDataRegionLine({ 'cf-ipcountry': ['US', 'GB'] })).toBeNull();
+    expect(appDataRegionLine({ 'cf-ipcountry': 'US,GB' })).toBeNull();
+    expect(appDataRegionLine({ 'cf-region-code': '' })).toBeNull();
+    expect(appDataRegionLine({ 'cf-ipcountry': 'x'.repeat(17) })).toBeNull();
   });
 
   const verify = (over: Partial<Parameters<typeof verifyAppDataSignature>[0]>) =>
@@ -61,7 +112,8 @@ describe('the signature scheme', () => {
       rawUrl: `${GOLDEN.path}?${GOLDEN.query}`,
       timestamp: GOLDEN.timestamp,
       signature: GOLDEN.signature,
-      body: GOLDEN.body,
+      body: Buffer.from(GOLDEN.body),
+      region: GOLDEN.regionLine,
       nowSeconds: NOW,
       ...over,
     });
@@ -77,7 +129,7 @@ describe('the signature scheme', () => {
     expect(verify({ nowSeconds: NOW - 61 })).toEqual({ ok: false, reason: 'stale' });
   });
 
-  it('refuses a wrong method, path or query, and a changed body', () => {
+  it('refuses a wrong method, path or query, a changed body, a wrong key', () => {
     expect(verify({ method: 'POST' })).toEqual({ ok: false, reason: 'mismatch' });
     expect(verify({ rawUrl: `/api/internal/blocks/storage/kv/run-02?${GOLDEN.query}` })).toEqual({
       ok: false,
@@ -98,24 +150,50 @@ describe('the signature scheme', () => {
       reason: 'mismatch',
     });
     expect(verify({ body: Buffer.alloc(0) })).toEqual({ ok: false, reason: 'mismatch' });
-    expect(verify({ key: 'test-signing-key-0002' })).toEqual({ ok: false, reason: 'mismatch' });
+    expect(verify({ key: 'test-signing-key-0002-0123456789ab' })).toEqual({
+      ok: false,
+      reason: 'mismatch',
+    });
   });
 
-  it('verifies an empty-body request signed over the empty-body hash', () => {
-    const parts = {
-      method: 'DELETE',
-      path: '/api/internal/blocks/storage/kv/run-03',
-      query: 'from=model-benchmarking&ifVersion=4',
-      timestamp: GOLDEN.timestamp,
-      body: Buffer.alloc(0),
+  it('refuses a region line other than the signed one, and a malformed region', () => {
+    const v = VECTORS[2];
+    const base = {
+      key: v.key,
+      method: v.method,
+      rawUrl: `${v.path}?${v.query}`,
+      timestamp: v.timestamp,
+      signature: v.signature,
+      body: Buffer.from(v.body),
+      nowSeconds: Number(v.timestamp),
     };
-    const signature = signAppDataRequest(GOLDEN.key, parts);
+    expect(verifyAppDataSignature({ ...base, region: v.regionLine })).toEqual({ ok: true });
+    expect(verifyAppDataSignature({ ...base, region: 'GB,CA,' })).toEqual({
+      ok: false,
+      reason: 'mismatch',
+    });
+    expect(verifyAppDataSignature({ ...base, region: '' })).toEqual({
+      ok: false,
+      reason: 'mismatch',
+    });
+    expect(verifyAppDataSignature({ ...base, region: null })).toEqual({
+      ok: false,
+      reason: 'malformed',
+    });
+  });
+
+  it('verifies the empty-body vector', () => {
+    const v = VECTORS[1];
     expect(
-      verify({
-        method: 'DELETE',
-        rawUrl: `${parts.path}?${parts.query}`,
-        signature,
+      verifyAppDataSignature({
+        key: v.key,
+        method: v.method,
+        rawUrl: `${v.path}?${v.query}`,
+        timestamp: v.timestamp,
+        signature: v.signature,
         body: Buffer.alloc(0),
+        region: '',
+        nowSeconds: Number(v.timestamp),
       })
     ).toEqual({ ok: true });
   });
@@ -136,7 +214,7 @@ describe('the signature scheme', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The route front: 404 unset, 401 before the chain, the body re-injected, req.url rewritten
+// The route front: 404 unset, 401 before the chain, the gate, the body re-injected, req.url
 // ---------------------------------------------------------------------------
 
 type Seen = { url: string | undefined; body: string; claims: unknown };
@@ -157,13 +235,20 @@ function recorder() {
   return { seen, handler };
 }
 
-function front(handler: ReturnType<typeof recorder>['handler'], key: string | undefined) {
+const KEY = GOLDEN.key;
+
+function front(
+  handler: ReturnType<typeof recorder>['handler'],
+  key: string | undefined,
+  gate?: (req: NextApiRequest, res: NextApiResponse) => boolean
+) {
   return withAppDataSignature(handler, {
     signingKey: () => key,
     internalPrefix: '/api/internal/blocks/storage',
     publicPrefix: '/api/v1/blocks/storage',
     bodyLimit: 64,
     now: () => NOW,
+    gate,
   });
 }
 
@@ -194,25 +279,42 @@ async function send(
   return { status, body };
 }
 
-function signed(method: string, url: string, body: string, key = GOLDEN.key) {
+function signed(
+  method: string,
+  url: string,
+  body: string,
+  opts: { key?: string; region?: Record<string, string> } = {}
+) {
   const q = url.indexOf('?');
+  const region = opts.region ?? {};
   return {
+    ...region,
     [APP_DATA_TS_HEADER]: String(NOW),
-    [APP_DATA_SIG_HEADER]: signAppDataRequest(key, {
+    [APP_DATA_SIG_HEADER]: signAppDataRequest(opts.key ?? KEY, {
       method,
       path: q < 0 ? url : url.slice(0, q),
       query: q < 0 ? '' : url.slice(q + 1),
       timestamp: String(NOW),
       body: Buffer.from(body),
+      region: appDataRegionLine(region) ?? '',
     }),
   };
 }
+
+const SIGNATURE_REFUSED = {
+  status: 401,
+  body: {
+    code: 'service_signature',
+    message: 'invalid service signature',
+    error: 'invalid service signature',
+  },
+};
 
 describe('withAppDataSignature', () => {
   const URL = '/api/internal/blocks/storage/kv/run-04?from=model-benchmarking';
   const BODY = '{"data":{"n":5}}';
 
-  it('is absent (404) while the key is unset, even for a request signed with some key', async () => {
+  it('answers 404 service_route_off while the key is unset, even for a signed request', async () => {
     for (const key of [undefined, '']) {
       const { seen, handler } = recorder();
       const r = await send(front(handler, key), {
@@ -224,35 +326,27 @@ describe('withAppDataSignature', () => {
       expect(r).toEqual({
         status: 404,
         body: {
-          code: 'not_found',
-          message: 'no such storage route',
-          error: 'no such storage route',
+          code: 'service_route_off',
+          message: 'the internal storage route is not configured',
+          error: 'the internal storage route is not configured',
         },
       });
       expect(seen).toEqual([]);
     }
   });
 
-  it('refuses an unsigned, a wrongly signed and a body-swapped request with 401, reaching nothing', async () => {
+  it('refuses an unsigned, a wrongly signed and a body-swapped request 401 service_signature, reaching nothing', async () => {
     const { seen, handler } = recorder();
-    const route = front(handler, GOLDEN.key);
-    const refused = {
-      status: 401,
-      body: {
-        code: 'unauthenticated',
-        message: 'invalid service signature',
-        error: 'invalid service signature',
-      },
-    };
-    expect(await send(route, { method: 'PUT', url: URL, body: BODY })).toEqual(refused);
+    const route = front(handler, KEY);
+    expect(await send(route, { method: 'PUT', url: URL, body: BODY })).toEqual(SIGNATURE_REFUSED);
     expect(
       await send(route, {
         method: 'PUT',
         url: URL,
         body: BODY,
-        headers: signed('PUT', URL, BODY, 'test-signing-key-0003'),
+        headers: signed('PUT', URL, BODY, { key: 'test-signing-key-0003-0123456789ab' }),
       })
-    ).toEqual(refused);
+    ).toEqual(SIGNATURE_REFUSED);
     expect(
       await send(route, {
         method: 'PUT',
@@ -260,7 +354,7 @@ describe('withAppDataSignature', () => {
         body: '{"data":{"n":6}}',
         headers: signed('PUT', URL, BODY),
       })
-    ).toEqual(refused);
+    ).toEqual(SIGNATURE_REFUSED);
     // Signed for a DELETE, sent as a PUT.
     expect(
       await send(route, {
@@ -269,14 +363,66 @@ describe('withAppDataSignature', () => {
         body: BODY,
         headers: signed('DELETE', URL, BODY),
       })
-    ).toEqual(refused);
+    ).toEqual(SIGNATURE_REFUSED);
     expect(seen).toEqual([]);
+  });
+
+  it('refuses a region header changed after signing, or added, as a signature mismatch', async () => {
+    const { seen, handler } = recorder();
+    const route = front(handler, KEY);
+    const asSigned = signed('PUT', URL, BODY, { region: { 'cf-ipcountry': 'GB' } });
+    expect(
+      await send(route, {
+        method: 'PUT',
+        url: URL,
+        body: BODY,
+        headers: { ...asSigned, 'cf-ipcountry': 'US' },
+      })
+    ).toEqual(SIGNATURE_REFUSED);
+    expect(
+      await send(route, {
+        method: 'PUT',
+        url: URL,
+        body: BODY,
+        headers: { ...signed('PUT', URL, BODY), 'x-isuk': 'true' },
+      })
+    ).toEqual(SIGNATURE_REFUSED);
+    expect(seen).toEqual([]);
+    // Positive control: the same request with the region it was signed with is served.
+    expect(
+      (await send(route, { method: 'PUT', url: URL, body: BODY, headers: asSigned })).status
+    ).toBe(299);
+  });
+
+  it('runs the gate after the signature and before the chain; a refusing gate stops it', async () => {
+    const { seen, handler } = recorder();
+    const gated: string[] = [];
+    const route = front(handler, KEY, (req, res) => {
+      gated.push(String(req.headers['cf-ipcountry']));
+      if (req.headers['cf-ipcountry'] !== 'GB') return false;
+      res.status(451).json({ code: 'gated' });
+      return true;
+    });
+    // Unsigned: refused before the gate.
+    expect(await send(route, { method: 'PUT', url: URL, body: BODY })).toEqual(SIGNATURE_REFUSED);
+    expect(gated).toEqual([]);
+    const gb = signed('PUT', URL, BODY, { region: { 'cf-ipcountry': 'GB' } });
+    expect(await send(route, { method: 'PUT', url: URL, body: BODY, headers: gb })).toEqual({
+      status: 451,
+      body: { code: 'gated' },
+    });
+    const us = signed('PUT', URL, BODY, { region: { 'cf-ipcountry': 'US' } });
+    expect((await send(route, { method: 'PUT', url: URL, body: BODY, headers: us })).status).toBe(
+      299
+    );
+    expect(gated).toEqual(['GB', 'US']);
+    expect(seen).toHaveLength(1);
   });
 
   it('answers an oversized body 413 in the storage envelope, reaching nothing', async () => {
     const { seen, handler } = recorder();
     const big = `{"data":{"s":"${'x'.repeat(80)}"}}`;
-    const r = await send(front(handler, GOLDEN.key), {
+    const r = await send(front(handler, KEY), {
       method: 'PUT',
       url: URL,
       body: big,
@@ -289,7 +435,7 @@ describe('withAppDataSignature', () => {
 
   it('hands the chain the public path and query, the signed bytes, and no claims', async () => {
     const { seen, handler } = recorder();
-    const r = await send(front(handler, GOLDEN.key), {
+    const r = await send(front(handler, KEY), {
       method: 'PUT',
       url: URL,
       body: BODY,
@@ -305,18 +451,21 @@ describe('withAppDataSignature', () => {
     ]);
   });
 
-  it('serves the bare prefix (info) and refuses a path outside it', async () => {
+  it('serves the bare prefix (info) and answers 404 not_found for a path outside it', async () => {
     const { seen, handler } = recorder();
-    const route = front(handler, GOLDEN.key);
+    const route = front(handler, KEY);
     const info = '/api/internal/blocks/storage?from=model-benchmarking';
     expect(
       (await send(route, { method: 'GET', url: info, headers: signed('GET', info, '') })).status
     ).toBe(299);
     const outside = '/api/internal/blocks/storagex/kv?from=model-benchmarking';
-    expect(
-      (await send(route, { method: 'GET', url: outside, headers: signed('GET', outside, '') }))
-        .status
-    ).toBe(404);
+    const r = await send(route, {
+      method: 'GET',
+      url: outside,
+      headers: signed('GET', outside, ''),
+    });
+    expect(r.status).toBe(404);
+    expect((r.body as { code: string }).code).toBe('not_found');
     expect(seen.map((s) => s.url)).toEqual(['/api/v1/blocks/storage?from=model-benchmarking']);
   });
 });
@@ -324,8 +473,6 @@ describe('withAppDataSignature', () => {
 // ---------------------------------------------------------------------------
 // The ledger: the entries into the storage chain (WRITES-DESIGN.md, "The internal route")
 // ---------------------------------------------------------------------------
-
-const REPO_SRC = path.resolve(__dirname, '../../../..');
 
 function productionSources(): string[] {
   const out: string[] = [];
@@ -359,6 +506,8 @@ describe('the entries into the storage chain', () => {
       .sort();
 
   it('are exactly the public route and the internal route, each the full chain', () => {
+    // The OPTIONS the two pass the block-token middleware are compared as values in
+    // `src/tests/api/v1/blocks/scoped-endpoints-cors-wiring.test.ts`.
     const found = callers();
     expect(found).toEqual([
       'pages/api/v1/blocks/storage/[[...path]].ts',
