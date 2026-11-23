@@ -1328,7 +1328,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             message:
               'You have not provided any labels for your files. This can produce an inflexible model. We will also attempt to generate sample files, but they may not be what you are looking for. Are you sure you want to continue?',
             labels: { cancel: 'Cancel', confirm: 'Continue' },
-            // Not returned: the confirm closes at once, as it did, rather than waiting out the upload.
+            // Not returned: the confirm closes at once rather than waiting out the upload.
             onConfirm: () => {
               void handleNextAfterCheck();
             },
@@ -1352,7 +1352,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             </Stack>
           ),
           labels: { cancel: 'Review trigger word', confirm: 'Continue anyway' },
-          // Not returned: the confirm closes at once, as it did, rather than waiting out the upload.
+          // Not returned: the confirm closes at once rather than waiting out the upload.
           onConfirm: () => {
             void continueSubmit();
           },

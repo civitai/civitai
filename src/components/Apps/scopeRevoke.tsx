@@ -374,26 +374,11 @@ export function useScopeRevoke({
    * 🔴 NO `onSuccess`/`onError`/`onSettled` OPTIONS — THE OUTCOME IS HANDLED IN THE `onConfirm`
    * CLOSURE. THE REASON IS ORDERING (see the block on the chain below), NOT LIFECYCLE.
    *
-   * ⚠️ A PREVIOUS VERSION OF THIS DOCBLOCK GAVE A DIFFERENT AND FALSE REASON, AND IT IS RETRACTED
-   * RATHER THAN REWORDED. It said: *"the dialog outlives this component … react-query unsubscribes
-   * this `useMutation` observer, so confirming still fired the mutation SERVER-SIDE while none of
-   * the option callbacks ran … The permission changed and the viewer was told nothing."* Two lanes
-   * independently reported that hazard in round 1 and the round-2 correctness lane RETRACTED it
-   * after reading the installed source: in `@tanstack/query-core@5.101.0`, `Mutation.execute`
-   * awaits `this.options.onSuccess/onError/onSettled` **unconditionally**, with no reference to
-   * `#observers`. The only listener-gated path is `MutationObserver.#notify`, which fires
-   * `#mutateOptions` — the PER-CALL options passed as `mutate(vars, options)`, which this code
-   * never used. Hook options become the MUTATION's options (`useMutation` →
-   * `observer.setOptions` → `mutationCache.build(client, this.options)`), so they would have fired
-   * after unmount. There was nothing to fix.
+   * Not lifecycle: `openConfirm` renders in the global `DialogProvider`, so the dialog outlives this
+   * component, but hook options would still fire after unmount (`Mutation.execute` awaits them
+   * regardless of observers; only per-call `mutate(vars, options)` callbacks are listener-gated).
    *
-   * The premise about the dialog is still true — `openConfirm` renders into the global
-   * `DialogProvider` in `src/pages/_app.tsx`, so it does outlive this component — but the
-   * conclusion drawn from it was wrong, and a comment asserting a library behaviour that does not
-   * exist is worse than no comment: the next reader trusts it, and the test fixture below was
-   * written to ENFORCE this shape on that false rationale.
-   *
-   * WHAT IS STILL TRUE AND IS THE REAL REASON TO KEEP THIS SHAPE: handling the outcome here is what
+   * The reason: handling the outcome here is what
    * lets the viewer be told BEFORE the cache is reconciled, which the option-callback form could not
    * express (`execute` awaits `onSuccess` before `onSettled`, so an `await invalidate()` inside
    * `onSuccess` necessarily delayed the spinner). React is 18.3.1, so the two `setState` calls are

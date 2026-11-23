@@ -72,16 +72,27 @@ describe('DialogProvider and closing', () => {
 
   const waitAFewFrames = () => new Promise((resolve) => setTimeout(resolve, 60));
 
+  // A 500ms exit, so "still on screen" is read well inside it and "gone" well before the 1s fallback.
+  function SlowExitDialog() {
+    const dialog = useDialogContext();
+    return (
+      <Modal {...dialog} title="Leaving" transitionProps={{ duration: 500 }}>
+        Leaving
+      </Modal>
+    );
+  }
+
   test('a closed dialog plays its exit transition, then unmounts', async () => {
     renderWithProviders(<DialogProvider />);
-    dialogStore.trigger({ component: NamedDialog, props: { name: 'Leaving' }, id: 'leaving' });
+    dialogStore.trigger({ component: SlowExitDialog, id: 'leaving' });
     await expect.element(page.getByRole('dialog', { name: 'Leaving' })).toBeInTheDocument();
 
     dialogStore.closeById('leaving');
-    // Closed at once for everything that reads the store...
+    // Closed at once for everything that reads the store, but kept for its exit...
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    expect(useDialogStore.getState().closing).toHaveLength(1);
     await waitAFewFrames();
-    // ...but still on screen while Mantine's exit transition runs, rather than unmounted at once.
+    // ...and still on screen while Mantine's exit transition runs, rather than unmounted at once.
     expect(document.body.textContent).toContain('Leaving');
     // Removed when the Modal reports the transition ended, before the fallback timer.
     await vi.waitFor(() => expect(useDialogStore.getState().closing).toHaveLength(0), {
@@ -152,6 +163,24 @@ describe('openDialog and openConfirm', () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
     finish();
     await expect.element(page.getByText('Report it?')).not.toBeInTheDocument();
+  });
+
+  test('a confirm closing after its answer ignores both buttons through its exit', async () => {
+    renderWithProviders(<DialogProvider />);
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    openConfirm({ message: 'Bank it?', onConfirm, onCancel });
+
+    await expect.element(page.getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
+    const confirm = page.getByRole('button', { name: 'Confirm' }).element() as HTMLButtonElement;
+    const cancel = page.getByRole('button', { name: 'Cancel' }).element() as HTMLButtonElement;
+    // Real DOM clicks in one tick, as a fast double click lands: the buttons stay on screen while
+    // the dialog animates out.
+    confirm.click();
+    confirm.click();
+    cancel.click();
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onCancel).not.toHaveBeenCalled();
   });
 
   test('a confirm runs onClose once, after onConfirm, and once on Escape', async () => {

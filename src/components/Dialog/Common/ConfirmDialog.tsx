@@ -1,6 +1,6 @@
 import type { ButtonProps, GroupProps, MantineSize } from '@mantine/core';
 import { Button, Group, Modal, Stack, Text, useMantineTheme } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Dialog } from '~/components/Dialog/dialogStore';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -68,22 +68,38 @@ export default function ConfirmDialog({
     if (autoFocusConfirm && dialog.opened) setConfirmFocused(true);
   }, [autoFocusConfirm, dialog.opened]);
 
+  // A closed dialog stays on screen through its exit transition: answered once, its buttons do
+  // nothing, so a second click cannot confirm twice or cancel after a confirm.
+  const answeredRef = useRef(false);
+
   const handleCancel = () => {
+    if (answeredRef.current) return;
+    answeredRef.current = true;
     onCancel?.();
     dialog.onClose();
   };
 
   const handleConfirm = async () => {
+    if (answeredRef.current) return;
+    answeredRef.current = true;
     const result = onConfirm?.();
     if (result instanceof Promise) {
       setLoading(true);
       try {
-        await result; // a rejection skips the close below, so the user can retry
-      } finally {
+        await result;
+      } catch (error) {
+        // Stays open so the user can retry.
+        answeredRef.current = false;
         setLoading(false);
+        throw error;
       }
     }
-    if (closeOnConfirm) dialog.onClose();
+    if (closeOnConfirm) {
+      dialog.onClose();
+    } else {
+      answeredRef.current = false;
+      setLoading(false);
+    }
   };
 
   return (
