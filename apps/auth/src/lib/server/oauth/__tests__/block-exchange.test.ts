@@ -1304,9 +1304,13 @@ describe('block token verification follows the site', () => {
     expect(middleware).toContain(
       [
         '        claims.viewerBrowsingLevel !== undefined &&',
-        '        // A non-negative integer: an all-bits value like -1 would pass AND-ing unchanged.',
-        '        !(Number.isInteger(claims.viewerBrowsingLevel) && claims.viewerBrowsingLevel >= 0)',
+        '        !isBrowsingLevelClaim(claims.viewerBrowsingLevel)',
+        '      ) {',
+        '        return null;',
       ].join('\n')
+    );
+    expect(middleware).toContain(
+      "import { isBrowsingLevelClaim } from '@civitai/auth/browsing-level-claim';"
     );
   });
 
