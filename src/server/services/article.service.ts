@@ -11,6 +11,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import {
   hasBlockMarker,
   isMinorMatureImage,
+  noBlockMarkerWhere,
   withoutMinorFlag,
 } from '~/server/common/image-visibility';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
@@ -3361,6 +3362,27 @@ function canRescanArticleImage(
 }
 
 /**
+ * `canRescanArticleImage` as the Rescan write's filter, so a block that lands after the row was
+ * read is not overwritten: the scan result would then lift it. Change the two together.
+ */
+const rescanArticleImageWhere = (articleUserId: number): Prisma.ImageWhereInput => ({
+  userId: articleUserId,
+  nsfwLevelLocked: false,
+  AND: [{ ingestion: { not: ImageIngestionStatus.Pending } }, noBlockMarkerWhere()],
+});
+
+/** Flips the images still eligible on the primary to Rescan; returns the ids it flipped. */
+async function markArticleImagesForRescan(imageIds: number[], articleUserId: number) {
+  if (!imageIds.length) return new Set<number>();
+  const flipped = await dbWrite.image.updateManyAndReturn({
+    where: { id: { in: imageIds }, ...rescanArticleImageWhere(articleUserId) },
+    data: { ingestion: ImageIngestionStatus.Rescan },
+    select: { id: true },
+  });
+  return new Set(flipped.map(({ id }) => id));
+}
+
+/**
  * Rescan an article: re-queue its content images (see `canRescanArticleImage`) and re-submit
  * text moderation.
  *
@@ -3466,17 +3488,15 @@ export async function rescanArticle({
   for (const own of ownImages)
     if (!candidates.some((image) => image.id === own.id)) candidates.push(own);
 
-  const imagesToIngest = candidates.filter((image) => canRescanArticleImage(image, article.userId));
-
   // Mark re-queued images non-terminal so the article reads as in-progress
   // (allComplete=false) and the status poll keeps running until they resolve.
-  const imageIdsToIngest = imagesToIngest.map((image) => image.id);
-  if (imageIdsToIngest.length) {
-    await dbWrite.image.updateMany({
-      where: { id: { in: imageIdsToIngest } },
-      data: { ingestion: ImageIngestionStatus.Rescan },
-    });
-  }
+  const flipped = await markArticleImagesForRescan(
+    candidates
+      .filter((image) => canRescanArticleImage(image, article.userId))
+      .map((image) => image.id),
+    article.userId
+  );
+  const imagesToIngest = candidates.filter((image) => flipped.has(image.id));
 
   enqueueImageIngestion({
     images: imagesToIngest,
@@ -3606,20 +3626,20 @@ export async function rescanArticleImage({
 
   // An image already scanning needs nothing; any other refusal is the caller's to hear, and costs
   // no attempt.
-  if (!canRescanArticleImage(image, article.userId)) {
-    if (image.ingestion === ImageIngestionStatus.Pending) return;
-    throw throwBadRequestError(
+  const refused = () =>
+    throwBadRequestError(
       'This image cannot be rescanned from the article. Remove it from the article if it is not needed.'
     );
+  if (!canRescanArticleImage(image, article.userId)) {
+    if (image.ingestion === ImageIngestionStatus.Pending) return;
+    throw refused();
   }
 
   // Flip to Rescan so the image is no longer terminal: getArticleScanStatus
   // then reports the article as in-progress (allComplete=false), which resumes
   // the 15s status poll so the eventual result loads without a manual refresh.
-  await dbWrite.image.update({
-    where: { id: image.id },
-    data: { ingestion: ImageIngestionStatus.Rescan },
-  });
+  const flipped = await markArticleImagesForRescan([image.id], article.userId);
+  if (!flipped.has(image.id)) throw refused();
   enqueueImageIngestion({
     images: [image],
     name: 'article-rescan-image',
