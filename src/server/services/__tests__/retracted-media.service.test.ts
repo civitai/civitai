@@ -224,6 +224,7 @@ describe('getRetractedMedia', () => {
     await expectTiers('anyMod', [1]);
   });
 
+  // civitai/civitai#10202: only item-level CSAM signals withhold from a moderator without the grant.
   it('serves a block with no reason to any moderator', async () => {
     await expectTiers('anyMod', [4]);
   });
@@ -290,6 +291,7 @@ describe('getRetractedMedia', () => {
     // each the access the rule names.
     it.each([
       ['a CSAM block reason', 11, 'none'],
+      // civitai/civitai#10202: a block with no reason no longer withholds.
       ['a block with no reason', 4, 'anyMod'],
       ['moderated', 1, 'anyMod'],
       ['tos', 2, 'anyMod'],
@@ -344,6 +346,7 @@ describe('getRetractedMedia', () => {
     await expectTiers('anyMod', [32, 2]);
   });
 
+  // civitai/civitai#10202: only item-level CSAM signals withhold from a moderator without the grant.
   it('serves an AiNotVerified image of a held or reported owner to any moderator', async () => {
     // Evidence-held owner, report subject, report secondary user.
     await expectTiers('anyMod', [19, 21, 22]);
@@ -509,6 +512,7 @@ describe('a model version unpublished for its subject', () => {
     });
   });
 
+  // civitai/civitai#10202: only item-level CSAM signals withhold from a moderator without the grant.
   it('serves an image on a model a CSAM hold removed to any moderator', async () => {
     await pg.exec(`
       INSERT INTO "Model" (id, meta) VALUES (990500126, '{"unpublishedReason": "mature-underage"}');
@@ -543,6 +547,7 @@ describe('a model version unpublished for its subject', () => {
     });
   });
 
+  // civitai/civitai#10202: only item-level CSAM signals withhold from a moderator without the grant.
   it('serves an image on a post a CSAM hold removed to any moderator', async () => {
     await pg.exec(`
       INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400129, '{"unpublishedReason": "csam-text-hold"}', NULL);

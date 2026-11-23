@@ -5,7 +5,7 @@ import {
   type RedisKeyTemplateCache,
   type RedisKeyTemplateSys,
 } from '@civitai/redis';
-import { heldImageSql, unreadableImageSql } from '@civitai/shared/held-media';
+import { heldImageKnownSql, unreadableImageSql } from '@civitai/shared/held-media';
 import { retractedAccessColumnsSql, type UrlSibling } from '@civitai/shared/retracted-media-tier';
 import {
   imageRoutesHeld,
@@ -113,7 +113,7 @@ export async function getBatchMedia(
       sql<boolean>`${sql.raw(access.restricted)}`.as('restricted'),
       sql<UrlSibling[]>`${sql.raw(access.siblings)}`.as('siblings'),
       sql<boolean>`${sql.raw(unreadableImageSql('i'))}`.as('unreadable'),
-      sql<boolean>`COALESCE(${sql.raw(heldImageSql('i'))}, false)`.as('held'),
+      sql<boolean>`${sql.raw(heldImageKnownSql('i'))}`.as('held'),
     ])
     .where('i.id', '=', imageId)
     .executeTakeFirst();

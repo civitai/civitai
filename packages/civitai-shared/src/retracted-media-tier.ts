@@ -15,6 +15,23 @@ import { blockedForSignal, type BlockedForPatterns, type ScannerVerdict } from '
  *  leg serve. With `cdnLeg`, the url must also be the row's alone. Who among
  *  moderators may see it is `csamRestrictedSql`'s call. */
 export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): string {
+  return `(
+    ${retractedEligibleSql(image, cdnLeg)}
+    -- NULL for an image with no review flag or block reason, so COALESCE before the NOT.
+    AND NOT COALESCE(${heldImageSql(image)}, false)
+  )`;
+}
+
+/** `retractedImageWhereSql` with held media let through unless it is held for itself
+ *  (`heldItemImageSql`): a held account's image the routes would serve if it were not held. */
+export function retractedOrOwnerHeldWhereSql(image: string, { cdnLeg = false } = {}): string {
+  return `(
+    ${retractedEligibleSql(image, cdnLeg)}
+    AND NOT COALESCE(${heldItemImageSql(image)}, false)
+  )`;
+}
+
+function retractedEligibleSql(image: string, cdnLeg: boolean): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const eligible = cdnLeg
     ? `(${image}.ingestion = 'Blocked' OR (
@@ -31,11 +48,7 @@ export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): 
       AND NOT EXISTS (SELECT 1 FROM "ImageCdnShopTakedown" st WHERE st.url = ${image}."url")
     ))`
     : `${image}.ingestion = 'Blocked'`;
-  return `(
-    ${eligible}
-    -- NULL for an image with no review flag or block reason, so COALESCE before the NOT.
-    AND NOT COALESCE(${heldImageSql(image)}, false)
-  )`;
+  return eligible;
 }
 
 /** At most this many other rows on a url are read; a url with more is refused (`siblingsServable`). */

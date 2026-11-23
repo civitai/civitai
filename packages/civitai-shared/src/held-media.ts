@@ -62,6 +62,11 @@ export function heldImageSql(image: string): string {
   )`;
 }
 
+/** `heldImageSql`, false rather than NULL for an image with no review flag or block reason. */
+export function heldImageKnownSql(image: string): string {
+  return `COALESCE(${heldImageSql(image)}, false)`;
+}
+
 /**
  * Whether the "Image" row aliased `image` is marked as CSAM by a hash block, a scan flag, a
  * moderator vote or a CSAM hold on its label item. Not `heldImageSql`'s legs.

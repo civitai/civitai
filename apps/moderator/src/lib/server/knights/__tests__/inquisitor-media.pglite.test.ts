@@ -157,10 +157,11 @@ describe('getInquisitorQueue media, by viewer', () => {
     expect((await getInquisitorQueue('all', { csamReview: true }))[0].media).toBe('retracted');
   });
 
-  it('draws an unblocked image of a held owner from storage for any moderator, not from the public CDN', async () => {
+  // civitai/civitai#10202: drawn for a moderator without the grant as any live image is.
+  it('draws an unblocked image of a held owner from the CDN, and from storage for a cleared moderator', async () => {
     await queued({ ingestion: 'Scanned', blockedFor: null });
     await db.query(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES ($1)`, [OWNER]);
-    expect(await media()).toBe('retracted');
+    expect(await media()).toBe('cdn');
     const [item] = await getInquisitorQueue('all', { csamReview: true });
     expect(item.media).toBe('retracted');
   });
@@ -171,6 +172,12 @@ describe('getInquisitorQueue media, by viewer', () => {
     expect(await media()).toBe('restricted');
     const [item] = await getInquisitorQueue('all', { csamReview: true });
     expect(item.media).toBe('retracted');
+  });
+
+  it('draws an unblocked image in the CSAM queue restricted, not from the public CDN', async () => {
+    await queued({ ingestion: 'Scanned', blockedFor: null });
+    await db.query(`UPDATE "Image" SET "needsReview" = 'csam'`);
+    expect(await media()).toBe('restricted');
   });
 
   it("restricts an image the scanner's CSAM label marks", async () => {

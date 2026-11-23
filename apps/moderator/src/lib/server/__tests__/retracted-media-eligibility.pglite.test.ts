@@ -599,14 +599,18 @@ describe('recordRetractedView', () => {
   });
 });
 
-// civitai/civitai#10202: a held account's ordinary media is open to any moderator.
+// civitai/civitai#10202: a held account's withheld media is open to any moderator, answered as
+// any other account's would be.
 describe("a held account's image, through /api/retracted-media's reader", () => {
   const OWNER = 990100400;
   const IMAGE = 990000400;
+  // Not held: the same image of another account.
+  const TWIN = 990000401;
   beforeAll(async () => {
     await db.exec(`
       INSERT INTO "Image" (id, url, "userId", ingestion, "needsReview") VALUES
-        (${IMAGE}, 'key-${IMAGE}', ${OWNER}, 'Scanned', 'poi');
+        (${IMAGE}, 'key-${IMAGE}', ${OWNER}, 'Scanned', 'poi'),
+        (${TWIN}, 'key-${TWIN}', 990100401, 'Scanned', 'poi');
       INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER});
     `);
   });
@@ -614,17 +618,34 @@ describe("a held account's image, through /api/retracted-media's reader", () => 
     scanner.verdict = 'clear';
   });
   afterAll(async () => {
-    await db.exec(`DELETE FROM "Image" WHERE id = ${IMAGE};
+    await db.exec(`DELETE FROM "Image" WHERE id IN (${IMAGE}, ${TWIN});
       DELETE FROM "EvidenceHeldUser" WHERE "userId" = ${OWNER}`);
   });
 
-  it('serves a scanned image in the POI queue to any moderator', async () => {
-    expect(await getModeratorMedia(IMAGE, { csamReview: false })).toEqual({
-      url: `key-${IMAGE}`,
-      type: 'image',
-      mimeType: null,
-      kind: 'held',
-    });
+  it('answers a live image of a held account as it answers any live image', async () => {
+    expect(await getModeratorMedia(IMAGE, { csamReview: false })).toBeNull();
+    expect(await getModeratorMedia(TWIN, { csamReview: false })).toBeNull();
+    expect(await getModeratorMedia(IMAGE, { csamReview: true })).toMatchObject({ kind: 'held' });
+  });
+
+  it('serves it from storage once the CDN refuses it, as it serves any such image', async () => {
+    envMock.env.RETRACTED_MEDIA_CDN_LEG = 'true';
+    await db.exec(`INSERT INTO "ImageCdnAccess" (url, state) VALUES
+      ('key-${IMAGE}', 'Denied'), ('key-${TWIN}', 'Denied')`);
+    try {
+      expect(await getModeratorMedia(IMAGE, { csamReview: false })).toEqual({
+        url: `key-${IMAGE}`,
+        type: 'image',
+        mimeType: null,
+        kind: 'held',
+      });
+      expect(await getModeratorMedia(TWIN, { csamReview: false })).toMatchObject({
+        kind: 'retracted',
+      });
+    } finally {
+      envMock.env.RETRACTED_MEDIA_CDN_LEG = undefined;
+      await db.exec(`DELETE FROM "ImageCdnAccess" WHERE url IN ('key-${IMAGE}', 'key-${TWIN}')`);
+    }
   });
 
   it('keeps the same image in the CSAM queue to cleared moderators', async () => {
@@ -650,6 +671,27 @@ describe("a held account's image, through /api/retracted-media's reader", () => 
       );
     }
   });
+
+  it.each(['Pending', 'Error'])(
+    'refuses a %s image of the account to a moderator without the grant, even once the CDN refuses it',
+    async (ingestion) => {
+      envMock.env.RETRACTED_MEDIA_CDN_LEG = 'true';
+      await db.exec(`ALTER TABLE "Image" ALTER COLUMN ingestion DROP DEFAULT;
+        UPDATE "Image" SET ingestion = '${ingestion}' WHERE id = ${IMAGE};
+        INSERT INTO "ImageCdnAccess" (url, state) VALUES ('key-${IMAGE}', 'Denied')`);
+      try {
+        expect(await getModeratorMedia(IMAGE, { csamReview: false })).toBeNull();
+        expect(await getModeratorMedia(IMAGE, { csamReview: true })).toMatchObject({
+          kind: 'held',
+        });
+      } finally {
+        envMock.env.RETRACTED_MEDIA_CDN_LEG = undefined;
+        await db.exec(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = ${IMAGE};
+          ALTER TABLE "Image" ALTER COLUMN ingestion SET DEFAULT 'Blocked';
+          DELETE FROM "ImageCdnAccess" WHERE url = 'key-${IMAGE}'`);
+      }
+    }
+  );
 
   it('keeps it to cleared moderators while the scanner marks it', async () => {
     scanner.verdict = 'hit';
