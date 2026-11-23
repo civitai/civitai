@@ -98,7 +98,7 @@ describe('buildApplyScript', () => {
   });
 
   it('caps the smoke-pod name at an 8-char short sha (DNS 63-char label guard)', () => {
-    expect(script).toContain(`SMOKE_POD="smoke-\${SLUG}-$(printf '%s' "\${SHA}" | head -c 8)"`);
+    expect(script).toContain('SMOKE_POD="smoke-${SLUG}-${SHA:0:8}"');
   });
 
   it('pins the smoke pod hardening: private-registry pull + non-root + drop-ALL caps', () => {
@@ -121,7 +121,7 @@ describe('buildApplyScript', () => {
     expect(script).toContain('GET /healthz returned');
     expect(script).toContain('expected text/html');
     // The mixed-content port-leak guard rejects any :8080 in a redirect Location.
-    expect(script).toContain("grep -q ':8080'");
+    expect(script).toContain('index(v, ":8080")');
     expect(script).toContain('leaks the in-pod port');
   });
 
