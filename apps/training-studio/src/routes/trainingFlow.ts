@@ -7,7 +7,6 @@ import {
   kohyaDefaults,
   kohyaFieldSupported,
   kohyaFamily,
-  kohyaSelectable,
   isKohyaFlow,
 } from '$lib/data/kohya';
 import {
@@ -151,10 +150,10 @@ export function runVersion(run: Run): ModelVersionInfo {
 }
 
 export const runEngine = (run: Run): string => run.engine ?? runVersion(run).engine ?? 'ai-toolkit';
-export const runSupportsKohya = (run: Run): boolean => kohyaSelectable(runVersion(run).ecosystem);
+export const runSupportsKohya = (run: Run): boolean => !!kohyaFamily(runVersion(run).ecosystem);
 /** A card's versions share one ecosystem, so its first decides whether the card trains on Kohya. */
 export const cardSupportsKohya = (card: ModelCard): boolean =>
-  kohyaSelectable(card.versions[0]!.ecosystem);
+  !!kohyaFamily(card.versions[0]!.ecosystem);
 
 /** The run on `engine`, moved to the card's first version when its pick isn't offered there (Custom
  *  exists for some cards only under Kohya). */
@@ -163,18 +162,6 @@ export function withEngine(run: Run, engine: string, enabledFlags?: ReadonlySet<
   return options.some((v) => v.key === run.versionKey)
     ? { ...run, engine }
     : { ...run, engine, versionKey: options[0]!.key, customAir: undefined, customName: undefined };
-}
-
-/** A selection re-entering Select: a Kohya run falls back to AI Toolkit for a viewer without the gate,
- *  or on a model Kohya isn't offered for. */
-export function restoreRun(
-  run: Run,
-  kohyaEnabled: boolean,
-  enabledFlags?: ReadonlySet<string>
-): Run {
-  return runEngine(run) !== 'kohya' || (kohyaEnabled && runSupportsKohya(run))
-    ? run
-    : withEngine(run, 'ai-toolkit', enabledFlags);
 }
 
 /** The key a version is blocked under: its checkpoint's, as a submit resolves it (an edit card reuses
@@ -234,7 +221,7 @@ export function versionOptions(
 ): { key: string; label: string }[] {
   return [
     ...visibleVersions(card, enabledFlags).map((v) => ({ key: v.key, label: v.label })),
-    ...(allowsCustomBase(card) || (engine === 'kohya' && kohyaFamily(card.versions[0]!.ecosystem))
+    ...(allowsCustomBase(card) || (engine === 'kohya' && cardSupportsKohya(card))
       ? [{ key: CUSTOM_VERSION_KEY, label: 'Custom' }]
       : []),
   ];
