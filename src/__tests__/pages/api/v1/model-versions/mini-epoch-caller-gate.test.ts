@@ -1,21 +1,38 @@
+import { createServer, request as httpRequest, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
+import { apiResolver } from 'next/dist/server/api-utils/node/api-resolver';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
- * `GET /api/v1/model-versions/mini/[id]`, the epoch arm of a Private version, behind the
+ * `GET /api/v1/model-versions/mini/[id]` for a Private model or version, behind the
  * `mini-epoch-caller-gate` variant flag: `log` logs the caller class, `enforce` also answers callers
  * who are not the owner, a moderator, a grantee or the orchestrator as an unknown id.
  */
 
-const h = vi.hoisted(() => ({
-  user: { value: undefined as undefined | Record<string, unknown> },
-  variant: { value: null as string | null },
-  hasEntityAccess: vi.fn(),
-  getFliptVariant: vi.fn(),
-  refreshBlobs: vi.fn(),
+const h = vi.hoisted(() => {
+  // GB is restricted (read by region-blocking when it loads); only the wire tests below send a region.
+  process.env.REGION_RESTRICTION_CONFIG = 'GB:2025-01-01';
+  // The real wrapper hashes a bearer to look it up.
+  process.env.NEXTAUTH_SECRET ??= 'test-nextauth-secret';
+  return {
+    user: { value: undefined as undefined | Record<string, unknown> },
+    notUpToDate: { value: false },
+    variant: { value: null as string | null },
+    hasEntityAccess: vi.fn(),
+    getFliptVariant: vi.fn(),
+    refreshBlobs: vi.fn(),
+  };
+});
+
+// Read on the same `$queryRaw` the route uses; the wire tests turn it on so the wrapper's X-Expires is sent.
+vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  checkNotUpToDate: vi.fn(async () => h.notUpToDate.value),
 }));
 
 vi.mock('~/server/services/orchestrator/refreshBlobs', () => ({
@@ -578,10 +595,7 @@ describe('mini/[id] ?epoch= from the query string', () => {
   );
 });
 
-/**
- * Every Private call goes through the gate, not only the epoch arm (#10174): a Private MODEL whose
- * version is Public, and a Private version whose file has no epochs.
- */
+/** Two Private shapes outside the epoch arm (#10174): a Private MODEL whose version is Public, and a Private version whose file has no epochs. */
 describe('mini/[id] a Private parent outside the epoch arm', () => {
   const PLAIN_FILE = {
     ...TRAINING_FILE,
@@ -605,7 +619,6 @@ describe('mini/[id] a Private parent outside the epoch arm', () => {
     ['another user by OAuth', stranger],
     ['another user by session', otherBySession],
   ] as const;
-  // Who is answered as an unknown id, per mode.
   const refusedIn: Record<string, string[]> = {
     off: [],
     log: [],
@@ -636,7 +649,6 @@ describe('mini/[id] a Private parent outside the epoch arm', () => {
         } else {
           expect(result.status ?? 200).toBe(200);
           expect(JSON.stringify(result.body)).toContain(PLAIN_FILE.hashes.SHA256);
-          // The body depends on the caller once the gate reads it, so no shared cache may hold it.
           if (mode !== 'off') expect(result.cacheControl).toBe('private, no-store');
         }
         if (mode === 'off') expect(callerLogs()).toEqual([]);
@@ -765,4 +777,145 @@ describe('mini/[id] unreleased versions stay served to the owner and the service
         }
       );
     }
+});
+
+/**
+ * On the wire, every 404 is an unknown id: status, body and the whole response header map. The route's handler (the
+ * passthrough above, which supplies the caller) is wrapped in the REAL `MixedAuthEndpoint` with the route's own
+ * options and served by Next's `apiResolver` over a real HTTP socket, so the wrapper's Vary, CORS, Cache-Control and
+ * X-Expires and Next's Content-Type and Content-Length are observed as sent. ETag is sent here; the app's
+ * `generateEtags: false` drops it in production.
+ *
+ * Not observed: the proxy layer (`apiCacheMiddleware`: X-Handled-By, a default Cache-Control), which depends on the path
+ * only, and CDN headers. Date, Connection and Keep-Alive are Node's, per connection and second.
+ */
+describe('mini/[id] every 404 is an unknown id on the wire', () => {
+  let server: Server;
+  let base: string;
+  let region = 'GB';
+
+  beforeAll(async () => {
+    const { MixedAuthEndpoint: realMixedAuthEndpoint } = await vi.importActual<
+      typeof EndpointHelpers
+    >('~/server/utils/endpoint-helpers');
+    const wired = realMixedAuthEndpoint(
+      async (req, res) => {
+        await handler(req, res);
+      },
+      ['GET'],
+      { scope: 'selfGated' }
+    );
+    server = createServer((req, res) => {
+      const url = new URL(req.url ?? '/', 'http://x');
+      void apiResolver(
+        req,
+        res,
+        { id: url.pathname.split('/').at(-1), etag: url.searchParams.get('etag') ?? undefined },
+        { default: wired },
+        {
+          previewModeId: 'test',
+          previewModeEncryptionKey: 'test',
+          previewModeSigningKey: 'test',
+          dev: false,
+        },
+        true
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  beforeEach(() => {
+    // X-Expires is read from the clock; a fixed clock leaves only what the path decides.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-23T12:00:00Z'));
+    h.variant.value = 'enforce';
+    h.notUpToDate.value = true;
+    region = 'GB';
+  });
+  afterAll(() => {
+    vi.useRealTimers();
+    h.notUpToDate.value = false;
+  });
+
+  const PUBLIC_ROW = { ...versionRow, availability: 'Public', modelAvailability: 'Public' };
+  const PLAIN_FILE = { ...TRAINING_FILE, visibility: 'Public', metadata: { format: 'SafeTensor' } };
+
+  /** The caller, from `region`, asks for the version: by bearer when signed in. */
+  async function wire(versionRows: object[], caller: Caller) {
+    h.user.value = caller.user;
+    dbMock.dbWrite.$queryRaw.mockReset();
+    dbMock.dbWrite.$queryRaw
+      .mockResolvedValueOnce(versionRows)
+      .mockResolvedValueOnce([structuredClone(PLAIN_FILE)])
+      .mockResolvedValue([]);
+    const sent = await new Promise<{ status: number; body: string; raw: Record<string, unknown> }>(
+      (resolve, reject) => {
+        const req = httpRequest(
+          `${base}/api/v1/model-versions/mini/${VERSION_ID}?etag=1`,
+          {
+            headers: {
+              ...(caller.authorization ? { authorization: caller.authorization } : {}),
+              'cf-ipcountry': region,
+            },
+          },
+          (res) => {
+            let body = '';
+            res.setEncoding('utf8');
+            res.on('data', (chunk) => (body += chunk));
+            res.on('end', () => resolve({ status: res.statusCode ?? 0, body, raw: res.headers }));
+          }
+        );
+        req.on('error', reject);
+        req.end();
+      }
+    );
+    const headers = Object.fromEntries(
+      Object.entries(sent.raw).filter(
+        ([name]) => !['connection', 'keep-alive', 'date'].includes(name)
+      )
+    );
+    return { status: sent.status, body: sent.body, headers };
+  }
+
+  // The last entry is who IS served the row, so each case proves the row reached the route and the 404 is its own.
+  const cases: [string, object, () => Caller][] = [
+    ['a person-of-interest model', { ...PUBLIC_ROW, poi: true }, () => owner],
+    ['a deleted model', { ...PUBLIC_ROW, modelStatus: 'Deleted' }, () => owner],
+    ['an unpublished version', { ...PUBLIC_ROW, status: 'Unpublished' }, () => owner],
+    [
+      'a Private model the gate withholds',
+      { ...PUBLIC_ROW, modelAvailability: 'Private' },
+      () => owner,
+    ],
+    [
+      'a Private version the gate withholds',
+      { ...PUBLIC_ROW, availability: 'Private' },
+      () => owner,
+    ],
+    [
+      'a level the region is not served',
+      { ...PUBLIC_ROW, nsfwLevel: 16 },
+      () => ((region = 'US'), stranger),
+    ],
+  ];
+  describe.each([
+    ['another signed-in user', stranger],
+    ['an anonymous caller', anonymous],
+  ])('%s', (_label, caller) => {
+    it.each(cases)('%s', async (_shape, row, servedTo) => {
+      const unknown = await wire([], caller);
+      expect(unknown.status).toBe(404);
+      expect(unknown.headers).toHaveProperty('x-expires');
+      expect(await wire([row], caller)).toEqual(unknown);
+
+      expect((await wire([row], servedTo())).status).toBe(200);
+    });
+  });
+
+  it('control: Vary differs by credential, so the two callers above are distinct', async () => {
+    const signedIn = await wire([], stranger);
+    expect(signedIn.headers.vary).not.toBe((await wire([], anonymous)).headers.vary);
+  });
 });

@@ -306,8 +306,8 @@ describe('mini/[id] moderation block: moderator credentials', () => {
 
 describe('mini/[id] deleted model with Published versions', () => {
   const at = new Date('2026-01-01T00:00:00Z');
-  // `hidden`: the shared visibility rule hides it (status Deleted), so it is an unknown id to anyone but
-  // its owner, a moderator and the orchestrator.
+  // `hidden`: the version status rule from #10174 hides it (status Deleted), so it is an unknown id to
+  // anyone but its owner, a moderator and the orchestrator.
   it.each<[string, Partial<Row>, { hidden: boolean }]>([
     ['status Deleted', { modelStatus: 'Deleted' }, { hidden: true }],
     ['only deletedAt set', { modelDeletedAt: at }, { hidden: false }],
