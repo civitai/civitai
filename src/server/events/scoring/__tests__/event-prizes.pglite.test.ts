@@ -177,8 +177,8 @@ describe('comebackCup', () => {
   };
 
   it('measures a near-zero baseline against the floor, so it cannot win on a tiny denominator', () => {
-    // 22 baseline days at a floor of 10 a day: the floor is 220. Tiny's 1 point would be a ratio of
-    // 700 per point; against the floor it is below Steady's.
+    // 22 baseline days at a floor of 10 a day: the floor is 220. Tiny's 1 baseline point would give a
+    // ratio of 220; against the floor it is 1, below Steady's 1.5.
     const result = comebackCup(
       [
         { team: 'Tiny', baseline: 1, week: 70 },
@@ -295,6 +295,12 @@ describe('awardEventPrizes', () => {
       comeback: comeback('live', {
         baseline: { from: BASELINE.from, to: '2026-11-24T00:00:00.000Z' },
       }),
+    });
+    await expect(award('Pink')).rejects.toThrow('other windows');
+    expect(await holders(CUP_BADGE)).toEqual([]);
+
+    setPrizes({
+      comeback: comeback('live', { week: { from: '2026-11-25T00:00:00.000Z', to: WEEK.to } }),
     });
     await expect(award('Pink')).rejects.toThrow('other windows');
     expect(await holders(CUP_BADGE)).toEqual([]);
