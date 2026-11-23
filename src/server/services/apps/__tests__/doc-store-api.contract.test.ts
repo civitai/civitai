@@ -5487,6 +5487,24 @@ describe('viewer-keyed documents', () => {
   });
 
   describe('the per-collection switch', () => {
+    it('🔴 a development namespace is always open: the closed switch is never evaluated there', async () => {
+      h.vkOpen.set('votes', false);
+      const A = vkApp();
+      const dev = await mintDevReal(A, VK_V1, VK_SCOPES);
+      const mine = (await vkOk(vkPutMine(dev, 'votes', VK_P1, { value: 1 }))).body as VkDoc;
+      expect(mine.key.startsWith(`${VK_P1}:`)).toBe(true);
+      await vkOk(vkDeleteMine(dev, 'votes', VK_P1));
+      expect(vkOpenEvaluations()).toEqual([]);
+      // Positive control: the same write with a production token is refused, and evaluated.
+      await vkRefused(
+        vkPutMine(await vkMint(A, VK_V1), 'votes', VK_P1, { value: 1 }),
+        403,
+        'write_policy',
+        'viewer_keyed_closed'
+      );
+      expect(vkOpenEvaluations()).toEqual([{ entityId: A.id, context: { collection: 'votes' } }]);
+    });
+
     it('🔴 closed: @me writes are 403 write_policy, reads work, and GET / says open: false', async () => {
       h.vkOpen.set('votes', false);
       const A = vkApp();
