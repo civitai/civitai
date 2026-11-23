@@ -18,6 +18,10 @@ export function sqlRef(ref: string): string {
  * Whether the user `column` (an int SQL expression) is named on any CsamReport (subject or secondary
  * user) or has an active evidence hold. Names the "EvidenceHeldUser" view, so a database without it
  * fails the statement, which refuses.
+ *
+ * The "KnightsHeldUser" view lists the same users (migration 20271125120000_knights_exclusion_views):
+ * a change here needs a new migration changing the view too. knights-exclusion-views.test.ts compares
+ * the two over its fixtures.
  */
 export function heldUserSql(column: string): string {
   const user = sqlRef(column);
@@ -159,7 +163,8 @@ export const csamReportListedImageIdsSql = (filter?: CsamReportFilter) => `SELEC
   ) listed
   WHERE listed.id IS NOT NULL`;
 
-/** Every image id listed on any CsamReport, whatever its state, as text. */
+/** Every image id listed on any CsamReport, whatever its state, as text. The "KnightsCsamListedImage"
+ *  view is this query as written (knights-exclusion-views.test.ts keeps the two identical). */
 export const CSAM_REPORT_LISTED_IMAGE_IDS_SQL = csamReportListedImageIdsSql();
 
 /**

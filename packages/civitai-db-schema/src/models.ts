@@ -4379,6 +4379,18 @@ export interface EvidenceHeldUser {
   heldUntil: Date | null;
 }
 
+export interface KnightsHeldUser {
+  userId: bigint;
+}
+
+export interface KnightsCsamListedImage {
+  imageId: string;
+}
+
+export interface KnightsOpenReportImage {
+  imageId: number;
+}
+
 export interface Link {
   id: number;
   url: string;

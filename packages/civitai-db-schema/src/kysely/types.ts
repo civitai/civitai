@@ -3971,6 +3971,9 @@ export type KnightsApprenticeAnswer = {
   createdAt: Generated<Timestamp>;
   checkpointSeenAt: Timestamp | null;
 };
+export type KnightsCsamListedImage = {
+  imageId: string;
+};
 export type KnightsGoldConversion = {
   id: Generated<number>;
   playerId: number;
@@ -3988,6 +3991,9 @@ export type KnightsHarvestCursor = {
   lastActivityId: Generated<number>;
   updatedAt: Timestamp;
 };
+export type KnightsHeldUser = {
+  userId: string;
+};
 export type KnightsLegacyPlayerDay = {
   playerId: number;
   day: Timestamp;
@@ -3998,6 +4004,9 @@ export type KnightsNotificationSend = {
   kind: string;
   sentAt: Generated<Timestamp>;
   confirmedAt: Timestamp | null;
+};
+export type KnightsOpenReportImage = {
+  imageId: number;
 };
 export type KnightsPlayer = {
   playerId: number;
@@ -7335,10 +7344,13 @@ export type DB = {
   KeyValue: KeyValue;
   KnightsAcolyteLevelGold: KnightsAcolyteLevelGold;
   KnightsApprenticeAnswer: KnightsApprenticeAnswer;
+  KnightsCsamListedImage: KnightsCsamListedImage;
   KnightsGoldConversion: KnightsGoldConversion;
   KnightsHarvestCursor: KnightsHarvestCursor;
+  KnightsHeldUser: KnightsHeldUser;
   KnightsLegacyPlayerDay: KnightsLegacyPlayerDay;
   KnightsNotificationSend: KnightsNotificationSend;
+  KnightsOpenReportImage: KnightsOpenReportImage;
   KnightsPlayer: KnightsPlayer;
   KnightsPlayerDay: KnightsPlayerDay;
   KnightsQuestion: KnightsQuestion;
