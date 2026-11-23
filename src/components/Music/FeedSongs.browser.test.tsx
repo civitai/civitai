@@ -10,7 +10,12 @@ import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import type * as Trpc from '~/utils/trpc';
 
-const feed = vi.hoisted(() => ({ images: [] as unknown[], music: true }));
+const feed = vi.hoisted(() => ({
+  images: [] as unknown[],
+  music: true,
+  /** The `enabled` of each `image.getSongGenreTags` read. */
+  genreReads: [] as (boolean | undefined)[],
+}));
 /** Each genre's mirror tag id, as `image.getSongGenreTags` serves it. */
 const genreTags = vi.hoisted(() => ({ Pop: 11, Synthwave: 29 }));
 
@@ -25,7 +30,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const stubbed = withSongCoversStub(actual.trpc);
   const image = {
     ...stubbed.image,
-    getSongGenreTags: { useQuery: () => ({ data: genreTags }) },
+    getSongGenreTags: {
+      useQuery: (_input: unknown, options?: { enabled?: boolean }) => {
+        feed.genreReads.push(options?.enabled);
+        return { data: options?.enabled === false ? undefined : genreTags };
+      },
+    },
   };
   const trpc = new Proxy(stubbed, {
     get: (target, key) => (key === 'image' ? image : Reflect.get(target, key)),
@@ -249,6 +259,29 @@ describe('the Song Row', () => {
     songPlays.served = { 1: 12400 };
     await renderWithProviders(<SongRow data={songs[0]} index={0} />);
     await expect.element(page.getByLabelText('12400 plays')).toHaveTextContent('12.4k');
+  });
+
+  test('shows the genre its tag ids name', async () => {
+    await renderWithProviders(
+      <FeedSongsProvider images={songs}>
+        <SongRow data={songs[0]} index={0} />
+      </FeedSongsProvider>
+    );
+    await expect.element(page.getByText('Synthwave')).toBeInTheDocument();
+  });
+
+  test('with the music flag off, reads no genre map and shows no genre', async () => {
+    feed.music = false;
+    feed.genreReads = [];
+    await renderWithProviders(
+      <FeedSongsProvider images={songs}>
+        <SongRow data={songs[0]} index={0} />
+      </FeedSongsProvider>
+    );
+    await expect.element(page.getByText('Midnight Arcade')).toBeInTheDocument();
+    expect(feed.genreReads.length).toBeGreaterThan(0);
+    expect(feed.genreReads.every((enabled) => enabled === false)).toBe(true);
+    expect(page.getByText('Synthwave').elements()).toHaveLength(0);
   });
 
   test('with the music flag off, reads no play count', async () => {

@@ -312,6 +312,8 @@ describe('setSongCover', () => {
     expect(await linkedCover()).toBe(second.id);
   });
 
+  // PGlite is one session, so this pins that the link and the read of the replaced cover are one
+  // statement; the `FOR UPDATE` that orders two real connections is not exercised here.
   it('gives each of two concurrent saves back the cover it replaced, deleting each once', async () => {
     const first = await setCover(owner, { url: 'a1b2c3d4-0000-4000-8000-000000000001' });
 

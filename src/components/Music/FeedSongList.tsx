@@ -55,11 +55,24 @@ export function FeedSongsProvider({
   return (
     <SongCoversContext.Provider value={covers}>
       <SongPlaysContext.Provider value={plays}>
-        <SongGenreTagIdsContext.Provider value={genreTagIds}>
-          {children}
-        </SongGenreTagIdsContext.Provider>
+        <FeedSongGenresProvider genreTagIds={genreTagIds}>{children}</FeedSongGenresProvider>
       </SongPlaysContext.Provider>
     </SongCoversContext.Provider>
+  );
+}
+
+/** The genre-to-tag map the songs below read their genres through (`useFeedSongGenre`). */
+export function FeedSongGenresProvider({
+  genreTagIds,
+  children,
+}: {
+  genreTagIds: SongGenreTagIds | undefined;
+  children: ReactNode;
+}) {
+  return (
+    <SongGenreTagIdsContext.Provider value={genreTagIds}>
+      {children}
+    </SongGenreTagIdsContext.Provider>
   );
 }
 

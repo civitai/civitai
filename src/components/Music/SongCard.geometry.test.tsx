@@ -53,6 +53,7 @@ vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { FeedSongGenresProvider } from '~/components/Music/FeedSongList';
 import { SongCard } from '~/components/Music/SongCard';
 import {
   MUSIC_FEED_COLUMN_WIDTH,
@@ -62,12 +63,15 @@ import {
 import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 
+/** The Synthwave genre's mirror tag id; the feed's songs carry it. */
+const SYNTHWAVE_TAG = 29;
 const song = (id: number, title: string) =>
   ({
     id,
     url: `song-${id}.mp3`,
     type: 'audio',
     metadata: { title, duration: 185 },
+    tagIds: [SYNTHWAVE_TAG],
     user: { id: 100 + id, username: `artist${id}` },
     stats: { likeCountAllTime: 3, commentCountAllTime: 1 },
   } as unknown as ImagesInfiniteModel);
@@ -98,9 +102,11 @@ function PhoneFeed() {
   return (
     <ScrollAreaContext.Provider value={{ ref: scrollRef as React.RefObject<HTMLDivElement> }}>
       <div ref={scrollRef} style={{ height: PHONE_VIEWPORT.height, overflowY: 'auto' }}>
-        <MasonryProvider columnWidth={MUSIC_FEED_COLUMN_WIDTH} px={16}>
-          <MasonryColumnsVirtual data={songs} render={SongCard} {...feedSizing} />
-        </MasonryProvider>
+        <FeedSongGenresProvider genreTagIds={{ Synthwave: SYNTHWAVE_TAG }}>
+          <MasonryProvider columnWidth={MUSIC_FEED_COLUMN_WIDTH} px={16}>
+            <MasonryColumnsVirtual data={songs} render={SongCard} {...feedSizing} />
+          </MasonryProvider>
+        </FeedSongGenresProvider>
       </div>
     </ScrollAreaContext.Provider>
   );
@@ -116,6 +122,7 @@ describe('the Song Card at phone width', () => {
     const { cover, rows } = parts(card);
     const { height } = card.getBoundingClientRect();
     expect(card.getBoundingClientRect().width).toBe(PHONE_VIEWPORT.width - 32);
+    expect(card.textContent).toContain('Synthwave');
     // Title 20, creator 16, style line 15, stats 15 (Pencil `AECSM`).
     expect(rows).toEqual([20, 16, 15, 15]);
     expect(cover).toBe(height - SONG_CARD_TEXT_HEIGHT);

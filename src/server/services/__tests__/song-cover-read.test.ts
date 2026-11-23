@@ -146,7 +146,8 @@ describe('the global player reads song covers', () => {
     expect(await read([1, 2, 3, 4, 5, 6])).toEqual([]);
   });
 
-  // Another song's cover cannot be linked: `Track.coverImageId` is unique.
+  // No writer links another song's cover: each links a row made for its own song. The unique
+  // `Track.coverImageId` only stops two songs sharing one.
   it("leaves out a linked image that is not the song's own: someone else's, or in a post", async () => {
     table = [
       song(1, 101),

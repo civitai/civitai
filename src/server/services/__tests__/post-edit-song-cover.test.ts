@@ -120,7 +120,8 @@ describe("the post editor's song covers", () => {
     expect(dbMock.dbRead.track.findMany).toHaveBeenCalledTimes(1);
   });
 
-  // Another song's cover cannot be linked: `Track.coverImageId` is unique.
+  // No writer links another song's cover: each links a row made for its own song. The unique
+  // `Track.coverImageId` only stops two songs sharing one.
   it("is null when the linked image is gone, someone else's, or a post image", async () => {
     table = [
       song(1, 404),
@@ -133,6 +134,21 @@ describe("the post editor's song covers", () => {
     const images = await read();
 
     expect(images.map((x) => x.cover)).toEqual([null, null, null]);
+  });
+
+  it("carry the song's genre from its Track row, its genre's tag left out of the song's tags", async () => {
+    table = [song(1)];
+    tracks = [{ imageId: 1, coverImageId: null, genre: 'Pop' }];
+    // The song's owner-managed tag rows: the genre's mirror and one the owner added.
+    vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([
+      { imageId: 1, id: 21, name: 'chill' },
+      { imageId: 1, id: 20, name: 'pop' },
+    ] as never);
+
+    const [image] = await read();
+
+    expect(image.genre).toBe('Pop');
+    expect(image.songTags).toEqual([{ id: 21, name: 'chill' }]);
   });
 
   it('skip the cover read for a post whose songs have none', async () => {
