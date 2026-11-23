@@ -28,7 +28,7 @@ moderator mid-override: reviews another moderator already voted on first (oldest
 read as one bounded batch. They answer with a rating level (Blocked is not a vote; see below). The first vote
 is recorded. The second closes the review:
 
-- the same level: `confirmed`, and the image enters the skill-check pool at that level;
+- the same level: `confirmed`, and the image enters the skill-check pool at that level when the pool can take it (see below);
 - another level: `split`, no check, the image keeps the players' level, both votes are kept.
 
 When the two moderators agree on a level other than the image's, that level is written to the image as a moderator ruling
@@ -49,8 +49,7 @@ Moderator votes earn no XP, gold or Watch, need no player record, and never chan
 A review is closed `excluded`, with no vote recorded, when the image is gone, was blocked, moved off the players' level, was
 ruled on by a moderator, or fails one of the skill-check pool's safety predicates that do not lift on their own. The tick
 checks a small batch of open reviews per run, least recently checked first (`checkedAt`), in a short transaction that skips
-reviews a moderator holds, closes the ones that fail and stamps the rest (`reviewsClosed` in its response). A review whose image fails one that lifts in time (an open report or appeal, a scan hold, a
-scan still running, an Inquisitor ruling under way) stays open: it is not served, and a vote on it is refused, until that
+reviews a moderator holds, closes the ones that fail and stamps the rest (`reviewsClosed` in its response). A review whose image fails one that lifts in time stays open: it is not served, and a vote on it is refused, until that
 clears. Serving reads only reviews whose image passes the predicates now, so held reviews never crowd out servable ones, and
 the waiting count counts only those. If the predicates cannot be read, the page says the queue cannot load and nothing is
 served or recorded (`knights_skill_check_reads_unreadable_total`).
@@ -83,4 +82,3 @@ own); the levels are the player game's answer pills (`$lib/AnswerPill.svelte`), 
 moderator's own stats sit on top: votes this week, reviews waiting for them (counted up to 1,000), and how often they agreed with the other
 moderator. Reviews are addressed by a sealed token bound to the moderator, under a key of its own, so a review token never
 opens as a feed item. Both actions (`inquisitorVote`, `sendToInquisitor`) are form posts that refuse anyone but a moderator.
-
