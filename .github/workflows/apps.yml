@@ -345,6 +345,9 @@ jobs:
 
       # Re-derives what the `paths:` filter above must contain and fails on a missing or stale
       # entry. See the header and the script. It reads the tree, not the tests, so one shard pays it.
+      # It runs where this job runs (the batch, a labelled PR, a dispatch), so on `main` a red here
+      # reaches `App tests (main batch)` from the batch, possibly long after the PR that dropped the
+      # entry; its message says the problem is the filter, not an app test.
       - name: Paths filter covers what the app suites read
         if: ${{ !cancelled() && steps.install.outcome == 'success' && matrix.shard == 1 }}
         run: node scripts/ci/assert-apps-paths-filter.mjs
@@ -412,9 +415,10 @@ jobs:
       # missing report is already failed, by name, by the ledger step above.
       - name: Upload test timings
         if: ${{ !cancelled() }}
-        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
-        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
-        continue-on-error: ${{ github.event_name != 'push' }}
+        # Telemetry: never turns a PR or a branch dispatch red. The app suites no longer run on a
+        # push; on `main` they run as the batch (`batch: true`), and there a failed upload fails the
+        # job, so a broken uploader shows rather than reading green.
+        continue-on-error: ${{ !(github.event_name == 'workflow_dispatch' && inputs.batch && github.ref == 'refs/heads/main') }}
         uses: actions/upload-artifact@v7
         with:
           name: test-times-apps-a${{ github.run_attempt }}

@@ -3,12 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_CAP,
   forcedReason,
+  importClosure,
   isSmoke,
-  mentionKey,
   missingFromReport,
   parseNameStatus,
   planRun,
-  selectByMention,
   summaryLines,
 } from '../ci/related-tests.mjs';
 
@@ -28,7 +27,6 @@ describe('forcedReason: which changes the import graph cannot follow', () => {
     ['vitest.config.mts', 'vitest/vite config'],
     ['apps/moderator/vite.config.ts', 'vitest/vite config'],
     ['test/component-setup.tsx', 'test setup (test/)'],
-    ['src/__tests__/setup.ts', 'unit setup file'],
     ['src/server/__tests__/fixtures/payload.ts', 'test fixtures'],
     ['packages/civitai-shared/tsconfig.build.json', 'tsconfig'],
     ['package.json', 'package.json'],
@@ -71,55 +69,120 @@ describe('forcedReason: which changes the import graph cannot follow', () => {
     expect(forcedReason('claudedocs/handoff.md')).toBeNull();
   });
 
-  // The apps exception: an app's own non-source files and manifest select by mention instead.
-  it('a non-source file or manifest under apps/<app>/ is not forced', () => {
-    expect(forcedReason('apps/feed-go/internal/rank.go')).toBeNull();
-    expect(forcedReason('apps/auth/package.json')).toBeNull();
-    // …but a vite config under an app still is (FORCED is checked before the exception).
+  // No apps exception: a non-source file under apps/<app>/, or an app's manifest, forces the
+  // fallback like any other (the cheaper mention rule was not sound and was removed).
+  it('a non-source file or manifest under apps/<app>/ is forced', () => {
+    expect(forcedReason('apps/feed-go/internal/rank.go')).toBe(
+      'not import-visible (a test may read it at runtime): apps/feed-go/internal/rank.go'
+    );
+    expect(forcedReason('apps/auth/package.json')).toBe('package.json: apps/auth/package.json');
     expect(forcedReason('apps/auth/vitest.config.ts')).toBe(
       'vitest/vite config: apps/auth/vitest.config.ts'
     );
   });
-});
 
-describe('mentionKey / selectByMention', () => {
-  it('keys a non-source app file on apps/<app>, and nothing else', () => {
-    expect(mentionKey('apps/feed-go/internal/rank.go')).toBe('apps/feed-go');
-    expect(mentionKey('apps/auth/src/token.ts')).toBeNull();
-    expect(mentionKey('src/server/sql/x.sql')).toBeNull();
-  });
-
-  it('selects the test files whose text names a key', () => {
-    const text: Record<string, string> = {
-      'scripts/__tests__/ports-touched.test.ts': "read('apps/feed-go/go.mod')",
-      'src/server/a.test.ts': "import x from './a'",
-      'src/server/b.test.ts': "path.join('apps/auth', 'x')",
-    };
-    expect(selectByMention(['apps/feed-go'], Object.keys(text), (f) => text[f])).toEqual([
-      'scripts/__tests__/ports-touched.test.ts',
+  // The setup closure (the unit setup files and every module they import) comes from the config at
+  // run time; forcedReason takes it as a set. Mutant: drop the `setup.has` line and both forced
+  // cases below return null (killed).
+  it('a setup file, or any module it imports transitively, is forced; other source is not', () => {
+    const setup = new Set([
+      'src/__tests__/setup.ts',
+      'src/__tests__/rsa-test-key.ts',
+      'src/mocks/notifications-client.mock.ts',
     ]);
-    expect(selectByMention([], Object.keys(text), (f) => text[f])).toEqual([]);
+    expect(forcedReason('src/__tests__/setup.ts', 'M', setup)).toBe(
+      'unit setup file or a module it imports: src/__tests__/setup.ts'
+    );
+    expect(forcedReason('src/mocks/notifications-client.mock.ts', 'M', setup)).toBe(
+      'unit setup file or a module it imports: src/mocks/notifications-client.mock.ts'
+    );
+    expect(forcedReason('src/server/services/model.service.ts', 'M', setup)).toBeNull();
+    // With no closure (e.g. a caller that does not pass one) nothing is forced by it.
+    expect(forcedReason('src/__tests__/rsa-test-key.ts')).toBeNull();
   });
 });
 
-describe('isSmoke: the repo-scan smoke set', () => {
+describe('importClosure: the setup files and everything they import', () => {
+  const graph: Record<string, string[]> = {
+    '/r/src/__tests__/setup.ts': ['/r/src/__tests__/rsa-test-key.ts', '/r/src/mocks/a.mock.ts'],
+    '/r/src/mocks/a.mock.ts': ['/r/src/mocks/b.ts', '/r/src/__tests__/setup.ts'],
+    '/r/src/mocks/b.ts': [],
+    '/r/src/__tests__/network-guard.ts': [],
+    '/r/src/unrelated.ts': ['/r/src/mocks/b.ts'],
+  };
+  // Mutant: visit only direct imports and `b.ts` (two hops) is missing (killed).
+  it('follows imports transitively, once each, cycles included; nothing it does not reach', async () => {
+    const got = await importClosure(
+      ['/r/src/__tests__/setup.ts', '/r/src/__tests__/network-guard.ts'],
+      async (f: string) => graph[f] ?? []
+    );
+    expect([...got].sort()).toEqual([
+      '/r/src/__tests__/network-guard.ts',
+      '/r/src/__tests__/rsa-test-key.ts',
+      '/r/src/__tests__/setup.ts',
+      '/r/src/mocks/a.mock.ts',
+      '/r/src/mocks/b.ts',
+    ]);
+    expect(got.has('/r/src/unrelated.ts')).toBe(false);
+  });
+
+  it('a transitive import forces the plan; a file the setup does not import does not', () => {
+    const setup = new Set(['src/__tests__/setup.ts', 'src/mocks/b.ts']);
+    expect(
+      planRun({ changes: [{ status: 'M', file: 'src/mocks/b.ts' }], smoke: SMOKE, setup }).mode
+    ).toBe('smoke');
+    expect(
+      planRun({
+        changes: [{ status: 'M', file: 'src/unrelated.ts' }],
+        smoke: SMOKE,
+        related: () => ['src/__tests__/unrelated.test.ts'],
+        setup,
+      }).mode
+    ).toBe('related');
+  });
+});
+
+describe('isSmoke: the smoke set, by name or by content', () => {
   it.each([
     'src/server/services/__tests__/no-raw-sql.test.ts',
     'src/server/__tests__/routes.ledger.test.ts',
     'src/server/__tests__/auth.seam.test.ts',
     'src/server/services/__tests__/moderator-delete-hold-parity.test.ts',
     'scripts/__tests__/feed-go-basemodels.schema-drift.test.ts',
-  ])('%s is in it', (f) => expect(isSmoke(f)).toBe(true));
+    // case-insensitive: a camelCase `Parity` is a parity test too
+    'src/components/AppBlocks/hostHandlerParity.test.ts',
+  ])('%s is in it by name', (f) => expect(isSmoke(f, '')).toBe(true));
+
+  // The content rule: a test that reads files. Mutant: drop READS_FILES from isSmoke and every
+  // case here goes false (killed).
+  it.each([
+    ["readFileSync(path.join(ROOT, 'src/x.ts'), 'utf8')"],
+    ['const files = readdirSync(dir)'],
+    ["await readFile(new URL('../a.ts', import.meta.url))"],
+    ["import { readFile } from 'node:fs/promises';"],
+    ["import fg from 'fast-glob';"],
+    ['const hits = globSync("src/**/*.tsx")'],
+    ['await fs.promises.readdir(SRC)'],
+  ])('a test whose text has %s is in it', (text) =>
+    expect(
+      isSmoke('src/components/Apps/__tests__/appListingDescriptionCallSites.test.ts', text)
+    ).toBe(true)
+  );
 
   it.each([
-    'src/server/services/__tests__/model.service.test.ts',
-    // the component project, not unit
-    'src/components/__tests__/no-overflow.browser.test.tsx',
+    [
+      'src/server/services/__tests__/model.service.test.ts',
+      "import { x } from '../model.service';",
+    ],
+    // `existsSync` and writes are not reads of the tree
+    ['src/server/utils/__tests__/tmp.test.ts', 'writeFileSync(tmp, "x"); existsSync(tmp)'],
+    // the component project, not unit, whatever it reads
+    ['src/components/__tests__/no-overflow.browser.test.tsx', 'readFileSync(x)'],
     // apps are not in the unit project's include
-    'apps/moderator/src/no-thing.test.ts',
+    ['apps/moderator/src/no-thing.test.ts', 'readFileSync(x)'],
     // `no-` must start the file name, not a directory
-    'src/no-dir/__tests__/thing.test.ts',
-  ])('%s is not', (f) => expect(isSmoke(f)).toBe(false));
+    ['src/no-dir/__tests__/thing.test.ts', ''],
+  ])('%s is not in it', (f, text) => expect(isSmoke(f, text)).toBe(false));
 });
 
 describe('parseNameStatus', () => {
@@ -203,27 +266,18 @@ describe('planRun: related, or smoke only and deferred', () => {
     ).toBe('smoke');
   });
 
-  // Deleted files are forced (above), so only live source files reach `related`; app non-source
-  // files reach `mentioned`, never `related`.
-  it('hands source files to `related` and app keys to `mentioned`, separately', () => {
-    const seen: { related?: string[]; mentioned?: string[] } = {};
-    const p = planRun({
+  // Deleted files are forced (above), so only live source files reach `related`.
+  it('hands only the changed source files to `related`', () => {
+    let seen: string[] = [];
+    planRun({
       changes: [
         { status: 'M', file: 'src/a.ts' },
-        { status: 'M', file: 'apps/feed-go/x.go' },
-        { status: 'A', file: 'apps/feed-go/y.json' },
+        { status: 'A', file: 'src/b.tsx' },
       ],
       smoke: SMOKE,
-      related: (files: string[]) => ((seen.related = files), ['src/__tests__/a.test.ts']),
-      mentioned: (keys: string[]) => (
-        (seen.mentioned = keys), ['scripts/__tests__/ports-touched.test.ts']
-      ),
+      related: (files: string[]) => ((seen = files), []),
     });
-    expect(seen).toEqual({ related: ['src/a.ts'], mentioned: ['apps/feed-go'] });
-    expect(p.mode).toBe('related');
-    expect(p.files).toEqual(
-      [...SMOKE, 'src/__tests__/a.test.ts', 'scripts/__tests__/ports-touched.test.ts'].sort()
-    );
+    expect(seen).toEqual(['src/a.ts', 'src/b.tsx']);
   });
 
   it('no related tests still runs the smoke set', () => {

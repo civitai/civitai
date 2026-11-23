@@ -797,7 +797,7 @@ jobs:
     # module reaches most of it), the rest a median 557 of ~3,930 files. What runs on a PR
     # now is the `related-tests` job: the same selection, but with a cap (past it, and on
     # any change the import graph cannot follow, it runs the smoke set alone and says
-    # "Deferred to batch"), next to the repo-scan smoke set. It is a fast signal on the
+    # "Deferred to batch"), next to the smoke set (repo-scan names and every test that reads files). It is a fast signal on the
     # PR; this job, in the batch, is still the verdict for every unit file.
     #
     # NO `continue-on-error`, deliberately. It used to be
@@ -1128,23 +1128,24 @@ jobs:
   #
   # What a pull request gets instead of the unit suite (which runs in the main batch, see the
   # `unit` job): the unit tests related to the files the PR changes (vitest's own import-graph
-  # selection, the one `vitest related` runs), plus the SMOKE SET, the repo-scan tests (`no-*`,
-  # `*.ledger`, `*.seam`, `*parity*`, `*.schema-drift`) that read source files as text and so
-  # see a change no import graph does. The smoke set is globbed from the tree on every run, never
-  # listed by hand, and fails the job when it is empty.
+  # selection, the one `vitest related` runs), plus the SMOKE SET: every unit test whose name is a
+  # repo-scan name (`no-*`, `*.ledger`, `*.seam`, `*parity*`, `*.schema-drift`, any case) or whose
+  # text reads files (readFileSync, readdir, glob, fs/promises, ...), since such a test sees a
+  # change no import graph does. The smoke set is derived from the tree on every run, never listed
+  # by hand, and fails the job when it is empty.
   #
   # THE FALLBACK. When the PR changes something the import graph cannot follow or that alters how
-  # every test runs (vitest/vite config, test setup, fixtures, any tsconfig, package manifests and
+  # every test runs (vitest/vite config, the unit setup files and every module they import, read
+  # from the config at run time, test/, fixtures, any tsconfig, package manifests and
   # the lockfile, the Prisma schema, the generated db-schema package, the test-cache scripts, CI
   # workflows, a removed source file, any non-source file a test may read at runtime), or the
   # related selection is over the cap (RELATED_UNIT_CAP, 250 files), this runs the smoke set alone
-  # and says "Deferred to batch" in the step summary. scripts/ci/related-tests.mjs owns that rule
-  # (and the one exception for non-source files under `apps/<app>/`); its tests are
-  # scripts/__tests__/related-tests.test.ts.
+  # and says "Deferred to batch" in the step summary. scripts/ci/related-tests.mjs owns that rule;
+  # its tests are scripts/__tests__/related-tests.test.ts.
   #
   # A FAST SIGNAL, NOT THE VERDICT: it never replaces the batch, which runs every unit file on
   # `main` after the merge. Not on a PR carrying `full-ci` (the `unit` job runs the whole suite
-  # there), not on a draft. The plan diffs HEAD against its first parent: on a PR that is the merge
+  # there), not on a draft. The selection diffs HEAD against its first parent: on a PR that is the merge
   # commit against the base. A dispatch with `only: related` runs it on a branch for the branch
   # head's last commit alone (`HEAD^1..HEAD`), to see what the PR tier would run for one change.
   #
@@ -1189,27 +1190,18 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Plan related tests
-        id: plan
-        run: node scripts/ci/related-tests.mjs plan HEAD^1 "$RUNNER_TEMP/related"
-
-      # The list is passed as file filters; vitest given a filter that matches nothing still exits
-      # 0, so the assert step below checks every listed file ran. 🔴 No `--` separator (see the
-      # `unit` job's `Unit tests` step).
+      # One process: the selection and the run share one vitest instance, so the run reuses the
+      # transforms the selection made (see the script's header, "ONE VITEST"). It writes the list
+      # it ran to files.txt and the JSON report beside it.
       - name: Related + smoke unit tests
-        env:
-          MODE: ${{ steps.plan.outputs.mode }}
-        run: |
-          set -euo pipefail
-          mapfile -t files < "$RUNNER_TEMP/related/files.txt"
-          echo "${#files[@]} file(s), mode $MODE"
-          pnpm exec vitest run --project 'unit*' --reporter=default --reporter=json \
-            --outputFile="$RUNNER_TEMP/related/report.json" "${files[@]}"
+        id: run
+        run: node scripts/ci/related-tests.mjs run HEAD^1 "$RUNNER_TEMP/related"
 
+      # vitest given a filter that matches nothing still exits 0, so every listed file must be in
+      # the report. Runs after a red run too: a red must not hide a file that never ran.
       - name: Assert every listed file ran
-        if: ${{ !cancelled() && steps.plan.outcome == 'success' }}
+        if: ${{ !cancelled() }}
         run: node scripts/ci/related-tests.mjs assert "$RUNNER_TEMP/related/files.txt" "$RUNNER_TEMP/related/report.json"
-
 
   packages:
     name: Package unit tests
@@ -1633,9 +1625,11 @@ jobs:
       # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
       - name: Upload test timings
         if: ${{ !cancelled() && env.SUITE_COMPONENT == 'true' }}
-        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
-        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
-        continue-on-error: ${{ github.event_name != 'push' }}
+        # Telemetry: never turns a PR or a branch dispatch red. This job no longer runs on a push;
+        # on `main` it runs as the bot's `only: unit` batch, and there a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (the rule main-branch-ci-coverage.test.ts
+        # holds the push path to).
+        continue-on-error: ${{ !(github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' && github.ref == 'refs/heads/main') }}
         uses: actions/upload-artifact@v7
         with:
           name: test-times-component-${{ matrix.shard }}-a${{ github.run_attempt }}
@@ -1797,9 +1791,11 @@ jobs:
       # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
       - name: Upload test timings
         if: ${{ !cancelled() && steps.geometry.outcome != 'skipped' }}
-        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
-        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
-        continue-on-error: ${{ github.event_name != 'push' }}
+        # Telemetry: never turns a PR or a branch dispatch red. This job no longer runs on a push;
+        # on `main` it runs as the bot's `only: unit` batch, and there a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (the rule main-branch-ci-coverage.test.ts
+        # holds the push path to).
+        continue-on-error: ${{ !(github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' && github.ref == 'refs/heads/main') }}
         uses: actions/upload-artifact@v7
         with:
           name: test-times-geometry-a${{ github.run_attempt }}
