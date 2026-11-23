@@ -1028,12 +1028,15 @@ describe('AppAssistantWorkspace app switcher', () => {
     await page.getByRole('menuitem', { name: 'Delete app' }).click();
     await page.getByRole('button', { name: 'Keep it' }).click();
     expect(m.remove).not.toHaveBeenCalled();
+    // An answered confirm stays on screen through its exit transition, and ignores its buttons
+    // there (#10184): wait for it to go before opening the next one.
+    await expect.element(page.getByRole('button', { name: 'Keep it' })).not.toBeInTheDocument();
 
     await switcher().click();
     await page.getByRole('button', { name: 'Actions for app-aaaa' }).click();
     await page.getByRole('menuitem', { name: 'Delete app' }).click();
     await page.getByRole('button', { name: 'Delete app' }).click();
-    expect(m.remove).toHaveBeenCalledWith('sbx-aaaaaaaaaaaa');
+    await vi.waitFor(() => expect(m.remove).toHaveBeenCalledWith('sbx-aaaaaaaaaaaa'));
     await expect.element(switcher()).toHaveAccessibleName('Switch app: no app open');
   });
 
@@ -4082,6 +4085,9 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     // The confirmation: Keep it deletes nothing.
     await page.getByRole('button', { name: 'Keep it' }).click();
     expect(hib.deleteMine).not.toHaveBeenCalled();
+    // An answered confirm stays on screen through its exit transition, and ignores its buttons
+    // there (#10184): wait for it to go before opening the next one.
+    await expect.element(page.getByRole('button', { name: 'Keep it' })).not.toBeInTheDocument();
     await offer.click();
     await page.getByRole('button', { name: 'Delete old-quiz', exact: true }).click();
     await vi.waitFor(() =>
