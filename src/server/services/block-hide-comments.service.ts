@@ -44,7 +44,7 @@ ${Object.entries(SECTION_OWNERS)
 SELECT c.id FROM owned o
 JOIN "CommentV3" c ON c."entityType" = o.t AND c."entityId" = o.id
 WHERE c."userId" = $1 AND c."deletedAt" IS NULL
--- Visible ones first, so hidden ones never use up the ceiling.
+-- Visible ones first: hidden ones take only the ceiling the visible ones leave.
 ORDER BY c.hidden, c.id
 LIMIT $3`;
 

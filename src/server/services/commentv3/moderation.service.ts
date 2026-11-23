@@ -25,8 +25,8 @@ export async function bulkSetCommentV3TosViolation({
   ids: number[];
   actor: { id: number; ip?: string };
 }) {
-  // Under the rows' lock (setCommentFlags takes it): a clear waits for this commit, then reopens
-  // exactly the reports actioned here.
+  // Under the rows' lock (setCommentFlags takes it): a clear waits for this commit, so it sees
+  // the reports actioned here.
   const { flagged, already, reports } = await dbWrite.$transaction(async (tx) => {
     const flagged = await setCommentFlags(prismaRunner(tx), ids, { tosViolation: true });
     const already = ids.length
