@@ -1327,11 +1327,27 @@ describe('who the bounty reads treat as a held-media viewer', () => {
     'a moderator without it': [{ id: 7, isModerator: true }, { csamReports: false }, false],
     'a grant without moderator': [{ id: 6 }, { csamReports: true }, false],
     'a signed-out visitor': [undefined, { csamReports: false }, false],
+    'a moderator with the grant on a MediaRead-scoped key': [
+      { id: 7, isModerator: true },
+      { csamReports: true },
+      false,
+      {
+        apiKeyId: 7,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 7 },
+        tokenScope: TokenScope.MediaRead,
+      },
+    ],
   } as const;
 
   it.each(Object.keys(viewers))('%s', async (who) => {
-    const [user, flags, sees] = viewers[who as keyof typeof viewers];
-    const ctx = { user, features: { canViewNsfw: true, ...flags } } as never;
+    const [user, flags, sees, credential] = viewers[who as keyof typeof viewers] as readonly [
+      unknown,
+      object,
+      boolean,
+      object?
+    ];
+    const ctx = { user, features: { canViewNsfw: true, ...flags }, ...credential } as never;
     await getBountyHandler({ input: { id: 9 }, ctx });
     dbMock.dbRead.bounty.findMany.mockResolvedValue([
       {
