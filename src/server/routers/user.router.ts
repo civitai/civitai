@@ -173,6 +173,10 @@ export const userRouter = router({
   getActiveLimits: protectedProcedure
     .meta({ anyOfScopes: USAGE_LIMITS_SCOPES })
     .query(({ ctx }) => getActiveLimits(ctx.user.id)),
+  getUsageLimitTiers: publicProcedure.query(async () => {
+    const { getUsageLimitTierTable } = await import('~/server/services/usage-limit-config.service');
+    return getUsageLimitTierTable();
+  }),
   /** Buzz spent through apps today against the per-user cap; `null` where apps are off. */
   getAppBuzzUsage: protectedProcedure.meta({ blockApiKeys: true }).query(async ({ ctx }) => {
     const { getMyAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
