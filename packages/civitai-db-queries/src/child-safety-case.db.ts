@@ -45,6 +45,8 @@ const evidenceFiled = (id: RawBuilder<unknown>) => sql<boolean>`EXISTS (
   END
 )`;
 
+const csamBlocked = (image: string) => sql<boolean>`${sql.ref(`${image}.blockedFor`)} = 'CSAM'`;
+
 // Each leg is a CASE so its subquery runs only on a row the leg can hold: an AND whose first test is
 // NULL (no flag, the usual image) still evaluates its second.
 
@@ -52,8 +54,6 @@ const evidenceFiled = (id: RawBuilder<unknown>) => sql<boolean>`EXISTS (
  * Blocked for CSAM, until its CyberTip is filed with verified evidence. Read against `image` (a
  * table name or alias). The broader "held" rule is `heldImageSql` in @civitai/shared/held-media.
  */
-const csamBlocked = (image: string) => sql<boolean>`${sql.ref(`${image}.blockedFor`)} = 'CSAM'`;
-
 const csamBlockOpen = (image: string) =>
   sql<boolean>`CASE WHEN ${csamBlocked(image)}
     THEN NOT ${evidenceFiled(sql.ref(`${image}.id`))} ELSE false END`;
