@@ -29,11 +29,15 @@ export function ProfilePageCustomization({ userId }: { userId: number }) {
     data.background && Flags.intersects(browsingLevel, data.background.nsfwLevel)
       ? data.background
       : null;
-  const card = profileCardBackground(data.cardColor, data.cardOpacity);
-  const bar = profileBarBackground(data.cardColor);
-  const cardInk = profileCardInk(data.cardColor, data.cardOpacity, scheme);
+  // Light-mode visitors get the light pair when the member set one.
+  const lightPair = scheme === 'light' && data.cardColorLight != null;
+  const cardColor = lightPair ? data.cardColorLight : data.cardColor;
+  const cardOpacity = lightPair ? data.cardOpacityLight : data.cardOpacity;
+  const card = profileCardBackground(cardColor, cardOpacity);
+  const bar = profileBarBackground(cardColor);
+  const cardInk = profileCardInk(cardColor, cardOpacity, scheme);
   // The bar is the same colour, nearly opaque, so it can need the other ink.
-  const barInk = profileCardInk(data.cardColor, 93, scheme);
+  const barInk = profileCardInk(cardColor, 93, scheme);
   if (!background && !card) return null;
 
   const rules = [

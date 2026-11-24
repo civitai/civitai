@@ -7,9 +7,6 @@ import {
   Chip,
   CloseButton,
   Collapse,
-  ColorInput,
-  ColorSwatch,
-  Slider,
   Divider,
   Group,
   Input,
@@ -39,12 +36,9 @@ import {
 } from '~/libs/form';
 import { useFormContext } from 'react-hook-form';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { suggestedCardColor } from '~/components/Profile/profile-card-color';
+import { CardColorPicker } from '~/components/Profile/CardColorPicker';
 import { CREATOR_STUDIO_URL } from '~/shared/constants/creator-studio.constants';
-import {
-  profileAboutMaxLength,
-  profileCardOpacityDefault,
-} from '~/server/schema/user-profile.schema';
+import { profileAboutMaxLength } from '~/server/schema/user-profile.schema';
 import type {
   ProfileSectionSchema,
   PrivacySettingsSchema,
@@ -475,6 +469,8 @@ export default function UserProfileEditModal() {
             null) as unknown as FormDataSchema['sfwBackgroundImage'],
           cardColor: customization?.stored?.cardColor ?? null,
           cardOpacity: customization?.stored?.cardOpacity ?? null,
+          cardColorLight: customization?.stored?.cardColorLight ?? null,
+          cardOpacityLight: customization?.stored?.cardOpacityLight ?? null,
           about: aboutData?.about ?? null,
         }),
       };
@@ -1047,6 +1043,8 @@ export default function UserProfileEditModal() {
         'backgroundImage',
         'cardColor',
         'cardOpacity',
+        'cardColorLight',
+        'cardOpacityLight',
       ],
       content: profilePageGroup,
     },
@@ -1198,25 +1196,17 @@ export function ProfilePreview({
 }
 
 /** Members-only page background, card colour and opacity (profile redesign). */
-type HashedImage = { hash?: string | null } | null | undefined;
-
 function PageCustomizationFields() {
   const currentUser = useCurrentUser();
   const form = useFormContext<FormDataSchema>();
-  const [cover, background, cardColor, cardOpacity] = form.watch([
+  const [cover, background, cardColor, cardOpacity, cardColorLight, cardOpacityLight] = form.watch([
     'coverImage',
     'backgroundImage',
     'cardColor',
     'cardOpacity',
+    'cardColorLight',
+    'cardOpacityLight',
   ]);
-  // A colour from either image, so the member can pick whichever suits; a new upload has no
-  // hash until it is scanned, so it suggests nothing yet.
-  const suggestions = [
-    { label: 'From your banner', color: suggestedCardColor((cover as HashedImage)?.hash) },
-    { label: 'From your background', color: suggestedCardColor((background as HashedImage)?.hash) },
-  ].filter((suggestion): suggestion is { label: string; color: string } => !!suggestion.color);
-  const setCardColor = (value: string) =>
-    form.setValue('cardColor', value || null, { shouldDirty: true });
 
   if (!currentUser?.isPaidMember)
     return (
@@ -1242,49 +1232,12 @@ function PageCustomizationFields() {
         description="Shown behind your whole profile page."
         previewWidth={constants.profile.coverImageWidth}
       />
-      <Stack gap={6}>
-        <ColorInput
-          label="Card colour"
-          description="Pick any colour, or use one taken from your banner or background."
-          placeholder="Your theme's colour"
-          format="hex"
-          value={cardColor ?? ''}
-          onChange={setCardColor}
-          swatches={suggestions.map((suggestion) => suggestion.color)}
-          swatchesPerRow={suggestions.length || undefined}
-          error={form.formState.errors.cardColor?.message}
-        />
-        {(suggestions.length > 0 || !!cardColor) && (
-          <Group gap="xs">
-            {suggestions.map((suggestion) => (
-              <Button
-                key={suggestion.label}
-                variant={cardColor === suggestion.color ? 'light' : 'default'}
-                size="compact-sm"
-                leftSection={<ColorSwatch color={suggestion.color} size={14} />}
-                onClick={() => setCardColor(suggestion.color)}
-              >
-                {suggestion.label}
-              </Button>
-            ))}
-            {!!cardColor && (
-              <Button variant="subtle" size="compact-sm" onClick={() => setCardColor('')}>
-                Use the theme&apos;s colour
-              </Button>
-            )}
-          </Group>
-        )}
-      </Stack>
-      <Input.Wrapper label="Card opacity">
-        <Slider
-          min={60}
-          max={100}
-          step={5}
-          value={cardOpacity ?? profileCardOpacityDefault}
-          onChange={(value) => form.setValue('cardOpacity', value, { shouldDirty: true })}
-          label={(value) => `${value}%`}
-        />
-      </Input.Wrapper>
+      <CardColorPicker
+        values={{ cardColor, cardOpacity, cardColorLight, cardOpacityLight }}
+        cover={cover as { hash?: string | null } | null}
+        background={background as { hash?: string | null } | null}
+        onChange={(field, value) => form.setValue(field, value as never, { shouldDirty: true })}
+      />
     </Stack>
   );
 }

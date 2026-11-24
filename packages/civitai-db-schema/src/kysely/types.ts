@@ -6826,6 +6826,8 @@ export type UserProfile = {
   sfwBackgroundImageId: number | null;
   cardColor: string | null;
   cardOpacity: number | null;
+  cardColorLight: string | null;
+  cardOpacityLight: number | null;
   about: string | null;
 };
 export type UserPurchasedRewards = {

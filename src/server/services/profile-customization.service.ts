@@ -39,14 +39,28 @@ export async function assertPageCustomizationAllowed({
   sfwBackgroundImage,
   cardColor,
   cardOpacity,
+  cardColorLight,
+  cardOpacityLight,
   about,
 }: Pick<
   UserProfileUpdateSchema,
-  'backgroundImage' | 'sfwBackgroundImage' | 'cardColor' | 'cardOpacity' | 'about'
+  | 'backgroundImage'
+  | 'sfwBackgroundImage'
+  | 'cardColor'
+  | 'cardOpacity'
+  | 'cardColorLight'
+  | 'cardOpacityLight'
+  | 'about'
 > & { userId: number; profileRedesign: boolean }) {
-  const touched = [backgroundImage, sfwBackgroundImage, cardColor, cardOpacity, about].some(
-    (value) => value !== undefined
-  );
+  const touched = [
+    backgroundImage,
+    sfwBackgroundImage,
+    cardColor,
+    cardOpacity,
+    cardColorLight,
+    cardOpacityLight,
+    about,
+  ].some((value) => value !== undefined);
   if (!touched) return;
   if (!profileRedesign) throw throwAuthorizationError('Profile customization is not available');
 
@@ -58,6 +72,8 @@ export async function assertPageCustomizationAllowed({
       sfwBackgroundImageId: true,
       cardColor: true,
       cardOpacity: true,
+      cardColorLight: true,
+      cardOpacityLight: true,
     },
   });
   const setsImage = (
@@ -71,7 +87,9 @@ export async function assertPageCustomizationAllowed({
     setsImage(backgroundImage, stored?.backgroundImageId) ||
     setsImage(sfwBackgroundImage, stored?.sfwBackgroundImageId) ||
     setsValue(cardColor, stored?.cardColor) ||
-    setsValue(cardOpacity, stored?.cardOpacity);
+    setsValue(cardOpacity, stored?.cardOpacity) ||
+    setsValue(cardColorLight, stored?.cardColorLight) ||
+    setsValue(cardOpacityLight, stored?.cardOpacityLight);
   if (raises && !(await isMemberTier(userId))) throw throwAuthorizationError(MEMBERS_ONLY);
 }
 
@@ -130,6 +148,8 @@ export async function getProfileCustomization({
       sfwBackgroundImageId: true,
       cardColor: true,
       cardOpacity: true,
+      cardColorLight: true,
+      cardOpacityLight: true,
       backgroundImage: { select: backgroundImageSelect },
       sfwBackgroundImage: { select: backgroundImageSelect },
     },
@@ -138,6 +158,8 @@ export async function getProfileCustomization({
     background: null,
     cardColor: null,
     cardOpacity: null,
+    cardColorLight: null,
+    cardOpacityLight: null,
     // The customizer's own values; only for someone who can edit the profile.
     stored: null,
   };
@@ -147,7 +169,9 @@ export async function getProfileCustomization({
     profile.backgroundImageId != null ||
     profile.sfwBackgroundImageId != null ||
     profile.cardColor != null ||
-    profile.cardOpacity != null;
+    profile.cardOpacity != null ||
+    profile.cardColorLight != null ||
+    profile.cardOpacityLight != null;
   if (!isSet) return empty;
 
   const canEdit = sameUser || !!isModerator;
@@ -161,6 +185,8 @@ export async function getProfileCustomization({
         sfwBackgroundImage: editable(profile.sfwBackgroundImage),
         cardColor: profile.cardColor,
         cardOpacity: profile.cardOpacity,
+        cardColorLight: profile.cardColorLight,
+        cardOpacityLight: profile.cardOpacityLight,
       }
     : null;
 
@@ -187,6 +213,8 @@ export async function getProfileCustomization({
     background: visible,
     cardColor: profile.cardColor,
     cardOpacity: profile.cardOpacity,
+    cardColorLight: profile.cardColorLight,
+    cardOpacityLight: profile.cardOpacityLight,
     stored,
   };
 }

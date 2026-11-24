@@ -9865,6 +9865,9 @@ model UserProfile {
   sfwBackgroundImage      Image?    @relation("UserProfileSfwBackgroundImage", fields: [sfwBackgroundImageId], references: [id], onDelete: SetNull)
   cardColor               String?
   cardOpacity             Int?
+  // For visitors in light mode; unset, they get cardColor/cardOpacity like everyone else.
+  cardColorLight          String?
+  cardOpacityLight        Int?
   about                   String?
 
   @@id([userId])

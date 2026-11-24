@@ -579,6 +579,8 @@ export const updateUserProfile = async ({
     sfwBackgroundImage,
     cardColor: profile.cardColor,
     cardOpacity: profile.cardOpacity,
+    cardColorLight: profile.cardColorLight,
+    cardOpacityLight: profile.cardOpacityLight,
     about: profile.about,
   });
 

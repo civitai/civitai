@@ -223,6 +223,12 @@ export const userProfileUpdateSchema = z.object({
     .regex(/^#[0-9a-f]{6}$/i)
     .nullish(),
   cardOpacity: z.number().int().min(60).max(100).nullish(),
+  // For visitors in light mode; unset falls back to the two above.
+  cardColorLight: z
+    .string()
+    .regex(/^#[0-9a-f]{6}$/i)
+    .nullish(),
+  cardOpacityLight: z.number().int().min(60).max(100).nullish(),
   // Text only: media here would never be scanned or rated, and shows on every domain.
   about: getSanitizedStringSchema({ allowedTags: profileAboutAllowedTags })
     .refine((html) => html.length <= profileAboutMaxLength, 'Your About text is too long')

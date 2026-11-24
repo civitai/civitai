@@ -72,6 +72,11 @@ describe('assertPageCustomizationAllowed', () => {
     await expect(save({ backgroundImage: { url: 'new.jpg' } })).rejects.toThrow(/for members/);
   });
 
+  it('treats the light-mode colour and opacity as members-only too', async () => {
+    await expect(save({ cardColorLight: '#f3ead7' })).rejects.toThrow(/for members/);
+    await expect(save({ cardOpacityLight: 90 })).rejects.toThrow(/for members/);
+  });
+
   it('lets a paying member, and a comped member, set them', async () => {
     subscriptions = [subscription('gold')];
     await expect(save({ cardColor: '#112233' })).resolves.toBeUndefined();
@@ -128,6 +133,17 @@ describe('getProfileCustomization', () => {
     const result = await getProfileCustomization({ userId: OWNER, viewerId: VISITOR });
     expect(result).toMatchObject({ background: { id: 70 }, cardColor: '#112233', cardOpacity: 70 });
     expect(result.stored).toBeNull();
+  });
+
+  it('returns the light-mode pair beside the dark one', async () => {
+    subscriptions = [subscription('gold')];
+    stored({ cardColorLight: '#f3ead7', cardOpacityLight: 90 });
+    const result = await getProfileCustomization({ userId: OWNER, viewerId: VISITOR });
+    expect(result).toMatchObject({
+      cardColor: '#112233',
+      cardColorLight: '#f3ead7',
+      cardOpacityLight: 90,
+    });
   });
 
   it('hides them while the owner is not a member, but keeps them for the owner to edit', async () => {

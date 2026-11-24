@@ -6189,6 +6189,8 @@ export interface UserProfile {
   sfwBackgroundImage?: Image | null;
   cardColor: string | null;
   cardOpacity: number | null;
+  cardColorLight: string | null;
+  cardOpacityLight: number | null;
   about: string | null;
 }
 
