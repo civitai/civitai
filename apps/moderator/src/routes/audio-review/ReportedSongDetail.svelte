@@ -137,7 +137,9 @@
 {/snippet}
 
 {#snippet decision()}
+  <!-- `contents`: the hidden forms take no room in the column; their buttons post through `form=`. -->
   <form
+    class="contents"
     method="POST"
     action={actionHref('dismiss')}
     data-triage-action="dismiss"
@@ -148,6 +150,7 @@
     <input type="hidden" name="reportIds" value={reportIds} />
   </form>
   <form
+    class="contents"
     method="POST"
     action={actionHref('remove')}
     data-triage-action="remove"
@@ -160,6 +163,7 @@
     <input type="hidden" name="violationDetails" value={note} />
   </form>
   <form
+    class="contents"
     method="POST"
     action={actionHref('removeCover')}
     data-triage-action="removeCover"
@@ -175,8 +179,8 @@
     {problem}
     hint={ratingOpen
       ? 'Rating: 1 to 5 picks the level · Esc cancels. A rating leaves the reports open.'
-      : `J/K to move · 1 to 4 decide. Remove song and Remove cover ask for a violation type; ` +
-        `Remove cover leaves the reports open. ${dismiss.label} closes ${plural(row.reports.length, 'report')}.`}
+      : 'J/K to move · 1 to 4 decide. Remove song and Remove cover ask for a violation type; ' +
+        'Remove cover leaves the reports open.'}
   >
     {#snippet buttons()}
       <!-- Dimmed while the rating picker owns the digits. -->

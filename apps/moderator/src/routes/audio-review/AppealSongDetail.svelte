@@ -142,18 +142,20 @@
       {buttons}
       {fields}
       {problem}
-      hint="J/K to move · 1 or 2 decide. Approving restores the {subject} only{isSong
-        ? ''
-        : ', not the song'}; a {isSong ? 'removed cover' : 'removed song'} is appealed separately."
     />
+    <!-- Under the reason line and above the hint, which the bar would otherwise end with. -->
     <Input
       name="resolvedMessage"
       bind:value={message}
       maxlength={1000}
       aria-label="Message to the owner"
       placeholder="Message to the owner (optional)"
-      class="mt-1.5 h-[30px] border-dark-4 bg-dark-7 text-[13px] placeholder:text-dark-2 dark:bg-dark-7"
+      class="mt-2 h-[30px] border-dark-4 bg-dark-7 text-[13px] placeholder:text-dark-2 dark:bg-dark-7"
     />
+    <p class="m-0 mt-2 line-clamp-2 text-[11px] text-dark-2">
+      J/K to move · 1 or 2 decide. Approving restores the {subject} only{isSong ? '' : ', not the song'};
+      a {isSong ? 'removed cover' : 'removed song'} is appealed separately.
+    </p>
   </form>
 {/snippet}
 
@@ -166,8 +168,8 @@
         {:else}
           {@render chip('Cover')}
         {/if}
-        {@render chip('Appeal', 'bg-amber-500/15 text-amber-300')}
-        {@render chip('Removed')}
+        {@render chip('Appeal', 'bg-blue-500/15 text-blue-300')}
+        {@render chip('Removed', 'bg-red-500/15 text-red-300')}
         {#if row.appeals > 1}{@render chip(`Repeat ×${row.appeals}`, 'bg-amber-500/15 text-amber-300')}{/if}
       {/snippet}
       {#snippet links()}
@@ -215,7 +217,7 @@
   {/snippet}
 
   {#snippet evidence()}
-    <div class="space-y-3">
+    <div class="flex flex-col gap-4">
       {#if row.withheld}
         <div class="space-y-2 rounded-lg border border-dark-4 bg-dark-7 p-3.5 text-sm text-dark-0">
           <p class="m-0">
@@ -224,14 +226,14 @@
           <a href="/csam/text-holds?status=all&q={row.id}" class={LINK_CLASS}>Open in CSAM holds</a>
         </div>
       {:else if isSong}
-        <p class="m-0 rounded-lg border border-dark-4 bg-dark-7 px-3.5 py-2 text-[13px] text-dark-0">
+        <p class="m-0 rounded-lg border border-blue-500/35 bg-blue-500/10 px-3.5 py-2 text-[13px] text-blue-200">
           This song is removed. It plays from storage for moderators only.
         </p>
         {#if row.url}
           <SongCard item={{ id: row.id, url: row.url }} variant="detail" />
         {/if}
       {:else}
-        <p class="m-0 rounded-lg border border-dark-4 bg-dark-7 px-3.5 py-2 text-[13px] text-dark-0">
+        <p class="m-0 rounded-lg border border-blue-500/35 bg-blue-500/10 px-3.5 py-2 text-[13px] text-blue-200">
           This cover is removed: the song shows the placeholder. Approving puts the cover back on the
           song; the song itself is not changed.
         </p>
@@ -256,7 +258,20 @@
         {:then d}
           <TriageCard title="Song" dense>
             {@render fact('Genre', d.facts.genre)}
-            {@render fact('Posted', d.facts.postedAt ? shortDate(d.facts.postedAt) : 'Not posted')}
+            <div class="grid grid-cols-[104px_1fr] gap-3 py-0.5">
+              <span class="text-dark-2">Posted</span>
+              <span class="text-white">
+                {d.facts.postedAt ? shortDate(d.facts.postedAt) : 'Not posted'}
+                {#if d.facts.postId}
+                  · <a
+                    href={entityUrl(civitaiUrl, 'post', d.facts.postId)}
+                    target="_blank"
+                    rel="noreferrer"
+                    class={LINK_CLASS}>Open post</a
+                  >
+                {/if}
+              </span>
+            </div>
             {@render fact('Remix', d.facts.allowRemix ? 'Allowed' : 'Not allowed')}
           </TriageCard>
         {:catch}

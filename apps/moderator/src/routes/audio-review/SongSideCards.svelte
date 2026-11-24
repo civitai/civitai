@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { IconCheck } from '@tabler/icons-svelte';
-  import { getBrowsingLevelLabel } from '@civitai/shared';
+  import { IconCheck, IconPhoto } from '@tabler/icons-svelte';
+  import { getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
   import EdgeImage from '$lib/components/EdgeImage.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import type { CheckState, SongDetails } from '$lib/audio-review';
@@ -61,12 +61,19 @@
       <div class="size-14 shrink-0 overflow-hidden rounded-md border border-dark-4 bg-dark-6">
         {#if d.cover.url && !coverRemoved}
           <EdgeImage src={d.cover.url} width={160} alt="" class="size-full object-cover" />
+        {:else}
+          <div class="flex size-full items-center justify-center text-dark-2">
+            <IconPhoto size={20} aria-label="No cover shown" />
+          </div>
         {/if}
       </div>
       <div class="min-w-0 space-y-1">
         <p class="m-0 font-medium text-white">Cover of this song</p>
         <div class="flex flex-wrap gap-1">
-          {@render chip(d.cover.nsfwLevel ? getBrowsingLevelLabel(d.cover.nsfwLevel) : 'Not rated')}
+          <!-- A Blocked level says what the scan chip already says. -->
+          {#if !coverRemoved && d.cover.nsfwLevel !== NsfwLevel.Blocked}
+            {@render chip(d.cover.nsfwLevel ? getBrowsingLevelLabel(d.cover.nsfwLevel) : 'Not rated')}
+          {/if}
           {#if d.checks.cover}
             <span
               class="inline-flex items-center gap-1 rounded px-1.5 py-px text-[11px] font-medium {CHECK_LOOK[
