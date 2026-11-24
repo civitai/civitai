@@ -65,6 +65,7 @@ const GLOBALS = [
   'globalClickhouse',
   'globalClickhouseLongQueries',
   'globalClickhouseMetrics',
+  'globalClickhouseDownloads',
   'globalPgWrite',
   'globalPgRead',
   'globalPgReadLong',
@@ -200,6 +201,37 @@ describe('process-global server singletons (production)', () => {
       () => import('~/server/clickhouse/metrics-client')
     ).then(([a]) => a);
     expect(clickhouseMetrics).toBeUndefined();
+    expect(factories.createClickhouseClient).not.toHaveBeenCalled();
+  });
+
+  it('dedicated downloads ClickHouse client: one per process, its own login, a 2s request timeout', async () => {
+    setEnv({
+      CLICKHOUSE_DOWNLOADS_HOST: 'http://clickhouse-downloads.test',
+      CLICKHOUSE_DOWNLOADS_USERNAME: 'downloads-user',
+    });
+    const [a, b] = await evaluateTwice(() => import('~/server/clickhouse/downloads-client'));
+    expect(factories.createClickhouseClient).toHaveBeenCalledTimes(1);
+    expect(a.clickhouseDownloads).toBeDefined();
+    expect(b.clickhouseDownloads).toBe(a.clickhouseDownloads);
+    const options = (factories.createClickhouseClient.mock.calls as unknown[][])[0][0] as Record<
+      string,
+      unknown
+    >;
+    expect(options).toMatchObject({
+      host: 'http://clickhouse-downloads.test',
+      username: 'downloads-user',
+      requestTimeoutMs: 2_000,
+    });
+    // An absent key would let the factory fill it from CLICKHOUSE_PASSWORD, the shared server's.
+    expect(Object.prototype.hasOwnProperty.call(options, 'password')).toBe(true);
+    expect(options.password).toBeUndefined();
+  });
+
+  it('dedicated downloads ClickHouse client: not built when its env is unset', async () => {
+    const { clickhouseDownloads } = await evaluateTwice(
+      () => import('~/server/clickhouse/downloads-client')
+    ).then(([a]) => a);
+    expect(clickhouseDownloads).toBeUndefined();
     expect(factories.createClickhouseClient).not.toHaveBeenCalled();
   });
 

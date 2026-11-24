@@ -415,6 +415,18 @@ export const serverSchema = z
     // per-id populate locks within seconds. Keep it above CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS and
     // the server-side lookup cap. .int().positive() for the same reason as that timeout.
     CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+    // A dedicated analytics replica for download reads (`~/server/clickhouse/downloads-client`):
+    // the user-downloads cache lookup and the download limiter's count, each only while its own
+    // flag is on (`user-downloads-dedicated-clickhouse`, `download-count-dedicated-clickhouse`).
+    // Same shape as CLICKHOUSE_HOST/USERNAME/PASSWORD. Optional everywhere, prod included: unset
+    // HOST or USERNAME means no such client is built and neither flag has an effect.
+    CLICKHOUSE_DOWNLOADS_HOST: z.string().optional(),
+    CLICKHOUSE_DOWNLOADS_USERNAME: z.string().optional(),
+    CLICKHOUSE_DOWNLOADS_PASSWORD: z.string().optional(),
+    // The key the limiter's anonymous branch hashes a client address with before it queries the
+    // replica, which stores only that keyed hash. Must equal the key the replica's rows were hashed
+    // with. Unset: the anonymous branch keeps reading the shared ClickHouse even with its flag on.
+    CLICKHOUSE_DOWNLOADS_IP_HASH_KEY: z.string().optional(),
     // OAuth LOGIN provider secrets now live ONLY in the hub (apps/auth) — the spoke fetches the enabled-provider
     // list from GET {hub}/api/auth/providers and never holds login secrets. Discord's creds REMAIN here because
     // the Discord ROLE-CONNECTION integration (src/server/integrations/discord.ts) uses them — that's a separate

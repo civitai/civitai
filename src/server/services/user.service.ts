@@ -1000,8 +1000,18 @@ export async function getUserDownloadedModelVersions({
   return downloads.map((d) => ({ modelVersionId: d.modelVersionId }));
 }
 
+// The bust window, in seconds. `userDownloadsCache` is stale-while-revalidate, so a bust of a user
+// with cached downloads keeps serving that entry for the window and revalidates it on the first
+// read after; a bust of a "none" marker reads the table uncached for the window instead. Either way
+// the entry is re-cached from what the table holds once the window is over, so the window must
+// outlast the row's arrival: the row is written asynchronously, on the dedicated downloads replica
+// up to about two minutes after the download. A row later than the window is missed until that
+// entry expires (10 minutes for "none", the cache TTL otherwise). The cost: a user who already has
+// downloads sees a new one up to this long after it, instead of the cache's 10-second default.
+const USER_DOWNLOADS_BUST_WINDOW_SECONDS = 180;
+
 export async function bustUserDownloadsCache(userId: number) {
-  await userDownloadsCache.bust([userId]);
+  await userDownloadsCache.bust([userId], { debounceTime: USER_DOWNLOADS_BUST_WINDOW_SECONDS });
 }
 
 export const getUserEngagedModelByModelId = ({
