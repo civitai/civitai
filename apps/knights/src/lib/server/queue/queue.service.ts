@@ -25,6 +25,8 @@ import { RANKS, rankIndex, type Rank } from '../ranks';
 import { heldSql } from '../conversion/held';
 import { metrics } from '../metrics';
 import { creditVote, insertVote, lockPlayerVoting, notHiddenCreator } from './vote-record';
+import { lockReasonSql, readImageState } from './image-state';
+import { openReview } from '../inquisitor/review.service';
 import {
   ESCALATION_PATH,
   FEED_STRETCH_SIZE,
@@ -52,7 +54,6 @@ import {
   isExcessiveDownRating,
   moderatorRuling,
   mostVotedLevel,
-  type ImageState,
   type WeightedAnswer,
   type WritebackDecision,
 } from './resolution';
@@ -78,6 +79,8 @@ export type QueueDeps = {
   mirrorXp?: XpMirror;
   /** Pacing for non-moderators; absent means unpaced. */
   voteLimits?: readonly VoteLimit[];
+  /** Whether the in-game inquisitor queue is on (`inquisitorQueue`); absent means off, so no review opens. */
+  inquisitorQueue?: () => boolean | Promise<boolean>;
 };
 
 /** A write-back that keeps failing is handed to the Inquisitors after this many tries. */
@@ -783,9 +786,6 @@ export async function castVote(
   return result;
 }
 
-const lockReasonSql = (metadata: 'metadata' | 'img.metadata') =>
-  sql<string | null>`${sql.ref(metadata)}->>'nsfwLevelReason'`;
-
 /** `moderatorRuling` giving a level, on an image with no `hasBlockMarker`, as SQL; change it with them. Expects `Image as img`. */
 const moderatorRuledImageSql = (eb: ExpressionBuilder<DB & { img: DB['Image'] }, 'img'>) =>
   eb.and([
@@ -795,21 +795,6 @@ const moderatorRuledImageSql = (eb: ExpressionBuilder<DB & { img: DB['Image'] },
     eb('img.blockedFor', 'is', null),
     eb(lockReasonSql('img.metadata'), 'is distinct from', KNIGHTS_VOTE_NSFW_LEVEL_REASON),
   ]);
-
-async function readImageState(db: Executor, imageId: number): Promise<ImageState | null> {
-  const image = await db
-    .selectFrom('Image')
-    .select([
-      'nsfwLevel',
-      'nsfwLevelLocked as locked',
-      'ingestion',
-      'blockedFor',
-      lockReasonSql('metadata').as('lockReason'),
-    ])
-    .where('id', '=', imageId)
-    .executeTakeFirst();
-  return image ?? null;
-}
 
 type Reroute = Exclude<WritebackDecision, { kind: 'apply' }>;
 
@@ -987,6 +972,15 @@ async function markApplied(db: Kysely<DB>, itemId: number, now: Date, deps: Queu
     .execute();
   await settleAndMirror(db, itemId, now, deps.mirrorXp).catch((error) =>
     console.error('knights: could not pay out a written-back item, the job will retry it', {
+      itemId,
+      error,
+    })
+  );
+  // The moderators' in-game review of the settled rating; the tick sweep opens any this misses.
+  await (async () => {
+    if (await deps.inquisitorQueue?.()) await openReview(db, itemId, now);
+  })().catch((error) =>
+    console.error('knights: could not open the inquisitor review, the sweep will retry it', {
       itemId,
       error,
     })

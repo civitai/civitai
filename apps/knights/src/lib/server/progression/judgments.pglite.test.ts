@@ -39,7 +39,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","KnightsApprenticeAnswer","KnightsYesNoReference","KnightsReferenceImage" RESTART IDENTITY`
+    `TRUNCATE "KnightsVote","KnightsInquisitorVote","KnightsInquisitorReview","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post","KnightsApprenticeAnswer","KnightsYesNoReference","KnightsReferenceImage" RESTART IDENTITY`
   );
   await pg.exec(
     `INSERT INTO "NewOrderPlayer" ("userId","rankType") VALUES (1,'Knight'),(2,'Knight')`

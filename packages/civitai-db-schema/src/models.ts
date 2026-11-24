@@ -5435,6 +5435,28 @@ export interface KnightsReferenceImage {
   updatedAt: Date;
 }
 
+export interface KnightsInquisitorReview {
+  id: number;
+  queueItemId: number;
+  imageId: number;
+  questionKey: string;
+  consensusValue: string;
+  status: string;
+  confirmedValue: string | null;
+  claimedBy: number | null;
+  claimExpiresAt: Date | null;
+  createdAt: Date;
+  closedAt: Date | null;
+  checkedAt: Date | null;
+}
+
+export interface KnightsInquisitorVote {
+  reviewId: number;
+  moderatorId: number;
+  answer: string;
+  createdAt: Date;
+}
+
 export interface KnightsYesNoReference {
   id: number;
   imageId: number;
