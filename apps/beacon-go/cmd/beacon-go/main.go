@@ -139,8 +139,12 @@ func run(log *slog.Logger) error {
 			BaseURL: cfg.TrackerURL,
 			HTTP:    &http.Client{Transport: tr},
 			Record:  func(table, result string) { metrics.TrackerWrites.WithLabelValues(table, result).Inc() },
+			Observe: func(table string, d time.Duration) {
+				metrics.TrackerSendSeconds.WithLabelValues(table).Observe(d.Seconds())
+			},
 		}
 		writer.Start(cfg.TrackerWorkers, cfg.TrackerQueue)
+		reg.MustRegister(server.TrackerQueueDepth(writer.Depth))
 		srv.Writer = writer
 		servers = append(servers, server.PublicHTTPServer(cfg.Addr, server.PublicMux(srv)))
 	}

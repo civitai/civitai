@@ -5,7 +5,9 @@
 //
 // Like the Node path it is fire-and-forget: the beacon's response never waits for the tracker. Unlike
 // it, the backlog is bounded (a queue of Queue rows, drained by Workers goroutines): a full queue
-// drops the row and counts it, where Node would keep piling up promises.
+// drops the row and counts it, where Node would keep piling up promises. A row still queued when
+// Close gives up is counted as dropped too, so every queued row ends in exactly one result except
+// one inside a POST that is still running when the process exits (at most one per worker).
 package tracker
 
 import (
@@ -47,6 +49,9 @@ type Client struct {
 	HTTP    *http.Client
 	// Record is called once per row with its table and result.
 	Record func(table, result string)
+	// Observe, when set, is called once per row a worker sent, with its table and how long Send took
+	// (every attempt and the waits between them), before Record.
+	Observe func(table string, d time.Duration)
 	// Sleep waits between attempts (tests replace it).
 	Sleep func(ctx context.Context, d time.Duration)
 
@@ -64,7 +69,12 @@ func (c *Client) Start(workers, queue int) {
 		go func() {
 			defer c.wg.Done()
 			for w := range c.queue {
-				c.record(w.Table, c.Send(context.Background(), w))
+				start := time.Now()
+				result := c.Send(context.Background(), w)
+				if c.Observe != nil {
+					c.Observe(w.Table, time.Since(start))
+				}
+				c.record(w.Table, result)
 			}
 		}()
 	}
@@ -94,7 +104,12 @@ func (c *Client) Enqueue(w beacon.Write) bool {
 	}
 }
 
-// Close stops accepting rows and waits (until ctx ends) for the queued ones to be sent.
+// Depth is the number of rows waiting in the queue (not counting the ones being sent).
+func (c *Client) Depth() int { return len(c.queue) }
+
+// Close stops accepting rows and waits (until ctx ends) for the queued ones to be sent. When ctx
+// ends first, every row still waiting is taken off the queue and counted as dropped: it will never
+// be sent, and uncounted it would be a silent loss.
 func (c *Client) Close(ctx context.Context) error {
 	c.mu.Lock()
 	if !c.closed {
@@ -111,6 +126,11 @@ func (c *Client) Close(ctx context.Context) error {
 	case <-done:
 		return nil
 	case <-ctx.Done():
+		// The queue is closed, so this ends once it is empty; a worker finishing its POST takes the
+		// next row in the meantime, and each row is received exactly once either way.
+		for w := range c.queue {
+			c.record(w.Table, ResultDropped)
+		}
 		return ctx.Err()
 	}
 }

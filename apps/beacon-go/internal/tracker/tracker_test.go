@@ -114,3 +114,119 @@ func TestQueue(t *testing.T) {
 		t.Fatalf("results %v, sent %d, accepted %d", results, got.Load(), accepted)
 	}
 }
+
+// blockingTracker answers nothing until the test ends; entered receives once per request.
+func blockingTracker(t *testing.T) (*httptest.Server, chan struct{}) {
+	t.Helper()
+	entered, release := make(chan struct{}, 16), make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		entered <- struct{}{}
+		<-release
+		w.WriteHeader(200)
+	}))
+	t.Cleanup(func() {
+		close(release)
+		srv.Close()
+	})
+	return srv, entered
+}
+
+// A row still queued when Close's grace period ends is counted as dropped (it is never sent); the
+// row inside the running POST is not counted by Close.
+func TestCloseCountsTheRowsItAbandonsAsDropped(t *testing.T) {
+	srv, entered := blockingTracker(t)
+	var mu sync.Mutex
+	results := map[string]int{}
+	cl := &Client{BaseURL: srv.URL, HTTP: srv.Client(), Sleep: noSleep, Record: func(table, result string) {
+		mu.Lock()
+		results[table+":"+result]++
+		mu.Unlock()
+	}}
+	cl.Start(1, 10)
+	if !cl.Enqueue(beacon.Write{Table: "views", Body: []byte("{}")}) {
+		t.Fatal("first row refused")
+	}
+	<-entered // the worker holds the first row in a POST that does not answer
+	for range 4 {
+		if !cl.Enqueue(beacon.Write{Table: "pageViews", Body: []byte("{}")}) {
+			t.Fatal("a row was refused by a queue with room")
+		}
+	}
+	if d := cl.Depth(); d != 4 {
+		t.Fatalf("Depth %d with 4 rows waiting behind one in flight, want 4", d)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := cl.Close(ctx); err == nil {
+		t.Fatal("Close returned nil with a POST still running")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if results["pageViews:dropped"] != 4 || len(results) != 1 {
+		t.Fatalf("results %v, want exactly the 4 waiting rows dropped", results)
+	}
+	if d := cl.Depth(); d != 0 {
+		t.Fatalf("Depth %d after Close gave up, want 0", d)
+	}
+}
+
+// Observe sees each sent row once, with its table and a duration covering the POST, before Record.
+func TestObserveTimesEachSentRow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(20 * time.Millisecond)
+		w.WriteHeader(202)
+	}))
+	defer srv.Close()
+	var mu sync.Mutex
+	var seen, order []string
+	var took []time.Duration
+	cl := &Client{BaseURL: srv.URL, HTTP: srv.Client(), Sleep: noSleep,
+		Observe: func(table string, d time.Duration) {
+			mu.Lock()
+			seen, took, order = append(seen, table), append(took, d), append(order, "observe")
+			mu.Unlock()
+		},
+		Record: func(_, result string) {
+			mu.Lock()
+			order = append(order, result)
+			mu.Unlock()
+		}}
+	cl.Start(1, 4)
+	cl.Enqueue(beacon.Write{Table: "views", Body: []byte("{}")})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := cl.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 || seen[0] != "views" || took[0] < 20*time.Millisecond {
+		t.Fatalf("observed %v %v, want one views row of at least 20ms", seen, took)
+	}
+	if len(order) != 2 || order[0] != "observe" || order[1] != ResultOK {
+		t.Fatalf("order %v, want observe then ok", order)
+	}
+}
+
+// A row refused by a closed client is never observed: Observe times sends only.
+func TestObserveSkipsDroppedRows(t *testing.T) {
+	var observed atomic.Int32
+	cl := &Client{BaseURL: "http://127.0.0.1:1", Sleep: noSleep,
+		Observe: func(string, time.Duration) { observed.Add(1) }}
+	cl.Start(1, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := cl.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cl.Enqueue(beacon.Write{Table: "views"})
+	if observed.Load() != 0 {
+		t.Fatalf("observed %d rows, want 0", observed.Load())
+	}
+}
+
+func TestDepthOfAnUnstartedClientIsZero(t *testing.T) {
+	if (&Client{}).Depth() != 0 {
+		t.Fatal("Depth of an unstarted client")
+	}
+}

@@ -183,6 +183,13 @@ sampler (below) posts samples; each one is computed and compared.
 by a bounded worker pool with the Node retry policy (a full queue drops the row and counts it). A
 fallback is proxied to `BEACON_GO_FALLBACK_URL` with the original Host and the whole body.
 
+Every queued row ends in exactly one `beacon_go_tracker_writes_total{table, result}` count: `ok`,
+`rejected` (a 4xx), `failed` (attempts spent) or `dropped` (the queue was full, the client was
+closed, or the row was still waiting when the shutdown grace period ended). The one row a worker is
+sending when the process exits is the exception (at most one per worker). Beside it,
+`beacon_go_tracker_send_seconds{table}` times each sent row (every attempt and retry wait) and
+`beacon_go_tracker_queue_depth` is the queue's backlog.
+
 ## 4. Shadow comparison
 
 The sampler is `src/server/beacon/beacon-go-shadow.ts` (payload code in
@@ -257,6 +264,8 @@ in front of a bounded queue (`BEACON_GO_TRACKER_QUEUE`); a full queue drops the 
 any replica to `BEACON_GO_MODE=serve`:
 
 1. size the workers from measurement: per-pod beacon rate (from the shadow phase) × the tracker's
-   p99 POST latency, with headroom, and set `BEACON_GO_TRACKER_WORKERS` to at least that;
+   p99 POST latency, with headroom, and set `BEACON_GO_TRACKER_WORKERS` to at least that; once
+   serving, `beacon_go_tracker_send_seconds` and `beacon_go_tracker_queue_depth` show whether the
+   pool keeps up;
 2. alert on `beacon_go_tracker_writes_total{result="dropped"}` increasing (any dropped row is a lost
    page view or view), and watch `result="failed"` beside it.
