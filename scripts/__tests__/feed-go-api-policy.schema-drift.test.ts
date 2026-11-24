@@ -26,5 +26,12 @@ describe('apps/feed-go apipolicy.json', () => {
     expect(
       new RegExp(google?.source ?? '$^', 'i').test('Mozilla/5.0 (compatible; googlebot/2.1)')
     ).toBe(true);
+    // The 451 the Go route writes for a blocked region (FEED_GO_ANSWER_REGION_BLOCKED), pinned as
+    // literals so a change to the app's 451 is a deliberate edit here too.
+    expect(policy.regionBlockResponse).toEqual({
+      status: 451,
+      contentType: 'application/json',
+      body: '{"error":"Access to this service is not available in your region due to legal restrictions.","code":"REGION_BLOCKED"}',
+    });
   });
 });

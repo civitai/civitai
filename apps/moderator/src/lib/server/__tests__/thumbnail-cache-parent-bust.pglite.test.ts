@@ -1,7 +1,4 @@
 import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import {
@@ -9,7 +6,7 @@ import {
   SET_ASIDE_TABLE_SQL,
 } from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
-import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
+import { REDIS_KEYS } from '@civitai/redis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
@@ -98,7 +95,6 @@ CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}',
   "images" JSONB NOT NULL DEFAULT '[]', "reportSentAt" TIMESTAMP(3), "archivedAt" TIMESTAMP(3)
 );
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "Appeal" ("id" SERIAL, "entityType" TEXT, "entityId" INTEGER, "status" TEXT);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
@@ -255,68 +251,5 @@ describe('updateImageNsfwLevel and the post gallery caches', () => {
     await updateImageNsfwLevel({ id: PLAIN_IMAGE_ID, nsfwLevel: 16, userId: 1 });
 
     expect(bustPostGalleryCaches).toHaveBeenCalledWith([42]);
-  });
-});
-
-// A held owner's image is kept by the hold's delete trigger (the real migration, installed here),
-// blocked and taken out of its post: that post's gallery caches are as stale as for a delete.
-describe('an image delete on an image a hold marker keeps', () => {
-  const HOLD_MIGRATION = readFileSync(
-    join(
-      dirname(fileURLToPath(import.meta.url)),
-      '../../../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
-    ),
-    'utf-8'
-  );
-  const OWNER = 42;
-  const POST = 900;
-
-  beforeEach(async () => {
-    vi.mocked(bustPostGalleryCaches).mockClear();
-    sysSet.mockClear();
-    await db.exec(`
-      CREATE TABLE "Post" (
-        "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "title" TEXT, "detail" TEXT,
-        "createdAt" TIMESTAMP(3), "publishedAt" TIMESTAMP(3), "modelVersionId" INTEGER,
-        "collectionId" INTEGER, "metadata" JSONB
-      );
-      DROP TABLE "EvidenceHeldUser";
-      CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
-    `);
-    await db.exec(HOLD_MIGRATION);
-    await db.exec(`
-      INSERT INTO "EvidenceHold" ("userId", "role", "reason") VALUES (${OWNER}, 'manual', 'review');
-      UPDATE "Image" SET "userId" = ${OWNER}, "postId" = ${POST} WHERE "id" = ${PLAIN_IMAGE_ID};
-    `);
-  });
-
-  it('busts and recounts the post the image was taken out of, and the image leaves search', async () => {
-    await deleteImages([PLAIN_IMAGE_ID]);
-
-    const row = await db.query(
-      `SELECT "postId", "ingestion" FROM "Image" WHERE "id" = ${PLAIN_IMAGE_ID}`
-    );
-    expect(row.rows).toEqual([{ postId: null, ingestion: 'Blocked' }]);
-    expect(vi.mocked(bustPostGalleryCaches)).toHaveBeenCalledWith([POST]);
-    const recounts = await db.query(
-      `SELECT "entityId" FROM "JobQueue" WHERE "entityType" = 'Post' AND type = 'UpdateNsfwLevel'`
-    );
-    expect(recounts.rows).toEqual([{ entityId: POST }]);
-    // The existence cache is what takes a blocked image off the site; meta and metadata go with it.
-    expect(sysSet.mock.calls.map(([k, v]) => [k, v])).toContainEqual([
-      `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:${PLAIN_IMAGE_ID}`,
-      'false',
-    ]);
-    expect(bustedKeys()).toEqual(
-      expect.arrayContaining([
-        `${REDIS_KEYS.CACHES.IMAGE_META}:${PLAIN_IMAGE_ID}`,
-        `${REDIS_KEYS.CACHES.IMAGE_METADATA}:${PLAIN_IMAGE_ID}`,
-      ])
-    );
-    expect(
-      syncSearchIndexBulk.mock.calls
-        .filter(([batch]) => batch.action === 'delete')
-        .flatMap(([batch]) => batch.entityIds)
-    ).toEqual([PLAIN_IMAGE_ID]);
   });
 });

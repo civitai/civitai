@@ -31,7 +31,6 @@ import { SITE_APPEAL_CATEGORIES } from '@civitai/shared/site-appeal';
 import { countStrikeReview } from './strike-review.service';
 import { countPendingScamRestrictions } from './user-restriction.service';
 import { countPendingCsamHolds } from './csam-holds.queries';
-import { countEvidenceHoldsEnding } from '@civitai/db-queries/evidence-hold';
 import { countPendingRemovalConfirmations } from './image-removal-confirmation.service';
 import { countOpenUnpaidAwards } from './bounty-unpaid-award.service';
 import { countTrainingDataReview } from './training-moderation.service';
@@ -183,7 +182,6 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     scamRestrictions,
     csamTextHolds,
     siteAppeals,
-    evidenceHoldsEnding,
     knightsInquisitor,
     knightsLinkReviews,
     ticketCounts,
@@ -244,8 +242,6 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     // One grouped count over the partial queue index for all four queues; bounded so a failure drops
     // only these badges.
     bounded(countSiteAppeals),
-    // Bounded: the view aggregates every hold row, so no index serves it.
-    bounded(() => countEvidenceHoldsEnding(dbRead)),
     bounded(countInquisitorQueue),
     bounded(countPendingLinkReviews),
     // Bounded so a slow Redis read cannot hold up the sidebar; these keys are not in `maybe`, so a timeout shows no badge rather than `unavailable`.
@@ -265,7 +261,6 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     strikeReview,
     scamRestrictions,
     csamTextHolds,
-    evidenceHoldsEnding: evidenceHoldsEnding?.owners ?? null,
     stuckIngestion,
     ingestionErrors,
     knightsInquisitor,

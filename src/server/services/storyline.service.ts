@@ -38,11 +38,6 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { StorylineModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { placementMoneyInFlightSql } from '~/server/services/placement-escrow.service';
-import {
-  accountHoldSql,
-  holdMarkerViewExists,
-  ownerHeldSql,
-} from '~/server/services/legal-hold.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { placementPriceRanges } from '~/server/services/placement.service';
@@ -1191,7 +1186,7 @@ function storylineCommentersSql(id: number) {
 }
 
 /**
- * The delete of storyline `id`, as ONE statement, so a hold placed while it runs cannot leave a
+ * The delete of storyline `id`, as ONE statement, so a report filed while it runs cannot leave a
  * partial copy, and its reports are stamped before their link is set NULL. Returns how many it
  * deleted.
  */
@@ -1202,8 +1197,7 @@ function deleteStorylineStatement(
     ownerId,
     deletedById,
     asModerator,
-    markerView,
-  }: { id: number; ownerId: number; deletedById: number; asModerator: boolean; markerView: boolean }
+  }: { id: number; ownerId: number; deletedById: number; asModerator: boolean }
 ) {
   const owner = Prisma.sql`${ownerId}::int`;
   return tx.$executeRaw`
@@ -1218,28 +1212,15 @@ function deleteStorylineStatement(
     facts AS MATERIALIZED (
       SELECT
         EXISTS (SELECT 1 FROM open_reports) AS reported,
-        ${ownerHeldSql(owner)} AS owner_held,
-        EXISTS (
-          SELECT 1 FROM "StorylineChapter" c
-          WHERE c."storylineId" = ${id} AND ${ownerHeldSql(Prisma.raw('c."userId"'))}
-        ) AS author_held,
-        EXISTS (
-          SELECT 1 FROM pending p WHERE ${accountHoldSql(Prisma.raw('p."userId"'), markerView)}
-        ) AS pending_author_held,
         EXISTS (
           SELECT 1 FROM "StorylineChapter" c
           WHERE c."storylineId" = ${id} AND c."removedAt" IS NOT NULL
         ) AS tombstoned
     ),
     keep AS MATERIALIZED (
-      SELECT (
-          reported OR owner_held OR author_held OR pending_author_held OR tombstoned
-        ) IS NOT FALSE AS keep,
+      SELECT (reported OR tombstoned) IS NOT FALSE AS keep,
         array_remove(ARRAY[
           CASE WHEN reported THEN 'open-report' END,
-          CASE WHEN owner_held THEN 'owner' END,
-          CASE WHEN author_held THEN 'chapter-author' END,
-          CASE WHEN pending_author_held THEN 'pending-author' END,
           CASE WHEN tombstoned THEN 'tombstone' END
         ], NULL) AS reasons
       FROM facts
@@ -1344,8 +1325,6 @@ export async function deleteStoryline({
   userId: number;
   isModerator?: boolean;
 }) {
-  // Read outside the transaction: what `accountHoldSql` needs.
-  const markerView = await holdMarkerViewExists();
   let spark: { actorId: number; imageId: number | null } | undefined;
   await dbWrite.$transaction(async (tx) => {
     // Ownership first, unlocked (the owner never changes), so no one else's call takes a lock.
@@ -1415,7 +1394,6 @@ export async function deleteStoryline({
         ownerId: owned.userId,
         deletedById: userId,
         asModerator,
-        markerView,
       });
     } catch (error) {
       // One answer for any failure, so a failed copy cannot be told from any other.
@@ -1589,48 +1567,7 @@ export async function removeStorylineChapter({
     `;
     if (role === 'moderator')
       await tx.$executeRaw`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = ${chapterId}`;
-    else {
-      // Every owner's or author's removal is the same hard delete. When either must be kept for
-      // records, this same statement copies the chapter and the rows its delete cascades to, so the
-      // decision is made at the write. The row is locked, so no child row can join it meanwhile.
-      const kept = Prisma.sql`(${ownerHeldSql(Prisma.sql`${ownerId}::int`)} OR ${ownerHeldSql(
-        Prisma.sql`${chapter.userId}::int`
-      )})`;
-      const ids = Prisma.sql`${ownerId}::int, ${chapter.userId}::int`;
-      await tx.$executeRaw`
-        WITH kept AS (SELECT ${kept} AS kept),
-        chapter AS (
-          -- Its columns change together with the chapter copy in deleteStorylineStatement.
-          INSERT INTO "HeldStorylineChapter" (id, "storylineId", "postId", "userId", depth,
-            "placementId", "createdAt", "removedAt", "ownerId", "authorId")
-          SELECT id, "storylineId", "postId", "userId", depth, "placementId", "createdAt",
-            "removedAt", ${ids}
-          FROM "StorylineChapter" WHERE id = ${chapterId} AND (SELECT kept FROM kept) IS NOT FALSE
-        ),
-        edges AS (
-          INSERT INTO "HeldStorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId",
-            canon, "createdAt", "ownerId", "authorId")
-          SELECT "storylineId", "chapterId", "parentChapterId", canon, "createdAt", ${ids}
-          FROM "StorylineChapterEdge"
-          WHERE "chapterId" = ${chapterId} AND (SELECT kept FROM kept) IS NOT FALSE
-        ),
-        choices AS (
-          INSERT INTO "HeldStorylineBranchChoice" ("userId", "parentChapterId", "chapterId",
-            "createdAt", "updatedAt", "ownerId", "authorId")
-          SELECT "userId", "parentChapterId", "chapterId", "createdAt", "updatedAt", ${ids}
-          FROM "StorylineBranchChoice"
-          WHERE ("chapterId" = ${chapterId} OR "parentChapterId" = ${chapterId}) AND (SELECT kept FROM kept) IS NOT FALSE
-        ),
-        clicks AS (
-          INSERT INTO "HeldStorylineCreateClick" ("userId", "parentChapterId", "createdAt",
-            "ownerId", "authorId")
-          SELECT "userId", "parentChapterId", "createdAt", ${ids}
-          FROM "StorylineCreateClick"
-          WHERE "parentChapterId" = ${chapterId} AND (SELECT kept FROM kept) IS NOT FALSE
-        )
-        DELETE FROM "StorylineChapter" WHERE id = ${chapterId}
-      `;
-    }
+    else await tx.$executeRaw`DELETE FROM "StorylineChapter" WHERE id = ${chapterId}`;
     // A tombstone, or a leaf deleted from under one, can leave the main route ending where
     // nothing can be added.
     await clearTombstoneTips(

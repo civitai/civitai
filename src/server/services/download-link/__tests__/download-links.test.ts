@@ -104,7 +104,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 }));
 // A provider's gate also reads moderator-review flags; none are set in this world.
 vi.mock('~/server/services/download-link/moderator-review.reads', () => ({
-  readModeratorFlags: async () => ({ inReview: false, removedWithOwner: false }),
+  readModeratorFlags: async () => ({ inReview: false }),
 }));
 vi.mock('~/server/prom/provider-download.metrics', () => ({
   countProviderDownload: mockCountProviderDownload,

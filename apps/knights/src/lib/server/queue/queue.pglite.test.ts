@@ -2277,7 +2277,7 @@ describe('closeUnservableItems', () => {
     };
     const imageGone = await atInquisitors(90);
     await countedVote(imageGone, 3, 90);
-    // An evidence hold keeps the image when its post is deleted: the moderators can still rule on it.
+    // An image can outlive its post: the moderators can still rule on it.
     const postGone = await atInquisitors(91);
     // Blocked escalations wait for a moderator by design.
     const blocked = await atInquisitors(92);

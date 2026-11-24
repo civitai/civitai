@@ -9,26 +9,21 @@ import { createJob } from './job';
  * durable record of an unfinished deletion, and this finishes it.
  *
  * Deliberately NOT gated on the `app-assistant-tracing` flag: it only finishes deletions of deleted
- * accounts, which must happen whether or not tracing is still on. A deleted account whose content
- * removal is held (or whose hold cannot be read) is skipped and counted. While the trace table is
- * not applied there is nothing to do. Any other error fails the run: the job runner counts and logs
+ * accounts, which must happen whether or not tracing is still on. While the trace table is not
+ * applied there is nothing to do. Any other error fails the run: the job runner counts and logs
  * it, and the next run retries.
  */
 export const sweepAppAssistantTracesJob = createJob(
   'sweep-app-assistant-traces',
   '41 * * * *',
   async () => {
-    const [{ sweepDeletedAccountTraces, liveTraceSweepDeps }, { isMissingTableError }, hold] =
+    const [{ sweepDeletedAccountTraces, liveTraceSweepDeps }, { isMissingTableError }] =
       await Promise.all([
         import('~/server/services/app-assistant/submission-trace.service'),
         import('~/server/services/blocks/app-access.service'),
-        import('~/server/services/legal-hold.service'),
       ]);
     const summary = await sweepDeletedAccountTraces(
-      await liveTraceSweepDeps({
-        isMissingTable: isMissingTableError,
-        isHeld: hold.isContentRemovalHeld,
-      })
+      await liveTraceSweepDeps({ isMissingTable: isMissingTableError })
     );
     logToAxiom({ name: 'sweep-app-assistant-traces', type: 'info', ...summary }, 'webhooks');
     return summary;

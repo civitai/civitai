@@ -15,6 +15,9 @@ export const UserFlag = {
    * `meta.eventPointsExcludedFrom` set, only from that UTC day on (see player-eligibility.ts).
    */
   ExcludeFromEventPoints: 1 << 1, // 2
+
+  /** Moderator-set, after a second moderator confirms: the account holder has died. See memorial.service. */
+  Memorialized: 1 << 2, // 4
 } as const;
 
 /** The `User.meta` key holding the ExcludeFromEventPoints start day; read by eventPointsExcludedFromSql. */
@@ -25,4 +28,5 @@ export type UserFlagValue = (typeof UserFlag)[keyof typeof UserFlag];
 export const userFlagLabels: Record<number, string> = {
   [UserFlag.DisablePayout]: 'Disable creator payouts',
   [UserFlag.ExcludeFromEventPoints]: 'Exclude from event points',
+  [UserFlag.Memorialized]: 'Memorialized',
 };

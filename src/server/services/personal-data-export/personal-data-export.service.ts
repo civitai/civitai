@@ -10,7 +10,6 @@ import {
   personalDataExportRefusedEmail,
 } from '~/server/email/templates/personalDataExport.email';
 import { logToAxiom } from '~/server/logging/client';
-import { accountHoldSql, getAccountLegalHold } from '~/server/services/legal-hold.service';
 import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import {
@@ -153,7 +152,19 @@ export async function claimNextExport(): Promise<ExportRow | null> {
   return row ?? null;
 }
 
-// Export-only, on top of getAccountLegalHold's legs; not part of the delete-path hold.
+/**
+ * A CSAM report that still names the user as subject or secondary user: not yet sent, not yet
+ * archived, or sent within the year.
+ */
+function reportHoldSql(userId: Prisma.Sql) {
+  return Prisma.sql`EXISTS (
+    SELECT 1 FROM "CsamReport" cr
+    WHERE (cr."userId" = ${userId} OR cr.details ->> 'secondaryUserId' = (${userId})::text)
+      AND (cr."reportSentAt" IS NULL OR cr."archivedAt" IS NULL
+        OR cr."reportSentAt" > now() - interval '1 year')
+  )`;
+}
+
 function reviewHoldSql(userId: Prisma.Sql) {
   return Prisma.sql`EXISTS (
     SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
@@ -163,33 +174,30 @@ function reviewHoldSql(userId: Prisma.Sql) {
   )`;
 }
 
-/**
- * Returns the account's legal-hold reasons, if any: `legs` (`['unconfirmed']` when they cannot be
- * read) and `markerView` (for `accountHoldSql`).
- */
-export async function exportHoldReasons(
-  userId: number
-): Promise<{ legs: string[]; markerView: boolean }> {
+/** The account's export hold reasons, if any: `legs` (`['unconfirmed']` when they cannot be read). */
+export async function exportHoldReasons(userId: number): Promise<{ legs: string[] }> {
   try {
-    const hold = await getAccountLegalHold(userId);
-    const [safety] = await dbWrite.$queryRaw<{ present: unknown; review: unknown }[]>(
-      Prisma.sql`SELECT EXISTS (
+    const [safety] = await dbWrite.$queryRaw<
+      { report: unknown; present: unknown; review: unknown }[]
+    >(
+      Prisma.sql`SELECT ${reportHoldSql(Prisma.sql`${userId}::int`)} AS report, EXISTS (
         SELECT 1 FROM "Image" WHERE "Image"."userId" = ${userId}::int AND ${Prisma.raw(
         IMAGE_SAFETY_CONDITION
       )}
       ) AS present, ${reviewHoldSql(Prisma.sql`${userId}::int`)} AS review`
     );
-    const legs: string[] = [...hold.legs];
+    const legs: string[] = [];
+    if (safety?.report !== false) legs.push('report');
     if (safety?.present !== false) legs.push('safety-content');
     if (safety?.review !== false) legs.push('review');
-    return { legs, markerView: hold.markerView };
+    return { legs };
   } catch (e) {
     logToAxiom({
       type: 'error',
       name: LOG,
       message: `hold check failed: ${errorMessage(e)}`,
     });
-    return { legs: ['unconfirmed'], markerView: true };
+    return { legs: ['unconfirmed'] };
   }
 }
 
@@ -705,7 +713,7 @@ export async function releaseExport({
   if (now.getTime() - row.builtAt.getTime() > RELEASE_WINDOW_SECONDS * 1000)
     return { ok: false, reason: 'expired' };
 
-  const { legs: holdReasons, markerView } = await exportHoldReasons(row.userId);
+  const { legs: holdReasons } = await exportHoldReasons(row.userId);
   // A hold that could not be READ is not a hold: refuse this press, write nothing, let it be retried.
   if (holdReasons.includes('unconfirmed')) return { ok: false, reason: 'unconfirmed' };
   if (holdReasons.length) {
@@ -756,12 +764,12 @@ export async function releaseExport({
     SET status = 'released', "releasedAt" = ${now}, "releasedById" = ${actorId}, "holdReasons" = '{}',
         error = NULL
     WHERE id = ${row.id} AND status = 'built'
-      AND NOT ${accountHoldSql(Prisma.sql`${row.userId}::int`, markerView)}
       AND NOT EXISTS (
         SELECT 1 FROM "Image" WHERE "Image"."userId" = ${row.userId}::int
           AND ${Prisma.raw(IMAGE_SAFETY_CONDITION)}
       )
       AND NOT ${reviewHoldSql(Prisma.sql`${row.userId}::int`)}
+      AND NOT ${reportHoldSql(Prisma.sql`${row.userId}::int`)}
   `;
   if (claimed !== 1) return { ok: false, reason: 'not-releasable' };
 

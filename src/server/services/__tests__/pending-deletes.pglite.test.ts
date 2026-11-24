@@ -1207,8 +1207,8 @@ describe('a CSAM report not yet sent', () => {
   });
 });
 
-// The delete hold and the account holds read one copy of each report predicate: a fix to how ids
-// are parsed, or to who counts as named, must reach both. Pins the any-report and unsent variants.
+// The report predicates have one copy, read by every caller: a fix to how ids are parsed, or to who
+// counts as named, must reach all of them. Pins the any-report and unsent variants.
 describe('the shared CSAM report sets', () => {
   const unsentOnly = (report: string) => `${report}."reportSentAt" IS NULL`;
   const rows = async (text: string) =>

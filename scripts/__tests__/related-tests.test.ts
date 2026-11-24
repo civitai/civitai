@@ -156,7 +156,7 @@ describe('isSmoke: the smoke set, by name or by the scanner list', () => {
     'src/server/services/__tests__/no-raw-sql.test.ts',
     'src/server/__tests__/routes.ledger.test.ts',
     'src/server/__tests__/auth.seam.test.ts',
-    'src/server/services/__tests__/moderator-delete-hold-parity.test.ts',
+    'src/server/notifications/__tests__/old-draft-reaper-parity.test.ts',
     'scripts/__tests__/feed-go-basemodels.schema-drift.test.ts',
     // case-insensitive: a camelCase `Parity` is a parity test too
     'src/components/AppBlocks/hostHandlerParity.test.ts',

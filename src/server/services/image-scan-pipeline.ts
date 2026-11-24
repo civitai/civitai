@@ -29,7 +29,6 @@ import { decideAgeRegexHit } from '~/server/services/age-prompt-shadow.service';
 import { getComputedTags, getConditionalTagsForReview } from '~/server/utils/tag-rules';
 import { getTagRules } from '~/server/services/system-cache';
 import { Prisma } from '@prisma/client';
-import { captureImageKeptSql, ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
 import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { isDefined } from '~/utils/type-guards';
 import { normalizeText } from '~/utils/normalize-text';
@@ -561,25 +560,29 @@ async function queueCdnAccessSyncWhen(imageId: number, condition: Prisma.Sql, na
 }
 
 /**
- * A block a scan must not lift: the owner is banned or held, or a hold kept the image. The fresh
- * read and the write's WHERE share it, since a ban or hold can land between the two.
+ * A block a scan must not lift: the owner is banned. The fresh read and the write's WHERE share it,
+ * since a ban can land between the two.
  */
-export const blockKeptByBanOrHoldSql = (alias: string) => {
+export const blockKeptByBanSql = (alias: string) => {
   const t = Prisma.raw(`"${alias}"`);
-  return Prisma.sql`(${hasBlockMarkerSql(alias)} AND (
-    EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${t}."userId" AND u."bannedAt" IS NOT NULL)
-    OR ${ownerHeldSql(Prisma.sql`${t}."userId"`)}
-    OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" k WHERE k."imageId" = ${t}.id)
-    OR ${captureImageKeptSql(`"${alias}"`)}))`;
+  return Prisma.sql`(${hasBlockMarkerSql(alias)} AND
+    EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${t}."userId" AND u."bannedAt" IS NOT NULL))`;
 };
 
-/** Whether `blockKeptByBanOrHoldSql` holds for the image. A read that fails counts as kept. */
-function isBlockKeptByBanOrHold(imageId: number) {
-  return ownerHeld(
-    dbWrite,
-    Prisma.sql`FROM "Image" m WHERE m.id = ${imageId}`,
-    blockKeptByBanOrHoldSql('m')
-  );
+/** Whether `blockKeptByBanSql` holds for the image. A read that fails counts as kept. */
+async function isBlockKeptByBan(imageId: number) {
+  const rows = await dbWrite.$queryRaw<{ kept: unknown }[]>`
+    SELECT ${blockKeptByBanSql('m')} AS kept FROM "Image" m WHERE m.id = ${imageId}
+  `.catch((e: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'scan-block-kept-check-failed',
+      message: (e as Error).message,
+    });
+    return null;
+  });
+  if (!rows) return true;
+  return rows.some((r) => r.kept !== false);
 }
 
 /** One image in this many is logged without a prior review, so the line's volume shows it runs. */
@@ -765,16 +768,15 @@ export async function resolveScanOutcome({
     reviewKey = 'csam';
   }
 
-  // A block on a banned or held owner's image, or on one a hold kept, is that decision, not a stale
-  // automated one, so a scan never lifts it. Read fresh, not from `image`: the ban or hold can block
-  // the row after this scan loaded it.
+  // A block on a banned owner's image is that decision, not a stale automated one, so a scan never
+  // lifts it. Read fresh, not from `image`: the ban can block the row after this scan loaded it.
   if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
     const [current] = await dbWrite.$queryRaw<
       { ingestion: ImageIngestionStatus; blockedFor: string | null; nsfwLevel: number }[]
     >`
       SELECT i.ingestion, i."blockedFor", i."nsfwLevel" FROM "Image" i WHERE i.id = ${image.id}
     `;
-    if (current && hasBlockMarker(current) && (await isBlockKeptByBanOrHold(image.id))) {
+    if (current && hasBlockMarker(current) && (await isBlockKeptByBan(image.id))) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = current.blockedFor ?? BlockedReason.Moderated;
       toUpdate.nsfwLevel = NsfwLevel.Blocked;
@@ -837,7 +839,7 @@ export async function resolveScanOutcome({
       )}::jsonb)${axesTerm}
     WHERE id = ${image.id}${blocking ? Prisma.empty : Prisma.sql` AND NOT ${graceBlockedSql}`}${
         lifting
-          ? Prisma.sql` AND NOT ${blockKeptByBanOrHoldSql('Image')} AND NOT ${keptFromScan}`
+          ? Prisma.sql` AND NOT ${blockKeptByBanSql('Image')} AND NOT ${keptFromScan}`
           : Prisma.empty
       }
   `),

@@ -15,7 +15,6 @@ CREATE TABLE "CsamReport" (
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "needsReview" TEXT, "blockedFor" TEXT
 );
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER NOT NULL, "role" TEXT NOT NULL);
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "meta" JSONB DEFAULT '{}');
 `;
 
@@ -42,9 +41,7 @@ beforeEach(async () => {
   dbMock.dbWrite.$queryRaw.mockImplementation(pgliteRaw(pg).queryRaw as never);
   dbMock.dbWrite.userProfile.findUnique.mockResolvedValue({ bio: 'b' } as never);
   dbMock.dbWrite.userLink.findMany.mockResolvedValue([] as never);
-  await pg.exec(
-    `DELETE FROM "CsamReport"; DELETE FROM "EvidenceHeldUser"; DELETE FROM "Image"; DELETE FROM "User"`
-  );
+  await pg.exec(`DELETE FROM "CsamReport"; DELETE FROM "Image"; DELETE FROM "User"`);
 });
 
 const archived = async () => {
@@ -84,11 +81,6 @@ describe('archiveProfileBeforeModeratorChange report match', () => {
     expect(await archived()).toBe(true);
   });
 
-  it('archives a user held only by a manual evidence hold', async () => {
-    await pg.query(`INSERT INTO "EvidenceHeldUser" ("userId", role) VALUES ($1, 'manual')`, [USER]);
-    expect(await archived()).toBe(true);
-  });
-
   it('archives the subject of a report that no longer holds', async () => {
     await pg.query(
       `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt")
@@ -96,32 +88,6 @@ describe('archiveProfileBeforeModeratorChange report match', () => {
       [USER]
     );
     expect(await archived()).toBe(true);
-  });
-
-  it('archives a user whose only hold is an upload awaiting CSAM review', async () => {
-    await pg.query(`INSERT INTO "Image" (id, "userId", "needsReview") VALUES (1, $1, 'csam')`, [
-      USER,
-    ]);
-    expect(await archived()).toBe(true);
-  });
-
-  it('archives a user whose only hold is a CSAM-blocked upload no sent report lists', async () => {
-    await pg.query(`INSERT INTO "Image" (id, "userId", "blockedFor") VALUES (2, $1, 'CSAM')`, [
-      USER,
-    ]);
-    expect(await archived()).toBe(true);
-  });
-
-  it('archives before a moderator clear of a user with only an upload awaiting CSAM review', async () => {
-    await pg.query(`INSERT INTO "Image" (id, "userId", "needsReview") VALUES (3, $1, 'csam')`, [
-      USER,
-    ]);
-    expect(await archivedBeforeClear()).toBe(true);
-  });
-
-  it('archives before a moderator clear of a user held only by a manual evidence hold', async () => {
-    await pg.query(`INSERT INTO "EvidenceHeldUser" ("userId", role) VALUES ($1, 'manual')`, [USER]);
-    expect(await archivedBeforeClear()).toBe(true);
   });
 
   // A ban note alone is not a hold or a CSAM signal: only a report or a hold archives.

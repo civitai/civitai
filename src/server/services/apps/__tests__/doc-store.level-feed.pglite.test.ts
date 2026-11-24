@@ -366,6 +366,56 @@ describe('the level streams over the store (rls on)', () => {
     await close(pg, pg13);
   });
 
+  it('🔴 the level reads page: newest key first by `beforeKey` with no duplicate or gap, and a bounded changes page holds exactly `limit` rows in seq order', async () => {
+    const PAGES: DocCollection = {
+      name: 'pages',
+      config: decl({ visibility: 'shared', write: 'own' }),
+    };
+    const source = docStoreLevelSource(feed);
+    const me = ctx(app, NS_PROD, VIEWER_1);
+    // Seven documents, written and then rated in orders that are neither key order nor each
+    // other, so seq order, heap order and key order all differ. Mixed case: code-unit
+    // (COLLATE "C") order puts every capital first, which a locale order would not.
+    const written = ['a1', 'B1', 'g1', 'F1', 'e1', 'D1', 'c1'];
+    const rated = ['D1', 'e1', 'B1', 'c1', 'g1', 'F1', 'a1'];
+    for (const key of written) await store.put(me, PAGES, key, { t: `page-${key}` });
+    for (const key of rated) await rate(PAGES, key, 4);
+    const upTo = await feed.feedHead(app);
+    const LIMIT = 3;
+
+    const pageDown = async (selector: 'none' | { bit: number }) => {
+      const pages: string[][] = [];
+      let before = '';
+      // Capped, so a read that ignores `beforeKey` fails the toEqual below instead of hanging.
+      for (let i = 0; i < 5; i++) {
+        const page = await source.documents(app, PAGES.name, selector, before, upTo, LIMIT);
+        pages.push(page.map((d) => d.key));
+        if (page.length < LIMIT) break;
+        before = page[page.length - 1].key;
+      }
+      return pages;
+    };
+    const expected = [['g1', 'e1', 'c1'], ['a1', 'F1', 'D1'], ['B1']];
+    expect(await pageDown('none')).toEqual(expected);
+    expect(await pageDown({ bit: 4 })).toEqual(expected);
+    // Positive control: the bit read selects by level, so another bit holds none of them.
+    expect(await pageDown({ bit: 2 })).toEqual([[]]);
+
+    // The changed set after the first rating is the other six; a page of three is the next three.
+    const after = (await docSeq('D1', PAGES)) ?? 0;
+    const seqs = await Promise.all(rated.map((key) => docSeq(key, PAGES)));
+    expect(seqs.every((s, i) => i === 0 || (s ?? 0) > (seqs[i - 1] ?? 0))).toBe(true);
+    for (const selector of ['none', { bit: 4 }] as const) {
+      const page = await source.changes(app, PAGES.name, selector, after, upTo, LIMIT);
+      expect(page.docs.map((d) => [d.key, d.seq, d.onStream])).toEqual([
+        ['e1', seqs[1], true],
+        ['B1', seqs[2], true],
+        ['c1', seqs[3], true],
+      ]);
+      expect(page.tombs).toEqual([]);
+    }
+  });
+
   it('a counter document is on no level stream', async () => {
     const pg = await open(1, TALLIES);
     expect(upserted(pg.events)).toEqual([]);

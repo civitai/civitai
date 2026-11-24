@@ -1,4 +1,4 @@
-import { captureImageStateHeldSql, ownerHeldSql } from '~/server/services/legal-hold.service';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import { constants } from '~/server/common/constants';
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
@@ -667,19 +667,11 @@ async function deleteFileObjects(
 }
 
 /**
- * Whether a file must be kept when it is removed, judged from the row each time: its uploader is
- * held, or a scan of it has not passed (an image in it, its own scan copy, or a
- * processing step still running). `f` names the file row.
+ * Whether a file must be kept when it is removed, judged from the row each time: a scan of it has not
+ * passed (an image in it, its own scan copy, or a processing step still running). `f` names the
+ * file row.
  */
-const mustKeep = (f: Prisma.Sql) => Prisma.sql`(${uploaderHeld(f)} OR ${scanOpen(f)})`;
-
-const uploaderHeld = (f: Prisma.Sql) => Prisma.sql`EXISTS (
-  SELECT 1 FROM "ServiceDeal" rd WHERE rd."id" = ${f}."dealId" AND ${ownerHeldSql(
-  Prisma.sql`CASE WHEN ${f}."kind"::text = 'Attachment' THEN rd."buyerId" ELSE rd."sellerId" END`
-)}
-)`;
-
-const scanOpen = (f: Prisma.Sql) => Prisma.sql`(
+const mustKeep = (f: Prisma.Sql) => Prisma.sql`(
   EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
     WHERE e."fileId" = ${f}."id" AND e."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")
   OR (${f}."imageId" IS NOT NULL AND ${f}."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus")
@@ -693,8 +685,8 @@ const dealHeld = (f: Prisma.Sql) => Prisma.sql`EXISTS (
 )`;
 
 /**
- * A removed file whose scans finished clean (or that can never be judged), with an uploader not
- * held and its scan copies gone. Deal holds are not checked here; `purgeable` adds them. A
+ * A removed file whose scans finished clean (or that can never be judged), with its scan copies
+ * gone. Deal holds are not checked here; `purgeable` adds them. A
  * removed file whose scan failed, or is still to come, stays for the moderators. `f` names the
  * file row.
  */
@@ -1188,7 +1180,9 @@ export async function resolveServiceDealFileDownload({
       f."malwareScanStatus", f."status", f."removedAt", f."scannedEtag", f."scannedVersionId",
       (SELECT max(e."nsfwLevel") FROM "ServiceDealFileEntry" e WHERE e."fileId" = f."id") AS "contentLevel",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e JOIN "Image" i ON i."id" = e."imageId"
-        WHERE e."fileId" = f."id" AND ${captureImageStateHeldSql('i')}) AS "csamHeld",
+        WHERE e."fileId" = f."id" AND (i."needsReview" IS NOT DISTINCT FROM 'csam'
+          OR i."blockedFor" IS NOT DISTINCT FROM 'CSAM' OR i.minor IS TRUE
+          OR (i.id)::text IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)}))) AS "csamHeld",
       EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
         WHERE e."fileId" = f."id" AND e."nsfwLevel" IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i."id" = e."imageId")) AS "ratedImageGone",
