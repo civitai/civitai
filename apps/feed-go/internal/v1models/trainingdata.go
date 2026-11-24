@@ -41,7 +41,7 @@ var trainingDataListingSQL string
 // TRAINING_DATA_LISTING_RULES_VERSION (training-data-restricted.service.ts), which
 // feed-go-training-data-listing.parity.test.ts holds to the Node source it versions and to this
 // constant. Bump both when Node's decision changes, and port the change here in the same PR.
-const TrainingDataRulesVersion = 1
+const TrainingDataRulesVersion = 2
 
 // TrainingDataSQLHash is the rule set this build lists Training Data files by, as Node names its own
 // (trainingDataListingRulesId, header TrainingDataSQLHeader): the SHA-256 (hex) of

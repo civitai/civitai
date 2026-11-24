@@ -1489,7 +1489,6 @@
   "src/server/jobs/__tests__/model-hot-rank-snapshot.pglite.test.ts": 2,
   "src/server/jobs/__tests__/new-order-grant-forfeits-pre-reset.test.ts": 2,
   "src/server/jobs/__tests__/new-order-grant-payout-block.test.ts": 6,
-  "src/server/jobs/__tests__/new-order-v1-gated-jobs.test.ts": 4,
   "src/server/jobs/__tests__/placement-jobs.drain.test.ts": 4,
   "src/server/jobs/__tests__/placement-jobs.unfunded-drain.test.ts": 5,
   "src/server/jobs/__tests__/prepaid-membership-jobs.test.ts": 6,

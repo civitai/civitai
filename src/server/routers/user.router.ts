@@ -188,6 +188,15 @@ export const userRouter = router({
     const { optInAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
     return optInAppBuzzToday(ctx.user);
   }),
+  /** The user's free generation allowance per free-tier model, from the orchestrator. */
+  getOrchestrationFreeUsage: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .query(async ({ ctx }) => {
+      const { getMyOrchestrationFreeUsage } = await import(
+        '~/server/services/orchestrator/free-tier-usage.service'
+      );
+      return getMyOrchestrationFreeUsage(ctx.user, ctx);
+    }),
   getSearchHydration: publicProcedure
     .input(getUserSearchHydrationSchema)
     .query(getUserSearchHydrationHandler),

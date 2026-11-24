@@ -246,6 +246,10 @@ export enum FLIPT_FEATURE_FLAGS {
   CDN_ACCESS_SYNC = 'cdn-access-sync',
   // The weekly missed-notification digest email (`missed-notification-digest` job), evaluated per user.
   MISSED_NOTIFICATION_DIGEST = 'missed-notification-digest',
+  // The "see it on civitai.red" pointer for a training dataset .com refuses for its rating
+  // (`trainingDataPublicView`). Off, missing or unreachable: no pointer, the dataset is absent as
+  // before. BOOLEAN ONLY: evaluated with no entity and no context.
+  TRAINING_DATA_RED_POINTER = 'training-data-red-pointer',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
@@ -465,6 +469,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // ids. DEFAULT-OFF — absent or Flipt unreachable, both paths answer as an unknown route. See
   // PUBLISH in `doc-store-api.ts`.
   APP_BLOCKS_STORAGE_PUBLISH = 'app-blocks-storage-publish',
+  // The REPORT MODERATION API (`POST /api/v1/blocks/moderation/reports`, the replacement for the
+  // `report` mark; `doc-store-report-api.ts`). EVALUATED PER APP like the publish flag above
+  // (entityId = the REQUESTING app's block id, NO context). DEFAULT-OFF — absent or Flipt
+  // unreachable, the path answers as an unknown route; the `report` mark is unaffected either way.
+  APP_BLOCKS_STORAGE_REPORT_API = 'app-blocks-storage-report-api',
   // A shared document PUT that would change no stored row is free of the shared-write budget:
   // when the body's content hash and index rows equal the stored document's (the caller's own,
   // visible, at the version any `ifVersion` names), the route answers with the stored document

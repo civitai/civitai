@@ -155,7 +155,7 @@ export const pendingDeleteQueued = (
   { ownerAsked = false } = {}
 ) => sql<boolean>`EXISTS (
   SELECT 1 FROM "JobQueue" pdq
-  WHERE pdq.type = 'PendingDelete' AND pdq."entityType" = ${entityType}
+  WHERE pdq.type = 'PendingDelete' AND pdq."entityType" = ${entityType}::"EntityType"
     AND pdq."entityId" = ${id}${ownerAsked ? sql` AND pdq.data ? 'ownerId'` : sql``}
 )`;
 

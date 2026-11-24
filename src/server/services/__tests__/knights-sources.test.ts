@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const { enqueue, openCount } = vi.hoisted(() => ({
@@ -14,6 +15,7 @@ vi.mock('~/server/services/knights/enqueue.service', () => ({ enqueueKnightsItem
 const {
   clearKnightsSourcesConfigCache,
   parseKnightsSourcesConfig,
+  queueLeftPrivateForKnights,
   queueOwnerRatingForKnights,
   queueScanSampleForKnights,
   readKnightsSourcesConfig,
@@ -316,5 +318,28 @@ describe('intake backpressure', () => {
     await queueScanSampleForKnights({ imageId: 3, nsfw: false }, () => 0);
     expect(openCount).toHaveBeenCalledTimes(1);
     expect(queuedIds()).toEqual([1, 2]);
+  });
+});
+
+describe('queueLeftPrivateForKnights', () => {
+  // The fake write client has no query builder, so any read through it fails.
+  const failures = () =>
+    loggingMock.logToAxiom.mock.calls.filter(
+      ([data]) => (data as { type?: string }).type === 'knights-v2-left-private-error'
+    );
+
+  it('reads nothing while the switch is off or unset', async () => {
+    await queueLeftPrivateForKnights({ postIds: [1] });
+    configured({ enabled: false });
+    await queueLeftPrivateForKnights({ postIds: [1] });
+
+    expect(failures()).toEqual([]);
+  });
+
+  it('logs a failure instead of throwing it into the caller', async () => {
+    configured({ enabled: true });
+
+    await expect(queueLeftPrivateForKnights({ imageIds: [7] })).resolves.toBeUndefined();
+    expect(failures()).toEqual([[expect.objectContaining({ ids: [7] }), 'knights-v2-sources']]);
   });
 });
