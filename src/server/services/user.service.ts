@@ -3785,6 +3785,10 @@ export const toggleBookmarkedArticle = async ({
 // TODO(model3d-workstream-E): wire CollectionType.Model3D through bookmark + metrics flow
 //   once model3dMetrics exists. For now Model3D bookmarks short-circuit before reaching
 //   these maps (see toggleBookmarked below).
+const likedModelsCollection = {
+  name: 'Liked Models',
+  description: 'Your liked models will appear in this collection.',
+};
 const collectionEntityProps: Partial<Record<CollectionType, string>> = {
   [CollectionType.Article]: 'articleId',
   [CollectionType.Model]: 'modelId',
@@ -3833,8 +3837,12 @@ export const toggleBookmarked = async ({
             userId,
             type,
             mode: CollectionMode.Bookmark,
-            name: `Bookmarked ${type}`,
-            description: `Your bookmarked ${type.toLowerCase()} will appear in this collection.`,
+            ...(type === CollectionType.Model
+              ? likedModelsCollection
+              : {
+                  name: `Bookmarked ${type}`,
+                  description: `Your bookmarked ${type.toLowerCase()} will appear in this collection.`,
+                }),
           },
         })
         .catch((e) => {
@@ -4307,8 +4315,7 @@ export const getUserBookmarkCollections = async ({ userId }: { userId: number })
         userId,
         type: CollectionType.Model,
         mode: CollectionMode.Bookmark,
-        name: 'Liked Models',
-        description: 'Your liked models will appear in this collection.',
+        ...likedModelsCollection,
       },
     });
 
