@@ -58,7 +58,7 @@ export function buyerDisclosureItems({
   const dispute = hours(SERVICE_DEAL_DISPUTE_WINDOW_MS);
   return [
     {
-      lead: `${price.toLocaleString()} Buzz is held now.`,
+      lead: `${price.toLocaleString('en-US')} Buzz is held now.`,
       text: `Refunded if the seller declines, doesn't accept within ${accept} hours, or you withdraw before they accept.`,
     },
     {
