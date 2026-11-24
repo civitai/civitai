@@ -9,6 +9,7 @@ import {
   type AppReactionEntityType,
   type EntityReactionError,
 } from '~/shared/constants/block-reaction.constants';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 
 /**
  * SET_ENTITY_REACTION / GET_ENTITY_REACTIONS — the shared, PURE decision layer for the app
@@ -230,7 +231,11 @@ export function createReactionReplyLatch({
 }: {
   requestId: string;
   emit: (payload: Record<string, unknown>) => void;
-}): { reply: (payload: { result: unknown } | { error: EntityReactionError }) => void } {
+}): {
+  reply: (
+    payload: { result: unknown } | { error: EntityReactionError; rateLimit?: RateLimitMeta }
+  ) => void;
+} {
   let settled = false;
   return {
     reply: (payload) => {

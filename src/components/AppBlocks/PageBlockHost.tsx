@@ -246,6 +246,7 @@ import {
   sharedStorageErrorReply,
   storageErrorMessage,
 } from '~/components/AppBlocks/sharedStorageError';
+import { rateLimitReplyFields } from '~/components/AppBlocks/bridgeRateLimit';
 import {
   BLOCK_STORAGE_READ_OPTS,
   invalidatePrivateStorageReads,
@@ -2930,6 +2931,7 @@ export function PageBlockHost({
           send('APP_WORKFLOWS_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2976,6 +2978,7 @@ export function PageBlockHost({
           send('CANCEL_APP_WORKFLOW_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3029,7 +3032,10 @@ export function PageBlockHost({
               });
               reply({ result });
             } catch (err) {
-              reply({ error: err instanceof Error ? err.message : 'unknown' });
+              reply({
+                error: err instanceof Error ? err.message : 'unknown',
+                ...rateLimitReplyFields(err),
+              });
             }
           },
           // Dismiss (Cancel / X / escape) = consent declined → settle the
@@ -3073,6 +3079,7 @@ export function PageBlockHost({
           send('IMAGES_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3105,6 +3112,7 @@ export function PageBlockHost({
           send('WORKFLOW_MEDIA_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3149,6 +3157,7 @@ export function PageBlockHost({
         send('BUZZ_BALANCE_RESULT', {
           requestId,
           error: err instanceof Error ? err.message : 'unknown',
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -3191,6 +3200,7 @@ export function PageBlockHost({
           send('BUZZ_TRANSACTIONS_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3221,6 +3231,7 @@ export function PageBlockHost({
         send('BUZZ_ACCOUNTS_RESULT', {
           requestId,
           error: err instanceof Error ? err.message : 'unknown',
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -3257,6 +3268,7 @@ export function PageBlockHost({
           send('DAILY_COMPENSATION_RESULT', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3293,6 +3305,7 @@ export function PageBlockHost({
         send('VIEWER_RESULT', {
           requestId,
           error: err instanceof Error ? err.message : 'unknown',
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -3496,6 +3509,7 @@ export function PageBlockHost({
             requestId,
             value: null,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3543,6 +3557,7 @@ export function PageBlockHost({
             requestId,
             ok: false,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3591,6 +3606,7 @@ export function PageBlockHost({
             ok: false,
             deleted: false,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -3655,6 +3671,7 @@ export function PageBlockHost({
           requestId,
           keys: [],
           error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -3703,6 +3720,7 @@ export function PageBlockHost({
           limitBytes: 0,
           limitRows: 0,
           error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -3798,7 +3816,11 @@ export function PageBlockHost({
           nextCursor: result.nextCursor,
         });
       } catch (err) {
-        send('SHARED_LIST_RESULT', { requestId, error: storageErrorMessage(err) });
+        send('SHARED_LIST_RESULT', {
+          requestId,
+          error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
+        });
       }
     });
     return off;
@@ -3825,7 +3847,11 @@ export function PageBlockHost({
           );
           send('SHARED_GET_COUNT_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_GET_COUNT_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_GET_COUNT_RESULT', {
+            requestId,
+            error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
+          });
         }
       }
     );
@@ -3853,7 +3879,11 @@ export function PageBlockHost({
           );
           send('SHARED_GET_COUNTS_RESULT', { requestId, counts: result.counts });
         } catch (err) {
-          send('SHARED_GET_COUNTS_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_GET_COUNTS_RESULT', {
+            requestId,
+            error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
+          });
         }
       }
     );
@@ -4115,7 +4145,12 @@ export function PageBlockHost({
               : null,
           });
         } catch (err) {
-          send('SHARED_GET_RESULT', { requestId, item: null, error: storageErrorMessage(err) });
+          send('SHARED_GET_RESULT', {
+            requestId,
+            item: null,
+            error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
+          });
         }
       }
     );
@@ -4322,7 +4357,12 @@ export function PageBlockHost({
           send('SAVE_IMAGE_RESULT', { requestId, ok: true });
         } catch (err) {
           if (unmounted.aborted) return;
-          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+          send('SAVE_IMAGE_RESULT', {
+            requestId,
+            ok: false,
+            error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
+          });
         } finally {
           if (holdsZipSlot) saveZipVerifyInFlightRef.current -= 1;
         }
@@ -4371,7 +4411,12 @@ export function PageBlockHost({
         await downloadUrlAsBlob(image.url, sanitizeDownloadFilename(req.filename, image.url));
         send('SAVE_IMAGE_RESULT', { requestId, ok: true });
       } catch (err) {
-        send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        send('SAVE_IMAGE_RESULT', {
+          requestId,
+          ok: false,
+          error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
+        });
       } finally {
         // Release the slot on EVERY exit that acquired one (success / refusal /
         // error) so the gate can't leak slots and wedge shut.
@@ -5028,7 +5073,11 @@ export function PageBlockHost({
                 selected ? { requestId, selected } : { requestId, error: MEDIA_UPLOAD_FAILED_ERROR }
               );
             } catch (err) {
-              send('MEDIA_UPLOAD_RESULT', { requestId, error: run.mediaUploadErrorMessage(err) });
+              send('MEDIA_UPLOAD_RESULT', {
+                requestId,
+                error: run.mediaUploadErrorMessage(err),
+                ...rateLimitReplyFields(err),
+              });
             }
           } catch {
             send('MEDIA_UPLOAD_RESULT', { requestId, error: MEDIA_UPLOAD_FAILED_ERROR });
@@ -5119,7 +5168,7 @@ export function PageBlockHost({
           );
         } catch (err) {
           release();
-          reply({ error: mediaUploadBatchStartError(err) });
+          reply({ error: mediaUploadBatchStartError(err), ...rateLimitReplyFields(err) });
           return;
         }
         const { batchId, expiresAt } = started;
@@ -5340,7 +5389,11 @@ export function PageBlockHost({
       } catch (err) {
         // NOT_FOUND / FORBIDDEN (proc) · too-large · parse-failed (fetch/unzip/
         // abort) — a single error discriminant, never a hang.
-        send('WILDCARD_PACK_RESULT', { requestId, error: classifyWildcardPackError(err) });
+        send('WILDCARD_PACK_RESULT', {
+          requestId,
+          error: classifyWildcardPackError(err),
+          ...rateLimitReplyFields(err),
+        });
       } finally {
         // Release the in-flight slot on EVERY exit (success, too-large early
         // return, or error) so the concurrency gate can't leak slots and wedge
@@ -5387,7 +5440,11 @@ export function PageBlockHost({
         }, RESOURCE_FILE_DEADLINE_MS);
         send('RESOURCE_FILE_RESULT', { requestId, file });
       } catch (err) {
-        send('RESOURCE_FILE_RESULT', { requestId, error: classifyResourceFileError(err) });
+        send('RESOURCE_FILE_RESULT', {
+          requestId,
+          error: classifyResourceFileError(err),
+          ...rateLimitReplyFields(err),
+        });
       } finally {
         resourceFileInFlightRef.current -= 1;
       }
@@ -5505,7 +5562,10 @@ export function PageBlockHost({
               // FORBIDDEN from the collection services (e.g. a private
               // collection this viewer may not follow) lands here as a message,
               // never as a hang.
-              settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              settlement.reply({
+                error: err instanceof Error ? err.message : 'unknown',
+                ...rateLimitReplyFields(err),
+              });
             }
           },
           // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
@@ -5582,7 +5642,7 @@ export function PageBlockHost({
         } catch (err) {
           const error = classifyEntityReactionError(err);
           reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(error));
-          latch.reply({ error });
+          latch.reply({ error, ...rateLimitReplyFields(err) });
         }
       })();
     });
@@ -5632,7 +5692,7 @@ export function PageBlockHost({
           });
           latch.reply({ result });
         } catch (err) {
-          latch.reply({ error: classifyEntityReactionError(err) });
+          latch.reply({ error: classifyEntityReactionError(err), ...rateLimitReplyFields(err) });
         }
       })();
     });
@@ -5693,6 +5753,7 @@ export function PageBlockHost({
           send('GENERATION_SOURCE_PERSISTED', {
             requestId,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       })();
@@ -5775,7 +5836,10 @@ export function PageBlockHost({
           // here as a legible message rather than a wedged button. The server's
           // refusals are deliberately uniform where they would otherwise be an
           // existence oracle.
-          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          settlement.reply({
+            error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
+          });
           return;
         }
         if (preview.images.length === 0) {
@@ -5814,7 +5878,10 @@ export function PageBlockHost({
               });
               settlement.reply({ result });
             } catch (err) {
-              settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              settlement.reply({
+                error: err instanceof Error ? err.message : 'unknown',
+                ...rateLimitReplyFields(err),
+              });
             }
           },
           // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
@@ -5875,7 +5942,10 @@ export function PageBlockHost({
             quoteId,
           })) as TrainingQuotePreview;
         } catch (err) {
-          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          settlement.reply({
+            error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
+          });
           return;
         }
         const thumbnails = resolveTrainingConsentThumbnails(preview, trainingUploadsRef.current);
@@ -5938,7 +6008,10 @@ export function PageBlockHost({
                 settlement.reply(trainingSubmitReplyFromResult(result));
                 refreshBuzzCapNotice();
               } catch (err) {
-                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+                settlement.reply({
+                  error: err instanceof Error ? err.message : 'unknown',
+                  ...rateLimitReplyFields(err),
+                });
               }
             },
             onCancel: settlement.decline,
@@ -6034,7 +6107,10 @@ export function PageBlockHost({
             quoteId,
           })) as ConfirmedStepQuotePreview;
         } catch (err) {
-          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          settlement.reply({
+            error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
+          });
           return;
         }
         // The viewer's own limit binds and the confirm cannot override it: explain,
@@ -6098,7 +6174,10 @@ export function PageBlockHost({
             try {
               await submitConsented();
             } catch (err) {
-              settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              settlement.reply({
+                error: err instanceof Error ? err.message : 'unknown',
+                ...rateLimitReplyFields(err),
+              });
             }
             return;
           }
@@ -6160,7 +6239,10 @@ export function PageBlockHost({
                 });
                 await submitConsented();
               } catch (err) {
-                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+                settlement.reply({
+                  error: err instanceof Error ? err.message : 'unknown',
+                  ...rateLimitReplyFields(err),
+                });
               }
             },
             onCancel: settlement.decline,

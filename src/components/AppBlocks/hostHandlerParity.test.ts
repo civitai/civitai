@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   INVENTORY,
+  UNIVERSAL_ERROR_KEYS,
   checkReplyKeys,
   parseDeclaredKeys,
   type HostFile,
@@ -286,6 +287,14 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
       expect(checkReplyKeys('SUBMIT_WORKFLOW', { requestId: 'r', error: 'x' }).problems).toEqual([
         "SUBMIT_WORKFLOW: the reply has a top-level `error`, but errorKeys is 'none'",
       ]);
+      // `rateLimit` is a universal ERROR key: any error reply may carry it, no success reply.
+      const rateLimit = { retryAfterSeconds: 1, retryAt: '2031-01-01T00:00:00.000Z' };
+      expect(
+        checkReplyKeys('GET_VIEWER', { requestId: 'r', error: 'x', rateLimit }).problems
+      ).toEqual([]);
+      expect(
+        checkReplyKeys('GET_VIEWER', { requestId: 'r', viewer: { id: 1 }, rateLimit }).problems
+      ).toEqual(['GET_VIEWER: the reply carries `rateLimit`, which replyKeys does not declare']);
     });
 
     it('the forward matrix rows agree with the declared shapes, on each host', () => {
@@ -390,9 +399,12 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
             continue;
           }
           const { required, optional } = names(declared);
-          expect([...seen].sort(), `${type}: ${outcome} keys the pins cover`).toEqual(
-            [...required, ...optional].sort()
-          );
+          // A universal error key is allowed on every type, so a pin may show it or not.
+          const listed = (k: string) => outcome === 'success' || !UNIVERSAL_ERROR_KEYS.includes(k);
+          expect(
+            [...seen].filter(listed).sort(),
+            `${type}: ${outcome} keys the pins cover`
+          ).toEqual([...required, ...optional].filter(listed).sort());
         }
       }
       // Positive control for the host-written check above: IframeHost writes the batch

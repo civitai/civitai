@@ -111,6 +111,7 @@ import {
   sharedStorageErrorReply,
   storageErrorMessage,
 } from '~/components/AppBlocks/sharedStorageError';
+import { rateLimitReplyFields } from '~/components/AppBlocks/bridgeRateLimit';
 import {
   BLOCK_STORAGE_READ_OPTS,
   invalidatePrivateStorageReads,
@@ -2604,6 +2605,7 @@ export function IframeHost({
             requestId,
             ok: false,
             error: err instanceof Error ? err.message : 'unknown',
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2700,6 +2702,7 @@ export function IframeHost({
         send('BUZZ_BALANCE_RESULT', {
           requestId,
           error: err instanceof Error ? err.message : 'unknown',
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -2759,6 +2762,7 @@ export function IframeHost({
             requestId,
             value: null,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2791,6 +2795,7 @@ export function IframeHost({
             requestId,
             ok: false,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2823,6 +2828,7 @@ export function IframeHost({
             ok: false,
             deleted: false,
             error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
           });
         }
       }
@@ -2872,6 +2878,7 @@ export function IframeHost({
           requestId,
           keys: [],
           error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -2902,6 +2909,7 @@ export function IframeHost({
           limitBytes: 0,
           limitRows: 0,
           error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
         });
       }
     });
@@ -3000,7 +3008,11 @@ export function IframeHost({
           nextCursor: result.nextCursor,
         });
       } catch (err) {
-        send('SHARED_LIST_RESULT', { requestId, error: storageErrorMessage(err) });
+        send('SHARED_LIST_RESULT', {
+          requestId,
+          error: storageErrorMessage(err),
+          ...rateLimitReplyFields(err),
+        });
       }
     });
     return off;
@@ -3022,7 +3034,11 @@ export function IframeHost({
           );
           send('SHARED_GET_COUNT_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_GET_COUNT_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_GET_COUNT_RESULT', {
+            requestId,
+            error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
+          });
         }
       }
     );
@@ -3045,7 +3061,11 @@ export function IframeHost({
           );
           send('SHARED_GET_COUNTS_RESULT', { requestId, counts: result.counts });
         } catch (err) {
-          send('SHARED_GET_COUNTS_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_GET_COUNTS_RESULT', {
+            requestId,
+            error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
+          });
         }
       }
     );
@@ -3221,7 +3241,12 @@ export function IframeHost({
               : null,
           });
         } catch (err) {
-          send('SHARED_GET_RESULT', { requestId, item: null, error: storageErrorMessage(err) });
+          send('SHARED_GET_RESULT', {
+            requestId,
+            item: null,
+            error: storageErrorMessage(err),
+            ...rateLimitReplyFields(err),
+          });
         }
       }
     );
@@ -3366,7 +3391,10 @@ export function IframeHost({
               // FORBIDDEN from the collection services (e.g. a private
               // collection this viewer may not follow) lands here as a message,
               // never as a hang.
-              settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              settlement.reply({
+                error: err instanceof Error ? err.message : 'unknown',
+                ...rateLimitReplyFields(err),
+              });
             }
           },
           // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
@@ -3435,7 +3463,7 @@ export function IframeHost({
         } catch (err) {
           const error = classifyEntityReactionError(err);
           reviveConsentNoticeOnRefusal(entityReactionRefusedScopes(error));
-          latch.reply({ error });
+          latch.reply({ error, ...rateLimitReplyFields(err) });
         }
       })();
     });
@@ -3484,7 +3512,7 @@ export function IframeHost({
           });
           latch.reply({ result });
         } catch (err) {
-          latch.reply({ error: classifyEntityReactionError(err) });
+          latch.reply({ error: classifyEntityReactionError(err), ...rateLimitReplyFields(err) });
         }
       })();
     });

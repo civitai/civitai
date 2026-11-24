@@ -1,4 +1,6 @@
 import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
+import { rateLimitReplyFields } from '~/components/AppBlocks/bridgeRateLimit';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 import {
   findForeignTrainingBlobKeys,
   trainingBlobKeyIdentity,
@@ -235,7 +237,9 @@ export function isTrainingSubmitTransportError(err: unknown): boolean {
   return typeof (err as { data?: { code?: unknown } } | null | undefined)?.data?.code !== 'string';
 }
 
-export type TrainingSubmitReply = { snapshot: unknown } | { error: string };
+export type TrainingSubmitReply =
+  | { snapshot: unknown }
+  | { error: string; rateLimit?: RateLimitMeta };
 
 /**
  * The `TRAINING_RESULT` payload for a submit that RETURNED. The server marks a submit
@@ -259,5 +263,5 @@ export function trainingSubmitReplyFromResult(result: {
  */
 export function trainingSubmitReplyFromError(err: unknown): TrainingSubmitReply {
   if (isTrainingSubmitTransportError(err)) return { error: 'submission-unconfirmed' };
-  return { error: err instanceof Error ? err.message : 'unknown' };
+  return { error: err instanceof Error ? err.message : 'unknown', ...rateLimitReplyFields(err) };
 }
