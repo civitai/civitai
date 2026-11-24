@@ -220,6 +220,7 @@ function TrainingStudioEmbed({
           supportUrl: SUPPORT_LINKS.portal,
           dataPolicyUrl: '/content/training/data-policy',
           enabledModelFlags,
+          userId: currentUser?.id,
         },
         hrefFor,
         navigate: async (loc: StudioLocation) => {
@@ -310,6 +311,7 @@ function TrainingStudioEmbed({
     canGenerateUnpublished,
     isPaidMember,
     enabledModelFlags,
+    currentUser?.id,
   ]);
 
   // Browser navigation (and the element's own host.navigate round-trip) drives the view: the query

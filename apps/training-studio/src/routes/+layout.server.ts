@@ -24,4 +24,5 @@ export const load: LayoutServerLoad = async ({ locals }) => ({
   elementsUi: locals.devPreview
     ? true
     : (await allowedModelFlags(locals.user, [ELEMENTS_UI_FLAG_KEY])).length > 0,
+  userId: locals.user.id,
 });

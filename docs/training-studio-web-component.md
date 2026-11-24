@@ -84,6 +84,9 @@ interface TrainingStudioHost {
      *  evaluate them and pass the enabled keys (the main app maps them in
      *  `studioModelFlagFeatures`, `src/utils/training.ts`). Omit and every gated model, and Kohya, is hidden. */
     enabledModelFlags?: string[];
+    /** The signed-in user's id. Keys the New training flow's autosave (IndexedDB on the host
+     *  page's origin), so a reload or remount offers the dataset back. Omit and nothing is autosaved. */
+    userId?: number;
   };
 
   /** The host owns the URL space. Flow code describes destinations in studio terms; the host maps

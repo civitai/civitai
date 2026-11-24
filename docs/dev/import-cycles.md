@@ -56,6 +56,13 @@ Before deleting a registry, check two things. Nothing may look an entry up by a 
 runtime: grep for the registry's export, not only its file name. And when an entry goes, check
 that its target is still imported somewhere; if not, delete it too.
 
+A barrel is the same shape. The `~/libs/form` barrel built every form input, the rich-text and
+cosmetic inputs among them, so `SendTipModal`, which needs three plain inputs, reached the editor
+and the cosmetic picker, and they reached the modal back. The plain inputs moved to
+`~/libs/form/basic-inputs.ts`, which the barrel re-exports, and the modal imports that and the
+`Form`/`useForm` modules directly. The 24-module client cycle split into three small ones, and 11
+of its modules left cycles entirely.
+
 ### A shared piece lives in a big service
 
 Module A imports service B for one function or constant, and B (through anything) imports A. Move

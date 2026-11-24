@@ -21,6 +21,8 @@ const bountyEntryUrl = (
 ) => getBaseUrl() + `/bounties/${bounty.id}/entries/${bountyEntry.id}`;
 
 export const bountyAutomaticallyAwardedEmail = createEmail({
+  template: 'bountyAutomaticallyAwarded',
+  mailClass: 'transactional',
   header: ({ user, bounty }: BountyAwardedData) => ({
     subject: `Your bounty "${bounty.name}" has been awarded automatically`,
     to: user.email,
