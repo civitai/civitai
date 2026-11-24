@@ -90,6 +90,7 @@ import {
 import {
   BLOCKED_IMAGE_DELETE_QUEUE,
   LIFT_KEPT_ACTIVITY,
+  ratingRecordedUnderGrace,
 } from '@civitai/shared/account-deletion-grace';
 import {
   PRIOR_BLOCKED_FOR_KEY,
@@ -1729,6 +1730,12 @@ export async function updateNsfwLevel(ids: number | number[]) {
   await dbWrite.$executeRawUnsafe(
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
+  await refreshImageLevelCaches(ids);
+}
+
+/** What reads an image's level outside the row: thumbnails, profile pictures, search documents. */
+export async function refreshImageLevelCaches(ids: number[]) {
+  if (!ids.length) return;
   await Promise.all([refreshThumbnailCache(ids), refreshProfilePicturesForImages(ids)]);
   await queueDocumentsForImageMinorChanges({ levelImageIds: ids });
 }
@@ -1738,14 +1745,19 @@ export async function updateNsfwLevel(ids: number | number[]) {
 // (update_nsfw_levels_new) skips locked rows, so a Blocked-locked row can never be restored
 // by updateNsfwLevel alone. Reset+unlock only the Blocked rows (never-corrupted locks are
 // preserved), then recompute; a never-tagged row the recompute leaves unrated goes back to the scanner.
-export async function resetBlockedNsfwLevel(ids: number | number[]) {
+/** `unlockedOnly`: passes by a row locked since the caller read it unlocked (a moderator's rating). */
+export async function resetBlockedNsfwLevel(
+  ids: number | number[],
+  { unlockedOnly = false }: { unlockedOnly?: boolean } = {}
+) {
   if (!Array.isArray(ids)) ids = [ids];
   ids = [...new Set(ids)];
   if (!ids.length) return;
   await dbWrite.$executeRaw`
     UPDATE "Image"
     SET "nsfwLevel" = 0, "nsfwLevelLocked" = FALSE
-    WHERE id IN (${Prisma.join(ids)}) AND "nsfwLevel" = ${NsfwLevel.Blocked};
+    WHERE id IN (${Prisma.join(ids)}) AND "nsfwLevel" = ${NsfwLevel.Blocked}
+      AND (${!unlockedOnly} OR NOT "nsfwLevelLocked");
   `;
   await updateNsfwLevel(ids);
   await rescanUnratedImages(ids);
@@ -6577,7 +6589,11 @@ export async function updateImageNsfwLevel({
 
     const metadata = (image.metadata as ImageMetadata) ?? undefined;
     if (activity === 'setNsfwLevelKono' && !reason) reason = KNIGHTS_VOTE_NSFW_LEVEL_REASON;
-    const updatedMetadata = { ...metadata, nsfwLevelReason: reason ?? null };
+    const updatedMetadata = {
+      ...metadata,
+      nsfwLevelReason: reason ?? null,
+      ...ratingRecordedUnderGrace(metadata, nsfwLevel),
+    };
 
     await dbWrite.image.update({
       where: { id },

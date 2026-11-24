@@ -391,7 +391,7 @@ describe('a rescan of an image carrying the moderator-only review flag', () => {
 });
 
 /**
- * Decision: a scan that does not block never clears or lowers an image's review. It keeps 'csam'
+ * Decision (civitai/civitai#10152): a scan that does not block never clears or lowers an image's review. It keeps 'csam'
  * and 'appeal', lets a pending appeal's 'appeal' take any other key, and otherwise fills an empty
  * `needsReview` or raises the stored key by IMAGE_REVIEW_PRECEDENCE. A blocking scan settles every
  * review but 'csam', and 'appeal' while one is pending, as every block does; a row holding a CSAM
@@ -666,7 +666,7 @@ describe('the review a scan verdict leaves', () => {
     expect(row.needsReview).toBe('appeal');
   });
 
-  // Control for the row above: only a Pending appeal counts.
+  // Control for the row above: a decided appeal does not keep a non-appeal review.
   it('a blocking verdict settles a review whose appeal was decided', async () => {
     await holder.db.query(
       `INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Image', $1, 'Rejected')`,

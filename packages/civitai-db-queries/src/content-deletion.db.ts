@@ -1,10 +1,6 @@
 import { sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import {
-  GRACE_PRIOR_BLOCKED_FOR_KEY,
-  GRACE_PRIOR_INGESTION_KEY,
-  GRACE_PRIOR_NEEDS_REVIEW_KEY,
-} from '@civitai/shared/account-deletion-grace';
+import { GRACE_PRIOR_KEYS } from '@civitai/shared/account-deletion-grace';
 import { childSafetyImageCase, childSafetyPostCase } from './child-safety-case.db';
 import {
   NSFW_LEVEL_BLOCKED,
@@ -137,8 +133,10 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
           WHEN "blockedFor" IS DISTINCT FROM 'CSAM' AND EXISTS (SELECT 1 FROM "Appeal" a WHERE a."entityType" = 'Image'
             AND a."entityId" = "Image".id AND a.status = 'Pending') THEN 'appeal' END,
         metadata = CASE WHEN jsonb_typeof(metadata) = 'object'
-          THEN metadata - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text
-            - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason'
+          THEN metadata - ${sql.join(
+            GRACE_PRIOR_KEYS.map((key) => sql`${key}::text`),
+            sql` - `
+          )} - 'ruleId' - 'ruleReason'
           ELSE metadata END,
         "updatedAt" = now()
       WHERE id IN (SELECT id FROM doomed WHERE blocked)

@@ -12,6 +12,7 @@ const { mockResetNsfwLevel, mockDropDeleteQueue, mockQueueSearchIndex, mockBustC
 
 vi.mock('~/server/services/image.service', () => ({
   resetBlockedNsfwLevel: mockResetNsfwLevel,
+  refreshImageLevelCaches: vi.fn(async () => undefined),
   dropBlockedImageDeleteQueue: mockDropDeleteQueue,
   queueImageSearchIndexUpdate: mockQueueSearchIndex,
 }));
@@ -93,8 +94,9 @@ const METADATA_LOOKUP = /^\(?"metadata"->>\?::text\)?(::"\w+")?$/;
 const METADATA_MINUS = /^"metadata"(\s*-\s*\?::text)+$/;
 const SCOPED_ON_BREADCRUMB = /"metadata"->>\?::text IS NOT NULL/;
 const CLAIM_START =
-  /FROM \(\s*SELECT i\.id, i\."needsReview" AS "currentReview",[\s\S]*?AS "recordedReview"\s+FROM "Image" i\s+WHERE\s/;
-const BOUNDED_CLAIM = /^LIMIT \?\s*\)\s*c\s+WHERE "Image"\.id = c\.id\s*$/;
+  /FROM \(\s*SELECT i\.id, i\."needsReview" AS "currentReview",[\s\S]*?AS "recordedReview"[\s\S]*?\s+FROM "Image" i\s+WHERE\s/;
+// Bounded, and locking what it claims: see account-deletion-restore-race.pg.test.ts.
+const BOUNDED_CLAIM = /^LIMIT \?\s*FOR UPDATE OF i\s*\)\s*c\s+WHERE "Image"\.id = c\.id\s*$/;
 const OWNER_CHECK = /^\s*\(SELECT [^()]*\([^()]*\)[^()]* FROM "User" u WHERE u\.id = \?\)\s*$/;
 const ENUM_RANGE = /\(SELECT unnest\(enum_range\(NULL::"ImageIngestionStatus"\)\)::text\)/;
 
@@ -213,8 +215,10 @@ function applyRestoreUpdate(rawSql: string, values: unknown[]) {
   const staged = claimed.map((row) => {
     const next: Partial<ImageRow> = {};
     for (const { column, expr, keys } of assignments) {
-      // Which review flag survives is pinned on Postgres, in scan-outcome-csam-block.behavior.test.ts.
-      if (column === 'needsReview') continue;
+      // Which review flag survives, and the rating put back, are pinned on Postgres, in
+      // scan-outcome-csam-block.behavior.test.ts.
+      if (column === 'needsReview' || column === 'nsfwLevel' || column === 'nsfwLevelLocked')
+        continue;
       if (METADATA_MINUS.test(expr)) {
         const metadata = { ...row.metadata };
         for (const key of keys) delete metadata[key];
@@ -234,6 +238,7 @@ function applyRestoreUpdate(rawSql: string, values: unknown[]) {
     needsReview: row.needsReview ?? null,
     currentReview: row.needsReview ?? null,
     recordedReview,
+    recordedLevel: null,
   }));
 }
 
@@ -290,14 +295,14 @@ beforeEach(() => {
   ownerLive = true;
   mockSysRedis.sAdd.mockResolvedValue(1);
 
-  mockDbWrite.$queryRaw.mockImplementation(
-    (strings: TemplateStringsArray, ...values: unknown[]) => {
-      const sql = strings.join('?');
-      if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyRestoreUpdate(sql, values));
-      if (sql.includes('SELECT COUNT(*)')) return Promise.resolve(countMatchingImages(sql, values));
-      throw new Error(`unexpected read: ${sql}`);
-    }
-  );
+  mockDbWrite.$queryRaw.mockImplementation((strings: TemplateStringsArray, ...raw: unknown[]) => {
+    // Nested fragments flattened, as Prisma sends them.
+    const { strings: flat, values } = Prisma.sql(strings, ...(raw as never[]));
+    const sql = flat.join('?');
+    if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyRestoreUpdate(sql, values));
+    if (sql.includes('SELECT COUNT(*)')) return Promise.resolve(countMatchingImages(sql, values));
+    throw new Error(`unexpected read: ${sql}`);
+  });
 
   mockDbWrite.$executeRaw.mockImplementation(
     (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -385,7 +390,7 @@ describe('unblockAccountDeletionImages', () => {
     expect(images[0]).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM', metadata: {} });
     // Control: the other image is restored and goes through the unhide follow-ups.
     expect(images[1]).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
-    expect(mockResetNsfwLevel.mock.calls).toEqual([[[2]]]);
+    expect(mockResetNsfwLevel.mock.calls).toEqual([[[2], { unlockedOnly: true }]]);
     expect(result).toMatchObject({ unblocked: 1, stillBlocked: 1 });
   });
 
@@ -439,7 +444,7 @@ describe('unblockAccountDeletionImages', () => {
 
     // A still-blocked row has to keep its Blocked rating; only the rows the block hid get the
     // reset-and-recompute that undoes the forced level and the rating lock.
-    expect(mockResetNsfwLevel).toHaveBeenCalledWith([1]);
+    expect(mockResetNsfwLevel).toHaveBeenCalledWith([1], { unlockedOnly: true });
     expect(mockQueueSearchIndex).toHaveBeenCalledWith({
       ids: [1],
       action: SearchIndexUpdateQueueAction.Update,
@@ -559,7 +564,7 @@ describe('unblockAccountDeletionImages', () => {
       metadata: { [PRIOR_INGESTION_KEY]: 'Scannned' },
     });
     expect(result).toEqual({ unblocked: 2, stillBlocked: 0, skipped: 1, drained: true });
-    expect(mockResetNsfwLevel).toHaveBeenCalledWith([1, 3]);
+    expect(mockResetNsfwLevel).toHaveBeenCalledWith([1, 3], { unlockedOnly: true });
   });
 
   it('stops instead of spinning when a claimed row comes back unchanged', async () => {
