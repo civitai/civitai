@@ -75,11 +75,7 @@ import {
   whatIfPresetImageGen,
   type PresetModelConfig,
 } from '~/server/services/orchestrator/preset-image-gen.service';
-import {
-  NSFW_CAPPED,
-  NSFW_CAPPED_MESSAGE,
-  WorkflowData,
-} from '~/shared/orchestrator/workflow-data';
+import { blockedReasonMessage, WorkflowData } from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import { orchestratorChatCompletionCost } from '~/server/services/comics/orchestrator-chat';
@@ -3128,14 +3124,7 @@ export const comicsRouter = router({
         const blockedOutput = rawOutputs.find((o) => o?.blockedReason);
         const blockedReason = blockedOutput?.blockedReason as string | undefined;
         if (workflow.status === 'succeeded' && blockedReason) {
-          const errorMessage =
-            blockedReason === 'siteRestricted'
-              ? 'This generation produced mature content that cannot be viewed on this site.'
-              : blockedReason === 'canUpgrade'
-              ? 'This generation produced mature content. Unlock with yellow Buzz to keep the result.'
-              : blockedReason === NSFW_CAPPED
-              ? NSFW_CAPPED_MESSAGE
-              : `Generation blocked: ${blockedReason}.`;
+          const errorMessage = blockedReasonMessage(blockedReason);
 
           if (
             panel.status !== ComicPanelStatus.RequireUnlock ||

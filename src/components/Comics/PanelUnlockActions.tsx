@@ -1,6 +1,6 @@
 import { Button, Text } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
-import { NSFW_CAPPED, NSFW_CAPPED_MESSAGE } from '~/shared/orchestrator/workflow-data';
+import { blockedReasonMessage, isCappedBlock } from '~/shared/orchestrator/workflow-data';
 
 /**
  * The CTA on a single-image panel in `RequireUnlock`. A capped output gets none: the yellow unlock
@@ -19,10 +19,10 @@ export function PanelUnlockActions({
   isUnlocking: boolean;
   onUnlock: () => void;
 }) {
-  if (blockedReason === NSFW_CAPPED)
+  if (isCappedBlock(blockedReason))
     return (
       <Text size="xs" c="dimmed" ta="center" px="xs">
-        {NSFW_CAPPED_MESSAGE}
+        {blockedReasonMessage(blockedReason)}
       </Text>
     );
 
