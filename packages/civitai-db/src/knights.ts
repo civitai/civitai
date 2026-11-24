@@ -52,7 +52,11 @@ type Joined = DB & { img: DB['Image']; p: DB['Post'] };
 
 /**
  * The image half of `servableImage`, whatever its post's state: a rated still image with no block marker, no review hold,
- * and no real-person or minor flag (those go to the moderators' own queues). Expects `Image as img` joined to `Post as p`.
+ * no real-person or minor flag (those go to the moderators' own queues), no CSAM flag or held owner (`heldImageSql`), no
+ * listing on a CSAM report, no ToS violation, an uploader who is not deleted, and no model or version on its post that is
+ * deleted or unpublished for a violation.
+ * Only rules that are permanent belong here: sweeps retire references and close items over a failure. Expects
+ * `Image as img` joined to `Post as p`.
  */
 export const servableImageContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
   eb.and([
@@ -64,11 +68,75 @@ export const servableImageContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>)
     eb('img.acceptableMinor', '=', false),
     eb('img.poi', '=', false),
     eb('img.minor', '=', false),
+    eb('img.tosViolation', '=', false),
+    // A clean image's nullable columns make the held check NULL, not false.
+    sql<SqlBool>`NOT COALESCE(${sql.raw(heldImageSql('img'))}, false)`,
+    sql<SqlBool>`(img.id)::text NOT IN (${sql.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})`,
+    eb.not(
+      eb.exists(
+        eb
+          .selectFrom('User as owner')
+          .select(sql<number>`1`.as('one'))
+          .whereRef('owner.id', '=', 'img.userId')
+          .where('owner.deletedAt', 'is not', null)
+      )
+    ),
+    eb.not(
+      eb.exists(
+        eb
+          .selectFrom('ModelVersion as mv')
+          .innerJoin('Model as m', 'm.id', 'mv.modelId')
+          .select(sql<number>`1`.as('one'))
+          .whereRef('mv.id', '=', 'p.modelVersionId')
+          .where((w) =>
+            w.or([
+              w('mv.status', 'in', ['Deleted', 'UnpublishedViolation']),
+              w('m.status', 'in', ['Deleted', 'UnpublishedViolation']),
+              w('m.deletedAt', 'is not', null),
+            ])
+          )
+      )
+    ),
   ]);
 
 /** The post is not Private. Unsearchable and EarlyAccess posts stay served, as the site serves them. */
 export const postNotPrivate = (eb: ExpressionBuilder<Joined, 'p'>) =>
   eb('p.availability', '!=', 'Private');
+
+/**
+ * Hides an image whose uploader is banned or muted, or whose post's model or version is not Published or is Private. Each
+ * can be lifted, so this only hides: it stays out of `servableImageForSweeps`. `servableImage` composes it, and the main
+ * app's sampling applies it as it reads. Expects `Image as img` joined to `Post as p`.
+ */
+export const imageSourceVisible = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
+  eb.and([
+    eb.not(
+      eb.exists(
+        eb
+          .selectFrom('User as owner')
+          .select(sql<number>`1`.as('one'))
+          .whereRef('owner.id', '=', 'img.userId')
+          .where((w) => w.or([w('owner.bannedAt', 'is not', null), w('owner.muted', '=', true)]))
+      )
+    ),
+    eb.not(
+      eb.exists(
+        eb
+          .selectFrom('ModelVersion as mv')
+          .innerJoin('Model as m', 'm.id', 'mv.modelId')
+          .select(sql<number>`1`.as('one'))
+          .whereRef('mv.id', '=', 'p.modelVersionId')
+          .where((w) =>
+            w.or([
+              w('mv.status', '!=', 'Published'),
+              w('mv.availability', '=', 'Private'),
+              w('m.status', '!=', 'Published'),
+              w('m.availability', '=', 'Private'),
+            ])
+          )
+      )
+    ),
+  ]);
 
 /**
  * `servableImageContent` on a published post, without the rules that must only hide an image (`postNotPrivate`): for
@@ -88,17 +156,14 @@ export const MOD_TAG_REVIEW_SOURCE = 'mod-tag-review';
 export const MOD_TAG_REVIEW_AXIS = 'tag_review';
 
 /**
- * Images players may judge for a moderator review queue: `servableImageContent`, and no CSAM flag or held owner
- * (`heldImageSql`), no listing on a CSAM report and no open report on the image. Everything else stays staff-only.
- * Used where the tag review item is created, served, voted on and swept, and by the moderator app's write-back guard.
- * Expects `Image as img` joined to `Post as p`; the post half is the caller's (`servableImage` for serving).
+ * Images players may judge for a moderator review queue: `servableImageContent` and no open report on the image.
+ * Everything else stays staff-only. Used where the tag review item is created, served, voted on and swept, and by the
+ * moderator app's write-back guard. Expects `Image as img` joined to `Post as p`; the post half is the caller's
+ * (`servableImage` for serving).
  */
 export const modReviewEligibleImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
   eb.and([
     servableImageContent(eb),
-    // A clean image's nullable columns make the held check NULL, not false.
-    sql<SqlBool>`NOT COALESCE(${sql.raw(heldImageSql('img'))}, false)`,
-    sql<SqlBool>`(img.id)::text NOT IN (${sql.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})`,
     sql<SqlBool>`NOT EXISTS (
       SELECT 1 FROM "ImageReport" ir JOIN "Report" r ON r.id = ir."reportId"
       WHERE ir."imageId" = img.id AND r.status IN ('Pending', 'Processing')
@@ -149,11 +214,11 @@ export async function removalLowersLevel(
 }
 
 /**
- * Images Knights may show players: `servableImageForSweeps` on a post that is not Private. Expects `Image as img`
- * joined to `Post as p`.
+ * Images Knights may show players: `servableImageForSweeps` on a post that is not Private, with `imageSourceVisible`.
+ * Expects `Image as img` joined to `Post as p`.
  */
 export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
-  eb.and([servableImageForSweeps(eb), postNotPrivate(eb)]);
+  eb.and([servableImageForSweeps(eb), postNotPrivate(eb), imageSourceVisible(eb)]);
 
 /**
  * Open Knight-stage rating items that players can be served, counted up to `limit` (the intake cap reads `maxOpen + 1`).

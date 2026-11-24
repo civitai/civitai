@@ -62,6 +62,13 @@ beforeAll(async () => {
        poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
        "userId" integer NOT NULL DEFAULT 1, "nsfwLevelLocked" boolean NOT NULL DEFAULT false
      );
+     ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "tosViolation" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS "userId" INTEGER;
+     ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "modelVersionId" INTEGER;
+     CREATE TABLE "User" (id INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP, "bannedAt" TIMESTAMP, muted BOOLEAN NOT NULL DEFAULT false);
+     CREATE TABLE "Model" (id INTEGER PRIMARY KEY, status TEXT NOT NULL, availability TEXT NOT NULL, "deletedAt" TIMESTAMP);
+     CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, status TEXT NOT NULL, availability TEXT NOT NULL);
+     CREATE TABLE "CsamReport" (id SERIAL PRIMARY KEY, "userId" INTEGER, images JSONB NOT NULL DEFAULT '[]', details JSONB);
+     CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
      CREATE TABLE "ImageRatingRequest" (
        "imageId" integer NOT NULL, "userId" integer NOT NULL, "nsfwLevel" integer NOT NULL,
        PRIMARY KEY ("imageId", "userId")
@@ -384,6 +391,25 @@ describe('offerLeftPrivateImagesToKnights', () => {
       `INSERT INTO "ImageRatingRequest" ("imageId", "userId", "nsfwLevel") VALUES ($1, $2, 4)`,
       [imageId, userId]
     );
+
+  // Moderation Lead condition (2026-11-24): both image reads run with JIT off, inside their own transaction.
+  it('runs the owner-rating read and the sampling read each with JIT off', async () => {
+    await post(1, minutesAgo(300));
+    await images(1, [11]);
+    await ownerRating(11);
+    const spy = vi.spyOn(pg, 'query');
+    try {
+      await offer({ postIds: [1] });
+      const sqls = spy.mock.calls.map(([text]) => String(text));
+      const reads = sqls.flatMap((text, i) =>
+        /^select "img"\."id"(, "img"\."nsfwLevel")? from "Image" as "img"/.test(text) ? [i] : []
+      );
+      expect(reads).toHaveLength(2);
+      for (const i of reads) expect(sqls[i - 1]).toBe('SET LOCAL jit = off');
+    } finally {
+      spy.mockRestore();
+    }
+  });
 
   it('samples, once, the images of a post that became public', async () => {
     await post(1, minutesAgo(300));

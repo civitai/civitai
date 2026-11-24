@@ -49,13 +49,29 @@ CREATE TABLE "Image" (
   "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
   "poi" BOOLEAN NOT NULL DEFAULT false,
   "minor" BOOLEAN NOT NULL DEFAULT false,
+  "tosViolation" BOOLEAN NOT NULL DEFAULT false,
   "postId" INTEGER
 );
 CREATE TABLE "Post" (
   "id" INTEGER PRIMARY KEY,
   "publishedAt" TIMESTAMP(3),
+  "availability" TEXT NOT NULL DEFAULT 'Public',
+  "modelVersionId" INTEGER
+);
+CREATE TABLE "Model" (
+  "id" INTEGER PRIMARY KEY,
+  "status" TEXT NOT NULL DEFAULT 'Published',
+  "availability" TEXT NOT NULL DEFAULT 'Public',
+  "deletedAt" TIMESTAMP(3)
+);
+CREATE TABLE "ModelVersion" (
+  "id" INTEGER PRIMARY KEY,
+  "modelId" INTEGER NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'Published',
   "availability" TEXT NOT NULL DEFAULT 'Public'
 );
+CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]', "details" jsonb);
+CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
 CREATE TABLE "NewOrderPlayer" (
   "userId" INTEGER PRIMARY KEY,
   "rankType" TEXT NOT NULL,
@@ -233,7 +249,7 @@ CREATE TABLE "Tag" (
   "nsfwLevel" INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]', "details" jsonb);
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
 CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "status" TEXT NOT NULL);
 CREATE TABLE "ImageReport" ("imageId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
 `;
