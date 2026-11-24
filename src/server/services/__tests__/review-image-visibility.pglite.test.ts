@@ -55,15 +55,22 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
-    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp);
+    CREATE TABLE "User" (
+      id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp, username text, image text,
+      "profilePictureId" int
+    );
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
       "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}', "scanJobs" jsonb,
       "acceptableMinor" boolean NOT NULL DEFAULT false, "modelRestricted" boolean NOT NULL DEFAULT false,
       minor boolean NOT NULL DEFAULT false, poi boolean NOT NULL DEFAULT false,
-      "tosViolation" boolean NOT NULL DEFAULT false
+      "tosViolation" boolean NOT NULL DEFAULT false,
+      -- The rest of what the image page reads.
+      name text, url text, height int, width int, index int, hash text, "hideMeta" boolean DEFAULT false,
+      "createdAt" timestamp DEFAULT now(), "mimeType" text, "scannedAt" timestamp, type text, meta jsonb
     );
+    CREATE TABLE "ImageReaction" ("imageId" int, "userId" int, reaction text);
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
       availability "Availability" DEFAULT 'Public', "collectionId" int, "modelVersionId" int
@@ -369,6 +376,49 @@ describe('reporting a review image', () => {
     await db.exec(`UPDATE "ServiceDealReview" SET "hiddenAt" = now()`);
     expect(await report(IMAGE, BUYER)).toBe('filed');
     expect(await report(IMAGE, OTHER, true)).toBe('filed');
+  });
+});
+
+describe('the image page behind a block', () => {
+  // What the page reads after its visibility decision; empty is enough for these cases.
+  beforeEach(async () => {
+    const caches = await import('~/server/redis/caches');
+    for (const cache of [
+      caches.userCosmeticCache,
+      caches.cosmeticCache,
+      caches.profilePictureCache,
+      caches.cosmeticEntityCaches.Image,
+    ])
+      vi.spyOn(cache, 'fetch').mockResolvedValue({});
+  });
+
+  const page = async (viewer: Viewer) => {
+    const { getImage } = await import('~/server/services/image.service');
+    return getImage({ id: IMAGE, ...viewer, shownReviewImageLevels: allBrowsingLevelsFlag }).then(
+      (image) => image.id,
+      (e: { code?: string }) => e.code
+    );
+  };
+
+  it.each<[string, [number, number]]>([
+    ['blocked by the buyer', [BUYER, OTHER]],
+    ['who blocked the buyer', [OTHER, BUYER]],
+    ['blocked by the seller', [SELLER, OTHER]],
+    ['who blocked the seller', [OTHER, SELLER]],
+  ])('is not found for a viewer %s', async (_label, block) => {
+    expect(await page(STRANGER)).toBe(IMAGE);
+    blocks = [block];
+    expect(await page(STRANGER)).toBe('NOT_FOUND');
+  });
+
+  it('still serves its buyer and a moderator through a block', async () => {
+    blocks = [[SELLER, BUYER]];
+    expect(await page({ userId: BUYER })).toBe(IMAGE);
+    blocks = [
+      [BUYER, OTHER],
+      [SELLER, OTHER],
+    ];
+    expect(await page(MOD)).toBe(IMAGE);
   });
 });
 
