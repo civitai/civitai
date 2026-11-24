@@ -110,6 +110,16 @@ const TURF = [0, 60, 'turf', 'Green'];
 add('2026-11-01 14:00:00', 'reaction', 20, 700, TURF, 'R:700:20', 'add', { players: [30, 31, 11] });
 add('2026-11-01 15:00:00', 'reaction', 30, 701, TURF, 'R:701:30', 'add', { players: [30, 31] });
 
+// Excluded from day two on (restrictedFrom): owner 40 wearing hat 70, actor 42 and turf player 45
+// keep what they gave and earned on day one, and nothing counts from day two.
+const H40 = [40, 70, 'claimed', 'Red'];
+add('2026-11-01 08:00:00', 'reaction', 43, 800, H40, 'R:800:43');
+add('2026-11-02 08:00:00', 'reaction', 44, 801, H40, 'R:801:44');
+add('2026-11-01 09:00:00', 'view', 42, 802, H40);
+add('2026-11-02 09:00:00', 'view', 42, 602, H1000);
+add('2026-11-01 16:00:00', 'reaction', 20, 702, TURF, 'R:702:20', 'add', { players: [45] });
+add('2026-11-02 16:00:00', 'reaction', 20, 703, TURF, 'R:703:20', 'add', { players: [45] });
+
 const q = (v) =>
   Array.isArray(v) ? `[${v.join(', ')}]` : typeof v === 'number' ? String(v) : `'${v}'`;
 const rows = (list) => list.map((r) => `(${r.map(q).join(', ')})`).join(', ');
@@ -147,6 +157,8 @@ const full = [
   ['2026-11-01', 10, 9, 'cosmetic-purchase-x', 'Yellow', 5, 0, 0, 0, 0, 1, 0, { 5: 5 }],
   ['2026-11-01', 30, 60, 'turf', 'Green', 5, 0, 1, 0, 0, 0, 0, { 14: 5 }],
   ['2026-11-01', 31, 60, 'turf', 'Green', 5 + 5, 0, 2, 0, 0, 0, 0, { 14: 5, 15: 5 }],
+  ['2026-11-01', 40, 70, 'claimed', 'Red', 5 + 1, 1, 1, 0, 0, 0, 0, { 8: 5, 9: 1 }],
+  ['2026-11-01', 45, 60, 'turf', 'Green', 5, 0, 1, 0, 0, 0, 0, { 16: 5 }],
   ['2026-11-01', 1000, 9, 'claimed', 'Pink', 5 + 1, 1, 1, 0, 0, 0, 0, { 5: 1, 8: 5 }],
   ['2026-11-02', 10, 7, 'claimed', 'Yellow', 2, 2, 0, 0, 0, 0, 0, { 4: 1, 6: 1 }],
 ];
@@ -174,7 +186,8 @@ async function run(recomputeFrom) {
       types: ['view', 'reaction', 'comment', 'sticker', 'remix', 'modelLike'],
       weights: [1, 5, 5, 10, 25, 5],
       dailyTypes: ['view'],
-      restrictedUsers: [4, 11],
+      restrictedUsers: [4, 11, 40, 42, 45],
+      restrictedFrom: [0, 0, ...Array(3).fill(Date.UTC(2026, 10, 2))],
       newAccountMinId: 1000,
     },
   });
