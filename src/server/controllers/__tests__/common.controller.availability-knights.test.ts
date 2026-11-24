@@ -27,13 +27,6 @@ vi.mock('~/server/db/kyselyDb', async () => {
   });
   return { kyselyWrite: kysely, kyselyRead: kysely };
 });
-// A model leaving Private applies any held scan verdict in the same transaction; none is held here. That step belongs
-// to entityAvailabilityUpdate, not to the Knights offer under test, so it is stubbed rather than driven.
-vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  applyHeldVerdictLeavingPrivate: vi.fn(async () => false),
-  finishHeldVerdictApply: vi.fn(async () => undefined),
-}));
 
 // The stored availability: `stored` until the availability write runs, then the value written, as the primary returns it.
 let stored: Availability;

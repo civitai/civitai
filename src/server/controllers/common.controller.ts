@@ -165,12 +165,18 @@ async function priorAvailability(
   id: number
 ): Promise<Availability | undefined> {
   const select = { availability: true } as const;
-  if (entityType === 'Post')
+  if (entityType === 'Post') {
+    // primary: read before the write overwrites it; a lagging replica could hide Private.
     return (await dbWrite.post.findUnique({ where: { id }, select }))?.availability;
-  if (entityType === 'Model')
+  }
+  if (entityType === 'Model') {
+    // primary: as for Post.
     return (await dbWrite.model.findUnique({ where: { id }, select }))?.availability;
-  if (entityType === 'ModelVersion')
+  }
+  if (entityType === 'ModelVersion') {
+    // primary: as for Post.
     return (await dbWrite.modelVersion.findUnique({ where: { id }, select }))?.availability;
+  }
   return undefined;
 }
 
@@ -182,6 +188,7 @@ async function offerLeftPrivateToKnights(entityType: SupportedAvailabilityResour
   if (entityType !== 'Model') return;
   // The model's trigger carries a flip to Public onto its versions; the sampler still checks each version's own state.
   try {
+    // primary: runs right after the availability write, before a replica may show the model's versions as changed.
     const versions = await dbWrite.modelVersion.findMany({
       where: { modelId: id },
       select: { id: true },
