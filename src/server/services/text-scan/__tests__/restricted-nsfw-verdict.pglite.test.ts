@@ -49,9 +49,21 @@ const {
   applySystemModelNsfwFlag,
   holdLeadAfterSfwOnlyLift,
 } = await import('~/server/services/text-scan/actions/model-nsfw');
-const { currentRestrictedLeadRevision, resolveRestrictedNsfwVerdict } = await import(
+const { currentRestrictedLeadRevision, resolveRestrictedNsfwVerdict: resolveRuling } = await import(
   '~/server/services/text-scan/actions/restricted-nsfw-verdict'
 );
+// Every ruling carries the revision its screen showed; a test that changes nothing in between rules on
+// the current one.
+const resolveRestrictedNsfwVerdict = async (
+  args: Omit<Parameters<typeof resolveRuling>[0], 'revision'> & { revision?: string }
+) =>
+  resolveRuling({
+    ...args,
+    revision:
+      args.revision ??
+      (await currentRestrictedLeadRevision(dbMock.dbWrite as never, args.modelId)) ??
+      '',
+  });
 const { restrictedLeadRevision } = await import('@civitai/shared/restricted-lead-revision');
 const { resolveRestrictedNsfwVerdictInput, restrictedNsfwRulingArgs } = await import(
   '~/server/schema/moderator/restricted-nsfw-verdict'
