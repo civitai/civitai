@@ -293,13 +293,15 @@ var unservedRequestReasons = []string{
 	"v1-with-tags", "v1-cursor", "v1-legacy-cursor", "v1-page-limit",
 }
 
-// prefixedReasonSites are the call sites that build a fallback reason from a key (`"input-" + k`),
-// per file: the parsers' key lists RequestFallbackReasons reads. A new one fails
-// TestRequestFallbackReasonsAreEmitted until its keys are seeded (or said to be unreachable).
+// prefixedReasonSites are the call sites that build a fallback reason at run time (`"input-" + k`),
+// per file. A new one fails TestRequestFallbackReasonsAreEmitted until its reasons are seeded, or it
+// is listed here as outside the request-determined class.
 var prefixedReasonSites = map[string]int{
 	"internal/feed/input.go":      2, // parseInput's unsupported keys; int4IDs (tools, techniques)
 	"internal/modelfeed/input.go": 1, // Parse's unsupported keys
 	"internal/v1models/query.go":  1, // ParseList's unported keys
+	"internal/feed/infinite.go":   1, // feed-<refusal>: the feed service's query mapper refused it, not seeded
+	"internal/feed/pager.go":      1, // feed-<refusal>: the same, on the posts gallery
 }
 
 var (
@@ -332,7 +334,7 @@ func TestRequestFallbackReasonsAreEmitted(t *testing.T) {
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		b, err := os.ReadFile(path)
+		b, err := os.ReadFile(path) //nolint:gosec // G304: path is a source file of this module, from the walk
 		if err != nil {
 			return err
 		}
