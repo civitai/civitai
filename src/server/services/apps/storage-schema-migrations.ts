@@ -631,6 +631,13 @@ function rawNames(decl: unknown, field: 'marks' | 'counters'): string[] {
  *
  * `prev` is read RAW, not parsed: a baseline that no longer parses still names what its
  * collections declared, and the parser keeps accepting these fields on replay (approved history).
+ *
+ * 🔴 ROLLBACK ASSUMPTION (docs/app-storage-generic-core.md, "Data migration" → "Rollback"): a
+ * revert re-submits the previous approved version, which this check compares with the CURRENT one.
+ * So a rollout step 4 migration version must keep the source collection's old marks (and counters,
+ * and `write: "none"`) declared until its target's switch opens: reverting to the version before it
+ * then re-declares nothing. Once the target is open there is no revert, only forward versions.
+ * There is deliberately no exemption here for a revert.
  */
 export function deprecatedPrimitiveErrors(
   now: ReadonlyMap<string, DeclaredStorageCollection>,
@@ -639,16 +646,21 @@ export function deprecatedPrimitiveErrors(
   const raw = (prev as { storage?: { collections?: unknown } } | null)?.storage?.collections;
   const was = isObj(raw) ? raw : {};
   const errors: string[] = [];
+  // No previous approved version (a new app, a fork's first submit): nothing can be kept.
+  const firstVersion = prev === null || prev === undefined;
   for (const [name, collection] of now) {
     const before = Object.hasOwn(was, name) ? was[name] : undefined;
     for (const field of ['marks', 'counters'] as const) {
       const kept = new Set(rawNames(before, field));
       const added = collection[field].filter((n) => !kept.has(n));
       if (added.length === 0) continue;
+      const listed = added.map((n) => JSON.stringify(n)).join(', ');
       errors.push(
-        `storage.collections.${name}.${field}: ${added.map((n) => JSON.stringify(n)).join(', ')} ${
-          added.length === 1 ? 'is' : 'are'
-        } not declared on this collection by the previous approved version, and ${field} are deprecated — a collection may keep only the ${field} it already declares, until its data is migrated; ${VIEWER_KEYED_INSTEAD}`
+        firstVersion
+          ? `storage.collections.${name}.${field}: ${field} are deprecated and cannot be declared on a new app (declared: ${listed}); ${VIEWER_KEYED_INSTEAD}`
+          : `storage.collections.${name}.${field}: ${listed} ${
+              added.length === 1 ? 'is' : 'are'
+            } not declared on this collection by the previous approved version, and ${field} are deprecated — a collection may keep only the ${field} it already declares, until its data is migrated; ${VIEWER_KEYED_INSTEAD}`
       );
     }
     if (
@@ -656,7 +668,9 @@ export function deprecatedPrimitiveErrors(
       (before as { write?: unknown } | undefined)?.write !== 'none'
     ) {
       errors.push(
-        `storage.collections.${name}.write: "none" is not declared on this collection by the previous approved version, and write "none" is deprecated — a collection may keep it only if it already declares it, until its data is migrated; ${VIEWER_KEYED_INSTEAD}`
+        firstVersion
+          ? `storage.collections.${name}.write: "none" is deprecated and cannot be declared on a new app; ${VIEWER_KEYED_INSTEAD}`
+          : `storage.collections.${name}.write: "none" is not declared on this collection by the previous approved version, and write "none" is deprecated — a collection may keep it only if it already declares it, until its data is migrated; ${VIEWER_KEYED_INSTEAD}`
       );
     }
   }

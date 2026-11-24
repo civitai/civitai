@@ -315,7 +315,7 @@ describe('submitVersion — deprecated marks, counters and write "none"', () => 
     const err = await refusedFor(VOTES({ marks: ['vote'] }));
     expect(err?.name).toBe('StorageMigrationRefusal');
     expect(err?.message).toContain(
-      'storage.collections.votes.marks: "vote" is not declared on this collection by the previous approved version, and marks are deprecated'
+      'storage.collections.votes.marks: marks are deprecated and cannot be declared on a new app (declared: "vote")'
     );
     expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
     // Positive control: the same first version without the mark passes this gate.

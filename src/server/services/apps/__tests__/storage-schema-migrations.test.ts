@@ -1048,6 +1048,11 @@ describe('checkStorageMigrations — marks, counters and write "none" are deprec
     `storage.collections.${coll}.${field}: ${names} not declared on this collection by the previous approved version, and ${field} are deprecated — a collection may keep only the ${field} it already declares, until its data is migrated; ${INSTEAD}`;
   const newNone = (coll: string) =>
     `storage.collections.${coll}.write: "none" is not declared on this collection by the previous approved version, and write "none" is deprecated — a collection may keep it only if it already declares it, until its data is migrated; ${INSTEAD}`;
+  // With no previous approved version there is nothing to keep, and the message says so.
+  const firstNames = (coll: string, field: 'marks' | 'counters', listed: string) =>
+    `storage.collections.${coll}.${field}: ${field} are deprecated and cannot be declared on a new app (declared: ${listed}); ${INSTEAD}`;
+  const firstNone = (coll: string) =>
+    `storage.collections.${coll}.write: "none" is deprecated and cannot be declared on a new app; ${INSTEAD}`;
   const withColls = (collections: Record<string, unknown>) => ({ storage: { collections } });
   const posts = (extra: Record<string, unknown> = {}) =>
     withColls({ posts: { visibility: 'shared', write: 'own', ...extra } });
@@ -1111,14 +1116,14 @@ describe('checkStorageMigrations — marks, counters and write "none" are deprec
 
   it('🔴 a first version may declare none of them', () => {
     expect(checkStorageMigrations(null, posts({ marks: ['vote'] })).errors).toEqual([
-      newNames('posts', 'marks', '"vote" is'),
+      firstNames('posts', 'marks', '"vote"'),
     ]);
-    expect(checkStorageMigrations(null, posts({ counters: ['views'] })).errors).toEqual([
-      newNames('posts', 'counters', '"views" is'),
+    expect(checkStorageMigrations(null, posts({ counters: ['views', 'runs'] })).errors).toEqual([
+      firstNames('posts', 'counters', '"views", "runs"'),
     ]);
     expect(checkStorageMigrations(null, plays({ counters: ['plays'] })).errors).toEqual([
-      newNames('plays', 'counters', '"plays" is'),
-      newNone('plays'),
+      firstNames('plays', 'counters', '"plays"'),
+      firstNone('plays'),
     ]);
     // Positive control: the same first version without them is accepted.
     expect(checkStorageMigrations(null, posts()).errors).toEqual([]);
