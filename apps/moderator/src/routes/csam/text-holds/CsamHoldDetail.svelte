@@ -350,6 +350,10 @@
       <TriageCard dense title="Song">
         <p class="m-0 text-xs text-dark-2">{RETRACTED_REFUSED}</p>
       </TriageCard>
+    {:else if row.songUnavailable}
+      <TriageCard dense title="Song">
+        <p class="m-0 text-xs text-dark-2">Couldn't load this song. Reload before deciding.</p>
+      </TriageCard>
     {/if}
     <TriageCard dense title="Scanned text">
       <!-- The middle column scrolls; the text gets its full length rather than a box of its own. -->

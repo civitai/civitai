@@ -91,6 +91,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     parent: contexts.get(hold.id)?.parent ?? null,
     song: contexts.get(hold.id)?.song ?? null,
     songWithheld: contexts.get(hold.id)?.songWithheld ?? false,
+    songUnavailable: contexts.get(hold.id)?.songUnavailable ?? false,
   }));
   const typeCounts: Record<string, number> | null = byType && {
     ...byType,

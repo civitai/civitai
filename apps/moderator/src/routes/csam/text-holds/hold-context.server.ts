@@ -205,10 +205,10 @@ async function parentContexts(holds: HoldRef[]): Promise<Map<number, HoldParent>
   return parents;
 }
 
-type SongContext = { songs: Map<number, HoldSong>; withheld: Set<number> };
+type SongContext = { songs: Map<number, HoldSong>; withheld: Set<number>; failed: boolean };
 
 /** A lyrics hold's entity id is its song's Image id. A song withheld from this moderator carries no
- *  url; a failing read or withheld check throws, so the caller drops every song. */
+ *  url; a failing read or withheld check throws, and the caller marks every song unavailable. */
 async function songContexts(
   imageIds: number[],
   withheld: (imageIds: number[]) => Promise<number[]>
@@ -223,6 +223,7 @@ async function songContexts(
   return {
     songs: new Map(rows.filter((r) => !hidden.has(r.id)).map((r) => [r.id, r])),
     withheld: hidden,
+    failed: false,
   };
 }
 
@@ -236,7 +237,7 @@ export async function getHoldContexts(
   const profileHolds = holds.filter((h) => h.entityType === 'UserProfile');
   const commentHolds = holds.filter((h) => h.entityType === 'CommentV3');
   const songHolds = holds.filter((h) => h.entityType === 'TrackLyrics');
-  const noSongs: SongContext = { songs: new Map(), withheld: new Set() };
+  const noSongs: SongContext = { songs: new Map(), withheld: new Set(), failed: false };
   const [profiles, parents, songs] = await Promise.all([
     profileHolds.length
       ? profileContexts([...new Set(profileHolds.map((h) => h.entityId))]).catch((err) => {
@@ -253,11 +254,17 @@ export async function getHoldContexts(
     songHolds.length
       ? songContexts([...new Set(songHolds.map((h) => h.entityId))], withheld).catch((err) => {
           console.error('CSAM hold songs failed', err);
-          return noSongs;
+          return { ...noSongs, failed: true };
         })
       : noSongs,
   ]);
-  const none = { profile: null, parent: null, song: null, songWithheld: false };
+  const none = {
+    profile: null,
+    parent: null,
+    song: null,
+    songWithheld: false,
+    songUnavailable: false,
+  };
   const contexts = new Map<number, HoldContext>();
   for (const h of profileHolds)
     contexts.set(h.id, { ...none, profile: profiles.get(h.entityId) ?? null });
@@ -267,6 +274,7 @@ export async function getHoldContexts(
       ...none,
       song: songs.songs.get(h.entityId) ?? null,
       songWithheld: songs.withheld.has(h.entityId),
+      songUnavailable: songs.failed,
     });
   return contexts;
 }

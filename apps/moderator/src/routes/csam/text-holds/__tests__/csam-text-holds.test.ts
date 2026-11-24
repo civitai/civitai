@@ -270,6 +270,7 @@ describe('csam text holds load', () => {
       items: [
         { id: 1, entityType: 'TrackLyrics', entityId: 9 },
         { id: 2, entityType: 'TrackLyrics', entityId: 8 },
+        { id: 3, entityType: 'TrackLyrics', entityId: 7 },
       ],
       hasMore: false,
     });
@@ -277,6 +278,10 @@ describe('csam text holds load', () => {
       new Map([
         [1, { profile: null, parent: null, song: { id: 9, url: 'k' }, songWithheld: false }],
         [2, { profile: null, parent: null, song: null, songWithheld: true }],
+        [
+          3,
+          { profile: null, parent: null, song: null, songWithheld: false, songUnavailable: true },
+        ],
       ])
     );
     const data = await loadAt('');
@@ -286,6 +291,7 @@ describe('csam text holds load', () => {
     expect(data.items).toMatchObject([
       { id: 1, song: { id: 9, url: 'k' }, songWithheld: false },
       { id: 2, song: null, songWithheld: true },
+      { id: 3, song: null, songUnavailable: true },
     ]);
   });
 

@@ -29,6 +29,8 @@ export type HoldContext = {
   song: HoldSong | null;
   /** The song exists but is withheld from this moderator (`withheldImageIds`). */
   songWithheld: boolean;
+  /** Reading the song or its withheld check failed: no url, and not the same as a song that is gone. */
+  songUnavailable: boolean;
 };
 
 export type CsamHoldView = CsamHoldItem & HoldContext;

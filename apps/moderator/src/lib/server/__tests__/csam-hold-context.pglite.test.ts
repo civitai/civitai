@@ -126,6 +126,7 @@ describe('getHoldContexts: profiles', () => {
       parent: null,
       song: null,
       songWithheld: false,
+      songUnavailable: false,
     });
   });
 });
@@ -197,6 +198,7 @@ describe('getHoldContexts: song lyrics', () => {
       parent: null,
       song: { id: 9, url: 'song-key' },
       songWithheld: false,
+      songUnavailable: false,
     });
   });
 
@@ -209,14 +211,27 @@ describe('getHoldContexts: song lyrics', () => {
       parent: null,
       song: null,
       songWithheld: true,
+      songUnavailable: false,
     });
   });
 
-  it('carries no song when the withheld check fails, so nothing leaks', async () => {
+  it('marks the song unavailable, with no url, when the withheld check fails', async () => {
     const contexts = await getHoldContexts([hold(1, 'TrackLyrics', 9)], async () => {
       throw new Error('scanner down');
     });
-    expect(contexts.get(1)?.song).toBeNull();
+    expect(contexts.get(1)).toEqual({
+      profile: null,
+      parent: null,
+      song: null,
+      songWithheld: false,
+      songUnavailable: true,
+    });
+  });
+
+  it('marks the song unavailable when the song read fails', async () => {
+    await db.exec(`DROP TABLE "Image"`);
+    const contexts = await getHoldContexts([hold(1, 'TrackLyrics', 9)]);
+    expect(contexts.get(1)).toMatchObject({ song: null, songUnavailable: true });
   });
 
   it('has no song for a lyrics hold whose song is gone or is not audio', async () => {
@@ -224,8 +239,8 @@ describe('getHoldContexts: song lyrics', () => {
       hold(1, 'TrackLyrics', 999),
       hold(2, 'TrackLyrics', 4),
     ]);
-    expect(contexts.get(1)?.song).toBeNull();
-    expect(contexts.get(2)?.song).toBeNull();
+    expect(contexts.get(1)).toMatchObject({ song: null, songUnavailable: false });
+    expect(contexts.get(2)).toMatchObject({ song: null, songUnavailable: false });
   });
 
   it('reads no song for other hold types', async () => {
