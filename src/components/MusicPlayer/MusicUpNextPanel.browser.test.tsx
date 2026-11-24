@@ -30,6 +30,18 @@ import { MusicPlayerBar } from '~/components/MusicPlayer/MusicPlayerBar';
 import { useMusicPlayerStore } from '~/store/music-player.store';
 import { formatPlaybackTime } from '~/utils/audio-player';
 
+// Nothing serves a cover in the test browser, so a shown cover's <img> fails to load a moment after
+// it renders and SongArt swaps it for the placeholder. Each cover <img> that rendered is recorded
+// here when its load fails.
+const renderedCovers: { src: string }[] = [];
+document.addEventListener(
+  'error',
+  (e) => {
+    if (e.target instanceof HTMLImageElement) renderedCovers.push({ src: e.target.src });
+  },
+  true
+);
+
 const song = (id: number, title: string, durationSec = 200): MusicTrack => ({
   id,
   url: `song-${id}`,
@@ -120,9 +132,9 @@ describe('the Up next panel', () => {
     ];
     await openPanel();
 
-    const row = panel().getByRole('button', { name: 'Play Rain on Shibuya' });
-    await expect.poll(() => row.element().querySelector('img')).not.toBeNull();
-    expect(row.getByTestId('music-cover-placeholder').elements()).toHaveLength(0);
+    await expect
+      .poll(() => renderedCovers.some((c) => c.src.startsWith(LOADABLE_IMAGE_DATA_URI)))
+      .toBe(true);
     // A song without a cover keeps the placeholder.
     await expect
       .element(

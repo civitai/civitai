@@ -1,5 +1,6 @@
 import { IconMusic } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ACCENT_FILL } from '~/components/MusicPlayer/music-accent';
 import styles from './MusicPlayerBar.module.scss';
@@ -49,19 +50,24 @@ export function SongArt({
   /** No cover: the design's gradient tile (Pencil `AECSM`) rather than the plain grey one. */
   gradient?: boolean;
 }) {
+  // A replaced cover's file is deleted, so a list read before the replacement can name a cover
+  // that no longer loads: show the placeholder rather than a broken image.
+  const [failedUrl, setFailedUrl] = useState<string>();
+  const shown = url && url !== failedUrl ? url : undefined;
   return (
     <div
       className={clsx(
         'shrink-0 overflow-hidden',
-        !url && gradient
+        !shown && gradient
           ? 'bg-gradient-to-br from-[#5f3dc4] to-[#4dabf7]'
           : 'bg-gray-2 dark:bg-dark-5',
         className
       )}
     >
-      {url ? (
+      {shown ? (
         <EdgeMedia
-          src={url}
+          src={shown}
+          onError={() => setFailedUrl(shown)}
           type="image"
           width={width * 2}
           name="Song cover"

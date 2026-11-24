@@ -127,6 +127,12 @@ linked when the song is posted, copied into a scanned image row (`linkGeneratedS
 queue shows that image over the song. Songs posted before this, as an MP4 over their cover, fail the
 song scan and need posting again.
 
+Replacing a cover (`setSongCover`) links the new one first, then deletes the old one through
+`deleteImages`, so an old cover under a hold is kept and blocked instead, and never shown again. The
+editor refreshes `image.getSongCovers` after the save. A player that still names the deleted cover
+(another tab, another viewer) shows the placeholder instead of a broken image (`SongArt`), and the
+detail backdrop keeps its colour wash alone.
+
 ## Playlists
 
 A playlist is a collection of type `Music` ("Playlist" in the UI). It holds songs only, as

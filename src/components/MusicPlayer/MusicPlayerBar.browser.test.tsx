@@ -60,6 +60,18 @@ import {
 import { MusicPlayerBar } from '~/components/MusicPlayer/MusicPlayerBar';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 
+// Nothing serves a cover in the test browser, so a shown cover's <img> fails to load a moment after
+// it renders and SongArt swaps it for the placeholder. Each cover <img> that rendered is recorded
+// here when its load fails.
+const renderedCovers: { src: string }[] = [];
+document.addEventListener(
+  'error',
+  (e) => {
+    if (e.target instanceof HTMLImageElement) renderedCovers.push({ src: e.target.src });
+  },
+  true
+);
+
 const SONG_ID = 1;
 const song: MusicTrack = {
   id: SONG_ID,
@@ -427,9 +439,9 @@ describe('the global player bar', () => {
     expect(bar().style.getPropertyValue('--music-accent')).toBe('');
 
     mocks.browsingLevel = 1 | 4;
+    renderedCovers.length = 0;
     await rerender(<MusicPlayerBar />);
-    expect(page.getByTestId('music-cover-placeholder').elements()).toHaveLength(0);
-    expect(bar().querySelector('img')).not.toBeNull();
+    await expect.poll(() => renderedCovers.length).toBeGreaterThan(0);
   });
 
   test('stays above an open dialog: never dimmed, and its controls and Up next still work', async () => {

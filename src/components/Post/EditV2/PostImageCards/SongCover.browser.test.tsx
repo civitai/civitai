@@ -20,6 +20,7 @@ type Tracked = { file: File; progress: number; status: string; url: string; obje
 
 const mocks = vi.hoisted(() => ({
   setCover: vi.fn(),
+  invalidateCovers: vi.fn(),
   updateImage: vi.fn(),
   uploadToCF: vi.fn(),
   setFiles: undefined as unknown as (update: (files: Tracked[]) => Tracked[]) => void,
@@ -29,9 +30,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../../test/trpcProxyStub');
   return {
     ...(await importOriginal<typeof TrpcModule>()),
-    trpc: makeTrpcProxy({
-      'image.setSongCover': { useMutation: () => ({ mutateAsync: mocks.setCover }) },
-    }),
+    trpc: makeTrpcProxy(
+      {
+        'image.setSongCover': { useMutation: () => ({ mutateAsync: mocks.setCover }) },
+      },
+      { useUtils: () => ({ image: { getSongCovers: { invalidate: mocks.invalidateCovers } } }) }
+    ),
   };
 });
 // The real hook PUTs to storage; this one tracks the picked file the same way and lets each test
@@ -114,6 +118,7 @@ const coverMedia = () => document.querySelector('[data-testid="cover-media"]');
 
 beforeEach(() => {
   mocks.setCover.mockReset();
+  mocks.invalidateCovers.mockReset();
   mocks.updateImage.mockReset();
   mocks.uploadToCF.mockReset();
   mocks.uploadToCF.mockReturnValue(new Promise(() => undefined));
@@ -180,6 +185,8 @@ describe("a song's cover in the post editor", () => {
     expect(stored.cover).toEqual(pending);
     // The link lives in the song's Track row; the stored metadata is left as it was.
     expect(stored.metadata).toEqual({ duration: 120 });
+    // The replaced cover's file is gone, so every player re-reads the song's cover.
+    expect(mocks.invalidateCovers).toHaveBeenCalledTimes(1);
   });
 
   test('shows a cover still being scanned as processing, not as a clean cover', async () => {
