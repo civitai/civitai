@@ -20,8 +20,6 @@ import { base32Decode, base32Encode } from '~/server/utils/base32';
  * session has exactly one host.
  */
 
-export { base32Decode, base32Encode };
-
 export const PREVIEW_LABEL_VERSION = 1;
 const MAC_DOMAIN = 'sandbox-preview:v1:';
 const RAW_BYTES = 38;

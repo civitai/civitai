@@ -245,10 +245,12 @@ put or delete at the derived key; a create or a write by key to such a collectio
 
 - **Dark, three ways:** submit refuses `keyedBy` while `viewerKeyedDocs` is off in
   `APP_STORAGE_ENABLED_FEATURES`; every `@me` op is `503` while `APP_STORAGE_VIEWER_KEY_SECRET`
-  is unset (no fallback key); and in production each collection's writes wait on its own
-  switch, the Flipt flag `app-blocks-storage-viewer-keyed-open` (per app, context
-  `{ collection }`), reported as `open` in `GET /storage`. Closed, `@me` writes are
-  `403 write_policy`; reads still work.
+  is unset (no fallback key; the secret must be byte-identical in every deployment writing the same
+  database and namespace); and in production writes need the Flipt flag
+  `app-blocks-storage-viewer-keyed-open` (per app, context `{ collection }`): created default on,
+  with a closed segment listing migration targets until each is verified. An absent flag or an
+  unreachable Flipt reads as closed. Closed, `@me` writes are `403 write_policy`; reads still work.
+  `open` in `GET /storage` reports both the switch and the secret.
 - **Immutable once approved:** submit and approve refuse adding, removing or changing `keyedBy` on
   a collection any approved version declared (`keyedByChangeErrors`).
 - **Policies:** as any shared write (publish scope, trust gate, shared-write budget, schema,

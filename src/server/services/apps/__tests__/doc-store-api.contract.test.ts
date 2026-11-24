@@ -5477,12 +5477,24 @@ describe('viewer-keyed documents', () => {
           503,
           'service_unavailable'
         );
+        // GET / folds the secret in: with both switches open, neither collection reports open.
+        const unset = (await vkOk(vkCall(t1, 'GET', []))).body as {
+          collections: Record<string, Record<string, unknown>>;
+        };
+        expect([unset.collections.votes.open, unset.collections.likes.open]).toEqual([
+          false,
+          false,
+        ]);
       }
       expect(await vkRows(A, 'votes')).toEqual([]);
       expect(await vkRows(A, 'likes')).toEqual([]);
-      // Positive control: the same calls succeed once it is set.
+      // Positive control: the same calls succeed, and GET / says open, once it is set.
       envMock.set({ APP_STORAGE_VIEWER_KEY_SECRET: VK_SECRET });
       await vkOk(vkPutMine(t1, 'votes', VK_P1, { value: 1 }));
+      const info = (await vkOk(vkCall(t1, 'GET', []))).body as {
+        collections: Record<string, Record<string, unknown>>;
+      };
+      expect([info.collections.votes.open, info.collections.likes.open]).toEqual([true, true]);
     });
   });
 

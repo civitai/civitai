@@ -113,7 +113,7 @@ import type {
 } from '~/server/services/apps/doc-store.types';
 import { withDocLevelGate } from '~/server/services/apps/doc-levels';
 import {
-  isViewerKeyedOpen,
+  isViewerKeyedWritable,
   VIEWER_KEYED_SEGMENT,
   viewerKeyedDocKey,
 } from '~/server/services/apps/doc-store-viewer-keyed';
@@ -823,7 +823,7 @@ async function presentDoc(doc: DocRecord, decl: DeclaredStorageCollection) {
   return (await presentDocs([doc], decl))[0] as PresentedDoc;
 }
 
-/** `open`: a viewer-keyed collection's migration switch (`isViewerKeyedOpen`); else unused. */
+/** `open`: whether a viewer-keyed collection takes `@me` writes (`isViewerKeyedWritable`). */
 function presentDeclaration(decl: DeclaredStorageCollection, open: boolean) {
   return {
     kind: decl.kind,
@@ -1254,7 +1254,7 @@ async function run(
         async ([name, decl]) =>
           [
             name,
-            presentDeclaration(decl, decl.keyedBy ? await isViewerKeyedOpen(ctx, name) : false),
+            presentDeclaration(decl, decl.keyedBy ? await isViewerKeyedWritable(ctx, name) : false),
           ] as const
       )
     );

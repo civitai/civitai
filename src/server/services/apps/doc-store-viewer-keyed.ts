@@ -74,9 +74,14 @@ export function deriveViewerKey(secret: string, t: ViewerKeyTuple): string {
   return t.mode === 'parent+viewer' ? `${t.parent}:${d}` : d;
 }
 
+/** The derivation secret (trimmed), or null while it is unset or blank. */
+function configuredSecret(): string | null {
+  return env.APP_STORAGE_VIEWER_KEY_SECRET?.trim() || null;
+}
+
 /** The derivation secret, or a `503`: never a fallback key. Blank reads as unset. */
 function derivationSecret(): string {
-  const secret = env.APP_STORAGE_VIEWER_KEY_SECRET?.trim();
+  const secret = configuredSecret();
   if (!secret) {
     throw new DocStoreError('service_unavailable', 'viewer-keyed documents are not configured', {
       reason: 'viewer_keys_unconfigured',
@@ -86,10 +91,11 @@ function derivationSecret(): string {
 }
 
 /**
- * Whether viewers may write the viewer-keyed collection `collection` (its migration switch, the
- * Flipt flag `app-blocks-storage-viewer-keyed-open`, evaluated per app with the collection as
- * context). Production only: a development or review namespace holds no migrated data, so it is
- * always open there. Flipt unreachable reads as closed.
+ * Whether viewers may write the viewer-keyed collection `collection`: the Flipt flag
+ * `app-blocks-storage-viewer-keyed-open`, per app with the collection as context, created DEFAULT ON
+ * with a closed segment listing the migration targets until each is verified. Fails closed: an
+ * absent flag or an unreachable Flipt reads as closed. Production only: development and review
+ * namespaces hold no migrated data and are always open.
  */
 export async function isViewerKeyedOpen(
   ctx: DocStoreContext,
@@ -99,6 +105,17 @@ export async function isViewerKeyedOpen(
   return isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_VIEWER_KEYED_OPEN, ctx.appId, {
     collection,
   });
+}
+
+/**
+ * `open` in `GET /storage`: whether a `@me` write to `collection` can land at all, so false while
+ * the derivation secret is unset as well as while the switch is closed.
+ */
+export async function isViewerKeyedWritable(
+  ctx: DocStoreContext,
+  collection: string
+): Promise<boolean> {
+  return configuredSecret() !== null && (await isViewerKeyedOpen(ctx, collection));
 }
 
 /**
