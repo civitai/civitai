@@ -827,17 +827,11 @@ function parseCollection(
     write = raw.write as AppStorageWritePolicy;
     if (write === 'anyone' && !features.anyoneWrites) {
       errors.push(
-        notYet(
-          `${at}.write "anyone"`,
-          'documents any viewer may edit',
-          'use "own" or "none" for now'
-        )
+        notYet(`${at}.write "anyone"`, 'documents any viewer may edit', 'use "own" for now')
       );
     }
     if (write === 'owner' && !features.ownerWrites) {
-      errors.push(
-        notYet(`${at}.write "owner"`, 'owner-written documents', 'use "own" or "none" for now')
-      );
+      errors.push(notYet(`${at}.write "owner"`, 'owner-written documents', 'use "own" for now'));
     }
   }
 

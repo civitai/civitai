@@ -28,7 +28,7 @@ import {
   IconLink,
   IconListDetails,
 } from '@tabler/icons-react';
-import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useEffect, useState } from 'react';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import { GenerationDetailsTable } from '~/components/ImageGeneration/GenerationDetails';
@@ -80,17 +80,7 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { getRefundSummary } from '~/components/ImageGeneration/refund-summary';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useSyncAccount } from '~/hooks/useSyncAccount';
-import {
-  encodeGenerationHandoff,
-  GENERATION_HANDOFF_PARAM,
-} from '~/components/generation_v2/utils/generation-url-handoff';
-import { getGenerationSnapshotCache } from '~/components/generation_v2/utils/generation-snapshot-cache';
-import type {
-  AudioBlob,
-  BlobData,
-  ImageBlob,
-  VideoBlob,
-} from '~/shared/orchestrator/workflow-data';
+import type { AudioBlob, ImageBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
 import { NSFW_CAPPED } from '~/shared/orchestrator/workflow-data';
 import { isFbxOnlyDelivered } from '~/shared/orchestrator/model3d-output';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
@@ -715,7 +705,7 @@ function StepOutputs({
       >
         {displayImages.map((image) =>
           image.blockedReason === 'siteRestricted' ? (
-            <SiteRestrictedBlock key={image.id} image={image} />
+            <SiteRestrictedBlock key={image.id} />
           ) : outputActions && image.type === 'image' && image.available && !image.blockedReason ? (
             <div key={image.id} className="flex flex-col gap-1.5">
               <GeneratedOutput image={image} />
@@ -908,7 +898,6 @@ const imageBlockedReasonMap: Record<string, string | React.ComponentType<any>> =
   [NSFW_CAPPED]:
     "This output was rated mature, and this generation is limited to PG-13, so it can't be shown.",
   siteRestricted: 'Images with mature ratings are unavailable on this site',
-  enableNsfw: EnableNsfwBlock,
   canUpgrade: CanUpgradeBlock,
 };
 
@@ -919,23 +908,10 @@ function countOccurrences(arr: string[]): Record<string, number> {
   }, {} as Record<string, number>);
 }
 
-/**
- * Per-image card shown on .com when NSFW output is blocked.
- * Displays a prompt/seed summary and a CTA to view on civitai.red.
- */
-function SiteRestrictedBlock({ image }: { image: BlobData }) {
+/** Per-image card shown on .com when a mature output is blocked. */
+function SiteRestrictedBlock() {
   const redDomain = useServerDomains().red;
   const syncAccount = useSyncAccount();
-
-  const buildRedUrl = () => {
-    const base = `//${redDomain}/generate`;
-    const cached = getGenerationSnapshotCache();
-    if (!cached) return syncAccount(base);
-    const handoff = encodeGenerationHandoff(cached.snapshot, {
-      computedKeys: cached.computedKeys,
-    });
-    return syncAccount(handoff ? `${base}?${GENERATION_HANDOFF_PARAM}=${handoff}` : base);
-  };
 
   return (
     <TwCard className="flex aspect-square size-full flex-col items-center justify-center gap-2 border p-3">
@@ -948,7 +924,7 @@ function SiteRestrictedBlock({ image }: { image: BlobData }) {
       {redDomain && (
         <Button
           component="a"
-          href={buildRedUrl()}
+          href={syncAccount(`//${redDomain}/generate`)}
           target="_blank"
           rel="noreferrer nofollow"
           color="red"
@@ -1010,17 +986,6 @@ function renderBlockedReason(
     const Component = value;
     return <Component {...props} />;
   }
-}
-
-function EnableNsfwBlock() {
-  return (
-    <Text align="center" size="sm">
-      To view this content, enable mature content in your{' '}
-      <Anchor component={NextLink} href="/user/account">
-        account settings
-      </Anchor>
-    </Text>
-  );
 }
 
 // TODO - show a separate message when the image is blocked for being green
@@ -1214,7 +1179,7 @@ function Model3DQueueCardOutputs({
         })}
       >
         {blob.blockedReason === 'siteRestricted' ? (
-          <SiteRestrictedBlock image={blob} />
+          <SiteRestrictedBlock />
         ) : (
           <BlockedBlocks
             blockedReasons={[blob.blockedReason]}

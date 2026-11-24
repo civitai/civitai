@@ -449,6 +449,14 @@ writes tombstones and refunds each document's author, not the caller as the auth
 vote made through `@me`, which were never written to `doc_mark`, so past that point the only way back
 is forward: fix the new version.
 
+The revert is a submit like any other, so it passes the rollout step 3 refusal of new marks, counters
+and `write: "none"` (`deprecatedPrimitiveErrors`), which compares it with the version it replaces and
+has no exemption for a revert. That holds because the migration version **keeps the source
+collection's old marks declared until `t`'s switch opens** (an assumption of this plan, not
+enforced by code: the old mark calls must keep working until then anyway). The version before it declares nothing the migration version does not, so the revert
+re-declares nothing. A migration version that dropped the marks early would make its own revert
+refused. Once `t` is open there is no revert, only forward versions, which may drop the marks.
+
 ### `doc_tally`
 
 Mark tallies (`kind = 'mark'`) are derived from `doc_mark` and are dropped, not migrated. Counter

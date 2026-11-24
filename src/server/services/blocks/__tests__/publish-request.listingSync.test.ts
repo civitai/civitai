@@ -1107,7 +1107,8 @@ const VK_SLUG = 'vote-board-4c2a';
 const VK_NEW_MANIFEST = {
   name: 'Vote Board',
   scopes: ['apps:storage'],
-  storage: { collections: { votes: { visibility: 'shared', write: 'none', counters: ['n'] } } },
+  // Not `write: "none"` + counters: those are refused as new declarations (below).
+  storage: { collections: { votes: { visibility: 'shared', write: 'own' } } },
 };
 const VK_ENFORCED = {
   name: 'Vote Board',
@@ -1119,13 +1120,13 @@ const VK_OLD_VOTES = {
   storage: { collections: { votes: { visibility: 'shared', write: 'own', keyedBy: 'viewer' } } },
 };
 
-function vkPendingRow() {
+function vkPendingRow(manifest: unknown = VK_NEW_MANIFEST) {
   return {
     id: 'req_vk',
     status: 'pending',
     slug: VK_SLUG,
     version: '3.0.0',
-    manifest: VK_NEW_MANIFEST,
+    manifest,
     bundleKey: 'bundles/vote-board.zip',
     forgejoCommitSha: '',
     submittedByUserId: 4243,
@@ -1139,6 +1140,38 @@ const vkApprovals = (withOld: boolean) => [
   ...(withOld ? [{ id: 'pubreq_old', manifest: VK_OLD_VOTES }] : []),
 ];
 
+async function setupVkApprove(manifest: unknown) {
+  const zip = new JSZip();
+  zip.file('block.manifest.json', JSON.stringify(manifest));
+  zip.file('index.html', '<html></html>');
+  holder.zipBytes = await zip.generateAsync({ type: 'uint8array' });
+  db.read.appBlockPublishRequest.findUnique.mockResolvedValue(vkPendingRow(manifest));
+  db.read.appBlock.findFirst.mockResolvedValue({
+    id: 'apb_vk',
+    appId: 'app_vk',
+    repoUrl: 'https://forgejo.example/vote-board',
+    trustTier: 'unverified',
+    app: { allowedScopes: 0n, allowedOrigins: ['https://vote-board.apps.example'] },
+  });
+  // What the store enforces (the baseline): no `votes`.
+  db.write.appBlock.findFirst.mockResolvedValue({ id: 'apb_vk', manifest: VK_ENFORCED });
+  db.write.appBlock.findUnique.mockResolvedValue({
+    id: 'apb_vk',
+    blockId: VK_SLUG,
+    manifest,
+    contentRating: 'pg',
+    category: 'utility',
+    featured: false,
+    featuredOrder: null,
+    externalUrl: null,
+    app: { userId: 42 },
+  });
+  db.write.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0n });
+  s3.send.mockImplementation(async () => ({
+    Body: { transformToByteArray: async () => holder.zipBytes },
+  }));
+}
+
 describe('approveRequest — keyedBy immutability against every approval', () => {
   let savedZip = holder.zipBytes;
   afterEach(() => {
@@ -1146,35 +1179,7 @@ describe('approveRequest — keyedBy immutability against every approval', () =>
   });
   beforeEach(async () => {
     savedZip = holder.zipBytes;
-    const zip = new JSZip();
-    zip.file('block.manifest.json', JSON.stringify(VK_NEW_MANIFEST));
-    zip.file('index.html', '<html></html>');
-    holder.zipBytes = await zip.generateAsync({ type: 'uint8array' });
-    db.read.appBlockPublishRequest.findUnique.mockResolvedValue(vkPendingRow());
-    db.read.appBlock.findFirst.mockResolvedValue({
-      id: 'apb_vk',
-      appId: 'app_vk',
-      repoUrl: 'https://forgejo.example/vote-board',
-      trustTier: 'unverified',
-      app: { allowedScopes: 0n, allowedOrigins: ['https://vote-board.apps.example'] },
-    });
-    // What the store enforces (the baseline): no `votes`.
-    db.write.appBlock.findFirst.mockResolvedValue({ id: 'apb_vk', manifest: VK_ENFORCED });
-    db.write.appBlock.findUnique.mockResolvedValue({
-      id: 'apb_vk',
-      blockId: VK_SLUG,
-      manifest: VK_NEW_MANIFEST,
-      contentRating: 'pg',
-      category: 'utility',
-      featured: false,
-      featuredOrder: null,
-      externalUrl: null,
-      app: { userId: 42 },
-    });
-    db.write.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0n });
-    s3.send.mockImplementation(async () => ({
-      Body: { transformToByteArray: async () => holder.zipBytes },
-    }));
+    await setupVkApprove(VK_NEW_MANIFEST);
   });
 
   it('🔴 refuses dropping keyedBy a 51st-newest approval declared, before the request is approved', async () => {
@@ -1205,5 +1210,70 @@ describe('approveRequest — keyedBy immutability against every approval', () =>
     );
     // Whatever later step this stubbed harness reaches, it is not the keyedBy refusal.
     expect(outcome ?? '').not.toContain('keyedBy');
+  });
+});
+
+// docs/app-storage-generic-core.md, rollout step 3, at APPROVE: a push-originated request never
+// passes `submitVersion`, so approve refuses a NEW mark, counter or `write: "none"` too, against
+// what the store enforces. The storage-migration modules are real here.
+describe('approveRequest — deprecated marks, counters and write "none"', () => {
+  const withVotes = (votes: Record<string, unknown>) => ({
+    ...VK_NEW_MANIFEST,
+    storage: { collections: { notes: { visibility: 'private' }, votes } },
+  });
+  let savedZip = holder.zipBytes;
+  afterEach(() => {
+    holder.zipBytes = savedZip;
+  });
+  beforeEach(() => {
+    savedZip = holder.zipBytes;
+    db.write.appBlockPublishRequest.findMany.mockResolvedValue(vkApprovals(false));
+  });
+  const outcomeOf = async (manifest: unknown) => {
+    await setupVkApprove(manifest);
+    return approveRequest({ publishRequestId: 'req_vk', reviewerUserId: 9 }).then(
+      () => null,
+      (err: Error) => err.message
+    );
+  };
+
+  it('🔴 refuses a new write "none" counter collection, before the request is approved', async () => {
+    const outcome = await outcomeOf(
+      withVotes({ visibility: 'shared', write: 'none', counters: ['n'] })
+    );
+    expect(outcome).toContain(
+      'storage.collections.votes.write: "none" is not declared on this collection by the previous approved version, and write "none" is deprecated'
+    );
+    expect(outcome).toContain(
+      'storage.collections.votes.counters: "n" is not declared on this collection by the previous approved version, and counters are deprecated'
+    );
+    const approvedWrites = [
+      ...db.write.appBlockPublishRequest.update.mock.calls,
+      ...db.write.appBlockPublishRequest.updateMany.mock.calls,
+    ].filter((c) => (c[0] as { data?: { status?: string } })?.data?.status === 'approved');
+    expect(approvedWrites).toEqual([]);
+    expect(db.write.appBlock.update).not.toHaveBeenCalled();
+  });
+
+  it('positive control: a collection the enforced manifest declares with the same mark passes the gate', async () => {
+    await setupVkApprove(withVotes({ visibility: 'shared', write: 'own', marks: ['vote'] }));
+    // The enforced manifest declares `votes` with the same mark. It differs from the request in
+    // `showAuthor`, so the baseline is read as an earlier version, not as this approve's own write
+    // (`loadStorageMigrationBaseline`'s `selfManifest`).
+    db.write.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_vk',
+      manifest: withVotes({
+        visibility: 'shared',
+        write: 'own',
+        marks: ['vote'],
+        showAuthor: true,
+      }),
+    });
+    const outcome = await approveRequest({ publishRequestId: 'req_vk', reviewerUserId: 9 }).then(
+      () => null,
+      (err: Error) => err.message
+    );
+    // Whatever later step this stubbed harness reaches, it is not the deprecation refusal.
+    expect(outcome ?? '').not.toContain('deprecated');
   });
 });
