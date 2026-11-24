@@ -286,7 +286,10 @@ export const getHomeBlockById = async ({
     }
   }
 
-  const block = await getHomeBlockCached(row, domain, metadata);
+  const block = await getHomeBlockCached(row, domain, metadata, {
+    resolveHomeBlockMetadata,
+    getHomeBlockData,
+  });
   const rotation = metadata.cosmeticShopSection;
   if (!block?.cosmeticShopSection || !rotation?.random) return block;
 

@@ -31,12 +31,11 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { newOrderConfig } from '~/server/common/constants';
-import { newOrderJobs } from '~/server/jobs/new-order-jobs';
+import { payV1Days } from '~/server/games/new-order/v1-final-settle';
+import { runGrantBlessedBuzz } from '~/server/jobs/new-order-jobs';
 
 type Rating = { userId: number; createdAt: Date; exp: number };
 type Player = { userId: number; startAt: Date; rankType: string };
-
-const grantJob = newOrderJobs.find((j) => j.name === 'new-order-grant-bless-buzz')!;
 
 // 3 days before the (fake) run time, matching the job's own window.
 const NOW = new Date('2026-11-15T12:00:00Z');
@@ -91,6 +90,11 @@ function fakeClickhouse(strings: TemplateStringsArray, ...values: unknown[]) {
   );
 }
 
+const paidIds = () =>
+  mocks.createBuzzTransactionMany.mock.calls.flatMap(([txs]) =>
+    (txs as { externalTransactionId: string }[]).map((t) => t.externalTransactionId)
+  );
+
 const paid = () =>
   new Map(
     mocks.createBuzzTransactionMany.mock.calls
@@ -129,12 +133,12 @@ beforeEach(() => {
   );
 });
 
-describe('new-order-grant-bless-buzz and career resets', () => {
+describe('blessed Buzz grant and career resets', () => {
   it('pays a player whose career started before the day in full', async () => {
     players = [{ userId: 1, startAt: before, rankType: 'Knight' }];
     ratings = [{ userId: 1, createdAt: at(5), exp: 1000 }];
 
-    await grantJob.run({}).result;
+    await runGrantBlessedBuzz();
 
     expect(paid().get(1)).toBe(Math.floor(1000 * newOrderConfig.blessedBuzzConversionRatio));
     expect(decrements().get(1)).toBe(1000);
@@ -144,7 +148,7 @@ describe('new-order-grant-bless-buzz and career resets', () => {
     players = [{ userId: 2, startAt: after, rankType: 'Knight' }];
     ratings = [{ userId: 2, createdAt: at(5), exp: 1000 }];
 
-    await grantJob.run({}).result;
+    await runGrantBlessedBuzz();
 
     expect(paid().has(2)).toBe(false);
     expect(decrements().has(2)).toBe(false);
@@ -159,7 +163,7 @@ describe('new-order-grant-bless-buzz and career resets', () => {
       { userId: 3, createdAt: at(18), exp: 2000 },
     ];
 
-    await grantJob.run({}).result;
+    await runGrantBlessedBuzz();
 
     expect(decrements().get(3)).toBe(3000);
     expect(paid().get(3)).toBe(Math.floor(3000 * newOrderConfig.blessedBuzzConversionRatio));
@@ -172,7 +176,7 @@ describe('new-order-grant-bless-buzz and career resets', () => {
       { userId: 5, createdAt: at(11), exp: 4000 },
     ];
 
-    await grantJob.run({}).result;
+    await runGrantBlessedBuzz();
 
     expect(paid().has(5)).toBe(false);
     expect(decrements().has(5)).toBe(false);
@@ -192,7 +196,7 @@ describe('new-order-grant-bless-buzz and career resets', () => {
       { userId: 3, createdAt: at(13), exp: 1700 },
     ];
 
-    await grantJob.run({}).result;
+    await runGrantBlessedBuzz();
 
     expect(paid()).toEqual(
       new Map([
@@ -213,9 +217,41 @@ describe('new-order-grant-bless-buzz and career resets', () => {
     players = [{ userId: 4, startAt: before, rankType: 'Acolyte' }];
     ratings = [{ userId: 4, createdAt: at(5), exp: 1000 }];
 
-    await grantJob.run({}).result;
+    await runGrantBlessedBuzz();
 
     expect(paid().has(4)).toBe(false);
     expect(decrements().has(4)).toBe(false);
+  });
+});
+
+// The v1 game's last payout runs once, after the nightly grant was removed. A day the nightly
+// already paid must reuse its id, so the Buzz service rejects it as a duplicate.
+describe('final v1 settle', () => {
+  it('pays every day from the given one through today, with the ids the nightly grant used', async () => {
+    players = [{ userId: 1, startAt: before, rankType: 'Knight' }];
+    const today = dayjs(NOW).startOf('day');
+    ratings = [
+      { userId: 1, createdAt: at(5), exp: 1000 },
+      { userId: 1, createdAt: today.subtract(1, 'day').add(2, 'hour').toDate(), exp: 2000 },
+      { userId: 1, createdAt: today.add(1, 'hour').toDate(), exp: 3000 },
+    ];
+
+    await runGrantBlessedBuzz();
+    const nightlyIds = paidIds();
+    mocks.createBuzzTransactionMany.mockClear();
+
+    await payV1Days(dayStart.toDate());
+
+    const ratio = newOrderConfig.blessedBuzzConversionRatio;
+    expect(paidIds()).toEqual([
+      nightlyIds[0],
+      `new-order-1-${today.subtract(1, 'day').toDate().toISOString()}`,
+      `new-order-1-${today.toDate().toISOString()}`,
+    ]);
+    expect(
+      mocks.createBuzzTransactionMany.mock.calls.flatMap(([txs]) =>
+        (txs as { amount: number }[]).map((t) => t.amount)
+      )
+    ).toEqual([Math.floor(1000 * ratio), Math.floor(2000 * ratio), Math.floor(3000 * ratio)]);
   });
 });

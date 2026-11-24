@@ -26,6 +26,7 @@ vi.mock('~/server/services/user-restriction.service', async (importOriginal) => 
 vi.mock('~/server/services/account-deletion-images', async (importOriginal) => ({
   ...(await importOriginal<typeof AccountDeletionImages>()),
   disarmAccountDeletionImagePurge: vi.fn(() => 'disarm-statement'),
+  releaseAccountDeletionPendingDeletes: vi.fn(() => 'release-statement'),
   recordPendingImageRestore: vi.fn(async () => true),
   countPendingAccountDeletionImageRestores: vi.fn(async () => 0),
 }));
@@ -100,8 +101,8 @@ describe('restoreUser -> model ownership history', () => {
 
     const reclaim = dbMock.dbWrite.$transaction.mock.calls
       .map(([ops]) => ops)
-      .find((ops) => Array.isArray(ops) && ops.length === 4) as
-      | [unknown, unknown, unknown, { sql: string; text: string; values: unknown[] }]
+      .find((ops) => Array.isArray(ops) && ops.length === 5) as
+      | [unknown, unknown, unknown, unknown, { sql: string; text: string; values: unknown[] }]
       | undefined;
     expect(reclaim, 'the reclaim and its ownership rows must commit together').toBeDefined();
     // The reclaim's own owner write, then its ownership statement, against Postgres.
@@ -110,7 +111,7 @@ describe('restoreUser -> model ownership history', () => {
       [
         (db) =>
           db.query(`UPDATE "Model" SET "userId" = $1 WHERE id = ANY($2)`, [USER_ID, ORPHANED]),
-        reclaim![3],
+        reclaim![4],
       ]
     );
     expect(rows).toEqual(

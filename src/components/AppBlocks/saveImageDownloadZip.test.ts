@@ -117,6 +117,33 @@ describe('zip classification on the save path', () => {
     }
   });
 
+  it('a zip holding .glb / .fbx model entries beside renders saves as a zip (app-sdk >= 0.93.0)', async () => {
+    // The entry-name allowlist is app-sdk's; this pins that the version this host depends on has
+    // the model extensions, and that the whole save path (classify + inflate check) accepts it.
+    const zip = await jszip(
+      {
+        'turnaround/model.glb': new Uint8Array([0x67, 0x6c, 0x54, 0x46, 2, 0, 0, 0, 9, 9, 9, 9]),
+        'turnaround/rig.fbx': enc.encode('Kaydara FBX Binary  \0'),
+        'turnaround/front.png': new Uint8Array([...PNG_HEAD, 1, 2, 3]),
+      },
+      'DEFLATE'
+    );
+    const prepared = prepareSaveBytes({ bytes: zip, filename: 'turnaround.glb' });
+    expect(prepared).toMatchObject({
+      ok: true,
+      type: 'application/zip',
+      filename: 'turnaround.zip',
+    });
+    if (!prepared.ok) return;
+    expect(await verifySaveBytesContent(zip, prepared)).toMatchObject({ ok: true });
+    // A glTF-JSON entry is still not allowed.
+    const gltf = await jszip({ 'model.gltf': '{"asset":{"version":"2.0"}}' });
+    expect(classifySaveBytesContent(gltf, 'm.zip')).toEqual({
+      ok: false,
+      error: 'zip entry type is not allowed: gltf',
+    });
+  });
+
   it('a non-zip named .zip is classified by content: text saves as .txt, binary is refused', () => {
     const text = enc.encode('not a zip at all').buffer as ArrayBuffer;
     expect(prepareSaveBytes({ bytes: text, filename: 'dataset.zip' })).toEqual({

@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockResetNsfwLevel, mockDropDeleteQueue, mockQueueSearchIndex, mockBustCachesForPosts } =
@@ -20,6 +21,7 @@ import {
   countPendingAccountDeletionImageRestores,
   disarmAccountDeletionImagePurge,
   recordPendingImageRestore,
+  releaseAccountDeletionPendingDeletes,
   unblockAccountDeletionImages,
   MAX_RESTORE_BATCHES,
   RESTORE_BATCH_SIZE,
@@ -30,6 +32,7 @@ import {
   PRIOR_NEEDS_REVIEW_KEY,
 } from '~/server/utils/image-removal-mode';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -689,5 +692,92 @@ describe('disarmAccountDeletionImagePurge', () => {
       { entityId: 1, entityType: 'Image', type: 'ImageScan' },
       { entityId: 1, entityType: 'Post', type: 'BlockedImageDelete' },
     ]);
+  });
+});
+
+describe('releaseAccountDeletionPendingDeletes', () => {
+  it("takes the drain's ask off the account's pending deletes, keeping anyone else's", async () => {
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+      CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete');
+      CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL);
+      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
+      CREATE TABLE "JobQueue" (
+        "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+        data jsonb, UNIQUE ("entityType", "entityId", type)
+      );
+      INSERT INTO "Image" VALUES (1, 7), (2, 7), (3, 7), (4, 8);
+      INSERT INTO "Post" VALUES (10, 7);
+      INSERT INTO "JobQueue" VALUES
+        (1, 'Image', 'PendingDelete', '{"deletedBy": "remove-deleted-user-images"}'),
+        (2, 'Image', 'PendingDelete', '{"ownerId": 7, "deletedBy": "remove-deleted-user-images"}'),
+        (3, 'Image', 'PendingDelete', '{"deletedBy": "moderator:99", "moderatorDelete": true}'),
+        (4, 'Image', 'PendingDelete', '{"deletedBy": "remove-deleted-user-images"}'),
+        (10, 'Post', 'PendingDelete', '{"deletedBy": "remove-deleted-user-images"}');
+    `);
+    await db.exec(imageUseTablesSql);
+    mockDbWrite.$executeRaw.mockImplementationOnce((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const sql = Prisma.sql(strings, ...(values as never[]));
+      return (await db.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
+    }) as never);
+
+    await releaseAccountDeletionPendingDeletes(7);
+
+    const { rows } = await db.query<{ entityId: number; data: unknown }>(
+      `SELECT "entityId", data FROM "JobQueue" ORDER BY "entityType", "entityId"`
+    );
+    // The drain's own go; the owner's ask stays; a moderator's and another account's are untouched.
+    expect(rows).toEqual([
+      { entityId: 2, data: { ownerId: 7 } },
+      { entityId: 3, data: { deletedBy: 'moderator:99', moderatorDelete: true } },
+      { entityId: 4, data: { deletedBy: 'remove-deleted-user-images' } },
+    ]);
+    await db.close();
+  });
+
+  it("keeps the drain's delete of what an open case keeps, so the restore cannot publish it", async () => {
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+      CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete');
+      CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
+      CREATE TABLE "JobQueue" (
+        "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+        data jsonb, UNIQUE ("entityType", "entityId", type)
+      );
+    `);
+    await db.exec(imageUseTablesSql);
+    await db.exec(`
+      INSERT INTO "Image" (id, "userId", "needsReview") VALUES (1, 7, 'csam'), (2, 7, NULL);
+      INSERT INTO "Post" VALUES (10, 7), (11, 7);
+      INSERT INTO "Report" (id) VALUES (1); UPDATE "Report" SET reason = 'CSAM' WHERE id = 1;
+      INSERT INTO "PostReport" VALUES (10, 1);
+      INSERT INTO "JobQueue" SELECT e.id, e.t::"EntityType", 'PendingDelete', '{"deletedBy": "remove-deleted-user-images"}'
+        FROM (VALUES (1, 'Image'), (2, 'Image'), (10, 'Post'), (11, 'Post')) e(id, t);
+    `);
+    mockDbWrite.$executeRaw.mockImplementationOnce((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const sql = Prisma.sql(strings, ...(values as never[]));
+      return (await db.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
+    }) as never);
+
+    await releaseAccountDeletionPendingDeletes(7);
+
+    const { rows } = await db.query<{ entityType: string; entityId: number; released: boolean }>(
+      `SELECT "entityType"::text AS "entityType", "entityId", data ? 'releasedOnRestore' AS released
+       FROM "JobQueue" ORDER BY 1, 2`
+    );
+    // Left for its case, marked so pending-deletes releases rather than deletes it once it closes.
+    expect(rows).toEqual([
+      { entityType: 'Image', entityId: 1, released: true },
+      { entityType: 'Post', entityId: 10, released: true },
+    ]);
+    await db.close();
   });
 });

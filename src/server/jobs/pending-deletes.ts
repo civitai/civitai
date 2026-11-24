@@ -1,12 +1,18 @@
 import {
+  childSafetyImageFinding,
+  childSafetyPostFinding,
+} from '@civitai/db-queries/child-safety-case';
+import { imageNotUsed } from '@civitai/db-queries/content-deletion';
+import {
   cleanupBlocked,
   imageDeleteBlocked,
-  imageNotUsed,
-  ownPostDeleteBlocked,
+  pendingKindOf,
+  PENDING_DELETES_ACTOR,
+  postDeleteBlocked,
   readDueDeletes,
   settleDeletes,
   type PendingDelete,
-} from '@civitai/db-queries/content-deletion';
+} from '@civitai/db-queries/pending-deletes';
 import { Prisma } from '@prisma/client';
 import { sql } from 'kysely';
 import { dbWrite } from '~/server/db/client';
@@ -38,20 +44,67 @@ export const heldOwner = () =>
 
 /**
  * What a cleanup's DELETE takes: an image still unused, since it may have been linked again, unless
- * its owner asked for the delete too.
+ * someone also asked for it outright.
  */
-const cleanupStillApplies = (moderatorDelete: boolean, ownerAsked: boolean) => {
+const cleanupStillApplies = (moderatorDelete: boolean, asked: boolean) => {
   const free = sql<boolean>`NOT ${cleanupBlocked(moderatorDelete, heldOwner())}`;
-  return ownerAsked ? free : sql<boolean>`${imageNotUsed()} AND ${free}`;
+  return asked ? free : sql<boolean>`${imageNotUsed()} AND ${free}`;
 };
+
+const ownerActor = (data: PendingDelete) => ({ id: Number(data.ownerId), isModerator: false });
+
+/** How each kind of pending delete is carried out, and what rows replay together. */
+function replay(entity: Kind, data: PendingDelete) {
+  const mod = !!data.moderatorDelete;
+  switch (pendingKindOf(data)) {
+    case 'cleanup': {
+      const asked = data.ownerId !== undefined || data.deletedBy !== undefined;
+      return {
+        key: `cleanup:${mod}:${asked}`,
+        remove: (ids: number[]) =>
+          deleteImages(ids, {
+            actor: PENDING_DELETES_ACTOR,
+            onlyWhere: cleanupStillApplies(mod, asked),
+            moderatorDelete: mod,
+          }),
+      };
+    }
+    case 'other':
+      return {
+        key: `other:${mod}:${!!data.keepStoredFiles}`,
+        remove:
+          entity === 'Post'
+            ? // A moderator's post delete again takes every image in the post, with the purge.
+              ([postId]: number[]) =>
+                deletePost({
+                  id: postId,
+                  actor: PENDING_DELETES_ACTOR,
+                  isModerator: !!data.deletedBy?.startsWith('moderator:'),
+                })
+            : (ids: number[]) =>
+                deleteImages(ids, {
+                  actor: PENDING_DELETES_ACTOR,
+                  moderatorDelete: mod,
+                  keepStoredFiles: !!data.keepStoredFiles,
+                }),
+      };
+    case 'own':
+      return {
+        key: `own:${data.ownerId}`,
+        remove:
+          entity === 'Post'
+            ? ([postId]: number[]) => deletePost({ id: postId, actor: ownerActor(data) })
+            : (ids: number[]) => deleteImages(ids, { actor: ownerActor(data) }),
+      };
+  }
+}
 
 /** Of the queued `ids`, each entity still present, and whether its pending delete is blocked now. */
 async function standing(kind: Kind, ids: number[]) {
   const blocked =
     kind === 'Image'
       ? imageDeleteBlocked(sql.ref('q.data'), heldOwner())
-      : // A post is only ever pending as its deleter's own delete (`deletePost`).
-        ownPostDeleteBlocked(sql`(q.data->>'ownerId')::int`);
+      : postDeleteBlocked(sql.ref('q.data'));
   const { rows } = await sql<{ id: number; present: boolean; blocked: boolean }>`
     SELECT q."entityId" AS id, ${sql.table(kind)}.id IS NOT NULL AS present,
       CASE WHEN ${sql.table(kind)}.id IS NULL THEN false ELSE ${blocked} END AS blocked
@@ -64,9 +117,53 @@ async function standing(kind: Kind, ids: number[]) {
 }
 
 /**
- * Carries out each pending delete as its kind says: an owner's as the owner, a cleanup as the system
- * while `cleanupStillApplies`. Returns the ids whose delete threw; a batch that throws is retried one
- * at a time, and a retry always runs alone, so one bad row cannot fail the rest.
+ * Of `ids`, those whose closed case found nothing and whose owner is not deleted again: only these
+ * may be kept rather than deleted.
+ */
+async function clearedByCase(kind: Kind, ids: number[]) {
+  if (!ids.length) return new Set<number>();
+  const finding = kind === 'Image' ? childSafetyImageFinding(kind) : childSafetyPostFinding(kind);
+  const { rows } = await sql<{ cleared: number }>`
+    SELECT ${sql.table(kind)}.id AS cleared FROM ${sql.table(kind)}
+    WHERE ${sql.table(kind)}.id = ANY(${ids}::int[]) AND (${finding}) IS FALSE
+      AND NOT EXISTS (
+        SELECT 1 FROM "User" u WHERE u.id = ${sql.ref(
+          `${kind}.userId`
+        )} AND u."deletedAt" IS NOT NULL
+      )
+  `.execute(db());
+  return new Set(rows.map(({ cleared }) => cleared));
+}
+
+/** Of `ids`, the images whose case has a finding, or an outcome not read as none. */
+async function imagesWithFinding(ids: number[]) {
+  if (!ids.length) return [];
+  const { rows } = await sql<{ found: number }>`
+    SELECT "Image".id AS found FROM "Image"
+    WHERE "Image".id = ANY(${ids}::int[]) AND (${childSafetyImageFinding('Image')}) IS NOT FALSE
+  `.execute(db());
+  return rows.map(({ found }) => found);
+}
+
+/**
+ * An image carried out on a finding, or under a restore mark it did not clear, takes the mark off its
+ * post's delete, so the post goes too: once the image is deleted, the post's own finding can no
+ * longer see it.
+ */
+const unmarkPostsOf = (imageIds: number[]) =>
+  imageIds.length
+    ? sql`
+        UPDATE "JobQueue" SET data = data - 'releasedOnRestore'
+        WHERE type = 'PendingDelete' AND "entityType" = 'Post'
+          AND "entityId" IN (SELECT "postId" FROM "Image" WHERE id = ANY(${imageIds}::int[]))
+      `.execute(db())
+    : undefined;
+
+/**
+ * Carries out each pending delete as its kind says: a cleanup while `cleanupStillApplies`, anyone
+ * else's as the system with the flags it was queued with (no caller condition), an owner's as the
+ * owner. Returns the ids whose delete threw; a batch that throws is retried one at a time, and a
+ * retry always runs alone, so one bad row cannot fail the rest.
  */
 async function carryOut(kind: Kind, rows: Row[]) {
   const failed: number[] = [];
@@ -91,37 +188,20 @@ async function carryOut(kind: Kind, rows: Row[]) {
 
   const groups = new Map<string, { ids: number[]; remove: (ids: number[]) => Promise<unknown> }>();
   for (const { id, data, attempted } of rows) {
-    const remove =
-      'cleanup' in data
-        ? (ids: number[]) =>
-            deleteImages(ids, {
-              actor: { system: 'pending-deletes' },
-              onlyWhere: cleanupStillApplies(!!data.moderatorDelete, data.ownerId !== undefined),
-              moderatorDelete: !!data.moderatorDelete,
-            })
-        : kind === 'Post'
-        ? ([postId]: number[]) =>
-            deletePost({ id: postId, actor: { id: data.ownerId, isModerator: false } })
-        : (ids: number[]) => deleteImages(ids, { actor: { id: data.ownerId, isModerator: false } });
-    // A post goes alone; images batch per owner, or per kind of cleanup. A retry goes alone.
-    const key =
-      kind === 'Post' || attempted
-        ? `one:${id}`
-        : 'cleanup' in data
-        ? `cleanup:${!!data.moderatorDelete}:${data.ownerId !== undefined}`
-        : `owner:${data.ownerId}`;
-    const group = groups.get(key) ?? { ids: [], remove };
+    const { remove, key } = replay(kind, data);
+    const groupKey = kind === 'Post' || attempted ? `one:${id}` : key;
+    const group = groups.get(groupKey) ?? { ids: [], remove };
     group.ids.push(id);
-    groups.set(key, group);
+    groups.set(groupKey, group);
   }
   for (const { ids, remove } of groups.values()) await attempt(ids, remove);
   return failed;
 }
 
 /**
- * Carries out the deletes that had to wait (`PendingDelete`) once nothing blocks them: an owner's
- * own delete once its child-safety case closes, a parent's cleanup once its image is free of
- * moderation and holds. One linked again, given away or kept by a hold marker is done with.
+ * Carries out the deletes that had to wait (`PendingDelete`) once nothing blocks them: a delete once
+ * its child-safety case closes, a parent's cleanup once its image is free of moderation and holds. One
+ * linked again, given away or kept by a hold marker is done with. See docs/features/pending-deletes.md.
  */
 export const pendingDeletes = createJob('pending-deletes', '*/5 * * * *', async () => {
   const result: Record<string, unknown> = {};
@@ -141,7 +221,22 @@ export const pendingDeletes = createJob('pending-deletes', '*/5 * * * *', async 
       (row) => before.get(row.id)?.present && !before.get(row.id)?.blocked && !textHeld.has(row.id)
     );
     const dueIds = new Set(due.map((row) => row.id));
-    const threw = new Set(await carryOut(kind, due));
+    // A restore-marked row is released (dropped, the item kept) only on a no-finding close.
+    const marked = due
+      .filter(({ data }) => data.releasedOnRestore && data.ownerId === undefined && !data.cleanup)
+      .map((row) => row.id);
+    const releasedIds = await clearedByCase(kind, marked);
+    if (kind === 'Image') {
+      const carried = due.map((row) => row.id).filter((id) => !releasedIds.has(id));
+      const found = new Set(await imagesWithFinding(carried));
+      await unmarkPostsOf(carried.filter((id) => found.has(id) || marked.includes(id)));
+    }
+    const threw = new Set(
+      await carryOut(
+        kind,
+        due.filter((row) => !releasedIds.has(row.id))
+      )
+    );
 
     // A row carried out is done once gone or no longer applicable (in use again, given away, kept by
     // a hold marker); blocked again it waits, and a delete that threw is retried.

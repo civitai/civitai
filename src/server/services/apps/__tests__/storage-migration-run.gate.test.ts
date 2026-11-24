@@ -217,7 +217,11 @@ describe('loadStorageMigrationBaseline', () => {
       slug: 'card-app',
       excludePublishRequestId: 'pubreq_SELF',
     });
-    expect(baseline).toEqual({ prev: ENFORCED, history: [LATEST, OLDER] });
+    expect(baseline).toEqual({
+      prev: ENFORCED,
+      history: [LATEST, OLDER],
+      approved: [LATEST, OLDER],
+    });
     expect(dbMock.dbRead.appBlock.findFirst).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.appBlockPublishRequest.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -257,7 +261,7 @@ describe('loadStorageMigrationBaseline', () => {
         excludePublishRequestId: 'pubreq_SELF',
         selfManifest: SELF,
       })
-    ).toEqual({ prev: ENFORCED, history: [ENFORCED] });
+    ).toEqual({ prev: ENFORCED, history: [ENFORCED], approved: [ENFORCED] });
   });
 
   it('a version that does not change storage keeps app_blocks as the baseline', async () => {
@@ -281,7 +285,26 @@ describe('loadStorageMigrationBaseline', () => {
     expect(await loadStorageMigrationBaseline({ slug: 'new-app' })).toEqual({
       prev: null,
       history: [],
+      approved: [],
     });
+  });
+
+  it('🔴 approved holds EVERY approval (keyedBy immutability); history only the newest 50', async () => {
+    const rows = Array.from({ length: 51 }, (_, i) => ({
+      id: `pubreq_${i}`,
+      manifest: i === 50 ? OLDER : ENFORCED,
+    }));
+    dbMock.dbWrite.appBlock.findFirst.mockResolvedValueOnce({ id: APP, manifest: ENFORCED });
+    dbMock.dbWrite.appBlockPublishRequest.findMany.mockResolvedValueOnce(rows);
+    const baseline = await loadStorageMigrationBaseline({ slug: 'card-app' });
+    expect(baseline.history).toHaveLength(50);
+    expect(baseline.history).not.toContain(OLDER);
+    expect(baseline.approved).toHaveLength(51);
+    expect(baseline.approved[50]).toBe(OLDER);
+    const query = dbMock.dbWrite.appBlockPublishRequest.findMany.mock.calls.at(-1)?.[0] as {
+      take?: number;
+    };
+    expect(query.take).toBeUndefined();
   });
 });
 

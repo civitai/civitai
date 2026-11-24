@@ -219,21 +219,24 @@ func TestTheWritesFlag(t *testing.T) {
 			t.Fatalf("%q: %v", v, err)
 		}
 		if !c.Writes || c.WritesSigningKey != signingKey || c.WritesSiteURL != "https://rest-site.invalid" ||
-			c.WritesTimeout != 10*time.Second || c.BlockJWKSURL != "https://site.invalid/api/v1/block-tokens/jwks" || c.RegistryURL != "" {
+			c.WritesTimeout != 10*time.Second || c.BlockJWKSURL != "https://site.invalid/api/v1/block-tokens/jwks" || c.RegistryURL != "" ||
+			c.AdapterPoll != time.Minute {
 			t.Fatalf("%q: %+v", v, c)
 		}
 	}
 	for _, v := range []string{"", "false", "0"} {
 		kv := map[string]string{"APP_DATA_REST_URL": "https://rest-site.invalid", "APP_DATA_WRITES": v}
-		if c, err := load(kv); err != nil || c.Writes || c.WritesTimeout != 0 || c.WritesSiteURL != "" {
+		if c, err := load(kv); err != nil || c.Writes || c.WritesTimeout != 0 || c.WritesSiteURL != "" || c.AdapterPoll != 0 {
 			t.Fatalf("%q: %+v, %v; want writes off", v, c, err)
 		}
 	}
 	kv := writesEnv()
 	kv["APP_DATA_WRITES_SITE_URL"] = "http://web.ns.svc.cluster.local:3000/prefix"
 	kv["APP_DATA_WRITES_TIMEOUT_MS"] = "2500"
+	kv["APP_DATA_WRITES_ADAPTER_POLL_SECONDS"] = "17"
 	c, err := load(kv)
-	if err != nil || c.WritesSiteURL != "http://web.ns.svc.cluster.local:3000/prefix" || c.WritesTimeout != 2500*time.Millisecond {
+	if err != nil || c.WritesSiteURL != "http://web.ns.svc.cluster.local:3000/prefix" || c.WritesTimeout != 2500*time.Millisecond ||
+		c.AdapterPoll != 17*time.Second {
 		t.Fatalf("%+v, %v", c, err)
 	}
 }
@@ -269,16 +272,16 @@ func TestWriteSettingsWithTheWritesOffAreAWarningNotAFailure(t *testing.T) {
 		c, err := load(map[string]string{
 			"APP_DATA_REST_URL": "https://rest-site.invalid", "APP_DATA_WRITES": off,
 			"APP_DATA_WRITES_SIGNING_KEY": signingKey, "APP_DATA_WRITES_SITE_URL": "not even a url",
-			"APP_DATA_WRITES_TIMEOUT_MS": "99999999",
+			"APP_DATA_WRITES_TIMEOUT_MS": "99999999", "APP_DATA_WRITES_ADAPTER_POLL_SECONDS": "-4",
 		})
 		if err != nil {
 			t.Fatalf("%q: %v; want the start to go on", off, err)
 		}
-		if c.Writes || c.WritesSigningKey != "" || c.WritesSiteURL != "" || c.WritesTimeout != 0 {
+		if c.Writes || c.WritesSigningKey != "" || c.WritesSiteURL != "" || c.WritesTimeout != 0 || c.AdapterPoll != 0 {
 			t.Fatalf("%q: %+v; want every write setting ignored", off, c)
 		}
 		w := c.Warnings()
-		want := "APP_DATA_WRITES_SIGNING_KEY,APP_DATA_WRITES_SITE_URL,APP_DATA_WRITES_TIMEOUT_MS set with APP_DATA_WRITES off: ignored"
+		want := "APP_DATA_WRITES_ADAPTER_POLL_SECONDS,APP_DATA_WRITES_SIGNING_KEY,APP_DATA_WRITES_SITE_URL,APP_DATA_WRITES_TIMEOUT_MS set with APP_DATA_WRITES off: ignored"
 		if len(w) != 1 || w[0] != want {
 			t.Fatalf("%q: warnings %q, want [%q]", off, w, want)
 		}
@@ -309,6 +312,8 @@ func TestInvalidWriteSettingsFailTheStart(t *testing.T) {
 		"site with a query":         {map[string]string{"APP_DATA_WRITES_SITE_URL": "https://site.invalid?x=1"}, "APP_DATA_WRITES_SITE_URL must be"},
 		"timeout under the hook's":  {map[string]string{"APP_DATA_WRITES_TIMEOUT_MS": "1999"}, "APP_DATA_WRITES_TIMEOUT_MS must be an integer from 2000 to 20000"},
 		"timeout over the cap":      {map[string]string{"APP_DATA_WRITES_TIMEOUT_MS": "20001"}, "APP_DATA_WRITES_TIMEOUT_MS must be an integer from 2000 to 20000"},
+		"no adapter poll":           {map[string]string{"APP_DATA_WRITES_ADAPTER_POLL_SECONDS": "0"}, "APP_DATA_WRITES_ADAPTER_POLL_SECONDS must be an integer from 1 to 600"},
+		"adapter poll over 10 min":  {map[string]string{"APP_DATA_WRITES_ADAPTER_POLL_SECONDS": "601"}, "APP_DATA_WRITES_ADAPTER_POLL_SECONDS must be an integer from 1 to 600"},
 		"JWKS with writes off only": {map[string]string{"APP_DATA_WRITES": "", "APP_DATA_WRITES_SIGNING_KEY": ""}, "set both or neither"},
 	}
 	for name, tc := range cases {

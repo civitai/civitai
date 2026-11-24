@@ -6,6 +6,7 @@ import { dbWrite } from '~/server/db/client';
 import { SCANNED_FILE_KINDS } from '~/server/services/creator-service-deal-file-sql';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  acceptedAsVideo,
   getFinalScanReading,
   isFinalsMalwareScanOn,
   submitFinalScan,
@@ -650,15 +651,19 @@ export async function settleMalwareScans({
     scansGivenUp: 0,
   };
 
-  const waiting = await dbWrite.$queryRaw<{ id: number; workflowId: string; stale: boolean }[]>`
-    SELECT "id", "malwareScanWorkflowId" AS "workflowId",
+  const waiting = await dbWrite.$queryRaw<
+    { id: number; workflowId: string; stale: boolean; scannedEtag: string | null }[]
+  >`
+    SELECT "id", "malwareScanWorkflowId" AS "workflowId", "scannedEtag",
       "malwareScanSubmittedAt" < now() - (${SERVICE_FINAL_SCAN_STALE_MS}::int * interval '1 millisecond') AS "stale"
     FROM "ServiceDealFile"
     WHERE ${WAITING_FOR_MALWARE_SCAN} AND "malwareScanWorkflowId" IS NOT NULL
     ORDER BY "id" LIMIT 50`;
-  for (const { id, workflowId, stale } of waiting) {
+  for (const { id, workflowId, stale, scannedEtag } of waiting) {
     if (shouldStop()) return counts;
-    const reading = await getFinalScanReading(workflowId).catch((error) => {
+    const reading = await getFinalScanReading(workflowId, {
+      video: acceptedAsVideo({ scannedEtag }),
+    }).catch((error) => {
       logUnpack(
         'malware scan read failed',
         { fileId: id, workflowId, error: (error as Error)?.message },

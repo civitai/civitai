@@ -701,6 +701,16 @@ export const serverSchema = z
     // every path). Set, it must be at least 32 bytes: a shorter value (an empty one included) fails
     // the env parse. It authenticates the caller only; the user's own token is still the authority.
     APP_DATA_WRITES_SIGNING_KEY: z.string().min(32).optional(),
+    // HMAC secret for viewer-keyed document keys (`doc-store-viewer-keyed.ts`), 32+ chars.
+    // Byte-identical in every deployment sharing the database; never rotate.
+    // Unset or blank: an `@me` op that passes its other checks (`keyedBy`, parent, the write
+    // switch, sign-in) answers 503; there is no fallback key.
+    APP_STORAGE_VIEWER_KEY_SECRET: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'APP_STORAGE_VIEWER_KEY_SECRET must be at least 32 characters',
+      })
+      .optional(),
     // With the `app-listings-read-model` flag at its `serve` variant: how long a store grid or
     // public REST list page waits for the read model before it is read from the database instead.
     APP_LISTINGS_READ_MODEL_SERVE_TIMEOUT_MS: z.coerce

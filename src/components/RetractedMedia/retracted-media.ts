@@ -26,11 +26,11 @@ export function retractedMediaUrl(
  * error event is never replayed.
  * The failure is kept per id, so a tile reused for another image starts on the CDN again.
  */
-export function useRetractedMedia(image: RetractableImage, user: Viewer, { cdnLeg = false } = {}) {
+export function useRetractedMedia(image: RetractableImage, user: Viewer) {
   const { id } = image;
   const [failedId, setFailedId] = useState<number | null>(null);
   const src = retractedMediaUrl(image, user, { cdnFailed: failedId === id });
-  const fallback = cdnLeg && !!retractedMediaUrl(image, user, { cdnFailed: true });
+  const fallback = !!retractedMediaUrl(image, user, { cdnFailed: true });
 
   // A video reports each failed `<source>`, and only the last one means nothing played.
   const onCdnError = useCallback(

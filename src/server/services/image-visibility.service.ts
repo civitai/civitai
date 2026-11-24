@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import { imageBlockedForConditions } from '~/server/common/image-visibility';
 
 export { imageBlockedForConditions };
@@ -58,8 +59,9 @@ export const countableImageSql = () =>
 
 /**
  * Which images attached to an entity (a bounty, a bounty entry) a viewer is served, as SQL over
- * `"Image" i`. Held, unscanned, unrated, blocked, acceptable-minor and minor-restricted images are
- * the owner's and moderators' alone; base-model restricted images are the owner's alone.
+ * `"Image" i`. Held, unscanned, unrated, blocked, ToS-removed, acceptable-minor and
+ * minor-restricted images are the owner's and moderators' alone; base-model restricted images are
+ * the owner's alone.
  */
 export function entityImageVisibilityConditions({
   userId,
@@ -85,7 +87,10 @@ export function entityImageVisibilityConditions({
         : Prisma.sql`(${Prisma.join([Prisma.sql`i."needsReview" IS NULL`], ' OR ')})`,
       userId
         ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
-        : Prisma.sql`i."acceptableMinor" = FALSE`
+        : Prisma.sql`i."acceptableMinor" = FALSE`,
+      userId
+        ? Prisma.sql`(i."tosViolation" IS NOT TRUE OR i."userId" = ${userId})`
+        : Prisma.sql`i."tosViolation" IS NOT TRUE`
     );
   }
   AND.push(...imageBlockedForConditions({ userId, isModerator }));
@@ -93,6 +98,15 @@ export function entityImageVisibilityConditions({
   AND.push(minorMatureImageVisibleSql({ userId, isModerator }));
   return AND;
 }
+
+/**
+ * Not listed on a CsamReport, as SQL over `"Image" i`: the bounty search index's exclusion, for a
+ * viewer without the held-media grant. Its uploader still sees it.
+ */
+export const notReportListedSql = (userId?: number) =>
+  Prisma.sql`((i.id)::text NOT IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})${
+    userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.empty
+  })`;
 
 /**
  * Who may fetch a single image by id, as SQL over `"Image" i` with `"Post" p` LEFT JOINed on

@@ -14,6 +14,7 @@ import {
   type SetAsideState,
 } from './csam-queue-set-aside';
 import { outOfCsamQueuePending as outOfPending } from '@civitai/db-queries/csam-queue';
+import { pendingDeleteQueued } from '@civitai/db-queries/pending-deletes';
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
@@ -480,11 +481,7 @@ export async function getReportedImageQueue({
    *  the hand-off panels. Without it a link to a ruled report landed on an unrelated Pending list. */
   reportId?: number;
 }): Promise<{ items: ReportedImageItem[]; nextCursor?: number }> {
-  const deleteRequested = sql<boolean>`EXISTS (
-    SELECT 1 FROM "JobQueue" jq
-    WHERE jq.type = 'PendingDelete' AND jq."entityType" = 'Image' AND jq."entityId" = i.id
-      AND jq.data ? 'ownerId'
-  )`;
+  const deleteRequested = pendingDeleteQueued('Image', sql.ref('i.id'), { ownerAsked: true });
   const base = () =>
     dbRead
       .selectFrom('Image as i')

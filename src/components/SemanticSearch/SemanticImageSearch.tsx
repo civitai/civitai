@@ -1,5 +1,7 @@
 import { Alert, Button, Center, Loader, MultiSelect, Text, TextInput, Title } from '@mantine/core';
 import { IconSearch } from '@tabler/icons-react';
+import { CorrectedQueryNote } from '~/components/Search/FeedSearchSummary';
+import { spellcheckFor, useSearchAsTyped } from '~/components/Search/useSearchAsTyped';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -39,8 +41,10 @@ export function SemanticImageSearch() {
   // Clips are a separate index, so Video is searched on its own rather than mixed with images.
   const videos = !!semanticVideoSearch && types.length === 1 && types[0] === MediaType.video;
 
+  const { asTyped } = useSearchAsTyped(query);
   const input = {
     query: imageId ? undefined : query,
+    ...spellcheckFor(asTyped && !imageId),
     imageId,
     browsingLevel,
     tagIds: tags.map((t) => t.id),
@@ -164,11 +168,7 @@ export function SemanticImageSearch() {
         </Alert>
       )}
 
-      {correctedQuery && !isError && (
-        <Text size="sm">
-          Showing results for <strong>{correctedQuery}</strong>
-        </Text>
-      )}
+      {!isError && <CorrectedQueryNote query={query ?? ''} correctedQuery={correctedQuery} />}
 
       {enabled && !isLoading && !isError && (
         <SemanticSearchFeedback

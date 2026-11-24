@@ -40,6 +40,9 @@ const (
 	expiryMargin       = 30 * time.Second
 	tokenRecheck       = 2 * time.Minute
 	exchangeTimeout    = 5 * time.Second
+	// overlayMargin is how much longer than one adapter poll an acknowledged write is shown over a
+	// stream that has not caught up with it (WRITES-DESIGN.md: "one poll interval plus 30 s").
+	overlayMargin = 30 * time.Second
 )
 
 func main() {
@@ -116,6 +119,11 @@ func run(log *slog.Logger) error {
 			Exchange: router.Exchange, ExpiryMargin: expiryMargin, Recheck: tokenRecheck,
 			Opened: m.StreamsOpened.Inc,
 			Closed: func(reason string) { m.StreamsClosed.WithLabelValues(reason).Inc() },
+			// Read-your-writes; zero with the writes off, which turns all of it off (session.Options).
+			OverlayTTL:  overlayTTL(cfg),
+			ReopenEvery: cfg.AdapterPoll,
+			Floor:       func(outcome string) { m.FloorReopens.WithLabelValues(outcome).Inc() },
+			Overlaid:    func(kind string) { m.Overlays.WithLabelValues(kind).Inc() },
 		})
 		srv.Streams = mgr
 		go func() {
@@ -133,12 +141,16 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return err // config validated it; never reached
 		}
-		srv.Writes = &writes.Forwarder{
+		fwd := &writes.Forwarder{
 			Site: site, Key: []byte(cfg.WritesSigningKey), Timeout: cfg.WritesTimeout,
 			HTTP:   &http.Client{}, // bounded per forward by Timeout; redirects never followed (writes.Forwarder)
 			Verify: verifier.Check, Ready: srv.Ready,
 			Metrics: m, Log: log.With("component", "writes"),
 		}
+		if mgr != nil {
+			fwd.Acked = mgr.Ack
+		}
+		srv.Writes = fwd
 	}
 	// A response may take as long as the slowest request: a read's deadline, or a forward's timeout.
 	longest := max(cfg.RequestDeadline, cfg.WritesTimeout)
@@ -173,6 +185,14 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// overlayTTL is how long an acknowledged write is shown over its stream: zero with the writes off.
+func overlayTTL(cfg *config.Config) time.Duration {
+	if !cfg.Writes {
+		return 0
+	}
+	return cfg.AdapterPoll + overlayMargin
 }
 
 // sweepInterval checks for idle streams four times per idle TTL, at most every 10 seconds.

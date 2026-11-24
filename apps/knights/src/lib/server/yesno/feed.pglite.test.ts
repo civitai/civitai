@@ -182,7 +182,9 @@ describe('what a player is offered', () => {
     await seed([row('a', 10)]);
     await seedPlayer(pg, 1);
     expect(await pick(1, { share: 0 })).toBeNull();
-    expect(await pick(1, { share: 0, force: true })).not.toBeNull();
+    // A share of 0 turns the axes off even when the roll is skipped: only the tag review switch can force a question then.
+    expect(await pick(1, { share: 0, force: true })).toBeNull();
+    expect(await pick(1, { share: 0.01, force: true })).not.toBeNull();
     expect(await pick(1, { share: 1 })).not.toBeNull();
 
     const slots = new Set<boolean>();

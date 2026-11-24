@@ -62,8 +62,10 @@ const serve: RequestHandler = async ({ params, locals, request, url }) => {
       sheet: false,
       request,
       audit: () => recordHeldView(moderatorId, imageId, 'web'),
-      // Held files are not size-capped, as on /api/held-media; every range is audited here.
       auditEveryRange: true,
+      // Uncapped for the grant, as on /api/held-media; capped otherwise, so the answer matches a
+      // retracted file's.
+      maxBytes: csamReview ? undefined : RETRACTED_MEDIA_MAX_BYTES,
     });
   return streamStoredMedia({
     media,

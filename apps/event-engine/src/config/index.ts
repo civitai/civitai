@@ -283,6 +283,7 @@ export const config = {
     videoAlias: process.env.VECTOR_VIDEO_ALIAS ?? 'videos_semantic',
     // Each pass reads Image filtered to videos; cheap only once Image_video_id_idx exists.
     videoRefreshMinutes: vectorInt('VECTOR_VIDEO_REFRESH_MINUTES', 720, 5),
+    videoRefreshPointsOnly: process.env.VECTOR_VIDEO_REFRESH_POINTS_ONLY === 'true',
     // Image CDN base the edge URLs are built on (the main app's NEXT_PUBLIC_IMAGE_LOCATION).
     imageLocation: process.env.VECTOR_IMAGE_LOCATION ?? '',
     orchestratorEndpoint: process.env.ORCHESTRATOR_ENDPOINT ?? '',

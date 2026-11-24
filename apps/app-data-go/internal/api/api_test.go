@@ -46,12 +46,14 @@ type fakeRegistry struct {
 	wide       atomic.Int32 // subscriptions whose token holds more than AppDataRead
 	notPrivate map[string]bool
 	schemas    sync.Map // token → schema last asked
+	// heads is the head a token's Live names in its meta, as the adapter's private feed does.
+	heads map[string]int64
 }
 
 func newFakeRegistry(t *testing.T) *fakeRegistry {
 	t.Helper()
 	f := &fakeRegistry{records: map[string][]registry.Entity{}, stall: map[string]bool{},
-		revokes: map[string][]chan string{}, notPrivate: map[string]bool{}}
+		revokes: map[string][]chan string{}, notPrivate: map[string]bool{}, heads: map[string]int64{}}
 	t.Cleanup(func() {
 		if n := f.raw.Load(); n != 0 {
 			t.Errorf("🔴 the adapter was shown %d tokens the hub did not issue", n)
@@ -81,6 +83,7 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 		f.mu.Lock()
 		// The adapter's wire form: every cursor wrapped as b1.<24 hex binding>.<inner>.
 		recs, stall, cursor := f.records[tok], f.stall[tok], "b1.0a1b2c3d4e5f60718293a4b5.p1.empty"
+		head, hasHead := f.heads[tok]
 		if f.notPrivate[tok] {
 			cursor = "b1.0a1b2c3d4e5f60718293a4b5.f1.0123456789abcdef0123456789abcdef"
 		}
@@ -92,7 +95,11 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			raw, _ := json.Marshal(map[string]any{"entity": e, "cursor": ""})
 			_, _ = fmt.Fprintf(w, "event: upsert\ndata: %s\n\n", raw)
 		}
-		if !stall {
+		switch {
+		case stall:
+		case hasHead:
+			_, _ = fmt.Fprintf(w, "event: live\ndata: {\"cursor\":%q,\"meta\":{\"head\":{\"seq\":%d}}}\n\n", cursor, head)
+		default:
 			_, _ = fmt.Fprintf(w, "event: live\ndata: {\"cursor\":%q}\n\n", cursor)
 		}
 		fl.Flush()
@@ -205,11 +212,13 @@ type restAnswer struct {
 
 // fakeStore is the site's document store list.
 type fakeStore struct {
-	srv   *httptest.Server
-	mu    sync.Mutex
-	by    map[string]restAnswer // token → answer
-	calls atomic.Int32
-	froms []string
+	srv *httptest.Server
+	mu  sync.Mutex
+	by  map[string]restAnswer // token → answer
+	// retryAfter is the Retry-After header sent with a token's answer, when set.
+	retryAfter map[string]string
+	calls      atomic.Int32
+	froms      []string
 	// prefixes are the keyPrefix values sent, one per request ("" when none).
 	prefixes []string
 	block    chan struct{}
@@ -217,13 +226,14 @@ type fakeStore struct {
 
 func newFakeStore(t *testing.T) *fakeStore {
 	t.Helper()
-	f := &fakeStore{by: map[string]restAnswer{}}
+	f := &fakeStore{by: map[string]restAnswer{}, retryAfter: map[string]string{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.calls.Add(1)
 		f.mu.Lock()
 		f.froms = append(f.froms, r.URL.Query().Get("from"))
 		f.prefixes = append(f.prefixes, r.URL.Query().Get("keyPrefix"))
 		a, ok := f.by[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
+		retryAfter := f.retryAfter[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
 		block := f.block
 		f.mu.Unlock()
 		if block != nil {
@@ -239,6 +249,9 @@ func newFakeStore(t *testing.T) *fakeStore {
 			a = restAnswer{401, `{"error":"unauthenticated"}`}
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if retryAfter != "" {
+			w.Header().Set("Retry-After", retryAfter)
+		}
 		w.WriteHeader(a.status)
 		_, _ = io.WriteString(w, a.body)
 	}))
@@ -665,6 +678,37 @@ func TestRESTFailuresAndBounds(t *testing.T) {
 	}
 }
 
+// The site's rate-limited refusal reaches the app as the site sent it: the 429, its body with the
+// house `rateLimit` meta byte for byte, and its Retry-After (exposed, so the frame can read it).
+func TestASiteRateLimitIsPassedOnWithItsMetaAndRetryAfter(t *testing.T) {
+	const body = `{"code":"rate_limited","message":"Too many reads","error":"Too many reads",` +
+		`"details":{"bucket":"read","retryAfter":7},` +
+		`"rateLimit":{"retryAfterSeconds":7,"retryAt":"2026-01-01T00:00:07.000Z","id":"apps.doc-store","kind":"abuse"}}`
+	s := newStack(t, false, session.Options{})
+	s.store.mu.Lock()
+	s.store.by["civitai_alice"] = restAnswer{429, body}
+	s.store.retryAfter["civitai_alice"] = "7"
+	s.store.mu.Unlock()
+	g := s.get(t, notesPath, "civitai_alice")
+	if g.status != 429 || g.body != body {
+		t.Fatalf("refusal not passed on: %d %s", g.status, g.body)
+	}
+	if got := g.header.Get("Retry-After"); got != "7" {
+		t.Fatalf("Retry-After = %q, want 7", got)
+	}
+	if got := g.header.Get("Access-Control-Expose-Headers"); !strings.Contains(got, "Retry-After") {
+		t.Fatalf("Retry-After not exposed to the frame: %q", got)
+	}
+	// CONTROL: a refusal that names no delay gets no Retry-After of ours.
+	s.store.mu.Lock()
+	s.store.by["civitai_alice"] = restAnswer{403, `{"error":"import_not_granted"}`}
+	delete(s.store.retryAfter, "civitai_alice")
+	s.store.mu.Unlock()
+	if g := s.get(t, notesPath, "civitai_alice"); g.status != 403 || g.header.Get("Retry-After") != "" {
+		t.Fatalf("%d Retry-After=%q", g.status, g.header.Get("Retry-After"))
+	}
+}
+
 func TestRESTPagesAreFollowed(t *testing.T) {
 	s := newStack(t, false, session.Options{})
 	var n atomic.Int32
@@ -766,6 +810,7 @@ func TestEveryStreamErrorHasAFallbackReason(t *testing.T) {
 		session.ErrNotPrivate:    "not_private",
 		session.ErrBlockSpent:    "block_spent",
 		session.ErrBlockFull:     "block_cache_full",
+		session.ErrCursorExpired: "cursor_expired",
 	} {
 		got := fallbackReason(err)
 		if got != want {

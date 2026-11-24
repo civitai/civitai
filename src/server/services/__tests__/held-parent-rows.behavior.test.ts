@@ -113,7 +113,8 @@ beforeAll(async () => {
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
     CREATE TABLE "EvidenceHold" ("userId" int NOT NULL);
     CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold";
-    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1);
+    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1,
+      "publishedAt" timestamp, metadata jsonb);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "ResourceReview" (
       id int PRIMARY KEY, "userId" int NOT NULL,
@@ -185,7 +186,8 @@ beforeEach(async () => {
   await db.exec(`
     TRUNCATE "CommentTopic", "CommentV3", "ResourceReview", "Model", "PostText", "Post", "Image", "CsamReport",
       "EvidenceHold", "BountyEntry", "Bounty", "Article",
-      "HeldResourceReview", "BountyBenefactor", "ModActivity", "BountyUnpaidAward", "JobQueue";
+      "HeldResourceReview", "BountyBenefactor", "ModActivity", "BountyUnpaidAward", "JobQueue",
+      "CsamQueueSetAside";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
   `);
@@ -664,7 +666,9 @@ describe("a held author's comments go with their parent", () => {
   it('returns the block markers of the image it deletes', async () => {
     await db.exec(`
       INSERT INTO "Image" (id, "userId", ingestion, "needsReview", "blockedFor")
-      VALUES (50, ${OWNER}, 'Blocked', 'csam', 'tos')
+      VALUES (50, ${OWNER}, 'Blocked', 'csam', 'tos');
+      -- No open case keeps it.
+      INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES (50, 'Dismissed');
     `);
 
     const [image] = await deleteImages([50], { updatePosts: false, actor: { system: 'test' } });

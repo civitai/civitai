@@ -52,7 +52,8 @@ import type { DB } from '@civitai/db-schema/kysely';
 const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK} OR "ingestion" <> 'Blocked')`;
 
 const BLOCKED_REASON_MODERATED = 'moderated';
-const BLOCKED_REASON_CSAM = 'CSAM';
+/** The block reason of a CSAM removal; the main app's `csamBlockedSql` reads the same literal. */
+export const BLOCKED_REASON_CSAM = 'CSAM';
 
 /**
  * Removed for CSAM, or under the review flag and not dismissed from its queue. A block of a held image
@@ -214,6 +215,13 @@ export class RemovedImageNotRestorableError extends Error {
   }
 }
 
+/** An accept refused because the image's review flag is no longer the one its page showed. */
+export class ImageChangedError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} changed since it was shown`);
+  }
+}
+
 /** A verdict on a report refused for an image under the CSAM review flag: that queue decides it. */
 export class CsamReviewImageError extends Error {
   constructor(readonly imageId: number) {
@@ -251,6 +259,7 @@ export async function acceptImage({
   deferAppealEmail = false,
   restoreRemoved = false,
   keepModeratorRemoved = false,
+  shownNeedsReview,
 }: {
   imageId: number;
   removeMinorFlag?: boolean;
@@ -263,6 +272,9 @@ export async function acceptImage({
    *  left cannot come back live from one; they throw `RemovedImageNotRestorableError` instead. Not even
    *  this lifts a CSAM block: it throws `ImageNotRestoredError`. */
   restoreRemoved?: boolean;
+  /** The review flag a queue page showed. When given (and this is not a report verdict), an image whose
+   *  flag has changed since is not accepted, and this throws `ImageChangedError`. */
+  shownNeedsReview?: string | null;
 }): Promise<ClosedAppeal | undefined> {
   const readImage = (db: Kysely<DB>) =>
     db
@@ -279,6 +291,9 @@ export async function acceptImage({
     return;
   }
   const nr = img.needsReview;
+  // Not for a report verdict: its page shows one image on several cards and does not reload between
+  // verdicts, so a second verdict must not fail on the first one's flag change.
+  const checksShown = shownNeedsReview !== undefined && !keepModeratorRemoved;
 
   // remixSource: stamp remixSourceReviewed so the audit job doesn't re-flag it. COALESCE guards the usual
   // metadata=NULL — both `-` and `||` NULL-propagate, silently dropping the stamp otherwise.
@@ -312,6 +327,10 @@ export async function acceptImage({
     .where('id', '=', imageId)
     .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
     .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
+    // A stale accept would lift an image whose child-safety case keeps a moderator's pending delete.
+    .$if(checksShown, (qb) =>
+      qb.where('needsReview', 'is not distinct from', shownNeedsReview ?? null)
+    )
     .$if(keepModeratorRemoved, (qb) =>
       qb.where(
         sql<boolean>`NOT (${REMOVED_BY_MODERATOR} OR ${BANNED_OWNER_BLOCKED}) AND "needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK}`
@@ -331,6 +350,14 @@ export async function acceptImage({
     ])
     .executeTakeFirst();
   if (!updated) {
+    if (checksShown) {
+      const now = await dbWrite
+        .selectFrom('Image')
+        .select('needsReview')
+        .where('id', '=', imageId)
+        .executeTakeFirst();
+      if (now && now.needsReview !== shownNeedsReview) throw new ImageChangedError(imageId);
+    }
     if (restoreRemoved) throw new ImageNotRestoredError(imageId);
     if (keepModeratorRemoved) {
       // An image under the review flag, removed or not and dismissed or not, is the CSAM queue's.
@@ -825,6 +852,8 @@ export async function keepPendingAppealFlags(db: Kysely<DB>, imageIds: readonly 
     .set({ needsReview: 'appeal' })
     .where('id', 'in', [...imageIds])
     .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
+    // A row holding a CSAM block never takes the appeal flag (main app: keepPendingAppealFlags).
+    .where(sql<boolean>`("blockedFor" = ${BLOCKED_REASON_CSAM}) IS NOT TRUE`)
     .where((eb) =>
       eb.exists(
         eb

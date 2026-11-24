@@ -1,6 +1,7 @@
 import type { TransactionInfo, WorkflowCost } from '@civitai/orchestration-client';
-import { ModalsProvider } from '@mantine/modals';
-import { describe, expect, test, vi } from 'vitest';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
@@ -18,6 +19,9 @@ const transactions = [
   { type: 'debit', amount: 20, accountType: 'blue' },
   { type: 'credit', amount: 20, accountType: 'blue' },
 ] as TransactionInfo[];
+
+// Each test renders its own DialogProvider; the store is global, so empty it between tests.
+afterEach(() => dialogStore.closeAll());
 
 describe('GenerationCostPopover', () => {
   test("a run's cost badge also shows what paid for it, refunds included", async () => {
@@ -39,9 +43,10 @@ describe('GenerationCostPopover', () => {
 
   test('the cost explanation opens above the phone sheets', async () => {
     renderWithProviders(
-      <ModalsProvider>
+      <>
         <GenerationCostPopover workflowCost={cost} readOnly variant="badge" />
-      </ModalsProvider>
+        <DialogProvider />
+      </>
     );
     await page.getByRole('button', { name: /50/ }).click();
     await page.getByRole('button', { name: 'How the cost is calculated' }).click();

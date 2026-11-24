@@ -411,28 +411,34 @@ func TestNextReadsAPrivateDocumentsKey(t *testing.T) {
 	}
 }
 
-// INVARIANT GUARD (green before the adapter sent either; it must stay green): the adapter's private
-// feed sends each record's `seq` beside its key, and a head in the `meta` of `live` and `progress`
-// (src/server/registry-adapter/private-feed.ts). Neither is read here yet; both are ignored, never a
-// Malformed event, and everything else in those events is read as before.
-func TestNextToleratesSeqAndHeadMeta(t *testing.T) {
+// The adapter's private feed sends each record's `seq` beside its key, and a head in the `meta` of
+// `live` and `progress` (src/server/registry-adapter/private-feed.ts); both are read, and everything
+// else in those events is read as before. An event with no `meta` has none; an upsert's is never read.
+// Fails on origin/main: Entity has no Seq and Event no Meta there (the test does not compile).
+func TestNextReadsSeqAndHeadMeta(t *testing.T) {
 	s := streamOf("" +
-		"event: upsert\ndata: {\"entity\":{\"urn\":\"urn:apps.civitai.com:app/notes/r1\",\"schemas\":[\"s\"],\"rev\":\"r1\",\"body\":{\"t\":1},\"key\":\"note-7e3\",\"seq\":41},\"cursor\":\"\"}\n\n" +
+		"event: upsert\ndata: {\"entity\":{\"urn\":\"urn:apps.civitai.com:app/notes/r1\",\"schemas\":[\"s\"],\"rev\":\"r1\",\"body\":{\"t\":1},\"key\":\"note-7e3\",\"seq\":41},\"cursor\":\"\",\"meta\":{\"head\":{\"seq\":5}}}\n\n" +
 		"event: live\nid: p1.c3\ndata: {\"cursor\":\"p1.c3\",\"meta\":{\"head\":{\"seq\":97}}}\n\n" +
-		"event: progress\nid: p1.c4\ndata: {\"cursor\":\"p1.c4\",\"meta\":{\"head\":{\"seq\":102}}}\n\n")
-	want := []Event{
-		{Type: Upsert, Entity: Entity{URN: "urn:apps.civitai.com:app/notes/r1", Schemas: []string{"s"}, Rev: "r1", Body: []byte(`{"t":1}`), Key: "note-7e3"}},
-		{Type: Live, Cursor: "p1.c3"},
-		{Type: Progress, Cursor: "p1.c4"},
+		"event: progress\nid: p1.c4\ndata: {\"cursor\":\"p1.c4\",\"meta\":{\"head\":{\"seq\":102}}}\n\n" +
+		"event: progress\nid: p1.c5\ndata: {\"cursor\":\"p1.c5\"}\n\n")
+	want := []struct {
+		ev   Event
+		meta string
+	}{
+		{Event{Type: Upsert, Entity: Entity{URN: "urn:apps.civitai.com:app/notes/r1", Schemas: []string{"s"}, Rev: "r1", Body: []byte(`{"t":1}`), Key: "note-7e3", Seq: 41}}, ""},
+		{Event{Type: Live, Cursor: "p1.c3"}, `{"head":{"seq":97}}`},
+		{Event{Type: Progress, Cursor: "p1.c4"}, `{"head":{"seq":102}}`},
+		{Event{Type: Progress, Cursor: "p1.c5"}, ""},
 	}
 	for i, w := range want {
 		got, err := s.Next()
 		if err != nil {
 			t.Fatalf("event %d: %v", i, err)
 		}
-		if got.Type != w.Type || got.Cursor != w.Cursor || got.Entity.URN != w.Entity.URN ||
-			got.Entity.Key != w.Entity.Key || string(got.Entity.Body) != string(w.Entity.Body) {
-			t.Fatalf("event %d = %+v, want %+v", i, got, w)
+		if got.Type != w.ev.Type || got.Cursor != w.ev.Cursor || got.Entity.URN != w.ev.Entity.URN ||
+			got.Entity.Key != w.ev.Entity.Key || got.Entity.Seq != w.ev.Entity.Seq ||
+			string(got.Entity.Body) != string(w.ev.Entity.Body) || string(got.Meta) != w.meta {
+			t.Fatalf("event %d = %+v (meta %s), want %+v (meta %s)", i, got, got.Meta, w.ev, w.meta)
 		}
 	}
 }

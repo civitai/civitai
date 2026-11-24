@@ -81,6 +81,7 @@ import {
   liftedBlockedForSql,
   liftedIngestionSql,
   liftedNeedsReviewSql,
+  reviewKeyAfterSql,
   liftedNsfwLevelSql,
   liftKeptBlockedSql,
   unblockedMetadataSql,
@@ -99,6 +100,7 @@ import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
   imageBlockedForConditions,
+  notReportListedSql,
   reviewedGalleryImageConditions,
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
@@ -270,6 +272,7 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
+import { invalidateImageVisibilityCaches } from '~/server/services/image-visibility-invalidation.service';
 import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
@@ -361,15 +364,19 @@ import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import {
   deleteImageRows,
-  imagesPendingDeletion as readImagesPendingDeletion,
+  moderatorDecides,
   moderatorPurge,
-  ownImageDeleteBlocked,
   queueImageStorageDelete as queueStorageDelete,
   queuePostNsfwLevelUpdates,
   type DeleteActor,
+  type DeleteOutcome,
   type DeletedImage as DeletedImageWithFiles,
   type DeletedImageRow,
 } from '@civitai/db-queries/content-deletion';
+import {
+  imagesPendingDeletion as readImagesPendingDeletion,
+  releaseModeratorPendingDeletes,
+} from '@civitai/db-queries/pending-deletes';
 import type { RawBuilder } from 'kysely';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
@@ -897,7 +904,10 @@ async function getKeptImages(ids: number[]) {
   `;
 }
 
-/** A kept image is now blocked and out of its post, so the caches a delete busts are stale too. */
+/**
+ * A kept image is now blocked (and, if a hold marker kept it, out of its post), so the caches a delete
+ * busts are stale too.
+ */
 async function bustKeptImages(kept: KeptImage[], updatePosts: boolean) {
   const ids = kept.map((x) => x.imageId);
   const postIds = updatePosts ? uniq(kept.map((x) => x.postId).filter(isDefined)) : [];
@@ -974,7 +984,7 @@ export async function queueReplacedImageDeletion(ids: number[]) {
   }
 }
 
-/** Of `ids`, the images whose delete waits on a review their owner can see. */
+/** Of `ids`, the images whose owner may be told their delete waits on a review. */
 export async function imagesPendingDeletion(ids: number[]) {
   // Primary: read straight after the delete that queued it.
   return readImagesPendingDeletion(kyselyOver(dbWrite), ids);
@@ -995,6 +1005,8 @@ type ImageDeleteOptions = {
   /** The stored files stay: a retry reuses their upload keys, or the rows only pointed at files
    *  stored for something else. */
   keepStoredFiles?: boolean;
+  /** False: a row its child-safety case keeps is not queued, for a caller with its own retry queue. */
+  queueKept?: boolean;
 };
 
 /**
@@ -1022,7 +1034,24 @@ const plainOwnerDeleteSql = (deletedById: number, reported: number[]) =>
  * their stored files and post recounts, so it needs no transaction; then, before returning,
  * everything that could still hand a client a deleted image is invalidated.
  */
-export async function deleteImages(
+export async function deleteImages(...args: Parameters<typeof deleteImagesWithOutcome>) {
+  return (await deleteImagesWithOutcome(...args)).deleted;
+}
+
+/**
+ * A delete that may hide an image no moderator decided on runs two statements (`deleteImageRows`),
+ * so they share a transaction.
+ */
+const withDeleteTransaction = <T>(
+  needed: boolean,
+  run: (db: ReturnType<typeof kyselyOver>) => Promise<T>
+) =>
+  needed
+    ? dbWrite.$transaction((tx) => run(kyselyOver(tx)), { maxWait: 10_000, timeout: 120_000 })
+    : run(kyselyOver(dbWrite));
+
+/** `deleteImages`, with the images it left for their child-safety case. */
+export async function deleteImagesWithOutcome(
   ids: number[],
   {
     actor,
@@ -1030,6 +1059,7 @@ export async function deleteImages(
     moderatorDelete = 'id' in actor && !!actor.isModerator,
     updatePosts = true,
     keepStoredFiles = false,
+    queueKept,
     retractPublicBlobs = false,
     retractionGate = newRetractionGate(),
   }: PurgeResizeCacheRetraction &
@@ -1038,12 +1068,13 @@ export async function deleteImages(
        *  sent; those rows come back `busy` so the caller can queue them. */
       retractionGate?: RetractionGate;
     }
-): Promise<DeletedImage[]> {
+): Promise<{ deleted: DeletedImage[]; kept: number[] }> {
   const deletedById = 'id' in actor ? actor.id : undefined;
   // This call's own rows run no wider than the shared limit, so they never wait out their slot
   // behind each other; only other senders in the process can hold them back.
   const ownLimit = pLimit(MAX_IN_FLIGHT_RETRACTIONS);
-  return await Limiter({ batchSize: 100 }).process(uniq(ids), async (ids) => {
+  const keptForCase: number[] = [];
+  const deleted = await Limiter({ batchSize: 100 }).process(uniq(ids), async (ids) => {
     // Read before the DELETE, which cascades `CollectionItem` and the report links and nulls
     // `User.profilePictureId`. Neither read throws.
     const [collections, profilePictureUserIds, reported] = await Promise.all([
@@ -1057,39 +1088,52 @@ export async function deleteImages(
 
     const callerWhere =
       !onlyWhere || 'toOperationNode' in onlyWhere ? onlyWhere : fromPrismaSql<boolean>(onlyWhere);
-    // The deleter's own image in a child-safety case waits for the case to close, as a pending
-    // delete. Never under a caller's condition, which the job would not carry out with it.
-    const rows = await deleteImageRows(kyselyOver(dbWrite), {
-      ids,
-      actor,
-      where: callerWhere,
-      pending:
-        deletedById === undefined || callerWhere
-          ? undefined
-          : { blocked: ownImageDeleteBlocked(deletedById), data: { ownerId: deletedById } },
-      files: keepStoredFiles
-        ? undefined
-        : {
-            allVersions: moderatorDelete ? moderatorPurge : undefined,
-            keepShopArtwork:
-              deletedById === undefined
-                ? undefined
-                : plainOwnerDeleteSql(deletedById, [...reported]),
+    const {
+      deleted: rows,
+      kept: caseKept,
+      hidden,
+      gone,
+    } = await withDeleteTransaction(
+      !moderatorDecides({
+        replay: moderatorDelete ? { moderatorDelete: true } : undefined,
+        queueKept,
+      }),
+      (db) =>
+        deleteImageRows(db, {
+          ids,
+          actor,
+          where: callerWhere,
+          queueKept,
+          replay: {
+            ...(moderatorDelete && { moderatorDelete: true }),
+            ...(keepStoredFiles && { keepStoredFiles: true }),
           },
-      recountPosts: updatePosts,
-      cdnTakedown: moderatorDelete,
-    });
+          files: keepStoredFiles
+            ? undefined
+            : {
+                allVersions: moderatorDelete ? moderatorPurge : undefined,
+                keepShopArtwork:
+                  deletedById === undefined
+                    ? undefined
+                    : plainOwnerDeleteSql(deletedById, [...reported]),
+              },
+          recountPosts: updatePosts,
+          cdnTakedown: moderatorDelete,
+        })
+    );
 
-    const returned = new Set(rows.map((row) => row.id));
-    // An id not returned was left in place, or kept by a hold marker's delete trigger (which blocks
-    // it): only the trigger's record tells them apart.
-    const kept =
-      rows.length < ids.length ? await getKeptImages(ids.filter((id) => !returned.has(id))) : [];
+    keptForCase.push(...caseKept);
+    // Of the rest, only the hold marker's record tells a row its delete trigger kept from one the
+    // caller's condition or ownership skipped.
+    const accounted = new Set([...rows.map((row) => row.id), ...caseKept, ...gone]);
+    const kept = [
+      ...(await getKeptImages(ids.filter((id) => !accounted.has(id)))),
+      ...hidden.map(({ id, userId, postId }) => ({ imageId: id, userId, postId })),
+    ];
     await invalidateDeletedImages({
-      ids,
       rows,
       kept,
-      filtered: !!onlyWhere || ('id' in actor && !actor.isModerator),
+      gone,
       updatePosts,
       collections,
       profilePictureUserIds,
@@ -1098,6 +1142,7 @@ export async function deleteImages(
     if (!retractPublicBlobs) return rows;
     return await retractFromStorage(rows, { retractPublicBlobs, retractionGate, ownLimit });
   });
+  return { deleted, kept: keptForCase };
 }
 
 /**
@@ -1105,18 +1150,16 @@ export async function deleteImages(
  * The rows are gone by now, so a failure is logged, not thrown.
  */
 async function invalidateDeletedImages({
-  ids,
   rows,
   kept,
-  filtered,
+  gone,
   updatePosts,
   collections,
   profilePictureUserIds,
 }: {
-  ids: number[];
   rows: DeletedImageRow[];
   kept: KeptImage[];
-  filtered: boolean;
+  gone: number[];
   updatePosts: boolean;
   collections: Awaited<ReturnType<typeof getCollectionIdsForImages>>;
   profilePictureUserIds: number[];
@@ -1127,9 +1170,9 @@ async function invalidateDeletedImages({
   const thumbnailParentIds = uniq(rows.map((row) => row.parentId).filter(isDefined));
   const results = await Promise.allSettled([
     queueImageSearchIndexUpdate({
-      // Ids a condition or ownership limit left in place stay in search; every other id asked for,
-      // a hold-kept row included, leaves it.
-      ids: filtered ? [...deletedIds, ...kept.map((x) => x.imageId)] : ids,
+      // A row left in place by a condition or ownership stays in search; a blocked (hold-kept or
+      // hidden) or already-gone row leaves it.
+      ids: [...deletedIds, ...kept.map((x) => x.imageId), ...gone],
       action: SearchIndexUpdateQueueAction.Delete,
     }),
     invalidateManyImageExistence(deletedIds),
@@ -1144,6 +1187,14 @@ async function invalidateDeletedImages({
     ...(thumbnailParentIds.length ? [thumbnailCache.refresh(thumbnailParentIds)] : []),
     refreshProfilePicturesForUsers(profilePictureUserIds),
     ...(kept.length ? [bustKeptImages(kept, updatePosts)] : []),
+    // A blocked image drops out of what shows it, as after a moderator's block (`handleBlockImages`).
+    ...(kept.length
+      ? [
+          queueComicsForPanelImages(kept.map((x) => x.imageId)),
+          queueDocumentsForBlockedImages(kept.map((x) => x.imageId)),
+          evictHomeBlocksForImages({ imageIds: kept.map((x) => x.imageId) }),
+        ]
+      : []),
   ]);
   const errors = results.flatMap((result) =>
     result.status === 'rejected' ? [safeError(result.reason)] : []
@@ -1153,7 +1204,7 @@ async function invalidateDeletedImages({
       type: 'error',
       name: 'delete-image-cleanup-failed',
       message: 'a deleted image may still be cached or indexed',
-      imageIds: ids,
+      imageIds: deletedIds,
       errors,
     });
 }
@@ -1296,7 +1347,7 @@ export async function handleUnblockImages({
       ...Object.entries(grouped).map(
         ([needsReview, groupedIds]) => dbWrite.$queryRaw<{ id: number; keptBlocked: boolean }[]>`
           UPDATE "Image" SET
-            "needsReview" = ${liftedNeedsReviewSql},
+            "needsReview" = ${reviewKeyAfterSql('human', liftedNeedsReviewSql)},
             "blockedFor" = ${liftedBlockedForSql},
             "nsfwLevel" = ${liftedNsfwLevelSql},
             "metadata" = ${unblockedMetadataSql},
@@ -1423,7 +1474,8 @@ const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needs
  * primary under the block's row locks: not as a replica last saw them. With `deferFor`, a held image
  * not removed for CSAM gets its deferred-effect row in the same transaction. With `moderatorId`, so
  * does the takedown's ModActivity row: the CDN access sync reads the block as a takedown only with
- * that row, and a run between the two would deny without ever retracting.
+ * that row, and a run between the two would deny without ever retracting. The shared delete's
+ * `hidden` step (`content-deletion.db.ts`) writes the same block columns; change both together.
  */
 export async function writeModeratorBlock(
   ids: number[],
@@ -1745,7 +1797,8 @@ export async function rescanUnratedImages(ids: number[]) {
  * `remove-blocked-images` counts its retention window from the queue row's `createdAt`, so a row
  * left behind by an unblock makes a later re-block inherit the *original* block's clock — the
  * image can then be deleted with no retention at all. Call this from anything that takes an image
- * out of `Blocked` or clears its `blockedFor`.
+ * out of `Blocked` or clears its `blockedFor`. A lift also releases the moderator's pending delete
+ * its child-safety case kept.
  */
 export async function dropBlockedImageDeleteQueue(ids: number[]) {
   if (!ids.length) return;
@@ -1757,6 +1810,7 @@ export async function dropBlockedImageDeleteQueue(ids: number[]) {
       AND "entityType" = ${EntityType.Image}::"EntityType"
       AND "entityId" = ANY(${ids})
   `;
+  await releaseModeratorPendingDeletes(kyselyOver(dbWrite), ids);
 }
 
 /**
@@ -5779,10 +5833,14 @@ export const getEntityCoverImage = async ({
   include,
   viewer,
   eventDecorationViewer,
+  seesReportListed = false,
 }: GetEntitiesCoverImage & {
   include?: ['tags'];
   // Covers follow the parent entity's visibility for this viewer; undefined is signed out.
   viewer: CoverImageViewer;
+  // A bounty's own images follow the bounty search index's exclusions (its uploader keeps theirs)
+  // unless this is set.
+  seesReportListed?: boolean;
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Pass one only
   // where the result is never cached for someone else.
   eventDecorationViewer?: EventViewer;
@@ -5825,6 +5883,7 @@ export const getEntityCoverImage = async ({
     exempt: Prisma.sql`(${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean`,
   });
 
+  const bountyNotReportListed = notReportListedSql(signedIn ? viewerId ?? undefined : undefined);
   // A blocked or ToS-violating cover is its owner's and moderators' alone.
   const coverNotBlocked = Prisma.join(
     [
@@ -6121,6 +6180,7 @@ export const getEntityCoverImage = async ({
             AND ${coverNotBlocked}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
+            AND (e."entityType" <> 'Bounty' OR ${seesReportListed}::boolean OR ${bountyNotReportListed})
             AND (
               ${isModerator}::boolean
               -- canViewBounty
@@ -7718,6 +7778,11 @@ export async function updateImageAcceptableMinor({
   id,
   acceptableMinor,
 }: UpdateImageAcceptableMinorInput) {
+  // primary: whether this write changes the flag decides whether shared caches are purged.
+  const before = await dbWrite.image.findUnique({
+    where: { id },
+    select: { acceptableMinor: true },
+  });
   const image = await dbWrite.image.update({
     where: { id },
     data: { acceptableMinor },
@@ -7734,8 +7799,24 @@ export async function updateImageAcceptableMinor({
   if (acceptableMinor) {
     await invalidateManyImageExistence([id]);
   }
+  if (before?.acceptableMinor !== acceptableMinor) {
+    await invalidateImageVisibilityCaches(id, { bustGalleries: bustImageGalleryCaches });
+  }
 
   return image;
+}
+
+/** The post and model-version galleries an image appears in. */
+async function bustImageGalleryCaches(imageId: number) {
+  const image = await dbRead.image.findUnique({
+    where: { id: imageId },
+    select: { postId: true, post: { select: { modelVersionId: true } } },
+  });
+  const modelVersionId = image?.post?.modelVersionId;
+  await Promise.all([
+    image?.postId ? bustCachesForPosts(image.postId) : undefined,
+    modelVersionId ? deleteImagesForModelVersionCache(modelVersionId) : undefined,
+  ]);
 }
 
 export async function getImageResourcesFromImageId({

@@ -90,6 +90,9 @@ type Input struct {
 	// `collectionTagId`, read only with a collection (0 = none).
 	CollectionID    int
 	CollectionTagID int
+	// Favorites is `favorites` (booleanString, default false). getModelsRaw never reads it; only the
+	// personal Hot lead's eligibility does (PersonalHotLeadEligible).
+	Favorites bool
 }
 
 // modelsSchema is model.getAll's allow-list and defaults (why: the inputschema package doc).
@@ -105,8 +108,9 @@ var modelsDefaults = struct{ sort, period, periodMode string }{
 // (authedCacheBypassLink, signed in) and `direction` (an infinite query's paging direction).
 var trpcTransportKeys = map[string]bool{"authed": true, "direction": true}
 
-// parsedKeys are the schema keys Parse reads; ignoredKeys the ones getModelsRaw never reads
-// (favorites, rating, excludedModelIds, excludedImageIds, and collectionItemStatus: getModelsRaw
+// parsedKeys are the schema keys Parse reads (`favorites` only for PersonalHotLeadEligible: getModelsRaw
+// never reads it); ignoredKeys the ones getModelsRaw never reads (rating, excludedModelIds,
+// excludedImageIds, and collectionItemStatus: getModelsRaw
 // builds its collection item filter without `statuses`), as zod's strip and the destructuring leave
 // them. With unsupportedKeys they are every key of the schema (TestInputKeyLedger), so a key added
 // to it must be classified.
@@ -116,10 +120,10 @@ var (
 		"user", "types", "baseModels", "checkpointType", "allowCommercialUse", "allowDerivatives",
 		"allowDifferentLicense", "allowNoCredit", "earlyAccess", "paidAccess", "hidePaid", "onSale",
 		"fromPlatform", "archived", "fileFormats", "disablePoi", "disableMinor", "excludedTagIds",
-		"excludedUserIds", "collectionId", "collectionTagId",
+		"excludedUserIds", "collectionId", "collectionTagId", "favorites",
 	}
 	ignoredKeys = []string{
-		"favorites", "rating", "excludedModelIds", "excludedImageIds", "collectionItemStatus",
+		"rating", "excludedModelIds", "excludedImageIds", "collectionItemStatus",
 	}
 )
 
@@ -265,6 +269,7 @@ func Parse(m map[string]any) (*Input, error) {
 	for key, dst := range map[string]*bool{
 		"earlyAccess": &in.EarlyAccess, "paidAccess": &in.PaidAccess, "hidePaid": &in.HidePaid,
 		"onSale": &in.OnSale, "fromPlatform": &in.FromPlatform, "archived": &in.Archived,
+		"favorites": &in.Favorites,
 	} {
 		if *dst, err = booleanString(m[key]); err != nil {
 			return nil, fallback.NewfSafe("input-invalid", fallback.Token(key), "%s: %v", key, err)

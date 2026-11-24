@@ -169,6 +169,7 @@ import { bustModelSaleCacheForModels } from '~/server/services/paid-access.servi
 import {
   countPendingAccountDeletionImageRestores,
   disarmAccountDeletionImagePurge,
+  releaseAccountDeletionPendingDeletes,
   recordPendingImageRestore,
 } from '~/server/services/account-deletion-images';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
@@ -338,7 +339,7 @@ export async function getUsersWithSearch({
       searchClient!.index(USERS_SEARCH_INDEX).search<UserSearchResult>(query, {
         limit: Math.round(limit * 1.5),
         filter: filters.join(' AND '),
-        attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture', 'image'],
+        attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture'],
       })
     );
   } catch (err) {
@@ -369,15 +370,17 @@ export async function getUsersWithSearch({
     throw err;
   }
 
-  return results.hits
-    .filter((x) => !x.deletedAt)
-    .map(({ deletedAt, profilePicture, image, ...user }) => ({
-      ...user,
-      avatarUrl: profilePicture?.url ?? image,
-      avatarNsfw: profilePicture?.nsfwLevel ?? 0,
-      meta: null,
-    }))
-    .slice(0, limit);
+  return (
+    results.hits
+      .filter((x) => !x.deletedAt)
+      .map(({ deletedAt, profilePicture, image: _legacyImage, ...user }) => ({
+        ...user,
+        avatarUrl: profilePicture?.url,
+        avatarNsfw: profilePicture?.nsfwLevel ?? 0,
+        meta: null,
+      }))
+      .slice(0, limit)
+  );
 }
 
 type GetUsersRow = {
@@ -1804,13 +1807,14 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
         ),
       ]
     : [];
-  const [, , reclaimed] = await dbWrite
+  const [, , , reclaimed] = await dbWrite
     .$transaction([
       dbWrite.user.update({
         where: { id, deletedAt: user.deletedAt, bannedAt: null },
         data: { deletedAt: null, username, email, meta },
       }),
       disarmAccountDeletionImagePurge(id),
+      releaseAccountDeletionPendingDeletes(id),
       ...reclaim,
     ])
     .catch(refuseIfBannedMeanwhile);

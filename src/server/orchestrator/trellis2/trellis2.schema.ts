@@ -4,8 +4,8 @@
  * Zod schema for the Trellis.2 3D-model generation form. Trellis.2 is the
  * base `modelVersion` of the same comfy pipeline Pixal3D rides
  * (`Trellis2ImageTo3dComfyPolyGenInput`), differing only in
- * `modelVersion: 'trellis2'` vs Pixal3D's `'pixal3D'`. Like Pixal3D / Tripo /
- * Hunyuan3D it is image-to-3D only, so there is no text-to-3D branch and no
+ * `modelVersion: 'trellis2'` vs Pixal3D's `'pixal3D'`. Like Pixal3D it is
+ * image-to-3D only, so there is no text-to-3D branch and no
  * `process` discriminator.
  *
  * Mirrors `src/server/orchestrator/pixal3d/pixal3d.schema.ts`:

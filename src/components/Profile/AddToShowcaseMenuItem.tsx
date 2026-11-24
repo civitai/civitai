@@ -1,6 +1,6 @@
 import { Menu } from '~/components/MantineOverlays';
 import { IconHeart } from '@tabler/icons-react';
-import { openAddToShowcaseModal } from '~/components/Dialog/triggers/add-to-showcase';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ShowcaseSectionType } from '~/server/schema/user-profile.schema';
@@ -57,8 +57,10 @@ export function AddToShowcaseMenuItem({ entityType, entityId, offerSections = tr
 
   const onClick = () => {
     if (hasSections && currentUser?.username)
-      openAddToShowcaseModal({
-        props: { entityType, entityId, username: currentUser.username },
+      openDialog(() => import('~/components/Profile/AddToShowcaseModal'), {
+        entityType,
+        entityId,
+        username: currentUser.username,
       });
     else add(entityId);
   };

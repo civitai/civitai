@@ -80,12 +80,16 @@ export const routes: ApiRoutes = {
   'temp/clamp-publishedat-bumps': () =>
     import('~/server/api-routes/admin/temp/clamp-publishedat-bumps'),
   'temp/convert-model-rules': () => import('~/server/api-routes/admin/temp/convert-model-rules'),
+  'temp/knights-v1-final-settle': () =>
+    import('~/server/api-routes/admin/temp/knights-v1-final-settle'),
   'temp/merge-moss-image-base': () =>
     import('~/server/api-routes/admin/temp/merge-moss-image-base'),
   'temp/migrate-article-images': () =>
     import('~/server/api-routes/admin/temp/migrate-article-images'),
   'temp/minor-hash-sweep': () => import('~/server/api-routes/admin/temp/minor-hash-sweep'),
   'temp/model-image-count': () => import('~/server/api-routes/admin/temp/model-image-count'),
+  'temp/model-nsfw-lock-backfill': () =>
+    import('~/server/api-routes/admin/temp/model-nsfw-lock-backfill'),
   'temp/model-text-moderation-backfill': () =>
     import('~/server/api-routes/admin/temp/model-text-moderation-backfill'),
   'temp/queue-accelerator-models-reindex': () =>

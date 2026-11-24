@@ -37,6 +37,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/jspack"
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
@@ -1406,6 +1407,30 @@ func goldenRedis(t *testing.T, entries map[string]goldenRedisEntry) *testkit.Red
 	return r
 }
 
+// seedUncuratedShowcase writes, for a request with prioritizedUserIds and a modelVersionId (the one
+// image.getInfinite shape that reads the version-showcase cache, getCarouselShowcaseIds), the entry
+// getVersionShowcaseCache's lookup writes for an uncurated version, unless the fixture holds one: no
+// fixture's world curates a showcase, so Node reads the version as uncurated.
+func seedUncuratedShowcase(r *testkit.Redis, fx *goldenFixture) {
+	if fx.Request.Input == "" {
+		return
+	}
+	var in struct {
+		JSON struct {
+			ModelVersionID     int   `json:"modelVersionId"`
+			PrioritizedUserIDs []int `json:"prioritizedUserIds"`
+		} `json:"json"`
+	}
+	if err := json.Unmarshal([]byte(fx.Request.Input), &in); err != nil || in.JSON.ModelVersionID == 0 || len(in.JSON.PrioritizedUserIDs) == 0 {
+		return
+	}
+	key := hydrate.KeyVersionShowcase + ":" + strconv.Itoa(in.JSON.ModelVersionID)
+	if _, own := fx.Redis[key]; own {
+		return
+	}
+	r.SetString(key, jspack.Pack(jspack.O("modelVersionId", in.JSON.ModelVersionID, "rows", []any{}, "community", []any{})))
+}
+
 func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	t.Helper()
 	return goldenSetupMode(t, fx, false)
@@ -1427,6 +1452,7 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 	nowFn := func() time.Time { return now }
 
 	cache := goldenRedis(t, fx.Redis)
+	seedUncuratedShowcase(cache, fx)
 	sys := goldenRedis(t, fx.SysRedis)
 	db := newGoldenPG(fx)
 
@@ -1853,6 +1879,12 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 			}
 			return testkit.NewRows([]string{"id", "userId", "modelVersionId", "modelId"}, rows...), nil
 		}},
+		// The community-cover guard's read (getShowcaseCommunityCovers' first query): no fixture's
+		// world features a community image in a showcase, so it finds no row, and Node's
+		// withCommunityCovers found none either.
+		{Match: `FROM "ModelVersionShowcaseItem" s`, Rows: func(_ []any) (*testkit.Rows, error) {
+			return testkit.NewRows([]string{"modelId", "imageId"}), nil
+		}},
 		// The collection permission read: the fixture's Collection row and the viewer's contributor
 		// row (none: no permissions); a collection the fixture does not hold is no row.
 		{Match: `FROM "Collection" c`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
@@ -2119,6 +2151,8 @@ func goldenSetupModelsMode(t *testing.T, fx *goldenFixture, writeBack bool) *gol
 		},
 		Now: env.now,
 	}
+	// gen-models.mjs models getModelsFeed with the personal-hot-lead flag off for every viewer.
+	env.server.PersonalHotLead = &stubUserFlag{}
 	return env
 }
 

@@ -305,24 +305,21 @@ describe('a scanned image the CDN refuses', () => {
     expect(routeImg()!.classList.contains('opacity-30')).toBe(false);
   });
 
-  test('keeps everyone else, and a moderator with the leg off, on the CDN', async () => {
-    for (const [isModerator, cdnLeg] of [
-      [false, true],
-      [true, false],
-    ] as const) {
-      setUp(isModerator, cdnLeg);
-      const { unmount } = await renderScanned();
-      await expect
-        .poll(() => document.querySelector('[data-testid="cdn-mock"], img[src^="/api/mod/"]'))
-        .not.toBeNull();
-      // The mock refuses in its first effect; act flushes it, so a fallback would be committed here.
-      await act(async () => undefined);
-      expect({ isModerator, cdnLeg, route: !!routeImg() }).toEqual({
-        isModerator,
-        cdnLeg,
-        route: false,
-      });
-      unmount();
-    }
+  // civitai/civitai#10202: the route decides which refused scanned images it serves.
+  test("moves a moderator's card with the CDN-refusal leg off too", async () => {
+    setUp(true, false);
+    await renderScanned();
+    await expect.poll(routeImg).not.toBeNull();
+  });
+
+  test('keeps everyone else on the CDN', async () => {
+    setUp(false, true);
+    await renderScanned();
+    await expect
+      .poll(() => document.querySelector('[data-testid="cdn-mock"], img[src^="/api/mod/"]'))
+      .not.toBeNull();
+    // The mock refuses in its first effect; act flushes it, so a fallback would be committed here.
+    await act(async () => undefined);
+    expect(routeImg()).toBeNull();
   });
 });

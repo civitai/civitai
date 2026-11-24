@@ -11,7 +11,7 @@ import {
   Text,
   Textarea,
 } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconAlertTriangle, IconPencil, IconTrash } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { formatDate } from '~/utils/date-helpers';
@@ -60,14 +60,13 @@ export function ModeratorChatThread({
   });
 
   const confirmDelete = (messageId: number) =>
-    openConfirmModal({
+    openConfirm({
       title: 'Delete this message?',
-      children: (
+      message: (
         <Text size="sm">
           It disappears for both participants. The row and its content stay in the audit log.
         </Text>
       ),
-      centered: true,
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => deleteMessage({ messageId }),

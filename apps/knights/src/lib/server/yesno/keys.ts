@@ -27,6 +27,7 @@ const AXIS_PROMPTS: Record<string, string> = {
   sexual_visual: 'Does this image contain sexual content?',
   sexual_text: 'Does text in this image describe or propose sexual activity?',
   subject_state: 'Does this image show a dead, decaying or reanimated body?',
+  tag_review: 'Should this image have this tag?',
   violence: 'Does this image show graphic injury, blood or gore?',
 };
 export const axisPrompt = (axis: string): string =>

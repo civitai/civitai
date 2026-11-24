@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { DELETED_ROW_COLUMNS_SQL } from './deleted-row-columns.fixture';
 import { readFileSync } from 'node:fs';
 import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
@@ -231,6 +232,7 @@ beforeAll(async () => {
     ${[...SEEDED_TABLES, ...QA_DATA]
       .map((t) => `CREATE TABLE "${t}" (id serial PRIMARY KEY, "userId" int NOT NULL);`)
       .join('\n')}
+    ALTER TABLE "Post" ADD COLUMN "publishedAt" timestamp, ADD COLUMN metadata jsonb;
     CREATE TABLE "BountyBenefactor" ("awardedToId" int REFERENCES "BountyEntry"(id) ON DELETE SET NULL);
     ALTER TABLE "BountyBenefactor" ADD COLUMN "bountyId" int REFERENCES "Bounty"(id) ON DELETE CASCADE;
     ALTER TABLE "BountyEntry" ADD COLUMN "bountyId" int REFERENCES "Bounty"(id) ON DELETE CASCADE;
@@ -294,6 +296,16 @@ beforeAll(async () => {
       id serial PRIMARY KEY, "modelId" int NOT NULL, status text NOT NULL DEFAULT 'Published'
     );
   `);
+  await holder.db.exec(`
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+    CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync');
+    CREATE TABLE "JobQueue" (
+      "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+      data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(),
+      UNIQUE ("entityType", "entityId", type)
+    );
+  `);
+  await holder.db.exec(imageUseTablesSql);
   await holder.db.exec(
     readFileSync(
       path.resolve(

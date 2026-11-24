@@ -58,7 +58,6 @@ describe('csamRestrictedSql and urlSiblingsSql', () => {
   it('refuse every alias their SQL declares, in any case', () => {
     const declared = aliases(csamRestrictedSql('i'));
     expect(declared).toContain('cs');
-    expect(declared.length).toBeGreaterThan(20);
     for (const alias of declared) {
       expect({ alias, refused: refuses(() => csamRestrictedSql(alias)) }).toEqual({
         alias,

@@ -15,6 +15,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Text Scan (LLM moderation of user text) | [docs/features/text-scan.md](text-scan.md) |
 | Moderator app: Model Flags (appeals, flagged, file matches) | [docs/features/moderator-model-flags.md](moderator-model-flags.md) |
 | CSAM text holds queue (moderator app) | [docs/features/text-scan-csam-holds.md](text-scan-csam-holds.md) |
+| Pending deletes (deletes a child-safety case keeps) | [docs/features/pending-deletes.md](pending-deletes.md) |
 | Model rule matches queue (moderator app) | [docs/features/text-scan.md](text-scan.md) |
 | Minor detection review mode | [docs/features/minor-detection-review.md](minor-detection-review.md) |
 | Label store (every moderation judgement, for training) | [docs/features/label-store.md](label-store.md) |
@@ -23,6 +24,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Buzz Accounts | [docs/features/buzz-accounts.md](buzz-accounts.md) |
 | Monetization rules (paid access / fees / donation goals) | [docs/features/monetization-rules.md](monetization-rules.md) |
 | Model gift links (free claims of gated versions) | [docs/features/model-gift-links.md](model-gift-links.md) |
+| Usage limits: adding a new limit (registry, 429, /me/limits) | [docs/features/usage-limits.md](usage-limits.md) |
 | Comped membership gifts (moderator, no charge) | [docs/features/membership-gift-comps.md](membership-gift-comps.md) |
 | Notifications | [docs/features/notifications.md](notifications.md) |
 | Message as Civitai Moderation (shared moderator chat account) | [docs/features/message-as-civitai.md](message-as-civitai.md) |

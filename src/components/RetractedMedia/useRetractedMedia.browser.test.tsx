@@ -9,9 +9,9 @@ type Hook = ReturnType<typeof useRetractedMedia>;
 const host = { hook: null as Hook | null, setId: (() => undefined) as (id: number) => void };
 
 // Nothing here is served, so every CDN load fails.
-function Host({ isModerator = true, cdnLeg = true, media = 'none' as 'none' | 'image' | 'video' }) {
+function Host({ isModerator = true, media = 'none' as 'none' | 'image' | 'video' }) {
   const [id, setId] = useState(41);
-  const hook = useRetractedMedia({ id, ingestion: 'Scanned' }, { isModerator }, { cdnLeg });
+  const hook = useRetractedMedia({ id, ingestion: 'Scanned' }, { isModerator });
   host.hook = hook;
   host.setId = setId;
   return (
@@ -76,15 +76,11 @@ describe('useRetractedMedia', () => {
     await expect.element(page.getByText('src cdn')).toBeVisible();
   });
 
-  test('attaches nothing for anyone else, or with the leg off', async () => {
-    for (const props of [{ isModerator: false }, { cdnLeg: false }]) {
-      const { unmount } = await renderWithProviders(<Host {...props} />);
-      expect({ props, onCdnError: host.hook!.onCdnError, mediaRef: host.hook!.mediaRef }).toEqual({
-        props,
-        onCdnError: undefined,
-        mediaRef: undefined,
-      });
-      unmount();
-    }
+  test('attaches nothing for anyone but a moderator', async () => {
+    await renderWithProviders(<Host isModerator={false} />);
+    expect({ onCdnError: host.hook!.onCdnError, mediaRef: host.hook!.mediaRef }).toEqual({
+      onCdnError: undefined,
+      mediaRef: undefined,
+    });
   });
 });

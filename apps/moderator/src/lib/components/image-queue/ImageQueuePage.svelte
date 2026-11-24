@@ -122,6 +122,15 @@
       ),
     ].join(',')
   );
+  const verdictFlags = $derived(
+    JSON.stringify(
+      Object.fromEntries(
+        selectedItems
+          .filter((i) => !('ingestion' in i && 'needsReview' in i && isFlagOnlyRemaining(i)))
+          .flatMap((i) => ('needsReview' in i ? [[i.id, i.needsReview ?? null]] : []))
+      )
+    )
+  );
   const selectedReportIds = $derived(
     selectedItems
       .map((i) => ('report' in i ? i.report.id : 0))
@@ -624,6 +633,7 @@
   {selected}
   imageIds={selectedImageIds}
   {verdictImageIds}
+  {verdictFlags}
   reportIds={selectedReportIds}
   submit={bulkSubmit}
   appeal={data.kind === 'appeal'}

@@ -3748,6 +3748,16 @@ const REDIS_KEYS_UNPREFIXED = {
      */
     CANDIDATES: 'semantic-search:candidates',
   },
+  FEED_GO: {
+    /*
+      Use: the Training Data listing rule sets (trainingDataListingRulesId) of the Node builds now
+      answering the public model API, read by feed-go before it serves a body listing a Training
+      Data file (src/server/services/feed-go-training-data-rules.ts).
+      Structure: hash, field = rule set id, value '1'; each field expires
+      FEED_GO_TRAINING_DATA_RULES_TTL_MS after its last write (HPEXPIRE), so the hash holds only the builds still answering.
+     */
+    TRAINING_DATA_RULES_LIVE: 'feed-go:training-data-rules-live',
+  },
 } as const;
 
 /**

@@ -23,6 +23,7 @@ describe('yesNoSettings', () => {
       share: 0,
       stretch: 4,
       maxAgeDays: 30,
+      tagReview: false,
     });
     expect(yesNoSettings({ KNIGHTS_YESNO_SHARE: '2', KNIGHTS_YESNO_STRETCH: '1.5' })).toEqual(
       DEFAULT_YESNO
@@ -40,7 +41,7 @@ describe('yesNoSettings with stored settings', () => {
         { KNIGHTS_YESNO_SHARE: '0.4', KNIGHTS_YESNO_STRETCH: '5', KNIGHTS_YESNO_MAX_AGE_DAYS: '3' },
         { yesNoShare: 0, yesNoStretch: 2, yesNoMaxAgeDays: 21 }
       )
-    ).toEqual({ share: 0, stretch: 2, maxAgeDays: 21 });
+    ).toEqual({ share: 0, stretch: 2, maxAgeDays: 21, tagReview: false });
   });
 
   it('keeps the environment for every field nothing is stored for', () => {
@@ -49,6 +50,14 @@ describe('yesNoSettings with stored settings', () => {
         { KNIGHTS_YESNO_SHARE: '0.4', KNIGHTS_YESNO_MAX_AGE_DAYS: '3' },
         { yesNoStretch: 2 }
       )
-    ).toEqual({ share: 0.4, stretch: 2, maxAgeDays: 3 });
+    ).toEqual({ share: 0.4, stretch: 2, maxAgeDays: 3, tagReview: false });
+  });
+});
+
+describe('the tag review switch', () => {
+  it('is off unless the Config page stored it on', () => {
+    expect(yesNoSettings({}).tagReview).toBe(false);
+    expect(yesNoSettings({}, { modTagReview: false }).tagReview).toBe(false);
+    expect(yesNoSettings({}, { modTagReview: true }).tagReview).toBe(true);
   });
 });

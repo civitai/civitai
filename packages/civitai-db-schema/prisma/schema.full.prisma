@@ -5646,6 +5646,63 @@ enum CommentEntityType {
   crucible
   storyline
   postText
+  featurePage
+}
+
+// A data.civitai.com Feature Pages subject (a feature or a feature request) with a comment thread.
+// The integer id is what CommentV3.entityId addresses; the urn is the platform's name for it.
+model FeaturePageTopic {
+  id        Int      @id @default(autoincrement())
+  urn       String   @unique
+  kind      String // feature | request (DB CHECK)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+}
+
+// One row per Feature Pages comment: what the mirror last pushed to the platform, and when it pushes
+// next. No relation to CommentV3, so the row outlives a hard-deleted comment.
+model FeaturePageCommentMirror {
+  commentId      Int       @id
+  userId         Int
+  requestId      String
+  urn            String?
+  goneCause      String? // author | moderator | refused (DB CHECK)
+  version        Int       @default(1)
+  pushedState    String?
+  pushedDigest   String?
+  platformDigest String?
+  // The state and post digest the next push is for, so the dirty pass schedules each change once
+  // and leaves a row in backoff alone until what it should hold changes again.
+  pendingDigest  String?
+  pushAttempts   Int       @default(0)
+  scanAttempts   Int       @default(0)
+  // The scan content hash scanAttempts counts against; a new hash starts the count again.
+  scanHash       String?
+  // The frame requestIds of the last 20 edits applied, so a resent edit changes nothing.
+  editRequestIds String[]  @default([])
+  // Set before the first post is sent: a lost reply leaves it set with no urn.
+  postAttemptedAt DateTime? @db.Timestamptz(6)
+  // Counts text sends after the first post, so each changed body gets its own idempotency key.
+  postSeq        Int       @default(0)
+  // When goneCause was set: the retraction's event time, the same on every retry.
+  goneAt            DateTime? @db.Timestamptz(6)
+  // Since when its feature subject is one the platform does not hold yet: the post waits, uncapped.
+  subjectMissingAt  DateTime? @db.Timestamptz(6)
+  // The text's own event time (post or edit), sent as `at`; flag changes do not move it.
+  contentAt         DateTime  @default(now()) @db.Timestamptz(6)
+  // Set when the platform holds, or is about to be sent, a removal: never cleared.
+  removeWantedAt    DateTime? @db.Timestamptz(6)
+  // Since when a restriction (hide, removal, retraction) is owed to the platform: lease priority and
+  // the alert clock.
+  restrictedAt      DateTime? @db.Timestamptz(6)
+  nextPushAt     DateTime? @db.Timestamptz(6)
+  leaseUntil     DateTime? @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([userId, requestId])
+  @@index([nextPushAt])
+  // Partial indexes, in the migration only: unique urn WHERE urn IS NOT NULL, and nextPushAt WHERE
+  // restrictedAt IS NOT NULL.
 }
 
 // Partitioned by entityType in the database, with the entity FK on each partition. No @relation to
@@ -5686,6 +5743,8 @@ model CommentV3 {
   deletedAt     DateTime? @db.Timestamptz(6)
   tosViolation  Boolean   @default(false)
   hidden        Boolean   @default(false)
+  // When `hidden` last became true; a restore undoes only the hide that wrote this stamp.
+  hiddenAt      DateTime? @db.Timestamptz(6)
   locked        Boolean   @default(false)
   pinnedAt      DateTime? @db.Timestamptz(6)
   reactionCount Int       @default(0)
@@ -7980,8 +8039,10 @@ enum JobQueueType {
   /// by that service's own database functions. No job in this app processes these rows; the
   /// moderator queue-health panel only counts them.
   CsamArchive
-  /// A delete that has to wait: an owner's own delete a child-safety case keeps, or a parent's cleanup
-  /// of an image something still keeps. `pending-deletes` carries it out once nothing blocks it.
+  /// A delete that has to wait: a delete a child-safety case keeps (the owner's, carried out as the
+  /// owner, or anyone else's, carried out as the system; `removeBlockedImages` keeps its own in its own
+  /// queue instead), or a parent's cleanup of an image something still keeps.
+  /// `pending-deletes` carries it out once nothing blocks it.
   PendingDelete
 }
 
@@ -8807,6 +8868,15 @@ model KnightsPlayer {
   startAtSeen DateTime?
   /// The player ticked "Don't show this again": the daily recap popup stays closed; the header button still opens it.
   recapPopupOptOut Boolean @default(false)
+}
+
+/// A UTC day on which the player voted in the original Knights game, filled once from its vote history. Counted with
+/// `KnightsPlayerDay` toward Paladin's days-played bar; nothing writes it after the backfill.
+model KnightsLegacyPlayerDay {
+  playerId Int
+  day      DateTime @db.Date
+
+  @@id([playerId, day])
 }
 
 /// One row per player per UTC day on which they voted. `goldRecorded` counts against the daily cap;
