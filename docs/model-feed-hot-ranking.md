@@ -1751,10 +1751,8 @@ buyer weight = least(1 + log2(max(price, 100) / 100) / 3, 3)
   that accepts Blue also counts 1, since its currency was not recorded. An unreadable amount or
   price counts 1, and never fails the metrics write.
 - **Wash buying.** The owner is still excluded, but the code has no signal that links one account to
-  another, so an alt's purchase counts like anyone's. Weighting makes that easier in alts: at the
-  cap, 9 alt purchases clear an empty bar where §20 needed 25. Each one must hold the full price, and
-  the Buzz goes to the creator, who can pass it on to the next alt. The cap is what bounds it.
-  Blue purchases stay at 1 because Blue costs nothing to earn.
+  another, so an alt's purchase counts like anyone's. The cap of 3 is what bounds how much one
+  purchase can move the bar, and Blue purchases stay at 1 because Blue costs nothing to earn.
 - **Known over-count.** A purchase made before this release is priced at the gate's price now, so a
   creator who raises the price after selling counts those buyers higher. It is bounded by the cap,
   and the 60-day window ends it.
