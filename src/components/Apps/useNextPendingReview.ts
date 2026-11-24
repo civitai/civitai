@@ -7,6 +7,10 @@ import { reviewSkipList } from '~/components/Apps/reviewSkipList';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
+/** The server render (and hydration) has no session storage: nothing is skipped there. */
+const NO_SKIPS: readonly string[] = [];
+const noSkips = () => NO_SKIPS;
+
 /**
  * "After a decision, open the next submission" — shared by the review page and the full-page
  * preview, so both decide what "next" means the same way.
@@ -23,10 +27,6 @@ import { trpc } from '~/utils/trpc';
  * `reviewSkipped` clears the list and opens the oldest; when none of them is pending any more,
  * the list is cleared on its own.
  */
-/** The server render (and hydration) has no session storage: nothing is skipped there. */
-const NO_SKIPS: readonly string[] = [];
-const noSkips = () => NO_SKIPS;
-
 export function useNextPendingReview(publishRequestId: string) {
   const features = useFeatureFlags();
   const router = useRouter();

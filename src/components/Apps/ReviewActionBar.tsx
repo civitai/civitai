@@ -199,6 +199,8 @@ export function ReviewActionBar({
         title: 'Approve failed',
         error: new Error(e.message),
         position: REVIEW_TOAST_POSITION,
+        // A failure stays up until the moderator acts on it.
+        autoClose: false,
       });
     },
   });
@@ -217,6 +219,8 @@ export function ReviewActionBar({
         title: 'Reject failed',
         error: new Error(e.message),
         position: REVIEW_TOAST_POSITION,
+        // A failure stays up until the moderator acts on it.
+        autoClose: false,
       });
     },
   });

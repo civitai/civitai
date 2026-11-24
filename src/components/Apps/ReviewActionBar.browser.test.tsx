@@ -296,7 +296,25 @@ describe('ReviewActionBar — approve', () => {
       <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={onClose} />
     );
     await page.getByRole('button', { name: 'Approve + build' }).click();
-    expect(showError).toHaveBeenCalledWith(expect.objectContaining({ title: 'Approve failed' }));
+    // Persistent, at the top, like every other review failure.
+    expect(showError).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Approve failed', autoClose: false, position: 'top-center' })
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test('a reject error is persistent too, and does NOT close', async () => {
+    mocks.errorMode = true;
+    const onClose = vi.fn();
+    renderWithProviders(
+      <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={onClose} />
+    );
+    await page.getByRole('button', { name: 'Reject…' }).click();
+    await page.getByTestId('apps-review-reject-chip-duplicate').click();
+    await page.getByTestId('apps-review-reject-confirm').click();
+    expect(showError).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Reject failed', autoClose: false, position: 'top-center' })
+    );
     expect(onClose).not.toHaveBeenCalled();
   });
 });
