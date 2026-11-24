@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buyerDisclosureItems } from '~/shared/constants/creator-service-terms.constants';
 
-/** The revisions line of the buyer disclosure, as the buyer reads it. */
 describe('buyerDisclosureItems price line', () => {
   // The server stores these lines as the buyer's record, so they must not vary with its locale.
   afterEach(() => vi.restoreAllMocks());
@@ -28,6 +27,7 @@ describe('buyerDisclosureItems price line', () => {
   });
 });
 
+/** The revisions line of the buyer disclosure, as the buyer reads it. */
 describe('buyerDisclosureItems revisions line', () => {
   const line = (revisionsIncluded: number) => {
     const { lead, text } = buyerDisclosureItems({

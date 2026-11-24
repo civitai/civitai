@@ -59,6 +59,8 @@ vi.mock('~/components/Buzz/BuzzTransactionButton', () => ({
     ),
 }));
 vi.mock('next/router', () => ({ useRouter: () => ({ push: () => undefined }) }));
+// The avatar reads the signed-in user; these tests are about the disclosure and what is sent.
+vi.mock('~/components/UserAvatar/UserAvatar', () => ({ UserAvatar: () => null }));
 vi.mock('~/components/Currency/CurrencyBadge', () => ({ CurrencyBadge: () => null }));
 // The uploader needs a signed-in session; these tests are about publishing.
 vi.mock('~/libs/form/components/SimpleImageUpload', () => ({ SimpleImageUpload: () => null }));

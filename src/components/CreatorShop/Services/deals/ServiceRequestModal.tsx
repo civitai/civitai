@@ -9,10 +9,20 @@ import {
   Stack,
   Text,
   Textarea,
+  ThemeIcon,
 } from '@mantine/core';
+import {
+  IconCircleCheck,
+  IconInfoCircle,
+  IconLock,
+  IconPackage,
+  IconScale,
+  IconShieldCheck,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import type { ReactNode } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
 import { useRef, useState } from 'react';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useServiceBuzzType } from '~/components/CreatorShop/Services/useServiceBuzzType';
@@ -50,7 +60,14 @@ const REQUEST_MAX = 5000;
 export function ServiceRequestModal({
   offering,
   sellerUsername,
+  sellerId,
+  seller,
+  origin = 'listing',
 }: {
+  /** Where the popup opened. The service page already shows the description, so it skips it. */
+  origin?: 'listing' | 'page';
+  seller?: RequestSeller;
+  sellerId?: number;
   offering: Pick<
     ServiceOffering,
     | 'id'
@@ -138,7 +155,13 @@ export function ServiceRequestModal({
   return (
     <Modal {...dialog} size="lg" title={`Request: ${offering.title}`}>
       <Stack gap="md">
-        <ServiceOfferingTerms offering={offering} sellerUsername={sellerUsername} />
+        <ServiceOfferingTerms
+          offering={offering}
+          sellerUsername={sellerUsername}
+          seller={seller}
+          sellerId={sellerId}
+          showDescription={origin !== 'page'}
+        />
         <Textarea
           label="What do you want?"
           value={text}
@@ -156,7 +179,14 @@ export function ServiceRequestModal({
             onChange={(e) => setLicenseAgreed(e.currentTarget.checked)}
           />
         </ServiceOfferingLicense>
-        <Group justify="flex-end">
+        <Group
+          justify="flex-end"
+          className={
+            features?.creatorServicesNext
+              ? '-mx-md px-md pt-md border-t border-gray-3 dark:border-dark-4'
+              : undefined
+          }
+        >
           <Button variant="default" onClick={dialog.onClose}>
             Cancel
           </Button>
@@ -186,23 +216,63 @@ export function ServiceRequestModal({
 }
 
 type RequestOffering = Parameters<typeof ServiceRequestModal>[0]['offering'];
+type RequestSeller = ComponentProps<typeof UserAvatar>['user'];
+
+const DISCLOSURE_ICONS = [IconLock, IconPackage, IconCircleCheck, IconScale, IconShieldCheck];
 
 /** Who it's from, its terms and its full description: what a buyer reads before requesting. */
 export function ServiceOfferingTerms({
   offering,
   sellerUsername,
+  sellerId,
+  seller,
+  showDescription = true,
 }: {
   offering: RequestOffering;
   sellerUsername: string;
+  /** With the seller's user (and cosmetics), the standard avatar replaces the plain name. */
+  seller?: RequestSeller;
+  sellerId?: number;
+  /** False where the page behind the popup already shows it. */
+  showDescription?: boolean;
 }) {
+  const features = useOptionalFeatureFlags();
+  if (!features?.creatorServicesNext)
+    return (
+      <>
+        <Text size="sm" c="dimmed">
+          From {sellerUsername} · {serviceTermsLine(offering)}
+        </Text>
+        <Text size="sm" className="whitespace-pre-line">
+          {offering.description}
+        </Text>
+      </>
+    );
   return (
     <>
-      <Text size="sm" c="dimmed">
-        From {sellerUsername} · {serviceTermsLine(offering)}
-      </Text>
-      <Text size="sm" className="whitespace-pre-line">
-        {offering.description}
-      </Text>
+      <Stack gap={6}>
+        <UserAvatar
+          user={seller ?? { id: sellerId, username: sellerUsername }}
+          withUsername
+          linkToProfile
+          size="md"
+        />
+        <Text size="sm" c="dimmed">
+          {serviceTermsLine(offering)}
+        </Text>
+      </Stack>
+      {showDescription && (
+        <Stack gap={4}>
+          <Text size="xs" fw={600} tt="uppercase" c="dimmed">
+            About this service
+          </Text>
+          <Paper withBorder radius="md" p="sm">
+            <Text size="sm" className="whitespace-pre-line break-words">
+              {offering.description}
+            </Text>
+          </Paper>
+        </Stack>
+      )}
     </>
   );
 }
@@ -233,7 +303,9 @@ export function ServiceOfferingLicense({
 /** The hold disclosure a buyer agrees to with the price. */
 export function ServiceBuyerDisclosure({ offering }: { offering: RequestOffering }) {
   const domain = useDomainColor();
-  const reviewEnabled = !!useOptionalFeatureFlags()?.creatorServicesNext;
+  const features = useOptionalFeatureFlags();
+  const reviewEnabled = !!features?.creatorServicesNext;
+  const items = buyerDisclosureItems({ ...offering, reviewEnabled });
   return (
     <Paper withBorder radius="md" p="md">
       <Stack gap="xs">
@@ -246,16 +318,37 @@ export function ServiceBuyerDisclosure({ offering }: { offering: RequestOffering
             variant="transparent"
           />
         </Group>
-        <List size="sm" spacing={4}>
-          {buyerDisclosureItems({ ...offering, reviewEnabled }).map(({ lead, text }) => (
-            <List.Item key={lead}>
-              <Text span fw={600} inherit>
-                {lead}
-              </Text>{' '}
-              {text}
-            </List.Item>
-          ))}
-        </List>
+        {reviewEnabled ? (
+          <Stack gap="sm">
+            {items.map(({ lead, text }, i) => {
+              const Icon = DISCLOSURE_ICONS[i] ?? IconInfoCircle;
+              return (
+                <Group key={lead} gap="sm" wrap="nowrap" align="flex-start">
+                  <ThemeIcon variant="light" color="gray" radius="xl" size={30}>
+                    <Icon size={18} aria-hidden />
+                  </ThemeIcon>
+                  <Text size="sm">
+                    <Text span fw={600} inherit>
+                      {lead}
+                    </Text>{' '}
+                    {text}
+                  </Text>
+                </Group>
+              );
+            })}
+          </Stack>
+        ) : (
+          <List size="sm" spacing={4}>
+            {items.map(({ lead, text }) => (
+              <List.Item key={lead}>
+                <Text span fw={600} inherit>
+                  {lead}
+                </Text>{' '}
+                {text}
+              </List.Item>
+            ))}
+          </List>
+        )}
       </Stack>
     </Paper>
   );
