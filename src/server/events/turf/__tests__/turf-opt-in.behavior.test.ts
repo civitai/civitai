@@ -196,6 +196,17 @@ describe('who is in Hat Turf', () => {
     expect(await left(NO_HAT)).toBe(false);
   });
 
+  // The summaries read marks images watched only for a joined viewer (hatTurf.getSummaries).
+  it('the summaries read says the viewer is in exactly when the stock read does', async () => {
+    const joined = async (userId?: number) =>
+      (await getTurfSummaries('e', [101, 102], userId)).joined;
+    expect(await joined(OPTED_IN)).toBe(true);
+    expect(await joined(OPTED_OUT)).toBe(false);
+    expect(await joined(NEVER_SET)).toBe(false);
+    expect(await joined(NO_HAT)).toBe(false);
+    expect(await joined()).toBe(false);
+  });
+
   // Deliberate: turf is played on anyone's image; an owner need not join. Gating on the owner again
   // is a product decision for the event owner, not a code cleanup.
   it('every visible image is open, whatever its owner chose', async () => {

@@ -23,7 +23,11 @@ import type { TurfWatchHub } from '~/components/HatTurf/turf-watch-hub';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
-import { MAX_TURF_IMAGES_PER_MARK, TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
+import {
+  MAX_TURF_IMAGES_PER_MARK,
+  TURF_FEED_STICKERS,
+  TURF_WATCH_TTL_MS,
+} from '~/server/schema/turf.schema';
 import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -117,9 +121,16 @@ export function TurfSummaryProvider({
     [imageIds.join(','), event]
   );
 
+  // With the shared hub, a signed-in viewer's reads also mark their images watched when the server
+  // finds the viewer joined, and the hub skips its own mark for them. Keyed on the session, not on
+  // `joined`, so the stock answer arriving never refetches a read already made.
+  const watchReads = batched && !!user;
   const summaryQueries = trpc.useQueries((t) =>
     (readsSummaries ? chunks : []).map((chunk) =>
-      t.hatTurf.getSummaries({ event: event ?? '', imageIds: chunk }, { staleTime: 30_000 })
+      t.hatTurf.getSummaries(
+        { event: event ?? '', imageIds: chunk, ...(watchReads ? { watch: true } : {}) },
+        { staleTime: 30_000 }
+      )
     )
   );
   const stickerQueries = trpc.useQueries((t) =>
@@ -131,6 +142,17 @@ export function TurfSummaryProvider({
     )
   );
   const summaryStamp = summaryQueries.map((query) => query.dataUpdatedAt).join(',');
+  // The reads that marked their images, and when: the hub need not mark those ids itself yet.
+  const readMarks = useMemo(
+    () =>
+      summaryQueries.flatMap((query, index) =>
+        query.data?.watched && chunks[index]
+          ? [{ imageIds: chunks[index], at: query.dataUpdatedAt }]
+          : []
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [summaryStamp, chunks]
+  );
   const stickerStamp = stickerQueries.map((query) => query.dataUpdatedAt).join(',');
 
   // A push or re-read applies over the page's read only while it is newer than that image's chunk,
@@ -375,6 +397,7 @@ export function TurfSummaryProvider({
               watching={watching}
               version={watchVersion}
               onAdded={catchUp}
+              readMarks={readMarks}
             />
           ) : (
             <TurfWatcher
@@ -461,18 +484,23 @@ function TurfWatcher({
  * TurfWatcher's job done by the page's shared hub: this provider's on-screen ids join the page's one
  * mark set, so the page sends one mark call per interval (per 50 ids) however many providers it has.
  * The hub tells every provider of ids marked again, and of every watched id when the page becomes
- * visible again; each catches up only those its own reads hold and that have gone stale.
+ * visible again after its marks may have lapsed; each catches up only those its own reads hold and
+ * that have gone stale. Ids this provider's summaries reads already marked are not marked again
+ * until the interval comes round.
  */
 function TurfHubWatcher({
   event,
   watching,
   version,
   onAdded,
+  readMarks,
 }: {
   event: string;
   watching: React.MutableRefObject<Map<number, number>>;
   version: number;
   onAdded: (imageIds: number[]) => void;
+  /** This provider's summaries reads that marked their images, and when they were read. */
+  readMarks: { imageIds: number[]; at: number }[];
 }) {
   const utils = trpc.useUtils();
   const hub = useRef<TurfWatchHub | null>(null);
@@ -491,6 +519,7 @@ function TurfHubWatcher({
       minGapMs: WATCH_MIN_GAP_MS,
       retryMs: BATCHED_WATCH_RETRY_MS,
       retryJitterMs: BATCHED_WATCH_RETRY_JITTER_MS,
+      markLifetimeMs: TURF_WATCH_TTL_MS,
     });
     hub.current = held.hub;
     const unsubscribe = held.hub.subscribe((ids) => added.current(ids));
@@ -504,6 +533,11 @@ function TurfHubWatcher({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event]);
+
+  // The hub consults these when it next sends the ids that came on screen (after its coalesce wait).
+  useEffect(() => {
+    readMarks.forEach(({ imageIds, at }) => hub.current?.noteMarked(imageIds, at));
+  }, [event, readMarks]);
 
   useEffect(() => {
     const current = hub.current;

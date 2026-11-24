@@ -4,7 +4,7 @@ import {
   TurfWatchHub,
   retainTurfWatchHub,
 } from '~/components/HatTurf/turf-watch-hub';
-import { TURF_WATCH_TTL_MS } from '~/server/events/turf/turf-watch';
+import { TURF_WATCH_TTL_MS } from '~/server/schema/turf.schema';
 
 type Sent = { event: string; imageIds: number[] };
 
@@ -16,9 +16,31 @@ const options = (sent: Sent[], event = 'birthday2026') => ({
   minGapMs: 2_000,
   retryMs: 5_000,
   retryJitterMs: 1_000,
+  markLifetimeMs: 90_000,
   // No page here: visibility is driven by hand where a test needs it.
   onVisible: () => () => undefined,
+  isHidden: () => false,
 });
+
+/** A page whose visibility the test sets: `show()` fires the hub's visible callback. */
+function page() {
+  let hidden = false;
+  let visible: () => void = () => undefined;
+  return {
+    hide: () => void (hidden = true),
+    show: () => {
+      hidden = false;
+      visible();
+    },
+    options: {
+      isHidden: () => hidden,
+      onVisible: (callback: () => void) => {
+        visible = callback;
+        return () => undefined;
+      },
+    },
+  };
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -187,6 +209,97 @@ describe('TurfWatchHub lapse guards', () => {
     visible();
     expect(sent).toEqual([{ event: 'birthday2026', imageIds: [51, 52, 53] }]);
     expect(heard).toEqual([[51, 52, 53]]);
+    hub.dispose();
+  });
+});
+
+describe('TurfWatchHub in a hidden page', () => {
+  test('sends no re-marks while hidden; shown again, re-marks once and every id catches up', () => {
+    const sent: Sent[] = [];
+    const heard: number[][] = [];
+    const tab = page();
+    const hub = new TurfWatchHub({ ...options(sent), ...tab.options });
+    hub.subscribe((ids) => heard.push(ids));
+    [61, 62].forEach((id) => hub.retain(id));
+    vi.advanceTimersByTime(250);
+    sent.length = 0;
+    tab.hide();
+    // Three ticks (40s, 80s, 120s) pass hidden: the marks lapse, and nothing is sent.
+    vi.advanceTimersByTime(130_000);
+    expect(sent).toEqual([]);
+    tab.show();
+    expect(sent).toEqual([{ event: 'birthday2026', imageIds: [61, 62] }]);
+    expect(heard).toEqual([[61, 62]]);
+    // Visible again, the interval re-marks as before (next tick at 160s).
+    vi.advanceTimersByTime(30_000);
+    expect(sent).toHaveLength(2);
+    hub.dispose();
+  });
+
+  test('shown again before a tick was missed: the marks are live, so nothing is sent', () => {
+    const sent: Sent[] = [];
+    const heard: number[][] = [];
+    const tab = page();
+    const hub = new TurfWatchHub({ ...options(sent), ...tab.options });
+    hub.subscribe((ids) => heard.push(ids));
+    hub.retain(71);
+    // The tick at 40s re-marks the set; hidden at 45s, shown at 70s, before the next tick.
+    vi.advanceTimersByTime(45_000);
+    sent.length = 0;
+    tab.hide();
+    vi.advanceTimersByTime(25_000);
+    tab.show();
+    expect(sent).toEqual([]);
+    expect(heard).toEqual([]);
+    // The tick at 80s still renews the mark (50s after the last, inside its 90s).
+    vi.advanceTimersByTime(10_000);
+    expect(sent).toEqual([{ event: 'birthday2026', imageIds: [71] }]);
+    hub.dispose();
+  });
+});
+
+describe('TurfWatchHub with marks made by a summaries read', () => {
+  test('an id a read marked just now is not marked again on screen, only by the interval', () => {
+    const sent: Sent[] = [];
+    const hub = new TurfWatchHub(options(sent));
+    hub.retain(80);
+    vi.advanceTimersByTime(250);
+    sent.length = 0;
+    // A read marks 81 and 82 at 1s; both come on screen at 3s.
+    vi.advanceTimersByTime(750);
+    hub.noteMarked([81, 82], Date.now());
+    vi.advanceTimersByTime(2_000);
+    hub.retain(81);
+    hub.retain(82);
+    vi.advanceTimersByTime(2_000);
+    expect(sent).toEqual([]);
+    // The tick at 40s renews them with the rest of the set.
+    vi.advanceTimersByTime(36_000);
+    expect(sent).toEqual([{ event: 'birthday2026', imageIds: [80, 81, 82] }]);
+    hub.dispose();
+  });
+
+  test('a read mark that would lapse before the tick after next is not trusted: marked as usual', () => {
+    const sent: Sent[] = [];
+    const hub = new TurfWatchHub(options(sent));
+    // Read at 0s, so its mark lives until 90s. Shown at 41s, just after a tick, the next ticks are
+    // 80s and 120s: one missed tick would leave the mark lapsed, so it is marked itself.
+    hub.noteMarked([91], Date.now());
+    vi.advanceTimersByTime(41_000);
+    hub.retain(91);
+    vi.advanceTimersByTime(250);
+    expect(sent).toEqual([{ event: 'birthday2026', imageIds: [91] }]);
+    hub.dispose();
+  });
+
+  test('ids a read did not mark still go out on screen', () => {
+    const sent: Sent[] = [];
+    const hub = new TurfWatchHub(options(sent));
+    hub.noteMarked([101], Date.now());
+    hub.retain(101);
+    hub.retain(102);
+    vi.advanceTimersByTime(250);
+    expect(sent).toEqual([{ event: 'birthday2026', imageIds: [102] }]);
     hub.dispose();
   });
 });
