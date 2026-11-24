@@ -59,7 +59,8 @@ not been deleted again; a released image stays hidden until a moderator lifts it
 appeals it; on a finding (blocked for CSAM, listed on a CSAM report, or an actioned
 child-safety report on the image, its post or its review) it carries out the delete as queued, and
 an image carried out on a finding takes the mark off its post's delete, so the post goes too. Another
-ask queued on a marked row (through `PENDING_DELETE_UPSERT`) takes the mark off.
+ask queued on a marked row (through `PENDING_DELETE_UPSERT`) replaces the drain's withdrawn ask, so
+that ask alone decides how the row is carried out (a cleanup is still re-checked as one).
 `deletePost` runs the unpublish follow-ups (`afterPostsUnpublish`) for a post it kept; the other
 `deletePostRows` callers do not yet. A publish the trigger refuses makes `updatePost` answer that the
 post can't be published right now.

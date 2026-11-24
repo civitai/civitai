@@ -82,7 +82,8 @@ export function releaseAccountDeletionPendingDeletes(userId: number) {
       WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"
         AND q."entityId" = d."entityId" AND d."askedElse"
     ),
-    -- Its open case keeps it hidden; pending-deletes decides when the case closes.
+    -- Kept, hidden, for its open case: pending-deletes releases it only if the case closes with no
+    -- finding and no other ask has replaced the drain's.
     marked AS (
       UPDATE "JobQueue" q SET data = q.data || '{"releasedOnRestore": true}'::jsonb FROM drained d
       WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"

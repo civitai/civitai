@@ -122,10 +122,10 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
           : PENDING_DELETE_UPSERT
       }
     )`);
+  const hides = table === 'Image';
   // Only a moderator's delete that queues what it keeps rewrites an already-blocked image, so a
   // takedown keeps its reason and a grace block stays restorable. Grace markers are dropped so a
   // restore cannot lift this block.
-  const hides = table === 'Image';
   const skipBlocked = !moderatorDecides(options);
   if (hides)
     ctes.push(sql`hidden AS (

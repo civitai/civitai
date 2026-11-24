@@ -787,6 +787,37 @@ describe('an owner deleting their own content in a child-safety case', () => {
     ).toEqual([]);
   });
 
+  it("handles a cleanup asked of a restore-marked image as a cleanup, not as the drain's delete", async () => {
+    const LOOSE = 4011;
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", url) VALUES (${LOOSE}, ${PLAIN}, 'key-loose');
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+      INSERT INTO "ImageReport" VALUES (${LOOSE}, 1);
+    `);
+    await deleteImages([LOOSE], {
+      actor: { system: ACCOUNT_DELETION_DRAIN },
+      onlyWhere: Prisma.sql`true`,
+    });
+    await releaseAccountDeletionPendingDeletes(PLAIN);
+    await queueImageDeletes(kyselyOver(dbMock.dbWrite as never), [LOOSE], { ownerId: PLAIN });
+    expect((await pending()).find(({ entityId }) => entityId === LOOSE)?.data).toEqual({
+      cleanup: true,
+    });
+
+    // In use again before the case closes: a cleanup no longer applies.
+    await holder.db.exec(`
+      INSERT INTO "ImageConnection" ("imageId") VALUES (${LOOSE});
+      UPDATE "Report" SET status = 'Unactioned' WHERE id = 1;
+    `);
+    await runJob();
+
+    // Still a cleanup, waiting on the image's block; not carried out as an outright delete.
+    expect(await imageRow(LOOSE)).toBeDefined();
+    expect((await pending()).find(({ entityId }) => entityId === LOOSE)?.data).toMatchObject({
+      cleanup: true,
+    });
+  });
+
   it("carries out a moderator's later delete of a post a restore marked, though its case finds nothing", async () => {
     await holder.db.exec(`
       INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
