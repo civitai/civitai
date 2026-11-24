@@ -7,7 +7,8 @@ import {
   restoreImages,
   type FlowDraftState,
 } from './flowDraft';
-import type { Img } from './trainingFlow';
+import { imagesInScope, newBatch, type Img } from './trainingFlow';
+import { removeTag } from './tagReplace';
 
 // train-core (for trainingBlobKey) loads the SDK, whose dist Node's ESM loader refuses.
 vi.mock('@civitai/orchestration-client', () => ({}));
@@ -30,6 +31,22 @@ let ids = 100;
 const nextId = () => ++ids;
 
 describe('draft round trip', () => {
+  it('keeps each file in its batch, so a batch-scoped tag edit still holds after a reload', () => {
+    const first = newBatch('upload', 1_000);
+    const second = newBatch('zip', 2_000);
+    const restored = restoreImages(
+      draftEntries([
+        img({ tags: ['1boy', 'smile'], batch: first }),
+        img({ id: 2, name: 'b.png', blobId: 'blob-b', tags: ['1boy'], batch: second }),
+      ]).map((e) => e.img),
+      new Map(),
+      nextId
+    );
+    expect(restored.map((i) => i.batch)).toEqual([first, second]);
+    for (const i of imagesInScope(restored, second.id)) i.tags = removeTag(i.tags, '1boy');
+    expect(restored.map((i) => i.tags)).toEqual([['1boy', 'smile'], []]);
+  });
+
   it('brings back every uploaded file with its hand-edited labels', () => {
     const file = new File(['bytes'], 'a.png', { type: 'image/png' });
     const entries = draftEntries([

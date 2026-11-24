@@ -1,13 +1,14 @@
-// The New training flow lives in component memory, so anything that reloads or remounts it — the main
-// app reloads the page when a session ends — used to throw away a whole tagging pass. This keeps an
-// autosaved copy in the browser's IndexedDB, per user, that the flow offers to resume. Only uploaded
-// files are kept: an in-flight upload has nothing to resume from but its bytes.
+// The New training flow lives in component memory, and anything that reloads or remounts it loses it
+// (the main app reloads the page when a session ends). This keeps an autosaved copy in the browser's
+// IndexedDB, per user, that the flow offers to resume. Only uploaded files are kept: an in-flight upload
+// has nothing to resume from but its bytes.
 import { cardByType, type LabelType, type Media } from '$lib/data/trainingModels';
 import { FLOW_DRAFT_DB } from '@civitai/shared/training-flow-draft';
 import { trainingBlobKey } from '$lib/train-core';
 import {
   isTrainable,
   type Img,
+  type ImgBatch,
   type RunParams,
   type SamplePrompt,
   type Selection,
@@ -51,6 +52,8 @@ export interface DraftImg {
   tags: string[];
   caption: string;
   repeats?: number;
+  /** The add it came in with, so Manage tags can still scope an edit to it after a reload. */
+  batch?: ImgBatch;
 }
 
 /** A tile to save, with where its bytes come from. */
@@ -94,6 +97,7 @@ export function draftEntries(images: Img[]): DraftEntry[] {
           tags: [...i.tags],
           caption: i.caption,
           repeats: i.repeats,
+          batch: i.batch && { ...i.batch },
         },
         file: i.file,
         localUrl: !i.file && local ? i.previewUrl : undefined,

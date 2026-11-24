@@ -128,27 +128,33 @@
     } catch {
       // Malformed hand-off — ignore and start empty.
     }
-    // A hand-off is the dataset the user just asked for; the draft waits for a later visit.
-    if (draftStore && !reuseItems.length && !reusePairItems.length)
-      void draftStore.load(nextImgId).then((draft) => {
-        if (draft && images.length === 0) draftOffer = draft;
-        else if (draft) for (const img of draft.images) URL.revokeObjectURL(img.previewUrl);
-      });
+    if (!draftStore) return;
+    // Autosave waits for this answer and never overwrites a stored draft the user hasn't seen. A
+    // hand-off is the dataset the user just asked for, so its draft isn't offered and keeps its slot
+    // for a later visit.
+    const handOff = reuseItems.length > 0 || reusePairItems.length > 0;
+    void draftStore.load(nextImgId).then((draft) => {
+      if (!draft) draftArmed = true;
+      else if (!handOff && images.length === 0) {
+        draftOffer = draft;
+        draftArmed = true;
+      } else for (const img of draft.images) URL.revokeObjectURL(img.previewUrl);
+    });
   });
 
-  // The autosave (./flowDraft): a reload or remount used to lose the whole dataset and its labels.
-  // Kept while the dataset has an uploaded file, offered back on the next visit, cleared once Start
-  // lands. Edit-pair datasets aren't kept.
+  // The autosave (./flowDraft): kept while the dataset has an uploaded file, offered back on the next
+  // visit, cleared once Start lands. Edit-pair datasets aren't kept.
   const draftUserId = hostConfig().userId;
   const draftStore = draftUserId != null ? flowDraftStore(draftUserId) : null;
   let draftOffer = $state<FlowDraft | null>(null);
+  let draftArmed = $state(false);
   // Whether this visit saved a draft — only then does an emptied dataset clear it, so the offer of
   // an earlier one survives until the user answers it or builds a new dataset.
   let draftSaved = false;
   let submitted = false;
   const DRAFT_SAVE_DELAY_MS = 500;
   $effect(() => {
-    if (!draftStore || !selection || trainsPairs || submitted) return;
+    if (!draftStore || !draftArmed || !selection || trainsPairs || submitted) return;
     const entries = draftEntries(images);
     if (entries.length === 0) {
       if (draftSaved) {
