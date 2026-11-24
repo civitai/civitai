@@ -1178,9 +1178,9 @@ model Model {
   @@index([updatedAt, id])
 }
 
-/// Every owner a model has had, including its first. Read by the legal hold so a transfer cannot
-/// move data out of it. Append-only (a trigger refuses UPDATE and DELETE); no foreign keys, so rows
-/// outlive the model and user.
+/// Every owner a model has had, including its first. Account restore reads it to find the models
+/// a deleted account handed to the placeholder owner. Append-only (a trigger refuses UPDATE and
+/// DELETE); no foreign keys, so rows outlive the model and user.
 model ModelOwnership {
   id        Int      @id @default(autoincrement())
   modelId   Int
@@ -1949,30 +1949,6 @@ model ComicProjectReport {
 
   @@id([reportId, comicProjectId])
   @@index([comicProjectId], type: Hash)
-}
-
-/// A copy of a held author's ResourceReview, written in the same statement as a delete that would
-/// cascade it. Purged once the author's hold ends.
-model HeldResourceReview {
-  /// The original ResourceReview id.
-  id             Int       @id
-  modelId        Int
-  modelVersionId Int
-  userId         Int
-  rating         Int
-  recommended    Boolean
-  details        String?
-  exclude        Boolean
-  nsfw           Boolean
-  tosViolation   Boolean
-  metadata       Json?
-  createdAt      DateTime
-  updatedAt      DateTime
-  heldAt         DateTime  @default(now())
-  /// The holds on the author when it was copied.
-  holdReasons    String[]
-
-  @@index([userId])
 }
 
 model ResourceReview {
@@ -7448,68 +7424,6 @@ model PersonalDataExport {
 
   @@index([userId])
   @@index([status])
-}
-
-/// A hold marker on one owner. While a row is active (see `EvidenceHeldUser`), that owner's images
-/// are not deleted by anything. Report rows are written by a trigger on `CsamReport` when a report is
-/// sent; `manual` rows are written by a person. A hold ends at `releaseAt` (or `extendedUntil`, if
-/// later), or when a person releases it; clearing an image's review flag never ends it.
-model EvidenceHold {
-  id              Int       @id @default(autoincrement())
-  userId          Int
-  csamReportId    Int?
-  /// subject | secondary | manual
-  role            String
-  reportSentAt    DateTime?
-  /// NULL holds until released.
-  releaseAt       DateTime?
-  extendedUntil   DateTime?
-  /// Who asked for the extension, and their reference.
-  extensionRequestedBy String?
-  extensionReference   String?
-  reason          String
-  createdAt       DateTime  @default(now())
-  createdById     Int?
-  releasedAt      DateTime?
-  releasedById    Int?
-  releaseReason   String?
-
-  @@index([userId])
-}
-
-/// An image a hold marker kept from deletion. The delete trigger takes it out of its post; `postId`
-/// is the post it was in, and nothing else records it. `prior*` are the image's ingestion, block
-/// reason and nsfwLevel before the trigger blocked it. Purged once no hold covers the owner.
-model EvidenceHoldImage {
-  imageId         Int      @id
-  userId          Int
-  postId          Int?
-  keptAt          DateTime @default(now())
-  priorIngestion  String?
-  priorBlockedFor String?
-  priorNsfwLevel  Int?
-}
-
-/// A held owner's post, copied by a delete trigger when it was deleted; it stands in for the post.
-/// Purged with the owner's `EvidenceHoldImage` rows once no hold covers them.
-model EvidenceHoldPost {
-  postId         Int       @id
-  userId         Int
-  title          String?
-  detail         String?
-  createdAt      DateTime?
-  publishedAt    DateTime?
-  modelVersionId Int?
-  collectionId   Int?
-  metadata       Json?
-  keptAt         DateTime  @default(now())
-}
-
-/// @view
-/// The owners with at least one active `EvidenceHold`.
-model EvidenceHeldUser {
-  userId    Int       @id
-  heldUntil DateTime?
 }
 
 model Link {

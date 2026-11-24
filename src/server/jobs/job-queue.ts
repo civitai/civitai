@@ -13,7 +13,6 @@ import {
   updateCollectionsNsfwLevels,
   updateNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
-import { contentRemovalHeldSql } from '~/server/services/legal-hold.service';
 import { limitConcurrency, Limiter } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 // TEMP: unused while collection enqueue is disabled below. REVERT.
@@ -318,8 +317,7 @@ const handleJobQueueCleanIfEmpty = createJob(
             )
             AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = "Post".id)
             -- Text items are content: a post with them is not empty.
-            AND NOT EXISTS (SELECT 1 FROM "PostText" t WHERE t."postId" = "Post".id)
-            AND NOT ${contentRemovalHeldSql(Prisma.raw('"Post"."userId"'), true)}`),
+            AND NOT EXISTS (SELECT 1 FROM "PostText" t WHERE t."postId" = "Post".id)`),
           // A post its child-safety case keeps stays: a pending delete would take it unchecked, even
           // after its owner filled it again.
           queueKept: false,

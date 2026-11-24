@@ -74,7 +74,7 @@ deferred), #4 (user moderation, out of scope), #8 (dispute auto-resolve, needs a
         file and its resized copies are purged by the main app's `image-storage-deletes` job, and the CDN takedown
         is queued as `CdnAccessSync` by the delete statement itself, so the spoke has no purge helper.
   - [x] **postId images — DONE.** The delete statement queues each deleted image's post for its recount
-        (`UpdateNsfwLevel`), `finishImageDeletes` queues the post of each image it blocked (one a hold marker's trigger kept, and one its case kept and the delete blocked), and both get `bustPostGalleryCaches`
+        (`UpdateNsfwLevel`), `finishImageDeletes` queues the post of each image it blocked (one its case kept and the delete blocked), and both get `bustPostGalleryCaches`
         (the spoke's `bustCachesForPosts` port). An article delete leaves posted images alone in both apps (the
         shared `queueImageDeletes` rule). `postMetrics.queueUpdate`
         is intentionally NOT mirrored — it enqueues to the main app's bucket-based metric queue (unsafe to

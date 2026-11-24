@@ -36,7 +36,6 @@ import {
   revokeCreatorScoreGrant,
   setRewardsEligibility,
   deleteAccount,
-  deleteAccountHold,
   confirmMemorial,
   getMemorialPanelState,
   proposeMemorial,
@@ -86,7 +85,6 @@ import {
   type CreatorScoreGrantResult,
 } from '$lib/creator-score-grant';
 import { BUZZ_ENTITY_TYPES } from '../enforcement-options';
-import { HOLD_UNKNOWN_REFUSAL, LEGAL_HOLD_REFUSAL, type DeleteHold } from '$lib/legal-hold';
 
 // The lookup itself lives in the layout so it survives moving between sections; this only validates
 // the slug, so an unknown one 404s rather than rendering the fallback panel.
@@ -96,21 +94,12 @@ export const load: PageServerLoad = async ({ params, url, locals, parent }) => {
   const moved = RETIRED_SECTIONS[params.section];
   if (moved) redirect(307, `/retool/user-lookup/${moved}${url.search}`);
   if (!isSection(params.section)) error(404, 'Unknown section');
-  // Only where the Delete account and Purge buttons render, and only for someone who may press one.
-  let deleteHold: DeleteHold | null = null;
-  if (
-    params.section === 'admin' &&
-    (locals.grants['user.deleteAccount'] || locals.grants['user.purge'])
-  ) {
-    const { result } = await parent();
-    if (result) deleteHold = await deleteAccountHold(result.identity.id);
-  }
   let memorial: MemorialPanelState | null = null;
   if (params.section === 'admin' && locals.grants['user.memorialize']) {
     const { result } = await parent();
     if (result) memorial = await getMemorialPanelState(result.identity.id);
   }
-  return { section: params.section, deleteHold, memorial };
+  return { section: params.section, memorial };
 };
 
 const NOTE_MAX = 5000;
@@ -898,10 +887,6 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return accountFail(input);
-    // The endpoint refuses a held account too; this answers before anything is sent.
-    const hold = await deleteAccountHold(input.userId);
-    if (hold === 'held') return accountFail(LEGAL_HOLD_REFUSAL);
-    if (hold !== 'clear') return accountFail(HOLD_UNKNOWN_REFUSAL);
     if (input.removeImages === 'true') {
       const withheld = await withheldAccountRefusal(locals.user, input.userId);
       if (withheld) return fail(403, { scope: 'account' as const, error: withheld });

@@ -74,7 +74,7 @@ beforeEach(async () => {
   await db.exec(`
     INSERT INTO "User" (id, username) VALUES (7, 'owner'), (${HELD_OWNER}, 'held'), (13, 'reporter');
     INSERT INTO "Post" (id, "userId") VALUES (${POST}, 7), (51, ${HELD_OWNER});
-    INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${HELD_OWNER});
+    INSERT INTO "CsamReport" ("userId", details, images) VALUES (${HELD_OWNER}, '{}', '[]');
     INSERT INTO "Image" (id, url, type, ingestion, "blockedFor", width, height, hash, "pHash", "userId", "postId", index) VALUES
       (${WITHHELD}, '${KEY}', 'video', 'Blocked', 'CSAM', 512, 768, 'withheld-hash', 1234, 7, ${POST}, 0),
       (${CONTROL}, 'control-key', 'image', 'Scanned', NULL, 640, 480, 'control-hash', 5678, 7, ${POST}, 1),

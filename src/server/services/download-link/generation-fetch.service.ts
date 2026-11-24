@@ -161,7 +161,6 @@ export async function checkGenerationFetch({
     )
       return refuse('not-found');
     const flags = await read('flags', () => readModeratorFlags(kyselyRead, modelVersionId));
-    if (flags.removedWithOwner) return refuse('not-found');
     if (flags.inReview) return refuse('in-review');
     allFiles = true;
   } else {

@@ -300,7 +300,6 @@
         canBan={!!data.grants['user.ban']}
         canPurge={!!data.grants['user.purge']}
         canDelete={!!data.grants['user.deleteAccount']}
-        deleteHold={data.deleteHold}
       />
       {#if data.memorial}
         <MemorialPanel identity={result.identity} panel={data.memorial} />

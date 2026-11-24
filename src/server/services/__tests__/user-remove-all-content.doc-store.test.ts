@@ -21,12 +21,6 @@ const { holder, recorded } = vi.hoisted(() => ({
   recorded: [] as string[],
 }));
 
-// No hold covers the account here; the hold itself is `remove-all-content-legal-hold.behavior.test.ts`.
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
-  assertContentRemovalNotHeld: async () => ({ markerView: false }),
-}));
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
   getDocStoreMaintenance: () => ({
     ...holder.maintenance,
@@ -179,8 +173,8 @@ async function state(app: string) {
 }
 
 /**
- * The evidence tables the wipe deletes with raw SQL, so each statement carries the legal hold.
- * Images go through `deleteImages` instead, its guard naming the account.
+ * The main-database tables the wipe deletes with raw SQL. Images go through `deleteImages`
+ * instead, the late pass naming the account.
  */
 const MAIN_DB_WIPE = ['Model', 'Image', 'Post', 'Article'];
 const rawDeleted = (table: string) =>
@@ -263,7 +257,6 @@ describe('removeAllContent → document store', () => {
 
     await expect(removeAllContent({ id: TARGET, actorUserId: 9 })).resolves.toEqual({
       incomplete: ['doc-store'],
-      keptModelIds: [],
     });
 
     // The main-database wipe ran in full regardless.
@@ -304,7 +297,6 @@ describe('removeAllContent → document store', () => {
     };
     await expect(removeAllContent({ id: TARGET })).resolves.toEqual({
       incomplete: ['doc-store'],
-      keptModelIds: [],
     });
     expect(recorded).toEqual(['partial']);
     const line = warn.mock.calls

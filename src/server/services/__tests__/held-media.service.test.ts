@@ -22,7 +22,6 @@ beforeAll(async () => {
       "mimeType" text, "needsReview" text, "blockedFor" text, "userId" int NOT NULL
     );
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb);
-    CREATE VIEW "EvidenceHeldUser" AS SELECT 0 AS "userId" WHERE false;
     INSERT INTO "Image" (id, url, type, "mimeType", "needsReview", "userId") VALUES
       (1, 'key-1', 'video', 'video/mp4', 'csam', 301),
       (2, 'key-2', 'image', NULL, NULL, 302),

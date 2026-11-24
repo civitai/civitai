@@ -180,7 +180,6 @@ export const routes: ApiRoutes = {
   'user/expire-generation-credentials': () =>
     import('~/server/api-routes/mod/user/expire-generation-credentials'),
   'user/force-logout': () => import('~/server/api-routes/mod/user/force-logout'),
-  'user/legal-hold': () => import('~/server/api-routes/mod/user/legal-hold'),
   'user/membership-cancel': () => import('~/server/api-routes/mod/user/membership-cancel'),
   'user/membership-cancel-preview': () =>
     import('~/server/api-routes/mod/user/membership-cancel-preview'),

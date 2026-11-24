@@ -80,8 +80,6 @@ CREATE TABLE "ScanLabelVote" ("itemId" INTEGER, reason TEXT);
 CREATE TABLE "CsamReport" (
   id SERIAL PRIMARY KEY, "userId" INTEGER, details JSONB, images JSONB, "reportSentAt" TIMESTAMP
 );
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
-CREATE TABLE "EvidenceHoldImage" ("imageId" INTEGER PRIMARY KEY);
 CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL, "textHash" TEXT, meta JSONB);
 `;
 
@@ -101,7 +99,6 @@ beforeAll(async () => {
       (4, 'key-4', 304, 'Blocked', 'csam', 'moderated', false),
       (5, 'key-5', 305, 'Scanned', NULL, NULL, false),
       (6, 'key-6', 306, 'Blocked', NULL, 'tos', false);
-    INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (6);
 
     -- The CDN-refusal leg. Each differs from 7 (scanned, url retracted, the url's only row) in one fact.
     INSERT INTO "Image" (id, url, "userId", ingestion, "postId", minor) VALUES
@@ -223,10 +220,6 @@ describe('retracted media eligibility', () => {
   it('never serves held media, an unblocked image or a missing id', async () => {
     for (const id of [4, 5, 999])
       expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
-  });
-
-  it('keeps an image under an evidence hold to cleared moderators', async () => {
-    expect(await tierOf(6)).toBe('cleared');
   });
 });
 
@@ -351,7 +344,6 @@ describe('copies sharing bytes with a restricted image', () => {
   afterEach(async () => {
     await db.exec(`
       DELETE FROM "CsamReport" WHERE "userId" = 990100199;
-      DELETE FROM "EvidenceHoldImage" WHERE "imageId" IN (990000102, 990000104);
       DELETE FROM "ImageCdnModeratorDelete" WHERE "imageId" = 990000105;
       UPDATE "Image" SET "needsReview" = NULL, minor = false WHERE id = 990000102;
     `);
@@ -361,8 +353,6 @@ describe('copies sharing bytes with a restricted image', () => {
     db.query(`INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100199, '{}', $1)`, [
       JSON.stringify([{ id: imageId }]),
     ]);
-  const hold = (imageId: number) =>
-    db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES ($1)`, [imageId]);
 
   it('serves both images to any moderator while neither copy is reported or held', async () => {
     expect(await tierOf(990000101)).toBe('anyMod');
@@ -372,7 +362,6 @@ describe('copies sharing bytes with a restricted image', () => {
   it.each([
     ['a reported row on the same url', 990000101, () => report(990000102)],
     ['a reported row with the same pHash', 990000103, () => report(990000104)],
-    ['a held row on the same url', 990000101, () => hold(990000102)],
     [
       'an unreported copy on the same url in review',
       990000101,
@@ -611,7 +600,7 @@ describe("a held account's image, through /api/retracted-media's reader", () => 
       INSERT INTO "Image" (id, url, "userId", ingestion, "needsReview") VALUES
         (${IMAGE}, 'key-${IMAGE}', ${OWNER}, 'Scanned', 'poi'),
         (${TWIN}, 'key-${TWIN}', 990100401, 'Scanned', 'poi');
-      INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER});
+      INSERT INTO "CsamReport" ("userId", details, images) VALUES (${OWNER}, '{}', '[]');
     `);
   });
   beforeEach(() => {
@@ -619,7 +608,7 @@ describe("a held account's image, through /api/retracted-media's reader", () => 
   });
   afterAll(async () => {
     await db.exec(`DELETE FROM "Image" WHERE id IN (${IMAGE}, ${TWIN});
-      DELETE FROM "EvidenceHeldUser" WHERE "userId" = ${OWNER}`);
+      DELETE FROM "CsamReport" WHERE "userId" = ${OWNER}`);
   });
 
   it('answers a live image of a held account as it answers any live image', async () => {
