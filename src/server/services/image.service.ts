@@ -1,4 +1,5 @@
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
+import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
 import { isSessionOrFullUserKey, withModeratorRightsFor } from '~/server/auth/full-user-credential';
@@ -90,6 +91,7 @@ import {
 import {
   BLOCKED_IMAGE_DELETE_QUEUE,
   LIFT_KEPT_ACTIVITY,
+  ratingRecordedUnderGrace,
 } from '@civitai/shared/account-deletion-grace';
 import {
   PRIOR_BLOCKED_FOR_KEY,
@@ -103,6 +105,7 @@ import {
   notReportListedSql,
   reviewedGalleryImageConditions,
   imageVisibilityConditions,
+  isReviewImageBlockedForViewer,
 } from '~/server/services/image-visibility.service';
 import {
   type MediaViewer,
@@ -364,6 +367,7 @@ import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import {
   deleteImageRows,
+  moderatorDecides,
   moderatorPurge,
   queueImageStorageDelete as queueStorageDelete,
   queuePostNsfwLevelUpdates,
@@ -1037,6 +1041,18 @@ export async function deleteImages(...args: Parameters<typeof deleteImagesWithOu
   return (await deleteImagesWithOutcome(...args)).deleted;
 }
 
+/**
+ * A delete that may hide an image no moderator decided on runs two statements (`deleteImageRows`),
+ * so they share a transaction.
+ */
+const withDeleteTransaction = <T>(
+  needed: boolean,
+  run: (db: ReturnType<typeof kyselyOver>) => Promise<T>
+) =>
+  needed
+    ? dbWrite.$transaction((tx) => run(kyselyOver(tx)), { maxWait: 10_000, timeout: 120_000 })
+    : run(kyselyOver(dbWrite));
+
 /** `deleteImages`, with the images it left for their child-safety case. */
 export async function deleteImagesWithOutcome(
   ids: number[],
@@ -1080,27 +1096,34 @@ export async function deleteImagesWithOutcome(
       kept: caseKept,
       hidden,
       gone,
-    } = await deleteImageRows(kyselyOver(dbWrite), {
-      ids,
-      actor,
-      where: callerWhere,
-      queueKept,
-      replay: {
-        ...(moderatorDelete && { moderatorDelete: true }),
-        ...(keepStoredFiles && { keepStoredFiles: true }),
-      },
-      files: keepStoredFiles
-        ? undefined
-        : {
-            allVersions: moderatorDelete ? moderatorPurge : undefined,
-            keepShopArtwork:
-              deletedById === undefined
-                ? undefined
-                : plainOwnerDeleteSql(deletedById, [...reported]),
+    } = await withDeleteTransaction(
+      !moderatorDecides({
+        replay: moderatorDelete ? { moderatorDelete: true } : undefined,
+        queueKept,
+      }),
+      (db) =>
+        deleteImageRows(db, {
+          ids,
+          actor,
+          where: callerWhere,
+          queueKept,
+          replay: {
+            ...(moderatorDelete && { moderatorDelete: true }),
+            ...(keepStoredFiles && { keepStoredFiles: true }),
           },
-      recountPosts: updatePosts,
-      cdnTakedown: moderatorDelete,
-    });
+          files: keepStoredFiles
+            ? undefined
+            : {
+                allVersions: moderatorDelete ? moderatorPurge : undefined,
+                keepShopArtwork:
+                  deletedById === undefined
+                    ? undefined
+                    : plainOwnerDeleteSql(deletedById, [...reported]),
+              },
+          recountPosts: updatePosts,
+          cdnTakedown: moderatorDelete,
+        })
+    );
 
     keptForCase.push(...caseKept);
     // Of the rest, only the hold marker's record tells a row its delete trigger kept from one the
@@ -1150,8 +1173,8 @@ async function invalidateDeletedImages({
   const thumbnailParentIds = uniq(rows.map((row) => row.parentId).filter(isDefined));
   const results = await Promise.allSettled([
     queueImageSearchIndexUpdate({
-      // A row left in place by a condition, ownership, or a child-safety case that did not block it
-      // stays in search; a blocked (hold-kept or hidden) or already-gone row leaves it.
+      // A row left in place by a condition or ownership stays in search; a blocked (hold-kept or
+      // hidden) or already-gone row leaves it.
       ids: [...deletedIds, ...kept.map((x) => x.imageId), ...gone],
       action: SearchIndexUpdateQueueAction.Delete,
     }),
@@ -1709,6 +1732,12 @@ export async function updateNsfwLevel(ids: number | number[]) {
   await dbWrite.$executeRawUnsafe(
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
+  await refreshImageLevelCaches(ids);
+}
+
+/** What reads an image's level outside the row: thumbnails, profile pictures, search documents. */
+export async function refreshImageLevelCaches(ids: number[]) {
+  if (!ids.length) return;
   await Promise.all([refreshThumbnailCache(ids), refreshProfilePicturesForImages(ids)]);
   await queueDocumentsForImageMinorChanges({ levelImageIds: ids });
 }
@@ -1718,14 +1747,19 @@ export async function updateNsfwLevel(ids: number | number[]) {
 // (update_nsfw_levels_new) skips locked rows, so a Blocked-locked row can never be restored
 // by updateNsfwLevel alone. Reset+unlock only the Blocked rows (never-corrupted locks are
 // preserved), then recompute; a never-tagged row the recompute leaves unrated goes back to the scanner.
-export async function resetBlockedNsfwLevel(ids: number | number[]) {
+/** `unlockedOnly`: passes by a row locked since the caller read it unlocked (a moderator's rating). */
+export async function resetBlockedNsfwLevel(
+  ids: number | number[],
+  { unlockedOnly = false }: { unlockedOnly?: boolean } = {}
+) {
   if (!Array.isArray(ids)) ids = [ids];
   ids = [...new Set(ids)];
   if (!ids.length) return;
   await dbWrite.$executeRaw`
     UPDATE "Image"
     SET "nsfwLevel" = 0, "nsfwLevelLocked" = FALSE
-    WHERE id IN (${Prisma.join(ids)}) AND "nsfwLevel" = ${NsfwLevel.Blocked};
+    WHERE id IN (${Prisma.join(ids)}) AND "nsfwLevel" = ${NsfwLevel.Blocked}
+      AND (${!unlockedOnly} OR NOT "nsfwLevelLocked");
   `;
   await updateNsfwLevel(ids);
   await rescanUnratedImages(ids);
@@ -4455,6 +4489,9 @@ export async function filterPinnedImagesToVersion<T extends { id: number }>(
 
 type GetImageRaw = GetAllImagesRaw & {
   reactions?: ReviewReactions[];
+  reviewId: number | null;
+  dealId: number | null;
+  sellerId: number | null;
   postId?: number | null;
   // User fields from JOIN (not in GetAllImagesRaw since main query uses cache)
   username: string | null;
@@ -4466,15 +4503,18 @@ export const getImage = async ({
   userId,
   isModerator,
   ownerSeesHeld = false,
+  shownReviewImageLevels,
 }: GetImageInput & {
   userId?: number;
   isModerator?: boolean;
   /** `imageVisibilityConditions`' `ownerSeesHeld`: the image page's read, not a remix or other use. */
   ownerSeesHeld?: boolean;
+  /** `imageVisibilityConditions`' `shownReviewImageLevels`: the image page's read only. */
+  shownReviewImageLevels?: number;
 }) => {
   const AND = [
     Prisma.sql`i.id = ${id}`,
-    ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld }),
+    ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld, shownReviewImageLevels }),
   ];
 
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
@@ -4497,7 +4537,10 @@ export const getImage = async ({
       i."blockedFor",
       i.type,
       i.metadata,
-      i."nsfwLevel",
+      COALESCE(rw."level", i."nsfwLevel") AS "nsfwLevel",
+      rw."reviewId",
+      rw."dealId",
+      rw."sellerId",
       i.minor,
       i.poi,
       i."acceptableMinor",
@@ -4534,15 +4577,49 @@ export const getImage = async ({
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
     LEFT JOIN "Post" p ON p.id = i."postId"
+    LEFT JOIN LATERAL ${reviewOfImageSql} rw ON TRUE
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
   if (!rawImages.length) throw throwNotFoundError(`No image with id ${id}`);
 
-  const [{ userId: creatorId, username, userImage, deletedAt, reactions, ...firstRawImage }] =
-    rawImages;
+  const [
+    {
+      userId: creatorId,
+      username,
+      userImage,
+      deletedAt,
+      reactions,
+      reviewId,
+      dealId,
+      sellerId,
+      ...rawImage
+    },
+  ] = rawImages;
+  // A review image carries no generation data: it is the seller's work, uploaded by the buyer.
+  const firstRawImage = reviewId
+    ? { ...rawImage, hasMeta: false, hasPositivePrompt: false, remixOfId: null }
+    : rawImage;
+  const seller = sellerId
+    ? await dbRead.user.findUnique({
+        where: { id: sellerId },
+        select: { id: true, username: true, image: true, bannedAt: true, deletedAt: true },
+      })
+    : null;
+  if (
+    sellerId &&
+    (await isReviewImageBlockedForViewer({
+      viewerId: userId,
+      buyerId: creatorId,
+      sellerId,
+      isModerator,
+    }))
+  )
+    throw throwNotFoundError(`No image with id ${id}`);
+  const creditedSeller = seller && !seller.bannedAt && !seller.deletedAt ? seller : null;
+  const userIds = creditedSeller ? [creatorId, creditedSeller.id] : [creatorId];
 
-  const userCosmetics = await getCosmeticsForUsers([creatorId]);
-  const profilePictures = await getProfilePicturesForUsers([creatorId]);
+  const userCosmetics = await getCosmeticsForUsers(userIds);
+  const profilePictures = await getProfilePicturesForUsers(userIds);
 
   const imageMetrics = await getImageMetricsObject([firstRawImage]);
   const match = imageMetrics[firstRawImage.id];
@@ -4578,6 +4655,24 @@ export const getImage = async ({
     },
     stats: toImageV2Stats(match),
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
+    // The image's maker on a service review: the seller, credited although the buyer uploaded it.
+    reviewWork:
+      reviewId && dealId
+        ? {
+            reviewId,
+            dealId,
+            seller: creditedSeller
+              ? {
+                  id: creditedSeller.id,
+                  username: creditedSeller.username,
+                  image: creditedSeller.image,
+                  deletedAt: null,
+                  cosmetics: userCosmetics?.[creditedSeller.id] ?? [],
+                  profilePicture: profilePictures?.[creditedSeller.id] ?? null,
+                }
+              : null,
+          }
+        : null,
   };
 
   return image;
@@ -6557,7 +6652,11 @@ export async function updateImageNsfwLevel({
 
     const metadata = (image.metadata as ImageMetadata) ?? undefined;
     if (activity === 'setNsfwLevelKono' && !reason) reason = KNIGHTS_VOTE_NSFW_LEVEL_REASON;
-    const updatedMetadata = { ...metadata, nsfwLevelReason: reason ?? null };
+    const updatedMetadata = {
+      ...metadata,
+      nsfwLevelReason: reason ?? null,
+      ...ratingRecordedUnderGrace(metadata, nsfwLevel),
+    };
 
     await dbWrite.image.update({
       where: { id },

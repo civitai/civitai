@@ -513,6 +513,7 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
       status: 'pending',
       listing: null,
       storageMigrationWarnings: [],
+      advisories: [],
     });
   });
 
@@ -558,6 +559,44 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
       status: 'pending',
       listing,
       storageMigrationWarnings: [],
+      advisories: [],
+    });
+  });
+
+  it('the CLI contract carries the submit’s advisories (warn, never block): `civitai app submit` prints advisories[].message', async () => {
+    const advisories = [
+      {
+        code: 'default-theme',
+        message:
+          "This app uses Civitai's default theme. A distinct accent helps it stand out in the store: https://developer.civitai.com/apps/guide/theming#give-your-app-its-own-look",
+        docsUrl: 'https://developer.civitai.com/apps/guide/theming#give-your-app-its-own-look',
+      },
+    ];
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockSubmitVersion.mockResolvedValueOnce({
+      publishRequestId: 'pubreq_abc',
+      slug: 'my-block',
+      version: '1.2.3',
+      bundleSha256: 'deadbeef',
+      fileSummary: {},
+      manifestDiffSummary: {},
+      listing: null,
+      advisories,
+    });
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(res._getJSONData()).toEqual({
+      publishRequestId: 'pubreq_abc',
+      slug: 'my-block',
+      version: '1.2.3',
+      status: 'pending',
+      listing: null,
+      storageMigrationWarnings: [],
+      advisories,
     });
   });
 

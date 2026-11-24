@@ -92,7 +92,7 @@ jobs:
             exit 1
           fi
           pnpm exec vitest run --project 'unit*' --reporter=default --reporter=json \
-            --outputFile=ports-test-report.json "${files[@]}"
+            --reporter=github-actions --outputFile=ports-test-report.json "${files[@]}"
           ran=$(node -e 'console.log(require("./ports-test-report.json").testResults.length)')
           if [ "$ran" -ne "${#files[@]}" ]; then
             echo "::error::vitest ran $ran of ${#files[@]} ports test files; each one must run."

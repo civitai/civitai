@@ -18,7 +18,7 @@ import { stickerPlacementActions } from '$lib/server/sticker-placement-actions';
 const ACT = 'image.moderate';
 
 export const load: PageServerLoad = async ({ url, locals }) => ({
-  ...(await loadImageQueue('reported', url)),
+  ...(await loadImageQueue('reported', url, locals.user)),
   title: 'Image reports',
   canAct: !!locals.grants[ACT],
 });

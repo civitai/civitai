@@ -74,3 +74,10 @@ describe.each([
     expect(await sqlFor(undefined)).toMatch(REVIEWED);
   });
 });
+
+// A postless image (a service review's, say) opens only by id, never in the image feed.
+describe('getAllImages', () => {
+  it.each([31, undefined])('leaves out postless images (browsing level %s)', async (level) => {
+    expect(await getAllImagesSql(level)).toMatch(/WHERE i\."postId" IS NOT NULL AND/);
+  });
+});

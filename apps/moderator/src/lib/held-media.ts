@@ -8,6 +8,12 @@ export const retractedMediaUrl = (imageId: number) => `/api/retracted-media/${im
 export const RETRACTED_REFUSED =
   'Not viewable here. It may need CSAM-queue access or be unavailable; ask a lead.';
 
+/** The refusal shown, and returned by image actions, when the image is withheld from this
+ *  moderator. Names no reason. */
+export const WITHHELD_REFUSED = 'Not ruled on here. Ask a lead.';
+export const SCANNER_UNAVAILABLE_REFUSED =
+  'The scanner is unavailable: try again, or ask a CSAM reviewer.';
+
 /** Asks the route why it refused an image, without serving it, and returns the tile's line. */
 export async function probeRetractedRefusal(imageId: number): Promise<string> {
   const res = await fetch(`${retractedMediaUrl(imageId)}?probe=1`);

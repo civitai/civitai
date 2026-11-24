@@ -2,6 +2,7 @@ import { CREATE_APP, USE_OPEN_APP, WAKE_APP } from './app-tools';
 import { letStepCallsReachGate, type AssistantTool, type ToolGate, type ToolResult } from './tool';
 import type { SandboxFeatures } from './sandbox-tools';
 import { SUBMIT_FOR_REVIEW, createSubmitTool } from './submit';
+import { themeAdvisoriesFrom, type Advisory, type ThemeEvidence } from './theme-evidence';
 
 /** The sandbox MCP server's id; the chat offers each of its tools as `sandbox__<tool>`. */
 export const SANDBOX_SERVER_ID = 'sandbox';
@@ -279,6 +280,39 @@ export interface GateCoreOptions {
    * files); a refused or stopped call is not (it did not run), nor any call while no app is open.
    */
   onAppChanged?: (app: string) => void;
+  /**
+   * The open app's theme evidence (`themeSignals` over its source), or null when it cannot be read.
+   * Set, a report_ready that passes carries the `default-theme` advisory when the evidence reads as
+   * Civitai's stock look (`accentCustomizedFrom`). ADVISORY ONLY: it never refuses report_ready nor
+   * changes `ready`, and a read that throws or outlasts `THEME_EVIDENCE_TIMEOUT_MS` adds nothing.
+   * The runner sets it; the page (which cannot read the sandbox's files cheaply) does not.
+   */
+  themeEvidence?: () => Promise<ThemeEvidence | null>;
+}
+
+/** The longest report_ready waits for the theme evidence before it answers without the advisory. */
+export const THEME_EVIDENCE_TIMEOUT_MS = 5_000;
+
+/** The advisories for the open app's look, never throwing and never waiting past the bound. */
+async function readyAdvisories(
+  themeEvidence: (() => Promise<ThemeEvidence | null>) | undefined
+): Promise<Advisory[]> {
+  if (!themeEvidence) return [];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const read = (async () => themeAdvisoriesFrom(await themeEvidence()))();
+  try {
+    return await Promise.race([
+      read,
+      new Promise<Advisory[]>((resolve) => {
+        timer = setTimeout(() => resolve([]), THEME_EVIDENCE_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+    read.catch(() => undefined);
+  }
 }
 
 /** What a gate starts from: what this conversation already did (a server run picking a reply up). */
@@ -334,6 +368,7 @@ export function createGateCore({
   unjustifiedScopes,
   sandboxFeatures,
   onAppChanged,
+  themeEvidence,
 }: GateCoreOptions = {}): GateCore {
   const runChecks = () => sandboxFeatures?.()?.runChecks === true;
   let conversationId: string | null = null;
@@ -638,9 +673,18 @@ export function createGateCore({
         (await manifestRefusal(REPORT_READY));
       if (refusal) throw new Error(refusal);
       const data = dataSourceOf(input.data);
+      // Advice about the look, never a refusal: `ready` is the same with or without it.
+      const advisories = await readyAdvisories(themeEvidence);
       return {
         ready: true,
         data,
+        ...(advisories.length
+          ? {
+              advisories,
+              advisoryNote:
+                'Advice, not a requirement: the app is ready either way. Mention it to the user in one short line and offer to give the app an accent of its own; change nothing unless they want it.',
+            }
+          : {}),
         note:
           data === 'sample'
             ? 'Tell the user the app is ready for review, that it shows sample data, not real Civitai data, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed and that the data is sample data. If they want it in the App Store, call submit_for_review when they ask.'

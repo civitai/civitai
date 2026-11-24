@@ -1289,8 +1289,12 @@ The numerators and denominators above exist at 0 from startup (`seedOutcomes` in
 creation of a series at 1 that it misses: every `feed_go_requests_total` outcome and
 `feed_go_shadow_compare_total` result a path can reach, per endpoint and mode, and the fallback
 reasons every compute can end in (`deadline`, `canceled`, `panic`; serve's `error` and `bulkhead`).
-The endpoint-specific fallback reasons and `feed_go_errors_total` (its `class` label is a set of about
-70) stay lazy.
+Serving, the reasons a request alone decides (its method, region, user agent, credential form, path,
+query or input: `RequestFallbackReasons`) are seeded too, per public route and only those that route
+can produce (172 series): a comparison of fallback rates between a new process and an old one
+subtracts them, and with `increase()` a series born inside the window loses its first event. The
+other endpoint-specific fallback reasons and `feed_go_errors_total` (its `class` label is a set of
+about 70) stay lazy.
 
 ### 10.1 Compute-only CPU: the per-phase series
 

@@ -234,7 +234,7 @@ Code: `src/shared/constants/block-storage.constants.ts` (`parseCollectionSchema`
 collection and schema text). The published shape is the `storage.collections.*.schema`
 property of `public/schemas/app-block/v1.json` (`$defs.storageCollectionSchema`).
 
-### Document store: viewer-keyed documents (dark)
+### Document store: viewer-keyed documents
 
 Plan: `docs/app-storage-generic-core.md` (#10203). A shared `write: "own"` collection may declare
 `keyedBy: "viewer"` or `"parent+viewer"`: the server derives each document's key from the
@@ -243,8 +243,9 @@ verified viewer (and a client-named parent), so each viewer has at most one docu
 put or delete at the derived key; a create or a write by key to such a collection is `400`
 `viewer_keyed`, and every `@me` op by an anonymous viewer is `401 sign_in_required`.
 
-- **Dark, three ways:** submit refuses `keyedBy` while `viewerKeyedDocs` is off in
-  `APP_STORAGE_ENABLED_FEATURES`; every `@me` op is `503` while `APP_STORAGE_VIEWER_KEY_SECRET`
+- **Three gates:** submit accepts `keyedBy` because `viewerKeyedDocs` is on in
+  `APP_STORAGE_ENABLED_FEATURES` (off, it is refused as not available yet); every `@me` op is
+  `503` while `APP_STORAGE_VIEWER_KEY_SECRET`
   is unset (no fallback key; the secret must be byte-identical in every deployment writing the same
   database and namespace); and in production writes need the Flipt flag
   `app-blocks-storage-viewer-keyed-open` (per app, context `{ collection }`): created default on,

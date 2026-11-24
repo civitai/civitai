@@ -181,6 +181,16 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
       const app = freshApp('REVKEEP');
       for (const uid of [MOD_1, MOD_2]) await seedModerator(store, pr, uid);
       await seedModerator(store, other, MOD_1);
+      // The store records maintenance runs in the production namespace only, so none of the
+      // calls above writes one; one is seeded in each review namespace so the purge's
+      // `maint_run` delete is exercised too.
+      for (const uid of [MOD_1, MOD_2]) {
+        await h.raw(
+          `INSERT INTO appdata.maint_run (app_id, ns, coll, kind, name, status)
+           VALUES ($1, $2, 'posts', 'mark_migration', 'vote', 'frozen')`,
+          [pr, reviewNamespace(pr, uid)]
+        );
+      }
       // prod and dev rows under the request's OWN app id: the purge must not reach them.
       await store.put(ctx(pr, NS_PROD, MOD_1), POSTS, 'p1', { status: 'open' });
       await store.mark(ctx(pr, NS_PROD, MOD_1), POSTS, 'p1', 'vote');

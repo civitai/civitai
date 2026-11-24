@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { isAgentReporter, type AgentReportWhere } from './agent-reporters';
 import { dbRead } from './db';
+import { restrictedImageIds, withheldRow } from './retracted-media';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
 import { getFlagClearHolds, holdMarkerState, type FlagClearHoldLeg } from './csam-flag-clear';
@@ -592,7 +593,10 @@ export type AppealImageItem = {
   nsfwLevel: number;
   width: number | null;
   height: number | null;
-  type: MediaType;
+  type: MediaType | null;
+  /** Withheld from this moderator by the media access rule (`restrictedImageIds`): served with
+   *  `withheldRow` in place of its fields. */
+  restricted: boolean;
   needsReview: string | null;
   minor: boolean;
   poi: boolean;
@@ -612,10 +616,12 @@ export async function getAppealImageQueue({
   browsingLevel,
   cursor,
   limit,
+  csamReview,
 }: {
   browsingLevel: number;
   cursor?: number;
   limit: number;
+  csamReview: boolean;
 }): Promise<{ items: AppealImageItem[]; nextCursor?: number }> {
   const fetched = await dbRead
     .selectFrom('Image as i')
@@ -690,6 +696,7 @@ export async function getAppealImageQueue({
   const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.appealId);
 
   const ids = rows.map((r) => r.id);
+  const restricted = await restrictedImageIds(ids, { csamReview });
   const tosByImage = new Map<number, string>();
   const reportsByImage = new Map<number, AppealReportRow[]>();
   if (ids.length) {
@@ -738,31 +745,35 @@ export async function getAppealImageQueue({
     }
   }
 
-  const items: AppealImageItem[] = rows.map((r) => ({
-    id: r.id,
-    url: r.url,
-    nsfwLevel: r.nsfwLevel,
-    width: r.width,
-    height: r.height,
-    type: r.type,
-    needsReview: r.needsReview,
-    minor: r.minor,
-    poi: r.poi,
-    modelRestricted: r.modelRestricted,
-    blockedFor: r.blockedFor,
-    userId: r.userId,
-    username: r.username,
-    appeal: {
-      id: r.appealId,
-      message: r.appealMessage,
-      createdAt: r.appealCreatedAt,
-      username: r.appealUsername,
-      userId: r.appealUserId,
-    },
-    moderatorUsername: r.moderatorUsername,
-    removedAt: r.removedAt,
-    tosReason: tosByImage.get(r.id) ?? null,
-    reports: reportsByImage.get(r.id) ?? [],
-  }));
+  const items: AppealImageItem[] = rows.map((r) => {
+    const item = {
+      id: r.id,
+      url: r.url,
+      width: r.width,
+      height: r.height,
+      type: r.type,
+      restricted: false,
+      nsfwLevel: r.nsfwLevel,
+      needsReview: r.needsReview,
+      minor: r.minor,
+      poi: r.poi,
+      modelRestricted: r.modelRestricted,
+      blockedFor: r.blockedFor,
+      userId: r.userId,
+      username: r.username,
+      appeal: {
+        id: r.appealId,
+        message: r.appealMessage,
+        createdAt: r.appealCreatedAt,
+        username: r.appealUsername,
+        userId: r.appealUserId,
+      },
+      moderatorUsername: r.moderatorUsername,
+      removedAt: r.removedAt,
+      tosReason: tosByImage.get(r.id) ?? null,
+      reports: reportsByImage.get(r.id) ?? [],
+    };
+    return restricted.has(r.id) ? withheldRow(item) : item;
+  });
   return { items, nextCursor };
 }

@@ -18,7 +18,7 @@ import {
   KNIGHTS_SOURCE_OWNER_RATING,
   KNIGHTS_SOURCE_SCAN_SAMPLE,
   knightsSampleDraw,
-  offerLeftPrivateImagesToKnights,
+  offerImagesToKnights,
   scopeFilter,
   type KnightsSampleScope,
 } from '~/server/services/knights/sampling';
@@ -211,7 +211,7 @@ export function queueOwnerRatingForKnights(imageId: number): Promise<void> {
 export async function queueLeftPrivateForKnights(scope: KnightsSampleScope): Promise<void> {
   try {
     const config = await getKnightsSourcesConfig();
-    await offerLeftPrivateImagesToKnights(kyselyWrite, { scope, now: new Date(), config });
+    await offerImagesToKnights(kyselyWrite, { scope, now: new Date(), config });
   } catch (error) {
     logToAxiom(
       {

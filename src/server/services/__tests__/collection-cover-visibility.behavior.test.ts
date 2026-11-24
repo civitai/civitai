@@ -124,6 +124,7 @@ const UNFLAGGED_R = 228; // the viewer's image rated R with no minor flag set (N
 beforeAll(async () => {
   const schema = `
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       minor boolean DEFAULT false,
       "id"              integer PRIMARY KEY,

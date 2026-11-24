@@ -1,10 +1,14 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { imageNotRestrictedSql, minorMatureImageVisibleSql } from '~/server/common/image-visibility';
+import {
+  imageNotRestrictedSql,
+  minorMatureImageVisibleSql,
+} from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { notReviewImageSql } from '~/server/services/creator-service-review-image-sql';
 
 /**
  * Scanned, rated, not awaiting review, not removed or a ToS violation, allowed by its base model:
@@ -64,7 +68,8 @@ export function imageAllowedByItsModelSql(imageId: Prisma.Sql) {
  * review and not removed. A posted image needs its post published, not Private and on no
  * taken-down model, and within the gallery level of a minor or SFW-only model. A postless image
  * needs `postlessAllowed`: `coverUploadSql` for a collection's own cover, `itemUploadSql` for a
- * cover taken from an item. `heldExempt` (over the model `hm`) is who sees past the gallery level.
+ * cover taken from an item, and to be on no service review. `heldExempt` (over the model `hm`)
+ * is who sees past the gallery level.
  */
 export function servableCollectionCoverSql({
   postlessAllowed,
@@ -83,7 +88,7 @@ export function servableCollectionCoverSql({
         AND ${notOnTakenDownModelSql}
         AND ${withinHeldGallerySql(heldExempt)}
       )
-      OR (i."postId" IS NULL AND ${postlessAllowed})
+      OR (i."postId" IS NULL AND ${postlessAllowed} AND ${notReviewImageSql})
     )
   )`;
 }

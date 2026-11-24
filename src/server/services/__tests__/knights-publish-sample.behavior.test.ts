@@ -3,10 +3,20 @@ import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseKnightsSourcesConfig } from '@civitai/shared/new-order';
+import {
+  type CompiledQuery,
+  type DatabaseConnection,
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+  type QueryResult,
+} from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
 import {
   knightsSampleDraw,
-  offerLeftPrivateImagesToKnights,
+  offerImagesToKnights,
   runKnightsPublishSampling,
   sampleNewlyLivePostsForKnights,
   type PublishSampleCursor,
@@ -49,6 +59,12 @@ const queued = async () =>
     )
   ).rows;
 
+const ownerRating = (imageId: number, userId = 1) =>
+  pg.query(
+    `INSERT INTO "ImageRatingRequest" ("imageId", "userId", "nsfwLevel") VALUES ($1, $2, 4)`,
+    [imageId, userId]
+  );
+
 const range = (from: number, count: number) => Array.from({ length: count }, (_, i) => from + i);
 
 beforeAll(async () => {
@@ -62,8 +78,16 @@ beforeAll(async () => {
        poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
        "userId" integer NOT NULL DEFAULT 1, "nsfwLevelLocked" boolean NOT NULL DEFAULT false
      );
+     ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "tosViolation" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS "userId" INTEGER;
+     ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "modelVersionId" INTEGER;
+     CREATE TABLE "User" (id INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP, "bannedAt" TIMESTAMP, muted BOOLEAN NOT NULL DEFAULT false);
+     CREATE TABLE "Model" (id INTEGER PRIMARY KEY, status TEXT NOT NULL, availability TEXT NOT NULL, "deletedAt" TIMESTAMP);
+     CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, status TEXT NOT NULL, availability TEXT NOT NULL);
+     CREATE TABLE "CsamReport" (id SERIAL PRIMARY KEY, "userId" INTEGER, images JSONB NOT NULL DEFAULT '[]', details JSONB);
+     CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
      CREATE TABLE "ImageRatingRequest" (
        "imageId" integer NOT NULL, "userId" integer NOT NULL, "nsfwLevel" integer NOT NULL,
+       status text NOT NULL DEFAULT 'Pending',
        PRIMARY KEY ("imageId", "userId")
      );`
   );
@@ -277,6 +301,41 @@ describe('sampleNewlyLivePostsForKnights', () => {
     expect((await queued()).map((i) => i.imageId)).toEqual([11, 12, 91, 92]);
   });
 
+  it("queues the owner's rating of an image on a post that just went live, whatever the rates and the cap (lost since #9735)", async () => {
+    // The intake cap is already full.
+    await post(9, new Date('2020-01-01T00:00:00Z'));
+    await images(9, [91]);
+    await pg.query(
+      `INSERT INTO "KnightsQueueItem" ("questionKey","imageId","source","minRank","votesNeeded")
+       VALUES ('knights.image.nsfwLevel', 91, 'test', 'Knight', 5)`
+    );
+    // Rated by its owner while the post was a draft or scheduled.
+    await post(1, minutesAgo(5));
+    await images(1, [11, 13, 14]);
+    await images(1, [12], { nsfwLevel: 8 });
+    await ownerRating(11);
+    await ownerRating(12);
+    await ownerRating(13, 2); // not the owner's
+    await ownerRating(14);
+    // Ruled by a moderator, then unlocked again (an NSFW report): the old request is settled.
+    await pg.query(`UPDATE "ImageRatingRequest" SET status = 'Actioned' WHERE "imageId" = 14`);
+
+    const result = await sweep(minutesAgo(10), { sfwRate: 0, nsfwRate: 0, maxOpen: 1 });
+
+    expect(result).toMatchObject({ ownerRatings: 2, enqueued: 0, capped: false });
+    expect(await queued()).toEqual([
+      { imageId: 11, source: 'owner-rating', priority: 1, status: 'Open' },
+      { imageId: 12, source: 'owner-rating', priority: 1, status: 'Open' },
+      { imageId: 91, source: 'test', priority: 2, status: 'Open' },
+    ]);
+
+    // The overlap re-read queues none of them again, settled or not.
+    await pg.exec(`UPDATE "KnightsQueueItem" SET status = 'Closed' WHERE source = 'owner-rating'`);
+    expect(await sweep(minutesAgo(20), { sfwRate: 0, nsfwRate: 0 })).toMatchObject({
+      ownerRatings: 0,
+    });
+  });
+
   it('does nothing while the sources are off, and still moves past the window', async () => {
     await post(1, minutesAgo(5));
     await images(1, [11]);
@@ -374,16 +433,114 @@ describe('runKnightsPublishSampling', () => {
   });
 });
 
-describe('offerLeftPrivateImagesToKnights', () => {
+describe('offerImagesToKnights', () => {
   const offer = (
-    scope: Parameters<typeof offerLeftPrivateImagesToKnights>[1]['scope'],
+    scope: Parameters<typeof offerImagesToKnights>[1]['scope'],
     fields: Record<string, unknown> = { sfwRate: 1, nsfwRate: 1 }
-  ) => offerLeftPrivateImagesToKnights(db, { scope, now: NOW, config: config(fields) });
-  const ownerRating = (imageId: number, userId = 1) =>
-    pg.query(
-      `INSERT INTO "ImageRatingRequest" ("imageId", "userId", "nsfwLevel") VALUES ($1, $2, 4)`,
-      [imageId, userId]
-    );
+  ) => offerImagesToKnights(db, { scope, now: NOW, config: config(fields) });
+
+  // JIT off per read: see readWithoutJit in packages/civitai-db/src/knights.ts.
+  it('runs each Image read, enqueueing included, in a transaction that turned JIT off first', async () => {
+    await post(1, minutesAgo(300));
+    await images(1, [11]);
+    await ownerRating(11);
+    // The shared client has no transactions, so this one logs where each begins and ends.
+    const log: string[] = [];
+    const connection: DatabaseConnection = {
+      async executeQuery<R>(compiled: CompiledQuery): Promise<QueryResult<R>> {
+        log.push(compiled.sql);
+        const result = await pg.query(compiled.sql, [...compiled.parameters]);
+        return { rows: result.rows as R[], numAffectedRows: BigInt(result.affectedRows ?? 0) };
+      },
+      // eslint-disable-next-line require-yield
+      async *streamQuery() {
+        throw new Error('streaming is not used');
+      },
+    };
+    const recording = new Kysely<DB>({
+      dialect: {
+        createAdapter: () => new PostgresAdapter(),
+        createDriver: () => ({
+          init: async () => undefined,
+          acquireConnection: async () => connection,
+          beginTransaction: async () => void log.push('BEGIN'),
+          commitTransaction: async () => void log.push('COMMIT'),
+          rollbackTransaction: async () => void log.push('ROLLBACK'),
+          releaseConnection: async () => undefined,
+          destroy: async () => undefined,
+        }),
+        createIntrospector: (k) => new PostgresIntrospector(k),
+        createQueryCompiler: () => new PostgresQueryCompiler(),
+      },
+    });
+
+    await offerImagesToKnights(recording, {
+      scope: { postIds: [1] },
+      now: NOW,
+      config: config({ sfwRate: 1, nsfwRate: 1 }),
+    });
+
+    const reads = log.flatMap((text, i) => (/ from "Image" as "img"/.test(text) ? [i] : []));
+    // The owner-rating read, enqueueKnightsItems' lookup for those ratings, and the sampling read.
+    expect(reads).toHaveLength(3);
+    for (const i of reads) {
+      const begin = log.lastIndexOf('BEGIN', i);
+      expect(begin).toBeGreaterThanOrEqual(0);
+      expect(log.slice(begin + 1, i)).toContain('SET LOCAL jit = off');
+      expect(log.slice(begin + 1, i)).not.toContain('COMMIT');
+    }
+  });
+
+  // Moderation Lead ruling 2026-11-23: a banned or muted uploader, or a model version that is not published, hides an
+  // image from players; sampling must not offer it either.
+  describe('hidden sources', () => {
+    beforeEach(async () => {
+      await pg.exec(`
+        INSERT INTO "User" (id, "bannedAt", muted) VALUES (7, now(), false), (8, NULL, true) ON CONFLICT DO NOTHING;
+        INSERT INTO "Model" (id, status, availability) VALUES (301, 'Published', 'Public') ON CONFLICT DO NOTHING;
+        INSERT INTO "ModelVersion" (id, "modelId", status, availability) VALUES
+          (401, 301, 'Draft', 'Public'), (402, 301, 'UnpublishedViolation', 'Public')
+          ON CONFLICT DO NOTHING;
+      `);
+      await post(1, minutesAgo(300));
+      await post(2, minutesAgo(300));
+      await post(3, minutesAgo(300));
+      await pg.query(`UPDATE "Post" SET "modelVersionId" = 401 WHERE id = 2`);
+      await pg.query(`UPDATE "Post" SET "modelVersionId" = 402 WHERE id = 3`);
+      await images(1, [11, 12, 14]);
+      await images(2, [13]);
+      await images(3, [15]);
+      await pg.query(`UPDATE "Image" SET "userId" = 7 WHERE id = 11`);
+      await pg.query(`UPDATE "Image" SET "userId" = 8 WHERE id = 12`);
+    });
+
+    it('draws none of their images, and still draws a clean one', async () => {
+      expect(await offer({ postIds: [1, 2, 3] })).toEqual({
+        ownerRatings: 0,
+        enqueued: 1,
+        capped: false,
+      });
+      expect(await queued()).toEqual([
+        { imageId: 14, source: 'scan-sample', priority: 1, status: 'Open' },
+      ]);
+    });
+
+    it("queues none of their owners' ratings, and still queues a clean one", async () => {
+      await ownerRating(11, 7);
+      await ownerRating(12, 8);
+      await ownerRating(13);
+      await ownerRating(14);
+      await ownerRating(15);
+      expect(await offer({ postIds: [1, 2, 3] }, { sfwRate: 0, nsfwRate: 0 })).toEqual({
+        ownerRatings: 1,
+        enqueued: 0,
+        capped: false,
+      });
+      expect(await queued()).toEqual([
+        { imageId: 14, source: 'owner-rating', priority: 1, status: 'Open' },
+      ]);
+    });
+  });
 
   it('samples, once, the images of a post that became public', async () => {
     await post(1, minutesAgo(300));

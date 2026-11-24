@@ -127,6 +127,7 @@ export const scheduledPostsGoLiveSql = (
   locked: { postId: number; versionId: number }[],
   now: Date
 ) => Prisma.sql`
+  WITH live AS (
   UPDATE "Post" p
   SET
     "publishedAt" = CASE
@@ -147,7 +148,10 @@ export const scheduledPostsGoLiveSql = (
     AND m.status::text NOT IN (${Prisma.join(constants.modPublishOnlyStatuses)})
     AND ${notRemovedWithOwnerSql('m.meta')}
     AND ${noFailedScanFileSql('mv.id')}
-  RETURNING p.id, p."userId"
+  RETURNING p.id, p."userId", p."publishedAt"
+  )
+  -- A post the publish guard kept unpublished (trg_post_pending_delete_keep_unpublished) did not go live.
+  SELECT id, "userId" FROM live WHERE "publishedAt" IS NOT NULL
 `;
 
 /**

@@ -7,7 +7,7 @@ import { stagesWorkedBy } from '../queue/ranks';
 import { isRank } from '../ranks';
 import { headingOf } from './headings';
 import { playableItems } from './items';
-import { MOD_TAG_REVIEW_AXIS } from '@civitai/db/knights';
+import { MOD_TAG_REVIEW_AXIS, readWithoutJit } from '@civitai/db/knights';
 import { axisKey, YESNO_KEY_PREFIX } from './keys';
 
 const TAG_REVIEW_KEY = axisKey(MOD_TAG_REVIEW_AXIS);
@@ -192,13 +192,9 @@ export async function pickYesNo(
   ];
 
   for (const axis of order) {
-    const found = await unanswered(
-      db,
-      input.userId,
-      axis,
-      stages,
-      input.exclude ?? []
-    ).executeTakeFirst();
+    const found = await readWithoutJit(db, (trx) =>
+      unanswered(trx, input.userId, axis, stages, input.exclude ?? []).executeTakeFirst()
+    );
     if (!found) continue;
     const heading = headingOf(axis, YESNO_KEY_PREFIX);
     return {

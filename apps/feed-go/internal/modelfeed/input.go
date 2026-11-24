@@ -139,6 +139,9 @@ var unsupportedKeys = []string{
 	"publishedTo", "poiOnly", "minorOnly", "page",
 }
 
+// UnsupportedInputKeys are the keys Parse falls back on as `input-<key>` (a copy; `ids` among them).
+func UnsupportedInputKeys() []string { return append([]string(nil), unsupportedKeys...) }
+
 // Parse validates the decoded input map (trpc.DecodeEnvelope's output). A shape outside the supported
 // subset is a fallback, and so is a value the schema itself rejects (Node answers it with its own
 // BAD_REQUEST, which the sampler never mirrors).

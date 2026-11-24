@@ -163,6 +163,19 @@ describe('resetBlockedNsfwLevel', () => {
     expect(await state(UNTAGGED)).toMatchObject({ ingestion: 'Rescan' });
   });
 
+  it('with unlockedOnly, passes by a row locked since its caller read it unlocked', async () => {
+    await db.exec(`UPDATE "Image" SET "nsfwLevelLocked" = false WHERE id = ${REVIEW_TAGS_ONLY}`);
+    await resetBlockedNsfwLevel([TAGGED, REVIEW_TAGS_ONLY], { unlockedOnly: true });
+    // A moderator's lock at Blocked: kept.
+    expect(await state(TAGGED)).toEqual({ ingestion: 'Scanned', nsfwLevel: 32, queued: false });
+    // Control: an unlocked row is still reset.
+    expect(await state(REVIEW_TAGS_ONLY)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 0,
+      queued: false,
+    });
+  });
+
   it('does not send an image that is still blocked to the scanner', async () => {
     await resetBlockedNsfwLevel([STILL_BLOCKED]);
     expect(await state(STILL_BLOCKED)).toMatchObject({ ingestion: 'Blocked', queued: false });

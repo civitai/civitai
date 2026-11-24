@@ -55,6 +55,7 @@ import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-revie
 import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
 import { drainReviewPreviewQueueJob } from '~/server/jobs/drain-review-preview-queue';
 import { runStorageMigrationsJob } from '~/server/jobs/run-storage-migrations';
+import { expireStorageMaintenanceDumpsJob } from '~/server/jobs/expire-storage-maintenance-dumps';
 import { reapDeletedAppStorageJob } from '~/server/jobs/reap-deleted-app-storage';
 import { removeDeletedAccountAppDataJob } from '~/server/jobs/remove-deleted-account-app-data';
 import { sweepHibernationObjectsJob } from '~/server/jobs/sweep-hibernation-objects';
@@ -334,6 +335,7 @@ export const jobs: Job[] = [
   sweepReviewStorageJob,
   drainReviewPreviewQueueJob,
   runStorageMigrationsJob,
+  expireStorageMaintenanceDumpsJob,
   reapDeletedAppStorageJob,
   removeDeletedAccountAppDataJob,
   sweepHibernationObjectsJob,

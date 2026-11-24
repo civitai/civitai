@@ -57,6 +57,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 vi.mock('~/server/services/image-appeal-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageAppealFlag>()),
   releaseReviewFlagsToReportHold: vi.fn(async () => undefined),
+  releaseSettledAppealFlags: vi.fn(async () => 0),
 }));
 vi.mock('~/server/services/report.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReportService>()),
@@ -290,7 +291,9 @@ describe('fileCsamReport', () => {
   });
 
   it('still closes the filed images’ appeals and deferred effects when the blocklist write throws', async () => {
-    const { releaseReviewFlagsToReportHold } = await import('~/server/services/image-appeal-flag');
+    const { releaseReviewFlagsToReportHold, releaseSettledAppealFlags } = await import(
+      '~/server/services/image-appeal-flag'
+    );
     vi.mocked(releaseReviewFlagsToReportHold).mockClear();
     dbMock.dbWrite.appeal.updateMany.mockClear();
     dbMock.dbWrite.$executeRaw.mockClear();
@@ -303,6 +306,7 @@ describe('fileCsamReport', () => {
       expect.objectContaining({ data: expect.objectContaining({ status: 'Rejected' }) })
     );
     expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(releaseSettledAppealFlags).toHaveBeenCalledWith([IMAGE]);
     expect(releaseReviewFlagsToReportHold).toHaveBeenCalledWith([IMAGE]);
   });
 });

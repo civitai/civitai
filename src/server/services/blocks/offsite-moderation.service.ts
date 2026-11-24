@@ -1534,6 +1534,10 @@ const OWNER_HIDDEN_MODERATION_ACTIONS = [
   'storage-doc-unhide',
   'storage-doc-delete',
   'storage-doc-dismiss',
+  // A data migration over every user's documents of one collection: its reason and counts are
+  // the moderators' record, not the owner's.
+  'storage-mark-migration',
+  'storage-collection-purge',
   // Operational records of the offline-access cut after a takedown. Not about a third party,
   // but not the owner's to read either: the failed one's `detail` is a raw error message, and
   // the owner is told about the takedown itself by the `delist` row.

@@ -192,6 +192,15 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   'storage-doc-delete',
   // Reviewed and kept: the document's open reports were dismissed (later reports re-open it).
   'storage-doc-dismiss',
+  // App Blocks DOCUMENT STORE data migration (`apps.mod.docStore.maintenance.*`,
+  // `storage-mark-migration.service.ts` is the only writer): a moderator moved one mark's rows of
+  // one collection into a viewer-keyed collection (`storage-mark-migration`: freeze, copy, verify),
+  // or purged every document of one collection (`storage-collection-purge`, also the mark
+  // migration's rollback). Changes no listing state; withheld from the owner's history like the
+  // other storage actions. `before` holds the op's parameters, never a document's content;
+  // `after` its outcome and counts (a purge's rows are dumped in the store, not here).
+  'storage-mark-migration',
+  'storage-collection-purge',
   // A moderator edited the listing's details or store media without holding a seat on it
   // (`app-listing-moderator-edit.ts`). Changes no `status`; owner-visible.
   // `reason` — the owner-facing sentence.   `detail` — `details` | `media`.

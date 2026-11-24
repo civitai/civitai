@@ -10,6 +10,11 @@ import type {
   GetRecentAppealsInput,
 } from '~/server/schema/report.schema';
 import { getImageById } from '~/server/services/image.service';
+import {
+  assertImageReportable,
+  REPORTED_CONTENT_GONE,
+} from '~/server/services/image-visibility.service';
+import { shownReviewImageLevelsFor } from '~/server/utils/review-image-levels';
 import { assertCommentActionable } from '~/server/controllers/commentv3.controller';
 import { assertPostTextVisible } from '~/server/services/post-viewer-visibility.service';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -63,6 +68,14 @@ export async function createReportHandler({
     // Reviews are shown only behind the flag; without it there is nothing the reporter could see.
     if (input.type === ReportEntity.ServiceDealReview && !ctx.features.creatorServicesNext)
       throw throwNotFoundError('That review is not shown.');
+    // A review image the reporter cannot open is answered as an id that names no image.
+    if (input.type === ReportEntity.Image)
+      await assertImageReportable({
+        id: input.id,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+        shownReviewImageLevels: shownReviewImageLevelsFor(ctx),
+      });
   } catch (e) {
     throw reportError(e);
   }
@@ -74,8 +87,7 @@ function reportError(e: unknown) {
   // report landing, so the entity-report FK has nothing to point at. Search
   // can legitimately serve a deleted image until its index delete is batched
   // through, so this is a reachable user path, not a server fault.
-  if (isPrismaForeignKeyViolation(e))
-    return throwNotFoundError('The content you are trying to report no longer exists');
+  if (isPrismaForeignKeyViolation(e)) return throwNotFoundError(REPORTED_CONTENT_GONE);
   return throwDbError(e);
 }
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import { goto } from '$app/navigation';
   import { page as pageState } from '$app/state';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -86,6 +87,8 @@
   // Blocked ids accumulate over the batch's pages because the selection spans them.
   const batchKey = $derived(selectionKey(pageState.url));
   const blockedIds = new BlockedIds();
+  // Accumulated like blockedIds: the selection spans the batch's pages.
+  const reviewImageIds = new SvelteSet<string | number>();
   let shownBatch: string | undefined;
   $effect.pre(() => {
     const key = batchKey;
@@ -95,8 +98,10 @@
         shownBatch = key;
         selected.clear();
         blockedIds.clear();
+        reviewImageIds.clear();
       }
       blockedIds.absorb(items);
+      for (const item of items) if (item.isReviewImage) reviewImageIds.add(item.id);
     });
   });
 
@@ -325,6 +330,7 @@
           submitting={onSubmit.submitting}
           notify={false}
           strike={can.strike}
+          {reviewImageIds}
           {blockedIds}
           keepOffScreen
         />

@@ -3,6 +3,8 @@ import type { ModerationAdapter } from '~/server/services/entity-moderation.serv
 import {
   getTextScanMode,
   getTextScanWebSearchMode,
+  isTextScanModeReachable,
+  isTextScanWebSearchModeReachable,
   TEXT_SCAN_ENTITY_TYPES,
   TEXT_SCAN_WEB_SEARCH_ENTITY_TYPES,
   textScanEmEntityType,
@@ -42,6 +44,7 @@ export function createTextScanShadowAdapter(entityType: TextScanEntityType): Mod
   return {
     ...createTextScanAdapter(entityType, {}),
     isEnabled: async ({ entityId }) => (await getTextScanMode(entityType, entityId)) === 'shadow',
+    isDarkForAll: async () => !(await isTextScanModeReachable(entityType, 'shadow')),
   };
 }
 
@@ -68,6 +71,7 @@ export function textScanWebSearchAdapters() {
             ),
           isEnabled: async ({ entityId }) =>
             (await getTextScanWebSearchMode(entityType, entityId)) === mode,
+          isDarkForAll: async () => !(await isTextScanWebSearchModeReachable(entityType, mode)),
         },
       ])
     )
@@ -96,6 +100,7 @@ export function createTextScanAdapter(
     },
     submit: ({ entityId }) => submitViaTextScan(entityType, entityId),
     isEnabled: async ({ entityId }) => (await getTextScanMode(entityType, entityId)) === 'active',
+    isDarkForAll: async () => !(await isTextScanModeReachable(entityType, 'active')),
     ...hooks,
   };
 }

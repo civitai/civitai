@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { createHash } from 'crypto';
-import { unreadableImageSql } from '@civitai/shared/held-media';
+import { heldImageKnownSql, unreadableImageSql } from '@civitai/shared/held-media';
 import { retractedAccessColumnsSql } from '@civitai/shared/retracted-media-tier';
 import {
   imageRoutesHeld,
@@ -47,7 +47,8 @@ export async function readImageSignals(ids: number[]): Promise<Map<number, Image
     SELECT i.id, ${Prisma.raw(access.restricted)} AS restricted, ${Prisma.raw(
     access.siblings
   )} AS siblings,
-      ${Prisma.raw(unreadableImageSql('i'))} AS unreadable, i."blockedFor"
+      ${Prisma.raw(unreadableImageSql('i'))} AS unreadable,
+      ${Prisma.raw(heldImageKnownSql('i'))} AS held, i."blockedFor"
     FROM "Image" i
     WHERE i.id IN (${Prisma.join(ids)})
   `;

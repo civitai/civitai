@@ -88,6 +88,8 @@ export const routes: ApiRoutes = {
     import('~/server/api-routes/admin/temp/migrate-article-images'),
   'temp/minor-hash-sweep': () => import('~/server/api-routes/admin/temp/minor-hash-sweep'),
   'temp/model-image-count': () => import('~/server/api-routes/admin/temp/model-image-count'),
+  'temp/model-nsfw-lock-backfill': () =>
+    import('~/server/api-routes/admin/temp/model-nsfw-lock-backfill'),
   'temp/model-text-moderation-backfill': () =>
     import('~/server/api-routes/admin/temp/model-text-moderation-backfill'),
   'temp/queue-accelerator-models-reindex': () =>
