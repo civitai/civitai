@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
+import type { NextApiRequest, NextApiResponse } from 'next';
 import { NextRequest } from 'next/server';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadNextConfigHeaders } from '~/__tests__/next-config-headers';
+import { applyApiRequestPolicy } from '~/server/middleware/api-request-policy';
 import { runMiddlewares } from '~/server/middleware/index';
 
 /**
@@ -15,9 +16,11 @@ import { runMiddlewares } from '~/server/middleware/index';
  * holds what this app answers on each of those routes; feed-go's region_blocked_test.go asserts its
  * own answer equals the file, and this test asserts the file equals the app's REAL answer:
  *
- *   - the tRPC routes: the real `/api/trpc/[trpc]` route over a socket, with no proxy in front (the
- *     proxy never runs on `/api/trpc`). `applyApiRequestPolicy` answers before tRPC runs, so the 451
- *     is an HTTP-level answer, not a tRPC error envelope, and a batch gets the same one;
+ *   - the tRPC routes: `applyApiRequestPolicy`, the route's first statement, on a real Node
+ *     request/response over a socket, with no proxy in front (the proxy never runs on `/api/trpc`).
+ *     That the route calls it first and answers its 451 there is pinned against the real route by
+ *     trpc-route-api-policy.test.ts. It answers before tRPC parses anything, so the 451 is an
+ *     HTTP-level answer, not a tRPC error envelope, and a batch gets the same one;
  *   - the REST routes: the real proxy middleware chain (`runMiddlewares`), which answers before the
  *     route runs;
  *   - on both, the next.config.mjs headers the router sets before either, read through Next's own
@@ -55,19 +58,6 @@ const golden = (JSON.parse(readFileSync(GOLDEN, 'utf8')) as { routes: GoldenRout
 const prod = await loadNextConfigHeaders('production');
 vi.unstubAllEnvs();
 
-vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
-// Never reached on a blocked region (the policy answers first); mocked so the route loads without
-// the app's context and routers, as in trpc-route-api-policy.test.ts.
-vi.mock('~/server/createContext', () => ({
-  createContext: () => {
-    throw new Error('createContext ran for a blocked region');
-  },
-}));
-vi.mock('~/server/routers', async () => {
-  const { router, publicProcedure } = await import('~/server/trpc');
-  return { appRouter: router({ ping: publicProcedure.query(() => 'pong') }) };
-});
-
 /** The router's config headers for `url`, then the route's own (a later setHeader replaces). */
 function withConfigHeaders(url: string, own: Iterable<[string, string]>): Record<string, string> {
   const out: Record<string, string> = {};
@@ -83,20 +73,14 @@ function withConfigHeaders(url: string, own: Iterable<[string, string]>): Record
 let server: http.Server | undefined;
 let baseUrl = '';
 
+// What the route does after the policy (tRPC) is out of scope: a request the policy lets through is
+// answered 299 here, so the control below can tell "passed the policy" from any app answer.
 beforeAll(async () => {
-  const route = (await import('~/pages/api/trpc/[trpc]')).default as NextApiHandler;
   server = http.createServer((req, res) => {
-    void (async () => {
-      const url = new URL(req.url ?? '/', 'http://localhost');
-      (req as unknown as NextApiRequest).query = {
-        ...Object.fromEntries(url.searchParams),
-        trpc: decodeURIComponent(url.pathname.replace('/api/trpc/', '')),
-      };
-      await route(req as unknown as NextApiRequest, res as unknown as NextApiResponse);
-    })().catch((err) => {
-      res.statusCode = 599;
-      res.end(String(err));
-    });
+    if (applyApiRequestPolicy(req as unknown as NextApiRequest, res as unknown as NextApiResponse))
+      return;
+    res.statusCode = 299;
+    res.end('passed the policy');
   });
   await new Promise<void>((r) => server!.listen(0, '127.0.0.1', r));
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -155,7 +139,7 @@ describe('feed-go region-blocked golden: the app answer on every route feed-go a
 
   it('CONTROL: an allowed region is not answered 451 on either path', async () => {
     const us = { 'cf-ipcountry': 'US' };
-    expect((await viaTrpcRoute('/api/trpc/ping', us)).status).not.toBe(451);
+    expect((await viaTrpcRoute('/api/trpc/model.getAll', us)).status).toBe(299);
     const rest = await runMiddlewares(
       new NextRequest('https://civitai.com/api/v1/models?limit=2', { headers: us })
     );

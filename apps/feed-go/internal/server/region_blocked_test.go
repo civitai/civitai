@@ -45,7 +45,7 @@ func loadRegionBlockedGolden(t *testing.T) []regionBlockedRoute {
 		t.Fatal(err)
 	}
 	// Every public route, each once: a route added to ServedEndpoints needs its Node capture too.
-	var got []string
+	got := make([]string, 0, len(doc.Routes))
 	for _, r := range doc.Routes {
 		got = append(got, r.Endpoint)
 	}
