@@ -332,7 +332,7 @@ func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error
 	if err != nil {
 		return nil, err
 	}
-	out := &computed{value: res.Value(), viewerClass: feedViewerClass(user, false)}
+	out := &computed{value: res.Value()}
 	if signedOut {
 		// createContext: cacheable only without a session user (a banned user still has one).
 		out.ttl = &trpc.SignedOutTTL
@@ -1356,7 +1356,6 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		if c.viewerClass != "" && isFeedViewerEndpoint(endpoint) {
 			// Who may cache the answer differs by viewer (signed out: the edge), so the headers'
 			// result is read per class too.
-			s.Metrics.ShadowResponseViewer.WithLabelValues(endpoint, c.viewerClass, respResult).Inc()
 		}
 	}
 	s.endPhase(ctx, phase, endpoint, "compare", "ok")

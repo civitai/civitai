@@ -317,7 +317,6 @@ async function settle(
   if (candidate.ok && candidate.response.servedBy !== undefined) {
     context.candidate_served_by = candidate.response.servedBy;
   }
-  if (options.viewer) context.viewer = options.viewer;
   if (control.ok && control.response.cacheStatus)
     context.control_cache = control.response.cacheStatus;
   if (candidate.ok && candidate.response.cacheStatus) {
