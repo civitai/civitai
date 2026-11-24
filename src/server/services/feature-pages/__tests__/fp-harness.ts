@@ -121,6 +121,8 @@ export const platform = {
   held: new Map<number, string>(),
   /** The by-source read answers 200 with a body that is not a record. */
   badBySource: false,
+  /** The platform has no subject lookup route yet (a deploy gap). */
+  noSubjectRoute: false,
 };
 export const urnOf = (sourceId: number) =>
   `urn:data.civitai.com:feature-pages/comments/c${sourceId}`;
@@ -226,6 +228,11 @@ export function deciding(sourceId: number): { source: string; verdict: string } 
   return decideVerdicts(steps);
 }
 
+/** Whether the platform holds a subject: a request unless listed unknown, a feature once added. */
+const subjectKnown = (urn: unknown) =>
+  !platform.unknown.has(urn as string) &&
+  (!String(urn).includes(':feature-pages/features/') || platform.features.has(urn as string));
+
 export async function platformReply(url: URL, init: RequestInit): Promise<Response> {
   if (platform.down) return json(503, { code: 'unavailable' });
   const body = init.body ? JSON.parse(String(init.body)) : {};
@@ -242,12 +249,7 @@ export async function platformReply(url: URL, init: RequestInit): Promise<Respon
           digest: tokenOf(body.sourceId),
           stale: true,
         });
-      if (
-        platform.unknown.has(body.subject) ||
-        (String(body.subject).includes(':feature-pages/features/') &&
-          !platform.features.has(body.subject))
-      )
-        return json(404, { code: 'unknown_subject' });
+      if (!subjectKnown(body.subject)) return json(404, { code: 'unknown_subject' });
       if (/^\d*$/.test(String(body.authorName ?? '')))
         return json(400, { code: 'bad_request', message: 'authorName' });
       if (body.text !== null && !(body.text.length >= 1 && body.text.length <= 4000))
@@ -331,6 +333,17 @@ export async function platformReply(url: URL, init: RequestInit): Promise<Respon
         return json(504, { code: 'gateway_timeout' });
       }
       return json(200, { ok: true });
+    }
+    case '/internal/subject': {
+      if (platform.noSubjectRoute) return json(404, { code: 'not_found' });
+      const urn = url.searchParams.get('urn') ?? '';
+      return subjectKnown(urn)
+        ? json(200, {
+            urn,
+            known: true,
+            kind: urn.includes(':feature-pages/features/') ? 'feature' : 'request',
+          })
+        : json(404, { code: 'unknown_subject' });
     }
     case '/internal/comments/by-source': {
       if (platform.badBySource) return json(200, { ok: true });
@@ -458,6 +471,7 @@ export async function resetFpState(flags: { mirror: boolean }) {
     failNext: [],
     held: new Map(),
     badBySource: false,
+    noSubjectRoute: false,
   });
   // The text-scan rollout: CommentV3 fully active.
   redisMock.sysRedis.hGetAll.mockImplementation((async () => ({
