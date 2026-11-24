@@ -167,6 +167,20 @@ describe('review batch routing', () => {
     expect({ id, held: await routesHeld(id) }).toEqual({ id, held: false });
   });
 
+  // civitai/civitai#10202: the review batch keeps a held account's media on the held tier, where
+  // each serve is a held view.
+  it('an image of a held account routes held', async () => {
+    await db.exec(`INSERT INTO "Image" (id, "userId", ingestion) VALUES (140, 990100140, 'Scanned');
+      INSERT INTO "EvidenceHeldUser" ("userId") VALUES (990100140)`);
+    try {
+      expect(await routesHeld(140)).toBe(true);
+    } finally {
+      await db.exec(
+        `DELETE FROM "Image" WHERE id = 140; DELETE FROM "EvidenceHeldUser" WHERE "userId" = 990100140`
+      );
+    }
+  });
+
   it("a CSAM label in the scanner's rows routes held", async () => {
     expect(await routesHeld(21)).toBe(false);
     scanner.csamHit.add(imageAuditContentHash(21));

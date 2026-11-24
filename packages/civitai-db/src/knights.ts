@@ -1,7 +1,7 @@
 import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import * as shared from '@civitai/shared';
-import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, heldImageSql } from '@civitai/shared/held-media';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, heldImageKnownSql } from '@civitai/shared/held-media';
 import { withheldCosmeticIds } from '@civitai/shared/knights-shop';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 
@@ -50,6 +50,9 @@ export const isModeratedSql = sql<SqlBool>`COALESCE("KnightsQueueItem"."meta" ? 
 
 type Joined = DB & { img: DB['Image']; p: DB['Post'] };
 
+/** The SQL comment `servableImageContent` carries, which the test harnesses look for to check a read ran with JIT off. */
+export const SERVABLE_IMAGE_CONTENT_MARKER = '/* servable-image-content */';
+
 /**
  * The content half of `servableImage`, independent of the post's publish state and privacy: a rated still image with
  * no block marker, no review hold, no real-person or minor flag (those go to the moderators' own queues), no CSAM flag or
@@ -72,9 +75,9 @@ export const servableImageContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>)
     eb('img.minor', '=', false),
     eb('img.tosViolation', '=', false),
     // Marks the read for the test harnesses' JIT check (`readWithoutJit`); always true.
-    sql<SqlBool>`/* servable-image-content */ true`,
+    sql<SqlBool>`${sql.raw(SERVABLE_IMAGE_CONTENT_MARKER)} true`,
     // A clean image's nullable columns make the held check NULL, not false.
-    sql<SqlBool>`NOT COALESCE(${sql.raw(heldImageSql('img'))}, false)`,
+    sql<SqlBool>`NOT ${sql.raw(heldImageKnownSql('img'))}`,
     sql<SqlBool>`(img.id)::text NOT IN (${sql.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})`,
     eb.not(
       eb.exists(
@@ -218,7 +221,8 @@ export async function removalLowersLevel(
 }
 
 /**
- * Runs a read that applies `servableImageContent` with JIT off, in its own transaction. Its CSAM subplans inflate the
+ * Runs a read that applies `servableImageContent` with JIT off (SET LOCAL, so in a transaction: the caller's, or one
+ * opened here). Its CSAM subplans inflate the
  * planner's estimate far past the read's real cost, and on a server with JIT on, compiling for that estimate costs more
  * than the read.
  */

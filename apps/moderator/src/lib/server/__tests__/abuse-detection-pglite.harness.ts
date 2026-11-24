@@ -16,6 +16,7 @@ import {
   type Driver,
   type QueryResult,
 } from 'kysely';
+import { SERVABLE_IMAGE_CONTENT_MARKER } from '@civitai/db/knights';
 import type { AbuseDetectionTables } from '../abuse-detection-tables';
 
 /**
@@ -65,16 +66,10 @@ export async function applySchema(db: PGlite): Promise<void> {
 }
 
 /**
- * A Kysely dialect over PGlite, so the SERVICE's own query builders run against real Postgres.
- *
- * 🔴 THE SERVICE, UNMODIFIED — that is the whole value. A fake builder can only be asked what it was
- * told; it cannot answer "did this UPDATE touch a row in another run", which is the question every
- * group-scoping guard in `recordAbuseVerdict` turns on. Those guards are about WHICH ROWS MOVE, and
- * only rows can answer.
- */
-/**
  * Reads carrying the CSAM subplans (`servableImageContent`) that ran without `SET LOCAL jit = off` in their transaction
  * (`readWithoutJit`). Recorded as well as thrown, since a caller that catches the error would otherwise hide it.
+ * Known limit: it checks that some transaction is open with JIT off, not that it is this statement's own, so an
+ * interleaved pool read could pass here; prod callers pass their trx to `readWithoutJit` explicitly.
  */
 const jitViolations: string[] = [];
 afterEach(() => {
@@ -83,6 +78,14 @@ afterEach(() => {
     throw new Error(`servableImageContent read ran with JIT on:\n${found.join('\n')}`);
 });
 
+/**
+ * A Kysely dialect over PGlite, so the SERVICE's own query builders run against real Postgres.
+ *
+ * 🔴 THE SERVICE, UNMODIFIED — that is the whole value. A fake builder can only be asked what it was
+ * told; it cannot answer "did this UPDATE touch a row in another run", which is the question every
+ * group-scoping guard in `recordAbuseVerdict` turns on. Those guards are about WHICH ROWS MOVE, and
+ * only rows can answer.
+ */
 export function pgliteDialect(
   db: PGlite,
   /**
@@ -100,10 +103,7 @@ export function pgliteDialect(
       if (text === 'begin') [inTransaction, jitOff] = [true, false];
       else if (text === 'commit' || text === 'rollback') [inTransaction, jitOff] = [false, false];
       else if (text === 'set local jit = off') jitOff = inTransaction;
-      else if (
-        compiled.sql.includes('/* servable-image-content */') &&
-        !(inTransaction && jitOff)
-      ) {
+      else if (compiled.sql.includes(SERVABLE_IMAGE_CONTENT_MARKER) && !(inTransaction && jitOff)) {
         jitViolations.push(compiled.sql.slice(0, 160));
         throw new Error(
           `A servableImageContent read ran with JIT on: ${compiled.sql.slice(0, 120)}`

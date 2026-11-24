@@ -34,7 +34,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Post" (
       "id" integer PRIMARY KEY, "userId" integer NOT NULL, "modelVersionId" integer,
-      "nsfwLevel" integer NOT NULL DEFAULT 0
+      "nsfwLevel" integer NOT NULL DEFAULT 0, "publishedAt" timestamp, metadata jsonb
     );
     CREATE TABLE "Image" (
       "id" integer PRIMARY KEY, "postId" integer REFERENCES "Post"(id), "userId" integer,

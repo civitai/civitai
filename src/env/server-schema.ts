@@ -703,7 +703,8 @@ export const serverSchema = z
     APP_DATA_WRITES_SIGNING_KEY: z.string().min(32).optional(),
     // HMAC secret for viewer-keyed document keys (`doc-store-viewer-keyed.ts`), 32+ chars.
     // Byte-identical in every deployment sharing the database; never rotate.
-    // Unset or blank: every `@me` op answers 503; there is no fallback key.
+    // Unset or blank: an `@me` op that passes its other checks (`keyedBy`, parent, the write
+    // switch, sign-in) answers 503; there is no fallback key.
     APP_STORAGE_VIEWER_KEY_SECRET: z
       .string()
       .refine((value) => value.trim() === '' || value.trim().length >= 32, {

@@ -15,7 +15,7 @@ import { answerHiddenCheck, readHiddenNotices } from './hidden.service';
 import { closeNotice, SMITE_NOTICE, SMITE_REASON, warningNotice } from './notices';
 
 const WARNING = { title: warningNotice(null, '').title };
-import { settleHiddenChecks } from './settle';
+import { gradeHiddenVotes, settleHiddenChecks } from './settle';
 
 const Q = 'knights.image.nsfwLevel';
 const NOW = new Date('2026-12-15T12:00:00Z');
@@ -300,6 +300,28 @@ describe('grading hidden checks', () => {
     await answer(1, await reference(10), '4');
     await settle(minutes(31));
     expect(await settle(minutes(32))).toMatchObject({ graded: 0 });
+  });
+
+  it('turns JIT off for its own image read, whatever the caller ran before it', async () => {
+    await seedPlayer(pg, 1);
+    await answer(1, await reference(10), '4');
+    const due = (
+      await pg.query<{
+        itemId: number;
+        playerId: number;
+        verdict: string;
+        gold: number;
+        createdAt: Date;
+        answer: string;
+      }>(
+        `SELECT "itemId","playerId",verdict,gold,"createdAt",answer FROM "KnightsVote" WHERE "playerId"=1`
+      )
+    ).rows;
+    // A transaction that ran no readWithoutJit first: the harness fails the test if the servableImage read runs with JIT on.
+    const { outcomes } = await db
+      .transaction()
+      .execute((trx) => gradeHiddenVotes(trx, due as never, { now: minutes(31), settings }));
+    expect(outcomes).toEqual([expect.objectContaining({ playerId: 1, verdict: 'correct' })]);
   });
 
   it('counts the check on its reference image when it is graded', async () => {

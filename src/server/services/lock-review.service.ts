@@ -54,6 +54,16 @@ export const LOCK_REVIEW_UNAVAILABLE = "That setting can't be reviewed this way.
 export const LOCK_REVIEW_HELD =
   "The owner's account is under an evidence hold, so this review can't be approved now.";
 /** Moderators only. */
+/**
+ * Whether a real-person or minor detection on the model aliased `m` still waits for a moderator: a
+ * text-scan flag the scan raised again, or a poi hash match. With `hasPendingMinorHashMatch`, what
+ * stops a lock review's approval; the nsfw lock backfill skips the same models.
+ */
+export const modelDetectionHeldSql = Prisma.sql`COALESCE(
+  m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' ? 'redetected'
+  OR m.meta->${TEXT_SCAN_FLAGS_KEY}->'minor' ? 'redetected'
+  OR m.meta ? ${POI_HASH_MATCH_KEY}, FALSE)`;
+
 export const LOCK_REVIEW_DETECTION_HELD =
   'A real person or minor detection on this model is waiting for a moderator. Rule on it first, or reject this review.';
 /** The re-judging job only: the lock is no longer the intent lock it judged, so a moderator decides. */
@@ -288,9 +298,7 @@ export async function resolveLockReviewAppeal({
           'comFaceIntent', jsonb_build_object('laterVerdict', m.meta->'comFaceIntent'->'laterVerdict')
         ) AS "verdictMeta",
         a."userId" = m."userId" AS "ownerFiled",
-        COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' ? 'redetected'
-          OR m.meta->${TEXT_SCAN_FLAGS_KEY}->'minor' ? 'redetected'
-          OR m.meta ? ${POI_HASH_MATCH_KEY}, FALSE) AS "detectionHeld",
+        ${modelDetectionHeldSql} AS "detectionHeld",
         ${
           approve ? accountHoldSql(Prisma.raw('m."userId"'), markerView) : Prisma.sql`FALSE`
         } AS held

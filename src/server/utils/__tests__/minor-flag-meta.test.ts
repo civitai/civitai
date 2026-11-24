@@ -101,6 +101,18 @@ describe('stripMinorHashMeta', () => {
     ).toEqual({});
   });
 
+  it('hides the nsfw lock backfill record', () => {
+    expect(
+      stripMinorHashMeta({
+        nsfwLockBackfill: {
+          at: '2026-11-25T00:00:00Z',
+          bucket: 'scan-locks',
+          priorLockedProperties: ['nsfw'],
+        },
+      })
+    ).toEqual({});
+  });
+
   it('hides a restricted-verdict lead and its rulings from every client', () => {
     expect(
       stripMinorHashMeta({

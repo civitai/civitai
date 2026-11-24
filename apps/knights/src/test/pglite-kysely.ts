@@ -14,6 +14,7 @@ import {
   type QueryResult,
 } from 'kysely';
 import { parseTimestampAsUtc } from '@civitai/db/kysely';
+import { SERVABLE_IMAGE_CONTENT_MARKER } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 
 const MIGRATIONS = [
@@ -281,6 +282,8 @@ function asNodePgParameter(value: unknown): unknown {
 /**
  * Reads that broke the JIT rule below. Recorded as well as thrown, since a caller that catches the error (a sweep counting
  * failures, a read that falls back) would otherwise hide it: every test using this harness fails if any were recorded.
+ * Known limit: it checks that some transaction is open with JIT off, not that it is this statement's own, so an
+ * interleaved pool read could pass here; prod callers pass their trx to `readWithoutJit` explicitly.
  */
 const jitViolations: string[] = [];
 afterEach(() => {
@@ -299,7 +302,7 @@ function dialect(pg: PGlite, transactions: { open: number }, serialize: boolean)
       if (text === 'begin' || text === 'commit' || text === 'rollback') jitOff = false;
       else if (text === 'set local jit = off') jitOff = transactions.open > 0;
       else if (
-        compiled.sql.includes('/* servable-image-content */') &&
+        compiled.sql.includes(SERVABLE_IMAGE_CONTENT_MARKER) &&
         !(jitOff && transactions.open > 0)
       ) {
         jitViolations.push(compiled.sql.slice(0, 160));

@@ -248,6 +248,7 @@ function defineAccountWipeSuite(makeHarness: () => Promise<Harness>) {
             counterDocsReleased: 1,
             marks: 4,
             namespaceRows: 0,
+            maintRunsScrubbed: 0,
           },
         ],
       });
