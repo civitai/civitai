@@ -106,6 +106,16 @@ describe('updateWorkflow unlock', () => {
     await refuses(/Nothing in this generation needs unlocking yet/);
   });
 
+  it("refuses a comic panel's workflow: the comic editor's unlock holds a claim against a second charge", async () => {
+    getWorkflow.mockResolvedValue({ ...locked(undefined, video('x')), tags: ['gen', 'comics'] });
+    await refuses(/Unlock this from the comic editor/);
+  });
+
+  it('CONTROL: charges a tagged workflow that is not a comic panel', async () => {
+    getWorkflow.mockResolvedValue({ ...locked(undefined, video('x')), tags: ['gen', 'vid'] });
+    await charges();
+  });
+
   it('surfaces an orchestrator refusal and does not forward the viewer', async () => {
     getWorkflow.mockResolvedValue(locked(undefined, video('x')));
 

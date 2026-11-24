@@ -58,6 +58,7 @@ import { panelSourceImageUrl, viewerPanelMetadata } from '~/server/services/comi
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import {
   assertUnlockAllowed,
   assertUnlockReleasesOutput,
@@ -222,7 +223,7 @@ async function submitComicGeneration({
     token,
     flags: features,
     currencies: getAllowedAccountTypes(features, ['blue']),
-    tags: isGreen ? ['comics', 'green'] : ['comics'],
+    tags: isGreen ? [WORKFLOW_TAGS.COMICS, 'green'] : [WORKFLOW_TAGS.COMICS],
     isGreen,
     allowMatureContent,
     track,
@@ -727,12 +728,14 @@ async function getReferenceImages(referenceId: number) {
   };
 }
 
-// Shared helper: create a single panel record and submit generation
+/** Under the claim's 10-minute expiry, so no charge still in flight is overlapped by a takeover. */
+const UNLOCK_CHARGE_TIMEOUT_MS = 150_000;
+
 /**
  * Claims a panel's unlock before the charge, so two concurrent unlocks cannot both pay. The writes
  * that end an unlock replace `metadata` from the copy read before the claim, which is what drops it
  * on success (a jsonb merge there would leave it held); any failure releases it; one left by a crash
- * expires. The poll's metadata writes carry a live claim over (liveUnlockClaim).
+ * expires. The poll's metadata writes keep the row's own claim (writePolledPanel).
  */
 async function claimPanelUnlock(panelId: number) {
   const token = randomUUID();
@@ -749,17 +752,31 @@ async function claimPanelUnlock(panelId: number) {
 }
 
 /**
- * A poll's metadata write starts from a copy read before its downloads; it carries over the claim
- * an unlock took meanwhile, so the write does not free it.
+ * The poll's write. Its metadata is a copy read before the downloads, so the claim comes from the
+ * row in the same statement: one an unlock took meanwhile stays, one released since stays released.
  */
-async function liveUnlockClaim(panelId: number) {
-  // primary: the claim is taken on the primary moments before.
-  const row = await dbWrite.comicPanel.findUnique({
-    where: { id: panelId },
-    select: { metadata: true },
-  });
-  const claim = (row?.metadata as { unlockClaim?: unknown } | null)?.unlockClaim;
-  return claim ? { unlockClaim: claim } : {};
+async function writePolledPanel(
+  panelId: number,
+  {
+    status,
+    errorMessage,
+    metadata,
+  }: { status: ComicPanelStatus; errorMessage?: string; metadata: Record<string, unknown> }
+) {
+  const copy = { ...metadata };
+  delete copy.unlockClaim;
+  await dbWrite.$executeRaw`
+    UPDATE "ComicPanel"
+    SET status = ${status}::"ComicPanelStatus",
+      "errorMessage" = CASE WHEN ${errorMessage !== undefined} THEN ${errorMessage ?? null}::text
+        ELSE "errorMessage" END,
+      metadata = ${JSON.stringify(copy)}::jsonb || CASE
+        WHEN jsonb_typeof(metadata->'unlockClaim') = 'object'
+        THEN jsonb_build_object('unlockClaim', metadata->'unlockClaim')
+        ELSE '{}'::jsonb END,
+      "updatedAt" = now()
+    WHERE id = ${panelId}
+  `;
 }
 
 /** Frees the claim only if it is still this request's own. */
@@ -770,6 +787,7 @@ async function releasePanelUnlock(panelId: number, token: string) {
   `;
 }
 
+// Shared helper: create a single panel record and submit generation
 async function createSinglePanel(args: {
   projectId: number;
   chapterPosition: number;
@@ -3010,16 +3028,9 @@ export const comicsRouter = router({
           // preview URLs for any still-locked entries.
           const metadataChanged = JSON.stringify(previousByIndex) !== JSON.stringify(newCandidates);
           if (metadataChanged || panel.status !== ComicPanelStatus.AwaitingSelection) {
-            await dbWrite.comicPanel.update({
-              where: { id: panel.id },
-              data: {
-                status: ComicPanelStatus.AwaitingSelection,
-                metadata: {
-                  ...((panel.metadata as any) ?? {}),
-                  ...(await liveUnlockClaim(panel.id)),
-                  candidateImages: newCandidates,
-                },
-              },
+            await writePolledPanel(panel.id, {
+              status: ComicPanelStatus.AwaitingSelection,
+              metadata: { ...((panel.metadata as any) ?? {}), candidateImages: newCandidates },
             });
             sendComicPanelSignal(ctx.user!.id, {
               panelId: panel.id,
@@ -3071,17 +3082,10 @@ export const comicsRouter = router({
             panel.status !== ComicPanelStatus.RequireUnlock ||
             panelBlockedReason !== blockedReason
           ) {
-            await dbWrite.comicPanel.update({
-              where: { id: panel.id },
-              data: {
-                status: ComicPanelStatus.RequireUnlock,
-                errorMessage,
-                metadata: {
-                  ...((panel.metadata as any) ?? {}),
-                  ...(await liveUnlockClaim(panel.id)),
-                  blockedReason,
-                },
-              },
+            await writePolledPanel(panel.id, {
+              status: ComicPanelStatus.RequireUnlock,
+              errorMessage,
+              metadata: { ...((panel.metadata as any) ?? {}), blockedReason },
             });
             sendComicPanelSignal(ctx.user!.id, {
               panelId: panel.id,
@@ -3333,19 +3337,34 @@ export const comicsRouter = router({
         (await getWorkflow({ token, path: { workflowId: panel.workflowId } }))
           .allowMatureContent === true;
       let claim: string | null = null;
+      // A charge cut off by its bound may still land: the claim then stays until it expires.
+      let chargeMayLand = false;
       try {
         if (!alreadyPaid) {
           // One charge per panel: claimed first, so the lock is re-checked by the claim holder.
           claim = await claimPanelUnlock(panel.id);
           if (!claim) throw throwBadRequestError('This panel is already being unlocked.');
           await assertUnlockReleasesOutput({ token, workflowId: panel.workflowId });
-          // The mapped error keeps the orchestrator's own message (insufficient Buzz, the cap).
-          await updateWorkflow({
-            token,
-            workflowId: panel.workflowId,
-            allowMatureContent: true,
-            throwOnError: true,
-          });
+          const bound = new AbortController();
+          const timer = setTimeout(() => bound.abort(), UNLOCK_CHARGE_TIMEOUT_MS);
+          try {
+            // The mapped error keeps the orchestrator's own message (insufficient Buzz, the cap).
+            await updateWorkflow({
+              token,
+              workflowId: panel.workflowId,
+              allowMatureContent: true,
+              throwOnError: true,
+              signal: bound.signal,
+            });
+          } catch (error) {
+            if (!bound.signal.aborted) throw error;
+            chargeMayLand = true;
+            throw throwBadRequestError(
+              'This unlock is taking longer than usual. Check this panel again in a few minutes.'
+            );
+          } finally {
+            clearTimeout(timer);
+          }
         }
 
         // 2) Re-fetch the workflow and run it through the same `BlobData`
@@ -3602,7 +3621,8 @@ export const comicsRouter = router({
             .map((c) => c.key),
         };
       } catch (error) {
-        if (claim) await releasePanelUnlock(panel.id, claim).catch(() => undefined);
+        if (claim && !chargeMayLand)
+          await releasePanelUnlock(panel.id, claim).catch(() => undefined);
         throw error;
       }
     }),

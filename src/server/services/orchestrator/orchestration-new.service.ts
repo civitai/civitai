@@ -3268,11 +3268,16 @@ function formatStep(
 export async function assertUnlockReleasesOutput({
   token,
   workflowId,
+  outsideComicEditor = false,
 }: {
   token: string;
   workflowId: string;
+  /** A comic panel's unlock holds a per-panel claim against a second charge; others take none. */
+  outsideComicEditor?: boolean;
 }) {
   const workflow = await getWorkflow({ token, path: { workflowId } });
+  if (outsideComicEditor && workflow.tags?.includes(WORKFLOW_TAGS.COMICS))
+    throw throwBadRequestError('Unlock this from the comic editor.');
   if (workflow.allowMatureContent === true)
     throw throwBadRequestError('This generation is already unlocked.');
   // Absent reads as null, the classic API's unrestricted workflow: the queue offers the unlock only
@@ -3322,7 +3327,7 @@ export async function updateWorkflow({
 }: WorkflowUpdateSchema & { token: string; user?: SessionUser; viewer: UnlockViewer }) {
   if (props.allowMatureContent === true) {
     assertUnlockAllowed(viewer);
-    await assertUnlockReleasesOutput(props);
+    await assertUnlockReleasesOutput({ ...props, outsideComicEditor: true });
   }
   const workflow = await clientUpdateWorkflow({ ...props, throwOnError: true });
   const [formatted] = await formatGenerationResponse2([workflow], user);
