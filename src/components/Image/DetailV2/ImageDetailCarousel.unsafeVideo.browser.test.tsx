@@ -207,23 +207,14 @@ describe('a scanned image the CDN refuses', () => {
   });
 
   test('keeps everyone else on the CDN', async () => {
-    for (const [isModerator, cdnLeg] of [[false, true]] as const) {
-      setUp(cdnLeg);
-      cdn.refuses = true;
-      const { unmount } = await renderSlide(isModerator);
-      await vi.waitFor(() =>
-        expect(
-          document.querySelector('[data-testid="media"], img[src^="/api/mod/"]')
-        ).not.toBeNull()
-      );
-      // The mock refuses in its first effect; act flushes it, so a fallback would be committed here.
-      await act(async () => undefined);
-      expect({ isModerator, cdnLeg, route: !!routeImg() }).toEqual({
-        isModerator,
-        cdnLeg,
-        route: false,
-      });
-      unmount();
-    }
+    setUp(true);
+    cdn.refuses = true;
+    await renderSlide(false);
+    await vi.waitFor(() =>
+      expect(document.querySelector('[data-testid="media"], img[src^="/api/mod/"]')).not.toBeNull()
+    );
+    // The mock refuses in its first effect; act flushes it, so a fallback would be committed here.
+    await act(async () => undefined);
+    expect(routeImg()).toBeNull();
   });
 });

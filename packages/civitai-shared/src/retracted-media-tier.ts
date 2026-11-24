@@ -10,12 +10,11 @@ import { evidenceHeldUrlSql, heldUrlSql, reportListedUrlSql } from './held-url';
 import { blockedForSignal, type BlockedForPatterns, type ScannerVerdict } from './media-signals';
 
 /** Whether the retracted-media routes may serve the "Image" row aliased `image` at all, to anyone:
- *  it is blocked, or scanned with its url refused by the CDN and its file not held (`heldUrlSql` with
- *  `owners: false`). Without `cdnLeg`, that refusal must come from someone other than the owner
- *  unpublishing its post, and the row carry no CSAM mark of its own.
- *  and not held media (`heldImageSql`), which the held-media route and the moderator app's held
- *  leg serve. With `cdnLeg`, the url must also be the row's alone. Who among
- *  moderators may see it is `csamRestrictedSql`'s call. */
+ *  it is blocked, or scanned with its url refused by the CDN, that url the row's alone and its file
+ *  not held (`heldUrlSql` with `owners: false`). Without `cdnLeg`, the refusal must come from someone
+ *  other than the owner unpublishing its post, not by a delete a case keeps, and the row must carry no
+ *  CSAM mark of its own. Held media (`heldImageSql`) is excluded: the held-media route and the
+ *  moderator app's held leg serve it. Who among moderators may see it is `csamRestrictedSql`'s call. */
 export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): string {
   return `(
     ${retractedEligibleSql(image, cdnLeg)}

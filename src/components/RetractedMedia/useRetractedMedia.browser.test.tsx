@@ -77,14 +77,10 @@ describe('useRetractedMedia', () => {
   });
 
   test('attaches nothing for anyone but a moderator', async () => {
-    for (const props of [{ isModerator: false }]) {
-      const { unmount } = await renderWithProviders(<Host {...props} />);
-      expect({ props, onCdnError: host.hook!.onCdnError, mediaRef: host.hook!.mediaRef }).toEqual({
-        props,
-        onCdnError: undefined,
-        mediaRef: undefined,
-      });
-      unmount();
-    }
+    await renderWithProviders(<Host isModerator={false} />);
+    expect({ onCdnError: host.hook!.onCdnError, mediaRef: host.hook!.mediaRef }).toEqual({
+      onCdnError: undefined,
+      mediaRef: undefined,
+    });
   });
 });
