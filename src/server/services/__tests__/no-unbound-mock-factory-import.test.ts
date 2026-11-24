@@ -6,19 +6,21 @@ import { describe, expect, it } from 'vitest';
 import { importGraph, REPO_ROOT, rel, resolveSpecifier } from './import-graph.harness';
 
 /**
- * A \`vi.mock\` factory must not read a static import that is still unbound when the factory runs.
+ * A `vi.mock` factory must not read a static import that is still unbound when the factory runs.
  *
- * Vitest hoists \`vi.mock\` above the file's imports and keeps the imports in source order, so the
+ * Vitest hoists `vi.mock` above the file's imports and keeps the imports in source order, so the
  * factory runs the first time an import loads the mocked module. If that import sits above the one
  * binding a name the factory reads, the name is in its temporal dead zone and the factory throws.
  * Browser mode reports this only as "Unhandled Rejection: [vitest] There was an error when mocking a
- * module", names no file, and kills the whole run (it took down component shard 1/3 on main).
+ * module", names no file, and kills the whole run.
  *
  * Fix a report by importing the name inside the factory
- * (\`const { makeTrpcProxy } = await import('../../../test/trpcProxyStub')\`) or by moving it into
- * \`vi.hoisted\`.
+ * (`const { makeTrpcProxy } = await import('../../../test/trpcProxyStub')`) or by moving it into
+ * `vi.hoisted`.
  *
- * Reads only references evaluated while the factory runs: one inside a nested function runs later.
+ * Reads only references evaluated while the factory runs: one inside a nested function runs later,
+ * unless the function is called where it is written. Known gap: a callback the factory passes to a
+ * call that runs it at once (`[].map(() => x)`) is read as deferred, like `vi.fn(() => x)`.
  * Known gap: a mocked module this resolver cannot place in the graph (a node_modules package) is
  * skipped, since whether an earlier import loads it cannot be read here.
  */
@@ -45,7 +47,7 @@ function staticImports(sf: ts.SourceFile): StaticImport[] {
       }
     }
     const line = sf.getLineAndCharacterOfPosition(st.getStart(sf)).line + 1;
-    // A side-effect import (\`import './x'\`) loads its module too.
+    // A side-effect import (`import './x'`) loads its module too.
     out.push({
       index,
       line,
@@ -73,12 +75,25 @@ function declaredIn(factory: ts.ArrowFunction | ts.FunctionExpression): Set<stri
     else for (const el of b.elements) if (!ts.isOmittedExpression(el)) addBinding(el.name);
   };
   const walk = (n: ts.Node) => {
-    if (ts.isVariableDeclaration(n) || ts.isParameter(n)) addBinding(n.name);
     if ((ts.isClassDeclaration(n) || ts.isFunctionDeclaration(n)) && n.name) names.add(n.name.text);
+    // A nested function's own names shadow only inside it, and its body is not read.
+    if (n !== factory && isFunctionLike(n)) return;
+    if (ts.isVariableDeclaration(n) || ts.isParameter(n)) addBinding(n.name);
     ts.forEachChild(n, walk);
   };
   walk(factory);
   return names;
+}
+
+/** Whether `fn` is called where it is written, as an IIFE. */
+function isCalledNow(fn: ts.Node): boolean {
+  let child = fn;
+  let p = fn.parent;
+  while (ts.isParenthesizedExpression(p)) {
+    child = p;
+    p = p.parent;
+  }
+  return ts.isCallExpression(p) && p.expression === child;
 }
 
 /** Identifiers the factory reads while it runs, not those inside functions it builds. */
@@ -86,8 +101,18 @@ function eagerReads(factory: ts.ArrowFunction | ts.FunctionExpression): Set<stri
   const names = new Set<string>();
   const own = declaredIn(factory);
   const walk = (n: ts.Node) => {
-    // A type position reads nothing at run time.
-    if (isFunctionLike(n) || ts.isTypeNode(n)) return;
+    // A class's base is read when the class is built, though it parses as a type node.
+    if (
+      ts.isExpressionWithTypeArguments(n) &&
+      ts.isHeritageClause(n.parent) &&
+      n.parent.token === ts.SyntaxKind.ExtendsKeyword &&
+      ts.isClassLike(n.parent.parent)
+    ) {
+      walk(n.expression);
+      return;
+    }
+    // A type position reads nothing at run time; a function body runs later unless called here.
+    if ((isFunctionLike(n) && !isCalledNow(n)) || ts.isTypeNode(n)) return;
     if (ts.isShorthandPropertyAssignment(n) && !own.has(n.name.text)) names.add(n.name.text);
     if (ts.isIdentifier(n)) {
       const p = n.parent;
@@ -132,7 +157,7 @@ function mocks(sf: ts.SourceFile, absFile: string): Mock[] {
   return out;
 }
 
-/** Whether loading \`from\` loads \`target\`, not walking past modules this file replaces. */
+/** Whether loading `from` loads `target`, not walking past modules this file replaces. */
 function loads(
   graph: Map<string, string[]>,
   from: string,
@@ -187,9 +212,11 @@ function check(relFile: string, source: string, graph?: Map<string, string[]>): 
     if (bound.length) factoriesReadingImports++;
     for (const imp of bound) {
       for (const earlier of imports) {
-        if (earlier.index >= imp.index || !earlier.value) continue;
+        // The binding import itself counts: the factory fires during its own load.
+        if (earlier.index > imp.index || !earlier.value) continue;
         const from = resolved.get(earlier);
-        if (!from || !loads(g, from, mock.target, replaced)) continue;
+        // A module this file replaces never loads its real imports.
+        if (!from || replaced.has(from) || !loads(g, from, mock.target, replaced)) continue;
         const name = imp.names.filter((n) => reads.has(n)).join(', ');
         findings.push(
           relFile +
@@ -216,16 +243,40 @@ function check(relFile: string, source: string, graph?: Map<string, string[]>): 
   return { findings, factoriesReadingImports };
 }
 
-function testFiles(dir: string, out: string[] = []): string[] {
+function filesUnder(dir: string, keep: (name: string) => boolean, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name !== 'node_modules') testFiles(full, out);
-    } else if (/\.test\.tsx?$/.test(entry.name)) {
+      if (entry.name !== 'node_modules') filesUnder(full, keep, out);
+    } else if (keep(entry.name)) {
       out.push(rel(full));
     }
   }
   return out;
+}
+
+/** Test files, the setup files that mock for every test, and the helpers under test/. */
+function scanned(): string[] {
+  return [
+    ...filesUnder(path.join(REPO_ROOT, 'src'), (n) => /\.test\.tsx?$/.test(n)),
+    'src/__tests__/setup.ts',
+    ...filesUnder(path.join(REPO_ROOT, 'test'), (n) => /\.tsx?$/.test(n)),
+  ];
+}
+
+let memo: { graph: Map<string, string[]>; results: Checked[] } | undefined;
+/** Built on first use, so a read or parse error fails a named test rather than collection. */
+function tree() {
+  if (!memo) {
+    const files = scanned();
+    // One graph for every file: built per file, the walk costs minutes.
+    const graph = importGraph(files, { followDynamic: false });
+    const results = files.map((f) =>
+      check(f, fs.readFileSync(path.join(REPO_ROOT, f), 'utf8'), graph)
+    );
+    memo = { graph, results };
+  }
+  return memo;
 }
 
 // Pre-fix ReportProblemButton.browser.test.tsx header (573175a0): the component import on line 5
@@ -249,10 +300,12 @@ const REPORT_TEST = 'src/components/Feedback/ReportProblemButton.browser.test.ts
 
 describe('vi.mock factories read no import that is still unbound', () => {
   it('reports the factory that killed component shard 1/3 (positive control)', () => {
-    const { findings } = check(REPORT_TEST, PRE_FIX);
-    expect(findings).toEqual([
+    const expected = [
       expect.stringContaining("'~/components/Feedback/ReportProblemButton' on line 5"),
-    ]);
+    ];
+    expect(check(REPORT_TEST, PRE_FIX).findings).toEqual(expected);
+    // The same through the graph the tree scan uses, so a broken shared graph fails here.
+    expect(check(REPORT_TEST, PRE_FIX, tree().graph).findings).toEqual(expected);
   });
 
   it('passes the same factory once it imports the stub itself', () => {
@@ -263,6 +316,8 @@ describe('vi.mock factories read no import that is still unbound', () => {
       'return { ...actual, trpc: makeTrpcProxy({}) };',
       "const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');\n  return { ...actual, trpc: makeTrpcProxy({}) };"
     );
+    expect(fixed).not.toContain("from '../../../test/trpcProxyStub'");
+    expect(fixed).toContain("await import('../../../test/trpcProxyStub')");
     expect(check(REPORT_TEST, fixed).findings).toEqual([]);
   });
 
@@ -274,21 +329,48 @@ describe('vi.mock factories read no import that is still unbound', () => {
     expect(check(REPORT_TEST, deferred).findings).toEqual([]);
   });
 
-  const files = [
-    ...testFiles(path.join(REPO_ROOT, 'src')),
-    ...testFiles(path.join(REPO_ROOT, 'test')),
-  ];
-  const sources = new Map(files.map((f) => [f, fs.readFileSync(path.join(REPO_ROOT, f), 'utf8')]));
-  // One graph for every file: built per file, the walk costs minutes.
-  const graph = importGraph(files, { followDynamic: false });
-  const results = files.map((f) => check(f, sources.get(f)!, graph));
+  it('reads a function the factory calls at once, and a class base', () => {
+    const iife = PRE_FIX.replace('trpc: makeTrpcProxy({})', 'trpc: (() => makeTrpcProxy({}))()');
+    const base = PRE_FIX.replace(
+      'return { ...actual, trpc: makeTrpcProxy({}) };',
+      'class Trpc extends makeTrpcProxy {}\n  return { ...actual, trpc: Trpc };'
+    );
+    expect(iife).not.toBe(PRE_FIX);
+    expect(base).not.toBe(PRE_FIX);
+    expect(check(REPORT_TEST, iife).findings).toHaveLength(1);
+    expect(check(REPORT_TEST, base).findings).toHaveLength(1);
+  });
 
-  // A parser or resolver that stopped working would read no factory and pass everything.
-  it('reads the factories in the tree', () => {
+  it('reports a factory reading a name from the import that loads the mocked module', () => {
+    const same = [
+      "import { vi } from 'vitest';",
+      "import { ReportProblemButton } from '~/components/Feedback/ReportProblemButton';",
+      'vi' + ".mock('~/utils/trpc', () => ({ trpc: ReportProblemButton }));",
+    ].join('\n');
+    expect(check(REPORT_TEST, same).findings).toHaveLength(1);
+  });
+
+  it('does not walk an earlier import this file replaces with a factory', () => {
+    const replacedFirst = PRE_FIX.replace(
+      "import { renderWithProviders } from '../../../test/component-setup';",
+      "import { renderWithProviders } from '../../../test/component-setup';\n" +
+        'vi' +
+        ".mock('~/components/Feedback/ReportProblemButton', () => ({ ReportProblemButton: null }));"
+    );
+    expect(replacedFirst).not.toBe(PRE_FIX);
+    expect(check(REPORT_TEST, replacedFirst).findings).toEqual([]);
+  });
+
+  // A parser that stopped seeing factories, or a graph with no edges, would pass everything.
+  it('reads the factories in the tree, over a graph with edges', () => {
+    const { graph, results } = tree();
     expect(results.reduce((n, r) => n + r.factoriesReadingImports, 0)).toBeGreaterThan(150);
+    expect(graph.get('src/components/Feedback/ReportProblemButton.tsx')).toContain(
+      'src/utils/trpc.ts'
+    );
   });
 
   it('finds none in src/ or test/', () => {
-    expect(results.flatMap((r) => r.findings)).toEqual([]);
+    expect(tree().results.flatMap((r) => r.findings)).toEqual([]);
   });
 });
