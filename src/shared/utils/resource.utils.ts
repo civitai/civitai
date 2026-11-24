@@ -10,6 +10,7 @@ import {
   DEFAULT_STRENGTH_RANGE,
 } from '~/shared/constants/generation.constants';
 import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';
+import { isRawAirResource } from '~/shared/utils/air';
 
 // =============================================================================
 // Types
@@ -40,6 +41,19 @@ export type StepMetadataFormat<T extends ResourceLike> = {
  */
 export const RESOURCE_NODE_KEYS = ['model', 'upscaler', 'resources', 'vae'] as const;
 export type ResourceNodeKey = (typeof RESOURCE_NODE_KEYS)[number];
+
+/**
+ * A resource that makes a generation private, capping its output at PG/PG-13: a Private or
+ * unpublished (Draft/Training) version, an in-app training epoch, or a raw-AIR Training Studio epoch.
+ */
+export function capsAsPrivateGeneration(resource: {
+  id?: unknown;
+  air?: unknown;
+  isPrivate?: boolean;
+  epochDetails?: unknown;
+}) {
+  return !!resource.isPrivate || !!resource.epochDetails || isRawAirResource(resource);
+}
 
 /** The weight a resource starts at: the version's default, or 1 for a value saved before the settings shape. */
 export const defaultStrength = (resource: { settings?: { strength?: { default: number } } }) =>

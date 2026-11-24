@@ -51,6 +51,14 @@ export const NSFW_CAPPED = 'nsfwCapped';
 /** Paying the yellow unlock never lifts the workflow's cap, so a capped output offers no unlock. */
 export const NSFW_CAPPED_MESSAGE =
   "This generation is limited to a lower rating, so its mature result can't be shown.";
+export const PRIVATE_GEN = 'privateGen';
+export const PRIVATE_GEN_MESSAGE =
+  "Private and unpublished models can only generate PG and PG-13 content, so this mature result can't be shown.";
+/** Both reasons are rating caps, so neither offers the yellow unlock. */
+export const isCappedBlock = (blockedReason: string | null | undefined) =>
+  blockedReason === NSFW_CAPPED || blockedReason === PRIVATE_GEN;
+export const cappedBlockMessage = (blockedReason: string | null | undefined) =>
+  blockedReason === PRIVATE_GEN ? PRIVATE_GEN_MESSAGE : NSFW_CAPPED_MESSAGE;
 
 /**
  * Video engines the orchestrator never rates (the provider moderates its own output), so a hold
@@ -439,11 +447,12 @@ export abstract class BlobData {
       const neverRated = isNeverRatedVideoStep(step, step.workflow?.metadata?.params);
       if (holdUnrated && isUnratedOutput(data, neverRated)) {
         this.blockedReason = PENDING_RATING;
+      } else if (isPrivateGeneration && isPrivateMature(data.nsfwLevel)) {
+        // Ahead of the cap: a private submit always carries a PG-13 cap, and this names its cause.
+        this.blockedReason = PRIVATE_GEN;
       } else if (nsfwCap && exceedsNsfwLevel(data.nsfwLevel, nsfwCap)) {
         // The orchestrator reports these available but serves a placeholder in their place.
         this.blockedReason = NSFW_CAPPED;
-      } else if (isPrivateGeneration && isPrivateMature(data.nsfwLevel)) {
-        this.blockedReason = 'privateGen';
       } else if (isMature(data.nsfwLevel)) {
         if (domain.green) this.blockedReason = 'siteRestricted';
         else if (!nsfwEnabled) this.blockedReason = 'enableNsfw';

@@ -1200,7 +1200,7 @@ function resolveBlockMaturity(claims: { maxBrowsingLevel?: number }): {
 
 /**
  * The maturity fields of a real submit: the token's ceiling, held to PG-13 with mature content
- * refused when a resource's base model restricts mature generation (`capsGenerationOutput`).
+ * refused when `capOutput` is set.
  */
 function blockOutputClamp(capOutput: boolean, allowMatureContent: boolean | undefined) {
   if (capOutput) return { nsfwLevel: 'pg13' as const, allowMatureContent: false };
@@ -8852,8 +8852,8 @@ export const blocksRouter = router({
             currencies,
             metadata: workflowMetadata,
             // Authoritative maturity clamp on the REAL submit — the orchestrator
-            // rejects mature output when this is false. Token-claim derived, and a base model
-            // that restricts mature generation holds it to PG-13 whatever the token allows.
+            // rejects mature output when this is false. Token-claim derived, and a private
+            // generation or a restricting base model holds it to PG-13 whatever the token allows.
             ...blockOutputClamp(capOutput, allowMatureContent),
             // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s
             // OWN internal 3× retry of THIS call — collapses to the existing

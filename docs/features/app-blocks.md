@@ -838,6 +838,12 @@ cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
   as on the platform one — so a job that reserves 5,000 and bills 200 gives back 4,800
   when it reaches a terminal state.
 
+### Private and unpublished resources
+
+An app-built step or workflow that names a Private or unpublished (not Published) version has its
+output capped at PG-13 with mature content refused, as `kind: 'textToImage'` is for any private
+generation; `checkAppStepResources` returns that cap as `capOutput`.
+
 ### Generation input images (`kind: 'textToImage'`, `kind: 'step'` and `kind: 'workflow'`)
 
 An image a generation input names must be an image stored on Civitai that has finished its

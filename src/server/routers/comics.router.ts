@@ -76,8 +76,8 @@ import {
   type PresetModelConfig,
 } from '~/server/services/orchestrator/preset-image-gen.service';
 import {
-  NSFW_CAPPED,
-  NSFW_CAPPED_MESSAGE,
+  cappedBlockMessage,
+  isCappedBlock,
   WorkflowData,
 } from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
@@ -3134,8 +3134,8 @@ export const comicsRouter = router({
               ? 'This generation produced mature content that cannot be viewed on this site.'
               : blockedReason === 'canUpgrade'
               ? 'This generation produced mature content. Unlock with yellow Buzz to keep the result.'
-              : blockedReason === NSFW_CAPPED
-              ? NSFW_CAPPED_MESSAGE
+              : isCappedBlock(blockedReason)
+              ? cappedBlockMessage(blockedReason)
               : `Generation blocked: ${blockedReason}.`;
 
           if (

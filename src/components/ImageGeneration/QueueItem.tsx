@@ -51,6 +51,7 @@ import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { GenerationResourceValue } from '~/shared/types/generation.types';
+import { capsAsPrivateGeneration } from '~/shared/utils/resource.utils';
 import { type WorkflowData, type StepData } from '~/server/services/orchestrator';
 import {
   orchestratorCompletedStatuses,
@@ -91,7 +92,7 @@ import type {
   ImageBlob,
   VideoBlob,
 } from '~/shared/orchestrator/workflow-data';
-import { NSFW_CAPPED } from '~/shared/orchestrator/workflow-data';
+import { NSFW_CAPPED, PRIVATE_GEN, PRIVATE_GEN_MESSAGE } from '~/shared/orchestrator/workflow-data';
 import { isFbxOnlyDelivered } from '~/shared/orchestrator/model3d-output';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
 import {
@@ -741,6 +742,7 @@ function StepOutputs({
           blockedReasons={blockedReasons.filter((r) => r !== 'siteRestricted')}
           workflowId={request.id}
           transactions={request.transactions}
+          resources={request.resources}
         />
         {(processing || (pending && !waitingOnDownloads)) && awaitingOutput && (
           <TwCard
@@ -903,8 +905,7 @@ const imageBlockedReasonMap: Record<string, string | React.ComponentType<any>> =
   NSFWLevel:
     'One or more resources used in this generation cannot be used to generate mature content',
   NSFWLevelSourceImageRestricted: UNMARKED_SOURCE_IMAGE_MESSAGE,
-  // the following keys are managed in generationRequestHooks.ts
-  privateGen: 'Private Generation is limited to PG and PG-13 content.',
+  [PRIVATE_GEN]: PrivateGenBlock,
   [NSFW_CAPPED]:
     "This output was rated mature, and this generation is limited to PG-13, so it can't be shown.",
   siteRestricted: 'Images with mature ratings are unavailable on this site',
@@ -966,6 +967,7 @@ function BlockedBlocks(props: {
   blockedReasons: string[];
   workflowId: string;
   transactions: TransactionInfo[];
+  resources: GenerationResourceValue[];
 }) {
   const map = countOccurrences(props.blockedReasons);
   const items = Object.entries(map).map(([value, count]) => ({ value, count }));
@@ -987,6 +989,7 @@ function BlockedBlocks(props: {
               ? renderBlockedReason(message, {
                   workflowId: props.workflowId,
                   transactions: props.transactions,
+                  resources: props.resources,
                 })
               : null}
           </TwCard>
@@ -1010,6 +1013,20 @@ function renderBlockedReason(
     const Component = value;
     return <Component {...props} />;
   }
+}
+
+function PrivateGenBlock({ resources }: { resources: GenerationResourceValue[] }) {
+  // Resources are read back at their current state, so a model published since names nothing.
+  const names = resources.filter(capsAsPrivateGeneration).map((r) => r.model.name);
+  return (
+    <Text align="center" size="sm">
+      {names.length
+        ? `${names.join(
+            ', '
+          )} can only generate PG and PG-13 content, so this mature result can't be shown.`
+        : PRIVATE_GEN_MESSAGE}
+    </Text>
+  );
 }
 
 function EnableNsfwBlock() {
@@ -1220,6 +1237,7 @@ function Model3DQueueCardOutputs({
             blockedReasons={[blob.blockedReason]}
             workflowId={request.id}
             transactions={request.transactions}
+            resources={request.resources}
           />
         )}
       </div>

@@ -10,7 +10,11 @@ import type { Tracker } from '~/server/clickhouse/client';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import { sanitizeStepErrors } from './provider-errors';
 import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
-import { WorkflowData } from '~/shared/orchestrator/workflow-data';
+import {
+  cappedBlockMessage,
+  isCappedBlock,
+  WorkflowData,
+} from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
 import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.constants';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
@@ -243,6 +247,7 @@ export async function pollIterationWorkflow({
 /** Map an output's blockedReason to plain text for the iterative editor, which has no unlock-in-place UI. */
 function blockedReasonToMessage(blockedReason: string | undefined): string | undefined {
   if (!blockedReason) return undefined;
+  if (isCappedBlock(blockedReason)) return cappedBlockMessage(blockedReason);
   switch (blockedReason) {
     case 'canUpgrade':
       return 'Mature content was generated. Open the Generator queue to unlock it with yellow Buzz — your Buzz is held, not lost.';

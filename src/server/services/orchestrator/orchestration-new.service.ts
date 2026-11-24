@@ -130,7 +130,11 @@ import { BlocklistType } from '~/server/common/enums';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import { normalizeText } from '~/utils/normalize-text';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
-import { toStepMetadata, asResourceValue } from '~/shared/utils/resource.utils';
+import {
+  toStepMetadata,
+  asResourceValue,
+  capsAsPrivateGeneration,
+} from '~/shared/utils/resource.utils';
 import { anyTipEligible } from '~/shared/utils/creator-tip';
 import { randomInt, randomUUID } from 'crypto';
 import { MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
@@ -698,11 +702,10 @@ async function validateAndEnrichResources(
       : Promise.resolve(),
   ]);
 
-  // Private models need a subscription; epochs (raw-AIR included) only need ownership,
-  // which getResourceData and validateRawAirResources have already enforced.
+  // Private models need a subscription; epochs (raw-AIR included) and Draft versions only need
+  // ownership, already enforced by getResourceData and validateRawAirResources.
   const hasPrivate = resources.some((r) => r.availability === Availability.Private);
-  const hasPrivateOrEpoch =
-    hasPrivate || rawAirResources.length > 0 || resources.some((r) => !!r.epochDetails);
+  const isPrivateGeneration = [...resources, ...rawAirResources].some(capsAsPrivateGeneration);
 
   if (hasPrivate && user?.id && !user?.isModerator) {
     // Span localizes the gen-path park: subscription lookup for private use.
@@ -737,7 +740,7 @@ async function validateAndEnrichResources(
   return {
     enrichedResources,
     rawAirResources,
-    isPrivateGeneration: hasPrivateOrEpoch,
+    isPrivateGeneration,
     hasPoiResource: resources.some((r) => r.model.poi),
     // Raw-AIR epochs are not ModelVersions, so the orchestrator has no creator to tip for them.
     hasTipEligibleResource: anyTipEligible(resources),
@@ -1348,7 +1351,7 @@ export async function createWorkflowStepsFromGraph({
   tags: string[];
   hasTipEligibleResource: boolean;
   boostRequired: boolean;
-  /** The submit's ecosystem, or a resource's base model, restricts mature generation. */
+  /** The submit is private, or its ecosystem or a resource's base model restricts mature generation. */
   capOutput: boolean;
 }> {
   data = expandAvatarData(data);
@@ -1375,10 +1378,12 @@ export async function createWorkflowStepsFromGraph({
       acceptBoostRequired
     )
   );
-  const capOutput = capsGenerationOutput({
-    baseModels: enrichedResources.map((r) => r.baseModel),
-    ecosystem: 'ecosystem' in data ? data.ecosystem : undefined,
-  });
+  const capOutput =
+    isPrivateGeneration ||
+    capsGenerationOutput({
+      baseModels: enrichedResources.map((r) => r.baseModel),
+      ecosystem: 'ecosystem' in data ? data.ecosystem : undefined,
+    });
 
   // Check for POI in prompt
   const prompt = 'prompt' in data ? (data.prompt as string) : undefined;
