@@ -95,9 +95,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const EMAIL_EVENT_USER_AGENT_MAX = 512;
 
 /**
- * The row for a click or an unsubscribe. `position` and `userAgent` are the columns the click DDL
- * adds; until it is applied they are skipped on insert (see insertEmailEvents), so the row still
- * lands with the columns E1's table has.
+ * The row for a click or an unsubscribe. `position` and `userAgent` come from the click DDL; until
+ * it is applied they are skipped on insert (see insertEmailEvents).
  */
 export function emailEventRow(e: EmailEvent, at: Date) {
   return {
