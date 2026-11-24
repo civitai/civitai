@@ -125,8 +125,6 @@ export const NAVIGATION: NavLink[] = [
         countKey: reportCountKey('image'),
         shortcut: true,
       },
-      // Songs and their covers: the song reports Image Reports no longer lists.
-      { path: '/audio-review', label: 'Audio review', countKey: 'audioReview' },
       // Linked from the expiry alert email, which never names the policy: keep it out of /csam.
       { path: '/evidence-holds', label: 'Evidence Holds', countKey: 'evidenceHoldsEnding' },
       { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
@@ -144,6 +142,16 @@ export const NAVIGATION: NavLink[] = [
         informational: true,
       },
       { path: '/images/ingestion-errors', label: 'Ingestion Errors', countKey: 'ingestionErrors' },
+    ],
+  },
+  // Audio items (songs now, sound effects next) are their own section, not image queues: a song is
+  // decided with its cover, lyrics and rating together. The path is the group's grant key only.
+  {
+    label: 'Audio',
+    path: '/audio',
+    children: [
+      // Songs and their covers: reports, appeals and holds. The song reports Image Reports no longer lists.
+      { path: '/audio-review', label: 'Audio review', countKey: 'audioReview' },
     ],
   },
   // Models gets its own group beside Images and Articles rather than a single top-level entry — the

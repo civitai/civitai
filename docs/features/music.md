@@ -186,7 +186,7 @@ song card (see Moderating songs).
 ## Moderating songs
 
 In the moderator app (`apps/moderator`), songs have their own page, **Audio review**
-(`/audio-review`, under Images in the sidebar, with the number of reported songs, pending
+(`/audio-review`, under Audio in the sidebar, with the number of reported songs, pending
 appeals and held songs and covers decided there). It is built on the shared triage shell: the queue on the left, the open song in the
 middle, its reports, cover, checks, generation details and owner on the right with the decision bar
 pinned under them. J/K move, number
