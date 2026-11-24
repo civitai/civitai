@@ -4,12 +4,12 @@ import {
   RETRACTED_MEDIA_READ_TIMEOUT_MS,
   RETRACTED_SERVED_ACTIVITY,
 } from '@civitai/shared/retracted-media';
-import { heldImageSql } from '@civitai/shared/held-media';
 import { blockedForSignal, type ScannerVerdict } from '@civitai/shared/media-signals';
 import {
   createScannerVerdictCache,
   retractedAccessColumnsSql,
   retractedImageWhereSql,
+  moderatorMediaWhereSql,
   retractedViewable,
   type UrlSibling,
 } from '@civitai/shared/retracted-media-tier';
@@ -26,7 +26,8 @@ export type RetractedMedia = {
   mimeType: string | null;
 };
 
-/** Held media is `heldImageSql`'s, served here only with `orHeld` to a moderator with the CSAM grant. */
+/** Held media is `heldImageSql`'s, read here only with `orHeld`; see `moderatorMediaWhereSql` for who
+ *  is served it. */
 export type ModeratorMedia = RetractedMedia & { kind: 'retracted' | 'held' };
 
 type ScannerRow = { id: number; ingestion: string };
@@ -55,10 +56,9 @@ export async function readRetractedMedia(
   const viewable = new Map<number, ModeratorMedia>();
   if (!imageIds.length) return { eligible, viewable };
   const access = retractedAccessColumnsSql('i', { csamReview });
-  const retracted = retractedImageWhereSql('i', { cdnLeg: retractedMediaCdnLeg() });
-  // Held rows are read for every viewer, so a caller can draw them as restricted, and served only to
-  // one with the grant.
-  const held = orHeld ? `COALESCE(${heldImageSql('i')}, false)` : 'false';
+  const cdnLeg = retractedMediaCdnLeg();
+  const retracted = retractedImageWhereSql('i', { cdnLeg });
+  const where = moderatorMediaWhereSql('i', { cdnLeg, csamReview, heldLeg: orHeld });
   const rows = await dbWrite.transaction().execute(async (trx) => {
     await sql.raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`).execute(trx);
     return trx
@@ -70,7 +70,7 @@ export async function readRetractedMedia(
       .select(sql<boolean>`${sql.raw(retracted)}`.as('retracted'))
       .select(sql<boolean>`${sql.raw(access.restricted)}`.as('restricted'))
       .select(sql<UrlSibling[]>`${sql.raw(access.siblings)}`.as('siblings'))
-      .where(sql<boolean>`(${sql.raw(retracted)} OR ${sql.raw(held)})`)
+      .where(sql<boolean>`${sql.raw(where)}`)
       .execute();
   });
   const media = (row: (typeof rows)[number]): ModeratorMedia => ({
@@ -86,7 +86,7 @@ export async function readRetractedMedia(
   }
   const patterns = blockedForPatterns();
   const candidates = rows.filter(
-    (row) => row.retracted && !row.restricted && !blockedForSignal(row.blockedFor, patterns)
+    (row) => !row.restricted && !blockedForSignal(row.blockedFor, patterns)
   );
   if (!candidates.length) return { eligible, viewable };
   // The candidates' url siblings in one scanner read, not one read per row.
@@ -124,9 +124,9 @@ const verdictOf = async (rows: ScannerRow[]) =>
   );
 
 /**
- * The image's storage key and type while this moderator may see it on `/api/retracted-media`, held
- * media excluded; `null` otherwise, so an image they may not see is answered exactly as a missing
- * one.
+ * The image's storage key and type while this moderator may see it on `/api/retracted-media`, media
+ * held for itself excluded; `null` otherwise, so an image they may not see is answered exactly as a
+ * missing one.
  */
 export async function getRetractedMedia(
   imageId: number,
