@@ -84,6 +84,19 @@ beforeEach(() => {
   vi.spyOn(userBasicCache, 'refresh').mockImplementation(record('basicData') as never);
 });
 
+describe('deleteUser refuses a non-positive id', () => {
+  it.each([-1, 0])('refuses user %i before reading or writing anything', async (id) => {
+    dbMock.dbWrite.user.findFirst.mockResolvedValue({ id, meta: {} });
+    await expect(
+      UserService.deleteUser({ id, username: 'gone' } as Parameters<
+        typeof UserService.deleteUser
+      >[0])
+    ).rejects.toThrow('Invalid user id');
+    expect(dbMock.dbWrite.user.findFirst).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+});
+
 describe('deleteUser — the post-commit tail is unskippable', () => {
   it('runs every step once, the session first and Paddle last', async () => {
     await deleteUser();

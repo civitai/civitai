@@ -1411,8 +1411,9 @@ export const deleteUser = async ({
   /** Server-only: stores the profile and links before they are deleted. */
   archive?: (snapshot: ProfileClearSnapshot) => Promise<unknown>;
 }) => {
-  // Refused by name; the account scrub below also rejects a non-positive id, but only as a 500.
   if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
+  // The placeholder owner (-1) and other system accounts are never deleted.
+  if (!Number.isSafeInteger(id) || id <= 0) throw throwBadRequestError('Invalid user id');
   const user = await dbWrite.user.findFirst({
     where: { username, id },
     select: { id: true, meta: true, flags: true },

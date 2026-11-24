@@ -22,10 +22,13 @@ const SUBJECT = 21;
 const SECONDARY = 22;
 const UNRELATED = 23;
 
-/** `csam_report_guard_sent` as defined by the `20271127120000_drop_legal_holds` migration. */
+/** `csam_report_guard_sent` as defined by the `20271127130000_drop_legal_hold_triggers` migration. */
 function guardWithoutHoldsSql() {
   const text = readFileSync(
-    path.resolve(path.dirname(MIGRATION), '../20271127120000_drop_legal_holds/migration.sql'),
+    path.resolve(
+      path.dirname(MIGRATION),
+      '../20271127130000_drop_legal_hold_triggers/migration.sql'
+    ),
     'utf8'
   );
   const start = text.indexOf('CREATE OR REPLACE FUNCTION csam_report_guard_sent()');

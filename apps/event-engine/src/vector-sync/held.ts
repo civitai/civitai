@@ -5,6 +5,9 @@
  * function's SQL to its original, text for text.
  */
 
+/** The owner deleted accounts hand kept content to; a report naming it holds nothing. */
+const PLACEHOLDER_OWNER_ID = -1;
+
 const CSAM_REPORT_LISTED_IMAGE_IDS_SQL = `SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
     FROM "CsamReport" lr
@@ -49,7 +52,8 @@ export function heldImageSql(image: string): string {
   const flagged = `(
     ${image}."needsReview" = 'csam'
     OR ${image}."blockedFor" = 'CSAM'
-    OR (${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND ${heldUserSql(owner)})
+    OR (${owner} <> ${PLACEHOLDER_OWNER_ID}
+      AND ${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND ${heldUserSql(owner)})
   )`;
   return `COALESCE((${flagged} OR (${image}.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})), false)`;
 }

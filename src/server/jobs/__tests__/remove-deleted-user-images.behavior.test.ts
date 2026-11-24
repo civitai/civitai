@@ -123,7 +123,7 @@ beforeAll(async () => {
   );
   await holder.db.exec(`DROP TABLE "EvidenceHeldUser"`);
   const drop = readFileSync(
-    path.join(migrations, '20271127120000_drop_legal_holds/migration.sql'),
+    path.join(migrations, '20271127130000_drop_legal_hold_triggers/migration.sql'),
     'utf8'
   );
   const start = drop.indexOf('CREATE OR REPLACE FUNCTION post_text_held(');

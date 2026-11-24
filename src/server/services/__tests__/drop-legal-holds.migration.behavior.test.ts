@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 
 /**
- * `20271127120000_drop_legal_holds` run whole, twice, over the hold objects as either live state
- * left them, against a Postgres stand-in.
+ * The two drop-legal-holds migrations (triggers, then tables) run whole, twice, over the hold objects
+ * as either live state left them, against a Postgres stand-in.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -17,6 +17,12 @@ const MIGRATIONS = path.resolve(
 );
 const migration = (name: string) =>
   readFileSync(path.join(MIGRATIONS, name, 'migration.sql'), 'utf8');
+const TRIGGERS = '20271127130000_drop_legal_hold_triggers';
+const TABLES = '20271127130100_drop_legal_hold_tables';
+const dropAll = async (pg: PGlite) => {
+  await pg.exec(migration(TRIGGERS));
+  await pg.exec(migration(TABLES));
+};
 
 const CAPTURE = FEEDBACK_CAPTURE_OWNER_ID;
 const OTHER = 7;
@@ -106,9 +112,8 @@ const names = async (pg: PGlite, sql: string) =>
 describe.each(Object.entries(LIVE_STATES))('over %s', (_, live) => {
   it('drops every hold object, keeps what stays, and runs again cleanly', async () => {
     const pg = await applyThrough(live);
-    const drop = migration('20271127120000_drop_legal_holds');
-    await pg.exec(drop);
-    await pg.exec(drop);
+    await dropAll(pg);
+    await dropAll(pg);
 
     expect(
       await names(
@@ -141,7 +146,7 @@ describe.each(Object.entries(LIVE_STATES))('over %s', (_, live) => {
 
   it('leaves image, post and model deletes and owner changes to go through', async () => {
     const pg = await applyThrough(live);
-    await pg.exec(migration('20271127120000_drop_legal_holds'));
+    await dropAll(pg);
     await pg.exec(`
       INSERT INTO "CsamReport" ("userId") VALUES (${OTHER});
       INSERT INTO "Image" (id, "userId", "needsReview") VALUES (1, ${OTHER}, 'csam');
@@ -167,10 +172,59 @@ describe.each(Object.entries(LIVE_STATES))('over %s', (_, live) => {
       INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (1, ${OTHER}), (2, ${OTHER}), (3, ${OTHER});
     `);
 
-    await pg.exec(migration('20271127120000_drop_legal_holds'));
+    await pg.exec(migration(TRIGGERS));
+    const queue = async () =>
+      (await pg.query(`SELECT "entityId", type FROM "JobQueue" ORDER BY 1`)).rows;
+    // Not at deploy: the purge waits for part 2, so nothing a pending capture reads goes first.
+    expect(await queue()).toEqual([]);
 
-    const queued = await pg.query(`SELECT "entityId", type FROM "JobQueue" ORDER BY 1`);
-    expect(queued.rows).toEqual([{ entityId: 1, type: 'BlockedImageDelete' }]);
+    await pg.exec(migration(TABLES));
+    expect(await queue()).toEqual([{ entityId: 1, type: 'BlockedImageDelete' }]);
+  });
+
+  it('after the triggers part alone, lets deletes and owner changes through and keeps the hold relations', async () => {
+    const pg = await applyThrough(live);
+    await pg.exec(migration(TRIGGERS));
+    await pg.exec(migration(TRIGGERS));
+    await pg.exec(`
+      INSERT INTO "CsamReport" ("userId") VALUES (${OTHER});
+      INSERT INTO "Image" (id, "userId", "needsReview") VALUES (1, ${OTHER}, 'csam');
+      INSERT INTO "Post" (id, "userId") VALUES (1, ${OTHER});
+      INSERT INTO "Model" (id, "userId") VALUES (1, ${OTHER});
+      UPDATE "Model" SET "userId" = ${OTHER + 1} WHERE id = 1;
+      DELETE FROM "Image" WHERE id = 1;
+      DELETE FROM "Post" WHERE id = 1;
+    `);
+    const left = await pg.query(
+      `SELECT (SELECT count(*) FROM "Image")::int AS images, (SELECT count(*) FROM "Post")::int AS posts,
+         (SELECT "userId" FROM "Model" WHERE id = 1) AS owner`
+    );
+    expect(left.rows).toEqual([{ images: 0, posts: 0, owner: OTHER + 1 }]);
+    expect(
+      await names(
+        pg,
+        `SELECT tgname AS name FROM pg_trigger WHERE NOT tgisinternal
+         AND tgrelid::regclass::text IN ('"Image"', '"Post"', '"Model"', '"CsamReport"')
+         AND tgname LIKE '%evidence_hold%'`
+      )
+    ).toEqual([]);
+    expect(
+      await names(
+        pg,
+        `SELECT relname AS name FROM pg_class
+         WHERE relname IN ('EvidenceHold', 'EvidenceHoldImage', 'EvidenceHoldPost', 'EvidenceHeldUser',
+           'HeldResourceReview')`
+      )
+    ).toEqual(
+      [
+        'EvidenceHeldUser',
+        'EvidenceHold',
+        'EvidenceHoldImage',
+        'EvidenceHoldPost',
+        'HeldResourceReview',
+      ].sort()
+    );
+    await pg.query('SELECT * FROM "EvidenceHeldUser" LIMIT 1');
   });
 
   // The capture account is still never a report subject: its constraint is not a hold's.
@@ -186,7 +240,7 @@ describe.each(Object.entries(LIVE_STATES))('over %s', (_, live) => {
     ],
   ])('still refuses the capture account as %s', async (_label, sql) => {
     const pg = await applyThrough(live);
-    await pg.exec(migration('20271127120000_drop_legal_holds'));
+    await dropAll(pg);
 
     await expect(pg.exec(sql)).rejects.toThrow(/CsamReport_not_capture_owner_check/);
     await pg.exec(`INSERT INTO "CsamReport" ("userId", details) VALUES (NULL, '{}')`);
