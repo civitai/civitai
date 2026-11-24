@@ -145,6 +145,7 @@ import {
 import { CacheTTL, constants } from '~/server/common/constants';
 import { revokeCrucibleEntry } from '~/server/services/crucible-entry-accepted';
 import { visibleEntryImageSql } from '~/server/services/crucible-entry-sql';
+import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import {
   imageNotRestrictedSql,
   imageNotRestrictedWhere,
@@ -965,14 +966,31 @@ export const assertCrucibleVisible = async (crucibleId: number, viewer: Crucible
     throw throwNotFoundError('Crucible not found');
 };
 
+/** Creators who blocked the viewer and creators the viewer blocked; empty for moderators. */
+export const getBlockLists = async (user?: { id: number; isModerator?: boolean } | null) => {
+  if (!user || user.isModerator) return { blockedBy: [], blocked: [] };
+  const [blockedBy, blocked] = await Promise.all([
+    BlockedByUsers.getCached({ userId: user.id }),
+    BlockedUsers.getCached({ userId: user.id }),
+  ]);
+  return { blockedBy: blockedBy.map((u) => u.id), blocked: blocked.map((u) => u.id) };
+};
+
 /**
  * The crucibles this viewer may judge right now in which image `imageId` is someone else's entry
  * that judging can serve, short of the viewer's browsing level: `getJudgingPair`'s rules.
  */
 export async function getJudgingCrucibleIdsForImage({
   imageId,
-  ...viewer
-}: CrucibleViewer & { imageId: number; viewerId: number }): Promise<number[]> {
+  viewerId,
+  isModerator,
+  isGreen,
+}: {
+  imageId: number;
+  viewerId: number;
+  isModerator?: boolean;
+  isGreen?: boolean;
+}): Promise<number[]> {
   // From the active crucibles: CrucibleEntry has no imageId index.
   const entries = await dbRead.$queryRaw<{ crucibleId: number }[]>`
     SELECT DISTINCT ce."crucibleId"
@@ -982,15 +1000,14 @@ export async function getJudgingCrucibleIdsForImage({
     WHERE c.status = 'Active'::"CrucibleStatus"
       AND (c."endAt" IS NULL OR c."endAt" > now())
       AND ce."imageId" = ${imageId}
-      AND ce."userId" != ${viewer.viewerId}
+      AND ce."userId" != ${viewerId}
       AND ${visibleEntryImageSql(Prisma.sql`c."nsfwLevel"`, 0)}
   `;
   if (!entries.length) return [];
-  const { canJudge } = await getCrucibleJudgeEligibility({
-    userId: viewer.viewerId,
-    isModerator: viewer.isModerator,
-  });
+  const { canJudge } = await getCrucibleJudgeEligibility({ userId: viewerId, isModerator });
   if (!canJudge) return [];
+  const { blockedBy, blocked } = await getBlockLists({ id: viewerId, isModerator });
+  const viewer = { viewerId, isModerator, isGreen, blockedCreatorIds: [...blockedBy, ...blocked] };
   const visible = await Promise.all(
     entries.map(({ crucibleId }) =>
       assertCrucibleVisible(crucibleId, viewer).then(
