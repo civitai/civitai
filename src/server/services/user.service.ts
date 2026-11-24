@@ -62,7 +62,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { isEqual, uniq } from 'lodash-es';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { assertNotMemorialized } from '~/server/services/memorial.service';
+import { assertNotMemorialized, metaWithoutMemorialSql } from '~/server/services/memorial.service';
 import { notifyModAlert } from '~/server/common/mod-alert';
 import dayjs from '~/shared/utils/dayjs';
 import {
@@ -421,9 +421,7 @@ export const getUsers = async ({
 
   if (contestBanned) {
     // The memorial record is for `user.memorialize` holders, not every moderator.
-    select.push(
-      `(CASE WHEN jsonb_typeof(u."meta") = 'object' THEN u."meta" - 'memorial' ELSE u."meta" END) AS "meta"`
-    );
+    select.push(`${metaWithoutMemorialSql('u."meta"')} AS "meta"`);
   }
 
   // The contest-ban list is a WINDOW over a set larger than itself, so without an order it showed an

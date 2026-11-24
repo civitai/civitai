@@ -7,7 +7,7 @@ import {
   type MemorialState,
   type MemorialTribute,
 } from '@civitai/shared/memorial';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
@@ -255,8 +255,14 @@ export function assertNotMemorialized(user: { flags: number }) {
 /** The recipients that are memorialized, so a new chat can drop them. */
 export async function memorializedAmong(userIds: number[]): Promise<Set<number>> {
   if (!userIds.length) return new Set();
-  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+  // primary: memorial status must not lag a confirm; this gates tips and new chats.
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT id FROM "User" WHERE id = ANY(${userIds}::int[]) AND (flags & ${MEMORIAL}) <> 0
   `;
   return new Set(rows.map((row) => row.id));
+}
+
+/** The SQL for `column` without the memorial record, for a read not limited to `user.memorialize` holders. */
+export function metaWithoutMemorialSql(column: string) {
+  return `(CASE WHEN jsonb_typeof(${column}) = 'object' THEN ${column} - 'memorial' ELSE ${column} END)`;
 }

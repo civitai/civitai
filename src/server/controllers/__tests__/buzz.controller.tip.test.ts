@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Ledger-backed idempotency for the App Blocks tip (audit 🟡-1).
@@ -339,14 +339,43 @@ describe('createBuzzTipTransactionHandler — block gate', () => {
     expect(mockCreateMany).not.toHaveBeenCalled();
   });
 
-  it('refuses a tip to a memorialized account, and moves no Buzz', async () => {
-    installLedger();
-    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ id: 5 }] as never);
+  describe('a memorialized recipient refuses the whole tip', () => {
+    const memorialize = (...ids: number[]) =>
+      dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+        strings.join('').includes('flags &') ? ids.map((id) => ({ id })) : []) as never);
+    afterEach(() => dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never));
+    const post = { entityType: 'Post' as const, entityId: 7 };
+    const refusal = 'One or more target users are memorialized and cannot receive tips.';
 
-    await expect(
-      createBuzzTipTransactionHandler({ input: baseInput, ctx: ctxUser() })
-    ).rejects.toThrow('This account is memorialized and cannot receive tips.');
-    expect(mockCreateMany).not.toHaveBeenCalled();
+    it('the tipped user', async () => {
+      installLedger();
+      memorialize(5);
+      await expect(
+        createBuzzTipTransactionHandler({ input: baseInput, ctx: ctxUser() })
+      ).rejects.toThrow(refusal);
+      expect(mockCreateMany).not.toHaveBeenCalled();
+    });
+
+    it('a collaborator, when the tip names no account', async () => {
+      installLedger();
+      memorialize(6);
+      mockGetEntityCollaborators.mockResolvedValue([{ user: { id: 6 } }]);
+      const { toAccountId: _none, ...input } = { ...baseInput, ...post };
+      await expect(createBuzzTipTransactionHandler({ input, ctx: ctxUser() })).rejects.toThrow(
+        refusal
+      );
+      expect(mockCreateMany).not.toHaveBeenCalled();
+    });
+
+    it('a collaborator beside a living recipient: no one is paid', async () => {
+      installLedger();
+      memorialize(6);
+      mockGetEntityCollaborators.mockResolvedValue([{ user: { id: 6 } }]);
+      await expect(
+        createBuzzTipTransactionHandler({ input: { ...baseInput, ...post }, ctx: ctxUser() })
+      ).rejects.toThrow(refusal);
+      expect(mockCreateMany).not.toHaveBeenCalled();
+    });
   });
 });
 

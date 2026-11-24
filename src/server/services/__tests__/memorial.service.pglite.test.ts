@@ -12,6 +12,7 @@ const {
   reverseMemorial,
   publicMemorial,
   memorialActorRefusal,
+  metaWithoutMemorialSql,
   memorializedAmong,
   assertNotMemorialized,
   MemorializedAccountError,
@@ -192,5 +193,21 @@ describe('memorialization (docs/features/memorialized-profiles.md)', () => {
     expect(memorialActorRefusal({ mayMemorialize: false, impersonatedBy: null })).toMatch(
       /user\.memorialize/
     );
+  });
+
+  it('reads a meta without the memorial record for the contest-ban list, whatever is stored', async () => {
+    await propose();
+    await pg.query('INSERT INTO "User" (id, meta) VALUES ($1, $2), ($3, $4)', [
+      USER + 2,
+      'null',
+      USER + 3,
+      '[1]',
+    ]);
+    const { rows } = await pg.query<{ id: number; meta: unknown }>(
+      `SELECT id, ${metaWithoutMemorialSql('meta')} AS meta FROM "User" ORDER BY id`
+    );
+    expect(rows.find((r) => r.id === USER)?.meta).toEqual({});
+    expect(rows.find((r) => r.id === USER + 2)?.meta).toBeNull();
+    expect(rows.find((r) => r.id === USER + 3)?.meta).toEqual([1]);
   });
 });

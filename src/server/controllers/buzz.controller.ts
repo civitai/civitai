@@ -158,9 +158,6 @@ export async function createBuzzTipTransactionHandler({
       throw throwBadRequestError('You cannot send Buzz to the system account');
     }
 
-    if (input.toAccountId && (await memorializedAmong([input.toAccountId])).size)
-      throw throwBadRequestError('This account is memorialized and cannot receive tips.');
-
     let accountCreatedAt = ctx.user?.createdAt ? new Date(ctx.user.createdAt) : undefined;
     if (!accountCreatedAt) {
       const user = await dbWrite.user.findUnique({
@@ -245,6 +242,11 @@ export async function createBuzzTipTransactionHandler({
       if (bannedUsers.length > 0) {
         throw throwBadRequestError('One or more target users are banned');
       }
+
+      if ((await memorializedAmong(targetUserIds)).size)
+        throw throwBadRequestError(
+          'One or more target users are memorialized and cannot receive tips.'
+        );
     }
 
     const amount = Math.floor(input.amount / targetUserIds.length);
