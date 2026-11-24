@@ -233,6 +233,27 @@ describe('review text while its scan cannot ask every label (civitai/civitai#101
     expect(dbMock.dbWrite.entityModeration.updateMany).not.toHaveBeenCalled();
   });
 
+  it('a type whose dark check fails is still queried, and its rows sent', async () => {
+    rows = [
+      { id: 501, entityType: 'Post', entityId: 20, status: 'Failed', retryCount: 1 },
+      { id: 202, entityType: 'Model', entityId: 3, status: 'Failed', retryCount: 1 },
+    ];
+    askable();
+    const unreadable = {
+      ...adapter,
+      isEnabled: async () => true,
+      isDarkForAll: async () => {
+        throw new Error('down');
+      },
+    };
+    vi.mocked(getModerationAdapter).mockImplementation((type) =>
+      type === 'Post' ? unreadable : adapter
+    );
+
+    expect(await run()).toMatchObject({ processed: 2, retried: 2, skipped: 0 });
+    expect(submit.mock.calls.map(([args]) => args.entityId).sort()).toEqual([20, 3]);
+  });
+
   it('a type off for only some entities is still queried, and its off rows skipped one by one', async () => {
     rows = [
       { id: 401, entityType: 'Post', entityId: 10, status: 'Failed', retryCount: 1 },

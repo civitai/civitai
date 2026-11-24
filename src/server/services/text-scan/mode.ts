@@ -109,10 +109,7 @@ export async function isTextScanEnabled() {
 
 const BUCKETS = Array.from({ length: 100 }, (_, bucket) => bucket);
 
-/**
- * Whether any entity of this type can be in `mode` right now. False only when no bucket maps to it,
- * so then `getTextScanMode` gives no entity that mode; it reads the same way, a failure included.
- */
+/** Whether any entity of this type can be in `mode`. Mirrors `getTextScanMode`: kill switch off or a failed read is unreachable. */
 export async function isTextScanModeReachable(
   entityType: TextScanEntityType,
   mode: Exclude<TextScanMode, 'off'>
@@ -197,7 +194,7 @@ function lowerMode(a: TextScanMode, b: TextScanMode) {
   return MODE_ORDER[a] < MODE_ORDER[b] ? a : b;
 }
 
-/** `isTextScanModeReachable` for the web-search pass, read as `getTextScanWebSearchMode` reads it. */
+/** `isTextScanModeReachable` for the web-search pass. Mirrors `getTextScanWebSearchMode`: kill switch off or a failed read is unreachable. */
 export async function isTextScanWebSearchModeReachable(
   entityType: TextScanEntityType,
   mode: Exclude<TextScanMode, 'off'>
