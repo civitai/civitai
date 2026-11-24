@@ -8,6 +8,13 @@ import type {
 } from '~/shared/constants/block-storage.constants';
 
 /**
+ * The five selectable content-level bits (PG 1, PG-13 2, R 4, X 8, XXX 16): the registry level
+ * streams' bits, as a subscription's `meta.level` (`registry-adapter/level-feed.ts`) and as the
+ * store's level-stream selector (`levelChanges`, `levelDocuments`). The one list of them.
+ */
+export const LEVEL_STREAM_BITS = [1, 2, 4, 8, 16] as const;
+
+/**
  * One collection's declaration — the manifest parser's own type, so the store sees exactly
  * what the validator accepted at review. The store never reads `showAuthor` or
  * `ownedModelVersions`; the REST layer applies them (`doc-store-api.ts`,
