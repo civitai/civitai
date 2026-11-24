@@ -59,7 +59,7 @@ CREATE TABLE "Image" (
   minor BOOLEAN NOT NULL DEFAULT false, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
   "nsfwLevel" INTEGER NOT NULL DEFAULT 4, "pHash" BIGINT, "userId" INTEGER NOT NULL, "postId" INTEGER
 );
-CREATE TABLE "Post" (id INTEGER PRIMARY KEY, metadata JSONB, "modelVersionId" INTEGER);
+CREATE TABLE "Post" (id INTEGER PRIMARY KEY, metadata JSONB, "modelVersionId" INTEGER, "userId" INTEGER, "publishedAt" TIMESTAMP);
 CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, meta JSONB, "modelId" INTEGER);
 CREATE TABLE "Model" (id INTEGER PRIMARY KEY, meta JSONB);
 CREATE TABLE "User" (id INTEGER PRIMARY KEY, meta JSONB);
@@ -696,5 +696,79 @@ describe("a held account's image, through /api/retracted-media's reader", () => 
   it('keeps it to cleared moderators while the scanner marks it', async () => {
     scanner.verdict = 'hit';
     expect(await getModeratorMedia(IMAGE, { csamReview: false })).toBeNull();
+  });
+});
+
+// civitai/civitai#10202: the shape of a reported case. A moderator unpublished the post, and the
+// model was pulled, so the CDN denies the url. With the leg off, any moderator still sees it.
+describe('a scanned image whose post someone other than its owner unpublished', () => {
+  const OWNER = 990100410;
+  const ids = {
+    pulled: 990000410,
+    signal: 990000411,
+    item: 990000412,
+    shop: 990000413,
+    deleted: 990000414,
+    live: 990000415,
+    ownPull: 990000416,
+  };
+  const all = Object.values(ids);
+  const postOf = (id: number) =>
+    id === ids.live ? 990400415 : id === ids.ownPull ? 990400416 : 990400410;
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "Post" (id, metadata, "modelVersionId", "userId", "publishedAt") VALUES
+        (990400410, '{"unpublishedAt": "2026-11-18", "unpublishedBy": "990100499"}', NULL, ${OWNER}, NULL),
+        (990400415, '{}', NULL, ${OWNER}, now()),
+        (990400416, '{"unpublishedAt": "2026-11-18", "unpublishedBy": "${OWNER}"}', NULL, ${OWNER}, NULL);
+      INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId", "userId") VALUES ('key-${ids.shop}', 1, ${OWNER});
+      INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview")
+        VALUES (${ids.deleted}, 'key-${ids.deleted}', ${OWNER}, false);
+      INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (${ids.signal}, ${ids.signal}, 'csam-hold');
+    `);
+    for (const id of all)
+      await db.query(
+        `INSERT INTO "Image" (id, url, ingestion, "needsReview", minor, "nsfwLevel", "userId", "postId")
+         VALUES ($1, $2, 'Scanned', $3, true, 2, $4, $5)`,
+        [id, `key-${id}`, id === ids.item ? 'csam' : null, OWNER, postOf(id)]
+      );
+    await db.query(
+      `INSERT INTO "ImageCdnAccess" (url, state) SELECT 'key-' || id, 'Denied' FROM unnest($1::int[]) id`,
+      [all]
+    );
+  });
+  beforeEach(() => {
+    scanner.verdict = 'clear';
+  });
+
+  it('serves it to any moderator, with the leg off', async () => {
+    for (const csamReview of [false, true])
+      expect({ csamReview, media: await getModeratorMedia(ids.pulled, { csamReview }) }).toEqual({
+        csamReview,
+        media: { url: `key-${ids.pulled}`, type: 'image', mimeType: null, kind: 'retracted' },
+      });
+  });
+
+  it('keeps it from a moderator without the grant with a CSAM mark of its own, or held for itself', async () => {
+    expect(await getModeratorMedia(ids.signal, { csamReview: false })).toBeNull();
+    // Nor is a scanned row with its own mark served to the grant through this leg.
+    expect(await getModeratorMedia(ids.signal, { csamReview: true })).toBeNull();
+    expect(await getModeratorMedia(ids.item, { csamReview: false })).toBeNull();
+  });
+
+  it('refuses a url a shop takedown or a moderator delete also refuses', async () => {
+    for (const id of [ids.shop, ids.deleted])
+      expect({ id, media: await getModeratorMedia(id, { csamReview: true }) }).toEqual({
+        id,
+        media: null,
+      });
+  });
+
+  it('refuses a denied url no unpublish by someone else explains', async () => {
+    for (const id of [ids.live, ids.ownPull])
+      expect({ id, media: await getModeratorMedia(id, { csamReview: true }) }).toEqual({
+        id,
+        media: null,
+      });
   });
 });

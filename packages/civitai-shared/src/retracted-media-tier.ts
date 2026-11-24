@@ -10,16 +10,16 @@ import { evidenceHeldUrlSql, heldUrlSql, reportListedUrlSql } from './held-url';
 import { blockedForSignal, type BlockedForPatterns, type ScannerVerdict } from './media-signals';
 
 /** Whether the retracted-media routes may serve the "Image" row aliased `image` at all, to anyone:
- *  it is blocked (or, with `cdnLeg`, scanned with its url refused by the CDN, as for a post or model
- *  a moderator removed or an owner's ban, and its file not held: `heldUrlSql` with `owners: false`),
+ *  it is blocked, or scanned with its url refused by the CDN and its file not held (`heldUrlSql` with
+ *  `owners: false`). Without `cdnLeg`, that refusal must come from someone other than the owner
+ *  unpublishing its post, and the row carry no CSAM mark of its own.
  *  and not held media (`heldImageSql`), which the held-media route and the moderator app's held
  *  leg serve. With `cdnLeg`, the url must also be the row's alone. Who among
  *  moderators may see it is `csamRestrictedSql`'s call. */
 export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): string {
   return `(
     ${retractedEligibleSql(image, cdnLeg)}
-    -- NULL for an image with no review flag or block reason, so COALESCE before the NOT.
-    AND NOT COALESCE(${heldImageSql(image)}, false)
+    AND NOT ${heldImageKnownSql(image)}
   )`;
 }
 
@@ -34,8 +34,21 @@ export function retractedOrOwnerHeldWhereSql(image: string, { cdnLeg = false } =
 
 function retractedEligibleSql(image: string, cdnLeg: boolean): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
-  const eligible = cdnLeg
-    ? `(${image}.ingestion = 'Blocked' OR (
+  const refused = scannedRefusedSql(image);
+  if (cdnLeg) return `(${image}.ingestion = 'Blocked' OR ${refused})`;
+  // Without the leg, only a refusal a moderator's pull of its post explains, and no CSAM mark of
+  // the row's own.
+  return `(${image}.ingestion = 'Blocked' OR (
+    ${refused}
+    AND ${postPulledSql(image)}
+    AND NOT COALESCE(${heldItemImageSql(image)}, false)
+    AND NOT COALESCE(${csamSignalImageSql(image)}, false)
+  ))`;
+}
+
+/** A scanned row whose url the CDN refuses, with no held file and nothing but this row behind it. */
+function scannedRefusedSql(image: string): string {
+  return `(
       ${image}.ingestion = 'Scanned'
       AND EXISTS (
         SELECT 1 FROM "ImageCdnAccess" ca
@@ -47,16 +60,26 @@ function retractedEligibleSql(image: string, cdnLeg: boolean): string {
       AND NOT EXISTS (SELECT 1 FROM "Image" so WHERE so.url = ${image}."url" AND so.id <> ${image}.id)
       AND NOT EXISTS (SELECT 1 FROM "ImageCdnModeratorDelete" sd WHERE sd.url = ${image}."url")
       AND NOT EXISTS (SELECT 1 FROM "ImageCdnShopTakedown" st WHERE st.url = ${image}."url")
-    ))`
-    : `${image}.ingestion = 'Blocked'`;
-  return eligible;
+    )`;
+}
+
+/** Its post was unpublished by someone other than its owner: the only fact that makes cdn-access
+ *  refuse a scanned image's url (`desiredPostAccess` in the main app's cdn-access service). */
+function postPulledSql(image: string): string {
+  return `EXISTS (
+      SELECT 1 FROM "Post" pp
+      WHERE pp.id = ${image}."postId" AND pp."publishedAt" IS NULL
+        AND pp.metadata ? 'unpublishedAt'
+        AND pp.metadata ->> 'unpublishedBy' IS DISTINCT FROM pp."userId"::text
+        AND pp.metadata ->> 'unpublishedBy' IS NOT NULL
+    )`;
 }
 
 /**
- * The rows a retracted-media read answers this moderator from. A moderator with the CSAM grant gets
- * retracted media, and held media too on a route with a held leg (`heldLeg`). Any other moderator
- * gets what the routes would serve were no owner held (`retractedOrOwnerHeldWhereSql`), so a held
- * owner cannot be told apart; with `heldLeg`, also media held for itself, drawn as restricted.
+ * The rows a retracted-media read answers this moderator from. Any moderator gets what the routes
+ * would serve were no owner held (`retractedOrOwnerHeldWhereSql`), so a held owner cannot be told
+ * apart. On a route with a held leg (`heldLeg`), a moderator with the CSAM grant also gets all held
+ * media, and any other moderator media held for itself, drawn as restricted.
  */
 export function moderatorMediaWhereSql(
   image: string,
@@ -66,11 +89,11 @@ export function moderatorMediaWhereSql(
     heldLeg,
   }: { cdnLeg?: boolean; csamReview: boolean; heldLeg: boolean }
 ): string {
+  const openable = retractedOrOwnerHeldWhereSql(image, { cdnLeg });
   if (csamReview)
     return heldLeg
       ? `(${retractedImageWhereSql(image, { cdnLeg })} OR ${heldImageKnownSql(image)})`
-      : retractedImageWhereSql(image, { cdnLeg });
-  const openable = retractedOrOwnerHeldWhereSql(image, { cdnLeg });
+      : openable;
   return heldLeg ? `(${openable} OR COALESCE(${heldItemImageSql(image)}, false))` : openable;
 }
 

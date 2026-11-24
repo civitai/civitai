@@ -99,7 +99,7 @@ beforeAll(async () => {
       minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 4, "userId" int NOT NULL,
       "acceptableMinor" boolean NOT NULL DEFAULT false, "pHash" bigint, "postId" int
     );
-    CREATE TABLE "Post" (id int PRIMARY KEY, metadata jsonb, "modelVersionId" int);
+    CREATE TABLE "Post" (id int PRIMARY KEY, metadata jsonb, "modelVersionId" int, "userId" int, "publishedAt" timestamp);
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, meta jsonb, "modelId" int);
     CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
     CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb);
@@ -310,9 +310,9 @@ describe('getRetractedMedia', () => {
   });
 
   // civitai/civitai#10202: answered to any moderator as an ordinary account's would be.
-  it("serves the image of a report's subject to a moderator without the grant, as held media", async () => {
+  it("serves the image of a report's subject to any moderator, grant or not, as held media", async () => {
     expect(await getRetractedMedia(20, { csamReview: false })).toMatchObject({ held: true });
-    expect(await getRetractedMedia(20, { csamReview: true })).toBeNull();
+    expect(await getRetractedMedia(20, { csamReview: true })).toMatchObject({ held: true });
   });
 
   it('refuses a missing id', async () => {
@@ -656,6 +656,68 @@ describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
   });
 });
 
+// civitai/civitai#10202: the shape of a reported case. A moderator unpublished the post, and the
+// model was pulled, so the CDN denies the url. With the leg off, any moderator still sees it.
+describe('a scanned image whose post someone other than its owner unpublished', () => {
+  const OWNER = 990100310;
+  const ids = {
+    pulled: 990000310,
+    signal: 990000311,
+    item: 990000312,
+    shop: 990000313,
+    deleted: 990000314,
+    live: 990000315,
+    ownPull: 990000316,
+  };
+  const all = Object.values(ids);
+  const post = (id: number) =>
+    id === ids.live ? 990400315 : id === ids.ownPull ? 990400316 : 990400310;
+  beforeAll(async () => {
+    await pg.exec(`
+      INSERT INTO "Post" (id, metadata, "modelVersionId", "userId", "publishedAt") VALUES
+        (990400310, '{"unpublishedAt": "2026-11-18", "unpublishedBy": "990100399"}', NULL, ${OWNER}, NULL),
+        (990400315, '{}', NULL, ${OWNER}, now()),
+        (990400316, '{"unpublishedAt": "2026-11-18", "unpublishedBy": "${OWNER}"}', NULL, ${OWNER}, NULL);
+      INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId", "userId") VALUES ('key-${ids.shop}', 1, ${OWNER});
+      INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview")
+        VALUES (${ids.deleted}, 'key-${ids.deleted}', ${OWNER}, false);
+      INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (${ids.signal}, ${ids.signal}, 'csam-hold');
+    `);
+    for (const id of all)
+      await pg.query(
+        `INSERT INTO "Image" (id, url, ingestion, "needsReview", minor, "nsfwLevel", "userId", "postId")
+         VALUES ($1, $2, 'Scanned', $3, true, 2, $4, $5)`,
+        [id, `key-${id}`, id === ids.item ? 'csam' : null, OWNER, post(id)]
+      );
+    await pg.query(
+      `INSERT INTO "ImageCdnAccess" (url, state) SELECT 'key-' || id, 'Denied' FROM unnest($1::int[]) id`,
+      [all]
+    );
+  });
+
+  it('serves it to any moderator, with the leg off', async () => {
+    await expectTiers('anyMod', [ids.pulled]);
+    expect(await getRetractedMedia(ids.pulled, { csamReview: false })).toEqual({
+      url: `key-${ids.pulled}`,
+      type: 'image',
+      mimeType: null,
+      held: false,
+    });
+  });
+
+  it('refuses it with a CSAM mark of its own, or held for itself', async () => {
+    await expectTiers('none', [ids.signal, ids.item]);
+  });
+
+  it('refuses a url a shop takedown or a moderator delete also refuses', async () => {
+    await expectTiers('none', [ids.shop, ids.deleted]);
+  });
+
+  it('refuses a denied url no unpublish by someone else explains', async () => {
+    await expectTiers('none', [ids.live, ids.ownPull]);
+  });
+});
+
 describe('rows sharing its url, its post text and its articles', () => {
   const target = { id: 990900000, url: 'key-990900000' };
   beforeAll(async () => {
@@ -696,17 +758,17 @@ describe('rows sharing its url, its post text and its articles', () => {
     }
   );
 
-  // civitai/civitai#10202: held media is answered to any moderator as its twin would be, marked held
-  // for the audit. The CSAM grant reads held media on the held-media route.
+  // civitai/civitai#10202: held media is answered to any moderator, grant or not, as its twin would
+  // be, marked held for the audit.
   it.each(CSAM_RESTRICTION_CASES.filter((c) => c.held))(
     'serves an image with $label to any moderator, as held media',
     async ({ mark }) => {
       await pg.exec(mark(target));
-      expect(await getRetractedMedia(target.id, { csamReview: false })).toMatchObject({
-        url: target.url,
-        held: true,
-      });
-      expect(await getRetractedMedia(target.id, { csamReview: true })).toBeNull();
+      for (const csamReview of [false, true])
+        expect(await getRetractedMedia(target.id, { csamReview })).toMatchObject({
+          url: target.url,
+          held: true,
+        });
     }
   );
 
@@ -730,8 +792,7 @@ describe("a held account's image outside the moderator routes", () => {
       (${IMAGE}, 'key-${IMAGE}', 'Blocked', 'moderated', ${OWNER})`);
   });
 
-  // heldImageSql also gates the held-media route, Knights eligibility and the semantic indexes;
-  // heldUrlSql's default is cdn-access's rule for the public CDN.
+  // heldUrlSql's default is cdn-access's rule for the public CDN; heldImageSql is the held-media rule.
   it.each([
     [
       'the subject of a CSAM report',

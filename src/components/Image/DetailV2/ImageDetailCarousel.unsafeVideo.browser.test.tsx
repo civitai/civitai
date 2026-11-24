@@ -198,11 +198,16 @@ describe('a scanned image the CDN refuses', () => {
     await expect.poll(routeImg).not.toBeNull();
   });
 
-  test('keeps everyone else, and a moderator with the leg off, on the CDN', async () => {
-    for (const [isModerator, cdnLeg] of [
-      [false, true],
-      [true, false],
-    ] as const) {
+  // civitai/civitai#10202: the route decides which refused scanned images it serves.
+  test("moves a moderator's slide with the CDN-refusal leg off too", async () => {
+    setUp(false);
+    cdn.refuses = true;
+    await renderSlide(true);
+    await expect.poll(routeImg).not.toBeNull();
+  });
+
+  test('keeps everyone else on the CDN', async () => {
+    for (const [isModerator, cdnLeg] of [[false, true]] as const) {
       setUp(cdnLeg);
       cdn.refuses = true;
       const { unmount } = await renderSlide(isModerator);

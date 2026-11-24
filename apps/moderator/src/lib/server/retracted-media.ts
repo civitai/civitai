@@ -26,8 +26,8 @@ export type RetractedMedia = {
   mimeType: string | null;
 };
 
-/** Held media is `heldImageSql`'s, read here only with `orHeld`. A moderator without the CSAM grant
- *  is served it by the same rule as retracted media, which keeps an image held for itself from them. */
+/** Held media is `heldImageSql`'s, read here only with `orHeld`; see `moderatorMediaWhereSql` for who
+ *  is served it. */
 export type ModeratorMedia = RetractedMedia & { kind: 'retracted' | 'held' };
 
 type ScannerRow = { id: number; ingestion: string };
@@ -124,9 +124,9 @@ const verdictOf = async (rows: ScannerRow[]) =>
   );
 
 /**
- * The image's storage key and type while this moderator may see it on `/api/retracted-media`, held
- * media excluded; `null` otherwise, so an image they may not see is answered exactly as a missing
- * one.
+ * The image's storage key and type while this moderator may see it on `/api/retracted-media`, media
+ * held for itself excluded; `null` otherwise, so an image they may not see is answered exactly as a
+ * missing one.
  */
 export async function getRetractedMedia(
   imageId: number,
