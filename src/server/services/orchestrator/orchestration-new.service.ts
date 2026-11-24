@@ -3273,17 +3273,22 @@ export async function assertUnlockReleasesOutput({
 }: {
   token: string;
   workflowId: string;
-  /** Set by callers other than the comic editor: a comic panel's unlock must take its per-panel claim, which they skip, so a panel is refused here. */
+  /** Callers outside the comic editor skip the per-panel unlock claim, so a comic panel's workflow is refused. */
   outsideComicEditor?: boolean;
 }) {
   // The owner-token read first, so a foreign id fails here alike, comic panel or not.
   const workflow = await getWorkflow({ token, path: { workflowId } });
-  // By the panel row, not a tag the owner can edit. Primary: the panel is written at submit.
-  if (
-    outsideComicEditor &&
-    (await dbWrite.comicPanel.findFirst({ where: { workflowId }, select: { id: true } }))
-  )
-    throw throwBadRequestError('Unlock this from the comic editor.');
+  // By the panel row, not a tag the owner can edit. This path takes no claim, so any path that
+  // removes a panel row or clears its workflowId must first wait out the panel's unlock claim, as
+  // the comic deletes do.
+  if (outsideComicEditor) {
+    // primary: the panel row is written at submit, just before its workflow can reach the queue.
+    const panel = await dbWrite.comicPanel.findFirst({
+      where: { workflowId },
+      select: { id: true },
+    });
+    if (panel) throw throwBadRequestError('Unlock this from the comic editor.');
+  }
   if (workflow.allowMatureContent === true)
     throw throwBadRequestError('This generation is already unlocked.');
   // Absent reads as null, the classic API's unrestricted workflow: the queue offers the unlock only

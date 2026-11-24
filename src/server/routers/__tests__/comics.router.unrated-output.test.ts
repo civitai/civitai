@@ -198,7 +198,6 @@ beforeEach(() => {
       : undefined) as never);
   vi.clearAllMocks();
   dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: PANEL_ID }] as never);
-  // The panel generated wf-1.
   dbMock.dbWrite.comicPanel.findFirst.mockImplementation((async (args: any) =>
     args?.where?.workflowId === 'wf-1' ? { id: PANEL_ID } : null) as never);
   // The poll catches and logs any throw, then returns the panel unchanged: the same result as the
@@ -438,7 +437,6 @@ beforeAll(async () => {
       "projectId" int, "chapterPosition" int
     )`);
 });
-/** The claim held in the stored row now, or undefined. */
 const storedClaim = async () =>
   (
     await pg.query<{ c: { token: string } | null }>(
@@ -741,18 +739,20 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
   });
 
   describe('a delete while an unlock is still finishing', () => {
+    const stored = async () =>
+      (await pg.query(`SELECT 1 FROM "ComicPanel" WHERE id = $1`, [PANEL_ID])).rows.length > 0;
     const deletes = {
       panel: {
         run: () => caller().deletePanel({ panelId: PANEL_ID }),
-        write: () => dbMock.dbWrite.comicPanel.delete,
+        deleted: async () => !(await stored()),
       },
       chapter: {
         run: () => caller().deleteChapter({ projectId: 11, chapterPosition: 0 }),
-        write: () => dbMock.dbWrite.comicChapter.delete,
+        deleted: async () => dbMock.dbWrite.comicChapter.delete.mock.calls.length > 0,
       },
       project: {
         run: () => caller().deleteProject({ id: 11 }),
-        write: () => dbMock.dbWrite.comicProject.update,
+        deleted: async () => dbMock.dbWrite.comicProject.update.mock.calls.length > 0,
       },
     };
     beforeEach(() => {
@@ -770,7 +770,7 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
 
         await expect(deletes[scope].run()).rejects.toThrow(/still finishing/);
 
-        expect(deletes[scope].write()).not.toHaveBeenCalled();
+        expect(await deletes[scope].deleted()).toBe(false);
       }
     );
 
@@ -781,9 +781,24 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
 
         await deletes[scope].run().catch(() => undefined);
 
-        expect(deletes[scope].write()).toHaveBeenCalled();
+        expect(await deletes[scope].deleted()).toBe(true);
       }
     );
+
+    // A single connection cannot interleave two transactions, so no test here can watch the lock
+    // work. This pins that the chapter's check holds its panels' row locks until the delete: drop
+    // FOR UPDATE and an unlock can claim a panel between the check and the cascade.
+    it('the chapter delete checks its panels under a row lock (FOR UPDATE)', async () => {
+      await deletes.chapter.run().catch(() => undefined);
+
+      const checks = dbMock.dbWrite.$queryRaw.mock.calls
+        .map((call: unknown[]) =>
+          Array.isArray(call[0]) ? call[0].join('?') : String((call[0] as { sql?: string }).sql)
+        )
+        .filter((sql: string) => sql.includes('AS live'));
+      expect(checks).toHaveLength(1);
+      expect(checks[0]).toMatch(/FOR UPDATE\s*$/);
+    });
   });
 
   describe('a copied panel does not carry the unlock claim', () => {

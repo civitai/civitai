@@ -59,7 +59,7 @@ import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-itera
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
 import { TRPCError } from '@trpc/server';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import {
   assertUnlockAllowed,
   assertUnlockReleasesOutput,
@@ -748,10 +748,8 @@ function chargeOutcomeUnknown(error: unknown) {
 
 /**
  * Claims a panel's unlock before the charge, so two concurrent unlocks cannot both pay. The writes
- * that end an unlock replace `metadata` from the copy read before the claim, which is what drops it
- * on success (a jsonb merge there would leave it held); a failure releases it, except a charge write
- * that may still land (cut off by its bound, a gateway error, no response); one left that way or by a
- * crash expires. The poll's metadata writes keep the row's own claim (writePolledPanel).
+ * that end an unlock replace metadata from the pre-claim copy, which is what drops the claim (a
+ * jsonb merge would leave it held). An unconfirmed charge or a crash leaves it to expire.
  */
 async function claimPanelUnlock(panelId: number) {
   const token = randomUUID();
@@ -803,32 +801,26 @@ async function releasePanelUnlock(panelId: number, token: string) {
   `;
 }
 
+/** Whether a panel row holds an unlock claim that has not expired (never null). */
+const liveUnlockClaim = () => Prisma.sql`COALESCE(
+  jsonb_typeof(metadata->'unlockClaim') = 'object'
+    AND (metadata->'unlockClaim'->>'at')::timestamptz >= now() - ${UNLOCK_CLAIM_EXPIRY}::interval,
+  false
+)`;
+
 /**
- * Refuses a delete while a panel in its scope holds a live unlock claim: the claim may cover a
- * charge still landing, and with the panel gone the queue's unlock would no longer defer to it.
+ * A delete waits while a panel it removes holds a live unlock claim: the claim may cover a charge
+ * still landing, and with the panel gone the queue's unlock would no longer defer to it.
  */
-async function assertNoLiveUnlockClaim({
-  projectId,
-  chapterPosition = null,
-  panelId = null,
-}: {
-  projectId: number;
-  chapterPosition?: number | null;
-  panelId?: number | null;
-}) {
+const unlockStillFinishing = () =>
+  throwBadRequestError('An unlock on this panel is still finishing. Try again in a few minutes.');
+
+/** Refuses a delete of the project while one of its panels holds a live unlock claim. */
+async function assertNoLiveUnlockClaim(projectId: number) {
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
-    SELECT id FROM "ComicPanel"
-    WHERE "projectId" = ${projectId}
-      AND (${chapterPosition}::int IS NULL OR "chapterPosition" = ${chapterPosition}::int)
-      AND (${panelId}::int IS NULL OR id = ${panelId}::int)
-      AND jsonb_typeof(metadata->'unlockClaim') = 'object'
-      AND (metadata->'unlockClaim'->>'at')::timestamptz >= now() - ${UNLOCK_CLAIM_EXPIRY}::interval
-    LIMIT 1
+    SELECT id FROM "ComicPanel" WHERE "projectId" = ${projectId} AND ${liveUnlockClaim()} LIMIT 1
   `;
-  if (rows.length)
-    throw throwBadRequestError(
-      'An unlock on this panel is still finishing. Try again in a few minutes.'
-    );
+  if (rows.length) throw unlockStillFinishing();
 }
 
 /** A copied panel's metadata: the source's unlock claim is not the copy's. */
@@ -1719,7 +1711,7 @@ export const comicsRouter = router({
       if (!project || project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
-      await assertNoLiveUnlockClaim({ projectId: input.id });
+      await assertNoLiveUnlockClaim(input.id);
 
       await dbWrite.comicProject.update({
         where: { id: input.id },
@@ -1909,12 +1901,15 @@ export const comicsRouter = router({
       if (!chapter || chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
-      await assertNoLiveUnlockClaim({
-        projectId: input.projectId,
-        chapterPosition: input.chapterPosition,
-      });
 
       await dbWrite.$transaction(async (tx) => {
+        // Locked, so an unlock cannot claim one of these panels between the check and the delete.
+        const panels = await tx.$queryRaw<{ live: boolean }[]>`
+          SELECT ${liveUnlockClaim()} AS live FROM "ComicPanel"
+          WHERE "projectId" = ${input.projectId} AND "chapterPosition" = ${input.chapterPosition}
+          FOR UPDATE
+        `;
+        if (panels.some((p) => p.live)) throw unlockStillFinishing();
         await tx.comicChapter.delete({
           where: {
             projectId_position: { projectId: input.projectId, position: input.chapterPosition },
@@ -2691,11 +2686,11 @@ export const comicsRouter = router({
       if (!panel || panel.chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
-      await assertNoLiveUnlockClaim({ projectId: panel.projectId, panelId: panel.id });
-
-      await dbWrite.comicPanel.delete({
-        where: { id: input.panelId },
-      });
+      // One statement: an unlock cannot claim the panel between the check and the delete.
+      const deleted = await dbWrite.$queryRaw<{ id: number }[]>`
+        DELETE FROM "ComicPanel" WHERE id = ${panel.id} AND NOT ${liveUnlockClaim()} RETURNING id
+      `;
+      if (!deleted.length) throw unlockStillFinishing();
 
       // Recalculate NSFW levels after panel removal
       await updateComicNsfwLevels([panel.projectId]).catch((e) =>
