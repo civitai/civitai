@@ -30,6 +30,21 @@ const SEEK_TOLERANCE_SEC = 0.5;
 export const isSeek = (target: number, current: number) =>
   Math.abs(target - current) >= SEEK_TOLERANCE_SEC;
 
+/** The `<audio>` events that start or end a load. */
+export type SongLoadEvent = 'play' | 'waiting' | 'playing' | 'canplay' | 'pause' | 'error';
+
+/**
+ * Whether a card's song is loading after `event`: from a play until it can play, and while it waits
+ * for data. A removed song from storage loads only once played, so without this the button would
+ * read Pause over a silent 0:00.
+ */
+export function songLoading(loading: boolean, event: SongLoadEvent): boolean {
+  if (event === 'play' || event === 'waiting') return true;
+  if (event === 'playing' || event === 'canplay' || event === 'pause' || event === 'error')
+    return false;
+  return loading;
+}
+
 let keySeq = 0;
 /** A key of its own for a card no caller named, so its controls drive that card and no other
  *  showing the same song. */

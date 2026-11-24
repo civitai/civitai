@@ -2,6 +2,7 @@
   import { browser } from '$app/environment';
   import { tick } from 'svelte';
   import {
+    IconLoader2,
     IconMusic,
     IconPlayerPauseFilled,
     IconPlayerPlayFilled,
@@ -21,8 +22,10 @@
     createPlayIntent,
     isSeek,
     playSongAt,
+    songLoading,
     songPlayer,
     uniqueCardKey,
+    type SongLoadEvent,
     type SongCardKey,
   } from '$lib/music/song-player';
 
@@ -51,6 +54,9 @@
   let time = $state(0);
   let duration = $state(NaN);
   let volume = $state(1);
+  // From a play until the song can play: a removed song from storage starts loading only then.
+  let loading = $state(false);
+  const loadEvent = (event: SongLoadEvent) => (loading = songLoading(loading, event));
 
   // Per id, so an instance reused for another song starts on the CDN again.
   let fallback = $state<{ id: number; mode: 'retracted' | 'failed' } | null>(null);
@@ -148,11 +154,18 @@
       <Button
         size="icon-lg"
         class="shrink-0 rounded-full"
-        aria-label={paused ? 'Play' : 'Pause'}
+        aria-label={loading ? 'Loading' : paused ? 'Play' : 'Pause'}
+        aria-busy={loading}
         disabled={mode === 'failed'}
         onclick={toggle}
       >
-        {#if paused}<IconPlayerPlayFilled size={16} />{:else}<IconPlayerPauseFilled size={16} />{/if}
+        {#if loading}
+          <IconLoader2 size={16} class="animate-spin" />
+        {:else if paused}
+          <IconPlayerPlayFilled size={16} />
+        {:else}
+          <IconPlayerPauseFilled size={16} />
+        {/if}
       </Button>
     </div>
 
@@ -162,6 +175,8 @@
       max={lengthOf(song) || 1}
       step={0.1}
       aria-label="Seek"
+      class="h-6"
+      trackClass="bg-dark-4"
       disabled={mode === 'failed'}
       bind:value={() => time, seek}
     />
@@ -173,7 +188,8 @@
         max={1}
         step={0.05}
         aria-label="Volume"
-        class="max-w-24"
+        class="h-6 max-w-24"
+        trackClass="bg-dark-4"
         bind:value={() => volume, setVolume}
       />
     </div>
@@ -187,14 +203,15 @@
             {@const at = line.t / 1000}
             <button
               type="button"
-              class="block w-full rounded px-1 text-left hover:bg-dark-5"
+              class="flex min-h-6 w-full items-baseline gap-2 rounded px-1 py-0.5 text-left hover:bg-dark-5"
               title="Play from {formatPlaybackTime(at)}"
               onclick={() => {
                 intent.requested();
                 playSongAt(item.id, at, ownKey);
               }}
             >
-              {line.text}
+              <span class="shrink-0 tabular-nums text-dark-2">{formatPlaybackTime(at)}</span>
+              <span>{line.text}</span>
             </button>
           {:else}
             <p class="px-1">{line.text}</p>
@@ -221,16 +238,27 @@
       bind:paused
       ontimeupdate={(e) => (time = e.currentTarget.currentTime)}
       bind:duration
-      onplay={(e) => songPlayer.played(e.currentTarget)}
+      onplay={(e) => {
+        loadEvent('play');
+        songPlayer.played(e.currentTarget);
+      }}
       onpause={(e) => {
         // The element a swap removed reports its pause late; only this card's current one counts.
-        if (e.currentTarget === audio) intent.paused();
+        if (e.currentTarget !== audio) return;
+        loadEvent('pause');
+        intent.paused();
       }}
+      onwaiting={() => loadEvent('waiting')}
+      onplaying={() => loadEvent('playing')}
+      oncanplay={() => loadEvent('canplay')}
       onvolumechange={(e) => {
         volume = e.currentTarget.volume;
         songPlayer.volumeChanged(e.currentTarget);
       }}
-      onerror={onError}
+      onerror={() => {
+        loadEvent('error');
+        void onError();
+      }}
       {@attach register}
     ></audio>
   {/key}

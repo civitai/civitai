@@ -180,16 +180,15 @@
             <!-- Served with no media: no tile, no link to the image, no selection. -->
             <div class="p-4 text-center text-xs text-dark-2">{RETRACTED_REFUSED}</div>
           {:else if song}
-            <SongCard {item} cardKey={key(item)} class="pt-9" />
+            <!-- Clear of the badges above and the corner link below, so neither covers a lyric line. -->
+            <SongCard {item} cardKey={key(item)} class="pb-10 pt-9" />
             <a
               href={fullHref(item)}
               target="_blank"
               rel="noreferrer"
               title={fullLabel}
               aria-label={fullLabel}
-              class="absolute top-2 z-10 rounded bg-black/70 p-1.5 text-white hover:bg-black/90 {selected
-                ? 'right-10'
-                : 'right-2'}"
+              class="absolute bottom-2 right-2 z-10 rounded bg-black/70 p-1.5 text-white hover:bg-black/90"
             >
               <IconExternalLink size={16} />
             </a>

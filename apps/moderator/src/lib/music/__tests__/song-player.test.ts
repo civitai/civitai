@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createPlayIntent,
   createSongPlayer,
+  songLoading,
   isSeek,
   uniqueCardKey,
   type SongMedia,
@@ -160,5 +161,20 @@ describe('isSeek, between the seek bar and the playing song', () => {
   it('takes a move of the bar as a seek', () => {
     expect(isSeek(30, 12.3)).toBe(true);
     expect(isSeek(0, 12.3)).toBe(true);
+  });
+});
+
+describe('songLoading', () => {
+  // A removed song from storage starts loading only on play, so the button must say so.
+  it('is loading from a play until the song can play, and while it waits for data', () => {
+    expect(songLoading(false, 'play')).toBe(true);
+    expect(songLoading(true, 'playing')).toBe(false);
+    expect(songLoading(false, 'waiting')).toBe(true);
+    expect(songLoading(true, 'canplay')).toBe(false);
+  });
+
+  it('stops loading on a pause or an error, so a refused file leaves no spinner', () => {
+    expect(songLoading(true, 'pause')).toBe(false);
+    expect(songLoading(true, 'error')).toBe(false);
   });
 });
