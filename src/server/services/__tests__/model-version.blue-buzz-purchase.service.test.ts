@@ -357,6 +357,8 @@ describe('earlyAccessPurchase — a user who already holds access is not charged
         meta: {
           'download-buzzTransactionId': `early-access-${VERSION_ID}-download-${BUYER}`,
           'download-purchasedAt': expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+          'download-amount': 500,
+          'download-buzzType': 'yellow',
         },
       })
     );
@@ -438,6 +440,15 @@ describe('earlyAccessPurchase — a sale on a PERMANENT gate, where the price ce
 
     // 200 is under the free cap, so the cap is a no-op and the sale takes 20%.
     expect(charged()).toBe(160);
+    // Hot weighs the buyer by what they were charged, not the stored price.
+    expect(mockGrantModelVersionAccess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meta: expect.objectContaining({
+          'generation-amount': 160,
+          'generation-buzzType': 'yellow',
+        }),
+      })
+    );
   });
 
   it('never bills zero: the floor holds when a discount reaches the whole price', async () => {

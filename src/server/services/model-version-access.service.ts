@@ -3,12 +3,18 @@ import { EntityAccessPermission } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
-/** The purchases one grant row can hold, and what each one grants (see `earlyAccessPurchase`). */
+/**
+ * The purchases one grant row can hold, and what each one grants (see `earlyAccessPurchase`). The
+ * amount and currency paid weigh the buyer in the Hot head-start bar, which reads these keys in SQL
+ * (migration 20271126120000_model_hot_score_buyer_price_weight).
+ */
 export const EARLY_ACCESS_PURCHASES = [
   {
     type: 'download',
     transactionKey: 'download-buzzTransactionId',
     purchasedAtKey: 'download-purchasedAt',
+    amountKey: 'download-amount',
+    buzzTypeKey: 'download-buzzType',
     permissions:
       EntityAccessPermission.EarlyAccessGeneration | EntityAccessPermission.EarlyAccessDownload,
   },
@@ -16,6 +22,8 @@ export const EARLY_ACCESS_PURCHASES = [
     type: 'generation',
     transactionKey: 'generation-buzzTransactionId',
     purchasedAtKey: 'generation-purchasedAt',
+    amountKey: 'generation-amount',
+    buzzTypeKey: 'generation-buzzType',
     permissions: EntityAccessPermission.EarlyAccessGeneration,
   },
 ] as const;
