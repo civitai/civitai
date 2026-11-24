@@ -24,7 +24,11 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
-  trpc: makeTrpcProxy({}),
+  trpc: makeTrpcProxy({
+    'hatTurf.getFlagRaceTotals': {
+      useQuery: () => ({ data: { days: 1, teams: [{ team: 'Pink', points: 100, flags: 1 }] } }),
+    },
+  }),
 }));
 vi.mock('~/components/HatTurf/FlagRace/FlagRowProviders', () => ({
   useFlagRow: (event: string | undefined) => (event ? h.row : null),
@@ -45,9 +49,6 @@ vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
 }));
 vi.mock('~/components/HatTurf/FlagRace/FlagRacePanel', () => ({
   FlagRacePanel: () => <div data-testid="panel" />,
-}));
-vi.mock('~/components/HatTurf/FlagRace/FlagRaceTotals', () => ({
-  FlagRaceTotals: () => <div data-testid="totals" />,
 }));
 vi.mock('~/components/Cards/ImageCard', () => ({
   ImageCard: ({ data }: { data: { id: number } }) => <div data-testid="card">{data.id}</div>,
@@ -140,7 +141,7 @@ describe('Flag Race on the event page', () => {
     await renderWithProviders(<FlagRaceEventSection event="birthday2026" />);
     expect(section()).not.toBeNull();
     expect(document.querySelector('[data-testid="panel"]')).not.toBeNull();
-    expect(document.querySelector('[data-testid="totals"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="flag-race-totals"]')).not.toBeNull();
     expect(cards()).toEqual(['hidden', 'hidden', 'hidden']);
   });
 
