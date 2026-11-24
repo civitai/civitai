@@ -759,6 +759,6 @@ export const getMyImagesInput = infiniteQuerySchema.merge(imageSelectProfileFilt
   publishedOnly: z.boolean().optional(),
   /** With publishedOnly: also the caller's unpublished media from the crucible entry modal. */
   includeEntryDrafts: z.boolean().optional(),
-  /** Narrows to media whose prompt, post title, image tag or post tag contains this text. */
+  /** Narrows to media whose prompt, post title or post tag contains this text. */
   query: z.string().trim().max(100).optional(),
 });

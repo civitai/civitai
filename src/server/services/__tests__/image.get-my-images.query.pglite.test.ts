@@ -5,7 +5,7 @@ import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 // getMyImages with a typed query (the showcase picker's search), run against real Postgres (PGlite):
-// it matches the owner's own images and videos by prompt, post title, image tag or post tag.
+// it matches the owner's own images and videos by prompt, post title or post tag.
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -22,10 +22,10 @@ const SUNSET_TAG = 2;
 
 const VIDEO_BY_POST_TITLE = 1;
 const IMAGE_BY_PROMPT = 2;
-const IMAGE_BY_IMAGE_TAG = 3;
 const IMAGE_BY_POST_TAG = 4;
 const UNRELATED = 5;
-const DISABLED_TAG_ONLY = 6;
+const DISABLED_POST_TAG_ONLY = 6;
+const DISABLED_TAG_POST = 1003;
 const OTHER_USERS_MATCH = 9;
 
 const SCHEMA = `
@@ -41,9 +41,6 @@ const SCHEMA = `
     "tosViolation" boolean NOT NULL DEFAULT false
   );
   CREATE TABLE "Tag" (id int PRIMARY KEY, name text NOT NULL);
-  CREATE TABLE "TagsOnImageDetails" (
-    "imageId" int NOT NULL, "tagId" int NOT NULL, disabled boolean NOT NULL DEFAULT false
-  );
   CREATE TABLE "TagsOnPost" (
     "postId" int NOT NULL, "tagId" int NOT NULL, disabled boolean NOT NULL DEFAULT false
   );
@@ -57,22 +54,20 @@ beforeAll(async () => {
       (${TITLED_POST}, now() - interval '1 day', 'Kuro at dusk'),
       (${TAGGED_POST}, now() - interval '1 day', NULL),
       (${PLAIN_POST}, now() - interval '1 day', 'Beach day'),
+      (${DISABLED_TAG_POST}, now() - interval '1 day', NULL),
       (${OTHER_USERS_POST}, now() - interval '1 day', 'kuro');
     INSERT INTO "Tag" VALUES (${KURO_TAG}, 'kuro'), (${SUNSET_TAG}, 'sunset');
     INSERT INTO "Image" (id, "userId", "postId", type, meta) VALUES
       (${VIDEO_BY_POST_TITLE}, ${OWNER}, ${TITLED_POST}, 'video', NULL),
       (${IMAGE_BY_PROMPT}, ${OWNER}, ${PLAIN_POST}, 'image', '{"prompt": "a KURO cat, 50% off"}'),
-      (${IMAGE_BY_IMAGE_TAG}, ${OWNER}, ${PLAIN_POST}, 'image', NULL),
       (${IMAGE_BY_POST_TAG}, ${OWNER}, ${TAGGED_POST}, 'image', NULL),
       (${UNRELATED}, ${OWNER}, ${PLAIN_POST}, 'image', '{"prompt": "sunset"}'),
-      (${DISABLED_TAG_ONLY}, ${OWNER}, ${PLAIN_POST}, 'image', NULL),
+      (${DISABLED_POST_TAG_ONLY}, ${OWNER}, ${DISABLED_TAG_POST}, 'image', NULL),
       (${OTHER_USERS_MATCH}, ${OTHER_USER}, ${OTHER_USERS_POST}, 'image', '{"prompt": "kuro"}');
-    INSERT INTO "TagsOnImageDetails" VALUES
-      (${IMAGE_BY_IMAGE_TAG}, ${KURO_TAG}, false),
-      (${UNRELATED}, ${SUNSET_TAG}, false),
-      (${DISABLED_TAG_ONLY}, ${KURO_TAG}, true),
-      (${OTHER_USERS_MATCH}, ${KURO_TAG}, false);
-    INSERT INTO "TagsOnPost" VALUES (${TAGGED_POST}, ${KURO_TAG}, false);
+    INSERT INTO "TagsOnPost" VALUES
+      (${TAGGED_POST}, ${KURO_TAG}, false),
+      (${DISABLED_TAG_POST}, ${KURO_TAG}, true),
+      (${OTHER_USERS_POST}, ${KURO_TAG}, false);
   `);
   dbMock.dbRead.image.findMany.mockImplementation(((
     ...args: Parameters<typeof harness.prisma.image.findMany>
@@ -96,13 +91,8 @@ const search = async (query: string, userId = OWNER) => {
 };
 
 describe('getMyImages: a typed query', () => {
-  it('finds the owner’s video by its post title, and images by prompt, image tag or post tag', async () => {
-    expect(await search('kuro')).toEqual([
-      VIDEO_BY_POST_TITLE,
-      IMAGE_BY_PROMPT,
-      IMAGE_BY_IMAGE_TAG,
-      IMAGE_BY_POST_TAG,
-    ]);
+  it('finds the owner’s video by its post title, and images by prompt or post tag', async () => {
+    expect(await search('kuro')).toEqual([VIDEO_BY_POST_TITLE, IMAGE_BY_PROMPT, IMAGE_BY_POST_TAG]);
   });
 
   // The other user's image matches on every field the query reads.

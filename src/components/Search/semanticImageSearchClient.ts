@@ -287,7 +287,7 @@ export const OWNER_PAGE_SIZE = 100;
 /**
  * The showcase picker's Images, offered with or without image search: the caller's own published
  * images and videos at the viewer's browsing level, newest first, narrowed by a typed query (the
- * server matches prompt, post title and tags). The caller is the session's, so no user is sent.
+ * server matches prompt, post title and post tags). The caller is the session's, so no user is sent.
  * Each InstantSearch page is one `getMyImages` page, reached through the cursor the page before returned.
  */
 export function createOwnerImageSearch({

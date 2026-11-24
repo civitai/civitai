@@ -8124,9 +8124,9 @@ async function getFailedEntryDrafts({
 }
 
 /** How many of the owner's newest media a typed `getMyImages` query matches within. */
-export const OWN_MEDIA_QUERY_WINDOW = 2000;
+export const OWN_MEDIA_QUERY_WINDOW = 1000;
 
-/** The owner's media among their newest `OWN_MEDIA_QUERY_WINDOW` whose prompt, post title or tags contain `query`. */
+/** The owner's media among their newest `OWN_MEDIA_QUERY_WINDOW` whose prompt, post title or post tag contains `query`. */
 async function getOwnMediaIdsMatching({
   userId,
   types,
@@ -8152,10 +8152,6 @@ async function getOwnMediaIdsMatching({
     LEFT JOIN "Post" p ON p.id = r."postId"
     WHERE r.meta->>'prompt' ILIKE ${pattern}
       OR p.title ILIKE ${pattern}
-      OR EXISTS (
-        SELECT 1 FROM "TagsOnImageDetails" toi JOIN "Tag" t ON t.id = toi."tagId"
-        WHERE toi."imageId" = r.id AND NOT toi.disabled AND t.name ILIKE ${pattern}
-      )
       OR EXISTS (
         SELECT 1 FROM "TagsOnPost" top JOIN "Tag" t ON t.id = top."tagId"
         WHERE top."postId" = r."postId" AND NOT top.disabled AND t.name ILIKE ${pattern}
