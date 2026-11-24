@@ -147,6 +147,8 @@ func TestExchangeWaitsOutA429BeforeAskingTheHubAgain(t *testing.T) {
 		{"an HTTP-date", "Tue, 14 Nov 2023 22:14:50 GMT", `{}`, 30 * time.Second},
 		{"no wait named", "", `{"error":"rate_limited"}`, minRateLimitHold},
 		{"a wait past the cap", "86400", `{}`, maxRateLimitHold},
+		{"an HTTP-date past the cap", "Wed, 15 Nov 2023 22:14:20 GMT", `{}`, maxRateLimitHold},
+		{"seconds past the duration range", "1000000000000", `{}`, maxRateLimitHold},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
