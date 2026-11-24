@@ -2152,7 +2152,7 @@ func goldenSetupModelsMode(t testing.TB, fx *goldenFixture, writeBack bool) *gol
 	blocked := &feed.BlockedTags{Cache: env.cache}
 	// As main: the model feed shares the miss computation.
 	compute := &hydrate.MissCompute{FrameNegative: fx.Config.FrameCacheNegative, Now: env.now, TagGate: feed.ImageTagGate(blocked, addons),
-		WriteBack: goldenWrites(writeBack)}
+		WriteBack: goldenWrites(writeBack), TierMetadataKey: "tier"}
 	if writeBack {
 		compute.Primary = db
 	}

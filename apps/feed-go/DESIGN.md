@@ -406,8 +406,8 @@ or "no row") is also kept in process for 10 s (at most 50 000 ids; expired ones 
 once a second, and while it is full of live ones a new id is not kept), so the same miss within seconds
 sends no query: without a write, Node's next fill is the only thing that would otherwise end the
 repeats. For a written-back cache nothing is kept (the written entry answers repeats). Every computed cache
-is kept but the image meta (§13) and the user follows (§14.2: the viewer's own follow set, read back
-after they change it): the tag ids, model frames, model decorations, model data, model
+is kept but the image meta (§13), the user follows (§14.2: the viewer's own follow set, read back
+after they change it) and the creator memberships (§15.2.6: Node keeps no per-pod copy): the tag ids, model frames, model decorations, model data, model
 tags and the official models too, as none depends on the viewer
 and Node already serves tag ids from a per-process copy for longer than 10 s. The kept answer is a
 §9 divergence.
@@ -2238,7 +2238,8 @@ always has here. On, the page runs the whole function (`hydrate.Sources.CreatorM
   `Product`, on the replica (Node's `dbRead`). A subscription whose metadata has a truthy
   `renewalEmailSent` is skipped. Each product metadata goes through `subscriptionProductMetadataSchema`
   and a Buzz purchase (`buzzPurchase`) is skipped. The tier is read under `TIER_METADATA_KEY` (the
-  app's own variable, from the same shared config; unset or empty: `tier`), and the user's highest
+  app's own variable, from the same shared config, read as its `z.string().default('tier')` reads it:
+  `tier` only when unset; set empty, it is the empty key, so every tier is free), and the user's highest
   tier by `constants.memberships.tierOrder` is kept. Valid is a tier that is neither free nor founder;
   an owner with no row is not valid.
 - **The schema.** The metadata must be an object with `tier` one of the product tiers. Each optional
@@ -2250,9 +2251,9 @@ always has here. On, the page runs the whole function (`hydrate.Sources.CreatorM
   naming another schema field, or a non-string value under another key, is `membership-shape` too.
 - **Writes.** Each computed answer is written back with a plain `SET` (not NX) for 10 minutes
   (`MEMBERSHIP_CACHE_TTL`), as Node's best-effort `redis.packed.set`. That happens only when
-  `FEED_GO_CACHE_WRITEBACK` lists `creator-memberships`. With write-back off, an answer is kept in
-  process for 10 s (§3.1), where Node keeps none: a membership busted by a subscription change can
-  read its old value here for up to 10 s.
+  `FEED_GO_CACHE_WRITEBACK` lists `creator-memberships`. With write-back off, nothing is kept in
+  process either (unlike the other caches not written back, §3.1): Node keeps no per-pod copy, so
+  every miss reads the origin, and a membership busted by a subscription change is read anew.
 - **Failures.** A failed origin read is `membership-miss-failed`.
 - **Probe and shadow.** Under the Go-first probe a miss is recorded as computed and looked up on the
   replica, never written. The switch decides the public route and the shadow alike. It needs the

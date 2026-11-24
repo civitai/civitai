@@ -40,7 +40,7 @@ func TestValidMemberships(t *testing.T) {
 		sub(t, 6, `{}`, `{"tier":"silver"}`),
 		sub(t, 6, `{}`, `{"tier":"bronze"}`),
 	}
-	got, err := validMemberships([]int{1, 2, 3, 4, 5, 6, 7}, subs, "")
+	got, err := validMemberships([]int{1, 2, 3, 4, 5, 6, 7}, subs, "tier")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestParseProductMetadata(t *testing.T) {
 			t.Errorf("%s: %v, want membership-shape", bad, err)
 		}
 	}
-	if _, err := validMemberships([]int{1}, []membershipSub{sub(t, 1, `{}`, `{"monthlyBuzz":5}`)}, ""); fallback.Reason(err) != "membership-shape" {
+	if _, err := validMemberships([]int{1}, []membershipSub{sub(t, 1, `{}`, `{"monthlyBuzz":5}`)}, "tier"); fallback.Reason(err) != "membership-shape" {
 		t.Fatalf("a product with no tier: %v, want membership-shape", err)
 	}
 }
@@ -102,6 +102,14 @@ func TestValidMembershipsTierKey(t *testing.T) {
 	}
 	if !got[1] || got[2] {
 		t.Fatalf("plan key: %v, want 1 valid (its plan) and 2 not (no plan: free)", got)
+	}
+	// An empty TIER_METADATA_KEY is the empty key, as Node reads `productMeta[""]`: never `tier`.
+	empty := []membershipSub{
+		sub(t, 1, `{}`, `{"tier":"gold"}`),
+		sub(t, 2, `{}`, `{"tier":"free","":"silver"}`),
+	}
+	if got, err := validMemberships([]int{1, 2}, empty, ""); err != nil || got[1] || !got[2] {
+		t.Fatalf("empty key: %v (%v), want 1 not valid (no \"\" key: free) and 2 valid (its \"\" key)", got, err)
 	}
 	for _, c := range []struct{ key, product string }{{"badge", `{"tier":"gold","badge":"gold"}`}, {"plan", `{"tier":"gold","plan":3}`}, {"plan", `{"tier":"gold","plan":null}`}} {
 		if _, err := validMemberships([]int{1}, []membershipSub{sub(t, 1, `{}`, c.product)}, c.key); fallback.Reason(err) != "membership-shape" {
@@ -138,7 +146,7 @@ func membershipSources(t *testing.T, rows [][]any, fail bool, writeBack bool) (*
 		Packed:  &PackedReader{Redis: r, Prefix: pageNS, Now: func() time.Time { return pageNow }},
 		Cache:   r,
 		Replica: db,
-		Compute: &MissCompute{Now: func() time.Time { return pageNow }, WriteBack: writeSet(writeBack)},
+		Compute: &MissCompute{Now: func() time.Time { return pageNow }, WriteBack: writeSet(writeBack), TierMetadataKey: "tier"},
 	}
 	return s, r, &reads
 }
@@ -161,6 +169,12 @@ func TestCreatorMembershipsComputed(t *testing.T) {
 		}
 		if *reads != 1 {
 			t.Fatalf("write-back %v: %d origin reads, want 1", writeBack, *reads)
+		}
+		if !writeBack {
+			// Node keeps no per-pod copy: a repeat miss reads the origin again (no in-process memo).
+			if _, err := s.CreatorMembershipsComputed(context.Background(), []int{1002}); err != nil || *reads != 2 {
+				t.Fatalf("write-back off, a repeat miss: %d origin reads (%v), want 2", *reads, err)
+			}
 		}
 		for id, want := range map[string]bool{"1002": true, "1003": false} {
 			key := pageNS + KeyMembershipValid + ":" + id

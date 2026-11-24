@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -230,7 +231,7 @@ func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
 }
 
 // FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS defaults off; TIER_METADATA_KEY is the app's own variable,
-// `tier` when unset or empty.
+// `tier` only when unset (`z.string().default('tier')`): set empty, it is the empty key.
 func TestLoadGetAllMembershipMiss(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
@@ -245,7 +246,7 @@ func TestLoadGetAllMembershipMiss(t *testing.T) {
 			t.Errorf("FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS=%q -> %v, want %v", in, c.GetAllServeMembershipMiss, want)
 		}
 	}
-	for in, want := range map[string]string{"": "tier", "plan": "plan"} {
+	for in, want := range map[string]string{"": "", "plan": "plan", "tier": "tier"} {
 		t.Setenv("TIER_METADATA_KEY", in)
 		c, err := Load()
 		if err != nil {
@@ -254,6 +255,17 @@ func TestLoadGetAllMembershipMiss(t *testing.T) {
 		if c.TierMetadataKey != want {
 			t.Errorf("TIER_METADATA_KEY=%q -> %q, want %q", in, c.TierMetadataKey, want)
 		}
+	}
+	t.Setenv("TIER_METADATA_KEY", "restored after the test")
+	if err := os.Unsetenv("TIER_METADATA_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.TierMetadataKey != "tier" {
+		t.Errorf("TIER_METADATA_KEY unset -> %q, want tier", c.TierMetadataKey)
 	}
 }
 

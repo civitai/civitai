@@ -109,7 +109,7 @@ func (s *Sources) CreatorMembershipsComputed(ctx context.Context, userIDs []int)
 	var err error
 	if p != nil {
 		// The Go-first probe: the miss is recorded as one Go computes and looked up on the replica
-		// (outside the shared flights and the memo), so a metadata Node's parse rejects is the same
+		// (outside the shared flights), so a metadata Node's parse rejects is the same
 		// fallback here; nothing is written or counted.
 		p.recordComputed(MissCreatorMemberships, len(miss))
 		records, err = s.lookupValidMemberships(ctx, miss)
@@ -200,11 +200,9 @@ type membershipSub struct {
 // validMemberships is queryValidCreatorMembership's reduce over the rows, for every id: each user's
 // highest tier (constants.memberships.tierOrder, the first of equals kept), skipping a subscription
 // whose metadata has a truthy `renewalEmailSent` and one whose product is a Buzz purchase; valid is
-// a tier that is neither free nor founder. tierKey is TIER_METADATA_KEY ("" = its default, `tier`).
+// a tier that is neither free nor founder. tierKey is TIER_METADATA_KEY as given: "" is the empty
+// key (Node's `productMeta?.[""] ?? 'free'`), not `tier`.
 func validMemberships(ids []int, subs []membershipSub, tierKey string) (map[int]bool, error) {
-	if tierKey == "" {
-		tierKey = "tier"
-	}
 	highest := map[int]string{}
 	for _, sub := range subs {
 		// `(sub.metadata ?? {}).renewalEmailSent`: a property of an object only.

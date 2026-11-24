@@ -4,7 +4,6 @@
 package config
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"net/url"
@@ -79,8 +78,10 @@ type Config struct {
 	// FEED_GO_CACHE_WRITEBACK lists `creator-memberships`. It needs the miss computation
 	// (FEED_GO_COMPUTE_MISSES, default on).
 	GetAllServeMembershipMiss bool
-	// TierMetadataKey is TIER_METADATA_KEY, the Node app's own variable read the same way (unset or
-	// empty: `tier`): the product metadata key a membership's tier is read from.
+	// TierMetadataKey is TIER_METADATA_KEY, the Node app's own variable read as its
+	// `z.string().default('tier')` reads it: unset is `tier`, and any value set, the empty string
+	// included, is the key as given (set empty, Node reads `productMeta[""]`, so every tier is free).
+	// The product metadata key a membership's tier is read from.
 	TierMetadataKey string
 	// ServeInfinite is FEED_GO_SERVE_INFINITE (default off): compute `image.getInfinite` on the public
 	// route (`/api/trpc/image.getInfinite`). Off, every request there is the `infinite-off` fallback,
@@ -265,7 +266,7 @@ func Load() (*Config, error) {
 		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
 
 		GetAllServeMembershipMiss: boolEnv("FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", false),
-		TierMetadataKey:           cmp.Or(os.Getenv("TIER_METADATA_KEY"), "tier"),
+		TierMetadataKey:           tierMetadataKey(),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
 		RedisSysSentinelName:     os.Getenv("REDIS_SYS_SENTINEL_NAME"),
@@ -605,4 +606,13 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// tierMetadataKey is TIER_METADATA_KEY as the Node app's schema reads it (`z.string().default('tier')`):
+// `tier` only when unset; a set value, empty or not, as it is.
+func tierMetadataKey() string {
+	if v, ok := os.LookupEnv("TIER_METADATA_KEY"); ok {
+		return v
+	}
+	return "tier"
 }
