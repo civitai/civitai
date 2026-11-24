@@ -191,6 +191,8 @@ describe('from-orchestrator SSR — adding the run as a new version', () => {
     await expect(asVersion({ modelId })).resolves.toEqual({
       props: { session, refusal: 'model-not-eligible' },
     });
+    // Refused before the run is read, so a malformed id never reaches a query.
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
   });
 
   it('refuses a model that is not one of the caller’s eligible models', async () => {

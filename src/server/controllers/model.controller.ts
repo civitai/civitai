@@ -1011,7 +1011,7 @@ export const publishModelHandler = async ({
     const modelMeta = model.meta as ModelMeta | null;
     const republishing =
       model.status !== ModelStatus.Draft && model.status !== ModelStatus.Scheduled;
-    await assertTrainingSourcePublishable({
+    const publishingVersions = await assertTrainingSourcePublishable({
       modelId: input.id,
       meta: modelMeta,
       ownerId: model.userId,
@@ -1067,18 +1067,12 @@ export const publishModelHandler = async ({
     // A scheduled publish skips this (status isn't Published yet) and the scheduled-publishing job
     // doesn't stamp either — the studio then just keeps offering its idempotent publish entry.
     if (updatedModel.status === ModelStatus.Published) {
-      const versionIds = input.versionIds ?? [];
-      // primary: the versions this publish just wrote.
-      const publishedVersions = await dbWrite.modelVersion.findMany({
-        where: { id: { in: versionIds }, modelId: input.id },
-        select: { id: true, meta: true },
-      });
       await stampPublishedTrainingRuns({
         ownerId: updatedModel.userId,
         callerId: ctx.user.id,
         modelId: updatedModel.id,
         modelMeta,
-        versions: publishedVersions,
+        versions: publishingVersions,
         fallbackVersionId: updatedModel.modelVersions[0]?.id,
       });
     }

@@ -762,7 +762,7 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
   it.each([null, undefined, {}])(
     'does not read anything for a model whose meta (%s) names no workflow',
     async (meta) => {
-      await expect(assertTrainingSourcePublishable({ ...args, meta })).resolves.toBeUndefined();
+      await expect(assertTrainingSourcePublishable({ ...args, meta })).resolves.toEqual([]);
       expect(mockGetWorkflow).not.toHaveBeenCalled();
       expect(mockGetToken).not.toHaveBeenCalled();
     }
@@ -771,9 +771,7 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
   // Case 1
   it('passes a stamped model without reading its workflow', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('rejected'));
-    await expect(
-      assertTrainingSourcePublishable({ ...args, meta: STAMPED })
-    ).resolves.toBeUndefined();
+    await expect(assertTrainingSourcePublishable({ ...args, meta: STAMPED })).resolves.toEqual([]);
     expect(mockGetWorkflow).not.toHaveBeenCalled();
     expect(stampWrites()).toEqual([]);
   });
@@ -781,7 +779,7 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
   // Case 2
   it('allows an approved run, reading it with the owner token, and backfills the stamp', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
-    await expect(assertTrainingSourcePublishable(args)).resolves.toBeUndefined();
+    await expect(assertTrainingSourcePublishable(args)).resolves.toEqual([]);
     expect(mockGetToken).toHaveBeenCalledWith(5, undefined, {
       bypassCache: false,
       allowRestricted: false,
@@ -833,7 +831,7 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
     dbMock.dbWrite.$executeRaw.mockRejectedValueOnce(new Error('db down'));
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
-      await expect(assertTrainingSourcePublishable(args)).resolves.toBeUndefined();
+      await expect(assertTrainingSourcePublishable(args)).resolves.toEqual([]);
     } finally {
       consoleSpy.mockRestore();
     }
@@ -842,7 +840,7 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
   // Case 3
   it('passes an unstamped model whose workflow the orchestrator no longer returns (NOT_FOUND)', async () => {
     mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
-    await expect(assertTrainingSourcePublishable(args)).resolves.toBeUndefined();
+    await expect(assertTrainingSourcePublishable(args)).resolves.toEqual([]);
     expect(stampWrites()).toEqual([]);
   });
 
@@ -1191,6 +1189,22 @@ describe('the run named on each version', () => {
       trainingStudioWorkflowId: 'wf-studio-1',
       trainingStudioModerationApproved: true,
     });
+  });
+
+  it("never resolves a run to another run's version on its model", async () => {
+    // The run's own v1 was deleted; the model it named still holds a version added from another run.
+    mockFindFirst.mockResolvedValue({
+      id: 77,
+      meta: { trainingStudioWorkflowId: 'wf-studio-1', trainingStudioModerationApproved: true },
+      modelVersions: [{ id: 89, meta: { trainingStudioWorkflowId: 'wf-other' } }],
+    } as never);
+    const result = await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 1,
+    });
+    // A fresh draft instead of handing back version 89 for this run's checkpoint.
+    expect(result).toMatchObject({ modelId: 100, modelVersionId: 200, target: 'new-model' });
   });
 
   it('resumes a run that was added to an existing model as that version, not a new model', async () => {

@@ -440,15 +440,21 @@ async function findRunDestination(
       meta: true,
       // The run's own version is the model's oldest (highest index: versions added later go on
       // top), unless the owner reordered them.
-      modelVersions: { select: { id: true }, take: 1, orderBy: { index: 'desc' } },
+      modelVersions: { select: { id: true, meta: true }, orderBy: { index: 'desc' } },
     },
   });
-  if (!model?.modelVersions[0]) return null;
+  // A version that names another run is that run's, never this one's: with this run's own version
+  // deleted, the model may hold only versions added from other runs.
+  const ownVersion = model?.modelVersions.find((version) => {
+    const versionRun = (version.meta as TrainingStudioLink | null)?.trainingStudioWorkflowId;
+    return !versionRun || versionRun === workflowId;
+  });
+  if (!model || !ownVersion) return null;
   // A draft materialized before the approval stamp existed gets it here. Best-effort: a failed write
   // leaves the draft unstamped, which only matters once its workflow is gone.
   if ((model.meta as ModelMeta | null)?.trainingStudioModerationApproved !== true)
     await stampTrainingModerationApproved({ modelId: model.id });
-  return { modelId: model.id, modelVersionId: model.modelVersions[0].id, target: 'new-model' };
+  return { modelId: model.id, modelVersionId: ownVersion.id, target: 'new-model' };
 }
 
 type SelectedEpoch = TrainingResultsV2['epochs'][number];
@@ -497,7 +503,7 @@ export async function getRunDestination({
 }
 
 /**
- * The caller's models the run can be added to, for the picker: up to `take` matching `query`, those
+ * The caller's models the run can be added to, for the picker: up to 100 matching `query`, those
  * whose newest version shares the run's training base model first (for a custom-checkpoint run, the
  * family it trains on, not the checkpoint's own base model). A different base model is allowed (a
  * model may mix them), so `sameBaseModel` only drives the order and the warning.
@@ -506,12 +512,10 @@ export async function getStudioVersionTargets({
   userId,
   workflow,
   query,
-  take = 100,
 }: {
   userId: number;
   workflow: Workflow;
   query?: string;
-  take?: number;
 }) {
   const { baseModel } = mapTrainingBaseModelToBaseModel(workflow);
   const models = await dbRead.model.findMany({
@@ -520,7 +524,7 @@ export async function getStudioVersionTargets({
       ...(query?.trim() && { name: { contains: query.trim(), mode: 'insensitive' } }),
     },
     orderBy: { updatedAt: 'desc' },
-    take,
+    take: 100,
     select: {
       id: true,
       name: true,
@@ -927,7 +931,8 @@ type LinkedRow = {
  *
  * Any other read failure is rethrown, so the publish fails and can be retried rather than going
  * ahead unchecked. Both meta keys it reads are server-only: `SERVER_OWNED_META_KEYS` on the model,
- * and outside the client meta schema on a version.
+ * and outside the client meta schema on a version. Returns the versions it read, for the publish
+ * back-link (`stampPublishedTrainingRuns`).
  */
 export async function assertTrainingSourcePublishable({
   modelId,
@@ -942,20 +947,20 @@ export async function assertTrainingSourcePublishable({
   callerId: number;
   /** The versions this publish makes published or public; ids of another model's versions are ignored. */
   versionIds?: number[];
-}): Promise<void> {
+}): Promise<{ id: number; meta: unknown }[]> {
   const rows: LinkedRow[] = [{ row: { modelId }, meta }];
-  if (versionIds.length) {
+  let versions: { id: number; meta: unknown }[] = [];
+  if (versionIds.length)
     // primary: the gate decides a publish, and a version created moments ago must not be missed.
-    const versions = await dbWrite.modelVersion.findMany({
+    versions = await dbWrite.modelVersion.findMany({
       where: { id: { in: versionIds }, modelId },
       select: { id: true, meta: true },
     });
-    for (const version of versions)
-      rows.push({
-        row: { modelVersionId: version.id },
-        meta: version.meta as TrainingStudioLink | null,
-      });
-  }
+  for (const version of versions)
+    rows.push({
+      row: { modelVersionId: version.id },
+      meta: version.meta as TrainingStudioLink | null,
+    });
 
   const runs = new Map<string, LinkedRow[]>();
   for (const linked of rows) {
@@ -981,6 +986,7 @@ export async function assertTrainingSourcePublishable({
     assertTrainingModerationApproved(workflow);
     for (const { row } of linked) await stampTrainingModerationApproved(row);
   }
+  return versions;
 }
 
 /**

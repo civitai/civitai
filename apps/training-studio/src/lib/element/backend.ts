@@ -41,10 +41,10 @@ export interface StudioElementHost {
   checkTrainingText?(
     input: TrainingTextCheckInput
   ): Promise<{ ok: true } | { ok: false; error: string }>;
-  /** Whether the run's model still counts for this user (not missing, not deleted by its owner),
-   *  answered by the host's server; it should settle (time out) on its own. Omit and a run links
-   *  its stored modelId unchecked. */
-  modelLive?(modelId: number): Promise<boolean>;
+  /** Whether the run's model (and, when given, the run's version on it) still counts for this user
+   *  (not missing, not deleted by its owner), answered by the host's server; it should settle (time
+   *  out) on its own. Omit and a run links its stored modelId unchecked. */
+  modelLive?(modelId: number, modelVersionId?: number): Promise<boolean>;
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;
   /** The main app's `training.getStatus` (available, moderator message, blocked models). Omit (or
@@ -176,7 +176,8 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
       }),
 
     // No hook: the stored link stands unchecked.
-    modelLive: (modelId) => (host.modelLive ? host.modelLive(modelId) : Promise.resolve(true)),
+    modelLive: (modelId, modelVersionId) =>
+      host.modelLive ? host.modelLive(modelId, modelVersionId) : Promise.resolve(true),
 
     getRunDataset: (workflowId) => call((client) => orch.getRunDataset(client, workflowId)),
 

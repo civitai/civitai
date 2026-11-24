@@ -51,6 +51,7 @@ import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.sto
 import { getModelFileFormat } from '~/utils/file-helpers';
 import { bytesToKB } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
+import { forwardQuery } from '~/utils/forward-query';
 import { trpc } from '~/utils/trpc';
 
 // A new model goes through the MODEL wizard: for trained uploads its steps are
@@ -64,13 +65,8 @@ const wizardUrl = (target: PublishTarget, modelId: number, modelVersionId: numbe
     : `/models/${modelId}/model-versions/${modelVersionId}/wizard?step=${step}`;
 
 /** Builds this page's URL from `query`; a value of `undefined` omits that param. */
-const pageUrl = (query: Record<string, string | string[] | undefined>) => {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(query))
-    for (const v of Array.isArray(value) ? value : value === undefined ? [] : [value])
-      params.append(key, v);
-  return `/models/train/from-orchestrator?${params}`;
-};
+const pageUrl = (query: Record<string, string | string[] | undefined>) =>
+  `/models/train/from-orchestrator${forwardQuery(query)}`;
 
 type PrepareProps = {
   target: PublishTarget;
@@ -466,7 +462,8 @@ function PublishRefused({ refusal }: RefusalProps) {
  * The epoch was already chosen in Training Studio, so this page performs the wizard's
  * "Select Model File" step unattended — copy the blob into our storage, create the Model file,
  * mark the version Approved, seed the post form with the epoch's samples — and lands the user
- * on "Edit model". The manual picker (wizard step 1) stays reachable as the failure fallback.
+ * on "Edit model" for a new model, or "Edit version" for a version added to an existing one (see
+ * `wizardUrl`). The manual picker (wizard step 1) stays reachable as the failure fallback.
  */
 function PrepareModel({
   target,

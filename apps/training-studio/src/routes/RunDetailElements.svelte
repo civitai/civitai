@@ -592,11 +592,12 @@
   // so the training poll's fresh `d` doesn't re-ask), and only when there's a link to drop. Never
   // settles on the server: SSR and hydration both render the pending branch.
   const runModelId = $derived(modelLink ? d.modelId : undefined);
+  const runModelVersionId = $derived(modelLink ? d.modelVersionId : undefined);
   const modelLive = $derived(
     runModelId == null
       ? null
       : browser
-        ? backend().modelLive(runModelId)
+        ? backend().modelLive(runModelId, runModelVersionId)
         : new Promise<boolean>(() => {})
   );
 

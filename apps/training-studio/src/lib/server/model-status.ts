@@ -4,10 +4,13 @@ const CHECK_TIMEOUT_MS = 5_000;
 
 /** The main app's answer to whether this user's model still counts (not missing, not deleted by its
  *  owner), asked with their forwarded session cookie. Rejects when the main app gives no answer. */
-export function mainAppModelLive(cookie: string): (modelId: number) => Promise<boolean> {
-  return async (modelId) => {
+export function mainAppModelLive(
+  cookie: string
+): (modelId: number, modelVersionId?: number) => Promise<boolean> {
+  return async (modelId, modelVersionId) => {
+    const versionParam = modelVersionId ? `&versionId=${modelVersionId}` : '';
     const res = await fetch(
-      `${mainAppSessionOrigin()}/api/training-studio/model-status?id=${modelId}`,
+      `${mainAppSessionOrigin()}/api/training-studio/model-status?id=${modelId}${versionParam}`,
       { headers: { cookie }, redirect: 'error', signal: AbortSignal.timeout(CHECK_TIMEOUT_MS) }
     );
     if (!res.ok) throw new Error(`model-status ${res.status}`);

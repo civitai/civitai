@@ -301,4 +301,10 @@ describe('versionHasStudioDataset', () => {
     );
     expect(await studio()).toBe(true);
   });
+  it('is true for a run added to a model that never came from the Studio', async () => {
+    await db.exec(
+      `UPDATE "ModelVersion" SET meta = '{"trainingStudioWorkflowId": "wf"}' WHERE id = ${VERSION}`
+    );
+    expect(await studio()).toBe(true);
+  });
 });
