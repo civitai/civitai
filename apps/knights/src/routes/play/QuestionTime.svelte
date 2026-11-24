@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { fade } from 'svelte/transition';
+  import { reducedMotion } from '$lib/motion';
   import { QUESTION_TIME_MS } from './question-run';
 
   /** Shown over the stage before a run of yes/no questions; it ends by itself, or at once on a click, tap or Space. */
@@ -15,13 +17,14 @@
   type="button"
   class="backdrop"
   style:--question-time="{QUESTION_TIME_MS}ms"
-  aria-describedby="question-time-line"
+  aria-label="Question time: start now"
   onclick={onstart}
+  out:fade={{ duration: reducedMotion() ? 120 : 160 }}
 >
   <span class="card" role="status">
     <span class="title">Question time</span>
     {#if category}<span class="chip">{category}</span>{/if}
-    <span class="line" id="question-time-line">
+    <span class="line">
       The next few images ask a yes or no question. Your answers help build Civitai's new moderation
       model.
     </span>
@@ -57,7 +60,9 @@
     flex-direction: column;
     align-items: center;
     gap: 12px;
+    justify-content: center;
     width: min(25rem, 100%);
+    min-height: 15.5rem;
     padding: 24px;
     border: 1px solid var(--io-gold-muted);
     border-radius: 8px;
@@ -74,6 +79,8 @@
   }
 
   .chip {
+    max-width: 100%;
+    overflow: hidden;
     padding: 5px 12px;
     border: 1px solid var(--io-gold);
     border-radius: 999px;
@@ -81,7 +88,9 @@
     color: var(--io-gold);
     font: 600 11px/1.3 var(--io-font-ui);
     letter-spacing: 2px;
+    text-overflow: ellipsis;
     text-transform: uppercase;
+    white-space: nowrap;
     animation: chip-glow var(--motion-milestone-min) var(--ease-out-quart) var(--motion-base) both;
   }
 
@@ -129,6 +138,7 @@
   @media (max-width: 40rem) {
     .card {
       width: min(18.75rem, 100%);
+      min-height: 14.75rem;
       gap: 10px;
     }
     .title {

@@ -8,6 +8,8 @@
   let saving = $state(false);
   // The switch flips at the click; the saved value replaces it once the page reloads, or it flips back on a failure.
   let pending = $state<boolean | null>(null);
+  // The value the last save stored; the switch shows it without reloading the page.
+  let savedOn = $state<boolean | null>(null);
   let saved = $state<boolean | null>(null);
   let error = $state<string | null>(null);
 </script>
@@ -48,7 +50,7 @@
           {/if}
         </div>
         {#if data.questions.available}
-          {@const on = pending ?? data.questions.on}
+          {@const on = pending ?? savedOn ?? data.questions.on}
           <form
             method="POST"
             action="?/questions"
@@ -61,7 +63,7 @@
                 try {
                   if (result.type === 'success') {
                     saved = result.data?.questions === true;
-                    await update({ reset: false });
+                    savedOn = saved;
                   } else if (result.type === 'failure') {
                     error = String(result.data?.message ?? 'Your choice was not saved. Try again.');
                   } else {
@@ -205,12 +207,12 @@
   }
 
   .switch:hover:not(:disabled) {
-    border-color: var(--io-gold-muted);
+    border-color: var(--io-gold);
     background: var(--io-matte);
   }
 
   .switch[aria-checked='true']:hover:not(:disabled) {
-    border-color: var(--io-gold);
+    border-color: var(--io-parchment);
     background: var(--io-gold);
   }
 

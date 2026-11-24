@@ -952,7 +952,7 @@
   {:else if screen.kind === 'queue-stage'}
     {@const shown = screen.view}
     <div class="column">
-      <div class="qrow">
+      <div class="qrow" class:locked={questionTimeShowing}>
       <p class="question" title={shown.question.prompt}>
         <span class="eyebrow" class:glow={questionsDoneShowing}>
           Question
@@ -1006,7 +1006,7 @@
           <p class="nudge cheer" role="status">{cue}</p>
         {/if}
       </div>
-      <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
+      <div class="controls" class:yesno={yesNo} class:failed={imageFailed} class:locked={questionTimeShowing}>
         <form class="answers answer-row" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers}>
           <input type="hidden" name="item" value={shown.item.id} />
           {#each shown.question.options as option, index (option.value)}
@@ -1232,9 +1232,11 @@
     font: 700 16px/1.25 var(--io-font-display);
     /* Wraps in full: phones can't hover for the title. */
   }
-  .category.glow,
-  .eyebrow.glow {
+  .category.glow {
     animation: category-glow 1.8s ease-out 1;
+  }
+  .eyebrow.glow {
+    animation: category-glow var(--motion-milestone-min) var(--ease-out-quart) 1;
   }
   @keyframes category-glow {
     0% {
@@ -1265,8 +1267,16 @@
     align-items: center;
     gap: 16px;
   }
+  .controls.yesno,
   .controls.yesno .answers {
     gap: 12px;
+  }
+  /* Question time is up: the question and every answer sit back evenly, and nothing reads as loading. */
+  .qrow.locked,
+  .controls.locked :global(.pill:disabled),
+  .controls.locked .unsure:disabled {
+    opacity: 0.35;
+    cursor: default;
   }
   .skip {
     display: contents;
@@ -1326,7 +1336,8 @@
     align-items: center;
     gap: 8px;
     margin: 0;
-    padding: 8px 14px;
+    height: 36px;
+    padding: 0 14px;
     border: 1px solid var(--io-gold-muted);
     border-radius: 999px;
     background: rgb(20 17 13 / 0.9);
@@ -1459,10 +1470,17 @@
     /* No room for a third pill beside Yes and No: Not sure takes the full width under them. */
     .controls.yesno {
       flex-wrap: wrap;
+      gap: 8px;
+    }
+    .controls.yesno .answers {
+      gap: 8px;
     }
     .controls.yesno .answers,
     .controls.yesno .skip {
       flex: 1 1 100%;
+    }
+    .controls.yesno :global(.pill) {
+      height: 44px;
     }
     .unsure {
       width: 100%;
