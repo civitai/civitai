@@ -79,7 +79,7 @@ export type CandidateFilter = {
   // `orAnyOf`, the keyword field `orAnyOf.key` holds any of its values.
   allWords?: { key: string; text: string; orAnyOf?: { key: string; values: string[] } };
   range?: { key: string; gte?: string | number; lte?: string | number };
-  numberRange?: { key: string; gte?: number; lt?: number };
+  numberRange?: { key: string; gte?: number; lt?: number; lte?: number };
   mustNot?: QdrantCondition[];
 };
 
@@ -150,8 +150,10 @@ export function buildQdrantFilter(collection: SearchCollection, f: CandidateFilt
     if (values?.length) must.push({ key, match: { any: values } });
   if (f.range && (f.range.gte !== undefined || f.range.lte !== undefined))
     must.push({ key: f.range.key, range: { gte: f.range.gte, lte: f.range.lte } });
-  if (f.numberRange && (f.numberRange.gte !== undefined || f.numberRange.lt !== undefined))
-    must.push({ key: f.numberRange.key, range: { gte: f.numberRange.gte, lt: f.numberRange.lt } });
+  if (f.numberRange) {
+    const { key, ...bounds } = f.numberRange;
+    if (Object.values(bounds).some((v) => v !== undefined)) must.push({ key, range: bounds });
+  }
 
   if (f.excludedTagIds?.length) must_not.push({ key: 'tagIds', match: { any: f.excludedTagIds } });
   if (f.excludedUserIds?.length)

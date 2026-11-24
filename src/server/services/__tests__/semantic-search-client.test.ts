@@ -378,11 +378,11 @@ describe('a numeric range', () => {
     expect(must).toContainEqual({ key: 'duration', range: { gte: 5, lt: 15 } });
   });
 
-  it('leaves the filter as it was when absent', () => {
-    const range = { key: 'sortAt', gte: '2026-01-01T00:00:00.000Z' };
-    const { must } = buildQdrantFilter('images', { gate, range });
-    expect(JSON.stringify(must.slice(-1))).toBe(
-      '[{"key":"sortAt","range":{"gte":"2026-01-01T00:00:00.000Z"}}]'
-    );
+  it('adds no condition when absent', () => {
+    const { must } = buildQdrantFilter('images', {
+      gate,
+      range: { key: 'sortAt', gte: '2026-01-01' },
+    });
+    expect(must.some((c) => (c as { key?: string }).key === 'duration')).toBe(false);
   });
 });

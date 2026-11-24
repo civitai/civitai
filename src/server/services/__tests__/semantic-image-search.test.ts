@@ -1567,7 +1567,12 @@ describe('the video index', () => {
 
   it.each([
     ['a video search with a length', 'videos', '5to15', { key: 'duration', gte: 5, lt: 15 }],
-    ['the longest preset, open-ended', 'videos', '30to60', { key: 'duration', gte: 30 }],
+    [
+      'the longest preset, to the longest indexed clip',
+      'videos',
+      '30to60',
+      { key: 'duration', gte: 30, lte: 60 },
+    ],
     ['a video search without one', 'videos', undefined, undefined],
     ['an image search with one', 'images', '5to15', undefined],
   ] as const)('bounds the clip length: %s', async (_, collection, length, expected) => {
