@@ -701,11 +701,9 @@ export const serverSchema = z
     // every path). Set, it must be at least 32 bytes: a shorter value (an empty one included) fails
     // the env parse. It authenticates the caller only; the user's own token is still the authority.
     APP_DATA_WRITES_SIGNING_KEY: z.string().min(32).optional(),
-    // App Storage VIEWER-KEYED documents (`doc-store-viewer-keyed.ts`): the HMAC secret a viewer's
-    // document key is derived under, at least 32 characters. 🔴 Byte-identical in EVERY deployment
-    // that writes the same database and namespace, or one viewer derives two keys (two documents).
-    // Never rotated (a rotation would orphan every viewer-keyed document from its `@me` route). Unset or blank, every `@me` op answers
-    // `503`: there is no fallback key. Blank is accepted so a bare ConfigMap key cannot stop boot.
+    // HMAC secret for viewer-keyed document keys (`doc-store-viewer-keyed.ts`), 32+ chars.
+    // Byte-identical in every deployment sharing the database; never rotate.
+    // Unset or blank: every `@me` op answers 503; there is no fallback key.
     APP_STORAGE_VIEWER_KEY_SECRET: z
       .string()
       .refine((value) => value.trim() === '' || value.trim().length >= 32, {

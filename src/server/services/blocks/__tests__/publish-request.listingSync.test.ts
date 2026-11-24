@@ -1182,6 +1182,14 @@ describe('approveRequest — keyedBy immutability against every approval', () =>
     await expect(approveRequest({ publishRequestId: 'req_vk', reviewerUserId: 9 })).rejects.toThrow(
       'storage.collections.votes: an approved version declared it with keyedBy "viewer"'
     );
+    // Nothing approved it: no request write sets status "approved", and no block was written.
+    const approvedWrites = [
+      ...db.write.appBlockPublishRequest.update.mock.calls,
+      ...db.write.appBlockPublishRequest.updateMany.mock.calls,
+    ].filter((c) => (c[0] as { data?: { status?: string } })?.data?.status === 'approved');
+    expect(approvedWrites).toEqual([]);
+    expect(db.write.appBlock.update).not.toHaveBeenCalled();
+    expect(db.write.appBlock.create).not.toHaveBeenCalled();
     // The baseline read every approval: no cap on the query.
     const query = db.write.appBlockPublishRequest.findMany.mock.calls.at(-1)?.[0] as {
       take?: number;
