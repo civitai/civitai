@@ -399,6 +399,7 @@ export function checkStorageMigrations(
   const prevCollections: ReadonlyMap<string, DeclaredStorageCollection> =
     before && before.errors.length === 0 ? before.collections : new Map();
   check.errors.push(...keyedByChangeErrors(after.collections, [prev, ...approved]));
+  check.errors.push(...deprecatedPrimitiveErrors(after.collections, prev));
 
   const compare = (
     name: string,
@@ -608,6 +609,56 @@ export function keyedByChangeErrors(
         was
       )}, and keyedBy cannot be added, removed or changed on a collection once approved (it changes what every stored key means) — declare a new collection instead`
     );
+  }
+  return errors;
+}
+
+const VIEWER_KEYED_INSTEAD =
+  'declare a viewer-keyed collection instead (keyedBy "viewer" or "parent+viewer": each viewer\'s own document is their vote or entry), and report a document through the moderation report API — see https://developer.civitai.com/apps/guide/storage';
+
+/** A raw declaration's string list (`marks`, `counters`), empty when absent or not a list. */
+function rawNames(decl: unknown, field: 'marks' | 'counters'): string[] {
+  const list = (decl as Record<string, unknown> | null)?.[field];
+  return Array.isArray(list) ? list.filter((n): n is string => typeof n === 'string') : [];
+}
+
+/**
+ * 🔴 MARKS, COUNTERS AND `write: "none"` ARE DEPRECATED (docs/app-storage-generic-core.md, "Manifest,
+ * schema majors and the SDK"): a version may not declare one its PREVIOUS APPROVED version did not
+ * declare on that same collection. A collection may keep exactly what `prev` declared there, or
+ * less, until its data is migrated; a first version (`prev` null) may declare none of them. Only
+ * `prev` grandfathers, not older history: a collection dropped and declared again is new here.
+ *
+ * `prev` is read RAW, not parsed: a baseline that no longer parses still names what its
+ * collections declared, and the parser keeps accepting these fields on replay (approved history).
+ */
+export function deprecatedPrimitiveErrors(
+  now: ReadonlyMap<string, DeclaredStorageCollection>,
+  prev: unknown
+): string[] {
+  const raw = (prev as { storage?: { collections?: unknown } } | null)?.storage?.collections;
+  const was = isObj(raw) ? raw : {};
+  const errors: string[] = [];
+  for (const [name, collection] of now) {
+    const before = Object.hasOwn(was, name) ? was[name] : undefined;
+    for (const field of ['marks', 'counters'] as const) {
+      const kept = new Set(rawNames(before, field));
+      const added = collection[field].filter((n) => !kept.has(n));
+      if (added.length === 0) continue;
+      errors.push(
+        `storage.collections.${name}.${field}: ${added.map((n) => JSON.stringify(n)).join(', ')} ${
+          added.length === 1 ? 'is' : 'are'
+        } not declared on this collection by the previous approved version, and ${field} are deprecated — a collection may keep only the ${field} it already declares, until its data is migrated; ${VIEWER_KEYED_INSTEAD}`
+      );
+    }
+    if (
+      collection.write === 'none' &&
+      (before as { write?: unknown } | undefined)?.write !== 'none'
+    ) {
+      errors.push(
+        `storage.collections.${name}.write: "none" is not declared on this collection by the previous approved version, and write "none" is deprecated — a collection may keep it only if it already declares it, until its data is migrated; ${VIEWER_KEYED_INSTEAD}`
+      );
+    }
   }
   return errors;
 }

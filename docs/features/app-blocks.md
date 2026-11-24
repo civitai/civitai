@@ -261,6 +261,27 @@ put or delete at the derived key; a create or a write by key to such a collectio
 Code: `src/server/services/apps/doc-store-viewer-keyed.ts` (derivation; golden vectors in its
 test), `viewerKeyedRoute` in `doc-store-api.ts`.
 
+### Document store: deprecated tallies and publish
+
+Rollout step 3 of `docs/app-storage-generic-core.md`. Marks, counters, `write: "none"` and
+server-side publish still work, but are deprecated in favour of viewer-keyed documents (above) and
+the report API (`POST /api/v1/blocks/moderation/reports`).
+
+- **Submit and approve** refuse a mark, a counter or `write: "none"` that the collection did not
+  declare in the previous approved version (the baseline the schema-migration check uses,
+  `app_blocks.manifest`). A collection may keep exactly what it declares, or drop some or all of
+  it; a first version may declare none. A collection dropped and declared again is new.
+  `deprecatedPrimitiveErrors` in `storage-schema-migrations.ts`, run by `checkStorageMigrations`.
+  The parser keeps accepting them, so approved manifests replay unchanged.
+- **Headers:** the per-tally routes, the tally `PATCH`, `_publish` / `_unpublish` (while the publish
+  flag serves them), and a list using `sort=counter:` / `sort=mark:`, `markedBy` or `mark` answer
+  with `Deprecation` and `Link` (`LEGACY_TALLY_HEADERS`, `isDeprecatedRequest` in
+  `doc-store-api.ts`), on refusals and 405s too. No `Sunset`: removal waits for measured usage to
+  reach zero (step 5). CORS exposes both (`BLOCK_CORS_EXPOSE_HEADERS`).
+- **Schema:** `public/schemas/app-block/v1.json` marks `counters`, `marks` and the `none` write
+  policy `deprecated` (annotations only; what validates is unchanged, pinned in
+  `manifest-storage.schema-drift.test.ts`).
+
 ## Feature flag
 
 `appBlocks` (Flipt key: `app-blocks-enabled`) gates the BlockSlot mount

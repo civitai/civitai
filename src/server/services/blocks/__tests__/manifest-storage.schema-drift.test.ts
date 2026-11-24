@@ -771,6 +771,45 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
     expect(() => schemaAccepts({ $ref: '#/$defs/missing' }, 1)).toThrow(/cannot resolve/);
   });
 
+  // docs/app-storage-generic-core.md, "Manifest, schema majors and the SDK": the tally primitives
+  // are marked deprecated in the published schema WITHOUT changing what validates (approved
+  // manifests keep them; submit refuses a new one, `deprecatedPrimitiveErrors`).
+  it('marks counters, marks and write "none" deprecated, as annotations only', () => {
+    const collections = (storageSchema.properties as Record<string, SchemaObject>).collections;
+    const collection = Object.values(
+      collections.patternProperties as Record<string, SchemaObject>
+    )[0];
+    const p = collection.properties as Record<string, SchemaObject>;
+    for (const field of ['counters', 'marks'] as const) {
+      expect(p[field].deprecated, field).toBe(true);
+      expect(String(p[field].description), field).toMatch(/^DEPRECATED — use a viewer-keyed/);
+    }
+    // Not the whole `write` property: "own" is not deprecated. The one clause selecting "none".
+    expect(p.write.deprecated).toBeUndefined();
+    const noneClauses = (collection.allOf as SchemaObject[]).filter(
+      (c) =>
+        (c.then as SchemaObject | undefined)?.properties !== undefined &&
+        ((c.then as SchemaObject).properties as Record<string, SchemaObject>).write !== undefined
+    );
+    expect(noneClauses).toHaveLength(1);
+    const [clause] = noneClauses;
+    expect(clause.if).toEqual({ required: ['write'], properties: { write: { const: 'none' } } });
+    const writeAnnotation = (
+      (clause.then as SchemaObject).properties as Record<string, SchemaObject>
+    ).write;
+    // Annotation keys only: a validating keyword here would change which manifests the schema accepts.
+    expect(Object.keys(writeAnnotation).sort()).toEqual(['deprecated', 'description']);
+    expect(writeAnnotation.deprecated).toBe(true);
+    // Still accepted by the schema (and the parser, with every feature on, as on replay).
+    for (const storage of [
+      one({ visibility: 'shared', write: 'none', counters: ['plays'] }),
+      shared({ marks: ['vote'], counters: ['views'] }),
+    ]) {
+      expect(schemaAccepts(storageSchema, storage, schema)).toBe(true);
+      expect(parserAccepts(storage)).toBe(true);
+    }
+  });
+
   it('the evaluator refuses a keyword it does not implement', () => {
     expect(() => schemaAccepts({ exclusiveMinimum: 1 }, 2)).toThrow(
       /does not implement "exclusiveMinimum"/
