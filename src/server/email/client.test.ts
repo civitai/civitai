@@ -56,6 +56,7 @@ describe('sendEmail', () => {
       cc: 'c@test.dev',
       subject: 'Hello',
       html: '<p>Body</p>',
+      tags: { template: 'test', mailClass: 'transactional' },
     });
 
     expect(sent).toHaveLength(1);
@@ -97,9 +98,13 @@ describe('sendEmail', () => {
       subject: 'Hello',
       html: '<p>Body</p>',
       headers: { 'List-Unsubscribe': '<https://example.test/u>' },
+      tags: { template: 'test', mailClass: 'transactional' },
     });
     expect(sent).toHaveLength(1);
-    expect(sent[0].headers).toEqual({ 'List-Unsubscribe': '<https://example.test/u>' });
+    expect(sent[0].headers).toEqual({
+      'List-Unsubscribe': '<https://example.test/u>',
+      'X-Civitai-Send-Id': expect.stringMatching(/^[0-9a-f-]{36}$/),
+    });
   });
 
   it('sends nothing and reports unconfigured during a build', async () => {
@@ -107,7 +112,12 @@ describe('sendEmail', () => {
     try {
       const { sendEmail, isEmailConfigured } = await import('~/server/email/client');
       expect(isEmailConfigured()).toBe(false);
-      await sendEmail({ to: 'a@test.dev', subject: 'Hello', html: '<p>Body</p>' });
+      await sendEmail({
+        to: 'a@test.dev',
+        subject: 'Hello',
+        html: '<p>Body</p>',
+        tags: { template: 'test', mailClass: 'transactional' },
+      });
       expect(sent).toHaveLength(0);
     } finally {
       appEnv.IS_BUILD = false;

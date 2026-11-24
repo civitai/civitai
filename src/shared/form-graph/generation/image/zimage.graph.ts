@@ -1,7 +1,14 @@
 import { branch, defineGraph } from 'form-graph';
 import { zImageControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 import { checkpointDef } from '../checkpoint';
-import { SDXL_FULL_AR, SDXL_FULL_AR_4MP, SEED, controlNetsDef, selectDef } from '../defs';
+import {
+  SDXL_FULL_AR,
+  SDXL_FULL_AR_4MP,
+  SEED,
+  comfySamplerAliases,
+  controlNetsDef,
+  selectDef,
+} from '../defs';
 import {
   familyResources,
   familyScope,
@@ -63,7 +70,12 @@ const base = defineGraph<FamilyExt>()
   .field('aspectRatio', AR_BASE)
   .field(
     'sampler',
-    selectDef({ options: zImageSamplers, default: 'euler', presets: zImageSamplerPresets })
+    selectDef({
+      options: zImageSamplers,
+      default: 'euler',
+      presets: zImageSamplerPresets,
+      aliases: comfySamplerAliases,
+    })
   )
   .field('scheduler', selectDef({ options: zImageSchedules, default: 'simple' }))
   .field('cfgScale', perModelSlider({ min: 1, max: 10, step: 0.5, default: 4 }))

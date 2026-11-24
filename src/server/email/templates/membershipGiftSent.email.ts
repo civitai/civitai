@@ -20,6 +20,8 @@ const describeRecipient = (recipient: string | null) =>
   recipient ? `@${recipient}` : 'your recipient';
 
 export const membershipGiftSentEmail = createEmail({
+  template: 'membershipGiftSent',
+  mailClass: 'transactional',
   header: ({ to, recipient, tier, months }: MembershipGiftSentData) => ({
     subject: `Your gift of ${describeGift({ tier, months })} was delivered to ${describeRecipient(
       recipient

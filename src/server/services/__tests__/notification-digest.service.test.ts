@@ -700,6 +700,19 @@ describe('the measurement rows', () => {
     ]);
   });
 
+  it('tags every digest send for emailEvents: its template, lifecycle, the pass and the user', async () => {
+    await run();
+    const tags = vi
+      .mocked(sendEmail)
+      .mock.calls.map(([mail]) => mail.tags)
+      .sort((a, b) => (a.userId ?? 0) - (b.userId ?? 0));
+    const pass = { template: 'missedNotificationsDigest', mailClass: 'lifecycle' };
+    expect(tags).toEqual([
+      { ...pass, campaign: '2026-11-16T12:00:00.000Z', userId: 1 },
+      { ...pass, campaign: '2026-11-16T12:00:00.000Z', userId: 9 },
+    ]);
+  });
+
   it('records no send row for a start floor, a skip or a failed send', async () => {
     // One is a fresh start (floor); nine's send fails; everyone else is skipped.
     await h.pg.exec(`DELETE FROM "UserNotificationDigest" WHERE "userId" = 1`);

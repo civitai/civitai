@@ -5,7 +5,6 @@ import type { NormalizedStep, NormalizedWorkflowMetadata } from '../orchestratio
 
 const defaultOptions: WorkflowDataOptions = {
   domain: { green: false, blue: false, red: false } as any,
-  nsfwEnabled: false,
 };
 
 function makeStep(metadata: Partial<NormalizedStep['metadata']>): NormalizedStep {

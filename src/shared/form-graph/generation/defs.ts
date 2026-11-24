@@ -13,6 +13,7 @@ import {
   twoMegapixelCustomDimensionLimits,
   sdxlFullAspectRatioBuckets,
   sdxlFullPriorityAspectRatios,
+  samplersToComfySamplers,
 } from '~/shared/constants/generation.constants';
 import {
   findClosestAspectRatio,
@@ -740,6 +741,15 @@ export const defaultSamplerPresets = [
   { label: 'Fast', value: 'Euler a' },
   { label: 'Popular', value: 'DPM++ 2M Karras' },
 ];
+
+/**
+ * `selectDef` aliases from the SD sampler names an image's metadata carries (`Euler`,
+ * `DPM++ 2M Karras`) to a family's own names, so remixing such an image keeps its sampler. Only
+ * the sampler carries over: a Karras schedule is not one of these families' schedules.
+ */
+export const comfySamplerAliases: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(samplersToComfySamplers).map(([name, { sampler }]) => [name, sampler])
+);
 
 // --- quantity -------------------------------------------------------------------
 

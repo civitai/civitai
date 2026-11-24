@@ -38,6 +38,8 @@ const moreLine = (data: MissedNotificationsDigestData) => {
 };
 
 export const missedNotificationsDigestEmail = createEmail({
+  template: 'missedNotificationsDigest',
+  mailClass: 'lifecycle',
   header: (data: MissedNotificationsDigestData) => ({
     subject: subjectFor(data),
     to: data.to,

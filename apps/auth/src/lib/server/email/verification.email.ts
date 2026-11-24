@@ -6,6 +6,8 @@ import { createEmail, emailTheme, EMAIL_MUTED_CLASS, renderEmailShell } from '@c
 type VerificationData = { to: string; url: string };
 
 export const verificationEmail = createEmail<VerificationData, void>({
+  template: 'verification',
+  mailClass: 'transactional',
   header: ({ to }) => ({ subject: 'Sign in to Civitai', to }),
   html: ({ url }) =>
     renderEmailShell({

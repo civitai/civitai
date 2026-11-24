@@ -32,7 +32,7 @@ const build = (
         { $type: 'imageGen', name: '$0', status: 'succeeded', metadata: stepMetadata, output },
       ],
     } as any,
-    { domain: { green: false } as any, nsfwEnabled: true }
+    { domain: { green: false } as any }
   );
 
 describe('WorkflowData private generation', () => {
