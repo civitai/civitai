@@ -209,7 +209,7 @@ export function imageVisibilityConditions({
     minorMatureImageVisibleSql({ userId }),
     ...imageBlockedForConditions({ userId }),
     imageNotRestrictedSql({ viewerId: userId }),
-    // Without the opt-in, a service review image opens to no one, its uploader included.
+    // Without the opt-in, a review image is closed to its uploader too (moderators aside).
     ...(shownReviewImageLevels === undefined ? [notReviewImageSql] : []),
   ];
 }
