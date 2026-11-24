@@ -245,7 +245,9 @@ until Audio review's Held tab takes them.
   is (the owner's removed-images list and the image appeal flow are per image row).
 - **A cover in an image queue** carries "Cover of song <title>", linking to the song in Image lookup.
   Song and cover are linked only through the song's own cover (`songsOwnCoverText`), read by
-  `getSongLinks` (`song-links.service.ts`) for every queue card.
+  `getSongLinks` (`song-links.service.ts`) for every queue card. A link to a song or cover withheld
+  from the moderator is left off, and a failed read leaves the cards without links. A removed cover
+  drops to the placeholder on every song card on the page at once.
 - **Removed-appeals** shows the song card for an appeal on a song still on file, unless the song is
   withheld from the moderator (`withheldImageIds`), which shows the refusal line instead; other rows
   stay text only. An appeal whose song row is gone has nothing to play.
