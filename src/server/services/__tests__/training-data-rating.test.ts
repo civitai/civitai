@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { datasetRating } from '~/server/services/training-data-rating';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import '~/__tests__/mocks/env.mock';
+import {
+  datasetRating,
+  extractionRating,
+  HEADER_PASS_DEADLINE_MS,
+} from '~/server/services/training-data-rating';
 import { NsfwLevel } from '~/server/common/enums';
 
 describe('datasetRating', () => {
@@ -42,5 +47,31 @@ describe('datasetRating', () => {
       nsfwLevel: undefined,
       fullyRated: false,
     });
+  });
+});
+
+describe('extractionRating', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('counts the entries left when the header pass runs out of time as unrated', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { headers: { 'x-nsfw-level': 'pg' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    let now = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const entries = Array.from({ length: 16 }, (_, i) => ({
+      air: `urn:air:other:other:orchestrator:blob@k${i}`,
+      mediaType: 'image',
+    }));
+    // The first batch of 8 is read; then the deadline passes.
+    fetchMock.mockImplementation(async () => {
+      now = HEADER_PASS_DEADLINE_MS + 1;
+      return new Response(null, { headers: { 'x-nsfw-level': 'pg' } });
+    });
+    const rating = await extractionRating({ entries }, 'wf-1');
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+    expect(rating).toEqual({ nsfwLevel: 1, fullyRated: false });
   });
 });

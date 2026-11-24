@@ -117,7 +117,7 @@ describe('submitTrainingDataScan', () => {
       {
         $type: 'archiveExtraction',
         name: 'extract',
-        input: { sourceUrl: 'urn:air:other:other:orchestrator:blob@BLOB1' },
+        input: { sourceUrl: 'urn:air:other:other:orchestrator:blob@BLOB1', maxEntries: 2000 },
       },
     ]);
     expect(body.callbacks).toEqual([

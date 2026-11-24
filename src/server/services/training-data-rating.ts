@@ -33,6 +33,10 @@ type ExtractionOutput = {
 
 const HEADER_TIMEOUT_MS = 30_000;
 const HEADER_CONCURRENCY = 8;
+/** The whole header pass, which runs inside the scan webhook: past it, the rest count as unrated. */
+export const HEADER_PASS_DEADLINE_MS = 120_000;
+/** Entries the extraction step extracts; the rest come back rejected, so the zip is not fully rated. */
+export const TRAINING_DATA_MAX_RATED_ENTRIES = 2_000;
 
 /** The blob's level as the orchestrator serves it, which waits for the blob's scan verdict. */
 async function blobHeaderLevel(air: string | undefined, workflowId: string) {
@@ -63,7 +67,14 @@ async function blobHeaderLevel(air: string | undefined, workflowId: string) {
 export async function extractionRating(output: ExtractionOutput, workflowId: string) {
   const entries = output.entries ?? [];
   const rated: RatedEntry[] = [];
+  const deadline = Date.now() + HEADER_PASS_DEADLINE_MS;
   for (let i = 0; i < entries.length; i += HEADER_CONCURRENCY) {
+    if (Date.now() > deadline) {
+      rated.push(
+        ...entries.slice(i).map((entry) => ({ mediaType: entry.mediaType, nsfwLevel: null }))
+      );
+      break;
+    }
     const batch = entries.slice(i, i + HEADER_CONCURRENCY);
     rated.push(
       ...(await Promise.all(

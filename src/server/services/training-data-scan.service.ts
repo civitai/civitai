@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { TRAINING_DATA_MAX_RATED_ENTRIES } from '~/server/services/training-data-rating';
 import type { WorkflowStepTemplate } from '@civitai/orchestration-client';
 import { submitWorkflow } from '@civitai/orchestration-client';
 import { isProd } from '~/env/other';
@@ -146,7 +147,7 @@ export async function submitTrainingDataScan(
               {
                 $type: 'archiveExtraction',
                 name: 'extract',
-                input: { sourceUrl: air },
+                input: { sourceUrl: air, maxEntries: TRAINING_DATA_MAX_RATED_ENTRIES },
               } as WorkflowStepTemplate,
             ]
           : []),
