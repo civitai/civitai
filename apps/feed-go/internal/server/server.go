@@ -178,9 +178,9 @@ type Server struct {
 	// proxy to the Node app that answers `/api/v1`, FEED_GO_V1_FALLBACK_URL: a different upstream from
 	// Fallback). The routes are mounted only when it is set.
 	V1Fallback http.Handler
-	// V1ImagesFallback, when set, replaces V1Fallback for the `/api/v1/images` route alone
-	// (FEED_GO_V1_IMAGES_FALLBACK_URL: the Node pool that answers that route, where it is not the one
-	// that answers the rest of `/api/v1`). The route is mounted when either is set (v1ImagesUpstream).
+	// V1ImagesFallback serves what the public `/api/v1/images` route does not
+	// (FEED_GO_V1_IMAGES_FALLBACK_URL: the Node pool that answers that route). The route is mounted
+	// only when it is set; V1Fallback is never used for it.
 	V1ImagesFallback http.Handler
 	// Associated serves the `model.getAssociatedResourcesCardData` shadow (associated.go); nil = every
 	// such sample falls back.

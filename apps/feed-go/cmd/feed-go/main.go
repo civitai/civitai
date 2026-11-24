@@ -201,21 +201,35 @@ func attachMetricsSwitch(ctx context.Context, cfg *config.Config, c *hydrate.Mis
 	return sw, nil
 }
 
+// imageResourcesFlagMaxStale bounds how old the last good read of hydrate.ImageResourceUseWriteFlag
+// may be for its "off" to count (flipt.Switch.MaxStale; the shared default is 10 minutes).
+const imageResourcesFlagMaxStale = time.Minute
+
+// imageResourcesSwitch is the switch attachImageResourcesSwitch starts over read: an "off" older than
+// imageResourcesFlagMaxStale is not off (Node's lookup may have moved to the primary since), so the
+// misses fall back rather than read the replica (12 refreshes at flipt.RefreshInterval).
+func imageResourcesSwitch(read func(ctx context.Context) (bool, error)) *flipt.Switch {
+	sw := flipt.NewSwitch(read)
+	sw.MaxStale = imageResourcesFlagMaxStale
+	return sw
+}
+
 // attachImageResourcesSwitch reads hydrate.ImageResourceUseWriteFlag in the background (every
 // flipt.RefreshInterval, until ctx ends) and hands c the question the image-resources miss
 // computation asks: is the flag known to be off (flipt.Switch.Off), so the Node lookup reads the
-// replica? Without c or FLIPT_URL nothing is read and every image-resources miss falls back, as
-// before. Failures are logged at most once a minute, the staleness once per outage; a flag unread
-// past flipt.DefaultMaxStale is not off, so the misses fall back again.
+// replica? Without c, FLIPT_URL or FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS nothing is read and every
+// image-resources miss falls back, as before. Failures are logged at most once a minute, the
+// staleness once per outage; a flag unread past imageResourcesFlagMaxStale (1 minute) is not off, so
+// the misses fall back again.
 func attachImageResourcesSwitch(ctx context.Context, cfg *config.Config, c *hydrate.MissCompute, log *slog.Logger) (*flipt.Switch, error) {
-	if c == nil || cfg.FliptURL == "" {
+	if c == nil || cfg.FliptURL == "" || !cfg.ComputeImageResourcesMiss {
 		return nil, nil
 	}
 	fc, err := flipt.New(flipt.Config{URL: cfg.FliptURL, ClientToken: cfg.FliptClientToken, Environment: cfg.FliptEnvironment})
 	if err != nil {
 		return nil, err
 	}
-	sw := flipt.NewSwitch(func(ctx context.Context) (bool, error) { return fc.Boolean(ctx, hydrate.ImageResourceUseWriteFlag) })
+	sw := imageResourcesSwitch(func(ctx context.Context) (bool, error) { return fc.Boolean(ctx, hydrate.ImageResourceUseWriteFlag) })
 	var lastLog time.Time
 	sw.OnError = func(err error) {
 		if now := time.Now(); now.Sub(lastLog) >= time.Minute {
@@ -358,7 +372,8 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		log.Error("flag not read; image-resources misses fall back", "flag", hydrate.ImageResourceUseWriteFlag, "err", err)
 	}
-	log.Info("image-resources misses", "computed_while_flag_off", resourcesSwitch != nil, "flag", hydrate.ImageResourceUseWriteFlag)
+	log.Info("image-resources misses", "FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS", cfg.ComputeImageResourcesMiss,
+		"computed_while_flag_off", resourcesSwitch != nil, "flag", hydrate.ImageResourceUseWriteFlag)
 	log.Info("dedicated metrics clickhouse", "configured", sources.Compute != nil && sources.Compute.MetricsClickHouse != nil,
 		"flag_read", metricsSwitch != nil, "CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS", cfg.MetricsClickHouseRequestTimeout.Milliseconds())
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
@@ -573,8 +588,8 @@ func run(log *slog.Logger) error {
 			srv.NoteProxyError(r, reason, err)
 		}, prop)
 	}
-	// The public /api/v1/images route's own upstream (FEED_GO_V1_IMAGES_FALLBACK_URL), where the Node
-	// pool that answers it is not FEED_GO_V1_FALLBACK_URL's; unset, the route uses that one.
+	// The public /api/v1/images route's one upstream (FEED_GO_V1_IMAGES_FALLBACK_URL); unset, the route
+	// is not mounted (FEED_GO_V1_FALLBACK_URL is never used for it).
 	if mc.ImagesFallbackURL != "" {
 		target, err := url.Parse(mc.ImagesFallbackURL)
 		if err != nil {
@@ -591,7 +606,7 @@ func run(log *slog.Logger) error {
 	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
 	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil)
 	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,
-		"mounted", srv.V1ImagesFallback != nil || srv.V1Fallback != nil, "own_upstream", srv.V1ImagesFallback != nil)
+		"mounted", srv.V1ImagesFallback != nil)
 	log.Info("public tRPC answers' write format", "TRPC_WRITE_DEVALUE", cfg.WriteDevalue)
 	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
 	// OpenMetrics on request only with tracing on: the exemplars ride in that format alone.

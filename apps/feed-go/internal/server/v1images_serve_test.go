@@ -27,7 +27,7 @@ const (
 	noStoreCC = "private, no-store"
 )
 
-// serveV1ImagesServer is a Server with the public images route: on per the argument, a V1Fallback
+// serveV1ImagesServer is a Server with the public images route: on per the argument, a V1ImagesFallback
 // that counts, a tRPC Fallback that must never be used, and an images compute that counts its calls.
 func serveV1ImagesServer(t *testing.T, reg *prometheus.Registry, on bool) (s *Server, up *v1Upstream, computes *int) {
 	t.Helper()
@@ -36,7 +36,11 @@ func serveV1ImagesServer(t *testing.T, reg *prometheus.Registry, on bool) (s *Se
 		Metrics:       NewMetrics(reg),
 		Log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
 		ServeV1Images: on,
-		V1Fallback:    up,
+		// The route's one upstream; the /api/v1 one must never be used for it.
+		V1ImagesFallback: up,
+		V1Fallback: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Error("the images route fell back to the /api/v1 upstream (FEED_GO_V1_FALLBACK_URL)")
+		}),
 		Fallback: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			t.Error("the images route fell back to the tRPC upstream (FEED_GO_FALLBACK_URL)")
 		}),
@@ -105,7 +109,7 @@ func TestServeV1ImagesSwitchOffIsUnchanged(t *testing.T) {
 	})
 	reg := prometheus.NewRegistry()
 	s, _, computes := serveV1ImagesServer(t, reg, false)
-	s.V1Fallback = node
+	s.V1ImagesFallback = node
 	s.ServeV1Models = true
 	mux := PublicMux(s)
 	w := httptest.NewRecorder()
@@ -481,7 +485,7 @@ func TestServeV1ImagesUnsupportedInputs(t *testing.T) {
 	newServer := func(reg *prometheus.Registry, up *v1Upstream) *Server {
 		return &Server{
 			Metrics: NewMetrics(reg), Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-			ServeV1Images: true, V1Fallback: up, Resolver: &auth.Resolver{}, V1: &feed.V1Deps{},
+			ServeV1Images: true, V1ImagesFallback: up, Resolver: &auth.Resolver{}, V1: &feed.V1Deps{},
 		}
 	}
 	for _, c := range []struct{ target, reason string }{
@@ -553,39 +557,49 @@ func TestPublicMuxMountsTheImagesRoute(t *testing.T) {
 	if up.count() != 2 {
 		t.Fatalf("upstream calls = %d, want 2", up.count())
 	}
-	s.V1Fallback = nil
+	// Without its own upstream the path is not routed here, the /api/v1 upstream notwithstanding.
+	s.V1ImagesFallback = nil
 	w := httptest.NewRecorder()
 	PublicMux(s).ServeHTTP(w, v1Request("/api/v1/images", nil))
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("without V1Fallback: %d, want 404", w.Code)
+		t.Fatalf("without V1ImagesFallback (V1Fallback set): %d, want 404", w.Code)
 	}
 }
 
-// With its own upstream (FEED_GO_V1_IMAGES_FALLBACK_URL) the images route is mounted and proxies
-// every fallback there, never to the /api/v1 upstream, which the model routes keep; with only its own
-// upstream the model routes are not mounted.
-func TestServeV1ImagesOwnUpstream(t *testing.T) {
+// FEED_GO_V1_IMAGES_FALLBACK_URL is the images route's ONLY upstream: every fallback goes there and
+// never to the /api/v1 upstream (FEED_GO_V1_FALLBACK_URL), which the model routes keep; with only the
+// /api/v1 upstream the images route is not mounted at all, and with only its own the model routes are
+// not.
+func TestServeV1ImagesNeverUsesTheV1Upstream(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	s, v1, computes := serveV1ImagesServer(t, reg, false)
-	own := &v1Upstream{}
-	s.V1ImagesFallback = own
+	s, own, computes := serveV1ImagesServer(t, reg, false)
+	apiV1 := &v1Upstream{}
+	s.V1Fallback = apiV1
 	mux := PublicMux(s)
 	mux.ServeHTTP(httptest.NewRecorder(), v1Request("/api/v1/images?limit=2", nil))
-	if own.count() != 1 || v1.count() != 0 || *computes != 0 {
-		t.Fatalf("off: images upstream %d, /api/v1 upstream %d, computes %d; want 1, 0, 0", own.count(), v1.count(), *computes)
+	if own.count() != 1 || apiV1.count() != 0 || *computes != 0 {
+		t.Fatalf("off: images upstream %d, /api/v1 upstream %d, computes %d; want 1, 0, 0", own.count(), apiV1.count(), *computes)
 	}
 	s.ServeV1Images = true
 	mux.ServeHTTP(httptest.NewRecorder(), v1Request("/api/v1/images?limit=2", map[string]string{"Authorization": "Bearer k"}))
-	if own.count() != 2 || v1.count() != 0 {
-		t.Fatalf("a fallback: images upstream %d, /api/v1 upstream %d; want 2, 0", own.count(), v1.count())
+	if own.count() != 2 || apiV1.count() != 0 {
+		t.Fatalf("a fallback: images upstream %d, /api/v1 upstream %d; want 2, 0", own.count(), apiV1.count())
 	}
 	mux.ServeHTTP(httptest.NewRecorder(), v1Request("/api/v1/models?limit=2", nil))
-	if v1.count() != 1 || own.count() != 2 {
-		t.Fatalf("the models route: /api/v1 upstream %d, images upstream %d; want 1, 2", v1.count(), own.count())
+	if apiV1.count() != 1 || own.count() != 2 {
+		t.Fatalf("the models route: /api/v1 upstream %d, images upstream %d; want 1, 2", apiV1.count(), own.count())
 	}
-	s.V1Fallback = nil
-	mux = PublicMux(s)
+	// Only the /api/v1 upstream: the images path is not routed here (a 404), never proxied there.
+	s.V1ImagesFallback = nil
 	w := httptest.NewRecorder()
+	PublicMux(s).ServeHTTP(w, v1Request("/api/v1/images?limit=2", nil))
+	if w.Code != http.StatusNotFound || apiV1.count() != 1 {
+		t.Fatalf("images with only the /api/v1 upstream: %d, /api/v1 upstream %d; want 404, 1", w.Code, apiV1.count())
+	}
+	// Only its own: served; the model routes are not mounted.
+	s.V1ImagesFallback, s.V1Fallback = own, nil
+	mux = PublicMux(s)
+	w = httptest.NewRecorder()
 	mux.ServeHTTP(w, v1Request("/api/v1/models?limit=2", nil))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("models without the /api/v1 upstream: %d, want 404", w.Code)
@@ -619,7 +633,7 @@ func TestServeV1ImagesGolden(t *testing.T) {
 			reg := prometheus.NewRegistry()
 			up := &v1Upstream{}
 			s := env.server
-			s.Metrics, s.Log, s.V1Fallback, s.ServeV1Images = NewMetrics(reg), slog.New(slog.NewTextHandler(io.Discard, nil)), up, true
+			s.Metrics, s.Log, s.V1ImagesFallback, s.ServeV1Images = NewMetrics(reg), slog.New(slog.NewTextHandler(io.Discard, nil)), up, true
 			request := func(extra map[string]string) *http.Request {
 				r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, fx.Request.Path+"?"+fx.Request.Query, nil)
 				for k, v := range env.headers {

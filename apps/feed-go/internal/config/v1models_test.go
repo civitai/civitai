@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -87,17 +88,22 @@ func TestLoadV1ImagesServeDefaultsOff(t *testing.T) {
 	}
 }
 
-// Serving the images route with neither upstream is refused at startup; its own upstream alone, or
-// the /api/v1 one alone, starts. The models switch still needs the /api/v1 one.
+// Serving the images route without ITS upstream is refused at startup, the /api/v1 one notwithstanding
+// (never used for it); its own alone starts. The models switch still needs the /api/v1 one.
 func TestV1ImagesValidate(t *testing.T) {
+	err := V1Models{ServeImages: true, FallbackURL: "http://u.example"}.Validate()
+	if err == nil || !strings.Contains(err.Error(), "FEED_GO_V1_IMAGES_FALLBACK_URL") {
+		t.Errorf("serve images with only the /api/v1 upstream: %v, want an error naming FEED_GO_V1_IMAGES_FALLBACK_URL", err)
+	}
 	for _, c := range []struct {
 		serve, serveModels bool
 		url, imagesURL     string
 		ok                 bool
 	}{
 		{false, false, "", "", true},
-		{true, false, "http://u.example", "", true},
+		{true, false, "http://u.example", "", false},
 		{true, false, "", "http://heavy.example", true},
+		{true, false, "http://u.example", "http://heavy.example", true},
 		{true, false, "", "", false},
 		{true, true, "", "http://heavy.example", false},
 	} {

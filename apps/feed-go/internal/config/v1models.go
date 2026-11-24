@@ -31,9 +31,9 @@ type V1Models struct {
 	// public model routes is proxied to it; unset, the routes are not mounted.
 	FallbackURL string
 	// ImagesFallbackURL is FEED_GO_V1_IMAGES_FALLBACK_URL: the Node app that answers
-	// `/api/v1/images`, where that is not FallbackURL's (a deployment can isolate its heaviest REST
-	// route on its own pool). Unset, the images route uses FallbackURL; with neither set it is not
-	// mounted.
+	// `/api/v1/images`, every fallback of that route's is proxied to it. REQUIRED for the route: unset,
+	// the route is not mounted (FallbackURL is never used for it: the pool answering /api/v1 need not
+	// be the one answering this, the heaviest REST route), and serving it fails startup.
 	ImagesFallbackURL string
 }
 
@@ -44,7 +44,7 @@ func LoadV1Models() V1Models {
 		Serve:       boolEnv("FEED_GO_SERVE_V1_MODELS", false),
 		ServeImages: boolEnv("FEED_GO_SERVE_V1_IMAGES", false),
 		FallbackURL: strings.TrimSpace(os.Getenv("FEED_GO_V1_FALLBACK_URL")),
-		// The images route's own upstream (default: FallbackURL's).
+		// The images route's own upstream (never FallbackURL's).
 		ImagesFallbackURL: strings.TrimSpace(os.Getenv("FEED_GO_V1_IMAGES_FALLBACK_URL")),
 	}
 	if boolEnv("FEED_GO_MODEL_RESPONSE_CACHE", true) {
@@ -54,14 +54,14 @@ func LoadV1Models() V1Models {
 }
 
 // Validate refuses a serve switch with nowhere to send its fallbacks: FEED_GO_SERVE_V1_MODELS on
-// without FEED_GO_V1_FALLBACK_URL, or FEED_GO_SERVE_V1_IMAGES on without either images upstream,
-// would leave every request the port does not answer unanswerable.
+// without FEED_GO_V1_FALLBACK_URL, or FEED_GO_SERVE_V1_IMAGES on without FEED_GO_V1_IMAGES_FALLBACK_URL
+// (its one upstream), would leave every request the port does not answer unanswerable.
 func (c V1Models) Validate() error {
 	if c.Serve && c.FallbackURL == "" {
 		return errors.New("FEED_GO_SERVE_V1_MODELS is on without FEED_GO_V1_FALLBACK_URL: the public model routes need the Node app that serves /api/v1 for their fallbacks")
 	}
-	if c.ServeImages && c.FallbackURL == "" && c.ImagesFallbackURL == "" {
-		return errors.New("FEED_GO_SERVE_V1_IMAGES is on without FEED_GO_V1_IMAGES_FALLBACK_URL or FEED_GO_V1_FALLBACK_URL: the public images route needs the Node app that serves /api/v1/images for its fallbacks")
+	if c.ServeImages && c.ImagesFallbackURL == "" {
+		return errors.New("FEED_GO_SERVE_V1_IMAGES is on without FEED_GO_V1_IMAGES_FALLBACK_URL: the public images route needs the Node app that serves /api/v1/images for its fallbacks (FEED_GO_V1_FALLBACK_URL is never used for it)")
 	}
 	return nil
 }

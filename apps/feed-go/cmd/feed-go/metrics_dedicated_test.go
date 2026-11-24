@@ -17,6 +17,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
+	"github.com/civitai/civitai/apps/feed-go/internal/flipt"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
 )
@@ -250,14 +251,16 @@ func TestAttachMetricsSwitch(t *testing.T) {
 
 // The image-resources miss computation follows image-resource-use-write, read from Flipt under the
 // Node app's key: computed (ImageResourcesFromReplica true) only while the flag reads off, never while
-// it reads on, and not before the first read. Without FLIPT_URL, or without the miss computation,
-// nothing is read and every image-resources miss keeps falling back (no reader).
+// it reads on, not before the first read, and not once the last good read is older than a minute.
+// Without FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS (its own kill switch, default off), FLIPT_URL or the
+// miss computation, nothing is read and every image-resources miss keeps falling back (no reader).
 func TestAttachImageResourcesSwitch(t *testing.T) {
 	fsrv, setFlag, asked := fliptServer(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
+	t.Setenv("FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS", "true")
 	cfg := loadConfig(t, map[string]string{"FLIPT_URL": "", "FLIPT_FETCHER_SECRET": "flipt-tok"})
 	c := dedicatedCompute(t, cfg)
 	if sw, err := attachImageResourcesSwitch(ctx, cfg, c, log); sw != nil || err != nil || c.ImageResourcesFromReplica != nil {
@@ -267,15 +270,32 @@ func TestAttachImageResourcesSwitch(t *testing.T) {
 	if sw, err := attachImageResourcesSwitch(ctx, cfg, nil, log); sw != nil || err != nil {
 		t.Fatalf("no miss computation: switch %v, %v; want none", sw, err)
 	}
+	// The kill switch: off (the default), no reader and no Flipt read, whatever the flag says.
+	for _, v := range []string{"", "false"} {
+		t.Setenv("FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS", v)
+		cfg := loadConfig(t, map[string]string{"FLIPT_URL": fsrv.URL, "FLIPT_FETCHER_SECRET": "flipt-tok"})
+		if cfg.ComputeImageResourcesMiss {
+			t.Fatalf("FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS=%q reads on", v)
+		}
+		c := dedicatedCompute(t, cfg)
+		if sw, err := attachImageResourcesSwitch(ctx, cfg, c, log); sw != nil || err != nil || c.ImageResourcesFromReplica != nil {
+			t.Fatalf("FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS=%q: switch %v, %v; want none", v, sw, err)
+		}
+	}
 	if n := len(asked()); n != 0 {
 		t.Fatalf("Flipt asked %d times, want none", n)
 	}
 
+	t.Setenv("FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS", "true")
+	cfg = loadConfig(t, map[string]string{"FLIPT_URL": fsrv.URL, "FLIPT_FETCHER_SECRET": "flipt-tok"})
 	c = dedicatedCompute(t, cfg)
 	setFlag(true)
 	sw, err := attachImageResourcesSwitch(ctx, cfg, c, log)
 	if sw == nil || err != nil || c.ImageResourcesFromReplica == nil {
 		t.Fatalf("switch %v, %v; want one", sw, err)
+	}
+	if sw.MaxStale != time.Minute {
+		t.Fatalf("MaxStale %v, want 1m (an older off is not off)", sw.MaxStale)
 	}
 	for _, v := range []bool{true, false, true, false} {
 		setFlag(v)
@@ -286,5 +306,47 @@ func TestAttachImageResourcesSwitch(t *testing.T) {
 	}
 	if got := asked(); len(got) == 0 || got[len(got)-1] != "/evaluate/v1/boolean image-resource-use-write global civitai-app Bearer flipt-tok" {
 		t.Fatalf("Flipt asked %v, want the flag image-resource-use-write for the global entity", got)
+	}
+}
+
+// The switch attachImageResourcesSwitch starts (imageResourcesSwitch), on a fake clock and never
+// started: an off read 59 s old still counts as off, 61 s old does not, so the misses fall back, well
+// inside the shared 10-minute default; a fresh read restores it.
+func TestImageResourcesSwitchStalenessBound(t *testing.T) {
+	ctx := context.Background()
+	fail := false
+	sw := imageResourcesSwitch(func(context.Context) (bool, error) {
+		if fail {
+			return false, errors.New("flipt: http 503")
+		}
+		return false, nil
+	})
+	now := time.Unix(1_800_000_000, 0)
+	sw.Now = func() time.Time { return now }
+	sw.Refresh(ctx)
+	fail = true
+	for _, c := range []struct {
+		after time.Duration
+		want  bool
+	}{{0, true}, {59 * time.Second, true}, {61 * time.Second, false}, {5 * time.Minute, false}} {
+		now = time.Unix(1_800_000_000, 0).Add(c.after)
+		sw.Refresh(ctx) // a failed read keeps the last good one; it does not refresh lastOK
+		if got := sw.Off(); got != c.want {
+			t.Fatalf("an off read %v old (reads failing since): Off %v, want %v", c.after, got, c.want)
+		}
+	}
+	// Without a read at all past the bound (no Refresh between), Off reads the clock itself.
+	fail = false
+	sw.Refresh(ctx)
+	now = now.Add(61 * time.Second)
+	if sw.Off() {
+		t.Fatal("no read for 61 s: Off, want not off")
+	}
+	sw.Refresh(ctx)
+	if !sw.Off() {
+		t.Fatal("a fresh off read: not Off")
+	}
+	if imageResourcesFlagMaxStale != time.Minute || flipt.DefaultMaxStale <= imageResourcesFlagMaxStale {
+		t.Fatalf("bound %v (shared default %v): want 1m, below the default", imageResourcesFlagMaxStale, flipt.DefaultMaxStale)
 	}
 }
