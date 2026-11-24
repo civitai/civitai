@@ -17,7 +17,7 @@ const ecosystemRestrictsGeneration = (ecosystem: EcosystemRecord) => {
 
 /**
  * Whether a submit's output is held to PG-13 with mature content refused: the caller flags a
- * private generation, the `workflow` is `sfwOnly` (avatars, which depict a real person), the
+ * private generation, the `workflow` is `sfwOnly`, the
  * ecosystem restricts it, or any resource's base model does. The ecosystem counts even with
  * resources, so a request on a restricted ecosystem stays capped whatever its resources are
  * labelled, raw-AIR epochs (which carry no base model) included.
