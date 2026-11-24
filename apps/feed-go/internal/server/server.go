@@ -589,18 +589,25 @@ func (c *computed) release() {
 // writer falls back (writeSerializeWithFallback).
 func (c *computed) encode(ctx context.Context) error {
 	if trpc.DevalueWrite(ctx, c.ttl) {
+		_, phase := tracing.StartPhase(ctx, tracing.PhaseEncodeDevalue)
 		b, err := devalue.PayloadBuffer(c.value)
 		if err == nil {
 			c.payload, c.dbuf, c.devalue = b.Bytes(), b, true
+			phase.SetInt(tracing.AttrResponseBytes, len(c.payload))
+			phase.End()
 			return nil
 		}
+		phase.End()
 		c.devalueRefused = err
 	}
+	_, phase := tracing.StartPhase(ctx, tracing.PhaseEncodeSuperjson)
+	defer phase.End()
 	buf, err := superjson.SerializeBuffer(c.value)
 	if err != nil {
 		return err
 	}
 	c.payload, c.buf = buf.Bytes(), buf
+	phase.SetInt(tracing.AttrResponseBytes, len(c.payload))
 	return nil
 }
 

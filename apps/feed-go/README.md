@@ -172,7 +172,12 @@ go tool pprof -http=:0 'http://localhost:9090/debug/pprof/profile?seconds=30'
 Every public, shadow and probe handler runs under two pprof labels, `feed_endpoint` (the endpoint
 label of the metrics) and `mode` (`serve` | `shadow` | `probe`), inherited by every goroutine the
 request starts, so one profile splits per route and per mode: `-tagfocus feed_endpoint=infinite
--tagfocus mode=serve` keeps one, `-tags` lists the split (`internal/server/labels.go`).
+-tagfocus mode=serve` keeps one, `-tags` lists the split (`internal/server/labels.go`). The CPU
+phases of a served answer add a third label, `phase`: `decode hydrate` (a page's cache reads and
+their decode), `build page` (the per-item build) and `encode devalue` / `encode superjson` (the
+payload write). On a sampled request (tracing on) each phase is also a child span of that name in the
+request's trace, with `feed_go.items` (ids hydrated, rows built) or `feed_go.response.bytes`; an
+unsampled request starts no span (`internal/tracing/phase.go`).
 
 `/metrics` carries, next to `process_cpu_seconds_total` and the default Go series, the runtime's CPU
 classes and GC families (`go_cpu_classes_*`: GC, scavenger, idle and user CPU seconds; `go_gc_*`), a
