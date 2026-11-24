@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
@@ -62,10 +62,11 @@ const {
  * only rows can test them — and nothing else in CI executes the migration SQL.
  */
 
-const MIGRATION = join(
-  __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261204120000_app_access_request/migration.sql'
-);
+const MIGRATIONS_DIR = join(__dirname, '../../../../packages/civitai-db-schema/prisma/migrations');
+const MIGRATIONS = [
+  '20261204120000_app_access_request',
+  '20271128120000_app_access_request_review_source',
+].map((dir) => join(MIGRATIONS_DIR, dir, 'migration.sql'));
 
 // A stand-in for the real `User` table, cut to what the queue and the auto-approval checks read
 // (same column names and types as the real table).
@@ -77,6 +78,22 @@ const PRELUDE = `CREATE TABLE "User" (
   "muted" BOOLEAN NOT NULL DEFAULT false,
   "deletedAt" TIMESTAMP(3),
   "meta" JSONB DEFAULT '{}'
+);
+CREATE TYPE "StrikeStatus" AS ENUM ('Active', 'Expired', 'Voided');
+CREATE TABLE "UserStrike" (
+  "id" SERIAL PRIMARY KEY,
+  "userId" INTEGER NOT NULL,
+  "status" "StrikeStatus" NOT NULL DEFAULT 'Active',
+  "points" INTEGER NOT NULL DEFAULT 1,
+  "expiresAt" TIMESTAMP(3) NOT NULL
+);
+CREATE TABLE "ModActivity" (
+  "id" SERIAL PRIMARY KEY,
+  "userId" INTEGER,
+  "activity" TEXT NOT NULL,
+  "entityType" TEXT,
+  "entityId" INTEGER,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );`;
 
 const MIRA_IDEA =
@@ -103,8 +120,12 @@ let mira: number;
 let tomasz: number;
 let moderator: number;
 
-const run = async (q: Prisma.Sql) =>
-  (await pg.query<Record<string, unknown>>(q.text, q.values)).rows;
+// `$queryRaw` is called both with a `Prisma.sql` object and as a tagged template (the strike
+// points read); both reach Postgres as the same parameterised text.
+const run = async (q: Prisma.Sql | TemplateStringsArray, ...values: unknown[]) => {
+  const sql = 'text' in q ? q : Prisma.sql(q, ...values);
+  return (await pg.query<Record<string, unknown>>(sql.text, sql.values)).rows;
+};
 
 // Every seeded account passes the auto-approval checks (verified email, not banned, not muted); a
 // test that needs one to fail breaks that one account itself.
@@ -124,6 +145,20 @@ const rowsFor = async (userId: number) =>
     )
   ).rows;
 
+const auditRows = async () =>
+  (
+    await pg.query<{ userId: number; activity: string; entityType: string; entityId: number }>(
+      'SELECT "userId", "activity", "entityType", "entityId" FROM "ModActivity" ORDER BY "id"'
+    )
+  ).rows;
+
+const strike = (userId: number, opts: { status?: string; expiresIn?: string } = {}) =>
+  pg.query(
+    `INSERT INTO "UserStrike" ("userId", "status", "expiresAt")
+     VALUES ($1, $2::"StrikeStatus", CURRENT_TIMESTAMP + $3::interval)`,
+    [userId, opts.status ?? 'Active', opts.expiresIn ?? '30 days']
+  );
+
 const asUser = (id: number) => ({ id, isModerator: false } as SessionUser);
 const submit = (userId: number, whatToBuild: string) =>
   submitAppAccessRequest({ user: asUser(userId), input: { whatToBuild } });
@@ -135,7 +170,7 @@ const decide = (id: number, decision: 'approved' | 'declined') =>
 beforeAll(async () => {
   pg = await PGlite.create();
   await pg.exec(PRELUDE);
-  await pg.exec(readFileSync(MIGRATION, 'utf8'));
+  for (const file of MIGRATIONS) await pg.exec(readFileSync(file, 'utf8'));
 });
 
 afterAll(async () => {
@@ -143,7 +178,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await pg.exec('TRUNCATE "AppAccessRequest", "User" RESTART IDENTITY');
+  await pg.exec(
+    'TRUNCATE "AppAccessRequest", "User", "UserStrike", "ModActivity" RESTART IDENTITY'
+  );
   // Three users whose ids differ, so a statement keyed on the wrong one cannot pass by accident.
   moderator = await seedUser('queue_reviewer');
   mira = await seedUser('mira_builds');
@@ -410,12 +447,12 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
     // The moderator's decline lands after the submit's eligibility read (no declined row yet) and
     // before its approved INSERT: run the real `decide` just ahead of that one statement.
     let injected = false;
-    dbMock.dbWrite.$queryRaw.mockImplementation((async (q: Prisma.Sql) => {
-      if (!injected && q.text.includes(`'approved', CURRENT_TIMESTAMP`)) {
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (q: Prisma.Sql, ...values: unknown[]) => {
+      if (!injected && 'text' in q && q.text.includes(`'approved', CURRENT_TIMESTAMP`)) {
         injected = true;
         await decide(first.id, 'declined');
       }
-      return run(q);
+      return run(q, ...values);
     }) as never);
     refreshSession.mockClear();
 
@@ -438,6 +475,41 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
     const again = await submit(mira, MIRA_IDEA_AGAIN);
     expect(again).toMatchObject({ status: 'pending', reviewedAt: null });
     expect(await isApproved(mira)).toBe(false);
+  });
+
+  it('🔴 an account with an ACTIVE strike stays PENDING, with no audit row and no session refresh', async () => {
+    await strike(mira);
+    flag.on.add(String(mira));
+    const row = await submit(mira, MIRA_IDEA);
+    expect(row).toMatchObject({ status: 'pending', reviewedAt: null });
+    expect(await isApproved(mira)).toBe(false);
+    expect(await auditRows()).toEqual([]);
+    expect(refreshSession).not.toHaveBeenCalled();
+  });
+
+  it('an EXPIRED or VOIDED strike does not block an auto-approval', async () => {
+    await strike(mira, { expiresIn: '-1 day' });
+    await strike(mira, { status: 'Voided' });
+    flag.on.add(String(mira));
+    expect(await submit(mira, MIRA_IDEA)).toMatchObject({ status: 'approved' });
+  });
+
+  it('🔴 an auto-approval writes exactly ONE audit row: system actor, the request, autoApproveAppAccess', async () => {
+    flag.on.add(String(mira));
+    const row = await submit(mira, MIRA_IDEA);
+    expect(await auditRows()).toEqual([
+      {
+        userId: -1,
+        activity: 'autoApproveAppAccess',
+        entityType: 'appAccessRequest',
+        entityId: row.id,
+      },
+    ]);
+    // A moderator's approval is not an automatic one, and a refused submit audits nothing.
+    const t = await submit(tomasz, TOMASZ_IDEA);
+    await decide(t.id, 'approved');
+    await expect(submit(mira, MIRA_IDEA_AGAIN)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(await auditRows()).toHaveLength(1);
   });
 
   it('🔴 already approved (by a moderator or automatically): a submit is the same CONFLICT and writes nothing', async () => {
@@ -485,11 +557,22 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
     await decide(t.id, 'approved');
 
     const { items } = await listAppAccessRequests({ status: 'approved', limit: 50 });
-    expect(items.map((i) => [i.id, i.reviewedById, i.reviewedByUsername])).toEqual([
-      [t.id, moderator, 'queue_reviewer'],
-      [auto.id, null, null],
+    expect(items.map((i) => [i.id, i.reviewedById, i.reviewedByUsername, i.reviewSource])).toEqual([
+      [t.id, moderator, 'queue_reviewer', 'moderator'],
+      [auto.id, null, null, 'system'],
     ]);
     expect(items.every((i) => i.reviewedAt instanceof Date)).toBe(true);
+  });
+
+  it('🔴 a moderator approval whose moderator account is DELETED keeps reviewSource moderator', async () => {
+    const t = await submit(tomasz, TOMASZ_IDEA);
+    await decide(t.id, 'approved');
+    await pg.query('DELETE FROM "User" WHERE "id" = $1', [moderator]);
+
+    const { items } = await listAppAccessRequests({ status: 'approved', limit: 50 });
+    expect(items.map((i) => [i.id, i.reviewedById, i.reviewSource])).toEqual([
+      [t.id, null, 'moderator'],
+    ]);
   });
 
   it('an EMPTY answer is stored as an empty string, pending or approved', async () => {
