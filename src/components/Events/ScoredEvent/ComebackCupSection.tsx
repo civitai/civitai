@@ -97,10 +97,12 @@ export function ComebackCupCard({
           />
         )}
         <div className="relative z-[1]">
-          <p className={flagClasses.title}>Comeback Cup</p>
-          <p className={flagClasses.tag}>
-            Beat your own pace. <b>Win the Cup.</b>
-          </p>
+          <div className={classes.titles}>
+            <p className={flagClasses.title}>Comeback Cup</p>
+            <p className={flagClasses.tag}>
+              Beat your own pace. <b>Win the Cup.</b>
+            </p>
+          </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Badge
               tt="none"

@@ -22,6 +22,14 @@
   }
 }
 
+// On a phone the title and tagline wrap left of the art, and the pills start below it.
+.titles {
+  @container (max-width: 639px) {
+    min-height: 80px;
+    padding-right: 116px;
+  }
+}
+
 .play {
   position: absolute;
   right: 20px;
