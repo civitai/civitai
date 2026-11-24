@@ -343,6 +343,30 @@ describe('withPreferredTagFirst', () => {
     ]);
   });
 
+  it('reads a window wider than a block one block at a time, stopping at the end of the ranking', async () => {
+    const similar = Array.from({ length: 230 }, (_, i) => i + 1);
+    let inFlight = 0;
+    let most = 0;
+    const plainReads: { offset: number; limit: number }[] = [];
+    const source: CandidateSource = async (args) => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight -= 1;
+      if (args.filter.tagIds?.includes(TAG)) return { ids: [230] };
+      plainReads.push({ offset: args.offset, limit: args.limit });
+      return { ids: similar.slice(args.offset, args.offset + args.limit) };
+    };
+    const { ids } = await page(withPreferredTagFirst(source, TAG, 250), 0, 3);
+    expect(ids).toEqual([230, 1, 2]);
+    expect(plainReads).toEqual([
+      { offset: 0, limit: 100 },
+      { offset: 100, limit: 100 },
+      { offset: 200, limit: 50 },
+    ]);
+    expect(most).toBe(1);
+  });
+
   it('leaves a text search alone', async () => {
     const { source, calls } = index([2], [1, 2, 3]);
     await withPreferredTagFirst(
