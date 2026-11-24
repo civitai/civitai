@@ -124,6 +124,20 @@ export async function sendNotice(noticeId: number, deps: SendDeps): Promise<Send
     return 'ceiling';
   }
 
+  // A filed case's notice goes from its process's sender and back to its form's mailbox, so a TAKE IT
+  // DOWN reply in a batch lands where its 48-hour clock is watched. Imported cases have no definition
+  // and keep the configured sender.
+  const sender = await deps.db
+    .selectFrom('case_notice as n')
+    .innerJoin('case_record as c', 'c.id', 'n.case_id')
+    .leftJoin('process_definition_version as v', 'v.id', 'c.definition_version_id')
+    .select([
+      'c.process_key as processKey',
+      sql<string | null>`v.definition->>'mailbox'`.as('mailbox'),
+    ])
+    .where('n.id', '=', noticeId)
+    .executeTakeFirst();
+
   const row = await deps.db
     .updateTable('case_notice')
     .set({ status: 'sending', attempted_at: sql`now()`, error: null })
@@ -160,8 +174,8 @@ export async function sendNotice(noticeId: number, deps: SendDeps): Promise<Send
       () =>
         deps.send({
           to,
-          from: deps.from,
-          replyTo: deps.replyTo,
+          from: sender?.mailbox ? noticeFrom(sender.processKey, deps.from) : deps.from,
+          replyTo: sender?.mailbox || deps.replyTo,
           subject: row.subject_snapshot,
           text: body,
           html: plainToHtml(body),

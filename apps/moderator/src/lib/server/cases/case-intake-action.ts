@@ -12,7 +12,7 @@ import { fileIntakeCase, IntakeRefusedError, isMinorFlagged, submitterRole } fro
 import { checkIntakeValues } from './intake-values';
 import { createIntakeRateLimit } from './intake-rate-limit';
 import { noticeTime, renderNotice } from './notice-render';
-import { defaultSendDeps, hashAddress, noticeFrom, sendNotice, type SendDeps } from './send-notice';
+import { defaultSendDeps, hashAddress, sendNotice, type SendDeps } from './send-notice';
 import { verifyTurnstile } from './turnstile';
 
 /** How long a party's link opens their case. */
@@ -166,11 +166,9 @@ export async function caseIntake(
     deps.background(
       sendNotice(Number(notice.id), {
         ...sendDeps,
-        from: noticeFrom(def.key, sendDeps.from),
         // One notice, outside any batch: there is no run lock to hold.
         holdsLock: async () => true,
         fillBody: (body) => body.split(LINK_TOKEN_PLACEHOLDER).join(token),
-        replyTo: def.mailbox,
       }).then(
         (outcome) => deps.log({ name: 'case-intake-receipt', publicRef, outcome }),
         (e) => recordUnsent(deps.db, filed.caseId, (e as Error)?.name || 'Error')

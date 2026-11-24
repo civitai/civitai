@@ -73,8 +73,8 @@ beforeEach(async () => {
     "INSERT INTO process_definition (key) VALUES ('dmca-notice') RETURNING id"
   );
   const v = await pg.query<{ id: number }>(
-    "INSERT INTO process_definition_version (definition_id, definition, created_by_id) VALUES ($1, '{}', 1) RETURNING id",
-    [d.rows[0].id]
+    'INSERT INTO process_definition_version (definition_id, definition, created_by_id) VALUES ($1, $2, 1) RETURNING id',
+    [d.rows[0].id, JSON.stringify(definition)]
   );
   versionId = Number(v.rows[0].id);
   const main = await freshPglite();
