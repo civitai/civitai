@@ -259,6 +259,8 @@ afterAll(async () => {
 // falls back for a Node that sends a version it does not have.
 const RULES_SOURCE_SHA256: Record<number, string> = {
   1: '27f8827e0fcef8aa29249cc65057f1f4dac0719ce1680d79878483e430b66fad',
+  // 2: trainingDataListings (one read, the decision for this host and for a red-capable one).
+  2: '74438f82a4c2bf886a0322aeccdb259c9a69759f6d45b1e6d355c76153a81946',
 };
 const SERVICE = path.resolve(__dirname, '../training-data-restricted.service.ts');
 const VISIBILITY = path.resolve(__dirname, '../../../shared/utils/training-data-visibility.ts');

@@ -246,6 +246,10 @@ export enum FLIPT_FEATURE_FLAGS {
   CDN_ACCESS_SYNC = 'cdn-access-sync',
   // The weekly missed-notification digest email (`missed-notification-digest` job), evaluated per user.
   MISSED_NOTIFICATION_DIGEST = 'missed-notification-digest',
+  // The "see it on civitai.red" pointer for a training dataset .com refuses for its rating
+  // (`trainingDataPublicView`). Off, missing or unreachable: no pointer, the dataset is absent as
+  // before. BOOLEAN ONLY: evaluated with no entity and no context.
+  TRAINING_DATA_RED_POINTER = 'training-data-red-pointer',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.

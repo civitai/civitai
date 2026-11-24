@@ -1,5 +1,4 @@
-import { useServerDomains } from '~/providers/AppProvider';
-import { useSyncAccount } from '~/hooks/useSyncAccount';
+import { useRedHref } from '~/hooks/useRedHref';
 
 /**
  * Where to send someone whose domain will not serve an image.
@@ -11,14 +10,12 @@ import { useSyncAccount } from '~/hooks/useSyncAccount';
  * the route moves would be whichever one the fixer had open.
  */
 export function useWithheldHref() {
-  const domains = useServerDomains();
-  const syncAccount = useSyncAccount();
+  const redHref = useRedHref();
   /**
    * `search` is opt-in and empty by default: the remix queue has nothing to add,
    * and a param baked in here would ride onto its links too. It goes on before
    * `syncAccount`, whose `stringifyUrl` merges rather than replaces the query,
    * so both params survive the cross-domain hop.
    */
-  return (image: { id: number }, search = '') =>
-    syncAccount(`//${domains.red}/images/${image.id}${search}`);
+  return (image: { id: number }, search = '') => redHref(`/images/${image.id}${search}`);
 }
