@@ -380,6 +380,8 @@ export function sendError(
   endpoint: DocStoreEndpoint = storageEndpointLabel(req)
 ): void {
   if (!(err instanceof DocStoreError)) {
+    // eslint-disable-next-line no-console
+    console.error('PROBE-DIAG route fault', err);
     logToAxiom(
       {
         name: 'app-blocks-doc-store-route-fault',
