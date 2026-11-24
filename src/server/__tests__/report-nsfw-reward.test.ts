@@ -54,7 +54,7 @@ const newSignup = (id: number) => ({
 const file = (user: unknown, details: Record<string, unknown>) =>
   createReportHandler({
     input: { type: ReportEntity.Image, id: 63, reason: ReportReason.NSFW, details },
-    ctx: { user, track: { report: vi.fn() } } as never,
+    ctx: { user, features: {}, track: { report: vi.fn() } } as never,
   });
 
 type StoredReport = {
@@ -98,6 +98,13 @@ const rewardedFor = async (row: StoredReport) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // assertImageReportable's read: an image on no service review.
+  dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+    Promise.resolve(
+      Array.isArray(strings) && strings.join('').includes('"ServiceDealReviewImage"')
+        ? [{ buyerId: 990000001, sellerId: null, visible: null }]
+        : []
+    )) as never);
   dbMock.dbWrite.report.findFirst.mockResolvedValue(null);
   dbMock.dbWrite.report.update.mockResolvedValue({} as never);
 });

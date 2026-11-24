@@ -33,11 +33,18 @@ const olderUnverified = { ...member, emailVerified: null };
 const fileNsfwReport = (user: unknown, type: ReportEntity.Image | ReportEntity.Model) =>
   createReportHandler({
     input: { type, id: 63, reason: ReportReason.NSFW, details: { tags: ['partial nudity'] } },
-    ctx: { user, track: { report: vi.fn() } } as never,
+    ctx: { user, features: {}, track: { report: vi.fn() } } as never,
   });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // assertImageReportable's read: an image on no service review.
+  dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+    Promise.resolve(
+      Array.isArray(strings) && strings.join('').includes('"ServiceDealReviewImage"')
+        ? [{ buyerId: 990000001, sellerId: null, visible: null }]
+        : []
+    )) as never);
   dbMock.dbWrite.report.findFirst.mockResolvedValue(null);
   reportCreate.mockResolvedValue({ id: 74, details: {} });
   // The reported tag rates above the image, so an image report's rating request has work to do.
@@ -130,7 +137,7 @@ describe('another reason from a new signup that has not verified their email', (
         reason: ReportReason.TOSViolation,
         details: { violation: 'Spam' },
       },
-      ctx: { user: newSignup, track: { report: vi.fn() } } as never,
+      ctx: { user: newSignup, features: {}, track: { report: vi.fn() } } as never,
     });
 
     expect(reportCreate).not.toHaveBeenCalled();
@@ -142,7 +149,7 @@ describe('an NSFW article report from a new signup that has not verified their e
   it('is actioned as before', async () => {
     await createReportHandler({
       input: { type: ReportEntity.Article, id: 63, reason: ReportReason.NSFW, details: {} },
-      ctx: { user: newSignup, track: { report: vi.fn() } } as never,
+      ctx: { user: newSignup, features: {}, track: { report: vi.fn() } } as never,
     });
 
     expect(existingReportLookup).not.toHaveBeenCalled();

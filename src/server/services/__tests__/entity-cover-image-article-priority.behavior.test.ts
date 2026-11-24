@@ -35,6 +35,7 @@ beforeAll(async () => {
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text, "nsfwLevel" int DEFAULT 1, width int, height int,
       hash text, "hideMeta" boolean DEFAULT false, meta jsonb, "createdAt" timestamp DEFAULT now(),
