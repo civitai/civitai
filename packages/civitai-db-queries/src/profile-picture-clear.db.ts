@@ -58,6 +58,43 @@ export const ownImageNamedByUserImage = (alias: string, user = 'u') =>
 export const blockMarkerText = (alias: string) =>
   `(${alias}.ingestion::text = 'Blocked' OR ${alias}."nsfwLevel" = 32 OR ${alias}."blockedFor" IS NOT NULL)`;
 
+/**
+ * The cover a song's public player shows, one rule in two forms: the main app's
+ * `getSongCoversForPlayer` filters fetched rows with `isSongsOwnCover` and `isPlayerSongCover`, the
+ * moderator's song card reads `songsOwnCoverText` and `playerSongCoverText`. A cover is the song
+ * owner's own image outside any post, scanned, with no block marker, not held for review and not
+ * flagged as showing a minor. The viewer's browsing level is the caller's to add.
+ */
+export const isSongsOwnCover = (
+  cover: { userId: number; postId: number | null } | null | undefined,
+  song: { userId: number }
+) => !!cover && cover.userId === song.userId && cover.postId == null;
+
+/** `isSongsOwnCover` over `Image` aliased `cover`, for the song aliased `song`. */
+export const songsOwnCoverText = (cover: string, song: string) =>
+  `(${cover}."userId" = ${song}."userId" AND ${cover}."postId" IS NULL)`;
+
+/** Scanned, with no block marker (`blockMarkerText`'s three), not held, not flagged as a minor. */
+export const isPlayerSongCover = (cover: {
+  ingestion: string;
+  nsfwLevel: number;
+  blockedFor: string | null;
+  needsReview: string | null;
+  acceptableMinor: boolean;
+}) =>
+  cover.ingestion === 'Scanned' &&
+  // The rest of the block marker: Scanned already rules out Blocked ingestion.
+  cover.nsfwLevel !== 32 &&
+  cover.blockedFor == null &&
+  cover.needsReview == null &&
+  cover.acceptableMinor === false;
+
+/** `isPlayerSongCover` over `Image` aliased `cover`. */
+export const playerSongCoverText = (cover: string) =>
+  `(${cover}.ingestion::text = 'Scanned' AND NOT ${blockMarkerText(
+    cover
+  )} AND ${cover}."needsReview" IS NULL AND ${cover}."acceptableMinor" = false)`;
+
 const CLEAR_HELD_USER_IMAGES_SQL = `
   WITH held AS (
     SELECT u.id, (u.image IS NOT NULL AND ${userImageNamesPicture('picture')}) AS "namesPicture"

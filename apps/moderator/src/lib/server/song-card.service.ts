@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
-import { blockMarkerText } from '@civitai/db-queries/profile-picture-clear';
+import { playerSongCoverText, songsOwnCoverText } from '@civitai/db-queries/profile-picture-clear';
+import { storedSongDurationSec } from '@civitai/shared';
 import { dbRead } from './db';
 import type { SongCard, SongLyricLine } from '$lib/music/song-card';
 
@@ -34,15 +35,9 @@ export async function getSongCard(imageId: number): Promise<SongCard | null> {
       'l.lines',
       'c.id as coverId',
       'c.url as coverUrl',
-      sql<boolean>`COALESCE(
-        c."userId" = s."userId"
-        AND c."postId" IS NULL
-        AND c.ingestion::text = 'Scanned'
-        AND NOT ${sql.raw(blockMarkerText('c'))}
-        AND c."needsReview" IS NULL
-        AND c."acceptableMinor" = false,
-        false
-      )`.as('coverShown'),
+      sql<boolean>`COALESCE(${sql.raw(songsOwnCoverText('c', 's'))} AND ${sql.raw(
+        playerSongCoverText('c')
+      )}, false)`.as('coverShown'),
     ])
     .where('s.id', '=', imageId)
     .where('s.type', '=', 'audio')
@@ -52,7 +47,7 @@ export async function getSongCard(imageId: number): Promise<SongCard | null> {
     id: row.id,
     url: row.url,
     title: row.title || null,
-    durationSec: typeof row.duration === 'number' && row.duration > 0 ? row.duration : null,
+    durationSec: storedSongDurationSec(row.duration),
     cover:
       row.coverShown && row.coverId != null && row.coverUrl
         ? { id: row.coverId, url: row.coverUrl }

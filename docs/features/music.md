@@ -173,7 +173,8 @@ Image and video cards are unchanged.
   moderator, as audio (`heldMediaContentType` names the audio types); the public CDN refuses it to
   everyone else. From storage nothing loads until play, since every response there is an audit row.
 - **Cover, title and lyrics** come from `/api/song-card/[imageId]` (`song-card.service.ts`). The cover
-  shows only as the public player would show it (`getSongCoversForPlayer`): the owner's own image
+  shows only as the public player would show it (one rule, `isPlayerSongCover` and its SQL form in
+  `@civitai/db-queries/profile-picture-clear`, which `getSongCoversForPlayer` uses too): the owner's own image
   outside any post, scanned, with no block marker, not held for review and not flagged as a minor;
   any other is the placeholder. A song withheld from the moderator is refused, lyrics included.
 - **Image reports** has a "Songs only" filter (`?songs=1`).

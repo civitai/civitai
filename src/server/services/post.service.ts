@@ -121,7 +121,7 @@ import { mediaFromBlobs, type OrchestratorBlobLike } from '~/server/services/blo
 import { Flags } from '~/shared/utils/flags';
 import { hasCompleteSfwFace, imagesForFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
-import { hasBlockMarker } from '~/server/common/image-visibility';
+import { isPlayerSongCover, isSongsOwnCover } from '@civitai/db-queries/profile-picture-clear';
 import {
   getImageIdsVisibleToViewer,
   getVisibleSongIds,
@@ -155,7 +155,6 @@ import {
   CollectionMode,
   CollectionType,
   EntityType,
-  ImageIngestionStatus,
   JobQueueType,
   MediaType,
   Model3DStatus,
@@ -1075,7 +1074,7 @@ async function getSongCovers<S extends Prisma.ImageSelect = typeof songCoverSele
     links.flatMap(({ songId, coverId }) => {
       const song = byId.get(songId);
       const cover = byId.get(coverId);
-      if (!song || !cover || !isSongsOwnImage(cover, song)) return [];
+      if (!song || !cover || !isSongsOwnCover(cover, song)) return [];
       const shown = Object.fromEntries(Object.keys(coverSelect).map((key) => [key, cover[key]]));
       return [[songId, shown as Cover] as const];
     })
@@ -1128,10 +1127,8 @@ export async function getSongCoversForPlayer({
   });
   const covers = await getSongCovers(songs, dbRead, playerCoverSelect);
   return [...covers].flatMap(([songId, cover]) =>
-    cover.ingestion === ImageIngestionStatus.Scanned &&
-    !hasBlockMarker(cover) &&
-    cover.needsReview == null &&
-    cover.acceptableMinor === false &&
+    // The rule the moderator's song card reads too; the browsing level is the public player's own.
+    isPlayerSongCover(cover) &&
     canViewImageMedia(ctx, { nsfwLevel: cover.nsfwLevel, user: { id: cover.userId } })
       ? [{ songId, id: cover.id, url: cover.url, hash: cover.hash, nsfwLevel: cover.nsfwLevel }]
       : []
@@ -2351,14 +2348,6 @@ export const updatePostImage = async ({ title, allowRemix, ...image }: UpdatePos
   enqueueImageIngestion({ images: requeued, name: 'post-image-ingest', userId: result.userId });
 };
 
-/** A song's cover is its owner's own image, outside any post: only such a linked row is shown. */
-function isSongsOwnImage(
-  row: { userId: number; postId: number | null } | null | undefined,
-  song: { userId: number }
-) {
-  return !!row && row.userId === song.userId && row.postId == null;
-}
-
 /**
  * A cover row made for this song: its own image naming the song as its parent. Only such a row is
  * reused by a retried save or deleted when it is replaced.
@@ -2368,7 +2357,7 @@ function isCoverOfSong(
   song: { id: number; userId: number }
 ) {
   return (
-    isSongsOwnImage(row, song) &&
+    isSongsOwnCover(row, song) &&
     (row?.metadata as { parentId?: unknown } | null)?.parentId === song.id
   );
 }

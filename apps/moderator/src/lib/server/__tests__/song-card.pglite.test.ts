@@ -24,6 +24,9 @@ vi.mock('../db', () => ({
 }));
 
 const { getSongCard } = await import('../song-card.service');
+const { isPlayerSongCover, isSongsOwnCover } = await import(
+  '@civitai/db-queries/profile-picture-clear'
+);
 
 const OWNER = 7;
 const SCHEMA = `
@@ -60,6 +63,7 @@ beforeAll(async () => {
     INSERT INTO "Image" (id, url, type, "userId", metadata) VALUES
       ${COVERS.map(([song]) => `(${song}, 'song-${song}', 'audio', ${OWNER}, NULL)`).join(', ')},
       (20, 'song-20', 'audio', ${OWNER}, '{"title": "Night drive", "duration": 183.4}'),
+      (21, 'song-21', 'audio', ${OWNER}, '{"duration": "183"}'),
       (30, 'picture-30', 'image', ${OWNER}, '{"title": "Not a song"}');
     INSERT INTO "Track" ("imageId", "coverImageId") VALUES
       ${COVERS.map(([song], i) => `(${song}, ${101 + i})`).join(', ')};
@@ -85,6 +89,29 @@ describe('getSongCard', () => {
     }
   });
 
+  // One rule in two forms: the main app's getSongCoversForPlayer filters fetched rows with the TS
+  // form, this card's SQL uses the text form.
+  it('shows a cover exactly where the TS form of the public-player rule does', async () => {
+    const { rows } = await db.query<{
+      id: number;
+      userId: number;
+      postId: number | null;
+      ingestion: string;
+      nsfwLevel: number;
+      blockedFor: string | null;
+      needsReview: string | null;
+      acceptableMinor: boolean;
+    }>(`SELECT * FROM "Image" WHERE id > 100 ORDER BY id`);
+    for (const cover of rows) {
+      const song = { userId: OWNER };
+      const card = await getSongCard(cover.id - 100);
+      expect({ id: cover.id, shown: card?.cover != null }).toEqual({
+        id: cover.id,
+        shown: isSongsOwnCover(cover, song) && isPlayerSongCover(cover),
+      });
+    }
+  });
+
   it("reads the song's title, length and lyric lines, a line's time in ms or null", async () => {
     expect(await getSongCard(20)).toEqual({
       id: 20,
@@ -98,6 +125,10 @@ describe('getSongCard', () => {
         { t: null, text: 'untimed' },
       ],
     });
+  });
+
+  it('reads no length from a stored duration that is not a positive number', async () => {
+    expect(await getSongCard(21)).toMatchObject({ title: null, durationSec: null });
   });
 
   it('answers nothing for an image that is not a song, or no image at all', async () => {
