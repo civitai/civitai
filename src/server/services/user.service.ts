@@ -374,15 +374,17 @@ export async function getUsersWithSearch({
     throw err;
   }
 
-  return results.hits
-    .filter((x) => !x.deletedAt)
-    .map(({ deletedAt, profilePicture, image: _legacyImage, ...user }) => ({
-      ...user,
-      avatarUrl: profilePicture?.url,
-      avatarNsfw: profilePicture?.nsfwLevel ?? 0,
-      meta: null,
-    }))
-    .slice(0, limit);
+  return (
+    results.hits
+      .filter((x) => !x.deletedAt)
+      .map(({ deletedAt, profilePicture, image: _legacyImage, ...user }) => ({
+        ...user,
+        avatarUrl: profilePicture?.url,
+        avatarNsfw: profilePicture?.nsfwLevel ?? 0,
+        meta: null,
+      }))
+      .slice(0, limit)
+  );
 }
 
 type GetUsersRow = {

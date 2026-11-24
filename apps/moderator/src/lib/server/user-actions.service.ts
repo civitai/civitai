@@ -2572,7 +2572,6 @@ export async function getMemorialPanelState(userId: number): Promise<MemorialPan
   };
 }
 
-/** The evidence note is not sent: the page action writes it as a moderator note, never on the account row. */
 export async function proposeMemorial(input: {
   userId: number;
   basis: MemorialBasis;

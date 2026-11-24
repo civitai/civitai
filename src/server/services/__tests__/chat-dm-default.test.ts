@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { env } from '~/env/server';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
@@ -85,6 +85,31 @@ const route = async () => {
 beforeEach(() => {
   getUserSettings.mockReset();
   getFeatureFlagsLazy.mockReset();
+});
+
+describe('resolveChatRecipients: a memorialized recipient', () => {
+  const OTHER = 30;
+  afterEach(() => dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never));
+
+  it('is dropped from a new chat, moderators included, and the others stay', async () => {
+    setup({ dmPolicy: 'everyone' });
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      strings.join('').includes('flags &')
+        ? (values.flat() as number[]).filter((id) => id === RECIPIENT).map((id) => ({ id }))
+        : []) as never);
+    for (const isModerator of [false, true]) {
+      const { allowed } = await resolveChatRecipients({
+        userId: SENDER,
+        recipientIds: [RECIPIENT, OTHER],
+        isModerator,
+      });
+      expect(allowed).not.toContain(RECIPIENT);
+      expect(allowed).toContain(OTHER);
+    }
+  });
 });
 
 describe('resolveChatRecipients: no saved DM policy', () => {

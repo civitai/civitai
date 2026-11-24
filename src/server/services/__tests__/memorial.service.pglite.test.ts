@@ -135,11 +135,11 @@ describe('memorialization (docs/features/memorialized-profiles.md)', () => {
   });
 
   it.each([
-    ['banned', 'UPDATE "User" SET "bannedAt" = now() WHERE id = $1'],
-    ['deleted', 'UPDATE "User" SET "deletedAt" = now() WHERE id = $1'],
-  ])('refuses to propose for a %s account', async (_, sql) => {
+    ['banned', 'UPDATE "User" SET "bannedAt" = now() WHERE id = $1', /banned account/],
+    ['deleted', 'UPDATE "User" SET "deletedAt" = now() WHERE id = $1', /is deleted/],
+  ])('refuses to propose for a %s account', async (_, sql, refusal) => {
     await pg.query(sql, [USER]);
-    await expect(propose()).rejects.toThrow();
+    await expect(propose()).rejects.toThrow(refusal);
     expect((await row()).meta).not.toHaveProperty('memorial');
   });
 
@@ -155,7 +155,7 @@ describe('memorialization (docs/features/memorialized-profiles.md)', () => {
     await expect(reverse()).rejects.toThrow(/not memorialized/);
   });
 
-  it('drops a memorialized account from new chats and refuses its deletion', async () => {
+  it('finds memorialized ids among others, and refuses a memorialized account at the delete check', async () => {
     await pg.query('INSERT INTO "User" (id, username) VALUES ($1, $2)', [USER + 1, 'alive']);
     await propose();
     await confirm(CONFIRMER);

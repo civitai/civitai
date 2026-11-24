@@ -341,8 +341,13 @@ describe('createBuzzTipTransactionHandler — block gate', () => {
 
   describe('a memorialized recipient refuses the whole tip', () => {
     const memorialize = (...ids: number[]) =>
-      dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
-        strings.join('').includes('flags &') ? ids.map((id) => ({ id })) : []) as never);
+      dbMock.dbWrite.$queryRaw.mockImplementation((async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) =>
+        strings.join('').includes('flags &')
+          ? (values.flat() as number[]).filter((id) => ids.includes(id)).map((id) => ({ id }))
+          : []) as never);
     afterEach(() => dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never));
     const post = { entityType: 'Post' as const, entityId: 7 };
     const refusal = 'One or more target users are memorialized and cannot receive tips.';
