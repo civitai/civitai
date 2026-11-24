@@ -197,26 +197,42 @@ describe('the reported image queue under ?agents=', () => {
 });
 
 describe('the reported image queue, songs only', () => {
+  // Songs 106, 108 and 109 among the images 100-105 and a video, so a one-item page that filtered
+  // after the limit would come back empty or with an image.
   beforeEach(async () => {
     await db.exec(`
-      INSERT INTO "Image" ("id", "type") VALUES (106, 'audio'), (107, 'video');
-      INSERT INTO "Report" ("id", "userId") VALUES (16, ${HUMAN}), (17, ${HUMAN});
-      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (106, 16), (107, 17);
+      INSERT INTO "Image" ("id", "type") VALUES (106, 'audio'), (107, 'video'), (108, 'audio'), (109, 'audio');
+      INSERT INTO "Report" ("id", "userId") VALUES
+        (16, ${HUMAN}), (17, ${HUMAN}), (18, ${HUMAN}), (19, ${HUMAN});
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (106, 16), (107, 17), (108, 18), (109, 19);
     `);
   });
 
-  it('lists only the reports on songs, and the cursor ends where they end', async () => {
-    const { items, nextCursor } = await getReportedImageQueue({
-      browsingLevel: 31,
-      limit: 10,
-      songsOnly: true,
-    });
-    expect(items.map((i) => [i.id, i.type])).toEqual([[106, 'audio']]);
-    expect(nextCursor).toBeUndefined();
+  it('pages through only the reports on songs, one a page, ending where they end', async () => {
+    const pages: [number[], number | undefined][] = [];
+    let cursor: number | undefined;
+    for (let i = 0; i < 10; i++) {
+      const { items, nextCursor } = await getReportedImageQueue({
+        browsingLevel: 31,
+        cursor,
+        limit: 1,
+        songsOnly: true,
+      });
+      pages.push([items.map((it) => it.id), nextCursor]);
+      if (!nextCursor) break;
+      cursor = nextCursor;
+    }
+    expect(pages).toEqual([
+      [[106], 16],
+      [[108], 18],
+      [[109], undefined],
+    ]);
   });
 
   it('lists every report without it, images and videos included', async () => {
-    const { items } = await getReportedImageQueue({ browsingLevel: 31, limit: 10 });
-    expect(items.map((i) => i.id)).toEqual([100, 101, 102, 103, 104, 105, 106, 107]);
+    const { items } = await getReportedImageQueue({ browsingLevel: 31, limit: 2 });
+    expect(items.map((i) => i.id)).toEqual([100, 101]);
+    const all = await getReportedImageQueue({ browsingLevel: 31, limit: 20 });
+    expect(all.items.map((i) => i.id)).toEqual([100, 101, 102, 103, 104, 105, 106, 107, 108, 109]);
   });
 });

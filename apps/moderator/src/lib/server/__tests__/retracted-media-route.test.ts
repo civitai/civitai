@@ -222,7 +222,32 @@ describe('/api/retracted-media, a removed song', () => {
     const { status, res } = await call({ headers: { range: 'bytes=1-' } });
     expect(status).toBe(206);
     expect(res!.headers.get('content-type')).toBe('audio/mpeg');
+    // The seek bar works only on a ranged answer the browser can read as one.
+    expect(res!.headers.get('content-range')).toBe('bytes 1-4/5');
+    expect(res!.headers.get('accept-ranges')).toBe('bytes');
     expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({ range: 'bytes=1-' });
+  });
+
+  it('plays a held song for a moderator with the CSAM grant, as audio, audited as a held view', async () => {
+    grants.paths = new Set(['/images/csam']);
+    getModeratorMedia.mockResolvedValue({
+      url: KEY,
+      type: 'audio',
+      mimeType: 'audio/mpeg',
+      kind: 'held',
+    });
+    fetchMock.mockResolvedValue(
+      new Response('bytes', {
+        status: 200,
+        headers: { 'content-type': 'binary/octet-stream', 'content-length': '5' },
+      })
+    );
+    const { status, res } = await call();
+    expect(status).toBe(200);
+    expect(res!.headers.get('content-type')).toBe('audio/mpeg');
+    expect(res!.headers.get('accept-ranges')).toBe('bytes');
+    expect(recordHeldView).toHaveBeenCalledWith(42, 7, 'web');
+    expect(recordRetractedView).not.toHaveBeenCalled();
   });
 
   it('plays for nobody else: no session, no song', async () => {

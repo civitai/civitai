@@ -108,19 +108,40 @@ describe("a moderator's rating", () => {
     }
   });
 
-  it('refuses a song that changed between its read and the write, saying so', async () => {
-    // The write matches no row, as when a rescan started since the read.
-    await db.exec(`
-      CREATE FUNCTION skip_write() RETURNS trigger AS $$ BEGIN RETURN NULL; END $$ LANGUAGE plpgsql;
-      CREATE TRIGGER skip_write BEFORE UPDATE ON "Image" FOR EACH ROW EXECUTE FUNCTION skip_write();
-    `);
+  it('refuses a song a rescan returned to Pending between the read and the write', async () => {
+    // Another writer commits between this writer's read and its UPDATE: the read saw Scanned.
+    let raced = false;
+    const racing = new Proxy(db, {
+      get(target, key) {
+        if (key === 'query')
+          return async (text: string, params?: unknown[]) => {
+            if (!raced && /^update "Image"/i.test(text.trim())) {
+              raced = true;
+              await target.query(`UPDATE "Image" SET "ingestion" = 'Pending' WHERE id = $1`, [
+                REVIEWED_SONG,
+              ]);
+            }
+            return target.query(text, params);
+          };
+        const value = Reflect.get(target, key);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const before = dbHandle.current;
+    dbHandle.current = new Kysely({ dialect: pgliteDialect(racing) });
     try {
       const refusal = updateImageNsfwLevel({ id: REVIEWED_SONG, nsfwLevel: 8, userId: 1 });
       await expect(refusal).rejects.toBeInstanceOf(SongRatingRefusedError);
       await expect(refusal).rejects.toThrow('This song changed while it was being rated. Reload.');
     } finally {
-      await db.exec(`DROP TRIGGER skip_write ON "Image"; DROP FUNCTION skip_write();`);
+      dbHandle.current = before;
     }
+    expect(raced).toBe(true);
+    expect(await row(REVIEWED_SONG)).toEqual({
+      nsfwLevel: 1,
+      nsfwLevelLocked: false,
+      metadata: {},
+    });
   });
 
   it('rates a song its own scans already reviewed, as it rates a picture', async () => {
