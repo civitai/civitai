@@ -442,7 +442,7 @@
                 },
                 "write": {
                   "type": "string",
-                  "description": "Shared collections only, and REQUIRED on them. Who may create, update and delete documents. \"own\": eligible signed-in viewers create documents, and only a document's author updates or deletes it. \"none\" is DEPRECATED: civitai.com refuses it on a collection that the app's previous approved version did not already declare with \"none\"; use \"own\" with `keyedBy` instead. \"anyone\": eligible signed-in viewers may update or delete any document — RESERVED: civitai.com refuses \"anyone\" until it is enabled. \"none\": nobody creates, updates or deletes documents — viewers may only increment the declared `counters` and set the declared `marks`, and incrementing a counter on a document that does not exist creates an empty one authored by no viewer; a \"none\" collection must declare at least one counter or mark. \"owner\": only the app owner writes documents; viewers can still mark and count. Only \"own\" and \"anyone\" require the `apps:storage:publish` scope. RESERVED: civitai.com refuses \"owner\" until owner-written documents are enabled. Available today: \"own\" and \"none\".",
+                  "description": "Shared collections only, and REQUIRED on them. Who may create, update and delete documents. \"own\": eligible signed-in viewers create documents, and only a document's author updates or deletes it. \"anyone\": eligible signed-in viewers may update or delete any document — RESERVED: civitai.com refuses \"anyone\" until it is enabled. \"none\" is DEPRECATED: civitai.com refuses it on a collection that the app's previous approved version did not already declare with \"none\", and a collection that already declares it may keep it until its data is migrated. Use \"own\" with `keyedBy` (a viewer-keyed collection) instead. With \"none\", nobody creates, updates or deletes documents — viewers may only increment the declared `counters` and set the declared `marks`, and incrementing a counter on a document that does not exist creates an empty one authored by no viewer; a \"none\" collection must declare at least one counter or mark. \"owner\": only the app owner writes documents; viewers can still mark and count. Only \"own\" and \"anyone\" require the `apps:storage:publish` scope. RESERVED: civitai.com refuses \"owner\" until owner-written documents are enabled. Available today: \"own\" (and \"none\" only where already declared, as above).",
                   "enum": ["own", "anyone", "owner", "none"]
                 },
                 "counters": {
@@ -549,21 +549,6 @@
                 }
               },
               "allOf": [
-                {
-                  "$comment": "Annotation only, validates nothing: the \"none\" write policy is deprecated (with counters and marks) in favour of viewer-keyed documents.",
-                  "if": {
-                    "required": ["write"],
-                    "properties": { "write": { "const": "none" } }
-                  },
-                  "then": {
-                    "properties": {
-                      "write": {
-                        "deprecated": true,
-                        "description": "DEPRECATED — write \"none\" (a collection written only through counters and marks) is refused on a collection the app's previous approved version did not already declare with it. Use a viewer-keyed collection instead: write \"own\" with `keyedBy` \"viewer\" or \"parent+viewer\"."
-                      }
-                    }
-                  }
-                },
                 {
                   "$comment": "No document body is ever written in a write:\"none\" collection, so a schema there would check nothing and a migration would migrate nothing.",
                   "if": {

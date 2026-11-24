@@ -278,9 +278,9 @@ the report API (`POST /api/v1/blocks/moderation/reports`).
   with `Deprecation` and `Link` (`LEGACY_TALLY_HEADERS`, `isDeprecatedRequest` in
   `doc-store-api.ts`), on refusals and 405s too. No `Sunset`: removal waits for measured usage to
   reach zero (step 5). CORS exposes both (`BLOCK_CORS_EXPOSE_HEADERS`).
-- **Schema:** `public/schemas/app-block/v1.json` marks `counters`, `marks` and the `none` write
-  policy `deprecated` (annotations only; what validates is unchanged, pinned in
-  `manifest-storage.schema-drift.test.ts`).
+- **Schema:** `public/schemas/app-block/v1.json` marks `counters` and `marks` `deprecated`
+  (annotations only; what validates is unchanged, pinned in `manifest-storage.schema-drift.test.ts`),
+  and the `write` description calls `none` deprecated (`deprecated` cannot mark one enum value).
 
 ## Feature flag
 

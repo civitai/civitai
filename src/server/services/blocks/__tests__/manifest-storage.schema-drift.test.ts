@@ -774,7 +774,7 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
   // docs/app-storage-generic-core.md, "Manifest, schema majors and the SDK": the tally primitives
   // are marked deprecated in the published schema WITHOUT changing what validates (approved
   // manifests keep them; submit refuses a new one, `deprecatedPrimitiveErrors`).
-  it('marks counters, marks and write "none" deprecated, as annotations only', () => {
+  it('marks counters and marks deprecated (and write "none" in its description), as annotations only', () => {
     const collections = (storageSchema.properties as Record<string, SchemaObject>).collections;
     const collection = Object.values(
       collections.patternProperties as Record<string, SchemaObject>
@@ -784,22 +784,14 @@ describe('app-block v1 schema ⇄ storage parser drift guard', () => {
       expect(p[field].deprecated, field).toBe(true);
       expect(String(p[field].description), field).toMatch(/^DEPRECATED — use a viewer-keyed/);
     }
-    // Not the whole `write` property: "own" is not deprecated. The one clause selecting "none".
+    // Not the whole `write` property: "own" is not deprecated, so `none` is deprecated in the
+    // description only (`deprecated` cannot sit on one enum value), and the description must not
+    // also offer it as available.
     expect(p.write.deprecated).toBeUndefined();
-    const noneClauses = (collection.allOf as SchemaObject[]).filter(
-      (c) =>
-        (c.then as SchemaObject | undefined)?.properties !== undefined &&
-        ((c.then as SchemaObject).properties as Record<string, SchemaObject>).write !== undefined
-    );
-    expect(noneClauses).toHaveLength(1);
-    const [clause] = noneClauses;
-    expect(clause.if).toEqual({ required: ['write'], properties: { write: { const: 'none' } } });
-    const writeAnnotation = (
-      (clause.then as SchemaObject).properties as Record<string, SchemaObject>
-    ).write;
-    // Annotation keys only: a validating keyword here would change which manifests the schema accepts.
-    expect(Object.keys(writeAnnotation).sort()).toEqual(['deprecated', 'description']);
-    expect(writeAnnotation.deprecated).toBe(true);
+    const write = String(p.write.description);
+    expect(write).toContain('"none" is DEPRECATED');
+    expect(write).toContain('Use "own" with `keyedBy` (a viewer-keyed collection) instead.');
+    expect(write).not.toContain('Available today: "own" and "none".');
     // Still accepted by the schema (and the parser, with every feature on, as on replay).
     for (const storage of [
       one({ visibility: 'shared', write: 'none', counters: ['plays'] }),
