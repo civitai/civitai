@@ -431,3 +431,16 @@ describe('applyGenerationData: MOSS Image turbo LoRA remix', () => {
     expect(store.getField('turboLora')?.value).toMatchObject({ id: 3413516, strength: 0.7 });
   });
 });
+
+// `Heun` is no family's default, so a fall-back-to-default cannot satisfy this.
+describe('applyGenerationData: SD sampler names on Comfy-named families', () => {
+  it.each(['MossImage', 'Anima', 'ZImageBase'])('%s keeps a remixed SD sampler', (ecosystem) => {
+    const store = makeStore();
+    applyGenerationData(store, {
+      runType: 'remix',
+      params: { workflow: 'txt2img', ecosystem, prompt: 'p', sampler: 'Heun' },
+      resources: [],
+    } satisfies Payload);
+    expect(store.getField('sampler')?.value).toBe('heun');
+  });
+});

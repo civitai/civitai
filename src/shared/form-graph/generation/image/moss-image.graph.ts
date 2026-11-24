@@ -1,6 +1,6 @@
 import { defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { SDXL_FULL_AR, SEED, selectDef } from '../defs';
+import { SDXL_FULL_AR, SEED, comfySamplerAliases, selectDef } from '../defs';
 import { familyScope, makeTextBlock, versionModeOf, type FamilyExt } from '../shared';
 import { comfyResourceBlock } from '../turbo';
 
@@ -44,7 +44,10 @@ export const mossImage = defineGraph<FamilyExt>({ scope: familyScope })
       turbo: { lora: 3411385 },
     })
   )
-  .field('sampler', selectDef({ options: mossImageSamplers, default: 'er_sde' }))
+  .field(
+    'sampler',
+    selectDef({ options: mossImageSamplers, default: 'er_sde', aliases: comfySamplerAliases })
+  )
   .field('scheduler', selectDef({ options: mossImageSchedules, default: 'simple' }))
   .field('aspectRatio', SDXL_FULL_AR)
   .field('seed', SEED)

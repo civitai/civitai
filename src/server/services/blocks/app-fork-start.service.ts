@@ -166,6 +166,8 @@ export async function buildForkSeedZip(
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: FORK_SOURCE_UNREADABLE_MESSAGE });
   }
   prefillParentStorageImports(manifest);
+  // After the prefill: the import still reaches every exportable PARENT collection, tallies included.
+  stripDeprecatedStoragePrimitives(manifest);
   manifest.blockId = forkSlug;
   // The parent's source-repository link is the PARENT's, not the fork's: left in, the fork's store
   // page would show the parent author's repository as its "Source".
@@ -267,6 +269,37 @@ export function prefillParentStorageImports(manifest: Record<string, unknown>): 
     justifications[APP_STORAGE_IMPORT_SCOPE] = defaultForkImportJustification(parentName);
   }
   manifest.scopeJustifications = justifications;
+}
+
+/**
+ * Remove the deprecated tally primitives from a fork's OWN collections, in place
+ * (docs/app-storage-generic-core.md, rollout step 3). A fork's first submit has no previous approved
+ * version, so submit refuses any `marks`, `counters` or `write: "none"` it declares
+ * (`deprecatedPrimitiveErrors`); a seed copied as-is from a parent that still declares them could
+ * never be submitted unedited. So: `marks` and `counters` go from every collection, and a collection
+ * with `write: "none"` goes whole (it held nothing but counters and marks). Everything else (schemas,
+ * indexes, the imports prefill) is kept. A `collections` left empty is removed, and a `storage` left
+ * with neither collections nor imports too, since the schema requires at least one of them.
+ */
+export function stripDeprecatedStoragePrimitives(manifest: Record<string, unknown>): void {
+  const storage = manifest.storage;
+  if (!storage || typeof storage !== 'object' || Array.isArray(storage)) return;
+  const store = storage as Record<string, unknown>;
+  const collections = store.collections;
+  if (!collections || typeof collections !== 'object' || Array.isArray(collections)) return;
+  const kept: Record<string, unknown> = {};
+  for (const [name, decl] of Object.entries(collections as Record<string, unknown>)) {
+    if (!decl || typeof decl !== 'object' || Array.isArray(decl)) {
+      kept[name] = decl;
+      continue;
+    }
+    const { marks: _marks, counters: _counters, ...rest } = decl as Record<string, unknown>;
+    if (rest.write === 'none') continue;
+    kept[name] = rest;
+  }
+  if (Object.keys(kept).length > 0) store.collections = kept;
+  else delete store.collections;
+  if (store.collections === undefined && store.imports === undefined) delete manifest.storage;
 }
 
 /** The sandbox service's cap on a seed's uncompressed size (`SEED_MAX_UNCOMPRESSED_BYTES`). */

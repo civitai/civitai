@@ -135,17 +135,17 @@ const orchestratorMiddlewareFor = (options?: { allowRestricted: boolean }) =>
     const user = ctx.user;
     if (!user) throw throwAuthorizationError();
     const token = await getOrchestratorToken(user.id, ctx, options);
-    const allowMatureContent = ctx.domain === 'green' || !user.showNsfw ? false : undefined;
+    // Domain only: the viewer's mature-content setting must not withhold or block their own generations.
+    const allowMatureContent = ctx.domain === 'green' ? false : undefined;
     return next({
       ctx: {
         ...ctx,
         user,
         token,
         allowMatureContent,
-        hideMatureContent: ctx.domain === 'green' || !user.showNsfw,
+        hideMatureContent: ctx.domain === 'green',
       },
     });
-    // return next({ ctx: { ...ctx, user, token, allowMatureContent: ctx.features.isBlue } });
   });
 const orchestratorMiddleware = orchestratorMiddlewareFor();
 
@@ -326,7 +326,7 @@ export const orchestratorRouter = router({
       const result = await updateWorkflow({
         ...input,
         token: ctx.token,
-        viewer: { domain: ctx.domain, showNsfw: !!ctx.user.showNsfw },
+        viewer: { domain: ctx.domain },
       });
       // Bust so a refetch within the TTL doesn't revert the update. Owner is
       // ctx.user.id (own token).
