@@ -6,6 +6,7 @@ import { parseKnightsSourcesConfig } from '@civitai/shared/new-order';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
 import {
   knightsSampleDraw,
+  offerLeftPrivateImagesToKnights,
   runKnightsPublishSampling,
   sampleNewlyLivePostsForKnights,
   type PublishSampleCursor,
@@ -53,13 +54,17 @@ const range = (from: number, count: number) => Array.from({ length: count }, (_,
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(
-    `CREATE TABLE "Post" (id integer PRIMARY KEY, "publishedAt" timestamp, availability text NOT NULL DEFAULT 'Public');
+    `CREATE TABLE "Post" (id integer PRIMARY KEY, "publishedAt" timestamp, availability text NOT NULL DEFAULT 'Public', "modelVersionId" integer);
      CREATE TABLE "Image" (
        id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
        type text NOT NULL DEFAULT 'image', "nsfwLevel" integer NOT NULL DEFAULT 1,
        ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "postId" integer,
        poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
-       "userId" integer NOT NULL DEFAULT 1
+       "userId" integer NOT NULL DEFAULT 1, "nsfwLevelLocked" boolean NOT NULL DEFAULT false
+     );
+     CREATE TABLE "ImageRatingRequest" (
+       "imageId" integer NOT NULL, "userId" integer NOT NULL, "nsfwLevel" integer NOT NULL,
+       PRIMARY KEY ("imageId", "userId")
      );`
   );
   await pg.exec(
@@ -78,7 +83,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await pg.exec(`DELETE FROM "KnightsQueueItem"; DELETE FROM "Image"; DELETE FROM "Post";`);
+  await pg.exec(
+    `DELETE FROM "KnightsQueueItem"; DELETE FROM "ImageRatingRequest"; DELETE FROM "Image"; DELETE FROM "Post";`
+  );
 });
 
 describe('knightsSampleDraw', () => {
@@ -363,6 +370,132 @@ describe('runKnightsPublishSampling', () => {
       ...on,
     });
     expect(on.saved).toEqual([{ publishedAt: minutesAgo(1), postId: 0 }]);
+    expect((await queued()).map((i) => i.imageId)).toEqual([11]);
+  });
+});
+
+describe('offerLeftPrivateImagesToKnights', () => {
+  const offer = (
+    scope: Parameters<typeof offerLeftPrivateImagesToKnights>[1]['scope'],
+    fields: Record<string, unknown> = { sfwRate: 1, nsfwRate: 1 }
+  ) => offerLeftPrivateImagesToKnights(db, { scope, now: NOW, config: config(fields) });
+  const ownerRating = (imageId: number, userId = 1) =>
+    pg.query(
+      `INSERT INTO "ImageRatingRequest" ("imageId", "userId", "nsfwLevel") VALUES ($1, $2, 4)`,
+      [imageId, userId]
+    );
+
+  it('samples, once, the images of a post that became public', async () => {
+    await post(1, minutesAgo(300));
+    await images(1, [11]);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 1`);
+    const sweep = (cursor: PublishSampleCursor | null) =>
+      sampleNewlyLivePostsForKnights(db, { cursor, now: NOW, config: config({ sfwRate: 1 }) });
+
+    // Within the sweep's lookback, so it reads the post, and skips it while Private.
+    const first = await sweep(null);
+    expect(first.posts).toBe(1);
+    await pg.query(`UPDATE "Post" SET availability = 'Public' WHERE id = 1`);
+    await sweep(first.cursor);
+    expect(await queued()).toEqual([]);
+
+    expect(await offer({ postIds: [1] })).toEqual({ ownerRatings: 0, enqueued: 1, capped: false });
+    expect(await offer({ postIds: [1] })).toEqual({ ownerRatings: 0, enqueued: 0, capped: false });
+    expect(await queued()).toEqual([
+      { imageId: 11, source: 'scan-sample', priority: 1, status: 'Open' },
+    ]);
+  });
+
+  it("draws each image against its pool's rate, as the sweep does", async () => {
+    const ids = range(1, 200);
+    const below = ids.find((id) => knightsSampleDraw(id) < 0.5) as number;
+    const above = ids.find((id) => knightsSampleDraw(id) >= 0.5) as number;
+    await post(1, minutesAgo(300));
+    await images(1, [below, above]);
+
+    await offer({ postIds: [1] }, { sfwRate: 0.5 });
+
+    expect((await queued()).map((i) => i.imageId)).toEqual([below]);
+  });
+
+  it('offers nothing while the post is still Private, and only the images named by an image scope', async () => {
+    await post(1, minutesAgo(300));
+    await post(2, minutesAgo(300));
+    await images(1, [11]);
+    await images(2, [21, 22]);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 1`);
+    await ownerRating(11);
+
+    expect(await offer({ postIds: [1] })).toEqual({ ownerRatings: 0, enqueued: 0, capped: false });
+    await offer({ imageIds: [22] });
+
+    expect((await queued()).map((i) => i.imageId)).toEqual([22]);
+  });
+
+  it("offers the images of a model version's posts by version", async () => {
+    await post(1, minutesAgo(300));
+    await post(2, minutesAgo(300));
+    await images(1, [11]);
+    await images(2, [21]);
+    await pg.query(`UPDATE "Post" SET "modelVersionId" = 9 WHERE id = 1`);
+
+    await offer({ modelVersionIds: [9] });
+
+    expect((await queued()).map((i) => i.imageId)).toEqual([11]);
+  });
+
+  it('reads a version with more posts than one page, and stops once more are due than fit', async () => {
+    await pg.query(
+      `INSERT INTO "Post" (id, "publishedAt", "modelVersionId") SELECT g, $1, 9 FROM generate_series(1, 201) AS g`,
+      [ts(minutesAgo(300))]
+    );
+    await pg.query(
+      `INSERT INTO "Image" (id, "postId") SELECT g, g FROM generate_series(1, 201) AS g`
+    );
+
+    const capped = await offer({ modelVersionIds: [9] }, { sfwRate: 1, nsfwRate: 1, maxOpen: 3 });
+    expect(capped).toEqual({ ownerRatings: 0, enqueued: 3, capped: true });
+    expect((await queued()).map((i) => i.imageId)).toEqual([1, 2, 3]);
+
+    const all = await offer({ modelVersionIds: [9] }, { sfwRate: 1, nsfwRate: 1, maxOpen: 10_000 });
+    expect(all).toEqual({ ownerRatings: 0, enqueued: 198, capped: false });
+    expect((await queued()).map((i) => i.imageId)).toEqual(range(1, 201));
+  });
+
+  it("queues the owner's rating as an owner rating, ahead of the draw, unless the image ever had an item or its level is locked", async () => {
+    await post(1, minutesAgo(300));
+    await images(1, [11, 12, 13, 14]);
+    await ownerRating(11);
+    await ownerRating(12, 2); // not the owner's
+    await ownerRating(13);
+    await ownerRating(14);
+    await pg.query(`UPDATE "Image" SET "nsfwLevelLocked" = true WHERE id = 14`);
+    await pg.query(
+      `INSERT INTO "KnightsQueueItem" ("questionKey", "imageId", source, "minRank", "votesNeeded", priority, status, "createdAt", "updatedAt")
+       VALUES ('knights.image.nsfwLevel', 13, 'owner-rating', 'Knight', 3, 1, 'Applied', now(), now())`
+    );
+
+    const result = await offer({ postIds: [1] }, { sfwRate: 0, nsfwRate: 0 });
+
+    expect(result).toEqual({ ownerRatings: 1, enqueued: 0, capped: false });
+    expect(await queued()).toEqual([
+      { imageId: 11, source: 'owner-rating', priority: 1, status: 'Open' },
+      { imageId: 13, source: 'owner-rating', priority: 1, status: 'Applied' },
+    ]);
+  });
+
+  it('queues no owner rating for an image Knights may not show: blocked, a minor, or not yet scanned', async () => {
+    await post(1, minutesAgo(300));
+    await images(1, [11, 12, 13]);
+    await images(1, [14], { ingestion: 'Pending' });
+    await pg.query(`UPDATE "Image" SET "blockedFor" = 'moderated' WHERE id = 12`);
+    await pg.query(`UPDATE "Image" SET minor = true WHERE id = 13`);
+    for (const id of [11, 12, 13, 14]) await ownerRating(id);
+
+    const result = await offer({ postIds: [1] }, { sfwRate: 0, nsfwRate: 0 });
+
+    // 11 is the servable control.
+    expect(result).toEqual({ ownerRatings: 1, enqueued: 0, capped: false });
     expect((await queued()).map((i) => i.imageId)).toEqual([11]);
   });
 });

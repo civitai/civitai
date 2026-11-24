@@ -40,7 +40,11 @@ Worked example: `src/components/Dialog/dialog-registry2.ts` held 23 `dynamic()` 
 were opened, each from one component. Each opener now names only its own modal:
 
 ```ts
-openDialog(() => import('~/components/Buzz/CryptoDeposit/BulkBonusInfoModal'), {}, { id: 'bulk-bonus-info' });
+openDialog(
+  () => import('~/components/Buzz/CryptoDeposit/BulkBonusInfoModal'),
+  {},
+  { id: 'bulk-bonus-info' }
+);
 ```
 
 The registry was deleted, along with one modal that only the registry had imported. The 164-module
@@ -59,6 +63,11 @@ the piece into a new module that imports neither A nor B, and point both at it. 
 for what the piece does, not for the service it came out of. A type-only import (`import type`) is
 not an edge and needs no move.
 
+The same move works the other way round: a widely imported service holding one function with a
+heavy import. Example: `notification.service`, which most notification senders import, held
+`getUserNotifications`, the one function that needs the notification detail fetchers. It moved to
+`notification-feed.service`, which only the notification controller imports.
+
 ### A low-level module calls up
 
 A shared module (a notification sender, a scan pipeline, an event hook) imports the
@@ -69,8 +78,18 @@ higher-level modules it hands work to. Two fixes, in order of preference:
 2. The higher-level modules register themselves at an entry point (a route, a job, a
    startup module), and the low-level module reads the registration.
 
-An uncut example: `text-scan/submit.ts` reaches `moderation-adapters.ts` through a call-site
-`await import()`. The fix is for the caller to pass the adapter.
+Example of the first: `home-block-cache.service` is imported by every writer that busts a home
+block, and its read-through getter lazily imported `home-block.service` to build a missing block,
+which handed every one of those writers that service's imports. The getter's only caller is
+`home-block.service`, so it now passes its two builders in (`getHomeBlockCached(…, source)`), and
+the cache imports the service for types only.
+
+An uncut example that neither fix covers yet: `text-scan/submit.ts` reaches `moderation-adapters.ts`
+through a call-site `await import()`, to apply a cleared verdict when text shrinks below the scan
+minimum. The main callers of `scanEntity` (the post, bounty, collection and model services, and
+text-scan's own retry adapter and route) are modules the adapters import, so they cannot pass the
+adapter in, and a registration would skip the apply in any process that never loaded the registry.
+Its fix needs a decision first (see "Ask first when").
 
 ## After each cut
 

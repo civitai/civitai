@@ -8,6 +8,7 @@ import type {
 } from '~/server/schema/base.schema';
 import { supportedAvailabilityResources } from '~/server/schema/base.schema';
 import { entityAvailabilityUpdate, hasEntityAccess } from '~/server/services/common.service';
+import { queueLeftPrivateForKnights } from '~/server/services/knights/sources';
 import { throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { dbRead, dbWrite } from '../db/client';
@@ -54,6 +55,18 @@ export const updateEntityAvailabilityHandler = async ({
   input: AvailabilityInput;
 }) => {
   try {
+    // Only a post leaving Private is offered to the Knights, as moveImagesToPost does. Read before the
+    // write, which overwrites the old availability; from the primary so a lagging replica cannot hide Private.
+    let postLeavesPrivate = false;
+    if (entityType === 'Post' && availability !== Availability.Private) {
+      // primary: the old availability, read before this request overwrites it
+      const prior = await dbWrite.post.findUnique({
+        where: { id: entityId },
+        select: { availability: true },
+      });
+      postLeavesPrivate = prior?.availability === Availability.Private;
+    }
+
     await entityAvailabilityUpdate({
       availability,
       entityIds: [entityId],
@@ -108,6 +121,7 @@ export const updateEntityAvailabilityHandler = async ({
         );
         break;
       case 'Post':
+        if (postLeavesPrivate) void queueLeftPrivateForKnights({ postIds: [entityId] });
         const images = await dbRead.image.findMany({
           where: { postId: entityId },
           select: { id: true },

@@ -48,7 +48,15 @@ const fileUrlsForOwner = ownerOnlyFileUrls<
       { redCapable }
     );
     const files = withoutFileUrls(view(data.files)) as typeof data.files;
-    return { ...data, files: (await withheld(data)) ? withoutEpochUrls(files) : files };
+    const offDomain = view.offDomain(data.files);
+    // A withheld model's files are refused on every host, so there is nothing to point at.
+    const model = offDomain ? await versionModel(data, data.modelVersionId) : undefined;
+    return {
+      ...data,
+      files: (await withheld(data)) ? withoutEpochUrls(files) : files,
+      offDomainTrainingData:
+        offDomain && model && !isModelDeletedOrTakenDown(model) ? offDomain : null,
+    };
   },
   forOwner: async (data) => {
     if (!data) return data;

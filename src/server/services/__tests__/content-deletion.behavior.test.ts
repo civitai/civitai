@@ -126,7 +126,7 @@ describe('deleteImageRows', () => {
         ids: [],
         actor: { system: 'test' },
       })
-    ).toEqual({ deleted: [], kept: [], gone: [] });
+    ).toEqual({ deleted: [], kept: [], hidden: [], gone: [] });
     expect(queryRaw).not.toHaveBeenCalled();
   });
 });

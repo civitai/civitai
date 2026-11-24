@@ -69,7 +69,7 @@ export const PENDING_DELETE_UPSERT = sql`
       OR (EXCLUDED."data" ? 'deletedBy' AND NOT "JobQueue"."data" ? 'deletedBy')`;
 
 /** `NsfwLevel.Blocked`. */
-const NSFW_LEVEL_BLOCKED = 32;
+export const NSFW_LEVEL_BLOCKED = 32;
 
 /** Moderation still open on an image: a review other than CSAM, any block, or an open report. */
 const moderationOpen = sql<boolean>`(
@@ -155,7 +155,7 @@ export const pendingDeleteQueued = (
   { ownerAsked = false } = {}
 ) => sql<boolean>`EXISTS (
   SELECT 1 FROM "JobQueue" pdq
-  WHERE pdq.type = 'PendingDelete' AND pdq."entityType" = ${entityType}
+  WHERE pdq.type = 'PendingDelete' AND pdq."entityType" = ${entityType}::"EntityType"
     AND pdq."entityId" = ${id}${ownerAsked ? sql` AND pdq.data ? 'ownerId'` : sql``}
 )`;
 
@@ -262,4 +262,27 @@ export async function settleDeletes(
     await sql`
       UPDATE "JobQueue" SET data = data || '{"attempted": true}'::jsonb WHERE ${of(failed)}
     `.execute(db);
+}
+
+/**
+ * Takes a moderator's delete off these images' pending deletes, for a lift that reverses it (an
+ * unblock or an approved appeal). A row only a moderator asked for goes; one the owner also asked for
+ * keeps the owner's ask, and a moderator's cleanup stays queued as a cleanup (the job deletes it only
+ * while the image is unused). A plain cleanup the moderator's delete outranked in the merge is gone,
+ * and goes with the row.
+ */
+export async function releaseModeratorPendingDeletes(db: Kysely<DB>, imageIds: number[]) {
+  if (!imageIds.length) return;
+  const queued = sql`q.type = 'PendingDelete' AND q."entityType" = 'Image'
+    AND q."entityId" = ANY(${imageIds}::int[]) AND q.data ? 'moderatorDelete' AND q.data ? 'deletedBy'`;
+  const keeps = sql`q.data ?| array['ownerId', 'cleanup']`;
+  await sql`
+    WITH stripped AS (
+      UPDATE "JobQueue" q SET data = CASE WHEN q.data ? 'cleanup'
+          THEN q.data - 'deletedBy' - 'keepStoredFiles'
+          ELSE q.data - 'deletedBy' - 'moderatorDelete' - 'keepStoredFiles' END
+      WHERE ${queued} AND ${keeps}
+    )
+    DELETE FROM "JobQueue" q WHERE ${queued} AND NOT ${keeps}
+  `.execute(db);
 }
