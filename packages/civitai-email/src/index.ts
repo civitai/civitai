@@ -9,6 +9,7 @@ export {
   EmailNotConfiguredError,
   isEmailConfigured,
   setEmailSendRecorder,
+  getEmailSendRecorder,
   emailSendRecord,
   MAIL_CLASSES,
   SEND_ID_HEADER,

@@ -1,4 +1,5 @@
 import { EMAIL_SEND_RECORD_TIMEOUT_MS, type EmailSendRecord } from '@civitai/email';
+import type { CustomClickHouseClient } from '@civitai/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
@@ -27,27 +28,45 @@ export function emailSendRow(r: EmailSendRecord) {
   };
 }
 
+type Inserter = Pick<CustomClickHouseClient, 'insert'>;
+
+// The tags only: the error names a table or a host, never an address.
+const logRecordFailure = (err: unknown, r: EmailSendRecord) =>
+  logToAxiom({
+    type: 'warning',
+    name: 'email-events',
+    message: 'email send could not be recorded',
+    error: safeError(err),
+    payload: { template: r.template, mailClass: r.mailClass },
+  });
+
 /**
- * Writes the send row. With the client's async inserts some failures (the table missing, for one)
- * may never reach the app, so a zero is checked against the table, not the log.
+ * Writes the send row through `client` (none: nothing to do). Never throws. With the client's
+ * async inserts some failures (the table missing, for one) may never reach the app, so a zero is
+ * checked against the table, not the log.
  */
-export async function recordEmailSend(r: EmailSendRecord): Promise<void> {
+export async function insertEmailSend(client: Inserter | undefined, r: EmailSendRecord) {
+  if (!client) return;
   try {
-    const { clickhouse } = await import('~/server/clickhouse/client');
-    if (!clickhouse) return;
-    await clickhouse.insert({
+    await client.insert({
       table: EMAIL_EVENTS_TABLE,
       values: [emailSendRow(r)],
       format: 'JSONEachRow',
       abort_signal: fetchTimeoutSignal(EMAIL_SEND_RECORD_TIMEOUT_MS),
     });
   } catch (err) {
-    logToAxiom({
-      type: 'warning',
-      name: 'email-events',
-      message: 'email send could not be recorded',
-      error: safeError(err),
-      payload: { template: r.template, mailClass: r.mailClass },
-    });
+    logRecordFailure(err, r);
   }
+}
+
+/** The app's recorder: the send row, through the process's ClickHouse client. Never throws. */
+export async function recordEmailSend(r: EmailSendRecord): Promise<void> {
+  let client: Inserter | undefined;
+  try {
+    ({ clickhouse: client } = await import('~/server/clickhouse/client'));
+  } catch (err) {
+    logRecordFailure(err, r);
+    return;
+  }
+  await insertEmailSend(client, r);
 }

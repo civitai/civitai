@@ -96,6 +96,11 @@ export function setEmailSendRecorder(recorder: EmailSendRecorder | null) {
   _recorder = recorder;
 }
 
+/** The recorder set by setEmailSendRecorder, or null. */
+export function getEmailSendRecorder(): EmailSendRecorder | null {
+  return _recorder;
+}
+
 export function emailSendRecord(sendId: string, tags: EmailTags | undefined, sentAt: Date) {
   const userId = tags?.userId;
   return {

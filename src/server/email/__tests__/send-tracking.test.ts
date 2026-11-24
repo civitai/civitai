@@ -1,30 +1,14 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as CivitaiEmail from '@civitai/email';
-import type { EmailSendRecord } from '@civitai/email';
-
-const h = vi.hoisted(() => ({
-  insert: vi.fn(),
-  log: vi.fn(),
-  clickhouse: true,
-}));
-vi.mock('~/server/clickhouse/client', () => ({
-  get clickhouse() {
-    return h.clickhouse ? { insert: h.insert } : undefined;
-  },
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: h.log,
-  safeError: (e: unknown) => String(e),
-}));
-vi.mock('~/server/utils/fetch-timeout', () => ({
-  fetchTimeoutSignal: (ms: number) => ({ timeoutMs: ms }),
-}));
-
-const { EMAIL_EVENTS_TABLE, emailSendRow, recordEmailSend } = await import(
-  '~/server/email/send-tracking'
-);
+import { getEmailSendRecorder, type EmailSendRecord } from '@civitai/email';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import {
+  EMAIL_EVENTS_TABLE,
+  emailSendRow,
+  insertEmailSend,
+  recordEmailSend,
+} from '~/server/email/send-tracking';
 
 const record: EmailSendRecord = {
   sendId: '0b6f3d4e-8f7a-4c1e-9d2b-5a6c7e8f9a0b',
@@ -36,11 +20,15 @@ const record: EmailSendRecord = {
   userId: 42,
 };
 
+// A stand-in ClickHouse client: only `insert` is used.
+const fakeClient = () => {
+  const insert = vi.fn();
+  insert.mockResolvedValue(undefined);
+  return { insert, client: { insert } as unknown as Parameters<typeof insertEmailSend>[0] };
+};
+
 beforeEach(() => {
-  h.insert.mockReset();
-  h.insert.mockResolvedValue(undefined);
-  h.log.mockReset();
-  h.clickhouse = true;
+  loggingMock.logToAxiom.mockClear();
 });
 
 // A row key the table lacks fails the whole insert inside a swallowed catch, so the two are pinned.
@@ -85,24 +73,26 @@ describe('emailEvents row and DDL', () => {
   });
 });
 
-describe('recordEmailSend', () => {
-  it('inserts the one row into emailEvents, bounded by the send-record timeout', async () => {
-    await recordEmailSend(record);
-    expect(h.insert).toHaveBeenCalledTimes(1);
-    expect(h.insert.mock.calls[0][0]).toEqual({
+describe('insertEmailSend', () => {
+  it('inserts the one row into emailEvents, with an abort signal', async () => {
+    const { insert, client } = fakeClient();
+    await insertEmailSend(client, record);
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(insert.mock.calls[0][0]).toEqual({
       table: 'emailEvents',
       values: [emailSendRow(record)],
       format: 'JSONEachRow',
-      abort_signal: { timeoutMs: 2000 },
+      abort_signal: expect.any(AbortSignal),
     });
-    expect(h.log).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
   it('never throws: an insert error (the table missing, say) is logged with the tags only', async () => {
-    h.insert.mockRejectedValueOnce(new Error('Table default.emailEvents does not exist'));
-    await expect(recordEmailSend(record)).resolves.toBeUndefined();
-    expect(h.log).toHaveBeenCalledTimes(1);
-    expect(h.log.mock.calls[0][0]).toMatchObject({
+    const { insert, client } = fakeClient();
+    insert.mockRejectedValueOnce(new Error('Table default.emailEvents does not exist'));
+    await expect(insertEmailSend(client, record)).resolves.toBeUndefined();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom.mock.calls[0][0]).toMatchObject({
       type: 'warning',
       name: 'email-events',
       payload: { template: 'trainingComplete', mailClass: 'transactional' },
@@ -110,23 +100,14 @@ describe('recordEmailSend', () => {
   });
 
   it('does nothing without a ClickHouse client', async () => {
-    h.clickhouse = false;
-    await recordEmailSend(record);
-    expect(h.insert).not.toHaveBeenCalled();
-    expect(h.log).not.toHaveBeenCalled();
+    await expect(insertEmailSend(undefined, record)).resolves.toBeUndefined();
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 });
 
 describe('the app transport', () => {
   it('registers recordEmailSend as the recorder of every send', async () => {
-    const setEmailSendRecorder = vi.fn();
-    vi.doMock('@civitai/email', async (importOriginal) => ({
-      ...(await importOriginal<typeof CivitaiEmail>()),
-      setEmailSendRecorder,
-    }));
-    vi.doMock('~/env/server', () => ({ env: { IS_BUILD: false } }));
     await import('~/server/email/client');
-    expect(setEmailSendRecorder).toHaveBeenCalledTimes(1);
-    expect(setEmailSendRecorder).toHaveBeenCalledWith(recordEmailSend);
+    expect(getEmailSendRecorder()).toBe(recordEmailSend);
   });
 });
