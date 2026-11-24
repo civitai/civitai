@@ -87,6 +87,7 @@ beforeEach(() => {
   getFeatureFlagsLazy.mockReset();
 });
 
+// Policy: docs/features/memorialized-profiles.md.
 describe('resolveChatRecipients: a memorialized recipient', () => {
   const OTHER = 30;
   afterEach(() => dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never));

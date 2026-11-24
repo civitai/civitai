@@ -11,7 +11,10 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
-import { UserFlag } from '~/shared/constants/user-flags.constants';
+import {
+  EVENT_POINTS_EXCLUDED_FROM_META_KEY,
+  UserFlag,
+} from '~/shared/constants/user-flags.constants';
 import { Flags } from '~/shared/utils/flags';
 
 export const memorialBases = MEMORIAL_BASES;
@@ -133,7 +136,7 @@ export type MemorialEffects = {
   syncEventStanding: (userId: number) => Promise<unknown>;
 };
 
-/** The proposer-differs check is in the UPDATE's WHERE, so no route lets a proposer confirm their own proposal. */
+/** Refuses the proposer, and any proposal other than `proposedAt`, in the UPDATE itself. */
 export async function confirmMemorial(
   input: { userId: number; actorId: number; proposedAt: string },
   effects: MemorialEffects
@@ -141,7 +144,11 @@ export async function confirmMemorial(
   const updated = await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
     UPDATE "User"
     SET flags = flags | ${MEMORIAL} | ${EVENT_EXCLUSION},
-        meta = meta || jsonb_build_object(
+        -- A memorial exclusion is whole-season: a start left from an earlier exclusion goes when this
+        -- sets the bit itself, and stays when the bit was already set by someone else.
+        meta = (CASE WHEN (flags & ${EVENT_EXCLUSION}) = 0
+                  THEN meta - ${EVENT_POINTS_EXCLUDED_FROM_META_KEY}::text ELSE meta END)
+          || jsonb_build_object(
           'memorial',
           (meta -> 'memorial') || jsonb_build_object(
             'status', 'active',
@@ -212,7 +219,9 @@ export async function reverseMemorial(input: { userId: number }, effects: Memori
           CASE WHEN (${meta} -> 'memorial' ->> 'setEventExclusion')::boolean
             THEN ${EVENT_EXCLUSION}::int ELSE 0 END
         ),
-        meta = ${meta} - 'memorial'
+        meta = CASE WHEN (${meta} -> 'memorial' ->> 'setEventExclusion')::boolean
+          THEN ${meta} - 'memorial' - ${EVENT_POINTS_EXCLUDED_FROM_META_KEY}::text
+          ELSE ${meta} - 'memorial' END
     WHERE id = ${input.userId}
       AND ((${meta} ? 'memorial') OR (flags & ${MEMORIAL}) <> 0)
     RETURNING id, username
@@ -255,7 +264,7 @@ export function assertNotMemorialized(user: { flags: number }) {
 /** The recipients that are memorialized, so a new chat can drop them. */
 export async function memorializedAmong(userIds: number[]): Promise<Set<number>> {
   if (!userIds.length) return new Set();
-  // primary: memorial status must not lag a confirm; this gates tips and new chats.
+  // primary: memorial status must not lag a confirm.
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT id FROM "User" WHERE id = ANY(${userIds}::int[]) AND (flags & ${MEMORIAL}) <> 0
   `;

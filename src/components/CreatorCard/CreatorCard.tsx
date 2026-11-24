@@ -219,7 +219,6 @@ export const CreatorCardV2 = ({
   );
 };
 
-/** A memorialized creator takes no tips and no new chats. */
 const isMemorializedCreator = (creator: object) =>
   'memorialized' in creator && creator.memorialized === true;
 

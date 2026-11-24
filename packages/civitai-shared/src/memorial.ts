@@ -13,9 +13,8 @@ export type MemorialTribute = { label: string; url: string };
 export const MEMORIAL_TRIBUTES_MAX = 3;
 
 /**
- * `User.meta.memorial`, written only by the main app's memorial service. `status: 'active'` is set in
- * the same statement as the `Memorialized` user flag. Private to `user.memorialize` holders: only the tributes of an active
- * memorial are public.
+ * `User.meta.memorial`, written only by the main app's memorial service; `status: 'active'` is set in
+ * the same statement as the `Memorialized` flag. Private to `user.memorialize` holders.
  */
 export type MemorialState = {
   status: 'pending' | 'active';

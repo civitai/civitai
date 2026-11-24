@@ -620,6 +620,7 @@ describe('deleteUser under a legal hold', () => {
     expect(await userRow(CLEAN)).toEqual(before);
   });
 
+  // Policy: docs/features/memorialized-profiles.md.
   it('refuses a memorialized account before any write', async () => {
     dbMock.dbWrite.user.findFirst.mockResolvedValueOnce({ id: CLEAN, meta: {}, flags: 4 } as never);
     const before = await userRow(CLEAN);

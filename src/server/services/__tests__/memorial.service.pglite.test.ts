@@ -210,4 +210,45 @@ describe('memorialization (docs/features/memorialized-profiles.md)', () => {
     expect(rows.find((r) => r.id === USER + 2)?.meta).toBeNull();
     expect(rows.find((r) => r.id === USER + 3)?.meta).toEqual([1]);
   });
+
+  describe('the event-points exclusion start (civitai/civitai#10311)', () => {
+    const START = '2026-11-25';
+    const setStart = (flags: number) =>
+      pg.query('UPDATE "User" SET flags = $1, meta = $2 WHERE id = $3', [
+        flags,
+        JSON.stringify({ eventPointsExcludedFrom: START }),
+        USER,
+      ]);
+
+    it('confirm drops a stale start when it sets the exclusion itself, so it is whole-season', async () => {
+      await setStart(0);
+      await propose();
+      await confirm(CONFIRMER);
+      expect((await row()).meta).not.toHaveProperty('eventPointsExcludedFrom');
+    });
+
+    it('confirm keeps the start of an exclusion that was already set', async () => {
+      await setStart(UserFlag.ExcludeFromEventPoints);
+      await propose();
+      await confirm(CONFIRMER);
+      expect((await row()).meta).toMatchObject({ eventPointsExcludedFrom: START });
+      await reverse();
+      const { flags, meta } = await row();
+      expect(flags).toBe(UserFlag.ExcludeFromEventPoints);
+      expect(meta).toEqual({ eventPointsExcludedFrom: START });
+    });
+
+    it('reverse drops a start when it lifts the exclusion memorializing set', async () => {
+      await propose();
+      await confirm(CONFIRMER);
+      await pg.query(
+        `UPDATE "User" SET meta = meta || '{"eventPointsExcludedFrom": "${START}"}' WHERE id = $1`,
+        [USER]
+      );
+      await reverse();
+      const { flags, meta } = await row();
+      expect(flags).toBe(0);
+      expect(meta).toEqual({});
+    });
+  });
 });

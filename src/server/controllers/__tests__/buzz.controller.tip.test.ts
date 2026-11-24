@@ -339,6 +339,7 @@ describe('createBuzzTipTransactionHandler — block gate', () => {
     expect(mockCreateMany).not.toHaveBeenCalled();
   });
 
+  // Policy: docs/features/memorialized-profiles.md.
   describe('a memorialized recipient refuses the whole tip', () => {
     const memorialize = (...ids: number[]) =>
       dbMock.dbWrite.$queryRaw.mockImplementation((async (
