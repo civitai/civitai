@@ -147,7 +147,7 @@ export function isUsableDraft(savedAt: number, state: FlowDraftState, now = Date
 }
 
 /** Whether this viewer may still pick every run's model, as the Select step gates it: a gate closed
- *  since the draft was saved must not be reopened by Resume. */
+ *  or a model retired since the draft was saved must not be reopened by Resume. */
 export function draftModelsAllowed(
   state: FlowDraftState,
   enabledFlags: ReadonlySet<string>
@@ -156,6 +156,7 @@ export function draftModelsAllowed(
     const card = cardByType(run.cardType);
     return (
       !!card &&
+      !card.retired &&
       isCardVisible(card, enabledFlags) &&
       (isCustom(run) || visibleVersions(card, enabledFlags).some((v) => v.key === run.versionKey))
     );
