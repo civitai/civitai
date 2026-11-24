@@ -470,6 +470,8 @@ describe('🔴 the wire: the spec proto’s field numbers', () => {
       { type: 'progress', cursor: 'ab', meta: { head: { seq: 7 } } },
       META_HEX + '32040a026162',
     ],
+    // An end with meta (a level stream's reason, `level-feed.ts`): after end (4).
+    ['end', { type: 'end', meta: { head: { seq: 7 } } }, '2200' + META_HEX],
   ])('%s with meta: Event.meta is its JSON text, and decodes back', (_name, event, hex) => {
     expect(encodeEvent(event).toString('hex')).toBe(hex);
     expect(decodeEvent(Buffer.from(hex, 'hex'))).toEqual(event);

@@ -1087,6 +1087,60 @@ const SQL_FEED_WITNESS_DOC = `SELECT d.seq FROM appdata.doc d
 const SQL_FEED_WITNESS_TOMB = `SELECT tb.seq FROM appdata.doc_tomb tb
   WHERE tb.app_id = $1 AND tb.ns = $2 AND tb.coll = $3 AND tb.scope_uid = 0 AND tb.key = $4`;
 
+// LEVEL STREAMS (`registry-adapter/level-feed.ts`): the registry feed's reads for the shared-
+// collection level streams (`apps/app-data-go/WRITES-DESIGN.md`, "The shape: one stream per level
+// bit"; `docs/app-storage-generic-core.md`, "Registry and app-data-go impact"). Shared documents
+// (`scope_uid = 0`) of one collection of one app namespace, each as a PLAIN document: its key,
+// body, version, seq and timestamps. Never its author, any tally, or anyone's marks. A viewer-keyed
+// document (`keyedBy`) is one of these like any other: its key is the opaque `<parent>:<digest>`
+// the REST list also returns, and its author is not read. Two selectors, each its own statement
+// so every predicate is a literal:
+//   - BIT: rated for its current version at exactly the one level bit `$bit`, through THE level
+//     predicate (`sharedDocLevelVisible` with no viewer, so its author arm never applies: an
+//     unrated, pending or stale-rated document is on no bit's stream);
+//   - NONE: every visible document (content levels OFF for the app: the adapter serves it only
+//     then).
+// Neither carries a counter document (`author_kind = 'counter'`): the predicate admits one at every
+// level, so it would sit on all five bit streams, and counter documents are being removed.
+// Hidden documents are never on a stream. The seq read flags each row `on_stream`, so a write
+// that moved a document off the stream reads as leaving it.
+const LEVEL_STREAM_COLUMNS = `d.key, d.data, d.version, d.seq, d.created_at, d.updated_at`;
+const LEVEL_ON_BIT = (bit: string) =>
+  `d.author_kind <> 'counter' AND ${sharedDocLevelVisible('NULL::int', bit, bit)}`;
+const LEVEL_ON_NONE = `d.author_kind <> 'counter'`;
+// The seq range (`after`, `upTo`]. $1 app, $2 ns, $3 coll, $4 after seq, $5 up to seq, $6 limit
+// (+ $7 the bit)
+const SQL_LEVEL_DOCS_SINCE_BIT = `SELECT ${LEVEL_STREAM_COLUMNS},
+    (d.hidden_at IS NULL AND ${LEVEL_ON_BIT('$7::int')}) AS on_stream
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.seq > $4::bigint AND d.seq <= $5::bigint
+  ORDER BY d.seq
+  LIMIT $6::int`;
+const SQL_LEVEL_DOCS_SINCE_NONE = `SELECT ${LEVEL_STREAM_COLUMNS},
+    (d.hidden_at IS NULL AND ${LEVEL_ON_NONE}) AS on_stream
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.seq > $4::bigint AND d.seq <= $5::bigint
+  ORDER BY d.seq
+  LIMIT $6::int`;
+// The stream's documents at or below `upTo`, NEWEST KEY FIRST, keyset before `$4` ('' = from the
+// newest). $1 app, $2 ns, $3 coll, $4 before key, $5 up to seq, $6 limit (+ $7 the bit)
+const SQL_LEVEL_DOCS_DESC_BIT = `SELECT ${LEVEL_STREAM_COLUMNS}
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.hidden_at IS NULL AND d.seq <= $5::bigint AND ($4::text = '' OR d.key < $4::text)
+    AND ${LEVEL_ON_BIT('$7::int')}
+  ORDER BY d.key DESC
+  LIMIT $6::int`;
+const SQL_LEVEL_DOCS_DESC_NONE = `SELECT ${LEVEL_STREAM_COLUMNS}
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.hidden_at IS NULL AND d.seq <= $5::bigint AND ($4::text = '' OR d.key < $4::text)
+    AND ${LEVEL_ON_NONE}
+  ORDER BY d.key DESC
+  LIMIT $6::int`;
+
 // PRIVATE FEED (`createDocStorePrivateFeed`): ONE user's private documents (`scope_uid` = that
 // user, never 0, never another user's) of one collection of one app's production namespace, for
 // the registry adapter's authorized private streams. Only rows that carry a `record_id` (the id
@@ -2020,6 +2074,34 @@ export type FeedDocument = {
 /** One page of `feedChanges`. */
 export type FeedChangesPage = {
   docs: Array<FeedDocument & { hidden: boolean }>;
+  tombs: Array<{ key: string; seq: number }>;
+};
+
+/**
+ * Which documents of a shared collection one level stream carries (`registry-adapter/level-feed.ts`):
+ * those rated at exactly one selectable level bit, or every visible document (content levels off).
+ */
+export type LevelSelector = { bit: number } | 'none';
+
+/** The five selectable level bits (PG, PG-13, R, X, XXX): a level stream's `bit`. */
+export const LEVEL_STREAM_BITS: readonly number[] = [1, 2, 4, 8, 16];
+
+/**
+ * A shared document as a level stream carries it: a plain document (`docs/app-storage-generic-core.md`,
+ * "Registry and app-data-go impact"). Never its author, any tally, or anyone's marks.
+ */
+export type LevelStreamDocument = {
+  key: string;
+  data: Record<string, unknown>;
+  version: number;
+  seq: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** One page of `levelChanges`: each row flagged whether it is on the stream now. */
+export type LevelChangesPage = {
+  docs: Array<LevelStreamDocument & { onStream: boolean }>;
   tombs: Array<{ key: string; seq: number }>;
 };
 
@@ -5528,6 +5610,73 @@ function buildDocStore(deps: DocStoreDeps) {
     });
   }
 
+  const levelBit = (selector: LevelSelector): number | null => {
+    if (selector === 'none') return null;
+    if (!LEVEL_STREAM_BITS.includes(selector.bit)) throw invalid('feed: not a level bit');
+    return selector.bit;
+  };
+  const levelSql = (selector: LevelSelector, bit: string, none: string) =>
+    selector === 'none' ? none : bit;
+  const levelRow = (r: Record<string, unknown>): LevelStreamDocument => ({
+    key: r.key as string,
+    data: r.data as Record<string, unknown>,
+    version: Number(r.version),
+    seq: seqOf(r.seq),
+    createdAt: new Date(r.created_at as string | Date).toISOString(),
+    updatedAt: new Date(r.updated_at as string | Date).toISOString(),
+  });
+
+  /**
+   * One page of what changed in a shared collection in the seq range (`after`, `upTo`], for one
+   * level stream: every document written (each flagged whether it is on the stream now: visible
+   * and selected) and every tombstone, each in seq order. One transaction, one app namespace.
+   */
+  async function levelChanges(
+    appId: string,
+    coll: string,
+    selector: LevelSelector,
+    after: number,
+    upTo: number,
+    limit: number
+  ): Promise<LevelChangesPage> {
+    const ctx = feedCtx(appId, coll);
+    const bit = levelBit(selector);
+    const params = [ctx.appId, ctx.ns, coll, feedSeq(after), feedSeq(upTo), feedLimit(limit)];
+    return withTx(ctx, async (c) => {
+      const sql = levelSql(selector, SQL_LEVEL_DOCS_SINCE_BIT, SQL_LEVEL_DOCS_SINCE_NONE);
+      const docs = (await c.query(sql, bit === null ? params : [...params, bit])).rows;
+      const tombs = (await c.query(SQL_FEED_TOMBS_SINCE, params)).rows;
+      return {
+        docs: docs.map((r) => ({ ...levelRow(r), onStream: r.on_stream === true })),
+        tombs: tombs.map((r) => ({ key: r.key as string, seq: seqOf(r.seq) })),
+      };
+    });
+  }
+
+  /**
+   * One page of a level stream's documents at or below `upTo`, NEWEST KEY FIRST, before
+   * `beforeKey` ('' = from the newest).
+   */
+  async function levelDocuments(
+    appId: string,
+    coll: string,
+    selector: LevelSelector,
+    beforeKey: string,
+    upTo: number,
+    limit: number
+  ): Promise<LevelStreamDocument[]> {
+    const ctx = feedCtx(appId, coll);
+    const bit = levelBit(selector);
+    if (beforeKey !== '' && !B.key.test(beforeKey)) throw invalid('feed: malformed key');
+    const params = [ctx.appId, ctx.ns, coll, beforeKey, feedSeq(upTo), feedLimit(limit)];
+    const sql = levelSql(selector, SQL_LEVEL_DOCS_DESC_BIT, SQL_LEVEL_DOCS_DESC_NONE);
+    const rows = await withTx(
+      ctx,
+      async (c) => (await c.query(sql, bit === null ? params : [...params, bit])).rows
+    );
+    return rows.map(levelRow);
+  }
+
   /** The private feed's bound values, checked before any of them reaches SQL. */
   function privateFeedParams(
     appId: string,
@@ -5591,7 +5740,7 @@ function buildDocStore(deps: DocStoreDeps) {
   return {
     store,
     lookup: { findSharedByKey },
-    feed: { feedHead, feedChanges, feedDocuments, feedWitness },
+    feed: { feedHead, feedChanges, feedDocuments, feedWitness, levelChanges, levelDocuments },
     // `privateHead` is the public feed's head read: the namespace's newest seq, one counter for
     // every collection of the app, private and shared (`SQL_CHARGE_APP`).
     privateFeed: { privateVersions, privateDocuments, privateHead: feedHead },

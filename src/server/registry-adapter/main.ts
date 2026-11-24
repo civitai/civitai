@@ -51,6 +51,17 @@
  *                                  space-separated) whose subscriptions may read the `store-listing@v1`
  *                                  stream (`listing-stream.ts`). Unset or empty, the default: the
  *                                  schema is not served, and the catalog read is unchanged
+ *   REGISTRY_ADAPTER_SHARED_LEVEL_CLIENTS
+ *                                  the OAuth client ids (comma- or space-separated) whose SERVICE
+ *                                  tokens may read the shared-collection LEVEL STREAMS, by naming
+ *                                  a level in a subscription's `meta` (`level-feed.ts`). Each must
+ *                                  also be on REGISTRY_ADAPTER_SERVICE_CLIENTS. Unset or empty, the
+ *                                  default: no level stream exists, and every subscription is
+ *                                  routed as before. The level-stream fill gauges are then served
+ *                                  on /metrics (REGISTRY_ADAPTER_METRICS_PORT)
+ *   REGISTRY_ADAPTER_LEVEL_STREAM_MAX_RECORDS
+ *                                  a level stream's record bound, an integer above 2000 (default
+ *                                  2500); past it a stream holds its newest documents by key
  *   REGISTRY_ADAPTER_TRUST_META    "1" to judge the region from a request's `meta` as well as its
  *                                  headers; set only once the gateway sets those keys itself
  *                                  (`request-origin.ts`)
@@ -81,12 +92,20 @@ import { createPollingAdapter, sharedRead } from '~/server/registry-adapter/curs
 import { abortableSleep } from '~/utils/errorHandling';
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import { createGrpcServer, listenGrpc } from '~/server/registry-adapter/grpc';
-import { liveSharedDocSource } from '~/server/registry-adapter/doc-source.live';
+import { liveLevelDocSource, liveSharedDocSource } from '~/server/registry-adapter/doc-source.live';
 import {
   composeAdapter,
   resolveFromCatalog,
   resolvePrivateFromCatalog,
+  resolveSharedLevelFromCatalog,
 } from '~/server/registry-adapter/doc-streams';
+import {
+  createLevelFeed,
+  createLevelStreamFill,
+  createLevelStreamMetrics,
+  parseLevelStreamMaxRecords,
+  parseSharedLevelClients,
+} from '~/server/registry-adapter/level-feed';
 import {
   PRIVATE_STATE_RETENTION_SECONDS,
   createPrivateDocFeed,
@@ -208,25 +227,31 @@ function main() {
       : 'registry-adapter: listing stream off (REGISTRY_ADAPTER_LISTING_RELAYS unset)'
   );
   const served = servedSchemas({ listings });
-  // The listing stream's cap counter, on the policy shadow's /metrics when it is on, else on a
-  // /metrics of its own (REGISTRY_ADAPTER_METRICS_PORT), only while the listing stream is.
+  // The listing stream's cap counter and the level streams' fill gauges, on the policy shadow's
+  // /metrics when it is on, else on one /metrics of their own (REGISTRY_ADAPTER_METRICS_PORT),
+  // only while either of them is on.
+  const metricsRegistry = policyRegistry ?? new Registry();
+  let metricsServed = !!policyRegistry;
+  const serveMetrics = (what: string) => {
+    if (metricsServed) return;
+    metricsServed = true;
+    const metricsPort = Number(process.env.REGISTRY_ADAPTER_METRICS_PORT) || DEFAULT_METRICS_PORT;
+    createMetricsServer(metricsRegistry)
+      .on('error', (err: NodeJS.ErrnoException) =>
+        console.warn(
+          `registry-adapter: WARNING: ${what} /metrics not served on :${metricsPort} (${
+            err.code ?? err.message
+          })`
+        )
+      )
+      .listen(metricsPort, () =>
+        console.log(`registry-adapter: ${what} /metrics on :${metricsPort}`)
+      );
+  };
   let onSubListingsCapped: ((listingId: string, omitted: number) => void) | undefined;
   if (listings) {
-    const { dropped, registry } = createListingStreamMetrics(policyRegistry ?? new Registry());
-    if (!policyRegistry) {
-      const metricsPort = Number(process.env.REGISTRY_ADAPTER_METRICS_PORT) || DEFAULT_METRICS_PORT;
-      createMetricsServer(registry)
-        .on('error', (err: NodeJS.ErrnoException) =>
-          console.warn(
-            `registry-adapter: WARNING: listing /metrics not served on :${metricsPort} (${
-              err.code ?? err.message
-            })`
-          )
-        )
-        .listen(metricsPort, () =>
-          console.log(`registry-adapter: listing stream /metrics on :${metricsPort}`)
-        );
-    }
+    const { dropped } = createListingStreamMetrics(metricsRegistry);
+    serveMetrics('listing stream');
     onSubListingsCapped = reportSubListingsCapped(
       dropped,
       (line) => console.warn(line),
@@ -289,7 +314,35 @@ function main() {
           onError,
         })
       : undefined;
-  const adapter = composeAdapter(entities, docs, privateDocs);
+  const levelClients = parseSharedLevelClients(process.env.REGISTRY_ADAPTER_SHARED_LEVEL_CLIENTS);
+  const levelMaxRecords = parseLevelStreamMaxRecords(
+    process.env.REGISTRY_ADAPTER_LEVEL_STREAM_MAX_RECORDS
+  );
+  console.log(
+    levelClients.size > 0
+      ? `registry-adapter: level streams ON for clients: ${[...levelClients].join(
+          ', '
+        )} (bound ${levelMaxRecords} records)`
+      : 'registry-adapter: level streams off (REGISTRY_ADAPTER_SHARED_LEVEL_CLIENTS unset)'
+  );
+  let levelDocs: ReturnType<typeof createLevelFeed> | undefined;
+  if (levelClients.size > 0) {
+    const fill = createLevelStreamFill();
+    createLevelStreamMetrics(metricsRegistry, fill);
+    serveMetrics('level stream');
+    levelDocs = createLevelFeed({
+      clients: levelClients,
+      source: liveLevelDocSource(),
+      resolve: resolveSharedLevelFromCatalog(readApps, isSharedDocLevelsOn),
+      store,
+      pollMs,
+      sleep: abortableSleep,
+      maxRecords: levelMaxRecords,
+      fill,
+      onError,
+    });
+  }
+  const adapter = composeAdapter(entities, docs, privateDocs, levelDocs);
 
   const server = createRegistryServer(adapter, {
     onError,

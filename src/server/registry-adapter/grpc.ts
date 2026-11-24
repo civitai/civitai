@@ -10,8 +10,10 @@
  *   - `Entity.body` is the body's JSON text as UTF-8 bytes, the text the HTTP binding sends for
  *     it ({@link jsonBytes}), so a relay can pass it on byte for byte. `Entity.meta` and
  *     `Event.meta` are bytes too (a JSON object; empty is none). This source sets no
- *     `Entity.meta`, so it is sent empty, which is absent on the wire; `Event.meta` is a `live` or
- *     `progress` event's `meta` (`EventMeta`) when it has one, as the HTTP binding's `meta` field.
+ *     `Entity.meta`, so it is sent empty, which is absent on the wire; `Event.meta` is a `live`,
+ *     `progress` or `end` event's `meta` (`EventMeta`) when it has one, as the HTTP binding's `meta`
+ *     field. The extra fields a private or level-stream entity carries beside its body (`key`,
+ *     `seq`, `version`, `createdAt`, `updatedAt`) have no field in `Entity`.
  *     The private feed's `Entity.key` and `Entity.seq` have no field here.
  *   - `SubscribeRequest.meta` is read as the HTTP binding's `meta` parameter is
  *     (`protocol.ts`), into the call's origin (`request-origin.ts`).
@@ -223,7 +225,9 @@ export function encodeEvent(e: StreamEvent): Buffer {
       kind = { end: {} };
       break;
   }
-  if ((e.type === 'live' || e.type === 'progress') && e.meta) kind.meta = jsonBytes(e.meta);
+  if ((e.type === 'live' || e.type === 'progress' || e.type === 'end') && e.meta) {
+    kind.meta = jsonBytes(e.meta);
+  }
   return Buffer.from(types.event.encode(types.event.fromObject(kind)).finish());
 }
 
@@ -272,7 +276,7 @@ export function decodeEvent(buf: Uint8Array): StreamEvent | null {
     case 'progress':
       return { type: 'progress', cursor: w.progress?.cursor ?? '', ...eventMeta(w.meta) };
     case 'end':
-      return { type: 'end' };
+      return { type: 'end', ...eventMeta(w.meta) };
     default:
       return null;
   }
