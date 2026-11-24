@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient } from '@tanstack/react-query';
 import {
   __impressionBufferTestHooks,
@@ -36,6 +36,10 @@ const context = (pageIndex: number): FeedEventContext => ({
   sort: 'Newest',
   pageIndex,
   filters: { hidePaid: 'true' },
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 beforeEach(() => {
@@ -90,7 +94,6 @@ describe('the card hook', () => {
     dwellHooks.armDwell(registry, element, state);
     vi.advanceTimersByTime(dwellHooks.DWELL_MS);
     flushImpressions();
-    vi.useRealTimers();
     expect(feedRows().filter((row) => row.event === 'seen')).toEqual([
       expect.objectContaining({
         feed: 'images',
