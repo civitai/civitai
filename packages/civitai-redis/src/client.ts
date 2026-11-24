@@ -3449,7 +3449,7 @@ const REDIS_KEYS_UNPREFIXED = {
     TENSOR_METADATA_SUMMARY: 'packed:caches:tensor-metadata-summary',
     IMAGE_RESOURCES: 'packed:caches:image-resources',
     USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
-    // A user's legacy-era membership rows (a closed date window), per user and window.
+    // Legacy annual-sub-payment and reward rows, per user and query window.
     LEGACY_PREPAID_DELIVERIES: 'packed:caches:legacy-prepaid-deliveries',
     MOD_RULES: {
       MODELS: 'packed:caches:mod-rules:models:v2',
