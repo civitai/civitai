@@ -153,6 +153,21 @@ describe('card load, without the grant', () => {
 
   // No other field carries the storage key either: the image id is the only handle left, and the
   // two routes that take one refuse it (below).
+  it('serves neither its appeal text nor its overturned removal label', async () => {
+    await db.exec(`INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status) VALUES
+        (990000060, 7, 'Image', ${RESTRICTED}, 'Approved');
+      INSERT INTO "AppealDecisionRecord" ("appealId", "removalLabel") VALUES (990000060, 'overturned-label');
+      UPDATE "Appeal" SET "appealMessage" = 'appeal text' WHERE "entityId" = ${RESTRICTED}`);
+    expect(await card(WITHOUT_GRANT, RESTRICTED)).toMatchObject({
+      appeal: { message: '' },
+      approvedAppeal: { removalLabel: null },
+    });
+    expect(await card(WITH_GRANT, RESTRICTED)).toMatchObject({
+      appeal: { message: 'appeal text' },
+      approvedAppeal: { removalLabel: 'overturned-label' },
+    });
+  });
+
   it('serves no flag that could say why it is withheld', async () => {
     await db.exec(
       `UPDATE "Image" SET minor = true, poi = true, "modelRestricted" = true WHERE id = ${RESTRICTED}`

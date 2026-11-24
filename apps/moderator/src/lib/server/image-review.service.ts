@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { isAgentReporter, type AgentReportWhere } from './agent-reporters';
 import { dbRead } from './db';
-import { restrictedImageIds, withheldMedia } from './retracted-media';
+import { restrictedImageIds, withheldRow } from './retracted-media';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
 import { getFlagClearHolds, holdMarkerState, type FlagClearHoldLeg } from './csam-flag-clear';
@@ -595,7 +595,7 @@ export type AppealImageItem = {
   height: number | null;
   type: MediaType | null;
   /** Withheld from this moderator by the media access rule (`restrictedImageIds`): served with
-   *  `withheldMedia()` in place of its fields. */
+   *  `withheldRow` in place of its fields. */
   restricted: boolean;
   needsReview: string | null;
   minor: boolean;
@@ -773,7 +773,7 @@ export async function getAppealImageQueue({
       tosReason: tosByImage.get(r.id) ?? null,
       reports: reportsByImage.get(r.id) ?? [],
     };
-    return restricted.has(r.id) ? { ...item, ...withheldMedia() } : item;
+    return restricted.has(r.id) ? withheldRow(item) : item;
   });
   return { items, nextCursor };
 }

@@ -8,7 +8,6 @@ import { logToAxiom } from './axiom';
 /** The page whose grant opens held media. */
 export const HELD_MEDIA_PAGE = '/images/csam';
 
-/** The CSAM grant: what decides which media a moderator is shown. */
 export const holdsCsamReview = (user: App.Locals['user'] | undefined) =>
   canAccess(user, HELD_MEDIA_PAGE);
 

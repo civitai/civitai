@@ -7,6 +7,7 @@ import { holdsCsamReview } from '$lib/server/held-media';
 import { WITHHELD_REFUSED } from '$lib/held-media';
 import {
   withheldAccountRefusal,
+  withheldApprovedAppeal,
   withheldImageIds,
   withheldRefusal,
 } from '$lib/server/retracted-media';
@@ -162,7 +163,9 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
     });
     // A restricted image's 3D model parent shows the image on the site.
     const cards = (await withModel3d(items)).map((item) =>
-      item.restricted ? { ...item, model3d: null } : item
+      item.restricted
+        ? { ...item, model3d: null, approvedAppeal: withheldApprovedAppeal(item.approvedAppeal) }
+        : item
     );
     return { ...base, view, kind: 'appeal' as const, items: cards, nextCursor };
   }

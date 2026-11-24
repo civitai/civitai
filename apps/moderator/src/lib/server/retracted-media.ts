@@ -212,6 +212,26 @@ export const withheldMedia = () => ({
   restricted: true as const,
 });
 
+/** An approved-appeal badge on a withheld row, without the removal label it names. */
+export const withheldApprovedAppeal = <A extends { removalLabel: string | null } | null>(
+  appeal: A
+) => appeal && { ...appeal, removalLabel: null };
+
+/** A row withheld from this moderator: `withheldMedia()` over it, and no appeal text or removal
+ *  label of its own. */
+export function withheldRow<T extends object>(row: T) {
+  const { appeal, approvedAppeal } = row as {
+    appeal?: object | null;
+    approvedAppeal?: { removalLabel: string | null } | null;
+  };
+  return {
+    ...row,
+    ...withheldMedia(),
+    ...(appeal ? { appeal: { ...appeal, message: '' } } : {}),
+    ...(approvedAppeal ? { approvedAppeal: withheldApprovedAppeal(approvedAppeal) } : {}),
+  } as Omit<T, keyof ReturnType<typeof withheldMedia>> & ReturnType<typeof withheldMedia>;
+}
+
 /** `restrictedImageAccess`'s kept ids. */
 export async function restrictedImageIds(imageIds: number[], opts: { csamReview: boolean }) {
   return (await restrictedImageAccess(imageIds, opts)).kept;

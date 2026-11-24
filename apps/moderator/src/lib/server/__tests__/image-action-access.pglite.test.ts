@@ -941,3 +941,36 @@ describe("the re-removal queue's list", () => {
     });
   });
 });
+
+describe("a withheld image's overturned removal label", () => {
+  beforeEach(() =>
+    db.exec(`INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status) VALUES
+        (990000050, 7, 'Image', ${WITHHELD}, 'Approved');
+      INSERT INTO "AppealDecisionRecord" ("appealId", "removalLabel") VALUES (990000050, 'overturned-label')`)
+  );
+  const bulkItem = async (user: { id: number; roles: string[] }) =>
+    (
+      (await bulkPage.load({
+        url: new URL(`https://mod.test/retool/bulk-image-manager?source=imageIds&q=${WITHHELD}`),
+        locals: { user, grants: GRANTS },
+      } as never)) as {
+        batch: { items: { id: number; approvedAppeal: { removalLabel: string | null } | null }[] };
+      }
+    ).batch.items.find((i) => i.id === WITHHELD);
+
+  it('is not sent without the grant, in Bulk Image Manager or Image Lookup', async () => {
+    expect((await bulkItem(WITHOUT_GRANT))?.approvedAppeal).toMatchObject({ removalLabel: null });
+    expect((await getImageLookup(WITHHELD, { csamReview: false }))?.approvedAppeal).toMatchObject({
+      removalLabel: null,
+    });
+  });
+
+  it('is sent to a grant holder', async () => {
+    expect((await bulkItem(WITH_GRANT))?.approvedAppeal).toMatchObject({
+      removalLabel: 'overturned-label',
+    });
+    expect((await getImageLookup(WITHHELD, { csamReview: true }))?.approvedAppeal).toMatchObject({
+      removalLabel: 'overturned-label',
+    });
+  });
+});

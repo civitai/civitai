@@ -3,7 +3,12 @@ import { dbRead } from './db';
 import { getModActivityFor, type ModActivityRow } from './mod-activity';
 import { usersByIds } from './users.service';
 import { getImagesForPost, withholdBatchMedia, type ServedBulkImage } from './bulk-image.service';
-import { restrictedImageIds, withheldMedia } from './retracted-media';
+import {
+  restrictedImageIds,
+  withheldApprovedAppeal,
+  withheldMedia,
+  withheldRow,
+} from './retracted-media';
 import { getReactions, type ImageReactionRow, type ReactionPage } from './image-reactions.service';
 import type { MediaType } from '../media/edge-url';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
@@ -193,7 +198,7 @@ export async function getImageLookup(
       reactions,
       reports: [],
       modActivity: { rows: [], truncated: false },
-      approvedAppeal: approvedAppealOf(appeals.get(imageId)),
+      approvedAppeal: withheldApprovedAppeal(approvedAppealOf(appeals.get(imageId))),
     };
   }
 
@@ -302,9 +307,7 @@ export async function getRecentImagesOutsidePost(
     rows.map((r) => r.id),
     { csamReview }
   );
-  return rows.map((r) =>
-    withheld.has(r.id) ? { ...r, ...withheldMedia() } : { ...r, restricted: false }
-  );
+  return rows.map((r) => (withheld.has(r.id) ? withheldRow(r) : { ...r, restricted: false }));
 }
 
 export type PostSummary = {

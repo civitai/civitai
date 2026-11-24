@@ -2,7 +2,7 @@ import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { dbRead } from './db';
-import { restrictedImageIds, withheldMedia } from './retracted-media';
+import { restrictedImageIds, withheldRow } from './retracted-media';
 import { issueStrike, removeImages, setImageFlag } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
 import { approvedAppealOf, type ApprovedAppealBadge, type HeldSummary } from './removal-hold';
@@ -106,7 +106,7 @@ export async function withholdBatchMedia<B extends { items: BulkImage[] }>(
   return {
     ...batch,
     items: batch.items.map((i) =>
-      withheld.has(i.id) ? { ...i, ...withheldMedia() } : { ...i, restricted: false }
+      withheld.has(i.id) ? withheldRow(i) : { ...i, restricted: false }
     ),
   };
 }

@@ -499,10 +499,12 @@
             </span>
           {/if}
         </div>
-        <div>
-          <span class="font-semibold text-sky-400">Appeal:</span>
-          <span class="text-muted-foreground/90">{item.appeal.message}</span>
-        </div>
+        {#if !item.restricted}
+          <div>
+            <span class="font-semibold text-sky-400">Appeal:</span>
+            <span class="text-muted-foreground/90">{item.appeal.message}</span>
+          </div>
+        {/if}
         <div class="text-muted-foreground">
           by
           <a

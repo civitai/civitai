@@ -5,7 +5,7 @@ import { blockImage, isBannedOwnerBlocked, isModerationBlocked } from './image-m
 import { recordModActivity } from './mod-activity';
 import { setReportStatus } from './reports.service';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
-import { restrictedImageIds, withheldMedia } from './retracted-media';
+import { restrictedImageIds, withheldRow } from './retracted-media';
 
 // Removals held by `holdRemovals` because they repeat the reason an approved appeal overturned. A
 // moderator holding `image.removal.confirm` decides each one on /images/re-removals. Confirming runs
@@ -82,8 +82,7 @@ export async function getRemovalConfirmations({
   const items = page.map((row) =>
     withheld.has(row.imageId)
       ? {
-          ...row,
-          ...withheldMedia(),
+          ...withheldRow(row),
           mediaType: null,
           violationType: null,
           violationDetails: null,
