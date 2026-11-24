@@ -51,7 +51,11 @@ func TestModelPageComputesUserCosmeticsMissWhenAsked(t *testing.T) {
 			}
 			reads := 0
 			db := s.Replica.(*testkit.DB)
-			db.Routes = append([]testkit.Route{userCosmeticsRoute(&reads)}, db.Routes...)
+			// The withheld check's shop-listing read: no listing (the badge is no creator's).
+			listings := testkit.Route{Match: `FROM "CosmeticShopItem" si`, Rows: func(_ []any) (*testkit.Rows, error) {
+				return testkit.NewRows([]string{"cosmeticId", "addedById", "status", "meta", "rejectionReason", "createdById"}), nil
+			}}
+			db.Routes = append([]testkit.Route{userCosmeticsRoute(&reads), listings}, db.Routes...)
 			req := modelPageRequest()
 			req.ComputeUserCosmetics = c.ask
 			p, err := s.ModelPage(context.Background(), req)
