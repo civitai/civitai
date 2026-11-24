@@ -1811,6 +1811,13 @@ describe('a restore puts back the rating the grace block replaced', () => {
       { id: 135, nsfwLevel: 4, nsfwLevelLocked: false, needsReview: null },
       { id: 136, nsfwLevel: 8, nsfwLevelLocked: false, needsReview: 'minor' },
     ]);
+    // The caches that read the level are refreshed for exactly the rows the floor raised.
+    expect(
+      vi
+        .mocked(refreshImageLevelCaches)
+        .mock.calls.flatMap(([ids]) => ids)
+        .sort()
+    ).toEqual([134, 136]);
   });
 
   it('re-rates a row whose rating changed during the window, keeping a moderator lock', async () => {
