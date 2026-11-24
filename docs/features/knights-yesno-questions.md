@@ -195,7 +195,9 @@ and whichever side rules first takes it out of the other's queue. Off unless the
 ## Players see
 
 `/judgments` shows the question's words and the answer; it is pending until the question closes, then right, wrong or set aside like
-any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. A hidden check is rolled only on a rating slot, at its own rate
+any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. On a question, Skip is a "Not sure" answer pill (Space, the same `?/skip`
+action: no pay, no smite); ratings keep Skip. A run of questions opens with "Question time" and ends with a "Questions done"
+banner ([motion](knights-motion-and-sound.md)). A hidden check is rolled only on a rating slot, at its own rate
 (`KNIGHTS_HIDDEN_CHECK_RATE`).
 
 The rules the questions test are shown as "Question rules" below the rating levels, in the Codex rating guide and in the guide

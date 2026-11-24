@@ -19,6 +19,8 @@
   import Countdown from '$lib/Countdown.svelte';
   import { limitPhrase } from '$lib/vote-limit-copy';
   import Icon from '$lib/Icon.svelte';
+  import QuestionTime from './QuestionTime.svelte';
+  import { QUESTIONS_DONE_MS, runCue } from './question-run';
   import AnswerPill from '$lib/AnswerPill.svelte';
   import '$lib/answer-row.css';
   import { sound } from '$lib/sound';
@@ -103,6 +105,29 @@
   let settledItem = $state<string | null>(null);
   let settledOnScreen = $derived(!!view && settledItem === view.item.key);
   let settledReady = $state(false);
+  // Question time before a run of yes/no questions, and the "Questions done" banner on the first rating after one, each
+  // keyed to the item it came up with so it goes when that item does.
+  let questionTimeItem = $state<string | null>(null);
+  let questionsDoneItem = $state<string | null>(null);
+  let questionTimeShowing = $derived(!!view && questionTimeItem === view.item.key);
+  let questionsDoneShowing = $derived(!!view && questionsDoneItem === view.item.key);
+  let cuedItem: string | null = null;
+  let lastWasQuestion: boolean | null = null;
+  $effect(() => {
+    if (!view || view.item.key === cuedItem) return;
+    const isQuestion = view.question.kind === 'bool';
+    const cue = runCue(lastWasQuestion, isQuestion);
+    cuedItem = view.item.key;
+    lastWasQuestion = isQuestion;
+    if (cue === 'question-time') questionTimeItem = view.item.key;
+    if (cue === 'questions-done') questionsDoneItem = view.item.key;
+  });
+  $effect(() => {
+    if (!questionsDoneItem) return;
+    const timer = setTimeout(() => (questionsDoneItem = null), QUESTIONS_DONE_MS);
+    return () => clearTimeout(timer);
+  });
+  const startQuestions = () => (questionTimeItem = null);
   let blockReason = $state<BlockReason | null>(null);
   // The ruling toast floats over the image stage; it is only an alert, so the answers stay live under it.
   const rulingNotice = dismissible(
@@ -144,6 +169,13 @@
       if (event.key === 'Enter' || event.key === ' ' || event.key === 'Escape') {
         event.preventDefault();
         if (!event.repeat) continueFromSettled();
+      }
+      return;
+    }
+    if (questionTimeShowing) {
+      if (event.key === ' ' || event.key === 'Enter') {
+        event.preventDefault();
+        startQuestions();
       }
       return;
     }
@@ -922,7 +954,7 @@
     <div class="column">
       <div class="qrow">
       <p class="question" title={shown.question.prompt}>
-        <span class="eyebrow">
+        <span class="eyebrow" class:glow={questionsDoneShowing}>
           Question
           {#if shown.category}
             <!-- Re-keyed (and glows once) only when the category changes; the text is part of the question for screen readers. -->
@@ -952,6 +984,13 @@
             onfail={() => (failedItem = itemKey)}
           />
         {/key}
+        {#if questionTimeShowing}
+          <QuestionTime category={shown.category?.heading ?? null} onstart={startQuestions} />
+        {:else if questionsDoneShowing}
+          <p class="questions-done" role="status">
+            <Icon name="check" size={14} /><b>Questions done</b><span aria-hidden="true">·</span>back to rating
+          </p>
+        {/if}
         {@render levelToast(true)}
         {@render ruling(true)}
         {#if settledOnScreen}
@@ -971,14 +1010,21 @@
         <form class="answers answer-row" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers}>
           <input type="hidden" name="item" value={shown.item.id} />
           {#each shown.question.options as option, index (option.value)}
-            {@render pill(option, index, imageFailed || settledOnScreen, asksBlockReason(shown.question.key))}
+            {@render pill(option, index, imageFailed || settledOnScreen || questionTimeShowing, asksBlockReason(shown.question.key))}
           {/each}
         </form>
         <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
           <input type="hidden" name="item" value={shown.item.id} />
-          <button type="submit" class="quiet" disabled={submitting || settledOnScreen} aria-label="Skip" title="Skip (Space)">
-            <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
-          </button>
+          {#if yesNo}
+            <!-- Same action as Skip (no pay, no smite), named for what it means on a question; Space still sends it. -->
+            <button type="submit" class="unsure" disabled={submitting || settledOnScreen || questionTimeShowing} title="Not sure (Space)">
+              <Icon name="circle-help" size={16} /><span>Not sure</span><kbd class="key" aria-hidden="true">Space</kbd>
+            </button>
+          {:else}
+            <button type="submit" class="quiet" disabled={submitting || settledOnScreen} aria-label="Skip" title="Skip (Space)">
+              <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
+            </button>
+          {/if}
         </form>
         <span class="rowtool">
           <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button>
@@ -1186,7 +1232,8 @@
     font: 700 16px/1.25 var(--io-font-display);
     /* Wraps in full: phones can't hover for the title. */
   }
-  .category.glow {
+  .category.glow,
+  .eyebrow.glow {
     animation: category-glow 1.8s ease-out 1;
   }
   @keyframes category-glow {
@@ -1241,6 +1288,81 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
+  }
+  /* "Not sure" is an answer a player gives, so it reads as one: an answer pill after Yes and No. */
+  .unsure {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 180px;
+    height: 40px;
+    padding: 0 16px;
+    border: 1px solid var(--io-gold-muted);
+    border-radius: 6px;
+    background: var(--io-bg);
+    color: var(--io-parchment);
+    font: 700 14px/1 var(--io-font-ui);
+    transition: border-color var(--motion-fast) var(--ease-out-quart);
+  }
+  .unsure:hover:not(:disabled) {
+    border-color: var(--io-gold);
+    background: var(--io-bg);
+  }
+  .unsure .key {
+    color: var(--io-parchment-muted);
+    font: 700 12px/1 var(--io-font-ui);
+  }
+  .unsure:disabled {
+    opacity: 0.4;
+  }
+  .questions-done {
+    position: absolute;
+    top: 14px;
+    left: 50%;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 8px 14px;
+    border: 1px solid var(--io-gold-muted);
+    border-radius: 999px;
+    background: rgb(20 17 13 / 0.9);
+    box-shadow: 0 4px 16px rgb(0 0 0 / 0.5);
+    color: var(--io-parchment-muted);
+    font: 13px/1.2 var(--io-font-ui);
+    white-space: nowrap;
+    transform: translateX(-50%);
+    animation: questions-done-in var(--motion-base) var(--ease-out-quart) both;
+  }
+  .questions-done b {
+    color: var(--io-parchment);
+    font-weight: 600;
+  }
+  .questions-done :global(svg) {
+    color: var(--io-verdigris);
+  }
+  @keyframes questions-done-in {
+    from {
+      opacity: 0;
+      transform: translate(-50%, -8px);
+    }
+  }
+  @keyframes fade-in-only {
+    from {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .questions-done {
+      animation-name: fade-in-only;
+      animation-duration: var(--motion-fast);
+    }
+    .eyebrow.glow {
+      animation: none;
+    }
   }
   .quiet.guide {
     color: var(--io-gold);
@@ -1333,6 +1455,21 @@
     }
     .controls.yesno .skiplabel {
       display: inline;
+    }
+    /* No room for a third pill beside Yes and No: Not sure takes the full width under them. */
+    .controls.yesno {
+      flex-wrap: wrap;
+    }
+    .controls.yesno .answers,
+    .controls.yesno .skip {
+      flex: 1 1 100%;
+    }
+    .unsure {
+      width: 100%;
+      height: 44px;
+    }
+    .unsure .key {
+      display: none;
     }
     .space {
       display: none;
