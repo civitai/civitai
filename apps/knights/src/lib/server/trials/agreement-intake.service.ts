@@ -37,7 +37,7 @@ export async function takeAgreementIntake(
   db: Kysely<DB>,
   { now, config = AGREEMENT_INTAKE }: { now: Date; config?: typeof AGREEMENT_INTAKE }
 ): Promise<{ added: number }> {
-  // Only references a player can be shown hold a slot: one hidden for now is kept, not retired, and frees its slot.
+  // A hidden image's reference is kept, not retired; it just frees its slot.
   const live = new Map(
     (
       await readWithoutJit(db, (trx) =>
