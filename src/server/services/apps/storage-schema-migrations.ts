@@ -371,11 +371,15 @@ function opLabel(name: string, index: number): string {
  * A manifest whose `storage` does not parse yields an empty check: the manifest validator
  * reports those errors itself, and a baseline that does not parse cannot be compared (a warning
  * says so; an unparseable `history` entry is skipped).
+ *
+ * `approved` is EVERY earlier approved manifest (default: `history`), for the one rule that spans
+ * all of them: `keyedBy` ({@link keyedByChangeErrors}).
  */
 export function checkStorageMigrations(
   prev: unknown,
   next: unknown,
-  history: readonly unknown[] = []
+  history: readonly unknown[] = [],
+  approved: readonly unknown[] = history
 ): StorageMigrationCheck {
   const check: StorageMigrationCheck = {
     breaking: [],
@@ -394,6 +398,7 @@ export function checkStorageMigrations(
   }
   const prevCollections: ReadonlyMap<string, DeclaredStorageCollection> =
     before && before.errors.length === 0 ? before.collections : new Map();
+  check.errors.push(...keyedByChangeErrors(after.collections, [prev, ...approved]));
 
   const compare = (
     name: string,
@@ -565,6 +570,46 @@ export class StorageMigrationRefusal extends Error {
 
 export function isStorageMigrationRefusal(err: unknown): err is StorageMigrationRefusal {
   return err instanceof StorageMigrationRefusal;
+}
+
+/**
+ * 🔴 `keyedBy` IS IMMUTABLE ONCE APPROVED: adding, removing or changing it on a collection that
+ * ANY approved manifest declared reinterprets every key stored in it (a collection dropped and
+ * declared again is the same stored key space). A schema major is the wrong tool for that; a new
+ * collection is the right one (docs/app-storage-generic-core.md, "Viewer-keyed documents").
+ *
+ * Read from each manifest's RAW declaration, not its parse: an approved manifest that no longer
+ * parses still names the key spaces its documents were written in.
+ */
+export function keyedByChangeErrors(
+  now: ReadonlyMap<string, DeclaredStorageCollection>,
+  approved: readonly unknown[]
+): string[] {
+  const declared = new Map<string, Set<string | null>>();
+  for (const manifest of approved) {
+    const raw = (manifest as { storage?: { collections?: unknown } } | null)?.storage?.collections;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    for (const [name, decl] of Object.entries(raw as Record<string, unknown>)) {
+      const keyedBy = (decl as { keyedBy?: unknown } | null)?.keyedBy;
+      let seen = declared.get(name);
+      if (!seen) declared.set(name, (seen = new Set()));
+      seen.add(typeof keyedBy === 'string' ? keyedBy : null);
+    }
+  }
+  const errors: string[] = [];
+  for (const [name, collection] of now) {
+    const want = collection.keyedBy ?? null;
+    const was = [...(declared.get(name) ?? [])].find((k) => k !== want);
+    if (was === undefined) continue;
+    const label = (k: string | null) =>
+      k === null ? 'no keyedBy' : `keyedBy ${JSON.stringify(k)}`;
+    errors.push(
+      `storage.collections.${name}: an approved version declared it with ${label(
+        was
+      )}, and keyedBy cannot be added, removed or changed on a collection once approved (it changes what every stored key means) — declare a new collection instead`
+    );
+  }
+  return errors;
 }
 
 /** Throws {@link StorageMigrationRefusal} when the check has anything to refuse. */

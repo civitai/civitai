@@ -485,6 +485,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF — absent or Flipt unreachable, every shared write spends and scans as before. See
   // `putIfUnchanged` in `doc-store.ts`.
   APP_BLOCKS_STORAGE_UNCHANGED_WRITES_FREE = 'app-blocks-storage-unchanged-writes-free',
+  // Viewer-keyed collection writes (see `isViewerKeyedOpen`): create DEFAULT ON, with a closed segment
+  // (app block id = SOURCE app through an import, context { collection }) per migration target.
+  // Absent or unreachable reads as closed.
+  APP_BLOCKS_STORAGE_VIEWER_KEYED_OPEN = 'app-blocks-storage-viewer-keyed-open',
   // Who may DECLARE an App Storage permission hook (`storage.collections.<c>.hook`): checked at
   // submit, on the git-push path and at approve, for a hook that is new or changed against the
   // approved manifest, on the actor who introduced it (the submitter, or the pusher on the git-push

@@ -1401,8 +1401,13 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   ]);
   const baseline = existingApp
     ? await loadStorageMigrationBaseline({ slug })
-    : { prev: null, history: [] };
-  const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
+    : { prev: null, history: [], approved: [] };
+  const storageMigrations = checkStorageMigrations(
+    baseline.prev,
+    manifest,
+    baseline.history,
+    baseline.approved
+  );
   assertStorageMigrationsCover(storageMigrations);
 
   // 🔴 APP STORAGE PERMISSION HOOKS — refused HERE too, before the upload and the review-repo push:
@@ -3792,13 +3797,18 @@ async function approveRequestUnderClaim(
     import('~/server/services/apps/storage-migration-run.service'),
   ]);
   const baseline = isFirstVersion
-    ? { prev: null, history: [] }
+    ? { prev: null, history: [], approved: [] }
     : await loadStorageMigrationBaseline({
         slug: request.slug,
         excludePublishRequestId: request.id,
         selfManifest: manifest,
       });
-  const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
+  const storageMigrations = checkStorageMigrations(
+    baseline.prev,
+    manifest,
+    baseline.history,
+    baseline.approved
+  );
   assertStorageMigrationsCover(storageMigrations);
 
   // APP STORAGE PERMISSION HOOKS — the submit pin, again, against the bytes this approve will

@@ -323,6 +323,21 @@ export function assertShareWritable(
 }
 
 /**
+ * VIEWER-KEYED collections (`keyedBy`, `doc-store-viewer-keyed.ts`): a viewer writes exactly one
+ * document per (parent) key, at a key the server derives, so every path that names keys itself or
+ * writes beside the document is refused (`invalid_request`, `reason: 'viewer_keyed'`): a create or
+ * a write by key (the route), publish and unpublish, counters and declared marks (here, in the
+ * store, for every caller). The only writes are the route's `@me` ones. Exported for the route.
+ */
+export function refuseViewerKeyed(coll: DocCollection, what: string): void {
+  if (coll.config.keyedBy === undefined) return;
+  throw invalid(
+    `${what} is not available on viewer-keyed collection ${coll.name}: write the viewer's own document at /${coll.name}/@me`,
+    { reason: 'viewer_keyed', collection: coll.name }
+  );
+}
+
+/**
  * A report cannot be withdrawn. Withdrawing and re-filing would otherwise make a fresh report
  * after a moderator dismissed the document's reports, so one viewer could re-open it
  * indefinitely (see DISMISSED REPORTS in the moderation section). Exported so the route refuses
@@ -371,6 +386,7 @@ function requireShared(coll: DocCollection, what: string): void {
  */
 export function assertIncrementRequest(coll: DocCollection, counter: string, by: number): void {
   requireShared(coll, 'counters');
+  refuseViewerKeyed(coll, 'counters');
   if (!TALLY_NAME_SHAPE.test(counter) || !(coll.config.counters ?? []).includes(counter)) {
     throw invalid(`counter ${counter} is not declared`, { counter });
   }
@@ -385,7 +401,9 @@ export function assertIncrementRequest(coll: DocCollection, counter: string, by:
  */
 export function assertMarkRequest(coll: DocCollection, name: string): void {
   requireShared(coll, 'marks');
+  // A report stays possible on every shared document, a viewer-keyed one included.
   if (name === REPORT_MARK) return;
+  refuseViewerKeyed(coll, 'marks');
   if (!TALLY_NAME_SHAPE.test(name) || !(coll.config.marks ?? []).includes(name)) {
     throw invalid(`mark ${name} is not declared`, { mark: name });
   }
@@ -478,6 +496,7 @@ export function assertPublishPair(from: DocCollection, to: DocCollection): void 
   }
   assertShareWritable(to);
   assertNotHooked(to, 'publish');
+  refuseViewerKeyed(to, 'publish');
 }
 
 /**
@@ -3888,6 +3907,7 @@ function buildDocStore(deps: DocStoreDeps) {
     requireShared(to, 'unpublish targets');
     assertShareWritable(to);
     assertNotHooked(to, 'unpublish');
+    refuseViewerKeyed(to, 'unpublish');
     const viewer = requireViewer(ctx);
     const sorted = assertPublishKeys(keys).sort();
     return retryOnDeadlock(() =>

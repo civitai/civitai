@@ -297,6 +297,36 @@ describe('POST /v1/check: request shape', () => {
     expect(res.json().error.code).toBe('bad_request');
   });
 
+  // `parent`: the civitai.com write path sends it only on a viewer-keyed (`keyedBy`) collection's
+  // `@me` write. An older runner refuses it (strict input) and such a write fails closed, so this
+  // contract must ship before any hooked viewer-keyed collection is opened.
+  it.each([
+    ['a 1-character parent', 'p'],
+    ['a 96-character parent', 'a'.repeat(96)],
+    ['a null parent (keyedBy "viewer")', null],
+  ] as const)('answers 200 for %s', async (_what, parent) => {
+    const res = await post(JSON.stringify(checkBody(ALLOW, { input: { parent } as never })));
+    expect(res.statusCode).toBe(200);
+    expect(res.json().result).toEqual({ allow: true });
+  });
+
+  it('answers 200 for an input without `parent` (every other collection)', async () => {
+    const body = checkBody(ALLOW) as { input: Record<string, unknown> };
+    expect(body.input).not.toHaveProperty('parent');
+    const res = await post(JSON.stringify(body));
+    expect(res.statusCode).toBe(200);
+  });
+
+  it.each([
+    ['an empty parent', ''],
+    ['a 97-character parent', 'a'.repeat(97)],
+    ['a non-string parent', 7],
+  ] as const)('refuses 400 bad_request for %s', async (_what, parent) => {
+    const res = await post(JSON.stringify(checkBody(ALLOW, { input: { parent } as never })));
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('bad_request');
+  });
+
   it('does not echo document values in a 400 message', async () => {
     const body = checkBody(ALLOW, {
       input: { viewer: { userId: 'secret-value-xyz' as unknown as number } },

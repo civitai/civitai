@@ -27,7 +27,7 @@ describe('APP_STORAGE_ENABLED_FEATURES', () => {
   // A ledger: turning a feature on must be a deliberate edit of this line AND of the
   // runtime behind it. `hooks` is on: the write path calls them (`doc-store-hook.ts`), and who
   // may declare one is the `app-blocks-storage-hooks` cohort's to decide (`storage-hooks.ts`).
-  it('ships with permission hooks on, and anyone-writes, owner writes, log collections, TTL, per-author write budgets and registry export switched off', () => {
+  it('ships with permission hooks on, and anyone-writes, owner writes, log collections, TTL, per-author write budgets, registry export and viewer-keyed documents switched off', () => {
     expect(APP_STORAGE_ENABLED_FEATURES).toEqual({
       anyoneWrites: false,
       ownerWrites: false,
@@ -36,6 +36,7 @@ describe('APP_STORAGE_ENABLED_FEATURES', () => {
       perAuthorWriteBudget: false,
       hooks: true,
       registryExport: false,
+      viewerKeyedDocs: false,
     });
     expect(Object.isFrozen(APP_STORAGE_ENABLED_FEATURES)).toBe(true);
   });
@@ -50,6 +51,7 @@ describe('APP_STORAGE_ENABLED_FEATURES', () => {
     ['perAuthorWriteBudget', { visibility: 'shared', write: 'own', dailyWritesPerAuthor: 200 }],
     ['hooks', { visibility: 'private', hook: { file: 'hooks/cards.js', sha256: 'a'.repeat(64) } }],
     ['registryExport', { visibility: 'shared', write: 'own', registry: 'public' }],
+    ['viewerKeyedDocs', { visibility: 'shared', write: 'own', keyedBy: 'parent+viewer' }],
   ] as const;
 
   // Updating the ledger above for a new switch key is not enough: the key must also get a
@@ -484,5 +486,47 @@ describe('storage hooks', () => {
     expect(errors).toEqual([
       'storage.collections.b.hook pins "h.js" with a different sha256 than storage.collections.a.hook — one file has one sha256',
     ]);
+  });
+});
+
+// docs/app-storage-generic-core.md, "Viewer-keyed documents": the declaration the store reads.
+describe('keyedBy (viewer-keyed documents)', () => {
+  const parse = (decl: Record<string, unknown>) =>
+    parseManifestStorage(
+      { storage: { collections: { votes: decl } } },
+      APP_STORAGE_ALL_FEATURES_ON
+    );
+
+  it.each(['viewer', 'parent+viewer'])('%s is carried into the parsed declaration', (keyedBy) => {
+    const parsed = parse({ visibility: 'shared', write: 'own', keyedBy });
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.collections.get('votes')?.keyedBy).toBe(keyedBy);
+  });
+
+  it('absent: no keyedBy on the declaration', () => {
+    expect(
+      parse({ visibility: 'shared', write: 'own' }).collections.get('votes')
+    ).not.toHaveProperty('keyedBy');
+  });
+
+  it.each([
+    [
+      { visibility: 'private', keyedBy: 'viewer' },
+      'storage.collections.votes.keyedBy applies only to shared collections — a private collection already has one key space per viewer',
+    ],
+    [
+      { visibility: 'shared', write: 'none', marks: ['vote'], keyedBy: 'viewer' },
+      'storage.collections.votes.keyedBy applies only to write "own" — the viewer must be the author of the document their key names',
+    ],
+    [
+      { visibility: 'shared', write: 'own', keyedBy: 'parent' },
+      'storage.collections.votes.keyedBy must be one of viewer, parent+viewer',
+    ],
+    [
+      { visibility: 'shared', write: 'own', keyedBy: 'parent+viewer', marks: ['vote'] },
+      "storage.collections.votes.keyedBy cannot be combined with counters or marks — each viewer's document is itself their vote or entry",
+    ],
+  ])('refused: %o', (decl, error) => {
+    expect(parse(decl).errors).toEqual([error]);
   });
 });
