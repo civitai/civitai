@@ -12,11 +12,12 @@ import { ratingRecordedUnderGrace } from '@civitai/shared/account-deletion-grace
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
-/** A rating refused because the image is a song. Its message is the moderator-facing copy. */
+/** A rating refused because the image is a song its own scans have not reviewed yet. Its message is
+ *  the moderator-facing copy. */
 export class SongRatingRefusedError extends Error {
   constructor(readonly imageId: number) {
     super(
-      'A song is published only by its own scan, which is retried automatically; it cannot be rated here.'
+      'This song has not been reviewed yet: its own scans decide it first, and are retried automatically. Rate it once they have.'
     );
   }
 }
@@ -38,12 +39,14 @@ export async function updateImageNsfwLevel({
 }): Promise<void> {
   const image = await dbWrite
     .selectFrom('Image')
-    .select(['type', 'metadata', 'postId', thumbnailParentId.as('parentId')])
+    .select(['type', 'ingestion', 'metadata', 'postId', thumbnailParentId.as('parentId')])
     .where('id', '=', id)
     .executeTakeFirst();
   if (!image) throw new Error('Image not found');
-  // The lock would count as the song's review, which only its own scan may give.
-  if (image.type === 'audio') throw new SongRatingRefusedError(id);
+  // The lock would count as the song's review, which only its own scans may give: a song is rated
+  // only once they have (`ingestion` Scanned, the first arm of the main app's `imageReviewedSql`; a
+  // song never reaches its second, the lock).
+  if (image.type === 'audio' && image.ingestion !== 'Scanned') throw new SongRatingRefusedError(id);
 
   const stored = (image.metadata as Record<string, unknown> | null) ?? {};
   const metadata = {
@@ -52,7 +55,7 @@ export async function updateImageNsfwLevel({
     ...ratingRecordedUnderGrace(stored, nsfwLevel),
   };
 
-  await dbWrite
+  const updated = await dbWrite
     .updateTable('Image')
     .set({
       nsfwLevel,
@@ -60,7 +63,13 @@ export async function updateImageNsfwLevel({
       metadata: sql`${JSON.stringify(metadata)}::jsonb`,
     })
     .where('id', '=', id)
-    .execute();
+    // Re-checked in the write: a rescan that started since the read leaves the song unreviewed.
+    .where((eb) => eb.or([eb('type', '<>', 'audio'), eb('ingestion', '=', 'Scanned')]))
+    .executeTakeFirst();
+  if (Number(updated.numUpdatedRows) === 0) {
+    if (image.type === 'audio') throw new SongRatingRefusedError(id);
+    throw new Error('Image not found');
+  }
   await invalidateThumbnails(id, [image.parentId]);
   await bustProfilePictures({ imageIds: [id] });
 
