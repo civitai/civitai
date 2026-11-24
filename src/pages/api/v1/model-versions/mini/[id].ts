@@ -40,6 +40,7 @@ import type {
   LicensingFeeSettlementCurrency,
   ModelType,
   ModelHashType,
+  ModelStatus,
 } from '~/shared/utils/prisma/enums';
 import {
   Availability,
@@ -66,10 +67,12 @@ import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isEvictable } from '~/shared/constants/model-version-flags.constants';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
 import { hashRouteServesEveryone } from '~/server/services/download-by-hash.servable';
 import {
   credentialKind,
   evaluateMiniEpochCaller,
+  type MiniEpochCallerClass,
   getMiniEpochGateMode,
   hasVersionGrant,
 } from '~/server/utils/mini-epoch-caller';
@@ -303,7 +306,43 @@ async function handler(
   `;
   // Same answer as an unknown id, so the response does not reveal that the version exists.
   if (!modelVersion || !canViewPoiModel(modelVersion.poi, modelVersion.modelUserId, user))
-    return res.status(404).json({ error: 'Model not found' });
+    return modelNotFound(res);
+  // A deleted, unpublished or not yet released model is shown only to its owner and moderators, as
+  // on the model page. The orchestrator's service token has no user: it reads this to decide what
+  // may generate.
+  if (
+    !orchestrator &&
+    !canViewModelVersionStatus({
+      viewer: user?.id ? { id: user.id, isModerator: user.isModerator } : null,
+      ownerId: modelVersion.modelUserId,
+      modelStatus: modelVersion.modelStatus as ModelStatus,
+      versionStatus: modelVersion.status as ModelStatus,
+      publishedAt: modelVersion.publishedAt,
+    })
+  )
+    return modelNotFound(res);
+
+  let privateCaller: { callerClass: MiniEpochCallerClass } | undefined;
+  if (
+    modelVersion.availability === Availability.Private ||
+    modelVersion.modelAvailability === Availability.Private
+  ) {
+    const mode = await getMiniEpochGateMode();
+    if (mode !== 'off') {
+      // The body now depends on the caller, so no shared cache may hold it.
+      res.setHeader('Cache-Control', 'private, no-store');
+      const caller = await evaluateMiniEpochCaller({
+        req,
+        user,
+        modelVersionId: modelVersion.id,
+        ownerId: modelVersion.modelUserId,
+        mode,
+        scopeRefused: await isScopeRefused(),
+      });
+      if (caller.withhold) return modelNotFound(res);
+      privateCaller = caller;
+    }
+  }
 
   // Above SFW, unrated, or with a civitai.com name, the answer depends on the caller's region, which
   // the shared cache does not key on.
@@ -319,7 +358,7 @@ async function handler(
     servedLevel !== allBrowsingLevelsFlag &&
     !Flags.intersects(modelVersion.nsfwLevel, servedLevel)
   )
-    return res.status(404).json({ error: 'Model not found' });
+    return modelNotFound(res);
   const modelName = resolveModelFace(
     { name: modelVersion.modelName, sfwName: modelVersion.sfwName },
     showsSfwFace(servedLevel)
@@ -424,10 +463,6 @@ async function handler(
   const requestedFile = modelFileId
     ? files.find((f) => f.id === modelFileId)
     : getPrimaryFile(files);
-  // The primary file the caller may not see is logged as its own reason, so the gate's measurement
-  // counts it separately.
-  const hiddenPrimary = !modelFileId && (!requestedFile || !visibleFiles.includes(requestedFile));
-
   const useEpochUrl =
     modelVersion.availability === Availability.Private && !!requestedFile?.metadata.trainingResults;
 
@@ -435,27 +470,12 @@ async function handler(
   // else the gate serves (`log`, or `enforce-anon` with a credential) keeps the stored one.
   let mayResign = false;
   let maySelectEpoch = false;
-  // Decided before the epoch is read, so a refused caller gets the same answer whatever the
-  // version's training results hold.
   if (useEpochUrl) {
-    const mode = await getMiniEpochGateMode();
-    if (mode !== 'off') {
-      // The body now depends on the caller, so no shared cache may hold it.
-      res.setHeader('Cache-Control', 'private, no-store');
-      const caller = await evaluateMiniEpochCaller({
-        req,
-        user,
-        modelVersionId: modelVersion.id,
-        ownerId: modelVersion.modelUserId,
-        mode,
-        scopeRefused: await isScopeRefused(),
-        pick: modelFileId ? 'by-id' : hiddenPrimary ? 'hidden-primary' : 'primary',
-      });
-      // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
-      // 404 to a caller who would be served.
-      if (caller.withhold) return res.status(404).json({ error: 'Model not found' });
-      mayResign = caller.callerClass !== 'anonymous' && caller.callerClass !== 'other';
-      maySelectEpoch = ['owner', 'moderator', 'orchestrator'].includes(caller.callerClass);
+    // `useEpochUrl` implies a Private version, so the gate above has classed the caller unless off.
+    if (privateCaller) {
+      mayResign =
+        privateCaller.callerClass !== 'anonymous' && privateCaller.callerClass !== 'other';
+      maySelectEpoch = ['owner', 'moderator', 'orchestrator'].includes(privateCaller.callerClass);
     } else {
       mayResign =
         orchestrator ||
@@ -976,4 +996,13 @@ async function resignEpochBlob(
     unknown,
     () => controller.abort()
   );
+}
+
+/**
+ * The answer to an unknown id and to a version the caller may not see, headers included, so the two
+ * cannot be told apart. Never in a shared cache: the same id can be visible to another caller.
+ */
+function modelNotFound(res: NextApiResponse) {
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.status(404).json({ error: 'Model not found' });
 }

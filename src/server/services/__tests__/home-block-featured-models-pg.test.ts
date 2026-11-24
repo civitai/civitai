@@ -12,6 +12,7 @@ import type { SessionUser } from '~/types/session';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ModelService from '~/server/services/model.service';
+import * as homeBlockSource from '~/server/services/home-block.service';
 
 type Img = { id: number; nsfwLevel: number };
 type FakeModel = {
@@ -192,7 +193,7 @@ describe('Featured Models home block shows PG only', () => {
     );
     state.items = [model(1, [{ id: 11, nsfwLevel: PG }])];
 
-    const block = await getHomeBlockCached(featuredBlock, undefined, {});
+    const block = await getHomeBlockCached(featuredBlock, undefined, {}, homeBlockSource);
 
     expect((block as { featuredModels: FakeModel[] }).featuredModels.map((m) => m.id)).toEqual([1]);
   });
@@ -200,7 +201,7 @@ describe('Featured Models home block shows PG only', () => {
   // A won auction must clear the entry the block actually reads, or it serves the old winners.
   it('busts the entry the block is cached under', async () => {
     state.items = [model(1, [{ id: 11, nsfwLevel: PG }])];
-    await getHomeBlockCached(featuredBlock, undefined, {});
+    await getHomeBlockCached(featuredBlock, undefined, {}, homeBlockSource);
     const readKey = redisMock.redis.packed.get.mock.calls[0][0];
 
     await bustFeaturedModelsHomeBlockCache();

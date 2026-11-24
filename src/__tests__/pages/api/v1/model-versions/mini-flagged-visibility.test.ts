@@ -52,6 +52,8 @@ const versionRow = {
   sfwOnly: false,
   usageControl: 'Download',
   modelUserId: OWNER_ID,
+  modelStatus: 'Published',
+  modelAvailability: 'Public',
   poi: true,
   licensingFee: null,
   licensingFeeType: null,

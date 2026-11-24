@@ -1,0 +1,92 @@
+name: Restore the Go module and build caches
+description: >-
+  Restore-only replacement for actions/setup-go's built-in cache (`cache: true`, its default).
+  Restores GOMODCACHE + GOCACHE under the key setup-go used, and NEVER saves. Put it right after
+  actions/setup-go with `cache: false`, and ./.github/actions/go-cache-save as the job's last step
+  in a job that runs on `main`; that action saves only on `main`.
+
+# ── WHY NOT setup-go's `cache` ────────────────────────────────────────────────────────────────
+#
+# setup-go v6 caches by default and saves in a post step on every run that missed, whatever the
+# ref, with no input to turn only the save off. Actions caches are scoped to a ref, so a pull
+# request or branch run that misses (its go.sum or Go version differs from what `main` last saved)
+# writes an entry that only that ref can read, against the repo's 10 GB cache budget. The same
+# leak the pnpm store had; see ./.github/actions/pnpm-store-restore and
+# scripts/__tests__/no-pr-scoped-cache-save.test.ts.
+#
+# ── THE KEY AND PATHS ARE setup-go's, ON PURPOSE ─────────────────────────────────────────────
+#
+# setup-go v6 (src/cache-restore.ts): key
+#   setup-go-<RUNNER_OS>-<process.arch>-<ImageOS>-go-<installed version>-<hashFiles(deps)>
+# (`<ImageOS>-` on Linux only), paths `go env GOMODCACHE` then `go env GOCACHE`, in that order.
+# An Actions cache entry's version is derived from its path list, so the paths must match as
+# exactly as the key for `main`'s existing entries to keep hitting. The installed version is
+# `go version`'s, which is `go env GOVERSION` without the `go` prefix. `process.arch` is the
+# lower-cased RUNNER_ARCH for the two hosted architectures (x64, arm64).
+#
+# Exports GO_CACHE_KEY, GO_CACHE_MOD, GO_CACHE_BUILD and GO_CACHE_HIT for the save action.
+
+inputs:
+  dependency-path:
+    description: setup-go's `cache-dependency-path`, unchanged (one path or glob per line).
+    required: true
+
+outputs:
+  cache-hit:
+    description: "'true' when the exact key was restored."
+    value: ${{ steps.restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve Go cache key and paths
+      shell: bash
+      env:
+        DEPS_HASH: ${{ hashFiles(inputs.dependency-path) }}
+      run: |
+        set -euo pipefail
+        # FAIL-CLOSED, unlike setup-go: when nothing matches, setup-go only WARNS and runs on with no
+        # cache; this fails the JOB. Deliberate: an empty hash would key every run alike, and a wrong
+        # dependency-path should be fixed, not silently run cold.
+        if [ -z "$DEPS_HASH" ]; then
+          echo "::error title=Go cache::no file matches the dependency path"
+          exit 1
+        fi
+        case "$RUNNER_ARCH" in
+          X64) arch=x64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "::error title=Go cache::unsupported RUNNER_ARCH $RUNNER_ARCH"; exit 1 ;;
+        esac
+        # Assignments, not inline in an echo: a failing substitution there does not fail the step.
+        version=$(go env GOVERSION)
+        version=${version#go}
+        mod=$(go env GOMODCACHE)
+        build=$(go env GOCACHE)
+        if [ -z "$version" ] || [ -z "$mod" ] || [ -z "$build" ]; then
+          echo "::error title=Go cache::could not read GOVERSION, GOMODCACHE or GOCACHE"
+          exit 1
+        fi
+        image=""
+        if [ "$RUNNER_OS" = Linux ]; then image="${ImageOS:?}-"; fi
+        key="setup-go-${RUNNER_OS}-${arch}-${image}go-${version}-${DEPS_HASH}"
+        {
+          printf 'GO_CACHE_KEY=%s\n' "$key"
+          printf 'GO_CACHE_MOD=%s\n' "$mod"
+          printf 'GO_CACHE_BUILD=%s\n' "$build"
+        } >> "$GITHUB_ENV"
+        echo "Go cache: key $key, paths $mod $build"
+
+    - name: Restore Go caches
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: |
+          ${{ env.GO_CACHE_MOD }}
+          ${{ env.GO_CACHE_BUILD }}
+        key: ${{ env.GO_CACHE_KEY }}
+
+    - name: Record the restore result
+      shell: bash
+      env:
+        HIT: ${{ steps.restore.outputs.cache-hit }}
+      run: printf 'GO_CACHE_HIT=%s\n' "${HIT:-false}" >> "$GITHUB_ENV"

@@ -1,0 +1,38 @@
+name: Save the Go module and build caches (main only)
+description: >-
+  Saves what ./.github/actions/go-cache-restore restored, under the same key, ONLY on a push,
+  workflow_dispatch or schedule run on `main`, and only when the restore missed. A no-op
+  everywhere else. Make it the job's LAST step: the build cache fills during the build and test
+  steps, which is why setup-go saved in a post step.
+
+# The gate and its allowlist are the pnpm store save's (./.github/actions/pnpm-store-save), for
+# the same reasons: an entry saved off `main` is readable by that ref alone, and
+# `pull_request_target`, `issue_comment` and `workflow_run` run with `github.ref` = main, so the
+# event is an allowlist rather than `!= 'pull_request'`. Callers need no `if` on this step.
+#
+# No `if: always()` from the caller: like setup-go's post step (`post-if: success()`), a job that
+# failed earlier does not save.
+#
+# `continue-on-error` sits on the inner save step: best-effort, two jobs on one commit race the
+# same key, and the loser must not red `main`.
+
+runs:
+  using: composite
+  steps:
+    - name: Check the restore ran
+      shell: bash
+      run: |
+        if [ -z "${GO_CACHE_KEY:-}" ] || [ -z "${GO_CACHE_MOD:-}" ] || [ -z "${GO_CACHE_BUILD:-}" ]; then
+          echo "::error title=Go cache::go-cache-save ran without go-cache-restore earlier in the job"
+          exit 1
+        fi
+
+    - name: Save Go caches
+      if: ${{ contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main' && env.GO_CACHE_HIT != 'true' }}
+      continue-on-error: true
+      uses: actions/cache/save@v6
+      with:
+        path: |
+          ${{ env.GO_CACHE_MOD }}
+          ${{ env.GO_CACHE_BUILD }}
+        key: ${{ env.GO_CACHE_KEY }}
