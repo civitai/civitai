@@ -1,6 +1,8 @@
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
-import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
-import { getBlockedPairIds } from '~/server/services/user-preferences.service';
+import {
+  isReviewImageBlockedForViewer,
+  reviewOfImageSql,
+} from '~/server/services/creator-service-review-image-sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
 import { isSessionOrFullUserKey, withModeratorRightsFor } from '~/server/auth/full-user-credential';
@@ -4574,12 +4576,16 @@ export const getImage = async ({
         select: { id: true, username: true, image: true, bannedAt: true, deletedAt: true },
       })
     : null;
-  // A block either way between the viewer and the buyer or the seller hides it, as on the review.
-  if (sellerId && userId && !isModerator && userId !== creatorId) {
-    const blockedPair = await getBlockedPairIds(userId);
-    if (blockedPair.includes(creatorId) || blockedPair.includes(sellerId))
-      throw throwNotFoundError(`No image with id ${id}`);
-  }
+  if (
+    sellerId &&
+    (await isReviewImageBlockedForViewer({
+      viewerId: userId,
+      buyerId: creatorId,
+      sellerId,
+      isModerator,
+    }))
+  )
+    throw throwNotFoundError(`No image with id ${id}`);
   const creditedSeller = seller && !seller.bannedAt && !seller.deletedAt ? seller : null;
   const userIds = creditedSeller ? [creatorId, creditedSeller.id] : [creatorId];
 

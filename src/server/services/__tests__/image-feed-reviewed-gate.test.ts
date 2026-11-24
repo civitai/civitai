@@ -78,7 +78,6 @@ describe.each([
 // A postless image (a service review's, say) opens only by id, never in the image feed.
 describe('getAllImages', () => {
   it.each([31, undefined])('leaves out postless images (browsing level %s)', async (level) => {
-    // The inner join on the post drops them, and the WHERE says so.
     expect(await getAllImagesSql(level)).toMatch(
       /FROM "Image" i JOIN "Post" p ON p\.id = i\."postId" WHERE i\."postId" IS NOT NULL AND/
     );

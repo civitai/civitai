@@ -339,11 +339,6 @@ export async function countImagesForUser(userId: number): Promise<number> {
   return Number(row?.c ?? 0);
 }
 
-/**
- * Retool's `strikeCheckbox`, on both Bulk Image Manager and User Reports: a TOS removal and the strike
- * for it were one gesture. Owners are resolved SERVER-side from the ids rather than passed in — the
- * client is not trusted to name them, and a hand-built POST can carry any ids.
- */
 export type StrikeSummary = {
   struck: number;
   owners: number;
@@ -371,6 +366,11 @@ export function reviewImagesSkippedNote(reviewImagesSkipped: number): string {
   } left out of the strike.`;
 }
 
+/**
+ * Retool's `strikeCheckbox`, on both Bulk Image Manager and User Reports: a TOS removal and the strike
+ * for it were one gesture. Owners are resolved SERVER-side from the ids rather than passed in — the
+ * client is not trusted to name them, and a hand-built POST can carry any ids.
+ */
 export async function strikeBatchOwners(input: {
   imageIds: number[];
   /** The user-facing strike description — the same canned message the removal was filed under. */

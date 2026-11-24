@@ -17,8 +17,9 @@ import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import {
   notReviewImageSql,
   shownReviewImageSql,
+  isReviewImageBlockedForViewer,
 } from '~/server/services/creator-service-review-image-sql';
-import { BlockedByUsers, getBlockedPairIds } from '~/server/services/user-preferences.service';
+import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
@@ -326,10 +327,14 @@ export async function assertImageReportable({
     LEFT JOIN "ServiceDeal" d ON d.id = sr."dealId"
     WHERE i.id = ${id}`;
   if (!image || image.visible === false) throw throwNotFoundError(REPORTED_CONTENT_GONE);
-  if (isModerator || image.sellerId === null || image.buyerId === userId) return;
-  const blockedPair = await getBlockedPairIds(userId);
-  if (blockedPair.includes(image.buyerId) || blockedPair.includes(image.sellerId))
-    throw throwNotFoundError(REPORTED_CONTENT_GONE);
+  if (image.sellerId === null) return;
+  const blocked = await isReviewImageBlockedForViewer({
+    viewerId: userId,
+    buyerId: image.buyerId,
+    sellerId: image.sellerId,
+    isModerator,
+  });
+  if (blocked) throw throwNotFoundError(REPORTED_CONTENT_GONE);
 }
 
 /**

@@ -26,6 +26,7 @@ export async function serviceReviewViewer({
 }) {
   return {
     levels: (browsingLevel ?? servable) & servable,
+    // A separate block set from isReviewImageBlockedForViewer's, tracked by task 1a20c17c830ce11af.
     excludedUserIds: viewerId ? await getHiddenOrBlockedUserIds(viewerId) : [],
   };
 }
