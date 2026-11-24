@@ -14,6 +14,7 @@ import type * as DetailFetchers from '~/server/notifications/detail-fetchers';
 import type * as SilenceAges from '~/server/notifications/silence-check-ages';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as ClickhouseClient from '~/server/clickhouse/client';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -22,6 +23,7 @@ const h = vi.hoisted(() => ({
   kv: new Map<string, unknown>(),
   unseen: vi.fn(),
   isFlipt: vi.fn(),
+  insert: vi.fn<(arg: unknown) => Promise<void>>(async () => undefined),
 }));
 
 vi.mock('~/server/email/client', () => ({ sendEmail: vi.fn(), isEmailConfigured: () => true }));
@@ -55,6 +57,10 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: h.isFlipt,
 }));
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClickhouseClient>()),
+  clickhouse: { insert: h.insert },
+}));
 vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof EndpointHelpers>()),
   PublicEndpoint: (handler: unknown) => handler,
@@ -65,6 +71,8 @@ const { DIGEST_CURSOR_KEY, DIGEST_ITEM_LIMIT, runMissedNotificationDigest } = aw
 );
 const { getEmailUnsubscribeUrl } = await import('~/server/services/notification-email.service');
 const { MISSED_DIGEST_EMAIL_TYPE } = await import('~/server/notifications/missed-digest.constants');
+const { verifyDigestClick } = await import('~/server/notifications/digest-tracking');
+const { decode: decodeHtml } = await import('he');
 const unsubscribe = (await import('~/pages/api/notifications/email-unsubscribe'))
   .default as unknown as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
 
@@ -191,6 +199,15 @@ async function lastSentAt(userId: number): Promise<string | null> {
   return rows[0]?.at ?? null;
 }
 
+/** The `notificationDigestEvents` rows written so far. */
+const digestEvents = () =>
+  h.insert.mock.calls.flatMap(([arg]) => (arg as { values: Record<string, unknown>[] }).values);
+const sendRows = () =>
+  digestEvents()
+    .filter((r) => r.event === 'send')
+    .map((r) => [r.userId, r.itemCount, r.cycleStartedAt, r.sentAt])
+    .sort();
+
 const mailedTo = () =>
   vi
     .mocked(sendEmail)
@@ -205,6 +222,7 @@ beforeEach(async () => {
   h.unseen.mockImplementation(async (input: UnseenNotificationsInput) => unseenFor(input));
   h.isFlipt.mockReset();
   h.isFlipt.mockResolvedValue(false);
+  h.insert.mockClear();
   await seed();
 });
 
@@ -561,22 +579,70 @@ describe('the notification-email kill switch', () => {
   });
 });
 
+const mailFor = (to: string) =>
+  vi
+    .mocked(sendEmail)
+    .mock.calls.map(([m]) => m)
+    .find((m) => m.to === to)!;
+
 describe('the digest email', () => {
+  /** Each tracked link in the html, as the click it records. */
+  const clicksIn = (html: string) =>
+    [...html.matchAll(/href="([^"]+)"/g)]
+      .map(([, href]) => new URL(decodeHtml(href!)))
+      .filter((url) => url.pathname === '/api/notifications/digest-click')
+      .map((url) => verifyDigestClick(Object.fromEntries(url.searchParams)));
+
   it('lists the newest ten with "and N more", and links each item and the notifications page', async () => {
     await run();
-    const mail = vi
-      .mocked(sendEmail)
-      .mock.calls.map(([m]) => m)
-      .find((m) => m.to === 'one@example.com')!;
+    const mail = mailFor('one@example.com');
     expect(mail.subject).toBe("You have 14 notifications you haven't seen");
-    expect(mail.text).toContain('- Reply #0\n  http://localhost:3000/images/100');
+    expect(mail.text).toContain(
+      '- Reply #0\n  http://localhost:3000/api/notifications/digest-click?u=1&'
+    );
     expect(mail.text).toContain('- Reply #9');
     expect(mail.text).toContain('and 4 more');
-    expect(mail.text).toContain('See all notifications: http://localhost:3000/user/notifications');
-    expect(mail.html).toContain('href="http://localhost:3000/images/109"');
-    expect(mail.html).toContain('href="http://localhost:3000/user/notifications"');
+    expect(mail.text).toContain(
+      'See all notifications: http://localhost:3000/api/notifications/digest-click?u=1&'
+    );
     expect(mail.headers?.['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
     expect(mail.headers?.['List-Unsubscribe']).toContain(`t=${MISSED_DIGEST_EMAIL_TYPE}`);
+  });
+
+  it("each link is signed for the user, the pass and the item's place, and leads to the item", async () => {
+    await run();
+    const pass = { userId: 1, cycleStartedAt: NOW, notificationType: 'system-message' };
+    expect(clicksIn(mailFor('one@example.com').html)).toEqual([
+      ...Array.from({ length: DIGEST_ITEM_LIMIT }, (_, i) => ({
+        ...pass,
+        position: i + 1,
+        to: `/images/${100 + i}`,
+      })),
+      // the "See all notifications" button
+      { ...pass, position: 0, notificationType: '', to: '/user/notifications' },
+    ]);
+    // Nine's links are signed for nine: a link is never shared between recipients.
+    expect(clicksIn(mailFor('nine@example.com').html).map((c) => c?.userId)).toEqual([9, 9]);
+  });
+
+  it('a link off the site is left as it is', async () => {
+    h.unseen.mockImplementation(async () => [
+      {
+        userId: 1,
+        total: 1,
+        floor: false,
+        items: [
+          {
+            ...item(100, 'Elsewhere'),
+            details: { message: 'Elsewhere', url: 'https://elsewhere.example/x' },
+          },
+        ],
+      },
+    ]);
+    await run();
+    const { html } = mailFor('one@example.com');
+    expect(html).toContain('href="https://elsewhere.example/x"');
+    expect(clicksIn(html).map((c) => c?.position)).toEqual([0]);
   });
 
   it('a one-click unsubscribe turns the digest off for that user', async () => {
@@ -601,5 +667,50 @@ describe('the digest email', () => {
     const result = await run();
     expect(mailedTo()).toEqual(['nine@example.com']);
     expect(result.skipped['opted-out']).toBe(2);
+  });
+});
+
+describe('the measurement rows', () => {
+  const unsubscribeVia = async (url: string) => {
+    const res = {
+      status: () => res,
+      setHeader: () => res,
+      send: () => res,
+    } as unknown as NextApiResponse;
+    const query = Object.fromEntries(new URL(url).searchParams);
+    await unsubscribe(
+      { method: 'POST', query, body: {}, headers: {} } as unknown as NextApiRequest,
+      res
+    );
+  };
+
+  it('records one send row per digest sent, with the pass, the send time and the item count', async () => {
+    await run();
+    const pass = '2026-11-16 12:00:00.000';
+    expect(sendRows()).toEqual([
+      [1, DIGEST_ITEM_LIMIT, pass, pass],
+      [9, 1, pass, pass],
+    ]);
+  });
+
+  it('records no send row for a start floor, a skip or a failed send', async () => {
+    // One is a fresh start (floor); nine's send fails; everyone else is skipped.
+    await h.pg.exec(`DELETE FROM "UserNotificationDigest" WHERE "userId" = 1`);
+    vi.mocked(sendEmail).mockRejectedValue(new Error('rejected'));
+    const result = await run();
+    expect(result.skipped['first-pass']).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(digestEvents()).toEqual([]);
+  });
+
+  it("an unsubscribe from a digest counts once, against the email's pass", async () => {
+    await run();
+    // The List-Unsubscribe header is `<url>`.
+    const url = String(mailFor('one@example.com').headers!['List-Unsubscribe']).slice(1, -1);
+    await unsubscribeVia(url);
+    await unsubscribeVia(url);
+    expect(digestEvents().filter((r) => r.event === 'unsubscribe')).toEqual([
+      expect.objectContaining({ userId: 1, cycleStartedAt: '2026-11-16 12:00:00.000' }),
+    ]);
   });
 });

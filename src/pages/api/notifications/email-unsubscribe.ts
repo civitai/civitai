@@ -2,6 +2,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { escape as escapeHtml } from 'he';
 import * as z from 'zod';
 import { notificationSettingsUrl } from '~/server/email/templates/notification.email';
+import { digestCycleParam, recordDigestEvents } from '~/server/notifications/digest-tracking';
+import { MISSED_DIGEST_EMAIL_TYPE } from '~/server/notifications/missed-digest.constants';
 import {
   emailOptOutDisplayName,
   isEmailOptOutType,
@@ -44,7 +46,13 @@ export default PublicEndpoint(
     const name = escapeHtml(emailOptOutDisplayName(t));
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     if (req.method === 'POST') {
-      await optOutOfNotificationEmail(u, t);
+      const turnedOff = await optOutOfNotificationEmail(u, t);
+      // A digest's links also carry the pass it was sent in (`c`), so its unsubscribes count per
+      // pass. Only the call that turned it off records one: a repeat POST counts nothing.
+      if (turnedOff && t === MISSED_DIGEST_EMAIL_TYPE)
+        await recordDigestEvents([
+          { event: 'unsubscribe', userId: u, cycleStartedAt: digestCycleParam(req.query.c) },
+        ]);
       return res.status(200).send(page(`<p>You won't get emails for "${name}" any more.</p>`));
     }
     return res.status(200).send(

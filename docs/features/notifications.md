@@ -228,6 +228,15 @@ so the digest never repeats one. Users with nothing unseen get nothing.
 - **Reads:** the notifications app's `POST /notifications/unseen` (`queryUnseenNotifications`).
 - **Counts:** each run logs `notification-digest` with users considered, emailed, failed and
   skipped by reason.
+- **Click-through** (`digest-tracking.ts`): every digest send, every followed digest link and every
+  unsubscribe from a digest is a row in the ClickHouse table `notificationDigestEvents`, keyed by
+  the pass (`cycleStartedAt`). Start floors, skips and failed sends write nothing. Each site link
+  goes through `/api/notifications/digest-click`, signed with the user, pass, item position and
+  type; it records the click (GET only) and redirects to a same-site path, and a link that fails a
+  check redirects to the notifications page and records nothing. Off-site links are left untracked.
+  The unsubscribe link carries the pass as `c`. The table's DDL is applied by hand
+  (`src/server/clickhouse/migrations/2026-11-24-notification-digest-events.sql`); without it the
+  inserts fail and are logged, and nothing else changes.
 
 ## Debugging
 
