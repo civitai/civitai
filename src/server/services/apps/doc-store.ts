@@ -1413,30 +1413,54 @@ const SQL_MAINT_RUN_DUMPS = `SELECT mr.name, mr.dump FROM appdata.maint_run mr
   WHERE mr.app_id = $1 AND mr.ns = $2 AND mr.coll = $3 AND mr.kind = 'purge_dump'
     AND mr.name LIKE $4 AND mr.dump IS NOT NULL
   ORDER BY mr.name`;
-// The runs naming one user in their dump or result, locked (the account wipe's scrub). jsonpath
-// over the dump's documents and marks, a purge's refunds and a copy's over-ceiling list.
-// $1 app, $2 ns, $3 user
+/**
+ * THE one predicate "this run names user `uid`" (a SQL int expression): as a dumped document's
+ * author, last writer or hider, as a dumped mark's (or report's) user, in a purge's refunds, a
+ * copy's over-ceiling list or a verify's per-user sample. The account wipe finds and scrubs runs by
+ * it; the migration's `appdata_account_wipe_read` policy on `maint_run` spells the same paths.
+ */
+function maintRunNamesUser(alias: string, uid: string): string {
+  const vars = `jsonb_build_object('u', ${uid}, 's', (${uid})::text)`;
+  return `(jsonb_path_exists(${alias}.dump, '$.docs[*] ? (@.authorUid == $u || @.lastWriterUid == $u || @.hiddenBy == $u)', ${vars})
+      OR jsonb_path_exists(${alias}.dump, '$.marks[*] ? (@.userId == $u)', ${vars})
+      OR jsonb_path_exists(${alias}.result, '$.refunds[*] ? (@.userId == $u)', ${vars})
+      OR jsonb_path_exists(${alias}.result, '$.totals.refunds[*] ? (@.userId == $u)', ${vars})
+      OR jsonb_path_exists(${alias}.result, '$.copy.overCeiling[*] ? (@ == $u)', ${vars})
+      OR jsonb_path_exists(${alias}.result, '$.verify.userSample[*] ? (@.id == $s)', ${vars}))`;
+}
+// The runs naming one user, locked (the account wipe's scrub). $1 app, $2 ns, $3 user
 const SQL_MAINT_RUN_NAMING_USER = `SELECT mr.coll, mr.kind, mr.name, mr.dump, mr.result
   FROM appdata.maint_run mr
-  WHERE mr.app_id = $1 AND mr.ns = $2
-    AND (jsonb_path_exists(mr.dump, '$.docs[*] ? (@.authorUid == $u || @.lastWriterUid == $u || @.hiddenBy == $u)', jsonb_build_object('u', $3::int))
-      OR jsonb_path_exists(mr.dump, '$.marks[*] ? (@.userId == $u)', jsonb_build_object('u', $3::int))
-      OR jsonb_path_exists(mr.result, '$.refunds[*] ? (@.userId == $u)', jsonb_build_object('u', $3::int))
-      OR jsonb_path_exists(mr.result, '$.copy.overCeiling[*] ? (@ == $u)', jsonb_build_object('u', $3::int)))
+  WHERE mr.app_id = $1 AND mr.ns = $2 AND ${maintRunNamesUser('mr', '$3::int')}
   ORDER BY mr.coll, mr.kind, mr.name
   FOR UPDATE`;
+// ACCOUNT-WIPE ENUMERATION of the maintenance runs: the (app, ns) pairs whose runs name one user,
+// keyset-paged like `SQL_ACCOUNT_NAMESPACES`, so a user who only REPORTED a document that a purge
+// then dumped is still found. Run only inside `accountWipeTx`, whose maint_run policy admits the
+// rows naming that ONE user, read only. $1 user id, $2 app id and $3 ns of the cursor (exclusive),
+// $4 limit.
+const SQL_ACCOUNT_DUMP_NAMESPACES = `SELECT DISTINCT wr.app_id, wr.ns FROM appdata.maint_run wr
+  WHERE ${maintRunNamesUser('wr', '$1::int')}
+    AND (wr.app_id, wr.ns) > ($2::text, $3::text)
+  ORDER BY wr.app_id, wr.ns LIMIT $4::int`;
 // The scrubbed dump and result; `updated_at` is left alone (it dates the run, and a dump's expiry
 // counts from its purge header's). $1 app, $2 ns, $3 coll, $4 kind, $5 name, $6 dump, $7 result
 const SQL_MAINT_RUN_SCRUB = `UPDATE appdata.maint_run mr SET dump = $6::jsonb, result = $7::jsonb
   WHERE mr.app_id = $1 AND mr.ns = $2 AND mr.coll = $3 AND mr.kind = $4 AND mr.name = $5`;
-// Retention: the dump rows of every purge that finished at least $3 days ago. $1 app, $2 ns,
-// $3 days
+// Retention: a purge left `purging` (never finished) $3 days after it STARTED is `abandoned`;
+// a re-call starts a new one. $1 app, $2 ns, $3 days
+const SQL_MAINT_RUN_ABANDON_PURGES = `UPDATE appdata.maint_run mr SET status = 'abandoned'
+  WHERE mr.app_id = $1 AND mr.ns = $2 AND mr.kind = 'purge' AND mr.status = 'purging'
+    AND mr.created_at < now() - make_interval(days => $3::int)`;
+// The dump rows of every purge that finished $3 days ago or more, or was abandoned.
+// $1 app, $2 ns, $3 days
 const SQL_MAINT_RUN_EXPIRE_DUMPS = `WITH gone AS (DELETE FROM appdata.maint_run mr
     WHERE mr.app_id = $1 AND mr.ns = $2 AND mr.kind = 'purge_dump'
       AND EXISTS (SELECT 1 FROM appdata.maint_run hr
         WHERE hr.app_id = $1 AND hr.ns = $2 AND hr.coll = mr.coll AND hr.kind = 'purge'
-          AND hr.status = 'purged' AND mr.name LIKE hr.name || '.%'
-          AND hr.updated_at < now() - make_interval(days => $3::int))
+          AND mr.name LIKE hr.name || '.%'
+          AND (hr.status = 'abandoned'
+            OR (hr.status = 'purged' AND hr.updated_at < now() - make_interval(days => $3::int))))
     RETURNING 1)
   SELECT count(*)::int AS n FROM gone`;
 // $1 app, $2 ns, $3 coll, $4 kind, $5 name, $6 status, $7 params, $8 result, $9 dump, $10 actor
@@ -2080,7 +2104,10 @@ export type MaintRun = {
   kind: 'mark_migration' | 'purge' | 'purge_dump';
   /** The mark name (`mark_migration`), the run id (`purge`) or `<run id>.<batch>` (`purge_dump`). */
   name: string;
-  /** `frozen`, `copied`, `verified`, `mismatch` or `rolled_back`; a purge `purging` or `purged`. */
+  /**
+   * `frozen`, `copied`, `verified`, `mismatch` or `rolled_back`; a purge `purging`, `purged` or
+   * `abandoned` (left unfinished past the retention period).
+   */
   status: string;
   params: Record<string, unknown>;
   result: Record<string, unknown>;
@@ -2167,10 +2194,11 @@ const SCHEMA_MAJOR_RECHECK_MS = 60_000;
 const MARK_HEAD_RECHECK_MS = 60_000;
 /** undefined_table: `appdata.mark_head` does not exist (its migration is not applied). */
 const PG_UNDEFINED_TABLE = '42P01';
-/** How long a store that found `appdata.maint_run` absent trusts that before looking again. */
-// ZERO: absence is never trusted, only presence is kept. The freeze is read on every mark; a store
-// that remembered "no table" would let a mark through for the length of that memory after the
-// table was created and a freeze committed, and the copy would miss it.
+/**
+ * Zero: a store never trusts "`appdata.maint_run` is absent" (only presence is kept). The freeze is
+ * read on every mark, and a remembered absence would let marks through after the table and a
+ * freeze appeared, which the copy would then miss.
+ */
 const MAINT_RUN_RECHECK_MS = 0;
 /** The manual migration that adds `appdata.maint_run`. */
 export const MAINT_RUN_MIGRATION = '20261123120000_appdata_maint_run.sql';
@@ -3359,9 +3387,37 @@ function buildDocStore(deps: DocStoreDeps) {
         ).rows.map((r) => ({ appId: r.app_id as string, ns: r.ns as string }))
       );
       out.push(...page);
-      if (page.length < ACCOUNT_WIPE_PAGE) return out;
+      if (page.length < ACCOUNT_WIPE_PAGE) break;
       after = page[page.length - 1];
     }
+    // The namespaces whose maintenance runs (purge dumps, run results) still name the user, where
+    // that table exists: their rows outlive the documents and marks the first listing reads.
+    const seen = new Set(out.map((p) => `${p.appId}\u0000${p.ns}`));
+    let afterDump = { appId: '', ns: '' };
+    for (;;) {
+      const page = await accountWipeTx(
+        userId,
+        async (c) =>
+          (await withMaintRun(c, async () =>
+            (
+              await c.query(SQL_ACCOUNT_DUMP_NAMESPACES, [
+                userId,
+                afterDump.appId,
+                afterDump.ns,
+                ACCOUNT_WIPE_PAGE,
+              ])
+            ).rows.map((r) => ({ appId: r.app_id as string, ns: r.ns as string }))
+          )) ?? []
+      );
+      for (const p of page) {
+        if (!seen.has(`${p.appId}\u0000${p.ns}`)) out.push(p);
+      }
+      if (page.length < ACCOUNT_WIPE_PAGE) break;
+      afterDump = page[page.length - 1];
+    }
+    return out.sort((a, b) =>
+      a.appId === b.appId ? (a.ns < b.ns ? -1 : a.ns > b.ns ? 1 : 0) : a.appId < b.appId ? -1 : 1
+    );
   }
 
   /** One (app, ns) of an account wipe, in ONE ordinary scoped transaction: all of it or none. */
@@ -3749,18 +3805,11 @@ function buildDocStore(deps: DocStoreDeps) {
     return result;
   }
 
-  // ---------------------------------------------------------------------------
   // THE MARK MIGRATION and THE PER-COLLECTION PURGE (`docs/app-storage-generic-core.md`, "Data
-  // migration"). Platform operations, started by a moderator through
-  // `storage-mark-migration.service.ts`: no hook, trust gate, budget or content scan. Each runs in
-  // the app's PRODUCTION namespace, in ordinary `withTx` transactions, and records itself in
-  // `appdata.maint_run`, which must exist (`MAINT_RUN_MIGRATION`).
-  //
-  // LOCK ORDER of their own rows: a run row is taken AFTER the source collection's document rows
-  // (a freeze: (1) then the run) and BEFORE the target collection's (a copy and a rollback: the
-  // run, then (1) of the target), then (2) and (3) as any write. The source and the target are
-  // different collections, so the two orders never meet on one row.
-  // ---------------------------------------------------------------------------
+  // migration"): moderator-run platform operations (no hook, trust gate, budget or content scan),
+  // in the production namespace, recorded in `appdata.maint_run`. LOCK ORDER of their run rows:
+  // after the source collection's document rows (a freeze), before the target's (a copy, a
+  // rollback); source and target are different collections, so the two orders never meet.
 
   const maintCtx = (appId: string): DocStoreContext => ({
     appId,
@@ -4310,35 +4359,14 @@ function buildDocStore(deps: DocStoreDeps) {
   }
 
   /**
-   * THE PER-COLLECTION PURGE, BATCHED AND RESUMABLE: one call deletes at most `batchSize`
-   * ({@link PURGE_BATCH}) documents of ONE collection in the app's production namespace, in key
-   * order, through the moderator delete path (`deleteLockedSharedDocs`: index rows by the cascade,
-   * tallies and EVERY mark row on each document — report rows included — tombstones, and each
-   * document's size refunded to the app and to its `author_uid`, never to the caller). Each call is
-   * one transaction: it dumps the rows it deletes into its own `purge_dump` row, deletes them, and
-   * advances the purge's header run (`kind 'purge'`, `purging` until no document is left, then
-   * `purged`). A re-call continues the purge in progress; every gate is checked again on every call,
-   * under the documents' locks.
+   * THE PER-COLLECTION PURGE, one batch (at most `batchSize`) per call, each dumped and deleted in
+   * one transaction; a re-call continues the run, re-checking every gate. Deletes through the
+   * moderator delete path, so each document's size is refunded to its `author_uid` (the user its
+   * creation was charged to), never to the moderator.
    *
-   * `mode: 'purge'` (a COUNTER collection, rollout step 4) runs only on counter documents
-   * (`author_kind 'counter'`, every one of them: any other document refuses it), and only when:
-   *   - no increment can re-create a document: `declared` (the collection as the app's enforced
-   *     manifest declares it, null when it does not) declares no counter, so `$inc` is refused;
-   *   - every mark with rows on the collection has a migration run `verified` whose target is in
-   *     `openTargets` (its switch is open);
-   *   - no report on the collection's documents is open (newer than its dismissal).
-   * A viewer-keyed collection — declared so, or the target of a mark migration whatever the
-   * manifest now says — is refused here: its purge is the rollback.
-   *
-   * `mode: 'rollback'` purges the TARGET of an active mark migration (`deriveKey` is its `@me`
-   * derivation) before its switch opens (the collection is not in `openTargets`), under the same
-   * open-report rule, and, once no document is left, marks that run `rolled_back`, which lifts the
-   * freeze. Because a switch that reads closed might still have been open (the switch fails
-   * closed), it refuses unless every document left in the target is exactly a copy: a user-authored
-   * version-1 document at a key a source mark derives, by that mark's voter, created (and last
-   * updated) when that mark was. On its first call no copy may be missing either, once the copy
-   * completed. And it refuses once the source collection was purged: its marks are gone, so lifting
-   * the freeze would bring nothing back.
+   * `rollback` refuses unless every document left is exactly a copy: the switch fails closed, so a
+   * target that reads closed may still have been open and hold viewers' own votes. It also refuses
+   * once the source was purged: the marks a rollback would hand back are gone.
    */
   async function purgeCollection(
     appId: string,
@@ -4733,7 +4761,8 @@ function buildDocStore(deps: DocStoreDeps) {
   /**
    * ACCOUNT DELETION reaches the maintenance runs (operator decision: the wipe covers dumps):
    * every row naming `userId` — as a dumped document's author, last writer or hider, as a dumped
-   * mark's (or report's) user, in a purge's refunds or a copy's over-ceiling list — loses it. A
+   * mark's (or report's) user, in a purge's refunds, a copy's over-ceiling list or a verify's
+   * per-user sample (`maintRunNamesUser`) — loses it. A
    * dumped document the user authored goes whole, with its index, tally and mark rows; the rest
    * keep only what names someone else. Runs in the wipe's own transaction, after its document locks.
    */
@@ -4771,6 +4800,13 @@ function buildDocStore(deps: DocStoreDeps) {
       if (copy && Array.isArray(copy.overCeiling)) {
         result.copy = { ...copy, overCeiling: copy.overCeiling.filter((u) => u !== userId) };
       }
+      const verify = result.verify as { userSample?: { id: string }[] } | undefined;
+      if (verify && Array.isArray(verify.userSample)) {
+        result.verify = {
+          ...verify,
+          userSample: verify.userSample.filter((x) => x.id !== String(userId)),
+        };
+      }
       await c.query(SQL_MAINT_RUN_SCRUB, [
         ctx.appId,
         ctx.ns,
@@ -4786,9 +4822,9 @@ function buildDocStore(deps: DocStoreDeps) {
   }
 
   /**
-   * RETENTION: drop the dumps of every purge of the app's production namespace that finished
-   * (`purged`) at least `days` ago (default {@link PURGE_DUMP_RETENTION_DAYS}); its header run, with
-   * its counts, stays. Returns the dump rows deleted. Nothing to do where the table does not exist.
+   * RETENTION: drop the dumps of every purge that finished `days` ago (default
+   * {@link PURGE_DUMP_RETENTION_DAYS}) or was abandoned (still `purging` that long after it
+   * started); the header, with its counts, stays.
    */
   async function expireMaintDumps(
     appId: string,
@@ -4798,9 +4834,12 @@ function buildDocStore(deps: DocStoreDeps) {
     if (!Number.isSafeInteger(days) || days < 1) throw new Error('doc-store: days must be ≥ 1');
     const ctx = maintCtx(appId);
     return withTx(ctx, async (c) => {
-      const n = await withMaintRun(c, async () =>
-        Number((await c.query(SQL_MAINT_RUN_EXPIRE_DUMPS, [appId, ctx.ns, days])).rows[0]?.n ?? 0)
-      );
+      const n = await withMaintRun(c, async () => {
+        await c.query(SQL_MAINT_RUN_ABANDON_PURGES, [appId, ctx.ns, days]);
+        return Number(
+          (await c.query(SQL_MAINT_RUN_EXPIRE_DUMPS, [appId, ctx.ns, days])).rows[0]?.n ?? 0
+        );
+      });
       return { dumps: n ?? 0 };
     });
   }

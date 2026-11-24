@@ -34,6 +34,8 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const V1 = 4_101;
 const V2 = 4_202;
 const V3 = 4_303;
+/** Only ever reports: no document, no usage row, no other mark. */
+const V4 = 4_404;
 const MOD = 9_017;
 const SECRET = 'mark-migration-test-secret-0123456789';
 
@@ -829,11 +831,85 @@ describe('the per-collection purge', () => {
       result: { deleted: 3 },
     });
 
+    // A purge never finished: kept while it may still be continued, then abandoned and expired,
+    // counted from when it STARTED.
     const partial = freshApp('PGEXPIREPART');
     await readyToPurge(partial);
-    await purge(partial, POPULAR_NO_COUNTERS, ['plays'], 'popular_plays', 1);
+    const started = await purge(partial, POPULAR_NO_COUNTERS, ['plays'], 'popular_plays', 1);
+    const ageStart = (days: number) =>
+      h.raw(
+        `UPDATE appdata.maint_run SET created_at = now() - make_interval(days => $2)
+          WHERE app_id = $1 AND kind = 'purge'`,
+        [partial, days]
+      );
     await age(partial, 90);
+    await ageStart(29);
     expect(await maint.expireMaintDumps(partial)).toEqual({ dumps: 0 });
+    expect((await maint.listMaintRuns(partial)).find((r) => r.kind === 'purge')?.status).toBe(
+      'purging'
+    );
+    await ageStart(31);
+    expect(await maint.expireMaintDumps(partial)).toEqual({ dumps: 1 });
+    expect((await maint.listMaintRuns(partial)).find((r) => r.kind === 'purge')).toMatchObject({
+      name: started.runId,
+      status: 'abandoned',
+    });
+    // A re-call starts a new purge instead of continuing the abandoned one.
+    const again = await purge(partial, POPULAR_NO_COUNTERS, ['plays']);
+    expect(again.runId).not.toBe(started.runId);
+    expect(again).toMatchObject({ done: true, deleted: 2 });
+  });
+
+  it('the wipe finds a REPORT-ONLY user through the dumps: their purged report leaves no trace', async () => {
+    const app = freshApp('PGWIPEREPORTER');
+    await seedCounters(app);
+    await store.report(ctx(app, NS_PROD, V4), POPULAR, 'song_c');
+    expect((await migratePlayed(app)).ok).toBe(true);
+    await mod.dismissReports(app, NS_PROD, 'popular_plays', 'song_b');
+    await mod.dismissReports(app, NS_PROD, 'popular_plays', 'song_c');
+    const out = await purge(app, POPULAR_NO_COUNTERS, ['plays']);
+    const reporters = async () =>
+      (await maint.purgeDump(app, { collection: 'popular_plays', runId: out.runId }))?.marks
+        .filter((m) => m.name === 'report')
+        .map((m) => m.userId);
+    // Positive control: the dump holds V4's report, and nothing else in the store names V4.
+    expect(await reporters()).toEqual([V3, V4]);
+    expect(
+      await h.raw(
+        `SELECT 1 FROM appdata.usage_user WHERE user_id = $1 UNION ALL
+         SELECT 1 FROM appdata.doc_mark WHERE user_id = $1`,
+        [V4]
+      )
+    ).toEqual([]);
+    const wiped = await maint.wipeAccount(V4);
+    expect(wiped.namespaces.filter((n) => n.appId === app)).toMatchObject([
+      { ns: NS_PROD, mode: 'user', maintRunsScrubbed: 1, marks: 0, sharedDocs: 0 },
+    ]);
+    expect(await reporters()).toEqual([V3]);
+  });
+
+  it("the wipe removes the user from a verify's per-user sample", async () => {
+    const app = freshApp('PGWIPEVERIFY');
+    await seedVotes(app);
+    await migrate(app);
+    await h.raw(`DELETE FROM appdata.doc WHERE app_id = $1 AND coll = 'votes' AND key = $2`, [
+      app,
+      deriver(app, 'votes')('rec_b', V3),
+    ]);
+    await maint.verifyMarkMigration(app, {
+      from: 'records',
+      mark: 'vote',
+      deriveKey: deriver(app, 'votes'),
+      actorUid: MOD,
+    });
+    const sample = async () =>
+      (
+        (await maint.listMaintRuns(app)).find((r) => r.kind === 'mark_migration')?.result
+          .verify as { userSample: { id: string }[] }
+      ).userSample.map((u) => u.id);
+    expect(await sample()).toEqual([String(V3)]);
+    await maint.wipeAccount(V3);
+    expect(await sample()).toEqual([]);
   });
 });
 

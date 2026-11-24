@@ -293,6 +293,8 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     });
     expect(wipe.map((n) => owner(n, 'variable'))).toEqual([
       'SQL_ACCOUNT_NAMESPACES',
+      // The maintenance runs that name the user (a report-only user's purged report).
+      'SQL_ACCOUNT_DUMP_NAMESPACES',
       'SQL_VIEWER_PROD_USAGE',
     ]);
   });
@@ -313,7 +315,12 @@ describe('review maintenance and account-wipe enumeration are confined to their 
         ts.isIdentifier(n.expression) &&
         n.expression.text === 'accountWipeTx'
     );
-    expect(calls.map(nearestFn)).toEqual(['listAccountNamespaces', 'listViewerUsage']);
+    // The enumeration opens two: the documents and marks, then the maintenance runs.
+    expect(calls.map(nearestFn)).toEqual([
+      'listAccountNamespaces',
+      'listAccountNamespaces',
+      'listViewerUsage',
+    ]);
   });
 
   it('every app-purge-shaped statement is SQL_APP_NAMESPACES', () => {
@@ -413,6 +420,8 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     expect(found.filter((f) => !f.includes('/__tests__/')).sort()).toEqual([
       'server/services/apps/doc-store.ts',
       'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
+      // The maintenance runs' wipe read: the runs that name the user.
+      'server/services/apps/migrations/20261123120000_appdata_maint_run.sql',
     ]);
   });
 });

@@ -112,6 +112,25 @@ async function declaredCollection(app: App, name: string): Promise<DocCollection
   return { name, config, schemaMajor };
 }
 
+/** The per-user lists an op answers (who was refunded, who is over a ceiling, who mismatched). */
+const PER_USER_LISTS = new Set(['refunds', 'overCeiling', 'userSample']);
+
+/**
+ * The op's answer as the audit row keeps it: each per-user list replaced by its length
+ * (`<name>Count`). The audit table is in the main database and outlives an account deletion, which
+ * scrubs the store's run records but not it, so it never holds a user id the op touched.
+ */
+function withoutPeople(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutPeople);
+  if (value === null || typeof value !== 'object') return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (PER_USER_LISTS.has(k) && Array.isArray(v)) out[`${k}Count`] = v.length;
+    else out[k] = withoutPeople(v);
+  }
+  return out;
+}
+
 /**
  * Audit row first, then the op, then the outcome stamp: a store refusal (`DocStoreError`, raised
  * inside its transaction before COMMIT) is recorded `failed`, any other error `unknown` (it may
@@ -177,7 +196,7 @@ async function audited<T extends Record<string, unknown>>(
       data: {
         after: {
           outcome: 'applied',
-          ...result,
+          ...(withoutPeople(result) as Record<string, unknown>),
           completedAt: new Date().toISOString(),
         } as Prisma.InputJsonValue,
       },

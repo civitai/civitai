@@ -383,8 +383,10 @@ only (`author_kind = 'counter'`) and refuses anything else, a viewer-keyed colle
 not the manifest still declares it. The rollback refuses unless every document left in the target is
 exactly a copy (version 1, at a derived key, by its mark's voter, created when that mark was), because the
 switch fails closed and "closed" therefore does not prove nobody wrote; it also refuses once the source
-collection was purged. Dumps are deleted 30 days after their purge finished (a daily job), and an
-account deletion removes the account from every dump and purge result.
+collection was purged. Dumps are deleted 30 days after their purge finished, or 30 days after an
+unfinished purge started (it is then `abandoned`), by a daily job. An account deletion finds every
+namespace whose runs name the account, a user who only reported a purged document included, and
+removes the account from every dump and run result; the main-database audit rows hold counts only.
 
 ### `doc_mark` votes to viewer-keyed documents
 

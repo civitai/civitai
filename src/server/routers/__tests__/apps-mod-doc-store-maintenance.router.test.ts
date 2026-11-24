@@ -297,8 +297,16 @@ describe('migrateMarks', () => {
       actorUserId: MOD.id,
       reason: REASON,
       before: { appBlockId: app.id, ns: 'prod', from: 'records', mark: 'vote', to: 'votes' },
-      after: { outcome: 'applied', copy: { inserted: 3 }, verify: { ok: true } },
+      after: {
+        outcome: 'applied',
+        copy: { inserted: 3, overCeilingCount: 0 },
+        verify: { ok: true, userSampleCount: 0 },
+      },
     });
+    // The main-database audit row holds counts, never the per-user lists (the account wipe does
+    // not reach it).
+    expect(audit[0].after.copy).not.toHaveProperty('overCeiling');
+    expect(audit[0].after.verify).not.toHaveProperty('userSample');
     expect(APP_LISTING_MODERATION_ACTIONS as readonly string[]).toContain(audit[0].action);
     expect((await status()).runs).toMatchObject([
       { collection: 'records', kind: 'mark_migration', name: 'vote', status: 'verified' },
@@ -365,6 +373,9 @@ describe('purgeCollection and rollbackMarks', () => {
       ['storage-collection-purge', 'failed'],
       ['storage-collection-purge', 'applied'],
     ]);
+    // Who was refunded stays in the store's run (which the wipe scrubs); the audit row counts them.
+    expect(audit[1].after).toMatchObject({ refundsCount: 2, totals: { refundsCount: 2 } });
+    expect(JSON.stringify(audit[1].after)).not.toMatch(new RegExp(`\\b(${V1}|${V2})\\b`));
     const dump = await storagePurgeDump(
       { appBlockId: app.id, collection: 'popular_plays', runId: out.runId },
       deps()

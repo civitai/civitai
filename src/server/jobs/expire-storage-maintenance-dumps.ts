@@ -3,11 +3,9 @@ import { expireStorageMaintenanceDumps } from '~/server/services/apps/storage-ma
 import { createJob } from './job';
 
 /**
- * APP STORAGE PURGE DUMPS — retention. A per-collection purge (`apps.mod.docStore.maintenance.*`)
- * dumps every row it deletes into the store's maintenance runs; this job deletes the dumps of every
- * purge that finished 30 days ago or more (`expireStorageMaintenanceDumps`), keeping each purge's
- * header and counts. Daily. FAIL-OPEN like the sibling reapers: an error is logged and the next
- * run retries.
+ * APP STORAGE PURGE DUMPS — retention: deletes the dumps of purges finished (or abandoned)
+ * `PURGE_DUMP_RETENTION_DAYS` ago (`expireStorageMaintenanceDumps`). Daily. Inert until the
+ * `maint_run` datastore migration is applied. FAIL-OPEN: an error is logged and the next run retries.
  */
 export const expireStorageMaintenanceDumpsJob = createJob(
   'expire-storage-maintenance-dumps',

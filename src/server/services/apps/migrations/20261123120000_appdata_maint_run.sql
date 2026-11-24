@@ -25,7 +25,8 @@
 --
 -- ROW-LEVEL SECURITY on the new table: the policies every other `appdata` table has: the
 --   (app, namespace) scope, and review maintenance's read and delete (a review namespace's row
---   is purged with its request; the store writes runs in the production namespace only). The
+--   is purged with its request; the store writes runs in the production namespace only); plus
+--   the account-wipe read of the runs that name the user being wiped. The
 --   existing grants do not reach a table created after them, so it is granted here.
 --
 -- ROLLOUT ORDER: safe before or after the code ships. Until this is applied the store finds the
@@ -77,6 +78,30 @@ CREATE POLICY appdata_review_delete ON appdata.maint_run FOR DELETE
   USING (current_setting('appdata.review_maintenance', true) = 'on'
     AND ns LIKE 'rev:%'
     AND app_id = NULLIF(current_setting('appdata.app_id', true), ''));
+
+-- Account-wipe enumeration (`SQL_ACCOUNT_DUMP_NAMESPACES` in `doc-store.ts`): read only, under
+-- `appdata.account_wipe_uid`, the runs that NAME that one user — the same paths as
+-- `maintRunNamesUser` there (a dumped document's author, last writer or hider; a dumped mark's
+-- user; a purge's refunds; a copy's over-ceiling list; a verify's per-user sample) — so a user
+-- whose only trace in an app is a purged report is still found and scrubbed. A setting that is not
+-- exactly a user id matches nothing (the CASE keeps the cast from erroring).
+DROP POLICY IF EXISTS appdata_account_wipe_read ON appdata.maint_run;
+CREATE POLICY appdata_account_wipe_read ON appdata.maint_run FOR SELECT
+  USING (CASE WHEN current_setting('appdata.account_wipe_uid', true) ~ '^[1-9][0-9]{0,9}$'
+    THEN (
+      jsonb_path_exists(dump, '$.docs[*] ? (@.authorUid == $u || @.lastWriterUid == $u || @.hiddenBy == $u)',
+        jsonb_build_object('u', current_setting('appdata.account_wipe_uid', true)::bigint))
+      OR jsonb_path_exists(dump, '$.marks[*] ? (@.userId == $u)',
+        jsonb_build_object('u', current_setting('appdata.account_wipe_uid', true)::bigint))
+      OR jsonb_path_exists(result, '$.refunds[*] ? (@.userId == $u)',
+        jsonb_build_object('u', current_setting('appdata.account_wipe_uid', true)::bigint))
+      OR jsonb_path_exists(result, '$.totals.refunds[*] ? (@.userId == $u)',
+        jsonb_build_object('u', current_setting('appdata.account_wipe_uid', true)::bigint))
+      OR jsonb_path_exists(result, '$.copy.overCeiling[*] ? (@ == $u)',
+        jsonb_build_object('u', current_setting('appdata.account_wipe_uid', true)::bigint))
+      OR jsonb_path_exists(result, '$.verify.userSample[*] ? (@.id == $s)',
+        jsonb_build_object('s', current_setting('appdata.account_wipe_uid', true))))
+    ELSE false END);
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON appdata.maint_run TO appdata_rw;
 
