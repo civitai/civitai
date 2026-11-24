@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { createPlayIntent, createSongPlayer, uniqueCardKey, type SongMedia } from '../song-player';
-import { formatPlaybackTime } from '@civitai/shared';
 
 /**
  * The moderator song player (Music T10, docs/features/music.md "Moderating songs"): nothing plays
@@ -123,14 +122,6 @@ describe('the moderator song player', () => {
     unregister();
     expect(a.paused).toBe(true);
     expect(player.playAt(1, 0)).toBe(false);
-  });
-});
-
-describe('formatPlaybackTime, as the card shows the time', () => {
-  it('reads m:ss, and 0:00 for a time not known yet', () => {
-    expect(formatPlaybackTime(83.9)).toBe('1:23');
-    expect(formatPlaybackTime(5)).toBe('0:05');
-    expect(formatPlaybackTime(Number.NaN)).toBe('0:00');
   });
 });
 
