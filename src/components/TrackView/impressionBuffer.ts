@@ -177,8 +177,9 @@ export function recordFeedSeen(context: FeedEventContext, entityId: number): voi
   else scheduleTimer();
 }
 
-/** Drops seen ids not yet sent, for when feed events are switched off. */
+/** Drops seen ids not yet sent, for when feed events are switched off; they can be seen again. */
 export function clearPendingFeedSeen(): void {
+  for (const [context, ids] of pendingSeen) for (const id of ids) sentSeen.get(context)?.delete(id);
   pendingSeen.clear();
   pendingSeenCount = 0;
 }

@@ -26,7 +26,6 @@ const FEED_PROCEDURES: Record<string, { feed: FeedEventFeed; entityType: Impress
   'article.getInfinite': { feed: 'articles', entityType: 'Article' },
 };
 
-// Bounds the item map; the oldest entries are evicted first.
 const FEED_ITEMS_MAX = 5_000;
 
 type FeedItem = { context: FeedEventContext; position: number; queryHash: string };
@@ -112,7 +111,6 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
     });
   }
 
-  // Starts this visit's load of pages [from, to): a load row and a new context for each.
   function emit(query: Query, from: number, to: number) {
     const feed = feedQuery(query);
     if (!feed) return;

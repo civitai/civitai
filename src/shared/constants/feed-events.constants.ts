@@ -48,7 +48,6 @@ export const FEED_EVENT_FILTER_KEYS: Record<FeedEventFeed, readonly string[]> = 
 };
 
 export const FEED_EVENT_FILTER_VALUE_MAX = 200;
-// The deepest position or page index a row may carry.
 export const FEED_EVENT_INDEX_MAX = 10_000;
 // What a filter control sends: option labels and numbers, comma-joined (`SDXL 1.0,Pony`, `true`).
 export const FEED_EVENT_FILTER_VALUE_PATTERN = /^[\w .,:+-]+$/;

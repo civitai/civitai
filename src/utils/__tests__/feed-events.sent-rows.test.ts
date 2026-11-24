@@ -67,13 +67,19 @@ describe('feed seen rows', () => {
 });
 
 describe('switching feed events off', () => {
-  it('drops seen ids not yet sent', () => {
+  it('drops seen ids not yet sent, and counts them if seen again once back on', () => {
+    const load = context(0);
     setFeedEventsCache(new QueryClient().getQueryCache());
     setFeedEventsEnabled(true);
-    recordFeedSeen(context(0), 1);
+    recordFeedSeen(load, 1);
     setFeedEventsEnabled(false);
     flushImpressions();
     expect(feedRows()).toEqual([]);
+
+    setFeedEventsEnabled(true);
+    recordFeedSeen(load, 1);
+    flushImpressions();
+    expect(feedRows().map((row) => row.seenIds)).toEqual([[1]]);
   });
 });
 
