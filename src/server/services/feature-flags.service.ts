@@ -514,6 +514,8 @@ const featureFlags = createFeatureFlags({
   // bar, and the images feed's ?similarTo=. Checked on top of `imageSearch` / `feedSearch`, so its
   // rollout is its own. Mods until the Flipt flag exists; once it does, keep mods in its rule.
   moreLikeThis: { availability: ['mod'], fliptKey: 'more-like-this' },
+  // "More like this" steering: Prefer a tag within the closest matches. Checked on top of `moreLikeThis`.
+  moreLikeThisSteer: { availability: ['mod'], fliptKey: 'more-like-this-steer' },
   // Search by uploaded image: drop or pick a file in image search. Checked on top of `moreLikeThis`
   // and never wider than it. Dark for everyone, mods included, until Flipt turns it on.
   imageSearchUpload: { availability: [], fliptKey: 'image-search-upload' },

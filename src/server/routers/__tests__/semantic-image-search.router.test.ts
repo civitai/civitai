@@ -12,6 +12,8 @@ const h = vi.hoisted(() => ({
   feedOn: false,
   videoOn: false,
   resourcesOn: false,
+  mltOn: false,
+  steerOn: false,
   search: vi.fn(),
   createFeedback: vi.fn(),
   trackSearch: vi.fn(),
@@ -24,6 +26,8 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
     feedSearch: h.feedOn,
     semanticVideoSearch: h.videoOn,
     imageSearchResources: h.resourcesOn,
+    moreLikeThis: h.mltOn,
+    moreLikeThisSteer: h.steerOn,
   }),
 }));
 vi.mock('~/server/services/semantic-image-search.service', async (importOriginal) => ({
@@ -64,6 +68,8 @@ const caller = (user: typeof VIEWER | null = VIEWER, credential: object = {}) =>
 beforeEach(() => {
   vi.clearAllMocks();
   h.resourcesOn = false;
+  h.mltOn = false;
+  h.steerOn = false;
   h.search.mockResolvedValue({ items: [], nextCursor: undefined });
   h.createFeedback.mockResolvedValue({ id: 1 });
   h.trackSearch.mockResolvedValue(undefined);
@@ -127,6 +133,23 @@ describe('semanticImageSearch router', () => {
       expect(h.search).not.toHaveBeenCalled();
     }
   });
+
+  // Dropped, not refused: a shared ?prefer= link still gets plain "more like this".
+  it.each([
+    [true, true, [55]],
+    [true, false, undefined],
+    [false, true, undefined],
+  ])(
+    'with moreLikeThis %s and moreLikeThisSteer %s, passes the preferred tag as %s',
+    async (mltOn, steerOn, passed) => {
+      h.flagOn = true;
+      h.mltOn = mltOn;
+      h.steerOn = steerOn;
+      await caller().search({ imageId: 3, preferTagIds: [55] });
+      expect(h.search).toHaveBeenCalledTimes(1);
+      expect(h.search.mock.calls[0][0].input.preferTagIds).toEqual(passed);
+    }
+  );
 
   it('serves both with the flag', async () => {
     h.flagOn = true;

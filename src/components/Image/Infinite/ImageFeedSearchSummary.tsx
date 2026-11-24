@@ -2,6 +2,7 @@ import { Alert, Anchor, Button, Chip, Pill, Text, Title } from '@mantine/core';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { IconCloudOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import type { ReactNode } from 'react';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Tooltip } from '~/components/MantineOverlays';
 import type { ImagesQueryParamSchema } from '~/components/Image/image-query-params';
@@ -24,6 +25,8 @@ type Props = {
   query: string;
   /** "More like this": the image matched while no query is set. */
   similarTo?: number;
+  /** "More like this" steering, for a viewer who may steer (`MoreLikeThisPrefer`). */
+  preferRow?: ReactNode;
   correctedQuery?: string;
   filters: Parameters<typeof ignoredWhileSearching>[0];
   failed: boolean;
@@ -35,6 +38,7 @@ type Props = {
 export function ImageFeedSearchSummary({
   query,
   similarTo,
+  preferRow,
   correctedQuery,
   filters,
   failed,
@@ -71,6 +75,8 @@ export function ImageFeedSearchSummary({
             ...Object.fromEntries(inUrl.map((key) => [key, patch[key as keyof typeof patch]])),
             // A changed or cleared query is corrected again.
             ...('query' in patch && { [SEARCH_AS_TYPED_PARAM]: undefined }),
+            // A preference belongs to its anchor.
+            ...(('query' in patch || 'similarTo' in patch) && { prefer: undefined }),
           }),
         },
         undefined,
@@ -192,6 +198,7 @@ export function ImageFeedSearchSummary({
           Clear search
         </Anchor>
       </div>
+      {similarTo && !unavailable && preferRow}
       {isClient && !failed && ignored.length > 0 && (
         <Tooltip label={IMAGE_FEED_SEARCH_UNAVAILABLE_REASON} multiline w={280} withArrow>
           <Text size="xs" c="dimmed" className="w-fit">
