@@ -1,5 +1,10 @@
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
-import { REFERENCE_SOURCE, REFERENCE_STATUS, servableImage } from '@civitai/db/knights';
+import {
+  readWithoutJit,
+  REFERENCE_SOURCE,
+  REFERENCE_STATUS,
+  servableImage,
+} from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
@@ -210,18 +215,20 @@ export async function settleHiddenChecks(
   const cutoff = new Date(now.getTime() - settings.settleDelayMinutes * 60_000);
 
   const { outcomes, xp, resetFor } = await db.transaction().execute(async (trx) => {
-    const due: Due[] = await trx
-      .selectFrom('KnightsVote')
-      .select(['itemId', 'playerId', 'verdict', 'gold', 'createdAt', 'answer'])
-      .where('itemId', '<', 0)
-      .where('settledAt', 'is', null)
-      .where('verdict', '=', 'pending')
-      .where('createdAt', '<=', utc(cutoff))
-      .orderBy('playerId', 'asc')
-      .orderBy('createdAt', 'asc')
-      .limit(deps.limit ?? 200)
-      .forUpdate()
-      .execute();
+    const due: Due[] = await readWithoutJit(trx, (trx) =>
+      trx
+        .selectFrom('KnightsVote')
+        .select(['itemId', 'playerId', 'verdict', 'gold', 'createdAt', 'answer'])
+        .where('itemId', '<', 0)
+        .where('settledAt', 'is', null)
+        .where('verdict', '=', 'pending')
+        .where('createdAt', '<=', utc(cutoff))
+        .orderBy('playerId', 'asc')
+        .orderBy('createdAt', 'asc')
+        .limit(deps.limit ?? 200)
+        .forUpdate()
+        .execute()
+    );
     return gradeHiddenVotes(trx, due, { now, settings });
   });
 

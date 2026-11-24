@@ -402,7 +402,7 @@ describe('offerLeftPrivateImagesToKnights', () => {
       [imageId, userId]
     );
 
-  // Sampling reads run with JIT off: the CSAM subplans make the planner's estimate far exceed the read's real cost.
+  // JIT off per read: see readWithoutJit in packages/civitai-db/src/knights.ts.
   it('runs each Image read, enqueueing included, in a transaction that turned JIT off first', async () => {
     await post(1, minutesAgo(300));
     await images(1, [11]);

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { afterEach } from 'vitest';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { PGlite } from '@electric-sql/pglite';
@@ -71,6 +72,17 @@ export async function applySchema(db: PGlite): Promise<void> {
  * group-scoping guard in `recordAbuseVerdict` turns on. Those guards are about WHICH ROWS MOVE, and
  * only rows can answer.
  */
+/**
+ * Reads carrying the CSAM subplans (`servableImageContent`) that ran without `SET LOCAL jit = off` in their transaction
+ * (`readWithoutJit`). Recorded as well as thrown, since a caller that catches the error would otherwise hide it.
+ */
+const jitViolations: string[] = [];
+afterEach(() => {
+  const found = jitViolations.splice(0);
+  if (found.length)
+    throw new Error(`servableImageContent read ran with JIT on:\n${found.join('\n')}`);
+});
+
 export function pgliteDialect(
   db: PGlite,
   /**
@@ -80,8 +92,23 @@ export function pgliteDialect(
    */
   { onQuery }: { onQuery?: (connection: number) => void } = {}
 ): Dialect {
+  let inTransaction = false;
+  let jitOff = false;
   const connection: DatabaseConnection = {
     async executeQuery<R>(compiled: CompiledQueryType): Promise<QueryResult<R>> {
+      const text = compiled.sql.trim().toLowerCase();
+      if (text === 'begin') [inTransaction, jitOff] = [true, false];
+      else if (text === 'commit' || text === 'rollback') [inTransaction, jitOff] = [false, false];
+      else if (text === 'set local jit = off') jitOff = inTransaction;
+      else if (
+        compiled.sql.includes('/* servable-image-content */') &&
+        !(inTransaction && jitOff)
+      ) {
+        jitViolations.push(compiled.sql.slice(0, 160));
+        throw new Error(
+          `A servableImageContent read ran with JIT on: ${compiled.sql.slice(0, 120)}`
+        );
+      }
       const result = await db.query(compiled.sql, compiled.parameters as unknown[]);
       return {
         rows: result.rows as R[],

@@ -1,3 +1,4 @@
+import { afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
@@ -277,9 +278,38 @@ function asNodePgParameter(value: unknown): unknown {
   );
 }
 
+/**
+ * Reads that broke the JIT rule below. Recorded as well as thrown, since a caller that catches the error (a sweep counting
+ * failures, a read that falls back) would otherwise hide it: every test using this harness fails if any were recorded.
+ */
+const jitViolations: string[] = [];
+afterEach(() => {
+  const found = jitViolations.splice(0);
+  if (found.length)
+    throw new Error(`servableImageContent read ran with JIT on:\n${found.join('\n')}`);
+});
+
 function dialect(pg: PGlite, transactions: { open: number }, serialize: boolean): Dialect {
+  // A read carrying the CSAM subplans (`servableImageContent`) must run with JIT off in its transaction
+  // (`readWithoutJit`): its inflated estimate would make a server with JIT on compile it for longer than it runs.
+  let jitOff = false;
   const connection: DatabaseConnection = {
     async executeQuery<R>(compiled: CompiledQuery): Promise<QueryResult<R>> {
+      const text = compiled.sql.trim().toLowerCase();
+      if (text === 'begin' || text === 'commit' || text === 'rollback') jitOff = false;
+      else if (text === 'set local jit = off') jitOff = transactions.open > 0;
+      else if (
+        compiled.sql.includes('/* servable-image-content */') &&
+        !(jitOff && transactions.open > 0)
+      ) {
+        jitViolations.push(compiled.sql.slice(0, 160));
+        throw new Error(
+          `A servableImageContent read ran with JIT on (wrap it in readWithoutJit): ${compiled.sql.slice(
+            0,
+            120
+          )}`
+        );
+      }
       const result = await pg.query(compiled.sql, compiled.parameters.map(asNodePgParameter));
       return { rows: result.rows as R[], numAffectedRows: BigInt(result.affectedRows ?? 0) };
     },

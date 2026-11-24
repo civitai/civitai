@@ -71,6 +71,8 @@ export const servableImageContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>)
     eb('img.poi', '=', false),
     eb('img.minor', '=', false),
     eb('img.tosViolation', '=', false),
+    // Marks the read for the test harnesses' JIT check (`readWithoutJit`); always true.
+    sql<SqlBool>`/* servable-image-content */ true`,
     // A clean image's nullable columns make the held check NULL, not false.
     sql<SqlBool>`NOT COALESCE(${sql.raw(heldImageSql('img'))}, false)`,
     sql<SqlBool>`(img.id)::text NOT IN (${sql.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})`,
@@ -220,11 +222,20 @@ export async function removalLowersLevel(
  * planner's estimate far past the read's real cost, and on a server with JIT on, compiling for that estimate costs more
  * than the read.
  */
-export const readWithoutJit = <T>(db: Kysely<DB>, read: (trx: Transaction<DB>) => Promise<T>) =>
-  db.transaction().execute(async (trx) => {
+export async function readWithoutJit<T>(
+  db: Kysely<DB>,
+  read: (trx: Kysely<DB>) => Promise<T>
+): Promise<T> {
+  // Already in a transaction: turn JIT off in it rather than nest one, which Kysely refuses.
+  if (db.isTransaction) {
+    await sql`SET LOCAL jit = off`.execute(db);
+    return read(db);
+  }
+  return db.transaction().execute(async (trx) => {
     await sql`SET LOCAL jit = off`.execute(trx);
     return read(trx);
   });
+}
 
 /**
  * Images Knights may show players: `servableImageForSweeps` on a post that is not Private, with `imageSourceVisible`.
@@ -239,22 +250,24 @@ export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
  * run out of work.
  */
 export async function countOpenServableKnightItems(db: Kysely<DB>, limit: number): Promise<number> {
-  const row = await db
-    .selectFrom(
-      db
-        .selectFrom('KnightsQueueItem as i')
-        .innerJoin('Image as img', 'img.id', 'i.imageId')
-        .innerJoin('Post as p', 'p.id', 'img.postId')
-        .select(sql<number>`1`.as('one'))
-        .where('i.status', '=', 'Open')
-        .where('i.minRank', '=', 'Knight')
-        .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
-        .where(servableImage)
-        .limit(limit)
-        .as('open')
-    )
-    .select((eb) => eb.fn.countAll<string>().as('n'))
-    .executeTakeFirstOrThrow();
+  const row = await readWithoutJit(db, (trx) =>
+    trx
+      .selectFrom(
+        trx
+          .selectFrom('KnightsQueueItem as i')
+          .innerJoin('Image as img', 'img.id', 'i.imageId')
+          .innerJoin('Post as p', 'p.id', 'img.postId')
+          .select(sql<number>`1`.as('one'))
+          .where('i.status', '=', 'Open')
+          .where('i.minRank', '=', 'Knight')
+          .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
+          .where(servableImage)
+          .limit(limit)
+          .as('open')
+      )
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .executeTakeFirstOrThrow()
+  );
   return Number(row.n);
 }
 
