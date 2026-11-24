@@ -1,7 +1,10 @@
 import { headBlob } from '@civitai/orchestration-client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
-import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
+import {
+  orchestratorNsfwLevelMap,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 export type RatedEntry = { mediaType?: string | null; nsfwLevel?: string | null };
 
@@ -34,12 +37,14 @@ type ExtractionOutput = {
 
 /**
  * Skips Studio dataset rows (the archive rates them) and a zip swapped in meanwhile (url check). A
- * pre-stamp zip, which has no fullyRated, is only ever moved to fully rated, never newly hidden.
+ * pre-stamp zip, which has no fullyRated, is not newly hidden for being partly unrated: it takes the
+ * rating only when fully rated, or when a rated entry is already mature.
  */
 export async function writeTrainingDataRating(
   db: { $executeRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<number> },
   { fileId, url, rating }: { fileId: number; url: string; rating: ReturnType<typeof datasetRating> }
 ) {
+  const lands = rating.fullyRated || ((rating.nsfwLevel ?? 0) & ~sfwBrowsingLevelsFlag) !== 0;
   return db.$executeRaw`
     UPDATE "ModelFile"
     SET metadata = (COALESCE(metadata, '{}'::jsonb) - 'nsfwLevel') || ${JSON.stringify(
@@ -47,7 +52,7 @@ export async function writeTrainingDataRating(
     )}::jsonb
     WHERE id = ${fileId} AND url = ${url} AND type = 'Training Data'
       AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'datasetArchive')
-      AND (${rating.fullyRated} OR COALESCE(metadata, '{}'::jsonb) ? 'fullyRated')`;
+      AND (${lands} OR COALESCE(metadata, '{}'::jsonb) ? 'fullyRated')`;
 }
 
 const HEADER_TIMEOUT_MS = 5_000;

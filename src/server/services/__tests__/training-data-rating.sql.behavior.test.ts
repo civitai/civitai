@@ -25,7 +25,8 @@ describe('writeTrainingDataRating', () => {
         (2, '${ZIP}', 'Training Data', '{"format": "Other"}'),
         (3, '${ZIP}', 'Training Data', NULL),
         (4, '${ZIP}', 'Training Data', '{"datasetArchive": {}, "fullyRated": false}'),
-        (5, 'https://storage.test/other.zip', 'Training Data', '{"fullyRated": false}');
+        (5, 'https://storage.test/other.zip', 'Training Data', '{"fullyRated": false}'),
+        (6, '${ZIP}', 'Training Data', NULL);
     `);
   });
   const metadata = async (id: number) =>
@@ -51,6 +52,15 @@ describe('writeTrainingDataRating', () => {
       rating: { nsfwLevel: 1, fullyRated: false },
     });
     expect(await metadata(2)).toEqual({ format: 'Other' });
+  });
+
+  it('hides a row from before the stamp when a rated entry is mature, though others are unrated', async () => {
+    await writeTrainingDataRating(db.prisma, {
+      fileId: 6,
+      url: ZIP,
+      rating: { nsfwLevel: 1 | 4, fullyRated: false },
+    });
+    expect(await metadata(6)).toEqual({ nsfwLevel: 5, fullyRated: false });
   });
 
   it('moves a row from before the stamp up to fully rated', async () => {
