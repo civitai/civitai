@@ -1,15 +1,22 @@
 -- A post its delete keeps for a review is unpublished with unpublishedReason 'pending-delete'
 -- (deleteStatement in packages/civitai-db-queries/src/content-deletion.db.ts). Several paths can
 -- publish a post (the owner's edit, scheduled publishing, a model publish sweeping its posts), so the
--- table refuses it: such a post stays unpublished, its stamp intact, until its queued delete removes
--- the row or a moderator clears the stamp. Silent rather than an error, so a bulk publish still
--- publishes the other posts.
+-- table refuses it while the post's delete is still queued: such a post stays unpublished, its stamp
+-- intact. Silent rather than an error, so a bulk publish still publishes the other posts. Once the
+-- queued delete is gone without the post (an account restore releases it), a publish goes through
+-- and drops the stamp.
 --
 -- Additive and idempotent: no data changes. Hand-applied.
 
 CREATE OR REPLACE FUNCTION post_pending_delete_keep_unpublished() RETURNS trigger AS $$
 BEGIN
-  IF OLD."metadata" ->> 'unpublishedReason' = 'pending-delete' AND NEW."publishedAt" IS NOT NULL THEN
+  IF NEW."publishedAt" IS NULL OR OLD."metadata" ->> 'unpublishedReason' IS DISTINCT FROM 'pending-delete' THEN
+    RETURN NEW;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM "JobQueue"
+    WHERE "entityType" = 'Post' AND "entityId" = OLD.id AND type = 'PendingDelete'
+  ) THEN
     NEW."publishedAt" := NULL;
     NEW."metadata" := COALESCE(NEW."metadata", '{}'::jsonb) || jsonb_build_object(
       'unpublishedAt', OLD."metadata" -> 'unpublishedAt',
@@ -17,6 +24,8 @@ BEGIN
       'unpublishedReason', OLD."metadata" -> 'unpublishedReason',
       'prevPublishedAt', OLD."metadata" -> 'prevPublishedAt'
     );
+  ELSIF NEW."metadata" ->> 'unpublishedReason' = 'pending-delete' THEN
+    NEW."metadata" := NEW."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'unpublishedReason' - 'prevPublishedAt';
   END IF;
   RETURN NEW;
 END;

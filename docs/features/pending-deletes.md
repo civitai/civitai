@@ -49,7 +49,12 @@ trigger blocked, and drops it from the comics and home blocks showing it. A kept
 so it leaves public reads and stays visible to its owner and moderators; `deletePost` then runs the
 unpublish follow-ups. The `trg_post_pending_delete_keep_unpublished` trigger (migration
 `20271126120000_post_pending_delete_publish_guard`) keeps such a post unpublished, its stamp intact,
-whatever path tries to publish it, until its queued delete removes it or a moderator clears the stamp.
+whatever path tries to publish it, while its `PendingDelete` row exists. A kept draft is stamped too; a
+post a moderator already unpublished keeps its own reason. Once that row is gone without
+the post (an account restore releases it), a publish goes through and drops the stamp.
+`deletePost` runs the unpublish follow-ups (`afterPostsUnpublish`) for a post it kept; the other
+`deletePostRows` callers do not yet. A publish the trigger refuses makes `updatePost` answer that the
+post can't be published right now.
 `deletePost` deletes a post's images first, so those a case keeps are blocked. An owner's image blocked this way is no longer a plain owner delete when the
 queued delete runs, so it does not keep an object shop artwork uses.
 

@@ -122,11 +122,9 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
           : PENDING_DELETE_UPSERT
       }
     )`);
-  // Every image delete blocks each image it keeps (for its case or `ownerReportHold`), whoever deletes
-  // it, so it leaves feeds and search until the delete is carried out. It writes what `writeModeratorBlock` writes and also drops
-  // the grace markers, so an account restore cannot lift it. Only a moderator's delete that queues what it
-  // keeps rewrites an image already blocked; any other leaves it as it is, so a takedown keeps its
-  // reason and an account-deletion grace block stays liftable by a restore.
+  // Only a moderator's delete that queues what it keeps rewrites an already-blocked image, so a
+  // takedown keeps its reason and a grace block stays restorable. Grace markers are dropped so a
+  // restore cannot lift this block.
   const hides = table === 'Image';
   const skipBlocked = !moderatorDecides(options);
   if (hides)
@@ -149,17 +147,20 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
     )`);
   // A post its delete keeps leaves the site as a moderator's unpublish takes it off
   // (`unpublishPostAsModerator`), with its own reason, so it stays visible to its owner and moderators.
-  if (table === 'Post')
+  const hidesPost = table === 'Post';
+  if (hidesPost)
     ctes.push(sql`hidden AS (
       UPDATE "Post" SET
         metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
           'unpublishedAt', ${new Date().toISOString()}::text,
           'unpublishedBy', ${'id' in actor ? actor.id : -1}::int,
           'unpublishedReason', ${POST_PENDING_DELETE_REASON}::text,
-          'prevPublishedAt', "publishedAt"
+          'prevPublishedAt', COALESCE(metadata -> 'prevPublishedAt', to_jsonb("publishedAt"))
         ),
         "publishedAt" = NULL
-      WHERE id IN (SELECT id FROM doomed WHERE blocked) AND "publishedAt" IS NOT NULL
+      -- A post a moderator already unpublished keeps its own reason.
+      WHERE id IN (SELECT id FROM doomed WHERE blocked)
+        AND ("publishedAt" IS NOT NULL OR metadata ->> 'unpublishedReason' IS NULL)
       RETURNING id, "userId"
     )`);
   return {
@@ -173,6 +174,7 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
       SELECT id, ${padding}, 'gone' FROM listed
       WHERE NOT EXISTS (SELECT 1 FROM ${t} WHERE ${t}.id = listed.id)`,
     hides,
+    hidesPost,
   };
 }
 
@@ -320,15 +322,16 @@ export async function deletePostRows(
 ): Promise<DeleteOutcome<DeletedPostRow>> {
   const ids = [...new Set(options.ids)];
   if (!ids.length) return { deleted: [], kept: [], hidden: [], gone: [] };
-  const { ctes, remove, others } = deleteStatement('Post', options, ids);
+  const { ctes, remove, others, hidesPost } = deleteStatement('Post', options, ids);
   const { rows } = await sql<DeletedPostRow & OutcomeRow>`
     ${withCtes(ctes, true)}
     gone_rows AS (${remove} RETURNING id, "userId", "nsfwLevel")
     SELECT id, "userId", "nsfwLevel", NULL AS outcome FROM gone_rows
     UNION ALL
     ${others(sql.raw('NULL, NULL'))}
-    UNION ALL
-    SELECT id, "userId", NULL, 'hidden' FROM hidden`.execute(db);
+    ${hidesPost ? sql`UNION ALL SELECT id, "userId", NULL, 'hidden' FROM hidden` : sql``}`.execute(
+    db
+  );
   return splitOutcome(rows);
 }
 

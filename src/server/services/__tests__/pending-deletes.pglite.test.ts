@@ -790,6 +790,46 @@ describe('deletePostRows keeps a post under a child-safety report', () => {
     ]);
   });
 
+  it('stamps a kept draft too, and leaves a moderator unpublish its own reason', async () => {
+    await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt", metadata) VALUES
+      (50, ${OWNER}, NULL, NULL),
+      (51, ${OWNER}, NULL, '{"unpublishedReason": "tos", "prevPublishedAt": "2026-01-01"}')`);
+    await report(1);
+    await pg.exec(`INSERT INTO "PostReport" VALUES (50, 1), (51, 1)`);
+
+    await deletePostRows(db, { ids: [50, 51], actor: owner });
+
+    const { rows } = await pg.query(
+      `SELECT id, metadata->>'unpublishedReason' AS reason, metadata->>'prevPublishedAt' AS prev
+       FROM "Post" ORDER BY id`
+    );
+    expect(rows).toEqual([
+      { id: 50, reason: 'pending-delete', prev: null },
+      { id: 51, reason: 'tos', prev: '2026-01-01' },
+    ]);
+  });
+
+  // The publish path undoes an unpublish by stripping its stamp keys (`scheduledPostsGoLiveSql`), so
+  // the hide must write exactly those keys.
+  it('stamps exactly the keys a publish strips', async () => {
+    const { scheduledPostsGoLiveSql } = await import('~/server/jobs/process-scheduled-publishing');
+    const stripped = [
+      ...scheduledPostsGoLiveSql([{ postId: 1, versionId: 1 }], new Date()).sql.matchAll(
+        /- '(\w+)'/g
+      ),
+    ].map((m) => m[1]);
+    await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (50, ${OWNER}, now())`);
+    await report(1);
+    await pg.exec(`INSERT INTO "PostReport" VALUES (50, 1)`);
+
+    await deletePostRows(db, { ids: [50], actor: owner });
+
+    const { rows } = await pg.query<{ metadata: Record<string, unknown> }>(
+      `SELECT metadata FROM "Post" WHERE id = 50`
+    );
+    expect(Object.keys(rows[0].metadata).sort()).toEqual(stripped.sort());
+  });
+
   it('deletes the unpublished post once its case closes', async () => {
     await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (50, ${OWNER}, now())`);
     await report(1);
@@ -847,6 +887,40 @@ describe('deletePostRows keeps a post under a child-safety report', () => {
         { id: KEPT, published: false, reason: 'pending-delete' },
         { id: OTHER, published: false, reason: null },
       ]);
+    });
+
+    it('lets its owner publish it again once its queued delete is released, dropping the stamp', async () => {
+      await pg.exec(`DELETE FROM "JobQueue" WHERE "entityType" = 'Post' AND "entityId" = ${KEPT}`);
+
+      await pg.exec(`UPDATE "Post" SET "publishedAt" = now() WHERE id = ${KEPT}`);
+
+      expect(await posts()).toEqual([
+        { id: KEPT, published: true, reason: null },
+        { id: OTHER, published: false, reason: null },
+      ]);
+    });
+
+    it('lets its owner publish a kept post no queued delete owns (a caller that retries itself)', async () => {
+      await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (52, ${OWNER}, now());
+        INSERT INTO "PostReport" VALUES (52, 1)`);
+      await deletePostRows(db, {
+        ids: [52],
+        actor: { system: 'job-queue-clean-if-empty' },
+        queueKept: false,
+      });
+      expect((await posts()).find((p) => p.id === 52)).toEqual({
+        id: 52,
+        published: false,
+        reason: 'pending-delete',
+      });
+
+      await pg.exec(`UPDATE "Post" SET "publishedAt" = now() WHERE id = 52`);
+
+      expect((await posts()).find((p) => p.id === 52)).toEqual({
+        id: 52,
+        published: true,
+        reason: null,
+      });
     });
 
     it('still publishes the other posts of a bulk publish', async () => {

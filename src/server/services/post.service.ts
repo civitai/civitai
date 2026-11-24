@@ -37,7 +37,7 @@ import {
   preventReplicationLag,
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import {
   announceReviewsInBackground,
   syncReviewsOfMovedPosts,
@@ -1174,6 +1174,8 @@ const onDownedVersionSql = (modelVersionId: Prisma.Sql) => Prisma.sql`EXISTS (
 export const TAKEN_DOWN_PUBLISH_ERROR =
   "This post can't be published: its model or model version has been taken down.";
 
+export const POST_PUBLISH_REFUSED_ERROR = "This post can't be published right now.";
+
 export const updatePost = async ({
   id,
   user,
@@ -1295,6 +1297,8 @@ export const updatePost = async ({
       // authoritative. Propagate the value faithfully — including null —
       // rather than masking malformed stash data behind a truthy check.
       if (writtenRows.length > 0) {
+        // Kept for a review its delete waits on (trg_post_pending_delete_keep_unpublished).
+        if (!writtenRows[0].publishedAt) throw throwBadRequestError(POST_PUBLISH_REFUSED_ERROR);
         updated.publishedAt = writtenRows[0].publishedAt;
         publishedAtWritten = true;
       }
@@ -1459,7 +1463,6 @@ export const deletePost = async ({
     kept: keptPost,
     hidden: hiddenPost,
   } = await deletePostRows(kyselyOver(dbWrite), { ids: [id], actor });
-  await afterPostsUnpublish(hiddenPost.map(({ id: postId, userId }) => ({ postId, userId })));
   // Only a moderator hears that a delete in the post was kept; a member's reply never says so.
   const deleteAfterReview = !!viewerIsModerator && (keptPost.length > 0 || keptImages.length > 0);
 
@@ -1489,6 +1492,16 @@ export const deletePost = async ({
 
   await bustCachesForPosts(id);
   await userImageVideoCountCaches.bust(imageOwnerIds);
+  // A post kept for its case was unpublished in the delete itself.
+  await afterPostsUnpublish(hiddenPost.map(({ id: postId, userId }) => ({ postId, userId }))).catch(
+    (e: unknown) =>
+      logToAxiom({
+        type: 'error',
+        name: 'post-delete-unpublish-follow-ups-failed',
+        postId: id,
+        error: safeError(e),
+      })
+  );
 
   if (post) return { ...post, deletedImageIds, deleteAfterReview };
   return deleteAfterReview ? { deleteAfterReview } : undefined;
