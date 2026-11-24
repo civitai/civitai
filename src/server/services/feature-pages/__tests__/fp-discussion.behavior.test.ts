@@ -239,7 +239,12 @@ describe('posting', () => {
     await q(`UPDATE "CommentTopic" SET locked = true WHERE "entityType"::text = 'featurePage'`);
     await expect(post('second')).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     await q(`UPDATE "CommentTopic" SET locked = false WHERE "entityType"::text = 'featurePage'`);
-    await expect(post('second', { parent: urnOf(comment.sourceId) })).resolves.toBeTruthy();
+    const reply = await post('second', { parent: urnOf(comment.sourceId) });
+    expect(
+      await q(`SELECT 1 FROM "CommentV3" WHERE id = $1 AND "deletedAt" IS NULL`, [
+        reply.comment.sourceId,
+      ])
+    ).toHaveLength(1);
   });
 
   it('with the platform down, answers ok with no urn, and the cron posts it once when it is back', async () => {

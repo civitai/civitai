@@ -223,7 +223,6 @@ async function mirrorUrnOf(commentId: number) {
     .execute();
 }
 
-/** featurePages.edit: the author replaces the text; the rescan and the mirror's re-post follow. */
 /**
  * The edit's checks and its mirror bump, run with the comment's hold lock and then its row lock
  * held: a ToS removal, a report or a hold committed meanwhile is seen, and a resend of an edit
@@ -265,6 +264,7 @@ async function fpEditUnderLock(
   );
 }
 
+/** featurePages.edit: the author replaces the text; the rescan and the mirror's re-post follow. */
 export async function editFeaturePageComment(
   ctx: ProtectedContext,
   input: FeaturePageCommentEditInput
