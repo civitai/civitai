@@ -66,12 +66,16 @@ const {
   dismissFromCsamQueue: vi.fn(async (_input: unknown) => ({ ok: true as const })),
   dismissUserFromCsamQueue: vi.fn(async (_input: unknown) => ({ ok: true as const, dismissed: 1 })),
 }));
+const { resolveImageAppeal } = vi.hoisted(() => ({
+  resolveImageAppeal: vi.fn(async (_input: unknown) => true),
+}));
 vi.mock('../image-moderation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../image-moderation.service')>()),
   acceptImage,
   blockImage,
   dismissFromCsamQueue,
   dismissUserFromCsamQueue,
+  resolveImageAppeal,
   sendBulkAppealEmails: vi.fn(async () => undefined),
 }));
 vi.mock('../image-nsfw-level', () => ({ updateImageNsfwLevel }));
@@ -142,6 +146,7 @@ beforeEach(async () => {
   dismissUserFromCsamQueue.mockClear();
   resolveIngestionError.mockClear();
   ruleOnInquisitorItem.mockClear();
+  resolveImageAppeal.mockClear();
   confirmRemoval.mockClear();
   declineRemoval.mockClear();
   db = await freshPglite();
@@ -978,6 +983,23 @@ describe("a withheld image's overturned removal label", () => {
 // civitai/civitai#10170: an image deleted since the page loaded is the write's to report, not a refusal.
 describe('a batch with an image deleted since the page loaded, without the grant', () => {
   const DELETED = 990999999;
+  const ruling = { status: 'Rejected', resolvedReason: 'violation-confirmed' };
+
+  it('rules the rest of an appeal batch', async () => {
+    const result = (await queuePage.actions.bulkResolveAppeal(
+      event(WITHOUT_GRANT, { imageIds: `${CONTROL},${DELETED}`, ...ruling })
+    )) as Result | undefined;
+    expect(result?.status).not.toBe(403);
+    expect(resolveImageAppeal).toHaveBeenCalledWith(expect.objectContaining({ imageId: CONTROL }));
+  });
+
+  it('still refuses an appeal batch with a withheld image in it', async () => {
+    const result = (await queuePage.actions.bulkResolveAppeal(
+      event(WITHOUT_GRANT, { imageIds: `${WITHHELD},${DELETED}`, ...ruling })
+    )) as Result;
+    expect(result.status).toBe(403);
+    expect(resolveImageAppeal).not.toHaveBeenCalled();
+  });
 
   it('acts on the rest', async () => {
     await reportActions.remove(event(WITHOUT_GRANT, { imageIds: `${CONTROL},${DELETED}` }));

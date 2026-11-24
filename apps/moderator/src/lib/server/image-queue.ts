@@ -4,11 +4,9 @@ import { FEEDBACK_CAPTURE_OWNER_REFUSAL } from '@civitai/shared/feedback-capture
 import { z } from 'zod';
 import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
 import { holdsCsamReview } from '$lib/server/held-media';
-import { WITHHELD_REFUSED } from '$lib/held-media';
 import {
   withheldAccountRefusal,
   withheldApprovedAppeal,
-  withheldImageIds,
   withheldRefusal,
 } from '$lib/server/retracted-media';
 import {
@@ -483,8 +481,8 @@ export const imageQueueActions = {
         .slice(0, 1000) || undefined;
     const reason = parseResolutionReason(form, status);
     if (typeof reason === 'string') return fail(400, { error: reason, imageId });
-    if ((await withheldImageIds(locals.user, [imageId])).length)
-      return fail(403, { error: WITHHELD_REFUSED, imageId });
+    const withheld = await withheldRefusal(locals.user, [imageId]);
+    if (withheld) return fail(403, { error: withheld, imageId });
 
     let closed;
     try {
@@ -756,11 +754,8 @@ export const imageQueueActions = {
     const status = form.get('status') === 'Approved' ? 'Approved' : 'Rejected';
     const reason = parseResolutionReason(form, status);
     if (typeof reason === 'string') return fail(400, { error: reason });
-    const kept = await withheldImageIds(locals.user, imageIds);
-    if (kept.length)
-      return fail(403, {
-        error: `${WITHHELD_REFUSED} Nothing was resolved: ${kept.join(', ')}.`,
-      });
+    const withheld = await withheldRefusal(locals.user, imageIds);
+    if (withheld) return fail(403, { error: withheld });
     const refused: number[] = [];
     const closed = await Promise.all(
       imageIds.map((imageId) =>
