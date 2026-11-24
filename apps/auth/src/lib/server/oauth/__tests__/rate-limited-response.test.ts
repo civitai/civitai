@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
 import { fileURLToPath } from 'url';
 import { describe, expect, it } from 'vitest';
-import { rateLimitedResponse } from '../rate-limit';
+import { oauthRateLimitRef, rateLimitedResponse } from '../rate-limit';
 
 const SRC = fileURLToPath(new URL('../../../../', import.meta.url));
 const BUILDER = 'lib/server/oauth/rate-limit.ts';
@@ -93,6 +93,24 @@ describe('rateLimitedResponse', () => {
       error: 'rate_limited',
       error_description: 'Too many token requests',
       retry_after: 1,
+      rateLimit: { retryAfterSeconds: 1, retryAt: expect.any(String) },
     });
+  });
+
+  it('carries the house rateLimit meta: the retry instant, and the limit the caller names', async () => {
+    const before = Date.now();
+    const res = rateLimitedResponse(60, undefined, 'Too many token requests', {
+      limit: oauthRateLimitRef('token-exchange'),
+    });
+    const body = (await res.json()) as { rateLimit: Record<string, unknown> };
+    expect(body.rateLimit).toEqual({
+      retryAfterSeconds: 60,
+      retryAt: expect.any(String),
+      id: 'oauth.token-exchange',
+      kind: 'abuse',
+    });
+    const retryAt = Date.parse(body.rateLimit.retryAt as string);
+    expect(retryAt).toBeGreaterThanOrEqual(before + 60_000 - 1000);
+    expect(retryAt).toBeLessThanOrEqual(Date.now() + 60_000 + 1000);
   });
 });
