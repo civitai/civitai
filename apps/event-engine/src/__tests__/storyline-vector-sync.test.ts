@@ -170,8 +170,7 @@ describe('storyline removal', () => {
        VALUES ('PostText', 500, 'csam', 'Pending')`,
     ],
   ];
-  // Search removes only on delete or block: a reported owner, or a chapter 1 image listed on a
-  // report, hides nothing. Red if the held filter returns.
+  // Holds hide nothing: only a delete or block removes content.
   test('a reported owner or a reported chapter 1 image keeps the storyline in search', async () => {
     const { PGlite } = await import('@electric-sql/pglite');
     const pg = new PGlite();

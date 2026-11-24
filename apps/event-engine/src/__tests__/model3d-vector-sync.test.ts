@@ -190,8 +190,7 @@ describe('3D model removal', () => {
     }
   }, 60_000);
 
-  // Search removes only on delete or block: an owner named on a report, or a thumbnail listed on
-  // one, hides nothing. Red if the held filter returns.
+  // Holds hide nothing: only a delete or block removes content.
   test('a reported owner or a reported thumbnail keeps the model in search', async () => {
     const pg = await pglite();
     try {

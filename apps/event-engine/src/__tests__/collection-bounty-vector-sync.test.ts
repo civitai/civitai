@@ -37,7 +37,7 @@ describe('collection payload, against the real query', () => {
     `);
     try {
       const docs = await getCollectionDocs(pg as unknown as Pg, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
-      // 8's owner is under an evidence hold: holds no longer hide anything (red if the filter returns).
+      // 8's owner is held. Holds hide nothing: only a delete or block removes content.
       expect([...docs.keys()]).toEqual([1, 8]);
       expect(docs.get(1)).toMatchObject({
         title_normalized: 'neon cities',
@@ -109,7 +109,7 @@ describe('bounty payload, against the real query', () => {
     `);
     try {
       const docs = await getBountyDocs(pg as unknown as Pg, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
-      // 8's owner is under an evidence hold: holds no longer hide anything (red if the filter returns).
+      // 8's owner is held. Holds hide nothing: only a delete or block removes content.
       expect([...docs.keys()]).toEqual([1, 8, 9]);
       // The feed serves a bounty marked nsfw at XXX, whatever its rated level.
       expect(docs.get(9)?.nsfwLevel).toEqual([16]);

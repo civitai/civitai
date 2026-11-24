@@ -172,7 +172,7 @@ describe('semantic collection search', () => {
       UPDATE "CollectionItem" SET status = 'REJECTED' WHERE "collectionId" = 4;
       INSERT INTO "CsamReport" ("userId") VALUES (5);
       UPDATE "Collection" SET "nsfwLevel" = 33 WHERE id = 6;`);
-    // 5's owner is under an evidence hold: holds hide nothing (red if the held filter returns).
+    // 5's owner is held. Holds hide nothing: only a delete or block removes content.
     expect(shown(await search([6, 5, 4, 3, 2, 1]))).toEqual([5, 1]);
     // Dropped before the card read, so nothing of theirs is fetched.
     expect(h.fetched).toEqual([[5, 1]]);

@@ -198,7 +198,7 @@ describe('semantic bounty search', () => {
       UPDATE "Bounty" SET poi = true WHERE id = 4;
       INSERT INTO "CsamReport" ("userId") VALUES (5);
       UPDATE "Bounty" SET "nsfwLevel" = 33 WHERE id = 6;`);
-    // 5's owner is named on a report: holds hide nothing (red if the held filter returns).
+    // 5's owner is named on a report. Holds hide nothing: only a delete or block removes content.
     expect(shown(await search([6, 5, 4, 3, 2, 1]))).toEqual([5, 1]);
     // Dropped before the feed read, so nothing of theirs is fetched.
     expect(h.fetched).toEqual([[5, 1]]);

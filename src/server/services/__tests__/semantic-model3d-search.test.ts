@@ -171,7 +171,7 @@ describe('semantic 3D model search', () => {
     expect(shown(await search([2, 1]))).toEqual([2, 1]);
   });
 
-  // Holds hide nothing. Red if the held filter returns.
+  // Holds hide nothing: only a delete or block removes content.
   it('serves a model whose owner is named on a report', async () => {
     await model(1);
     await model(2, { owner: 77 });

@@ -37,7 +37,7 @@ export const videoDomain: Domain<VideoPayload> = {
   getDocs: getVideoDocs,
   topics: VIDEO_TOPICS,
   refFromEvent: videoRefFromEvent,
-  // Eligibility reads only the Image row, so CDC carries every removal and there is no refresh walk.
+  // No refresh walk: eligibility reads only the Image row.
   cdcTables: ['public.Image', 'public.TagsOnImageNew', 'public.ImageResourceNew'],
   embedInput: (id, payload) => ({ id: String(id), videoUrl: videoEmbedUrl(payload.url) }),
   rejected: redisRejectedMemo,

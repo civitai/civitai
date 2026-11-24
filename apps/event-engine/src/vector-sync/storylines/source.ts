@@ -19,7 +19,6 @@ export const STORYLINE_FROM = `"Storyline" st
 /**
  * Which storylines get a point: the site's `storylineSemanticEligibleText`
  * (storyline-visibility.sql.ts) as SQL, held to it by the site's storyline-eligibility parity test.
- * A chapter 1 image under CSAM review or blocked as CSAM keeps the storyline out.
  * Whether the publication time has passed is not part of it: the payload's rootPublishedAt is
  * filtered at query time.
  */

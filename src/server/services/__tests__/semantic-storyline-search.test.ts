@@ -240,7 +240,7 @@ describe('semantic storyline search', () => {
     expect(h.feedCalls).toEqual([expect.objectContaining({ ids: [1] })]);
   });
 
-  // Holds hide nothing; an image in CSAM review still does. Red if the held filter returns.
+  // Holds hide nothing; an image in CSAM review still does.
   it("serves a held owner's or chapter-1 author's storyline, not one with an image in CSAM review", async () => {
     await storyline(1);
     await storyline(2, { owner: 77 });

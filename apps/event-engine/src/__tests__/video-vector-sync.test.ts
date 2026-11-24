@@ -130,7 +130,7 @@ describe('which videos get a point', () => {
     }
   }, 60_000);
 
-  // Search removes only on delete or block. Red if the held filter returns.
+  // Holds hide nothing: only a delete or block removes content.
   test('held media and held owners keep their point', async () => {
     const pg = await pglite(`
       ${video(1)} ${video(2)} ${video(3)}
