@@ -17,6 +17,7 @@ import { upsertModelVersion } from '~/server/services/model-version.service';
 import { createFile } from '~/server/services/model-file.service';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -711,6 +712,19 @@ async function createRunVersion({
 type DraftFromWorkflow = RunDestination & { selectedEpoch: SelectedEpoch | null };
 
 /**
+ * One publish entry at a time per run, from the destination lookup through the write: two overlapping
+ * page loads (a double click, two tabs) would otherwise both find no draft and each make one.
+ */
+async function withRunLock<T>(workflowId: string, operation: () => Promise<T>): Promise<T> {
+  const result = await withDistributedLock(
+    { key: `training-studio:publish-run:${workflowId}`, ttl: 30, maxRetries: 50, autoRenew: true },
+    async () => ({ value: await operation() })
+  );
+  if (!result) throw new Error(`Timed out waiting to publish training run ${workflowId}`);
+  return result.value;
+}
+
+/**
  * Turn a completed Training Studio orchestrator workflow into a Draft Trained Model + v1 ModelVersion +
  * Training-Data ModelFile, so the user can drop into the main app's publish wizard or generate
  * off the draft. Training Studio trains orchestrator-only (no `ModelVersion` exists), so this reconstructs
@@ -741,48 +755,55 @@ export async function createDraftModelFromWorkflow({
     selectedEpochNumber,
   });
 
-  const existing = await findRunDestination(user.id, workflowId);
-  if (existing)
-    return { ...existing, selectedEpoch: selectedEpoch?.modelUrl ? selectedEpoch : null };
+  return withRunLock(workflowId, async (): Promise<DraftFromWorkflow> => {
+    const existing = await findRunDestination(user.id, workflowId);
+    if (existing)
+      return { ...existing, selectedEpoch: selectedEpoch?.modelUrl ? selectedEpoch : null };
 
-  assertHasCheckpoint(selectedEpoch);
-  const version = await readRunVersionData(user, workflow);
-  const { trainingModelType } = version;
-  const modelName = truncateModelName(
-    name?.trim() || version.defaultName || version.trigger || 'Trained LoRA'
-  );
+    assertHasCheckpoint(selectedEpoch);
+    const version = await readRunVersionData(user, workflow);
+    const { trainingModelType } = version;
+    const modelName = truncateModelName(
+      name?.trim() || version.defaultName || version.trigger || 'Trained LoRA'
+    );
 
-  const model = await upsertModel({
-    name: modelName,
-    type: ModelType.LORA,
-    uploadType: ModelUploadType.Trained,
-    status: ModelStatus.Draft,
-    userId: user.id,
-    nsfw: false,
-    poi: false,
-    minor: false,
-    // The in-app trainer stamps the same category tag at creation; the publish form reads it back as
-    // the default category.
-    ...(trainingModelType && {
-      tagsOnModels: [{ name: trainingModelType.toLowerCase(), isCategory: true }],
-    }),
-    // Server-owned keys (see SERVER_OWNED_META_KEYS): client meta can't set or clear them. The
-    // approval stamp records that this run passed the moderation check at materialization.
-    serverMeta: { trainingStudioWorkflowId: workflowId, trainingStudioModerationApproved: true },
+    const model = await upsertModel({
+      name: modelName,
+      type: ModelType.LORA,
+      uploadType: ModelUploadType.Trained,
+      status: ModelStatus.Draft,
+      userId: user.id,
+      nsfw: false,
+      poi: false,
+      minor: false,
+      // The in-app trainer stamps the same category tag at creation; the publish form reads it back as
+      // the default category.
+      ...(trainingModelType && {
+        tagsOnModels: [{ name: trainingModelType.toLowerCase(), isCategory: true }],
+      }),
+      // Server-owned keys (see SERVER_OWNED_META_KEYS): client meta can't set or clear them. The
+      // approval stamp records that this run passed the moderation check at materialization.
+      serverMeta: { trainingStudioWorkflowId: workflowId, trainingStudioModerationApproved: true },
+    });
+    if (!model) throw throwBadRequestError('Could not create the model');
+
+    const modelVersion = await createRunVersion({
+      user,
+      workflowId,
+      modelId: model.id,
+      name: 'v1',
+      version,
+      trainingResults,
+      selectedEpoch,
+    });
+
+    return {
+      modelId: model.id,
+      modelVersionId: modelVersion.id,
+      target: 'new-model',
+      selectedEpoch,
+    };
   });
-  if (!model) throw throwBadRequestError('Could not create the model');
-
-  const modelVersion = await createRunVersion({
-    user,
-    workflowId,
-    modelId: model.id,
-    name: 'v1',
-    version,
-    trainingResults,
-    selectedEpoch,
-  });
-
-  return { modelId: model.id, modelVersionId: modelVersion.id, target: 'new-model', selectedEpoch };
 }
 
 /**
@@ -855,32 +876,34 @@ export async function createDraftVersionFromWorkflow({
     selectedEpochNumber,
   });
 
-  const existing = await findRunDestination(user.id, workflowId);
-  if (existing) {
-    if (existing.modelId !== modelId) refuseTarget('already-published-elsewhere');
-    return { ...existing, selectedEpoch: selectedEpoch?.modelUrl ? selectedEpoch : null };
-  }
+  return withRunLock(workflowId, async (): Promise<DraftFromWorkflow> => {
+    const existing = await findRunDestination(user.id, workflowId);
+    if (existing) {
+      if (existing.modelId !== modelId) refuseTarget('already-published-elsewhere');
+      return { ...existing, selectedEpoch: selectedEpoch?.modelUrl ? selectedEpoch : null };
+    }
 
-  // primary: the ownership and eligibility check guarding the version write.
-  const target = await dbWrite.model.findFirst({
-    where: { id: modelId, ...studioVersionTargetWhere(user.id) },
-    select: { id: true, meta: true },
+    // primary: the ownership and eligibility check guarding the version write.
+    const target = await dbWrite.model.findFirst({
+      where: { id: modelId, ...studioVersionTargetWhere(user.id) },
+      select: { id: true, meta: true },
+    });
+    if (!target || !isVersionTargetEligible(target)) refuseTarget('model-not-eligible');
+
+    assertHasCheckpoint(selectedEpoch);
+    const version = await readRunVersionData(user, workflow);
+    const modelVersion = await createRunVersion({
+      user,
+      workflowId,
+      modelId,
+      name: await nextVersionName(modelId),
+      version,
+      trainingResults,
+      selectedEpoch,
+    });
+
+    return { modelId, modelVersionId: modelVersion.id, target: 'existing-model', selectedEpoch };
   });
-  if (!target || !isVersionTargetEligible(target)) refuseTarget('model-not-eligible');
-
-  assertHasCheckpoint(selectedEpoch);
-  const version = await readRunVersionData(user, workflow);
-  const modelVersion = await createRunVersion({
-    user,
-    workflowId,
-    modelId,
-    name: await nextVersionName(modelId),
-    version,
-    trainingResults,
-    selectedEpoch,
-  });
-
-  return { modelId, modelVersionId: modelVersion.id, target: 'existing-model', selectedEpoch };
 }
 
 /**

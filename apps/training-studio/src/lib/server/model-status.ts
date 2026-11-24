@@ -2,8 +2,9 @@ import { mainAppSessionOrigin } from './main-app';
 
 const CHECK_TIMEOUT_MS = 5_000;
 
-/** The main app's answer to whether this user's model still counts (not missing, not deleted by its
- *  owner), asked with their forwarded session cookie. Rejects when the main app gives no answer. */
+/** The main app's answer to whether this user's model (and, when given, the run's version on it)
+ *  still counts (not missing, not deleted by its owner), asked with their forwarded session cookie.
+ *  Rejects when the main app gives no answer. */
 export function mainAppModelLive(
   cookie: string
 ): (modelId: number, modelVersionId?: number) => Promise<boolean> {

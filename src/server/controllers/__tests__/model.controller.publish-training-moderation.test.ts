@@ -327,6 +327,24 @@ describe('privateModelFromTrainingHandler — training moderation gate', () => {
       expect(mockPrivateModelFromTraining).not.toHaveBeenCalled();
     }
   );
+
+  it('checks every version of the model when none are named', async () => {
+    // A non-Studio model holding a version added from an unapproved run.
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      meta: null,
+      modelVersions: [{ id: 43 }],
+    } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      { id: 43, meta: { trainingStudioWorkflowId: 'wf-added' } },
+    ] as never);
+    mockGetWorkflow.mockResolvedValue(trainingRun('underReview'));
+    await expect(run()).rejects.toThrow(NOT_APPROVED);
+    expect(mockGetWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ path: { workflowId: 'wf-added' } })
+    );
+    expect(mockPrivateModelFromTraining).not.toHaveBeenCalled();
+  });
 });
 
 describe('publishPrivateModelHandler — training moderation gate', () => {
