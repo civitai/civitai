@@ -4,7 +4,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { sessionCookieName } from '@civitai/auth';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
-import { createQueueDb } from '../../test/pglite-kysely';
+import {
+  createQueueDb,
+  SKILL_CHECK_GATE_READABLE,
+  SKILL_CHECK_GATE_UNREADABLE,
+} from '../../test/pglite-kysely';
 import { lockImage, seedImage } from '../../test/seed';
 
 const NOW = new Date('2026-12-15T12:00:00Z');
@@ -242,8 +246,7 @@ describe('inquisitor actions', () => {
           `UPDATE "KnightsInquisitorReview" SET "claimedBy"=9,"claimExpiresAt"=$1 WHERE id=$2`,
           [new Date(NOW.getTime() + 60_000), id]
         );
-      if (reason === 'unavailable')
-        await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
+      if (reason === 'unavailable') await pg.exec(SKILL_CHECK_GATE_UNREADABLE);
       vi.spyOn(console, 'error').mockImplementation(() => undefined);
       try {
         expect(
@@ -253,8 +256,7 @@ describe('inquisitor actions', () => {
           data: { next },
         });
       } finally {
-        if (reason === 'unavailable')
-          await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
+        if (reason === 'unavailable') await pg.exec(SKILL_CHECK_GATE_READABLE);
       }
     }
   );
@@ -280,14 +282,14 @@ describe('inquisitorView', () => {
 
   it('says the queue cannot load, instead of showing it empty, when the safety reads fail', async () => {
     await review();
-    await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
+    await pg.exec(SKILL_CHECK_GATE_UNREADABLE);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       const view = await inquisitorView(MOD);
       expect(view).toMatchObject({ unreadable: true, review: false });
       expect(view.stats.waiting).toBeNull();
     } finally {
-      await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
+      await pg.exec(SKILL_CHECK_GATE_READABLE);
     }
   });
 });

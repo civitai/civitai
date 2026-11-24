@@ -187,13 +187,13 @@ export const MOD_TAG_REVIEW_AXIS = 'tag_review';
  * (`servableImage` for serving).
  */
 export const modReviewEligibleImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
-  eb.and([
-    servableImageContent(eb),
-    sql<SqlBool>`NOT EXISTS (
-      SELECT 1 FROM "ImageReport" ir JOIN "Report" r ON r.id = ir."reportId"
-      WHERE ir."imageId" = img.id AND r.status IN ('Pending', 'Processing')
-    )`,
-  ]);
+  eb.and([servableImageContent(eb), noOpenImageReport]);
+
+/** No report waiting on a moderator names the image `img`. */
+export const noOpenImageReport = sql<SqlBool>`NOT EXISTS (
+  SELECT 1 FROM "ImageReport" ir JOIN "Report" r ON r.id = ir."reportId"
+  WHERE ir."imageId" = img.id AND r.status IN ('Pending', 'Processing')
+)`;
 
 /**
  * Whether disabling `tagId` on the image would lower its `nsfwLevel`, read as `update_nsfw_levels_new` decides it: the

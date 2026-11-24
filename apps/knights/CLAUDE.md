@@ -142,6 +142,17 @@ Queue producers (moderator enqueue endpoint, sampling, which takes an image once
 
 `GET /metrics` serves Prometheus text to in-cluster scrapes only. Every metric, its labels and meaning, and the gauge queries: [`docs/features/knights-metrics.md`](../../docs/features/knights-metrics.md). Labels are bounded enums, never user, image or item ids; add a new metric there too.
 
+## Database role
+
+The app's database role reads none of the moderation tables (CSAM reports, evidence holds, scan labels, reports,
+models). Whether an image may be shown or used as a check comes from the "KnightsImageGate" view
+(`src/lib/server/image-gate.ts`), and a month's "KnightsVote" partition from the owner's
+`knights_ensure_vote_partition`. The PGlite harness runs every app statement as that role with production's grants
+(`src/test/knights-app-grants.ts`), so a query needing a table the role cannot read fails in tests. A new table read
+needs a production grant first, then a line in that file. The view's SQL is generated from the TypeScript predicates
+(`imageGateViewSql`); a change to them ships as a new migration carrying the regenerated SQL, with `IMAGE_GATE_MIGRATION`
+(`src/test/pglite-kysely.ts`) pointed at it, and `image-gate.pglite.test.ts` fails until the two match.
+
 ## Tests
 
 `pnpm --filter @civitai/knights-app test` (project `app:knights`). Typecheck with `typecheck`, never `check`. Run the app on port 5180 with `cd apps/knights && pnpm dev --port 5180 --strictPort`. `pnpm dev -- --port 5180` lands on 5173 (the `--` ends Vite's option parsing), and without `--strictPort` it silently picks another port when the one asked for is taken.
