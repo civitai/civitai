@@ -1640,7 +1640,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     }
   }
 
-  // WARN, NEVER BLOCK: never throws, bounded in time; run beside the listing read.
+  // WARN, NEVER BLOCK: never throws; its bundle read is time-bounded (not its scan: `submitAdvisories`).
   const [listing, advisories] = await Promise.all([
     submitListingReadiness({
       slug,

@@ -6,7 +6,7 @@ import {
 
 export type { Advisory };
 
-/** The longest a submit waits for its advisories: past it, the submit answers without them. */
+/** The longest a submit waits for the bundle's files to be read: past it, it answers no advisory. */
 export const SUBMIT_ADVISORIES_TIMEOUT_MS = 2_000;
 
 export interface SubmitAdvisoryDeps {
@@ -27,8 +27,13 @@ async function liveFiles(bundleBuffer: Buffer): Promise<ReadonlyMap<string, stri
  * reads as Civitai's stock look by `accentCustomizedFrom`, the one rule the trace signal and App
  * Assistant's report_ready use too). Independent of every feature flag.
  *
- * Never throws and never waits past `timeoutMs`: a failure or a slow read answers `[]`, so an
- * advisory can neither fail nor hold up a submission.
+ * Never throws: a failure answers `[]`. `timeoutMs` bounds only the ASYNC part, the unzip and read
+ * of the bundle's source files (`files`): past it the submit answers `[]` without waiting for them.
+ * `Promise.race` cannot interrupt the synchronous `themeSignals` regex scan once it starts, so that
+ * scan runs to the end on the request's thread; it is bounded by the file caps of
+ * `bundleSignalFiles` (512 KiB per file, 8 MiB in all), not by the timer.
+ * The same bundle is also unzipped by `extractBundleMetadata` earlier in `submitVersion`, and again
+ * by the fire-and-forget trace (`recordSubmissionTrace`) while `app-assistant-tracing` is on.
  */
 export async function submitAdvisories(
   bundleBuffer: Buffer,

@@ -96,12 +96,6 @@ function SignalsSummary({ signals }: { signals: TraceSignals }) {
           </Badge>
         ))}
       </Group>
-      {signals.themeCustomized !== null && (
-        <Text size="xs" c="dimmed" data-testid="apps-review-sessions-theme-v1">
-          Any colour or token of its own (v1 signal, not the look):{' '}
-          {signals.themeCustomized ? 'yes' : 'no'}
-        </Text>
-      )}
       {signals.theme.tokenOverrides.length > 0 && (
         <Text size="xs">Tokens set: {signals.theme.tokenOverrides.join(', ')}</Text>
       )}

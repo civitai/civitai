@@ -145,9 +145,6 @@ describe('ReviewAssistantSessionsPanel', () => {
     await expect
       .element(page.getByTestId('apps-review-sessions-theme'))
       .toHaveTextContent('Default theme');
-    await expect
-      .element(page.getByTestId('apps-review-sessions-theme-v1'))
-      .toHaveTextContent('Any colour or token of its own (v1 signal, not the look): yes');
     unmount();
     // v2 stores the verdict: it is shown as stored.
     answer({

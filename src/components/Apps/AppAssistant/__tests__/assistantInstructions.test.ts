@@ -182,10 +182,10 @@ describe('buildAssistantSystemPrompt', () => {
 const BUZZ_TRANSACTIONS_RULE_TEXT =
   "- The viewer's own Buzz transactions (a spending history, a daily spending chart) are available: import { getTransport } from '@civitai/sdk' and call getTransport().request('GET_BUZZ_TRANSACTIONS', { params: { accountType, type, start, end, cursor, limit } }), which resolves to { transactions, cursor } (each transaction has date, a Date or an ISO string, so read it with new Date(date); type; amount, always positive, spent or received as its fromAccountId and toAccountId say; and description. limit is 1-200, 50 by default; pass the returned cursor to get the next page). It needs the buzz:read:self scope in block.manifest.json. Each call reads one Buzz pool: accountType is 'yellow' unless you pass another ('blue', 'green'), so request every pool the app shows and combine them. BREAKING.md's \"No v1 route\" for GET_BUZZ_TRANSACTIONS means only that app.site has no route for it; this host request works.";
 
-// The whole sentence: the look is advice (a scoped accent on the app root, light and dark, the
-// theming guide), never a requirement; many submitted apps shipped Civitai's stock look.
+// The whole sentence: the look is a recommendation, not a requirement (operator decision on
+// #10274: advisory only, no explicit expectation): a scoped accent, never at :root, and the guide.
 const THEME_RULE_TEXT =
-  "- Unless the user wants Civitai's own look, give the app an accent of its own: override --civitai-color-primary (and its -hover and -fg partners) on the app's root element, never on :root, and check it in both light and dark. The theming guide shows how: https://developer.civitai.com/apps/guide/theming.md. This is advice, not a requirement.";
+  "- A distinct look is recommended, not required: an accent of the app's own (a scoped --civitai-color-primary override on the app's root element, never at :root, checked in light and dark) helps it stand out in the store; see read_docs https://developer.civitai.com/apps/guide/theming.md.";
 
 describe('the theme rule', () => {
   it('names a theming guide address read_docs reads, on both runners', () => {

@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
-import { BLOCK_SLUG, themeSignals, type ThemeEvidence } from '@civitai/app-assistant';
+import { BLOCK_SLUG } from '@civitai/app-assistant';
+import { themeSignals, type ThemeEvidence } from '@civitai/app-assistant/theme-evidence';
 
 import { exitCodeOf, outputOf } from './preview';
 import type { SdkPinSandbox } from './sdk-pin';

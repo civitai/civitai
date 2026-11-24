@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { accentCustomizedFrom } from '@civitai/app-assistant';
+import { accentCustomizedFrom } from '@civitai/app-assistant/theme-evidence';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { openAppThemeEvidence, THEME_EVIDENCE_MAX_FILES } from '../app-assistant/theme-evidence';
