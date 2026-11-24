@@ -7,7 +7,7 @@ import { cycleContaining, importGraph } from './import-graph.harness';
  * that touches one pulls all of it into its graph. This caps the cycle and only lets the cap go down.
  * Dynamic `import()` counts; docs/dev/import-cycles.md says how to break an edge.
  */
-const MAX_CYCLE = 173;
+const MAX_CYCLE = 162;
 
 const IMAGE_SERVICE = 'src/server/services/image.service.ts';
 const graph = importGraph([IMAGE_SERVICE]);
