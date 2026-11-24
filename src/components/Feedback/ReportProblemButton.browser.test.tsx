@@ -5,7 +5,6 @@ import type * as TrpcModule from '~/utils/trpc';
 import { ReportProblemButton } from '~/components/Feedback/ReportProblemButton';
 import { registerReportProblemButton, showErrorNotification } from '~/utils/notifications';
 import { renderWithProviders } from '../../../test/component-setup';
-import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * "Report this" on error toasts, through the real `showErrorNotification` and the real Mantine
@@ -20,6 +19,9 @@ const { mocks } = vi.hoisted(() => ({
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
+  // Imported here, not at the top: the static `ReportProblemButton` import above loads
+  // `~/utils/trpc` (and so runs this factory) before a top-level import below it is initialised.
+  const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
   const actual = await importOriginal<typeof TrpcModule>();
   return {
     ...actual,
