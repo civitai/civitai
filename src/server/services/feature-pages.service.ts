@@ -12,6 +12,7 @@ import type {
 } from '~/server/schema/feature-pages.schema';
 import { fetchThroughCache, setFetchThroughCache } from '~/server/utils/cache-helpers';
 import { fetchTimeoutSignal, outboundFetch } from '~/server/utils/fetch-timeout';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import {
   FEATURE_PAGES_FEATURE_URN_PREFIX,
   FEATURE_PAGES_HOST_ORIGINS,
@@ -204,9 +205,12 @@ export async function getFeaturePageProps({ ctx, features, session }: FeaturePag
   return { props: { ...embed, feature, viewerAuthor } };
 }
 
-/** The viewer's platform handle for fp-init, or null when the platform gives none. */
+const viewerHandleKey = (userId: number) =>
+  `${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:${userId}` as const;
+
+/** The viewer's platform handle for fp-init, or null when the platform gives none in time. */
 export async function getFeaturePageViewerHandle(userId: number): Promise<string | null> {
-  const key = `${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:${userId}` as const;
+  const key = viewerHandleKey(userId);
   const missKey = `${key}:miss` as const;
   // The page render waits on this, so after a failure it is not asked again for a while.
   const missed = await clusterCacheGuard.readOr(
@@ -215,29 +219,41 @@ export async function getFeaturePageViewerHandle(userId: number): Promise<string
     null
   );
   if (missed) return null;
-  try {
-    return await fetchThroughCache(
-      key,
-      async () => {
-        const reply = await callSigner(PLATFORM_HANDLE_PATH, {
-          method: 'GET',
-          query: new URLSearchParams({ uid: String(userId) }),
-          timeoutMs: VIEWER_HANDLE_TIMEOUT_MS,
-        });
-        const parsed = viewerHandleSchema.safeParse(reply.body);
-        // Thrown, so the handle key never holds a failure.
-        if (!parsed.success) throw new Error(`viewer handle unavailable (${reply.status})`);
-        return parsed.data.author;
-      },
-      { ttl: VIEWER_HANDLE_TTL_SECONDS }
-    );
-  } catch (e) {
-    log({ message: 'viewer handle unavailable', error: safeError(e) });
-    await clusterCacheGuard.writeBestEffort('feature-pages.viewerHandleMiss', () =>
+  const markMissed = () =>
+    clusterCacheGuard.writeBestEffort('feature-pages.viewerHandleMiss', () =>
       redis.packed.set(missKey, 1, { EX: VIEWER_HANDLE_MISS_TTL_SECONDS })
     );
+  const lookup = fetchThroughCache(
+    key,
+    async () => {
+      const reply = await callSigner(PLATFORM_HANDLE_PATH, {
+        method: 'GET',
+        query: new URLSearchParams({ uid: String(userId) }),
+        timeoutMs: VIEWER_HANDLE_TIMEOUT_MS,
+      });
+      const parsed = viewerHandleSchema.safeParse(reply.body);
+      // Thrown, so the handle key never holds a failure.
+      if (!parsed.success) throw new Error(`viewer handle unavailable (${reply.status})`);
+      return parsed.data.author;
+    },
+    { ttl: VIEWER_HANDLE_TTL_SECONDS }
+  ).catch(async (e) => {
+    log({ message: 'viewer handle unavailable', error: safeError(e) });
+    await markMissed();
     return null;
-  }
+  });
+  // The service token is minted on the same path, so the whole lookup is bounded. One that runs
+  // late still fills the cache for a later render.
+  return withTimeoutFallback(lookup, VIEWER_HANDLE_TIMEOUT_MS, null, () => void markMissed());
+}
+
+/** Drops the viewer's cached handle, so an erased account's is never served again. */
+export async function forgetFeaturePageViewerHandle(userId: number) {
+  const key = viewerHandleKey(userId);
+  await clusterCacheGuard.writeBestEffort('feature-pages.viewerHandleForget', async () => {
+    await redis.del(key);
+    await redis.del(`${key}:miss`);
+  });
 }
 
 /** The refusal code of a non-2xx answer (`{ code, message, details }`), if it has one. */

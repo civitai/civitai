@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { envMock } from '~/__tests__/mocks/env.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import '~/__tests__/mocks/logging.mock';
+import { REDIS_KEYS } from '~/server/redis/client';
 import type * as Service from '~/server/services/feature-pages.service';
 
 const HUB = 'https://hub.test';
@@ -11,6 +12,7 @@ const REQUEST = 'urn:data.civitai.com:feature-pages/requests/dark-mode';
 let service: typeof Service;
 let fetchMock: ReturnType<typeof vi.fn>;
 let minted: number;
+let cache: ReturnType<typeof installFakeCacheRedis>;
 let signerReplies: Array<(token: string) => Response>;
 
 const json = (status: number, body: unknown) =>
@@ -23,7 +25,7 @@ beforeEach(async () => {
     FEATURE_PAGES_CLIENT_ID: 'client-id',
     FEATURE_PAGES_CLIENT_SECRET: 'client-secret',
   });
-  installFakeCacheRedis();
+  cache = installFakeCacheRedis();
   minted = 0;
   signerReplies = [];
   fetchMock = vi.fn(async (input: string, init: RequestInit) => {
@@ -273,6 +275,50 @@ describe('getFeaturePageViewerHandle', () => {
 
     await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
     expect(Date.now() - started).toBeLessThan(4_000);
+  });
+
+  it('gives up on a hub that does not mint a token, without waiting for the token timeout', async () => {
+    fetchMock.mockImplementation(
+      async (_: string, init: RequestInit) =>
+        new Promise<Response>((_, reject) =>
+          init.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+        )
+    );
+    const started = Date.now();
+
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+    expect(Date.now() - started).toBeLessThan(2_500);
+    expect(cache.peek(`${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:42:miss`)).toBe(1);
+  });
+
+  it('caches a handle that arrives after the render gave up, for a later render', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      let tokenAsked!: () => void;
+      const asked = new Promise<void>((resolve) => (tokenAsked = resolve));
+      fetchMock.mockImplementation(async (input: string) => {
+        if (input === `${HUB}/api/auth/oauth/token`) {
+          tokenAsked();
+          await new Promise((resolve) => setTimeout(resolve, 2_000));
+          return json(200, { access_token: 'token-1', expires_in: 900 });
+        }
+        return json(200, { author });
+      });
+
+      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+      await asked;
+      await vi.waitFor(
+        () =>
+          expect(cache.peek(`${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:42`)).not.toBeNull(),
+        { timeout: 3_000 }
+      );
+
+      vi.setSystemTime(Date.now() + 61_000);
+      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+      expect(signerCalls()).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
