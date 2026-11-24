@@ -172,10 +172,14 @@ describe.each(Object.entries(LIVE_STATES))('over %s', (_, live) => {
       INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (1, ${OTHER}), (2, ${OTHER}), (3, ${OTHER});
     `);
 
-    await dropAll(pg);
+    await pg.exec(migration(TRIGGERS));
+    const queue = async () =>
+      (await pg.query(`SELECT "entityId", type FROM "JobQueue" ORDER BY 1`)).rows;
+    // Not at deploy: the purge waits for part 2, so nothing a pending capture reads goes first.
+    expect(await queue()).toEqual([]);
 
-    const queued = await pg.query(`SELECT "entityId", type FROM "JobQueue" ORDER BY 1`);
-    expect(queued.rows).toEqual([{ entityId: 1, type: 'BlockedImageDelete' }]);
+    await pg.exec(migration(TABLES));
+    expect(await queue()).toEqual([{ entityId: 1, type: 'BlockedImageDelete' }]);
   });
 
   it('after the triggers part alone, lets deletes and owner changes through and keeps the hold relations', async () => {

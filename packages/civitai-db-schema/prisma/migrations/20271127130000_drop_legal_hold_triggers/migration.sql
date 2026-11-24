@@ -1,5 +1,5 @@
--- Removes the legal holds, part 1 of 2: the evidence-hold triggers, the held-image purge queueing,
--- and the hold checks in two functions that stay. Holds stop acting once this is applied.
+-- Removes the legal holds, part 1 of 2: the evidence-hold triggers and the hold checks in two
+-- functions that stay. Holds stop acting once this is applied.
 --
 -- Hand-applied, per environment, right AFTER the code that stops reading the hold objects is deployed.
 -- The hold tables and view stay until part 2 (20271127130100_drop_legal_hold_tables), which waits on
@@ -13,18 +13,6 @@ DROP TRIGGER IF EXISTS "Image_evidence_hold_owner" ON "Image";
 DROP TRIGGER IF EXISTS "Post_evidence_hold" ON "Post";
 DROP TRIGGER IF EXISTS "Post_evidence_hold_owner" ON "Post";
 DROP TRIGGER IF EXISTS "Model_evidence_hold_owner" ON "Model";
-
--- A kept image the trigger blocked has no other record once its table goes: queue each blocked one
--- for the blocked-image purge, as any block does.
-DO $$
-BEGIN
-  IF to_regclass('public."EvidenceHoldImage"') IS NOT NULL THEN
-    PERFORM create_job_queue_record(i.id, 'Image', 'BlockedImageDelete')
-    FROM "EvidenceHoldImage" e
-    JOIN "Image" i ON i.id = e."imageId"
-    WHERE i.ingestion = 'Blocked' AND i."blockedFor" IS DISTINCT FROM 'AiNotVerified';
-  END IF;
-END $$;
 
 -- 2. A sent report under a year old cannot be deleted.
 CREATE OR REPLACE FUNCTION csam_report_guard_sent() RETURNS trigger AS $$
