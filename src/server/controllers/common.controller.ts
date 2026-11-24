@@ -13,6 +13,7 @@ import { throwBadRequestError, throwDbError } from '~/server/utils/errorHandling
 import { withSpan } from '~/server/utils/otel-helpers';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import {
   articlesSearchIndex,
   bountiesSearchIndex,
@@ -55,23 +56,17 @@ export const updateEntityAvailabilityHandler = async ({
   input: AvailabilityInput;
 }) => {
   try {
-    // Only a post leaving Private is offered to the Knights, as moveImagesToPost does. Read before the
-    // write, which overwrites the old availability; from the primary so a lagging replica cannot hide Private.
-    let postLeavesPrivate = false;
-    if (entityType === 'Post' && availability !== Availability.Private) {
-      // primary: the old availability, read before this request overwrites it
-      const prior = await dbWrite.post.findUnique({
-        where: { id: entityId },
-        select: { availability: true },
-      });
-      postLeavesPrivate = prior?.availability === Availability.Private;
-    }
+    // Read before the write, which overwrites the old availability; from the primary so a lagging replica cannot hide Private.
+    const leavesPrivate =
+      availability !== Availability.Private &&
+      (await priorAvailability(entityType, entityId)) === Availability.Private;
 
     await entityAvailabilityUpdate({
       availability,
       entityIds: [entityId],
       entityType,
     });
+    if (leavesPrivate) void offerLeftPrivateToKnights(entityType, entityId);
 
     // Update search index:
     switch (entityType) {
@@ -121,7 +116,6 @@ export const updateEntityAvailabilityHandler = async ({
         );
         break;
       case 'Post':
-        if (postLeavesPrivate) void queueLeftPrivateForKnights({ postIds: [entityId] });
         const images = await dbRead.image.findMany({
           where: { postId: entityId },
           select: { id: true },
@@ -164,3 +158,48 @@ export const updateEntityAvailabilityHandler = async ({
     throw throwDbError(error);
   }
 };
+
+/** The stored availability, from the primary, of an entity whose leaving Private offers images to the Knights. */
+async function priorAvailability(
+  entityType: SupportedAvailabilityResources,
+  id: number
+): Promise<Availability | undefined> {
+  const select = { availability: true } as const;
+  if (entityType === 'Post') {
+    // primary: read before the write overwrites it; a lagging replica could hide Private.
+    return (await dbWrite.post.findUnique({ where: { id }, select }))?.availability;
+  }
+  if (entityType === 'Model') {
+    // primary: as for Post.
+    return (await dbWrite.model.findUnique({ where: { id }, select }))?.availability;
+  }
+  if (entityType === 'ModelVersion') {
+    // primary: as for Post.
+    return (await dbWrite.modelVersion.findUnique({ where: { id }, select }))?.availability;
+  }
+  return undefined;
+}
+
+/** Called without awaiting, after the availability write: never throws, and logs its own failures. */
+async function offerLeftPrivateToKnights(entityType: SupportedAvailabilityResources, id: number) {
+  if (entityType === 'Post') return void queueLeftPrivateForKnights({ postIds: [id] });
+  if (entityType === 'ModelVersion')
+    return void queueLeftPrivateForKnights({ modelVersionIds: [id] });
+  if (entityType !== 'Model') return;
+  // Offers every version; the sampler re-checks each one, and imageSourceVisible refuses an image whose version or model
+  // is still Private or unpublished.
+  try {
+    // primary: a lagging replica could miss versions.
+    const versions = await dbWrite.modelVersion.findMany({
+      where: { modelId: id },
+      select: { id: true },
+    });
+    if (versions.length > 0)
+      await queueLeftPrivateForKnights({ modelVersionIds: versions.map((v) => v.id) });
+  } catch (error) {
+    logToAxiom(
+      { type: 'knights-v2-left-private-error', modelId: id, error: safeError(error) },
+      'knights-v2-sources'
+    );
+  }
+}

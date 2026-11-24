@@ -6,13 +6,13 @@ import { describe, expect, it } from 'vitest';
  * Every `vi.mock` factory that stands in for a module `base.reward` imports must
  * provide the bindings it actually imports.
  *
- * Two of those modules cannot be mocked by spreading `importOriginal` — the
- * reward suites replace `~/server/clickhouse/client` and
- * `~/server/services/buzz.service` precisely to avoid constructing the real
- * clients, and spreading loads them for real (measured at 1.8s → 15.6s of import
- * on one file). `~/server/prom/client` is replaced globally in `setup.ts` for
- * the same reason. So the export surface is hand-written in three places, and a
- * hand-written surface pins itself to the day it was typed.
+ * Two of those modules are mocked by hand, not by spreading `importOriginal`:
+ * the reward suites replace `~/server/clickhouse/client` and
+ * `~/server/services/buzz-payout` so the real ClickHouse client, Buzz client and
+ * redis caches never load, and spreading would load them. `~/server/prom/client`
+ * is replaced globally in `setup.ts` for the same reason. So the export surface
+ * is hand-written in three places, and a hand-written surface pins itself to the
+ * day it was typed.
  *
  * The failure when it falls behind is the invisible one: the missing binding
  * resolves to `undefined`, the test file fails to LOAD, and a file that fails to

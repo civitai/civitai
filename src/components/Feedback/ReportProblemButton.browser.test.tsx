@@ -5,7 +5,6 @@ import type * as TrpcModule from '~/utils/trpc';
 import { ReportProblemButton } from '~/components/Feedback/ReportProblemButton';
 import { registerReportProblemButton, showErrorNotification } from '~/utils/notifications';
 import { renderWithProviders } from '../../../test/component-setup';
-import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * "Report this" on error toasts, through the real `showErrorNotification` and the real Mantine
@@ -19,8 +18,12 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
+// The proxy stub is imported inside the factory: a static import is still unbound when the
+// `ReportProblemButton` import above evaluates this factory, and the run dies with vitest's
+// generic "error when mocking a module" Unhandled Rejection.
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
+  const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
   return {
     ...actual,
     trpc: makeTrpcProxy({

@@ -32,6 +32,8 @@ const received = (i: StuckCryptoDepositDigestItem) => {
 };
 
 export const stuckCryptoDepositDigestEmail = createEmail({
+  template: 'stuckCryptoDepositDigest',
+  mailClass: 'transactional',
   header: ({ to, items }: StuckCryptoDepositDigestData) => ({
     subject: `Crypto deposits needing NowPayments follow-up (${items.length})`,
     to,

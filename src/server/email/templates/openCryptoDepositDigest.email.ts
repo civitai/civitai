@@ -60,6 +60,8 @@ const listedLine = (i: ListedPaymentDigestItem) =>
   `Payment ${i.paymentId}: ${LISTED_STATE_LABEL[i.state]}${i.status ? ` (${i.status})` : ''}`;
 
 export const openCryptoDepositDigestEmail = createEmail({
+  template: 'openCryptoDepositDigest',
+  mailClass: 'transactional',
   header: ({ to, items, listed }: OpenCryptoDepositDigestData) => ({
     subject: `NP open-payment digest: ${items.length} crypto deposit${
       items.length === 1 ? '' : 's'

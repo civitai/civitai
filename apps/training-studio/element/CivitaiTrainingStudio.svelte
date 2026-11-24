@@ -68,6 +68,7 @@
         pricingUrl: h.config.pricingUrl,
         supportUrl: h.config.supportUrl,
         dataPolicyUrl: h.config.dataPolicyUrl,
+        userId: h.config.userId,
       },
       hrefFor: (loc) => h.hrefFor(loc),
       navigate: (loc, opts) => h.navigate(loc, opts),

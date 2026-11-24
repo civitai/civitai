@@ -13,7 +13,9 @@ const { mockVoidChallenge, mockCreateNotification, mockCloseChallengeCollection 
   })
 );
 
-vi.mock('~/server/services/challenge.service', () => ({ voidChallenge: mockVoidChallenge }));
+vi.mock('~/server/games/daily-challenge/challenge-void', () => ({
+  voidChallenge: mockVoidChallenge,
+}));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
 }));
