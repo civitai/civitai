@@ -243,6 +243,10 @@ export async function listCsamHolds({
     .leftJoin('Model as m', (join) =>
       join.onRef('m.id', '=', 'h.entityId').on('h.entityType', '=', 'Model')
     )
+    // A lyrics hold's entity is its song, titled from the upload's metadata as the song card is.
+    .leftJoin('Image as song', (join) =>
+      join.onRef('song.id', '=', 'h.entityId').on('h.entityType', '=', 'TrackLyrics')
+    )
     .select([
       'h.id',
       'h.entityType',
@@ -273,7 +277,9 @@ export async function listCsamHolds({
         where x."userId" = h."userId" and x."entityType" = 'ChatMessage' and x.label = 'csam'
           and x.status = 'Pending' and x.id <> h.id and x.meta->>'chatId' = h.meta->>'chatId'
       ) else 0 end`.as('otherPendingInChat'),
-      sql<string | null>`coalesce(p.title, m.name)`.as('title'),
+      sql<string | null>`coalesce(p.title, m.name, nullif(song.metadata->>'title', ''))`.as(
+        'title'
+      ),
       sql<
         boolean | null
       >`case h."entityType" when 'Post' then p."publishedAt" is not null when 'Model' then coalesce(m.status::text = 'Published', false) end`.as(
