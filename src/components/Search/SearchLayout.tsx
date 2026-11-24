@@ -23,7 +23,7 @@ import { SEARCH_HITS_PER_PAGE } from '~/components/Search/search.constants';
 import { searchBoxFor } from '~/components/Search/CustomSearchComponents';
 import { useRouter } from 'next/router';
 import { useTrackEvent } from '../TrackView/track.utils';
-import { trackSearchPage } from '~/utils/feed-events';
+import { sendSearchFeedLoad } from '~/utils/feed-events';
 import * as z from 'zod';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -134,7 +134,12 @@ export function SearchLayout({
   const searchQuery = instantSearchQuery || urlQuery;
 
   useEffect(() => {
-    if (parsedQuery) trackSearchPage(indexName, parsedQuery, trackSearch);
+    if (!parsedQuery) return;
+
+    const { query, sortBy: index, ...filters } = parsedQuery;
+
+    if (query && index) trackSearch({ query, index, filters });
+    else if (!query) sendSearchFeedLoad(indexName, { sortBy: index, ...filters });
   }, [parsedQuery]);
 
   // Callback for InstantSearch state changes
