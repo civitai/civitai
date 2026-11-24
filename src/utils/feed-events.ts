@@ -1,14 +1,21 @@
 import Router from 'next/router';
 import type { Query, QueryCache, QueryCacheNotifyEvent } from '@tanstack/react-query';
 import { enqueueTrackEvent } from '~/components/TrackView/trackEventBuffer';
-import { getImpressionSessionKey, recordFeedSeen } from '~/components/TrackView/impressionBuffer';
+import {
+  clearPendingFeedSeen,
+  getImpressionSessionKey,
+  recordFeedSeen,
+} from '~/components/TrackView/impressionBuffer';
 import type { FeedEventContext } from '~/components/TrackView/impressionBuffer';
 import type {
   ImpressionEntityType,
   TrackFeedInput,
   TrackSearchInput,
 } from '~/server/schema/track.schema';
-import { FEED_EVENT_FILTER_KEYS } from '~/shared/constants/feed-events.constants';
+import {
+  FEED_EVENT_FILTER_KEYS,
+  FEED_EVENT_INDEX_MAX,
+} from '~/shared/constants/feed-events.constants';
 import type { FeedEventFeed } from '~/shared/constants/feed-events.constants';
 
 // tRPC v11 keys an infinite query as [path segments, { input, type: 'infinite' }].
@@ -19,7 +26,7 @@ const FEED_PROCEDURES: Record<string, { feed: FeedEventFeed; entityType: Impress
   'article.getInfinite': { feed: 'articles', entityType: 'Article' },
 };
 
-// Bounds the item map; the oldest entries go first. A few dozen pages of the largest feed.
+// Bounds the item map; the oldest entries are evicted first.
 const FEED_ITEMS_MAX = 5_000;
 
 type FeedItem = { context: FeedEventContext; position: number; queryHash: string };
@@ -77,14 +84,25 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
   let visit = 0;
   let started = false;
 
-  function mapItems(query: Query, entityType: ImpressionEntityType, pages: unknown[]) {
-    const contexts = loads.get(query.queryHash) ?? [];
+  // Points each item at its page's load. An item another query holds is taken only by a page loaded
+  // now, in [from, to): a refetch must not move credit back and forth between two queries.
+  function mapItems(query: Query, from = 0, to = 0) {
+    const feed = feedQuery(query);
+    const pages = (query.state.data as InfiniteData | undefined)?.pages;
+    const contexts = loads.get(query.queryHash);
+    if (!feed || !pages || !contexts) return;
     let position = 0;
     pages.forEach((page, pageIndex) => {
       const context = contexts[pageIndex];
+      const loadedNow = pageIndex >= from && pageIndex < to;
       for (const id of pageItemIds(page)) {
-        if (context && typeof id === 'number') {
-          const key = `${entityType}:${id}`;
+        const key = `${feed.entityType}:${id}`;
+        const held = items.get(key);
+        if (
+          context &&
+          typeof id === 'number' &&
+          (loadedNow || !held || held.queryHash === query.queryHash)
+        ) {
           items.delete(key);
           items.set(key, { context, position, queryHash: query.queryHash });
           if (items.size > FEED_ITEMS_MAX) items.delete(items.keys().next().value as string);
@@ -94,8 +112,8 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
     });
   }
 
-  // Starts this visit's load of pages [from, to) and sends a load row for each below `sendTo`.
-  function emit(query: Query, from: number, to: number, sendTo = to) {
+  // Starts this visit's load of pages [from, to): a load row and a new context for each.
+  function emit(query: Query, from: number, to: number) {
     const feed = feedQuery(query);
     if (!feed) return;
     const page = getPage();
@@ -106,16 +124,9 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
     for (let pageIndex = from; pageIndex < to; pageIndex++) {
       const context: FeedEventContext = { feed: feed.feed, page, sort, pageIndex, filters };
       contexts[pageIndex] = context;
-      if (pageIndex < sendTo) send({ event: 'load', sessionKey: getSessionKey(), ...context });
+      send({ event: 'load', sessionKey: getSessionKey(), ...context });
     }
-    remap(query);
-  }
-
-  // A refetch can change what a page holds without being a new load.
-  function remap(query: Query) {
-    const feed = feedQuery(query);
-    const pages = (query.state.data as InfiniteData | undefined)?.pages;
-    if (feed && pages) mapItems(query, feed.entityType, pages);
+    mapItems(query, from, to);
   }
 
   function onData(query: Query) {
@@ -131,14 +142,14 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
     } else {
       // A refetch can come back shorter; the pages fetched after it are new loads.
       state.pages = pages;
-      const contexts = loads.get(query.queryHash);
-      if (contexts) contexts.length = Math.min(contexts.length, pages);
-      remap(query);
+      // A refetch can change what a page holds without being a new load.
+      mapItems(query);
     }
   }
 
   // A cached feed shown again on a later route visit counts as one page-0 load, however many hooks
-  // watch it. Its cached pages' items belong to this visit's load from then on.
+  // watch it. The other cached pages keep the loads they were sent under, so a row never names a
+  // page load this visit did not send; under a different route pattern they then match nothing.
   function onRevisit(query: Query) {
     const state = emitted.get(query.queryHash);
     if (!state || state.visit === visit) return onData(query);
@@ -146,7 +157,7 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
     if (!pages) return;
     state.visit = visit;
     state.pages = Math.max(state.pages, pages);
-    emit(query, 0, pages, 1);
+    emit(query, 0, 1);
   }
 
   function onEvent(event: QueryCacheNotifyEvent) {
@@ -190,7 +201,8 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
         ...found.item.context,
         entityType: found.target.entityType,
         entityId: found.target.entityId,
-        position: found.item.position,
+        // Past the server's cap the row would be dropped; the cap reads as "this deep or deeper".
+        position: Math.min(found.item.position, FEED_EVENT_INDEX_MAX),
       });
     },
     newVisit() {
@@ -244,6 +256,7 @@ function apply() {
   } else if (!wanted && stop) {
     stop();
     stop = undefined;
+    clearPendingFeedSeen();
     Router.events.off('routeChangeComplete', onRouteChange);
   }
 }

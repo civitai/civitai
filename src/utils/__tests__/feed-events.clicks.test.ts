@@ -76,15 +76,35 @@ describe('feed clicks and the item context map', () => {
     expect(sent.filter((e) => e.event === 'load')).toHaveLength(1);
   });
 
-  it('a cached feed revisited from another route counts under the new route', () => {
+  it('a cached feed revisited from another route: page 0 is the new load, older pages match nothing', () => {
     const { client, tracker, setPages, clicks, goTo } = setup();
     tracker.start();
     setPages(page(1), page(2));
     goTo('/');
     tracker.newVisit();
     new QueryObserver(client, { queryKey: key, enabled: false }).subscribe(() => undefined);
+    tracker.click(model(1));
     tracker.click(model(2));
-    expect(clicks().map((e) => [e.page, e.pageIndex, e.position])).toEqual([['/', 1, 1]]);
+    expect(clicks().map((e) => [e.entityId, e.page, e.pageIndex])).toEqual([[1, '/', 0]]);
+  });
+
+  it('a refetch does not take an item back from a feed that loaded it later', () => {
+    const { client, tracker, setPages, clicks } = setup();
+    tracker.start();
+    setPages(page(1));
+    const other = [['model', 'getAll'], { input: { sort: 'Newest' }, type: 'infinite' }];
+    client.setQueryData(other, { pages: [page(9, 1)], pageParams: [0] });
+    setPages(page(1));
+    tracker.click(model(1));
+    expect(clicks().map((e) => [e.sort, e.position])).toEqual([['Newest', 1]]);
+  });
+
+  it('caps position at the server limit instead of sending a row it would drop', () => {
+    const { tracker, setPages, clicks } = setup();
+    tracker.start();
+    setPages(page(...Array.from({ length: 10_002 }, (_, i) => i + 1)));
+    tracker.click(model(10_002));
+    expect(clicks().map((e) => e.position)).toEqual([10_000]);
   });
 
   it('forgets a removed query and everything after stop', () => {

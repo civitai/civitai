@@ -38,8 +38,8 @@ One row per event, for a sample of browser sessions (the share is set in Flipt):
   second, the same rule impression counts use. Items are grouped by the page load they came from,
   one row per load, each item once.
 - **click:** a click on the item's link in its card (a middle-click too). Clicks on a card's
-  buttons and menus, or anywhere outside a link, are not recorded. `position` counts from 0 at the
-  top of the feed.
+  buttons and menus, or anywhere outside a link, are not recorded. `position` is the item's place
+  in the feed as it was sent to your browser, counting from 0.
 
 If the same item appears in two feeds on one page, its seen and click rows go to the feed that
 loaded it last.

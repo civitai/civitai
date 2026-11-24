@@ -177,6 +177,12 @@ export function recordFeedSeen(context: FeedEventContext, entityId: number): voi
   else scheduleTimer();
 }
 
+/** Drops seen ids not yet sent, for when feed events are switched off. */
+export function clearPendingFeedSeen(): void {
+  pendingSeen.clear();
+  pendingSeenCount = 0;
+}
+
 // Move everything pending into the shared telemetry buffer as one event per
 // surface (split further only if a surface exceeds the per-event cap), and one
 // feed seen event per load.

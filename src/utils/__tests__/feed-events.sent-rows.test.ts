@@ -15,7 +15,9 @@ vi.mock('next/router', () => ({
 }));
 vi.stubGlobal('window', new EventTarget());
 // The network is the boundary: rows are read off the bodies the shared buffer POSTs.
-const fetchMock = vi.fn((_url: string, _init: { body: string }) => Promise.resolve({ ok: true }));
+const fetchMock = vi.fn<(url: string, init: { body: string }) => Promise<{ ok: boolean }>>(() =>
+  Promise.resolve({ ok: true })
+);
 vi.stubGlobal('fetch', fetchMock);
 
 const feedRows = () => {
@@ -64,9 +66,22 @@ describe('feed seen rows', () => {
   });
 });
 
+describe('switching feed events off', () => {
+  it('drops seen ids not yet sent', () => {
+    setFeedEventsCache(new QueryClient().getQueryCache());
+    setFeedEventsEnabled(true);
+    recordFeedSeen(context(0), 1);
+    setFeedEventsEnabled(false);
+    flushImpressions();
+    expect(feedRows()).toEqual([]);
+  });
+});
+
 describe('search page visits (the SearchLayout call site)', () => {
-  setFeedEventsCache(new QueryClient().getQueryCache());
-  setFeedEventsEnabled(true);
+  beforeEach(() => {
+    setFeedEventsCache(new QueryClient().getQueryCache());
+    setFeedEventsEnabled(true);
+  });
 
   it('a text search goes to trackSearch, and no feed row carries it', () => {
     const trackSearch = vi.fn();

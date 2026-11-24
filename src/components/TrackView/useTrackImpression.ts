@@ -257,9 +257,7 @@ function useImpressionObserver<T extends HTMLElement>(
   return ref;
 }
 
-// A click through the card's link: the nearest control the click landed in is a link (the card's
-// own, an ancestor of the card, or one inside it). A button inside the link, such as a card menu,
-// is not a click through.
+// A button inside a link (e.g. a card menu) is not a click through, so the nearest control must be the link.
 const CONTROLS =
   'a[href], button, [role="button"], [role="menuitem"], input, select, textarea, label';
 export function isLinkClick(target: EventTarget | null) {

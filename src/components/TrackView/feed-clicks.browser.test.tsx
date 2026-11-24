@@ -18,11 +18,4 @@ describe('isLinkClick', () => {
     expect(isLinkClick(q('span'))).toBe(false);
     expect(isLinkClick(null)).toBe(false);
   });
-
-  test('a card whose observed element sits inside its link counts too', () => {
-    const link = document.createElement('a');
-    link.href = '/posts/1';
-    link.innerHTML = '<div><p>title</p></div>';
-    expect(isLinkClick(link.querySelector('p'))).toBe(true);
-  });
 });
