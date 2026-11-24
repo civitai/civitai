@@ -6,6 +6,8 @@
   let { data }: { data: PageData } = $props();
 
   let saving = $state(false);
+  // The switch flips at the click; the saved value replaces it once the page reloads, or it flips back on a failure.
+  let pending = $state<boolean | null>(null);
   let saved = $state<boolean | null>(null);
   let error = $state<string | null>(null);
 </script>
@@ -46,11 +48,12 @@
           {/if}
         </div>
         {#if data.questions.available}
-          {@const on = data.questions.on}
+          {@const on = pending ?? data.questions.on}
           <form
             method="POST"
             action="?/questions"
-            use:enhance={() => {
+            use:enhance={({ formData }) => {
+              pending = formData.get('questions') === 'on';
               saving = true;
               error = null;
               saved = null;
@@ -68,6 +71,7 @@
                   error = 'Your choice was not saved. Try again.';
                 } finally {
                   saving = false;
+                  pending = null;
                 }
               };
             }}
@@ -183,8 +187,10 @@
     display: flex;
     flex: none;
     align-items: center;
-    width: 2.5rem;
-    height: 1.375rem;
+    width: 2.75rem;
+    min-width: 0;
+    height: 1.5rem;
+    min-height: 0;
     padding: 2px;
     border: 1px solid color-mix(in srgb, var(--io-gold-muted) 55%, transparent);
     border-radius: 999px;
@@ -194,6 +200,16 @@
 
   .switch[aria-checked='true'] {
     justify-content: flex-end;
+    border-color: var(--io-gold);
+    background: var(--io-gold);
+  }
+
+  .switch:hover:not(:disabled) {
+    border-color: var(--io-gold-muted);
+    background: var(--io-matte);
+  }
+
+  .switch[aria-checked='true']:hover:not(:disabled) {
     border-color: var(--io-gold);
     background: var(--io-gold);
   }
@@ -209,8 +225,8 @@
   }
 
   .knob {
-    width: 1rem;
-    height: 1rem;
+    width: 1.125rem;
+    height: 1.125rem;
     border-radius: 50%;
     background: var(--io-parchment-muted);
   }

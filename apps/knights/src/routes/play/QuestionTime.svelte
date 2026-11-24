@@ -48,6 +48,10 @@
     animation: fade-in var(--motion-base) var(--ease-out-quart) both;
   }
 
+  .backdrop:hover:not(:disabled) {
+    background: rgb(14 12 9 / 0.7);
+  }
+
   .card {
     display: flex;
     flex-direction: column;
