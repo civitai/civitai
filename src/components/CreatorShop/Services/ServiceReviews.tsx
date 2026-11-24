@@ -1,6 +1,12 @@
 import { Badge, Button, Divider, Group, Loader, Stack, Text, Title } from '@mantine/core';
 import { IconMoodHappy, IconMoodNeutral } from '@tabler/icons-react';
+import type { CSSProperties } from 'react';
 import { useMemo } from 'react';
+import {
+  reviewImageLayout,
+  reviewRowTileStyle,
+} from '~/components/CreatorShop/Services/review-image-layout';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -114,6 +120,7 @@ export function ServiceReviews({
 
 function ReviewRow({ review, canReport }: { review: Review; canReport: boolean }) {
   const happy = review.verdict === ServiceDealReviewVerdict.Happy;
+  const next = !!useOptionalFeatureFlags()?.creatorServicesNext;
   return (
     <Stack gap={6}>
       <Group gap="xs" align="center" wrap="wrap">
@@ -141,13 +148,16 @@ function ReviewRow({ review, canReport }: { review: Review; canReport: boolean }
           {review.comment}
         </Text>
       )}
-      {review.images.length > 0 && (
-        <div className="grid max-w-md grid-cols-4 gap-2">
-          {review.images.map((image) => (
-            <ReviewThumb key={image.id} image={image} />
-          ))}
-        </div>
-      )}
+      {review.images.length > 0 &&
+        (next ? (
+          <ReviewImages images={review.images} />
+        ) : (
+          <div className="grid max-w-md grid-cols-4 gap-2">
+            {review.images.map((image) => (
+              <ReviewThumb key={image.id} image={image} />
+            ))}
+          </div>
+        ))}
       {review.sellerReply && (
         <Stack gap={2} className="ml-4 border-l-2 border-gray-3 pl-3 dark:border-dark-4">
           <Text size="xs" fw={600}>
@@ -162,14 +172,60 @@ function ReviewRow({ review, canReport }: { review: Review; canReport: boolean }
   );
 }
 
-function ReviewThumb({ image }: { image: Omit<ReviewImage, 'reviewId'> }) {
+function ReviewImages({ images }: { images: Omit<ReviewImage, 'reviewId'>[] }) {
+  const layout = reviewImageLayout(images.length);
+  if (layout === 'single')
+    return (
+      <div className="max-w-[360px]">
+        {images.map((image) => (
+          <ReviewThumb key={image.id} image={image} className="aspect-[4/3]" />
+        ))}
+      </div>
+    );
+  if (layout === 'row')
+    return (
+      <div className="flex max-w-md gap-2">
+        {images.map((image) => (
+          <ReviewThumb
+            key={image.id}
+            image={image}
+            fit="contain"
+            style={reviewRowTileStyle(image)}
+            className="min-w-0"
+          />
+        ))}
+      </div>
+    );
+  return (
+    <div className="grid max-w-md grid-cols-4 gap-2">
+      {images.map((image) => (
+        <ReviewThumb key={image.id} image={image} className="aspect-square" />
+      ))}
+    </div>
+  );
+}
+
+function ReviewThumb({
+  image,
+  className = 'aspect-square',
+  style,
+  fit = 'cover',
+}: {
+  image: Omit<ReviewImage, 'reviewId'>;
+  className?: string;
+  style?: CSSProperties;
+  fit?: 'cover' | 'contain';
+}) {
   const media = {
     ...image,
     type: image.type as MediaType,
     metadata: image.metadata as MixedObject,
   };
   return (
-    <div className="relative aspect-square overflow-hidden rounded-md bg-gray-2 dark:bg-dark-5">
+    <div
+      className={`relative overflow-hidden rounded-md bg-gray-2 dark:bg-dark-5 ${className}`}
+      style={style}
+    >
       <ImageGuard2 image={media} explain={false}>
         {(safe) =>
           safe ? (
@@ -180,7 +236,7 @@ function ReviewThumb({ image }: { image: Omit<ReviewImage, 'reviewId'> }) {
               type={media.type}
               metadata={media.metadata}
               width={300}
-              className="size-full object-cover"
+              className={fit === 'contain' ? 'size-full object-contain' : 'size-full object-cover'}
             />
           ) : (
             <MediaHash {...media} />

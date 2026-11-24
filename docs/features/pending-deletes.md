@@ -43,8 +43,8 @@ passes, runs one statement that:
 5. returns `{ deleted, kept, hidden, gone }`: the deleted rows, the kept ids, the kept images it
    blocked (with their owner and post), and the listed ids that were already gone.
 
-Each app takes a blocked image out of search and busts its caches, as for one a hold marker's
-trigger blocked, and drops it from the comics and home blocks showing it. A kept post is unpublished as a moderator's unpublish does (`publishedAt` cleared, the
+Each app takes a blocked image out of search, busts its caches, and drops it from the comics and
+home blocks showing it. A kept post is unpublished as a moderator's unpublish does (`publishedAt` cleared, the
 `unpublishedAt`/`unpublishedBy`/`prevPublishedAt` stamps written, `unpublishedReason = 'pending-delete'`),
 so it leaves public reads and stays visible to its owner and moderators; `deletePost` then runs the
 unpublish follow-ups. The `trg_post_pending_delete_keep_unpublished` trigger (migration
@@ -118,12 +118,12 @@ Every run, per entity type, `pending-deletes`:
    and for posts a hold on its text);
 3. carries out the unblocked ones through `replay(kind, data)`, batching rows that replay alike;
 4. settles each (`settleDeletes`): **done** (deleted, gone, or left by the replay because it no longer
-   applies: in use again, given away, kept by a hold marker), **waiting** (blocked again; due again at
-   the next run, or in an hour for a plain cleanup), or **failed** (retried on its own next run).
+   applies: in use again, given away), **waiting** (blocked again; due again at the next run, or in
+   an hour for a plain cleanup), or **failed** (retried on its own next run).
 
 What blocks a row: its case, for every kind; for someone else's post delete, also any of its images
-that still has a pending delete of its own (those go first); for a cleanup, also a held owner and,
-for an owner's cleanup, open moderation; and, for any post, a hold on its text
+that still has a pending delete of its own (those go first); for a cleanup, also an owner who is the
+subject of any CSAM report and, for an owner's cleanup, open moderation; and, for any post, a hold on its text
 (`heldPostTextPostIds`).
 
 Cleanups and other people's deletes run as `PENDING_DELETES_ACTOR`; an owner's runs as the owner.
@@ -141,11 +141,3 @@ reaches through a post it carries out, and finds in a case of its own, is queued
   `deletePost`) is told when the delete was kept; bulk and account-wide deletes (`removeAllContent`,
   the mod and admin delete endpoints) do not report it. The moderator app returns such an image as
   refused `review`.
-
-## Holds
-
-The account and review holds (`legal-hold.service.ts`, the moderator app's `heldImages`) still run
-alongside this. Today they are often the caller's condition, so an in-case image they cover is left
-by the condition and never queued; and the moderator app refuses held images (except a marked
-owner's, which go to the delete) before its delete runs. Once the holds are removed, every in-case
-image reaches the case check and is queued, except in the `queueKept: false` callers above.

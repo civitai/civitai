@@ -40,6 +40,13 @@ func (s *Server) ServeV1ModelsIDHTTP(w http.ResponseWriter, r *http.Request) {
 // serveV1Models is serve (server.go) for a REST model route. With ServeV1Models off every request is
 // the `v1-models-off` fallback: nothing is computed and no serve slot is taken.
 func (s *Server) serveV1Models(w http.ResponseWriter, r *http.Request, endpoint string) {
+	withProfileLabels(r.Context(), endpoint, "serve", func(ctx context.Context) {
+		s.serveV1ModelsLabelled(w, r.WithContext(ctx), endpoint)
+	})
+}
+
+// serveV1ModelsLabelled is serveV1Models under the request's profile labels (withProfileLabels).
+func (s *Server) serveV1ModelsLabelled(w http.ResponseWriter, r *http.Request, endpoint string) {
 	start := time.Now()
 	ctx, span := s.startSpan(r.Context(), r.Header, "serve", endpoint)
 	defer span.End()

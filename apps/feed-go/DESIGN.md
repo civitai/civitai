@@ -2389,9 +2389,7 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
    `[id]` runs it over the body's versions AFTER the origin cache (`withListableTrainingData`), since
    that cache keys on neither the host nor a restriction placed since. Every version listing a
    Training Data file is a candidate; one replica statement reads each candidate's Training Data
-   rows with `restricted` (the owner's legal hold through `ownerHeldSql`: the placeholder owner, a
-   holding report naming them as subject or secondary user, a hold marker, an image of theirs under
-   CSAM review, blocked or listed in a holding report; any `CsamReport` naming them; a POI, minor or
+   rows with `restricted` (any `CsamReport` naming the owner as subject or secondary user; a POI, minor or
    ToS-violation model; a post image of the version with `needsReview`, `blockedFor` or ingestion
    `Blocked`). A row is refused when `restricted !== false` (NULL included), its virus scan is not
    `Success`, or, off a red-capable host (`isRedCapableHost`: the Host header, lowercased, port
@@ -2472,14 +2470,13 @@ the same statement (text and bound values) from Go.
 The Training Data statement is held to Node in two more ways: the golden fixtures pin its text and
 candidates (`expect.trainingDataSql`), and
 `src/server/services/__tests__/feed-go-training-data-listing.parity.test.ts` requires the embedded
-file to be, byte for byte, the text Node's builder (`trainingDataListingSql`) renders (re-render it when `ownerHeldSql` or the restriction legs
-change) and runs both on Postgres (PGlite with the hold migrations), one Training Data file per
+file to be, byte for byte, the text Node's builder (`trainingDataListingSql`) renders (re-render it when the restriction legs
+change) and runs both on Postgres (PGlite), one Training Data file per
 refusal reason, requiring the same rows. The predicate over the rows is pinned per rule by
 `internal/v1models/trainingdata_test.go`.
 
 **Drift.** feed-go and the Node app deploy separately, so a Node change to the rules would otherwise
-leave feed-go listing by the old ones. The rules are two parts: the statement (`ownerHeldSql`, the
-restriction legs) and the JS decision over its rows (`trainingDataServableOnHost`, the
+leave feed-go listing by the old ones. The rules are two parts: the statement (the restriction legs) and the JS decision over its rows (`trainingDataServableOnHost`, the
 `restricted !== false` and virus-scan tests, the listed predicate). Every model sample carries the
 Node build's rule set id, `<sha256 of the statement text>;rules=<TRAINING_DATA_LISTING_RULES_VERSION>`
 (`trainingDataListingRulesId`, header `x-feed-go-training-data-sql`, added by the sampler); a body

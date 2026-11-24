@@ -118,9 +118,6 @@ CREATE TABLE "ModActivity" (
 );
 CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}', "images" JSONB NOT NULL DEFAULT '[]', "reportSentAt" TIMESTAMP(3));
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP(3), "bannedAt" TIMESTAMP(3), "meta" JSONB);
-CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "releaseAt" TIMESTAMP(3));
-CREATE VIEW "EvidenceHeldUser" AS
-  SELECT "userId" FROM "EvidenceHold" WHERE "releaseAt" IS NULL OR "releaseAt" > now() GROUP BY "userId";
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 `;
 
@@ -140,7 +137,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   await db.exec(`TRUNCATE "Image", "CsamQueueSetAside", "ImageDeferredBlockEffect", "Report",
-    "ImageReport", "Appeal", "ModActivity", "CsamReport", "EvidenceHold"`);
+    "ImageReport", "Appeal", "ModActivity", "CsamReport"`);
   await db.query(
     `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel", "postId") VALUES
       ($1, ${OWNER}, 'csam', NULL, 'Scanned', 4, 5), ($2, ${OWNER}, 'csam', NULL, 'Scanned', 4, 5)`,
@@ -451,11 +448,6 @@ describe('a dismissal whose owner check matches', () => {
       'a CSAM report naming the owner second',
       `INSERT INTO "CsamReport" ("userId", "details") VALUES (999, '{"secondaryUserId": "${OWNER}"}')`,
     ],
-    [
-      'a released evidence hold',
-      `INSERT INTO "EvidenceHold" ("userId", "releaseAt") VALUES (${OWNER}, now() - interval '1 day')`,
-    ],
-    ['an evidence hold', `INSERT INTO "EvidenceHold" ("userId") VALUES (${OWNER})`],
   ])('%s: sends no notice and writes the withheld row, ids only', async (_, seed) => {
     await block(FLAGGED);
     await db.exec(seed);
@@ -480,11 +472,11 @@ describe('a dismissal whose owner check matches', () => {
 
   it('withholds when the check itself fails', async () => {
     await block(FLAGGED);
-    await db.exec(`ALTER TABLE "EvidenceHold" RENAME TO "EvidenceHold_gone"`);
+    await db.exec(`ALTER TABLE "CsamReport" RENAME COLUMN "details" TO "details_gone"`);
     try {
       await dismiss(FLAGGED);
     } finally {
-      await db.exec(`ALTER TABLE "EvidenceHold_gone" RENAME TO "EvidenceHold"`);
+      await db.exec(`ALTER TABLE "CsamReport" RENAME COLUMN "details_gone" TO "details"`);
     }
 
     expect(notices()).toEqual([]);

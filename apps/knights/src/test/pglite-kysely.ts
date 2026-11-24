@@ -121,7 +121,6 @@ CREATE TABLE "CsamReport" (
   "details" JSONB NOT NULL DEFAULT '{}',
   "images" JSONB NOT NULL DEFAULT '[]'
 );
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
 CREATE TABLE "ImageCdnModeratorDelete" ("imageId" INTEGER PRIMARY KEY, "url" TEXT NOT NULL);
 CREATE TABLE "Model" (
   "id" INTEGER PRIMARY KEY,
@@ -168,8 +167,6 @@ CREATE TABLE "ScanLabelVote" (
   "createdAt" timestamptz(3) NOT NULL DEFAULT now(),
   PRIMARY KEY ("itemId", "userId")
 );
-CREATE TABLE "EvidenceHoldImage" ("imageId" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
-CREATE TABLE "EvidenceHoldPost" ("postId" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
 CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "status" TEXT NOT NULL);
 CREATE TABLE "ImageReport" ("reportId" INTEGER NOT NULL, "imageId" INTEGER NOT NULL, PRIMARY KEY ("reportId", "imageId"));
 CREATE TABLE "PostReport" ("reportId" INTEGER PRIMARY KEY, "postId" INTEGER NOT NULL);
@@ -361,7 +358,6 @@ CREATE TABLE IF NOT EXISTS "Tag" (
   "nsfwLevel" INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]', "details" jsonb);
-CREATE TABLE IF NOT EXISTS "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS "Report" ("id" SERIAL PRIMARY KEY, "status" TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS "ImageReport" ("imageId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
 `;

@@ -68,8 +68,6 @@ const TABLES = [
   'TextScanHold',
   'User',
   'CsamReport',
-  'EvidenceHeldUser',
-  'EvidenceHoldImage',
   'ImageCdnModeratorDelete',
   'Model',
   'BlockedImage',
@@ -158,9 +156,11 @@ describe('getInquisitorQueue media, by viewer', () => {
   });
 
   // civitai/civitai#10202: drawn for a moderator without the grant as any live image is.
-  it('draws an unblocked image of a held owner from the CDN, and from storage for a cleared moderator', async () => {
+  it('draws an unblocked image of a reported owner from the CDN, and from storage for a cleared moderator', async () => {
     await queued({ ingestion: 'Scanned', blockedFor: null });
-    await db.query(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES ($1)`, [OWNER]);
+    await db.query(`INSERT INTO "CsamReport" ("userId", details, images) VALUES ($1, '{}', '[]')`, [
+      OWNER,
+    ]);
     expect(await media()).toBe('cdn');
     const [item] = await getInquisitorQueue('all', { csamReview: true });
     expect(item.media).toBe('retracted');
@@ -215,10 +215,6 @@ describe('getInquisitorQueue media', () => {
           [JSON.stringify([{ id: IMAGE }])]
         ),
     ],
-    [
-      'a hold register entry',
-      async () => db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES ($1)`, [IMAGE]),
-    ],
     ['another review flag', async () => db.query(`UPDATE "Image" SET "needsReview" = 'csam'`)],
     [
       'a block reason that holds it',
@@ -238,15 +234,6 @@ describe('getInquisitorQueue media', () => {
           `INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100002, '{}', $1)`,
           [JSON.stringify([{ id: 990_000_002 }])]
         );
-      },
-    ],
-    [
-      'a hold register entry on another row on its url',
-      async () => {
-        await db.query(
-          `INSERT INTO "Image" (id, url, "userId") VALUES (990000002, 'key-990000001', 990100003)`
-        );
-        await db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (990000002)`);
       },
     ],
     [
@@ -297,8 +284,11 @@ describe('getInquisitorQueue media', () => {
       },
     ],
     [
-      'a hold on its owner',
-      async () => db.query(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES ($1)`, [OWNER]),
+      'a report naming its owner',
+      async () =>
+        db.query(`INSERT INTO "CsamReport" ("userId", details, images) VALUES ($1, '{}', '[]')`, [
+          OWNER,
+        ]),
     ],
     ['a block with no reason', async () => db.query(`UPDATE "Image" SET "blockedFor" = NULL`)],
     [

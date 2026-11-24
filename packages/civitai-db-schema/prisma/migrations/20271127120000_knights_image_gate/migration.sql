@@ -48,7 +48,6 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
         WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
           AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
       )
-      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = img."userId")
     ))
   ), false) and (img.id)::text NOT IN (SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
@@ -72,7 +71,6 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
         WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
           AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
       )
-      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = img."userId")
     ))
   ), false) and (img.id)::text NOT IN (SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
@@ -96,7 +94,6 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
         WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
           AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
       )
-      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = img."userId")
     ))
   ), false) and (img.id)::text NOT IN (SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
@@ -120,7 +117,6 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
         WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
           AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
       )
-      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = img."userId")
     ))
   ), false) and NOT COALESCE((
     EXISTS (
@@ -176,17 +172,7 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
   WHERE listed.id IS NOT NULL) rl_ids) AND rl_x."pHash" IS NOT NULL
       ))
     )
-  ) and NOT (
-    EXISTS (
-      SELECT 1 FROM "EvidenceHoldImage" eh_h JOIN "Image" eh_i ON eh_i.id = eh_h."imageId"
-      WHERE eh_i.url = img."url"
-    )
-    OR EXISTS (
-      SELECT 1 FROM "EvidenceHoldImage" eh_h
-      JOIN "ImageCdnModeratorDelete" eh_d ON eh_d."imageId" = eh_h."imageId"
-      WHERE eh_d.url = img."url"
-    )
-  ) and not exists (select 1 as "one" from "EvidenceHoldPost" as "ehp" where "ehp"."postId" = "img"."postId") and not exists (select 1 as "one" from "ImageReport" as "ir" inner join "Report" as "rep" on "rep"."id" = "ir"."reportId" where "ir"."imageId" = "img"."id" and "rep"."status" in ('Pending', 'Processing')) and not exists (select 1 as "one" from "PostReport" as "pr" inner join "Report" as "rep" on "rep"."id" = "pr"."reportId" where "pr"."postId" = "img"."postId" and "rep"."status" in ('Pending', 'Processing')) and not exists (select 1 as "one" from "ImageResourceNew" as "irn" inner join "ModelVersion" as "mv" on "mv"."id" = "irn"."modelVersionId" inner join "ModelReport" as "mr" on "mr"."modelId" = "mv"."modelId" inner join "Report" as "rep" on "rep"."id" = "mr"."reportId" where "irn"."imageId" = "img"."id" and "rep"."status" in ('Pending', 'Processing')) and not exists (select 1 as "one" from "UserReport" as "ur" inner join "Report" as "rep" on "rep"."id" = "ur"."reportId" where "ur"."userId" = "img"."userId" and "rep"."status" in ('Pending', 'Processing')) and not exists (select 1 as "one" from "ImageFlag" as "f" where "f"."imageId" = "img"."id" and ("f"."promptNsfw" = true or "f"."resourcesNsfw" = true)) and not exists (select 1 as "one" from "Appeal" as "a" where "a"."entityType" = 'Image' and "a"."entityId" = "img"."id" and "a"."status" = 'Pending') and not exists (select 1 as "one" from "TextScanHold" as "t" where "t"."status" = 'Pending' and (("t"."entityType" = 'Image' and "t"."entityId" = "img"."id") or ("t"."entityType" = 'Post' and "t"."entityId" = "img"."postId"))) and not exists (select 1 as "one" from "User" as "u" where "u"."id" = "img"."userId" and ("u"."bannedAt" is not null or "u"."deletedAt" is not null or "u"."muted" = true)) and not exists (select 1 as "one" from "ImageResourceNew" as "irn" inner join "ModelVersion" as "mv" on "mv"."id" = "irn"."modelVersionId" inner join "Model" as "m" on "m"."id" = "mv"."modelId" where "irn"."imageId" = "img"."id" and ("m"."minor" = true or "m"."poi" = true)) and not exists (select 1 as "one" from "KnightsQueueItem" as "qi" where "qi"."imageId" = "img"."id" and "qi"."status" in ('Inquisitor', 'Ruling'))), false) as "skillCheckEligible", COALESCE((((("img"."type" = 'image' and "img"."nsfwLevel" not in (0, 32) and "img"."ingestion" != 'Blocked' and "img"."blockedFor" is null and "img"."needsReview" is null and "img"."acceptableMinor" = false and "img"."poi" = false and "img"."minor" = false and "img"."tosViolation" = false and /* servable-image-content */ true and NOT COALESCE((
+  ) and not exists (select 1 as "one" from "ImageReport" as "ir" inner join "Report" as "rep" on "rep"."id" = "ir"."reportId" where "ir"."imageId" = "img"."id" and "rep"."status" in ('Pending', 'Processing')) and not exists (select 1 as "one" from "PostReport" as "pr" inner join "Report" as "rep" on "rep"."id" = "pr"."reportId" where "pr"."postId" = "img"."postId" and "rep"."status" in ('Pending', 'Processing')) and not exists (select 1 as "one" from "ImageResourceNew" as "irn" inner join "ModelVersion" as "mv" on "mv"."id" = "irn"."modelVersionId" inner join "ModelReport" as "mr" on "mr"."modelId" = "mv"."modelId" inner join "Report" as "rep" on "rep"."id" = "mr"."reportId" where "irn"."imageId" = "img"."id" and "rep"."status" in ('Pending', 'Processing')) and not exists (select 1 as "one" from "UserReport" as "ur" inner join "Report" as "rep" on "rep"."id" = "ur"."reportId" where "ur"."userId" = "img"."userId" and "rep"."status" in ('Pending', 'Processing')) and not exists (select 1 as "one" from "ImageFlag" as "f" where "f"."imageId" = "img"."id" and ("f"."promptNsfw" = true or "f"."resourcesNsfw" = true)) and not exists (select 1 as "one" from "Appeal" as "a" where "a"."entityType" = 'Image' and "a"."entityId" = "img"."id" and "a"."status" = 'Pending') and not exists (select 1 as "one" from "TextScanHold" as "t" where "t"."status" = 'Pending' and (("t"."entityType" = 'Image' and "t"."entityId" = "img"."id") or ("t"."entityType" = 'Post' and "t"."entityId" = "img"."postId"))) and not exists (select 1 as "one" from "User" as "u" where "u"."id" = "img"."userId" and ("u"."bannedAt" is not null or "u"."deletedAt" is not null or "u"."muted" = true)) and not exists (select 1 as "one" from "ImageResourceNew" as "irn" inner join "ModelVersion" as "mv" on "mv"."id" = "irn"."modelVersionId" inner join "Model" as "m" on "m"."id" = "mv"."modelId" where "irn"."imageId" = "img"."id" and ("m"."minor" = true or "m"."poi" = true)) and not exists (select 1 as "one" from "KnightsQueueItem" as "qi" where "qi"."imageId" = "img"."id" and "qi"."status" in ('Inquisitor', 'Ruling'))), false) as "skillCheckEligible", COALESCE((((("img"."type" = 'image' and "img"."nsfwLevel" not in (0, 32) and "img"."ingestion" != 'Blocked' and "img"."blockedFor" is null and "img"."needsReview" is null and "img"."acceptableMinor" = false and "img"."poi" = false and "img"."minor" = false and "img"."tosViolation" = false and /* servable-image-content */ true and NOT COALESCE((
     img."needsReview" = 'csam'
     OR img."blockedFor" = 'CSAM'
     OR (img."userId" <> -1
@@ -201,7 +187,6 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
         WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
           AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
       )
-      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = img."userId")
     ))
   ), false) and (img.id)::text NOT IN (SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
@@ -225,7 +210,6 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
         WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
           AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
       )
-      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = img."userId")
     ))
   ), false) and NOT COALESCE((
     EXISTS (
@@ -281,17 +265,7 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
   WHERE listed.id IS NOT NULL) rl_ids) AND rl_x."pHash" IS NOT NULL
       ))
     )
-  ) and NOT (
-    EXISTS (
-      SELECT 1 FROM "EvidenceHoldImage" eh_h JOIN "Image" eh_i ON eh_i.id = eh_h."imageId"
-      WHERE eh_i.url = img."url"
-    )
-    OR EXISTS (
-      SELECT 1 FROM "EvidenceHoldImage" eh_h
-      JOIN "ImageCdnModeratorDelete" eh_d ON eh_d."imageId" = eh_h."imageId"
-      WHERE eh_d.url = img."url"
-    )
-  ) and not exists (select 1 as "one" from "EvidenceHoldPost" as "ehp" where "ehp"."postId" = "img"."postId") and not exists (select 1 as "one" from "ImageFlag" as "f" where "f"."imageId" = "img"."id" and ("f"."promptNsfw" = true or "f"."resourcesNsfw" = true)) and not exists (select 1 as "one" from "User" as "u" where "u"."id" = "img"."userId" and ("u"."bannedAt" is not null or "u"."deletedAt" is not null or "u"."muted" = true)) and not exists (select 1 as "one" from "ImageResourceNew" as "irn" inner join "ModelVersion" as "mv" on "mv"."id" = "irn"."modelVersionId" inner join "Model" as "m" on "m"."id" = "mv"."modelId" where "irn"."imageId" = "img"."id" and ("m"."minor" = true or "m"."poi" = true))), false) as "skillCheckLasting" from "Image" as "img" inner join "Post" as "p" on "p"."id" = "img"."postId"
+  ) and not exists (select 1 as "one" from "ImageFlag" as "f" where "f"."imageId" = "img"."id" and ("f"."promptNsfw" = true or "f"."resourcesNsfw" = true)) and not exists (select 1 as "one" from "User" as "u" where "u"."id" = "img"."userId" and ("u"."bannedAt" is not null or "u"."deletedAt" is not null or "u"."muted" = true)) and not exists (select 1 as "one" from "ImageResourceNew" as "irn" inner join "ModelVersion" as "mv" on "mv"."id" = "irn"."modelVersionId" inner join "Model" as "m" on "m"."id" = "mv"."modelId" where "irn"."imageId" = "img"."id" and ("m"."minor" = true or "m"."poi" = true))), false) as "skillCheckLasting" from "Image" as "img" inner join "Post" as "p" on "p"."id" = "img"."postId"
 -- end generated
 ;
 

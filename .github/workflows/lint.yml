@@ -465,12 +465,6 @@ jobs:
           fi
           echo "no migrations added outside the schema package"
 
-      # BLOCKING, on every PR including drafts. The moderator app keeps its own copy of the hold
-      # SQL; the unit suite that would catch drift does not run on PRs, and a PR touching only the
-      # main-app side is not path-filtered into apps.yml.
-      - name: Moderator hold SQL matches the main app
-        run: pnpm exec vitest run --project 'unit*' src/server/services/__tests__/moderator-delete-hold-parity.test.ts
-
       # BLOCKING, on every PR including drafts. A route missing from the generated map is a 404.
       - name: API route maps are generated
         run: node scripts/generate-api-routes.mjs --check

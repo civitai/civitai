@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./media-key": "./src/media-key.ts",
+    "./memorial": "./src/memorial.ts",
     "./iso-datetime-compat": "./src/iso-datetime-compat.ts",
     "./basemodel.constants": "./src/basemodel.constants.ts",
     "./feedback.constants": "./src/feedback.constants.ts",
@@ -59,7 +60,7 @@
     "./held-media": "./src/held-media.ts",
     "./held-url": "./src/held-url.ts",
     "./retracted-media": "./src/retracted-media.ts",
-    "./legal-hold-texts": "./src/legal-hold-texts.ts",
+    "./account-action-texts": "./src/account-action-texts.ts",
     "./media-signals": "./src/media-signals.ts",
     "./retracted-media-tier": "./src/retracted-media-tier.ts",
     "./review-batch": "./src/review-batch.ts",

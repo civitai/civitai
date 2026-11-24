@@ -7,7 +7,7 @@ import { recordedOwnership } from './model-ownership-db';
 
 /**
  * Splitting a model into a collection creates one model per extra version. Each new model records its
- * owner as its first, in the same transaction, so a hold on that owner follows it after a transfer.
+ * owner as its first, in the same transaction, so `restoreUser` can find it after a transfer.
  */
 
 const OWNER = 7;

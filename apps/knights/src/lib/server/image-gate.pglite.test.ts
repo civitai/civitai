@@ -182,7 +182,7 @@ describe('"KnightsImageGate"', () => {
     for (const column of IMAGE_GATE_COLUMNS)
       expect(reasonsOut.get(column)?.size).toBeGreaterThanOrEqual(2);
     // A skill-check column out on a servable image does not narrow to a CSAM or hold reason: many others do the same.
-    const csamOrHold = /legal-hold|reported-image|csam-signal|evidence-hold/;
+    const csamOrHold = /held-media|reported-image|csam-signal/;
     expect(
       [...outWhileServable].filter((reason) => !csamOrHold.test(reason)).length
     ).toBeGreaterThanOrEqual(5);
@@ -211,13 +211,7 @@ describe('what the Knights role may do', () => {
   });
 
   it('cannot read the tables behind it', async () => {
-    for (const table of [
-      'CsamReport',
-      'EvidenceHeldUser',
-      'ScanLabelItem',
-      'BlockedImage',
-      'ModelVersion',
-    ])
+    for (const table of ['CsamReport', 'ScanLabelItem', 'BlockedImage', 'ModelVersion'])
       await refused(`SELECT 1 FROM "${table}" LIMIT 1`);
   });
 

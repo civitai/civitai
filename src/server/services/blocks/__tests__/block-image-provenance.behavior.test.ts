@@ -77,7 +77,7 @@ const SHARED_PENDING_OWN = 208; // viewer's, shared with APP, scan not finished
 const SHARED_PENDING_OTHER = 209; // ANOTHER viewer's, shared with APP, scan not finished
 const SHARED_FLAGGED = 210; // ANOTHER viewer's, shared with APP, scanned but flagged for review
 // Generation sources an app kept privately (`blockGenerationSourceAppId`), readable by their owner only.
-/** A viewer under an evidence hold: their media is held whatever its own flags say. */
+/** A viewer named on a CSAM report: their media is held whatever its own flags say. */
 const HELD_VIEWER = 43;
 const SOURCE_OWN = 301; // viewer's, kept by APP, scanned PG
 const SOURCE_OTHER_USER = 302; // ANOTHER viewer's, kept by APP
@@ -115,12 +115,11 @@ beforeAll(async () => {
     CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int, metadata jsonb);
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, meta jsonb);
     CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
-    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
       images jsonb NOT NULL DEFAULT '[]', "reportSentAt" timestamp(3));
     CREATE TABLE "ImageCdnModeratorDelete" (url text, "userId" int, "imageId" int, "csamReview" boolean NOT NULL DEFAULT false);
     CREATE TABLE "ImageCdnShopTakedown" (url text, "userId" int);
-    INSERT INTO "EvidenceHeldUser" VALUES (${HELD_VIEWER});
+    INSERT INTO "CsamReport" ("userId") VALUES (${HELD_VIEWER});
   `);
 });
 

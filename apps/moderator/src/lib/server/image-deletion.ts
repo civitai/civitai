@@ -18,8 +18,7 @@ import { bustPostGalleryCaches, queueComicsForImages } from './image-moderation-
 import { evictHomeBlocks } from './home-blocks';
 import { syncSearchIndexBulk } from './search-index';
 import { logAxiomError } from './axiom';
-import { imageDeleteHeldSqlText, imageDeleteHoldLegs } from './delete-hold-sql';
-import type { ImageKeptReason, KeptImage } from '$lib/image-kept-reasons';
+import type { KeptImage } from '$lib/image-kept-reasons';
 
 type DeletedImage = { id: number; postId: number | null; parentId: number | null };
 
@@ -29,43 +28,9 @@ export type DeletedImageRows = {
   /** Kept for its child-safety case and blocked by the delete, so out of search like a deleted one. */
   hidden: HiddenImage[];
   avatarUserIds: number[];
-  /**
-   * Not deleted. `evidence`: blocked by the hold marker's delete trigger. `review`: kept for its
-   * child-safety case, and also in `hidden` if the delete blocked it. Any other image, a `review` one
-   * a hold refused included, is left as it was.
-   */
+  /** Kept for its child-safety case, and also in `hidden` if the delete blocked it. */
   refused: KeptImage[];
 };
-
-const legs = imageDeleteHoldLegs('"Image"');
-const imageHeld = sql<boolean>`${sql.raw(imageDeleteHeldSqlText('"Image"'))}`;
-const ownerMarked = sql<boolean>`EXISTS (
-  SELECT 1 FROM "EvidenceHeldUser" marker WHERE marker."userId" = "Image"."userId"
-)`;
-const reviewHeld = sql<boolean>`${sql.raw(`(${legs.review} OR ${legs.block} OR ${legs.listed})`)}`;
-// A marked owner's image still goes to the DELETE: the marker's trigger keeps the evidence and
-// blocks the image, which a refusal alone would leave live.
-const deletable = sql<boolean>`(NOT ${imageHeld} OR ${ownerMarked})`;
-
-async function heldImages(trx: Kysely<DB>, ids: number[]): Promise<KeptImage[]> {
-  if (!ids.length) return [];
-  const rows = await trx
-    .selectFrom('Image')
-    .select(['id', ownerMarked.as('marked'), reviewHeld.as('reviewHeld')])
-    .where('id', 'in', ids)
-    .where(imageHeld)
-    .execute();
-  const reasons = new Map(
-    rows.map((row): [number, ImageKeptReason] => [
-      row.id,
-      row.marked ? 'evidence' : row.reviewHeld ? 'review' : 'account',
-    ])
-  );
-  return ids.flatMap((id) => {
-    const reason = reasons.get(id);
-    return reason ? [{ id, reason }] : [];
-  });
-}
 
 /**
  * The database half of a delete. The DELETE itself queues each stored file, CDN takedown and post
@@ -77,27 +42,13 @@ async function deleteImageRows(
   ids: number[],
   actor: DeleteActor
 ): Promise<DeletedImageRows> {
-  // A hold written to one of these rows now waits for this delete rather than landing between its
-  // statements; a new report listing one is still caught by the guards below.
-  if (ids.length)
-    await trx
-      .selectFrom('Image')
-      .select('id')
-      .where('id', 'in', ids)
-      .orderBy('id')
-      .forUpdate()
-      .execute();
-  const untouched = (await heldImages(trx, ids)).filter((image) => image.reason !== 'evidence');
-  const skip = new Set(untouched.map((image) => image.id));
-  const toDelete = ids.filter((id) => !skip.has(id));
-  const avatarUserIds = await profilePictureUserIds(toDelete, trx);
+  const avatarUserIds = await profilePictureUserIds(ids, trx);
   const deleted: DeletedImage[] = [];
-  // No row came back: already gone, kept by a hold marker's trigger, or held since the check.
+  // No row came back: already gone.
   const notReturned: number[] = [];
   const keptForReview: KeptImage[] = [];
   const hidden: HiddenImage[] = [];
-  for (const id of toDelete) {
-    // The guard is re-checked here, so a hold placed after the check above still keeps the image.
+  for (const id of ids) {
     // Every delete here is a moderator's, so the file goes with all its versions (see `moderatorPurge`).
     const {
       deleted: [image],
@@ -106,7 +57,6 @@ async function deleteImageRows(
     } = await deleteRows(trx, {
       ids: [id],
       actor,
-      where: deletable,
       files: { allVersions: moderatorPurge },
       recountPosts: true,
       cdnTakedown: true,
@@ -130,18 +80,7 @@ async function deleteImageRows(
     }
     deleted.push({ id, postId: image.postId, parentId: image.parentId });
   }
-  const heldLate = await heldImages(trx, notReturned);
-  // An untouched image keeps its search entry; one the trigger blocked leaves search.
-  const untouchedLate = new Set(
-    heldLate.filter((image) => image.reason !== 'evidence').map((image) => image.id)
-  );
-  return {
-    deleted,
-    notReturned: notReturned.filter((id) => !untouchedLate.has(id)),
-    hidden,
-    avatarUserIds,
-    refused: [...untouched, ...heldLate, ...keptForReview],
-  };
+  return { deleted, notReturned, hidden, avatarUserIds, refused: keptForReview };
 }
 
 /**
@@ -178,7 +117,6 @@ async function finishImageDeletes({
     entityIds: [...deletedIds, ...notReturned, ...hidden.map((image) => image.id)],
     action: 'delete',
   });
-  await bustKeptImages(notReturned, affectedPostIds);
   if (hidden.length) {
     const hiddenIds = hidden.map((image) => image.id);
     await Promise.all([queueComicsForImages(hiddenIds), evictHomeBlocks(hiddenIds)]).catch((err) =>
@@ -193,7 +131,7 @@ async function finishImageDeletes({
   if (affectedPostIds.size) {
     const postIds = [...affectedPostIds];
     try {
-      // Kept images' posts are added by bustKeptImages; the DELETE already queued the deleted rows'.
+      // The DELETE already queued these posts' recounts.
       await queuePostNsfwLevelUpdates(dbWrite, postIds);
       await bustPostGalleryCaches(postIds);
       // Don't reimplement the main app's postMetrics bucket queue here — a partial write can orphan
@@ -206,7 +144,7 @@ async function finishImageDeletes({
 
 /**
  * The only image delete in this app: the rows go, then everything that could still hand a client a
- * deleted image is invalidated. Returns the images a hold or a child-safety case kept.
+ * deleted image is invalidated. Returns the images a child-safety case kept.
  */
 export async function deleteImages(ids: number[], actor: DeleteActor): Promise<KeptImage[]> {
   if (!ids.length) return [];
@@ -217,31 +155,4 @@ export async function deleteImages(ids: number[], actor: DeleteActor): Promise<K
 
 function logImageDeletionError(error: unknown, step: string, imageIds: number[]) {
   void logAxiomError(error, { event: 'image-deletion', step, imageIds });
-}
-
-// A kept image is now blocked and out of its post (`EvidenceHoldImage` names the post), so its
-// caches and that post's are as stale as a deleted image's.
-async function bustKeptImages(ids: number[], affectedPostIds: Set<number>): Promise<void> {
-  if (!ids.length) return;
-  try {
-    const kept = await dbWrite
-      .selectFrom('EvidenceHoldImage')
-      .select(['imageId', 'postId'])
-      .where('imageId', 'in', ids)
-      .execute();
-    for (const { imageId, postId } of kept) {
-      if (postId != null) affectedPostIds.add(postId);
-      await getSysRedis()
-        .packed.set(
-          `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:${imageId}` as RedisKeyTemplateSys,
-          'false',
-          { EX: 60 * 5 }
-        )
-        .catch(() => undefined);
-      await bustCachedObject(REDIS_KEYS.CACHES.IMAGE_META, imageId);
-      await bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, imageId);
-    }
-  } catch (err) {
-    logImageDeletionError(err, 'kept image bust', ids);
-  }
 }

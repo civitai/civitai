@@ -13,7 +13,6 @@ const SCHEMA = `
     minor boolean DEFAULT false, poi boolean DEFAULT false);
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
-  CREATE TABLE "EvidenceHeldUser" ("userId" int);
   CREATE TABLE "Model3DLicense" (id int PRIMARY KEY, name text);
   CREATE TABLE "Tag" (id int PRIMARY KEY, name text);
   CREATE TABLE "Model3D" (id int PRIMARY KEY, name text, description text, "userId" int,
@@ -146,7 +145,6 @@ describe('3D model removal', () => {
     ['flagged POI', `UPDATE "Model3D" SET poi = true WHERE id = 1`],
     ['owner banned', `UPDATE "User" SET "bannedAt" = now() WHERE id = 7`],
     ['owner reported', `INSERT INTO "CsamReport" ("userId") VALUES (7)`],
-    ['owner under an evidence hold', `INSERT INTO "EvidenceHeldUser" VALUES (7)`],
     ['thumbnail sent to review', `UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 10`],
     ['thumbnail taken down', `UPDATE "Image" SET "tosViolation" = true WHERE id = 10`],
     ['thumbnail blocked for CSAM', `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = 10`],

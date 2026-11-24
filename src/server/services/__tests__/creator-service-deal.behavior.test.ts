@@ -469,7 +469,7 @@ describe('request', () => {
     expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
 
-  // Legal's text as written: each deal keeps the version and the exact lines its buyer was shown.
+  // Legal's text as written (decision: civitai/civitai#10253): each deal keeps the version and the exact lines its buyer was shown.
   const held = `${PRICE.toLocaleString()} Buzz is held now. Refunded if the seller declines, doesn't accept within 48 hours, or you withdraw before they accept.`;
   const shared = [
     held,

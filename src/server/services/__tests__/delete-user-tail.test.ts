@@ -10,12 +10,6 @@ import type * as UserRestrictionService from '~/server/services/user-restriction
 import { userBasicCache, userFollowsCache } from '~/server/redis/caches';
 import { usersSearchIndex } from '~/server/search-index';
 
-// No hold covers the account here; the hold itself is `account-legal-hold.behavior.test.ts`.
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
-}));
-
 /**
  * `deleteUser` commits the soft delete, then ran three unguarded awaits (follow-cache bust,
  * search-index queue, basic-data refresh) AHEAD of the subscription cancels and
@@ -88,6 +82,19 @@ beforeEach(() => {
   vi.spyOn(userFollowsCache, 'bust').mockImplementation(record('follows'));
   vi.spyOn(usersSearchIndex, 'queueUpdate').mockImplementation(record('search') as never);
   vi.spyOn(userBasicCache, 'refresh').mockImplementation(record('basicData') as never);
+});
+
+describe('deleteUser refuses a non-positive id', () => {
+  it.each([-1, 0])('refuses user %i before reading or writing anything', async (id) => {
+    dbMock.dbWrite.user.findFirst.mockResolvedValue({ id, meta: {} });
+    await expect(
+      UserService.deleteUser({ id, username: 'gone' } as Parameters<
+        typeof UserService.deleteUser
+      >[0])
+    ).rejects.toThrow('Invalid user id');
+    expect(dbMock.dbWrite.user.findFirst).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
 });
 
 describe('deleteUser — the post-commit tail is unskippable', () => {

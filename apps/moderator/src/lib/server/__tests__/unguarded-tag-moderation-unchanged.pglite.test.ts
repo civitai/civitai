@@ -65,7 +65,6 @@ beforeAll(async () => {
     CREATE TABLE "Post" (id INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP(3));
     CREATE TABLE "Tag" (id INTEGER PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'Moderation', "nsfwLevel" INTEGER NOT NULL DEFAULT 1);
     CREATE TABLE "CsamReport" (id SERIAL PRIMARY KEY, "userId" INTEGER, images JSONB NOT NULL DEFAULT '[]', details JSONB);
-    CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
     CREATE TABLE "Report" (id SERIAL PRIMARY KEY, status TEXT NOT NULL);
     CREATE TABLE "ImageReport" ("imageId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
     CREATE TABLE "ImageTagForReview" ("imageId" INTEGER NOT NULL, "tagId" INTEGER NOT NULL, PRIMARY KEY ("imageId", "tagId"));
@@ -86,7 +85,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await pg.exec(`
-    TRUNCATE "TagsOnImageNew", "Image", "Post", "Tag", "CsamReport", "EvidenceHeldUser", "Report",
+    TRUNCATE "TagsOnImageNew", "Image", "Post", "Tag", "CsamReport", "Report",
       "ImageReport", "ModActivity", "ImageTagForReview";
     INSERT INTO "Post" VALUES (1, now() - interval '1 day');
     INSERT INTO "Tag" VALUES (10, 'flagged', 'Moderation', ${X}), (11, 'other', 'Moderation', ${R}),

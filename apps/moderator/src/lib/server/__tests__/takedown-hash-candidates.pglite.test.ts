@@ -34,7 +34,6 @@ beforeEach(async () => {
   await pg.exec(`
     INSERT INTO "Model" (id, status, "deletedAt", meta) VALUES
       (1, 'UnpublishedViolation', NULL, '{}'),
-      (2, 'UnpublishedViolation', NULL, '{"removedWithOwner": true}'),
       (3, 'Published', now(), NULL),
       (4, 'Published', NULL, NULL);
     INSERT INTO "ModelVersion" (id, "modelId") SELECT id * 10, id FROM "Model";
@@ -48,7 +47,7 @@ beforeEach(async () => {
 afterEach(() => pg.close());
 
 describe('getTakedownHashCandidates', () => {
-  it('offers taken-down and deleted models, not one kept when its owner was wiped', async () => {
+  it('offers taken-down and deleted models, not live ones', async () => {
     const rows = await getTakedownHashCandidates();
     expect(rows.map((r) => r.modelId).sort()).toEqual([1, 3]);
   });

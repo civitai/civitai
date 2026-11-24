@@ -247,8 +247,6 @@ export const EXCLUDED: Record<string, string> = {
   ModActivity: 'staff audit log; the user id there is the moderator',
   FeaturePageCommentMirror:
     'push bookkeeping for Feature Pages comments (ids and states only); the comments themselves are exported as CommentV3',
-  HeldResourceReview:
-    'content held for an automated check (detection internals); the published content is exported',
   HeldAnswer:
     'content held for an automated check (detection internals); the published content is exported',
   TextScanHold:
@@ -268,10 +266,6 @@ export const EXCLUDED: Record<string, string> = {
   CsamReportAudit: 'safety record; never exported',
   CsamFlagRelease: 'safety record; never exported',
   PersonalDataExport: 'this export log itself',
-  EvidenceHold: 'legal hold record; never exported',
-  EvidenceHoldImage: 'legal hold record; never exported',
-  EvidenceHoldPost: 'legal hold record; never exported',
-  EvidenceHeldUser: 'legal hold record (a view); never exported',
   PurchasableReward:
     'catalog item; names the user only as its staff author (purchases are exported)',
   ImageCdnModeratorDelete: 'moderation internals',

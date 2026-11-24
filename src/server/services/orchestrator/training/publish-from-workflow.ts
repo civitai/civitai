@@ -18,7 +18,6 @@ import { createFile } from '~/server/services/model-file.service';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
-import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -816,7 +815,6 @@ export async function createDraftModelFromWorkflow({
  * The owner's models a run can be added to as a new version. Owner only, with no moderator bypass:
  * this writes content onto the caller's own account. A private model takes no added versions
  * (`upsertModelVersion` refuses them), and a model only a moderator may publish can't be finished.
- * `isRemovedWithOwner` lives in meta, so callers also drop those rows (`isVersionTargetEligible`).
  */
 export function studioVersionTargetWhere(userId: number): Prisma.ModelWhereInput {
   return {
@@ -830,7 +828,7 @@ export function studioVersionTargetWhere(userId: number): Prisma.ModelWhereInput
 }
 
 export function isVersionTargetEligible(model: { meta: unknown }): boolean {
-  return !isRemovedWithOwner(model.meta) && !(model.meta as ModelMeta | null)?.cannotPublish;
+  return !(model.meta as ModelMeta | null)?.cannotPublish;
 }
 
 /** `v<n+1>` for n the larger of the model's version count and the highest `v<n>` among their names. */

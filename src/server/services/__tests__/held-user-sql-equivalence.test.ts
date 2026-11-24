@@ -18,14 +18,12 @@ const heldUserSqlBefore = (user: string) => `(
         WHERE CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
                    THEN (hs.details ->> 'secondaryUserId')::bigint END = ${user}
       )
-      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = ${user})
     )`;
 
 const SUBJECT = 1;
 const SECONDARY = 2;
 const BOTH = 3;
 const NEITHER = 4;
-const HOLD_ONLY = 6;
 const NONCANONICAL = 7;
 // Stored as a JSON number, the form the app writes.
 const JSON_NUMBER = 8;
@@ -40,7 +38,7 @@ beforeAll(async () => {
   await pg.exec(`
     CREATE TABLE "Viewer" (id bigint);
     INSERT INTO "Viewer" VALUES (${SUBJECT}), (${SECONDARY}), (${BOTH}), (${NEITHER}),
-      (${HOLD_ONLY}), (${NONCANONICAL}), (${JSON_NUMBER}), (${NEGATIVE}), (${OVERFLOW_PREFIX}), (NULL);
+      (${NONCANONICAL}), (${JSON_NUMBER}), (${NEGATIVE}), (${OVERFLOW_PREFIX}), (NULL);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}');
     INSERT INTO "CsamReport" ("userId", details) VALUES
       (${SUBJECT}, '{}'),
@@ -53,8 +51,6 @@ beforeAll(async () => {
       (NULL, '{"secondaryUserId": null}'),
       (NULL, '{"secondaryUserId": "00${NONCANONICAL}"}'),
       (NULL, '{"secondaryUserId": ${JSON_NUMBER}}');
-    CREATE TABLE "EvidenceHeldUser" ("userId" int);
-    INSERT INTO "EvidenceHeldUser" VALUES (${HOLD_ONLY});
   `);
 });
 
@@ -81,7 +77,6 @@ describe('heldUserSql', () => {
       [String(SECONDARY), true],
       [String(BOTH), true],
       [String(NEITHER), false],
-      [String(HOLD_ONLY), true],
       [String(NONCANONICAL), true],
       [String(JSON_NUMBER), true],
       [OVERFLOW_PREFIX, false],

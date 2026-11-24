@@ -8,9 +8,9 @@ import type * as ReportService from '~/server/services/report.service';
 import type * as UserService from '~/server/services/user.service';
 
 /**
- * Filing a report hands each reported image from the moderator-only review flag to the legal hold on
- * its owner. The flag must still be on until that hold covers the image, must not come off an image
- * the hold does not cover, and stays on past the release cutoff on the owner's oldest open report.
+ * Filing a report takes the moderator-only review flag off each reported image blocked as CSAM whose
+ * owner it names, once that image is blocked. The flag stays on an image whose owner the report does
+ * not name, and past the release cutoff on the owner's oldest open report.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -35,7 +35,10 @@ const { createCsamReport, createSupplementalCsamReport, softDeleteUser } = vi.ho
     ]);
   }),
   softDeleteUser: vi.fn(async ({ id }: { id: number }) => {
-    await holder.db.query(`UPDATE "Image" SET ingestion = 'Blocked' WHERE "userId" = $1`, [id]);
+    await holder.db.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE "userId" = $1`,
+      [id]
+    );
   }),
 }));
 vi.mock('~/server/services/csam.service', async (importOriginal) => ({
@@ -88,7 +91,8 @@ beforeAll(async () => {
       id int PRIMARY KEY,
       "userId" int,
       ingestion text,
-      "needsReview" text
+      "needsReview" text,
+      "blockedFor" text
     );
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY,
@@ -130,6 +134,7 @@ beforeEach(async () => {
       (${NEAR_CEILING}, ${NEAR_CEILING_OWNER}, 'Blocked', 'csam'),
       (${INSIDE_MARGIN}, ${INSIDE_MARGIN_OWNER}, 'Blocked', 'csam'),
       (${PAST_MARGIN}, ${PAST_MARGIN_OWNER}, 'Blocked', 'csam');
+    UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE ingestion = 'Blocked';
     -- A report on the other owner that has finished: it holds nothing.
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES
       (${OTHER_OWNER}, now(), now()),
@@ -272,9 +277,12 @@ describe('fileCsamReport', () => {
     expect(await flag(APPEALED_UNLISTED)).toBe('appeal');
   });
 
-  it('files a supplemental report without removing the account again, and hands its image to the hold', async () => {
+  it("files a supplemental report without removing the account again, and clears its image's flag", async () => {
     // The earlier report removed the account.
-    await pg.query(`UPDATE "Image" SET ingestion = 'Blocked' WHERE "userId" = $1`, [OWNER]);
+    await pg.query(
+      `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM' WHERE "userId" = $1`,
+      [OWNER]
+    );
     dbMock.dbWrite.user.findUnique.mockImplementationOnce((async ({
       where,
     }: {

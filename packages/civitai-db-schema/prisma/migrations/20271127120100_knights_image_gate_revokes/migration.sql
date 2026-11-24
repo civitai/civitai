@@ -16,7 +16,7 @@ BEGIN
     RETURN;
   END IF;
   FOREACH relation IN ARRAY ARRAY[
-    'CsamReport', 'EvidenceHeldUser', 'EvidenceHoldImage', 'EvidenceHoldPost', 'BlockedImage',
+    'CsamReport', 'BlockedImage',
     'ScanLabelItem', 'ScanLabelFlag', 'ScanLabelVote', 'Model', 'ModelVersion', 'TextScanHold',
     'ImageCdnModeratorDelete', 'UserReport', 'ModelReport', 'PostReport', 'Appeal', 'ImageFlag',
     'ImageResourceNew', 'CollectionItem', 'pg_stat_statements', 'pg_stat_statements_info'
@@ -30,7 +30,7 @@ BEGIN
   END IF;
   -- Every table above but the pg_stat_statements views, which PUBLIC may read wherever the extension is installed.
   FOREACH relation IN ARRAY ARRAY[
-    'CsamReport', 'EvidenceHeldUser', 'EvidenceHoldImage', 'EvidenceHoldPost', 'BlockedImage',
+    'CsamReport', 'BlockedImage',
     'ScanLabelItem', 'ScanLabelFlag', 'ScanLabelVote', 'Model', 'ModelVersion', 'TextScanHold',
     'ImageCdnModeratorDelete', 'UserReport', 'ModelReport', 'PostReport', 'Appeal', 'ImageFlag',
     'ImageResourceNew', 'CollectionItem'

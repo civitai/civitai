@@ -24,7 +24,7 @@ function sqlRef(ref: string): string {
   return ref;
 }
 
-/** The user `column` is named on a CsamReport (subject or secondary user) or under an evidence hold. */
+/** The user `column` is named on a CsamReport (subject or secondary user). */
 export function heldUserSql(column: string): string {
   const user = sqlRef(column);
   return `(
@@ -38,7 +38,6 @@ export function heldUserSql(column: string): string {
         WHERE hs.details ->> 'secondaryUserId' = (${user})::text
           AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
       )
-      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = ${user})
     )`;
 }
 

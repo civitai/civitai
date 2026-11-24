@@ -33,7 +33,7 @@ func packArray(t *testing.T, elems ...[]byte) []byte {
 // orderedEntry decodes b as an ordered cache's entry.
 func orderedEntry(t *testing.T, b []byte) Entry {
 	t.Helper()
-	e, st := decodeBytes(b, 0, time.Now(), true)
+	e, st := decodeValue(string(b), 0, time.Now(), decodeOpts{ordered: true})
 	if st != stateEntry {
 		t.Fatalf("% x: state %d, want an entry", b, st)
 	}
@@ -71,7 +71,7 @@ func TestOrderedCacheEntry(t *testing.T) {
 		"cachedAt", at,
 		"alpha", "x",
 	)
-	e, st := decodeBytes(b, time.Hour, at.Add(2*time.Hour), true)
+	e, st := decodeValue(string(b), time.Hour, at.Add(2*time.Hour), decodeOpts{ordered: true})
 	if st != stateEntry || !e.Stale || e.NotFound || !e.CachedAt.Equal(at) || e.Value != nil {
 		t.Fatalf("entry %+v state %d: want a stale entry stamped %v, Value nil", e, st, at)
 	}
@@ -83,19 +83,19 @@ func TestOrderedCacheEntry(t *testing.T) {
 	if got := e.Ordered(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ordered:\n got  %#v\n want %#v", got, want)
 	}
-	if fresh, _ := decodeBytes(b, 3*time.Hour, at.Add(2*time.Hour), true); fresh.Stale {
+	if fresh, _ := decodeValue(string(b), 3*time.Hour, at.Add(2*time.Hour), decodeOpts{ordered: true}); fresh.Stale {
 		t.Fatal("an entry within its ttl is stale")
 	}
 
 	// The control: the same bytes as an unordered cache's entry (Value, then Wire) come out sorted.
-	u, st := decodeBytes(b, time.Hour, at.Add(2*time.Hour), false)
+	u, st := decodeValue(string(b), time.Hour, at.Add(2*time.Hour), decodeOpts{ordered: false})
 	if st != stateEntry || !u.Stale || !u.CachedAt.Equal(at) || len(u.Value) != 3 {
 		t.Fatalf("unordered entry %+v state %d", u, st)
 	}
 	wantKeys(t, "unordered", u.Ordered(), "alpha", "meta", "zeta")
 	wantKeys(t, "unordered meta", ObjectField(u.Ordered(), "meta"), "10", "2", "a", "z")
 
-	// The marker and failure states match decodeBytes' unordered ones.
+	// The marker and failure states match decodeValue's unordered ones.
 	for name, c := range map[string]struct {
 		b        []byte
 		st       readState
@@ -108,7 +108,7 @@ func TestOrderedCacheEntry(t *testing.T) {
 		"empty":       {nil, stateAbsent, false},
 	} {
 		for _, ordered := range []bool{true, false} {
-			e, st := decodeBytes(c.b, 0, at, ordered)
+			e, st := decodeValue(string(c.b), 0, at, decodeOpts{ordered: ordered})
 			if st != c.st || e.NotFound != c.notFound {
 				t.Errorf("%s (ordered %v): state %d notFound %v, want %d %v", name, ordered, st, e.NotFound, c.st, c.notFound)
 			}
@@ -134,12 +134,12 @@ func TestOrderedCaches(t *testing.T) {
 	}
 	p := &PackedReader{}
 	for _, k := range want {
-		if !p.Queue(NewBatch(), k, nil, 0).ordered {
+		if !p.Queue(NewBatch(), k, nil, 0).opts.ordered {
 			t.Errorf("%s: read unordered", k)
 		}
 	}
 	for _, k := range []string{KeyBasicUsers, KeyImageFrames, KeyModelFrames, KeyTagIDs, KeyModelTags, KeyThumbnails} {
-		if p.Queue(NewBatch(), k, nil, 0).ordered {
+		if p.Queue(NewBatch(), k, nil, 0).opts.ordered {
 			t.Errorf("%s: read ordered", k)
 		}
 	}

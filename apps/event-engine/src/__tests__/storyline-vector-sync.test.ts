@@ -21,7 +21,6 @@ const SCHEMA = `
     minor boolean DEFAULT false, poi boolean DEFAULT false, "nsfwLevel" int DEFAULT 1);
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
-  CREATE TABLE "EvidenceHeldUser" ("userId" int);
   CREATE TABLE "PostText" (id serial PRIMARY KEY, "postId" int, "csamHeld" boolean NOT NULL);
   CREATE TABLE "TextScanHold" (id serial PRIMARY KEY, "entityType" text, "entityId" int,
     label text, status text);
@@ -158,7 +157,6 @@ describe('storyline removal', () => {
        UPDATE "Storyline" SET "coverImageId" = 900 WHERE id = 1`,
     ],
     ['owner reported', `INSERT INTO "CsamReport" ("userId") VALUES (7)`],
-    ['owner under an evidence hold', `INSERT INTO "EvidenceHeldUser" VALUES (7)`],
     ['chapter 1 removed', `UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 10`],
     ['chapter 1 post deleted', `UPDATE "StorylineChapter" SET "postId" = NULL WHERE id = 10`],
     ['chapter 1 post taken down', `UPDATE "Post" SET "tosViolation" = true WHERE id = 10`],

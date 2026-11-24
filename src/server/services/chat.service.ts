@@ -39,6 +39,7 @@ import { MAX_CHAT_MEMBERS } from '~/shared/utils/chat';
 import { ChatMemberStatus, ChatMessageType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
+import { memorializedAmong } from '~/server/services/memorial.service';
 
 export const maxChats = 1000;
 export const maxChatsPerDay = 10;
@@ -148,6 +149,9 @@ export const resolveChatRecipients = async ({
   ]);
   const blockedUserIds = new Set(blockedUsers.flat().map((u) => u.id));
   let allowed = recipientIds.filter((u) => u !== userId && !blockedUserIds.has(u));
+  // No new chats to a memorialized account, moderators included: nobody can read them.
+  const memorialized = await memorializedAmong(allowed);
+  if (memorialized.size) allowed = allowed.filter((u) => !memorialized.has(u));
 
   // Apply each recipient's DM policy (mods bypass). Only `nobody` refuses; a
   // sender who fails a `following`/`mutuals` policy still gets a chat, it just

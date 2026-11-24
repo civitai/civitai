@@ -86,7 +86,6 @@ const SCHEMA = `
   CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp);
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
-  CREATE TABLE "EvidenceHeldUser" ("userId" int);
   CREATE TABLE "Bounty" (id int PRIMARY KEY, "userId" int, availability text DEFAULT 'Public',
     poi boolean DEFAULT false, nsfw boolean DEFAULT false, "nsfwLevel" int);
 `;

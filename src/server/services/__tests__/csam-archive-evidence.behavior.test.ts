@@ -437,7 +437,7 @@ describe('the check', () => {
     expect(await verifiedAt(id)).toBeNull();
   });
 
-  it('writes the mark the evidence-hold reader accepts', async () => {
+  it('writes the mark the evidence-verified reader accepts', async () => {
     const id = await addReport('TrainingData');
     await addObject(id, 'base');
     await addObject(id, 'trainingData');

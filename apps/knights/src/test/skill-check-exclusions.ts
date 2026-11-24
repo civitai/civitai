@@ -7,10 +7,10 @@ import type { PGlite } from '@electric-sql/pglite';
 export const exclusionCases = (pg: () => PGlite): [string, (id: number) => Promise<unknown>][] => [
   ['tos-violation', (id) => pg().query(`UPDATE "Image" SET "tosViolation"=true WHERE id=$1`, [id])],
   [
-    'legal-hold',
+    'held-media',
     async (id) => {
       await pg().query(`UPDATE "Image" SET "userId"=40 WHERE id=$1`, [id]);
-      await pg().query(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (40)`);
+      await pg().query(`INSERT INTO "CsamReport" ("userId") VALUES (40)`);
     },
   ],
   [
@@ -40,14 +40,6 @@ export const exclusionCases = (pg: () => PGlite): [string, (id: number) => Promi
         `INSERT INTO "CsamReport" ("userId","images") VALUES (41, jsonb_build_array(jsonb_build_object('id',$1::int)))`,
         [id]
       ),
-  ],
-  [
-    'evidence-hold-image',
-    (id) => pg().query(`INSERT INTO "EvidenceHoldImage" ("imageId","userId") VALUES ($1,1)`, [id]),
-  ],
-  [
-    'evidence-hold-post',
-    (id) => pg().query(`INSERT INTO "EvidenceHoldPost" ("postId","userId") VALUES ($1,1)`, [id]),
   ],
   [
     'open-report',
@@ -137,7 +129,7 @@ export const extraExclusionCases = (
   pg: () => PGlite
 ): [string, (id: number) => Promise<unknown>][] => [
   [
-    'legal-hold, image leg (flagged for CSAM review)',
+    'held-media, image leg (flagged for CSAM review)',
     (id) => pg().query(`UPDATE "Image" SET "needsReview"='csam' WHERE id=$1`, [id]),
   ],
   [
@@ -209,4 +201,4 @@ export const extraExclusionCases = (
 
 /** Every table the exclusion cases write, for a test's TRUNCATE. */
 export const EXCLUSION_TABLES =
-  '"EvidenceHoldImage","EvidenceHoldPost","ImageReport","PostReport","ModelReport","UserReport","Report","ImageFlag","Appeal","TextScanHold","CsamReport","EvidenceHeldUser","ImageCdnModeratorDelete","ImageResourceNew","ModelVersion","Model","User","ScanLabelItem","ScanLabelFlag","ScanLabelVote","TagsOnImageDetails","BlockedImage"';
+  '"ImageReport","PostReport","ModelReport","UserReport","Report","ImageFlag","Appeal","TextScanHold","CsamReport","ImageCdnModeratorDelete","ImageResourceNew","ModelVersion","Model","User","ScanLabelItem","ScanLabelFlag","ScanLabelVote","TagsOnImageDetails","BlockedImage"';

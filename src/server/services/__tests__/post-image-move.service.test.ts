@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { clearKnightsSourcesConfigCache } from '~/server/services/knights/sources';
@@ -11,7 +11,6 @@ import type * as Caches from '~/server/redis/caches';
 import type * as LagHelpers from '~/server/db/db-lag-helpers';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { moveImagesToPost } from '~/server/services/post-image-move.service';
-import { IMAGES_NOT_MOVABLE } from '~/server/services/post-image-move.rules';
 import { Availability, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 const mocks = vi.hoisted(() => ({
@@ -88,15 +87,6 @@ const imageRow = (id: number) => ({
 
 const db = dbMock.dbWrite;
 
-const accountRow = (over: Record<string, unknown> = {}) => ({
-  report: false,
-  'image-review': false,
-  'image-blocked': false,
-  'reported-image': false,
-  markerView: false,
-  markerTable: false,
-  ...over,
-});
 // Nested Prisma.sql fragments (the lock clause) are values of the tagged call, so inline them.
 const rawSql = ([strings, ...values]: unknown[]) =>
   (strings as TemplateStringsArray).reduce((sql, part, i) => {
@@ -106,7 +96,7 @@ const rawSql = ([strings, ...values]: unknown[]) =>
 const isPostLock = (sql: string) => sql.includes('FOR UPDATE OF p');
 const isVersionLock = (sql: string) => sql.includes('"ModelVersion"') && sql.includes('AS downed');
 
-// Routed by statement: the account check, the split's version read and takedown lock, the posts.
+// Routed by statement: the split's version read and takedown lock, the posts.
 function mockPosts(
   ...rows: (
     | ReturnType<typeof postRow>
@@ -125,7 +115,7 @@ function mockPosts(
     if (sql.includes('"ownsModel"'))
       return Promise.resolve(readVersionId ? [{ modelVersionId: readVersionId, ownsModel }] : []);
     if (sql.includes('AS downed')) return Promise.resolve([{ downed }]);
-    return Promise.resolve([accountRow()]);
+    return Promise.resolve([]);
   }) as never);
 }
 
@@ -407,32 +397,6 @@ describe('moveImagesToPost', () => {
     await expect(
       moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, toPostId: 2, userId: USER })
     ).rejects.toThrow(/published at the same time or earlier/);
-    expectNothingWritten();
-  });
-
-  it('refuses a restricted account, without saying why, and writes nothing', async () => {
-    db.$queryRaw
-      .mockResolvedValueOnce([accountRow({ report: true })])
-      .mockResolvedValue([postRow()]);
-
-    await expect(
-      moveImagesToPost({ imageIds: [100], fromPostId: 1, userId: USER })
-    ).rejects.toThrow(new RegExp(`^${IMAGES_NOT_MOVABLE}$`));
-    expect(db.$transaction).not.toHaveBeenCalled();
-    expectNothingWritten();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'account-legal-hold', message: 'Image move refused' })
-    );
-  });
-
-  it('refuses when the account check cannot be read', async () => {
-    db.$queryRaw
-      .mockRejectedValueOnce(new Error('connection reset'))
-      .mockResolvedValue([postRow()]);
-
-    await expect(
-      moveImagesToPost({ imageIds: [100], fromPostId: 1, userId: USER })
-    ).rejects.toThrow(new RegExp(`^${IMAGES_NOT_MOVABLE}$`));
     expectNothingWritten();
   });
 
