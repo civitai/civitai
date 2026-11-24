@@ -401,7 +401,7 @@ describe('getRequestImageFilter', () => {
   const ctx = {
     user: { id: 9, isModerator: false, showNsfw: true, browsingLevel: allBrowsingLevelsFlag },
     features: { canViewNsfw: true },
-    req: { headers: {} },
+    req: { headers: { host: 'example.test' } },
   } as never;
 
   it('hides an image whose tags were not read while a tag is excluded, and keeps an untagged one', async () => {

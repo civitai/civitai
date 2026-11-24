@@ -67,7 +67,7 @@ function ctxFor({
   return {
     user,
     features: { canViewNsfw },
-    req: { headers: bot ? { [VERIFIED_BOT_HEADER]: bot } : {} },
+    req: { headers: { host: 'example.test', ...(bot ? { [VERIFIED_BOT_HEADER]: bot } : {}) } },
     cache: null,
     // A personal key, full-access or limited to reading models; no key fields is a browser session.
     ...(token && {

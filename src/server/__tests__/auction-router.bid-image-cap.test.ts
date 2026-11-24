@@ -44,7 +44,7 @@ const callerFor = ({ user, canViewNsfw, bot }: Viewer, cache: Record<string, num
     track: {},
     ip: '127.0.0.1',
     cache,
-    req: { headers: bot ? { [VERIFIED_BOT_HEADER]: bot } : {} },
+    req: { headers: { host: 'example.test', ...(bot ? { [VERIFIED_BOT_HEADER]: bot } : {}) } },
     res: undefined,
   } as never);
 

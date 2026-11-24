@@ -237,7 +237,7 @@ describe('relatedPostsBrowsingLevel', () => {
     ({
       user: over.user,
       features: { canViewNsfw: over.canViewNsfw, isGreen: over.isGreen },
-      req: { headers: {} },
+      req: { headers: { host: 'example.test' } },
     } as never);
   const mature = (saved: number) =>
     ctx({
@@ -265,7 +265,7 @@ describe('relatedPostsBrowsingLevel', () => {
     const crawler = {
       user: undefined,
       features: { canViewNsfw: true, isGreen: false },
-      req: { headers: { [VERIFIED_BOT_HEADER]: 'googlebot' } },
+      req: { headers: { host: 'example.test', [VERIFIED_BOT_HEADER]: 'googlebot' } },
     } as never;
     expect(relatedPostsBrowsingLevel(crawler, undefined)).toBe(publicBrowsingLevelsFlag);
   });

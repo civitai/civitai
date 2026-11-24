@@ -92,7 +92,7 @@ async function call(session: unknown) {
   const { req, res, header } = createRealApiPair({
     url: '/api/v1/articles/7',
     query: { id: '7' },
-    headers: session ? { authorization: 'Bearer key' } : {},
+    headers: { host: 'example.test', ...(session ? { authorization: 'Bearer key' } : {}) },
   });
   let body: Record<string, unknown> | undefined;
   const json = res.json.bind(res);

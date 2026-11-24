@@ -41,7 +41,7 @@ const signedInMod = { user: { id: OWNER, isModerator: true }, features: { canVie
 function ctx(viewer: { user?: unknown; features: Record<string, unknown> }) {
   return {
     ...viewer,
-    req: { headers: {} },
+    req: { headers: { host: 'example.test' } },
     ip: '127.0.0.1',
     cache: { canCache: true },
   } as unknown as Context;

@@ -133,8 +133,11 @@ export const requestVerifiedCrawler = (req: Pick<NextApiRequest, 'headers'> | un
 /**
  * `domainBrowsingLevelCap` for a request. A verified search crawler counts as signed in
  * where mature content is allowed (the `Gated` paywall bypass) and as signed out elsewhere.
+ * A request with no Host gets PG: with no host every domain-gated flag passes, `canViewNsfw`
+ * included, so the domain cannot be known.
  */
 export function requestDomainBrowsingLevelCap(ctx: Pick<Context, 'user' | 'features' | 'req'>) {
+  if (!ctx.req?.headers?.host) return publicBrowsingLevelsFlag;
   const canViewNsfw = !!ctx.features.canViewNsfw;
   const isAuthorized = !!ctx.user || (requestVerifiedCrawler(ctx.req) !== null && canViewNsfw);
   return domainBrowsingLevelCap({ isAuthorized, canViewNsfw });

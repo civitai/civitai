@@ -26,7 +26,7 @@ function resolve(
   resolveRequestBrowsingLevels(input, {
     user,
     features: { canViewNsfw } as Ctx['features'],
-    req: { headers: {} } as Ctx['req'],
+    req: { headers: { host: 'example.test' } } as Ctx['req'],
   });
   return input;
 }
@@ -87,7 +87,9 @@ describe('resolveRequestBrowsingLevels, signed out', () => {
     resolveRequestBrowsingLevels(input, {
       user: undefined,
       features: { canViewNsfw: true } as Ctx['features'],
-      req: { headers: { [VERIFIED_BOT_HEADER]: 'googlebot' } } as unknown as Ctx['req'],
+      req: {
+        headers: { host: 'example.test', [VERIFIED_BOT_HEADER]: 'googlebot' },
+      } as unknown as Ctx['req'],
     });
     expect(input.browsingLevel).toBeUndefined();
   });

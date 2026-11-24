@@ -138,7 +138,7 @@ const caller = (user: Viewer, apiKey: boolean | 'full' = false) =>
     // A personal API key's credential, as the auth layer sets it; none for a session.
     ...(apiKey ? { apiKeyId: 1, apiKeyType: ApiKeyType.User, subject: { type: 'apiKey' } } : {}),
     apiKeyId: apiKey ? 1 : null,
-    req: { headers: {}, cookies: {} },
+    req: { headers: { host: 'example.test' }, cookies: {} },
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
     features: { canViewNsfw: true, isGreen: false },

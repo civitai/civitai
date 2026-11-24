@@ -68,7 +68,11 @@ function arrange({
 }
 
 async function cover(user: object) {
-  const ctx = { user, features: { canViewNsfw: true }, req: { headers: {} } } as unknown as Context;
+  const ctx = {
+    user,
+    features: { canViewNsfw: true },
+    req: { headers: { host: 'example.test' } },
+  } as unknown as Context;
   const { collection } = await getCollectionByIdHandler({ ctx, input: { id: 10 } });
   return { image: collection?.image?.id ?? null, coverHidden: collection?.coverHidden };
 }

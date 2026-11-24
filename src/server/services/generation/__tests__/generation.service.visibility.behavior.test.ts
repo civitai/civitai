@@ -136,7 +136,11 @@ const PRIVATE = `now() - interval '1 day', 'Private'`;
 
 function fetchAs(userId: number | undefined, canViewNsfw: boolean) {
   const user = userId ? ({ id: userId, isModerator: false } as SessionUser) : undefined;
-  const mediaViewer = { user, features: { canViewNsfw }, req: { headers: {} } } as MediaViewer;
+  const mediaViewer = {
+    user,
+    features: { canViewNsfw },
+    req: { headers: { host: 'example.test' } },
+  } as MediaViewer;
   return getGenerationData({
     query: { type: 'image', id: 1, generation: false },
     user,

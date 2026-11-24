@@ -60,7 +60,7 @@ const caller = (user: typeof VIEWER | null = VIEWER, credential: object = {}) =>
     user: user ?? undefined,
     tokenScope: TokenScope.Full,
     ...credential,
-    req: { headers: {} },
+    req: { headers: { host: 'example.test' } },
     features: {},
     track: { search: h.trackSearch },
   } as never);
