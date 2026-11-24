@@ -7,7 +7,7 @@ import {
 import { uniq } from 'lodash-es';
 import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
-import { BlockedReason, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { BlockedReason, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -172,26 +172,8 @@ export async function unblockAccountDeletionImages(userId: number) {
             THEN "needsReview"
             ELSE c."recordedReview"
           END,
-          -- The rating the grace block replaced with Blocked, and its lock. A CSAM row stays Blocked;
-          -- a row with nothing recorded is re-rated below.
-          "nsfwLevel" = CASE
-            WHEN "blockedFor" = ${
-              BlockedReason.CSAM
-            } OR "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text = ${
-      BlockedReason.CSAM
-    } THEN "nsfwLevel"
-            WHEN c."recordedLevel" IS NOT NULL THEN c."recordedLevel"
-            ELSE "nsfwLevel"
-          END,
-          "nsfwLevelLocked" = CASE
-            WHEN "blockedFor" = ${
-              BlockedReason.CSAM
-            } OR "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text = ${
-      BlockedReason.CSAM
-    } THEN "nsfwLevelLocked"
-            WHEN c."recordedLevel" IS NOT NULL AND c."recordedLocked" IS NOT NULL THEN c."recordedLocked"
-            ELSE "nsfwLevelLocked"
-          END,
+          -- The rating the grace block replaced with Blocked, when nothing has changed it since.
+          "nsfwLevel" = COALESCE(c."recordedLevel", "nsfwLevel"),
           "metadata" = "metadata"${minusPriorKeysSql}
       FROM (
         SELECT i.id, i."needsReview" AS "currentReview",
@@ -205,15 +187,19 @@ export async function unblockAccountDeletionImages(userId: number) {
             ) THEN NULL
             ELSE i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
           END AS "recordedReview",
+          -- Only while the row is as the grace block left it (still Blocked, same rating lock, no CSAM
+          -- block): a rating set during the window, or none recorded, goes through the re-rate below.
           CASE
-            WHEN jsonb_typeof(i."metadata"->${PRIOR_NSFW_LEVEL_KEY}::text) = 'number'
+            WHEN i."nsfwLevel" = ${NsfwLevel.Blocked}
+              AND to_jsonb(i."nsfwLevelLocked") = i."metadata"->${PRIOR_NSFW_LOCKED_KEY}::text
+              AND (${csamBlockedSql('i')}) IS NOT TRUE
+              AND i."metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text IS DISTINCT FROM ${
+      BlockedReason.CSAM
+    }
+              AND jsonb_typeof(i."metadata"->${PRIOR_NSFW_LEVEL_KEY}::text) = 'number'
               AND i."metadata"->>${PRIOR_NSFW_LEVEL_KEY}::text ~ '^[0-9]{1,2}$'
             THEN (i."metadata"->>${PRIOR_NSFW_LEVEL_KEY}::text)::int
-          END AS "recordedLevel",
-          CASE
-            WHEN jsonb_typeof(i."metadata"->${PRIOR_NSFW_LOCKED_KEY}::text) = 'boolean'
-            THEN (i."metadata"->>${PRIOR_NSFW_LOCKED_KEY}::text)::boolean
-          END AS "recordedLocked"
+          END AS "recordedLevel"
         FROM "Image" i
         WHERE i."userId" = ${userId}
           AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
@@ -262,8 +248,7 @@ export async function unblockAccountDeletionImages(userId: number) {
     unblocked += ids.length;
     stillBlocked += restored.length - ids.length;
 
-    // A row with its rating recorded got it back above. Re-rating it would lose a moderator's
-    // lock, and the Blocked level that marks a kept row.
+    // A row with its rating recorded got it back above; re-rating it would drop a moderator's lock.
     const rerate = visible.filter((x) => x.recordedLevel == null).map((x) => x.id);
     const rated = visible.filter((x) => x.recordedLevel != null).map((x) => x.id);
     if (ids.length)

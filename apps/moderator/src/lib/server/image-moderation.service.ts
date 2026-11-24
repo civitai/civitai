@@ -102,6 +102,11 @@ END)`;
 /** The image's owner has deleted their account (in its grace period, or not yet purged). */
 const OWNER_DELETED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "Image"."userId" AND u."deletedAt" IS NOT NULL)`;
 
+const MINUS_GRACE_KEYS = sql.join(
+  GRACE_PRIOR_KEYS.map((key) => sql`${key}::text`),
+  sql` - `
+);
+
 /**
  * The grace-block breadcrumbs off `metadata`; a non-object value is left as it is.
  *
@@ -109,11 +114,6 @@ const OWNER_DELETED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "
  * key alone, so a row marked during a grace period and then moderated would be put back by a later
  * account restore.
  */
-/** Every grace breadcrumb, as `key::text - key::text ...`, to follow `jsonb -`. */
-const MINUS_GRACE_KEYS = sql.join(
-  GRACE_PRIOR_KEYS.map((key) => sql`${key}::text`),
-  sql` - `
-);
 const withoutGraceMarkers = (metadata: RawBuilder<unknown>) =>
   sql`(CASE WHEN jsonb_typeof(${metadata}) = 'object'
     THEN (${metadata}) - ${MINUS_GRACE_KEYS}

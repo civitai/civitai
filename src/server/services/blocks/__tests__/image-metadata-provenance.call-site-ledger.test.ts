@@ -726,7 +726,9 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
         const cast = /^::(\w+)/.exec(expr.slice(end))?.[1];
         const fixedKey = /^[A-Z][A-Z0-9_]*$/.test(param) && cast === 'text';
         const scalar = cast !== undefined && ['int', 'integer', 'float8', 'numeric'].includes(cast);
-        if (!fixedKey && !scalar) return `interpolates \${${param}} into metadata`;
+        // ` - key::text` for each grace breadcrumb (image-removal-mode.ts): fixed server keys only.
+        const graceStrip = param === 'minusPriorKeysSql';
+        if (!fixedKey && !scalar && !graceStrip) return `interpolates \${${param}} into metadata`;
       }
       return null;
     }

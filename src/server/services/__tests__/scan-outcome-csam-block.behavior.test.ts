@@ -69,6 +69,7 @@ import {
   feedThumbnailFields,
   feedViewer,
   ingestImageById,
+  refreshImageLevelCaches,
   requeueUnverifiedImages,
   resetBlockedNsfwLevel,
 } from '~/server/services/image.service';
@@ -1718,6 +1719,88 @@ describe('a restore puts back the rating the grace block replaced', () => {
     });
     expect(resetIds()).not.toContain(114);
     expect(resetIds()).not.toContain(115);
+    // Not re-rated, so the caches that read the level are refreshed for exactly these rows.
+    expect(
+      vi
+        .mocked(refreshImageLevelCaches)
+        .mock.calls.flatMap(([ids]) => ids)
+        .sort()
+    ).toEqual([114, 115]);
+    const { rows } = await holder.db.query<{ metadata: Record<string, unknown> }>(
+      `SELECT metadata FROM "Image" WHERE id IN (114, 115)`
+    );
+    expect(rows.map((row) => row.metadata)).toEqual([{}, {}]);
+  });
+
+  it('re-rates a row whose rating changed during the window, keeping a moderator lock', async () => {
+    resetLikeProd();
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
+        -- A moderator rated it X and locked it after the grace block.
+        (121, ${OWNER}, 'Blocked', 'moderated', 8, true, ${graced({
+      ingestion: 'Scanned',
+      level: 1,
+      locked: false,
+    })}),
+        -- Re-rated to R during the window, lock unchanged.
+        (129, ${OWNER}, 'Blocked', 'moderated', 4, false, ${graced({
+      ingestion: 'Scanned',
+      level: 1,
+      locked: false,
+    })}),
+        -- A moderator locked it at Blocked after the grace block.
+        (122, ${OWNER}, 'Blocked', 'moderated', 32, true, ${graced({
+      ingestion: 'Scanned',
+      level: 4,
+      locked: false,
+    })});
+    `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    expect(await rating(121)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 8,
+      nsfwLevelLocked: true,
+    });
+    expect(await rating(129)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 4,
+      nsfwLevelLocked: false,
+    });
+    expect(resetIds()).toEqual(expect.arrayContaining([121, 122, 129]));
+    expect(vi.mocked(refreshImageLevelCaches).mock.calls.flat(2)).not.toContain(121);
+  });
+
+  it('re-rates a row whose recorded rating is not a whole level, or has no lock beside it', async () => {
+    resetLikeProd();
+    const crumbs = (level: unknown, locked?: boolean) =>
+      `'${JSON.stringify({
+        accountDeletionPriorIngestion: 'Scanned',
+        accountDeletionPriorBlockedFor: null,
+        accountDeletionPriorNeedsReview: null,
+        accountDeletionPriorNsfwLevel: level,
+        ...(locked === undefined ? {} : { accountDeletionPriorNsfwLevelLocked: locked }),
+      })}'`;
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
+        (123, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs('4', false)}),
+        (124, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(4.5, false)}),
+        (125, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(123456789012, false)}),
+        (126, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(4)}),
+        (127, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(4, false)});
+    `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    expect(resetIds()).toEqual(expect.arrayContaining([123, 124, 125, 126]));
+    // Control: a whole level with its lock is put back, not re-rated.
+    expect(resetIds()).not.toContain(127);
+    expect(await rating(127)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 4,
+      nsfwLevelLocked: false,
+    });
   });
 
   it('re-rates a row with no rating recorded, as before', async () => {
@@ -1744,12 +1827,24 @@ describe('a restore puts back the rating the grace block replaced', () => {
         (117, ${OWNER}, 'Blocked', 'CSAM', 32, false, ${graced({
       ingestion: 'Scanned',
       level: 4,
-      locked: true,
+      locked: false,
+    })}),
+        -- A CSAM reason only in the record: the restore puts it back, and the row stays Blocked.
+        (128, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      blockedFor: 'CSAM',
+      level: 4,
+      locked: false,
     })});
     `);
 
     await unblockAccountDeletionImages(OWNER);
 
+    expect(await rating(128)).toEqual({
+      ingestion: 'Blocked',
+      nsfwLevel: 32,
+      nsfwLevelLocked: false,
+    });
     expect(await rating(117)).toEqual({
       ingestion: 'Blocked',
       nsfwLevel: 32,

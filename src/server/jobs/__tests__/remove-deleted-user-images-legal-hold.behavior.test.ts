@@ -200,6 +200,8 @@ describe('remove-deleted-user-images under a legal hold', () => {
     await holder.db.exec(`
       UPDATE "Image" SET "nsfwLevel" = 4, "nsfwLevelLocked" = true WHERE id = 1;
       UPDATE "Image" SET "nsfwLevel" = 32, ingestion = 'Error' WHERE id = 2;
+      -- Already blocked for an unverified AI claim: the job re-points it rather than hiding it.
+      UPDATE "Image" SET "nsfwLevel" = 8, ingestion = 'Blocked', "blockedFor" = 'AiNotVerified' WHERE id = 3;
     `);
     await holdSecondaryUser(HELD);
 
@@ -209,9 +211,9 @@ describe('remove-deleted-user-images under a legal hold', () => {
       id: number;
       nsfwLevel: number;
       metadata: Record<string, unknown>;
-    }>(`SELECT id, "nsfwLevel", metadata FROM "Image" WHERE id IN (1, 2) ORDER BY id`);
-    // Control: the grace block ran and replaced the rating.
-    expect(rows.map((row) => row.nsfwLevel)).toEqual([32, 32]);
+    }>(`SELECT id, "nsfwLevel", metadata FROM "Image" WHERE id IN (1, 2, 3) ORDER BY id`);
+    // Control: the grace block ran and replaced the rating; the re-point leaves it.
+    expect(rows.map((row) => row.nsfwLevel)).toEqual([32, 32, 8]);
     expect(rows.map((row) => row.metadata)).toEqual([
       expect.objectContaining({
         accountDeletionPriorNsfwLevel: 4,
@@ -219,6 +221,11 @@ describe('remove-deleted-user-images under a legal hold', () => {
       }),
       expect.objectContaining({
         accountDeletionPriorNsfwLevel: 32,
+        accountDeletionPriorNsfwLevelLocked: false,
+      }),
+      expect.objectContaining({
+        accountDeletionPriorBlockedFor: 'AiNotVerified',
+        accountDeletionPriorNsfwLevel: 8,
         accountDeletionPriorNsfwLevelLocked: false,
       }),
     ]);
