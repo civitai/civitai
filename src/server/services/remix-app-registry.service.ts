@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from 'crypto';
 import { TRPCError } from '@trpc/server';
+import { IMPERSONATION_REFUSED } from '~/server/auth/refuse-while-impersonating';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { registerCounter } from '@civitai/telemetry/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { newBlockIdError } from '~/server/utils/apps-slug';
 import { isPrismaForeignKeyViolation, isPrismaUniqueViolation } from '~/server/utils/errorHandling';
@@ -33,17 +35,18 @@ import {
   REMIX_USER_APPS_PER_AUTHOR,
   REMIX_REVIEW_LOG_MAX,
   REMIX_COMBINATION_BLOCKS_MAX,
+  REMIX_AUTHOR_RUNNER_TRIPS_MAX,
   REMIX_SYSTEM_ACTOR,
   type REMIX_REVIEW_STATES,
   type RemixRejectReason,
   type RemixReviewLogEntry,
 } from '~/shared/remix-apps/row.schema';
 import { DEFAULT_ENGINE } from '~/shared/constants/remix-apps.constants';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { SEED_REMIX_APPS } from '~/shared/remix-apps/seed';
 import { CODE_REMIX_APPS } from '~/shared/remix-apps/system-apps';
 import {
-  type RemixQuarantinedError,
+  RemixQuarantinedError,
   userRemixAuthorPrompt,
   userRemixBranchReplayer,
   userRemixFirstRequest,
@@ -118,6 +121,8 @@ export function visibleRemixApps<T extends Pick<RegisteredRemixApp, 'author' | '
   caller: {
     features: Pick<FeatureAccess, 'remixAppsUserCode'>;
     user?: { id: number; isModerator?: boolean };
+    /** A moderator acting as `user`. */
+    impersonated?: boolean;
   }
 ) {
   if (!caller.features.remixAppsUserCode) return apps.filter((entry) => !entry.author);
@@ -417,6 +422,13 @@ export async function getRegisteredRemixApp(
   );
   if (!entry || (!allowDisabled && !isRunnableBy(entry, caller)))
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
+  if (entry.author && entry.author.userId === caller.user?.id) {
+    // The run would be the author's, counted against the author: never one acted by another.
+    if (caller.impersonated)
+      throw new TRPCError({ code: 'FORBIDDEN', message: IMPERSONATION_REFUSED.message });
+    if (await isRemixAuthorHeld(entry.author.userId))
+      throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_AUTHOR_HELD });
+  }
   return entry;
 }
 
@@ -564,6 +576,8 @@ export const remixReviewHash = (manifest: {
 export async function submitUserRemixApp(
   input: RemixAppSubmitInput & { authorId: number; isGreen: boolean }
 ) {
+  if (await isRemixAuthorHeld(input.authorId))
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_AUTHOR_HELD });
   // One author's saves run one at a time, so the per-author cap holds against concurrent creates.
   const result = await withDistributedLock(
     { key: `remix-user-apps:${input.authorId}`, ttl: 30 },
@@ -623,6 +637,9 @@ async function submitUserRemixAppLocked({
   const before =
     previous?.success && 'source' in previous.data.remix ? previous.data.remix.source : undefined;
   if (source !== before) await auditRemixAppSource({ source, authorId, blockId, isGreen });
+  // Again under the lock, after the audit: the check before them can miss a hold that landed since.
+  if (await isRemixAuthorHeld(authorId))
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_AUTHOR_HELD });
   const spec: RemixUserSpec = { icon, engine: { safe: DEFAULT_ENGINE.safe }, source };
   const runVersion = nextRunVersion(existing, previous, spec);
   const listing = {
@@ -636,12 +653,22 @@ async function submitUserRemixAppLocked({
     review: 'submitted',
   } satisfies RemixManifest;
   const sha256 = remixReviewHash(listing);
-  // The log and the minor-themed marker are the server's: an author's save carries them over as stored.
+  // The log, the minor-themed marker and the runner trips are the server's: an author's save
+  // carries them over as stored.
   const kept = previous?.success ? previous.data : undefined;
   const reviewLog = kept?.reviewLog;
   const minorThemed = kept?.minorThemed;
+  const runnerTrips = kept?.runnerTrips;
+  // Only a mod's clear removes a hold.
+  const runnerHold = kept?.runnerHold;
   const manifest = withReviewLog(
-    { ...listing, ...(reviewLog ? { reviewLog } : {}), ...(minorThemed ? { minorThemed } : {}) },
+    {
+      ...listing,
+      ...(reviewLog ? { reviewLog } : {}),
+      ...(minorThemed ? { minorThemed } : {}),
+      ...(runnerTrips ? { runnerTrips } : {}),
+      ...(runnerHold ? { runnerHold } : {}),
+    },
     { by: authorId, action: 'submitted', sha256 }
   );
   const fields = { manifest, version: manifest.version, contentRating: contentRatingOf(spec) };
@@ -656,12 +683,18 @@ async function submitUserRemixAppLocked({
 const withReviewLog = (
   manifest: RemixManifest,
   entry: Omit<RemixReviewLogEntry, 'at'>
-): RemixManifest => ({
-  ...manifest,
-  reviewLog: [...(manifest.reviewLog ?? []), { ...entry, at: new Date().toISOString() }].slice(
-    -REMIX_REVIEW_LOG_MAX
-  ),
-});
+): RemixManifest => appendReviewLog(manifest, entry);
+
+/** `manifest` with `entry` logged, keeping the newest entries; takes a raw row, valid or not. */
+function appendReviewLog<T extends object>(
+  manifest: T,
+  entry: { at?: string; [key: string]: unknown }
+): T {
+  const { reviewLog } = manifest as { reviewLog?: unknown };
+  const log = Array.isArray(reviewLog) ? reviewLog : [];
+  const logged = { ...entry, at: entry.at ?? new Date().toISOString() };
+  return { ...manifest, reviewLog: [...log, logged].slice(-REMIX_REVIEW_LOG_MAX) };
+}
 
 /** A user app as stored now: every mod decision is checked against it. */
 async function readUserRemixApp(slug: string) {
@@ -747,6 +780,7 @@ export async function reviewUserRemixApp({
   const { row, parsed, manifest: stored, remix } = await readUserRemixApp(slug);
   if (remixReviewHash({ ...stored, remix }) !== sha256 || stored.review !== seenReview)
     throw userAppChanged();
+  if (decision === 'approved') await assertNotSelfPublishing(stored.author?.userId, moderatorId);
   // No literal set, no check of what it shows: unreadable code is never approved.
   if (decision === 'approved' && !remixSourceLiterals(remix.source))
     throw new TRPCError({ code: 'BAD_REQUEST', message: REMIX_SOURCE_UNREADABLE });
@@ -953,28 +987,72 @@ export async function holdUserRemixApp(
 }
 
 /** A mod's dry run of a user app down every path, in the sandbox, on the source stored now. */
-export async function validateUserRemixApp(slug: string) {
+export async function validateUserRemixApp(slug: string, moderatorId: number) {
   const { manifest, remix } = await readUserRemixApp(slug);
+  const { author } = manifest;
+  // A dry run of one's own app is one of one's runs.
+  const own = isOwnApp(author?.userId, moderatorId);
+  if (own && (await isRemixAuthorHeld(moderatorId)))
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_AUTHOR_HELD });
+  const replay = userRemixBranchReplayer(slug, remixBlockId(slug), async () => remix.source);
+  // The walk takes a branch's error as that path's issue and walks on: once held, no branch runs.
+  let held: TRPCError | undefined;
   const { graph, paths, issues } = await validateRemixApp({
-    branches: userRemixBranchReplayer(slug, remixBlockId(slug), async () => remix.source),
+    branches: own
+      ? (...args) =>
+          held
+            ? Promise.reject(held)
+            : replay(...args).catch(async (error: unknown) => {
+                if (!(error instanceof RemixQuarantinedError)) throw error;
+                const refusal = await noteRunnerQuarantine({ slug, author }, moderatorId, error);
+                if (!refusal) throw error;
+                held = new TRPCError({ code: 'PRECONDITION_FAILED', message: refusal.message });
+                throw held;
+              })
+      : replay,
   });
+  if (held) throw held;
   return { sha256: remixReviewHash({ ...manifest, remix }), graph, paths, issues };
 }
 
 const QUARANTINE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * The runner refused a viewer's call of a user app as quarantined; `true` when that held the app.
- * Only a call that tripped the quarantine counts: every viewer refused while it is cached would
- * otherwise count as another. The author's calls never count.
+ * The runner refused a call of a user app as quarantined: the refusal to show when that held the
+ * app or its author. Only a call that tripped the quarantine counts: every call refused while it
+ * is cached would otherwise count as another. A viewer's trip counts against the source, the
+ * author's own against the author.
  */
 export async function noteRunnerQuarantine(
   { slug, author }: Pick<RegisteredRemixApp, 'slug' | 'author'>,
   viewerId: number,
   { sha256, tripped }: RemixQuarantinedError
-) {
-  if (!tripped || !author || author.userId === viewerId) return false;
-  return recordRunnerQuarantine(slug, { viewerId, sha256 }).catch((error: unknown) => {
+): Promise<RunnerRefusal | undefined> {
+  if (!tripped || !author) return undefined;
+  const own = author.userId === viewerId;
+  if (own) {
+    const held = await recordAuthorTrip(slug, author.userId).catch((error: unknown) => error);
+    if (held === true) return { kind: 'held', message: REMIX_AUTHOR_HELD };
+    if (held === false) return undefined;
+    // Nothing was stored: this call is refused, the failure counted, and the author may retry.
+    authorTripUnrecorded.inc();
+    logToAxiom({
+      name: 'remix-app-run',
+      type: 'error',
+      message: 'Could not record an author runner trip; refused',
+      payload: {
+        slug,
+        error:
+          held === 'unrecorded'
+            ? 'no app of the author to record it on'
+            : held instanceof Error
+            ? held.message
+            : String(held),
+      },
+    });
+    return { kind: 'unrecorded', message: REMIX_AUTHOR_TRIP_UNRECORDED };
+  }
+  const held = await recordRunnerQuarantine(slug, { viewerId, sha256 }).catch((error: unknown) => {
     logToAxiom({
       name: 'remix-app-run',
       type: 'error',
@@ -983,7 +1061,20 @@ export async function noteRunnerQuarantine(
     });
     return false;
   });
+  return held ? { kind: 'held', message: REMIX_APP_HELD } : undefined;
 }
+
+/** A recorded trip's refusal: the app or its author is held, or the trip could not be stored. */
+export type RunnerRefusal = { kind: 'held' | 'unrecorded'; message: string };
+
+export const REMIX_AUTHOR_TRIP_UNRECORDED =
+  'This app could not run just now. Try again in a moment.';
+
+/** Author trips refused because they could not be stored: each one is a hold that may be missing. */
+const authorTripUnrecorded = registerCounter({
+  name: 'remix_author_trip_unrecorded_total',
+  help: 'Author runner trips refused because the trip could not be recorded',
+});
 
 const QUARANTINE_OBSERVED = 'held-runner-quarantine-observed';
 
@@ -1054,23 +1145,192 @@ async function recordRunnerQuarantine(
   }
 }
 
-/** A minor-themed mark bars the mature engine on every app its author holds, not only the marked one. */
-async function authorHasMinorThemedApp(authorId: number) {
-  // primary: a mark set a moment ago must already count.
-  const rows = await dbWrite.appBlock.findMany({
-    where: { blockId: { startsWith: remixBlockId(userRemixSlugPrefix(authorId)) } },
-    select: { manifest: true },
+/**
+ * A trip by the author's own call. Every one counts, a new source's too: the runner forgets a
+ * quarantine after minutes and keys it by source. The {@link REMIX_AUTHOR_RUNNER_TRIPS_MAX}th
+ * across their apps in a day holds the author. `true` when they are held.
+ *
+ * Locks every app of the author, so concurrent trips cannot miss each other's count. Lands on the
+ * tripping app, or on another of theirs if that one is gone.
+ */
+async function recordAuthorTrip(slug: string, authorId: number): Promise<boolean | 'unrecorded'> {
+  const prefix = remixBlockId(userRemixSlugPrefix(authorId));
+  const record = () =>
+    dbWrite.$transaction(async (tx) => {
+      const locked = await lockRemixRows(tx, Prisma.sql`"block_id" LIKE ${prefix + '%'}`);
+      // Only the rows locked: one created since is not counted, and not written.
+      const rows = await tx.appBlock.findMany({
+        where: { id: { in: locked } },
+        select: { id: true, blockId: true, manifest: true },
+      });
+      const target = rows.find((row) => row.blockId === remixBlockId(slug)) ?? rows[0];
+      if (!target) return { unrecorded: true as const };
+      const now = new Date().toISOString();
+      const since = Date.now() - QUARANTINE_WINDOW_MS;
+      const recent = (manifest: unknown) =>
+        tripsOf(manifest).filter((at) => Date.parse(at) >= since);
+      const trips = [...recent(target.manifest), now].slice(-REMIX_AUTHOR_RUNNER_TRIPS_MAX);
+      const count = rows.reduce(
+        (n, row) => n + (row === target ? trips.length : recent(row.manifest).length),
+        0
+      );
+      const already = rows.some((row) => hasRunnerHold(row.manifest));
+      const hold = !already && count >= REMIX_AUTHOR_RUNNER_TRIPS_MAX;
+      const raw = target.manifest as Record<string, unknown>;
+      const parsed = remixManifestSchema.safeParse(raw);
+      const entry = {
+        by: REMIX_SYSTEM_ACTOR,
+        at: now,
+        action: 'held-runner-quarantine',
+        ...(parsed.success && 'source' in parsed.data.remix
+          ? { sha256: remixReviewHash({ ...parsed.data, remix: parsed.data.remix }) }
+          : {}),
+        note: `author trip ${count} of ${REMIX_AUTHOR_RUNNER_TRIPS_MAX}`,
+      };
+      await tx.appBlock.updateMany({
+        where: { id: target.id },
+        data: {
+          manifest: (hold
+            ? appendReviewLog({ ...raw, runnerTrips: trips, runnerHold: { at: now } }, entry)
+            : { ...raw, runnerTrips: trips }) as Prisma.InputJsonValue,
+        },
+      });
+      return { unrecorded: false as const, held: already || hold, hold, count };
+    });
+  // One retry when Postgres picks this transaction as a deadlock's victim.
+  const outcome = await record().catch((error: unknown) => {
+    if (isDeadlock(error)) return record();
+    throw error;
   });
-  return rows.some((row) => hasMinorThemedMark(row.manifest));
+  if (outcome.unrecorded) return 'unrecorded';
+  // The trip is committed; a failed bump only delays the registry refresh.
+  await bumpRemixAppRegistry().catch((error: unknown) =>
+    logToAxiom({
+      name: 'remix-app-registry',
+      type: 'error',
+      message: 'Could not bump the remix registry after an author runner trip',
+      payload: { slug, error: error instanceof Error ? error.message : String(error) },
+    })
+  );
+  if (outcome.hold)
+    logToAxiom({
+      name: 'remix-app-registry',
+      type: 'info',
+      message: 'Held a remix author for runner trips',
+      payload: { slug, trips: outcome.count },
+    });
+  return outcome.held;
 }
 
-/** Read off the raw manifest, so a mark on a row that no longer validates still counts. */
-const hasMinorThemedMark = (manifest: unknown) =>
-  typeof manifest === 'object' &&
-  manifest !== null &&
-  !!(manifest as { minorThemed?: unknown }).minorThemed;
+/**
+ * Locks the remix rows `where` picks, in id order: every writer of several remix rows takes them
+ * through here, so no two can deadlock. Waits briefly for a lock, never indefinitely.
+ */
+async function lockRemixRows(tx: Prisma.TransactionClient, where: Prisma.Sql) {
+  await tx.$executeRaw`SET LOCAL lock_timeout = '2s'`;
+  const locked = await tx.$queryRaw<
+    { id: string }[]
+  >`SELECT id FROM "app_blocks" WHERE ${where} ORDER BY id FOR NO KEY UPDATE`;
+  return locked.map(({ id }) => id);
+}
 
-/** Lifts a minor-themed marker. A second moderator must do it: never the one who set it. */
+/** Postgres's deadlock_detected, however Prisma wraps it. */
+const isDeadlock = (error: unknown) =>
+  error instanceof Error &&
+  /40P01|deadlock detected/i.test(`${error.message} ${JSON.stringify(error)}`);
+
+const authorRows = (authorId: number) =>
+  // primary: a mark or hold set a moment ago must already count.
+  dbWrite.appBlock.findMany({
+    where: { blockId: { startsWith: remixBlockId(userRemixSlugPrefix(authorId)) } },
+    select: { id: true, blockId: true, manifest: true },
+  });
+
+/** A minor-themed mark bars the mature engine on every app its author holds, not only the marked one. */
+async function authorHasMinorThemedApp(authorId: number) {
+  return (await authorRows(authorId)).some((row) => hasMinorThemedMark(row.manifest));
+}
+
+export const REMIX_AUTHOR_HELD = 'Your remix apps are on hold until a moderator reviews them';
+
+/** `true` while the author's runner trips hold them: their own runs, prices and saves wait for a mod. */
+export async function isRemixAuthorHeld(authorId: number) {
+  return (await authorRows(authorId)).some((row) => hasRunnerHold(row.manifest));
+}
+
+/**
+ * The one decision behind every second-moderator rule on a user app: a moderator may not act on
+ * their own app.
+ */
+const isOwnApp = (authorId: number | undefined, moderatorId: number) =>
+  authorId !== undefined && authorId === moderatorId;
+
+/** The author of a held or minor-themed app approves or enables no app of theirs. */
+async function assertNotSelfPublishing(authorId: number | undefined, moderatorId: number) {
+  if (!authorId || !isOwnApp(authorId, moderatorId)) return;
+  const rows = await authorRows(authorId);
+  if (rows.some((row) => hasRunnerHold(row.manifest) || hasMinorThemedMark(row.manifest)))
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'A different moderator must approve or enable your app',
+    });
+}
+
+/** One field of a raw manifest, so a row that no longer validates still answers. */
+const rawField = (manifest: unknown, key: 'minorThemed' | 'runnerHold' | 'runnerTrips') =>
+  typeof manifest === 'object' && manifest !== null
+    ? (manifest as Record<string, unknown>)[key]
+    : undefined;
+
+const hasRunnerHold = (manifest: unknown) => !!rawField(manifest, 'runnerHold');
+
+const tripsOf = (manifest: unknown) => {
+  const trips = rawField(manifest, 'runnerTrips');
+  return Array.isArray(trips) ? trips.filter((at): at is string => typeof at === 'string') : [];
+};
+
+/**
+ * Lifts a runner-trip hold off the author of `slug`, whichever app holds it: their count starts
+ * again. Read and written raw, so a held row that no longer validates is cleared too.
+ */
+export async function clearRemixRunnerHold({
+  slug,
+  moderatorId,
+}: {
+  slug: string;
+  moderatorId: number;
+}) {
+  const authorId = Number(USER_REMIX_SLUG.exec(slug)?.[1]);
+  if (!authorId) throw new TRPCError({ code: 'NOT_FOUND', message: 'User remix app not found' });
+  if (isOwnApp(authorId, moderatorId))
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'A different moderator must clear a hold on you',
+    });
+  const rows = await authorRows(authorId);
+  if (!rows.some((row) => hasRunnerHold(row.manifest)))
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'This author is not held' });
+  // The hold goes last, so a clear that fails partway is retried rather than refused as not held.
+  const ordered = [...rows].sort((a, b) => +hasRunnerHold(a.manifest) - +hasRunnerHold(b.manifest));
+  for (const row of ordered) {
+    if (!hasRunnerHold(row.manifest) && !tripsOf(row.manifest).length) continue;
+    const { runnerHold, runnerTrips: _, ...rest } = row.manifest as Record<string, unknown>;
+    await writeUserRemixApp(row, {
+      manifest: (runnerHold
+        ? appendReviewLog(rest, { by: moderatorId, action: 'cleared-runner-hold' })
+        : rest) as Prisma.InputJsonValue,
+    });
+  }
+  logToAxiom({
+    name: 'remix-app-registry',
+    type: 'info',
+    message: 'Cleared a remix author runner hold',
+    payload: { slug, moderatorId },
+  });
+}
+
+const hasMinorThemedMark = (manifest: unknown) => !!rawField(manifest, 'minorThemed');
+
 export async function clearRemixMinorThemed({
   slug,
   moderatorId,
@@ -1085,6 +1345,11 @@ export async function clearRemixMinorThemed({
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'A different moderator must clear a mark you set',
+    });
+  if (isOwnApp(stored.author?.userId, moderatorId))
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'A different moderator must clear a mark on your app',
     });
   const { minorThemed: _, ...rest } = stored;
   await writeUserRemixApp(row, {
@@ -1118,7 +1383,7 @@ const isDeletable = (slug: string, status: string) =>
  * Deletes a disabled, non-default app row for good. Rows hanging off it (BlockUserSubscription
  * among them) go by FK cascade or SET NULL; a Restrict FK (attribution, a platform default) refuses.
  */
-export async function deleteRemixApp({ slug }: { slug: string }) {
+export async function deleteRemixApp({ slug, moderatorId }: { slug: string; moderatorId: number }) {
   const blockId = remixBlockId(slug);
   const row = await dbWrite.appBlock.findUnique({
     where: { blockId },
@@ -1128,6 +1393,12 @@ export async function deleteRemixApp({ slug }: { slug: string }) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix app not found' });
   if (BUILT_IN_SLUGS.has(slug))
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Built-in default apps cannot be deleted' });
+  // A mod's own run can still be tripping this row.
+  if (isOwnApp(Number(USER_REMIX_SLUG.exec(slug)?.[1]) || undefined, moderatorId))
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'A different moderator must delete your app',
+    });
   if (row.status !== REMIX_STATUS.disabled)
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Disable the app first' });
   // Deleting would drop the mark with the row; lifting it takes a second moderator.
@@ -1135,6 +1406,16 @@ export async function deleteRemixApp({ slug }: { slug: string }) {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'This app is marked minor-themed; a second moderator must clear the mark first',
+    });
+  // Deleting would drop the author's trips or hold with the row.
+  if (
+    hasRunnerHold(row.manifest) ||
+    tripsOf(row.manifest).some((at) => Date.parse(at) >= Date.now() - QUARANTINE_WINDOW_MS)
+  )
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        "This app records its author's runner trips: a moderator must clear the author's hold, or a trip must be a day old",
     });
 
   // The only record of what was deleted.
@@ -1184,6 +1465,7 @@ export async function setRemixAppEnabled({
   if (USER_REMIX_SLUG.test(slug)) {
     if (!moderatorId) throw new Error('A user app is enabled or disabled by a named moderator');
     const { row, manifest, remix } = await readUserRemixApp(slug);
+    if (enabled) await assertNotSelfPublishing(manifest.author?.userId, moderatorId);
     if (enabled && manifest.review !== 'approved')
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
@@ -1216,14 +1498,21 @@ export async function setRemixAppEnabled({
 
 /** `slugs` in menu order; apps it leaves out keep their place after these. */
 export async function orderRemixApps(slugs: string[]) {
-  await dbWrite.$transaction(
-    slugs.map((slug, order) =>
-      dbWrite.appBlock.updateMany({
-        where: { blockId: remixBlockId(slug), status: { in: REMIX_STATUSES } },
-        data: { featuredOrder: order },
-      })
-    )
-  );
+  if (slugs.length)
+    await dbWrite.$transaction(async (tx) => {
+      // Locked first, as an author's runner trip locks them.
+      await lockRemixRows(
+        tx,
+        Prisma.sql`"block_id" IN (${Prisma.join(
+          slugs.map(remixBlockId)
+        )}) AND "status" IN (${Prisma.join(REMIX_STATUSES)})`
+      );
+      for (const [order, slug] of slugs.entries())
+        await tx.appBlock.updateMany({
+          where: { blockId: remixBlockId(slug), status: { in: REMIX_STATUSES } },
+          data: { featuredOrder: order },
+        });
+    });
   await bumpRemixAppRegistry();
 }
 
@@ -1244,6 +1533,7 @@ export async function listRemixAppsForAdmin() {
           order,
           version: row.version,
           invalid: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+          runnerHeld: hasRunnerHold(row.manifest),
         };
       const { name, description, targets, remix, author, review } = parsed.data;
       // A user app is reviewed, never edited, so it carries no editor input.
@@ -1265,6 +1555,7 @@ export async function listRemixAppsForAdmin() {
             sha256: remixReviewHash({ ...parsed.data, remix }),
             reviewLog: parsed.data.reviewLog ?? [],
             minorThemed: parsed.data.minorThemed ?? null,
+            runnerHold: parsed.data.runnerHold ?? null,
           },
         };
       return {

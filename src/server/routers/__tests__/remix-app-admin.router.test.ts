@@ -25,6 +25,7 @@ const u = vi.hoisted(() => ({
   submit: vi.fn(),
   review: vi.fn(),
   clear: vi.fn(),
+  clearHold: vi.fn(),
   validate: vi.fn(),
 }));
 
@@ -38,6 +39,7 @@ vi.mock('~/server/services/remix-app-registry.service', async (importOriginal) =
   submitUserRemixApp: u.submit,
   reviewUserRemixApp: u.review,
   clearRemixMinorThemed: u.clear,
+  clearRemixRunnerHold: u.clearHold,
   validateUserRemixApp: u.validate,
 }));
 vi.mock('~/server/services/remix-app-run.service', async (importOriginal) => ({
@@ -248,7 +250,7 @@ describe('user app code: submit and review', () => {
     expect(u.validate).not.toHaveBeenCalled();
     // POSITIVE CONTROL: a moderator with the flag reaches the service.
     await as(moderator, on).validate({ slug: 'u88-probe' });
-    expect(u.validate).toHaveBeenCalledWith('u88-probe');
+    expect(u.validate).toHaveBeenCalledWith('u88-probe', moderator.id);
   });
 
   it('clears a minor-themed mark only as a moderator with remixAppsUserCode on', async () => {
@@ -262,6 +264,82 @@ describe('user app code: submit and review', () => {
     expect(u.clear).not.toHaveBeenCalled();
     await as(moderator, on).clearMinorThemed({ slug: 'u88-probe' });
     expect(u.clear).toHaveBeenCalledWith({ slug: 'u88-probe', moderatorId: moderator.id });
+  });
+
+  it('refuses a review, a mark clear and a hold clear made while impersonating', async () => {
+    // Decided in civitai/civitai#10060: a moderator acting as a user does not act for them here.
+    const impersonating = remixAppRouter.createCaller(
+      Object.assign(ctx(moderator, flags({ remixAppsUserCode: true })), { impersonatedBy: 1 })
+    ).admin;
+    const slug = { slug: 'u88-probe' };
+    await expect(impersonating.clearRunnerHold(slug)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(impersonating.clearMinorThemed(slug)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      impersonating.review({
+        ...slug,
+        sha256: 'a'.repeat(64),
+        seenReview: 'submitted',
+        decision: 'approved',
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(u.clearHold).not.toHaveBeenCalled();
+    expect(u.clear).not.toHaveBeenCalled();
+    expect(u.review).not.toHaveBeenCalled();
+  });
+
+  it("marks a run started while impersonating, so the author's own app refuses it", async () => {
+    // Decided in civitai/civitai#10060: a moderator acting as a user does not act for them here.
+    const impersonating = remixAppRouter.createCaller(
+      Object.assign(ctx(moderator, flags({ remixAppsUserCode: true })), { impersonatedBy: 1 })
+    );
+    await impersonating.start({ slug: 'u88-probe', imageId: 5, nonce: 'nonce-test' });
+    expect(h.start).toHaveBeenCalledWith(
+      expect.objectContaining({ caller: expect.objectContaining({ impersonated: true }) })
+    );
+  });
+
+  it('refuses a submit while impersonating', async () => {
+    // Decided in civitai/civitai#10060: a moderator acting as a user does not act for them here.
+    const impersonating = remixAppRouter.createCaller(
+      Object.assign(ctx(moderator, flags({ remixAppsUserCode: true, remixAppBuilder: true })), {
+        impersonatedBy: 1,
+      })
+    );
+    await expect(impersonating.submit(submission())).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(u.submit).not.toHaveBeenCalled();
+  });
+
+  it("refuses a user app's enable, delete, dry run and test run while impersonating", async () => {
+    // Decided in civitai/civitai#10060: a moderator acting as a user does not act for them here.
+    const impersonating = remixAppRouter.createCaller(
+      Object.assign(ctx(moderator, flags({ remixAppsUserCode: true })), { impersonatedBy: 1 })
+    ).admin;
+    const slug = 'u88-probe';
+    await expect(impersonating.setEnabled({ slug, enabled: true })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    await expect(impersonating.delete({ slug })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(impersonating.validate({ slug })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      impersonating.testStart({ slug, imageId: 5, nonce: 'nonce-test' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(h.setEnabled).not.toHaveBeenCalled();
+    expect(h.remove).not.toHaveBeenCalled();
+    expect(u.validate).not.toHaveBeenCalled();
+    expect(h.start).not.toHaveBeenCalled();
+  });
+
+  it("clears an author's runner hold only as a moderator with remixAppsUserCode on", async () => {
+    const on = flags({ remixAppsUserCode: true });
+    await expect(as(moderator).clearRunnerHold({ slug: 'u88-probe' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    await expect(as(user, on).clearRunnerHold({ slug: 'u88-probe' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(u.clearHold).not.toHaveBeenCalled();
+    await as(moderator, on).clearRunnerHold({ slug: 'u88-probe' });
+    expect(u.clearHold).toHaveBeenCalledWith({ slug: 'u88-probe', moderatorId: moderator.id });
   });
 
   it("toggles or deletes a user app's row only with remixAppsUserCode on, as a named moderator", async () => {
@@ -280,6 +358,6 @@ describe('user app code: submit and review', () => {
       expect.objectContaining({ slug: 'u88-probe', moderatorId: moderator.id })
     );
     await as(moderator, on).delete({ slug: 'u88-probe' });
-    expect(h.remove).toHaveBeenCalledWith({ slug: 'u88-probe' });
+    expect(h.remove).toHaveBeenCalledWith({ slug: 'u88-probe', moderatorId: moderator.id });
   });
 });

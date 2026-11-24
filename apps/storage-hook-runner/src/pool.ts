@@ -6,6 +6,7 @@ import {
   DEAD_AFTER_MS,
   RESPAWN_BASE_MS,
   RESPAWN_MAX_MS,
+  REMIX_MAX_QUEUE_WAIT_MS,
   defaultMaxPerApp,
 } from './limits.ts';
 import type { RemixArgs, RemixOutput } from './remix.ts';
@@ -60,12 +61,15 @@ export type PoolOptions = {
   deadAfterMs?: number;
   /** Test seam: how a worker is created. */
   createWorker?: (url: URL) => Worker;
+  /** See REMIX_MAX_QUEUE_WAIT_MS. */
+  remixQueueWaitMs?: number;
 };
 
 type Pending = {
   appId: string;
   budgetMs: number;
   job: WorkerJob;
+  enqueuedAt: number;
   resolve: (out: Answer) => void;
   reject: (err: Error) => void;
 };
@@ -106,6 +110,7 @@ export class HookPool {
   private readonly maxQueue: number;
   private readonly maxPerApp: number;
   private readonly backstopMs: number;
+  private readonly remixQueueWaitMs: number;
   private readonly respawnBaseMs: number;
   private readonly deadAfterMs: number;
   private readonly onBackstop: (appId: string) => void;
@@ -122,6 +127,7 @@ export class HookPool {
     this.maxQueue = opts.maxQueue ?? DEFAULT_MAX_QUEUE;
     this.maxPerApp = opts.maxPerApp ?? defaultMaxPerApp(this.maxQueue);
     this.backstopMs = opts.backstopMs ?? BACKSTOP_MS;
+    this.remixQueueWaitMs = opts.remixQueueWaitMs ?? REMIX_MAX_QUEUE_WAIT_MS;
     this.respawnBaseMs = opts.respawnBaseMs ?? RESPAWN_BASE_MS;
     this.deadAfterMs = opts.deadAfterMs ?? DEAD_AFTER_MS;
     this.onBackstop = opts.onBackstop ?? (() => undefined);
@@ -171,6 +177,7 @@ export class HookPool {
         appId,
         budgetMs,
         job,
+        enqueuedAt: performance.now(),
         resolve: (out) => {
           release();
           resolve(out);
@@ -303,13 +310,23 @@ export class HookPool {
     for (const slot of this.slots) {
       if (this.queue.length === 0) return;
       if (!slot.ready || slot.busy) continue;
-      const next = this.queue.shift();
+      const next = this.nextFresh();
       if (!next) return;
       const id = this.nextId++;
       const timer = setTimeout(() => this.backstop(slot, id), next.budgetMs + this.backstopMs);
       slot.busy = { ...next, id, timer };
       slot.worker.postMessage({ id, ...next.job } satisfies WorkerRequest);
     }
+  }
+
+  /** The next queued call, refusing each remix call that waited past REMIX_MAX_QUEUE_WAIT_MS. */
+  private nextFresh(): Pending | undefined {
+    for (let next = this.queue.shift(); next; next = this.queue.shift()) {
+      if (next.job.kind !== 'remix' || performance.now() - next.enqueuedAt <= this.remixQueueWaitMs)
+        return next;
+      next.reject(new PoolOverloadedError('queue'));
+    }
+    return undefined;
   }
 
   private backstop(slot: Slot, id: number): void {

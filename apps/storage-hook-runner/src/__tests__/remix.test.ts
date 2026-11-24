@@ -12,7 +12,14 @@ import {
 } from '../limits.ts';
 import { createMetrics } from '../metrics.ts';
 import { HookPool } from '../pool.ts';
-import { PICK_OF_FOUR, SECRET, checkBody, hmac, sha256 } from '../test-support/fixtures.ts';
+import {
+  PICK_OF_FOUR,
+  SECRET,
+  checkBody,
+  hmac,
+  sha256,
+  waitFor,
+} from '../test-support/fixtures.ts';
 
 /** `POST /v1/remix/replay` through the real Fastify app and the real worker pool. */
 
@@ -550,6 +557,44 @@ describe('quarantine after the backstop', () => {
       await p.close();
     }
   });
+});
+
+it("a call queued past its caller's margin is refused unevaluated, so its trip is still reported to a caller", async () => {
+  const OUTRUNS = `export default defineRemixApp({ async run() {
+  const a = []; a.length = 2 ** 32 - 1; a.includes(1); return [];
+} });`;
+  // Each replay spins to its interrupt: slow, and never a trip.
+  const SLOW = 'export default defineRemixApp({ async run() { for (;;) {} } });';
+  const p = await HookPool.start({ size: 1 });
+  const a = buildApp({ secret: SECRET, mode: 'remix', pool: p, metrics: createMetrics() });
+  const call = (source: string, appId: string, input?: Parameters<typeof replayBody>[1]) => {
+    const body = JSON.stringify({ ...replayBody(source, input), appId });
+    return a.inject({
+      method: 'POST',
+      url: '/v1/remix/replay',
+      headers: { 'content-type': 'application/json', [SIG_HEADER]: hmac(SECRET, body) },
+      payload: body,
+    });
+  };
+  try {
+    // inject() starts only once it is awaited or then'd.
+    const slow = call(SLOW, 'remix-u5-slow', {
+      branches: Array.from({ length: MAX_REMIX_BRANCHES }, (_, i) => [{ type: 'ask', answer: i }]),
+    }).then((res) => res);
+    await waitFor('the slow call running', () => p.stats().busy === 1);
+    const queued = await call(OUTRUNS, 'remix-u5-outruns');
+    expect(queued.statusCode).toBe(503);
+    expect(queued.json().error.code).toBe('overloaded');
+    expect((await slow).statusCode).toBe(200);
+    expect(p.stats().terminated).toBe(0);
+    // Never evaluated, so the next call is the one that trips, and is told so.
+    const next = await call(OUTRUNS, 'remix-u5-outruns');
+    expect(next.statusCode).toBe(423);
+    expect(next.json().error.tripped).toBe(true);
+  } finally {
+    await a.close();
+    await p.close();
+  }
 });
 
 it('counts one trip when calls admitted together all outrun the interrupt', async () => {

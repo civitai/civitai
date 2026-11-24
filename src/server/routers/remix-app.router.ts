@@ -32,6 +32,7 @@ import {
   submitUserRemixApp,
   reviewUserRemixApp,
   clearRemixMinorThemed,
+  clearRemixRunnerHold,
   validateUserRemixApp,
 } from '~/server/services/remix-app-registry.service';
 import {
@@ -43,6 +44,7 @@ import {
   USER_REMIX_SLUG,
 } from '~/shared/remix-apps/row.schema';
 import { TRPCError } from '@trpc/server';
+import { assertNotImpersonating } from '~/server/auth/refuse-while-impersonating';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
 import { REMIX_RUN_LIMITS } from '~/shared/remix-apps/replay';
@@ -56,6 +58,11 @@ const remixAppBuilderProcedure = guardedProcedure
   .use(isFlagProtected('remixApps'))
   .use(isFlagProtected('remixAppsUserCode'))
   .use(isFlagProtected('remixAppBuilder'));
+
+/** A user app's author check compares the session's user id, which an impersonation replaces. */
+function assertUserAppNotImpersonating(slug: string, ctx: { impersonatedBy?: number | null }) {
+  if (USER_REMIX_SLUG.test(slug)) assertNotImpersonating(ctx);
+}
 
 /** A user app's row is only acted on with its flag, like its review. */
 function assertUserCodeAccess(slug: string, features: { remixAppsUserCode?: boolean }) {
@@ -104,6 +111,7 @@ function callerOf(ctx: Context & { user: SessionUser }): Omit<RemixAppCaller, 't
     isGreenDomain: ctx.domain === 'green',
     isApiCaller: ctx.apiKeyId != null,
     track: ctx.track,
+    impersonated: ctx.impersonatedBy != null,
   };
 }
 
@@ -127,13 +135,15 @@ const remixAppAdminRouter = router({
     .input(z.object({ slug: remixAppSlugSchema, enabled: z.boolean() }))
     .mutation(({ ctx, input }) => {
       assertUserCodeAccess(input.slug, ctx.features);
+      assertUserAppNotImpersonating(input.slug, ctx);
       return setRemixAppEnabled({ ...input, moderatorId: ctx.user.id });
     }),
   delete: remixAppAdminProcedure
     .input(z.object({ slug: remixAppSlugSchema }))
     .mutation(({ ctx, input }) => {
       assertUserCodeAccess(input.slug, ctx.features);
-      return deleteRemixApp(input);
+      assertUserAppNotImpersonating(input.slug, ctx);
+      return deleteRemixApp({ ...input, moderatorId: ctx.user.id });
     }),
   /** Approves or rejects the source whose hash the mod read. */
   review: userCodeReviewProcedure
@@ -148,18 +158,33 @@ const remixAppAdminRouter = router({
         note: z.string().trim().max(200).optional(),
       })
     )
-    .mutation(({ ctx, input }) => reviewUserRemixApp({ ...input, moderatorId: ctx.user.id })),
+    .mutation(({ ctx, input }) => {
+      // The id is the decision's author, and a second-moderator rule compares it.
+      assertNotImpersonating(ctx);
+      return reviewUserRemixApp({ ...input, moderatorId: ctx.user.id });
+    }),
   /** Runs a user app down every path in the sandbox, on a placeholder image: what review reads. */
   validate: userCodeReviewProcedure
     .use(runStepRateLimit)
     .input(z.object({ slug: remixAppSlugSchema }))
-    .mutation(({ input }) => validateUserRemixApp(input.slug)),
+    .mutation(({ ctx, input }) => {
+      assertNotImpersonating(ctx);
+      return validateUserRemixApp(input.slug, ctx.user.id);
+    }),
   /** Lifts a minor-themed mark; refused to the moderator who set it. */
   clearMinorThemed: userCodeReviewProcedure
     .input(z.object({ slug: remixAppSlugSchema }))
-    .mutation(({ ctx, input }) =>
-      clearRemixMinorThemed({ slug: input.slug, moderatorId: ctx.user.id })
-    ),
+    .mutation(({ ctx, input }) => {
+      assertNotImpersonating(ctx);
+      return clearRemixMinorThemed({ slug: input.slug, moderatorId: ctx.user.id });
+    }),
+  /** Lifts a runner-trip hold off the app's author. */
+  clearRunnerHold: userCodeReviewProcedure
+    .input(z.object({ slug: remixAppSlugSchema }))
+    .mutation(({ ctx, input }) => {
+      assertNotImpersonating(ctx);
+      return clearRemixRunnerHold({ slug: input.slug, moderatorId: ctx.user.id });
+    }),
   order: remixAppAdminProcedure
     .input(z.object({ slugs: remixAppSlugSchema.array().max(100) }))
     .mutation(({ input }) => orderRemixApps(input.slugs)),
@@ -175,8 +200,9 @@ const remixAppAdminRouter = router({
         quote: quote.optional(),
       })
     )
-    .mutation(async ({ ctx, input: { slug, imageId, nonce, answers, quote } }) =>
-      startRemixRun({
+    .mutation(async ({ ctx, input: { slug, imageId, nonce, answers, quote } }) => {
+      assertUserAppNotImpersonating(slug, ctx);
+      return startRemixRun({
         slug,
         imageId,
         nonce,
@@ -184,8 +210,8 @@ const remixAppAdminRouter = router({
         quote,
         caller: await getCaller(ctx),
         allowDisabled: true,
-      })
-    ),
+      });
+    }),
 });
 
 export const remixAppRouter = router({
@@ -194,9 +220,14 @@ export const remixAppRouter = router({
   submit: remixAppBuilderProcedure
     .use(submitRateLimit)
     .input(remixAppSubmitSchema)
-    .mutation(({ ctx, input }) =>
-      submitUserRemixApp({ ...input, authorId: ctx.user.id, isGreen: !!ctx.features.isGreen })
-    ),
+    .mutation(({ ctx, input }) => {
+      assertNotImpersonating(ctx);
+      return submitUserRemixApp({
+        ...input,
+        authorId: ctx.user.id,
+        isGreen: !!ctx.features.isGreen,
+      });
+    }),
   list: remixAppProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .query(({ ctx }) => listRemixApps(ctx)),

@@ -74,6 +74,7 @@ import {
   REMIX_APP_TAG,
   REMIX_DONE_TAG,
   REMIX_RUN_TAG_PREFIX,
+  REMIX_RUNTIME_TAG,
   REMIX_SEGMENT_TAG_PREFIX,
   remixRunTags,
 } from '~/shared/remix-apps/tags';
@@ -485,15 +486,25 @@ async function advance({
 
   const source = runtimeSourceOf(image);
   const currencies = getAllowedAccountTypes(caller.features, ['blue']);
-  const quarantined = async (error: unknown) => {
-    if (!(error instanceof RemixQuarantinedError)) return error;
-    return (await noteRunnerQuarantine({ slug: app.slug, author }, caller.user.id, error))
-      ? new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD })
-      : new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE });
+  // Records a trip, and ranks what the caller is told: held > unrecorded > quarantine > other.
+  const quarantined = async (error: unknown): Promise<{ rank: number; error: unknown }> => {
+    if (!(error instanceof RemixQuarantinedError)) return { rank: 0, error };
+    const refusal = await noteRunnerQuarantine({ slug: app.slug, author }, caller.user.id, error);
+    if (!refusal)
+      return {
+        rank: 1,
+        error: new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE }),
+      };
+    return {
+      rank: refusal.kind === 'held' ? 3 : 2,
+      error: new TRPCError({ code: 'PRECONDITION_FAILED', message: refusal.message }),
+    };
   };
   const replay = () =>
     replayer(source, log).catch(async (error) => {
-      throw error instanceof RemixReplayError ? damaged(error.message) : await quarantined(error);
+      throw error instanceof RemixReplayError
+        ? damaged(error.message)
+        : (await quarantined(error)).error;
     });
   const pending = [...answers];
   let outcome = await replay();
@@ -540,22 +551,42 @@ async function advance({
     const ask =
       shown && gateOf(shown.url, levels, caller) === 'shown' ? { ...choice, image: shown } : choice;
     if (!priceOptions) return { status: 'ask', runId, ask };
-    const prices = await cachedOptionPrices([runId, segments.length, outcome.index], () =>
-      optionPrices({
+    // Every option's replay settles before the prices count: a quarantine refusal on one outranks
+    // another's app fault, and nothing from such an ask is cached.
+    const replays: Promise<unknown>[] = [];
+    let refused: { rank: number; error: unknown } | undefined;
+    const refuse = (next: { rank: number; error: unknown }) => {
+      if (!refused || next.rank > refused.rank) refused = next;
+    };
+    const prices = await cachedOptionPrices([runId, segments.length, outcome.index], async () => {
+      const priced = await optionPrices({
         app,
         author,
-        replay: (...args) =>
-          replayer(...args).catch(async (error) => {
-            throw error instanceof RemixReplayError ? error : await quarantined(error);
-          }),
+        replay: (...args) => {
+          const call = replayer(...args).catch(async (error) => {
+            if (error instanceof RemixReplayError) throw error;
+            const outcome = await quarantined(error);
+            refuse(outcome);
+            throw outcome.error;
+          });
+          replays.push(call.catch(() => undefined));
+          return call;
+        },
         image,
         source,
         log,
         spec,
         caller,
         currencies,
-      })
-    );
+      }).catch((error: unknown) => {
+        // Last: a fault around the pricing never displaces a replay's trip.
+        refuse({ rank: -1, error });
+        return undefined;
+      });
+      await Promise.all(replays);
+      if (refused || !priced) throw refused?.error;
+      return priced;
+    });
     return { status: 'ask', runId, ask, prices };
   }
 
@@ -586,7 +617,7 @@ async function advance({
   const part =
     othersApp && authorPrompt
       ? await authorPrompt(source, log).catch(async (error) => {
-          throw await quarantined(error);
+          throw (await quarantined(error)).error;
         })
       : null;
   if (othersApp) {
@@ -703,8 +734,14 @@ const notFinished = () =>
 /** A one-shot remix: everything its one workflow made. */
 async function workflowResult(workflowId: string, caller: RemixAppCaller): Promise<PostableResult> {
   const workflow = await getWorkflow({ token: caller.token, path: { workflowId } });
-  if (!workflow?.tags?.includes(REMIX_APP_TAG))
+  const tags = workflow?.tags ?? [];
+  const slug = readRemixTag(tags, `${REMIX_APP_TAG}:`);
+  if (!tags.includes(REMIX_APP_TAG) || !slug)
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Remix not found' });
+  // A runtime run posts by its run id, through its own checks. Best-effort: the owner can edit
+  // these tags. Not `isRuntimeRun`: its untagged slugs are one-shot apps now.
+  if (tags.includes(REMIX_RUNTIME_TAG))
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Post this remix from its run.' });
   if (workflow.status !== 'succeeded') throw notFinished();
 
   const images = outputImages(workflow);

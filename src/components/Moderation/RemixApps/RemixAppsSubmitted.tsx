@@ -83,12 +83,14 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
   });
   const setEnabled = trpc.remixApp.admin.setEnabled.useMutation({ onSuccess, onError });
   const clearMark = trpc.remixApp.admin.clearMinorThemed.useMutation({ onSuccess, onError });
+  const clearHold = trpc.remixApp.admin.clearRunnerHold.useMutation({ onSuccess, onError });
   const dryRun = trpc.remixApp.admin.validate.useMutation({ onError });
   // A dry run of a source other than the one on screen is not shown.
   const run = dryRun.data?.sha256 === seen.sha256 ? dryRun.data : undefined;
   const marked = !!user.minorThemed;
   // The server bars mature on every app of an author with a mark on any of them.
   const authorMarked = marked || others.some((o) => !!o.user.minorThemed);
+  const authorHeld = !!user.runnerHold || others.some((o) => !!o.user.runnerHold);
 
   return (
     <Stack gap="xs" className="rounded-md border border-solid border-gray-3 p-3 dark:border-dark-4">
@@ -97,6 +99,7 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
           <Title order={4}>{seen.name}</Title>
           <Badge color={REVIEW_COLOR[user.review]}>{user.review}</Badge>
           {marked && <Badge color="red">minor-themed</Badge>}
+          {authorHeld && <Badge color="orange">author held: runner trips</Badge>}
           <Text size="sm" c="dimmed">
             {row.slug} · icon {seen.icon}
           </Text>
@@ -180,6 +183,16 @@ function SubmittedApp({ row, others }: { row: SubmittedRow; others: SubmittedRow
               onClick={() => clearMark.mutate({ slug: row.slug })}
             >
               Clear minor-themed mark
+            </Button>
+          )}
+          {authorHeld && (
+            <Button
+              size="compact-xs"
+              variant="light"
+              loading={clearHold.isPending}
+              onClick={() => clearHold.mutate({ slug: row.slug })}
+            >
+              Clear author hold
             </Button>
           )}
         </Group>

@@ -323,7 +323,7 @@ describe('deleteRemixApp', () => {
     expect(before).toBeDefined();
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row('remix_disabled') as never);
     dbMock.dbWrite.appBlock.deleteMany.mockResolvedValue({ count: 1 });
-    await deleteRemixApp({ slug: 'test-charcoal' });
+    await deleteRemixApp({ slug: 'test-charcoal', moderatorId: 88 });
     expect(dbMock.dbWrite.appBlock.deleteMany).toHaveBeenCalledWith({
       where: expect.objectContaining({
         id: 'ab_rx_test_charcoal_________',
@@ -337,14 +337,14 @@ describe('deleteRemixApp', () => {
   it('refuses when the app was enabled between the read and the delete', async () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row('remix_disabled') as never);
     dbMock.dbWrite.appBlock.deleteMany.mockResolvedValue({ count: 0 });
-    await expect(deleteRemixApp({ slug: 'test-charcoal' })).rejects.toMatchObject({
+    await expect(deleteRemixApp({ slug: 'test-charcoal', moderatorId: 88 })).rejects.toMatchObject({
       code: 'PRECONDITION_FAILED',
     });
   });
 
   it('refuses an enabled app', async () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row('remix') as never);
-    await expect(deleteRemixApp({ slug: 'test-charcoal' })).rejects.toMatchObject({
+    await expect(deleteRemixApp({ slug: 'test-charcoal', moderatorId: 88 })).rejects.toMatchObject({
       code: 'PRECONDITION_FAILED',
     });
     expect(dbMock.dbWrite.appBlock.deleteMany).not.toHaveBeenCalled();
@@ -352,7 +352,7 @@ describe('deleteRemixApp', () => {
 
   it('refuses a built-in default, even disabled', async () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row('remix_disabled', pixelArt) as never);
-    await expect(deleteRemixApp({ slug: 'pixel-art' })).rejects.toMatchObject({
+    await expect(deleteRemixApp({ slug: 'pixel-art', moderatorId: 88 })).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
     expect(dbMock.dbWrite.appBlock.deleteMany).not.toHaveBeenCalled();
@@ -360,7 +360,7 @@ describe('deleteRemixApp', () => {
 
   it('refuses a block that is not a remix row', async () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row('approved') as never);
-    await expect(deleteRemixApp({ slug: 'test-charcoal' })).rejects.toMatchObject({
+    await expect(deleteRemixApp({ slug: 'test-charcoal', moderatorId: 88 })).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
     expect(dbMock.dbWrite.appBlock.deleteMany).not.toHaveBeenCalled();
@@ -371,7 +371,7 @@ describe('deleteRemixApp', () => {
     dbMock.dbWrite.appBlock.deleteMany.mockRejectedValue(
       new Prisma.PrismaClientKnownRequestError('fk', { code: 'P2003', clientVersion: 'test' })
     );
-    await expect(deleteRemixApp({ slug: 'test-charcoal' })).rejects.toMatchObject({
+    await expect(deleteRemixApp({ slug: 'test-charcoal', moderatorId: 88 })).rejects.toMatchObject({
       code: 'CONFLICT',
     });
   });
@@ -563,6 +563,29 @@ describe('user apps: submit, review and enable', () => {
   beforeEach(() => {
     dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
     dbMock.dbWrite.appBlock.findMany.mockResolvedValue([]);
+  });
+
+  it("a save carries the author's runner trips and hold over as stored", async () => {
+    const runnerTrips = ['2026-11-21T00:00:00.000Z', '2026-11-21T01:00:00.000Z'];
+    const runnerHold = { at: '2026-11-21T02:00:00.000Z' };
+    // The check before the lock reads no hold (findMany: []); the row read inside it carries one.
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(
+      userRow('submitted', SOURCE, 'remix_disabled', { runnerTrips, runnerHold }) as never
+    );
+    await submitUserRemixApp({ ...submission, authorId: 7, isGreen: false });
+    expect(lastWrite().data.manifest).toMatchObject({ runnerTrips, runnerHold });
+  });
+
+  it('a hold that lands between the check before the lock and the read inside it refuses the save', async () => {
+    const held = userRow('submitted', SOURCE, 'remix_disabled', {
+      runnerHold: { at: '2026-11-21T02:00:00.000Z' },
+    });
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValueOnce([]).mockResolvedValue([held] as never);
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(held as never);
+    await expect(
+      submitUserRemixApp({ ...submission, authorId: 7, isGreen: false })
+    ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    expect(dbMock.dbWrite.appBlock.updateMany).not.toHaveBeenCalled();
   });
 
   it("creates the author's app disabled, awaiting review, on the safe engine only", async () => {
@@ -774,6 +797,27 @@ describe('user apps: submit, review and enable', () => {
     });
     expect(lastWrite().data.manifest.minorThemed).toEqual(marked.minorThemed);
 
+    // Authors are moderators too: the marked author neither approves, enables nor clears it.
+    dbMock.dbWrite.appBlock.updateMany.mockClear();
+    await expect(
+      reviewUserRemixApp({
+        slug: 'u7-probe',
+        sha256: hashOf(markedRow),
+        seenReview: reviewOf(markedRow),
+        decision: 'approved',
+        moderatorId: 7,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const approvedMarked = userRow('approved', SOURCE, 'remix_disabled', marked);
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(approvedMarked as never);
+    await expect(
+      setRemixAppEnabled({ slug: 'u7-probe', enabled: true, moderatorId: 7 })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(dbMock.dbWrite.appBlock.updateMany).not.toHaveBeenCalled();
+    dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(markedRow as never);
+    await expect(clearRemixMinorThemed({ slug: 'u7-probe', moderatorId: 7 })).rejects.toMatchObject(
+      { code: 'FORBIDDEN' }
+    );
     await expect(
       clearRemixMinorThemed({ slug: 'u7-probe', moderatorId: MOD })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
@@ -1128,7 +1172,7 @@ describe('user apps: submit, review and enable', () => {
       const row = userRow('submitted');
       dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(row as never);
       dbMock.dbWrite.appBlock.deleteMany.mockResolvedValue({ count: 1 });
-      await deleteRemixApp({ slug: 'u7-probe' });
+      await deleteRemixApp({ slug: 'u7-probe', moderatorId: 88 });
       expect(dbMock.dbWrite.appBlock.deleteMany.mock.calls[0][0]).toEqual({
         where: { id: row.id, status: 'remix_disabled', manifest: { equals: row.manifest } },
       });
@@ -1243,7 +1287,9 @@ describe('user apps: submit, review and enable', () => {
     dbMock.dbWrite.appBlock.findUnique.mockResolvedValue(
       userRow('rejected', SOURCE, 'remix_disabled', marked) as never
     );
-    await expect(deleteRemixApp({ slug: 'u7-probe' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(deleteRemixApp({ slug: 'u7-probe', moderatorId: 88 })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
     expect(dbMock.dbWrite.appBlock.deleteMany).not.toHaveBeenCalled();
   });
 

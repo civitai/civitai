@@ -238,6 +238,12 @@ function AdminTableRow({
   onDelete: () => void;
 }) {
   const input = 'input' in row ? row.input : undefined;
+  const utils = trpc.useUtils();
+  const clearHold = trpc.remixApp.admin.clearRunnerHold.useMutation({
+    onSuccess: () => utils.remixApp.admin.list.invalidate(),
+    onError: (error) =>
+      showErrorNotification({ title: 'Not cleared', error: new Error(error.message) }),
+  });
   return (
     <Table.Tr>
       <Table.Td>
@@ -269,6 +275,21 @@ function AdminTableRow({
           >
             Invalid, not served
           </Badge>
+        )}
+        {'runnerHeld' in row && row.runnerHeld && (
+          <Group gap={4} wrap="nowrap">
+            <Badge color="orange" variant="light">
+              Author held: runner trips
+            </Badge>
+            <Button
+              size="compact-xs"
+              variant="light"
+              loading={clearHold.isPending}
+              onClick={() => clearHold.mutate({ slug: row.slug })}
+            >
+              Clear author hold
+            </Button>
+          </Group>
         )}
       </Table.Td>
       <Table.Td>

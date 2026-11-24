@@ -263,6 +263,9 @@ export const REMIX_SYSTEM_ACTOR = -1;
 /** Distinct viewers whose refused runs of a user app take it out of menus. */
 export const REMIX_COMBINATION_BLOCKS_MAX = 3;
 
+/** Runner trips by an author's own calls, across all their apps in a day, that hold the author. */
+export const REMIX_AUTHOR_RUNNER_TRIPS_MAX = 3;
+
 const reviewLogEntry = z.strictObject({
   by: z.union([z.number().int().positive(), z.literal(REMIX_SYSTEM_ACTOR)]),
   at: z.string(),
@@ -279,6 +282,7 @@ const reviewLogEntry = z.strictObject({
     'held-classifier-error',
     'held-runner-quarantine',
     'held-runner-quarantine-observed',
+    'cleared-runner-hold',
   ]),
   sha256: z.string().optional(),
   mature: z.boolean().optional(),
@@ -334,6 +338,10 @@ export const remixManifestSchema = z
           .max(REMIX_COMBINATION_BLOCKS_MAX),
       })
       .optional(),
+    /** When the author's own calls of this app tripped the runner; readers count only the last day's. */
+    runnerTrips: z.array(z.string()).max(REMIX_AUTHOR_RUNNER_TRIPS_MAX).optional(),
+    /** Set when the author's trips reach REMIX_AUTHOR_RUNNER_TRIPS_MAX; only a mod's clear removes it. */
+    runnerHold: z.strictObject({ at: z.string() }).optional(),
     /**
      * Viewers whose own audit refused a run of this source, each as an unkeyed hash of the slug and
      * their id: distinct, not secret, so no listing returns it. A submit starts it again; an

@@ -109,6 +109,14 @@ export const SIG_SKEW_SECONDS = 60;
 /** Header carrying `hex(HMAC-SHA256(secret, rawBody))`, on requests and on responses. */
 export const SIG_HEADER = 'x-storage-hook-sig';
 
+/**
+ * A remix call that waits longer than this for a worker is refused unevaluated (503
+ * `overloaded`). The caller's timeout is the call's backstop plus a margin for queue and network,
+ * so a call evaluated later than this could trip after its caller had gone, and its one
+ * `tripped: true` would reach nobody.
+ */
+export const REMIX_MAX_QUEUE_WAIT_MS = 100;
+
 /** Bounded queue per pool; past it the runner answers 503 rather than queue without limit. */
 export const DEFAULT_MAX_QUEUE = 64;
 
