@@ -16,6 +16,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
 )
 
 // profileLabelsOf is the pprof labels a compute saw, by the literal label names (not the constants,
@@ -55,6 +56,36 @@ func TestServeRunsUnderProfileLabels(t *testing.T) {
 				t.Fatalf("compute labels: context %q, request %q; want %q", fromCtx, fromReq, want)
 			}
 		})
+	}
+}
+
+// The goroutine that computes a served answer carries the labels too (what a CPU profile records,
+// not only what the context says), and the handler's goroutine has its own labels back once the
+// request returns, so no later work on it is charged to this route.
+func TestServeSetsGoroutineProfileLabels(t *testing.T) {
+	before, ok := testkit.GoroutineLabels()
+	if !ok {
+		t.Fatal("the goroutine profile has no record of this goroutine")
+	}
+	var inCompute map[string]string
+	s := serveServer(prometheus.NewRegistry(), nil, &proxyRecorder{})
+	s.computeFn = func(context.Context, *http.Request) (*computed, error) {
+		inCompute, ok = testkit.GoroutineLabels()
+		return nil, fallback.New("test")
+	}
+	s.ServeHTTP(httptest.NewRecorder(), publicRequest())
+	if want := map[string]string{"feed_endpoint": EndpointAsPosts, "mode": "serve"}; !ok || len(inCompute) != 2 ||
+		inCompute["feed_endpoint"] != want["feed_endpoint"] || inCompute["mode"] != want["mode"] {
+		t.Fatalf("compute goroutine labels %v (read %v), want %v", inCompute, ok, want)
+	}
+	after, ok := testkit.GoroutineLabels()
+	if !ok || len(after) != len(before) {
+		t.Fatalf("after the request: goroutine labels %v, want %v", after, before)
+	}
+	for k, v := range before {
+		if after[k] != v {
+			t.Fatalf("after the request: goroutine labels %v, want %v", after, before)
+		}
 	}
 }
 

@@ -57,9 +57,6 @@ func StartPhase(ctx context.Context, name string) (context.Context, Phase) {
 	return ctx, p
 }
 
-// Recording reports whether the phase has a span, i.e. whether attributes are worth computing.
-func (p Phase) Recording() bool { return p.span.IsRecording() }
-
 // SetInt sets an integer attribute on the phase's span (nothing on a request that is not sampled).
 func (p Phase) SetInt(k attribute.Key, v int) {
 	if p.span.IsRecording() {

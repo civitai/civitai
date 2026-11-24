@@ -177,7 +177,9 @@ phases of a served answer add a third label, `phase`: `decode hydrate` (a page's
 their decode), `build page` (the per-item build) and `encode devalue` / `encode superjson` (the
 payload write). On a sampled request (tracing on) each phase is also a child span of that name in the
 request's trace, with `feed_go.items` (ids hydrated, rows built) or `feed_go.response.bytes`; an
-unsampled request starts no span (`internal/tracing/phase.go`).
+unsampled request starts no span (`internal/tracing/phase.go`). A phase span's duration is wall time,
+I/O waits included (`decode hydrate` covers its Redis and Postgres round trips), so rank CPU by the
+`phase` pprof label and wall time by the spans.
 
 `/metrics` carries, next to `process_cpu_seconds_total` and the default Go series, the runtime's CPU
 classes and GC families (`go_cpu_classes_*`: GC, scavenger, idle and user CPU seconds; `go_gc_*`), a
