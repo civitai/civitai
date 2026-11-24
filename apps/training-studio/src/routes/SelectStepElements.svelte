@@ -969,7 +969,7 @@
           <path d="M12 9v4" />
           <path d="M12 17h.01" />
         </svg>
-        Nothing is saved until you start training
+        Nothing is charged until you start training
       </p>
     {/snippet}
   </StickySummary>

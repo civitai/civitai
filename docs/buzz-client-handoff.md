@@ -60,8 +60,8 @@ internally. On a non-2xx the client throws `BuzzApiError` (has `.status`), or th
 - `src/shared/constants/buzz.constants.ts` — `BuzzTypes` is now a facade (see above); name-map/types removed and
   re-exported from the package. `TransactionType`, `buzzTypeConfig` (UX flags), `buzzSpendTypes`/`buzzBankTypes`/
   `buzzPurchaseTypes`, `toSpendType`, `toOrchestratorType`, `buzzConstants` **stayed** in the app.
-- `src/server/services/buzz.service.ts` — `buzzService = createBuzzClient({ endpoint, log, mapError })`; every
-  wrapper calls a typed method (no `buzzApiFetch` alias, no local `baseEndpoint()` — both removed).
+- `src/server/services/buzz-client.ts` (re-exported by `buzz.service.ts`) — `buzzService = createBuzzClient({ endpoint, log, mapError })`; the
+  wrappers in `buzz.service.ts` and `buzz-payout.ts` call its typed methods (no `buzzApiFetch` alias, no local `baseEndpoint()` — both removed).
 
 ## Buzz service reference
 

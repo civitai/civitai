@@ -7,8 +7,8 @@ import {
 } from '~/server/events/points/clickhouse-limits';
 import { dbRead, type dbWrite } from '~/server/db/client';
 import type { TeamAward } from '~/server/events/base.event';
+import { eventPointsExcludedFromSql } from '~/server/events/player-eligibility';
 import { visibleEntryImageSql } from '~/server/services/crucible-entry-sql';
-import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 
 // Each crucible carrying `eventTag` gives the entrant's team `points` for each accepted entrant,
@@ -158,23 +158,27 @@ WHERE event = {event:String}
 
 /**
  * The entries that may still count: in their crucible, the crucible not cancelled, the image one
- * judges can see, and the entrant not banned, deleted or excluded from leaderboards. Read now, so an
- * entry hidden after its accept (a ToS flag, a review hold, an unpublished post, a re-rating) stops
+ * judges can see, and the award earned before the entrant's event-points exclusion start (banned or
+ * deleted: the whole season). Read now, so an entry hidden after its accept (a ToS flag, a review hold, an unpublished post, a re-rating) stops
  * counting at the next read with nothing revoking it, and counts again once it is shown.
  */
-async function countedEntryIds(entryIds: number[], db: typeof dbRead | typeof dbWrite) {
-  if (!entryIds.length) return new Set<number>();
+async function countedEntryIds(
+  entries: { entryId: number; at: Date }[],
+  db: typeof dbRead | typeof dbWrite
+) {
+  if (!entries.length) return new Set<number>();
+  const ids = entries.map((e) => e.entryId);
+  const ats = entries.map((e) => e.at.toISOString());
   const rows = await db.$queryRaw<{ id: number }[]>`
     SELECT ce.id
-    FROM "CrucibleEntry" ce
+    FROM unnest(${ids}::int[], ${ats}::timestamptz[]) AS e(id, at)
+    JOIN "CrucibleEntry" ce ON ce.id = e.id
     JOIN "Crucible" c ON c.id = ce."crucibleId"
     JOIN "Image" i ON i.id = ce."imageId"
     JOIN "User" u ON u.id = ce."userId"
-    WHERE ce.id = ANY(${entryIds}::int[])
-      AND c.status <> ${CrucibleStatus.Cancelled}::"CrucibleStatus"
+    WHERE c.status <> ${CrucibleStatus.Cancelled}::"CrucibleStatus"
       AND ${visibleEntryImageSql(Prisma.sql`c."nsfwLevel"`, 0)}
-      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
-      AND (u.flags & ${UserFlag.ExcludeFromEventPoints}::int) = 0
+      AND e.at < COALESCE(${eventPointsExcludedFromSql()}::timestamp AT TIME ZONE 'UTC', 'infinity')
   `;
   return new Set(rows.map((r) => r.id));
 }
@@ -207,9 +211,6 @@ export async function loadCrucibleTeamAwards(
     },
   });
   const standing = standingCrucibleAwards(await result.json<CrucibleTeamAwardRow>(), until);
-  const counted = await countedEntryIds(
-    standing.map((s) => s.entryId),
-    db
-  );
+  const counted = await countedEntryIds(standing, db);
   return crucibleAwardsFrom(standing, counted, award.points);
 }

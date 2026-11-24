@@ -37,7 +37,7 @@ import {
 } from '~/shared/constants/creator-service-license.constants';
 import {
   BUYER_DISCLOSURE_INTRO,
-  SERVICES_TERMS_VERSION,
+  BUYER_DISCLOSURE_VERSION,
   buyerDisclosureItems,
   buyerHoldButtonLabel,
 } from '~/shared/constants/creator-service-terms.constants';
@@ -129,7 +129,9 @@ export function ServiceRequestModal({
       },
       licenseAgreed: licensed && licenseAgreed,
       requestText: trimmed,
-      disclosureVersion: SERVICES_TERMS_VERSION,
+      disclosureVersion: BUYER_DISCLOSURE_VERSION,
+      // The flag that sets the deal's reviewEnabledAt picks the disclosure shown; the server checks they match.
+      disclosureReviewEnabled: !!features?.creatorServicesNext,
     });
   };
 
@@ -231,6 +233,7 @@ export function ServiceOfferingLicense({
 /** The hold disclosure a buyer agrees to with the price. */
 export function ServiceBuyerDisclosure({ offering }: { offering: RequestOffering }) {
   const domain = useDomainColor();
+  const reviewEnabled = !!useOptionalFeatureFlags()?.creatorServicesNext;
   return (
     <Paper withBorder radius="md" p="md">
       <Stack gap="xs">
@@ -244,8 +247,13 @@ export function ServiceBuyerDisclosure({ offering }: { offering: RequestOffering
           />
         </Group>
         <List size="sm" spacing={4}>
-          {buyerDisclosureItems(offering).map((item) => (
-            <List.Item key={item}>{item}</List.Item>
+          {buyerDisclosureItems({ ...offering, reviewEnabled }).map(({ lead, text }) => (
+            <List.Item key={lead}>
+              <Text span fw={600} inherit>
+                {lead}
+              </Text>{' '}
+              {text}
+            </List.Item>
           ))}
         </List>
       </Stack>

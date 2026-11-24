@@ -228,3 +228,70 @@ describe('getMyFeaturePageVotes', () => {
     expect(JSON.parse(String(init.body))).toEqual({ uid: 42, requests: [REQUEST] });
   });
 });
+
+describe('getFeaturePageViewerHandle', () => {
+  const author = `h1:${'b'.repeat(64)}`;
+
+  it('asks the platform for the uid once, then serves the handle from cache', async () => {
+    signerReplies.push(() => json(200, { author }));
+
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+
+    const calls = signerCalls();
+    expect(calls.map(([url]) => url)).toEqual([`${SIGNER}/internal/handle?uid=42`]);
+  });
+
+  it.each([
+    ['a refusal', () => json(400, { code: 'bad_request' })],
+    ['a reply that is not a handle', () => json(200, { author: 'u42' })],
+  ])('gives no handle on %s, asks nothing for a minute, then asks again', async (_, reply) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      signerReplies.push(reply, () => json(200, { author }));
+
+      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+      expect(signerCalls()).toHaveLength(1);
+
+      vi.setSystemTime(Date.now() + 61_000);
+      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up on a platform that does not answer well before the signer timeout', async () => {
+    fetchMock.mockImplementation(async (input: string, init: RequestInit) => {
+      if (input === `${HUB}/api/auth/oauth/token`)
+        return json(200, { access_token: 'token-1', expires_in: 900 });
+      return new Promise<Response>((_, reject) =>
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+      );
+    });
+    const started = Date.now();
+
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+    expect(Date.now() - started).toBeLessThan(4_000);
+  });
+});
+
+describe('getFeaturePageProps', () => {
+  it('serves the page private and never stored, so no shared cache can hand it to another viewer', async () => {
+    envMock.set({ FEATURE_PAGES_EMBED_URL: 'https://features.example.com/feature.html' });
+    const setHeader = vi.fn();
+
+    const result = await service.getFeaturePageProps({
+      ctx: {
+        query: { slug: 'dark-mode' },
+        req: { headers: { host: 'civitai.com' } },
+        res: { setHeader },
+      },
+      features: { featurePages: true },
+      session: null,
+    });
+
+    expect(result).toMatchObject({ props: { viewerAuthor: null } });
+    expect(setHeader).toHaveBeenCalledWith('Cache-Control', 'private, no-store');
+  });
+});

@@ -42,7 +42,8 @@ export async function setImageLevelAsModerator({
   const res = await fetch(`${base}/api/mod/image/set-nsfw-level`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', cookie: `${name}=${session}` },
-    body: JSON.stringify({ items: [{ imageId, nsfwLevel: level }] }),
+    // Settles the image's rating requests, so they stop counting toward the moderators' rating queue.
+    body: JSON.stringify({ items: [{ imageId, nsfwLevel: level }], status: 'Actioned' }),
     redirect: 'error',
     signal: AbortSignal.timeout(TIMEOUT_MS),
   }).catch((error: unknown) => {

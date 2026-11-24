@@ -63,6 +63,14 @@ the piece into a new module that imports neither A nor B, and point both at it. 
 for what the piece does, not for the service it came out of. A type-only import (`import type`) is
 not an edge and needs no move.
 
+Example: `rewards/base.reward` imported `buzz.service` for three functions. Those three, with the
+multiplier helpers beside them, moved to `buzz-payout`, and the Buzz client they wrap to
+`buzz-client`; `buzz.service` re-exports both, so its other callers are unchanged. Only
+`base.reward` and the tests that stubbed Buzz for its payouts point at the new module: a
+`buzz.service` mock no longer stands in for what `base.reward` calls. Move the pieces into one
+module per caller, so each of those tests replaces its one mock with one mock and the own-module
+mock ratchet does not grow.
+
 The same move works the other way round: a widely imported service holding one function with a
 heavy import. Example: `notification.service`, which most notification senders import, held
 `getUserNotifications`, the one function that needs the notification detail fetchers. It moved to
@@ -83,6 +91,12 @@ block, and its read-through getter lazily imported `home-block.service` to build
 which handed every one of those writers that service's imports. The getter's only caller is
 `home-block.service`, so it now passes its two builders in (`getHomeBlockCached(…, source)`), and
 the cache imports the service for types only.
+
+Example of the second: `utils/notifications.tsx` (which the tRPC client imports) rendered the
+"Report this" button, which queries tRPC. `_app` registers the button with
+`registerReportProblemButton`. Registration fits here because a missing registration costs only an
+optional button (and its longer toast timeout); it fits badly where skipping the registered work
+would lose data.
 
 An uncut example that neither fix covers yet: `text-scan/submit.ts` reaches `moderation-adapters.ts`
 through a call-site `await import()`, to apply a cleared verdict when text shrinks below the scan

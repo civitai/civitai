@@ -355,6 +355,25 @@ func TestLoadServingLimits(t *testing.T) {
 	}
 }
 
+// FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS is off unless set to a true value, and is its own switch:
+// FEED_GO_COMPUTE_MISSES on does not turn it on.
+func TestLoadComputeImageResourcesMiss(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	t.Setenv("FEED_GO_COMPUTE_MISSES", "true")
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "0": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.ComputeImageResourcesMiss != want || !c.ComputeMisses {
+			t.Errorf("FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS=%q -> %v (compute misses %v), want %v", in, c.ComputeImageResourcesMiss, c.ComputeMisses, want)
+		}
+	}
+}
+
 // The miss computation is on by default, write-back (no cache) and the frame negative-cache mirror
 // off; a write-back of a cache whose lookup reads the primary needs DATABASE_URL, which is read only
 // then.

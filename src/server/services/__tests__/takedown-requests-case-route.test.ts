@@ -153,6 +153,13 @@ describe('/api/requests/case/[publicRef]', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('refuses a caller with no link token and no cookie, before the moderator app is asked', async () => {
+    const fetchMock = moderatorAnswers(200, view);
+    expect((await call({ method: 'GET' })).status).toBe(401);
+    expect((await call({ body: {} })).status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('reloads the case from the cookie alone', async () => {
     const fetchMock = moderatorAnswers(200, view);
     const out = await call({ method: 'GET', cookie: TOKEN });
