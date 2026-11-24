@@ -78,15 +78,63 @@ export interface ScanMeter {
   steps: number;
 }
 
+/** Style-sheet extensions the scan reads as CSS. */
+const STYLE_EXTENSIONS = ['css', 'scss', 'sass', 'less'] as const;
+/** Markup extensions whose `<style>` blocks and `style="…"` attributes the scan reads. */
+const MARKUP_EXTENSIONS = ['html', 'htm', 'vue', 'svelte'] as const;
+/** Script extensions (`[cm]?[jt]sx?`): the scan reads their style objects, classes and CSS. */
+const SCRIPT_EXTENSIONS = ['', 'c', 'm'].flatMap((prefix) =>
+  ['js', 'jsx', 'ts', 'tsx'].map((ext) => prefix + ext)
+);
+/**
+ * Every extension the scan reads, matched case-insensitively. THE one list: the regexes below and
+ * the assistant runner's `find` are built from it.
+ */
+export const THEME_SOURCE_EXTENSIONS: readonly string[] = [
+  ...STYLE_EXTENSIONS,
+  ...MARKUP_EXTENSIONS,
+  ...SCRIPT_EXTENSIONS,
+];
+/** The manifest the scan reads for styling dependencies (not scanned itself). */
+export const THEME_MANIFEST_FILE = 'package.json';
+/**
+ * Directories never the app's own styling, matched by name at any depth, case-insensitively:
+ * dependencies, build output, tests, scratch. THE one list (`EXCLUDED_PATH`, the runner's `find`).
+ */
+export const THEME_EXCLUDED_DIRS: readonly string[] = [
+  'node_modules',
+  'dist',
+  'build',
+  '.git',
+  'coverage',
+  'test',
+  'tests',
+  '__tests__',
+  'scratch',
+];
+/** Directory paths never the app's own styling, at any depth: the template's dev harness. */
+export const THEME_EXCLUDED_DIR_PATHS: readonly string[] = ['src/dev'];
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+const alternation = (items: readonly string[]) => items.map(escapeRegExp).join('|');
+const extensionsRegExp = (extensions: readonly string[]) =>
+  new RegExp(`\\.(?:${alternation(extensions)})$`, 'i');
+
 /** The files the evidence reads (a source file, or a `package.json`), before `EXCLUDED_PATH`. */
-export const THEME_SOURCE_FILE =
-  /\.(?:css|scss|sass|less|html?|[cm]?[jt]sx?|vue|svelte)$|(?:^|\/)package\.json$/i;
-const SOURCE_FILE = /\.(?:css|scss|sass|less|html?|[cm]?[jt]sx?|vue|svelte)$/i;
-const STYLE_FILE = /\.(?:css|scss|sass|less)$/i;
-const MARKUP_FILE = /\.(?:html?|vue|svelte)$/i;
-/** Not the app's own styling: dependencies, build output, tests, the template's dev harness. */
-export const EXCLUDED_PATH =
-  /(?:^|\/)(?:node_modules|dist|build|\.git|coverage|test|tests|__tests__|scratch)\/|(?:^|\/)src\/dev\/|\.(?:test|spec)\.[cm]?[jt]sx?$|\.d\.ts$/i;
+export const THEME_SOURCE_FILE = new RegExp(
+  `\\.(?:${alternation(THEME_SOURCE_EXTENSIONS)})$|(?:^|\\/)${escapeRegExp(THEME_MANIFEST_FILE)}$`,
+  'i'
+);
+const SOURCE_FILE = extensionsRegExp(THEME_SOURCE_EXTENSIONS);
+const STYLE_FILE = extensionsRegExp(STYLE_EXTENSIONS);
+const MARKUP_FILE = extensionsRegExp(MARKUP_EXTENSIONS);
+/** Not the app's own styling: the directories above, test and spec files, type declarations. */
+export const EXCLUDED_PATH = new RegExp(
+  `(?:^|\\/)(?:${alternation(THEME_EXCLUDED_DIRS)})\\/` +
+    `|(?:^|\\/)(?:${alternation(THEME_EXCLUDED_DIR_PATHS)})\\/` +
+    `|\\.(?:test|spec)\\.(?:${alternation(SCRIPT_EXTENSIONS)})$|\\.d\\.ts$`,
+  'i'
+);
 
 /** The literal start of a token; the name after it is read by hand (`tokensSetIn`). */
 const TOKEN_PREFIX = /--civitai-/gi;

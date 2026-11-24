@@ -3,10 +3,20 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { accentCustomizedFrom } from '@civitai/app-assistant/theme-evidence';
+import {
+  accentCustomizedFrom,
+  THEME_EXCLUDED_DIR_PATHS,
+  THEME_EXCLUDED_DIRS,
+  THEME_MANIFEST_FILE,
+  THEME_SOURCE_EXTENSIONS,
+} from '@civitai/app-assistant/theme-evidence';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { openAppThemeEvidence, THEME_EVIDENCE_MAX_FILES } from '../app-assistant/theme-evidence';
+import {
+  openAppThemeEvidence,
+  THEME_EVIDENCE_MAX_FILES,
+  themeReadCommand,
+} from '../app-assistant/theme-evidence';
 
 /**
  * The runner's read of the open app's theme evidence, its one `run_command` run by a real shell over
@@ -107,6 +117,30 @@ describe('openAppThemeEvidence', () => {
     write(files);
     const evidence = await openAppThemeEvidence(shellSandbox('my-app'));
     expect(evidence).toMatchObject({ filesScanned: 1, customColorCount: 1 });
+  });
+
+  it('the read names every extension and prunes every directory the scan lists (seam)', () => {
+    const command = themeReadCommand('my-app', '@@m@@');
+    const missing = [
+      ...THEME_SOURCE_EXTENSIONS.map((ext) => `-iname '*.${ext}'`),
+      `-iname '${THEME_MANIFEST_FILE}'`,
+      ...THEME_EXCLUDED_DIRS.map((dir) => `-iname '${dir}'`),
+      ...THEME_EXCLUDED_DIR_PATHS.map((path) => `-path '*/${path}'`),
+    ].filter((clause) => !command.includes(clause));
+    expect(missing).toEqual([]);
+    // Positive control: the lists are not empty, so the check above checks something.
+    expect(THEME_SOURCE_EXTENSIONS.length).toBeGreaterThan(10);
+    expect(THEME_EXCLUDED_DIRS.length).toBeGreaterThan(5);
+  });
+
+  it('reads an upper-case extension the scan reads', async () => {
+    write({
+      'my-app/src/main.ts': MAIN,
+      'my-app/src/Theme.CSS': '.a { --civitai-color-primary: #f0f; }',
+    });
+    expect(await openAppThemeEvidence(shellSandbox('my-app'))).toMatchObject({
+      tokenOverrides: ['--civitai-color-primary'],
+    });
   });
 
   it('no open app, or a key that is not an app key, runs nothing', async () => {

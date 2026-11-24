@@ -1,7 +1,14 @@
 import { randomBytes } from 'node:crypto';
 
 import { BLOCK_SLUG } from '@civitai/app-assistant';
-import { themeSignals, type ThemeEvidence } from '@civitai/app-assistant/theme-evidence';
+import {
+  THEME_EXCLUDED_DIR_PATHS,
+  THEME_EXCLUDED_DIRS,
+  THEME_MANIFEST_FILE,
+  THEME_SOURCE_EXTENSIONS,
+  themeSignals,
+  type ThemeEvidence,
+} from '@civitai/app-assistant/theme-evidence';
 
 import { exitCodeOf, outputOf } from './preview';
 import type { SdkPinSandbox } from './sdk-pin';
@@ -11,45 +18,24 @@ export const THEME_EVIDENCE_MAX_FILES = 300;
 /** The sandbox's own bound on the read's command. */
 const THEME_READ_TIMEOUT_MS = 10_000;
 
-/** The names `themeSignals` reads (its source files and `package.json`), as `find` tests them. */
-const NAMES = [
-  'css',
-  'scss',
-  'sass',
-  'less',
-  'html',
-  'htm',
-  'js',
-  'jsx',
-  'ts',
-  'tsx',
-  'mjs',
-  'cjs',
-  'mts',
-  'cts',
-  'vue',
-  'svelte',
-]
-  .map((ext) => `-name '*.${ext}'`)
-  .concat(`-name package.json`)
-  .join(' -o ');
 /**
- * Directories `EXCLUDED_PATH` never scans, pruned so they count against neither the file cap nor
- * the output: dependencies, build output, tests, scratch, and the template's `src/dev` harness.
+ * The files `themeSignals` reads, as `find` tests them: built from the shared lists, never
+ * re-spelled here. `-iname` matches the scan's case-insensitive regexes. Every element is a static
+ * literal and single-quoted, so nothing reaches the shell unquoted.
+ */
+const NAMES = [
+  ...THEME_SOURCE_EXTENSIONS.map((ext) => `-iname '*.${ext}'`),
+  `-iname '${THEME_MANIFEST_FILE}'`,
+].join(' -o ');
+/**
+ * What `EXCLUDED_PATH` never scans, pruned so it counts against neither the file cap nor the
+ * output. Directory names prune case-insensitively (`-iname`), as the regex matches them; paths use
+ * `-path`, which is case-sensitive (`-ipath` is not in every `find`), so a `Src/Dev` is still read
+ * here and only dropped by the scan itself.
  */
 const PRUNED = [
-  ...[
-    'node_modules',
-    'dist',
-    'build',
-    '.git',
-    'coverage',
-    'scratch',
-    'test',
-    'tests',
-    '__tests__',
-  ].map((dir) => `-name ${dir}`),
-  "-path '*/src/dev'",
+  ...THEME_EXCLUDED_DIRS.map((dir) => `-iname '${dir}'`),
+  ...THEME_EXCLUDED_DIR_PATHS.map((path) => `-path '*/${path}'`),
 ].join(' -o ');
 
 /**
