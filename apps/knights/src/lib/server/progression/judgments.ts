@@ -1,7 +1,7 @@
 import { sql, type Kysely, type SqlBool } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
-import { servableImage } from '@civitai/db/knights';
+import { readWithoutJit, servableImage } from '@civitai/db/knights';
 import {
   answerImageId,
   answerImageJoin,
@@ -90,7 +90,16 @@ function filterClause(filter: Exclude<JudgmentFilter, 'all'>) {
   }
 }
 
+/** `listJudgmentsIn`, with JIT off: its rows read `servableImage`. */
 export async function listJudgments(
+  db: Kysely<DB>,
+  userId: number,
+  options: Parameters<typeof listJudgmentsIn>[2]
+) {
+  return readWithoutJit(db, (trx) => listJudgmentsIn(trx, userId, options));
+}
+
+async function listJudgmentsIn(
   db: Kysely<DB>,
   userId: number,
   {

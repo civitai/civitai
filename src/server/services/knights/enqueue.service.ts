@@ -1,5 +1,5 @@
 import { sql, type Kysely } from 'kysely';
-import { servableImage } from '@civitai/db/knights';
+import { readWithoutJit, servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_STAGE_RANKS, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
@@ -110,24 +110,26 @@ export async function enqueueKnightsItems(
     input.items.length === 0
       ? []
       : (
-          await db
-            .selectFrom('Image as img')
-            .leftJoin('Post as p', 'p.id', 'img.postId')
-            .select((eb) => [
-              'img.id',
-              'img.needsReview',
-              'img.acceptableMinor',
-              'img.type',
-              'p.id as postRowId',
-              'p.availability',
-              // Epoch seconds of the UTC timestamp, so the comparison does not depend on how the driver parses it.
-              sql<string | null>`extract(epoch from ${eb.ref('p.publishedAt')})`.as(
-                'publishedEpoch'
-              ),
-              servableImage(eb).as('servable'),
-            ])
-            .where('img.id', 'in', [...new Set(input.items.map((i) => i.imageId))])
-            .execute()
+          await readWithoutJit(db, (trx) =>
+            trx
+              .selectFrom('Image as img')
+              .leftJoin('Post as p', 'p.id', 'img.postId')
+              .select((eb) => [
+                'img.id',
+                'img.needsReview',
+                'img.acceptableMinor',
+                'img.type',
+                'p.id as postRowId',
+                'p.availability',
+                // Epoch seconds of the UTC timestamp, so the comparison does not depend on how the driver parses it.
+                sql<string | null>`extract(epoch from ${eb.ref('p.publishedAt')})`.as(
+                  'publishedEpoch'
+                ),
+                servableImage(eb).as('servable'),
+              ])
+              .where('img.id', 'in', [...new Set(input.items.map((i) => i.imageId))])
+              .execute()
+          )
         ).map((row) => [
           row.id,
           {

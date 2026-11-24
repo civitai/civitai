@@ -54,19 +54,22 @@ const pendingRank = (column: string) => {
 
 // A stronger kind replaces a queued one (a moderator's delete or cleanup, anyone's outright delete, an
 // owner's cleanup, strongest first) and the row keeps its earlier due time. An outright ask (`ownerId`,
-// `deletedBy`) survives either way. Anything else changes nothing.
+// `deletedBy`) survives either way. A row a restore marked holds only the drain's ask, which the restore
+// withdrew, so another ask on it replaces it whole and alone decides the kind. Anything else changes
+// nothing.
 export const PENDING_DELETE_UPSERT = sql`
   ON CONFLICT ("entityType", "entityId", "type") DO UPDATE
-    SET "data" = CASE
+    SET "data" = CASE WHEN "JobQueue"."data" ? 'releasedOnRestore' THEN EXCLUDED."data" ELSE (CASE
         WHEN ${pendingRank('EXCLUDED."data"')} > ${pendingRank('"JobQueue"."data"')}
         THEN EXCLUDED."data" ELSE "JobQueue"."data" END
       || jsonb_strip_nulls(jsonb_build_object(
         'ownerId', COALESCE(EXCLUDED."data"->'ownerId', "JobQueue"."data"->'ownerId'),
-        'deletedBy', COALESCE(EXCLUDED."data"->'deletedBy', "JobQueue"."data"->'deletedBy'))),
+        'deletedBy', COALESCE(EXCLUDED."data"->'deletedBy', "JobQueue"."data"->'deletedBy')))) END,
       "createdAt" = LEAST("JobQueue"."createdAt", EXCLUDED."createdAt")
     WHERE ${pendingRank('EXCLUDED."data"')} > ${pendingRank('"JobQueue"."data"')}
       OR (EXCLUDED."data" ? 'ownerId' AND NOT "JobQueue"."data" ? 'ownerId')
-      OR (EXCLUDED."data" ? 'deletedBy' AND NOT "JobQueue"."data" ? 'deletedBy')`;
+      OR (EXCLUDED."data" ? 'deletedBy' AND NOT "JobQueue"."data" ? 'deletedBy')
+      OR "JobQueue"."data" ? 'releasedOnRestore'`;
 
 /** `NsfwLevel.Blocked`. */
 export const NSFW_LEVEL_BLOCKED = 32;
@@ -93,6 +96,8 @@ export type PendingDelete = DeleteReplay & {
   ownerId?: number;
   deletedBy?: string;
   cleanup?: true;
+  /** The account-deletion drain's ask, released by an account restore while a case held the row. */
+  releasedOnRestore?: true;
 };
 
 const unsent: CsamReportFilter = (report) => `${report}."reportSentAt" IS NULL`;
@@ -207,6 +212,17 @@ export async function imagesPendingDeletion(db: Kysely<DB>, imageIds: number[]) 
     SELECT id FROM "Image"
     WHERE id = ANY(${ids}::int[]) AND ${childSafetyVisibleCase()}
       AND ${pendingDeleteQueued('Image', sql.ref('Image.id'), { ownerAsked: true })}
+  `.execute(db);
+  return new Set(rows.map((row) => row.id));
+}
+
+/** Of `postIds`, those with a pending delete still queued. */
+export async function postsWithDeleteQueued(db: Kysely<DB>, postIds: number[]) {
+  const ids = [...new Set(postIds)];
+  if (!ids.length) return new Set<number>();
+  const { rows } = await sql<{ id: number }>`
+    SELECT id FROM "Post"
+    WHERE id = ANY(${ids}::int[]) AND ${pendingDeleteQueued('Post', sql.ref('Post.id'))}
   `.execute(db);
   return new Set(rows.map((row) => row.id));
 }

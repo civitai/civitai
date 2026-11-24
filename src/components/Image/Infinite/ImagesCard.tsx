@@ -111,9 +111,7 @@ function ImagesCardContent({
     src: retractedSrc,
     onCdnError,
     mediaRef,
-  } = useRetractedMedia(image, features.modRetractedMedia ? currentUser : null, {
-    cdnLeg: features.modRetractedMediaCdnLeg,
-  });
+  } = useRetractedMedia(image, features.modRetractedMedia ? currentUser : null);
 
   const tags = useMemo(() => {
     if (!image.tags) return undefined;

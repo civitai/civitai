@@ -65,9 +65,13 @@ beforeAll(async () => {
       "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false, ingestion TEXT NOT NULL DEFAULT 'Scanned',
       "blockedFor" TEXT, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
       poi BOOLEAN NOT NULL DEFAULT false, minor BOOLEAN NOT NULL DEFAULT false, "userId" INTEGER NOT NULL DEFAULT 5,
-      "postId" INTEGER, metadata JSONB NOT NULL DEFAULT '{}', "scanJobs" JSONB, "pHash" BIGINT
+      "postId" INTEGER, metadata JSONB NOT NULL DEFAULT '{}', "scanJobs" JSONB, "pHash" BIGINT,
+      "tosViolation" BOOLEAN NOT NULL DEFAULT false
     );
-    CREATE TABLE "Post" (id INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP(3));
+    CREATE TABLE "Post" (id INTEGER PRIMARY KEY, "publishedAt" TIMESTAMP(3), "modelVersionId" INTEGER);
+    CREATE TABLE "User" (id INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP, "bannedAt" TIMESTAMP, muted BOOLEAN NOT NULL DEFAULT false);
+    CREATE TABLE "Model" (id INTEGER PRIMARY KEY, status TEXT NOT NULL, availability TEXT NOT NULL, "deletedAt" TIMESTAMP);
+    CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, status TEXT NOT NULL, availability TEXT NOT NULL);
     CREATE TABLE "Tag" (id INTEGER PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'Moderation', "nsfwLevel" INTEGER NOT NULL DEFAULT 1);
     CREATE TABLE "CsamReport" (id SERIAL PRIMARY KEY, "userId" INTEGER, images JSONB NOT NULL DEFAULT '[]', details JSONB);
     CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);

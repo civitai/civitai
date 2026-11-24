@@ -8,6 +8,7 @@ import { bustProfilePictures } from './profile-picture-cache';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { recordModActivity } from './mod-activity';
 import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
+import { ratingRecordedUnderGrace } from '@civitai/shared/account-deletion-grace';
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
@@ -44,9 +45,11 @@ export async function updateImageNsfwLevel({
   // The lock would count as the song's review, which only its own scan may give.
   if (image.type === 'audio') throw new SongRatingRefusedError(id);
 
+  const stored = (image.metadata as Record<string, unknown> | null) ?? {};
   const metadata = {
-    ...((image.metadata as Record<string, unknown> | null) ?? {}),
+    ...stored,
     nsfwLevelReason: reason ?? null,
+    ...ratingRecordedUnderGrace(stored, nsfwLevel),
   };
 
   await dbWrite

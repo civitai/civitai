@@ -4,28 +4,19 @@ import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { offersImageSearch } from '~/components/Search/search-target';
-import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
+import { MediaType } from '~/shared/utils/prisma/enums';
+import type { MoreLikeThisAnchor } from '~/shared/utils/more-like-this';
+import { isMoreLikeThisRefused } from '~/shared/utils/more-like-this';
 
-type MoreLikeThisImage = {
+type MoreLikeThisImage = MoreLikeThisAnchor & {
   id: number;
   type: MediaType | `${MediaType}`;
-  ingestion?: ImageIngestionStatus | string | null;
-  blockedFor?: string | null;
-  minor?: boolean;
-  poi?: boolean;
 };
 
 type MoreLikeThisFlags = Pick<FeatureAccess, 'imageSearch' | 'feedSearch' | 'moreLikeThis'>;
 
 export const offersMoreLikeThis = (features: MoreLikeThisFlags) =>
   !!features.moreLikeThis && offersImageSearch(features);
-
-/** Images "more like this" can't search from: the ones Remix refuses image-to-image. */
-export function isMoreLikeThisRefused(image: MoreLikeThisImage) {
-  if (image.ingestion === ImageIngestionStatus.Blocked || image.blockedFor) return true;
-  if (image.minor || image.poi) return true;
-  return image.ingestion != null && image.ingestion !== ImageIngestionStatus.Scanned;
-}
 
 /** Only images are embedded, so videos have no "more like this". */
 export function isMoreLikeThisVisible(features: MoreLikeThisFlags, image: MoreLikeThisImage) {

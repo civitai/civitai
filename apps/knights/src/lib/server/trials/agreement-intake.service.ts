@@ -3,6 +3,7 @@ import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import {
+  readWithoutJit,
   REFERENCE_POOL,
   REFERENCE_SOURCE,
   REFERENCE_STATUS,
@@ -55,70 +56,72 @@ export async function takeAgreementIntake(
     const need = config.probationPerLevel - (live.get(String(level)) ?? 0);
     if (need <= 0) continue;
 
-    const candidates = await db
-      .selectFrom('KnightsQueueItem as i')
-      .innerJoin('Image as img', 'img.id', 'i.imageId')
-      .innerJoin('Post as p', 'p.id', 'img.postId')
-      .select(['i.imageId'])
-      .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
-      .where('i.minRank', '=', 'Knight')
-      // Written back to the image: a resolved item still awaiting its write-back may yet be rerouted.
-      .where('i.status', '=', 'Resolved')
-      .where('i.appliedAt', 'is not', null)
-      .where('i.resolvedValue', '=', String(level))
-      .where('i.resolvedAt', '>=', utc(since))
-      .where(servableImage)
-      .where('img.nsfwLevel', '=', level)
-      .where('img.nsfwLevelLocked', '=', true)
-      .where((eb) =>
-        eb.and([
-          eb.not(
-            eb.exists(
-              eb
-                .selectFrom('ModActivity as m')
-                .select(sql<number>`1`.as('one'))
-                .whereRef('m.entityId', '=', 'i.imageId')
-                .where('m.entityType', '=', 'image')
-                // Not `setNsfwLevelKono`: that is Knights' own write-back of this verdict, always after resolvedAt.
-                .where('m.activity', '=', MODERATOR_RULING_ACTIVITY)
-                .whereRef('m.createdAt', '>', 'i.resolvedAt')
-            )
-          ),
-          eb.not(
-            eb.exists(
-              eb
-                .selectFrom('KnightsReferenceImage as r')
-                .select(sql<number>`1`.as('one'))
-                .whereRef('r.imageId', '=', 'i.imageId')
-            )
-          ),
-          // Unanimous: no vote at the stage, held or not, gave another answer ...
-          eb.not(
-            eb.exists(
+    const candidates = await readWithoutJit(db, (trx) =>
+      trx
+        .selectFrom('KnightsQueueItem as i')
+        .innerJoin('Image as img', 'img.id', 'i.imageId')
+        .innerJoin('Post as p', 'p.id', 'img.postId')
+        .select(['i.imageId'])
+        .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
+        .where('i.minRank', '=', 'Knight')
+        // Written back to the image: a resolved item still awaiting its write-back may yet be rerouted.
+        .where('i.status', '=', 'Resolved')
+        .where('i.appliedAt', 'is not', null)
+        .where('i.resolvedValue', '=', String(level))
+        .where('i.resolvedAt', '>=', utc(since))
+        .where(servableImage)
+        .where('img.nsfwLevel', '=', level)
+        .where('img.nsfwLevelLocked', '=', true)
+        .where((eb) =>
+          eb.and([
+            eb.not(
+              eb.exists(
+                eb
+                  .selectFrom('ModActivity as m')
+                  .select(sql<number>`1`.as('one'))
+                  .whereRef('m.entityId', '=', 'i.imageId')
+                  .where('m.entityType', '=', 'image')
+                  // Not `setNsfwLevelKono`: that is Knights' own write-back of this verdict, always after resolvedAt.
+                  .where('m.activity', '=', MODERATOR_RULING_ACTIVITY)
+                  .whereRef('m.createdAt', '>', 'i.resolvedAt')
+              )
+            ),
+            eb.not(
+              eb.exists(
+                eb
+                  .selectFrom('KnightsReferenceImage as r')
+                  .select(sql<number>`1`.as('one'))
+                  .whereRef('r.imageId', '=', 'i.imageId')
+              )
+            ),
+            // Unanimous: no vote at the stage, held or not, gave another answer ...
+            eb.not(
+              eb.exists(
+                eb
+                  .selectFrom('KnightsVote as v')
+                  .select(sql<number>`1`.as('one'))
+                  .whereRef('v.itemId', '=', 'i.id')
+                  .where('v.stage', '=', 'Knight')
+                  .whereRef('v.answer', '!=', 'i.resolvedValue')
+              )
+            ),
+            // ... and enough distinct players carried weight.
+            eb(
               eb
                 .selectFrom('KnightsVote as v')
-                .select(sql<number>`1`.as('one'))
+                .select(sql<number>`count(DISTINCT "v"."playerId")`.as('n'))
                 .whereRef('v.itemId', '=', 'i.id')
                 .where('v.stage', '=', 'Knight')
-                .whereRef('v.answer', '!=', 'i.resolvedValue')
-            )
-          ),
-          // ... and enough distinct players carried weight.
-          eb(
-            eb
-              .selectFrom('KnightsVote as v')
-              .select(sql<number>`count(DISTINCT "v"."playerId")`.as('n'))
-              .whereRef('v.itemId', '=', 'i.id')
-              .where('v.stage', '=', 'Knight')
-              .where('v.weight', '>', 0),
-            '>=',
-            config.minPlayers
-          ),
-        ])
-      )
-      .orderBy('i.resolvedAt', 'desc')
-      .limit(need)
-      .execute();
+                .where('v.weight', '>', 0),
+              '>=',
+              config.minPlayers
+            ),
+          ])
+        )
+        .orderBy('i.resolvedAt', 'desc')
+        .limit(need)
+        .execute()
+    );
 
     const imageIds = [...new Set(candidates.map((c) => c.imageId))];
     if (imageIds.length === 0) continue;

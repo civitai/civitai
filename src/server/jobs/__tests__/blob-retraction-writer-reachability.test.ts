@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -375,8 +376,14 @@ function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   return [];
 }
 
-function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
+function writeExec(strings: TemplateStringsArray, ...values: unknown[]): number {
   const sql = strings.join('?');
+
+  // The marker strip binds its keys as one fragment; read it flattened, as Postgres receives it.
+  if (sql.includes('UPDATE "Image"') && sql.includes('SET "metadata" = "metadata"?')) {
+    const flat = Prisma.sql(strings, ...(values as never[]));
+    return writeExec(flat.strings as unknown as TemplateStringsArray, ...flat.values);
+  }
 
   // `blockImageFromRating`, the orchestrator content-rating block.
   if (sql.includes('"blockedFor" = CASE WHEN "blockedFor" = ? OR ?')) {
@@ -668,13 +675,10 @@ describe('who can reach blob retraction, driven through the real block writers',
         skipIngestion: true,
       } as never);
 
-      const created = store.images.find((i) => i.id === 2);
-      // Positive control on the forgery itself. If `createImage` ever starts stripping the key,
-      // this test would go on passing while proving nothing about the job.
-      expect(
-        created?.metadata && PRIOR_INGESTION_KEY in created.metadata,
-        'the upload path no longer stores the forged key — this test can no longer see the attack'
-      ).toBe(true);
+      const created = store.images.find((i) => i.id === 2)!;
+      // The upload strips the key; the job must also ignore one on the stored row, however it got there.
+      expect(created.metadata && PRIOR_INGESTION_KEY in created.metadata).toBeFalsy();
+      created.metadata = { ...(created.metadata ?? {}), [PRIOR_INGESTION_KEY]: forged };
 
       await handleBlockImages({ ids: [2], moderatorId: MOD_ID });
       ageQueuePastRetention();
@@ -695,9 +699,11 @@ describe('who can reach blob retraction, driven through the real block writers',
       userId: SCANNED_USER,
       url: 'key-3/original.jpeg',
       type: 'image',
-      metadata: { [PRIOR_INGESTION_KEY]: 'Scanned', moderatorReviewed: true, review: true },
+      metadata: { moderatorReviewed: true, review: true },
       skipIngestion: true,
     } as never);
+    const created = store.images.find((i) => i.id === 3)!;
+    created.metadata = { ...(created.metadata ?? {}), [PRIOR_INGESTION_KEY]: 'Scanned' };
 
     await blockByScanner(3);
     ageQueuePastRetention();

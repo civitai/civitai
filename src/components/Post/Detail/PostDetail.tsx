@@ -463,6 +463,16 @@ export function PostDetailContent({ postId, deferredSsr }: Props) {
               sit in one column and `@max-lg:order-*` sets the screen order: title, where it was
               posted to and tags, then the images, description, creator, app card, comments. */}
           <div className="flex w-full max-w-[728px] flex-col gap-3 @lg:my-3 @max-lg:contents">
+            {isOwnerOrMod && post.unavailable && !post.publishedAt && (
+              <Alert
+                color="yellow"
+                icon={<IconAlertCircle size={16} />}
+                radius="sm"
+                className="shrink-0"
+              >
+                <Text size="sm">This post isn&apos;t available right now.</Text>
+              </Alert>
+            )}
             {isOwnerOrMod && post.wasPublished && !post.publishedAt && (
               <Alert
                 color="yellow"

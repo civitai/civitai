@@ -1,8 +1,7 @@
 import { error, isHttpError, json } from '@sveltejs/kit';
 import { RETRACTED_MEDIA_MAX_BYTES } from '@civitai/shared/retracted-media';
 import type { RequestHandler } from './$types';
-import { canAccess } from '$lib/server/access';
-import { HELD_MEDIA_PAGE, recordHeldView } from '$lib/server/held-media';
+import { holdsCsamReview, recordHeldView } from '$lib/server/held-media';
 import { streamStoredMedia } from '$lib/server/held-media-stream';
 import { retractedMediaRetryAfter } from '$lib/server/retracted-media-rate';
 import {
@@ -44,7 +43,7 @@ const serve: RequestHandler = async ({ params, locals, request, url }) => {
       { message: 'Too many requests.' },
       { status: 429, headers: { ...NO_STORE, 'retry-after': String(retryAfter) } }
     );
-  const csamReview = canAccess(locals.user, HELD_MEDIA_PAGE);
+  const csamReview = holdsCsamReview(locals.user);
 
   const media = await getModeratorMedia(imageId, { csamReview }).catch(() => {
     error(503, 'Could not check this image; retry.');
@@ -62,8 +61,10 @@ const serve: RequestHandler = async ({ params, locals, request, url }) => {
       sheet: false,
       request,
       audit: () => recordHeldView(moderatorId, imageId, 'web'),
-      // Held files are not size-capped, as on /api/held-media; every range is audited here.
       auditEveryRange: true,
+      // Uncapped for the grant, as on /api/held-media; capped otherwise, so the answer matches a
+      // retracted file's.
+      maxBytes: csamReview ? undefined : RETRACTED_MEDIA_MAX_BYTES,
     });
   return streamStoredMedia({
     media,

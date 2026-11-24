@@ -10,8 +10,14 @@ import {
   type TranscriptCursor,
   type ChatMemberRow,
 } from './chat-audit.service';
-import { getImagesForCollection, getImagesForConnection } from './bulk-image.service';
-import { articleBody } from './article-body';
+import {
+  getImagesForCollection,
+  getImagesForConnection,
+  withholdBatchMedia,
+} from './bulk-image.service';
+import { holdsCsamReview } from './held-media';
+import { articleBody, type ArticleBody } from './article-body';
+import { restrictedImageIds } from './retracted-media';
 import { cappedText } from './html-to-text';
 import { loadItemReports } from './report-queue-load';
 import { parseQueryKeys } from './query';
@@ -238,7 +244,41 @@ async function subjectsByEntity(type: EntityQueueType, ids: number[]): Promise<S
 // ---------------------------------------------------------------------------------------------------
 // The open item
 
-async function articleItem(id: number) {
+/**
+ * `body` with each media segment the media access rule withholds from this moderator replaced by a
+ * `withheld` one that carries no key. A key that is no image's, or whose images include a withheld
+ * one, is withheld. A grant holder gets `body` as it is.
+ */
+export async function withholdArticleBody(
+  body: ArticleBody | null,
+  { csamReview }: { csamReview: boolean }
+): Promise<ArticleBody | null> {
+  if (!body || csamReview) return body;
+  const urls = [...new Set(body.segments.flatMap((s) => (s.kind === 'media' ? [s.url] : [])))];
+  if (!urls.length) return body;
+  const rows = await dbRead
+    .selectFrom('Image')
+    .select(['id', 'url'])
+    .where('url', 'in', urls)
+    .execute();
+  const withheld = await restrictedImageIds(
+    rows.map((r) => r.id),
+    { csamReview }
+  );
+  const shown = new Set(urls);
+  for (const url of urls) {
+    const ids = rows.filter((r) => r.url === url).map((r) => r.id);
+    if (!ids.length || ids.some((rowId) => withheld.has(rowId))) shown.delete(url);
+  }
+  return {
+    ...body,
+    segments: body.segments.map((s) =>
+      s.kind === 'media' && !shown.has(s.url) ? { kind: 'withheld', mediaType: s.mediaType } : s
+    ),
+  };
+}
+
+async function articleItem(id: number, csamReview: boolean) {
   const article = await getArticle(id);
   if (!article)
     return { kind: 'article' as const, article: null, body: null, images: null, ownerId: null };
@@ -250,12 +290,13 @@ async function articleItem(id: number) {
       id,
       { limit: IMAGE_LIMIT },
       [article.coverId, article.bannerId].filter((x): x is number => x != null)
-    ),
+    ).then((batch) => withholdBatchMedia(batch, { csamReview })),
   ]);
   return {
     kind: 'article' as const,
-    article,
-    body: articleBody(content?.content),
+    // `cover` is a storage key the page never draws.
+    article: { ...article, cover: null },
+    body: await withholdArticleBody(articleBody(content?.content), { csamReview }),
     images,
     ownerId: article.userId,
   };
@@ -296,7 +337,7 @@ async function chatItem(id: number, locals: App.Locals, cursor: TranscriptCursor
  * One page of a collection's images. The page is clamped to the last one: a removal can shrink the
  * collection under a moderator on its last page, and an empty grid there reads as "nothing left".
  */
-export async function collectionImages(id: number, page: number) {
+export async function collectionImages(id: number, page: number, csamReview: boolean) {
   const perPage = COLLECTION_IMAGES_PER_PAGE;
   const at = (p: number) =>
     getImagesForCollection(id, { limit: perPage, offset: (p - 1) * perPage });
@@ -310,10 +351,10 @@ export async function collectionImages(id: number, page: number) {
   // them so the strike box can.
   const ownerIds = [...new Set(batch.items.map((i) => i.userId))];
   const owners = [...(await usersByIds(ownerIds))].map(([id, u]) => ({ id, ...u }));
-  return { ...batch, owners, page, perPage };
+  return { ...(await withholdBatchMedia(batch, { csamReview })), owners, page, perPage };
 }
 
-async function collectionItem(id: number, imgPage: number) {
+async function collectionItem(id: number, imgPage: number, csamReview: boolean) {
   const collection = await dbRead
     .selectFrom('Collection as c')
     .leftJoin('User as u', 'u.id', 'c.userId')
@@ -354,7 +395,7 @@ async function collectionItem(id: number, imgPage: number) {
     .where('ci.collectionId', '=', id)
     .where('ci.imageId', 'is', null);
   const [images, otherRows, otherCount] = await Promise.all([
-    collectionImages(id, imgPage),
+    collectionImages(id, imgPage, csamReview),
     others
       .select([
         'ci.id',
@@ -426,7 +467,7 @@ const bountyView = (b: NonNullable<Awaited<ReturnType<typeof bountySummary>>>) =
   availability: String(b.availability),
 });
 
-async function bountyItem(id: number) {
+async function bountyItem(id: number, csamReview: boolean) {
   const bounty = await bountySummary(id);
   if (!bounty)
     return {
@@ -454,7 +495,9 @@ async function bountyItem(id: number) {
       .select((eb) => eb.fn.countAll<string>().as('n'))
       .where('bountyId', '=', id)
       .executeTakeFirst(),
-    getImagesForConnection('Bounty', id, { limit: IMAGE_LIMIT }),
+    getImagesForConnection('Bounty', id, { limit: IMAGE_LIMIT }).then((batch) =>
+      withholdBatchMedia(batch, { csamReview })
+    ),
   ]);
   return {
     kind: 'bounty' as const,
@@ -470,7 +513,7 @@ async function bountyItem(id: number) {
   };
 }
 
-async function bountyEntryItem(id: number) {
+async function bountyEntryItem(id: number, csamReview: boolean) {
   const entry = await dbRead
     .selectFrom('BountyEntry as e')
     .leftJoin('User as u', 'u.id', 'e.userId')
@@ -494,7 +537,9 @@ async function bountyEntryItem(id: number) {
     return { kind: 'bountyEntry' as const, entry: null, bounty: null, images: null, ownerId: null };
   const [bounty, images] = await Promise.all([
     bountySummary(entry.bountyId),
-    getImagesForConnection('BountyEntry', id, { limit: IMAGE_LIMIT }),
+    getImagesForConnection('BountyEntry', id, { limit: IMAGE_LIMIT }).then((batch) =>
+      withholdBatchMedia(batch, { csamReview })
+    ),
   ]);
   return {
     kind: 'bountyEntry' as const,
@@ -533,17 +578,18 @@ function itemEvidence(
   imgPage: number,
   cursor: TranscriptCursor
 ) {
+  const csamReview = holdsCsamReview(locals.user);
   switch (type) {
     case 'article':
-      return articleItem(id);
+      return articleItem(id, csamReview);
     case 'chat':
       return chatItem(id, locals, cursor);
     case 'collection':
-      return collectionItem(id, imgPage);
+      return collectionItem(id, imgPage, csamReview);
     case 'bounty':
-      return bountyItem(id);
+      return bountyItem(id, csamReview);
     case 'bountyEntry':
-      return bountyEntryItem(id);
+      return bountyEntryItem(id, csamReview);
   }
   // Exhaustive, as `subjectsByEntity` is: a new type without its read fails the build here rather
   // than loading as some other type's.

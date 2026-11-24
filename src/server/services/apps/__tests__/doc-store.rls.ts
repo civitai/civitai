@@ -34,7 +34,7 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
   });
 
   describe('row-level security (second isolation layer)', () => {
-    it('every appdata table has RLS enabled AND forced, with the scope policy, the two review-maintenance policies, the account-wipe read on usage_user and doc_mark only, and the app-purge read on doc and usage_app only', async () => {
+    it('every appdata table has RLS enabled AND forced, with the scope policy, the two review-maintenance policies, the account-wipe read on usage_user, doc_mark and maint_run only, and the app-purge read on doc and usage_app only', async () => {
       const rows = await h.raw(
         `SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
                 (SELECT string_agg(p.policyname || ':' || p.cmd, ',' ORDER BY p.policyname)
@@ -47,7 +47,9 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
           relrowsecurity: true,
           relforcerowsecurity: true,
           policies:
-            (t === 'usage_user' || t === 'doc_mark' ? 'appdata_account_wipe_read:SELECT,' : '') +
+            (t === 'usage_user' || t === 'doc_mark' || t === 'maint_run'
+              ? 'appdata_account_wipe_read:SELECT,'
+              : '') +
             (t === 'doc' || t === 'usage_app' ? 'appdata_app_purge_read:SELECT,' : '') +
             'appdata_review_delete:DELETE,appdata_review_read:SELECT,appdata_scope:ALL',
         }))
@@ -195,6 +197,11 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
           `INSERT INTO appdata.mark_head (app_id, ns, last_mark_seq) VALUES ($1, $2, 3)`,
           [app, ns]
         );
+        await h.raw(
+          `INSERT INTO appdata.maint_run (app_id, ns, coll, kind, name, status)
+           VALUES ($1, $2, 'c', 'mark_migration', 'vote', 'frozen')`,
+          [app, ns]
+        );
       }
     });
 
@@ -204,6 +211,7 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
       'doc_mark',
       'doc_tomb',
       'mark_head',
+      'maint_run',
       'usage_user',
     ];
 
@@ -352,7 +360,15 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
         .map(([a, n, u]) => `${a}|${n}|${u}`)
         .sort();
     const PER_USER = ['usage_user', 'doc_mark'];
-    const OTHERS = ['doc', 'doc_index', 'doc_tally', 'doc_tomb', 'mark_head', 'usage_app'];
+    const OTHERS = [
+      'doc',
+      'doc_index',
+      'doc_tally',
+      'doc_tomb',
+      'mark_head',
+      'maint_run',
+      'usage_app',
+    ];
     const count = async (t: string) =>
       Number(
         (
@@ -398,6 +414,11 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
         for (const ns of NAMESPACES) {
           await h.raw(`INSERT INTO appdata.usage_app (app_id, ns) VALUES ($1, $2)`, [app, ns]);
           await h.raw(`INSERT INTO appdata.mark_head (app_id, ns) VALUES ($1, $2)`, [app, ns]);
+          await h.raw(
+            `INSERT INTO appdata.maint_run (app_id, ns, coll, kind, name, status)
+             VALUES ($1, $2, 'c', 'mark_migration', 'vote', 'frozen')`,
+            [app, ns]
+          );
         }
       }
     });
@@ -420,7 +441,7 @@ export function defineRlsSuite(makeHarness: () => Promise<Harness>) {
       for (const t of OTHERS)
         expect({ t, n: await count(t) }).toEqual({
           t,
-          n: t === 'usage_app' || t === 'mark_head' ? 8 : 16,
+          n: t === 'usage_app' || t === 'mark_head' || t === 'maint_run' ? 8 : 16,
         });
     });
 

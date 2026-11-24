@@ -8,6 +8,10 @@ import {
   CSAM_RESTRICTION_CASES,
   csamCaseCleanupSql,
 } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
+import { POST_PENDING_DELETE_REASON } from '@civitai/db-queries/content-deletion';
+import { heldImageSql, heldUserSql } from '@civitai/shared/held-media';
+import { heldUrlSql } from '@civitai/shared/held-url';
+import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
 
 /**
  * Which images `/api/mod/retracted-media` serves, and to whom: the shared `retracted-media-tier`
@@ -96,7 +100,7 @@ beforeAll(async () => {
       minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 4, "userId" int NOT NULL,
       "acceptableMinor" boolean NOT NULL DEFAULT false, "pHash" bigint, "postId" int
     );
-    CREATE TABLE "Post" (id int PRIMARY KEY, metadata jsonb, "modelVersionId" int);
+    CREATE TABLE "Post" (id int PRIMARY KEY, metadata jsonb, "modelVersionId" int, "userId" int, "publishedAt" timestamp);
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, meta jsonb, "modelId" int);
     CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
     CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb);
@@ -199,6 +203,7 @@ describe('getRetractedMedia', () => {
       url: 'key-1',
       type: 'image',
       mimeType: null,
+      held: false,
     });
   });
 
@@ -221,8 +226,9 @@ describe('getRetractedMedia', () => {
     await expectTiers('anyMod', [1]);
   });
 
-  it('keeps a block with no reason to cleared moderators', async () => {
-    await expectTiers('cleared', [4]);
+  // civitai/civitai#10202: only item-level CSAM signals withhold from a moderator without the grant.
+  it('serves a block with no reason to any moderator', async () => {
+    await expectTiers('anyMod', [4]);
   });
 
   it('reads any other reason as a signal while the patterns are missing', async () => {
@@ -287,7 +293,8 @@ describe('getRetractedMedia', () => {
     // each the access the rule names.
     it.each([
       ['a CSAM block reason', 11, 'none'],
-      ['a block with no reason', 4, 'cleared'],
+      // civitai/civitai#10202: a block with no reason no longer withholds.
+      ['a block with no reason', 4, 'anyMod'],
       ['moderated', 1, 'anyMod'],
       ['tos', 2, 'anyMod'],
       ['AiNotVerified', 3, 'anyMod'],
@@ -299,8 +306,14 @@ describe('getRetractedMedia', () => {
   });
 
   it('never serves held media, which the held-media route serves', async () => {
-    // CSAM block, CSAM review flag, an owner who is a report's subject.
-    await expectTiers('none', [11, 13, 20]);
+    // CSAM block, CSAM review flag.
+    await expectTiers('none', [11, 13]);
+  });
+
+  // civitai/civitai#10202: answered to any moderator as an ordinary account's would be.
+  it("serves the image of a report's subject to any moderator, grant or not, as held media", async () => {
+    expect(await getRetractedMedia(20, { csamReview: false })).toMatchObject({ held: true });
+    expect(await getRetractedMedia(20, { csamReview: true })).toMatchObject({ held: true });
   });
 
   it('refuses a missing id', async () => {
@@ -341,9 +354,10 @@ describe('getRetractedMedia', () => {
     await expectTiers('anyMod', [32, 2]);
   });
 
-  it('keeps an AiNotVerified image of a held or reported owner to cleared moderators', async () => {
+  // civitai/civitai#10202: only item-level CSAM signals withhold from a moderator without the grant.
+  it('serves an AiNotVerified image of a held or reported owner to any moderator', async () => {
     // Evidence-held owner, report subject, report secondary user.
-    await expectTiers('cleared', [19, 21, 22]);
+    await expectTiers('anyMod', [19, 21, 22]);
   });
 
   it('keeps an image listed on a report, in either list shape, to cleared moderators', async () => {
@@ -468,11 +482,6 @@ describe('copies sharing bytes with a restricted image', () => {
       () => pg.query(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 990000102`),
     ],
     [
-      'a copy on the same url whose owner is held',
-      990000101,
-      () => pg.query(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (990100102)`),
-    ],
-    [
       'a sent report listing it',
       990000101,
       () =>
@@ -511,69 +520,27 @@ describe('a model version unpublished for its subject', () => {
     });
   });
 
-  it('keeps an image on a model a confirmed CSAM hold removed to cleared moderators', async () => {
+  // civitai/civitai#10202: only item-level CSAM signals withhold from a moderator without the grant.
+  it('serves an image on a model a CSAM hold removed to any moderator', async () => {
     await pg.exec(`
       INSERT INTO "Model" (id, meta) VALUES (990500126, '{"unpublishedReason": "mature-underage"}');
       INSERT INTO "ModelVersion" (id, meta, "modelId") VALUES (990300126, '{}', 990500126);
       INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400126, '{}', 990300126);
       INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "postId") VALUES
-        (990000126, 'key-990000126', 'Blocked', 'moderated', 990100126, 990400126),
-        (990000127, 'key-990000127', 'Blocked', 'moderated', 990100127, NULL),
-        (990000128, 'key-990000127', 'Scanned', NULL, 990100128, 990400126);
+        (990000126, 'key-990000126', 'Blocked', 'moderated', 990100126, 990400126);
     `);
-    // Removed by a moderator for its subject alone: the image itself is open, and so is an image
-    // whose url a row on that model shares.
-    expect(await getRetractedMedia(990000126, { csamReview: false })).toMatchObject({
-      url: 'key-990000126',
-    });
-    expect(await getRetractedMedia(990000127, { csamReview: false })).toMatchObject({
-      url: 'key-990000127',
-    });
-    // A hold that does not mark this model as CSAM leaves it open.
-    for (const hold of [
-      `('Model', 990500126, 'csam', 'Dismissed')`,
-      `('Model', 990500126, 'other', 'Confirmed')`,
-      `('Article', 990500126, 'csam', 'Confirmed')`,
-      `('Model', 990500999, 'csam', 'Confirmed')`,
-    ]) {
+    for (const status of ['Pending', 'Confirmed']) {
       await pg.exec(
-        `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ${hold}`
+        `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Model', 990500126, 'csam', '${status}')`
       );
       try {
         expect({
-          hold,
+          status,
           served: !!(await getRetractedMedia(990000126, { csamReview: false })),
-        }).toEqual({
-          hold,
-          served: true,
-        });
+        }).toEqual({ status, served: true });
       } finally {
-        await pg.exec(
-          `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129, 990400999)`
-        );
+        await pg.exec(`DELETE FROM "TextScanHold" WHERE "entityId" = 990500126`);
       }
-    }
-    // A pending hold restricts too.
-    await pg.exec(
-      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Model', 990500126, 'csam', 'Pending')`
-    );
-    try {
-      expect(await getRetractedMedia(990000126, { csamReview: false })).toBeNull();
-    } finally {
-      await pg.exec(
-        `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129, 990400999)`
-      );
-    }
-    await pg.exec(
-      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Model', 990500126, 'csam', 'Confirmed')`
-    );
-    try {
-      expect(await getRetractedMedia(990000126, { csamReview: false })).toBeNull();
-      expect(await getRetractedMedia(990000126, { csamReview: true })).toMatchObject({
-        url: 'key-990000126',
-      });
-    } finally {
-      await pg.exec(`DELETE FROM "TextScanHold" WHERE "entityId" = 990500126`);
     }
   });
 
@@ -588,7 +555,8 @@ describe('a model version unpublished for its subject', () => {
     });
   });
 
-  it('keeps an image on a post a CSAM hold removed, after the post is republished', async () => {
+  // civitai/civitai#10202: only item-level CSAM signals withhold from a moderator without the grant.
+  it('serves an image on a post a CSAM hold removed to any moderator', async () => {
     await pg.exec(`
       INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400129, '{"unpublishedReason": "csam-text-hold"}', NULL);
       INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "postId") VALUES
@@ -596,48 +564,12 @@ describe('a model version unpublished for its subject', () => {
       INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('Post', 990400129, 'csam', 'Confirmed');
     `);
     try {
-      expect(await getRetractedMedia(990000129, { csamReview: false })).toBeNull();
-      // With the post's reason cleared, the hold still restricts.
-      await pg.exec(`UPDATE "Post" SET metadata = '{}' WHERE id = 990400129`);
-      expect(await getRetractedMedia(990000129, { csamReview: false })).toBeNull();
-      await pg.exec(`UPDATE "TextScanHold" SET status = 'Pending' WHERE "entityId" = 990400129`);
-      expect(await getRetractedMedia(990000129, { csamReview: false })).toBeNull();
-      // A hold that does not mark this post as CSAM leaves it open.
-      for (const hold of [
-        `'Post', 990400129, 'csam', 'Dismissed'`,
-        `'Post', 990400129, 'other', 'Confirmed'`,
-        `'Model', 990400129, 'csam', 'Confirmed'`,
-        `'Post', 990400999, 'csam', 'Confirmed'`,
-      ]) {
-        await pg.exec(`DELETE FROM "TextScanHold" WHERE "entityId" IN (990400129, 990400999)`);
-        await pg.exec(
-          `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES (${hold})`
-        );
-        expect({
-          hold,
-          served: !!(await getRetractedMedia(990000129, { csamReview: false })),
-        }).toEqual({
-          hold,
-          served: true,
-        });
-      }
+      expect(await getRetractedMedia(990000129, { csamReview: false })).toMatchObject({
+        url: 'key-990000129',
+      });
     } finally {
-      await pg.exec(
-        `DELETE FROM "TextScanHold" WHERE "entityId" IN (990500126, 990500999, 990400129, 990400999)`
-      );
+      await pg.exec(`DELETE FROM "TextScanHold" WHERE "entityId" = 990400129`);
     }
-  });
-
-  it('keeps an image whose own post is on a CSAM hold to cleared moderators', async () => {
-    await pg.exec(`
-      INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES (990400124, '{"unpublishedReason": "csam-text-hold"}', NULL);
-      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "postId") VALUES
-        (990000124, 'key-990000124', 'Blocked', 'moderated', 990100124, 990400124)
-    `);
-    expect(await getRetractedMedia(990000124, { csamReview: false })).toBeNull();
-    expect(await getRetractedMedia(990000124, { csamReview: true })).toMatchObject({
-      url: 'key-990000124',
-    });
   });
 });
 
@@ -705,11 +637,13 @@ describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
 
   // The route answers a null with 404: a moderator not cleared for CSAM review must not reach the
   // image of a report's owner through this leg.
-  it('refuses the image of a CsamReport owner to a moderator not cleared for CSAM review', async () => {
+  it('serves the image of a CsamReport owner to a moderator not cleared for CSAM review, as held media', async () => {
     await pg.query(
       `INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100204, '{}', '[]')`
     );
-    expect(await getRetractedMedia(ids.retracted, { csamReview: false, cdnLeg: true })).toBeNull();
+    expect(
+      await getRetractedMedia(ids.retracted, { csamReview: false, cdnLeg: true })
+    ).toMatchObject({ held: true });
   });
 
   // A minor-safety ban alone is a minor signal, open to any moderator.
@@ -720,6 +654,78 @@ describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
     expect(
       await getRetractedMedia(ids.retracted, { csamReview: false, cdnLeg: true })
     ).not.toBeNull();
+  });
+});
+
+// civitai/civitai#10202: the shape of a reported case. A moderator unpublished the post, and the
+// model was pulled, so the CDN denies the url. With the leg off, any moderator still sees it.
+describe('a scanned image whose post someone other than its owner unpublished', () => {
+  const OWNER = 990100310;
+  const ids = {
+    pulled: 990000310,
+    signal: 990000311,
+    item: 990000312,
+    shop: 990000313,
+    deleted: 990000314,
+    live: 990000315,
+    ownPull: 990000316,
+    keptDelete: 990000317,
+  };
+  const all = Object.values(ids);
+  const posts: Record<number, number> = {
+    [ids.live]: 990400315,
+    [ids.ownPull]: 990400316,
+    [ids.keptDelete]: 990400317,
+  };
+  const post = (id: number) => posts[id] ?? 990400310;
+  beforeAll(async () => {
+    await pg.exec(`
+      INSERT INTO "Post" (id, metadata, "modelVersionId", "userId", "publishedAt") VALUES
+        (990400310, '{"unpublishedAt": "2026-11-18", "unpublishedBy": "990100399"}', NULL, ${OWNER}, NULL),
+        (990400315, '{}', NULL, ${OWNER}, now()),
+        (990400316, '{"unpublishedAt": "2026-11-18", "unpublishedBy": "${OWNER}"}', NULL, ${OWNER}, NULL),
+        (990400317, '{"unpublishedAt": "2026-11-18", "unpublishedBy": "990100399", "unpublishedReason": "${POST_PENDING_DELETE_REASON}"}', NULL, ${OWNER}, NULL);
+      INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId", "userId") VALUES ('key-${ids.shop}', 1, ${OWNER});
+      INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview")
+        VALUES (${ids.deleted}, 'key-${ids.deleted}', ${OWNER}, false);
+      INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (${ids.signal}, ${ids.signal}, 'csam-hold');
+    `);
+    for (const id of all)
+      await pg.query(
+        `INSERT INTO "Image" (id, url, ingestion, "needsReview", minor, "nsfwLevel", "userId", "postId")
+         VALUES ($1, $2, 'Scanned', $3, true, 2, $4, $5)`,
+        [id, `key-${id}`, id === ids.item ? 'csam' : null, OWNER, post(id)]
+      );
+    await pg.query(
+      `INSERT INTO "ImageCdnAccess" (url, state) SELECT 'key-' || id, 'Denied' FROM unnest($1::int[]) id`,
+      [all]
+    );
+  });
+
+  it('serves it to any moderator, with the leg off', async () => {
+    await expectTiers('anyMod', [ids.pulled]);
+    expect(await getRetractedMedia(ids.pulled, { csamReview: false })).toEqual({
+      url: `key-${ids.pulled}`,
+      type: 'image',
+      mimeType: null,
+      held: false,
+    });
+  });
+
+  it('refuses it with a CSAM mark of its own, or held for itself', async () => {
+    await expectTiers('none', [ids.signal, ids.item]);
+  });
+
+  it('refuses a url a shop takedown or a moderator delete also refuses', async () => {
+    await expectTiers('none', [ids.shop, ids.deleted]);
+  });
+
+  it('refuses a denied url no unpublish by someone else explains', async () => {
+    await expectTiers('none', [ids.live, ids.ownPull]);
+  });
+
+  it('refuses a post a delete its case keeps unpublished', async () => {
+    await expectTiers('none', [ids.keptDelete]);
   });
 });
 
@@ -763,7 +769,21 @@ describe('rows sharing its url, its post text and its articles', () => {
     }
   );
 
-  it.each(CSAM_RESTRICTION_CASES.filter((c) => !c.restricts))(
+  // civitai/civitai#10202: held media is answered to any moderator, grant or not, as its twin would
+  // be, marked held for the audit.
+  it.each(CSAM_RESTRICTION_CASES.filter((c) => c.held))(
+    'serves an image with $label to any moderator, as held media',
+    async ({ mark }) => {
+      await pg.exec(mark(target));
+      for (const csamReview of [false, true])
+        expect(await getRetractedMedia(target.id, { csamReview })).toMatchObject({
+          url: target.url,
+          held: true,
+        });
+    }
+  );
+
+  it.each(CSAM_RESTRICTION_CASES.filter((c) => !c.restricts && !c.held))(
     'serves an image with $label to any moderator',
     async ({ mark }) => {
       await pg.exec(mark(target));
@@ -772,4 +792,40 @@ describe('rows sharing its url, its post text and its articles', () => {
       });
     }
   );
+});
+
+// civitai/civitai#10202: only the moderator routes open a held account's media.
+describe("a held account's image outside the moderator routes", () => {
+  const OWNER = 990100300;
+  const IMAGE = 990000300;
+  beforeAll(async () => {
+    await pg.exec(`INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
+      (${IMAGE}, 'key-${IMAGE}', 'Blocked', 'moderated', ${OWNER})`);
+  });
+
+  // heldUrlSql's default is cdn-access's rule for the public CDN; heldImageSql is the held-media rule.
+  it.each([
+    [
+      'the subject of a CSAM report',
+      `INSERT INTO "CsamReport" ("userId", details, images) VALUES (${OWNER}, '{}', '[]')`,
+    ],
+    [
+      'the secondary user of a CSAM report',
+      `INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100301, '{"secondaryUserId": "${OWNER}"}', '[]')`,
+    ],
+    ['under an evidence hold', `INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER})`],
+  ])('stays held everywhere outside the moderator routes when its owner is %s', async (_, mark) => {
+    await pg.exec(mark);
+    try {
+      const { rows } = await pg.query(`SELECT ${heldImageSql('i')} AS held,
+          ${semanticImageHeldText('i')} AS semantic, ${heldUserSql('i."userId"')} AS owner,
+          ${heldUrlSql('i."url"')} AS cdn
+        FROM "Image" i WHERE i.id = ${IMAGE}`);
+      expect(rows).toEqual([{ held: true, semantic: true, owner: true, cdn: true }]);
+      expect(await getRetractedMedia(IMAGE, { csamReview: false })).toMatchObject({ held: true });
+    } finally {
+      await pg.exec(`DELETE FROM "CsamReport" WHERE "userId" IN (${OWNER}, 990100301);
+        DELETE FROM "EvidenceHeldUser" WHERE "userId" = ${OWNER}`);
+    }
+  });
 });

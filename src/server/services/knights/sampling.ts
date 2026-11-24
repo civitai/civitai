@@ -1,7 +1,9 @@
 import { sql, type Kysely } from 'kysely';
 import {
   countOpenServableKnightItems,
+  imageSourceVisible,
   postNotPrivate,
+  readWithoutJit,
   servableImageContent,
 } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
@@ -219,17 +221,20 @@ export async function sampleImagesForKnights(
   const todo: { imageId: number; nsfw: boolean }[] = [];
   let room: number | undefined;
   for (const ids of batches(filter)) {
-    const images = await db
-      .selectFrom('Image as img')
-      .innerJoin('Post as p', 'p.id', 'img.postId')
-      .select(['img.id', 'img.nsfwLevel'])
-      .where(filter.column, 'in', ids)
-      .where(servableImageContent)
-      .where(postNotPrivate)
-      .where('img.ingestion', '=', 'Scanned')
-      .where('img.userId', '!=', FEEDBACK_CAPTURE_OWNER_ID)
-      .orderBy('img.id', 'asc')
-      .execute();
+    const images = await readWithoutJit(db, (trx) =>
+      trx
+        .selectFrom('Image as img')
+        .innerJoin('Post as p', 'p.id', 'img.postId')
+        .select(['img.id', 'img.nsfwLevel'])
+        .where(filter.column, 'in', ids)
+        .where(servableImageContent)
+        .where(postNotPrivate)
+        .where(imageSourceVisible)
+        .where('img.ingestion', '=', 'Scanned')
+        .where('img.userId', '!=', FEEDBACK_CAPTURE_OWNER_ID)
+        .orderBy('img.id', 'asc')
+        .execute()
+    );
     const drawn = images
       .map(({ id, nsfwLevel }) => ({ imageId: id, nsfw: nsfwLevel > sfwBrowsingLevelsFlag }))
       .filter(
@@ -300,21 +305,24 @@ export async function offerLeftPrivateImagesToKnights(
 
   let ownerRatings = 0;
   for (const ids of batches(filter)) {
-    const rated = await db
-      .selectFrom('Image as img')
-      .innerJoin('Post as p', 'p.id', 'img.postId')
-      .innerJoin('ImageRatingRequest as r', (join) =>
-        join.onRef('r.imageId', '=', 'img.id').onRef('r.userId', '=', 'img.userId')
-      )
-      .select('img.id')
-      .where(filter.column, 'in', ids)
-      // As when the owner rates: a moderator-locked level is not asked about.
-      .where('img.nsfwLevelLocked', '=', false)
-      // Only images Knights may show, read as the sampling half reads them.
-      .where(servableImageContent)
-      .where('img.ingestion', '=', 'Scanned')
-      .orderBy('img.id', 'asc')
-      .execute();
+    const rated = await readWithoutJit(db, (trx) =>
+      trx
+        .selectFrom('Image as img')
+        .innerJoin('Post as p', 'p.id', 'img.postId')
+        .innerJoin('ImageRatingRequest as r', (join) =>
+          join.onRef('r.imageId', '=', 'img.id').onRef('r.userId', '=', 'img.userId')
+        )
+        .select('img.id')
+        .where(filter.column, 'in', ids)
+        // As when the owner rates: a moderator-locked level is not asked about.
+        .where('img.nsfwLevelLocked', '=', false)
+        // The sampling half's content and source rules.
+        .where(servableImageContent)
+        .where(imageSourceVisible)
+        .where('img.ingestion', '=', 'Scanned')
+        .orderBy('img.id', 'asc')
+        .execute()
+    );
     if (rated.length === 0) continue;
     const outcomes = await enqueueKnightsItems(
       db,

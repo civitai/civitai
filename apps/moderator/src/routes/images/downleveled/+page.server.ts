@@ -5,6 +5,7 @@ import { parseQuery } from '$lib/server/query';
 import { getDownleveledImages } from '$lib/server/downleveled-review.service';
 import { SongRatingRefusedError, updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
 import { isRatingLevel } from '$lib/nsfw-levels';
+import { withheldRefusal } from '$lib/server/retracted-media';
 
 const querySchema = z.object({
   cursor: z.string().optional().catch(undefined),
@@ -33,6 +34,8 @@ export const actions: Actions = {
 
     if (!id) return fail(400, { error: 'Missing image id.' });
     if (!isRatingLevel(nsfwLevel)) return fail(400, { error: 'Invalid rating level.' });
+    const withheld = await withheldRefusal(locals.user, [id]);
+    if (withheld) return fail(403, { error: withheld, id });
 
     try {
       await updateImageNsfwLevel({

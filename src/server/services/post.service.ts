@@ -1,5 +1,11 @@
 import { ilikeContains } from '~/server/utils/ilike';
 import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-deletion';
+import { postsWithDeleteQueued } from '@civitai/db-queries/pending-deletes';
+import {
+  postUnpublishContextOf,
+  PUBLISHED_POST_CONTEXT,
+  type PostUnpublishContext,
+} from '~/server/utils/post-unpublish-context';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { Prisma } from '@prisma/client';
 import {
@@ -42,7 +48,7 @@ import {
   preventReplicationLag,
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import {
   announceReviewsInBackground,
   syncReviewsOfMovedPosts,
@@ -850,12 +856,7 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
   // Pass the same `db` client used above so the stash JOIN shares
   // `getDbWithoutLag`'s primary-routing right after an unpublish/republish.
   const unpublishContext: PostUnpublishContext = post.publishedAt
-    ? {
-        wasPublished: false,
-        unpublishedAt: null,
-        unpublishedBy: null,
-        parentModelId: null,
-      }
+    ? PUBLISHED_POST_CONTEXT
     : await getPostUnpublishContext({ id, db });
 
   return {
@@ -963,22 +964,6 @@ async function getPostModel({
   return version?.model ?? null;
 }
 
-export type PostUnpublishContext = {
-  // True when the post carries a `prevPublishedAt` stash — i.e. it was
-  // previously public, then unpublished via the parent model/version flow.
-  // Drives the restore-only UI in PostEditSidebar: when set, the post
-  // cannot be rescheduled, only republished at its original date.
-  wasPublished: boolean;
-  unpublishedAt: Date | null;
-  unpublishedBy: number | null;
-  // Surfaced via JOIN so the UI can build a link back to the parent model
-  // edit page (where the actual unpublish reason + custom message live).
-  // We deliberately don't surface the reason directly on the post —
-  // model-level reasons like "insufficient-description" don't always map
-  // onto the post itself, so showing them in the post alert is misleading.
-  parentModelId: number | null;
-};
-
 async function getPostUnpublishContext({
   id,
   db = dbRead,
@@ -1001,17 +986,12 @@ async function getPostUnpublishContext({
   `;
 
   const row = rows[0];
-  const metadata = (row?.metadata ?? {}) as Record<string, unknown>;
-  const prevPublishedAt = metadata.prevPublishedAt;
-  const rawUnpublishedAt = metadata.unpublishedAt;
-  const rawUnpublishedBy = metadata.unpublishedBy;
-
-  return {
-    wasPublished: !!prevPublishedAt,
-    unpublishedAt: typeof rawUnpublishedAt === 'string' ? new Date(rawUnpublishedAt) : null,
-    unpublishedBy: typeof rawUnpublishedBy === 'number' ? rawUnpublishedBy : null,
-    parentModelId: row?.modelId ?? null,
-  };
+  const queued = await postsWithDeleteQueued(kyselyOver(db), [id]);
+  return postUnpublishContextOf(
+    (row?.metadata ?? {}) as Record<string, unknown>,
+    row?.modelId ?? null,
+    queued.has(id)
+  );
 }
 
 /** Each song's stored lyric lines, in one read for all of them. */
@@ -1380,9 +1360,7 @@ export const createPost = async ({
     // A fresh post has never been unpublished — supply the
     // PostUnpublishContext defaults so the type matches getPostEditDetail
     // (which carries these via the getPostDetail spread).
-    wasPublished: false,
-    unpublishedAt: null,
-    unpublishedBy: null,
+    ...PUBLISHED_POST_CONTEXT,
     parentModelId: model?.id ?? null,
     parentModelName: model?.name ?? null,
     ownModelId: model?.userId === userId ? model.id : null,
@@ -1423,6 +1401,8 @@ async function assertSongsHaveGenres(postId: number) {
   if (post?.publishedAt && post.publishedAt <= new Date()) return;
   throw throwBadRequestError(SONG_GENRE_REQUIRED_MESSAGE);
 }
+
+export const POST_PUBLISH_REFUSED_ERROR = "This post can't be published right now.";
 
 export const updatePost = async ({
   id,
@@ -1546,6 +1526,8 @@ export const updatePost = async ({
       // authoritative. Propagate the value faithfully — including null —
       // rather than masking malformed stash data behind a truthy check.
       if (writtenRows.length > 0) {
+        // Kept for a review its delete waits on (trg_post_pending_delete_keep_unpublished).
+        if (!writtenRows[0].publishedAt) throw throwBadRequestError(POST_PUBLISH_REFUSED_ERROR);
         updated.publishedAt = writtenRows[0].publishedAt;
         publishedAtWritten = true;
       }
@@ -1708,7 +1690,17 @@ export const deletePost = async ({
   const {
     deleted: [post],
     kept: keptPost,
+    hidden: hiddenPost,
   } = await deletePostRows(kyselyOver(dbWrite), { ids: [id], actor });
+  await afterPostsUnpublish(hiddenPost.map(({ id: postId, userId }) => ({ postId, userId }))).catch(
+    (e: unknown) =>
+      logToAxiom({
+        type: 'error',
+        name: 'post-delete-unpublish-follow-ups-failed',
+        postId: id,
+        error: safeError(e),
+      })
+  );
   // Only a moderator hears that a delete in the post was kept; a member's reply never says so.
   const deleteAfterReview = !!viewerIsModerator && (keptPost.length > 0 || keptImages.length > 0);
 

@@ -58,9 +58,11 @@
       modActivity={result.modActivity}
       reactions={result.reactions}
     />
-    <ImageSignalsPanel
-      imageId={result.image.id}
-      remixSource={result.image.needsReview === 'remixSource'}
-    />
+    {#if !result.image.restricted}
+      <ImageSignalsPanel
+        imageId={result.image.id}
+        remixSource={result.image.needsReview === 'remixSource'}
+      />
+    {/if}
   {/key}
 {/if}
