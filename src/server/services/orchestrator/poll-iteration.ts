@@ -125,7 +125,6 @@ export async function pollIterationWorkflow({
     );
     const wfData = new WorkflowData(normalized as any, {
       domain: domainFlags,
-      nsfwEnabled: !!ctx?.user?.showNsfw,
       holdUnrated: true,
     });
     rawImages = wfData.steps[0]?.output ?? [];
@@ -250,8 +249,6 @@ function blockedReasonToMessage(blockedReason: string | undefined): string | und
       return 'This image requires a membership upgrade to view. Upgrade your membership to unlock it.';
     case 'siteRestricted':
       return 'This image was rated mature and is not available on this site. Open it on civitai.red to use it.';
-    case 'enableNsfw':
-      return 'This image was rated mature. Enable mature content in your settings to view it.';
     case 'NsfwLevel':
     case 'NSFWLevel':
       return 'One or more resources used here cannot generate mature content. Try a different model or a tamer prompt.';

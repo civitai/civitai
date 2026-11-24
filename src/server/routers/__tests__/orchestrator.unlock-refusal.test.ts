@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
     steps: [{ $type: 'imageGen', name: '$0', output: { images: [{ id: '1', nsfwLevel: 'x' }] } }],
   })),
   patchWorkflows: vi.fn(async () => undefined),
+  queryWorkflows: vi.fn(async (_query: { hideMatureContent: boolean }) => ({ items: [] })),
 }));
 
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
@@ -22,6 +23,7 @@ vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   updateWorkflow: h.updateWorkflow,
   getWorkflow: h.getWorkflow,
   patchWorkflows: h.patchWorkflows,
+  queryWorkflows: h.queryWorkflows,
 }));
 
 import { orchestratorRouter } from '~/server/routers/orchestrator.router';
@@ -64,20 +66,13 @@ describe('orchestrator mature unlock refusal', () => {
     expect(h.updateWorkflow).not.toHaveBeenCalled();
   });
 
-  it('refuses an unlock for a user with mature content off', async () => {
-    const error = await errorOf(caller({ domain: 'red', showNsfw: false }).updateWorkflow(unlock));
-    expect(error).toEqual({
-      code: 'BAD_REQUEST',
-      message: expect.stringMatching(/account settings/),
-    });
-    expect(h.getWorkflow).not.toHaveBeenCalled();
-    expect(h.updateWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('POSITIVE CONTROL: unlocks on red with mature content on', async () => {
-    await caller({ domain: 'red', showNsfw: true }).updateWorkflow(unlock);
-    expect(h.updateWorkflow).toHaveBeenCalledTimes(1);
-  });
+  it.each([true, false])(
+    'unlocks on red whatever the mature content setting (%s)',
+    async (showNsfw) => {
+      await caller({ domain: 'red', showNsfw }).updateWorkflow(unlock);
+      expect(h.updateWorkflow).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('refuses a workflow patch that sets allowMatureContent', async () => {
     const error = await errorOf(
@@ -92,5 +87,22 @@ describe('orchestrator mature unlock refusal', () => {
     );
     expect(error?.code).toBe('BAD_REQUEST');
     expect(h.patchWorkflows).not.toHaveBeenCalled();
+  });
+});
+
+describe('orchestrator reads: mature content follows the domain, not the setting', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const hidesMature = async (domain: 'green' | 'red', showNsfw: boolean) => {
+    await caller({ domain, showNsfw }).queryWorkflowsByTags({});
+    return h.queryWorkflows.mock.calls[0][0].hideMatureContent;
+  };
+
+  it('hides mature outputs on green', async () => {
+    expect(await hidesMature('green', true)).toBe(true);
+  });
+
+  it.each([true, false])('shows them on red whatever the setting (%s)', async (showNsfw) => {
+    expect(await hidesMature('red', showNsfw)).toBe(false);
   });
 });

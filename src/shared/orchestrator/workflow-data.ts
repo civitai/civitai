@@ -42,7 +42,6 @@ export const defaultWorkflowCost: WorkflowCost = {
 // =============================================================================
 export interface WorkflowDataOptions {
   domain: Record<ColorDomain, boolean>;
-  nsfwEnabled: boolean;
   holdUnrated?: boolean;
 }
 
@@ -409,7 +408,6 @@ export abstract class BlobData {
     step,
     index,
     domain,
-    nsfwEnabled,
     holdUnrated,
   }: BlobConstructorArgs) {
     Object.assign(this, data);
@@ -431,7 +429,11 @@ export abstract class BlobData {
       this.blockedReason = 'siteRestricted';
     }
 
-    if (data.blockedReason === 'none') this.blockedReason = null;
+    // Off green, an output withheld as 'MatureContent' (workflow created with mature content off,
+    // e.g. on .com) goes through the rules below like any other, so a rated-mature one can offer its
+    // owner the unlock; when no rule matches it keeps 'MatureContent'.
+    const withheldMature = !domain.green && this.blockedReason === 'MatureContent';
+    if (data.blockedReason === 'none' || withheldMature) this.blockedReason = null;
 
     if (!this.blockedReason) {
       // Stored as a blockedReason so every `!blockedReason` check downstream treats the output as
@@ -446,9 +448,9 @@ export abstract class BlobData {
         this.blockedReason = 'privateGen';
       } else if (isMature(data.nsfwLevel)) {
         if (domain.green) this.blockedReason = 'siteRestricted';
-        else if (!nsfwEnabled) this.blockedReason = 'enableNsfw';
         else if (allowMatureContent === false) this.blockedReason = 'canUpgrade';
       }
+      if (withheldMature && !this.blockedReason) this.blockedReason = 'MatureContent';
     }
   }
 

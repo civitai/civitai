@@ -40,7 +40,7 @@ const workflow = ({
       metadata: {},
       steps: steps ?? [{ $type: 'comfy', name: '$0', status, metadata: {}, output }],
     } as any,
-    { domain: { green: false } as any, nsfwEnabled: true }
+    { domain: { green: false } as any }
   );
 
 describe('WorkflowData.awaitingOutput', () => {
