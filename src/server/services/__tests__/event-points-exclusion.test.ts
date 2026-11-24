@@ -22,7 +22,9 @@ describe('setEventPointsExclusion', () => {
 
   beforeAll(async () => {
     db = new PGlite();
-    await db.exec(`CREATE TABLE "User" (id int PRIMARY KEY, flags int NOT NULL DEFAULT 0)`);
+    await db.exec(
+      `CREATE TABLE "User" (id int PRIMARY KEY, flags int NOT NULL DEFAULT 0, meta jsonb)`
+    );
     const raw = pgliteRaw(db);
     (dbMock.dbWrite.$executeRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       raw.executeRaw
@@ -50,6 +52,21 @@ describe('setEventPointsExclusion', () => {
     expect(await flagsOf(USER)).toBe(UserFlag.DisablePayout);
 
     expect(await flagsOf(OTHER)).toBe(UserFlag.DisablePayout);
+  });
+
+  it('drops the exclusion start when lifting the flag, and keeps it when setting it', async () => {
+    const meta = { eventPointsExcludedFrom: '2026-11-25', other: 1 };
+    const metaOf = async () =>
+      (await db.query<{ meta: unknown }>(`SELECT meta FROM "User" WHERE id = $1`, [USER])).rows[0]
+        .meta;
+    await db.query(`UPDATE "User" SET meta = $1::jsonb WHERE id = $2`, [
+      JSON.stringify(meta),
+      USER,
+    ]);
+    await setEventPointsExclusion({ id: USER, setTo: true });
+    expect(await metaOf()).toEqual(meta);
+    await setEventPointsExclusion({ id: USER, setTo: false });
+    expect(await metaOf()).toEqual({ other: 1 });
   });
 
   // Excluded, the owner's hats stop earning and they leave their team's roster at once; let back

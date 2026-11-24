@@ -17,6 +17,9 @@ export const UserFlag = {
   ExcludeFromEventPoints: 1 << 1, // 2
 } as const;
 
+/** The `User.meta` key holding the ExcludeFromEventPoints start day; read by eventPointsExcludedFromSql. */
+export const EVENT_POINTS_EXCLUDED_FROM_META_KEY = 'eventPointsExcludedFrom';
+
 export type UserFlagValue = (typeof UserFlag)[keyof typeof UserFlag];
 
 export const userFlagLabels: Record<number, string> = {

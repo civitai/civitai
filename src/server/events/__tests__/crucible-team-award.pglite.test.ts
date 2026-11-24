@@ -308,7 +308,6 @@ describe('team points for accepted crucible entrants', () => {
     );
   });
 
-  // The accept is now: a start after today's UTC day keeps it, one on today's drops it.
   it.each([
     ["keeps an award earned before the entrant's exclusion start", 1, 1000],
     ['drops an award earned on or after it', 0, 0],

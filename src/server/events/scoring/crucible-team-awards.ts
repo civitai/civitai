@@ -159,8 +159,7 @@ WHERE event = {event:String}
 /**
  * The entries that may still count: in their crucible, the crucible not cancelled, the image one
  * judges can see, and the award earned before the entrant's event-points exclusion start (banned or
- * deleted: never). Read now, so an
- * entry hidden after its accept (a ToS flag, a review hold, an unpublished post, a re-rating) stops
+ * deleted: the whole season). Read now, so an entry hidden after its accept (a ToS flag, a review hold, an unpublished post, a re-rating) stops
  * counting at the next read with nothing revoking it, and counts again once it is shown.
  */
 async function countedEntryIds(

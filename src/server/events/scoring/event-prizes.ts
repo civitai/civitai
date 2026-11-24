@@ -91,8 +91,8 @@ export function comebackCup(teams: ComebackTeam[], { baseline, week, floorPerDay
 
 type PrizeEvent = { name: string; startDate: Date; endDate: Date; teams: readonly string[] };
 
-// Play points only, from the daily snapshot, without the users the standings hide, from the day they
-// are hidden.
+// Play points only, from the daily snapshot; a user the standings hide counts only for days before
+// their exclusion start.
 async function comebackTeams(event: PrizeEvent, { baseline, week }: CupWindows) {
   const rows = await dbWrite.$queryRaw<{ team: string; baseline: bigint; week: bigint }[]>`
     SELECT d.team,

@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { TURF_SCORE_TIER_KEY } from '~/server/events/turf/config';
-import { UserFlag } from '~/shared/constants/user-flags.constants';
+import {
+  EVENT_POINTS_EXCLUDED_FROM_META_KEY,
+  UserFlag,
+} from '~/shared/constants/user-flags.constants';
 
 /** The user aliased `u` is not banned, deleted or excluded from event points. */
 const inGoodStandingSql = (u: Prisma.Sql) =>
@@ -10,8 +13,9 @@ const inGoodStandingSql = (u: Prisma.Sql) =>
 // A per-user start for the ExcludeFromEventPoints flag: from this UTC day on, the user neither gives
 // nor earns event points; what they earned before it stands. Set as an ISO date ('2026-11-25') or a
 // UTC midnight timestamp ('2026-11-25T00:00:00.000Z'). A flagged user without it, or with any
-// other value, is excluded for the whole season.
-export const EVENT_POINTS_EXCLUDED_FROM_META_KEY = 'eventPointsExcludedFrom';
+// other value, is excluded for the whole season. Only the settled points read it (referee, standings,
+// the Cup, crucible awards); live earning, crucible accepts, prizes and badges read the flag as it is
+// now, so set the flag on or after the start day, not before it.
 const EXCLUDED_FROM_FORMAT =
   '^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])(T00:00(:00(\\.0+)?)?Z)?$';
 
