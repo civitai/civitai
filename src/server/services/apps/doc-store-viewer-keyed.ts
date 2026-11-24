@@ -89,31 +89,6 @@ function derivationSecret(): string {
 }
 
 /**
- * The key deriver of one viewer-keyed collection, for the MARK MIGRATION
- * (`migrateMarksToDocs` in `storage-mark-migration.service.ts`): each copied vote lands at exactly
- * the key its voter's own `@me` call derives, so the voter reaches it after the switch opens.
- * Throws the `503` (`viewer_keys_unconfigured`) while the derivation secret is unset, as every
- * `@me` op does: a copy must never land at a key no viewer can reach.
- */
-export function viewerKeyDeriver(args: {
-  appId: string;
-  ns: string;
-  collection: string;
-  mode: AppStorageKeyedBy;
-}): (parent: string | null, viewerUid: number) => string {
-  const secret = derivationSecret();
-  return (parent, viewerUid) =>
-    deriveViewerKey(secret, {
-      appId: args.appId,
-      ns: args.ns,
-      collection: args.collection,
-      mode: args.mode,
-      parent: args.mode === 'parent+viewer' ? parent : null,
-      viewerUid,
-    });
-}
-
-/**
  * Whether viewers may write the viewer-keyed collection `collection`: the Flipt flag
  * `app-blocks-storage-viewer-keyed-open`, per app with the collection as context, created DEFAULT ON
  * with a closed segment listing the migration targets until each is verified. Fails closed: an

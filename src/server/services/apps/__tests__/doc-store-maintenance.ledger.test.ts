@@ -38,20 +38,15 @@ describe('document-store maintenance is reachable from its five callers only', (
     ]);
   });
 
-  it('the maintenance object is exactly the thirteen maintenance operations; the viewer store has none', () => {
+  it('the maintenance object is exactly the eight maintenance operations; the viewer store has none', () => {
     const MAINTENANCE = [
-      'checkMarkMigration',
-      'copyMarksToDocs',
       'expireMaintDumps',
-      'freezeMarks',
       'listMaintRuns',
       'listReviewAppIds',
       'migrateDocuments',
       'purgeApp',
-      'purgeCollection',
       'purgeDump',
       'purgeReview',
-      'verifyMarkMigration',
       'wipeAccount',
     ];
     expect(Object.keys(createDocStoreMaintenance({ db: null })).sort()).toEqual(MAINTENANCE);

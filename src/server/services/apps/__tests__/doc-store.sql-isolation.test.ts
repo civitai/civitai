@@ -465,9 +465,9 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-store.functional.ts',
     // Sets documents' rating columns directly (no rater yet) and reads back what a write stored.
     'server/services/apps/__tests__/doc-store.levels.pglite.test.ts',
-    // Seeds mark times, reads back the copies, usage, tombstones and run records a mark migration
-    // and a purge wrote, and removes or adds a copy to make the verify see a mismatch.
-    'server/services/apps/__tests__/doc-store.mark-migration.pglite.test.ts',
+    // Seeds the run records the removed rollout step 4 tooling wrote (no store op writes them now),
+    // ages them for the retention, and reads back what an account wipe left in them.
+    'server/services/apps/__tests__/doc-store.maint-runs.pglite.test.ts',
     // Reads back the mark sequence each mark, unmark and increment stamped, and the order of the
     // statements that took it.
     'server/services/apps/__tests__/doc-store.mark-seq.pglite.test.ts',
