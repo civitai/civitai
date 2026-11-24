@@ -152,6 +152,20 @@ export function parseLevelStreamMaxRecords(raw: string | undefined): number {
   return n;
 }
 
+/**
+ * The level streams' deploy configuration, or null while they are off. The bound
+ * ({@link parseLevelStreamMaxRecords}) is parsed ONLY when the allowlist names a client, so a
+ * malformed bound cannot stop the adapter while the feature is off; once it is on, it throws.
+ */
+export function parseLevelStreamConfig(env: {
+  clients: string | undefined;
+  maxRecords: string | undefined;
+}): { clients: ReadonlySet<string>; maxRecords: number } | null {
+  const clients = parseSharedLevelClients(env.clients);
+  if (clients.size === 0) return null;
+  return { clients, maxRecords: parseLevelStreamMaxRecords(env.maxRecords) };
+}
+
 /** A shared collection major that resolves now, with what a level stream needs of it. */
 export type SharedLevelCollection = Pick<
   CollectionStream,
@@ -467,7 +481,9 @@ export function createLevelFeed(opts: LevelFeedOptions) {
       family: digest,
       bound,
     } as const;
-    if (prev && !full && seq === prev.seq && prev.appBlockId === s.appBlockId) {
+    // Same head, same schemas, same bound: nothing moved. (`appBlockId` is the app's id, and an app
+    // change is `cursor_expired` above, so the block cannot move within one stream.)
+    if (prev && !full && seq === prev.seq) {
       return { next: prev, entities: new Map() };
     }
 
@@ -644,10 +660,6 @@ export function createLevelFeed(opts: LevelFeedOptions) {
                 : { delete: c.delete, cursor: at };
             }
             position = nextCursor;
-          } else if (next.appBlockId !== before.appBlockId) {
-            // The block moved with nothing to send: saved, so the progress cursor is one a resume
-            // is bound to.
-            position = await guarded(() => save(next));
           }
         }
         // After the poll's changes, so a consumer holds all of them when it reads the heads.

@@ -103,8 +103,7 @@ import {
   createLevelFeed,
   createLevelStreamFill,
   createLevelStreamMetrics,
-  parseLevelStreamMaxRecords,
-  parseSharedLevelClients,
+  parseLevelStreamConfig,
 } from '~/server/registry-adapter/level-feed';
 import {
   PRIVATE_STATE_RETENTION_SECONDS,
@@ -314,30 +313,32 @@ function main() {
           onError,
         })
       : undefined;
-  const levelClients = parseSharedLevelClients(process.env.REGISTRY_ADAPTER_SHARED_LEVEL_CLIENTS);
-  const levelMaxRecords = parseLevelStreamMaxRecords(
-    process.env.REGISTRY_ADAPTER_LEVEL_STREAM_MAX_RECORDS
-  );
+  // The bound is read only while the allowlist names a client: a bad value cannot stop the
+  // adapter while level streams are off, and refuses to start once they are on.
+  const levelConfig = parseLevelStreamConfig({
+    clients: process.env.REGISTRY_ADAPTER_SHARED_LEVEL_CLIENTS,
+    maxRecords: process.env.REGISTRY_ADAPTER_LEVEL_STREAM_MAX_RECORDS,
+  });
   console.log(
-    levelClients.size > 0
-      ? `registry-adapter: level streams ON for clients: ${[...levelClients].join(
+    levelConfig
+      ? `registry-adapter: level streams ON for clients: ${[...levelConfig.clients].join(
           ', '
-        )} (bound ${levelMaxRecords} records)`
+        )} (bound ${levelConfig.maxRecords} records)`
       : 'registry-adapter: level streams off (REGISTRY_ADAPTER_SHARED_LEVEL_CLIENTS unset)'
   );
   let levelDocs: ReturnType<typeof createLevelFeed> | undefined;
-  if (levelClients.size > 0) {
+  if (levelConfig) {
     const fill = createLevelStreamFill();
     createLevelStreamMetrics(metricsRegistry, fill);
     serveMetrics('level stream');
     levelDocs = createLevelFeed({
-      clients: levelClients,
+      clients: levelConfig.clients,
       source: liveLevelDocSource(),
       resolve: resolveSharedLevelFromCatalog(readApps, isSharedDocLevelsOn),
       store,
       pollMs,
       sleep: abortableSleep,
-      maxRecords: levelMaxRecords,
+      maxRecords: levelConfig.maxRecords,
       fill,
       onError,
     });

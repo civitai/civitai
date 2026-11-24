@@ -13,6 +13,7 @@ import {
   createLevelFeed,
   createLevelStreamFill,
   createLevelStreamMetrics,
+  parseLevelStreamConfig,
   parseLevelStreamMaxRecords,
   parseSharedLevelClients,
 } from '~/server/registry-adapter/level-feed';
@@ -655,6 +656,30 @@ describe('the bound: a board past it keeps each stream’s newest documents by k
     expect(() => parseLevelStreamMaxRecords('1500')).toThrow();
   });
 
+  it('🔴 the bound is read only while the allowlist names a client: malformed and off starts, malformed and on refuses', () => {
+    for (const maxRecords of ['banana', '2000', '-5', '']) {
+      for (const clients of [undefined, '', ' , ']) {
+        expect(parseLevelStreamConfig({ clients, maxRecords })).toBeNull();
+      }
+    }
+    expect(() => parseLevelStreamConfig({ clients: LEVEL_CLIENT, maxRecords: 'banana' })).toThrow(
+      /REGISTRY_ADAPTER_LEVEL_STREAM_MAX_RECORDS/
+    );
+    expect(() => parseLevelStreamConfig({ clients: LEVEL_CLIENT, maxRecords: '2000' })).toThrow(
+      /REGISTRY_ADAPTER_LEVEL_STREAM_MAX_RECORDS/
+    );
+    // Positive control: on, with a valid bound or none.
+    expect(
+      parseLevelStreamConfig({ clients: `${LEVEL_CLIENT},${OTHER_SERVICE}`, maxRecords: '2017' })
+    ).toEqual({
+      clients: new Set([LEVEL_CLIENT, OTHER_SERVICE]),
+      maxRecords: 2_017,
+    });
+    expect(
+      parseLevelStreamConfig({ clients: LEVEL_CLIENT, maxRecords: undefined })?.maxRecords
+    ).toBe(2_500);
+  });
+
   it('🔴 past the bound: the newest by key; a delete and a re-rating inside the window backfill the next-newest from beyond it', async () => {
     seedMany(BOUND + 4);
     const run = await open(4);
@@ -689,6 +714,19 @@ describe('the bound: a board past it keeps each stream’s newest documents by k
     expect(text).toContain(`registry_adapter_level_stream_records{level="4"} ${BOUND}`);
     await close(run);
     expect(await registry.metrics()).not.toContain('level="4"');
+  });
+
+  it('🔴 a new document above the floor of a full window pushes the lowest served key out, as a Delete', async () => {
+    seedMany(BOUND + 2);
+    const run = await open(4);
+    const held = keysOf(run.events) as string[];
+    // The window: key(2) … key(BOUND + 1); key(0) and key(1) lie beyond it.
+    expect([held.length, held[0], held[held.length - 1]]).toEqual([BOUND, key(BOUND + 1), key(2)]);
+    put(key(BOUND + 2), { t: 'doc-new-top' }, 4);
+    const batch = await poll(run);
+    expect([deleted(batch), keysOf(batch)]).toEqual([[urnOf(key(2))], [key(BOUND + 2)]]);
+    expect(fill.byLevel().get('4')).toEqual({ records: BOUND, ratio: 1 });
+    await close(run);
   });
 
   it('positive control: a board under the bound is held whole and reads below 1', async () => {
