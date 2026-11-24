@@ -47,9 +47,11 @@ export const GET: RequestHandler = async ({ locals, request, url, fetch }) => {
     error(404, 'Dataset image not found.');
   }
 
+  const nsfwLevel = upstream.headers.get('x-nsfw-level');
   return new Response(upstream.body, {
     headers: {
       'content-type': contentType,
+      ...(nsfwLevel ? { 'x-nsfw-level': nsfwLevel } : {}),
       // Blobs are immutable per key; let the browser cache within the session (private — it's the user's data).
       'cache-control': 'private, max-age=3600',
     },

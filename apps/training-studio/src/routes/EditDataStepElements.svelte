@@ -14,7 +14,7 @@
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { pool } from '$lib/pool';
-  import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
+  import { blobPreview, directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { isAbort } from '$lib/upload';
   import type { EditGenerationItem, EditImageOption } from '$lib/edit-helpers-core';
   import '$lib/civitai-elements';
@@ -202,10 +202,10 @@
     filter = 'all';
     notice = `${plural(added.length, 'pair')} added from your generations.`;
     void pool(added, 4, async (p) => {
-      const url = await blobPreviewUrl(p.before.blobUrl!, p.before.sourceWorkflowId!);
+      const { url, nsfwLevel } = await blobPreview(p.before.blobUrl!, p.before.sourceWorkflowId!);
       if (!url) return;
       if (!pairById(p.id)) return URL.revokeObjectURL(url);
-      patchImg(p.id, 'before', { previewUrl: url });
+      patchImg(p.id, 'before', { previewUrl: url, ...(nsfwLevel ? { nsfwLevel } : {}) });
     });
   }
 
@@ -237,10 +237,12 @@
     ]);
     void pool(previews, 4, async ({ id, side, img }) => {
       const direct = directDatasetUrl(img.blobId!);
-      const url = direct ?? (await blobPreviewUrl(img.blobId!, img.sourceWorkflowId!));
+      const { url, nsfwLevel } = direct
+        ? { url: direct }
+        : await blobPreview(img.blobId!, img.sourceWorkflowId!);
       if (!url) return;
       if (!pairById(id)) return direct ? undefined : URL.revokeObjectURL(url);
-      patchImg(id, side, { previewUrl: url });
+      patchImg(id, side, { previewUrl: url, ...(nsfwLevel ? { nsfwLevel } : {}) });
     });
   }
 

@@ -2,7 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import { IconCheck, IconArrowLeft } from '@tabler/icons-svelte';
   import { backend, navigate } from '$lib/host';
-  import { isMatureNsfwLevel } from '$lib/buzz-balance.svelte';
+  import { isMatureNsfwLevel, ratingBreakdown } from '$lib/nsfw-rating';
   import { submitNotice } from '$lib/submit-notice.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
@@ -154,6 +154,12 @@
           (p) => isMatureNsfwLevel(p.before.nsfwLevel) || isMatureNsfwLevel(p.after?.nsfwLevel)
         ).length
       : images.filter((i) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel)).length
+  );
+  // A pair counts once whatever its two sides were rated, so pairs get no breakdown.
+  const matureRatings = $derived(
+    trainsPairs
+      ? []
+      : ratingBreakdown(images.filter(isTrainable).map((i) => i.nsfwLevel)).filter((r) => r.mature)
   );
 
   // The blobs the submit sends (buildTrainingRuns / pairItems), keyed order-free.
@@ -505,6 +511,7 @@
       {repeated}
       {trainsPairs}
       matureCount={reviewMatureCount}
+      {matureRatings}
       readiness={readinessView}
       {readinessUnusableCount}
       onCheckReadinessAgain={() => readinessRound++}

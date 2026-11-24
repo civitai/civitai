@@ -1,5 +1,6 @@
 import { pickAiToolkitOptions } from '@civitai/shared/training-options';
 import { findTrigger, withTrigger } from '$lib/training-trigger';
+import { asNsfwRating, ratingBreakdown, type NsfwRating, type RatingCount } from '$lib/nsfw-rating';
 export { findTrigger, promptHasTrigger, withTrigger } from '$lib/training-trigger';
 import {
   KOHYA_PARAM_FIELDS,
@@ -277,7 +278,36 @@ export function kohyaSeedCard(
 
 export type ImgStatus = 'uploading' | 'uploaded' | 'blocked' | 'error';
 
-export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature' | 'failed';
+const STATUS_FILTERS = ['all', 'labeled', 'unlabeled', 'mature', 'failed'] as const;
+/** `rating:<level>` shows the images the upload scan gave that one rating. */
+export type DatasetFilter = (typeof STATUS_FILTERS)[number] | `rating:${NsfwRating}`;
+
+export function asDatasetFilter(value: string): DatasetFilter | undefined {
+  if ((STATUS_FILTERS as readonly string[]).includes(value)) return value as DatasetFilter;
+  const rating = value.startsWith('rating:')
+    ? asNsfwRating(value.slice('rating:'.length))
+    : undefined;
+  return rating && `rating:${rating}`;
+}
+
+const ratingOfFilter = (filter: DatasetFilter) =>
+  filter.startsWith('rating:') ? asNsfwRating(filter.slice('rating:'.length)) : undefined;
+
+/** Under a `rating:` filter, whether a trainable image has that rating; undefined for any other filter. */
+export function matchesRatingFilter(img: Img, filter: DatasetFilter): boolean | undefined {
+  const rating = ratingOfFilter(filter);
+  if (!rating) return undefined;
+  return isTrainable(img) && asNsfwRating(img.nsfwLevel) === rating;
+}
+
+/** The rating filters to offer: each rating among the trainable images, plus the selected one at 0
+ *  once the dataset no longer has it, so the selection stays visible. */
+export function ratingChoices(images: Img[], filter: DatasetFilter): RatingCount[] {
+  const totals = ratingBreakdown(images.filter(isTrainable).map((i) => i.nsfwLevel));
+  const selected = ratingOfFilter(filter);
+  if (!selected || totals.some((r) => r.rating === selected)) return totals;
+  return [...totals, ...ratingBreakdown([selected]).map((r) => ({ ...r, count: 0 }))];
+}
 
 /** File-browser order — natural (`clip2` before `clip10`) and case-insensitive. A zip's entry order is
  *  whatever the archiver wrote (a tester reported theirs arriving sorted by video duration; their zip
