@@ -165,7 +165,6 @@ beforeAll(async () => {
 beforeEach(() => {
   patterns.current = null;
   scanner.verdict = 'clear';
-  scannerVerdicts.clear();
   dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...v: unknown[]
@@ -175,9 +174,7 @@ beforeEach(() => {
   }) as never);
 });
 
-const { getRetractedMedia, scannerVerdicts } = await import(
-  '~/server/services/retracted-media.service'
-);
+const { getRetractedMedia } = await import('~/server/services/retracted-media.service');
 
 /** Who sees the image: `none` (refused to every moderator), `anyMod` (any moderator) or `cleared`
  *  (only a moderator cleared for CSAM review). */
@@ -207,19 +204,13 @@ describe('getRetractedMedia', () => {
     });
   });
 
-  it('keeps an image the scanner marks, or cannot read, to cleared moderators', async () => {
-    for (const verdict of ['hit', null] as const) {
+  // The moderator-view rule reads Postgres only: no scanner verdict, read or missing, withholds.
+  it('serves an image to any moderator whatever the scanner says, or when it cannot answer', async () => {
+    for (const verdict of ['hit', null, 'none'] as const) {
       scanner.verdict = verdict;
-      scannerVerdicts.clear();
-      await expectTiers('cleared', [1]);
-      expect(await getRetractedMedia(1, { csamReview: false })).toBeNull();
+      expect({ verdict, tier: await tierOf(1) }).toEqual({ verdict, tier: 'anyMod' });
     }
-    expect(readScannerVerdict).toHaveBeenCalledWith(1);
-  });
-
-  it('serves an image the scanner has no verdict for to any moderator', async () => {
-    scanner.verdict = 'none';
-    await expectTiers('anyMod', [1]);
+    expect(readScannerVerdict).not.toHaveBeenCalled();
   });
 
   it('survives a report with a malformed secondary user or image list', async () => {
@@ -231,78 +222,39 @@ describe('getRetractedMedia', () => {
     await expectTiers('anyMod', [4]);
   });
 
-  it('reads any other reason as a signal while the patterns are missing', async () => {
-    await expectTiers('cleared', [10]);
-  });
-
-  it('reads a reason by the private patterns: known non-minor is open to any moderator, a signal to cleared ones', async () => {
-    patterns.current = { signal: [], nonMinor: [/^scan-reason-/u] };
+  // The block-reason patterns are not read here: only a CSAM block reason withholds.
+  it('serves any block reason but CSAM to any moderator, with or without the patterns', async () => {
     await expectTiers('anyMod', [10]);
-    patterns.current = { signal: [/^scan-reason-x$/u], nonMinor: [/^scan-reason-/u] };
-    await expectTiers('cleared', [10]);
+    patterns.current = { signal: [/^scan-reason-/u], nonMinor: [] };
+    await expectTiers('anyMod', [10]);
   });
 
-  // A minor flag alone lets any moderator see the media; only a CSAM signal, report or hold keeps it
-  // to cleared moderators. The private patterns name which block reasons are minor-only.
-  describe('a block reason the patterns list as minor-only', () => {
-    const MINOR = { signal: [], nonMinor: [], minor: [/^scan-reason-/u] };
-
-    it('is open to any moderator', async () => {
-      patterns.current = MINOR;
-      await expectTiers('anyMod', [10]);
-    });
-
-    it('stays with cleared moderators while the patterns have no minor section', async () => {
-      patterns.current = { signal: [], nonMinor: [] };
-      await expectTiers('cleared', [10]);
-    });
-
-    it('stays with cleared moderators when the scanner marks the image as CSAM', async () => {
-      patterns.current = MINOR;
-      scanner.hits.add(10);
-      try {
-        await expectTiers('cleared', [10]);
-      } finally {
-        scanner.hits.delete(10);
-      }
-    });
-
-    it('stays with cleared moderators when a CSAM report lists the image', async () => {
-      patterns.current = MINOR;
+  it('keeps an image a CSAM report lists to cleared moderators, whatever its block reason', async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId")
+        VALUES (990000120, 'key-990000120', 'Blocked', 'scan-reason-y', 990100120);
+      INSERT INTO "CsamReport" ("userId", details, images) VALUES (NULL, '{}', '[990000120]');
+    `);
+    try {
+      await expectTiers('cleared', [990000120]);
+    } finally {
       await pg.exec(`
-        INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId")
-          VALUES (990000120, 'key-990000120', 'Blocked', 'scan-reason-y', 990100120);
-        INSERT INTO "CsamReport" ("userId", details, images) VALUES (NULL, '{}', '[990000120]');
+        DELETE FROM "CsamReport" WHERE images = '[990000120]';
+        DELETE FROM "Image" WHERE id = 990000120;
       `);
-      try {
-        await expectTiers('cleared', [990000120]);
-      } finally {
-        await pg.exec(`
-          DELETE FROM "CsamReport" WHERE images = '[990000120]';
-          DELETE FROM "Image" WHERE id = 990000120;
-        `);
-      }
-    });
+    }
+  });
 
-    it('does not open a reason a signal pattern also matches', async () => {
-      patterns.current = { ...MINOR, signal: [/^scan-reason-x$/u] };
-      await expectTiers('cleared', [10]);
-    });
-
-    // The SQL and the block-reason read decide together: over the same reasons, the route gives
-    // each the access the rule names.
-    it.each([
-      ['a CSAM block reason', 11, 'none'],
-      // civitai/civitai#10202: a block with no reason no longer withholds.
-      ['a block with no reason', 4, 'anyMod'],
-      ['moderated', 1, 'anyMod'],
-      ['tos', 2, 'anyMod'],
-      ['AiNotVerified', 3, 'anyMod'],
-      ['a minor-only reason', 10, 'anyMod'],
-    ])('gives %s the access the rule names', async (_, id, tier) => {
-      patterns.current = MINOR;
-      await expectTiers(tier, [id]);
-    });
+  it.each([
+    ['a CSAM block reason', 11, 'none'],
+    // civitai/civitai#10202: a block with no reason no longer withholds.
+    ['a block with no reason', 4, 'anyMod'],
+    ['moderated', 1, 'anyMod'],
+    ['tos', 2, 'anyMod'],
+    ['AiNotVerified', 3, 'anyMod'],
+    ['an unlisted reason', 10, 'anyMod'],
+  ])('gives %s the access the rule names', async (_, id, tier) => {
+    await expectTiers(tier, [id]);
   });
 
   it('never serves held media, which the held-media route serves', async () => {
@@ -320,8 +272,9 @@ describe('getRetractedMedia', () => {
     await expectTiers('none', [999]);
   });
 
-  it('keeps an image under an evidence hold to cleared moderators', async () => {
-    await expectTiers('cleared', [18]);
+  // An evidence hold is not a CSAM mark of the row: it does not withhold.
+  it('serves an image under an evidence hold to any moderator', async () => {
+    await expectTiers('anyMod', [18]);
   });
 
   it('serves a minor review flag to any moderator, PG included', async () => {
@@ -340,8 +293,8 @@ describe('getRetractedMedia', () => {
     await expectTiers('cleared', [27]);
   });
 
-  it('keeps an image whose label item is on a csam hold to cleared moderators', async () => {
-    await expectTiers('cleared', [28]);
+  it('serves an image whose label item is on a csam hold to any moderator', async () => {
+    await expectTiers('anyMod', [28]);
   });
 
   it('serves an image with only an automated review flag, minor or clean, to any moderator', async () => {
@@ -396,12 +349,8 @@ describe('a url retracted by a deny upgraded later', () => {
     `);
   });
 
-  it('keeps a blocked image on it, or on one with no retraction time, to cleared moderators', async () => {
-    await expectTiers('cleared', [990000301, 990000302, 990000304]);
-  });
-
-  it('leaves a blocked image on an outright retraction open to any moderator', async () => {
-    await expectTiers('anyMod', [990000303]);
+  it('serves a blocked image on it, on one with no retraction time, or on an outright retraction to any moderator', async () => {
+    await expectTiers('anyMod', [990000301, 990000302, 990000304, 990000303]);
   });
 });
 
@@ -488,14 +437,14 @@ describe('copies sharing bytes with a restricted image', () => {
           `INSERT INTO "CsamReport" ("userId", details, images, "reportSentAt") VALUES (990100199, '{}', '[990000101]', now())`
         ),
     ],
-    [
-      'a held row on the same url',
-      990000101,
-      () => pg.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (990000102)`),
-    ],
   ])('keeps an image with %s to cleared moderators', async (_label, id, mark) => {
     await mark();
     await expectTiers('cleared', [id]);
+  });
+
+  it('serves an image with a row under an evidence hold on the same url to any moderator', async () => {
+    await pg.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (990000102)`);
+    await expectTiers('anyMod', [990000101]);
   });
 });
 
@@ -609,8 +558,8 @@ describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
     await expectTiers('anyMod', [ids.retracted], leg);
   });
 
-  it('keeps a scanned image on a url retracted by an upgraded deny, or with no retraction time, to cleared moderators', async () => {
-    await expectTiers('cleared', [ids.upgraded, ids.noRetractTime], leg);
+  it('serves a scanned image on a url retracted by an upgraded deny, or with no retraction time, to any moderator', async () => {
+    await expectTiers('anyMod', [ids.upgraded, ids.noRetractTime], leg);
   });
 
   it('is off unless the route asks for it', async () => {
@@ -626,12 +575,6 @@ describe('the CDN-refusal leg (modRetractedMediaCdnLeg)', () => {
 
   it('refuses a url the CDN still serves, and one whose scan is not final', async () => {
     await expectTiers('none', [ids.served, ids.pending], leg);
-  });
-
-  it("reads a scanned image's verdict fresh each time, since a rescan can change it", async () => {
-    await expectTiers('anyMod', [ids.retracted], leg);
-    scanner.verdict = 'hit';
-    expect(await getRetractedMedia(ids.retracted, { csamReview: false, cdnLeg: true })).toBeNull();
   });
 
   // The route answers a null with 404: a moderator not cleared for CSAM review must not reach the
@@ -742,13 +685,15 @@ describe('rows sharing its url, its post text and its articles', () => {
     await pg.exec(csamCaseCleanupSql(target));
   });
 
-  it('keeps an image whose url a row the scanner marks shares to cleared moderators', async () => {
+  it('serves an image whose url a row the scanner marks shares to any moderator', async () => {
     await pg.exec(
       `INSERT INTO "Image" (id, url, "userId", ingestion) VALUES (990900001, 'key-990900000', 990910001, 'Scanned')`
     );
     scanner.hits.add(990900001);
     try {
-      expect(await getRetractedMedia(target.id, { csamReview: false })).toBeNull();
+      expect(await getRetractedMedia(target.id, { csamReview: false })).toMatchObject({
+        url: target.url,
+      });
       expect(await getRetractedMedia(target.id, { csamReview: true })).toMatchObject({
         url: target.url,
       });

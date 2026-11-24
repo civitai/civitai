@@ -3,7 +3,6 @@ import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../test/pglite';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
-import { SCANNER_UNAVAILABLE_REFUSED } from '$lib/held-media';
 import { applyGrants } from '../access';
 import { IMAGE_PAGES_SCHEMA } from './appeal-media-schema';
 
@@ -124,7 +123,7 @@ const inquisitorPage = await import('../../../routes/knights-of-new-order/inquis
 const { getImageLookup } = await import('../image-lookup.service');
 const reRemovalsPage = await import('../../../routes/images/re-removals/+page.server');
 
-// A routine block reason, kept by the other row on its url, which has not finished its scan.
+// A routine block reason, kept by the other row on its url, which is in the CSAM queue.
 const WITHHELD = 501;
 const CONTROL = 502;
 
@@ -158,9 +157,10 @@ beforeEach(async () => {
     INSERT INTO "User" (id, username) VALUES (7, 'owner'), (8, 'other'), (9, 'clean');
     INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
       (${WITHHELD}, 'shared-key', 'Blocked', 'moderated', 7),
-      (503, 'shared-key', 'Pending', NULL, 8),
+      (503, 'shared-key', 'Scanned', NULL, 8),
       (${CONTROL}, 'control-key', 'Blocked', 'moderated', 7),
       (504, 'clean-key', 'Scanned', NULL, 9);
+    UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 503;
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -196,34 +196,15 @@ describe('report image actions, without the grant', () => {
     expect(write).not.toHaveBeenCalled();
   });
 
-  it('refuses a retracted image while the scanner cannot answer, saying so', async () => {
-    scanner.down = true;
-    const result = (await reportActions.restore(
-      event(WITHOUT_GRANT, { imageIds: String(CONTROL) })
-    )) as Result;
-    expect(result.status).toBe(403);
-    expect(result.data?.error).toContain(SCANNER_UNAVAILABLE_REFUSED);
-    expect(writes.restoreImages).not.toHaveBeenCalled();
-  });
-
-  // Ordinary moderation does not wait on ClickHouse: only a row /api/retracted-media could serve is
-  // read from the scanner.
-  it('acts on a scanned image nothing withholds while the scanner cannot answer', async () => {
+  // The moderator-view rule reads Postgres only: a scanner outage withholds nothing.
+  it('acts on a scanned or retracted image nothing withholds while the scanner cannot answer', async () => {
     scanner.down = true;
     await queuePage.actions.accept(event(WITHOUT_GRANT, { imageId: '504' }));
-    await queuePage.actions.block(event(WITHOUT_GRANT, { imageId: '504' }));
+    await queuePage.actions.block(event(WITHOUT_GRANT, { imageId: String(CONTROL) }));
+    await reportActions.restore(event(WITHOUT_GRANT, { imageIds: String(CONTROL) }));
     expect(acceptImage).toHaveBeenCalledOnce();
     expect(blockImage).toHaveBeenCalledOnce();
-  });
-
-  it('refuses to accept or remove a retracted image while the scanner cannot answer', async () => {
-    scanner.down = true;
-    for (const action of [queuePage.actions.accept, queuePage.actions.block]) {
-      const result = (await action(event(WITHOUT_GRANT, { imageId: String(CONTROL) }))) as Result;
-      expect(result.data?.error).toContain(SCANNER_UNAVAILABLE_REFUSED);
-    }
-    expect(acceptImage).not.toHaveBeenCalled();
-    expect(blockImage).not.toHaveBeenCalled();
+    expect(writes.restoreImages).toHaveBeenCalledOnce();
   });
 
   it('restores a batch with nothing withheld', async () => {
@@ -756,12 +737,10 @@ describe('a live image sharing its url, without the grant', () => {
     `)
   );
 
-  it('is refused when a sibling on its url carries a signal block reason', async () => {
-    const result = (await queuePage.actions.accept(
-      event(WITHOUT_GRANT, { imageId: String(SIGNAL_SHARED) })
-    )) as Result;
-    expect(result.status).toBe(403);
-    expect(acceptImage).not.toHaveBeenCalled();
+  // A block reason is not a CSAM mark unless it is CSAM itself.
+  it('is acted on when a sibling on its url carries an unrecognised block reason', async () => {
+    await queuePage.actions.accept(event(WITHOUT_GRANT, { imageId: String(SIGNAL_SHARED) }));
+    expect(acceptImage).toHaveBeenCalledOnce();
   });
 
   it('is acted on when every sibling on its url is clean, even while the scanner cannot answer', async () => {
@@ -1052,7 +1031,7 @@ describe('a batch with an image deleted since the page loaded, without the grant
 // civitai/civitai#10170: the main queues draw a withheld card as restricted, as the appeal queue does.
 describe('the reported and review queues, without the grant', () => {
   const reportsImagePage = () => import('../../../routes/reports/image/+page.server');
-  // Withheld because the other row on its url carries a signal block reason.
+  // Withheld because the other row on its url is blocked as CSAM.
   const KEPT = 990000080;
   const CLEAN = 990000082;
   beforeEach(() =>
@@ -1065,7 +1044,7 @@ describe('the reported and review queues, without the grant', () => {
       CREATE TABLE IF NOT EXISTS "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
       INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "needsReview") VALUES
         (${KEPT}, 'queue-key', 'Scanned', NULL, 9, 'minor'),
-        (990000081, 'queue-key', 'Blocked', 'unrecognised-reason', 8, NULL),
+        (990000081, 'queue-key', 'Blocked', 'CSAM', 8, NULL),
         (${CLEAN}, 'queue-clean-key', 'Scanned', NULL, 9, 'minor');
       INSERT INTO "Report" (id, "userId", reason, status, details, "createdAt") VALUES
         (990000070, 8, 'TOSViolation', 'Pending', '{}', now()),
@@ -1130,12 +1109,12 @@ describe('the reported and review queues, without the grant', () => {
     }
   );
 
-  // Such a row still gets the scanner read a refused url gets.
+  // The moderator-view rule reads Postgres only, and a scan flag is not a CSAM mark.
   it.each([
     ['minor review', minor],
     ['reported', reported],
   ] as const)(
-    '%s withholds a flagged card on a pulled post and refused url while the scanner cannot answer',
+    '%s shows a flagged card on a pulled post and refused url while the scanner cannot answer',
     async (_, read) => {
       await db.exec(`INSERT INTO "Post" (id, "userId", "publishedAt", metadata)
           VALUES (990000092, 9, NULL, '{"unpublishedAt": "2026-11-24T00:00:00Z", "unpublishedBy": "2"}');
@@ -1144,18 +1123,24 @@ describe('the reported and review queues, without the grant', () => {
         INSERT INTO "ScanLabelItem" (id, "imageId") VALUES (990000093, ${CLEAN});
         INSERT INTO "ScanLabelFlag" ("itemId", snapshot) VALUES (990000093, '{"csam": "true"}')`);
       scanner.down = true;
-      expect((await read(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({ url: '', restricted: true });
+      expect((await read(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({
+        url: 'queue-clean-key',
+        restricted: false,
+      });
     }
   );
 
   it.each([
     ['minor review', minor],
     ['reported', reported],
-  ] as const)('%s still withholds a card whose label item is on a csam hold', async (_, read) => {
+  ] as const)('%s shows a card whose label item is on a csam hold', async (_, read) => {
     await db.exec(
       `INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (990000091, ${CLEAN}, 'csam-hold')`
     );
-    expect((await read(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({ url: '', restricted: true });
+    expect((await read(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({
+      url: 'queue-clean-key',
+      restricted: false,
+    });
   });
 
   it('sends no report reason or details on a withheld reported card, and both to a grant holder', async () => {

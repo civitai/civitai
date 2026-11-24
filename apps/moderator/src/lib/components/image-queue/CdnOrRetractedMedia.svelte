@@ -1,7 +1,12 @@
 <script lang="ts">
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { getInferredMediaType, type MediaType } from '$lib/media/edge-url';
-  import { probeRetractedRefusal, RETRACTED_REFUSED, retractedMediaUrl } from '$lib/held-media';
+  import {
+    MEDIA_UNPROCESSED,
+    probeRetractedRefusal,
+    RETRACTED_REFUSED,
+    retractedMediaUrl,
+  } from '$lib/held-media';
 
   // The public CDN first. Media it will not serve (a blocked image or video) is tried once more from
   // storage through `/api/retracted-media`, which decides on the server whether this moderator may see
@@ -11,11 +16,14 @@
     width = 450,
     alt = '',
     class: className,
+    unprocessed = false,
   }: {
     item: { id: number; url: string; type?: MediaType | null; name?: string | null };
     width?: number;
     alt?: string;
     class?: string;
+    /** The upload never finished processing, so storage has no file to fall back to either. */
+    unprocessed?: boolean;
   } = $props();
 
   const mediaType = $derived(
@@ -28,7 +36,9 @@
   let reason = $state(RETRACTED_REFUSED);
 
   const toStorage = (id: number) => {
-    if (fallback?.id !== id) fallback = { id, mode: 'retracted' };
+    if (fallback?.id === id) return;
+    fallback = { id, mode: unprocessed ? 'failed' : 'retracted' };
+    if (unprocessed) reason = MEDIA_UNPROCESSED;
   };
 
   // `error` does not bubble, so it is caught on the way down. A video reports each failed `<source>`,

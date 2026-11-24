@@ -4,26 +4,16 @@ import {
   RETRACTED_MEDIA_READ_TIMEOUT_MS,
   RETRACTED_SERVED_ACTIVITY,
 } from '@civitai/shared/retracted-media';
-import { heldImageKnownSql } from '@civitai/shared/held-media';
-import { blockedForSignal, type ScannerVerdict } from '@civitai/shared/media-signals';
 import {
-  createScannerVerdictCache,
-  retractedAccessColumnsSql,
-  retractedImageWhereSql,
   moderatorMediaWhereSql,
-  retractedViewable,
-  siblingsClearInPostgres,
-  type UrlSibling,
+  moderatorWithheldSql,
+  retractedImageWhereSql,
 } from '@civitai/shared/retracted-media-tier';
-import { blockedForPatterns } from './blocked-for-patterns';
 import { dbWrite } from './db';
 import { holdsCsamReview } from './held-media';
-import { WITHHELD_REFUSED, SCANNER_UNAVAILABLE_REFUSED } from '$lib/held-media';
+import { WITHHELD_REFUSED } from '$lib/held-media';
 import { insertModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
-import { readScannerCsamVerdict, readScannerCsamVerdicts } from './review-batch';
-
-export const scannerVerdicts = createScannerVerdictCache(readScannerCsamVerdict);
 
 export type RetractedMedia = {
   url: string;
@@ -35,35 +25,24 @@ export type RetractedMedia = {
  *  it is `moderatorMediaWhereSql`'s call. */
 export type ModeratorMedia = RetractedMedia & { kind: 'retracted' | 'held' };
 
-type ScannerRow = { id: number; ingestion: string };
-
 /**
  * Which of these images `/api/retracted-media` serves at all (`eligible`) and, with each one's
- * storage key, which it serves to this moderator (`viewable`). A moderator without `csamReview` is
- * refused what `retractedViewable` refuses; `readVerdicts` reads the scanner for the rows Postgres has
- * not already refused. The same rules as the main app's `getRetractedMedia`, which has no held leg,
- * read on the primary for the same reason: a flag or hold the replica has not seen would otherwise
- * be missed. A read that fails throws. The moderator view's rule: call it only for a moderator viewer.
+ * storage key, which it serves to this moderator (`viewable`): all of them with `csamReview`, else
+ * those `moderatorWithheldSql` does not withhold. The same rule as the main app's
+ * `getRetractedMedia`, which has no held leg, read on the primary so a flag or report the replica
+ * has not seen still counts. A read that fails throws. Call it only for a moderator viewer.
  */
 export async function readRetractedMedia(
   imageIds: number[],
-  {
-    csamReview,
-    orHeld = false,
-    readVerdicts,
-  }: {
-    csamReview: boolean;
-    orHeld?: boolean;
-    readVerdicts: (rows: ScannerRow[]) => Promise<Map<number, ScannerVerdict | null> | null>;
-  }
+  { csamReview, orHeld = false }: { csamReview: boolean; orHeld?: boolean }
 ): Promise<{ eligible: Set<number>; viewable: Map<number, ModeratorMedia> }> {
   const eligible = new Set<number>();
   const viewable = new Map<number, ModeratorMedia>();
   if (!imageIds.length) return { eligible, viewable };
-  const access = retractedAccessColumnsSql('i', { csamReview, scanFlag: false });
   const cdnLeg = retractedMediaCdnLeg();
   const retracted = retractedImageWhereSql('i', { cdnLeg });
   const where = moderatorMediaWhereSql('i', { cdnLeg, csamReview, heldLeg: orHeld });
+  const withheld = moderatorWithheldSql('i', { csamReview });
   const rows = await dbWrite.transaction().execute(async (trx) => {
     await sql.raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`).execute(trx);
     return trx
@@ -71,96 +50,44 @@ export async function readRetractedMedia(
         // OFFSET 0 keeps the id lookup a subquery, so the rest is read for these rows only.
         eb.selectFrom('Image').selectAll().where('id', 'in', imageIds).offset(0).as('i')
       )
-      .select(['i.id', 'i.url', 'i.type', 'i.mimeType', 'i.blockedFor', 'i.ingestion'])
+      .select(['i.id', 'i.url', 'i.type', 'i.mimeType'])
       .select(sql<boolean>`${sql.raw(retracted)}`.as('retracted'))
-      .select(sql<boolean>`${sql.raw(access.restricted)}`.as('restricted'))
-      .select(sql<UrlSibling[]>`${sql.raw(access.siblings)}`.as('siblings'))
+      .select(sql<boolean>`${sql.raw(withheld)}`.as('withheld'))
       .where(sql<boolean>`${sql.raw(where)}`)
       .execute();
   });
-  const media = (row: (typeof rows)[number]): ModeratorMedia => ({
-    url: row.url,
-    type: row.type,
-    mimeType: row.mimeType,
-    kind: row.retracted ? 'retracted' : 'held',
-  });
-  for (const row of rows) eligible.add(row.id);
-  if (csamReview) {
-    for (const row of rows) viewable.set(row.id, media(row));
-    return { eligible, viewable };
+  for (const row of rows) {
+    eligible.add(row.id);
+    if (!row.withheld)
+      viewable.set(row.id, {
+        url: row.url,
+        type: row.type,
+        mimeType: row.mimeType,
+        kind: row.retracted ? 'retracted' : 'held',
+      });
   }
-  const { viewable: open } = await viewableToNonGrant(rows, readVerdicts);
-  for (const row of rows) if (open.has(row.id)) viewable.set(row.id, media(row));
   return { eligible, viewable };
 }
 
-type AccessRow = ScannerRow & {
-  blockedFor: string | null;
-  restricted: boolean;
-  siblings: UrlSibling[];
-};
-
-/**
- * Which of `rows` a moderator without `csamReview` may see. A row Postgres refuses (`restricted`, a
- * `blockedFor` signal) is not read from the scanner; a verdict that could not be read refuses.
- */
-async function viewableToNonGrant(
-  rows: AccessRow[],
-  readVerdicts: (rows: ScannerRow[]) => Promise<Map<number, ScannerVerdict | null> | null>
-): Promise<{ viewable: Set<number>; unreadable: Set<number> }> {
-  const viewable = new Set<number>();
-  const unreadable = new Set<number>();
-  const patterns = blockedForPatterns();
-  const candidates = rows.filter(
-    (row) => !row.restricted && !blockedForSignal(row.blockedFor, patterns)
-  );
-  if (!candidates.length) return { viewable, unreadable };
-  const siblingIds = [...new Set(candidates.flatMap((row) => row.siblings.map((s) => s.id)))];
-  const [verdicts, siblingVerdicts] = await Promise.all([
-    readVerdicts(candidates),
-    readScannerCsamVerdicts(siblingIds),
-  ]);
-  for (const row of candidates) {
-    const verdict = verdicts?.get(row.id) ?? null;
-    const ok = await retractedViewable(row, {
-      patterns,
-      readVerdict: async () => verdict,
-      readVerdicts: async () => siblingVerdicts,
-    });
-    if (ok) viewable.add(row.id);
-    else if (verdict === null || (row.siblings.length && !siblingVerdicts)) unreadable.add(row.id);
-  }
-  return { viewable, unreadable };
-}
-
-/** Ids `restrictedImageIds` reads in one go, so a large selection is several bounded reads. */
+/** Ids `restrictedImageAccess` reads in one go, so a large selection is several bounded reads. */
 const RESTRICTED_READ_PAGE = 50;
 
 /**
  * The moderator view's rule: call it only for a moderator viewer, never for anyone else.
- * Which of these images a moderator without `csamReview` is refused (`kept`), so a list withholds
- * what `/api/retracted-media` would refuse. Only rows that route could serve are read from the
- * scanner, so ordinary moderation never waits on ClickHouse; a row whose verdict can't be read is
- * kept and named in `unreadable`. An id the primary lacks is kept too, and named in `missing`.
+ * Which of these images a moderator without `csamReview` is refused (`kept`,
+ * `moderatorWithheldSql`), so a list withholds what `/api/retracted-media` would refuse. An id the
+ * primary lacks is kept too, and named in `missing`.
  */
 export async function restrictedImageAccess(
   imageIds: number[],
   { csamReview }: { csamReview: boolean }
-): Promise<{ kept: Set<number>; unreadable: Set<number>; missing: Set<number> }> {
+): Promise<{ kept: Set<number>; missing: Set<number> }> {
   const kept = new Set<number>();
-  const unreadable = new Set<number>();
   const missing = new Set<number>();
-  if (csamReview) return { kept, unreadable, missing };
-  const patterns = blockedForPatterns();
-  // With the access rule's own `scanFlag`, so a row whose only mark is a scan flag is still read
-  // from the scanner.
-  const scanScope = `(${retractedImageWhereSql('i', {
-    cdnLeg: retractedMediaCdnLeg(),
-    scanFlag: false,
-  })} OR ${heldImageKnownSql('i')})`;
+  if (csamReview) return { kept, missing };
+  const withheld = moderatorWithheldSql('i', { csamReview });
   for (let i = 0; i < imageIds.length; i += RESTRICTED_READ_PAGE) {
     const page = imageIds.slice(i, i + RESTRICTED_READ_PAGE);
-    const access = retractedAccessColumnsSql('i', { csamReview, scanFlag: false });
     const rows = await dbWrite.transaction().execute(async (trx) => {
       await sql
         .raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`)
@@ -169,34 +96,18 @@ export async function restrictedImageAccess(
         .selectFrom((eb) =>
           eb.selectFrom('Image').selectAll().where('id', 'in', page).offset(0).as('i')
         )
-        .select(['i.id', 'i.blockedFor', 'i.ingestion'])
-        .select(sql<boolean>`${sql.raw(access.restricted)}`.as('restricted'))
-        .select(sql<UrlSibling[]>`${sql.raw(access.siblings)}`.as('siblings'))
-        .select(sql<boolean>`${sql.raw(scanScope)}`.as('scanned'))
+        .select('i.id')
+        .select(sql<boolean>`${sql.raw(withheld)}`.as('withheld'))
         .execute();
     });
-    const scanned = await viewableToNonGrant(
-      rows.filter((row) => row.scanned),
-      (candidates) => readScannerCsamVerdicts(candidates.map((row) => row.id))
-    );
-    for (const id of scanned.unreadable) unreadable.add(id);
-    const viewable = new Set(scanned.viewable);
-    const isSignal = (blockedFor: string | null) => blockedForSignal(blockedFor, patterns);
-    for (const row of rows)
-      if (
-        !row.scanned &&
-        !row.restricted &&
-        !isSignal(row.blockedFor) &&
-        siblingsClearInPostgres(row.siblings, isSignal)
-      )
-        viewable.add(row.id);
+    const open = new Set(rows.filter((row) => !row.withheld).map((row) => row.id));
     const found = new Set(rows.map((row) => row.id));
     for (const id of page) {
-      if (!viewable.has(id)) kept.add(id);
+      if (!open.has(id)) kept.add(id);
       if (!found.has(id)) missing.add(id);
     }
   }
-  return { kept, unreadable, missing };
+  return { kept, missing };
 }
 
 /** What every list serves a withheld image with in place of these fields: none of the media, and
@@ -277,17 +188,11 @@ export async function withheldImageIds(user: App.Locals['user'] | undefined, ima
  *  when nothing in it is withheld. An id the primary lacks is left to the write, which reports it
  *  not found. */
 export async function withheldRefusal(user: App.Locals['user'] | undefined, imageIds: number[]) {
-  const { kept, unreadable, missing } = await restrictedImageAccess(imageIds, {
+  const { kept, missing } = await restrictedImageAccess(imageIds, {
     csamReview: holdsCsamReview(user),
   });
   const withheld = [...kept].filter((id) => !missing.has(id));
   if (!withheld.length) return null;
-  if (withheld.some((id) => unreadable.has(id))) {
-    console.error('[retracted-media] scanner unavailable; refused an image action', {
-      count: withheld.length,
-    });
-    return `${SCANNER_UNAVAILABLE_REFUSED} Nothing was changed: ${withheld.join(', ')}.`;
-  }
   return `${WITHHELD_REFUSED} Nothing was changed: ${withheld.join(', ')}.`;
 }
 
@@ -314,23 +219,6 @@ export async function withheldAccountRefusal(user: App.Locals['user'] | undefine
   );
 }
 
-/** Each row's verdict, one read per row: a scanned image can be rescanned, so it is read fresh; a
- *  blocked one from the cache. For the single-image readers. */
-const verdictOf = async (rows: ScannerRow[]) =>
-  new Map(
-    await Promise.all(
-      rows.map(
-        async (row) =>
-          [
-            row.id,
-            row.ingestion === 'Scanned'
-              ? await readScannerCsamVerdict(row.id)
-              : await scannerVerdicts.read(row.id),
-          ] as const
-      )
-    )
-  );
-
 /**
  * The image's storage key and type while this moderator may see it on `/api/retracted-media`, media
  * held for itself excluded; `null` otherwise, so an image they may not see is answered exactly as a
@@ -340,23 +228,27 @@ export async function getRetractedMedia(
   imageId: number,
   { csamReview }: { csamReview: boolean }
 ): Promise<RetractedMedia | null> {
-  const { viewable } = await readRetractedMedia([imageId], { csamReview, readVerdicts: verdictOf });
-  const media = viewable.get(imageId);
+  const media = (await readRetractedMedia([imageId], { csamReview })).viewable.get(imageId);
   return media ? { url: media.url, type: media.type, mimeType: media.mimeType } : null;
 }
 
-/** What `/api/retracted-media` serves this moderator: `getRetractedMedia`, or held media to one with
- *  the CSAM grant. */
+/** What `/api/retracted-media` serves this moderator: `getRetractedMedia`, plus held media. */
 export async function getModeratorMedia(
   imageId: number,
   { csamReview }: { csamReview: boolean }
 ): Promise<ModeratorMedia | null> {
-  const { viewable } = await readRetractedMedia([imageId], {
-    csamReview,
-    orHeld: true,
-    readVerdicts: verdictOf,
-  });
+  const { viewable } = await readRetractedMedia([imageId], { csamReview, orHeld: true });
   return viewable.get(imageId) ?? null;
+}
+
+/** Whether `/api/retracted-media` has nothing to answer this moderator from for this image: gone,
+ *  unprocessed, or a file the CDN still serves. Never true for an image only withheld from them. */
+export async function moderatorMediaUnavailable(
+  imageId: number,
+  { csamReview }: { csamReview: boolean }
+): Promise<boolean> {
+  const { eligible } = await readRetractedMedia([imageId], { csamReview, orHeld: true });
+  return !eligible.has(imageId);
 }
 
 /** Every response carrying bytes, ranges included. Throws when the row is not written, so the bytes

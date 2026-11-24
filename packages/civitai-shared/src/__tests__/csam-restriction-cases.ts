@@ -1,8 +1,8 @@
 /**
- * Cases for `csamRestrictedSql` that every suite reading it runs against its own route: rows that
- * share the target's url, and the post-text and article holds. Each `mark` is plain SQL for a
- * PGlite whose schema includes `CSAM_LINK_TABLES_SQL`; `csamCaseCleanupSql` removes what any
- * case wrote and clears the target's post.
+ * Cases for the moderator-view rule (`moderatorWithheldSql`) that every suite reading it runs
+ * against its own route: rows that share the target's url, and the post-text and article holds.
+ * Each `mark` is plain SQL for a PGlite whose schema includes `CSAM_LINK_TABLES_SQL`;
+ * `csamCaseCleanupSql` removes what any case wrote and clears the target's post.
  */
 
 import { CSAM_HOLD_POST_UNPUBLISH_REASON } from '../held-url';
@@ -83,7 +83,7 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   },
   {
     label: 'a row on its url whose label item is on a csam hold',
-    restricts: true,
+    restricts: false,
     mark: (t) =>
       `${sibling(
         t
@@ -180,7 +180,7 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   },
   {
     label: 'a row on its url with a block reason not known to be routine',
-    restricts: true,
+    restricts: false,
     mark: (t) => sibling(t, { ingestion: "'Blocked'", blockedFor: "'unlisted'" }),
   },
   {
@@ -375,7 +375,7 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   },
   {
     label: 'its own label item on a csam hold',
-    restricts: true,
+    restricts: false,
     mark: (t) =>
       `INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (${ITEM}, ${t.id}, 'csam-hold');`,
   },
@@ -445,7 +445,7 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
     mark: (t) =>
       `INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId", "userId") VALUES ('${t.url}', ${OFFERING}, NULL);`,
   },
-  // Item-level signals, which stay with the CSAM grant.
+  // Item-level marks.
   {
     label: 'a row on its url in the CSAM review queue',
     restricts: true,
@@ -459,7 +459,7 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
   },
   {
     label: 'a moderator delete on its url flagged for CSAM review',
-    restricts: true,
+    restricts: false,
     mark: (t) =>
       `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES (${OTHER_IMAGE}, '${t.url}', ${SIBLING_OWNER}, true);`,
   },

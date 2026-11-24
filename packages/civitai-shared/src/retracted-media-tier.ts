@@ -28,7 +28,7 @@ export function retractedImageWhereSql(
 
 /** `retractedImageWhereSql` with held media let through unless it is held for itself
  *  (`heldItemImageSql`): a held account's image the routes would serve if it were not held. */
-export function retractedOrOwnerHeldWhereSql(image: string, { cdnLeg = false } = {}): string {
+function retractedOrOwnerHeldWhereSql(image: string, { cdnLeg = false } = {}): string {
   return `(
     ${retractedEligibleSql(image, cdnLeg)}
     AND NOT COALESCE(${heldItemImageSql(image)}, false)
@@ -128,7 +128,7 @@ function csamRowSql(image: string, scanFlag: boolean): string {
  * so they are equal; an upgrade keeps the earlier deny time. Anything but equal, NULL included,
  * reads as upgraded.
  */
-export function upgradedRetractionSql(image: string): string {
+function upgradedRetractionSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image) || image.toLowerCase() === 'ua')
     throw new Error(`Bad table alias: ${image}`);
   return `(EXISTS (
@@ -171,6 +171,49 @@ function buildCsamRestrictedSql(image: string, scanFlag = true): string {
   ), true)`;
 }
 
+/**
+ * Whether the "Image" row aliased `image` is withheld from a moderator without the CSAM grant, in
+ * every moderator view (lists, actions, the retracted-media routes): it, or any other row on its url,
+ * is in the CSAM queue, blocked as CSAM (CSAM anywhere in its comma list of block reasons), or carries
+ * a CSAM hash block or a CSAM vote; or it, or its
+ * bytes, are listed on a CSAM report. Postgres only: no scanner read, so a scanner outage withholds
+ * nothing. `'false'` for a moderator with the grant. A NULL reads as withheld.
+ */
+export function moderatorWithheldSql(
+  image: string,
+  { csamReview }: { csamReview: boolean }
+): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image) || MODERATOR_WITHHELD_ALIASES.has(image.toLowerCase()))
+    throw new Error(`Bad table alias: ${image}`);
+  return csamReview ? 'false' : buildModeratorWithheldSql(image);
+}
+
+function buildModeratorWithheldSql(image: string): string {
+  const marked = (row: string) => `(
+    COALESCE(${heldItemImageSql(row)}, false)
+    OR EXISTS (
+      SELECT 1 FROM unnest(string_to_array(${row}."blockedFor", ',')) AS mw_reason(value)
+      WHERE lower(btrim(mw_reason.value)) = 'csam'
+    )
+    OR ${csamSignalImageSql(row, { scanFlag: false, hold: false })}
+  )`;
+  return `COALESCE((
+    ${marked(image)}
+    OR EXISTS (
+      SELECT 1 FROM "Image" mw WHERE mw.url = ${image}."url" AND mw.id <> ${image}.id AND ${marked(
+    'mw'
+  )}
+    )
+    OR ${reportListedUrlSql(`${image}."url"`)}
+  ), true)`;
+}
+
+const MODERATOR_WITHHELD_ALIASES = new Set(
+  [...buildModeratorWithheldSql('i').matchAll(/(?:FROM|JOIN) "\w+" (\w+)/g)].map((m) =>
+    m[1].toLowerCase()
+  )
+);
+
 /** The aliases `csamRestrictedSql` declares after a quoted table name, which its caller's alias must
  *  not shadow. */
 const CSAM_RESTRICTED_ALIASES = new Set(
@@ -199,17 +242,6 @@ export function urlSiblingsSql(image: string): string {
   ), '[]'::json)`;
 }
 
-/** `siblingsServable` without its scanner read. */
-export function siblingsClearInPostgres(
-  siblings: UrlSibling[],
-  isSignal: (blockedFor: string | null) => boolean
-): boolean {
-  return (
-    siblings.length < URL_SIBLING_CAP &&
-    !siblings.some((s) => s.unreadable !== false || isSignal(s.blockedFor))
-  );
-}
-
 /**
  * Whether no row in `siblings` (`urlSiblingsSql`) keeps the shared url from a moderator without the
  * CSAM grant: the list is under `URL_SIBLING_CAP`, every row has finished its scan, `isSignal`
@@ -220,7 +252,11 @@ export async function siblingsServable(
   isSignal: (blockedFor: string | null) => boolean,
   readVerdicts: (imageIds: number[]) => Promise<Map<number, ScannerVerdict> | null>
 ): Promise<boolean> {
-  if (!siblingsClearInPostgres(siblings, isSignal)) return false;
+  if (
+    siblings.length >= URL_SIBLING_CAP ||
+    siblings.some((s) => s.unreadable !== false || isSignal(s.blockedFor))
+  )
+    return false;
   if (!siblings.length) return true;
   const verdicts = await readVerdicts(siblings.map((s) => s.id));
   if (!verdicts) return false;
@@ -277,30 +313,4 @@ export async function retractedViewable(
   const verdict = await readVerdict();
   if (verdict !== 'clear' && verdict !== 'none') return false;
   return siblingsServable(row.siblings, isSignal, readVerdicts);
-}
-
-/**
- * A process-local cache of scanner verdicts, so a page of tiles, or a video's range requests, does
- * not query ClickHouse once per request. A blocked image's labels are written by its scan, which has
- * finished, so a `hit` or `clear` held for `ttlMs` is not expected to go stale. An unreadable answer
- * (null) and `none` are never cached: rows can land after the verdict, so the next request asks again.
- */
-export function createScannerVerdictCache(
-  read: (imageId: number) => Promise<ScannerVerdict | null>,
-  { ttlMs = 5 * 60_000, max = 10_000, now = () => Date.now() } = {}
-) {
-  const entries = new Map<number, { verdict: ScannerVerdict; at: number }>();
-  return {
-    async read(imageId: number): Promise<ScannerVerdict | null> {
-      const hit = entries.get(imageId);
-      if (hit && now() - hit.at < ttlMs) return hit.verdict;
-      entries.delete(imageId);
-      const verdict = await read(imageId);
-      if (verdict === null || verdict === 'none') return verdict;
-      if (entries.size >= max) entries.delete(entries.keys().next().value as number);
-      entries.set(imageId, { verdict, at: now() });
-      return verdict;
-    },
-    clear: () => entries.clear(),
-  };
 }

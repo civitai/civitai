@@ -46,11 +46,17 @@ vi.mock('../review-batch', () => ({
       : new Map(ids.map((id) => [id, scanner.hits.has(id) ? 'hit' : scanner.verdict])),
 }));
 
-const { getModeratorMedia, getRetractedMedia, recordRetractedView, scannerVerdicts } = await import(
-  '../retracted-media'
-);
+const logToAxiom = vi.hoisted(() => vi.fn(async (_event: Record<string, unknown>) => {}));
+vi.mock('../axiom', () => ({ logToAxiom }));
+
+const {
+  getModeratorMedia,
+  getRetractedMedia,
+  listWithheldIds,
+  recordRetractedView,
+  restrictedImageAccess,
+} = await import('../retracted-media');
 const { URL_SIBLING_CAP } = await import('@civitai/shared/retracted-media-tier');
-beforeEach(() => scannerVerdicts.clear());
 
 const SCHEMA = `
 CREATE TABLE "Image" (
@@ -186,26 +192,6 @@ const tierOf = async (id: number) => {
 };
 
 describe('retracted media eligibility', () => {
-  it('keeps a blocked image on a url retracted by an upgraded deny to cleared moderators', async () => {
-    expect(await tierOf(31)).toBe('cleared');
-    expect(await tierOf(32)).toBe('anyMod');
-  });
-
-  it('keeps an image the scanner marks, or cannot read, to moderators cleared for CSAM review', async () => {
-    for (const verdict of ['hit', null] as const) {
-      scanner.verdict = verdict;
-      scannerVerdicts.clear();
-      expect(await tierOf(1)).toBe('cleared');
-    }
-    scanner.verdict = 'clear';
-  });
-
-  it('serves an image the scanner has no verdict for to any moderator', async () => {
-    scanner.verdict = 'none';
-    expect(await tierOf(1)).toBe('anyMod');
-    scanner.verdict = 'clear';
-  });
-
   it('serves a blocked image with a known non-minor reason to any moderator', async () => {
     expect(await tierOf(1)).toBe('anyMod');
     expect(await getRetractedMedia(1, { csamReview: false })).toEqual({
@@ -224,10 +210,6 @@ describe('retracted media eligibility', () => {
     for (const id of [4, 5, 999])
       expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
   });
-
-  it('keeps an image under an evidence hold to cleared moderators', async () => {
-    expect(await tierOf(6)).toBe('cleared');
-  });
 });
 
 describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
@@ -243,12 +225,9 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
     expect(await tierOf(7)).toBe('anyMod');
   });
 
-  it('keeps a url retracted by an upgraded deny, or with no retraction time, to cleared moderators', async () => {
-    expect(await tierOf(28)).toBe('cleared');
-    expect(await tierOf(29)).toBe('cleared');
-    // An upgrade can land seconds after its deny: only stamps from one write read as outright.
-    expect(await tierOf(30)).toBe('cleared');
-    expect(await tierOf(33)).toBe('cleared');
+  it('serves a url retracted by an upgraded deny, or with no retraction time, to any moderator', async () => {
+    for (const id of [28, 29, 30, 33])
+      expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'anyMod' });
   });
 
   it('is off unless the switch is exactly true', async () => {
@@ -295,12 +274,6 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
     // On the post, on the version, on the model; then the ban.
     for (const id of [20, 25, 26, 21])
       expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'anyMod' });
-  });
-
-  it("reads a scanned image's verdict fresh each time, since a rescan can change it", async () => {
-    expect(await tierOf(7)).toBe('anyMod');
-    scanner.verdict = 'hit';
-    expect(await getRetractedMedia(7, { csamReview: false })).toBeNull();
   });
 });
 
@@ -361,10 +334,8 @@ describe('copies sharing bytes with a restricted image', () => {
     db.query(`INSERT INTO "CsamReport" ("userId", details, images) VALUES (990100199, '{}', $1)`, [
       JSON.stringify([{ id: imageId }]),
     ]);
-  const hold = (imageId: number) =>
-    db.query(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES ($1)`, [imageId]);
 
-  it('serves both images to any moderator while neither copy is reported or held', async () => {
+  it('serves both images to any moderator while neither copy is reported', async () => {
     expect(await tierOf(990000101)).toBe('anyMod');
     expect(await tierOf(990000103)).toBe('anyMod');
   });
@@ -372,7 +343,6 @@ describe('copies sharing bytes with a restricted image', () => {
   it.each([
     ['a reported row on the same url', 990000101, () => report(990000102)],
     ['a reported row with the same pHash', 990000103, () => report(990000104)],
-    ['a held row on the same url', 990000101, () => hold(990000102)],
     [
       'an unreported copy on the same url in review',
       990000101,
@@ -507,61 +477,22 @@ describe('rows sharing its url, its post text and its articles', () => {
     await db.exec(csamCaseCleanupSql(target));
   });
 
-  it('keeps an image whose url a row the scanner marks shares to cleared moderators', async () => {
-    await db.exec(
-      `INSERT INTO "Image" (id, url, "userId", ingestion) VALUES (990900001, 'key-990900000', 990910001, 'Scanned')`
-    );
+  // The moderator-view rule reads Postgres only: a row on the url withholds by its CSAM marks alone.
+  it('serves an image whose url a row the scanner marks, or with no scan state, shares to any moderator', async () => {
+    await db.exec(`ALTER TABLE "Image" ALTER COLUMN ingestion DROP NOT NULL;
+      INSERT INTO "Image" (id, url, "userId", ingestion) VALUES
+        (990900001, 'key-990900000', 990910001, 'Scanned'),
+        (990900002, 'key-990900000', 990910001, NULL)`);
     scanner.hits.add(990900001);
     try {
-      expect(await getRetractedMedia(target.id, { csamReview: false })).toBeNull();
-      expect(await getRetractedMedia(target.id, { csamReview: true })).toMatchObject({
-        url: target.url,
-      });
-    } finally {
-      scanner.hits.clear();
-    }
-  });
-
-  it('keeps an image whose url more rows share than it reads to cleared moderators', async () => {
-    const ids = Array.from({ length: URL_SIBLING_CAP }, (_, n) => 990900100 + n);
-    await db.exec(
-      `INSERT INTO "Image" (id, url, "userId", ingestion) VALUES ${ids
-        .map((id) => `(${id}, 'key-990900000', 990910001, 'Scanned')`)
-        .join(', ')}`
-    );
-    try {
-      expect(await getRetractedMedia(target.id, { csamReview: false })).toBeNull();
-      await db.exec(`DELETE FROM "Image" WHERE id = ${ids[0]}`);
       expect(await getRetractedMedia(target.id, { csamReview: false })).toMatchObject({
         url: target.url,
       });
     } finally {
-      await db.exec(`DELETE FROM "Image" WHERE id = ANY(ARRAY[${ids.join(', ')}])`);
-    }
-  });
-
-  it('keeps an image whose url a row with an unknown signal shares to cleared moderators', async () => {
-    await db.exec(`ALTER TABLE "Image" ALTER COLUMN ingestion DROP NOT NULL;
-      INSERT INTO "Image" (id, url, "userId", ingestion) VALUES (990900001, 'key-990900000', 990910001, NULL)`);
-    try {
-      expect(await getRetractedMedia(target.id, { csamReview: false })).toBeNull();
-      expect(await getRetractedMedia(target.id, { csamReview: true })).toMatchObject({
-        url: target.url,
-      });
-    } finally {
-      await db.exec(`DELETE FROM "Image" WHERE id = 990900001;
+      scanner.hits.clear();
+      await db.exec(`DELETE FROM "Image" WHERE id = 990900002;
         ALTER TABLE "Image" ALTER COLUMN ingestion SET NOT NULL`);
     }
-  });
-
-  it('keeps an image whose url a row with an unfinished scan shares to cleared moderators', async () => {
-    await db.exec(
-      `INSERT INTO "Image" (id, url, "userId", ingestion) VALUES (990900001, 'key-990900000', 990910001, 'Pending')`
-    );
-    expect(await getRetractedMedia(target.id, { csamReview: false })).toBeNull();
-    expect(await getRetractedMedia(target.id, { csamReview: true })).toMatchObject({
-      url: target.url,
-    });
   });
 
   it.each(CSAM_RESTRICTION_CASES.filter((c) => c.restricts))(
@@ -770,5 +701,211 @@ describe('a scanned image whose post someone other than its owner unpublished', 
         id,
         media: null,
       });
+  });
+});
+
+/**
+ * The moderator-view rule for a moderator without the CSAM grant, one fact at a time: each case
+ * marks one target with one fact and nothing else, and either withholds the card and refuses the
+ * bytes, or shows both. A moderator with the grant gets every one of them.
+ */
+describe('the moderator-view rule, one leg at a time', () => {
+  const base = 990001000;
+  const owner = 990011000;
+  type Leg = { leg: string; mark: (id: number, url: string) => string; scanner?: 'hit' | null };
+  const WITHHELD: Leg[] = [
+    {
+      leg: 'in the CSAM queue',
+      mark: (id) => `UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${id};`,
+    },
+    {
+      leg: 'blocked as CSAM',
+      mark: (id) => `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${id};`,
+    },
+    {
+      leg: 'CSAM among its block reasons',
+      mark: (id) => `UPDATE "Image" SET "blockedFor" = 'moderated, csam ' WHERE id = ${id};`,
+    },
+    {
+      leg: 'a CSAM hash block',
+      mark: (id) => `UPDATE "Image" SET "pHash" = ${id} WHERE id = ${id};
+        INSERT INTO "BlockedImage" (hash, reason) VALUES (${id}, 'CSAM');`,
+    },
+    {
+      leg: 'a csam-realistic vote',
+      mark: (id) => `INSERT INTO "ScanLabelItem" (id, "imageId") VALUES (${id}, ${id});
+        INSERT INTO "ScanLabelVote" ("itemId", reason) VALUES (${id}, 'csam-realistic');`,
+    },
+    {
+      leg: 'a row on its url in the CSAM queue',
+      mark: (id, url) =>
+        `INSERT INTO "Image" (id, url, "userId", "needsReview") VALUES (${
+          id + 500
+        }, '${url}', ${owner}, 'csam');`,
+    },
+    {
+      leg: 'a row on its url blocked as CSAM',
+      mark: (id, url) =>
+        `INSERT INTO "Image" (id, url, "userId", "blockedFor") VALUES (${
+          id + 500
+        }, '${url}', ${owner}, 'CSAM');`,
+    },
+    {
+      leg: 'a row on its url with a CSAM hash block',
+      mark: (id, url) => `INSERT INTO "Image" (id, url, "userId", "pHash") VALUES (${
+        id + 500
+      }, '${url}', ${owner}, ${id});
+        INSERT INTO "BlockedImage" (hash, reason) VALUES (${id}, 'CSAM');`,
+    },
+    {
+      leg: 'a row on its url with a csam-realistic vote',
+      mark: (id, url) => `INSERT INTO "Image" (id, url, "userId") VALUES (${
+        id + 500
+      }, '${url}', ${owner});
+        INSERT INTO "ScanLabelItem" (id, "imageId") VALUES (${id}, ${id + 500});
+        INSERT INTO "ScanLabelVote" ("itemId", reason) VALUES (${id}, 'csam-realistic');`,
+    },
+    {
+      leg: 'listed on a CSAM report',
+      mark: (id) =>
+        `INSERT INTO "CsamReport" ("userId", details, images) VALUES (${owner}, '{}', '[{"id": ${id}}]');`,
+    },
+    {
+      leg: 'its url listed on a CSAM report, through a deleted copy',
+      mark: (
+        id,
+        url
+      ) => `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES (${
+        id + 500
+      }, '${url}', ${owner}, false);
+        INSERT INTO "CsamReport" ("userId", details, images) VALUES (${owner}, '{}', '[{"id": ${
+        id + 500
+      }}]');`,
+    },
+  ];
+  const SHOWN: Leg[] = [
+    {
+      leg: 'a csam hold on its label item',
+      mark: (id) =>
+        `INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (${id}, ${id}, 'csam-hold');`,
+    },
+    {
+      leg: 'an evidence hold on its bytes',
+      mark: (id) => `INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (${id});`,
+    },
+    {
+      leg: 'a held file (a CSAM-review delete on its url with no owner)',
+      mark: (id, url) =>
+        `INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES (${
+          id + 500
+        }, '${url}', NULL, true);`,
+    },
+    {
+      leg: 'its url retracted by an upgraded deny',
+      mark: (_id, url) =>
+        `INSERT INTO "ImageCdnAccess" (url, state, "deniedAt", "retractedAt") VALUES ('${url}', 'Retracted', now() - interval '5 minutes', now());`,
+    },
+    {
+      leg: 'a block reason not known to be routine',
+      mark: (id) => `UPDATE "Image" SET "blockedFor" = 'unlisted' WHERE id = ${id};`,
+    },
+    {
+      leg: 'a row on its url with a block reason not known to be routine',
+      mark: (id, url) =>
+        `INSERT INTO "Image" (id, url, "userId", "blockedFor") VALUES (${
+          id + 500
+        }, '${url}', ${owner}, 'unlisted');`,
+    },
+    { leg: 'the scanner marks it', mark: () => '', scanner: 'hit' },
+    { leg: 'the scanner cannot be read', mark: () => '', scanner: null },
+    {
+      leg: 'a row on its url with an unfinished scan',
+      mark: (id, url) =>
+        `INSERT INTO "Image" (id, url, "userId", ingestion) VALUES (${
+          id + 500
+        }, '${url}', ${owner}, 'Pending');`,
+    },
+    {
+      leg: `more rows on its url than the old cap (${URL_SIBLING_CAP})`,
+      mark: (id, url) => `INSERT INTO "Image" (id, url, "userId")
+        SELECT ${
+          base + 5000
+        } + n, '${url}', ${owner} FROM generate_series(1, ${URL_SIBLING_CAP}) n;`,
+    },
+    {
+      leg: 'its owner named on a CSAM report',
+      mark: (id) =>
+        `INSERT INTO "CsamReport" ("userId", details, images) VALUES ((SELECT "userId" FROM "Image" WHERE id = ${id}), '{}', '[]');`,
+    },
+  ];
+  const cases = [
+    ...WITHHELD.map((c) => ({ ...c, withheld: true })),
+    ...SHOWN.map((c) => ({ ...c, withheld: false })),
+  ].map((c, n) => ({ ...c, id: base + n, url: `rule-${base + n}` }));
+
+  beforeAll(async () => {
+    for (const c of cases)
+      await db.exec(`
+        INSERT INTO "Image" (id, url, "userId", ingestion, "blockedFor")
+          VALUES (${c.id}, '${c.url}', ${owner + c.id - base}, 'Blocked', 'moderated');
+        ${c.mark(c.id, c.url)}
+      `);
+  });
+  afterEach(() => {
+    scanner.verdict = 'clear';
+    scanner.hits.clear();
+  });
+
+  const answer = async (c: (typeof cases)[number], csamReview: boolean) => {
+    scanner.verdict = c.scanner === null ? null : 'clear';
+    if (c.scanner === 'hit') scanner.hits.add(c.id);
+    const { kept } = await restrictedImageAccess([c.id], { csamReview });
+    const media = await getModeratorMedia(c.id, { csamReview });
+    return {
+      leg: c.leg,
+      card: kept.has(c.id) ? 'withheld' : 'shown',
+      bytes: media ? 'served' : 'refused',
+    };
+  };
+
+  for (const c of cases) {
+    const expected = c.withheld
+      ? { card: 'withheld', bytes: 'refused' }
+      : { card: 'shown', bytes: 'served' };
+    it(`${c.leg}: ${expected.card} to a moderator without the grant`, async () => {
+      expect(await answer(c, false)).toEqual({ leg: c.leg, ...expected });
+    });
+    it(`${c.leg}: shown and served with the grant`, async () => {
+      expect(await answer(c, true)).toEqual({ leg: c.leg, card: 'shown', bytes: 'served' });
+    });
+  }
+
+  it('the unmarked target is shown and served to a moderator without the grant', async () => {
+    await db.exec(`INSERT INTO "Image" (id, url, "userId", ingestion, "blockedFor")
+      VALUES (${base + 999}, 'rule-${base + 999}', ${owner + 999}, 'Blocked', 'moderated');`);
+    const { kept } = await restrictedImageAccess([base + 999], { csamReview: false });
+    expect(kept.has(base + 999)).toBe(false);
+    expect(await getModeratorMedia(base + 999, { csamReview: false })).not.toBeNull();
+  });
+
+  it('keeps an id with no row', async () => {
+    const { kept, missing } = await restrictedImageAccess([base + 998], { csamReview: false });
+    expect([kept.has(base + 998), missing.has(base + 998)]).toEqual([true, true]);
+  });
+
+  it('withholds every id, and logs it, when the read throws', async () => {
+    const real = dbHandle.current;
+    dbHandle.current = {
+      transaction: () => ({ execute: async () => Promise.reject(new Error('down')) }),
+    };
+    try {
+      const ids = [base + 999, base + 998];
+      expect([...(await listWithheldIds(ids, { csamReview: false }, 'test'))]).toEqual(ids);
+      expect(logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'image-queue-withheld-read-failed' })
+      );
+    } finally {
+      dbHandle.current = real;
+    }
   });
 });

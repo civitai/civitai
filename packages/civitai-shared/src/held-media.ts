@@ -70,9 +70,12 @@ export function heldImageKnownSql(image: string): string {
 /**
  * Whether the "Image" row aliased `image` is marked as CSAM by a hash block, a scan flag, a
  * moderator vote or a CSAM hold on its label item. Not `heldImageSql`'s legs. With
- * `scanFlag: false` a scan flag alone does not count.
+ * `scanFlag: false` a scan flag alone does not count; with `hold: false` a hold alone does not.
  */
-export function csamSignalImageSql(image: string, { scanFlag = true } = {}): string {
+export function csamSignalImageSql(
+  image: string,
+  { scanFlag = true, hold = true }: { scanFlag?: boolean; hold?: boolean } = {}
+): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const id = `${image}.id`;
   const flagged = scanFlag
@@ -88,7 +91,7 @@ export function csamSignalImageSql(image: string, { scanFlag = true } = {}): str
     OR EXISTS (
       SELECT 1 FROM "ScanLabelItem" si
       WHERE si."imageId" = ${id} AND (
-        si."voidReason" = 'csam-hold'${flagged}
+        ${hold ? `si."voidReason" = 'csam-hold'` : 'false'}${flagged}
         OR EXISTS (
           SELECT 1 FROM "ScanLabelVote" sv WHERE sv."itemId" = si.id AND sv.reason = 'csam-realistic'
         )

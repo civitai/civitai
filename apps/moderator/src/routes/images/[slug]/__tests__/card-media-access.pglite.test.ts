@@ -185,13 +185,23 @@ describe('card load, without the grant', () => {
     expect(JSON.stringify(await card(WITHOUT_GRANT, RESTRICTED))).not.toContain(KEY);
   });
 
-  it('withholds a row the Postgres rule restricts, whatever its block reason', async () => {
-    expect(await card(WITHOUT_GRANT, HELD)).toMatchObject({ restricted: true, url: '' });
+  // The moderator-view rule reads Postgres only, and none of these is a CSAM mark of a row: an
+  // evidence hold, a url sibling still scanning, the scanner's label on the row or a sibling.
+  it('serves a row only an evidence hold or the scanner would have kept', async () => {
+    for (const id of [HELD, SHARED_URL, SCANNER_HIT, SCANNER_SIBLING])
+      expect({ id, card: await card(WITHOUT_GRANT, id) }).toMatchObject({
+        id,
+        card: { restricted: false },
+      });
   });
 
-  // Bytes are per url: another row on it that has not finished its scan keeps this one too.
-  it('withholds a row whose url another row keeps', async () => {
-    expect(await card(WITHOUT_GRANT, SHARED_URL)).toMatchObject({ restricted: true, url: '' });
+  it('withholds a row with CSAM among its block reasons', async () => {
+    expect(await card(WITHOUT_GRANT, SIGNAL)).toMatchObject({ restricted: true, url: '' });
+  });
+
+  it('serves a row while the scanner cannot answer', async () => {
+    scanner.down = true;
+    expect(await card(WITHOUT_GRANT, CONTROL)).toMatchObject({ restricted: false });
   });
 
   it('withholds a row whose url sibling carries a signal, and refuses its ruling', async () => {
@@ -212,24 +222,6 @@ describe('card load, without the grant', () => {
       restricted: false,
       url: 'clean-sibling-key',
     });
-  });
-
-  it('withholds a row only the scanner marks', async () => {
-    expect(await card(WITHOUT_GRANT, SCANNER_HIT)).toMatchObject({ restricted: true, url: '' });
-  });
-
-  it('withholds a row whose url sibling only the scanner marks', async () => {
-    expect(await card(WITHOUT_GRANT, SCANNER_SIBLING)).toMatchObject({ restricted: true, url: '' });
-  });
-
-  it('withholds every row the rule reaches while the scanner cannot answer', async () => {
-    scanner.down = true;
-    expect(await card(WITHOUT_GRANT, CONTROL)).toMatchObject({ restricted: true, url: '' });
-  });
-
-  // The storage route's block-reason check, which the Postgres rule alone does not make.
-  it('withholds a row whose block reason carries a signal', async () => {
-    expect(await card(WITHOUT_GRANT, SIGNAL)).toMatchObject({ restricted: true, url: '' });
   });
 
   it('serves an unrestricted row as before', async () => {

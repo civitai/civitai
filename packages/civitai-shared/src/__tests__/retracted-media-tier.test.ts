@@ -1,56 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  createScannerVerdictCache,
   csamRestrictedSql,
+  moderatorWithheldSql,
   siblingsServable,
   URL_SIBLING_CAP,
   urlSiblingsSql,
 } from '../retracted-media-tier';
 import type { ScannerVerdict } from '../media-signals';
 
-describe('createScannerVerdictCache', () => {
-  const setup = (answers: (ScannerVerdict | null)[]) => {
-    let t = 0;
-    const read = vi.fn(async () => answers.shift() ?? null);
-    const cache = createScannerVerdictCache(read, { ttlMs: 1000, max: 2, now: () => t });
-    return { read, cache, advance: (ms: number) => (t += ms) };
-  };
-
-  it('asks ClickHouse once per image within the ttl, and again after it', async () => {
-    const { read, cache, advance } = setup(['clear', 'hit']);
-    expect(await cache.read(1)).toBe('clear');
-    expect(await cache.read(1)).toBe('clear');
-    expect(read).toHaveBeenCalledTimes(1);
-    advance(1000);
-    expect(await cache.read(1)).toBe('hit');
-    expect(read).toHaveBeenCalledTimes(2);
-  });
-
-  it('never keeps an unreadable answer', async () => {
-    const { read, cache } = setup([null, 'clear']);
-    expect(await cache.read(1)).toBeNull();
-    expect(await cache.read(1)).toBe('clear');
-    expect(read).toHaveBeenCalledTimes(2);
-  });
-
-  it('never keeps a missing verdict, since rows can land after it', async () => {
-    const { read, cache } = setup(['none', 'hit']);
-    expect(await cache.read(1)).toBe('none');
-    expect(await cache.read(1)).toBe('hit');
-    expect(read).toHaveBeenCalledTimes(2);
-  });
-
-  it('drops the oldest entry past its size', async () => {
-    const { read, cache } = setup(['clear', 'clear', 'clear', 'hit']);
-    await cache.read(1);
-    await cache.read(2);
-    await cache.read(3);
-    expect(await cache.read(1)).toBe('hit');
-    expect(read).toHaveBeenCalledTimes(4);
-  });
-});
-
-describe('csamRestrictedSql and urlSiblingsSql', () => {
+describe('csamRestrictedSql, moderatorWithheldSql and urlSiblingsSql', () => {
   const aliases = (sql: string) => [
     ...new Set([...sql.matchAll(/(?:FROM|JOIN) "\w+" (\w+)/g)].map((m) => m[1])),
   ];
@@ -69,6 +27,13 @@ describe('csamRestrictedSql and urlSiblingsSql', () => {
         refused: true,
       });
     }
+    const withheld = (alias: string) => moderatorWithheldSql(alias, { csamReview: false });
+    const declaredWithheld = aliases(withheld('i'));
+    expect(declaredWithheld).toContain('mw');
+    for (const alias of declaredWithheld)
+      for (const a of [alias, alias.toUpperCase()])
+        expect({ a, refused: refuses(() => withheld(a)) }).toEqual({ a, refused: true });
+    expect(moderatorWithheldSql('i', { csamReview: true })).toBe('false');
     expect(() => urlSiblingsSql('us')).toThrow(/Bad table alias/);
     expect(() => urlSiblingsSql('US')).toThrow(/Bad table alias/);
     expect(() => urlSiblingsSql('i')).not.toThrow();

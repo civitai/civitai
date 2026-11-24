@@ -187,8 +187,8 @@ export async function rescanStuckImages({
 
 /** Shared by the queue and its badge: a divergence here is a count that never reaches zero. */
 const ingestionErrorWhere = sql`
-  i."createdAt" > now() - INTERVAL '2 days'
-  AND i."createdAt" < now() - INTERVAL '1 hour'
+  i."createdAt" > (now() AT TIME ZONE 'UTC') - INTERVAL '2 days'
+  AND i."createdAt" < (now() AT TIME ZONE 'UTC') - INTERVAL '1 hour'
   AND i.ingestion = 'Error'::"ImageIngestionStatus"
   AND i."nsfwLevel" = 0
 `;
