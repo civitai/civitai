@@ -184,7 +184,7 @@ beforeEach(async () => {
     if (/FROM "PostText"/.test(sql.text))
       return sql.values.filter((v) => heldTextPosts.has(v as number)).map((postId) => ({ postId }));
     if (
-      !/DELETE FROM "(Image|Post)"|AS deletable|AS cleared|"EvidenceHoldImage"|"JobQueue"|SELECT id FROM "Image" WHERE "postId"/.test(
+      !/DELETE FROM "(Image|Post)"|AS deletable|AS cleared|AS found|"EvidenceHoldImage"|"JobQueue"|SELECT id FROM "Image" WHERE "postId"/.test(
         sql.text
       )
     )
@@ -733,6 +733,41 @@ describe('an owner deleting their own content in a child-safety case', () => {
     expect((await pending()).map(({ data }) => data)).toEqual([
       { deletedBy: ACCOUNT_DELETION_DRAIN, releasedOnRestore: true },
       { deletedBy: ACCOUNT_DELETION_DRAIN, releasedOnRestore: true },
+    ]);
+
+    await holder.db.exec(`
+      UPDATE "Report" SET status = 'Unactioned' WHERE id = 1;
+      UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${imageOf(PLAIN)};
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", images, details)
+      VALUES (${PLAIN}, now(), '[${imageOf(
+      PLAIN
+    )}]', '{"evidenceVerifiedAt": "2026-11-01T00:00:00Z"}')
+    `);
+    await runJob();
+    await runJob();
+
+    expect(await pending()).toEqual([]);
+    expect(
+      (await holder.db.query(`SELECT id FROM "Post" WHERE id = ${postOf(PLAIN)}`)).rows
+    ).toEqual([]);
+  });
+
+  it('deletes a restored post whose image the case found after another ask unmarked the image', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+      INSERT INTO "PostReport" VALUES (${postOf(PLAIN)}, 1);
+    `);
+    await deletePost({ id: postOf(PLAIN), actor: { system: ACCOUNT_DELETION_DRAIN } });
+    await releaseAccountDeletionPendingDeletes(PLAIN);
+    await deleteImages([imageOf(PLAIN)], { actor: { id: MODERATOR, isModerator: true } });
+    expect(
+      (await pending()).map(({ entityType, data }) => [
+        entityType,
+        'releasedOnRestore' in (data as object),
+      ])
+    ).toEqual([
+      ['Image', false],
+      ['Post', true],
     ]);
 
     await holder.db.exec(`

@@ -135,9 +135,20 @@ async function clearedByCase(kind: Kind, ids: number[]) {
   return new Set(rows.map(({ cleared }) => cleared));
 }
 
+/** Of `ids`, the images whose case has a finding, or an outcome not read as none. */
+async function imagesWithFinding(ids: number[]) {
+  if (!ids.length) return [];
+  const { rows } = await sql<{ found: number }>`
+    SELECT "Image".id AS found FROM "Image"
+    WHERE "Image".id = ANY(${ids}::int[]) AND (${childSafetyImageFinding('Image')}) IS NOT FALSE
+  `.execute(db());
+  return rows.map(({ found }) => found);
+}
+
 /**
- * A restore-marked image carried out on a finding takes the mark off its post's delete, so the post
- * goes too: once the image is deleted, the post's own finding can no longer see it.
+ * An image carried out on a finding, or under a restore mark it did not clear, takes the mark off its
+ * post's delete, so the post goes too: once the image is deleted, the post's own finding can no
+ * longer see it.
  */
 const unmarkPostsOf = (imageIds: number[]) =>
   imageIds.length
@@ -216,7 +227,11 @@ export const pendingDeletes = createJob('pending-deletes', '*/5 * * * *', async 
       .filter(({ data }) => data.releasedOnRestore && data.ownerId === undefined && !data.cleanup)
       .map((row) => row.id);
     const releasedIds = await clearedByCase(kind, marked);
-    if (kind === 'Image') await unmarkPostsOf(marked.filter((id) => !releasedIds.has(id)));
+    if (kind === 'Image') {
+      const carried = due.map((row) => row.id).filter((id) => !releasedIds.has(id));
+      const found = new Set(await imagesWithFinding(carried));
+      await unmarkPostsOf(carried.filter((id) => found.has(id) || marked.includes(id)));
+    }
     const threw = new Set(
       await carryOut(
         kind,
