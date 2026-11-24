@@ -1064,10 +1064,12 @@ describe('imagesPendingDeletion', () => {
   it.each(OWNER_HIDDEN_REVIEWS)(
     'does not name one still held for a %s review, whatever the state of the review',
     async (needsReview) => {
-      await addImage({ blockedFor: 'CSAM', needsReview });
+      await addImage({ blockedFor: 'CSAM' });
       await pg.exec(`INSERT INTO "CsamReport" (images, details)
         VALUES ('[{"id": ${IMAGE}}]', '{"evidenceVerifiedAt": "2026-11-01T00:00:00Z"}')`);
       await ownDelete([IMAGE]);
+      // After the delete, which takes the image out of every review queue but one.
+      await pg.query(`UPDATE "Image" SET "needsReview" = $1 WHERE id = ${IMAGE}`, [needsReview]);
       expect(await imagesPendingDeletion(db, [IMAGE])).toEqual(new Set());
 
       await pg.exec(`UPDATE "CsamReport" SET "reportSentAt" = now()`);
