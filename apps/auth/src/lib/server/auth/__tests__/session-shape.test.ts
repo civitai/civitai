@@ -309,6 +309,12 @@ describe('shapeSessionUser — meta / banDetails (parity)', () => {
     expect(u.meta).toEqual({ scores: { total: 1 } });
   });
 
+  it("never sends the moderators' memorial record, not even to the account owner", () => {
+    const memorial = { status: 'pending', basis: 'attestation', proposedBy: 7, tributes: [] };
+    const u = shape({ meta: { memorial, scores: { total: 1 } } });
+    expect(u.meta).toEqual({ scores: { total: 1 } });
+  });
+
   it('treats a null/garbage meta as an empty object', () => {
     expect(shape({ meta: null }).meta).toEqual({});
     expect(shape({ meta: 'nope' }).meta).toEqual({});

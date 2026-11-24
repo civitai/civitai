@@ -26,15 +26,16 @@ import (
 // Every request outcome a path can reach is a 0 series per endpoint, and only those: served_cached
 // on the single-model route alone (the only cached answer), on both modes; no served_empty on
 // as-posts (its compute marks no trivial answer) nor on the single-model public route (its trivial
-// answer, the not-found body, falls back there).
+// answer, the not-found body, falls back there); region_blocked (the app's 451 written here) on every
+// public route, serve mode only.
 func TestRequestOutcomesAreSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
 	// serve: 6 public routes x served, served_empty, fallback, error, + v1-models-id served_cached,
 	// - served_empty on as-posts and v1-models-id; shadow: 7 endpoints x the same 4, + v1-models-id
-	// served_cached, - served_empty on as-posts.
-	if n := testutil.CollectAndCount(m.Requests); n != 6*4+1-2+7*4+1-1 {
-		t.Fatalf("feed_go_requests_total has %d series at construction, want 51", n)
+	// served_cached, - served_empty on as-posts; + region_blocked on the 6 public routes (serve only).
+	if n := testutil.CollectAndCount(m.Requests); n != 6*4+1-2+7*4+1-1+6 {
+		t.Fatalf("feed_go_requests_total has %d series at construction, want 57", n)
 	}
 	served := []string{"as-posts", "model-getall", "infinite", "v1-models", "v1-models-id", "v1-images"}
 	all := append([]string{"model-associated"}, served...)
@@ -67,6 +68,18 @@ func TestRequestOutcomesAreSeeded(t *testing.T) {
 	} {
 		if _, found := metricValue(t, reg, "feed_go_requests_total", l); found {
 			t.Errorf("requests%v exists, but its path cannot count it", l)
+		}
+	}
+	for _, e := range served {
+		l := map[string]string{"feed_endpoint": e, "mode": "serve", "outcome": "region_blocked"}
+		if v, found := metricValue(t, reg, "feed_go_requests_total", l); !found || v != 0 {
+			t.Errorf("requests%v = %v found=%v, want a 0 series", l, v, found)
+		}
+	}
+	for _, e := range all {
+		l := map[string]string{"feed_endpoint": e, "mode": "shadow", "outcome": "region_blocked"}
+		if _, found := metricValue(t, reg, "feed_go_requests_total", l); found {
+			t.Errorf("requests%v exists: the shadow never answers a 451", l)
 		}
 	}
 	if _, found := metricValue(t, reg, "feed_go_requests_total", map[string]string{"feed_endpoint": "model-associated", "mode": "serve", "outcome": "served"}); found {

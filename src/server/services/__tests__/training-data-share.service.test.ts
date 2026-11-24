@@ -2,8 +2,6 @@ import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const ownerHeld = vi.hoisted(() => vi.fn());
-vi.mock('~/server/services/legal-hold.service', () => ({ ownerHeld, ownerHeldSql: () => '' }));
 const deleteFilesForModelVersionCache = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/model-file.service', () => ({ deleteFilesForModelVersionCache }));
 
@@ -11,8 +9,16 @@ const { setStudioDatasetShare, trainingDataShareFromQuery } = await import(
   '~/server/services/training-data-share.service'
 );
 
+/** Whether the share-restriction read finds a restricted owner or content. */
+const restriction = vi.hoisted(() => ({ on: false }));
+/** `rows` for every raw read but the share-restriction read, which answers `restriction.on`. */
+const answerQueries = (rows: unknown[]) =>
+  dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+    Promise.resolve(
+      strings.join('').includes('AS restricted') ? [{ restricted: restriction.on }] : rows
+    )) as never);
 const row = (sizeKB: number, metadata: Record<string, unknown> = {}) =>
-  dbMock.dbWrite.$queryRaw.mockResolvedValue([
+  answerQueries([
     { id: 7, sizeKB, metadata: { selectedEpochUrl: 'https://orch.example/E', ...metadata } },
   ]);
 const written = () =>
@@ -30,7 +36,7 @@ const owner = { raise: true, ownerId: 5 };
 beforeEach(() => {
   dbMock.dbWrite.$queryRaw.mockReset();
   dbMock.dbWrite.modelFile.update.mockReset().mockResolvedValue({});
-  ownerHeld.mockReset().mockResolvedValue(false);
+  restriction.on = false;
   deleteFilesForModelVersionCache.mockReset();
 });
 
@@ -81,7 +87,7 @@ describe('setStudioDatasetShare', () => {
 
   it('a restricted owner or content keeps a shared zip Private', async () => {
     row(1024, archived(true));
-    ownerHeld.mockResolvedValue(true);
+    restriction.on = true;
     await setStudioDatasetShare(70, shared, owner);
     expect(written().data.visibility).toBe('Private');
   });

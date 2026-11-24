@@ -15,6 +15,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
+	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
 )
 
 // RawImage is one row of the getAllImages SELECT.
@@ -290,7 +291,10 @@ func hydrateRows(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer
 			model3dIDs = append(model3dIDs, *r.Model3DID)
 		}
 	}
-	p, err := h.Page(ctx, req)
+	pctx, phase := tracing.StartPhase(ctx, tracing.PhaseHydrate)
+	phase.SetInt(tracing.AttrItems, len(req.ImageIDs))
+	p, err := h.Page(pctx, req)
+	phase.End()
 	if err != nil {
 		return nil, err
 	}
@@ -512,6 +516,9 @@ func FetchImages(ctx context.Context, db Querier, cache *QueryCache, h Hydrator,
 	if err != nil {
 		return nil, err
 	}
+	_, phase := tracing.StartPhase(ctx, tracing.PhaseBuild)
+	phase.SetInt(tracing.AttrItems, len(rows))
 	page.Images = BuildImages(rows, hy, viewer, now)
+	phase.End()
 	return page, nil
 }

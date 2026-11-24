@@ -16,8 +16,7 @@ export function sqlRef(ref: string): string {
 
 /**
  * Whether the user `column` (an int SQL expression) is named on any CsamReport (subject or secondary
- * user) or has an active evidence hold. Names the "EvidenceHeldUser" view, so a database without it
- * fails the statement, which refuses.
+ * user).
  */
 export function heldUserSql(column: string): string {
   const user = sqlRef(column);
@@ -33,7 +32,6 @@ export function heldUserSql(column: string): string {
         FROM "CsamReport" hs
         WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
       ), false)
-      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = ${user})
     )`;
 }
 

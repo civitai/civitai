@@ -136,7 +136,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	m := &Metrics{
 		Requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_requests_total",
-			Help: "Requests by mode (serve|shadow) and outcome (served|served_empty|served_cached|fallback|error).",
+			Help: "Requests by mode (serve|shadow) and outcome (served|served_empty|served_cached|fallback|error|region_blocked).",
 		}, []string{EndpointLabel, "mode", "outcome"}),
 		Fallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_fallback_total",
@@ -325,8 +325,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 // fields, order and membership, the trivial and cached matches, and the compare path's own outcomes.
 var ShadowResultValues = []string{"match", "match_empty", "match_cached", "fields", "order", "membership", "unsupported", "deadline", "go_error", "bad_request"}
 
-// RequestOutcomes are the `outcome` values of feed_go_requests_total.
-var RequestOutcomes = []string{"served", "served_empty", "served_cached", "fallback", "error"}
+// RequestOutcomes are the `outcome` values of feed_go_requests_total. region_blocked
+// (OutcomeRegionBlocked) is the app's 451 written here for a blocked region: neither a served answer
+// nor a fallback, so the served-traffic and fallback-rate figures keep their meaning.
+var RequestOutcomes = []string{"served", "served_empty", "served_cached", "fallback", "error", OutcomeRegionBlocked}
 
 // computeFallbackReasons are the fallback reasons every compute can end in, whatever its endpoint
 // (Server.within: a panic, a gone client, the budget), so feed_go_fallback_total is seeded with them
@@ -431,6 +433,8 @@ func outcomeReachable(endpoint, mode, outcome string) bool {
 		return cachedEndpoint(endpoint)
 	case "served_empty":
 		return emptyReachable(endpoint, mode)
+	case OutcomeRegionBlocked:
+		return mode == "serve"
 	}
 	return true
 }

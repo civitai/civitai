@@ -92,8 +92,6 @@ CREATE TABLE "ScanLabelVote" ("itemId" INTEGER, reason TEXT);
 CREATE TABLE "CsamReport" (
   id SERIAL PRIMARY KEY, "userId" INTEGER, details JSONB, images JSONB, "reportSentAt" TIMESTAMP
 );
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
-CREATE TABLE "EvidenceHoldImage" ("imageId" INTEGER PRIMARY KEY);
 CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL, "textHash" TEXT, meta JSONB);
 `;
 
@@ -113,7 +111,6 @@ beforeAll(async () => {
       (4, 'key-4', 304, 'Blocked', 'csam', 'moderated', false),
       (5, 'key-5', 305, 'Scanned', NULL, NULL, false),
       (6, 'key-6', 306, 'Blocked', NULL, 'tos', false);
-    INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (6);
 
     -- The CDN-refusal leg. Each differs from 7 (scanned, url retracted, the url's only row) in one fact.
     INSERT INTO "Image" (id, url, "userId", ingestion, "postId", minor) VALUES
@@ -330,7 +327,6 @@ describe('copies sharing bytes with a restricted image', () => {
   afterEach(async () => {
     await db.exec(`
       DELETE FROM "CsamReport" WHERE "userId" = 990100199;
-      DELETE FROM "EvidenceHoldImage" WHERE "imageId" IN (990000102, 990000104);
       DELETE FROM "ImageCdnModeratorDelete" WHERE "imageId" = 990000105;
       UPDATE "Image" SET "needsReview" = NULL, minor = false WHERE id = 990000102;
     `);
@@ -548,7 +544,7 @@ describe("a held account's image, through /api/retracted-media's reader", () => 
       INSERT INTO "Image" (id, url, "userId", ingestion, "needsReview") VALUES
         (${IMAGE}, 'key-${IMAGE}', ${OWNER}, 'Scanned', 'poi'),
         (${TWIN}, 'key-${TWIN}', 990100401, 'Scanned', 'poi');
-      INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${OWNER});
+      INSERT INTO "CsamReport" ("userId", details, images) VALUES (${OWNER}, '{}', '[]');
     `);
   });
   beforeEach(() => {
@@ -556,7 +552,7 @@ describe("a held account's image, through /api/retracted-media's reader", () => 
   });
   afterAll(async () => {
     await db.exec(`DELETE FROM "Image" WHERE id IN (${IMAGE}, ${TWIN});
-      DELETE FROM "EvidenceHeldUser" WHERE "userId" = ${OWNER}`);
+      DELETE FROM "CsamReport" WHERE "userId" = ${OWNER}`);
   });
 
   it('answers a live image of a held account as it answers any live image', async () => {
@@ -801,10 +797,6 @@ describe('the moderator-view rule, one fact at a time (civitai/civitai#10377)', 
       leg: 'a csam hold on its label item',
       mark: (id) =>
         `INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (${id}, ${id}, 'csam-hold');`,
-    },
-    {
-      leg: 'an evidence hold on its bytes',
-      mark: (id) => `INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (${id});`,
     },
     {
       leg: 'a held file (a CSAM-review delete on its url with no owner)',

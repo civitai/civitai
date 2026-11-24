@@ -2,7 +2,7 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, denied, requiresGrant } from '$lib/server/access';
-import { int4Id, parseForm, userIdSchema } from '$lib/server/query';
+import { int4Id, jsonField, parseForm, userIdSchema } from '$lib/server/query';
 import { isInt4Id } from '$lib/server/users.service';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { RETIRED_SECTIONS, isSection } from '../sections';
@@ -36,7 +36,11 @@ import {
   revokeCreatorScoreGrant,
   setRewardsEligibility,
   deleteAccount,
-  deleteAccountHold,
+  confirmMemorial,
+  getMemorialPanelState,
+  proposeMemorial,
+  reverseMemorial,
+  type MemorialPanelState,
   countReactions,
   removeReactions,
   purgeAllContent,
@@ -52,6 +56,11 @@ import {
   updateUserIdentity,
 } from '$lib/server/user-actions.service';
 import { resolveUsername } from '$lib/server/user-lookup.service';
+import {
+  MEMORIAL_BASES,
+  MEMORIAL_BASIS_LABELS,
+  MEMORIAL_TRIBUTES_MAX,
+} from '@civitai/shared/memorial';
 import { withheldAccountRefusal } from '$lib/server/retracted-media';
 import {
   boxGrantFields,
@@ -76,7 +85,6 @@ import {
   type CreatorScoreGrantResult,
 } from '$lib/creator-score-grant';
 import { BUZZ_ENTITY_TYPES } from '../enforcement-options';
-import { HOLD_UNKNOWN_REFUSAL, LEGAL_HOLD_REFUSAL, type DeleteHold } from '$lib/legal-hold';
 
 // The lookup itself lives in the layout so it survives moving between sections; this only validates
 // the slug, so an unknown one 404s rather than rendering the fallback panel.
@@ -86,22 +94,19 @@ export const load: PageServerLoad = async ({ params, url, locals, parent }) => {
   const moved = RETIRED_SECTIONS[params.section];
   if (moved) redirect(307, `/retool/user-lookup/${moved}${url.search}`);
   if (!isSection(params.section)) error(404, 'Unknown section');
-  // Only where the Delete account and Purge buttons render, and only for someone who may press one.
-  let deleteHold: DeleteHold | null = null;
-  if (
-    params.section === 'admin' &&
-    (locals.grants['user.deleteAccount'] || locals.grants['user.purge'])
-  ) {
+  let memorial: MemorialPanelState | null = null;
+  if (params.section === 'admin' && locals.grants['user.memorialize']) {
     const { result } = await parent();
-    if (result) deleteHold = await deleteAccountHold(result.identity.id);
+    if (result) memorial = await getMemorialPanelState(result.identity.id);
   }
-  return { section: params.section, deleteHold };
+  return { section: params.section, memorial };
 };
 
 const NOTE_MAX = 5000;
 
 // Every action's input is a zod parse, per the app standard.
 const accountFail = (message: string) => fail(400, { scope: 'account' as const, error: message });
+const memorialFail = (message: string) => fail(400, { scope: 'memorial' as const, error: message });
 // Separate from `account`: the only renderer of that scope is the panel on Admin, so an identity
 // refusal scoped there is invisible on Basic, where the form actually is.
 const identityFail = (message: string) => fail(400, { scope: 'identity' as const, error: message });
@@ -882,10 +887,6 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return accountFail(input);
-    // The endpoint refuses a held account too; this answers before anything is sent.
-    const hold = await deleteAccountHold(input.userId);
-    if (hold === 'held') return accountFail(LEGAL_HOLD_REFUSAL);
-    if (hold !== 'clear') return accountFail(HOLD_UNKNOWN_REFUSAL);
     if (input.removeImages === 'true') {
       const withheld = await withheldAccountRefusal(locals.user, input.userId);
       if (withheld) return fail(403, { scope: 'account' as const, error: withheld });
@@ -899,6 +900,62 @@ export const actions: Actions = {
       removeImages: flag(input.removeImages),
     });
     if (!result.ok) return accountFail(result.error);
+    return { success: true };
+  }),
+
+  memorialPropose: requiresGrant('user.memorialize', async ({ request, locals }) => {
+    const author = locals.user.username;
+    if (!author) return memorialFail('Your account has no username.');
+    const input = parseForm(
+      userIdSchema.extend({
+        basis: z.enum(MEMORIAL_BASES),
+        note: z.string().trim().min(1, 'Say how the death was confirmed.').max(NOTE_MAX),
+        tributes: jsonField(
+          z
+            .array(
+              z.object({
+                label: z.string().trim().min(1, 'Each tribute needs a label.').max(80),
+                url: z.string().trim().min(1, 'Each tribute needs a link.'),
+              })
+            )
+            .max(MEMORIAL_TRIBUTES_MAX, `At most ${MEMORIAL_TRIBUTES_MAX} tributes.`)
+        ),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return memorialFail(input);
+
+    // First, so a proposal is never left without its evidence, whatever the endpoint answers.
+    await addUserNote({
+      userId: input.userId,
+      notes: `Memorialization evidence (${MEMORIAL_BASIS_LABELS[input.basis]}): ${input.note}`,
+      author,
+    });
+    const result = await proposeMemorial({
+      userId: input.userId,
+      basis: input.basis,
+      tributes: input.tributes,
+    });
+    if (!result.ok) return memorialFail(result.error);
+    return { success: true };
+  }),
+
+  memorialConfirm: requiresGrant('user.memorialize', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({ proposedAt: z.string().min(1, 'Reload the page and try again.') }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return memorialFail(input);
+    const result = await confirmMemorial(input.userId, input.proposedAt);
+    if (!result.ok) return memorialFail(result.error);
+    return { success: true, warning: result.warning };
+  }),
+
+  memorialReverse: requiresGrant('user.memorialize', async ({ request }) => {
+    const input = parseForm(userIdSchema, await request.formData());
+    if (typeof input === 'string') return memorialFail(input);
+    const result = await reverseMemorial(input.userId);
+    if (!result.ok) return memorialFail(result.error);
     return { success: true };
   }),
 

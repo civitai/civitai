@@ -6,7 +6,7 @@ import {
   heldItemImageSql,
   unreadableImageSql,
 } from './held-media';
-import { evidenceHeldUrlSql, heldUrlSql, reportListedUrlSql } from './held-url';
+import { heldUrlSql, reportListedUrlSql } from './held-url';
 import { blockedForSignal, type BlockedForPatterns, type ScannerVerdict } from './media-signals';
 
 /** Whether the retracted-media routes may serve the "Image" row aliased `image` at all, to anyone:
@@ -139,8 +139,8 @@ function upgradedRetractionSql(image: string): string {
  * The review-batch tier rule, not the moderator views' (`moderatorWithheldSql`).
  * Whether the "Image" row aliased `image` is kept to moderators cleared for CSAM review: it, or
  * one of the first `URL_SIBLING_CAP` other rows on its url, carries a CSAM signal in Postgres
- * (`csamRowSql`); it is listed on a CSAM report; its bytes (by url or pHash copy) are reported, held
- * or under an evidence hold; or the file is held (`heldUrlSql` with `owners: false`). Nothing about
+ * (`csamRowSql`); it is listed on a CSAM report; its bytes (by url or pHash copy) are reported or
+ * held; or the file is held (`heldUrlSql` with `owners: false`). Nothing about
  * an owner, post or model is here, and neither is a minor signal alone: any moderator may see those.
  * `blockedFor` text and the scanner's labels, of this row and of `urlSiblingsSql`'s rows, are read by the caller.
  */
@@ -164,7 +164,6 @@ function buildCsamRestrictedSql(image: string): string {
     )
     OR (${id})::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})
     OR ${reportListedUrlSql(url)}
-    OR ${evidenceHeldUrlSql(url)}
     OR ${heldUrlSql(url, { exceptImageId: `${image}."id"`, owners: false })}
   ), true)`;
 }

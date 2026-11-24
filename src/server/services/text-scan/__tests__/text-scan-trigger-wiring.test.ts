@@ -86,7 +86,7 @@ const cases: [file: string, start: string, call: string, times: number][] = [
   [
     'src/server/controllers/model.controller.ts',
     'export const publishModelHandler',
-    'return withModelRulesClearance(withoutRemovedWithOwner(rest), stored, isModerator)',
+    'return withModelRulesClearance(rest, stored, isModerator)',
     1,
   ],
   [

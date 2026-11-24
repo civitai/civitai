@@ -94,8 +94,7 @@ function subjectWhere(model: DmmfModel, subject: readonly string[], userId: numb
 
 /**
  * Images the content-safety rules leave out of an export, rows and URLs both; kept at least as wide
- * as `excludedImageRow`. Accounts under a legal hold are handled by `exportHoldReasons`. Over
- * "Image" unaliased.
+ * as `excludedImageRow`. Over "Image" unaliased.
  */
 export const IMAGE_SAFETY_CONDITION = `(
   COALESCE("Image"."blockedFor", '') = 'CSAM'

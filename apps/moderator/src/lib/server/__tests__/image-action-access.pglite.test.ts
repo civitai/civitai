@@ -24,7 +24,6 @@ const { dbHandle, writes } = vi.hoisted(() => ({
     removeAllImagesForUser: vi.fn(async (_input: unknown) => ({ ok: true as const, count: 1 })),
     purgeAllContent: vi.fn(async (_input: unknown) => ({ ok: true as const })),
     deleteAccount: vi.fn(async (_input: unknown) => ({ ok: true as const })),
-    deleteAccountHold: vi.fn(async (_userId: number) => 'clear' as const),
   },
 }));
 

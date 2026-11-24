@@ -1546,24 +1546,6 @@ export interface ComicProjectReport {
   report?: Report;
 }
 
-export interface HeldResourceReview {
-  id: number;
-  modelId: number;
-  modelVersionId: number;
-  userId: number;
-  rating: number;
-  recommended: boolean;
-  details: string | null;
-  exclude: boolean;
-  nsfw: boolean;
-  tosViolation: boolean;
-  metadata: JsonValue | null;
-  createdAt: Date;
-  updatedAt: Date;
-  heldAt: Date;
-  holdReasons: string[];
-}
-
 export interface ResourceReview {
   id: number;
   modelId: number;
@@ -4367,52 +4349,6 @@ export interface PersonalDataExport {
   releasedById: number | null;
   ticketId: number | null;
   requestedAt: Date | null;
-}
-
-export interface EvidenceHold {
-  id: number;
-  userId: number;
-  csamReportId: number | null;
-  role: string;
-  reportSentAt: Date | null;
-  releaseAt: Date | null;
-  extendedUntil: Date | null;
-  extensionRequestedBy: string | null;
-  extensionReference: string | null;
-  reason: string;
-  createdAt: Date;
-  createdById: number | null;
-  releasedAt: Date | null;
-  releasedById: number | null;
-  releaseReason: string | null;
-}
-
-export interface EvidenceHoldImage {
-  imageId: number;
-  userId: number;
-  postId: number | null;
-  keptAt: Date;
-  priorIngestion: string | null;
-  priorBlockedFor: string | null;
-  priorNsfwLevel: number | null;
-}
-
-export interface EvidenceHoldPost {
-  postId: number;
-  userId: number;
-  title: string | null;
-  detail: string | null;
-  createdAt: Date | null;
-  publishedAt: Date | null;
-  modelVersionId: number | null;
-  collectionId: number | null;
-  metadata: JsonValue | null;
-  keptAt: Date;
-}
-
-export interface EvidenceHeldUser {
-  userId: number;
-  heldUntil: Date | null;
 }
 
 export interface Link {

@@ -8,22 +8,15 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /** Preserving a user's generator evidence and filing it. Every id, host and byte below is invented. */
 
-const { createCsamReport, placeEvidenceHold, reviewConsumerStrikes, softDeleteUser } = vi.hoisted(
-  () => ({
-    createCsamReport: vi.fn(),
-    placeEvidenceHold: vi.fn(async () => ({ id: 1, created: true })),
-    reviewConsumerStrikes: vi.fn(),
-    softDeleteUser: vi.fn(),
-  })
-);
+const { createCsamReport, reviewConsumerStrikes, softDeleteUser } = vi.hoisted(() => ({
+  createCsamReport: vi.fn(),
+  reviewConsumerStrikes: vi.fn(),
+  softDeleteUser: vi.fn(),
+}));
 
 vi.mock('~/server/services/csam.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CsamService>()),
   createCsamReport,
-}));
-vi.mock('@civitai/db-queries/evidence-hold', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  placeEvidenceHold,
 }));
 vi.mock('~/server/http/orchestrator/flagged-consumers', async (importOriginal) => ({
   ...(await importOriginal<typeof FlaggedConsumers>()),
@@ -34,7 +27,6 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   softDeleteUser,
 }));
 
-import { GENERATOR_EVIDENCE_HOLD_REASON } from '@civitai/db-queries/evidence-hold';
 import {
   approveGeneratorEvidenceReport,
   excludeGeneratorEvidenceFile,
@@ -157,16 +149,6 @@ describe('preserveGeneratorEvidence', () => {
       [INPUT, 'input'],
     ]);
     expect(blobs[1].derivedOutputIds).toEqual([OUTPUT]);
-    expect(placeEvidenceHold).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        userId: USER,
-        role: 'manual',
-        reason: GENERATOR_EVIDENCE_HOLD_REASON,
-        createdById: 1,
-      })
-    );
-    expect(placeEvidenceHold).toHaveBeenCalledTimes(1);
     expect(reviewConsumerStrikes).not.toHaveBeenCalled();
     expect(softDeleteUser).not.toHaveBeenCalled();
     for (const write of [
@@ -365,8 +347,6 @@ describe('preserveGeneratorEvidence', () => {
   });
 
   describe('the file limit of one request', () => {
-    beforeEach(() => placeEvidenceHold.mockClear());
-
     // One input plus `outputs` outputs.
     const serveWorkflowWith = (outputs: number) => {
       const images = Array.from({ length: outputs }, (_, i) => ({
@@ -394,7 +374,6 @@ describe('preserveGeneratorEvidence', () => {
     const nothingWritten = (store: EvidenceStore) => {
       expect(fetched.filter((path) => path.startsWith('/v2/consumer/blobs/'))).toEqual([]);
       expect(store.upload).not.toHaveBeenCalled();
-      expect(placeEvidenceHold).not.toHaveBeenCalled();
       expect(createCsamReport).not.toHaveBeenCalled();
     };
 

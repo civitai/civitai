@@ -73,7 +73,6 @@ const PACKAGE_EXPORTS = {
   './placement': './src/placement.db.ts',
   './tag': './src/tag.db.ts',
   './image-removal-confirmation': './src/image-removal-confirmation.db.ts',
-  './evidence-hold': './src/evidence-hold.db.ts',
   './csam-queue': './src/csam-queue.db.ts',
   './evidence-archive-queue': './src/evidence-archive-queue.db.ts',
   './content-deletion': './src/content-deletion.db.ts',

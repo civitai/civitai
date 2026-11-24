@@ -113,7 +113,6 @@ describe('submitSiteAppeal', () => {
       ['someone else’s', { ...removed, userId: 999 }],
       ['a deleted', { ...removed, deletedAt: new Date() }],
       ['an owner-unpublished', { ...removed, status: ModelStatus.Unpublished }],
-      ['a wipe-kept', { ...removed, meta: { removedWithOwner: true } }],
     ])('refuses %s model', async (_, model) => {
       dbWrite.model.findUnique.mockResolvedValue(model as never);
 
@@ -270,17 +269,6 @@ describe('submitSiteAppeal cooldown', () => {
 
 describe('getSiteAppealState', () => {
   const { dbRead } = dbMock;
-
-  it('lists no model a content wipe kept', async () => {
-    dbRead.model.findMany.mockResolvedValueOnce([
-      { id: 2, name: 'taken down', meta: {} },
-      { id: 1, name: 'kept by a wipe', meta: { removedWithOwner: true } },
-    ] as never);
-
-    const state = await getSiteAppealState({ user: USER });
-
-    expect(state.models).toEqual([{ id: 2, name: 'taken down' }]);
-  });
 
   beforeEach(() => {
     dbWrite.user.findUnique.mockResolvedValue({ bannedAt: null, muted: true } as never);

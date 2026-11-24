@@ -83,13 +83,10 @@ describe('/api/admin/rescan-images rows', () => {
       "nsfwLevel" int NOT NULL DEFAULT 0, "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "needsReview" text,
       minor boolean NOT NULL DEFAULT false, metadata jsonb, "scanJobs" jsonb, url text, type text NOT NULL DEFAULT 'image',
       width int, height int, meta jsonb, "scanRequestedAt" timestamp(3));
-    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
-    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
       images jsonb NOT NULL DEFAULT '[]', "reportSentAt" timestamp(3), "archivedAt" timestamp(3));
     CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean NOT NULL DEFAULT false);
-    INSERT INTO "User" (id) VALUES (20), (21), (22);
-    INSERT INTO "EvidenceHeldUser" VALUES (21);`);
+    INSERT INTO "User" (id) VALUES (20), (22);`);
   });
 
   beforeEach(async () => {
@@ -98,8 +95,7 @@ describe('/api/admin/rescan-images rows', () => {
     INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", minor, url) VALUES
       (101, 20, 'Blocked', 'moderated', 32, false, 'https://example.invalid/101.jpeg'),
       (102, 20, 'Blocked', 'moderated', 32, true, 'https://example.invalid/102.jpeg'),
-      (103, 22, 'Blocked', 'CSAM', 32, false, 'https://example.invalid/103.jpeg'),
-      (104, 21, 'Blocked', 'moderated', 32, false, 'https://example.invalid/104.jpeg');`);
+      (103, 22, 'Blocked', 'CSAM', 32, false, 'https://example.invalid/103.jpeg');`);
     dbMock.dbWrite.$executeRaw.mockImplementation((async (
       strings: TemplateStringsArray,
       ...values: unknown[]
@@ -118,15 +114,14 @@ describe('/api/admin/rescan-images rows', () => {
     ).rows.map((r) => [r.id, r.ingestion]);
 
   it('case 1', async () => {
-    const res = await runRequest('101,102,103,104');
+    const res = await runRequest('101,102,103');
     expect(await states()).toEqual([
       [101, 'Rescan'],
       [102, 'Blocked'],
       [103, 'Blocked'],
-      [104, 'Blocked'],
     ]);
     expect(mockIngestImageById.mock.calls.map(([a]) => (a as { id: number }).id).sort()).toEqual([
-      101, 102, 103, 104,
+      101, 102, 103,
     ]);
     const updateOrder = dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0];
     expect(Math.min(...mockIngestImageById.mock.invocationCallOrder)).toBeGreaterThan(updateOrder);

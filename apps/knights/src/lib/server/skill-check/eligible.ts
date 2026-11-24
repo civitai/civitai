@@ -11,7 +11,7 @@ import { metrics, type SkillCheckReadSite } from '../metrics';
 import { childBrowsingTagIds, NsfwLevel } from '@civitai/shared';
 import type { DB } from '@civitai/db-schema/kysely';
 import { csamSignalImageSql, heldImageSql, unreadableImageSql } from '@civitai/shared/held-media';
-import { evidenceHeldUrlSql, reportListedUrlSql } from '@civitai/shared/held-url';
+import { reportListedUrlSql } from '@civitai/shared/held-url';
 
 type Joined = DB & { img: DB['Image']; p: DB['Post'] };
 type Builder = ExpressionBuilder<Joined, 'img' | 'p'>;
@@ -34,10 +34,9 @@ export const SKILL_CHECK_EXCLUSIONS: {
   clause: (eb: Builder, options?: ClauseOptions) => Expression<SqlBool>;
 }[] = [
   { name: 'tos-violation', clause: (eb) => eb('img.tosViolation', '=', false) },
-  // The shared legal-hold predicate: the image flagged for CSAM, or its owner's account held (named on a report, or under
-  // an active evidence hold). Its legs compare nullable columns, so NULL reads as not held, as its own callers read it.
+  // NULL-safe: its legs compare nullable columns, so NULL reads as not held, as its own callers read it.
   {
-    name: 'legal-hold',
+    name: 'held-media',
     clause: () => sql<SqlBool>`NOT COALESCE(${sql.raw(heldImageSql('img'))}, false)`,
   },
   // The shared CSAM-signal predicate (a CSAM blocklist hash, a scan flag, a moderator vote or a CSAM hold on its label
@@ -101,21 +100,6 @@ export const SKILL_CHECK_EXCLUSIONS: {
   {
     name: 'reported-image',
     clause: () => sql<SqlBool>`NOT ${sql.raw(reportListedUrlSql('img."url"'))}`,
-  },
-  {
-    name: 'evidence-hold-image',
-    clause: () => sql<SqlBool>`NOT ${sql.raw(evidenceHeldUrlSql('img."url"'))}`,
-  },
-  {
-    name: 'evidence-hold-post',
-    clause: (eb) =>
-      none(
-        eb,
-        eb
-          .selectFrom('EvidenceHoldPost as ehp')
-          .select(sql<number>`1`.as('one'))
-          .whereRef('ehp.postId', '=', 'img.postId')
-      ),
   },
   {
     name: 'open-report',

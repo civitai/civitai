@@ -180,7 +180,6 @@ export const routes: ApiRoutes = {
   'user/expire-generation-credentials': () =>
     import('~/server/api-routes/mod/user/expire-generation-credentials'),
   'user/force-logout': () => import('~/server/api-routes/mod/user/force-logout'),
-  'user/legal-hold': () => import('~/server/api-routes/mod/user/legal-hold'),
   'user/membership-cancel': () => import('~/server/api-routes/mod/user/membership-cancel'),
   'user/membership-cancel-preview': () =>
     import('~/server/api-routes/mod/user/membership-cancel-preview'),
@@ -193,6 +192,9 @@ export const routes: ApiRoutes = {
   'user/membership-resync': () => import('~/server/api-routes/mod/user/membership-resync'),
   'user/membership-resync-preview': () =>
     import('~/server/api-routes/mod/user/membership-resync-preview'),
+  'user/memorial-confirm': () => import('~/server/api-routes/mod/user/memorial-confirm'),
+  'user/memorial-propose': () => import('~/server/api-routes/mod/user/memorial-propose'),
+  'user/memorial-reverse': () => import('~/server/api-routes/mod/user/memorial-reverse'),
   'user/message-as-civitai': () => import('~/server/api-routes/mod/user/message-as-civitai'),
   'user/mute': () => import('~/server/api-routes/mod/user/mute'),
   'user/personal-data-export-release': () =>

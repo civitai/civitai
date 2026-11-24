@@ -82,8 +82,7 @@ beforeEach(() => {
     const sql = Array.isArray(strings) ? strings.join('') : '';
     if (sql.includes('unnest(') || sql.includes('FROM "Image" WHERE url = ANY('))
       return pgliteRaw(db).queryRaw(strings, ...values);
-    // The owner's legal-hold read: not held.
-    return Promise.resolve(sql.includes(' AS held') ? [{ held: false }] : []);
+    return Promise.resolve([]);
   }) as never);
   dbMock.dbWrite.article.create.mockResolvedValue({ id: 1, userId: 7, content: '' } as never);
   dbMock.dbWrite.$transaction.mockImplementation(((cb: (tx: unknown) => unknown) =>
