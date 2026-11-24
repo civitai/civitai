@@ -28,7 +28,7 @@ import { postCoverRows } from './post-covers';
 import { challengeAllowedMaskAt } from './rating-review-apply';
 import { computeRatedEntityDerivedNsfwLevel } from './rated-entity-derivation';
 import { SongRatingRefusedError, updateImageNsfwLevel } from './image-nsfw-level';
-import { ReportStatus, type RatingReviewStatusFilter } from '$lib/rating-review';
+import { ReportStatus, SONG_ENTITY_TYPE, type RatingReviewStatusFilter } from '$lib/rating-review';
 import type { MediaType } from '$lib/media/edge-url';
 import type { ComFace } from '$lib/com-face';
 
@@ -65,9 +65,6 @@ export type RatingReviewRow = {
   scan: { level: number | null; reason: string | null } | null;
   levelOptions: number[];
 };
-
-/** The type whose disputes live on the Audio review page rather than the /ratings queue. */
-export const SONG_ENTITY_TYPE = 'Song' satisfies RatingReviewEntityType;
 
 // Blocked is a ToS action, not a rating, as in the main app's `ratedLevel`.
 const ratingBits = (mask: number) => mask & allBrowsingLevelsFlag;
@@ -1012,7 +1009,32 @@ async function entityExists(
 }
 
 const SONG_UNREVIEWED =
-  'This song has not been reviewed yet: its own scans decide it first, and are retried automatically. Rule on its dispute once they have.';
+  "This song's own scans have not reviewed it yet; they are running or will be retried. Rule on its dispute once they have.";
+
+// The main app's scan retry ceilings (src/server/services/image-scan-failure.ts, pinned by
+// song-dispute-retry-parity.test.ts): past them the ingest cron never re-sends the song.
+const SCAN_RETRY_LIMITS: Record<string, number> = { transient: 30, permanent: 1 };
+const UNKNOWN_SCAN_RETRY_LIMIT = 9;
+const RESCAN_RETRY_LIMIT = 9;
+
+type SongScanState = { ingestion: string; retryCount: number | null; failureClass: string | null };
+
+/** A removed song, a lost file, or a scan that gave up can never be reviewed, so its dispute closes
+ *  as a gone entity's does; one still scanning or due a retry is refused until its scans decide. */
+function songNeverReviewable(s: SongScanState): boolean {
+  const retries = s.retryCount ?? 0;
+  switch (s.ingestion) {
+    case 'Blocked':
+    case 'NotFound':
+      return true;
+    case 'Error':
+      return retries >= (SCAN_RETRY_LIMITS[s.failureClass ?? ''] ?? UNKNOWN_SCAN_RETRY_LIMIT);
+    case 'Rescan':
+      return retries >= RESCAN_RETRY_LIMIT;
+    default:
+      return false;
+  }
+}
 
 // A ruling is the moderator rating writer's own: a locked level counts as the song's review, so it
 // refuses a song its scans have not reviewed, re-checked in its write. It writes on its own
@@ -1067,15 +1089,25 @@ export async function resolveRatingReview(input: {
     let exists: boolean;
     let challenge: LiveChallenge | undefined;
     let crucible: LiveCrucible | undefined;
-    let song: { ingestion: string } | undefined;
+    let song: SongScanState | undefined;
     let liveLevel: number | undefined;
     if (entityType === 'Song') {
-      song = await trx
+      // The cron's own reads of the retry count and failure class (src/server/jobs/image-ingestion.ts).
+      const found = await trx
         .selectFrom('Image')
-        .select('ingestion')
+        .select([
+          'ingestion',
+          sql<number | null>`("scanJobs"->>'retryCount')::int`.as('retryCount'),
+          sql<
+            string | null
+          >`COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')->>'failureClass'`.as(
+            'failureClass'
+          ),
+        ])
         .where('id', '=', entityId)
         .where('type', '=', 'audio')
         .executeTakeFirst();
+      song = found && !songNeverReviewable(found) ? found : undefined;
       exists = !!song;
     } else if (entityType === 'Challenge') {
       challenge = await readLiveChallenge(trx, entityId);

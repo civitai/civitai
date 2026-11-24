@@ -46,6 +46,7 @@ vi.mock('$env/dynamic/private', () => ({
 }));
 
 const service = await import('../rating-reviews.service');
+const { ratingDisputesSectionFor } = await import('../tickets/rating-disputes');
 
 let db: PGlite;
 let owner: number;
@@ -56,7 +57,8 @@ beforeEach(async () => {
   await db.exec(`ALTER TABLE "Image"
     ADD COLUMN "userId" INTEGER,
     ADD COLUMN "metadata" JSONB NOT NULL DEFAULT '{}',
-    ADD COLUMN "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE`);
+    ADD COLUMN "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN "scanJobs" JSONB`);
   dbHandle.current = ratingReviewKysely(db);
   owner = await seedUser(db, 'owner');
   mod = await seedUser(db, 'mod');
@@ -67,12 +69,20 @@ afterEach(async () => {
   await db.close();
 });
 
-async function seedSong(row: { type?: string; ingestion?: string; nsfwLevel?: number } = {}) {
+async function seedSong(
+  row: { type?: string; ingestion?: string; nsfwLevel?: number; scanJobs?: object } = {}
+) {
   const [r] = await rows<{ id: number }>(
     db,
-    `INSERT INTO "Image" ("url", "type", "postId", "nsfwLevel", "ingestion", "userId", "metadata")
-     VALUES ('song.mp3', $1, 7, $2, $3, $4, '{"title":"Night drive"}') RETURNING "id"`,
-    [row.type ?? 'audio', row.nsfwLevel ?? 8, row.ingestion ?? 'Scanned', owner]
+    `INSERT INTO "Image" ("url", "type", "postId", "nsfwLevel", "ingestion", "userId", "metadata", "scanJobs")
+     VALUES ('song.mp3', $1, 7, $2, $3, $4, '{"title":"Night drive"}', $5) RETURNING "id"`,
+    [
+      row.type ?? 'audio',
+      row.nsfwLevel ?? 8,
+      row.ingestion ?? 'Scanned',
+      owner,
+      row.scanJobs ? JSON.stringify(row.scanJobs) : null,
+    ]
   );
   return r.id;
 }
@@ -145,14 +155,22 @@ describe('a song rating dispute', () => {
     expect(await review(id)).toEqual({ status: 'Actioned', appliedLevel: 4, resolvedBy: mod });
   });
 
-  it('refuses a ruling on a song its own scans have not reviewed, and changes nothing', async () => {
-    for (const ingestion of ['Pending', 'Rescan', 'Error']) {
-      const song = await seedSong({ ingestion });
+  it('refuses a ruling on a song its scans are still reviewing or will retry, and changes nothing', async () => {
+    const states = [
+      { ingestion: 'Pending' },
+      { ingestion: 'Rescan', scanJobs: { retryCount: 8 } },
+      { ingestion: 'Error', scanJobs: { retryCount: 2, error: { failureClass: 'unknown' } } },
+      { ingestion: 'Error', scanJobs: { retryCount: 29, error: { failureClass: 'transient' } } },
+    ];
+    for (const state of states) {
+      const song = await seedSong(state);
       const id = await fileSongReview(song);
 
       await expect(
         service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
-      ).rejects.toThrow(/not been reviewed yet/);
+      ).rejects.toThrow(
+        "This song's own scans have not reviewed it yet; they are running or will be retried. Rule on its dispute once they have."
+      );
 
       expect(await image(song)).toEqual({ nsfwLevel: 8, nsfwLevelLocked: false });
       expect(await review(id)).toEqual({ status: 'Pending', appliedLevel: null, resolvedBy: null });
@@ -192,6 +210,36 @@ describe('a song rating dispute', () => {
     expect(await review(id)).toEqual({ status: 'Pending', appliedLevel: null, resolvedBy: null });
   });
 
+  it('closes the dispute as gone, with nothing applied, on a removed song, a lost file or a scan that gave up', async () => {
+    const states = [
+      { ingestion: 'Blocked' },
+      { ingestion: 'NotFound' },
+      // Past the main app's retry ceilings (image-scan-failure.ts) the ingest cron never re-sends it.
+      { ingestion: 'Error', scanJobs: { retryCount: 9 } },
+      { ingestion: 'Error', scanJobs: { retryCount: 1, error: { failureClass: 'permanent' } } },
+      {
+        ingestion: 'Error',
+        scanJobs: { retryCount: 30, lastFailure: { failureClass: 'transient' } },
+      },
+      { ingestion: 'Rescan', scanJobs: { retryCount: 9 } },
+    ];
+    for (const state of states) {
+      const song = await seedSong(state);
+      const id = await fileSongReview(song);
+
+      await expect(
+        service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+      ).resolves.toMatchObject({ entityMissing: true, status: 'Unactioned' });
+
+      expect(await image(song)).toEqual({ nsfwLevel: 8, nsfwLevelLocked: false });
+      expect(await review(id)).toEqual({
+        status: 'Unactioned',
+        appliedLevel: null,
+        resolvedBy: mod,
+      });
+    }
+  });
+
   it('closes the dispute with nothing applied when the song is gone, or the image is not a song', async () => {
     const gone = await fileSongReview(990000999);
     const picture = await seedSong({ type: 'image' });
@@ -219,5 +267,19 @@ describe('a song rating dispute', () => {
       Actioned: 0,
       Unactioned: 0,
     });
+  });
+
+  it("leaves song disputes out of a ticket's rating disputes: they are decided on the Audio review page", async () => {
+    await fileSongReview(await seedSong());
+    const [post] = await rows<{ id: number }>(
+      db,
+      `INSERT INTO "RatingReview" ("entityType", "entityId", "userId", "currentLevel", "suggestedLevel")
+       VALUES ('Post', 1, $1, 4, 2) RETURNING "id"`,
+      [owner]
+    );
+
+    const section = await ratingDisputesSectionFor({ userId: owner });
+
+    expect(section.disputes.map((d) => d.id)).toEqual([post.id]);
   });
 });

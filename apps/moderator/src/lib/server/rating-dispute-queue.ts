@@ -16,7 +16,6 @@ import {
   hydrateRatingReviews,
   ratingReviewImagesKey,
   ratingReviewRowQuery,
-  SONG_ENTITY_TYPE,
   type RatingReviewImages,
   type RatingReviewRow,
   type ScannedText,
@@ -32,7 +31,7 @@ import {
   type DisputeTab,
   type OtherKind,
 } from '$lib/rating-dispute';
-import type { RatingReviewStatusFilter } from '$lib/rating-review';
+import { SONG_ENTITY_TYPE, type RatingReviewStatusFilter } from '$lib/rating-review';
 
 const PAGE_SIZE = 50;
 

@@ -345,10 +345,11 @@ the `music` flag beside `ratingDispute`, and no text scan: the current level is 
 removed one, cannot be disputed.
 
 Moderators decide song disputes on the moderator app's Audio review page, not in `/ratings`, whose
-tabs, deep links and sidebar badge leave songs out. A ruling goes through the moderator rating writer
+tabs, deep links and sidebar badge leave songs out, nor from a ticket's rating disputes. A ruling goes through the moderator rating writer
 (`updateImageNsfwLevel`): it sets and locks the song's level, and since a locked level counts as the
-song's review, it is refused, with nothing written, unless the song's scans have reviewed it, which the
-write re-checks. The owner's notification names the song ("your song "<title>"") and links its page.
+song's review, it is refused, with nothing written, while the song's scans are running or due a retry,
+which the write re-checks. A song that can never be reviewed (removed, its file gone, or its scan past
+its retry ceiling) closes its dispute as a deleted entity's closes: nothing applied, no notification. The owner's notification names the song ("your song "<title>"") and links its page.
 
 ## After launch
 
