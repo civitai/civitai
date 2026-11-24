@@ -237,14 +237,27 @@ export async function getFeaturePageViewerHandle(userId: number): Promise<string
       return parsed.data.author;
     },
     { ttl: VIEWER_HANDLE_TTL_SECONDS }
-  ).catch(async (e) => {
-    log({ message: 'viewer handle unavailable', error: safeError(e) });
-    await markMissed();
-    return null;
+  ).then(
+    async (handle) => {
+      // A lookup that ran late lifts its own miss, so the next render gets the handle it cached.
+      if (timedOut)
+        await clusterCacheGuard.writeBestEffort('feature-pages.viewerHandleMiss', () =>
+          redis.del(missKey)
+        );
+      return handle;
+    },
+    async (e) => {
+      log({ message: 'viewer handle unavailable', error: safeError(e) });
+      await markMissed();
+      return null;
+    }
+  );
+  // The service token is minted on the same path, so the whole lookup is bounded.
+  let timedOut = false;
+  return withTimeoutFallback(lookup, VIEWER_HANDLE_TIMEOUT_MS, null, () => {
+    timedOut = true;
+    void markMissed();
   });
-  // The service token is minted on the same path, so the whole lookup is bounded. One that runs
-  // late still fills the cache for a later render.
-  return withTimeoutFallback(lookup, VIEWER_HANDLE_TIMEOUT_MS, null, () => void markMissed());
 }
 
 /** Drops the viewer's cached handle, so an erased account's is never served again. */

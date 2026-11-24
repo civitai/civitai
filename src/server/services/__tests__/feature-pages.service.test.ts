@@ -291,34 +291,31 @@ describe('getFeaturePageViewerHandle', () => {
     expect(cache.peek(`${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:42:miss`)).toBe(1);
   });
 
-  it('caches a handle that arrives after the render gave up, for a later render', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    try {
-      let tokenAsked!: () => void;
-      const asked = new Promise<void>((resolve) => (tokenAsked = resolve));
-      fetchMock.mockImplementation(async (input: string) => {
-        if (input === `${HUB}/api/auth/oauth/token`) {
-          tokenAsked();
-          await new Promise((resolve) => setTimeout(resolve, 2_000));
-          return json(200, { access_token: 'token-1', expires_in: 900 });
-        }
-        return json(200, { author });
-      });
+  it('caches a handle that arrives after the render gave up, for the next render', async () => {
+    let tokenAsked!: () => void;
+    const asked = new Promise<void>((resolve) => (tokenAsked = resolve));
+    fetchMock.mockImplementation(async (input: string) => {
+      if (input === `${HUB}/api/auth/oauth/token`) {
+        tokenAsked();
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        return json(200, { access_token: 'token-1', expires_in: 900 });
+      }
+      return json(200, { author });
+    });
 
-      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
-      await asked;
-      await vi.waitFor(
-        () =>
-          expect(cache.peek(`${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:42`)).not.toBeNull(),
-        { timeout: 3_000 }
-      );
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+    await asked;
+    await vi.waitFor(
+      () =>
+        expect(cache.peek(`${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:42`)).not.toBeNull(),
+      { timeout: 3_000 }
+    );
+    await vi.waitFor(() =>
+      expect(cache.peek(`${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:42:miss`)).toBeNull()
+    );
 
-      vi.setSystemTime(Date.now() + 61_000);
-      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
-      expect(signerCalls()).toHaveLength(1);
-    } finally {
-      vi.useRealTimers();
-    }
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+    expect(signerCalls()).toHaveLength(1);
   });
 });
 
