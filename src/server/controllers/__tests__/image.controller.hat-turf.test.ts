@@ -159,6 +159,7 @@ describe('Hat Turf sorts on the image feed', () => {
         hatSort: 'most',
         hatTeams: ['Blue'],
         hatTurfMine: true,
+        hatTurfExpired: true,
         hideTurfHats: true,
         hideWornHats: true,
       }),
@@ -169,7 +170,14 @@ describe('Hat Turf sorts on the image feed', () => {
     expect(mocks.turfHiddenIds).not.toHaveBeenCalled();
     expect(result.items.map((i) => i.id)).toEqual([1, 2]);
     const sent = mocks.getAllImagesIndex.mock.calls[0][0];
-    for (const field of ['hatSort', 'hatTeams', 'hatTurfMine', 'hideTurfHats', 'hideWornHats'])
+    for (const field of [
+      'hatSort',
+      'hatTeams',
+      'hatTurfMine',
+      'hatTurfExpired',
+      'hideTurfHats',
+      'hideWornHats',
+    ])
       expect(sent).not.toHaveProperty(field);
   });
 
@@ -190,6 +198,7 @@ describe('Hat Turf sorts on the image feed', () => {
         hatSort: 'most',
         hatTeams: ['Blue'],
         hatTurfMine: true,
+        hatTurfExpired: true,
         hideTurfHats: true,
         hideWornHats: true,
       }),
@@ -287,6 +296,46 @@ describe("the viewer's own live hats on the image feed", () => {
     expect(mocks.readMyTurfPage).not.toHaveBeenCalled();
     const [served] = [...mocks.getAllImagesIndex.mock.calls, ...mocks.getAllImages.mock.calls];
     expect(served[0]).toMatchObject({ modelId: 5 });
+  });
+});
+
+describe("the viewer's own expired hats on the image feed", () => {
+  beforeEach(() => {
+    mocks.readMyTurfPage.mockResolvedValue({
+      ids: [30, 10],
+      placedAt: new Map([[10, new Date('2026-11-01T10:00:00Z')]]),
+      nextCursor: '1|10',
+    });
+    mocks.getAllImages.mockResolvedValue({ items: rows(10, 30) });
+  });
+
+  it('a player gets the images where their hat expired, with no time left on the card', async () => {
+    const result = await getInfiniteImagesHandler({
+      input: feed({ hatTurfExpired: true, types: ['image'] }),
+      ctx: ctx(),
+    });
+    expect(mocks.readMyTurfPage).toHaveBeenCalledWith(
+      expect.objectContaining({ event: EVENT, userId: 7, expired: true })
+    );
+    expect(mocks.getAllImages.mock.calls[0][0].types).toBeUndefined();
+    expect(result.items).toEqual([{ id: 30 }, { id: 10 }]);
+    expect(result.source).toBe('turf');
+  });
+
+  it('sent with the live hats, the live hats are served', async () => {
+    await getInfiniteImagesHandler({
+      input: feed({ hatTurfExpired: true, hatTurfMine: true }),
+      ctx: ctx(),
+    });
+    expect(mocks.readMyTurfPage).toHaveBeenCalledWith(expect.objectContaining({ expired: false }));
+  });
+
+  it("a scoped feed ignores it, and serves the gallery's own images", async () => {
+    await getInfiniteImagesHandler({
+      input: feed({ hatTurfExpired: true, modelId: 5 }),
+      ctx: ctx(),
+    });
+    expect(mocks.readMyTurfPage).not.toHaveBeenCalled();
   });
 });
 
