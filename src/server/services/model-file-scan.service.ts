@@ -735,6 +735,7 @@ async function notifyHashFix(modelVersionId: number, fileId: number) {
 
 type ModelClamScanStep = {
   $type: 'modelClamScan';
+  status?: string;
   output?: {
     exitCode?: number | null;
     output?: string | null;
