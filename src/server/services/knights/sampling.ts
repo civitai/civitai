@@ -1,8 +1,9 @@
-import { sql, type Kysely, type Transaction } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import {
   countOpenServableKnightItems,
   imageSourceVisible,
   postNotPrivate,
+  readWithoutJit,
   servableImageContent,
 } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
@@ -204,16 +205,6 @@ async function byIds(
 /** `ids` in batches for one statement each: posts (a post holds a bounded number of images), or images by id. */
 const batches = ({ column, ids }: ReturnType<typeof scopeFilter>) =>
   chunkIds(ids, column === 'img.postId' ? SAMPLE_POST_PAGE : SAMPLE_IMAGE_PAGE);
-
-/**
- * Runs an image read with JIT off. The CSAM subplans in `servableImageContent` inflate the planner's estimate far
- * past the read's real cost, and on a server with JIT on, compiling for that estimate costs more than the read.
- */
-const readWithoutJit = <T>(db: Kysely<DB>, read: (trx: Transaction<DB>) => Promise<T>) =>
-  db.transaction().execute(async (trx) => {
-    await sql`SET LOCAL jit = off`.execute(trx);
-    return read(trx);
-  });
 
 /**
  * The publish sweep's sampling over `scope`. Images that already had an item are dropped before the `maxOpen` room is

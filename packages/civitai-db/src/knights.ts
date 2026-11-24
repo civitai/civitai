@@ -216,6 +216,17 @@ export async function removalLowersLevel(
 }
 
 /**
+ * Runs a read that applies `servableImageContent` with JIT off, in its own transaction. Its CSAM subplans inflate the
+ * planner's estimate far past the read's real cost, and on a server with JIT on, compiling for that estimate costs more
+ * than the read.
+ */
+export const readWithoutJit = <T>(db: Kysely<DB>, read: (trx: Transaction<DB>) => Promise<T>) =>
+  db.transaction().execute(async (trx) => {
+    await sql`SET LOCAL jit = off`.execute(trx);
+    return read(trx);
+  });
+
+/**
  * Images Knights may show players: `servableImageForSweeps` on a post that is not Private, with `imageSourceVisible`.
  * Expects `Image as img` joined to `Post as p`.
  */

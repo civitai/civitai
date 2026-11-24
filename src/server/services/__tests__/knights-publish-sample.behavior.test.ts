@@ -403,7 +403,7 @@ describe('offerLeftPrivateImagesToKnights', () => {
     );
 
   // Moderation Lead condition (2026-11-24).
-  it('runs each Image read in a transaction that turned JIT off first', async () => {
+  it('runs each Image read, enqueueing included, in a transaction that turned JIT off first', async () => {
     await post(1, minutesAgo(300));
     await images(1, [11]);
     await ownerRating(11);
@@ -443,11 +443,9 @@ describe('offerLeftPrivateImagesToKnights', () => {
       config: config({ sfwRate: 1, nsfwRate: 1 }),
     });
 
-    // Every Image read sampling issues; enqueueKnightsItems' own lookup by image id (its "postRowId") is not one.
-    const reads = log.flatMap((text, i) =>
-      / from "Image" as "img"/.test(text) && !text.includes('"postRowId"') ? [i] : []
-    );
-    expect(reads).toHaveLength(2);
+    const reads = log.flatMap((text, i) => (/ from "Image" as "img"/.test(text) ? [i] : []));
+    // The owner-rating read, enqueueKnightsItems' lookup for those ratings, and the sampling read.
+    expect(reads).toHaveLength(3);
     for (const i of reads) {
       const begin = log.lastIndexOf('BEGIN', i);
       expect(begin).toBeGreaterThanOrEqual(0);
