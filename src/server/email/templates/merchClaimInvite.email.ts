@@ -8,6 +8,8 @@ type MerchClaimInviteData = {
 };
 
 export const merchClaimInviteEmail = createEmail({
+  template: 'merchClaimInvite',
+  mailClass: 'transactional',
   header: ({ to }: MerchClaimInviteData) => ({
     subject: 'Claim your Blue Buzz from your Civitai merch order',
     to,

@@ -10,6 +10,8 @@ setEnv({ NEXTAUTH_URL: 'https://civitai.com' });
 const ORIGIN = 'https://civitai.com';
 
 type Template = {
+  template?: unknown;
+  mailClass?: unknown;
   getHtml: (data: unknown) => string;
   getText: (data: unknown) => string;
   getTestData?: (input: Record<string, unknown>) => Promise<unknown>;
@@ -176,5 +178,56 @@ describe('app-review emails', () => {
     expect(visibleHtml).not.toMatch(/app[\s-]?block/i);
     expect(visibleText).not.toMatch(/app[\s-]?block/i);
     expect(visibleHtml).toContain(`<title>${data.typeName}</title>`);
+  });
+});
+
+/**
+ * Every template's send-row tags (emailEvents.template, emailEvents.mailClass), pinned whole: a
+ * template added without them, or with a key or class changed, fails here. Only the weekly digest
+ * is lifecycle mail; the rest are mail a user needs or asked for. Edit this on purpose.
+ */
+const TAGS: Record<string, [string, string]> = {
+  bankingChangeNoticeEmail: ['bankingChangeNotice', 'transactional'],
+  bountyAutomaticallyAwardedEmail: ['bountyAutomaticallyAwarded', 'transactional'],
+  bountyExpiredEmail: ['bountyExpired', 'transactional'],
+  bountyExpiredReminderEmail: ['bountyExpiredReminder', 'transactional'],
+  bountyRefundedEmail: ['bountyRefunded', 'transactional'],
+  emailVerificationEmail: ['emailVerification', 'transactional'],
+  klein9bNoticeEmail: ['klein9bNotice', 'transactional'],
+  membershipGiftReceivedEmail: ['membershipGiftReceived', 'transactional'],
+  membershipGiftSentEmail: ['membershipGiftSent', 'transactional'],
+  merchBuzzCreditedEmail: ['merchBuzzCredited', 'transactional'],
+  merchClaimInviteEmail: ['merchClaimInvite', 'transactional'],
+  missedNotificationsDigestEmail: ['missedNotificationsDigest', 'lifecycle'],
+  moderationActionEmail: ['moderationAction', 'transactional'],
+  ncEarningsNoticeEmail: ['ncEarningsNotice', 'transactional'],
+  notificationEmail: ['notification', 'transactional'],
+  openCryptoDepositDigestEmail: ['openCryptoDepositDigest', 'transactional'],
+  paddleCancellationEmail: ['paddleCancellation', 'transactional'],
+  personalDataExportBuiltEmail: ['personalDataExportBuilt', 'transactional'],
+  personalDataExportHeldEmail: ['personalDataExportHeld', 'transactional'],
+  personalDataExportReadyEmail: ['personalDataExportReady', 'transactional'],
+  personalDataExportRefusedEmail: ['personalDataExportRefused', 'transactional'],
+  prepaidTokenUnlockedEmail: ['prepaidTokenUnlocked', 'transactional'],
+  redeemableCodePurchaseEmail: ['redeemableCodePurchase', 'transactional'],
+  strikeIssuedEmail: ['strikeIssued', 'transactional'],
+  stuckCryptoDepositDigestEmail: ['stuckCryptoDepositDigest', 'transactional'],
+  stuckCryptoDepositUserEmail: ['stuckCryptoDepositUser', 'transactional'],
+  tipaltiTaxFormRequiredEmail: ['tipaltiTaxFormRequired', 'transactional'],
+  trainingCompleteEmail: ['trainingComplete', 'transactional'],
+  trainingFailEmail: ['trainingFail', 'transactional'],
+};
+
+describe('every email template tags its sends', () => {
+  it('with the pinned template key and mail class', () => {
+    const found = Object.fromEntries(
+      [...fromFiles.entries()].map(([name, t]) => [name, [t.template, t.mailClass]])
+    );
+    expect(found).toEqual(TAGS);
+  });
+
+  it('with a key no other template uses', () => {
+    const keys = Object.values(TAGS).map(([key]) => key);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });

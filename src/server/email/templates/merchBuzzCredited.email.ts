@@ -9,6 +9,8 @@ type MerchBuzzCreditedData = {
 };
 
 export const merchBuzzCreditedEmail = createEmail({
+  template: 'merchBuzzCredited',
+  mailClass: 'transactional',
   header: ({ to }: MerchBuzzCreditedData) => ({
     subject: 'Your Civitai merch order earned you Blue Buzz',
     to,

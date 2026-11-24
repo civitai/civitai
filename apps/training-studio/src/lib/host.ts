@@ -88,6 +88,9 @@ export interface HostContext {
     /** The host's dataset storage policy, linked beside the dataset-sharing choice. Absent => the
      *  choice shows without a link. */
     dataPolicyUrl?: string;
+    /** The signed-in user — keys the New training flow's browser-local autosave, so one user never
+     *  sees another's draft. Absent => no autosave. */
+    userId?: number;
   };
   /** The host's URL for a location — for real `<a href>`s (middle-click / open-in-new-tab). */
   hrefFor: (loc: StudioLocation) => string;
