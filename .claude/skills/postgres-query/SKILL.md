@@ -1,6 +1,6 @@
 ---
 name: postgres-query
-description: Run PostgreSQL queries for testing, debugging, and performance analysis. Use when you need to query the database directly, run EXPLAIN ANALYZE, compare query results, or test SQL optimizations. Always pass a target — `--prod` or `--dev` — because prod and dev are different databases and the default is prod. Always uses read-only connections unless explicitly directed otherwise.
+description: Run PostgreSQL queries for testing, debugging, and performance analysis. Use when you need to query the database directly, read query plans (plain EXPLAIN on prod; EXPLAIN ANALYZE, which runs the query, on --dev), compare query results, or test SQL optimizations. Always pass a target — `--prod` or `--dev` — because prod and dev are different databases and the default is prod. Always uses read-only connections unless explicitly directed otherwise.
 ---
 
 # PostgreSQL Query Testing
@@ -74,7 +74,7 @@ Two checks make the wrong database fail loudly instead of answering:
 
 | Flag | Description |
 |------|-------------|
-| `--explain` | Run EXPLAIN ANALYZE on the query |
+| `--explain` | Run EXPLAIN ANALYZE on the query. **This executes the query**, so use it with `--dev`. On prod, pass plain `EXPLAIN SELECT ...` instead (the plan only, nothing runs); `--explain` on prod is a heavy read and needs approval. |
 | `--writable` | Use the primary connection instead of the read replica (requires user permission) |
 | `--timeout <s>`, `-t` | Query timeout in seconds (default: 30) |
 | `--file`, `-f` | Read query from a file |
@@ -93,8 +93,11 @@ node .claude/skills/postgres-query/query.mjs --prod "SELECT id, username FROM \"
 # Same query against the dev database
 node .claude/skills/postgres-query/query.mjs --dev "SELECT id, username FROM \"User\" LIMIT 5"
 
-# Check query performance
-node .claude/skills/postgres-query/query.mjs --prod --explain "SELECT * FROM \"Model\" WHERE id = 1"
+# Check query performance (EXPLAIN ANALYZE runs the query: use --dev)
+node .claude/skills/postgres-query/query.mjs --dev --explain "SELECT * FROM \"Model\" WHERE id = 1"
+
+# The plan on prod, without running the query
+node .claude/skills/postgres-query/query.mjs --prod "EXPLAIN SELECT * FROM \"Model\" WHERE id = 1"
 
 # Override default 30s timeout for longer queries
 node .claude/skills/postgres-query/query.mjs --prod --timeout 60 "SELECT ... (complex query)"
@@ -167,8 +170,8 @@ Once you have the tunnel open, set `NOTIFICATION_DB_REPLICA_URL` in
 node .claude/skills/postgres-query/query.mjs --notifications \
   "SELECT count(*) FROM \"Notification\""
 
-node .claude/skills/postgres-query/query.mjs --notifications --explain \
-  "SELECT * FROM \"UserNotification\" WHERE \"userId\" = 12345 ORDER BY \"createdAt\" DESC LIMIT 50"
+node .claude/skills/postgres-query/query.mjs --notifications \
+  "EXPLAIN SELECT * FROM \"UserNotification\" WHERE \"userId\" = 12345 ORDER BY \"createdAt\" DESC LIMIT 50"
 ```
 
 ### Available tables (read-only)
@@ -207,11 +210,14 @@ Only use the `--writable` flag when:
 To compare two query approaches — same target on both runs, or the comparison is meaningless:
 
 ```bash
-# Run first approach
-node .claude/skills/postgres-query/query.mjs --prod --explain "SELECT ... (approach 1)"
+# Run first approach (EXPLAIN ANALYZE runs the query: dev, not prod)
+node .claude/skills/postgres-query/query.mjs --dev --explain "SELECT ... (approach 1)"
 
 # Run second approach
-node .claude/skills/postgres-query/query.mjs --prod --explain "SELECT ... (approach 2)"
+node .claude/skills/postgres-query/query.mjs --dev --explain "SELECT ... (approach 2)"
+
+# Prod plans only, nothing executes
+node .claude/skills/postgres-query/query.mjs --prod "EXPLAIN SELECT ... (approach 1)"
 
 # Compare actual results
 node .claude/skills/postgres-query/query.mjs --prod --json "SELECT ... (approach 1)" > /tmp/q1.json
@@ -220,10 +226,10 @@ node .claude/skills/postgres-query/query.mjs --prod --json "SELECT ... (approach
 
 ## Verifying Index Usage
 
-Run with `--explain` and look for:
+Read the plan (plain `EXPLAIN` on prod, or `--explain` on `--dev`) and look for:
 - **Good**: "Index Scan", "Bitmap Index Scan", "Index Only Scan"
 - **Bad**: "Seq Scan" on large tables (indicates missing or unused index)
 
 ```bash
-node .claude/skills/postgres-query/query.mjs --prod --explain "SELECT * FROM \"Account\" WHERE provider = 'discord'"
+node .claude/skills/postgres-query/query.mjs --prod "EXPLAIN SELECT * FROM \"Account\" WHERE provider = 'discord'"
 ```
