@@ -2408,6 +2408,13 @@ func goldenRunModelsMode(t *testing.T, fx *goldenFixture, writeBack bool) {
 	if fx.Request.Session != nil && c.ttl != nil {
 		t.Errorf("a session: want no cache TTL, got %+v", *c.ttl)
 	}
+	// The per-class shadow series count a signed-out answer as `anon`, a session's never.
+	if fx.Request.Session == nil && c.viewerClass != FeedViewerAnon {
+		t.Errorf("signed out: viewer class %q, want %q", c.viewerClass, FeedViewerAnon)
+	}
+	if fx.Request.Session != nil && (c.viewerClass == FeedViewerAnon || c.viewerClass == "") {
+		t.Errorf("a session: viewer class %q, want a session class", c.viewerClass)
+	}
 }
 
 func TestGoldenModelGetAll(t *testing.T) {

@@ -312,7 +312,8 @@ type computed struct {
 	// answers that did the work.
 	trivial bool
 	// viewerClass is the sample's viewer class when the endpoint reports one (model-associated:
-	// modelfeed.ViewerClasses); "" = not reported. The comparison result is also counted under it.
+	// modelfeed.ViewerClasses; the tRPC feeds: FeedViewerClasses); "" = not reported. The body's
+	// comparison result, and the headers' for the tRPC feeds, are also counted under it.
 	viewerClass string
 	// cached: the answer is a cached response body read as Node read it (v1models.Answer.Cached), no
 	// build. Recorded as outcome served_cached and result match_cached, apart for the same reason.
@@ -327,15 +328,16 @@ type computed struct {
 
 // compute answers a request, or returns a fallback/other error.
 func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error) {
-	req, signedOut, err := s.prepare(ctx, r)
+	req, user, err := s.prepareViewer(ctx, r)
 	if err != nil {
 		return nil, err
 	}
+	signedOut := user == nil
 	res, err := feed.Serve(ctx, s.Deps, req)
 	if err != nil {
 		return nil, err
 	}
-	out := &computed{value: res.Value()}
+	out := &computed{value: res.Value(), viewerClass: feedViewerClass(user, false)}
 	if signedOut {
 		// createContext: cacheable only without a session user (a banned user still has one).
 		out.ttl = &trpc.SignedOutTTL
@@ -350,23 +352,32 @@ func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error
 // feed.Serve takes them, and whether there is no session user at all. The Go-first probe runs the
 // same steps (probe.go).
 func (s *Server) prepare(ctx context.Context, r *http.Request) (feed.Request, bool, error) {
+	req, user, err := s.prepareViewer(ctx, r)
+	if err != nil {
+		return feed.Request{}, false, err
+	}
+	return req, user == nil, nil
+}
+
+// prepareViewer is prepare with the session user it resolved (nil: none) instead of whether there is one.
+func (s *Server) prepareViewer(ctx context.Context, r *http.Request) (feed.Request, *auth.SessionUser, error) {
 	if r.Method != http.MethodGet {
-		return feed.Request{}, false, fallback.New("method")
+		return feed.Request{}, nil, fallback.New("method")
 	}
 	raw, err := trpc.ParseInput(r)
 	if err != nil {
-		return feed.Request{}, false, fallback.Wrap("input-envelope", err)
+		return feed.Request{}, nil, fallback.Wrap("input-envelope", err)
 	}
 	in, err := feed.Parse(raw)
 	if err != nil {
-		return feed.Request{}, false, err
+		return feed.Request{}, nil, err
 	}
 	if r.Header.Get(verifiedBotHeader) != "" {
-		return feed.Request{}, false, fallback.New("verified-bot")
+		return feed.Request{}, nil, fallback.New("verified-bot")
 	}
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
-		return feed.Request{}, false, err
+		return feed.Request{}, nil, err
 	}
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
@@ -378,7 +389,7 @@ func (s *Server) prepare(ctx context.Context, r *http.Request) (feed.Request, bo
 	if authorized {
 		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
 	}
-	return req, user == nil, nil
+	return req, user, nil
 }
 
 // computeInfinite answers an `image.getInfinite` request (getInfiniteImagesHandler), or returns a
@@ -387,15 +398,16 @@ func (s *Server) prepare(ctx context.Context, r *http.Request) (feed.Request, bo
 // carries createContext's public TTL unless its input is viewer-scoped (InfiniteInput.ViewerScoped).
 // Shadowed, and served on the public route only with ServeInfinite.
 func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*computed, error) {
-	req, cacheable, err := s.prepareInfinite(ctx, r)
+	req, user, crawler, err := s.prepareInfiniteViewer(ctx, r)
 	if err != nil {
 		return nil, err
 	}
+	cacheable := user == nil && !crawler
 	ans, err := feed.ServeInfinite(ctx, s.Infinite, req)
 	if err != nil {
 		return nil, err
 	}
-	out := &computed{value: ans.Value, trivial: ans.Trivial}
+	out := &computed{value: ans.Value, trivial: ans.Trivial, viewerClass: feedViewerClass(user, crawler)}
 	if cacheable && !req.Input.ViewerScoped() {
 		// createContext: cacheable without a session user and without a verified crawler, unless
 		// noEdgeCacheWhen(isViewerScopedInfiniteFeed) lowers it, as it does for a viewer-scoped input.
@@ -412,24 +424,34 @@ func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*compute
 // the same steps. A verified crawler (verifiedCrawler) counts as signed in for the domain cap where
 // NSFW is viewable (requestDomainBrowsingLevelCap) and is never cached; it is no viewer.
 func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.InfiniteRequest, bool, error) {
+	req, user, crawler, err := s.prepareInfiniteViewer(ctx, r)
+	if err != nil {
+		return feed.InfiniteRequest{}, false, err
+	}
+	return req, user == nil && !crawler, nil
+}
+
+// prepareInfiniteViewer is prepareInfinite with the session user it resolved (nil: none) and whether
+// the request is a verified crawler's, instead of the cacheable verdict the two make.
+func (s *Server) prepareInfiniteViewer(ctx context.Context, r *http.Request) (feed.InfiniteRequest, *auth.SessionUser, bool, error) {
 	if s.Infinite == nil {
-		return feed.InfiniteRequest{}, false, fallback.New("infinite-unconfigured")
+		return feed.InfiniteRequest{}, nil, false, fallback.New("infinite-unconfigured")
 	}
 	if r.Method != http.MethodGet {
-		return feed.InfiniteRequest{}, false, fallback.New("method")
+		return feed.InfiniteRequest{}, nil, false, fallback.New("method")
 	}
 	raw, err := trpc.ParseInput(r)
 	if err != nil {
-		return feed.InfiniteRequest{}, false, fallback.Wrap("input-envelope", err)
+		return feed.InfiniteRequest{}, nil, false, fallback.Wrap("input-envelope", err)
 	}
 	in, err := feed.ParseInfiniteWith(raw, s.Infinite.Ports)
 	if err != nil {
-		return feed.InfiniteRequest{}, false, err
+		return feed.InfiniteRequest{}, nil, false, err
 	}
 	crawler := verifiedCrawler(r)
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
-		return feed.InfiniteRequest{}, false, err
+		return feed.InfiniteRequest{}, nil, false, err
 	}
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
@@ -445,7 +467,7 @@ func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.Inf
 		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
 		req.ViewerUsername = user.Username
 	}
-	return req, user == nil && !crawler, nil
+	return req, user, crawler, nil
 }
 
 // computeModelGetAll answers a `model.getAll` request (getModelsInfiniteHandler), or returns a
@@ -469,7 +491,7 @@ func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*comp
 	if err != nil {
 		return nil, err
 	}
-	out := &computed{value: ans.Value, trivial: ans.Trivial}
+	out := &computed{value: ans.Value, trivial: ans.Trivial, viewerClass: feedViewerClass(user, false)}
 	if signedOut {
 		// createContext: cacheable without a session user (a banned user still has one).
 		out.ttl = &trpc.SignedOutTTL
@@ -1375,10 +1397,15 @@ func (s *Server) compareAnswer(ctx context.Context, endpoint string, sink compar
 			}
 		}
 		respDiffs = shadow.CompareResponseHeaders(goHeaders, nodeHeaders, names)
+		respResult := "match"
 		if len(respDiffs) > 0 {
-			sink.response.WithLabelValues(endpoint, "mismatch").Inc()
-		} else {
-			sink.response.WithLabelValues(endpoint, "match").Inc()
+			respResult = "mismatch"
+		}
+		sink.response.WithLabelValues(endpoint, respResult).Inc()
+		if c.viewerClass != "" && sink.source == SourceShadow && isFeedViewerEndpoint(endpoint) {
+			// Who may cache the answer differs by viewer (signed out: the edge), so the headers'
+			// result is read per class too.
+			s.Metrics.ShadowResponseViewer.WithLabelValues(endpoint, c.viewerClass, respResult).Inc()
 		}
 	}
 	if compared != nil {
