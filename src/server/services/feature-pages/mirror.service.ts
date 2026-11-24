@@ -941,7 +941,7 @@ export async function runFpReconcile() {
         await markFpReconciled(kyselyWrite, row.commentId, action);
         continue;
       }
-      // Unreadable, it is owed nothing this pass: the next reconcile finds it again.
+      // Counter unreadable: send nothing this pass; the next reconcile finds the row again.
       const lifts = await takeLift(row.commentId).catch(() => NaN);
       if (Number.isNaN(lifts)) continue;
       if (lifts <= FP_MAX_LIFTS) {

@@ -1266,10 +1266,15 @@ describe('the platform ends on what civitai decided', () => {
 
   it('an author the platform has erased: recorded erased, nothing sent after', async () => {
     const id = (await seed('erased upstream')).comment.sourceId;
+    const handleKey = `${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:${AUTHOR}` as const;
+    await redis.packed.set(handleKey, 1);
+    await redis.packed.set(`${handleKey}:miss`, 1);
     platform.erasedUids.add(AUTHOR);
     await rename(AUTHOR, 'renamed');
     await runMirror(mirror);
     expect((await mirrorRow(id)).pushedState).toBe('erased');
+    expect(await redis.packed.get(handleKey)).toBeNull();
+    expect(await redis.packed.get(`${handleKey}:miss`)).toBeNull();
     const calls = fetchFake.mock.calls.length;
     await rename(AUTHOR, 'again');
     await runMirror(mirror);

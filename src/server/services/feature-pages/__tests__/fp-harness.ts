@@ -173,11 +173,11 @@ export type VerdictStep = {
 
 /**
  * The platform's decider over a comment's verdicts, in the order written. A write supersedes the
- * newest of its source not newer than itself, and within a source a tie goes to the non-visible. A
- * moderator removal is final; otherwise the newest live moderator hide hides, and a live moderator
- * visible on the current token newer than it shows. Else pipeline, then site, by their newest live
- * verdict on the current token, failing closed: a hide of either, or a newer hide on an old token,
- * hides. None on the current token: none decides.
+ * newest of its source not newer than itself, and within a source a tie goes to the non-visible
+ * (platform wire contract 6.5). A moderator removal is final; otherwise the newest live moderator
+ * hide hides, and a live moderator visible on the current token newer than it shows. Else
+ * pipeline, then site, by their newest live verdict on the current token, failing closed: a hide
+ * of either, or a newer hide on an old token, hides. None on the current token: none decides.
  */
 export function decideVerdicts(steps: VerdictStep[]): { source: string; verdict: string } | null {
   const step = decidingStep(steps);

@@ -252,7 +252,7 @@ export async function getFeaturePageViewerHandle(userId: number): Promise<string
       return null;
     }
   );
-  // The service token is minted on the same path, so the whole lookup is bounded.
+  // The signer's timeout does not cover minting the service token, so the whole lookup is raced.
   let timedOut = false;
   return withTimeoutFallback(lookup, VIEWER_HANDLE_TIMEOUT_MS, null, () => {
     timedOut = true;
