@@ -95,6 +95,9 @@ var infiniteUnsupported = func() []string {
 	return out
 }()
 
+// InfiniteUnsupportedInputKeys are the keys ParseInfinite falls back on as `input-<key>` (a copy).
+func InfiniteUnsupportedInputKeys() []string { return append([]string(nil), infiniteUnsupported...) }
+
 // strippedURLKeys are keys of imagesQueryParamSchema (src/components/Image/image-query-params.ts,
 // the images feeds' URL query) that getInfiniteImagesSchema lacks. The site passes that query into
 // image.getInfinite's input (useImageFilters → ImagesInfinite → useQueryImages): `view` from an

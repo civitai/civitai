@@ -9,8 +9,10 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
+	"github.com/civitai/civitai/apps/feed-go/internal/v1models"
 )
 
 // EndpointLabel names the endpoint label. Not `endpoint`: that is a reserved scrape target label (the
@@ -328,8 +330,77 @@ var RequestOutcomes = []string{"served", "served_empty", "served_cached", "fallb
 
 // computeFallbackReasons are the fallback reasons every compute can end in, whatever its endpoint
 // (Server.within: a panic, a gone client, the budget), so feed_go_fallback_total is seeded with them
-// for each mode that computes. Every other reason is endpoint-specific and stays lazy.
+// for each mode that computes. Serving, the request-determined reasons are seeded too
+// (RequestFallbackReasons); every other reason is endpoint-specific and stays lazy.
 var computeFallbackReasons = []string{"deadline", "canceled", "panic"}
+
+// RequestFallbackReasons is, per public route, every fallback reason the request alone decides (its
+// method, region, user agent, headers, credential form, path, query or input, never a store's state
+// or this process's config) that the route's serve path can reach: the series seedOutcomes creates at
+// 0 for mode serve. A comparison of fallback rates between a new process and an old one subtracts
+// these reasons, as they measure the traffic rather than the port; a reason series born inside the
+// window would lose its first event to increase() and bias that comparison against the new process.
+//
+// Each list holds only the reasons that route's code can produce: the input-<key> and
+// v1-models-<key> reasons are the parsers' own key lists, so a key added there is seeded here.
+// `bearer-token` is seeded on the REST model routes only: on the tRPC routes it means the API keys
+// are not configured.
+func RequestFallbackReasons() map[string][]string {
+	// Every public route: the API request policy (apiRequestPolicy) and a method other than GET.
+	policy := []string{"method", "region-blocked", "crawler-user-agent"}
+	// The tRPC routes resolve a bearer credential (auth.bearerToken, resolveBearer).
+	bearer := []string{"bearer-malformed", "bearer-multiple-headers", "bearer-query-token"}
+	// The images input (feed.parseInput), on both image procedures.
+	imagesInput := []string{
+		"input-envelope", "input-invalid", "input-unknown-key", "input-sort", "input-include",
+		"input-cursor", "input-tools", "input-techniques",
+	}
+	// Both REST model routes: preflight's credential check, the conditional request, the host.
+	v1 := []string{"bearer-token", "v1-models-conditional", "v1-models-host"}
+
+	asPosts := sortedUnion(policy, bearer, imagesInput, []string{"verified-bot", "input-include-no-cosmetics"},
+		prefixed("input-", feed.UnsupportedInputKeys()))
+	infinite := sortedUnion(policy, bearer, imagesInput, []string{
+		"input-collectionTagId", "ids-not-int4", "collection-id", "collection-tag-id",
+		"infinite-user-zero", "prioritized-cursor",
+	}, prefixed("input-", feed.InfiniteUnsupportedInputKeys()))
+	modelGetAll := sortedUnion(policy, bearer, []string{
+		"verified-bot", "input-envelope", "input-invalid", "input-unknown-key", "input-ids",
+		"model-cursor", "model-sort-recently-added", "model-collection-id",
+	}, prefixed("input-", modelfeed.UnsupportedInputKeys()))
+	v1Models := sortedUnion(policy, v1, []string{
+		"v1-models-session-cookie", "v1-models-etag", "v1-models-query-encoding", "v1-models-authed-only",
+		"v1-models-query", "v1-models-limit", "v1-models-input-number", "v1-models-sort",
+		"v1-models-input-enum", "v1-models-input-duplicate", "v1-models-input-bool", "v1-models-ids",
+		"v1-models-page-limit", "v1-models-cursor",
+	}, prefixed("v1-models-", v1models.UnportedFallbackKeys()))
+	v1ModelsID := sortedUnion(policy, v1, []string{"v1-models-origin", "v1-models-path", "v1-models-id"})
+	return map[string][]string{
+		EndpointAsPosts:     asPosts,
+		EndpointInfinite:    infinite,
+		EndpointModelGetAll: modelGetAll,
+		EndpointV1Models:    v1Models,
+		EndpointV1ModelsID:  v1ModelsID,
+	}
+}
+
+// sortedUnion joins lists into one sorted list without duplicates.
+func sortedUnion(lists ...[]string) []string {
+	var out []string
+	for _, l := range lists {
+		out = append(out, l...)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+func prefixed(prefix string, keys []string) []string {
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		out[i] = prefix + k
+	}
+	return out
+}
 
 // cachedEndpoint reports whether endpoint can answer from the origin response cache (served_cached,
 // match_cached): the single-model route only (v1models.Answer.Cached).
@@ -369,7 +440,8 @@ func shadowResultReachable(endpoint, result string) bool {
 }
 
 // seedOutcomes creates, at 0, every request outcome, shadow result and generic fallback series the
-// serve, shadow and probe paths can reach, so a new pod's first event is an increase from 0 that
+// serve, shadow and probe paths can reach, and serving the request-determined fallback reasons
+// (RequestFallbackReasons), so a new pod's first event is an increase from 0 that
 // rate() over its lifetime counts, rather than the creation of a series at 1 that it does not. The
 // label values are the closed sets above crossed with the endpoints each path serves; the series are
 // the ones those paths create on their own, never more.
@@ -383,6 +455,11 @@ func (m *Metrics) seedOutcomes() {
 		// An error that is no fallback is counted with reason `error` (serveFallback).
 		m.Fallbacks.WithLabelValues(e, "serve", "error")
 		for _, r := range computeFallbackReasons {
+			m.Fallbacks.WithLabelValues(e, "serve", r)
+		}
+	}
+	for e, reasons := range RequestFallbackReasons() {
+		for _, r := range reasons {
 			m.Fallbacks.WithLabelValues(e, "serve", r)
 		}
 	}

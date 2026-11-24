@@ -125,6 +125,9 @@ var unsupportedKeys = []string{
 	"notPublished", "scheduled", "publishedOnly",
 }
 
+// UnsupportedInputKeys are the keys Parse (the posts gallery) falls back on as `input-<key>` (a copy).
+func UnsupportedInputKeys() []string { return append([]string(nil), unsupportedKeys...) }
+
 var knownSorts = map[string]bool{SortMostReactions: true, SortMostComments: true, SortMostCollected: true, SortNewest: true, SortOldest: true}
 var knownPeriods = map[string]bool{"AllTime": true, "Day": true, "Week": true, "Month": true, "Year": true}
 
