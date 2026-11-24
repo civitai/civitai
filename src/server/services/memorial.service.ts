@@ -125,7 +125,7 @@ export async function proposeMemorial(input: {
   throw throwBadRequestError('A memorialization is already waiting for confirmation.');
 }
 
-/** What a memorialization reaches outside the database: sessions, keys and the creator-card cache. */
+/** What confirming or reversing reaches outside the database. */
 export type MemorialEffects = {
   invalidateSession: (userId: number, caller: 'moderation') => Promise<unknown>;
   expireUserApiKeys: (
@@ -256,7 +256,6 @@ function logMemorialError(name: string, userId: number, error: unknown) {
   });
 }
 
-/** For a caller holding the row: refuses a memorialized account. */
 export function assertNotMemorialized(user: { flags: number }) {
   if (isMemorialized(user.flags)) throw new MemorializedAccountError();
 }

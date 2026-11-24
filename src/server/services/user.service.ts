@@ -1653,7 +1653,13 @@ export async function setEventPointsExclusion({ id, setTo }: { id: number; setTo
   await dbWrite.$executeRaw`
     UPDATE "User"
     SET flags = CASE WHEN ${setTo} THEN flags | ${bit}::int ELSE flags & ~${bit}::int END,
-      meta = CASE WHEN ${setTo} THEN meta ELSE meta - ${EVENT_POINTS_EXCLUDED_FROM_META_KEY}::text END
+      meta = CASE
+        -- A moderator's own exclusion on a memorialized account: reversing the memorial must keep it.
+        WHEN ${setTo} AND jsonb_typeof(meta) = 'object' AND meta ? 'memorial'
+          THEN jsonb_set(meta, '{memorial,setEventExclusion}', 'false'::jsonb)
+        WHEN ${setTo} THEN meta
+        ELSE meta - ${EVENT_POINTS_EXCLUDED_FROM_META_KEY}::text
+      END
     WHERE id = ${id}
   `;
   userUpdateCounter?.inc({ location: 'user.service:setEventPointsExclusion' });

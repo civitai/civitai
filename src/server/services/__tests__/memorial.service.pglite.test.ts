@@ -12,6 +12,7 @@ const {
   reverseMemorial,
   publicMemorial,
   memorialActorRefusal,
+  memorialTributeSchema,
   metaWithoutMemorialSql,
   memorializedAmong,
   assertNotMemorialized,
@@ -250,5 +251,27 @@ describe('memorialization (docs/features/memorialized-profiles.md)', () => {
       expect(flags).toBe(0);
       expect(meta).toEqual({});
     });
+  });
+
+  it('keeps an exclusion a moderator set while the account was memorialized', async () => {
+    const { setEventPointsExclusion } = await import('~/server/services/user.service');
+    dbMock.dbWrite.$executeRaw.mockImplementation(pgliteRaw(pg).executeRaw as never);
+    await propose();
+    await confirm(CONFIRMER);
+    await setEventPointsExclusion({ id: USER, setTo: true });
+    await reverse();
+    expect((await row()).flags).toBe(UserFlag.ExcludeFromEventPoints);
+  });
+
+  it.each([
+    ['https://civitai.red/models/1/tribute', true],
+    ['https://civitai.com/user/someone', true],
+    ['http://civitai.com/models/1', false],
+    ['javascript:alert(1)', false],
+    ['data:text/html,hi', false],
+    ['https://evilcivitai.com/x', false],
+    ['https://civitai.com.evil.com/x', false],
+  ])('a tribute link %s is accepted: %s', (url, ok) => {
+    expect(memorialTributeSchema.safeParse({ label: 'Tribute', url }).success).toBe(ok);
   });
 });
