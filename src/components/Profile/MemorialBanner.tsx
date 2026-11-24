@@ -29,12 +29,14 @@ export function MemorialBanner({
             here for the community.
           </Text>
           {tributes.length > 0 && (
-            <Text size="sm" c="dimmed">
-              Tributes:{' '}
+            <Text size="sm">
+              <Text span size="sm" c="dimmed">
+                Tributes:
+              </Text>{' '}
               {tributes.map((tribute, index) => (
                 <span key={tribute.url}>
                   {index > 0 && ', '}
-                  <Anchor href={tribute.url} size="sm">
+                  <Anchor href={tribute.url} size="sm" underline="always">
                     {tribute.label}
                   </Anchor>
                 </span>
