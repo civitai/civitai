@@ -40,6 +40,19 @@ function claimedValue(p: ReviewSourceProvenance): string {
   return `${sha7} · tree state not sent`;
 }
 
+export const DECLARED_REPOSITORY_LABEL = 'Repository (declared by the developer, not checked)';
+
+export type DeclaredRepository = {
+  /** What to show: the canonical URL when it links, else the value as the developer wrote it. */
+  text: string;
+  /** Only set when `validateRepositoryUrl` accepts the value. */
+  href: string | null;
+  /** The client-claimed commit, shortened; `null` when none was sent. */
+  claimedCommit: string | null;
+  /** `<repo>/commit/<sha>`, only for a github.com repository and a full 40-hex claim. */
+  claimedCommitHref: string | null;
+};
+
 /**
  * The manifest's `repository`, as the review header shows it.
  *
@@ -54,19 +67,6 @@ function claimedValue(p: ReviewSourceProvenance): string {
  * the canonical URL, the same string as its `href`, so what the moderator reads is where the
  * click goes.
  */
-export const DECLARED_REPOSITORY_LABEL = 'Repository (declared by the developer, not checked)';
-
-export type DeclaredRepository = {
-  /** What to show: the canonical URL when it links, else the value as the developer wrote it. */
-  text: string;
-  /** Only set when `validateRepositoryUrl` accepts the value. */
-  href: string | null;
-  /** The client-claimed commit, shortened; `null` when none was sent. */
-  claimedCommit: string | null;
-  /** `<repo>/commit/<sha>`, only for a github.com repository and a full 40-hex claim. */
-  claimedCommitHref: string | null;
-};
-
 export function declaredRepository(
   repository: unknown,
   claimedCommit?: string | null

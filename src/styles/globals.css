@@ -572,11 +572,9 @@ textarea {
      be inert rather than wrong. `top-center` / `bottom-center` are placed with
      `left: 50%` + a transform and have no inline edge to pay.
 
-     `--review-action-bar-reserve` is set on `<html>` only while `ReviewActionBar` renders as the
-     sticky bar for a PENDING request (no bar renders for decided history): the distance from its top edge to the viewport
-     bottom, which already includes the safe area below it. `max()` keeps the bottom toasts
-     above that bar, so none of them lands on its Approve buttons; unset, the rule is the
-     safe-area margin alone. */
+     `--review-action-bar-reserve` is set on `<html>` by `ReviewActionBar` while its sticky bar
+     is up, and already includes the bottom safe area, so it is `max()`ed with the inset, not
+     added to it. */
   .mantine-Notifications-root[data-position^='top-'] {
     margin-block-start: var(--safe-area-inset-top);
   }

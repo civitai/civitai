@@ -913,7 +913,7 @@ describe('what opens next', () => {
     await second.unmount();
   });
 
-  test('🔴 the skip list survives a reload of the page (session storage), and only that', async () => {
+  test('🔴 the skip list survives a reload of the page (session storage)', async () => {
     const a = pendingRequest();
     const b = pendingRequest();
     m.pendingItems = {

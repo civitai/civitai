@@ -1,6 +1,6 @@
 import { Notifications, notifications } from '@mantine/notifications';
 import { useRef } from 'react';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { useReserveViewportBottom } from '~/components/Apps/ReviewActionBar';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -50,11 +50,14 @@ describe('the sticky review bar keeps bottom toasts off it', () => {
     await expect.element(bar).toBeInTheDocument();
     notifications.show({ id: 'other', message: 'Something else happened', autoClose: false });
     await expect.element(page.getByText('Something else happened')).toBeInTheDocument();
-    // Past the enter transition, so the toast is measured where it rests.
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    await nextLayout();
     const container = () =>
       document.querySelector('.mantine-Notifications-root[data-position="bottom-right"]')!;
+    // Past the enter transition: measured once the toast's box stops moving between frames.
+    await vi.waitFor(async () => {
+      const before = box(container()).bottom;
+      await nextLayout();
+      expect(box(container()).bottom).toBe(before);
+    });
     const barBox = box(bar.element());
     // The bar really is at the viewport bottom, so the toast could cover it.
     expect(barBox.bottom).toBeGreaterThan(DESKTOP.height - 5);
