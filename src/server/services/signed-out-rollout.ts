@@ -48,7 +48,7 @@ export function applySignedOutRolloutFlags(
   if (user || !req) return flags;
   const bucket = readSignedOutRolloutBucket(req.headers?.cookie);
   if (bucket === null) return flags;
-  const entity = bucket >= 0 ? 'anonymous' : signedOutRolloutEntity(bucket);
+  const entity = signedOutRolloutEntity(bucket);
   for (const key of keys) {
     if (evaluate(SIGNED_OUT_ROLLOUT_FLAGS[key], entity) === true) flags[key] = true;
   }

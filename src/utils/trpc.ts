@@ -409,7 +409,7 @@ export function shouldUseGoTransport(op: { type: string; path: string; input: un
 /** This browser's cohort flag for `path`: the signed-in flag when signed in, else the signed-out one. */
 function isGoTransportCohortFor(path: string): boolean {
   if (isAuthedBrowser()) return isGoTransportEnabledFor(path);
-  return false && isSignedOutBrowser() && isSignedOutGoTransportEnabledFor(path);
+  return isSignedOutBrowser() && isSignedOutGoTransportEnabledFor(path);
 }
 
 /**
