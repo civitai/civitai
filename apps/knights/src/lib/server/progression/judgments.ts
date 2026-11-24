@@ -36,7 +36,8 @@ export type Judgment = {
   /** A vote's item id or a practice answer's id; unique only together with `kind`. */
   itemId: number;
   kind: 'vote' | 'practice';
-  imageId: number;
+  /** Null, like `imageKey`, when the image is no longer one the public feeds would show. */
+  imageId: number | null;
   /** Null when the image is no longer one the public feeds would show. */
   imageKey: string | null;
   prompt: string;
@@ -203,7 +204,7 @@ async function listJudgmentsIn(
       return {
         itemId: r.itemId,
         kind: r.kind as Judgment['kind'],
-        imageId: r.imageId,
+        imageId: r.servable ? r.imageId : null,
         imageKey: r.servable && r.imageKey ? r.imageKey : null,
         // A yes/no question carries its own words; the question row only holds the generic ones.
         prompt: r.itemPrompt ?? r.prompt,
