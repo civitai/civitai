@@ -4,6 +4,8 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type { Context } from '~/server/createContext';
 import { updateEntityAvailabilityHandler } from '~/server/controllers/common.controller';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { modelsSearchIndex } from '~/server/search-index';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { clearKnightsSourcesConfigCache } from '~/server/services/knights/sources';
 import { Availability } from '~/shared/utils/prisma/enums';
 
@@ -142,4 +144,14 @@ describe('updateEntityAvailabilityHandler on a Model or ModelVersion', () => {
       expect(imageReads()).toEqual([]);
     }
   );
+
+  it('still completes the availability update when reading the model versions fails', async () => {
+    dbMock.dbWrite.modelVersion.findMany.mockRejectedValue(new Error('primary down') as never);
+    const reindex = vi.spyOn(modelsSearchIndex, 'queueUpdate');
+
+    await expect(setModel('Model', Availability.Public)).resolves.not.toThrow();
+    expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalled();
+    expect(reindex).toHaveBeenCalledWith([{ id: 3, action: SearchIndexUpdateQueueAction.Update }]);
+    expect(postsOfVersionsReads()).toEqual([]);
+  });
 });

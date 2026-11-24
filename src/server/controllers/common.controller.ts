@@ -13,6 +13,7 @@ import { throwBadRequestError, throwDbError } from '~/server/utils/errorHandling
 import { withSpan } from '~/server/utils/otel-helpers';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import {
   articlesSearchIndex,
   bountiesSearchIndex,
@@ -67,7 +68,7 @@ export const updateEntityAvailabilityHandler = async ({
       entityIds: [entityId],
       entityType,
     });
-    if (leavesPrivate) await offerLeftPrivateToKnights(entityType, entityId);
+    if (leavesPrivate) void offerLeftPrivateToKnights(entityType, entityId);
 
     // Update search index:
     switch (entityType) {
@@ -175,17 +176,24 @@ async function priorAvailability(
   return undefined;
 }
 
-/** Never waits on the Knights: the offer runs after the response, and logs its own failures. */
+/** Called without awaiting, after the availability write: never throws, and logs its own failures. */
 async function offerLeftPrivateToKnights(entityType: SupportedAvailabilityResources, id: number) {
   if (entityType === 'Post') return void queueLeftPrivateForKnights({ postIds: [id] });
   if (entityType === 'ModelVersion')
     return void queueLeftPrivateForKnights({ modelVersionIds: [id] });
   if (entityType !== 'Model') return;
   // The model's trigger carries a flip to Public onto its versions; the sampler still checks each version's own state.
-  const versions = await dbWrite.modelVersion.findMany({
-    where: { modelId: id },
-    select: { id: true },
-  });
-  if (versions.length > 0)
-    void queueLeftPrivateForKnights({ modelVersionIds: versions.map((v) => v.id) });
+  try {
+    const versions = await dbWrite.modelVersion.findMany({
+      where: { modelId: id },
+      select: { id: true },
+    });
+    if (versions.length > 0)
+      await queueLeftPrivateForKnights({ modelVersionIds: versions.map((v) => v.id) });
+  } catch (error) {
+    logToAxiom(
+      { type: 'knights-v2-left-private-error', modelId: id, error: safeError(error) },
+      'knights-v2-sources'
+    );
+  }
 }
