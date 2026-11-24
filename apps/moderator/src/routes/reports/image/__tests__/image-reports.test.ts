@@ -40,7 +40,7 @@ describe('/reports/image', () => {
       url: url('/reports/image?level=1'),
       locals: { user: { id: 1 }, grants: { 'image.moderate': true } },
     } as never);
-    expect(loadImageQueue).toHaveBeenCalledWith('reported', expect.any(URL));
+    expect(loadImageQueue).toHaveBeenCalledWith('reported', expect.any(URL), { id: 1 });
     expect(data).toMatchObject({ kind: 'reported', title: 'Image reports', canAct: true });
   });
 

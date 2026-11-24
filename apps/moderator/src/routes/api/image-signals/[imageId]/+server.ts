@@ -21,7 +21,8 @@ import { section } from '$lib/server/section';
 // by the server's UTC offset; formatting in SQL keeps the conversion out of JS entirely.
 export const GET: RequestHandler = async ({ params, locals }) => {
   const imageId = requireIdParam(locals, params.imageId, '/retool/image-lookup', 'imageId');
-  // Its events and remixes say why an image was withheld, so they are withheld with it.
+  // Its events and remixes say why an image was withheld, so they are withheld with it. An image the
+  // primary lacks is withheld too, so a ToS-deleted image's events load only for csamReview.
   const withheld = await restrictedImageIds([imageId], {
     csamReview: holdsCsamReview(locals.user),
   });
@@ -34,7 +35,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     .executeTakeFirst();
 
   // A ToS-deleted image has no Postgres row but still has a lifecycle log, and that log is the record of
-  // the deletion — so the events still load. Reaction clustering does not: without `createdAt` there is
+  // the deletion — so the events still load for a csamReview holder. Reaction clustering does not: without `createdAt` there is
   // no lower bound, and an unbounded scan of the 825M-row reactions table is not worth it for an image
   // that no longer exists.
   const [events, reactions, flaggedRemixes] = await Promise.all([

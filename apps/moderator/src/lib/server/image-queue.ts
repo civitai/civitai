@@ -5,9 +5,11 @@ import { z } from 'zod';
 import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
 import { holdsCsamReview } from '$lib/server/held-media';
 import {
+  restrictedImageIds,
   withheldAccountRefusal,
   withheldApprovedAppeal,
   withheldRefusal,
+  withheldRow,
 } from '$lib/server/retracted-media';
 import {
   getCsamQueueByUser,
@@ -109,6 +111,19 @@ async function withModel3d<T extends { id: number }>(items: T[]) {
   }));
 }
 
+/** Cards withheld from `user` go out as `withheldRow`s, with no prompt, rule or 3D model parent. */
+async function withheldCards<T extends { id: number }>(items: T[], user?: App.Locals['user']) {
+  const withheld = await restrictedImageIds(
+    items.map((i) => i.id),
+    { csamReview: holdsCsamReview(user) }
+  );
+  return items.map((item) =>
+    withheld.has(item.id)
+      ? { ...withheldRow(item), model3d: null, promptHighlight: null, ruleDefinition: null }
+      : { ...item, restricted: false }
+  );
+}
+
 /**
  * One image queue's cards, for `view`. Shared by `/images/[slug]` (the review queues) and
  * `/reports/image` (the reported-image queue, which moved there from `/images/reported`).
@@ -144,7 +159,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
       ...base,
       view,
       kind: 'reported' as const,
-      items: await withModel3d(items),
+      items: await withheldCards(await withModel3d(items), user),
       nextCursor: reportId ? undefined : nextCursor,
       singleReport: reportId ?? null,
       // `null` hides the control: no agent accounts configured, or a `?report=` view, which runs unfiltered.
@@ -184,13 +199,16 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
       view,
       kind: 'review-highlight' as const,
       tagOptions: await getReviewQueueTags(view),
-      items: await withModel3d(
-        items.map(({ prompt, negativePrompt, ...item }) => ({
-          ...item,
-          promptHighlight: getPromptHighlightSegments(prompt, negativePrompt, {
-            categories,
-          }),
-        }))
+      items: await withheldCards(
+        await withModel3d(
+          items.map(({ prompt, negativePrompt, ...item }) => ({
+            ...item,
+            promptHighlight: getPromptHighlightSegments(prompt, negativePrompt, {
+              categories,
+            }),
+          }))
+        ),
+        user
       ),
       nextCursor,
       capturesOnly,
@@ -221,11 +239,14 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
     view,
     kind: 'review' as const,
     tagOptions,
-    items: await withModel3d(
-      stripped.map((item) => ({
-        ...item,
-        ruleDefinition: item.ruleId != null ? rules[item.ruleId] ?? null : null,
-      }))
+    items: await withheldCards(
+      await withModel3d(
+        stripped.map((item) => ({
+          ...item,
+          ruleDefinition: item.ruleId != null ? rules[item.ruleId] ?? null : null,
+        }))
+      ),
+      user
     ),
     nextCursor,
     userId: csamUserId ?? null,

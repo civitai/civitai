@@ -1015,3 +1015,75 @@ describe('a batch with an image deleted since the page loaded, without the grant
     expect(writes.removeImages).not.toHaveBeenCalled();
   });
 });
+
+// civitai/civitai#10170: the main queues draw a withheld card as restricted, as the appeal queue does.
+describe('the reported and review queues, without the grant', () => {
+  const reportsImagePage = () => import('../../../routes/reports/image/+page.server');
+  // Withheld because the other row on its url carries a signal block reason.
+  const KEPT = 990000080;
+  const CLEAN = 990000082;
+  beforeEach(() =>
+    db.exec(`ALTER TABLE "User" ADD COLUMN IF NOT EXISTS image TEXT;
+      CREATE TABLE IF NOT EXISTS "ModerationRule" (id INTEGER PRIMARY KEY, action TEXT, definition JSONB);
+      CREATE TABLE IF NOT EXISTS "ModerationRuleVersion" ("ruleId" INTEGER, action TEXT);
+      CREATE TABLE IF NOT EXISTS "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
+      CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+      CREATE TABLE IF NOT EXISTS "JobQueue" ("type" TEXT, "entityType" "EntityType", "entityId" INTEGER, "data" JSONB);
+      CREATE TABLE IF NOT EXISTS "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "needsReview") VALUES
+        (${KEPT}, 'queue-key', 'Scanned', NULL, 9, 'minor'),
+        (990000081, 'queue-key', 'Blocked', 'unrecognised-reason', 8, NULL),
+        (${CLEAN}, 'queue-clean-key', 'Scanned', NULL, 9, 'minor');
+      INSERT INTO "Report" (id, "userId", reason, status, details, "createdAt") VALUES
+        (990000070, 8, 'TOSViolation', 'Pending', '{}', now()),
+        (990000071, 8, 'TOSViolation', 'Pending', '{}', now());
+      INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (${KEPT}, 990000070), (${CLEAN}, 990000071)`)
+  );
+  type Card = Record<string, unknown> & { id: number };
+  const minor = async (user: { id: number; roles: string[] }) =>
+    new Map(
+      (
+        (await queuePage.load({
+          params: { slug: 'minor' },
+          url: new URL('https://mod.test/images/minor'),
+          locals: { user, grants: GRANTS },
+        } as never)) as { items: Card[] }
+      ).items.map((c) => [c.id, c])
+    );
+  const reported = async (user: { id: number; roles: string[] }) =>
+    new Map(
+      (
+        (await (
+          await reportsImagePage()
+        ).load({
+          url: new URL('https://mod.test/reports/image'),
+          locals: { user, grants: GRANTS },
+        } as never)) as { items: Card[] }
+      ).items.map((c) => [c.id, c])
+    );
+
+  it.each([
+    ['minor review', minor],
+    ['reported', reported],
+  ] as const)('%s draws a withheld card restricted, and the rest as before', async (_, read) => {
+    const cards = await read(WITHOUT_GRANT);
+    expect(cards.get(KEPT)).toMatchObject({ url: '', restricted: true });
+    expect(cards.get(CLEAN)).toMatchObject({ url: 'queue-clean-key', restricted: false });
+  });
+
+  it.each([
+    ['minor review', minor],
+    ['reported', reported],
+  ] as const)('%s sends a grant holder the withheld card with its media', async (_, read) => {
+    expect((await read(WITH_GRANT)).get(KEPT)).toMatchObject({
+      url: 'queue-key',
+      restricted: false,
+    });
+  });
+
+  // The grid leaves a restricted card out of the selection, so a bulk accept posts the rest.
+  it('bulk accepts the rest of the page', async () => {
+    await queuePage.actions.bulkAccept(event(WITHOUT_GRANT, { imageIds: String(CLEAN) }));
+    expect(acceptImage).toHaveBeenCalledOnce();
+  });
+});
