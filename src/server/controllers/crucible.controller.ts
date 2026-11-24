@@ -33,7 +33,6 @@ import {
   getCrucibleJudgeEligibility,
 } from '~/server/services/crucible-eligibility.service';
 import { toggleCrucibleFollow } from '~/server/services/crucible-engagement.service';
-import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { logToAxiom } from '~/server/logging/client';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
@@ -68,17 +67,8 @@ import {
   submitVote,
   withoutEntryScores,
   withEntryCounts,
+  getBlockLists,
 } from '~/server/services/crucible.service';
-
-/** Creators who blocked the viewer and creators the viewer blocked; empty for moderators. */
-const getBlockLists = async (user: Context['user']) => {
-  if (!user || user.isModerator) return { blockedBy: [], blocked: [] };
-  const [blockedBy, blocked] = await Promise.all([
-    BlockedByUsers.getCached({ userId: user.id }),
-    BlockedUsers.getCached({ userId: user.id }),
-  ]);
-  return { blockedBy: blockedBy.map((u) => u.id), blocked: blocked.map((u) => u.id) };
-};
 
 const getAllBlockedCreatorIds = async (user: Context['user']) => {
   const { blockedBy, blocked } = await getBlockLists(user);

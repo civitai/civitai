@@ -229,6 +229,23 @@ func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
 	}
 }
 
+// FEED_GO_ANSWER_REGION_BLOCKED is off unless set: a blocked region is then handed back to the app.
+func TestLoadAnswerRegionBlockedDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_ANSWER_REGION_BLOCKED", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.AnswerRegionBlocked != want {
+			t.Errorf("FEED_GO_ANSWER_REGION_BLOCKED=%q -> %v, want %v", in, c.AnswerRegionBlocked, want)
+		}
+	}
+}
+
 // TRPC_WRITE_DEVALUE is read as the main app reads it (`=== 'true'`): only the exact string turns it
 // on, and unset is off.
 func TestLoadWriteDevalue(t *testing.T) {
