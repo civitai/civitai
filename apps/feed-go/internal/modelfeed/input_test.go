@@ -14,7 +14,7 @@ func parseJSON(t *testing.T, raw string) (*Input, error) {
 	if err != nil {
 		t.Fatalf("decode %s: %v", raw, err)
 	}
-	return Parse(m)
+	return ParseWith(m, Ports{})
 }
 
 // The shape the browse page sends most (the access-log sample's top shapes): every key read, the
