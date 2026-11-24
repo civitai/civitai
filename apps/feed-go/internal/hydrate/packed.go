@@ -178,13 +178,8 @@ func entryState(cmd *redis.StringCmd, ttl time.Duration, now time.Time, opts dec
 	return decodeValue(s, ttl, now, opts)
 }
 
-// decodeBytes is one cached value as an Entry (see decodeEntry); ordered decodes it as an ordered
-// cache's (orderedCaches: decodeOrderedValue).
-func decodeBytes(b []byte, ttl time.Duration, now time.Time, ordered bool) (Entry, readState) {
-	return decodeValue(string(b), ttl, now, decodeOpts{ordered: ordered})
-}
-
-// decodeValue is decodeBytes over a string, with a cache's decodeOpts.
+// decodeValue is one cached value as an Entry (see decodeEntry), decoded with a cache's decodeOpts
+// (an ordered cache's with decodeOrderedValue).
 func decodeValue(b string, ttl time.Duration, now time.Time, opts decodeOpts) (Entry, readState) {
 	if len(b) == 0 {
 		return Entry{}, stateAbsent

@@ -247,7 +247,7 @@ func TestUnpackMatchesOracleOnGoldens(t *testing.T) {
 	}
 }
 
-// oracleDecodeBytes is decodeBytes as it was, on the oracle.
+// oracleDecodeBytes is decodeValue as it was (decodeBytes, over bytes), on the oracle.
 func oracleDecodeBytes(b []byte, ttl time.Duration, now time.Time, ordered bool) (Entry, readState) {
 	if len(b) == 0 {
 		return Entry{}, stateAbsent
