@@ -157,6 +157,7 @@ app statement as the app's database role with production's grants
 needs a production grant first, then a line in that file. The view's SQL is generated from the TypeScript predicates
 (`imageGateViewSql`); a change to them ships as a new migration carrying the regenerated SQL, with `IMAGE_GATE_MIGRATION`
 (`src/test/pglite-kysely.ts`) pointed at it, and `image-gate.pglite.test.ts` fails until the two match.
+Keep "KnightsImageGate" WHERE-free with only `imageId` and boolean columns; adding a filter or another column means marking it `security_barrier`.
 
 ## Tests
 

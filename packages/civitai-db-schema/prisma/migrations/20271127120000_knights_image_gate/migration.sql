@@ -12,7 +12,8 @@
 -- show an image but never why one is out. Every column but "sweepServable" implies "servable". The SELECT is generated
 -- from the TypeScript predicates (`imageGateViewSql` in apps/knights/src/lib/server/image-gate.ts), and a test fails when
 -- this copy differs: regenerate it rather than editing it here. Names in it resolve when the view is created, under the
--- search_path set below, not when it is read.
+-- search_path set below, not when it is read. Keep "KnightsImageGate" WHERE-free with only imageId and boolean columns;
+-- adding a filter or another column means marking it security_barrier.
 --
 -- knights_ensure_vote_partition(year, month): creates that month's "KnightsVote" partition, which only the table's owner
 -- may do. SECURITY DEFINER with a pinned search_path; integers only, the name built inside; only a month from the
