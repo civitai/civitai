@@ -32,6 +32,9 @@ export class SongRatingRefusedError extends Error {
   }
 }
 
+/** One piece of the work that follows a committed rating, named for its log line. */
+export type AfterCommitStep = { name: string; run: () => Promise<unknown> };
+
 type ImageNsfwLevelInput = {
   id: number;
   nsfwLevel: number;
@@ -43,18 +46,21 @@ type ImageNsfwLevelInput = {
 // Don't mirror the main app's single-image Meilisearch update: that index locks specially on a single-image
 // change.
 export async function updateImageNsfwLevel(input: ImageNsfwLevelInput): Promise<void> {
-  const afterCommit = await writeImageNsfwLevel(dbWrite, input);
-  await afterCommit();
+  // One transaction, so the level never lands without its rating-request and Model3D writes, and the
+  // busts run only after a level has landed.
+  const steps = await dbWrite.transaction().execute((trx) => writeImageNsfwLevel(trx, input));
+  for (const step of steps) await step.run();
 }
 
 /**
  * `updateImageNsfwLevel`'s writes, on `db`: pass a transaction to commit the rating with the caller's
- * own writes. Returns the cache, activity and search work, which the caller runs once that commits.
+ * own writes. Returns the cache, activity and search work, in order, for the caller to run once that
+ * commits.
  */
 export async function writeImageNsfwLevel(
   db: Kysely<DB> | Transaction<DB>,
   { id, nsfwLevel, status, reason, userId }: ImageNsfwLevelInput
-): Promise<() => Promise<void>> {
+): Promise<AfterCommitStep[]> {
   const image = await db
     .selectFrom('Image')
     .select(['type', 'ingestion', 'metadata', 'postId', thumbnailParentId.as('parentId')])
@@ -127,24 +133,36 @@ export async function writeImageNsfwLevel(
     `.execute(db);
   }
 
-  return async () => {
-    await invalidateThumbnails(id, [image.parentId]);
-    await bustProfilePictures({ imageIds: [id] });
-    await recordModActivity({
-      userId,
-      entityType: 'image',
-      entityId: id,
-      activity: 'setNsfwLevel',
-    });
-
-    await bustAfterWrite('image-nsfw-level-cache-bust', () =>
-      Promise.all([
-        bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id),
-        // The version showcase is cached for a day and filtered by level when it is built.
-        bustPostGalleryCaches(image.postId != null ? [image.postId] : []),
-      ])
-    );
-
-    if (image.postId != null) await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
-  };
+  const postId = image.postId;
+  return [
+    { name: 'image-nsfw-level-thumbnails', run: () => invalidateThumbnails(id, [image.parentId]) },
+    {
+      name: 'image-nsfw-level-profile-pictures',
+      run: () => bustProfilePictures({ imageIds: [id] }),
+    },
+    {
+      name: 'image-nsfw-level-activity',
+      run: () =>
+        recordModActivity({ userId, entityType: 'image', entityId: id, activity: 'setNsfwLevel' }),
+    },
+    {
+      name: 'image-nsfw-level-cache-bust',
+      run: () =>
+        bustAfterWrite('image-nsfw-level-cache-bust', () =>
+          Promise.all([
+            bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id),
+            // The version showcase is cached for a day and filtered by level when it is built.
+            bustPostGalleryCaches(postId != null ? [postId] : []),
+          ])
+        ),
+    },
+    ...(postId != null
+      ? [
+          {
+            name: 'image-nsfw-level-search',
+            run: () => queueDocumentsForImageMinorChanges({ levelImageIds: [id] }),
+          },
+        ]
+      : []),
+  ];
 }

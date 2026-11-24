@@ -107,6 +107,18 @@ describe('a song rating dispute', () => {
     expect(dbMock.dbWrite.ratingReview.create).not.toHaveBeenCalled();
   });
 
+  it('lets the owner file again once a dispute closed with the song unreviewable is behind it', async () => {
+    // The last dispute closed with nothing applied, while the song's scan had given up; a rescan
+    // has since reviewed the song. A ruled dispute (a level applied) still blocks re-filing.
+    const closedAsGone = { resolvedAt: new Date('2026-11-21T00:00:00Z'), resolvedTextHash: null };
+    dbMock.dbRead.ratingReview.findFirst.mockImplementation(
+      async (args: { where: { status: unknown; appliedLevel?: unknown } }) =>
+        typeof args.where.status === 'object' && !args.where.appliedLevel ? closedAsGone : null
+    );
+
+    await expect(file()).resolves.toMatchObject({ entityType: 'Song', status: 'Pending' });
+  });
+
   it('keeps one pending dispute per song', async () => {
     dbMock.dbRead.ratingReview.findFirst.mockImplementation(
       async (args: { where: { status: unknown } }) =>

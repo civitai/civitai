@@ -57,14 +57,16 @@ const REMOVED_SONG_STATES: string[] = [ImageIngestionStatus.Blocked, ImageIngest
 function songScanState(ingestion: string, scanJobs: unknown): SongScanState {
   const jobs = (scanJobs ?? {}) as {
     retryCount?: unknown;
-    error?: { failureClass?: unknown };
-    lastFailure?: { failureClass?: unknown };
+    error?: { failureClass?: unknown; reason?: unknown };
+    lastFailure?: { failureClass?: unknown; reason?: unknown };
   };
-  const failureClass = (jobs.error ?? jobs.lastFailure)?.failureClass;
+  const failure = jobs.error ?? jobs.lastFailure;
+  const text = (v: unknown) => (typeof v === 'string' ? v : null);
   return {
     ingestion,
     retryCount: typeof jobs.retryCount === 'number' ? jobs.retryCount : null,
-    failureClass: typeof failureClass === 'string' ? failureClass : null,
+    failureClass: text(failure?.failureClass),
+    failureReason: text(failure?.reason),
   };
 }
 

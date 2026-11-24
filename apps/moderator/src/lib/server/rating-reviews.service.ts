@@ -30,7 +30,11 @@ import { postCoverRows } from './post-covers';
 import { challengeAllowedMaskAt } from './rating-review-apply';
 import { computeRatedEntityDerivedNsfwLevel } from './rated-entity-derivation';
 import { bustAfterWrite } from './bust-after-write';
-import { SongRatingRefusedError, writeImageNsfwLevel } from './image-nsfw-level';
+import {
+  SongRatingRefusedError,
+  writeImageNsfwLevel,
+  type AfterCommitStep,
+} from './image-nsfw-level';
 import { ReportStatus, SONG_ENTITY_TYPE, type RatingReviewStatusFilter } from '$lib/rating-review';
 import type { MediaType } from '$lib/media/edge-url';
 import type { ComFace } from '$lib/com-face';
@@ -1022,7 +1026,7 @@ async function applySongRating(
   songId: number,
   appliedLevel: number,
   moderatorId: number
-): Promise<() => Promise<void>> {
+): Promise<AfterCommitStep[]> {
   try {
     return await writeImageNsfwLevel(trx, {
       id: songId,
@@ -1060,7 +1064,7 @@ export async function resolveRatingReview(input: {
 }): Promise<ResolveResult> {
   const { reviewId, appliedLevel, modComment, moderatorId } = input;
 
-  let afterSongRating: (() => Promise<void>) | undefined;
+  let afterSongRating: AfterCommitStep[] = [];
   const core = await dbWrite.transaction().execute(async (trx) => {
     const review = await trx
       .selectFrom('RatingReview')
@@ -1090,6 +1094,11 @@ export async function resolveRatingReview(input: {
             string | null
           >`COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')->>'failureClass'`.as(
             'failureClass'
+          ),
+          sql<
+            string | null
+          >`COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')->>'reason'`.as(
+            'failureReason'
           ),
         ])
         .where('id', '=', entityId)
@@ -1189,8 +1198,9 @@ export async function resolveRatingReview(input: {
     };
   });
 
-  // The ruling has committed, so a failure here is logged, not reported as a failed ruling.
-  if (afterSongRating) await bustAfterWrite('rating-review-song-rating', afterSongRating);
+  // The ruling has committed, so a failure here is logged, not reported as a failed ruling, and each
+  // step runs whatever an earlier one did.
+  for (const step of afterSongRating) await bustAfterWrite(step.name, step.run);
 
   const summary = core.exists
     ? (await loadSummaries(core.entityType, [core.entityId])).get(core.entityId)

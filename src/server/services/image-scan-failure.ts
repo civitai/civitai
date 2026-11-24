@@ -15,103 +15,21 @@
  * hard backstop that stops any image re-flooding the scanner forever.
  */
 
-import { imageScanRetryLimit } from '@civitai/shared/rating-review';
-
-export const ImageScanFailureClass = {
-  /** Infra churn that recovers on its own (container-create, 5xx, timeout, expiry). Keep retrying. */
-  Transient: 'transient',
-  /** The media itself can't be downloaded/decoded — it will never scan. Stop almost immediately. */
-  Permanent: 'permanent',
-  /** Unclassifiable reason. Retry conservatively under the historical cap. */
-  Unknown: 'unknown',
-} as const;
-export type ImageScanFailureClass =
-  (typeof ImageScanFailureClass)[keyof typeof ImageScanFailureClass];
+import { ImageScanFailureClass, imageScanRetryLimit } from '@civitai/shared/rating-review';
 
 // Retry ceilings by class. The cron ALWAYS increments `scanJobs.retryCount` on every
 // failed attempt (see markImageScanError; a 429 is not one) — these are the absolute
-// backstops applied against that ever-incrementing count. Defined in @civitai/shared, which a song's
-// rating dispute in both apps also reads.
+// backstops applied against that ever-incrementing count. The classes, the classifier and the
+// ceilings are defined in @civitai/shared, which a song's rating dispute in both apps also reads.
 export {
+  classifyImageScanFailure,
+  effectiveScanFailureClass,
+  ImageScanFailureClass,
   IMAGE_RESCAN_RETRY_LIMIT,
   IMAGE_SCAN_PERMANENT_RETRY_LIMIT,
   IMAGE_SCAN_TRANSIENT_RETRY_LIMIT,
   IMAGE_SCAN_UNKNOWN_RETRY_LIMIT,
 } from '@civitai/shared/rating-review';
-
-// Reason substrings that mark infra-transient failures. Matched case-insensitively.
-const TRANSIENT_REASON_PATTERNS = [
-  'failed to create container',
-  'giving up after', // "…Giving up after 10 attempts"
-  'does not indicate success: 5', // 5xx surfaced by a worker, e.g. "500 (Internal Server Error)"
-  'internal server error',
-  'bad gateway',
-  'service unavailable',
-  'gateway timeout',
-  'timed out',
-  'timeout',
-  'connection reset',
-  'connection refused',
-  'temporarily unavailable',
-  // A flapping worker pool: a fresh re-submit mostly lands on a worker that serves the job.
-  'no provider supports this job',
-  'retracted support',
-];
-
-// Orchestrator middleware / step markers that are infra-transient regardless of message.
-// Aspirational: the v2 job event doesn't expose `current_middleware` today, so in
-// practice container failures classify via the reason text ("Failed to create
-// container…") below. Kept so classification improves for free if middleware ever
-// arrives (via the passed `middleware` or a failing step named after it).
-const TRANSIENT_MIDDLEWARE_PATTERNS = ['preparemanagedcontainer', 'preparecontainer'];
-
-// Reason substrings that mark a permanently-bad input (the media can't be fetched/decoded).
-const PERMANENT_REASON_PATTERNS = [
-  'download',
-  'decode',
-  'corrupt',
-  'invalid image',
-  'invalid media',
-  'not a valid',
-  // Not a bare 'too large' — that would also match our own oversized request body.
-  'image is too large',
-  'unsupported',
-  'unscannable',
-];
-
-/**
- * Classify a scan failure. Transient checks run first so a 5xx *while downloading*
- * (which is recoverable) isn't mislabeled permanent by the `download` marker.
- * Robust to empty/unknown reasons — falls back to `Unknown` (conservative retry).
- */
-export function classifyImageScanFailure(input: {
-  reason?: string | null;
-  failureType?: string | null;
-  middleware?: string | null;
-  failedSteps?: string[] | null;
-}): ImageScanFailureClass {
-  const { reason, failureType, middleware, failedSteps } = input;
-
-  // Workflow expiry (the orchestrator's 10-min cap) is always a transient timeout:
-  // the work never ran to completion, so a re-scan can still succeed.
-  if (failureType === 'expired') return ImageScanFailureClass.Transient;
-
-  const haystack = [reason, middleware, ...(failedSteps ?? [])]
-    .filter((x): x is string => !!x)
-    .join(' ')
-    .toLowerCase();
-
-  if (!haystack) return ImageScanFailureClass.Unknown;
-
-  if (TRANSIENT_MIDDLEWARE_PATTERNS.some((p) => haystack.includes(p)))
-    return ImageScanFailureClass.Transient;
-  if (TRANSIENT_REASON_PATTERNS.some((p) => haystack.includes(p)))
-    return ImageScanFailureClass.Transient;
-  if (PERMANENT_REASON_PATTERNS.some((p) => haystack.includes(p)))
-    return ImageScanFailureClass.Permanent;
-
-  return ImageScanFailureClass.Unknown;
-}
 
 // Minutes after a failed submit before the cron re-sends it. Transient failures usually clear
 // on a fresh submit, so they wait less.

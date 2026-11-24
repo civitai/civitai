@@ -87,6 +87,9 @@ async function readReviewState(entityType: RatingReviewEntityType, entityId: num
         entityId,
         status: { in: [ReportStatus.Actioned, ReportStatus.Unactioned] },
         resolvedAt: { not: null },
+        // A song's dispute closed with nothing applied (its scans could not review it) ruled on
+        // nothing, so once a rescan reviews the song it must not block a new one.
+        ...(entityType === 'Song' && { appliedLevel: { not: null } }),
       },
       orderBy: { resolvedAt: 'desc' },
       select: { resolvedAt: true, resolvedTextHash: true },

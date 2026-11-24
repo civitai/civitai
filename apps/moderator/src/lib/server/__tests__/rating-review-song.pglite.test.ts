@@ -53,6 +53,7 @@ let owner: number;
 let mod: number;
 
 beforeEach(async () => {
+  vi.clearAllMocks();
   db = await freshRatingReviewDb();
   await db.exec(`ALTER TABLE "Image"
     ADD COLUMN "userId" INTEGER,
@@ -181,6 +182,28 @@ describe('a song rating dispute', () => {
     expect(activity).toEqual([{ activity: 'setNsfwLevel' }]);
   });
 
+  it('runs every after-commit step of the ruling even when an earlier one fails', async () => {
+    const { invalidateThumbnails } = await import('../thumbnail-cache');
+    const { bustProfilePictures } = await import('../profile-picture-cache');
+    const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
+    const song = await seedSong();
+    const id = await fileSongReview(song);
+    vi.mocked(invalidateThumbnails).mockRejectedValueOnce(new Error('main app down'));
+
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+    ).resolves.toMatchObject({ status: 'Actioned' });
+
+    expect(bustProfilePictures).toHaveBeenCalledWith({ imageIds: [song] });
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ levelImageIds: [song] });
+    const activity = await rows<{ activity: string }>(
+      db,
+      `SELECT "activity" FROM "ModActivity" WHERE "entityType" = 'image' AND "entityId" = $1`,
+      [song]
+    );
+    expect(activity).toEqual([{ activity: 'setNsfwLevel' }]);
+  });
+
   it("writes the song's level on the ruling's own transaction, not beside it", async () => {
     const song = await seedSong();
     const id = await fileSongReview(song);
@@ -217,6 +240,14 @@ describe('a song rating dispute', () => {
       { ingestion: 'Rescan', scanJobs: { retryCount: 8 } },
       { ingestion: 'Error', scanJobs: { retryCount: 2, error: { failureClass: 'unknown' } } },
       { ingestion: 'Error', scanJobs: { retryCount: 29, error: { failureClass: 'transient' } } },
+      // Stamped unknown, but its reason reads transient now: the cron retries it under 30.
+      {
+        ingestion: 'Error',
+        scanJobs: {
+          retryCount: 12,
+          error: { failureClass: 'unknown', reason: 'Failed to create container' },
+        },
+      },
     ];
     for (const state of states) {
       const song = await seedSong(state);
@@ -278,6 +309,8 @@ describe('a song rating dispute', () => {
         scanJobs: { retryCount: 30, lastFailure: { failureClass: 'transient' } },
       },
       { ingestion: 'Rescan', scanJobs: { retryCount: 9 } },
+      // No class stamped, and a reason that reads permanent: the cron gave up.
+      { ingestion: 'Error', scanJobs: { retryCount: 2, error: { reason: 'could not decode' } } },
     ];
     for (const state of states) {
       const song = await seedSong(state);
