@@ -34,8 +34,13 @@
 // the deprecated paths match and runs through the very same operation below, so every gate,
 // budget, moderation scan, import rule and reply is one code path for both. A tally never
 // touches a document's `data` or `version`. A PATCH carrying plain fields is refused: a
-// merge-patch of `data` is reserved for later. The deprecated routes answer exactly as before,
-// with `Deprecation` and `Link` headers (`LEGACY_TALLY_HEADERS`); no `Sunset` is set yet.
+// merge-patch of `data` is reserved for later.
+//
+// DEPRECATED. Tallies and publish are being removed from the core (docs/app-storage-generic-core.md):
+// the per-tally routes, the tally `PATCH`, `_publish` / `_unpublish`, and a list using `sort=counter:`
+// / `sort=mark:`, `markedBy` or `mark` answer exactly as before, with `Deprecation` and `Link`
+// headers (`LEGACY_TALLY_HEADERS`, `isDeprecatedRequest`); no `Sunset` is set, since removal waits
+// on measured usage, not a date. Their replacement is a viewer-keyed collection (`@me` below).
 //
 // IMPORTS. Every collection route takes an optional `?from=<source blockId>`. A `from` naming the
 // token's OWN app (its blockId) is an own call, exactly as if `from` were omitted: same access,
@@ -687,10 +692,11 @@ export function parseTallyPatch(
 export const LEGACY_TALLY_DEPRECATED_AT = '@1794182400';
 
 /**
- * Sent on every response this handler gives for a deprecated per-tally PATH, whatever the method
- * (a 405 included). Not on the token middleware's own refusals (401/403/429), which are sent
- * before the handler runs. No `Sunset`: removal waits for the usage
- * `civitai_app_block_doc_store_tally_ops_total{route="legacy"}` shows.
+ * Sent on every response this handler gives for a deprecated route or list parameter
+ * (`isDeprecatedRequest`), whatever the method (a 405 included). Not on the token middleware's
+ * own refusals (401/403/429), which are sent before the handler runs. No `Sunset`: removal waits
+ * for measured usage (`civitai_app_block_doc_store_tally_ops_total`, `app_storage_requests_total`)
+ * to reach zero.
  */
 export const LEGACY_TALLY_HEADERS = {
   Deprecation: LEGACY_TALLY_DEPRECATED_AT,
@@ -708,6 +714,34 @@ function isLegacyTallyPath(segments: readonly string[]): boolean {
   return (
     segments.length === 4 && (segments[2] === COUNTERS_SEGMENT || segments[2] === MARKS_SEGMENT)
   );
+}
+
+/**
+ * A list parameter that only exists for tallies: `sort=counter:` / `sort=mark:` (either
+ * direction, as `parseSort` in `doc-store.ts` reads it), `markedBy`, `mark`.
+ */
+function usesRemovedListParam(req: NextApiRequest): boolean {
+  if (req.query.markedBy !== undefined || req.query.mark !== undefined) return true;
+  const sort = req.query.sort;
+  return (Array.isArray(sort) ? sort : sort === undefined ? [] : [sort]).some((s) =>
+    /^-?(counter|mark):/.test(s)
+  );
+}
+
+/**
+ * THE one predicate for "this request uses a route or parameter that is being removed"
+ * (docs/app-storage-generic-core.md, "What is removed"): the per-tally paths, the tally `PATCH`,
+ * `_publish` / `_unpublish` (once the publish flag has let the path through at all), and a list
+ * naming a tally parameter. Each answers with {@link LEGACY_TALLY_HEADERS} on every response the
+ * handler gives, a refusal and a wrong method's 405 included.
+ */
+function isDeprecatedRequest(req: NextApiRequest, match: NonNullable<Match>): boolean {
+  const segments = pathSegments(req);
+  if (isLegacyTallyPath(segments)) return true;
+  if (segments[0] === PUBLISH_SEGMENT || segments[0] === UNPUBLISH_SEGMENT) return true;
+  if (!('route' in match)) return false;
+  if (match.route.op === 'patch') return true;
+  return match.route.op === 'list' && usesRemovedListParam(req);
 }
 
 function isTallyRoute(route: StorageRoute): route is TallyRoute {
@@ -1913,9 +1947,9 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       // Off for this app, publish and unpublish are not routes at all: the same refusal as any
       // unknown path, before any other gate (a wrong method's 405 included).
       if (!(await isPublishRouteServed(req, match))) throw noSuchRoute();
-      // A deprecated per-tally path says so on every response the handler gives, a refusal and a
-      // wrong method's 405 included.
-      if (isLegacyTallyPath(pathSegments(req))) {
+      // A removed route or list parameter says so on every response the handler gives, a refusal
+      // and a wrong method's 405 included.
+      if (isDeprecatedRequest(req, match)) {
         for (const [name, value] of Object.entries(LEGACY_TALLY_HEADERS)) {
           res.setHeader(name, value);
         }

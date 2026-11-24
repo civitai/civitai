@@ -393,27 +393,31 @@
       {@render userHeader(item)}
       {#if data.view === 'minor'}
         <div class="flex flex-col gap-1.5">
-          <div class="flex flex-wrap gap-1">
-            <Badge
-              class={item.minor
-                ? 'bg-rose-500/15 text-rose-500'
-                : 'bg-emerald-500/15 text-emerald-500'}
-            >
-              {item.minor ? 'Minor' : 'Not minor'}
-            </Badge>
-            {#if item.acceptableMinor}
-              <Badge class="bg-pink-500/15 text-pink-400">Acceptable minor</Badge>
+          {#if !item.restricted}
+            <div class="flex flex-wrap gap-1">
+              <Badge
+                class={item.minor
+                  ? 'bg-rose-500/15 text-rose-500'
+                  : 'bg-emerald-500/15 text-emerald-500'}
+              >
+                {item.minor ? 'Minor' : 'Not minor'}
+              </Badge>
+              {#if item.acceptableMinor}
+                <Badge class="bg-pink-500/15 text-pink-400">Acceptable minor</Badge>
+              {/if}
+            </div>
+            {#if item.promptHighlight.hasHighlights}
+              <PromptHighlight result={item.promptHighlight} />
             {/if}
-          </div>
-          {#if item.promptHighlight.hasHighlights}
-            <PromptHighlight result={item.promptHighlight} />
           {/if}
           <ReviewActions {item} minorQueue verdict={verdictOf(item)} {selected} {submit} />
         </div>
       {:else}
         <div class="flex flex-col gap-1.5">
-          <Badge class="w-fit bg-fuchsia-500/15 text-fuchsia-400">Remix source — prompt flagged</Badge>
-          <PromptHighlight result={item.promptHighlight} />
+          {#if !item.restricted}
+            <Badge class="w-fit bg-fuchsia-500/15 text-fuchsia-400">Remix source — prompt flagged</Badge>
+            <PromptHighlight result={item.promptHighlight} />
+          {/if}
           <ReviewActions {item} verdict={verdictOf(item)} {selected} {submit} />
         </div>
       {/if}

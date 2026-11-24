@@ -20,6 +20,7 @@ import { dbWrite } from './db';
 import { holdsCsamReview } from './held-media';
 import { WITHHELD_REFUSED, SCANNER_UNAVAILABLE_REFUSED } from '$lib/held-media';
 import { insertModActivity } from './mod-activity';
+import { logToAxiom } from './axiom';
 import { readScannerCsamVerdict, readScannerCsamVerdicts } from './review-batch';
 
 export const scannerVerdicts = createScannerVerdictCache(readScannerCsamVerdict);
@@ -42,7 +43,7 @@ type ScannerRow = { id: number; ingestion: string };
  * refused what `retractedViewable` refuses; `readVerdicts` reads the scanner for the rows Postgres has
  * not already refused. The same rules as the main app's `getRetractedMedia`, which has no held leg,
  * read on the primary for the same reason: a flag or hold the replica has not seen would otherwise
- * be missed. A read that fails throws.
+ * be missed. A read that fails throws. The moderator view's rule: call it only for a moderator viewer.
  */
 export async function readRetractedMedia(
   imageIds: number[],
@@ -59,7 +60,7 @@ export async function readRetractedMedia(
   const eligible = new Set<number>();
   const viewable = new Map<number, ModeratorMedia>();
   if (!imageIds.length) return { eligible, viewable };
-  const access = retractedAccessColumnsSql('i', { csamReview });
+  const access = retractedAccessColumnsSql('i', { csamReview, scanFlag: false });
   const cdnLeg = retractedMediaCdnLeg();
   const retracted = retractedImageWhereSql('i', { cdnLeg });
   const where = moderatorMediaWhereSql('i', { cdnLeg, csamReview, heldLeg: orHeld });
@@ -133,9 +134,10 @@ async function viewableToNonGrant(
 }
 
 /** Ids `restrictedImageIds` reads in one go, so a large selection is several bounded reads. */
-const RESTRICTED_READ_PAGE = 200;
+const RESTRICTED_READ_PAGE = 50;
 
 /**
+ * The moderator view's rule: call it only for a moderator viewer, never for anyone else.
  * Which of these images a moderator without `csamReview` is refused (`kept`), so a list withholds
  * what `/api/retracted-media` would refuse. Only rows that route could serve are read from the
  * scanner, so ordinary moderation never waits on ClickHouse; a row whose verdict can't be read is
@@ -150,12 +152,15 @@ export async function restrictedImageAccess(
   const missing = new Set<number>();
   if (csamReview) return { kept, unreadable, missing };
   const patterns = blockedForPatterns();
+  // With the access rule's own `scanFlag`, so a row whose only mark is a scan flag is still read
+  // from the scanner.
   const scanScope = `(${retractedImageWhereSql('i', {
     cdnLeg: retractedMediaCdnLeg(),
+    scanFlag: false,
   })} OR ${heldImageKnownSql('i')})`;
   for (let i = 0; i < imageIds.length; i += RESTRICTED_READ_PAGE) {
     const page = imageIds.slice(i, i + RESTRICTED_READ_PAGE);
-    const access = retractedAccessColumnsSql('i', { csamReview });
+    const access = retractedAccessColumnsSql('i', { csamReview, scanFlag: false });
     const rows = await dbWrite.transaction().execute(async (trx) => {
       await sql
         .raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`)
@@ -240,6 +245,27 @@ export function withheldRow<T extends object>(row: T) {
 /** `restrictedImageAccess`'s kept ids. */
 export async function restrictedImageIds(imageIds: number[], opts: { csamReview: boolean }) {
   return (await restrictedImageAccess(imageIds, opts)).kept;
+}
+
+/** `restrictedImageIds` for a list a page draws: a failed read withholds every id rather than
+ *  failing the page. */
+export async function listWithheldIds(
+  imageIds: number[],
+  opts: { csamReview: boolean },
+  list: string
+) {
+  return restrictedImageIds(imageIds, opts).catch((e) => {
+    void logToAxiom({
+      name: 'image-queue-withheld-read-failed',
+      type: 'error',
+      payload: {
+        list,
+        count: imageIds.length,
+        error: e instanceof Error ? e.name : typeof e,
+      },
+    });
+    return new Set(imageIds);
+  });
 }
 
 /** The images among these withheld from `user` (`restrictedImageIds`). */
