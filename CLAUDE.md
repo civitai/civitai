@@ -93,9 +93,6 @@ Commands, generation and migration details: `.claude/rules/database.md`.
   tell the user it needs applying manually to each writable environment, with the dry run and the
   post-apply scoped drift check from "Migration details" in `.claude/rules/database.md`.
 - Adding an enum value: deploy the regenerated client **before** the migration and any backfill.
-- Adding a column to a table that is logically replicated to another database: the subscriber takes it
-  **first**, or replication to it stops. Check `pg_publication_tables` and tell the applier the order
-  ("Replicated tables" in `.claude/rules/database.md`).
 
 ## Security — this repository is public
 Everything committed is permanently world-readable, including `docs/`, `claudedocs/`, `.claude/` and
