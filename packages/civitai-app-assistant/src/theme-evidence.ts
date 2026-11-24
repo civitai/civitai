@@ -8,9 +8,11 @@
  * The `page-elements` template (scaffolded by `civitai app create --template page-elements`, from
  * the CLI's `internal/scaffold/templates/page-elements`) themes an app ONLY through the
  * `@civitai/theme` design tokens: `src/main.ts` imports `@civitai/theme/styles.css`, `src/index.css`
- * sets `color: var(--civitai-color-text)` and nothing else colour-wise, and `index.html`'s boot
- * skeleton paints fixed literals (`TEMPLATE_COLOR_LITERALS`). The evidence counts, over the app's
- * source (tests, dev harness and build output excluded):
+ * sets `color: var(--civitai-color-text)` and nothing else colour-wise (its "make it yours" accent
+ * block ships COMMENTED OUT), and `index.html`'s boot skeleton paints fixed literals
+ * (`TEMPLATE_COLOR_LITERALS`). The evidence counts, over the app's source (tests, dev harness and
+ * build output excluded; CSS comments in style files and `<style>`/`style="…"`, and HTML comments
+ * in markup, ignored — a script's comments are not):
  *   1. the `--civitai-*` tokens it SETS (`--civitai-color-primary: …` in CSS, or
  *      `setProperty('--civitai-…')`): `tokenOverrides`;
  *   2. the colours it declares of its own: a colour-valued declaration whose value holds a colour
@@ -25,7 +27,10 @@
  *   - colour carried by images, SVG files or icon fonts;
  *   - a token override to the token's own default value still counts as an override;
  *   - layout, typography and component choice are not "theme" here;
- *   - minified or vendored code inside the source tree is scanned like authored code.
+ *   - minified or vendored code inside the source tree is scanned like authored code;
+ *   - comments are found by their delimiters, not by tokenizing: a `/*` inside a CSS string, or a
+ *     `<!--` inside a markup file's `<style>`/`<script>`, opens a comment here; and a commented-out
+ *     colour in a SCRIPT file still counts.
  */
 
 /** The literals the template's own `index.html` boot skeleton paints (dark base, light theme). */
@@ -214,12 +219,51 @@ export function styleBlocksIn(text: string, meter?: ScanMeter): string[] {
   return blocks;
 }
 
-/** The CSS a markup file carries: its `<style>` blocks and `style="…"` attributes. */
+/** A CSS comment's delimiters (style files, `<style>` blocks, `style="…"` values). */
+const CSS_COMMENT = ['/*', '*/'] as const;
+/** An HTML comment's delimiters (markup files). */
+const HTML_COMMENT = ['<!--', '-->'] as const;
+
+/**
+ * `text` with every comment opened by `open` and closed by the FIRST `close` after it replaced by
+ * one space (a comment still separates what is on either side of it). As in CSS and HTML, comments
+ * do not nest (`/* /* *\/ x *\/` leaves ` x *\/`), and a comment with no `close` runs to the end of
+ * the text. LINEAR TIME: one `indexOf` for the next `open`, one for its `close`, and the search
+ * resumes past that `close`, so every character is examined once; no regex spans the comment.
+ * Not a tokenizer: an `open` inside a string (`content: "/*"`) opens a comment here.
+ */
+export function withoutComments(
+  text: string,
+  [open, close]: readonly [string, string],
+  meter?: ScanMeter
+): string {
+  let out = '';
+  let from = 0;
+  while (from < text.length) {
+    const start = text.indexOf(open, from);
+    if (start < 0) {
+      out += text.slice(from);
+      break;
+    }
+    out += text.slice(from, start) + ' ';
+    const end = text.indexOf(close, start + open.length);
+    const next = end < 0 ? text.length : end + close.length;
+    if (meter) meter.steps += next - from;
+    from = next;
+  }
+  if (meter) meter.steps += text.length - from;
+  return out;
+}
+
+/**
+ * The CSS a markup file carries (`text` already without its HTML comments): its `<style>` blocks and
+ * `style="…"` attributes, without their CSS comments.
+ */
 function cssInMarkup(text: string): string {
   const blocks = styleBlocksIn(text);
   // Linear: `[^"]*` cannot run past the quote that ends it, so no attempt rescans another's value.
-  const inline = [...text.matchAll(/\sstyle\s*=\s*"([^"]*)"/gi)].map((m) => m[1]);
-  return [...blocks, ...inline].join('\n');
+  const inline = [...text.matchAll(/\sstyle\s*=\s*"([^"]*)"/gi)].map((m) => m[1]!);
+  return [...blocks, ...inline].map((css) => withoutComments(css, CSS_COMMENT)).join('\n');
 }
 
 function countCssColors(css: string): number {
@@ -246,7 +290,8 @@ export function themeSignals(files: ReadonlyMap<string, string>): {
   let filesScanned = 0;
   let charsScanned = 0;
   let budgetExceeded = false;
-  for (const [path, text] of files) {
+  for (const [path, source] of files) {
+    let text = source;
     if (!SOURCE_FILE.test(path) || EXCLUDED_PATH.test(path)) continue;
     charsScanned += text.length;
     if (charsScanned > THEME_SCAN_MAX_CHARS) {
@@ -254,9 +299,14 @@ export function themeSignals(files: ReadonlyMap<string, string>): {
       break;
     }
     filesScanned++;
-    if (USES_THEME.test(text)) usesThemePackage = true;
     const isStyle = STYLE_FILE.test(path);
     const isMarkup = MARKUP_FILE.test(path);
+    // Commented-out code is not the app's styling (the template ships its accent block commented
+    // out). A script keeps its comments: `/*` and `//` also occur inside its strings, template
+    // literals and regexes, which only a JS tokenizer tells apart.
+    if (isStyle) text = withoutComments(text, CSS_COMMENT);
+    else if (isMarkup) text = withoutComments(text, HTML_COMMENT);
+    if (USES_THEME.test(text)) usesThemePackage = true;
     const css = isStyle ? text : isMarkup ? cssInMarkup(text) : '';
     tokensSetIn(css, tokens);
     // A script can carry CSS too (a `css\`…\`` template, an injected <style> string).

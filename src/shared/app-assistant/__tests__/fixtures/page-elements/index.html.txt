@@ -19,6 +19,13 @@
     -->
     <meta name="color-scheme" content="dark light" />
     <title>{{ .Name }}</title>
+    <!--
+      REBRANDING? The four literal colours in the boot skeleton below are
+      Civitai's stock page and placeholder colours. If you give the app its own
+      look (the commented accent block in src/index.css), make these follow it,
+      keeping the dark values on the base rules and the light ones behind
+      html[data-theme='light'].
+    -->
     <style>
       /*
         BOOT SKELETON — see AGENTS.md § "Boot skeleton".

@@ -14,16 +14,19 @@ import {
 } from '~/shared/app-assistant/trace-signals';
 import {
   styleBlocksIn,
+  themeAdvisoriesFrom,
   THEME_SCAN_MAX_CHARS,
   tokensSetIn,
+  withoutComments,
   type ScanMeter,
 } from '@civitai/app-assistant/theme-evidence';
 
 /**
  * The fixtures under `fixtures/page-elements` are the `page-elements` template's own files, copied
- * verbatim from the CLI's `internal/scaffold/templates/page-elements` (commit fda27eb82bc0) with
- * `.tmpl` replaced by `.txt` so nothing here typechecks or runs them. They are what an app that
- * never touched its theme submits.
+ * verbatim (placeholders unrendered) from the CLI's `internal/scaffold/templates/page-elements` with
+ * `.tmpl` replaced by `.txt` so nothing here typechecks or runs them: `index.html`, `package.json`
+ * and `src/index.css` at civitai/cli 6ff24be39f44 (v0.1.152's commented-out accent block), the rest
+ * at fda27eb82bc0 (unchanged since). They are what an app that never touched its theme submits.
  */
 const FIXTURES = fileURLToPath(new URL('./fixtures/page-elements', import.meta.url));
 
@@ -146,6 +149,112 @@ describe('themeSignals', () => {
 
   it('nothing to scan is nothing to judge: null', () => {
     expect(themeSignals(new Map([['README.md', '# app']])).themeCustomized).toBeNull();
+  });
+});
+
+/** The template's `src/index.css` with its shipped, commented-out accent block uncommented. */
+function accentUncommented(): Map<string, string> {
+  const css = template().get('src/index.css')!;
+  const open = '\n\n[data-block-root] {\n  --civitai-color-primary: #7c3aed;';
+  const close = '  --civitai-color-primary-fg: #ffffff;\n}\n*/\n';
+  // The fixture must still carry the block, commented, exactly once.
+  expect(css.split(open)).toHaveLength(2);
+  expect(css.split(close)).toHaveLength(2);
+  return withFile(
+    'src/index.css',
+    css
+      .replace(open, `\n*/\n${open.slice(2)}`)
+      .replace(close, '  --civitai-color-primary-fg: #ffffff;\n}\n')
+  );
+}
+
+describe('the page-elements scaffold, as the CLI ships it (seam)', () => {
+  it('its commented-out accent block is not an override: the stock look, with the advisory', () => {
+    const { theme } = themeSignals(template());
+    expect(theme.tokenOverrides).toEqual([]);
+    expect(theme.customColorCount).toBe(0);
+    expect(accentCustomizedFrom(theme)).toBe(false);
+    expect(themeAdvisoriesFrom(theme).map((a) => a.code)).toEqual(['default-theme']);
+  });
+
+  it('the same block uncommented is a look of its own, with no advisory', () => {
+    const { theme } = themeSignals(accentUncommented());
+    expect(theme.tokenOverrides).toEqual([
+      '--civitai-color-primary',
+      '--civitai-color-primary-fg',
+      '--civitai-color-primary-hover',
+    ]);
+    expect(accentCustomizedFrom(theme)).toBe(true);
+    expect(themeAdvisoriesFrom(theme)).toEqual([]);
+  });
+});
+
+describe('comments are not the app’s styling', () => {
+  const scan = (path: string, text: string) => themeSignals(new Map([[path, text]])).theme;
+
+  it('a token only inside a CSS comment is not counted', () => {
+    expect(
+      scan('src/a.css', '/* .x { --civitai-color-primary: var(--b); } */').tokenOverrides
+    ).toEqual([]);
+  });
+
+  it('a colour literal only inside a CSS comment is not counted', () => {
+    expect(scan('src/a.css', '.x { /* color: #7b2ff7; */ padding: 1px; }').customColorCount).toBe(
+      0
+    );
+    expect(scan('index.html', '<style>/* .x { color: #7b2ff7; } */</style>').customColorCount).toBe(
+      0
+    );
+    expect(
+      scan('index.html', '<p style="/* color: #7b2ff7 */ margin: 0"></p>').customColorCount
+    ).toBe(0);
+  });
+
+  it('anything inside an HTML comment in markup is not counted', () => {
+    const theme = scan(
+      'index.html',
+      '<!-- <style>.x { --civitai-color-primary: #7b2ff7; color: #7b2ff7; }</style> <div class="bg-purple-600" style="color: #7b2ff7"></div> -->'
+    );
+    expect(theme.tokenOverrides).toEqual([]);
+    expect(theme.customColorCount).toBe(0);
+  });
+
+  it('an unterminated comment comments out the rest of the text', () => {
+    expect(
+      scan('src/a.css', '.a { color: #7b2ff7; } /* .b { color: #f107a3; }').customColorCount
+    ).toBe(1);
+    expect(
+      scan(
+        'index.html',
+        '<style>.a { color: #7b2ff7; }</style><!-- <style>.b { color: #f107a3; }</style>'
+      ).customColorCount
+    ).toBe(1);
+  });
+
+  it('a real declaration after a comment is still counted', () => {
+    const theme = scan(
+      'src/a.css',
+      '/* note */.x { --civitai-color-primary: var(--b); }/**/.y{color:#7b2ff7}'
+    );
+    expect(theme.tokenOverrides).toEqual(['--civitai-color-primary']);
+    expect(theme.customColorCount).toBe(1);
+    expect(
+      scan('index.html', '<!-- note --><style>/* a */.y{color:#7b2ff7}</style>').customColorCount
+    ).toBe(1);
+  });
+
+  it('comments do not nest: the first close ends one, as in CSS', () => {
+    expect(
+      scan('src/a.css', '.x { /* /* */ --civitai-color-primary: red; */ }').tokenOverrides
+    ).toEqual(['--civitai-color-primary']);
+    expect(withoutComments('a/* /* */b*/c', ['/*', '*/'])).toBe('a b*/c');
+    expect(withoutComments('a<!--x-->b<!--y', ['<!--', '-->'])).toBe('a b ');
+  });
+
+  it('a script file keeps its comments (a JS tokenizer would be needed to strip them)', () => {
+    expect(
+      scan('src/a.ts', 'const css = `/* .x { --civitai-color-primary: red; } */`;').tokenOverrides
+    ).toEqual(['--civitai-color-primary']);
   });
 });
 
@@ -453,6 +562,22 @@ describe('the theme scan is linear time', () => {
       expect(meter.steps).toBe(0);
     }
   );
+
+  it.each([
+    // `/* ` and not `/*`: `/*/*/` holds a close (`*/`), so `/*`-runs are not unterminated.
+    ['src/opens.css', fill('/* '), ['/*', '*/'] as const],
+    ['index.html', fill('<!--'), ['<!--', '-->'] as const],
+    ['src/closes.css', fill('/**/'), ['/*', '*/'] as const],
+    ['index.html', fill('<!-- -->'), ['<!--', '-->'] as const],
+  ])('a run of comment delimiters (%s, 512 KiB) #%#', (path, text, delimiters) => {
+    const { out, ms } = timed(new Map([[path, text]]));
+    expect(out.theme.filesScanned).toBe(1);
+    expect(out.theme.tokenOverrides).toEqual([]);
+    expect(ms).toBeLessThan(2_000);
+    const meter: ScanMeter = { steps: 0 };
+    expect(withoutComments(text, delimiters, meter).trim()).toBe('');
+    expect(meter.steps).toBeLessThanOrEqual(text.length);
+  });
 
   it('the linear scanners find what the regexes they replace found', () => {
     const found = new Set<string>();
