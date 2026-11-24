@@ -77,7 +77,17 @@ export async function countRemovedAppeals(): Promise<number> {
   return Number(row?.count ?? 0);
 }
 
-export async function getRemovedAppeals({ limit }: { limit: number }) {
+/**
+ * `withheld` answers which of the listed songs this moderator may not be shown
+ * (`withheldImageIds(locals.user, ids)`): those rows carry no song, only `songWithheld`.
+ */
+export async function getRemovedAppeals({
+  limit,
+  withheld,
+}: {
+  limit: number;
+  withheld: (imageIds: number[]) => Promise<number[]>;
+}) {
   const rows = await pendingRemoved()
     .leftJoin('User as u', 'u.id', 'a.userId')
     // A song still on file, which the page plays. Any other row stays text only.
@@ -105,6 +115,8 @@ export async function getRemovedAppeals({ limit }: { limit: number }) {
     .limit(limit + 1)
     .execute();
   const page = rows.slice(0, limit);
+  const songIds = page.flatMap((r) => (r.songId != null ? [r.songId] : []));
+  const withheldSongs = new Set(songIds.length ? await withheld(songIds) : []);
 
   const history = page.length
     ? await dbRead
@@ -120,7 +132,11 @@ export async function getRemovedAppeals({ limit }: { limit: number }) {
     hasMore: rows.length > limit,
     items: page.map(({ buzzTransactionId, songId, songUrl, ...row }) => ({
       ...row,
-      song: songId != null && songUrl ? { id: songId, url: songUrl } : null,
+      song:
+        songId != null && songUrl && !withheldSongs.has(songId)
+          ? { id: songId, url: songUrl }
+          : null,
+      songWithheld: songId != null && withheldSongs.has(songId),
       hasFee: buzzTransactionId != null,
       history: history
         .filter((h) => h.entityId === row.entityId && h.entityType === row.entityType.toLowerCase())

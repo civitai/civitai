@@ -8,6 +8,7 @@
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import SongCard from '$lib/components/SongCard.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import RulingForm, { emptyRulingDraft, type RulingDraft } from '$lib/components/RulingForm.svelte';
   import { optimisticEnhancer } from '$lib/form-action';
   import { LINK_CLASS, dateTime } from '$lib/format';
@@ -93,11 +94,13 @@
             <div class="h-72 w-full shrink-0 overflow-hidden rounded-md border border-dark-4 sm:w-64">
               <SongCard item={row.song} />
             </div>
+          {:else if row.songWithheld}
+            <div class="w-full shrink-0 p-4 text-center text-xs text-dark-2 sm:w-64">{RETRACTED_REFUSED}</div>
           {/if}
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-baseline gap-x-2">
               <span class="font-medium">{row.entityType} #{row.entityId}</span>
-              {#if row.song}
+              {#if row.song || row.songWithheld}
                 <Badge class="border-transparent bg-sky-600 text-white">Song</Badge>
               {/if}
               <code class="text-xs text-dark-2">appeal #{row.id}</code>
