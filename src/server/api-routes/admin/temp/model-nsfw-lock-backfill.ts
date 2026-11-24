@@ -13,8 +13,9 @@
  *     marks the model reverted so a later unlock run skips it. Dry run by default too.
  *
  * Excluded, and left locked: a model a moderator ruled on since the lock, one with a pending lock
- * review, a minor or poi model, one already reverted, and any model whose owner, now or before, has a
- * CSAM report, an evidence hold, an account hold or a SexualMinor ban.
+ * review, a minor or poi model, one with a real-person or minor detection still pending, one already
+ * reverted, and any model whose owner, now or before, has a CSAM report, an evidence hold, an account
+ * hold or a SexualMinor ban.
  */
 import { Prisma } from '@prisma/client';
 import * as z from 'zod';
@@ -22,6 +23,8 @@ import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { modelRowHeldSql } from '~/server/services/legal-hold.service';
+import { modelDetectionHeldSql } from '~/server/services/lock-review.service';
+import { pendingMinorHashMatchIdsSql } from '~/server/services/minor-hash.service';
 import { bustPublicModelResponseCache } from '~/server/services/public-model-response-cache';
 import { MODERATOR_NSFW_LOCK_ACTIVITIES } from '~/server/services/rating-review.entities';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
@@ -50,10 +53,6 @@ const everyOwnerSql = Prisma.sql`(
 )`;
 
 /**
- * Each reason a scan-locked model keeps its lock. Fail closed: a marker with no readable time counts
- * as ruled on, since a ruling after it cannot be ruled out.
- */
-/**
  * Whether a moderator ruled on the nsfw lock of the model aliased `m` after the time `at` (a text
  * SQL expression). Fail closed: a time that cannot be read counts as ruled on, since a ruling after it
  * cannot be ruled out.
@@ -69,6 +68,7 @@ const moderatorRuledSinceSql = (at: Prisma.Sql) => Prisma.sql`(
   )
 )`;
 
+/** Each reason a scan-locked model keeps its lock; each fails closed. */
 export const exclusions = {
   moderatorRuled: moderatorRuledSinceSql(Prisma.sql`m.meta->'systemNsfwLock'->>'at'`),
   pendingLockReview: Prisma.sql`EXISTS (
@@ -76,6 +76,8 @@ export const exclusions = {
     WHERE a."entityType" = 'Model' AND a."entityId" = m.id AND a.status = 'Pending'
   )`,
   minorOrPoi: Prisma.sql`(m.minor OR m.poi)`,
+  // A real-person or minor detection a moderator has not ruled on: what stops a lock review's approval.
+  pendingDetection: Prisma.sql`(${modelDetectionHeldSql} OR m.id IN (${pendingMinorHashMatchIdsSql()}))`,
   reverted: Prisma.sql`(m.meta->'nsfwLockBackfill'->>'revertedAt') IS NOT NULL`,
   // Two EXISTS rather than one OR, so the subject leg can use the CsamReport userId index.
   ownerCsamReport: Prisma.sql`(EXISTS (

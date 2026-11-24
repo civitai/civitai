@@ -32,8 +32,15 @@ beforeAll(async () => {
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int NOT NULL, nsfw boolean NOT NULL DEFAULT true,
       minor boolean NOT NULL DEFAULT false, poi boolean NOT NULL DEFAULT false,
+      status text NOT NULL DEFAULT 'Published',
       "deletedAt" timestamp(3), "lockedProperties" text[], meta jsonb
     );
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+    CREATE TABLE "ModelFile" (
+      id int PRIMARY KEY, "modelVersionId" int NOT NULL, type text NOT NULL,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
+    CREATE TABLE "ModelFileHash" ("fileId" int NOT NULL, type text NOT NULL, hash text NOT NULL);
     CREATE TABLE "ModelOwnership" (
       id serial PRIMARY KEY, "modelId" int NOT NULL, "userId" int NOT NULL, reason text NOT NULL,
       "actorId" int, "createdAt" timestamp(3) NOT NULL DEFAULT now()
@@ -169,6 +176,36 @@ const excluded: [string, number, ModelFields, string][] = [
   ],
   ['it is a poi model', 15, { sql: `UPDATE "Model" SET poi = true WHERE id = $ID` }, 'minorOrPoi'],
   [
+    'the text scan raised its poi flag again',
+    50,
+    { meta: { ...scanMarker, textScanFlags: { poi: 'redetected' } } },
+    'pendingDetection',
+  ],
+  [
+    'the text scan raised its minor flag again',
+    51,
+    { meta: { ...scanMarker, textScanFlags: { minor: 'redetected' } } },
+    'pendingDetection',
+  ],
+  [
+    'a poi hash match waits for a moderator',
+    52,
+    { meta: { ...scanMarker, poiHashMatch: { at: LOCKED_AT } } },
+    'pendingDetection',
+  ],
+  [
+    'its file matches a minor model and waits on the review queue',
+    53,
+    {
+      // A moderator-flagged minor model (another uploader) with the same file hash.
+      sql: `INSERT INTO "Model" (id, "userId", minor, "lockedProperties", meta) VALUES ($ID + 500, 900, true, ARRAY['minor'], '{}');
+        INSERT INTO "ModelVersion" VALUES ($ID + 500, $ID + 500), ($ID, $ID);
+        INSERT INTO "ModelFile" (id, "modelVersionId", type) VALUES ($ID + 500, $ID + 500, 'Model'), ($ID, $ID, 'Model');
+        INSERT INTO "ModelFileHash" VALUES ($ID + 500, 'SHA256', 'h$ID'), ($ID, 'SHA256', 'h$ID');`,
+    },
+    'pendingDetection',
+  ],
+  [
     'a revert already put its lock back',
     16,
     {
@@ -204,7 +241,7 @@ const outside: [string, number, ModelFields][] = [
 
 beforeEach(async () => {
   await db.exec(
-    'DELETE FROM "Model"; DELETE FROM "ModelOwnership"; DELETE FROM "ModActivity"; DELETE FROM "Appeal"; DELETE FROM "CsamReport"; DELETE FROM "EvidenceHold"; DELETE FROM "User"; DELETE FROM "Image"; DELETE FROM "EvidenceHeldUser";'
+    'DELETE FROM "Model"; DELETE FROM "ModelVersion"; DELETE FROM "ModelFile"; DELETE FROM "ModelFileHash"; DELETE FROM "ModelOwnership"; DELETE FROM "ModActivity"; DELETE FROM "Appeal"; DELETE FROM "CsamReport"; DELETE FROM "EvidenceHold"; DELETE FROM "User"; DELETE FROM "Image"; DELETE FROM "EvidenceHeldUser";'
   );
   await db.query(`INSERT INTO "User" (id, meta) VALUES ($1, '{}')`, [NEW_OWNER]);
   await model(ELIGIBLE);
@@ -276,6 +313,7 @@ describe('model nsfw lock backfill: scan locks', () => {
       moderatorRuled: 3,
       pendingLockReview: 1,
       minorOrPoi: 2,
+      pendingDetection: 4,
       reverted: 1,
       ownerCsamReport: 4,
       ownerEvidenceHold: 2,
