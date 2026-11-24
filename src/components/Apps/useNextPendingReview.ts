@@ -17,15 +17,10 @@ const noSkips = () => NO_SKIPS;
  *
  * Next = the OLDEST pending on-site request that is not the one just decided, not waiting on a
  * delayed approval, and not SKIPPED this session (`reviewSkipList`) — `nextPendingRequestId`.
- * One page of the queue is enough: the oldest is always on the first page. When nothing is
- * left, `caughtUp` turns true and the caller shows "No more app submissions waiting"; when the
- * queue has not loaded (or failed), it goes to the queue page rather than guess that nothing is
- * left.
- *
- * `skip` opens the next one WITHOUT deciding this one: it only adds the id to the session's skip
- * list. When the only submissions left are skipped ones, `skippedPending` counts them and
- * `reviewSkipped` clears the list and opens the oldest; when none of them is pending any more,
- * the list is cleared on its own.
+ * Only the queue's first page is read. Skipped submissions stay pending and stay oldest, so that
+ * page can hold nothing but skips while more wait beyond it: `caughtUp` is then NOT "no more" —
+ * `skippedPending` and `moreBeyondPage` let the caller say "only skipped submissions remain".
+ * When the queue has not loaded (or failed), it goes to the queue page rather than guess.
  */
 export function useNextPendingReview(publishRequestId: string) {
   const features = useFeatureFlags();
@@ -109,5 +104,7 @@ export function useNextPendingReview(publishRequestId: string) {
     if (next && next !== publishRequestId) void router.push(`/apps/review/${next}`);
   }, [items, pendingApprovalIds, publishRequestId, router]);
 
-  return { openNext, skip, caughtUp, skippedPending, reviewSkipped };
+  const moreBeyondPage = pendingQuery.data?.nextCursor != null;
+
+  return { openNext, skip, caughtUp, skippedPending, moreBeyondPage, reviewSkipped };
 }

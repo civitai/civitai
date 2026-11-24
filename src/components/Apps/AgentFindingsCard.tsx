@@ -15,14 +15,8 @@ import { agentReviewDisplay, type AgentReviewSummary } from '~/shared/utils/agen
 import { trpc } from '~/utils/trpc';
 
 /**
- * The agentic review as the review page's Overview leads with it: one badge ("1 high · 2
- * medium", "no findings", or not run / running / run failed) coloured by the worst severity;
- * then, once a report exists, EVERY finding rated above low (severity, title, `file:line`, a
- * one-line detail — `FindingCard compact`, the full report's own card), the over-broad and
- * under-declared scopes by name, any prompt-injection attempts and sandbox grants, and low/info
- * findings as a count. 🔴 NO VERDICT: the agent emits findings, not a judgement, so this never
- * says "pass" — see `agent-review-findings`. Evidence, suggested fixes, the scope trace, re-run
- * controls and chat stay on the AI report tab ("Full report").
+ * The agentic review as the review page's Overview leads with it. 🔴 NO VERDICT: the agent emits
+ * findings, not a judgement, so this never says "pass" — see `agent-review-findings`.
  *
  * 🔴 MOUNTED ONLY THROUGH `ReviewAgentSection variant="summary"`, which owns the gate (pending,
  * on-site, the mod-only agentic flag). It reads the SAME `blocks.getAgentReview` query as the

@@ -27,14 +27,10 @@ import {
  * it commits — the same click navigated to the next submission. Mantine's notifications live
  * at the app root, so the countdown keeps ticking across review pages.
  *
- * 🔴 ONE TOAST, AT THE TOP. Every review decision feeds one toast (`REVIEW_DECISIONS_TOAST_ID`)
- * at `REVIEW_TOAST_POSITION`, reading "2 approvals pending · 1 approved" and listing each pending
- * approval with its own Undo. Top-center, because the bottom-right corner is under the sticky
- * review bar's Approve buttons, and one toast per approval there stacks over them. Its body is a live component subscribed to the queue and
- * the tally, so it updates in place without `updateNotification` — which silently does nothing
- * once a toast has closed (see `buildReviewConsentNotification` in `pageBlockHostLogic.ts`).
- * It never auto-closes on Mantine's timer; it is hidden by `settle` a few seconds after the
- * last pending approval resolves, and every new decision re-shows it by id when it is gone.
+ * 🔴 ONE TOAST, AT THE TOP: top-center because the bottom-right is under the sticky bar's Approve
+ * buttons. The body is a live component, not `updateNotification`, which silently does nothing
+ * once a toast has closed (see `buildReviewConsentNotification` in `pageBlockHostLogic.ts`). It
+ * never auto-closes on Mantine's timer, which would race the countdown; `settle` hides it.
  *
  * Failures (and a late hold that re-suspended an approve) stay SEPARATE and PERSISTENT, at the
  * same position: the moderator has to act on them.

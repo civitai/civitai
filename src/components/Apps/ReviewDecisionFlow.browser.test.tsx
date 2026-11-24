@@ -864,11 +864,14 @@ describe('what opens next', () => {
 
   /** The page's wiring: the bar's Skip and its decisions both go through the hook. */
   function SkipHarness({ request }: { request: Record<string, unknown> }) {
-    const { openNext, skip, caughtUp, skippedPending, reviewSkipped } = useNextPendingReview(
-      request.id as string
-    );
+    const { openNext, skip, caughtUp, skippedPending, moreBeyondPage, reviewSkipped } =
+      useNextPendingReview(request.id as string);
     return caughtUp ? (
-      <AllCaughtUp skippedPending={skippedPending} onReviewSkipped={reviewSkipped} />
+      <AllCaughtUp
+        skippedPending={skippedPending}
+        moreBeyondPage={moreBeyondPage}
+        onReviewSkipped={reviewSkipped}
+      />
     ) : (
       <ReviewDetailView
         selection={{ request: request as never, mode: 'pending' }}
@@ -957,6 +960,33 @@ describe('what opens next', () => {
     expect(reviewSkipList.get()).toEqual([]);
     expect(window.sessionStorage.getItem('apps-review-skipped')).toBeNull();
     expect(m.mutate).not.toHaveBeenCalled();
+  });
+
+  test('🔴 a FULL first page of skipped submissions is not "no more waiting"', async () => {
+    // The queue reads one page of 50; skipped ones stay oldest, so 50 skips fill it while more
+    // wait beyond it (`nextCursor`).
+    const current = pendingRequest();
+    const skippedIds = Array.from({ length: 50 }, (_, i) => `skipped-${i}`);
+    for (const id of skippedIds) reviewSkipList.add(id);
+    m.pendingItems = {
+      items: [
+        ...skippedIds.map((id, i) => ({ id, submittedAt: new Date(Date.UTC(2025, 0, 1, 0, i)) })),
+      ],
+      nextCursor: 'page-2',
+    };
+    await renderWithProviders(<SkipHarness request={current} />);
+    await page.getByTestId('apps-review-skip').click();
+    expect(router.push).not.toHaveBeenCalled();
+    const card = page.getByTestId('apps-review-all-caught-up');
+    await expect.element(card).toBeInTheDocument();
+    expect(card.element().getAttribute('data-end-state')).toBe('only-skipped');
+    await expect.element(card).toHaveTextContent('Only skipped submissions remain');
+    expect(card.element().textContent ?? '').not.toContain('No more app submissions waiting');
+    await expect
+      .element(page.getByTestId('apps-review-skipped-pending'))
+      .toHaveTextContent(
+        'You skipped 50 submissions that are still waiting. More may be waiting after them.'
+      );
   });
 
   test('the queue not loaded → back to the queue page, never a guessed "caught up"', async () => {

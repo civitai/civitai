@@ -295,27 +295,40 @@ export function ReviewDeclaredRepository({
 export function AllCaughtUp({
   skippedPending = 0,
   onReviewSkipped,
+  moreBeyondPage = false,
 }: {
   /** Submissions skipped this session that are still pending (`useNextPendingReview`). */
   skippedPending?: number;
   /** Forget the skips and open the oldest of them. */
   onReviewSkipped?: () => void;
+  /** The queue page "next" reads was full, so more submissions may wait beyond it. */
+  moreBeyondPage?: boolean;
 } = {}) {
   const { data } = trpc.blocks.countReviewQueue.useQuery(undefined, { retry: false });
   const listingRequests = data?.offsite ?? 0;
+  // 🔴 Skipped submissions are still waiting, so this is not "no more": say what is left.
+  const onlySkipped = skippedPending > 0 && !!onReviewSkipped;
   return (
-    <Card withBorder p="xl" data-testid="apps-review-all-caught-up">
+    <Card
+      withBorder
+      p="xl"
+      data-testid="apps-review-all-caught-up"
+      data-end-state={onlySkipped ? 'only-skipped' : 'caught-up'}
+    >
       <Stack align="center" gap="sm">
         <IconConfetti size={40} color="var(--mantine-color-green-6)" />
-        <Title order={3}>No more app submissions waiting</Title>
+        <Title order={3}>
+          {onlySkipped ? 'Only skipped submissions remain' : 'No more app submissions waiting'}
+        </Title>
         <Text c="dimmed" ta="center">
           Pending approvals finish in the background.
         </Text>
-        {skippedPending > 0 && onReviewSkipped && (
+        {onlySkipped && (
           <Stack align="center" gap={6} data-testid="apps-review-skipped-pending">
             <Text ta="center">
               You skipped {skippedPending} submission{skippedPending === 1 ? '' : 's'} that{' '}
               {skippedPending === 1 ? 'is' : 'are'} still waiting.
+              {moreBeyondPage && ' More may be waiting after them.'}
             </Text>
             <Button
               variant="light"

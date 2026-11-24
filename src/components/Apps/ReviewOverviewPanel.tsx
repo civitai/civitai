@@ -23,10 +23,7 @@ import { appDisplayName } from '~/shared/utils/app-display-name';
  * gate included), the sensitive rows are `ManifestScopeRow`, the preview is
  * `ReviewPreviewSection`, the art is `ReviewListingMedia`. The other tabs are the evidence
  * behind each signal; nothing here is a second implementation of them.
- *
- * Layout: the description across the top (a long one folds behind "Show more"), then two
- * columns from `md` — signals left, the app right. One column below `md`, app first after the
- * AI findings.
+
  */
 export function ReviewOverviewPanel({
   selection,
