@@ -34,6 +34,7 @@ import { EmbedNode, embedIframeAttrs } from '~/shared/tiptap/embed.node';
 import { isAllowedPlayerUrl } from '~/shared/utils/embed-providers';
 import { useMaybeAppContext } from '~/providers/AppProvider';
 import { TextAlignExtension } from '~/shared/tiptap/text-align';
+import { markdownTableExtensions } from '~/shared/tiptap/markdown-table';
 import { CivitaiEmbedNode } from '~/shared/tiptap/civitai-embed.node';
 import { collectCivitaiEmbedIds } from '~/shared/tiptap/civitai-embed.utils';
 import { CivitaiEmbedProvider } from '~/components/CivitaiEmbed/CivitaiEmbedProvider';
@@ -71,6 +72,7 @@ export const renderExtensions = [
   SpoilerMark,
   SpoilerBlockNode,
   SpoilerRunNode,
+  ...markdownTableExtensions,
 ];
 
 type JsonNode = {
@@ -237,7 +239,7 @@ export function RenderRichText({
   if (!memoized.ok)
     // The fallback cannot mask a spoiler, so it leaves spoilers out rather than show them.
     return fallbackHtml ? (
-      <RenderHtml html={removeSpoilers(fallbackHtml)} className={className} />
+      <RenderHtml html={removeSpoilers(fallbackHtml)} className={className} allowTables />
     ) : null;
 
   const body = (

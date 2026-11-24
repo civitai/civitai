@@ -36,6 +36,12 @@ const DEFAULT_ALLOWED_TAGS = [
   'edge-media',
 ];
 
+const TABLE_TAGS = ['table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td'];
+const TABLE_CELL_ATTRIBUTES = [
+  'style',
+  { name: 'align', multiple: false, values: ['left', 'center', 'right'] },
+];
+
 // Must cover everything the comment editor's toolbar can produce: a tag missing
 // here is stripped at save with no error, so the markup just vanishes.
 export const COMMENT_ALLOWED_TAGS = [
@@ -64,7 +70,7 @@ const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
 const IMAGE_WIDTH_ATTRIBUTE = { name: 'data-width', multiple: false, values: [...IMAGE_WIDTHS] };
 const IMAGE_ALIGN_ATTRIBUTE = { name: 'data-align', multiple: false, values: [...IMAGE_ALIGNS] };
 // `style` is allowed on these tags only because `allowedStyles` limits it to text-align left|center|right.
-const TEXT_ALIGN_TAGS = ['p', 'h1', 'h2', 'h3'];
+const TEXT_ALIGN_TAGS = ['p', 'h1', 'h2', 'h3', 'th', 'td'];
 const TEXT_ALIGN_STYLES = Object.fromEntries(
   TEXT_ALIGN_TAGS.map((tag) => [tag, { 'text-align': [/^(left|center|right)$/] }])
 );
@@ -100,6 +106,8 @@ export const DEFAULT_ALLOWED_ATTRIBUTES = {
   ],
   span: ['class', 'data-type', 'data-id', 'data-label', 'style'],
   ...Object.fromEntries(TEXT_ALIGN_TAGS.map((tag) => [tag, ['style']])),
+  th: [...TABLE_CELL_ATTRIBUTES, { name: 'scope', multiple: false, values: ['col', 'row'] }],
+  td: TABLE_CELL_ATTRIBUTES,
   time: ['datetime', 'data-type', 'data-value', 'data-style'],
   '*': ['id'],
   'edge-media': [
@@ -249,6 +257,7 @@ const isBlurbAttribs = (attribs: Record<string, string>) =>
 
 export type santizeHtmlOptions = sanitize.IOptions & {
   stripEmpty?: boolean;
+  allowTables?: boolean;
   /** Opt-in for surfaces that gate sticker ownership (chat, comments). */
   allowStickers?: boolean;
   /** Opt-in for surfaces registered with the blurb fan-out. */
@@ -265,6 +274,8 @@ function isRefusedEmbedIframe(frame: sanitize.IFrame) {
 export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
   const {
     stripEmpty = false,
+    allowTables = false,
+    allowedTags = DEFAULT_ALLOWED_TAGS,
     allowStickers = false,
     allowBlurbs = false,
     transformTags,
@@ -313,7 +324,8 @@ export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
   };
 
   return sanitize(html, {
-    allowedTags: DEFAULT_ALLOWED_TAGS,
+    allowedTags:
+      allowTables && allowedTags !== false ? [...allowedTags, ...TABLE_TAGS] : allowedTags,
     exclusiveFilter: (frame) =>
       (!allowStickers && isStickerSpan(frame)) ||
       (stripEmpty && frame.tag === 'p' && !frame.text.trim()) ||

@@ -28,6 +28,7 @@ export function RenderHtml({
   withProfanityFilter = false,
   maskedHtml,
   allowStickers = false,
+  allowTables = false,
   className,
   ...props
 }: Props) {
@@ -46,6 +47,7 @@ export function RenderHtml({
       getSanitizedRenderHtml(source, {
         maskProfanity: maskProfanity && !serverMasked,
         allowStickers,
+        allowTables,
         allowCustomStyles,
         colorScheme,
         withMentions,
@@ -62,6 +64,7 @@ export function RenderHtml({
       withMentions,
       thirdPartyAllowed,
       allowStickers,
+      allowTables,
       host,
       ownHosts,
     ]
@@ -161,6 +164,7 @@ type Props = Omit<TypographyStylesProviderProps, 'children'> & {
   html: string;
   withMentions?: boolean;
   allowCustomStyles?: boolean;
+  allowTables?: boolean;
   withProfanityFilter?: boolean;
   /**
    * The server's masked copy of `html` (`maskedContent`, `maskedDetails`): a string when masking

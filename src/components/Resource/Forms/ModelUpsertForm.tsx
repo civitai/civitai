@@ -98,9 +98,12 @@ const schema = modelUpsertSchema
     // request is sent. The server schema never sees the reference, no BlurbReference row is
     // written, and the words are left frozen as ordinary text: the control renders, the chip
     // inserts, and the feature silently does nothing on this surface alone.
-    description: getSanitizedStringSchema({ allowBlurbs: true }).refine((data) => {
-      return data && data.length > 0 && data !== '<p></p>';
-    }, 'Cannot be empty'),
+    description: getSanitizedStringSchema({ allowBlurbs: true, allowTables: true }).refine(
+      (data) => {
+        return data && data.length > 0 && data !== '<p></p>';
+      },
+      'Cannot be empty'
+    ),
     poi: z.string().refine((data) => !!data.length, 'Required'),
     attestation: z.boolean().refine((data) => !!data, 'Required'),
   })
@@ -513,6 +516,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
       label="Description"
       description="Tell us what your model does"
       includeControls={[
+        'markdown',
         'heading',
         'formatting',
         'list',

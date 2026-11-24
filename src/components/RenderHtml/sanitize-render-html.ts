@@ -25,6 +25,7 @@ export type RenderHtmlSanitizeOptions = {
    */
   maskProfanity: boolean;
   allowStickers: boolean;
+  allowTables: boolean;
   allowCustomStyles: boolean;
   colorScheme: 'light' | 'dark';
   withMentions: boolean;
@@ -57,6 +58,7 @@ export function sanitizeRenderHtml(html: string, options: RenderHtmlSanitizeOpti
 
   return sanitizeHtml(processedHtml, {
     allowStickers,
+    allowTables: options.allowTables,
     parseStyleAttributes: allowCustomStyles,
     allowedAttributes: {
       ...DEFAULT_ALLOWED_ATTRIBUTES,
@@ -204,6 +206,7 @@ export function optionsKey(options: RenderHtmlSanitizeOptions): string {
   const parts: { [K in keyof RenderHtmlSanitizeOptions]: string } = {
     maskProfanity: options.maskProfanity ? '1' : '0',
     allowStickers: options.allowStickers ? '1' : '0',
+    allowTables: options.allowTables ? '1' : '0',
     allowCustomStyles: options.allowCustomStyles ? '1' : '0',
     colorScheme: options.colorScheme,
     withMentions: options.withMentions ? '1' : '0',

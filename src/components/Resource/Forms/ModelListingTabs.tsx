@@ -310,7 +310,7 @@ function ComListing({
           name="sfwDescription"
           label="Description"
           description="Leave it empty to show no description on civitai.com."
-          includeControls={['heading', 'formatting', 'list', 'link', 'media', 'colors']}
+          includeControls={['heading', 'formatting', 'list', 'link', 'media', 'colors', 'markdown']}
           editorSize="xl"
           placeholder="What does your model do, described for civitai.com?"
         />

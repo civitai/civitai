@@ -696,7 +696,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
             const descriptionBlock = model3d.description ? (
               <ContentClamp maxHeight={460}>
-                <RenderHtml html={model3d.description ?? ''} withMentions />
+                <RenderHtml html={model3d.description ?? ''} withMentions allowTables />
               </ContentClamp>
             ) : null;
 

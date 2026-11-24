@@ -320,6 +320,7 @@ export const modelVersionUpsertSchema = z.object({
   baseModel: baseModelSchema,
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
+    allowTables: true,
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
     stripEmpty: true,
   }).nullish(),
@@ -526,6 +527,7 @@ export const modelVersionUpsertSchema2 = z.object({
   baseModel: baseModelSchema,
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
+    allowTables: true,
     // `div` is the blurb wrapper and is already in this narrowed list; `data-id` on it comes from
     // the app-wide attribute defaults. `span` is here for what goes INSIDE a blurb — the colour
     // span, and mentions. `allowBlurbs` is an attribute STRIP toggle, not a tag admission, so it

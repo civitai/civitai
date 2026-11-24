@@ -18,6 +18,7 @@ import {
 const BASE: RenderHtmlSanitizeOptions = {
   maskProfanity: false,
   allowStickers: false,
+  allowTables: false,
   allowCustomStyles: true,
   colorScheme: 'dark',
   withMentions: false,
@@ -30,6 +31,7 @@ const BASE: RenderHtmlSanitizeOptions = {
 const FLIPPED: { [K in keyof RenderHtmlSanitizeOptions]: RenderHtmlSanitizeOptions[K] } = {
   maskProfanity: true,
   allowStickers: true,
+  allowTables: true,
   allowCustomStyles: false,
   colorScheme: 'light',
   withMentions: true,
@@ -42,6 +44,15 @@ beforeEach(() => sanitizeCacheForTests.clear());
 afterEach(() => sanitizeCacheForTests.clear());
 
 describe('getSanitizedRenderHtml memo', () => {
+  it('keeps table cells and column alignment on model pages when the same HTML was cached elsewhere', () => {
+    const table =
+      '<table><tbody><tr><td style="text-align:right;color:red">24</td></tr></tbody></table>';
+    expect(getSanitizedRenderHtml(table, BASE)).toBe('24');
+    expect(getSanitizedRenderHtml(table, { ...BASE, allowTables: true })).toBe(
+      '<table><tbody><tr><td style="text-align:right">24</td></tr></tbody></table>'
+    );
+  });
+
   it('sanitizes an input once and serves repeats from the cache', () => {
     const sanitize = vi.fn((html: string) => `<p>${html}</p>`);
     expect(getSanitizedRenderHtml('a', BASE, sanitize)).toBe('<p>a</p>');
