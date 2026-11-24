@@ -1903,7 +1903,13 @@ export const comicsRouter = router({
       }
 
       await dbWrite.$transaction(async (tx) => {
-        // Locked, so an unlock cannot claim one of these panels between the check and the delete.
+        // The chapter row first, so a reorder cannot move another chapter into this position; then
+        // its panels, so an unlock cannot claim one between the check and the delete.
+        await tx.$queryRaw`
+          SELECT 1 FROM "ComicChapter"
+          WHERE "projectId" = ${input.projectId} AND position = ${input.chapterPosition}
+          FOR UPDATE
+        `;
         const panels = await tx.$queryRaw<{ live: boolean }[]>`
           SELECT ${liveUnlockClaim()} AS live FROM "ComicPanel"
           WHERE "projectId" = ${input.projectId} AND "chapterPosition" = ${input.chapterPosition}
@@ -3368,7 +3374,10 @@ export const comicsRouter = router({
 
       // Deliberately no gate on `panel.status` or `metadata.blockedReason`: the poll loop writes them,
       // so they can be stale or missing on legacy panels. The orchestrator's workflow is the authority.
-      const meta = (panel.metadata as any) ?? {};
+      // The writes that end this unlock start from this copy; a claim in it is another request's (or
+      // expired) and is not this one's to write back.
+      const meta = { ...((panel.metadata as any) ?? {}) };
+      delete meta.unlockClaim;
       const candidates: Array<{ key?: string; requiresUnlock?: boolean; blockedReason?: string }> =
         meta.candidateImages ?? [];
       // Only a multi-image generation stores candidates; a selection leaves them stored and the
@@ -3396,7 +3405,6 @@ export const comicsRouter = router({
       let chargeMayLand = false;
       try {
         if (!alreadyPaid) {
-          // One charge per panel: claimed first, so the lock is re-checked by the claim holder.
           claim = await claimPanelUnlock(panel.id);
           if (!claim) throw throwBadRequestError('This panel is already being unlocked.');
           await assertUnlockReleasesOutput({ token, workflowId: panel.workflowId });

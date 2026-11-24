@@ -432,6 +432,8 @@ const pg = new PGlite();
 beforeAll(async () => {
   await pg.exec(`
     CREATE DOMAIN "ComicPanelStatus" AS text;
+    CREATE TABLE "ComicChapter" ("projectId" int, position int, PRIMARY KEY ("projectId", position));
+    INSERT INTO "ComicChapter" VALUES (11, 0);
     CREATE TABLE "ComicPanel" (
       id int PRIMARY KEY, metadata jsonb, status text, "errorMessage" text, "updatedAt" timestamptz,
       "projectId" int, "chapterPosition" int
@@ -557,6 +559,28 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
         ...metadata,
       },
     });
+
+  it("a collect of an unlock already paid for does not write back another request's claim", async () => {
+    givenPanel({
+      status: 'RequireUnlock',
+      metadata: {
+        quantity: 1,
+        blockedReason: 'canUpgrade',
+        unlockClaim: { token: 'other', at: new Date().toISOString() },
+      },
+    });
+    givenWorkflow(
+      [output('b1', { nsfwLevel: 'x' })],
+      { allowMatureContent: true },
+      { unlocked: true }
+    );
+
+    await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(mocks.updateWorkflow).not.toHaveBeenCalled();
+    expect(writes().length).toBeGreaterThan(0);
+    expect(await storedClaim()).toBeUndefined();
+  });
 
   it("the poll's candidate write keeps a claim an unlock took meanwhile", async () => {
     choosingPanel();
@@ -690,7 +714,6 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
       const unlock = caller().unlockPanelGeneration({ panelId: PANEL_ID });
       const refused = expect(unlock).rejects.toThrow(/not confirmed yet/);
       while (!mocks.updateWorkflow.mock.calls.length) await new Promise((r) => setImmediate(r));
-      // Well inside the claim's 10 minutes.
       await vi.advanceTimersByTimeAsync(3 * 60_000);
       await refused;
     } finally {
@@ -785,19 +808,25 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
       }
     );
 
-    // A single connection cannot interleave two transactions, so no test here can watch the lock
-    // work. This pins that the chapter's check holds its panels' row locks until the delete: drop
-    // FOR UPDATE and an unlock can claim a panel between the check and the cascade.
-    it('the chapter delete checks its panels under a row lock (FOR UPDATE)', async () => {
+    // A single connection cannot interleave two transactions, so no test here can watch the locks
+    // work. This pins that the chapter delete locks its chapter row (so a reorder cannot move
+    // another chapter into the position), then checks its panels under their row locks (so an
+    // unlock cannot claim one), before deleting. Drop either FOR UPDATE and that race reopens.
+    it('the chapter delete locks its chapter, then checks its panels, under row locks', async () => {
       await deletes.chapter.run().catch(() => undefined);
 
-      const checks = dbMock.dbWrite.$queryRaw.mock.calls
+      const locks = dbMock.dbWrite.$queryRaw.mock.calls
         .map((call: unknown[]) =>
           Array.isArray(call[0]) ? call[0].join('?') : String((call[0] as { sql?: string }).sql)
         )
-        .filter((sql: string) => sql.includes('AS live'));
-      expect(checks).toHaveLength(1);
-      expect(checks[0]).toMatch(/FOR UPDATE\s*$/);
+        .filter(
+          (sql: string) =>
+            sql.trimStart().startsWith('SELECT') &&
+            (sql.includes('FROM "ComicChapter"') || sql.includes('AS live'))
+        );
+      expect(locks).toHaveLength(2);
+      expect(locks[0]).toMatch(/FROM "ComicChapter"[\s\S]*FOR UPDATE\s*$/);
+      expect(locks[1]).toMatch(/AS live FROM "ComicPanel"[\s\S]*FOR UPDATE\s*$/);
     });
   });
 
