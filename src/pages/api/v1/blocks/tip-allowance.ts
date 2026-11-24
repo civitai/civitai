@@ -17,7 +17,7 @@ import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-li
  *
  * Returns the viewer's CURRENT daily tip allowance `{ cap, spent, remaining }`
  * from the SAME authoritative `tip-cap` Redis counter the tip endpoint's
- * reserve/refund path mutates (BLOCK_TIP_CAP_PER_DAY). This lets a block show a
+ * reserve/refund path mutates (the registry's `apps.tip-daily`). This lets a block show a
  * genuinely-tracked remaining allowance and disable the tip button at the true
  * ceiling — instead of the dead client-side full-cap guess (`localStorage` is
  * inert in the opaque-origin sandbox).

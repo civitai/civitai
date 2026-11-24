@@ -95,7 +95,7 @@ export async function checkBlockGoodRateLimit(
 // ── Daily goods-spend cap ────────────────────────────────────────────────────
 //
 // Per-USER aggregate across EVERY installed app (the key omits appBlockId,
-// mirroring BLOCK_TIP_CAP_PER_DAY), so a publisher cannot multiply a viewer's
+// mirroring the tip cap), so a publisher cannot multiply a viewer's
 // ceiling by shipping N apps. Set above the tip ceiling because a good is
 // review-gated — a moderator saw its price — where a tip recipient is not.
 // The CODE DEFAULT, the registry's `apps.goods-daily`: the cap enforced is resolved per user
@@ -128,8 +128,8 @@ function goodsCapRedisKey(userId: number): `${typeof REDIS_SYS_KEYS.BLOCKS.GOODS
  * counter and returns the new running total plus the exact key reserved.
  * INCRBY is atomic, so concurrent purchases accumulate with no
  * read→check→record TOCTOU. No try/catch: a redis error throws and fails the
- * purchase CLOSED. The caller compares `total` against BLOCK_GOOD_CAP_PER_DAY
- * and refunds via the returned key on over-cap or on any downstream failure.
+ * purchase CLOSED. The caller compares `total` against the user's resolved
+ * `apps.goods-daily` and refunds via the returned key on over-cap or on any downstream failure.
  */
 export async function reserveBlockGoodSpend(
   userId: number,

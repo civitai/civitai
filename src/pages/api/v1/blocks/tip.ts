@@ -48,7 +48,7 @@ import { appRateLimitBody, appRateLimitMeta, utcDayReset } from '~/server/utils/
  * Response: `{ ok: true, tip: { toUserId, amount, entityType?, entityId? } }`.
  *
  * PAGE-SAFE via BOUNDED tipping: this endpoint enforces a per-tip cap
- * (BLOCK_TIP_MAX_PER_TIP) AND a per-user daily cap (BLOCK_TIP_CAP_PER_DAY,
+ * (BLOCK_TIP_MAX_PER_TIP) AND a per-user daily cap (the registry's `apps.tip-daily`,
  * reserve-and-refund) BEFORE any money moves — the analogue of the gen-spend
  * `buzzBudget` + per-user daily cap pair. Those caps are what let
  * `social:tip:self` come off PAGE_FORBIDDEN_SCOPES (a page tip is now bounded, no

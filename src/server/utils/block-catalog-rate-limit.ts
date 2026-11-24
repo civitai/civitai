@@ -1,6 +1,5 @@
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
-import { getUsageLimitDef } from '~/shared/constants/usage-limits';
 
 /**
  * Per-token fixed-window rate limit for the App Blocks catalog endpoints
@@ -633,9 +632,7 @@ export async function checkBlockUploadAppRateLimit(
 //
 // FIXED window and FAILS OPEN on a Redis error, like every bucket in this file. A refused call
 // still counts toward this window.
-// The code default of the registry's `apps.generation-source`; the enforced limit is resolved.
-export const BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_MAX =
-  getUsageLimitDef('apps.generation-source').base;
+// The limit is the registry's `apps.generation-source` (code default 60), resolved per viewer.
 export const BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_WINDOW_SECONDS = 3600;
 
 /** Records ONE generation-source call against `userId`'s window. Own `:gen-source-user:` key. */
@@ -779,10 +776,9 @@ export async function checkBlockSubmitRateLimit(
 // SUBMIT-USER bucket: the same subject across EVERY install, so the pre-spend work one
 // viewer can cause does not grow with the number of install tokens they hold. Twice the
 // per-install submit ceiling, so a viewer running two apps flat out still fits.
-// The code default of the registry's `apps.submit-user` (pinned equal to twice the per-install
-// ceiling by the registry pin test); the enforced limit is resolved, without a user: the subject
-// may be anonymous, so a tier rule resolves to the lowest tier's value.
-export const BLOCK_SUBMIT_USER_RATE_LIMIT_MAX = getUsageLimitDef('apps.submit-user').base;
+// The limit is the registry's `apps.submit-user` (code default twice the per-install ceiling,
+// pinned by the registry test), resolved without a user: the subject may be anonymous, so a tier
+// rule resolves to the lowest tier's value.
 export const BLOCK_SUBMIT_USER_RATE_LIMIT_WINDOW_SECONDS = BLOCK_SUBMIT_RATE_LIMIT_WINDOW_SECONDS;
 
 /**

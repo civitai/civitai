@@ -111,7 +111,7 @@ function tipCapRedisKey(userId: number): `${typeof REDIS_SYS_KEYS.BLOCKS.TIP_CAP
  * concurrent tips accumulate correctly with no read→check→record TOCTOU. Sets the
  * TTL on the (effectively) first write. No try/catch: a Redis error throws and
  * fails the tip CLOSED (mirrors reserveBlockBuzzSpend). Caller compares `total`
- * against BLOCK_TIP_CAP_PER_DAY and refunds via the returned key on over-cap /
+ * against the user's resolved `apps.tip-daily` and refunds via the returned key on over-cap /
  * on any downstream failure.
  */
 export async function reserveBlockTipSpend(

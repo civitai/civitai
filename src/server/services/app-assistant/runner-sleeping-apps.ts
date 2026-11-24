@@ -5,7 +5,7 @@ import * as z from 'zod';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { readRunnerRequest } from '~/server/services/app-assistant/runner-request';
 import { appRateLimitMeta } from '~/server/utils/app-rate-limit';
-import { usageLimits } from '~/shared/constants/usage-limits';
+import { getUsageLimitDef, usageLimits } from '~/shared/constants/usage-limits';
 import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 import { sleepingAppSchema } from '~/server/schema/app-hibernation.schema';
 import type { SessionUser } from '~/types/session';
@@ -34,7 +34,10 @@ import type {
 /** Per user, per route: the page's own `getWakeSeed` limit (60 an hour). */
 export const RUNNER_SLEEPING_RATE_LIMIT = usageLimits('apps.sleeping-reads');
 /** The window of `apps.sleeping-reads`: the wait when the limiter names none. */
-const RUNNER_SLEEPING_WINDOW_SECONDS = 60 * 60;
+const RUNNER_SLEEPING_WINDOW_SECONDS = (() => {
+  const { window } = getUsageLimitDef('apps.sleeping-reads');
+  return window.type === 'rolling' ? window.seconds : 60 * 60;
+})();
 
 export type RunnerSleepingDeps = {
   /** The grant's user when every App Assistant gate admits them, else the refusal. */
