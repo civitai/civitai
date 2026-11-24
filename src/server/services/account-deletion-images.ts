@@ -173,7 +173,13 @@ export async function unblockAccountDeletionImages(userId: number) {
             ELSE c."recordedReview"
           END,
           -- The rating the grace block replaced with Blocked, when nothing has changed it since.
-          "nsfwLevel" = COALESCE(c."recordedLevel", "nsfwLevel"),
+          -- Checked again on the locked row: a re-rate that landed after the claim read it is kept.
+          "nsfwLevel" = CASE
+            WHEN "nsfwLevel" = ${NsfwLevel.Blocked}
+              AND to_jsonb("nsfwLevelLocked") = "metadata"->${PRIOR_NSFW_LOCKED_KEY}::text
+            THEN COALESCE(c."recordedLevel", "nsfwLevel")
+            ELSE "nsfwLevel"
+          END,
           "metadata" = "metadata"${minusPriorKeysSql}
       FROM (
         SELECT i.id, i."needsReview" AS "currentReview",

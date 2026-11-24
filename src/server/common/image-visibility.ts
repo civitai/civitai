@@ -482,9 +482,9 @@ const REVIEWS_ONLY_A_MODERATOR_CLEARS = ['csam', 'appeal'] as const;
  * `needsReview` after a write that sets `key`, by who writes it: 'human' (an unblock, an approved
  * appeal) writes `key`; 'block' (a scan that leaves the row blocked) settles every review but
  * 'csam', keeping 'appeal' when it is stored, being set, or an appeal is pending, unless the row
- * holds a CSAM block; 'verdict'
- * (any other scan) never clears or lowers a review, and replaces a stored key only by one ranked
- * higher, except that a pending appeal's 'appeal' takes any key but 'csam'. Its SQL reads
+ * holds a CSAM block; 'verdict' (any other scan) never clears or lowers a review, and replaces a
+ * stored key only by one ranked higher, except that a pending appeal's 'appeal' takes any key but
+ * 'csam'. Its SQL reads
  * "Image".id, so it is only for an UPDATE of "Image". `csamBlock` is whether the row holds a CSAM
  * block once the write lands; it defaults to the stored one.
  */

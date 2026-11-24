@@ -32,7 +32,7 @@ export function ratingRecordedUnderGrace(
   return { [GRACE_PRIOR_NSFW_LEVEL_KEY]: nsfwLevel, [GRACE_PRIOR_NSFW_LOCKED_KEY]: true };
 }
 
-/** Every breadcrumb above. A write that strips them strips this list, so a new key is never missed. */
+/** Every breadcrumb above. Strip with this list, not named keys, so a new breadcrumb is never left behind. */
 export const GRACE_PRIOR_KEYS = [
   GRACE_PRIOR_INGESTION_KEY,
   GRACE_PRIOR_BLOCKED_FOR_KEY,

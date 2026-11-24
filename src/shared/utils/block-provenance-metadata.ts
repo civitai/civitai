@@ -1,8 +1,5 @@
 import { FEEDBACK_CAPTURE_METADATA_KEY } from '@civitai/shared/feedback-capture';
-import {
-  GRACE_PRIOR_NSFW_LEVEL_KEY,
-  GRACE_PRIOR_NSFW_LOCKED_KEY,
-} from '@civitai/shared/account-deletion-grace';
+import { GRACE_PRIOR_KEYS } from '@civitai/shared/account-deletion-grace';
 
 /**
  * `Image.metadata` keys that record which App Block app produced an image. They are
@@ -118,15 +115,14 @@ export const JUDGE_RATING_METADATA_KEY = 'judgeRating';
  *  - `judgeRating`: see `JUDGE_RATING_METADATA_KEY`.
  *  - `ruleId` / `ruleReason`: the moderation rule that matched the image; whether a removal counts as
  *    a rule's or a moderator's is read from them.
- *  - the rating an account-deletion grace block recorded, which an account restore writes back.
+ *  - the prior state an account-deletion grace block records, which an account restore writes back.
  */
 export const OTHER_SERVER_OWNED_IMAGE_METADATA_KEYS = [
   FEEDBACK_CAPTURE_METADATA_KEY,
   JUDGE_RATING_METADATA_KEY,
   'ruleId',
   'ruleReason',
-  GRACE_PRIOR_NSFW_LEVEL_KEY,
-  GRACE_PRIOR_NSFW_LOCKED_KEY,
+  ...GRACE_PRIOR_KEYS,
 ] as const;
 
 const isServerOwnedMetadataKey = (key: string) =>
