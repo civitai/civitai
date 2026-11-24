@@ -55,6 +55,7 @@ import {
   trainingDataObjectUnchanged,
   uncountUnconfirmedResubmit,
 } from '~/server/services/training-data-scan.service';
+import { extractionRating } from '~/server/services/training-data-rating';
 
 // -----------------------------------------------------------------------------
 // Shared scan outcome — the normalized shape that both webhook adapters produce
@@ -86,6 +87,8 @@ export type ScanOutcome = {
   /** The stored url a Training Data blob scan copied. Only an outcome naming the file's current url
    *  may write a Training Data file. */
   trainingDataUrl?: string;
+  /** An uploaded Training Data zip's rating, from the workflow's archiveExtraction step. */
+  trainingDataRating?: { nsfwLevel: number | undefined; fullyRated: boolean };
 };
 
 const exitCodeToScanResult = (exitCode: number | null | undefined): ScanResultCode => {
@@ -308,6 +311,16 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     data,
     select: { pickleScanResult: true, virusScanResult: true },
   });
+  // One writer per row: a Studio dataset's rating is the archive's, so this write skips it, and a zip
+  // swapped in meanwhile.
+  if (isTrainingData && outcome.trainingDataRating) {
+    const patch = JSON.stringify(outcome.trainingDataRating);
+    await dbWrite.$executeRaw`
+      UPDATE "ModelFile"
+      SET metadata = (COALESCE(metadata, '{}'::jsonb) - 'nsfwLevel') || ${patch}::jsonb
+      WHERE id = ${fileId} AND url = ${file.url} AND type = 'Training Data'
+        AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'datasetArchive')`;
+  }
   const failedScan = ranScan && hasFailedScan(written);
   const coverageMoved =
     ranScan &&
@@ -1100,6 +1113,12 @@ async function handleScanWorkflow(event: WorkflowEvent) {
       return;
     }
   }
+
+  const extraction = steps.find((x) => (x as { $type?: string }).$type === 'archiveExtraction') as
+    | { output?: Parameters<typeof extractionRating>[0] }
+    | undefined;
+  if (trainingDataUrl && outcome.virusScan?.result === ScanResultCode.Success && extraction?.output)
+    outcome.trainingDataRating = await extractionRating(extraction.output, event.workflowId);
 
   if (pickleScan?.output) {
     const pickleOut = pickleScan.output;

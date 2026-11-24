@@ -174,6 +174,16 @@ export async function deleteFilesForModelVersionCache(modelVersionId: number) {
   await filesForModelVersionCache.bust(modelVersionId);
 }
 
+/**
+ * A new Training Data zip is not rated until its scan rates it (the archiveExtraction step, or the
+ * Studio dataset archive), and an unrated zip is not served off a red-capable host
+ * (trainingDataServableOnHost refuses fullyRated: false).
+ */
+function notYetRated<M>(metadata: M): M {
+  const { nsfwLevel: _level, ...rest } = (metadata ?? {}) as Record<string, unknown>;
+  return { ...rest, fullyRated: false } as M;
+}
+
 export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   select,
   userId,
@@ -183,6 +193,7 @@ export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   if (data.overrideName !== undefined)
     data.overrideName = sanitizeOverrideName(data.overrideName, data.name) ?? undefined;
   const file = prepareFile(data);
+  if (file.type === 'Training Data') file.metadata = notYetRated(file.metadata);
   // `name` is the uploaded file name, which some model types publish as the download name.
   await throwOnBlockedUserContent([data.overrideName, data.name], {
     isModerator,
@@ -433,6 +444,7 @@ async function replaceFileContent({
   delete (metadata as Record<string, unknown>).nsfwLevel;
   delete (metadata as Record<string, unknown>).fullyRated;
   delete (metadata as Record<string, unknown>).datasetArchive;
+  if (type === 'Training Data') (metadata as Record<string, unknown>).fullyRated = false;
   const prepared = prepareFile({
     name: fields.name ?? file.name,
     url: fields.url,

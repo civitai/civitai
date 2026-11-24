@@ -83,10 +83,17 @@ export async function submitTrainingDataScan(
 ) {
   if (!isProd && !env.ORCHESTRATOR_ACCESS_TOKEN) return false;
 
-  await dbWrite.modelFile.update({
+  const stamped = await dbWrite.modelFile.update({
     where: { id: fileId },
     data: { scanRequestedAt: new Date() },
+    select: { metadata: true },
   });
+  // A Studio dataset's rating is the archive's; any other zip is rated from its entries.
+  const rate = !(
+    stamped?.metadata &&
+    typeof stamped.metadata === 'object' &&
+    'datasetArchive' in stamped.metadata
+  );
 
   const sourceUrl = await resolveSource(fileId, url);
   const answered = new AbortController();
@@ -134,6 +141,15 @@ export async function submitTrainingDataScan(
           metadata,
           input: { model: air },
         } as WorkflowStepTemplate,
+        ...(rate
+          ? [
+              {
+                $type: 'archiveExtraction',
+                name: 'extract',
+                input: { sourceUrl: air },
+              } as WorkflowStepTemplate,
+            ]
+          : []),
       ],
       callbacks: [
         {

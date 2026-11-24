@@ -69,7 +69,7 @@ beforeEach(() => {
   mockVersionHasStudioDataset.mockImplementation(async () => false);
 });
 
-import { updateFile } from '~/server/services/model-file.service';
+import { createFile, updateFile } from '~/server/services/model-file.service';
 
 const OLD_URL = 'https://example.test/a.safetensors';
 const NEW_URL = 'https://example.test/b.safetensors';
@@ -914,7 +914,9 @@ describe('the rating on a new dataset', () => {
 
     expect(createdData().metadata).toMatchObject({ selectedEpochUrl: 'https://orch.test/epoch-1' });
     expect(createdData().metadata).not.toHaveProperty('datasetArchive');
-    expect(createdData().metadata).not.toHaveProperty('fullyRated');
+    expect(createdData().metadata).not.toHaveProperty('nsfwLevel');
+    // Unrated until its scan rates it, and so not served off a red-capable host meanwhile.
+    expect(createdData().metadata).toMatchObject({ fullyRated: false });
   });
 });
 
@@ -1095,5 +1097,48 @@ describe('an owner editing a Training Studio dataset directly', () => {
     studio({ complete: false });
     await updateFile({ id: 1, visibility: 'Public', userId: 1, isModerator: true });
     expect(writtenData().visibility).toBe('Public');
+  });
+});
+
+// Until its zip is rated, a new Training Data upload is not served off a red-capable host
+// (trainingDataServableOnHost refuses fullyRated: false); the scan's archiveExtraction step rates it.
+describe('a new Training Data zip starts not fully rated', () => {
+  it('stamps a created zip, over whatever the input says', async () => {
+    dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue({ id: 10 } as never);
+    dbMock.dbWrite.modelFile.create.mockResolvedValue({ id: NEW_ID } as never);
+    await createFile({
+      name: 'data.zip',
+      url: NEW_URL,
+      sizeKB: 10,
+      type: 'Training Data',
+      modelVersionId: 10,
+      metadata: { numImages: 3, fullyRated: true, nsfwLevel: 1 } as never,
+      select: { id: true },
+      userId: 7,
+    });
+    const { data } = dbMock.dbWrite.modelFile.create.mock.calls.at(-1)![0] as {
+      data: { metadata: Record<string, unknown> };
+    };
+    expect(data.metadata).toEqual(expect.objectContaining({ numImages: 3, fullyRated: false }));
+    expect(data.metadata).not.toHaveProperty('nsfwLevel');
+  });
+
+  it('leaves a model file unstamped', async () => {
+    dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue({ id: 10 } as never);
+    dbMock.dbWrite.modelFile.create.mockResolvedValue({ id: NEW_ID } as never);
+    await createFile({
+      name: 'a.safetensors',
+      url: NEW_URL,
+      sizeKB: 10,
+      type: 'Model',
+      modelVersionId: 10,
+      metadata: { format: 'SafeTensor' } as never,
+      select: { id: true },
+      userId: 7,
+    });
+    const { data } = dbMock.dbWrite.modelFile.create.mock.calls.at(-1)![0] as {
+      data: { metadata: Record<string, unknown> };
+    };
+    expect(data.metadata).not.toHaveProperty('fullyRated');
   });
 });
