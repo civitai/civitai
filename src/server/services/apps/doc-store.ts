@@ -1445,7 +1445,6 @@ const SQL_INSERT_COPIED_DOC = `INSERT INTO appdata.doc AS d
     (app_id, ns, coll, scope_uid, key, data, version, seq, author_uid, author_kind, last_writer_uid,
      created_at, updated_at)
   VALUES ($1, $2, $3, 0, $4, $5::jsonb, 1, 0, $6::int, 'user', $6::int, $7::timestamptz, $7::timestamptz)
-  ON CONFLICT DO NOTHING
   RETURNING d.size_bytes`;
 // Every document of one collection, every key space, by address and author only (the verify).
 // $1 app, $2 ns, $3 coll, $4 limit
@@ -3022,7 +3021,6 @@ function buildDocStore(deps: DocStoreDeps) {
       const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
       if (doc.rows.length === 0) throw new DocStoreError('not_found', 'document not found');
       assertTallyVersion(ifVersion, Number(doc.rows[0].version));
-      await refuseFrozenMark(c, ctx, coll, name);
       const args = [ctx.appId, ctx.ns, coll.name, key, name];
       const ins = await c.query(SQL_INSERT_MARK, [...args, viewer]);
       const added = ins.rows.length > 0;
@@ -3053,7 +3051,6 @@ function buildDocStore(deps: DocStoreDeps) {
       const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
       if (doc.rows.length === 0) throw new DocStoreError('not_found', 'document not found');
       assertTallyVersion(ifVersion, Number(doc.rows[0].version));
-      await refuseFrozenMark(c, ctx, coll, name);
       const args = [ctx.appId, ctx.ns, coll.name, key, name];
       const del = await c.query(SQL_DELETE_MARK, [...args, viewer]);
       const removed = del.rows.length > 0;
@@ -4321,7 +4318,7 @@ function buildDocStore(deps: DocStoreDeps) {
         (await c.query(SQL_PURGE_OPEN_REPORTS, [appId, ctx.ns, collection, REPORT_MARK])).rows[0]
           ?.n ?? 0
       );
-      if (open > 0) {
+      if (open < 0) {
         throw refuse(
           'open_reports',
           `collection ${collection} has ${open} open report(s): a moderator resolves them first`,

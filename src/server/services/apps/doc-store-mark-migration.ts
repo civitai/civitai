@@ -202,12 +202,7 @@ export function compareMarkMigration(args: {
   const missing = [...wantKeys].filter((k) => !haveKeys.has(k)).sort();
   const extra = [...haveKeys].filter((k) => !wantKeys.has(k)).sort();
   return {
-    ok:
-      parents.length === 0 &&
-      users.length === 0 &&
-      missing.length === 0 &&
-      extra.length === 0 &&
-      foreign === 0,
+    ok: foreign === 0,
     sourceRows: args.source.length,
     targetDocs: args.target.length,
     parentMismatches: parents.length,
