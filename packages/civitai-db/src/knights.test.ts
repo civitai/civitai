@@ -130,6 +130,8 @@ describe('servableImage', () => {
     expect(await servedBy(servableImageForSweeps)).toEqual([990000205, 990000206, 990000207]);
   });
 
+  // Moderation Lead ruling 2026-11-24: Knights shows posts that are Public, Unsearchable or EarlyAccess; any other
+  // availability, including one added to the enum later, is hidden until it is listed (docs/features/knights-sources.md).
   it('hides the same availabilities whether the rule runs in SQL or on a row already read', async () => {
     const values = Object.values(Availability);
     for (const [index, availability] of values.entries()) {

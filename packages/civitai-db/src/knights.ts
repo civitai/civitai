@@ -112,7 +112,7 @@ export const servableImageContent = (eb: ExpressionBuilder<Joined, 'img' | 'p'>)
  */
 export const KNIGHTS_SHOWN_POST_AVAILABILITIES = ['Public', 'Unsearchable', 'EarlyAccess'] as const;
 
-/** The opposite of `postShownToKnights`, for a row already read: the same list, and a missing value is hidden, as the SQL's NULL is. */
+/** The opposite of `postShownToKnights`, for a row already read: the same list, and a missing value is hidden. */
 export const postHiddenFromKnights = (availability: string | null | undefined): boolean =>
   availability == null ||
   !(KNIGHTS_SHOWN_POST_AVAILABILITIES as readonly string[]).includes(availability);
@@ -253,7 +253,7 @@ export async function readWithoutJit<T>(
 }
 
 /**
- * Images Knights may show players: `servableImageForSweeps` on a post that is not Private, with `imageSourceVisible`.
+ * Images Knights may show players: `servableImageForSweeps` on a post whose availability Knights shows (`postShownToKnights`), with `imageSourceVisible`.
  * Expects `Image as img` joined to `Post as p`.
  */
 export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
