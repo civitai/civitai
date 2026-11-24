@@ -5,7 +5,7 @@
   import { entityUrl, imageLookupUrl, modelLookupUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, relativeTime } from '$lib/format';
   import type { TicketAppeal, TicketAppeals } from '$lib/server/tickets/appeals';
-  import { APPEAL_KIND_LABEL, APPEAL_WINDOW_DAYS } from '$lib/tickets/appeals';
+  import { APPEAL_KIND_LABEL, APPEAL_WINDOW_DAYS, songAppealsHref } from '$lib/tickets/appeals';
   import TicketAccountAction from './TicketAccountAction.svelte';
   import TicketAppealRuling from './TicketAppealRuling.svelte';
   import TicketFlagAppealRuling from './TicketFlagAppealRuling.svelte';
@@ -88,6 +88,8 @@
                 {ondone}
               />
             {/if}
+          {:else if a.status === 'Pending' && a.kind === 'song'}
+            <a class={LINK_CLASS} href={songAppealsHref(a.entityId)}>Decide on Audio review</a>
           {:else if a.status === 'Pending' && a.category === 'Account' && accountCardShown}
             <p class="m-0 text-dark-2">Decided in the Account card.</p>
           {/if}

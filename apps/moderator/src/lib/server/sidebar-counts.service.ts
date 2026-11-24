@@ -15,7 +15,7 @@ import { getImageReviewCounts } from './image-review.service';
 import {
   countReportedSongs,
   countSongAppeals,
-  songOrOwnCoverText,
+  songAppealImages,
   withSongBadges,
 } from './audio-review-count';
 import { countStuckIngestion, countIngestionErrorImages } from './ingestion.service';
@@ -209,8 +209,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
       .selectFrom('Image')
       .select((eb) => eb.fn.countAll<number>().as('count'))
       .where('needsReview', '=', 'appeal')
-      // Songs and their covers are appealed on Audio review, as the Appeals queue leaves them out.
-      .where(sql<boolean>`NOT ${sql.raw(songOrOwnCoverText('"Image"'))}`)
+      // Pending song and cover appeals are decided on Audio review, as the Appeals queue leaves them out.
+      .where('id', 'not in', songAppealImages().select('i.id'))
       .executeTakeFirst(),
     countModeratorArticles(),
     getRatingReviewCounts(),

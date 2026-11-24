@@ -143,6 +143,7 @@ export async function getReportedSongRows(
         sql<string | null>`s.metadata->>'title'`.as('title'),
         'owner.id as ownerId',
         'owner.username as ownerUsername',
+        'c.id as coverId',
         sql<string | null>`CASE WHEN ${sql.raw(songsOwnCoverText('c', 's'))} AND ${sql.raw(
           playerSongCoverText('c')
         )} THEN c.url END`.as('coverUrl'),
@@ -170,6 +171,7 @@ export async function getReportedSongRows(
     visibleSongLinks(imageIds, user),
   ]);
   const withheldSet = new Set(withheld);
+  const coversWithheld = await withheldCovers(songs, user);
   const reportsBySong = new Map<number, SongReport[]>();
   for (const r of reports) {
     const list = reportsBySong.get(r.imageId) ?? [];
@@ -195,7 +197,7 @@ export async function getReportedSongRows(
       withheld: false,
       title: song.title || null,
       url: song.url,
-      coverUrl: song.coverUrl,
+      coverUrl: shownThumb(song, coversWithheld),
       nsfwLevel: song.nsfwLevel,
       removed: song.ingestion === 'Blocked',
       removal:
@@ -215,6 +217,21 @@ export async function getReportedSongRows(
     return [withheldSet.has(id) ? withheldSongRow(row) : row];
   });
 }
+
+/** The covers among these rows' thumbnails withheld from `user`: the list hides them, as the open
+ *  song's cover card does (`getSongDetails`). */
+async function withheldCovers(
+  rows: { coverId: number | null; coverUrl: string | null }[],
+  user: App.Locals['user'] | undefined
+) {
+  const ids = rows.flatMap((r) => (r.coverUrl && r.coverId != null ? [r.coverId] : []));
+  return new Set(ids.length ? await withheldImageIds(user, ids) : []);
+}
+
+const shownThumb = (
+  row: { coverId: number | null; coverUrl: string | null },
+  withheld: Set<number>
+) => (row.coverId != null && withheld.has(row.coverId) ? null : row.coverUrl);
 
 /**
  * A song withheld from this moderator: what is waiting (its id, when, how many) and nothing that
@@ -407,7 +424,8 @@ export async function getSongDetails(
 
 /** Every browsing level, Blocked included: a removed song or cover is what an appeal is about. */
 const ALL_LEVELS = 0x7fffffff;
-/** The appeals read at once. Songs and covers under appeal stay few, as reported songs do. */
+/** The appeals read at once. Songs and covers under appeal stay few, as reported songs do; past this
+ *  the oldest are listed and the rest wait for them to be decided. */
 const APPEALS_READ = 500;
 
 /**
@@ -445,6 +463,7 @@ export async function getSongAppeals({
           .leftJoin('Image as c', 'c.id', 't.coverImageId')
           .select([
             's.id',
+            'c.id as coverId',
             sql<string | null>`s.metadata->>'title'`.as('title'),
             sql<string | null>`CASE WHEN ${sql.raw(songsOwnCoverText('c', 's'))} AND ${sql.raw(
               playerSongCoverText('c')
@@ -474,9 +493,11 @@ export async function getSongAppeals({
       : [],
   ]);
   const songById = new Map(songs.map((s) => [s.id, s]));
+  const coversWithheld = await withheldCovers(songs, user);
   const appealsOf = new Map(counts.map((c) => [c.entityId, c.n]));
   const rows = items.map((item): SongAppealRow => {
-    const kind = item.type === 'audio' ? 'song' : 'cover';
+    // From the song read, not `item.type`, which a withheld row no longer carries.
+    const kind = songById.has(item.id) ? 'song' : 'cover';
     const base = {
       id: item.id,
       appealId: item.appeal.id,
@@ -504,7 +525,7 @@ export async function getSongAppeals({
       withheld: false,
       song: songId != null ? { id: songId, title: song?.title || null } : null,
       url: item.url,
-      coverUrl: song?.coverUrl ?? null,
+      coverUrl: song ? shownThumb(song, coversWithheld) : null,
       owner: { id: item.userId, username: item.username },
       message: item.appeal.message || null,
       removal: {

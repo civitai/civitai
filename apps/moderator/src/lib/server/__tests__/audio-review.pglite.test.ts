@@ -3,7 +3,7 @@ import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../test/pglite';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
-import { RETRACTED_REFUSED } from '$lib/held-media';
+import { RETRACTED_REFUSED, WITHHELD_REFUSED } from '$lib/held-media';
 import { IMAGE_PAGES_SCHEMA } from './appeal-media-schema';
 import {
   DEFERRED_BLOCK_EFFECT_TABLE_SQL,
@@ -455,8 +455,13 @@ describe('Remove cover on a reported song (S2)', () => {
         (631, 'shared-scanned-cover', 'image', 'Pending', 1, 0);
       UPDATE "Track" SET "coverImageId" = 630 WHERE "imageId" = ${QUIET_SONG};
     `);
+    await db.exec(`UPDATE "Image" SET "needsReview" = NULL WHERE id = 621`);
     const [quiet] = await getReportedSongRows([QUIET_SONG], WITHOUT_GRANT as never);
     expect(quiet.removableCoverId).toBeNull();
+    // The list thumbnail follows the same rule as the detail's cover card.
+    expect(quiet.coverUrl).toBeNull();
+    const [open] = await getReportedSongRows([QUIET_SONG], WITH_GRANT as never);
+    expect(open).toMatchObject({ coverUrl: 'shared-scanned-cover', removableCoverId: 630 });
     // Someone else's image named as the cover is not the song's own.
     await db.exec(`UPDATE "Image" SET "userId" = 1 WHERE id = 620`);
     const [song] = await getReportedSongRows([SONG], WITH_GRANT as never);
@@ -492,6 +497,34 @@ describe('Remove cover on a reported song (S2)', () => {
     expect(await pageAction('removeCover', { imageId: String(SONG) })).toMatchObject({
       status: 400,
       data: { error: 'Pick a violation type.' },
+    });
+    expect((await imageRow(620)).ingestion).toBe('Scanned');
+  });
+
+  it('says so when the cover cannot be checked, rather than that there is none', async () => {
+    await db.exec(`ALTER TABLE "Track" RENAME TO "TrackGone"`);
+    expect(
+      await pageAction('removeCover', { imageId: String(SONG), violationType: 'gore' })
+    ).toMatchObject({
+      status: 503,
+      data: { error: "Couldn't check the cover. Try again.", key: SONG },
+    });
+  });
+
+  it('refuses a cover withheld from the moderator as withheld, not as missing', async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, url, type, ingestion, "userId") VALUES (632, 'cover-key', 'image', 'Pending', 1);
+    `);
+    expect(
+      await pageAction(
+        'removeCover',
+        { imageId: String(SONG), violationType: 'gore' },
+        GRANTS,
+        WITHOUT_GRANT
+      )
+    ).toMatchObject({
+      status: 403,
+      data: { error: expect.stringContaining(WITHHELD_REFUSED), key: SONG },
     });
     expect((await imageRow(620)).ingestion).toBe('Scanned');
   });
@@ -576,10 +609,24 @@ describe('the Appeals tab (S2)', () => {
     ]);
   });
 
+  it('leaves out a list thumbnail withheld from the moderator', async () => {
+    await db.exec(`
+      UPDATE "Image" SET url = 'shared-thumb' WHERE id = ${ITS_COVER};
+      INSERT INTO "Image" (id, url, type, ingestion, "userId") VALUES (646, 'shared-thumb', 'image', 'Pending', 1);
+    `);
+    const thumb = async (user: typeof WITH_GRANT) =>
+      (await appeals(user)).items.find((r) => r.id === APPEALED_SONG)?.coverUrl;
+    expect(await thumb(WITH_GRANT)).toBe('shared-thumb');
+    expect(await thumb(WITHOUT_GRANT)).toBeNull();
+  });
+
   it('sends a withheld appeal with nothing that shows or names it, found only by its id', async () => {
-    const withheld = (await appeals(WITHOUT_GRANT)).items.find((r) => r.id === WITHHELD);
+    const hidden = await appeals(WITHOUT_GRANT);
+    expect(hidden.facets).toEqual({ all: 3, song: 2, cover: 1 });
+    const withheld = hidden.items.find((r) => r.id === WITHHELD);
     expect(withheld).toEqual(
       expect.objectContaining({
+        kind: 'song',
         withheld: true,
         song: null,
         url: null,
@@ -609,7 +656,9 @@ describe('the Appeals tab (S2)', () => {
       new URL('https://mod.example/images/appeals'),
       WITH_GRANT as never
     );
-    expect(queue.items.map((i) => i.id)).toEqual([APPEALED_PICTURE]);
+    // A song left flagged for appeal with no Pending appeal stays in the image queue, whose
+    // resolve clears the flag; Audio review lists only Pending appeals.
+    expect(queue.items.map((i) => i.id)).toEqual([APPEALED_PICTURE, DECIDED_SONG]);
   });
 
   const appealOf = async (imageId: number) =>

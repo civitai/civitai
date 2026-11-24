@@ -8,6 +8,7 @@ import {
   type AppealKind,
 } from '$lib/tickets/appeals';
 import { mentionKeys } from '$lib/tickets/mentions';
+import { songOrOwnCoverText } from '../audio-review-count';
 
 /** Rows read before the viewer's grants and the cut: a viewer who holds few queues must still fill the list. */
 const FETCH_ROWS = 100;
@@ -57,9 +58,20 @@ export type AppealReads = {
   ) => Promise<{ id: number; postId: number }[]>;
   /** Which of `imageIds` the image appeals queue lists (`needsReview = 'appeal'`). */
   imagesFlaggedForAppeal: (imageIds: number[]) => Promise<number[]>;
+  /** Which of `imageIds` are songs or songs' own covers, whose appeals Audio review decides. */
+  songImages: (imageIds: number[]) => Promise<number[]>;
 };
 
 const liveReads: AppealReads = {
+  songImages: async (imageIds) =>
+    (
+      await dbRead
+        .selectFrom('Image as i')
+        .select('i.id')
+        .where('i.id', 'in', imageIds)
+        .where(sql<boolean>`${sql.raw(songOrOwnCoverText('i'))}`)
+        .execute()
+    ).map((r) => r.id),
   // The userId index finds the user's appeals; the window is a filter over a handful of rows.
   appealsOf: (userId, since, limit) =>
     dbRead
@@ -112,6 +124,8 @@ const liveReads: AppealReads = {
 
 function isRulable(kind: AppealKind, row: AppealRow, flagged: Set<number>): boolean {
   if (kind === 'image') return flagged.has(row.entityId);
+  // Decided on Audio review's Appeals tab, which the card links to.
+  if (kind === 'song') return false;
   if (kind === 'removed') return true;
   if (kind === 'modelFlag') return true;
   return kind === 'site' && row.category !== 'Account';
@@ -132,8 +146,22 @@ export async function appealsSectionFor(
   const since = new Date(now.getTime() - APPEAL_WINDOW_DAYS * 86_400_000);
   const rows = await reads.appealsOf(ticket.userId, since, FETCH_ROWS);
 
+  // Songs and their own covers are Audio review's. A failed lookup cannot tell them apart, so no
+  // image appeal is offered a ruling here (`songsUnknown`) rather than one ruled in the wrong queue.
+  const imageRows = rows.filter((r) => r.entityType === 'Image');
+  let songs = new Set<number>();
+  let songsUnknown = false;
+  if (imageRows.length > 0) {
+    try {
+      songs = new Set(await reads.songImages([...new Set(imageRows.map((r) => r.entityId))]));
+    } catch (e) {
+      songsUnknown = true;
+      console.error('[tickets] song lookup for appeals failed', e);
+    }
+  }
+
   const visible = rows.flatMap((row) => {
-    const kind = classifyAppeal(row);
+    const kind = classifyAppeal(row, row.entityType === 'Image' && songs.has(row.entityId));
     const path = kind && appealQueuePath(kind, row.category);
     return kind && path && ticket.canRead(path) ? [{ row, kind }] : [];
   });
@@ -183,7 +211,10 @@ export async function appealsSectionFor(
       resolvedMessage: row.resolvedMessage,
       mentioned: mentioned(row.entityType, row.entityId),
       category: row.category,
-      rulable: row.status === 'Pending' && isRulable(kind, row, flagged),
+      rulable:
+        row.status === 'Pending' &&
+        !(kind === 'image' && songsUnknown) &&
+        isRulable(kind, row, flagged),
     })),
   };
 }

@@ -33,7 +33,8 @@ import {
   removeImagesWithReports,
 } from '$lib/server/image-queue';
 import { withheldRefusal } from '$lib/server/retracted-media';
-import { visibleSongLinks } from '$lib/server/song-links.service';
+import { logAxiomError } from '$lib/server/axiom';
+import { getSongLinks } from '$lib/server/song-links.service';
 import { int4Id, parseForm, parseIdList, parseQueryKeys } from '$lib/server/query';
 import { violationInputSchema } from '$lib/violations';
 
@@ -196,7 +197,15 @@ export const actions: Actions = {
       return fail(400, { error: 'Pick a violation type.', key: songId });
     const withheld = await withheldRefusal(event.locals.user, [songId]);
     if (withheld) return fail(403, { error: withheld, key: songId });
-    const coverId = (await visibleSongLinks([songId], event.locals.user)).get(songId)?.songCoverId;
+    // Read here, not through `visibleSongLinks`, which turns a failed read or a withheld cover into
+    // "no cover": each gets its own answer (a withheld cover is refused by the removal writer).
+    let coverId: number | null | undefined;
+    try {
+      coverId = (await getSongLinks([songId])).get(songId)?.songCoverId;
+    } catch (error) {
+      logAxiomError(error, { name: 'audio-review-remove-cover' });
+      return fail(503, { error: "Couldn't check the cover. Try again.", key: songId });
+    }
     if (coverId == null)
       return fail(409, { error: 'This song has no cover to remove. Reload.', key: songId });
     const result = await removeImagesWithReports(

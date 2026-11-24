@@ -37,7 +37,9 @@ beforeEach(async () => {
       "entityRemovedAt" timestamp(3),
       category text
     );
-    CREATE TABLE "Image" (id serial PRIMARY KEY, "postId" integer, "needsReview" text);
+    CREATE TABLE "Image" (id serial PRIMARY KEY, "postId" integer, "needsReview" text,
+      type text NOT NULL DEFAULT 'image', "userId" integer);
+    CREATE TABLE "Track" ("imageId" integer PRIMARY KEY, "coverImageId" integer UNIQUE);
   `);
   h.db.current = new Kysely({ dialect: pgliteDialect(pg) });
 });
