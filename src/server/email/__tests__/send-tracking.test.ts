@@ -1,10 +1,11 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as CivitaiEmail from '@civitai/email';
 import type { EmailSendRecord } from '@civitai/email';
 
 const h = vi.hoisted(() => ({
-  insert: vi.fn(async (_arg: unknown) => undefined),
+  insert: vi.fn(),
   log: vi.fn(),
   clickhouse: true,
 }));
@@ -120,7 +121,7 @@ describe('the app transport', () => {
   it('registers recordEmailSend as the recorder of every send', async () => {
     const setEmailSendRecorder = vi.fn();
     vi.doMock('@civitai/email', async (importOriginal) => ({
-      ...(await importOriginal<typeof import('@civitai/email')>()),
+      ...(await importOriginal<typeof CivitaiEmail>()),
       setEmailSendRecorder,
     }));
     vi.doMock('~/env/server', () => ({ env: { IS_BUILD: false } }));
