@@ -12,8 +12,8 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
   `knightsEnqueue` grant. Up to 1000 items per call; a 200 does not mean every item was queued, read `results`. Unlike the producers below, it also refuses images Knights may not show (`not-servable`: `servableImage` in `@civitai/db/knights`: published on a post that is not Private, rated, no block marker or review hold, not flagged poi/minor).
 - The image-scan pipeline (`scan-sample`: safe-looking priority 1, NSFW priority 2) and an owner's own rating (`owner-rating`, priority 1) also enqueue
   here, beside today's game, which is untouched. Both pass `requirePublished`: an image with no post is refused (`no-post`), and so is one whose post is
-  a draft or scheduled for later (`unpublished`), which the publish sweep below samples once the post goes live, at the sampling rates (an owner
-  rating there gets no item of its own), and one whose post is Private (`private-post`). An owner rating on a video is refused too (`not-still-image`; the scan hook only ever passes still
+  a draft or scheduled for later (`unpublished`), which the publish sweep below picks up once the post goes live (a Pending owner rating there is queued as
+  `owner-rating` whatever the rates and `maxOpen`, unless the image ever had an item or its level is locked), and one whose post is Private (`private-post`). An owner rating on a video is refused too (`not-still-image`; the scan hook only ever passes still
   images). Both hooks live in `src/server/services/knights/sources.ts`, never throw into the scan, and are
   **off unless** the sys Redis key `system:knights-v2-sources` (`REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES`) holds
   `{"enabled":true,"sfwRate":1,"nsfwRate":0.3}`; a missing or unreadable key means off, rates are 0-1 samples per pool. Set it in sys Redis; no
