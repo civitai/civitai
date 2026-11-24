@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -368,6 +369,9 @@ func (m *productMetadata) tierAt(key string) (string, error) {
 // other value.
 func coercedNumber(v any) (float64, bool) {
 	switch t := v.(type) {
+	case float64:
+		// jspack.FromJSON's number (JSON.parse's): out of range is ±Infinity, which z.number refuses.
+		return t, !math.IsInf(t, 0) && !math.IsNaN(t)
 	case json.Number:
 		f, err := t.Float64()
 		return f, err == nil
@@ -387,6 +391,8 @@ func booleanString(v any) (bool, bool) {
 	switch t := v.(type) {
 	case bool:
 		return t, true
+	case float64:
+		return t == 1, !math.IsInf(t, 0) && !math.IsNaN(t)
 	case json.Number:
 		f, err := t.Float64()
 		return f == 1, err == nil
@@ -408,6 +414,8 @@ func jsTruthy(v any) bool {
 		return false
 	case bool:
 		return t
+	case float64:
+		return t != 0 && !math.IsNaN(t)
 	case json.Number:
 		f, err := t.Float64()
 		return err != nil || f != 0
