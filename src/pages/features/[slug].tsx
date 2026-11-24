@@ -17,6 +17,8 @@ import {
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ ctx, features, session }) => {
+    // The frame's props depend on the request, so no cache may hold the page for another viewer.
+    ctx.res.setHeader('Cache-Control', 'private, no-store');
     if (!features?.featurePages) return { notFound: true };
     const slug = ctx.query.slug;
     if (typeof slug !== 'string' || !featurePageSlugRegex.test(slug)) return { notFound: true };
