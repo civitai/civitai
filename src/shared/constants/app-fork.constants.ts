@@ -49,8 +49,8 @@ export const FORK_ACTION_LABEL = 'Fork';
 
 /** Per-user caps on starting a fork. Each start builds and uploads a copy of the parent's source. */
 export const FORK_START_LIMITS = [
-  { windowSeconds: 60 * 60, max: 5 },
-  { windowSeconds: 24 * 60 * 60, max: 20 },
+  { id: 'apps.fork-starts-hourly', windowSeconds: 60 * 60, max: 5 },
+  { id: 'apps.fork-starts-daily', windowSeconds: 24 * 60 * 60, max: 20 },
 ] as const;
 
 /** Refusals of `appListings.startFork`, pinned whole by the tests. */

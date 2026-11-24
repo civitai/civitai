@@ -10,17 +10,6 @@ export function rateLimitMetaFor(retryAfterSeconds: number): RateLimitMeta {
 }
 
 /**
- * Throws the TOO_MANY_REQUESTS refusal for a shared-storage write, carrying the retry
- * metadata as `cause.rateLimit`, with `retryAt` derived here as now + `retryAfterSeconds`.
- * The tRPC error formatter lifts it onto `data.rateLimit` and `handleEndpointError` onto the
- * REST body + `Retry-After`; `message` is the caller's prose.
- */
-export function throwSharedRateLimited(rl: { retryAfterSeconds: number }, message: string): never {
-  const rateLimit = rateLimitMetaFor(rl.retryAfterSeconds);
-  throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message, cause: { rateLimit } });
-}
-
-/**
  * Throws the TOO_MANY_REQUESTS refusal carrying `meta` as `cause.rateLimit`, where the tRPC
  * error formatter and `handleEndpointError` lift it. `message` is the caller's prose.
  */

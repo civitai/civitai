@@ -9,6 +9,7 @@ import {
 } from '~/server/middleware/block-scope.middleware';
 import { readBlockTipAllowance } from '~/server/utils/block-tip-rate-limit';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
 /**
  * GET /api/v1/blocks/tip-allowance — scope `social:tip:self`.
@@ -80,8 +81,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       endpoint: 'tip_allowance',
       retryAfterSeconds: rateLimit.retryAfterSeconds,
     });
-    res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
-    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.catalog', rateLimit.retryAfterSeconds),
+      'Rate limit exceeded, please retry shortly.'
+    );
     return;
   }
 

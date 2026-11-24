@@ -103,10 +103,12 @@ describe('takeSubmitSlot — the submit window stays in system Redis', () => {
     for (let i = 0; i < SUBMIT_RATE_LIMIT.max; i++) {
       expect(await takeSubmitSlot('user:7')).toEqual({ ok: true });
     }
+    // `used`: the window's count with this refused submit, for the product meta's counts.
     expect(await takeSubmitSlot('user:7')).toEqual({
       ok: false,
       reason: 'limited',
       retryAfterSeconds: 55,
+      used: 11,
     });
 
     expect(redisMock.sysRedis.ttl).toHaveBeenCalledWith(`${SUBMIT_KEY}:user:7`);

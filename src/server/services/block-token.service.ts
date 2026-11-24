@@ -5,6 +5,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { BLOCK_TOKEN_LIFETIMES_SECONDS } from '~/server/services/block-token-lifetimes';
 import { ANON_SUBJECT, subjectForUserId } from '~/server/services/block-token-subject';
 import type { PrivateRunAudience } from '~/shared/constants/block-scope.constants';
+import { BLOCK_TOKEN_MINT_RATE_LIMIT } from '~/server/common/block-token-mint-rate-limit';
 
 // L7 (audit-10): shared issuer/audience constants exported for the
 // middleware so a typo in one place can't desynchronize sign-vs-verify.
@@ -15,8 +16,8 @@ export const BLOCK_TOKEN_AUDIENCE = 'civitai-app-block';
 // off the SAME constant the signer uses — if these desynced, dev tokens between
 // the two values would silently 401 (fail-closed but confusing).
 export const DEV_TOKEN_LIFETIME_SECONDS = BLOCK_TOKEN_LIFETIMES_SECONDS.dev;
-const RATE_LIMIT_WINDOW_SECONDS = 60;
-const RATE_LIMIT_MAX = 60;
+const RATE_LIMIT_WINDOW_SECONDS = BLOCK_TOKEN_MINT_RATE_LIMIT.windowSeconds;
+const RATE_LIMIT_MAX = BLOCK_TOKEN_MINT_RATE_LIMIT.max;
 
 function isSettingsScope(s: string): boolean {
   return s === 'block:settings:read' || s === 'block:settings:write';

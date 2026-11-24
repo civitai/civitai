@@ -891,6 +891,17 @@ type Passed = {
   handlerScopes: string[] | null;
 };
 
+/**
+ * The body of an App Platform 429 (`appRateLimitBody`): the house envelope plus the `rateLimit`
+ * meta for the stub limiter's 7 s refusal at the frozen clock. `id` is the refusing limit's.
+ */
+const rateLimited429 = (message: string, id: string) => ({
+  error: message,
+  message,
+  code: 'TOO_MANY_REQUESTS',
+  rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z', id, kind: 'abuse' },
+});
+
 const X = (
   status: number,
   body: unknown,
@@ -1939,7 +1950,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { error: 'Rate limit exceeded, please retry shortly.' },
+      rateLimited429('Rate limit exceeded, please retry shortly.', 'apps.catalog'),
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       [],
@@ -2081,7 +2092,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { error: 'Rate limit exceeded, please retry shortly.' },
+      rateLimited429('Rate limit exceeded, please retry shortly.', 'apps.catalog'),
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       [],
@@ -2223,7 +2234,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { error: 'Rate limit exceeded, please retry shortly.' },
+      rateLimited429('Rate limit exceeded, please retry shortly.', 'apps.goods-read'),
       true,
       ['checkBlockGoodReadRateLimit("bki_char", 42)'],
       [],
@@ -2365,7 +2376,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { error: 'Rate limit exceeded, please retry shortly.' },
+      rateLimited429('Rate limit exceeded, please retry shortly.', 'apps.catalog'),
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       [],
@@ -2507,7 +2518,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { error: 'Rate limit exceeded, please retry shortly.' },
+      rateLimited429('Rate limit exceeded, please retry shortly.', 'apps.catalog'),
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       [],
@@ -2649,7 +2660,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { error: 'Rate limit exceeded, please retry shortly.' },
+      rateLimited429('Rate limit exceeded, please retry shortly.', 'apps.catalog'),
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       [],
@@ -2852,7 +2863,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { error: 'Too many purchases — please retry shortly.' },
+      rateLimited429('Too many purchases — please retry shortly.', 'apps.goods-rate'),
       true,
       ['checkBlockGoodRateLimit("bki_char", 42)'],
       ['consent-lookup:{"userId":42,"appBlockId":"apb_claim"}'],
@@ -2974,7 +2985,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { error: 'Rate limit exceeded, please retry shortly.' },
+      rateLimited429('Rate limit exceeded, please retry shortly.', 'apps.catalog'),
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       [],
@@ -3082,7 +3093,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { error: 'Rate limit exceeded, please retry shortly.' },
+      rateLimited429('Rate limit exceeded, please retry shortly.', 'apps.catalog'),
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['consent-lookup:{"userId":42,"appBlockId":"apb_claim"}', 'hydrate:42'],
@@ -3212,7 +3223,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { error: 'Rate limit exceeded, please retry shortly.' },
+      rateLimited429('Rate limit exceeded, please retry shortly.', 'apps.catalog'),
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       [],
@@ -3360,7 +3371,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { error: 'Rate limit exceeded, please retry shortly.' },
+      rateLimited429('Rate limit exceeded, please retry shortly.', 'apps.llm'),
       true,
       ['checkBlockLLMRateLimit("bki_char")'],
       [],
@@ -3568,7 +3579,12 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         error: 'Too many submissions — retry in 7s',
         message: 'Too many submissions — retry in 7s',
         code: 'TOO_MANY_REQUESTS',
-        rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
+        rateLimit: {
+          retryAfterSeconds: 7,
+          retryAt: '2026-01-01T00:00:07.000Z',
+          id: 'apps.shared-storage',
+          kind: 'abuse',
+        },
       },
       true,
       ['reserveSharedWrite(42, "apb_row")'],
@@ -3834,7 +3850,12 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         error: 'Too many increments — retry in 7s',
         message: 'Too many increments — retry in 7s',
         code: 'TOO_MANY_REQUESTS',
-        rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
+        rateLimit: {
+          retryAfterSeconds: 7,
+          retryAt: '2026-01-01T00:00:07.000Z',
+          id: 'apps.shared-storage',
+          kind: 'abuse',
+        },
       },
       true,
       ['checkSharedVoteRateLimit(42, "apb_row")'],
@@ -4222,7 +4243,12 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         error: 'Too many reports — retry in 7s',
         message: 'Too many reports — retry in 7s',
         code: 'TOO_MANY_REQUESTS',
-        rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
+        rateLimit: {
+          retryAfterSeconds: 7,
+          retryAt: '2026-01-01T00:00:07.000Z',
+          id: 'apps.shared-storage',
+          kind: 'abuse',
+        },
       },
       true,
       ['checkSharedReportRateLimit(42, "apb_row")'],
@@ -4488,7 +4514,12 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         error: 'Too many votes — retry in 7s',
         message: 'Too many votes — retry in 7s',
         code: 'TOO_MANY_REQUESTS',
-        rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
+        rateLimit: {
+          retryAfterSeconds: 7,
+          retryAt: '2026-01-01T00:00:07.000Z',
+          id: 'apps.shared-storage',
+          kind: 'abuse',
+        },
       },
       true,
       ['checkSharedVoteRateLimit(42, "apb_row")'],
@@ -4632,7 +4663,12 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         error: 'Too many submissions — retry in 7s',
         message: 'Too many submissions — retry in 7s',
         code: 'TOO_MANY_REQUESTS',
-        rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
+        rateLimit: {
+          retryAfterSeconds: 7,
+          retryAt: '2026-01-01T00:00:07.000Z',
+          id: 'apps.shared-storage',
+          kind: 'abuse',
+        },
       },
       true,
       ['reserveSharedWrite(42, "apb_row")'],
@@ -4776,7 +4812,12 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         error: 'Too many votes — retry in 7s',
         message: 'Too many votes — retry in 7s',
         code: 'TOO_MANY_REQUESTS',
-        rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
+        rateLimit: {
+          retryAfterSeconds: 7,
+          retryAt: '2026-01-01T00:00:07.000Z',
+          id: 'apps.shared-storage',
+          kind: 'abuse',
+        },
       },
       true,
       ['checkSharedVoteRateLimit(42, "apb_row")'],
@@ -4920,7 +4961,12 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         error: 'Too many withdrawals — retry in 7s',
         message: 'Too many withdrawals — retry in 7s',
         code: 'TOO_MANY_REQUESTS',
-        rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
+        rateLimit: {
+          retryAfterSeconds: 7,
+          retryAt: '2026-01-01T00:00:07.000Z',
+          id: 'apps.shared-storage',
+          kind: 'abuse',
+        },
       },
       true,
       ['checkSharedWithdrawRateLimit(42, "apb_row")'],
@@ -5457,7 +5503,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { error: 'Rate limit exceeded, please retry shortly.' },
+      rateLimited429('Rate limit exceeded, please retry shortly.', 'apps.catalog'),
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       ['consent-lookup:{"userId":42,"appBlockId":"apb_claim"}'],
@@ -5603,7 +5649,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { error: 'Too many tips — please retry shortly.' },
+      rateLimited429('Too many tips — please retry shortly.', 'apps.tip-rate'),
       true,
       ['checkBlockTipRateLimit("bki_char")'],
       ['consent-lookup:{"userId":42,"appBlockId":"apb_claim"}'],
@@ -5725,7 +5771,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { error: 'Rate limit exceeded, please retry shortly.' },
+      rateLimited429('Rate limit exceeded, please retry shortly.', 'apps.catalog'),
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       [],
@@ -6137,7 +6183,12 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         message: 'rate limit exceeded',
         error: 'rate limit exceeded',
         details: { bucket: 'read', retryAfter: 7 },
-        rateLimit: { retryAfterSeconds: 7, retryAt: '2026-01-01T00:00:07.000Z' },
+        rateLimit: {
+          retryAfterSeconds: 7,
+          retryAt: '2026-01-01T00:00:07.000Z',
+          id: 'apps.doc-store',
+          kind: 'abuse',
+        },
       },
       true,
       ['checkDocStoreRateLimit("read", "apb_row", "u:42")'],
@@ -6606,7 +6657,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { message: 'Rate limit exceeded, please retry shortly.' },
+      rateLimited429('Rate limit exceeded, please retry shortly.', 'apps.catalog'),
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       [
@@ -6927,7 +6978,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { message: 'Rate limit exceeded, please retry shortly.' },
+      rateLimited429('Rate limit exceeded, please retry shortly.', 'apps.catalog'),
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       [
@@ -7086,7 +7137,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       429,
-      { message: 'Rate limit exceeded, please retry shortly.' },
+      rateLimited429('Rate limit exceeded, please retry shortly.', 'apps.submit'),
       true,
       ['checkBlockSubmitRateLimit("bki_char", "user:42")'],
       [

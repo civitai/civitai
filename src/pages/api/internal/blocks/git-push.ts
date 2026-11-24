@@ -25,6 +25,7 @@ import {
   APP_DEVELOPER_TERMS_ACCEPT_PATH,
   AppDeveloperTermsNotAcceptedError,
 } from '~/shared/constants/app-developer-terms.constants';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
 /**
  * POST /api/internal/blocks/git-push
@@ -507,8 +508,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
         1
       )} min`,
     });
-    res.setHeader('Retry-After', String(Math.max(pushSlot.retryAfterSeconds, 1)));
-    res.status(429).json({ error: 'Too many pushes recorded for review' });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.push-review', pushSlot.retryAfterSeconds),
+      'Too many pushes recorded for review'
+    );
     return;
   }
 

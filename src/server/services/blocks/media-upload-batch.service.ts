@@ -3,6 +3,7 @@ import type { ConsumerBlobPresignResponse } from '@civitai/orchestration-client'
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
+import { throwAppRateLimited, utcDayReset } from '~/server/utils/app-rate-limit';
 import { getConsumerBlobUploadUrlService } from '~/server/services/orchestrator/consumerBlobUpload';
 import {
   MEDIA_UPLOAD_BATCH_DAILY_BYTES,
@@ -148,7 +149,20 @@ export async function reserveMediaUploadBatchQuota(
   }
   if (itemTotal > MEDIA_UPLOAD_BATCH_DAILY_ITEMS || byteTotal > MEDIA_UPLOAD_BATCH_DAILY_BYTES) {
     await release();
-    throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: mediaUploadBatchQuotaError() });
+    // `used` is the day's usage before this batch, which the release just gave back.
+    const itemsOver = itemTotal > MEDIA_UPLOAD_BATCH_DAILY_ITEMS;
+    const { retryAfterSeconds, resetAt } = utcDayReset(now.getTime());
+    throwAppRateLimited(
+      itemsOver ? 'apps.media-upload-daily-items' : 'apps.media-upload-daily-bytes',
+      retryAfterSeconds,
+      mediaUploadBatchQuotaError(),
+      {
+        limit: itemsOver ? MEDIA_UPLOAD_BATCH_DAILY_ITEMS : MEDIA_UPLOAD_BATCH_DAILY_BYTES,
+        used: itemsOver ? itemTotal - items : byteTotal - bytes,
+        windowSeconds: 24 * 60 * 60,
+        resetAt,
+      }
+    );
   }
   return release;
 }

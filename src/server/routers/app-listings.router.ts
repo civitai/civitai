@@ -116,6 +116,11 @@ const actsAsModerator = (ctx: Context) => !!ctx.user?.isModerator && isSessionOr
 const listingEditorUser = (ctx: Context) => ({ ...ctx.user!, isModerator: actsAsModerator(ctx) });
 import { isRedCapableHost } from '~/server/utils/server-domain';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import {
+  appRateLimitMeta,
+  rateLimitedTrpcError,
+  rateLimitMetaOfServiceError,
+} from '~/server/utils/app-rate-limit';
 
 /**
  * App Store Listings (W13) — asset pipeline + off-site submission router (NEW
@@ -399,6 +404,13 @@ function mapSubListingError(err: unknown): TRPCError {
   if (err instanceof TRPCError) return err;
   if (err instanceof Error && err.name === 'SubListingError') {
     const status = (err as { status?: unknown }).status;
+    // Every 429 the service raises carries its meta (`subListingRateLimited`).
+    if (status === 429) {
+      return rateLimitedTrpcError(
+        rateLimitMetaOfServiceError(err) ?? appRateLimitMeta('apps.store-item-writes', 60),
+        err.message
+      );
+    }
     const code =
       status === 403
         ? 'FORBIDDEN'
@@ -406,8 +418,6 @@ function mapSubListingError(err: unknown): TRPCError {
         ? 'NOT_FOUND'
         : status === 409
         ? 'CONFLICT'
-        : status === 429
-        ? 'TOO_MANY_REQUESTS'
         : status === 503
         ? 'SERVICE_UNAVAILABLE'
         : 'BAD_REQUEST';
@@ -463,6 +473,18 @@ function mapOffsiteError(err: unknown): TRPCError {
     typeof (err as { code?: unknown }).code === 'string'
   ) {
     const code = (err as { code?: unknown }).code as string;
+    // 🔴 An exhausted quota must NOT fall through to the BAD_REQUEST default.
+    // BAD_REQUEST reads to a caller as "your input was wrong" and carries no
+    // retry semantics, so a mod who hit the hourly ceiling would be told to fix
+    // a message that is fine. TOO_MANY_REQUESTS (with the refusal's meta) is the
+    // honest answer and is what the sibling mod-only limiter
+    // (`blocks.retriggerBuild`) already returns.
+    if (code === 'RATE_LIMITED') {
+      return rateLimitedTrpcError(
+        rateLimitMetaOfServiceError(err) ?? appRateLimitMeta('apps.moderator-messages', 60),
+        err.message
+      );
+    }
     const trpcCode =
       code === 'NOT_FOUND'
         ? 'NOT_FOUND'
@@ -470,13 +492,6 @@ function mapOffsiteError(err: unknown): TRPCError {
         ? 'FORBIDDEN'
         : code === 'ALREADY_REPORTED'
         ? 'CONFLICT'
-        : // 🔴 An exhausted quota must NOT fall through to the BAD_REQUEST default.
-        // BAD_REQUEST reads to a caller as "your input was wrong" and carries no
-        // retry semantics, so a mod who hit the hourly ceiling would be told to fix
-        // a message that is fine. TOO_MANY_REQUESTS is the honest code and is what
-        // the sibling mod-only limiter (`blocks.retriggerBuild`) already returns.
-        code === 'RATE_LIMITED'
-        ? 'TOO_MANY_REQUESTS'
         : // 🔴 MAPPED EXPLICITLY even though it lands on the same TRPC code as the
         // default. The default is a FALLTHROUGH, and this table's own note above warns
         // that an unmapped code silently becomes BAD_REQUEST — so an entry here is the

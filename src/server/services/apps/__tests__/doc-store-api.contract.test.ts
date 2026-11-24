@@ -1774,7 +1774,12 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
     expect(refused.body).toMatchObject({
       code: 'rate_limited',
       details: { bucket: 'shared-write' },
-      rateLimit: { retryAfterSeconds: expect.any(Number), retryAt: expect.any(String) },
+      rateLimit: {
+        retryAfterSeconds: expect.any(Number),
+        retryAt: expect.any(String),
+        id: 'apps.doc-store',
+        kind: 'abuse',
+      },
     });
   });
 

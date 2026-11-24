@@ -18,6 +18,7 @@ import {
   OFFSITE_MOD_REASON_MIN,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { moderatorProcedure, router } from '~/server/trpc';
+import { retryAfterSecondsOf, throwAppRateLimited } from '~/server/utils/app-rate-limit';
 import {
   DocStoreModerationError,
   deleteModeratedDoc,
@@ -60,11 +61,12 @@ async function mapped<T>(fn: () => Promise<T>): Promise<T> {
       throw new TRPCError({ code: 'BAD_REQUEST', message: 'invalid request', cause: err });
     }
     if (isDocStoreError(err, 'rate_limited')) {
-      throw new TRPCError({
-        code: 'TOO_MANY_REQUESTS',
-        message: 'storage is busy; retry',
-        cause: err,
-      });
+      const retryAfter = err.details?.retryAfter;
+      throwAppRateLimited(
+        'apps.doc-store',
+        retryAfterSecondsOf(retryAfter, 1),
+        'storage is busy; retry'
+      );
     }
     if (isDocStoreError(err, 'storage_disabled')) {
       throw new TRPCError({

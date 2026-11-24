@@ -41,8 +41,15 @@ import JSZip from 'jszip';
 import type { NextApiRequest } from 'next';
 import { TRPCError } from '@trpc/server';
 
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
-import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
+import {
+  redis,
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
+import { throwAppRateLimited } from '~/server/utils/app-rate-limit';
+import { boundedClusterCall, takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
 import { logToAxiom } from '~/server/logging/client';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
@@ -388,7 +395,7 @@ export async function readForkSession(forkSlug: string): Promise<ForkSession | n
  * cannot be read: every start builds and uploads a copy of an app's source.
  */
 async function consumeForkStart(userId: number): Promise<void> {
-  for (const { windowSeconds, max } of FORK_START_LIMITS) {
+  for (const { id, windowSeconds, max } of FORK_START_LIMITS) {
     const key = `${REDIS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${userId}:${windowSeconds}` as const;
     let count: number;
     try {
@@ -400,7 +407,16 @@ async function consumeForkStart(userId: number): Promise<void> {
       throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: FORK_BUSY_MESSAGE });
     }
     if (count > max) {
-      throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: FORK_RATE_LIMITED_MESSAGE });
+      // A failed TTL read falls back to the whole window: the wait is at most that.
+      const ttl = await boundedClusterCall('consumeForkStart', () => redis.ttl(key)).catch(
+        () => windowSeconds
+      );
+      throwAppRateLimited(id, ttl > 0 ? ttl : windowSeconds, FORK_RATE_LIMITED_MESSAGE, {
+        limit: max,
+        used: count,
+        windowSeconds,
+        resetAt: new Date(Date.now() + (ttl > 0 ? ttl : windowSeconds) * 1000),
+      });
     }
   }
 }

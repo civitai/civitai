@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 
 import {
+  rateLimitMetaFor,
   rateLimitMetaOf,
   throwRateLimited,
-  throwSharedRateLimited,
 } from '~/server/utils/rate-limit-error';
 
 // Distinct from any production window.
@@ -29,10 +29,10 @@ function thrown(call: () => never): unknown {
   throw new Error('did not throw');
 }
 
-describe('throwSharedRateLimited', () => {
+describe('rateLimitMetaFor', () => {
   it('throws TOO_MANY_REQUESTS with the prose message and retryAt = now + retryAfterSeconds', () => {
     const err = thrown(() =>
-      throwSharedRateLimited({ retryAfterSeconds: RETRY_AFTER }, 'Too many votes — retry in 17s')
+      throwRateLimited(rateLimitMetaFor(RETRY_AFTER), 'Too many votes — retry in 17s')
     );
 
     expect(err).toBeInstanceOf(TRPCError);
@@ -63,7 +63,7 @@ describe('throwSharedRateLimited', () => {
   });
 
   it('carries the hour and second for a wait over an hour (3601s)', () => {
-    const err = thrown(() => throwSharedRateLimited({ retryAfterSeconds: 3601 }, 'wait'));
+    const err = thrown(() => throwRateLimited(rateLimitMetaFor(3601), 'wait'));
 
     expect((err as TRPCError).cause).toMatchObject({
       rateLimit: { retryAfterSeconds: 3601, retryAt: '2030-02-03T05:05:07.000Z' },

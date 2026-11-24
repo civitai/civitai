@@ -18,6 +18,11 @@ import {
   checkAppBlocksCliCredential,
 } from '~/server/auth/bearer-scope-tighten';
 import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
+import {
+  appRateLimitMeta,
+  retryAfterSecondsOf,
+  sendAppRateLimited,
+} from '~/server/utils/app-rate-limit';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
@@ -336,13 +341,19 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   }
   if (count > RATE_LIMIT.max) {
     const retryAfter = await sysRedis.ttl(rateKey);
-    res.setHeader('Retry-After', String(Math.max(retryAfter, 1)));
-    res.status(429).json({
-      message: 'Rate limit exceeded',
-      retryAfterSeconds: retryAfter,
-      limit: RATE_LIMIT.max,
-      windowSeconds: RATE_LIMIT.windowSeconds,
-    });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta(
+        'apps.listing-submissions',
+        retryAfterSecondsOf(retryAfter, RATE_LIMIT.windowSeconds)
+      ),
+      'Rate limit exceeded',
+      {
+        retryAfterSeconds: retryAfter,
+        limit: RATE_LIMIT.max,
+        windowSeconds: RATE_LIMIT.windowSeconds,
+      }
+    );
     return;
   }
 
