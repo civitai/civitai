@@ -819,6 +819,8 @@ describe('"more like this" refuses a minor- or POI-flagged anchor at every level
     ['a POI-flagged anchor for a PG viewer', { poi: true }, VIEWER],
     ['a minor-flagged anchor for a moderator', { minor: true }, MOD],
     ['a blocked anchor for a PG viewer', { blockedFor: 'Moderated' }, VIEWER],
+    ['an anchor still pending its scan for a PG viewer', { ingestion: 'Pending' }, VIEWER],
+    ['an anchor whose ingestion is blocked for a PG viewer', { ingestion: 'Blocked' }, VIEWER],
   ])('refuses %s, before any search', async (_name, anchor, user) => {
     const { result, calls } = run(anchor, user);
     await expect(result).rejects.toMatchObject({ code: 'NOT_FOUND' });
