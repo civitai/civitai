@@ -36,7 +36,11 @@ vi.mock('../clickhouse', () => ({
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
-const { getReportedSongs, boundSongReports } = await import('../audio-review.service');
+const { getReportedSongs, getReportedSongRows, boundSongReports, getSongAppeals } = await import(
+  '../audio-review.service'
+);
+const { getAppealImageQueue } = await import('../image-review.service');
+const { loadImageQueue } = await import('../image-queue');
 const { countReportedSongs, withSongBadges } = await import('../audio-review-count');
 const page = await import('../../../routes/audio-review/+page.server');
 const details = await import('../../../routes/audio-review/details/[imageId]/+server');
@@ -405,5 +409,309 @@ describe('the open song details', () => {
       shown: true,
     });
     expect((await get(WITHOUT_GRANT, QUIET_SONG)).body.cover).toMatchObject({ id: 630, url: null });
+  });
+});
+
+const formOf = (fields: Record<string, string>) => {
+  const form = new FormData();
+  for (const [k, v] of Object.entries(fields)) form.set(k, v);
+  return form;
+};
+const pageAction = (
+  action: keyof typeof page.actions,
+  fields: Record<string, string>,
+  grants: Record<string, boolean> = GRANTS,
+  user = WITH_GRANT
+) =>
+  page.actions[action]({
+    request: new Request('https://mod.example/audio-review', {
+      method: 'POST',
+      body: formOf(fields),
+    }),
+    locals: { user, grants },
+    getClientAddress: () => '127.0.0.1',
+    url: new URL('https://mod.example/audio-review'),
+  } as never);
+const imageRow = async (id: number) =>
+  (await db.query<Record<string, unknown>>(`SELECT * FROM "Image" WHERE id = ${id}`)).rows[0];
+
+describe('Remove cover on a reported song (S2)', () => {
+  it('is offered only for the song’s own cover that is not removed or withheld', async () => {
+    const rows = await getReportedSongRows(
+      [SONG, QUIET_SONG, RULE_SONG, WITHHELD],
+      WITH_GRANT as never
+    );
+    expect(rows.map((r) => [r.id, r.removableCoverId])).toEqual([
+      [SONG, 620],
+      [QUIET_SONG, 621],
+      // Its cover is already removed.
+      [RULE_SONG, null],
+      [WITHHELD, null],
+    ]);
+    // A cover a still-scanning image shares a key with is withheld without the grant.
+    await db.exec(`
+      INSERT INTO "Image" (id, url, type, ingestion, "userId", "nsfwLevel") VALUES
+        (630, 'shared-scanned-cover', 'image', 'Scanned', ${OWNER}, 1),
+        (631, 'shared-scanned-cover', 'image', 'Pending', 1, 0);
+      UPDATE "Track" SET "coverImageId" = 630 WHERE "imageId" = ${QUIET_SONG};
+    `);
+    const [quiet] = await getReportedSongRows([QUIET_SONG], WITHOUT_GRANT as never);
+    expect(quiet.removableCoverId).toBeNull();
+    // Someone else's image named as the cover is not the song's own.
+    await db.exec(`UPDATE "Image" SET "userId" = 1 WHERE id = 620`);
+    const [song] = await getReportedSongRows([SONG], WITH_GRANT as never);
+    expect(song.removableCoverId).toBeNull();
+  });
+
+  it('removes only the cover: the song row is unchanged, its reports stay open, and its card shows the placeholder', async () => {
+    const before = await imageRow(SONG);
+    const result = await pageAction('removeCover', {
+      imageId: String(SONG),
+      violationType: 'gore',
+    });
+    expect(result).toMatchObject({ success: true, coverId: 620, key: SONG });
+    expect(await imageRow(SONG)).toEqual(before);
+    expect(await imageRow(620)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+    const { rows } = await db.query<{ id: number; status: string }>(
+      `SELECT id, status FROM "Report" WHERE id IN (11, 12) ORDER BY id`
+    );
+    expect(rows.map((r) => r.status)).toEqual(['Pending', 'Pending']);
+    const [row] = await getReportedSongRows([SONG], WITH_GRANT as never);
+    expect(row).toMatchObject({ coverUrl: null, removableCoverId: null, removed: false });
+    const res = await details.GET({
+      params: { imageId: String(SONG) },
+      locals: { user: WITH_GRANT },
+    } as never);
+    expect((await res.json()).cover).toMatchObject({ id: 620, url: null, shown: false });
+  });
+
+  it('refuses a song with no cover to remove, and one with no violation type', async () => {
+    expect(
+      await pageAction('removeCover', { imageId: String(RULE_SONG), violationType: 'gore' })
+    ).toMatchObject({ status: 409, data: { key: RULE_SONG } });
+    expect(await pageAction('removeCover', { imageId: String(SONG) })).toMatchObject({
+      status: 400,
+      data: { error: 'Pick a violation type.' },
+    });
+    expect((await imageRow(620)).ingestion).toBe('Scanned');
+  });
+
+  it('refuses a withheld song without the grant to see it', async () => {
+    await db.exec(`UPDATE "Track" SET "coverImageId" = 620 WHERE "imageId" = ${WITHHELD};
+      UPDATE "Track" SET "coverImageId" = NULL WHERE "imageId" = ${SONG}`);
+    expect(
+      await pageAction(
+        'removeCover',
+        { imageId: String(WITHHELD), violationType: 'gore' },
+        GRANTS,
+        WITHOUT_GRANT
+      )
+    ).toMatchObject({ status: 403 });
+    expect((await imageRow(620)).ingestion).toBe('Scanned');
+  });
+});
+
+describe('the Appeals tab (S2)', () => {
+  const APPEALED_SONG = 640;
+  const ITS_COVER = 641;
+  const LIVE_SONG = 642;
+  const APPEALED_COVER = 643;
+  const APPEALED_PICTURE = 644;
+  const DECIDED_SONG = 645;
+  const MOD = 3;
+
+  beforeEach(async () => {
+    await db.exec(`
+      ALTER TABLE "User" ADD COLUMN IF NOT EXISTS email TEXT;
+      ALTER TABLE "Appeal" ADD COLUMN IF NOT EXISTS "buzzTransactionId" TEXT,
+        ADD COLUMN IF NOT EXISTS "internalNotes" TEXT;
+      CREATE TABLE "ComicPanel" ("projectId" INTEGER, "imageId" INTEGER);
+      INSERT INTO "User" (id, username) VALUES (${MOD}, 'mod_sam');
+      INSERT INTO "Image" (id, url, type, ingestion, "blockedFor", "needsReview", "nsfwLevel", "userId", metadata) VALUES
+        (${APPEALED_SONG}, 'appealed-song', 'audio', 'Blocked', 'moderated', 'appeal', 32, ${OWNER}, '{"title": "Cinder"}'),
+        (${ITS_COVER}, 'its-cover', 'image', 'Scanned', NULL, NULL, 1, ${OWNER}, NULL),
+        (${LIVE_SONG}, 'live-song', 'audio', 'Scanned', NULL, NULL, 2, ${OWNER}, '{"title": "Marigold"}'),
+        (${APPEALED_COVER}, 'appealed-cover', 'image', 'Blocked', 'moderated', 'appeal', 32, ${OWNER}, NULL),
+        (${APPEALED_PICTURE}, 'appealed-picture', 'image', 'Blocked', 'moderated', 'appeal', 32, ${OWNER}, NULL),
+        (${DECIDED_SONG}, 'decided-song', 'audio', 'Blocked', 'moderated', 'appeal', 32, ${OWNER}, '{"title": "Old"}');
+      INSERT INTO "Track" ("imageId", "coverImageId") VALUES
+        (${APPEALED_SONG}, ${ITS_COVER}), (${LIVE_SONG}, ${APPEALED_COVER}), (${DECIDED_SONG}, NULL);
+      UPDATE "Image" SET "needsReview" = 'appeal' WHERE id = ${WITHHELD};
+      INSERT INTO "Appeal" ("userId", "entityType", "entityId", status, "appealMessage", "createdAt") VALUES
+        (${OWNER}, 'Image', ${APPEALED_SONG}, 'Rejected', 'first try', '2026-11-01'),
+        (${OWNER}, 'Image', ${APPEALED_SONG}, 'Pending', 'It is a story', '2026-11-10'),
+        (${OWNER}, 'Image', ${APPEALED_COVER}, 'Pending', 'It is abstract', '2026-11-11'),
+        (${OWNER}, 'Image', ${APPEALED_PICTURE}, 'Pending', 'A picture', '2026-11-12'),
+        (${OWNER}, 'Image', ${DECIDED_SONG}, 'Rejected', 'Decided', '2026-11-13'),
+        (${OWNER}, 'Image', ${WITHHELD}, 'Pending', 'Held words', '2026-11-14');
+      INSERT INTO "ModActivity" ("userId", "entityType", "entityId", activity, "createdAt") VALUES
+        (${MOD}, 'image', ${APPEALED_SONG}, 'review', '2026-11-09');
+    `);
+  });
+
+  const appeals = (user = WITH_GRANT, opts: Partial<Parameters<typeof getSongAppeals>[0]> = {}) =>
+    getSongAppeals({ sort: 'oldest', filter: 'all', q: '', page: 1, user: user as never, ...opts });
+
+  it('lists only Pending appeals of a song or a song’s own cover', async () => {
+    const { items, facets } = await appeals();
+    expect(items.map((r) => [r.id, r.kind])).toEqual([
+      [APPEALED_SONG, 'song'],
+      [APPEALED_COVER, 'cover'],
+      [WITHHELD, 'song'],
+    ]);
+    expect(facets).toEqual({ all: 3, song: 2, cover: 1 });
+    expect(items[0]).toMatchObject({
+      withheld: false,
+      song: { id: APPEALED_SONG, title: 'Cinder' },
+      url: 'appealed-song',
+      coverUrl: 'its-cover',
+      owner: { id: OWNER, username: 'owner' },
+      message: 'It is a story',
+      removal: { by: 'mod_sam', reason: 'Moderated' },
+      appeals: 2,
+    });
+    expect(items[1]).toMatchObject({ song: { id: LIVE_SONG, title: 'Marigold' }, appeals: 1 });
+    expect((await appeals(WITH_GRANT, { filter: 'cover' })).items.map((r) => r.id)).toEqual([
+      APPEALED_COVER,
+    ]);
+  });
+
+  it('sends a withheld appeal with nothing that shows or names it, found only by its id', async () => {
+    const withheld = (await appeals(WITHOUT_GRANT)).items.find((r) => r.id === WITHHELD);
+    expect(withheld).toEqual(
+      expect.objectContaining({
+        withheld: true,
+        song: null,
+        url: null,
+        coverUrl: null,
+        owner: null,
+        message: null,
+        removal: null,
+        nsfwLevel: null,
+      })
+    );
+    expect((await appeals(WITHOUT_GRANT, { q: 'Held' })).items).toEqual([]);
+    expect((await appeals(WITHOUT_GRANT, { q: String(WITHHELD) })).items.map((r) => r.id)).toEqual([
+      WITHHELD,
+    ]);
+  });
+
+  it('leaves songs and their covers out of the image Appeals queue, and every other image in it', async () => {
+    const all = (
+      await getAppealImageQueue({ browsingLevel: 0x7fffffff, limit: 50, csamReview: true })
+    ).items.map((i) => i.id);
+    expect(all).toEqual(
+      expect.arrayContaining([APPEALED_SONG, APPEALED_COVER, APPEALED_PICTURE, DECIDED_SONG])
+    );
+    // The image Appeals queue page (`/images/appeals`), at its default levels.
+    const queue = await loadImageQueue(
+      'appeals',
+      new URL('https://mod.example/images/appeals'),
+      WITH_GRANT as never
+    );
+    expect(queue.items.map((i) => i.id)).toEqual([APPEALED_PICTURE]);
+  });
+
+  const appealOf = async (imageId: number) =>
+    (
+      await db.query<{
+        status: string;
+        resolvedReason: string | null;
+        resolvedMessage: string | null;
+      }>(
+        `SELECT status, "resolvedReason", "resolvedMessage" FROM "Appeal"
+         WHERE "entityId" = ${imageId} ORDER BY id DESC LIMIT 1`
+      )
+    ).rows[0];
+
+  it('approving a cover appeal restores the cover and leaves its song untouched', async () => {
+    const song = await imageRow(LIVE_SONG);
+    const result = await pageAction('approveAppeal', {
+      imageId: String(APPEALED_COVER),
+      resolvedReason: 'misclassified',
+    });
+    expect(result).toMatchObject({ success: true, key: APPEALED_COVER });
+    expect(await imageRow(APPEALED_COVER)).toMatchObject({ needsReview: null, blockedFor: null });
+    expect((await imageRow(APPEALED_COVER)).ingestion).not.toBe('Blocked');
+    expect(await imageRow(LIVE_SONG)).toEqual(song);
+    expect((await appealOf(APPEALED_COVER)).status).toBe('Approved');
+  });
+
+  it('approving a song appeal restores the song and leaves its cover untouched', async () => {
+    const cover = await imageRow(ITS_COVER);
+    expect(
+      await pageAction('approveAppeal', {
+        imageId: String(APPEALED_SONG),
+        resolvedReason: 'misclassified',
+      })
+    ).toMatchObject({ success: true });
+    expect(await imageRow(APPEALED_SONG)).toMatchObject({ needsReview: null, blockedFor: null });
+    expect(await imageRow(ITS_COVER)).toEqual(cover);
+  });
+
+  it('rejecting keeps it removed and records the reason and the message to the owner', async () => {
+    expect(
+      await pageAction('rejectAppeal', {
+        imageId: String(APPEALED_SONG),
+        resolvedReason: 'violation-confirmed',
+        resolvedMessage: 'The lyric names a real person.',
+      })
+    ).toMatchObject({ success: true });
+    expect(await imageRow(APPEALED_SONG)).toMatchObject({
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+      needsReview: null,
+    });
+    expect(await appealOf(APPEALED_SONG)).toEqual({
+      status: 'Rejected',
+      resolvedReason: 'violation-confirmed',
+      resolvedMessage: 'The lyric names a real person.',
+    });
+  });
+
+  it('refuses an appeal that is not on a song or its cover, or already decided', async () => {
+    for (const imageId of [APPEALED_PICTURE, DECIDED_SONG])
+      expect(
+        await pageAction('approveAppeal', {
+          imageId: String(imageId),
+          resolvedReason: 'misclassified',
+        })
+      ).toMatchObject({ status: 409 });
+    expect((await appealOf(APPEALED_PICTURE)).status).toBe('Pending');
+    expect((await imageRow(APPEALED_PICTURE)).ingestion).toBe('Blocked');
+  });
+
+  it('refuses a withheld appeal without the grant to see it', async () => {
+    expect(
+      await pageAction(
+        'approveAppeal',
+        { imageId: String(WITHHELD), resolvedReason: 'misclassified' },
+        GRANTS,
+        WITHOUT_GRANT
+      )
+    ).toMatchObject({ status: 403 });
+    expect((await appealOf(WITHHELD)).status).toBe('Pending');
+  });
+});
+
+describe('every Audio review action', () => {
+  it('refuses without the image moderation grant and changes nothing', async () => {
+    const before = (await db.query(`SELECT * FROM "Image" ORDER BY id`)).rows;
+    for (const action of Object.keys(page.actions) as (keyof typeof page.actions)[])
+      expect(
+        await pageAction(
+          action,
+          {
+            imageId: String(SONG),
+            reportIds: '11',
+            violationType: 'hate',
+            nsfwLevel: '2',
+            resolvedReason: 'misclassified',
+          },
+          {}
+        ),
+        String(action)
+      ).toMatchObject({ status: 403 });
+    expect((await db.query(`SELECT * FROM "Image" ORDER BY id`)).rows).toEqual(before);
   });
 });

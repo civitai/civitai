@@ -1,9 +1,10 @@
 import { browsingLevels, getBrowsingLevelLabel } from '@civitai/shared';
 import { removedKind, removedTitle, type RemovedState } from '$lib/image-review';
+import { VIOLATION_LABELS } from '$lib/violations';
 
 /**
- * Audio review (`/audio-review`): songs and their covers, on the shared triage shell. Only the
- * Reported tab works today; Appeals, Held and Disputes are shown and arrive later on this page.
+ * Audio review (`/audio-review`): songs and their covers, on the shared triage shell. Reported and
+ * Appeals work today; Held and Disputes are shown and arrive later on this page.
  */
 export const AUDIO_TABS = ['reported', 'appeals', 'held', 'disputes'] as const;
 export type AudioTab = (typeof AUDIO_TABS)[number];
@@ -17,7 +18,7 @@ export const AUDIO_TAB_LABELS: Record<AudioTab, string> = {
 };
 
 /** The tabs that work on this page; the rest render disabled. */
-export const LIVE_AUDIO_TABS: readonly AudioTab[] = ['reported'];
+export const LIVE_AUDIO_TABS: readonly AudioTab[] = ['reported', 'appeals'];
 
 export const REPORTED_SORTS = ['oldest', 'newest', 'most'] as const;
 export type ReportedSort = (typeof REPORTED_SORTS)[number];
@@ -93,6 +94,9 @@ export type ReportedSongRow = {
   /** Reporters, merged ones included. */
   reportCount: number;
   reports: SongReport[];
+  /** The song's own cover while there is one to remove: not removed, not withheld from this
+   *  moderator (`visibleSongLinks`). Null when withheld. */
+  removableCoverId: number | null;
 };
 
 /** Labels of a song's reports, most common first, without repeats. */
@@ -105,25 +109,28 @@ export function songReportReasons(reports: readonly Pick<SongReport, 'label' | '
 /** The decisions in key order: 1 Dismiss reports, 2 Remove song, 3 Remove cover, 4 Set rating. */
 export const REPORTED_DECISIONS = ['dismiss', 'remove', 'removeCover', 'rate'] as const;
 
-type DecisionRow = Pick<ReportedSongRow, 'withheld' | 'removed' | 'removal'>;
+type DecisionRow = Pick<ReportedSongRow, 'withheld' | 'removed' | 'removal'> &
+  Partial<Pick<ReportedSongRow, 'removableCoverId'>>;
 const SONG_VERBS = { restore: 'Restore and dismiss', remove: 'Remove song' };
 
 /**
  * Which decision keys a song takes, as Image reports rules on a removed image: a live song takes
  * Dismiss, Remove and Set rating; a rule-blocked or otherwise blocked one is restored by its
  * dismissal and can be made a moderator removal; a moderator-removed one can only have its reports
- * closed; one removed for CSAM, or under CSAM review, takes nothing here. A withheld song takes
- * nothing, and Remove cover is not built on this page yet.
+ * closed; one removed for CSAM, or under CSAM review, takes nothing here. Remove cover is offered
+ * beside any of those while the song has its own cover to remove (`removableCoverId`). A withheld
+ * song takes nothing.
  */
 export function reportedDecisionsEnabled(row: DecisionRow, canAct: boolean): boolean[] {
   if (!canAct || row.withheld) return REPORTED_DECISIONS.map(() => false);
-  if (!row.removed || !row.removal) return [true, true, false, true];
+  const cover = row.removableCoverId != null;
+  if (!row.removed || !row.removal) return [true, true, cover, true];
   switch (removedKind(row.removal)) {
     case 'rule':
     case 'other':
-      return [true, true, false, false];
+      return [true, true, cover, false];
     case 'moderator':
-      return [true, false, false, false];
+      return [true, false, cover, false];
     default:
       return [false, false, false, false];
   }
@@ -212,3 +219,63 @@ export type SongDetails = {
 };
 
 export const songDetailsUrl = (imageId: number) => `/audio-review/details/${imageId}`;
+
+/** Appeals tab chips: every appeal, a song's own, or a cover's. */
+export const APPEAL_FILTERS = ['all', 'song', 'cover'] as const;
+export type AppealFilter = (typeof APPEAL_FILTERS)[number];
+export const APPEAL_FILTER_LABELS: Record<AppealFilter, string> = {
+  all: 'All',
+  song: 'Song',
+  cover: 'Cover',
+};
+export const APPEAL_SORTS = ['oldest', 'newest'] as const;
+export type AppealSort = (typeof APPEAL_SORTS)[number];
+
+/** An owner's Pending appeal of a removed song or of a song's removed cover, one row per appeal. */
+export type SongAppealRow = {
+  /** The appealed image: the song, or the cover. */
+  id: number;
+  appealId: number;
+  kind: 'song' | 'cover';
+  /** Withheld from this moderator by the media access rule: only the id, the kind and the wait. */
+  withheld: boolean;
+  /** The song: itself on a song appeal, the song it is the cover of on a cover appeal (null when that
+   *  song is withheld from this moderator). */
+  song: { id: number; title: string | null } | null;
+  /** The appealed image's storage key: the song's audio, or the cover's picture. Null when withheld. */
+  url: string | null;
+  /** The list thumbnail: a song's cover as the public player shows it. */
+  coverUrl: string | null;
+  owner: { id: number; username: string | null } | null;
+  waitingSince: Date;
+  message: string | null;
+  removal: { reason: string | null; by: string | null; at: Date | null } | null;
+  /** This image's appeals so far, this one included: 2 or more is a repeat. */
+  appeals: number;
+  nsfwLevel: number | null;
+};
+
+/** The decisions in key order: 1 Approve appeal (restores what was appealed), 2 Reject appeal. */
+export const APPEAL_DECISIONS = ['approveAppeal', 'rejectAppeal'] as const;
+
+/** Neither decision on a withheld appeal, nor without the grant. */
+export const appealDecisionsEnabled = (row: Pick<SongAppealRow, 'withheld'>, canAct: boolean) =>
+  APPEAL_DECISIONS.map(() => canAct && !row.withheld);
+
+/** A removal's reason as moderators read it: the violation type recorded with it, else why it is
+ *  blocked. */
+export function removalReasonLabel(tosReason: string | null, blockedFor: string | null): string {
+  const raw = tosReason ?? blockedFor;
+  if (!raw) return 'TOS violation';
+  return (
+    VIOLATION_LABELS[raw as keyof typeof VIOLATION_LABELS] ??
+    raw.replace(/[_-]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
+  );
+}
+
+/** How an appeal row reads in the list. */
+export const appealRowTitle = (row: Pick<SongAppealRow, 'id' | 'kind' | 'withheld' | 'song'>) => {
+  if (row.withheld) return `Withheld ${row.kind} #${row.id}`;
+  const title = row.song?.title || (row.song ? `Untitled song #${row.song.id}` : null);
+  return row.kind === 'song' ? title ?? `Song #${row.id}` : `Cover: ${title ?? `image #${row.id}`}`;
+};

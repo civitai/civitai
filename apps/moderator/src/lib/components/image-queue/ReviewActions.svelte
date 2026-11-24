@@ -30,7 +30,6 @@
       type?: string | null;
       version?: string;
       needsReview?: string | null;
-      type?: string | null;
       /** A song's cover, while there is one to remove: "Remove cover" beside "Remove song". */
       songCoverId?: number | null;
     };

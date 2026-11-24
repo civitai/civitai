@@ -1,6 +1,9 @@
 import { sql } from '@civitai/db/kysely';
 import { blockMarkerText, songsOwnCoverText } from '@civitai/db-queries/profile-picture-clear';
+import { logAxiomError } from './axiom';
 import { dbRead } from './db';
+import { holdsCsamReview } from './held-media';
+import { restrictedImageIds } from './retracted-media';
 
 /** What a queue card knows of the song it belongs to (docs/features/music.md "Moderating songs"). */
 export type SongLinks = {
@@ -74,4 +77,31 @@ export async function songNoticeSubject(
     songId: row.songId,
     title: row.title ?? '',
   };
+}
+
+/**
+ * `getSongLinks`, without a link to an image withheld from `user`: a link names another image than
+ * the card's own, so the card's own check does not cover it. A withheld cover is not offered for
+ * removal (the removal would be refused) and a withheld song is not named. A failed read leaves the
+ * cards without song links rather than failing the queue.
+ */
+export async function visibleSongLinks(ids: number[], user?: App.Locals['user']) {
+  try {
+    const links = await getSongLinks(ids);
+    const linked = [...links.values()].flatMap((l) => [
+      ...(l.songCoverId != null ? [l.songCoverId] : []),
+      ...(l.coverOf ? [l.coverOf.songId] : []),
+    ]);
+    if (!linked.length) return links;
+    const withheld = await restrictedImageIds(linked, { csamReview: holdsCsamReview(user) });
+    for (const [id, l] of links)
+      links.set(id, {
+        songCoverId: l.songCoverId != null && withheld.has(l.songCoverId) ? null : l.songCoverId,
+        coverOf: l.coverOf && withheld.has(l.coverOf.songId) ? null : l.coverOf,
+      });
+    return links;
+  } catch (error) {
+    logAxiomError(error, { name: 'image-queue-song-links' });
+    return new Map<number, SongLinks>();
+  }
 }

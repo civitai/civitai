@@ -46,8 +46,7 @@ import { approvedAppealOf } from '$lib/server/removal-hold';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
 import { heldRemovalMessage, type HeldRemoval } from '$lib/server/removal-hold';
 import { getModel3DsByThumbnailImageIds, unpublishModel3d } from '$lib/server/model3d.service';
-import { getSongLinks, NO_SONG_LINKS, type SongLinks } from '$lib/server/song-links.service';
-import { logAxiomError } from '$lib/server/axiom';
+import { NO_SONG_LINKS, visibleSongLinks } from '$lib/server/song-links.service';
 import { ReportStatus } from '$lib/reports';
 import {
   FLAG_KEPT_THROUGH_BLOCK,
@@ -117,33 +116,6 @@ async function withModel3d<T extends { id: number }>(
     approvedAppeal: approvedAppealOf(appeals.get(i.id)),
     ...(songLinks.get(i.id) ?? NO_SONG_LINKS),
   }));
-}
-
-/**
- * `getSongLinks`, without a link to an image withheld from `user`: a link names another image than
- * the card's own, so the card's own check does not cover it. A withheld cover is not offered for
- * removal (the removal would be refused) and a withheld song is not named. A failed read leaves the
- * cards without song links rather than failing the queue.
- */
-async function visibleSongLinks(ids: number[], user?: App.Locals['user']) {
-  try {
-    const links = await getSongLinks(ids);
-    const linked = [...links.values()].flatMap((l) => [
-      ...(l.songCoverId != null ? [l.songCoverId] : []),
-      ...(l.coverOf ? [l.coverOf.songId] : []),
-    ]);
-    if (!linked.length) return links;
-    const withheld = await restrictedImageIds(linked, { csamReview: holdsCsamReview(user) });
-    for (const [id, l] of links)
-      links.set(id, {
-        songCoverId: l.songCoverId != null && withheld.has(l.songCoverId) ? null : l.songCoverId,
-        coverOf: l.coverOf && withheld.has(l.coverOf.songId) ? null : l.coverOf,
-      });
-    return links;
-  } catch (error) {
-    logAxiomError(error, { name: 'image-queue-song-links' });
-    return new Map<number, SongLinks>();
-  }
 }
 
 async function withheldCards<T extends { id: number }>(items: T[], user?: App.Locals['user']) {
@@ -216,6 +188,8 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
       cursor,
       limit,
       csamReview: holdsCsamReview(user),
+      // Audio review's Appeals tab decides these.
+      songs: 'exclude',
     });
     // model3d would draw a withheld image's media, and a song link would name it; drop both.
     const cards = (await withModel3d(items, user)).map((item) =>
