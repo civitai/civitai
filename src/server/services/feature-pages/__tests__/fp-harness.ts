@@ -228,7 +228,6 @@ export function deciding(sourceId: number): { source: string; verdict: string } 
   return decideVerdicts(steps);
 }
 
-/** Whether the platform holds a subject: a request unless listed unknown, a feature once added. */
 const subjectKnown = (urn: unknown) =>
   !platform.unknown.has(urn as string) &&
   (!String(urn).includes(':feature-pages/features/') || platform.features.has(urn as string));

@@ -211,6 +211,7 @@ describe('posting', () => {
       .length,
   });
 
+  // Refused before any write since civitai/civitai#10318; a feature was answered pending before.
   it.each([
     ['a request', UNKNOWN, true],
     ['a request', UNKNOWN, false],
