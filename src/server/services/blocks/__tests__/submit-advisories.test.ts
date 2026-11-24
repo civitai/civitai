@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
 import { describe, expect, it } from 'vitest';
 import { submitAdvisories } from '~/server/services/blocks/submit-advisories';
@@ -56,6 +59,30 @@ describe('submitAdvisories — warn, never block', () => {
     ).resolves.toEqual([]);
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(iterated).toBe(0);
+  });
+
+  it('SEAM: the page-elements scaffold as the CLI ships it, zipped, answers default-theme', async () => {
+    // The CLI template fixtures (provenance: trace-signals.test.ts), through the real unzip and read.
+    const root = fileURLToPath(
+      new URL('../../../../shared/app-assistant/__tests__/fixtures/page-elements', import.meta.url)
+    );
+    const zip = new JSZip();
+    zip.file('block.manifest.json', '{}');
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else zip.file(relative(root, path).replace(/\.txt$/, ''), readFileSync(path, 'utf8'));
+      }
+    };
+    walk(root);
+    // The shipped, commented-out accent block is in the bundle.
+    expect(await zip.file('src/index.css')!.async('string')).toContain(
+      '  --civitai-color-primary: #7c3aed;\n  --civitai-color-primary-hover: #6d28d9;'
+    );
+    const buffer = Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
+    const advisories = await submitAdvisories(buffer, { timeoutMs: 30_000 });
+    expect(advisories.map((a) => a.code)).toEqual(['default-theme']);
   });
 
   it('a small compressed bundle of adversarial sources is judged in linear time', async () => {
