@@ -24,7 +24,11 @@ export function ModelVersionWrittenReviews({
   /** The model's all-time counts (every version, written or not): the same numbers the page's thumbs badge and star rating read. */
   thumbsUpCount?: number;
   thumbsDownCount?: number;
-  /** This version's thumbs up + down: every review carries a thumb, so 0 skips the request. Unknown fetches. */
+  /**
+   * This version's thumbs up + down: every review carries a thumb, so 0 skips the request. The
+   * model page always passes a number (a version with no metrics row reads as 0); undefined, from a
+   * caller that has no count, fetches.
+   */
   versionRatingCount?: number;
 }) {
   const { modelPageReviews } = useFeatureFlags();
@@ -46,7 +50,9 @@ export function ModelVersionWrittenReviews({
   const scrollAreaRef = useScrollAreaRef();
   const { ref, inView } = useInView({
     root: scrollAreaRef?.current,
-    rootMargin: '400px 0px',
+    // Well ahead of the viewport, so the request usually lands before the row scrolls into view
+    // and the cards insert off screen instead of shifting the content below them.
+    rootMargin: '1200px 0px',
     triggerOnce: true,
     skip: !active,
   });
