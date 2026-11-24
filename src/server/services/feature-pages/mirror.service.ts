@@ -791,7 +791,6 @@ export function reconcileAction(
   if (e.state === 'mod-hidden') return seen === 'visible' ? 'restrict' : null;
   // Retracted there is final: its text is never sent again.
   if (seen === 'retracted') return 'counted';
-  // Hidden there by the platform's own pipeline: counted on its own and never answered.
   if (seen === 'hidden' && item.verdict?.source === 'pipeline') return 'pipeline-hidden';
   // Visible: a takedown's tombstone or another post moved the token, so the text goes again.
   if (item.digest && item.digest !== e.row.platformDigest) return 'repost';

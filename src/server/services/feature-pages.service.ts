@@ -42,8 +42,7 @@ export function resolveFeaturePageEmbed(
   servingHost: string | undefined
 ): { src: string; origin: string } | null {
   if (!embedUrl) return null;
-  // The frame talks only to the host it is given, which must be one the platform lists (or, outside
-  // production, a local dev origin).
+  // The frame trusts the host it is given, so only a listed origin is passed.
   const served = (servingHost ?? '').toLowerCase();
   const host = (FEATURE_PAGES_HOST_ORIGINS as readonly string[]).includes(`https://${served}`)
     ? `https://${served}`

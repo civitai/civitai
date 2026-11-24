@@ -47,6 +47,7 @@ beforeEach(async () => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  envMock.reset();
 });
 
 const signerCalls = () =>
