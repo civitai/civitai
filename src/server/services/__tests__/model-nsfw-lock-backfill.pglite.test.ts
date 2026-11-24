@@ -7,7 +7,8 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 /**
  * The backfill's own selector, UPDATEs and dry-run gate against PGlite: which scan-locked models it may
  * unlock, what the unlock writes, and what a revert puts back. The holds are the real legal-hold SQL
- * over stand-ins for the tables it reads. Ids are invented.
+ * over stand-ins for the tables it reads. Ids are invented. The policy they pin (lock only for sexual
+ * intent; lift the text scan's locks, keep the rating) is described on civitai/civitai#10228.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -300,6 +301,27 @@ describe('model nsfw lock backfill: revert', () => {
     expect(after.meta.nsfwLockBackfill).toMatchObject({ revertedAt: expect.any(String) });
     expect(await nextScanLockBatch(0, 100)).not.toContain(ELIGIBLE);
     expect(await revertScanLocks([ELIGIBLE])).toEqual([]);
+  });
+
+  it('reverts a model a moderator ruled on only before the unlock (control)', async () => {
+    await unlockScanLocks([ELIGIBLE_RULED_BEFORE]);
+    expect(await revertScanLocks([ELIGIBLE_RULED_BEFORE])).toEqual([ELIGIBLE_RULED_BEFORE]);
+  });
+
+  it.each([
+    [
+      'a moderator ruled on its nsfw since the unlock',
+      `INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt")
+        VALUES (7, 'lockProperty:nsfw', 'model', $ID, now() + interval '1 minute')`,
+    ],
+    ['its scan marker is gone', `UPDATE "Model" SET meta = meta - 'systemNsfwLock' WHERE id = $ID`],
+  ])('leaves the model as it is when %s', async (_reason, sql) => {
+    await unlockScanLocks([ELIGIBLE]);
+    await db.exec(sql.replaceAll('$ID', String(ELIGIBLE)));
+    const before = await row(ELIGIBLE);
+    expect(await nextRevertBatch(0, 100)).toEqual([]);
+    expect(await revertScanLocks([ELIGIBLE])).toEqual([]);
+    expect(await row(ELIGIBLE)).toEqual(before);
   });
 
   it('touches no model an unlock never changed', async () => {

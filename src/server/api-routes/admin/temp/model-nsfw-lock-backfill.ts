@@ -53,28 +53,37 @@ const everyOwnerSql = Prisma.sql`(
  * Each reason a scan-locked model keeps its lock. Fail closed: a marker with no readable time counts
  * as ruled on, since a ruling after it cannot be ruled out.
  */
-const exclusions = {
-  moderatorRuled: Prisma.sql`(
-    COALESCE(m.meta->'systemNsfwLock'->>'at', '') !~ '^\\d{4}-\\d{2}-\\d{2}T'
-    OR EXISTS (
-      SELECT 1 FROM "ModActivity" ma
-      WHERE ma."entityType" = 'model' AND ma."entityId" = m.id
-        AND ma.activity = ANY(${[...MODERATOR_NSFW_LOCK_ACTIVITIES, 'rejectLockReview']}::text[])
-        AND ma."userId" IS DISTINCT FROM ${constants.system.user.id}
-        AND ma."createdAt" > (m.meta->'systemNsfwLock'->>'at')::timestamptz
-    )
-  )`,
+/**
+ * Whether a moderator ruled on the nsfw lock of the model aliased `m` after the time `at` (a text
+ * SQL expression). Fail closed: a time that cannot be read counts as ruled on, since a ruling after it
+ * cannot be ruled out.
+ */
+const moderatorRuledSinceSql = (at: Prisma.Sql) => Prisma.sql`(
+  COALESCE(${at}, '') !~ '^\\d{4}-\\d{2}-\\d{2}T'
+  OR EXISTS (
+    SELECT 1 FROM "ModActivity" ma
+    WHERE ma."entityType" = 'model' AND ma."entityId" = m.id
+      AND ma.activity = ANY(${[...MODERATOR_NSFW_LOCK_ACTIVITIES, 'rejectLockReview']}::text[])
+      AND ma."userId" IS DISTINCT FROM ${constants.system.user.id}
+      AND ma."createdAt" > (${at})::timestamptz
+  )
+)`;
+
+export const exclusions = {
+  moderatorRuled: moderatorRuledSinceSql(Prisma.sql`m.meta->'systemNsfwLock'->>'at'`),
   pendingLockReview: Prisma.sql`EXISTS (
     SELECT 1 FROM "Appeal" a
     WHERE a."entityType" = 'Model' AND a."entityId" = m.id AND a.status = 'Pending'
   )`,
   minorOrPoi: Prisma.sql`(m.minor OR m.poi)`,
   reverted: Prisma.sql`(m.meta->'nsfwLockBackfill'->>'revertedAt') IS NOT NULL`,
-  ownerCsamReport: Prisma.sql`EXISTS (
+  // Two EXISTS rather than one OR, so the subject leg can use the CsamReport userId index.
+  ownerCsamReport: Prisma.sql`(EXISTS (
+    SELECT 1 FROM ${everyOwnerSql} ow JOIN "CsamReport" r ON r."userId" = ow."ownerId"
+  ) OR EXISTS (
     SELECT 1 FROM ${everyOwnerSql} ow
-    JOIN "CsamReport" r
-      ON r."userId" = ow."ownerId" OR r.details->>'secondaryUserId' = ow."ownerId"::text
-  )`,
+    JOIN "CsamReport" r ON r.details->>'secondaryUserId' = ow."ownerId"::text
+  ))`,
   ownerEvidenceHold: Prisma.sql`EXISTS (
     SELECT 1 FROM ${everyOwnerSql} ow JOIN "EvidenceHold" h ON h."userId" = ow."ownerId"
   )`,
@@ -157,11 +166,18 @@ export async function unlockScanLocks(ids: number[]) {
   return rows.map((r) => r.id);
 }
 
-/** A model an unlock run changed and no revert has put back yet. */
+/**
+ * A model an unlock run changed and no revert has put back yet. A moderator's decision since the
+ * unlock wins over a revert: a model they ruled on since, or whose scan marker is gone (a moderator
+ * save drops it), is left as it is.
+ */
 const revertableSql = Prisma.sql`
   m.meta->'nsfwLockBackfill'->>'bucket' = 'scan-locks'
   AND (m.meta->'nsfwLockBackfill'->>'revertedAt') IS NULL
   AND jsonb_typeof(m.meta->'nsfwLockBackfill'->'priorLockedProperties') = 'array'
+  AND jsonb_typeof(m.meta) = 'object'
+  AND m.meta->'systemNsfwLock'->>'source' = ANY(${[...SCAN_RATING_SOURCES]}::text[])
+  AND NOT ${moderatorRuledSinceSql(Prisma.sql`m.meta->'nsfwLockBackfill'->>'at'`)}
 `;
 
 export async function nextRevertBatch(afterId: number, limit: number) {
