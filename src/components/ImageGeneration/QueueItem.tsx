@@ -74,7 +74,6 @@ import {
   type OutputAction,
 } from '~/components/ImageGeneration/workflow-display';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
-import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
@@ -92,7 +91,11 @@ import type {
   ImageBlob,
   VideoBlob,
 } from '~/shared/orchestrator/workflow-data';
-import { NSFW_CAPPED, PRIVATE_GEN, PRIVATE_GEN_MESSAGE } from '~/shared/orchestrator/workflow-data';
+import {
+  blockedReasonMessage,
+  PRIVATE_GEN,
+  PRIVATE_GEN_MESSAGE,
+} from '~/shared/orchestrator/workflow-data';
 import { isFbxOnlyDelivered } from '~/shared/orchestrator/model3d-output';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
 import {
@@ -896,19 +899,8 @@ function SubmitBlockedImagesForReviewButton({
   );
 }
 
-const imageBlockedReasonMap: Record<string, string | React.ComponentType<any>> = {
-  ChildReference: 'An inappropriate child reference was detected.',
-  Bestiality: 'Bestiality detected.',
-  'Child Sexual - Anime': 'Inappropriate minor content detected.',
-  'Child Sexual - Realistic': 'Inappropriate minor content detected.',
-  NsfwLevel: 'Mature content restriction.',
-  NSFWLevel:
-    'One or more resources used in this generation cannot be used to generate mature content',
-  NSFWLevelSourceImageRestricted: UNMARKED_SOURCE_IMAGE_MESSAGE,
+const blockedReasonBlocks: Record<string, React.ComponentType<any>> = {
   [PRIVATE_GEN]: PrivateGenBlock,
-  [NSFW_CAPPED]:
-    "This output was rated mature, and this generation is limited to PG-13, so it can't be shown.",
-  siteRestricted: 'Images with mature ratings are unavailable on this site',
   enableNsfw: EnableNsfwBlock,
   canUpgrade: CanUpgradeBlock,
 };
@@ -975,7 +967,7 @@ function BlockedBlocks(props: {
   return (
     <>
       {items.map(({ value, count }) => {
-        const message = imageBlockedReasonMap[value] ?? value;
+        const message = blockedReasonBlocks[value] ?? blockedReasonMessage(value);
 
         return (
           <TwCard

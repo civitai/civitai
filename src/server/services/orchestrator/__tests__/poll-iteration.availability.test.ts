@@ -171,7 +171,7 @@ describe('pollIterationWorkflow availability', () => {
     const result = await poll();
 
     expect(result.status).toBe('failed');
-    expect(result.errorMessage).toMatch(/yellow Buzz/);
+    expect(result.errorMessage).toContain('Open the Generator queue');
     expect(fetch).not.toHaveBeenCalled();
     expect(mocks.createImage).not.toHaveBeenCalled();
   });

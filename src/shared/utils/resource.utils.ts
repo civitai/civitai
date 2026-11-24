@@ -44,7 +44,7 @@ export type ResourceNodeKey = (typeof RESOURCE_NODE_KEYS)[number];
 
 /**
  * A resource that makes a generation private, capping its output at PG/PG-13: a Private or
- * unpublished (Draft/Training) version, an in-app training epoch, or a raw-AIR Training Studio epoch.
+ * unpublished version (`isPrivate`), an in-app training epoch, or a raw-AIR Training Studio epoch.
  */
 export function capsAsPrivateGeneration(resource: {
   id?: unknown;

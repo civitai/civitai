@@ -467,6 +467,7 @@ import {
   buildGenerationContext,
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import { outputRestrictions } from '~/server/services/orchestrator/form-graph/output-restrictions';
 import {
   assertGenerationInputsUsable,
   countAppBlockHostSources,
@@ -1196,15 +1197,6 @@ function resolveBlockMaturity(claims: { maxBrowsingLevel?: number }): {
     // (SFW, per the App-Blocks product decision) block gets the SFW audit too.
     isGreen: allowMatureContent === false,
   };
-}
-
-/**
- * The maturity fields of a real submit: the token's ceiling, held to PG-13 with mature content
- * refused when `capOutput` is set.
- */
-function blockOutputClamp(capOutput: boolean, allowMatureContent: boolean | undefined) {
-  if (capOutput) return { nsfwLevel: 'pg13' as const, allowMatureContent: false };
-  return allowMatureContent === false ? { allowMatureContent: false } : {};
 }
 
 // SECURITY-CRITICAL (W10). A page token has no model binding, so the model-
@@ -8854,7 +8846,7 @@ export const blocksRouter = router({
             // Authoritative maturity clamp on the REAL submit — the orchestrator
             // rejects mature output when this is false. Token-claim derived, and a private
             // generation or a restricting base model holds it to PG-13 whatever the token allows.
-            ...blockOutputClamp(capOutput, allowMatureContent),
+            ...outputRestrictions(capOutput, allowMatureContent),
             // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s
             // OWN internal 3× retry of THIS call — collapses to the existing
             // workflow on the orchestrator (dedupe on (userId, externalId)) → no
@@ -11866,7 +11858,7 @@ async function submitCustomComfyWorkflow(opts: {
         tags,
         currencies,
         // Authoritative maturity clamp on the real submit — token-claim derived.
-        ...blockOutputClamp(capOutput, allowMatureContent),
+        ...outputRestrictions(capOutput, allowMatureContent),
         // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s OWN
         // internal 3× retry of THIS call — collapses to the existing workflow on the
         // orchestrator → no second Buzz charge. Always present.
@@ -14237,7 +14229,7 @@ async function submitPassThroughStepWorkflow(opts: {
         steps: [orchestratorStep as any],
         tags,
         currencies,
-        ...blockOutputClamp(capOutput, allowMatureContent),
+        ...outputRestrictions(capOutput, allowMatureContent),
         externalId: blockExternalId,
       },
     });
@@ -14915,7 +14907,7 @@ async function submitMultiStepWorkflow(opts: {
         steps: orchestratorSteps as any,
         tags,
         currencies,
-        ...blockOutputClamp(capOutput, allowMatureContent),
+        ...outputRestrictions(capOutput, allowMatureContent),
         ...(body.arguments ? { arguments: body.arguments } : {}),
         // Which steps this submit named, so a later poll can tell them from a
         // step the orchestrator added. See `WORKFLOW_METADATA_BLOCK_STEPS_KEY`.
@@ -15630,7 +15622,7 @@ type QuotedGrantSubmitPlan = {
   invocation: { step: string; variant: string };
   /** Constant settle labels (metric cardinality). */
   settle: { engine: string; recipe: string };
-  /** Hold the output to PG-13 (`blockOutputClamp`). */
+  /** Hold the output to PG-13 (`outputRestrictions`). */
   capOutput?: boolean;
 };
 
@@ -15951,7 +15943,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
           steps: [plan.step as any],
           tags: plan.tags,
           currencies,
-          ...blockOutputClamp(!!plan.capOutput, allowMatureContent),
+          ...outputRestrictions(!!plan.capOutput, allowMatureContent),
           externalId: blockExternalId,
         },
       });

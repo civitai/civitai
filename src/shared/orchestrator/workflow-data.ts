@@ -13,6 +13,7 @@ import type {
   NormalizedModel3DOutput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
+import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.constants';
 import {
   exceedsNsfwLevel,
   isPrivateMature,
@@ -48,17 +49,46 @@ export interface WorkflowDataOptions {
 
 export const PENDING_RATING = 'pendingRating';
 export const NSFW_CAPPED = 'nsfwCapped';
-/** Paying the yellow unlock never lifts the workflow's cap, so a capped output offers no unlock. */
 export const NSFW_CAPPED_MESSAGE =
   "This generation is limited to a lower rating, so its mature result can't be shown.";
 export const PRIVATE_GEN = 'privateGen';
 export const PRIVATE_GEN_MESSAGE =
   "Private and unpublished models can only generate PG and PG-13 content, so this mature result can't be shown.";
-/** Both reasons are rating caps, so neither offers the yellow unlock. */
+const RESOURCE_MATURE_REFUSAL =
+  'One or more resources used in this generation cannot be used to generate mature content.';
+const MINOR_CONTENT = 'Inappropriate minor content detected.';
+
+/**
+ * Every output `blockedReason` a surface explains, from the orchestrator or `BlobData`. A
+ * `capped` reason is a rating cap the yellow unlock never lifts, so it offers no unlock.
+ */
+const BLOCKED_REASONS: Record<string, { message: string; capped?: true }> = {
+  ChildReference: { message: 'An inappropriate child reference was detected.' },
+  Bestiality: { message: 'Bestiality detected.' },
+  'Child Sexual - Anime': { message: MINOR_CONTENT },
+  'Child Sexual - Realistic': { message: MINOR_CONTENT },
+  NsfwLevel: { message: RESOURCE_MATURE_REFUSAL },
+  NSFWLevel: { message: RESOURCE_MATURE_REFUSAL },
+  NSFWLevelSourceImageRestricted: { message: UNMARKED_SOURCE_IMAGE_MESSAGE },
+  [NSFW_CAPPED]: { message: NSFW_CAPPED_MESSAGE, capped: true },
+  [PRIVATE_GEN]: { message: PRIVATE_GEN_MESSAGE, capped: true },
+  siteRestricted: {
+    message:
+      'This result was rated mature and is not available on this site. Open it on civitai.red to use it.',
+  },
+  enableNsfw: {
+    message: 'This result was rated mature. Enable mature content in your settings to view it.',
+  },
+  canUpgrade: { message: 'This result was rated mature. Unlock it with yellow Buzz to see it.' },
+  membershipRequired: { message: 'This result requires a membership upgrade to view.' },
+};
+
 export const isCappedBlock = (blockedReason: string | null | undefined) =>
-  blockedReason === NSFW_CAPPED || blockedReason === PRIVATE_GEN;
-export const cappedBlockMessage = (blockedReason: string | null | undefined) =>
-  blockedReason === PRIVATE_GEN ? PRIVATE_GEN_MESSAGE : NSFW_CAPPED_MESSAGE;
+  !!blockedReason && !!BLOCKED_REASONS[blockedReason]?.capped;
+
+export const blockedReasonMessage = (blockedReason: string | undefined) =>
+  (blockedReason && BLOCKED_REASONS[blockedReason]?.message) ||
+  `Generation blocked: ${blockedReason}.`;
 
 /**
  * Video engines the orchestrator never rates (the provider moderates its own output), so a hold

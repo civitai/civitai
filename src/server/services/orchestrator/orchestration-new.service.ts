@@ -46,7 +46,7 @@ import { createVideoPreprocessStep } from './handlers/video-preprocess.handler';
 import { collectStepWarnings } from './step-warnings';
 import type { GenerationData, LooseGenerationData } from './form-graph/types';
 import { AVATAR_WORKFLOW } from '~/shared/constants/avatar-styles.constants';
-import { capsGenerationOutput, workflowOutputRestrictions } from './form-graph/output-restrictions';
+import { capsGenerationOutput, outputRestrictions } from './form-graph/output-restrictions';
 import {
   getInputTypeForWorkflow,
   isWorkflowAvailable,
@@ -1351,7 +1351,7 @@ export async function createWorkflowStepsFromGraph({
   tags: string[];
   hasTipEligibleResource: boolean;
   boostRequired: boolean;
-  /** The submit is private, or its ecosystem or a resource's base model restricts mature generation. */
+  /** `capsGenerationOutput`: the output is held to PG-13. */
   capOutput: boolean;
 }> {
   data = expandAvatarData(data);
@@ -1378,12 +1378,12 @@ export async function createWorkflowStepsFromGraph({
       acceptBoostRequired
     )
   );
-  const capOutput =
-    isPrivateGeneration ||
-    capsGenerationOutput({
-      baseModels: enrichedResources.map((r) => r.baseModel),
-      ecosystem: 'ecosystem' in data ? data.ecosystem : undefined,
-    });
+  const capOutput = capsGenerationOutput({
+    isPrivateGeneration,
+    workflow: data.workflow,
+    baseModels: enrichedResources.map((r) => r.baseModel),
+    ecosystem: 'ecosystem' in data ? data.ecosystem : undefined,
+  });
 
   // Check for POI in prompt
   const prompt = 'prompt' in data ? (data.prompt as string) : undefined;
@@ -2084,10 +2084,6 @@ export async function generateFromGraph({
 
   const tips = buildWorkflowTips({ civitaiTip, creatorTip, hasTipEligibleResource });
 
-  // Check if private generation (from workflow metadata)
-  const isPrivateGeneration = !!(workflowMetadata as { isPrivateGeneration?: boolean })
-    ?.isPrivateGeneration;
-
   // Silent checkpoint substitutions recorded by the validation at the top of
   // this function (#3520 / #3665). Read off THIS request's per-request collector
   // — never a shared or cached object — so it describes this submit and no one
@@ -2179,12 +2175,7 @@ export async function generateFromGraph({
       experimental,
       metadata,
       callbacks: getOrchestratorCallbacks(userId, { remixApp: tags.includes(REMIX_APP_TAG) }),
-      ...workflowOutputRestrictions({
-        workflow: data.workflow,
-        isPrivateGeneration,
-        capOutput,
-        allowMatureContent,
-      }),
+      ...outputRestrictions(capOutput, allowMatureContent),
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       // Always an idempotency key: the form sends one per click, an API caller may send none,

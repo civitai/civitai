@@ -10,13 +10,8 @@ import type { Tracker } from '~/server/clickhouse/client';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import { sanitizeStepErrors } from './provider-errors';
 import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
-import {
-  cappedBlockMessage,
-  isCappedBlock,
-  WorkflowData,
-} from '~/shared/orchestrator/workflow-data';
+import { blockedReasonMessage, WorkflowData } from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
-import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.constants';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 /**
@@ -247,22 +242,8 @@ export async function pollIterationWorkflow({
 /** Map an output's blockedReason to plain text for the iterative editor, which has no unlock-in-place UI. */
 function blockedReasonToMessage(blockedReason: string | undefined): string | undefined {
   if (!blockedReason) return undefined;
-  if (isCappedBlock(blockedReason)) return cappedBlockMessage(blockedReason);
-  switch (blockedReason) {
-    case 'canUpgrade':
-      return 'Mature content was generated. Open the Generator queue to unlock it with yellow Buzz — your Buzz is held, not lost.';
-    case 'membershipRequired':
-      return 'This image requires a membership upgrade to view. Upgrade your membership to unlock it.';
-    case 'siteRestricted':
-      return 'This image was rated mature and is not available on this site. Open it on civitai.red to use it.';
-    case 'enableNsfw':
-      return 'This image was rated mature. Enable mature content in your settings to view it.';
-    case 'NsfwLevel':
-    case 'NSFWLevel':
-      return 'One or more resources used here cannot generate mature content. Try a different model or a tamer prompt.';
-    case 'NSFWLevelSourceImageRestricted':
-      return UNMARKED_SOURCE_IMAGE_MESSAGE;
-    default:
-      return `Generation failed: ${blockedReason}.`;
-  }
+  // The editor has no unlock of its own, so it points to the queue's.
+  if (blockedReason === 'canUpgrade')
+    return 'Mature content was generated. Open the Generator queue to unlock it with yellow Buzz — your Buzz is held, not lost.';
+  return blockedReasonMessage(blockedReason);
 }

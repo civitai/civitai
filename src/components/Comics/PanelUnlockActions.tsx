@@ -1,6 +1,6 @@
 import { Button, Text } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
-import { cappedBlockMessage, isCappedBlock } from '~/shared/orchestrator/workflow-data';
+import { blockedReasonMessage, isCappedBlock } from '~/shared/orchestrator/workflow-data';
 
 /**
  * The CTA on a single-image panel in `RequireUnlock`. A capped output gets none: the yellow unlock
@@ -22,7 +22,7 @@ export function PanelUnlockActions({
   if (isCappedBlock(blockedReason))
     return (
       <Text size="xs" c="dimmed" ta="center" px="xs">
-        {cappedBlockMessage(blockedReason)}
+        {blockedReasonMessage(blockedReason)}
       </Text>
     );
 

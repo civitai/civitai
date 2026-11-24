@@ -459,7 +459,9 @@ export async function checkAppStepResources(
   const baseModels = versions.map((v) => v.baseModel);
   assertNoRestrictedBaseModels({ baseModels });
   return {
-    capOutput:
-      versions.some(isRestrictedGenerationResource) || capsGenerationOutput({ baseModels }),
+    capOutput: capsGenerationOutput({
+      isPrivateGeneration: versions.some(isRestrictedGenerationResource),
+      baseModels,
+    }),
   };
 }

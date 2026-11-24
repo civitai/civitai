@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Flags } from '~/shared/utils/flags';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { cappedBlockMessage, isCappedBlock } from '~/shared/orchestrator/workflow-data';
+import { blockedReasonMessage, isCappedBlock } from '~/shared/orchestrator/workflow-data';
 
 // One candidate slot, in stable orchestrator order. Either:
 //  - clean (downloaded to S3, picker may select it), or
@@ -223,7 +223,7 @@ export function CandidateImageModal({
                       <Text size="xs" c="white" ta="center">
                         {isUnlockableSlot(slot)
                           ? 'Use the unlock button above to reveal.'
-                          : cappedBlockMessage(slot.blockedReason)}
+                          : blockedReasonMessage(slot.blockedReason)}
                       </Text>
                     </div>
                   </div>
