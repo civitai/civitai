@@ -4,6 +4,7 @@ import '~/styles/globals.css';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
+import { recordImageLoadErrors } from '../../../test/image-load-errors';
 import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as ToursProvider from '~/components/Tours/ToursProvider';
 import type { MusicTrack } from '~/store/music-player.store';
@@ -30,17 +31,8 @@ import { MusicPlayerBar } from '~/components/MusicPlayer/MusicPlayerBar';
 import { useMusicPlayerStore } from '~/store/music-player.store';
 import { formatPlaybackTime } from '~/utils/audio-player';
 
-// Nothing serves a cover in the test browser, so a shown cover's <img> fails to load a moment after
-// it renders and SongArt swaps it for the placeholder. Each cover <img> that rendered is recorded
-// here when its load fails.
-const renderedCovers: { src: string }[] = [];
-document.addEventListener(
-  'error',
-  (e) => {
-    if (e.target instanceof HTMLImageElement) renderedCovers.push({ src: e.target.src });
-  },
-  true
-);
+// A cover's <img> that rendered, recorded when its load fails (see the helper).
+const failedCovers = recordImageLoadErrors();
 
 const song = (id: number, title: string, durationSec = 200): MusicTrack => ({
   id,
@@ -133,7 +125,7 @@ describe('the Up next panel', () => {
     await openPanel();
 
     await expect
-      .poll(() => renderedCovers.some((c) => c.src.startsWith(LOADABLE_IMAGE_DATA_URI)))
+      .poll(() => failedCovers.some((src) => src.startsWith(LOADABLE_IMAGE_DATA_URI)))
       .toBe(true);
     // A song without a cover keeps the placeholder.
     await expect

@@ -34,6 +34,16 @@ export function Equalizer({ playing }: { playing: boolean }) {
   );
 }
 
+/**
+ * The cover url to render, or none once it failed to load. A replaced cover's file is deleted, so a
+ * cover list read before the replacement can name a cover that no longer loads; a new url is tried.
+ */
+export function useLoadableCover(url: string | undefined) {
+  const [failedUrl, setFailedUrl] = useState<string>();
+  const shown = url && url !== failedUrl ? url : undefined;
+  return { shown, onError: () => setFailedUrl(shown) };
+}
+
 /** A song's cover, or the music placeholder when it has none the viewer may see. */
 export function SongArt({
   url,
@@ -50,10 +60,7 @@ export function SongArt({
   /** No cover: the design's gradient tile (Pencil `AECSM`) rather than the plain grey one. */
   gradient?: boolean;
 }) {
-  // A replaced cover's file is deleted, so a list read before the replacement can name a cover
-  // that no longer loads: show the placeholder rather than a broken image.
-  const [failedUrl, setFailedUrl] = useState<string>();
-  const shown = url && url !== failedUrl ? url : undefined;
+  const { shown, onError } = useLoadableCover(url);
   return (
     <div
       className={clsx(
@@ -67,7 +74,7 @@ export function SongArt({
       {shown ? (
         <EdgeMedia
           src={shown}
-          onError={() => setFailedUrl(shown)}
+          onError={onError}
           type="image"
           width={width * 2}
           name="Song cover"

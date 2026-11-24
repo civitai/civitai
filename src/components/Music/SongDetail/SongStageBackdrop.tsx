@@ -1,5 +1,5 @@
-import { useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useLoadableCover } from '~/components/MusicPlayer/MusicPlayerParts';
 import { useMusicPlayerCover } from '~/components/MusicPlayer/useMusicPlayerCover';
 import { ViewerBrowsingLevelScope } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
@@ -14,8 +14,8 @@ function SongStageBackdropContent({ songId }: { songId: number }) {
   const { cover, accent } = useMusicPlayerCover(songId);
   const from = accent?.accent2 ?? PRIMARY;
   const to = accent?.accent ?? PRIMARY;
-  // A replaced cover's file is deleted; a stale read of it keeps the wash alone.
-  const [failedUrl, setFailedUrl] = useState<string>();
+  // A cover that fails to load leaves the wash alone.
+  const { shown, onError } = useLoadableCover(cover?.url);
   return (
     <div
       aria-hidden
@@ -26,10 +26,10 @@ function SongStageBackdropContent({ songId }: { songId: number }) {
         className="absolute inset-[-15%] opacity-90 blur-[90px]"
         style={{ background: `linear-gradient(225deg, ${from}, ${to})` }}
       >
-        {cover && cover.url !== failedUrl && (
+        {shown && (
           <EdgeMedia
-            src={cover.url}
-            onError={() => setFailedUrl(cover.url)}
+            src={shown}
+            onError={onError}
             type="image"
             width={450}
             name="Song cover"
