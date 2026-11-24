@@ -3,6 +3,7 @@ import { logger } from '@/utils/logger';
 import type { ImageRow } from './eligibility';
 import { EMBED_MODEL, VECTOR_DIMENSIONS, type ModelStamp } from './qdrant';
 import { parseRetryAfter, RateLimiter } from './ratelimit';
+import { MAX_VIDEO_KB, MAX_VIDEO_SECONDS, MAX_VIDEO_SIDE } from './videos/limits';
 
 // The orchestration client has no type for this step yet; this is the subset we send and read.
 // One step embeds exactly one input; a workflow carries many steps.
@@ -58,9 +59,6 @@ const stepDetails = (ids: string[], steps: Map<string | undefined, WorkflowStep>
 
 export const MAX_INPUTS_PER_WORKFLOW = 128;
 export const MAX_VIDEOS_PER_WORKFLOW = 8;
-const MAX_VIDEO_SECONDS = 60;
-const MAX_VIDEO_KB = 100 * 1024;
-const MAX_VIDEO_SIDE = 4096;
 // The variant the site's image cards request for 2x screens (a 450 card's hi-DPI rung), so it is
 // usually already stored and the image cacher redirects to it without converting the original.
 // The smallest ladder rung at or above the model's 512x512 profile that the site requests.

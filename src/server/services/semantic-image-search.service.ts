@@ -1,3 +1,4 @@
+import { VIDEO_LENGTH_BOUNDS } from '~/shared/constants/video-length.constants';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -284,6 +285,8 @@ export async function searchSemanticImages({
       gte: input.postedAfter?.toISOString(),
       lte: input.postedBefore?.toISOString(),
     },
+    ...(collection === 'videos' &&
+      input.length && { numberRange: { key: 'duration', ...VIDEO_LENGTH_BOUNDS[input.length] } }),
   };
 
   const viewer = { isModerator: !!user?.isModerator };

@@ -1565,6 +1565,23 @@ describe('the video index', () => {
     expect(calls[0].filter.anyOf?.type).toBeUndefined();
   });
 
+  it.each([
+    ['a video search with a length', 'videos', '5to15', { key: 'duration', gte: 5, lt: 15 }],
+    ['the longest preset, open-ended', 'videos', '30to60', { key: 'duration', gte: 30 }],
+    ['a video search without one', 'videos', undefined, undefined],
+    ['an image search with one', 'images', '5to15', undefined],
+  ] as const)('bounds the clip length: %s', async (_, collection, length, expected) => {
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: undefined, query: 'a fox running', length }),
+      user: VIEWER,
+      collection,
+      candidateSource: source,
+    });
+    expect(calls[0].filter.numberRange).toEqual(expected);
+  });
+
   it('a held clip is not served', async () => {
     h.fakeGetAllImages = visibleOnly(new Set([201, 202, 203]));
     dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 202 }]);

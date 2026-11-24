@@ -366,3 +366,23 @@ describe('withWordMatchesFirst', () => {
     expect(filter.must).toContainEqual({ key: 'search_text', match: { text: 'kiyami kuro' } });
   });
 });
+
+describe('a numeric range', () => {
+  const gate: ViewerGate = { kind: 'level', nsfwLevels: [1] };
+
+  it('bounds the key from gte, below lt', () => {
+    const { must } = buildQdrantFilter('videos', {
+      gate,
+      numberRange: { key: 'duration', gte: 5, lt: 15 },
+    });
+    expect(must).toContainEqual({ key: 'duration', range: { gte: 5, lt: 15 } });
+  });
+
+  it('leaves the filter as it was when absent', () => {
+    const range = { key: 'sortAt', gte: '2026-01-01T00:00:00.000Z' };
+    const { must } = buildQdrantFilter('images', { gate, range });
+    expect(JSON.stringify(must.slice(-1))).toBe(
+      '[{"key":"sortAt","range":{"gte":"2026-01-01T00:00:00.000Z"}}]'
+    );
+  });
+});
