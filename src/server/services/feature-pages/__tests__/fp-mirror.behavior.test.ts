@@ -307,7 +307,6 @@ describe('moderation changes the mirror carries', () => {
     expect(platform.erased).toEqual([AUTHOR]);
     for (const id of [a, b, c, d].map((x) => x.sourceId))
       expect((await mirrorRow(id)).pushedState).toBe('erased');
-    // The erased account's handle is no longer served from cache; another viewer's is.
     expect(await redis.packed.get(handleKey(AUTHOR))).toBeNull();
     expect(await redis.packed.get(`${handleKey(AUTHOR)}:miss`)).toBeNull();
     expect(await redis.packed.get(handleKey(OTHER))).toBe(1);
@@ -495,6 +494,7 @@ describe('the reconcile', () => {
     expect(row.pushAttempts).toBe(0);
   });
 
+  // The bound (FP_MAX_LIFTS in a 30-day window) was set in civitai/civitai#10312.
   it('a lift that keeps losing is sent three times, then counted stuck and never settled', async () => {
     const id = (await seed('never lifts')).comment.sourceId;
     const hiddenAt = new Date(Date.now() - 1_000).toISOString();

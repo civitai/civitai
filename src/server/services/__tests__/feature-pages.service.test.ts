@@ -288,7 +288,9 @@ describe('getFeaturePageViewerHandle', () => {
 
     await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
     expect(Date.now() - started).toBeLessThan(2_500);
-    expect(cache.peek(`${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:42:miss`)).toBe(1);
+    await vi.waitFor(() =>
+      expect(cache.peek(`${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:42:miss`)).toBe(1)
+    );
   });
 
   it('caches a handle that arrives after the render gave up, for the next render', async () => {

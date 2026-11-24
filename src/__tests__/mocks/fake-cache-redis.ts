@@ -85,7 +85,6 @@ export function installFakeCacheRedis() {
   };
   r.incr.mockImplementation(async (key: string) => incrBy(key, 1));
   r.incrBy.mockImplementation(async (key: string, by: number) => incrBy(key, by));
-  // Queued, applied in order on exec.
   r.multi.mockImplementation(() => {
     const queued: Array<() => unknown> = [];
     const chain = {
