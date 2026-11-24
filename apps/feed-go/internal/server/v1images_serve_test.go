@@ -445,7 +445,7 @@ func TestServeV1ImagesComputeFallbacks(t *testing.T) {
 	s.RequestBudget = 0
 
 	s.computeV1Fn = func(context.Context, *http.Request) (*computed, error) {
-		return &computed{payload: []byte(`{"items":[{"id":1,"name":"a�b"}],"metadata":{}}`)}, nil
+		return &computed{payload: []byte(`{"items":[{"id":1,"name":"a\ufffdb"}],"metadata":{}}`)}, nil
 	}
 	s.ServeV1ImagesHTTP(httptest.NewRecorder(), v1Request("/api/v1/images?limit=2", nil))
 	if imagesCount(t, reg, "feed_go_fallback_total", map[string]string{"reason": "v1-images-invalid-utf8"}) != 1 {
@@ -454,11 +454,11 @@ func TestServeV1ImagesComputeFallbacks(t *testing.T) {
 	// Control: an escaped U+2028 is served, written raw as JSON.stringify writes it, with the ETag
 	// Next gives that text (node, 2026-11-21; TestServeV1ModelsComputeFallbacks pins the same).
 	s.computeV1Fn = func(context.Context, *http.Request) (*computed, error) {
-		return &computed{payload: []byte(`{"id":42,"name":"a b"}`)}, nil
+		return &computed{payload: []byte(`{"id":42,"name":"a\u2028b"}`)}, nil
 	}
 	w := httptest.NewRecorder()
 	s.ServeV1ImagesHTTP(w, v1Request("/api/v1/images?limit=2", nil))
-	if w.Code != http.StatusOK || w.Body.String() != "{\"id\":42,\"name\":\"a b\"}" || w.Header().Get("ETag") != `"ea5y3kfvagm"` {
+	if w.Code != http.StatusOK || w.Body.String() != "{\"id\":42,\"name\":\"a\u2028b\"}" || w.Header().Get("ETag") != `"ea5y3kfvagm"` {
 		t.Fatalf("U+2028: code=%d body=%q ETag=%s", w.Code, w.Body.String(), w.Header().Get("ETag"))
 	}
 
