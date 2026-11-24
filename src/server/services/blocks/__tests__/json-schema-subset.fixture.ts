@@ -14,7 +14,9 @@
 
 export type Schema = Record<string, unknown> | boolean;
 
-const ANNOTATIONS = new Set(['description', '$comment']);
+// `deprecated` is a draft 2020-12 meta-data annotation: it never changes what validates, so
+// there is no verdict to implement (the storage drift guard pins where it appears).
+const ANNOTATIONS = new Set(['description', '$comment', 'deprecated']);
 /** Holds schemas for `$ref` to name; asserts nothing by itself. */
 const DEFINITIONS = new Set(['$defs']);
 const IMPLEMENTED = new Set([

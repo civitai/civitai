@@ -45,7 +45,7 @@ describe('BlobData', () => {
           },
         ],
       } as never,
-      { domain: { green: false } as never, nsfwEnabled: true }
+      { domain: { green: false } as never }
     ).succeededOutput[0];
 
   it('reads the workflow key of the generation', () => {

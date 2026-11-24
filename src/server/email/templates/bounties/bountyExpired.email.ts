@@ -17,6 +17,8 @@ type BountyExpiredData = {
 const bountyUrl = (bounty: BountyExpiredData['bounty']) => getBaseUrl() + `/bounties/${bounty.id}`;
 
 export const bountyExpiredEmail = createEmail({
+  template: 'bountyExpired',
+  mailClass: 'transactional',
   header: ({ user, bounty }: BountyExpiredData) => ({
     subject: `Your bounty "${bounty.name}" just expired - check out the entries!`,
     to: user.email,

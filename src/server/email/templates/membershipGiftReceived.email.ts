@@ -24,6 +24,8 @@ const describeGift = ({ tier, months }: Pick<MembershipGiftReceivedData, 'tier' 
 const describeGifter = (from: string | null) => (from ? `@${from}` : 'Someone');
 
 export const membershipGiftReceivedEmail = createEmail({
+  template: 'membershipGiftReceived',
+  mailClass: 'transactional',
   header: ({ to, from, tier, months }: MembershipGiftReceivedData) => ({
     subject: `${describeGifter(from)} gifted you ${describeGift({ tier, months })}! 🎁`,
     to,

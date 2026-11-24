@@ -253,7 +253,7 @@ export function planBlockOutputUnlock(
 export type OutputUnlockDeps = {
   /** The viewer's own orchestrator read of the workflow (their token, so another's 404s). */
   readWorkflow: () => Promise<Workflow>;
-  /** `assertUnlockAllowed`: the site-level refusal (green domain, mature content off). */
+  /** `assertUnlockAllowed`: the site-level refusal (green domain). */
   assertUnlockAllowed: () => void;
   /** `assertUnlockReleasesOutput`: the orchestrator would release something for the charge. */
   assertUnlockReleasesOutput: () => Promise<void>;

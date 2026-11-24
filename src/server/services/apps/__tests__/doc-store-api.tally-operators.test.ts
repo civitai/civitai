@@ -920,9 +920,9 @@ describe('🔴 REGRESSION: a tally never changes a document body or its registry
 // Deprecation headers and the metric
 // ---------------------------------------------------------------------------
 
-describe('deprecation: the old routes say so, the PATCH does not', () => {
+describe('deprecation: every tally route and tally list parameter says so', () => {
   it.each(OP_NAMES)(
-    '%s: Deprecation and Link on the legacy route, neither on PATCH, no Sunset',
+    '%s: Deprecation and Link on the legacy route AND on the PATCH, no Sunset',
     async (op, name) => {
       const app = freshApp();
       await putPost(app, 'd');
@@ -938,8 +938,9 @@ describe('deprecation: the old routes say so, the PATCH does not', () => {
         Deprecation: '@1794182400',
         Link: '<https://developer.civitai.com/apps/guide/storage>; rel="deprecation"',
       });
-      expect(v2.headers.deprecation).toBeUndefined();
-      expect(v2.headers.link).toBeUndefined();
+      // Step 3 (docs/app-storage-generic-core.md): the tally PATCH is deprecated too.
+      expect(v2.headers.deprecation).toBe('@1794182400');
+      expect(v2.headers.link).toBe(LEGACY_TALLY_HEADERS.Link);
       for (const r of [legacy, v2]) expect(r.headers.sunset).toBeUndefined();
     }
   );
@@ -971,6 +972,16 @@ describe('deprecation: the old routes say so, the PATCH does not', () => {
     const refused = await send(app, 'anon', 'legacy', 'mark', 'posts', 'nope', 'vote');
     expect(refused.status).toBe(401);
     expect(refused.headers.deprecation).toBe('@1794182400');
+    // A PATCH the operator parser refuses still names a removed route.
+    const badPatch = await call({
+      token: await mint(app, UID.v1),
+      method: 'PATCH',
+      path: '/posts/nope',
+      body: { title: 'x' },
+    });
+    expect(badPatch.status).toBe(400);
+    expect(badPatch.headers.deprecation).toBe('@1794182400');
+    expect(badPatch.headers.link).toBe(LEGACY_TALLY_HEADERS.Link);
     const token = await mint(app, UID.v1);
     for (const [method, p] of [
       ['GET', '/posts/nope'],
@@ -1113,13 +1124,14 @@ describe('?from= imports: a tally through an import is the same on both routes',
         });
         landed.push({ status: r.status, body: r.body });
       }
-      // The legacy headers follow the route, not the import.
+      // The deprecation headers follow the route, not the import: both tally routes are
+      // deprecated (the PATCH since rollout step 3).
       const last = await call({
         token,
         ...tally(route, 'mark', 'board', 'b1', 'vote'),
         query: from,
       });
-      expect(last.headers.deprecation).toBe(route === 'legacy' ? '@1794182400' : undefined);
+      expect(last.headers.deprecation).toBe('@1794182400');
       outcomes[route] = {
         refused: refused.map((r) => ({
           ...r,
@@ -1135,5 +1147,40 @@ describe('?from= imports: a tally through an import is the same on both routes',
     const legacy = outcomes.legacy as { landed: { status: number }[] };
     expect(legacy.landed.map((l) => l.status)).toEqual(STEPS.map(() => 200));
     expect(outcomes.v2).toEqual(outcomes.legacy);
+  });
+});
+
+describe('deprecation: a list naming a tally parameter', () => {
+  it.each<[string, Record<string, string>]>([
+    ['sort=counter:', { sort: 'counter:views' }],
+    ['sort=-counter:', { sort: '-counter:views' }],
+    ['sort=mark:', { sort: 'mark:vote' }],
+    ['markedBy=me&mark=', { markedBy: 'me', mark: 'vote' }],
+  ])('%s carries Deprecation and Link, no Sunset', async (_label, query) => {
+    const app = freshApp();
+    await putPost(app, 'd');
+    const token = await mint(app, UID.v1);
+    const r = await call({ token, method: 'GET', path: '/posts', query });
+    expect(r.headers.deprecation).toBe('@1794182400');
+    expect(r.headers.link).toBe(LEGACY_TALLY_HEADERS.Link);
+    expect(r.headers.sunset).toBeUndefined();
+  });
+
+  it('a list with none of them carries neither (sort by an index or a built-in key included)', async () => {
+    const app = freshApp();
+    await putPost(app, 'd');
+    const token = await mint(app, UID.v1);
+    const queries: Record<string, string>[] = [
+      {},
+      { sort: 'createdAt' },
+      { sort: '-updatedAt' },
+      { author: 'me' },
+    ];
+    for (const query of queries) {
+      const r = await call({ token, method: 'GET', path: '/posts', query });
+      expect(r.status, JSON.stringify(query)).toBe(200);
+      expect(r.headers.deprecation, JSON.stringify(query)).toBeUndefined();
+      expect(r.headers.link, JSON.stringify(query)).toBeUndefined();
+    }
   });
 });

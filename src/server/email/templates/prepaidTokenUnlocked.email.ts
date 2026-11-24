@@ -14,6 +14,8 @@ type PrepaidTokenUnlockedData = {
 const membershipUrl = () => getBaseUrl() + `/user/membership`;
 
 export const prepaidTokenUnlockedEmail = createEmail({
+  template: 'prepaidTokenUnlocked',
+  mailClass: 'transactional',
   header: ({ user, tokensUnlocked }: PrepaidTokenUnlockedData) => ({
     subject: `${tokensUnlocked} Membership Token${
       tokensUnlocked !== 1 ? 's' : ''
