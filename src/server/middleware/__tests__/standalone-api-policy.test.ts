@@ -11,6 +11,8 @@ import {
   registerStandaloneApiPolicy,
   STANDALONE_API_POLICY_KEY,
 } from '~/server/middleware/standalone-api-policy';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import { CF_VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/edge-verified-bot';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 
 /**
@@ -43,9 +45,11 @@ const BROWSER = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0 Safari/5
 const GOOGLEBOT_IP = '192.178.4.1';
 const OTHER_IP = '203.0.113.9';
 const POD = 'test-pod-v1';
+const EDGE_SECRET = 'standalone-edge-secret';
 
 beforeAll(() => {
   vi.stubEnv('PODNAME', POD);
+  setEnv({ CF_VERIFIED_BOT_HEADER_SECRET: EDGE_SECRET });
 });
 afterAll(() => {
   vi.unstubAllEnvs();
@@ -111,7 +115,11 @@ const CASES: [string, string, Record<string, string>][] = [
   [
     'verified crawler',
     '/api/v1/images?limit=1',
-    { 'user-agent': GOOGLEBOT, 'cf-connecting-ip': GOOGLEBOT_IP },
+    {
+      'user-agent': GOOGLEBOT,
+      'cf-connecting-ip': GOOGLEBOT_IP,
+      [CF_VERIFIED_BOT_HEADER]: EDGE_SECRET,
+    },
   ],
   [
     'crawler UA from a non-crawler IP',
