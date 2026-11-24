@@ -228,7 +228,7 @@ produce. `FEED_GO_COMPUTE_MISSES=false` restores the fallbacks.
 | `model-tags-miss` | `modelTagCache` (`packed:caches:model-tags:<modelId>`): model.getAll, asked for the models the data cache answered (the data cache's appendFn) | the same file's lookupFn (a plain fetch's `dbRead`) | `TagsOnModels` of the models on the replica (with write-back on too), `{modelId, tagIds}` in row order, a `notFound` marker for a model with none (whose data entry then keeps its own `tags`); the tag records from `basic-tags` as for a hit |
 | `image-tags-miss` | `imageTagsCache` (`packed:caches:image-tags:<imageId>`): image.getInfinite with `include: ['tags']` | `src/server/redis/caches.ts` lookupFn: `readImageTagsForImages` → `listImageTagsForImages` (`packages/civitai-db-queries/src/hot-reads.db.ts`, the fetch's `kyselyRead`) | the `ImageTag` view's `imageTagCompositeSelect` columns on the replica, `score DESC, tagId ASC`, the numeric `score` and bigint vote counts read as numbers (as `@civitai/db/kysely` parses them), `lastUpvote` a Date; `{imageId, tags}` per image with a row, a `notFound` marker otherwise. ttl an hour, `staleWhileRevalidate` off (an entry is never stale). Not in `FEED_GO_CACHE_WRITEBACK`'s names: computed entries are never written (only kept in process for `recentTTL`) |
 | `v1-models-showcase-miss`, `prioritized-showcase-miss` | `getVersionShowcaseCache` (`packed:caches:version-showcase:<versionId>`): the curated-showcase guard of the model routes and image.getInfinite's carousel (§16.9) | `src/server/services/version-showcase.service.ts` lookupFn (`getDbWithoutLagBatch('modelVersion', ids)`), as `curatedSiteFor` reads it for `withCuratedShowcases` and `getCarouselShowcaseIds` | only the decision: whether any of the missed versions has a `ModelVersionShowcaseItem` row that is not removed, one `LIMIT 1` query on the replica (never the primary), and none while any missed version carries its `lag-helper:modelVersion:<id>` flag or the flag read fails (it falls back as a miss; §16.9). No entry is built, written or kept in process; a row or a failed read (`<reason>-failed`) falls back. Counted as `version-showcase` in `feed_go_cache_miss_total` |
-| `image-resources-miss` | `imageResourcesCache` (`packed:caches:image-resources:<imageId>`): `GET /api/v1/images` | `src/server/redis/caches.ts` lookupFn: on a plain fetch's miss `getDbWithoutLagBatch('imageResource', ids)` (the replica unless an id carries its lag flag), or the primary for every miss while the Flipt flag `image-resource-use-write` is on | the lookupFn's own query (`ImageResourceNew` joined to `ModelVersion` and `Model`, no `ORDER BY`: the row order is the cached order) on the replica, ONLY with its own switch `FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS` on (default OFF: a kill for this one computation, apart from `FEED_GO_COMPUTE_MISSES`) and while `image-resource-use-write` is known off (`hydrate.ImageResourceUseWriteFlag`, read from Flipt in the background every 5 s; unread, a last good read older than 1 minute, or on, the miss falls back as before); none while any missed image carries `lag-helper:imageResource:<id>` or that read fails (nothing in the Node app sets that flag today), nor for a miss Node would not write back (a bust's debounce marker, a failed cache read). An image with no row is absent, as its `notFound` marker is. Nothing is written back or kept in process (the entry stays a miss until Node fills it); a failed query is `image-resources-miss-failed`. Counted as `image-resources` in `feed_go_cache_miss_total` |
+| `image-resources-miss` | `imageResourcesCache` (`packed:caches:image-resources:<imageId>`): `GET /api/v1/images` | `src/server/redis/caches.ts` lookupFn: on a plain fetch's miss `getDbWithoutLagBatch('imageResource', ids)` (the replica unless an id carries its lag flag), or the primary for every miss while the Flipt flag `image-resource-use-write` is on | the lookupFn's own query (`ImageResourceNew` joined to `ModelVersion` and `Model`, no `ORDER BY`: the row order is the cached order) on the replica, ONLY with its own switch `FEED_GO_COMPUTE_IMAGE_RESOURCES_MISS` on (default OFF: a kill for this one computation, apart from `FEED_GO_COMPUTE_MISSES`) and while `image-resource-use-write` is known off (`hydrate.ImageResourceUseWriteFlag`, read from Flipt in the background every 5 s; unread, a last good read older than 1 minute, a flag Flipt does not know (a 404, read as on here), or on, the miss falls back as before); none while any missed image carries `lag-helper:imageResource:<id>` or that read fails (nothing in the Node app sets that flag today), nor for a miss Node would not write back (a bust's debounce marker, a failed cache read). An image with no row is absent, as its `notFound` marker is. Nothing is written back or kept in process (the entry stays a miss until Node fills it); a failed query is `image-resources-miss-failed`. Counted as `image-resources` in `feed_go_cache_miss_total` |
 | `user-follows-miss` | `userFollowsCache` (`packed:caches:user-follows:<userId>`): image.getInfinite with `followed: true`, signed in | `src/server/redis/caches.ts` lookupFn (a plain fetch's `dbRead`) | `UserEngagement` rows of type `Follow` on the replica, no `ORDER BY` (Prisma sends none), `{userId, follows}` with the target ids in row order, a `notFound` marker (no follows) for a user with none. ttl a day, `staleWhileRevalidate` off. Not in `FEED_GO_CACHE_WRITEBACK`'s names: computed entries are never written, and not kept in process either (the viewer's own follow set, read back after they change it) |
 
 The tag-ids values are `{imageId, tags}` with the tag ids in row order (Node's lookup has no `ORDER
@@ -600,12 +600,10 @@ principal-cache fill (the app fills it on its next read), no `lastUsedAt`, no cl
   scoped key (rule 19).
 - `?token=` (the webhook token), several `Authorization` header lines (Node keeps the first, a proxy in
   between may not), and a key with a byte outside printable ASCII.
-- The REST routes (`/api/v1/images`, `/api/v1/models`, `/api/v1/models/[id]`) keep every API
-  credential a `bearer-token` fallback: `PublicEndpoint` shapes the cache headers on whether a
-  credential was presented, `/api/v1/images` applies `REST_SCOPE_ENFORCE`, and the models routes have
-  their own block-scope middleware, none of it ported. The sampler never sends a credential, and the
-  model routes' public serve path (§16.8) hands every credentialed request (an Authorization header of
-  any value, or `?token=`) to the Node app before anything is computed.
+- `/api/v1/images` and `/api/v1/models` keep every API credential a `bearer-token` fallback
+  (`REST_SCOPE_ENFORCE` and the signed-in list are not ported). `/api/v1/models/[id]` does too unless
+  `FEED_GO_V1_BEARER_AUTH` is on (default off): then it decides a credential as its Node wrappers do
+  (§16.10), with this resolver's principal-cache read.
 - Shadow and probe samples: the sampler forwards `authorization: present`, never the key, so a sample's
   API credential stays `bearer-token` (`auth.WithRedactedCredentials`).
 
@@ -2410,7 +2408,7 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 | Area | Ported | Falls back (reason) |
 |---|---|---|
 | Query | every key above except those on the right; an empty `query` (falsy: the database path); `tag` (ASCII); unknown keys ignored and kept for `nextPage` | a truthy or repeated `query` (`v1-models-query`: Meilisearch), a non-ASCII `tag` or a blocked list holding a non-ASCII name (`v1-models-tag`: Go's lowercasing of such text is not always JS's `toLowerCase`), no cached blocked list (`blocked-tags-*`), every other schema key (`v1-models-<key>`: `tagname`, `supportsGeneration`, `checkpointType`, …), a signed-out `favorites`/`hidden` (`v1-models-authed-only`), `limit=0` or over 100 (`v1-models-limit`), the 429 (`v1-models-page-limit`), a Recently Added or unknown sort (`v1-models-sort`), a value `Number()` or zod reads otherwise (`v1-models-input-*`), a cursor Node answers with a 400 or reads through JS's Date parser (`v1-models-cursor`) |
-| Viewer | the list signed out; `[id]` always (it reads no session) | a list session (`v1-models-session`); API credentials (`bearer-token`; the sampler never sends them) |
+| Viewer | the list signed out; `[id]` always (it reads no session), and with `FEED_GO_V1_BEARER_AUTH` an API credential on `[id]` that Node answers with the same body (§16.10) | a list session (`v1-models-session`); API credentials (`bearer-token`; on `[id]` with `FEED_GO_V1_BEARER_AUTH`, the cases of §16.10) |
 | Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, `tag` (the blocked-name empty page, the Tag lookup, its `EXISTS`), ids, earlyAccess, archived, the addons' POI/minor/tag clauses | a username the replica does not hold (`v1-models-username-miss`) |
 | Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads); a tag-name miss with `FEED_GO_COMPUTE_MISSES` (tagCache's lookup, §16.7); the showcase images and their tag ids read exactly as model.getAll reads them (`hydrate.Sources.VersionImages`, §16.7) | a model-data, model-tags, files or membership miss (`v1-models-*-miss`), a tag-name miss with `FEED_GO_COMPUTE_MISSES` off, a showcase-images or image-tag-ids miss with it off (`model-images-miss`, `tag-ids-miss`; a failed lookup is `<reason>-failed`), a stale files or tag-name entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level |
 | Curated showcases | an uncurated version (§16.9) | a curated version or a failed showcase read (`v1-models-curated-showcase`), a showcase entry the cache does not hold without the miss computation (`v1-models-showcase-miss`; with it, a replica lookup: a row is curated, a failed read `v1-models-showcase-miss-failed`), an uncurated entry past the cache's hour (`v1-models-showcase-stale`) |
@@ -2432,7 +2430,10 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 
 One flag for both routes, sampled through the REST sampler of §13.4 (`beginFeedGoShadowV1Models`,
 `captureFeedGoShadowRest`), with its own per-second bucket per route and the shared rate and
-in-flight cap. A request with an API credential is counted (`skipped_credential`) and never sent.
+in-flight cap. A request with an API credential is counted (`skipped_credential`) and never sent,
+unless the Node app runs with `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS=true` (default off): then an
+`[id]` request's Authorization credential is sent described, never forwarded (§16.10). The list
+never samples one.
 The list route does not sample a text `query` or a signed-in caller: feed-go answers every one of
 them with a fallback (`v1-models-query`, `v1-models-session`). An empty `query` is falsy to the
 sampler's `query || user` test as to the handler, so it is sampled, and answered here. Both routes finish every sampled
@@ -2573,9 +2574,10 @@ deployment config. Every answer carries `X-Feed-Go-Served` (`go` or `node`), as 
 2. A serve slot from the one shared pool (`FEED_GO_MAX_IN_FLIGHT`, §6.1; `bulkhead` past it), and the
    request budget (`deadline`), as every public route; `feed_go_serve_in_flight` and the `bulkhead`
    series are seeded per model endpoint. A client that leaves is `canceled` and not proxied.
-3. The checks no Node read can answer, before the port runs: not a GET (`method`) and any API
-   credential, an Authorization header of any value or a `?token=` (`bearer-token`), in the shadow
-   too (`v1ModelsPreflight`); then, on the public route only (`v1ModelsServeOnly`), a conditional request (`If-None-Match` or
+3. The checks no Node read can answer, before the port runs: not a GET (`method`) and, with
+   `FEED_GO_V1_BEARER_AUTH` off (and on the list always), any API credential, an Authorization
+   header of any value or a `?token=` (`bearer-token`), in the shadow too (`v1ModelsPreflight`; on
+   `[id]` with it on, the credential is decided after the checks below, §16.10); then, on the public route only (`v1ModelsServeOnly`), a conditional request (`If-None-Match` or
    `If-Modified-Since`) whose `If-None-Match`, `If-Modified-Since` or `Cache-Control` is sent on
    more than one line or holds a byte outside ASCII (`v1-models-conditional`: Node joins repeated
    lines, and JS reads non-ASCII text by rules not ported; every other conditional request is
@@ -2778,6 +2780,74 @@ filter or Hide Paid (`sameVersionOnly`) the owner lookup is the shown version al
 still runs, as `withCommunityCovers` does. `model.getAssociatedResourcesCardData` (§17) reads no cover
 (`associatedCardImages` serves the versions' own images), so it has no such path to guard.
 
+### 16.10 API credentials on `[id]` (`FEED_GO_V1_BEARER_AUTH`, default off)
+
+Off, every API credential on either route is the `bearer-token` fallback (§16.8 gate 3), as before
+the switch existed. On (it needs `FEED_GO_BEARER_AUTH`: startup refuses it otherwise), `[id]` decides
+a credential as its Node wrappers do, after §16.8's gates 1-3, with §4.2's principal-cache read; the
+list is unchanged (every API credential is still `bearer-token`: its signed-in search is a separate,
+later port). A request Node answers with the body any caller gets is computed exactly as one without
+a credential, with the headers its credential's presence selects; every other case falls back.
+Nothing is written: no principal-cache fill, no `lastUsedAt`, no claim.
+
+**What a credential changes on Node's `[id]`** (`src/pages/api/v1/models/[id].ts`,
+`src/server/utils/endpoint-helpers.ts`, `src/server/middleware/block-scope.middleware.ts`):
+
+| # | Where | What the credential changes | Here |
+|---|---|---|---|
+| 1 | `PublicEndpoint` (`requestCarriesCallerCredentials`) | an Authorization header of any value, a session cookie or any `?token=` value selects `Vary: Authorization, Cookie`; the handler writes `Cache-Control: private, no-store` either way | the same, from the request's headers (`v1models.ResponseHeaders`, unchanged) |
+| 2 | `PublicEndpoint` | reads no session: the body is the same for any caller, cookie, key or none | computed |
+| 3 | `withBlockScope` | only an `Authorization` value starting `bearer ` (any case) is read, as `slice(7).trim()`; any other value, an empty bearer and a `?token=` are left to `PublicEndpoint` | the same reading (`auth.blockBearer`); those are computed without a read |
+| 4 | `withBlockScope`, a block JWT | verified: the origin cache is skipped, the response is the block-scoped one, an invalid token is a 401 | any bearer holding `.` falls back (`v1-models-block-token`) |
+| 5 | `withBlockScope`, any other bearer (the hub-token path) | `getSessionFromBearerToken`: the principal cache or the primary, the hourly `lastUsedAt` write; a hub OAuth token (a row with a clientId) of an app block becomes block claims, a suspended app's a 401; anything else goes on to `PublicEndpoint` | answered only when the principal-cache entry is read with no write due (§4.2 rules 7-13); a miss, a due write, a revoked, expired or uncacheable entry falls back with its §4.2 reason. A provider or service token is answered without a read (no lookup in Node either) |
+| 6 | several Authorization lines | Node keeps the first | `bearer-multiple-headers` |
+| 7 | an `Origin` | `withBlockScope`'s CORS for the block-app allow-list | unchanged: `v1-models-origin`, before any credential read |
+| 8 | rate limits | none on this route depend on the credential | nothing to do |
+
+**Hub OAuth tokens never reach the port.** Row 5's OAuth branch is the one way a bearer changes the
+answer. Node gives such a token an `oauth` subject exactly when its ApiKey row has a clientId, and the
+principal cache never holds one (`isCacheableApiKey`); `readPrincipal` independently answers only an
+entry whose `clientId` is present and null and whose type is User or System. So an OAuth token is a
+miss, or `bearer-key-uncacheable` for an entry that somehow held one (`TestDetailCredentialRefusesOAuthTokens`).
+
+Not reproduced, and not observable to the caller: Node's principal-cache hit counter and the session
+cache fill `getBearerTokenUser` may trigger (its answer is discarded on this route).
+
+**Fallback reasons this adds** (reached only with the switch on, on `[id]`): `v1-models-block-token`,
+`bearer-sample-credential` (shadow only: a description this service does not read), and on this route
+§4.2's `bearer-multiple-headers`, `bearer-malformed`, `bearer-unconfigured`, `bearer-key-*` and
+`bearer-last-used`. They are not seeded at 0 (§10): they cannot fire while the switch is off.
+
+**The shadow.** A sample never carries a key. With `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS=true` on the
+Node app (default off), an `[id]` request whose credential is an Authorization header (a `?token=` is
+still `skipped_credential`: the query string carries it) is sampled with `authorization: present` and
+`x-feed-go-credential` in place of the key (`src/server/trpc/feed-go-shadow-credential.ts`): the bearer
+as `withBlockScope` reads it, described as `none`, `provider` / `service`, `dotted` or
+`key:<generateSecretHash of the bearer>` (the principal cache key, never the key). The list samples
+none. `SyntheticV1ModelsRequest` moves the description onto the rebuilt request's context and off its
+headers (a public request's header of that name is never read), and the decision above runs from the
+principal read by hash. No log line carries it: the fallback line logs the reason and an error class
+only, the diff line paths only (`TestV1ModelsShadowNeverLogsTheSampleCredential`). Computed samples
+are also counted under `feed_go_shadow_compare_viewer_total{viewer="api-key"}`. Known optimism:
+Node's own read has just filled the principal cache and claimed a due `lastUsedAt`, so a sample hits
+the cache more often, and falls back on `bearer-last-used` less often, than a public request would
+(coverage, not correctness); and the header reading itself (rows 3 and 6) is held to Node by the unit
+tests, not by the shadow.
+
+**Serving it.** Credentialed requests reach this service only through the deployment's routing: a
+bypass that sends credentialed model requests to the Node app is narrowed to the list path (not
+removed) once the `[id]` shadow is clean, so credentialed `[id]` requests come here and credentialed
+list requests keep going to Node.
+
+**Tests.** `internal/auth/rest_test.go` (every credential form of rows 3-6, the sample descriptions,
+the OAuth refusal), `internal/server/v1models_bearer_test.go` (the switch off keeps every form on both
+routes the `bearer-token` fallback, the list keeps it with the switch on, an uncredentialed request is
+answered with the same bytes either way; on, each `[id]` case's served or fallback answer with the
+credentialed headers; the shadow's description, viewer class and logs), `internal/config/v1models_test.go`
+(the switch and its startup check), and on the Node side
+`src/server/trpc/__tests__/feed-go-shadow-credential.test.ts` and the credential cases of
+`src/server/trpc/__tests__/feed-go-shadow.test.ts`.
+
 ## 17. `model.getAssociatedResourcesCardData` (tRPC, shadow only)
 
 A model page's Suggested Resources cards: `src/server/routers/model.router.ts` (`publicProcedure`,
@@ -2822,7 +2892,7 @@ No public route and no Go-first probe: a probe needs a case in the server's gold
 | Viewer | as §4 | a banned session (`model-assoc-banned-session`); a POI source for a viewer who may not see it (`model-assoc-source-hidden`: Node's 404, never sampled) |
 | Targets | model associations | an article among them (`model-assoc-articles`); more than 100 distinct models (`model-assoc-many`); with `creator-promotions` not known off for the viewer (`FEED_GO_CREATOR_PROMOTIONS`, as §8), any approved model-card run on the source resolved within 7 days, live or not (`model-assoc-sponsored`: Node picks one at random) |
 | Caches | model.getAll's (§15.2), including the misses it computes; the hidden-preferences hash | a missing hidden-preferences field (`model-assoc-hidden-prefs-miss`: Node reads the database and writes it); the gallery-settings and held-level fallbacks of §15.2 |
-| canGenerate | coverage (`generation-coverage-next` mirrored by `FEED_GO_GENERATION_COVERAGE_NEXT`, both states), the explicit-coverage versions, Private versions, `hidden` gate rules on version ids for moderators / nobody / signed out testers | a shown Wildcards card (`model-assoc-wildcards`); the gate rules unmigrated or unreadable (`gate-rules-unmigrated`, `gate-rules-unreadable`); an applicable `hidden` rule naming an ecosystem (`gate-rules-ecosystem`: the base model's ecosystem key is not held here); a `hidden` testers rule naming a shown version or an ecosystem, for a signed-in non-moderator (`gate-rules-testers`: testing access is a per-user Flipt answer) |
+| canGenerate | coverage (`generation-coverage-next` mirrored by `FEED_GO_GENERATION_COVERAGE_NEXT`, both states), the explicit-coverage versions, Private versions, `hidden` gate rules on version ids or ecosystems for moderators / nobody / signed out testers (an ecosystem reaches a version through its base model's own ecosystem key, `gateEcosystems` in basemodels.json: isTargetedBy's answers, regenerated by `scripts/feed-go-basemodels.ts` and held to Node by its drift test) | a shown Wildcards card (`model-assoc-wildcards`); the gate rules unmigrated or unreadable (`gate-rules-unmigrated`, `gate-rules-unreadable`); a `hidden` testers rule naming a version that would generate, by id or ecosystem, for a signed-in non-moderator (`gate-rules-testers`: testing access is a per-user Flipt answer) |
 
 ### 17.3 Sampler, comparison, measurement
 

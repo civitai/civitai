@@ -37,23 +37,20 @@ export const clearNotificationEmailEnabledCache = () => enabledMemo.clear();
 // With an empty or short key anyone could compute the links, so no key means no links: every send
 // fails closed and every unsubscribe link is refused.
 const MIN_KEY_LENGTH = 8;
-const signature = (userId: number, type: string) => {
+/**
+ * The signature on a link in a notification email. `message` must start with a purpose prefix of
+ * its own, so a signature minted for one kind of link never verifies as another.
+ */
+export const signEmailLink = (message: string) => {
   if ((env.NEXTAUTH_SECRET?.length ?? 0) < MIN_KEY_LENGTH)
-    throw new Error('No server secret to sign unsubscribe links with');
-  return createHmac('sha256', env.NEXTAUTH_SECRET)
-    .update(`notification-email-unsubscribe:${userId}:${type}`)
-    .digest('hex')
-    .slice(0, 32);
+    throw new Error('No server secret to sign email links with');
+  return createHmac('sha256', env.NEXTAUTH_SECRET).update(message).digest('hex').slice(0, 32);
 };
 
-export function getEmailUnsubscribeUrl(userId: number, type: string) {
-  const params = new URLSearchParams({ u: String(userId), t: type, s: signature(userId, type) });
-  return `${getBaseUrl()}/api/notifications/email-unsubscribe?${params}`;
-}
-
-export function verifyEmailUnsubscribe(userId: number, type: string, sig: string) {
+/** Whether `sig` is `message`'s signature. False, never a throw, when there is no key. */
+export function verifyEmailLinkSignature(message: string, sig: string) {
   try {
-    const expected = Buffer.from(signature(userId, type));
+    const expected = Buffer.from(signEmailLink(message));
     const given = Buffer.from(sig);
     return expected.length === given.length && timingSafeEqual(expected, given);
   } catch {
@@ -61,12 +58,30 @@ export function verifyEmailUnsubscribe(userId: number, type: string, sig: string
   }
 }
 
+const unsubscribeMessage = (userId: number, type: string) =>
+  `notification-email-unsubscribe:${userId}:${type}`;
+
+export function getEmailUnsubscribeUrl(userId: number, type: string) {
+  const params = new URLSearchParams({
+    u: String(userId),
+    t: type,
+    s: signEmailLink(unsubscribeMessage(userId, type)),
+  });
+  return `${getBaseUrl()}/api/notifications/email-unsubscribe?${params}`;
+}
+
+export function verifyEmailUnsubscribe(userId: number, type: string, sig: string) {
+  return verifyEmailLinkSignature(unsubscribeMessage(userId, type), sig);
+}
+
+/** Returns true when this call turned the email off, false when it was already off. */
 export async function optOutOfNotificationEmail(userId: number, type: string) {
-  await dbWrite.$executeRaw`
+  const inserted = await dbWrite.$executeRaw`
     INSERT INTO "UserEmailNotificationOptOut" ("userId", "type")
     SELECT ${userId}, ${type}
     WHERE EXISTS (SELECT 1 FROM "User" WHERE id = ${userId})
     ON CONFLICT DO NOTHING`;
+  return inserted > 0;
 }
 
 /** One more send in the key's window. Throws on a Redis error. */

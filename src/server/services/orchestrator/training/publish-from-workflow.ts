@@ -8,6 +8,7 @@ import type {
   TrainingStep,
   Workflow,
 } from '@civitai/orchestration-client';
+import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
@@ -16,8 +17,10 @@ import { upsertModelVersion } from '~/server/services/model-version.service';
 import { createFile } from '~/server/services/model-file.service';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
+import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 import { constants } from '~/server/common/constants';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
@@ -40,6 +43,7 @@ import {
 import { type BaseModel, isHiddenBaseModel } from '~/shared/constants/basemodel.constants';
 import { truncateModelName } from '~/shared/constants/model-name.constants';
 import {
+  Availability,
   ModelFileVisibility,
   ModelStatus,
   ModelType,
@@ -149,7 +153,15 @@ const APPROVED_TRAINING_MODERATION_STATUS = 'approved' satisfies TrainingModerat
 const TRAINING_NOT_APPROVED_MESSAGE =
   "This training run's dataset has not been approved, so a model can't be created or published from it.";
 
-export type PublishRefusalReason = 'not-approved' | 'unsupported-base' | 'no-checkpoint';
+export type PublishRefusalReason =
+  | 'not-approved'
+  | 'unsupported-base'
+  | 'no-checkpoint'
+  | 'model-not-eligible'
+  | 'already-published-elsewhere';
+
+/** Where a run is published: a new draft model, or a new draft version on one of the owner's models. */
+export type PublishTarget = 'new-model' | 'existing-model';
 
 /**
  * The `cause` on a refusal the user can act on, so the from-orchestrator page can explain it by
@@ -347,52 +359,137 @@ export function mapWorkflowToTrainingResultsV2(workflow: Workflow): TrainingResu
   };
 }
 
+type TrainingStudioLink = Pick<
+  ModelMeta,
+  'trainingStudioWorkflowId' | 'trainingStudioModerationApproved'
+>;
+
 /**
- * Set `trainingStudioModerationApproved` on a model whose run was just checked and is approved, as a
- * single-key write so a concurrent meta write is not overwritten. Best-effort: a failure is logged
- * and the model stays unstamped.
+ * Set `trainingStudioModerationApproved` on a model or version whose run was just checked and is
+ * approved, as a single-key write so a concurrent meta write is not overwritten. Best-effort: a
+ * failure is logged and the row stays unstamped.
  */
-async function stampTrainingModerationApproved(modelId: number): Promise<void> {
+async function stampTrainingModerationApproved(
+  row: { modelId: number } | { modelVersionId: number }
+): Promise<void> {
   try {
-    await dbWrite.$executeRaw`
-      UPDATE "Model"
-      SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{trainingStudioModerationApproved}', 'true'::jsonb)
-      WHERE id = ${modelId}
-    `;
+    if ('modelId' in row)
+      await dbWrite.$executeRaw`
+        UPDATE "Model"
+        SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{trainingStudioModerationApproved}', 'true'::jsonb)
+        WHERE id = ${row.modelId}
+      `;
+    else
+      await dbWrite.$executeRaw`
+        UPDATE "ModelVersion"
+        SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{trainingStudioModerationApproved}', 'true'::jsonb)
+        WHERE id = ${row.modelVersionId}
+      `;
   } catch (error) {
-    console.error(`approval stamp backfill failed (model ${modelId}):`, error);
+    console.error(`approval stamp backfill failed (${JSON.stringify(row)}):`, error);
   }
 }
 
+type RunDestination = { modelId: number; modelVersionId: number; target: PublishTarget };
+
+const newest = <T extends { id: number }>(rows: T[]): T | undefined =>
+  rows.reduce<T | undefined>((top, row) => (!top || row.id > top.id ? row : top), undefined);
+
 /**
- * Turn a completed Training Studio orchestrator workflow into a Draft Trained Model + v1 ModelVersion +
- * Training-Data ModelFile, so the user can drop into the main app's publish wizard or generate
- * off the draft. Training Studio trains orchestrator-only (no `ModelVersion` exists), so this reconstructs
- * the minimal chain the wizard/generator require — it does NOT move assets, create a 'Model' file, or
- * publish; the from-orchestrator page finalizes those client-side off the returned `selectedEpoch`.
- *
- * Idempotent per workflow: the first call stamps `meta.trainingStudioWorkflowId`, and later calls for the
- * same workflow return the newest existing ids instead of creating a duplicate, unless the owner
- * deleted that draft (see `studioModelNotOwnerDeleted`), which starts a fresh one. `selectedEpoch` is
- * null only on the reuse path — once the blobs expire the draft still resolves, but there is nothing
- * left to finalize.
- *
- * Refuses (BAD_REQUEST) unless the run's training data is approved — on first entry and on re-entry.
+ * The model or version a run was already turned into, draft or published, if its owner still has it: a version that names the run in
+ * its own meta, else (a draft made before versions carried the link) a model that names it. A run has
+ * one live destination, so both publish entries resume it rather than make a second. A version found
+ * on a model that names some other run (or none) is an added version. Backfills the approval stamp
+ * on the row it found; the caller has just checked the run.
  */
-export async function createDraftModelFromWorkflow({
+async function findRunDestination(
+  userId: number,
+  workflowId: string
+): Promise<RunDestination | null> {
+  const linked = { path: ['trainingStudioWorkflowId'], equals: workflowId };
+  // Both lookups match a handful of rows at most, so the newest is picked here: with `ORDER BY id
+  // DESC LIMIT 1` Postgres walks the primary key backwards past every other row on a large account
+  // instead of going through the user's models.
+  // primary: decides whether this publish entry writes a second draft for the run.
+  const versions = await dbWrite.modelVersion.findMany({
+    where: {
+      uploadType: ModelUploadType.Trained,
+      meta: linked,
+      model: { userId, ...studioModelNotOwnerDeleted(userId) },
+    },
+    select: { id: true, meta: true, model: { select: { id: true, meta: true } } },
+  });
+  const version = newest(versions);
+  if (version) {
+    if ((version.meta as TrainingStudioLink | null)?.trainingStudioModerationApproved !== true)
+      await stampTrainingModerationApproved({ modelVersionId: version.id });
+    const modelRun = (version.model.meta as TrainingStudioLink | null)?.trainingStudioWorkflowId;
+    return {
+      modelId: version.model.id,
+      modelVersionId: version.id,
+      target: modelRun === workflowId ? 'new-model' : 'existing-model',
+    };
+  }
+
+  // primary: decides whether this publish entry writes a second draft for the run.
+  const models = await dbWrite.model.findMany({
+    where: {
+      userId,
+      uploadType: ModelUploadType.Trained,
+      meta: linked,
+      // A fresh draft made past the owner's delete is re-stamped onto the run by from-orchestrator.
+      ...studioModelNotOwnerDeleted(userId),
+    },
+    select: {
+      id: true,
+      meta: true,
+      // The run's own version is the model's oldest (highest index: versions added later go on
+      // top), unless the owner reordered them.
+      modelVersions: { select: { id: true, meta: true }, orderBy: { index: 'desc' } },
+    },
+  });
+  // A restored draft and its replacement can both match; the run follows the newest.
+  const model = newest(models);
+  const ownVersion = model && runVersionOnItsModel(model.modelVersions, workflowId);
+  if (!model || !ownVersion) return null;
+  // A draft materialized before the approval stamp existed gets it here. Best-effort: a failed write
+  // leaves the draft unstamped, which only matters once its workflow is gone.
+  if ((model.meta as ModelMeta | null)?.trainingStudioModerationApproved !== true)
+    await stampTrainingModerationApproved({ modelId: model.id });
+  return { modelId: model.id, modelVersionId: ownVersion.id, target: 'new-model' };
+}
+
+/**
+ * The version of a model linked to a run on the model only (a draft made before versions carried the
+ * link): the oldest, given oldest-first, that names no other run. A version naming another run is that
+ * run's: with this run's own version deleted, the model may hold only versions added from other runs.
+ */
+function runVersionOnItsModel<T extends { meta: unknown }>(
+  oldestFirst: T[],
+  workflowId: string
+): T | undefined {
+  return oldestFirst.find((version) => {
+    const versionRun = (version.meta as TrainingStudioLink | null)?.trainingStudioWorkflowId;
+    return !versionRun || versionRun === workflowId;
+  });
+}
+
+type SelectedEpoch = TrainingResultsV2['epochs'][number];
+
+/** The checks both publish entries make before anything is looked up or written, and the epoch the
+ *  run is published from. */
+async function prepareRunPublish({
   user,
   workflow,
   selectedEpochNumber,
-  name,
 }: {
   user: SessionUser;
   workflow: Workflow;
   selectedEpochNumber: number;
-  name?: string;
 }): Promise<{
-  modelId: number;
-  modelVersionId: number;
-  selectedEpoch: TrainingResultsV2['epochs'][number] | null;
+  workflowId: string;
+  trainingResults: TrainingResultsV2;
+  selectedEpoch?: SelectedEpoch;
 }> {
   if (!workflow.id) throw throwBadRequestError('Workflow is missing an id');
   // Ahead of the idempotency lookup, so re-entry on an existing draft is refused too.
@@ -404,41 +501,82 @@ export async function createDraftModelFromWorkflow({
   const selectedEpoch =
     trainingResults.epochs.find((epoch) => epoch.epochNumber === selectedEpochNumber) ??
     trainingResults.epochs.at(-1);
+  return { workflowId: workflow.id, trainingResults, selectedEpoch };
+}
 
-  const existing = await dbWrite.model.findFirst({
+/**
+ * The run's existing destination, after the same checks a publish entry makes: for the model picker,
+ * which must send a run that already has a draft back to it rather than offer a second one.
+ */
+export async function getRunDestination({
+  user,
+  workflow,
+}: {
+  user: SessionUser;
+  workflow: Workflow;
+}): Promise<RunDestination | null> {
+  const { workflowId } = await prepareRunPublish({ user, workflow, selectedEpochNumber: -1 });
+  return findRunDestination(user.id, workflowId);
+}
+
+/**
+ * The caller's models the run can be added to, for the picker: up to 100 matching `query`, those
+ * whose newest version shares the run's training base model first (for a custom-checkpoint run, the
+ * family it trains on, not the checkpoint's own base model). A different base model is allowed (a
+ * model may mix them), so `sameBaseModel` only drives the order and the warning.
+ */
+export async function getStudioVersionTargets({
+  userId,
+  workflow,
+  query,
+}: {
+  userId: number;
+  workflow: Workflow;
+  query?: string;
+}) {
+  const { baseModel } = mapTrainingBaseModelToBaseModel(workflow);
+  const models = await dbRead.model.findMany({
     where: {
-      userId: user.id,
-      uploadType: ModelUploadType.Trained,
-      meta: { path: ['trainingStudioWorkflowId'], equals: workflow.id },
-      // A fresh draft made past the owner's delete is re-stamped onto the run by from-orchestrator.
-      ...studioModelNotOwnerDeleted(user.id),
+      ...studioVersionTargetWhere(userId),
+      ...(query?.trim() && { name: { contains: query.trim(), mode: 'insensitive' } }),
     },
-    // A restored draft and its replacement can both match; the run follows the newest.
-    orderBy: { id: 'desc' },
+    orderBy: { updatedAt: 'desc' },
+    take: 100,
     select: {
       id: true,
+      name: true,
       meta: true,
-      modelVersions: { select: { id: true }, take: 1, orderBy: { index: 'asc' } },
+      modelVersions: { select: { baseModel: true }, take: 1, orderBy: { index: 'asc' } },
     },
   });
-  if (existing?.modelVersions[0]) {
-    // A draft materialized before the approval stamp existed gets it here: the run was just
-    // checked above. Set as one key, so a concurrent meta write is not overwritten. Best-effort: a
-    // failed write leaves the draft unstamped, which only matters once its workflow is gone.
-    if ((existing.meta as ModelMeta | null)?.trainingStudioModerationApproved !== true)
-      await stampTrainingModerationApproved(existing.id);
-    return {
-      modelId: existing.id,
-      modelVersionId: existing.modelVersions[0].id,
-      selectedEpoch: selectedEpoch?.modelUrl ? selectedEpoch : null,
-    };
-  }
+  return models
+    .filter(isVersionTargetEligible)
+    .map((model) => {
+      const latestBaseModel = model.modelVersions[0]?.baseModel ?? null;
+      return {
+        id: model.id,
+        name: model.name,
+        latestBaseModel,
+        sameBaseModel: latestBaseModel === baseModel,
+      };
+    })
+    .sort((a, b) => Number(b.sameBaseModel) - Number(a.sameBaseModel));
+}
 
-  if (!selectedEpoch?.modelUrl) {
-    const message = 'This training run has no downloadable checkpoint to publish.';
-    throw throwBadRequestError(message, new PublishRefusalError('no-checkpoint', message));
-  }
+function assertHasCheckpoint(
+  selectedEpoch: SelectedEpoch | undefined
+): asserts selectedEpoch is SelectedEpoch {
+  if (selectedEpoch?.modelUrl) return;
+  const message = 'This training run has no downloadable checkpoint to publish.';
+  throw throwBadRequestError(message, new PublishRefusalError('no-checkpoint', message));
+}
 
+/**
+ * Everything a version trained by the run carries: its base model, trigger word, training details,
+ * and the Studio's LoRA type. Shared by both publish entries, so a version added to an existing model
+ * carries the same training links a Studio-born v1 does.
+ */
+async function readRunVersionData(user: SessionUser, workflow: Workflow) {
   const {
     baseModel,
     trainingBaseModelType,
@@ -455,13 +593,6 @@ export async function createDraftModelFromWorkflow({
 
   const customBaseModel = await customKohyaBaseModel(input);
   const trigger = meta.trigger || input.triggerWord || undefined;
-  const modelName = truncateModelName(
-    name?.trim() ||
-      meta.name?.trim() ||
-      workflow.tags?.find((tag) => tag.startsWith('name:'))?.slice('name:'.length) ||
-      trigger ||
-      'Trained LoRA'
-  );
 
   const mediaType = (trainingBaseModelTypesVideo as readonly string[]).includes(
     trainingBaseModelType
@@ -509,35 +640,53 @@ export async function createDraftModelFromWorkflow({
       : {}),
   };
 
-  const model = await upsertModel({
-    name: modelName,
-    type: ModelType.LORA,
-    uploadType: ModelUploadType.Trained,
-    status: ModelStatus.Draft,
-    userId: user.id,
-    nsfw: false,
-    poi: false,
-    minor: false,
-    // The in-app trainer stamps the same category tag at creation; the publish form reads it back as
-    // the default category.
-    ...(trainingModelType && {
-      tagsOnModels: [{ name: trainingModelType.toLowerCase(), isCategory: true }],
-    }),
-    // Server-owned keys (see SERVER_OWNED_META_KEYS): client meta can't set or clear them. The
-    // approval stamp records that this run passed the moderation check at materialization.
-    serverMeta: { trainingStudioWorkflowId: workflow.id, trainingStudioModerationApproved: true },
-  });
-  if (!model) throw throwBadRequestError('Could not create the model');
-
-  const modelVersion = await upsertModelVersion({
-    modelId: model.id,
-    name: 'v1',
+  return {
     baseModel: customBaseModel ?? baseModel,
+    trigger,
+    trainingDetails,
+    trainingModelType,
+    defaultName:
+      meta.name?.trim() ||
+      workflow.tags?.find((tag) => tag.startsWith('name:'))?.slice('name:'.length),
+  };
+}
+
+/**
+ * Create the run's Draft Trained version on `modelId`, linked to the run in its own meta, with the
+ * private Training Data placeholder the epoch picker and the dataset archive job read.
+ */
+async function createRunVersion({
+  user,
+  workflowId,
+  modelId,
+  name,
+  version,
+  trainingResults,
+  selectedEpoch,
+}: {
+  user: SessionUser;
+  workflowId: string;
+  modelId: number;
+  name: string;
+  version: Awaited<ReturnType<typeof readRunVersionData>>;
+  trainingResults: TrainingResultsV2;
+  selectedEpoch: SelectedEpoch;
+}) {
+  const modelVersion = await upsertModelVersion({
+    modelId,
+    name,
+    baseModel: version.baseModel,
     uploadType: ModelUploadType.Trained,
     status: ModelStatus.Draft,
-    trainedWords: trigger ? [trigger] : [],
+    trainedWords: version.trigger ? [version.trigger] : [],
     trainingStatus: TrainingStatus.InReview,
-    trainingDetails,
+    trainingDetails: version.trainingDetails,
+    // Server-owned like the model's (the client meta schema admits neither key): a model can hold
+    // versions from several runs, so each version names its own.
+    meta: {
+      trainingStudioWorkflowId: workflowId,
+      trainingStudioModerationApproved: true,
+    } satisfies TrainingStudioLink,
   });
 
   // A placeholder until the archive-studio-training-datasets job replaces its url and size with the
@@ -563,7 +712,204 @@ export async function createDraftModelFromWorkflow({
   // the job never picks it up. Its scan status stays Pending: nothing scanned it.
   await dbWrite.modelFile.update({ where: { id: placeholder.id }, data: { exists: false } });
 
-  return { modelId: model.id, modelVersionId: modelVersion.id, selectedEpoch };
+  return modelVersion;
+}
+
+type DraftFromWorkflow = RunDestination & { selectedEpoch: SelectedEpoch | null };
+
+/**
+ * One publish entry at a time per run, from the destination lookup through the write: two overlapping
+ * page loads (a double click, two tabs) would otherwise both find no draft and each make one.
+ */
+async function withRunLock<T>(workflowId: string, operation: () => Promise<T>): Promise<T> {
+  const result = await withDistributedLock(
+    { key: `training-studio:publish-run:${workflowId}`, ttl: 30, maxRetries: 50, autoRenew: true },
+    async () => ({ value: await operation() })
+  );
+  if (!result) throw new Error(`Timed out waiting to publish training run ${workflowId}`);
+  return result.value;
+}
+
+/**
+ * Turn a completed Training Studio orchestrator workflow into a Draft Trained Model + v1 ModelVersion +
+ * Training-Data ModelFile, so the user can drop into the main app's publish wizard or generate
+ * off the draft. Training Studio trains orchestrator-only (no `ModelVersion` exists), so this reconstructs
+ * the minimal chain the wizard/generator require — it does NOT move assets, create a 'Model' file, or
+ * publish; the from-orchestrator page finalizes those client-side off the returned `selectedEpoch`.
+ *
+ * Idempotent per workflow: the first call links the run on the model and its v1, and later calls for
+ * the same workflow return the run's existing destination (see `findRunDestination`), which may be a
+ * version it was added as, instead of creating a duplicate. `selectedEpoch` is null only on the reuse
+ * path — once the blobs expire the draft still resolves, but there is nothing left to finalize.
+ *
+ * Refuses (BAD_REQUEST) unless the run's training data is approved — on first entry and on re-entry.
+ */
+export async function createDraftModelFromWorkflow({
+  user,
+  workflow,
+  selectedEpochNumber,
+  name,
+}: {
+  user: SessionUser;
+  workflow: Workflow;
+  selectedEpochNumber: number;
+  name?: string;
+}): Promise<DraftFromWorkflow> {
+  const { workflowId, trainingResults, selectedEpoch } = await prepareRunPublish({
+    user,
+    workflow,
+    selectedEpochNumber,
+  });
+
+  return withRunLock(workflowId, async (): Promise<DraftFromWorkflow> => {
+    const existing = await findRunDestination(user.id, workflowId);
+    if (existing)
+      return { ...existing, selectedEpoch: selectedEpoch?.modelUrl ? selectedEpoch : null };
+
+    assertHasCheckpoint(selectedEpoch);
+    const version = await readRunVersionData(user, workflow);
+    const { trainingModelType } = version;
+    const modelName = truncateModelName(
+      name?.trim() || version.defaultName || version.trigger || 'Trained LoRA'
+    );
+
+    const model = await upsertModel({
+      name: modelName,
+      type: ModelType.LORA,
+      uploadType: ModelUploadType.Trained,
+      status: ModelStatus.Draft,
+      userId: user.id,
+      nsfw: false,
+      poi: false,
+      minor: false,
+      // The in-app trainer stamps the same category tag at creation; the publish form reads it back as
+      // the default category.
+      ...(trainingModelType && {
+        tagsOnModels: [{ name: trainingModelType.toLowerCase(), isCategory: true }],
+      }),
+      // Server-owned keys (see SERVER_OWNED_META_KEYS): client meta can't set or clear them. The
+      // approval stamp records that this run passed the moderation check at materialization.
+      serverMeta: { trainingStudioWorkflowId: workflowId, trainingStudioModerationApproved: true },
+    });
+    if (!model) throw throwBadRequestError('Could not create the model');
+
+    const modelVersion = await createRunVersion({
+      user,
+      workflowId,
+      modelId: model.id,
+      name: 'v1',
+      version,
+      trainingResults,
+      selectedEpoch,
+    });
+
+    return {
+      modelId: model.id,
+      modelVersionId: modelVersion.id,
+      target: 'new-model',
+      selectedEpoch,
+    };
+  });
+}
+
+/**
+ * The owner's models a run can be added to as a new version. Owner only, with no moderator bypass:
+ * this writes content onto the caller's own account. A private model takes no added versions
+ * (`upsertModelVersion` refuses them), and a model only a moderator may publish can't be finished.
+ * `isRemovedWithOwner` lives in meta, so callers also drop those rows (`isVersionTargetEligible`).
+ */
+export function studioVersionTargetWhere(userId: number): Prisma.ModelWhereInput {
+  return {
+    userId,
+    type: ModelType.LORA,
+    deletedAt: null,
+    status: { notIn: constants.modPublishOnlyStatuses },
+    mode: null,
+    availability: { not: Availability.Private },
+  };
+}
+
+export function isVersionTargetEligible(model: { meta: unknown }): boolean {
+  return !isRemovedWithOwner(model.meta) && !(model.meta as ModelMeta | null)?.cannotPublish;
+}
+
+/** `v<n+1>` for n the larger of the model's version count and the highest `v<n>` among their names. */
+async function nextVersionName(modelId: number): Promise<string> {
+  // primary: names the version about to be written.
+  const versions = await dbWrite.modelVersion.findMany({
+    where: { modelId },
+    select: { name: true },
+  });
+  const numbered = versions
+    .map(({ name }) => /^v(\d+)$/i.exec(name.trim())?.[1])
+    .filter((n): n is string => n !== undefined)
+    .map(Number);
+  return `v${Math.max(versions.length, ...numbered) + 1}`;
+}
+
+function refuseTarget(reason: 'model-not-eligible' | 'already-published-elsewhere'): never {
+  const message =
+    reason === 'model-not-eligible'
+      ? 'This training run can only be added to one of your own LoRA models that can still be published.'
+      : 'This training run already has a model page or draft on Civitai. Delete it to publish the run somewhere else.';
+  throw throwBadRequestError(message, new PublishRefusalError(reason, message));
+}
+
+/**
+ * Add a completed Training Studio run to one of the caller's own LoRA models as a new Draft Trained
+ * version, with the same training links a Studio-born v1 carries: training details, the Training Data
+ * placeholder, and the run named in the version's own meta, which the publish gate and the
+ * publish back-link read. Like `createDraftModelFromWorkflow`, the from-orchestrator page then moves
+ * the epoch and creates the Model file client-side.
+ *
+ * A run has one live destination: re-entry for the same model returns the version it was already
+ * added as, and a run whose draft is elsewhere is refused until that draft is deleted.
+ */
+export async function createDraftVersionFromWorkflow({
+  user,
+  workflow,
+  selectedEpochNumber,
+  modelId,
+}: {
+  user: SessionUser;
+  workflow: Workflow;
+  selectedEpochNumber: number;
+  modelId: number;
+}): Promise<DraftFromWorkflow> {
+  const { workflowId, trainingResults, selectedEpoch } = await prepareRunPublish({
+    user,
+    workflow,
+    selectedEpochNumber,
+  });
+
+  return withRunLock(workflowId, async (): Promise<DraftFromWorkflow> => {
+    const existing = await findRunDestination(user.id, workflowId);
+    if (existing) {
+      if (existing.modelId !== modelId) refuseTarget('already-published-elsewhere');
+      return { ...existing, selectedEpoch: selectedEpoch?.modelUrl ? selectedEpoch : null };
+    }
+
+    // primary: the ownership and eligibility check guarding the version write.
+    const target = await dbWrite.model.findFirst({
+      where: { id: modelId, ...studioVersionTargetWhere(user.id) },
+      select: { id: true, meta: true },
+    });
+    if (!target || !isVersionTargetEligible(target)) refuseTarget('model-not-eligible');
+
+    assertHasCheckpoint(selectedEpoch);
+    const version = await readRunVersionData(user, workflow);
+    const modelVersion = await createRunVersion({
+      user,
+      workflowId,
+      modelId,
+      name: await nextVersionName(modelId),
+      version,
+      trainingResults,
+      selectedEpoch,
+    });
+
+    return { modelId, modelVersionId: modelVersion.id, target: 'existing-model', selectedEpoch };
+  });
 }
 
 /**
@@ -601,51 +947,122 @@ export async function stampWorkflowDraftModel({
   }
 }
 
+type LinkedRow = {
+  row: { modelId: number } | { modelVersionId: number };
+  meta: TrainingStudioLink | null | undefined;
+};
+
 /**
  * Called by every path that makes a model (or one of its versions) published or public, with the
- * stored model. A model whose meta names no source workflow is not training-studio-born and is not
- * checked. Otherwise:
+ * stored model and the ids of the versions it publishes. The model and each of those versions may
+ * name a source run in their own meta (a model holds versions from several runs, and a version added
+ * to a model that never came from the Studio is linked only on itself); a row naming none is not
+ * checked. For each run named:
  *
- * 1. Meta carries the approval stamp → passes without reading the workflow. The stamp records an
- *    approval already seen, so a stamped model is not re-checked.
+ * 1. A row naming it carries the approval stamp → passes without reading the workflow. The stamp
+ *    records an approval already seen, so a stamped run is not re-checked.
  * 2. The workflow can be read (with the model OWNER's token — a moderator can publish someone else's
  *    model) → it must report an approved status, or this throws; when it does, the stamp is written
- *    (best-effort).
+ *    on each row naming it (best-effort).
  * 3. The orchestrator returns NOT_FOUND for the workflow, for whatever reason, and there is no stamp →
- *    passes unchecked. Every model `createDraftModelFromWorkflow` creates carries the stamp, so this
+ *    passes unchecked. Every model and version the publish entries create carries the stamp, so this
  *    only reaches models created before the stamp existed; they are grandfathered.
  *
  * Any other read failure is rethrown, so the publish fails and can be retried rather than going
- * ahead unchecked. Both meta keys it reads are server-owned (`SERVER_OWNED_META_KEYS`).
+ * ahead unchecked. Both meta keys it reads are server-only: `SERVER_OWNED_META_KEYS` on the model,
+ * and outside the client meta schema on a version. Returns the versions it read, for the publish
+ * back-link (`stampPublishedTrainingRuns`).
  */
 export async function assertTrainingSourcePublishable({
   modelId,
   meta,
   ownerId,
   callerId,
+  versionIds = [],
 }: {
   modelId: number;
   meta: ModelMeta | null | undefined;
   ownerId: number;
   callerId: number;
-}): Promise<void> {
-  const workflowId = meta?.trainingStudioWorkflowId;
-  if (!workflowId) return;
-  if (meta?.trainingStudioModerationApproved === true) return;
-  const token = await getOrchestratorToken(ownerId, undefined, {
-    bypassCache: callerId !== ownerId,
-    // Someone else's run, e.g. a moderator publishing it: the owner's restriction is not theirs.
-    allowRestricted: callerId !== ownerId,
-  });
-  let workflow: Workflow;
-  try {
-    workflow = await getWorkflow({ token, path: { workflowId } });
-  } catch (error) {
-    if (error instanceof TRPCError && error.code === 'NOT_FOUND') return;
-    throw error;
+  /** The versions this publish makes published or public; ids of another model's versions are ignored. */
+  versionIds?: number[];
+}): Promise<{ id: number; meta: unknown }[]> {
+  const rows: LinkedRow[] = [{ row: { modelId }, meta }];
+  let versions: { id: number; meta: unknown }[] = [];
+  if (versionIds.length)
+    // primary: the gate decides a publish, and a version created moments ago must not be missed.
+    versions = await dbWrite.modelVersion.findMany({
+      where: { id: { in: versionIds }, modelId },
+      select: { id: true, meta: true },
+    });
+  for (const version of versions)
+    rows.push({
+      row: { modelVersionId: version.id },
+      meta: version.meta as TrainingStudioLink | null,
+    });
+
+  const runs = new Map<string, LinkedRow[]>();
+  for (const linked of rows) {
+    const workflowId = linked.meta?.trainingStudioWorkflowId;
+    if (workflowId) runs.set(workflowId, [...(runs.get(workflowId) ?? []), linked]);
   }
-  assertTrainingModerationApproved(workflow);
-  await stampTrainingModerationApproved(modelId);
+
+  let token: string | undefined;
+  for (const [workflowId, linked] of runs) {
+    if (linked.some((r) => r.meta?.trainingStudioModerationApproved === true)) continue;
+    token ??= await getOrchestratorToken(ownerId, undefined, {
+      bypassCache: callerId !== ownerId,
+      // Someone else's run, e.g. a moderator publishing it: the owner's restriction is not theirs.
+      allowRestricted: callerId !== ownerId,
+    });
+    let workflow: Workflow;
+    try {
+      workflow = await getWorkflow({ token, path: { workflowId } });
+    } catch (error) {
+      if (error instanceof TRPCError && error.code === 'NOT_FOUND') continue;
+      throw error;
+    }
+    assertTrainingModerationApproved(workflow);
+    for (const { row } of linked) await stampTrainingModerationApproved(row);
+  }
+  return versions;
+}
+
+/**
+ * Back-link every run this publish made public onto its workflow (`stampWorkflowPublished`), once per
+ * run: each published version names its own run, and the model names the run of a draft made before
+ * versions carried the link, which back-links to that run's own version (`runVersionOnItsModel`).
+ */
+export async function stampPublishedTrainingRuns({
+  ownerId,
+  callerId,
+  modelId,
+  modelMeta,
+  versions,
+}: {
+  ownerId: number;
+  callerId: number;
+  modelId: number;
+  modelMeta: ModelMeta | null | undefined;
+  versions: { id: number; meta: unknown }[];
+}): Promise<void> {
+  const runs = new Map<string, number | undefined>();
+  for (const version of versions) {
+    const workflowId = (version.meta as TrainingStudioLink | null)?.trainingStudioWorkflowId;
+    if (workflowId && !runs.has(workflowId)) runs.set(workflowId, version.id);
+  }
+  const modelRun = modelMeta?.trainingStudioWorkflowId;
+  if (modelRun && !runs.has(modelRun)) {
+    // primary: the publish just wrote these versions.
+    const oldestFirst = await dbWrite.modelVersion.findMany({
+      where: { modelId },
+      select: { id: true, meta: true },
+      orderBy: { index: 'desc' },
+    });
+    runs.set(modelRun, runVersionOnItsModel(oldestFirst, modelRun)?.id);
+  }
+  for (const [workflowId, modelVersionId] of runs)
+    await stampWorkflowPublished({ ownerId, callerId, workflowId, modelId, modelVersionId });
 }
 
 /**

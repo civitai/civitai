@@ -110,6 +110,36 @@ const EXPECTED_A = {
 };
 const EXPECTED_B = { ...EXPECTED_A, id: 12, userId: 2, index: 3 };
 
+// The home page reads a system block's clone by its source's id (homeBlockContentId), which is
+// right only while the two reads are one entry. An invariant guard: it held before that change.
+describe('a clone and its system block', () => {
+  const SOURCE = { id: 5, userId: -1, index: 2, sourceId: null };
+  it.each([
+    [HomeBlockType.Leaderboard, {}],
+    [HomeBlockType.Announcement, {}],
+    [HomeBlockType.Feed, {}],
+    [HomeBlockType.FeaturedCollections, {}],
+    [HomeBlockType.CosmeticShop, { cosmeticShopSection: { id: 8 } }],
+  ])('%s: read one shared entry, built once, each with its own row', async (type, metadata) => {
+    const clone = await getHomeBlockCached(
+      { ...ROW_A, type, metadata } as never,
+      undefined,
+      metadata as never,
+      homeBlockSource
+    );
+    const source = await getHomeBlockCached(
+      { ...SOURCE, type, metadata } as never,
+      undefined,
+      metadata as never,
+      homeBlockSource
+    );
+    expect(getHomeBlockData).toHaveBeenCalledTimes(1);
+    const content = { leaderboards: [{ id: 'board-none-1' }], type, metadata };
+    expect(clone).toEqual({ ...content, ...ROW_A });
+    expect(source).toEqual({ ...content, ...SOURCE });
+  });
+});
+
 describe('home-block-server-cache', () => {
   it('off: every call reads the shared Redis entry (the old path)', async () => {
     const out = await serveBothRows();

@@ -3,6 +3,7 @@
   import '$lib/civitai-elements';
   import type { CivitaiTextarea } from '@civitai/components/civitai-textarea';
   import { cn } from '@civitai/ui/utils.js';
+  import RatingBadge from '$lib/components/RatingBadge.svelte';
   import { isFailed, type Img } from './trainingFlow';
   import { pairProblem, type EditPair } from './editPairs';
 
@@ -50,6 +51,9 @@
   >
     {#if img.previewUrl}
       <img src={img.previewUrl} alt="" class="h-full w-full object-cover" />
+    {/if}
+    {#if img.status === 'uploaded'}
+      <RatingBadge level={img.nsfwLevel} class="absolute bottom-1 left-1" />
     {/if}
     {#if showBefore}
       <span

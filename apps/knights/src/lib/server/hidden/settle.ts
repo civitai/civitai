@@ -113,10 +113,30 @@ export async function gradeHiddenVotes(
       .set({ status: REFERENCE_STATUS.retired, updatedAt: utc(now) })
       .where('id', 'in', counted)
       .where('status', '=', REFERENCE_STATUS.active)
-      .where('source', '!=', REFERENCE_SOURCE.core)
+      .where('source', 'not in', [REFERENCE_SOURCE.core, REFERENCE_SOURCE.inquisitor])
       .where('answers', '>=', settings.retireMinAnswers)
       .where(sql<SqlBool>`"failures" > "answers" * ${settings.retireFailureRate}::float8`)
       .execute();
+    // Acolytes answer mod-confirmed checks too, by exact match, so the shared counters would let them retire a check two
+    // moderators agreed on. These retire on Knights' own hard failures in the ledger instead (close answers are inconclusive),
+    // counted from when the row entered the pool (`harvestedAt`), so votes on its earlier life do not count.
+    const failedByKnights = await trx
+      .updateTable('KnightsReferenceImage as r')
+      .set({ status: REFERENCE_STATUS.retired, updatedAt: utc(now) })
+      .where('r.id', 'in', counted)
+      .where('r.status', '=', REFERENCE_STATUS.active)
+      .where('r.source', '=', REFERENCE_SOURCE.inquisitor)
+      .where(
+        sql<SqlBool>`(
+          SELECT count(*) FILTER (WHERE v."verdict" IN ('correct', 'failed')) >= ${settings.retireMinAnswers}
+             AND count(*) FILTER (WHERE v."verdict" = 'failed')
+               > count(*) FILTER (WHERE v."verdict" IN ('correct', 'failed')) * ${settings.retireFailureRate}::float8
+          FROM "KnightsVote" v
+          WHERE v."itemId" = -"r"."id" AND v."createdAt" >= "r"."harvestedAt"
+        )`
+      )
+      .executeTakeFirst();
+    metrics.skillChecksRetired('failures', Number(failedByKnights.numUpdatedRows));
   }
 
   const paid = await payOutVotes(trx, gradedVotes, now);

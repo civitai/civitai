@@ -28,12 +28,16 @@ export function directDatasetUrl(air: string): string | null {
     : null;
 }
 
-/** A blob-backed item's bytes as a local object URL for its preview; '' when they can't be read. */
-export function blobPreviewUrl(air: string, workflowId: string): Promise<string> {
+/** A blob-backed item's bytes as a local object URL for its preview ('' when they can't be read),
+ *  with the blob's scan rating when the orchestrator sent one. */
+export function blobPreview(
+  air: string,
+  workflowId: string
+): Promise<{ url: string; nsfwLevel?: string }> {
   return backend()
     .datasetBlob(air, workflowId)
-    .then((blob) => URL.createObjectURL(blob))
-    .catch(() => '');
+    .then(({ blob, nsfwLevel }) => ({ url: URL.createObjectURL(blob), nsfwLevel }))
+    .catch(() => ({ url: '' }));
 }
 
 export function toReuseItems(

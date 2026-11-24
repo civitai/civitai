@@ -121,7 +121,13 @@ are the `cache` labels of `feed_go_cache_miss_total` (`user-cosmetics`, `image-f
 falls back (`index-feed-unconfigured`). The public `/api/v1/models` routes hand their fallbacks to
 `FEED_GO_V1_FALLBACK_URL`, the Node app that serves `/api/v1` (a different upstream from
 `FEED_GO_FALLBACK_URL`'s; deployment config, not set here); `FEED_GO_SERVE_V1_MODELS=true` without it
-fails startup. The kill is the switch: off, every request there is proxied (DESIGN.md §16.8). The
+fails startup. The kill is the switch: off, every request there is proxied (DESIGN.md §16.8). Both
+routes hand every API credential to the Node app (`bearer-token`); `GET /api/v1/models/{id}` stops
+doing so with `FEED_GO_V1_BEARER_AUTH` on (default off; needs `FEED_GO_BEARER_AUTH`): a credential
+Node answers with the body any caller gets is computed here, and every other one falls back with
+its own reason (DESIGN.md §16.10). The list keeps every API credential a fallback. Credentialed
+requests reach this service only once the deployment's routing sends them here: the bypass that
+sends them to the Node app is narrowed to the list path (not removed) when `[id]` serves them. The
 REST endpoint's shadow also needs
 `NEXT_PUBLIC_IMAGE_LOCATION` (the same edge URL prefix the Node app publishes); it builds
 `metadata.nextPage` as the production Node app does (`https://<host>`).

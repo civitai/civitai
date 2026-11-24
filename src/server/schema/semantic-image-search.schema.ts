@@ -22,6 +22,8 @@ export const semanticImageSearchSchema = baseQuerySchema
     imageId: z.number().int().positive().optional(),
     // "More like this" without the viewer's own images (results only, never the source image).
     excludeOwn: z.boolean().optional(),
+    // "More like this" only: the closest matches carrying this tag first (behind `moreLikeThisSteer`).
+    preferTagIds: z.number().int().positive().array().max(1).optional(),
     // Room for whatever the images feed can select: its filters carry into the search unchanged.
     tagIds: z.number().int().array().max(100).optional(),
     // By name, as the image search URLs and pickers carry them; resolved to ids on the server.

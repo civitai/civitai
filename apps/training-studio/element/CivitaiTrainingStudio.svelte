@@ -74,6 +74,7 @@
       generate: h.generate?.bind(h),
       generateUrl: h.generateUrl?.bind(h),
       publishUrl: h.publishUrl?.bind(h),
+      publishVersionUrl: h.publishVersionUrl?.bind(h),
       modelPageUrl: h.modelPageUrl?.bind(h),
       pickModel: h.pickModel?.bind(h),
       refresh: async () => {

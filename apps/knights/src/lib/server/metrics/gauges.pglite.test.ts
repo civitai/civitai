@@ -100,6 +100,8 @@ beforeAll(async () => {
     [2, 'trials', 'active'],
     [3, 'trials', 'retired'],
     [4, 'hiddenCheck', 'active'],
+    [5, 'skillCheck', 'active'],
+    [6, 'skillCheck', 'retired'],
   ]) {
     await pg.query(
       `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","status") VALUES ($1,$2,'4','core',$3)`,
@@ -133,7 +135,7 @@ describe('readGaugeSnapshot', () => {
     expect(snapshot.writebackPending).toBe(1);
     expect(snapshot.buzzGrantsStuck).toEqual({ failed: 1, pending: 1 });
     expect(snapshot.shopPurchasesStuck).toBe(1);
-    expect(snapshot.referencePool).toEqual({ trials: 2, hiddenCheck: 1 });
+    expect(snapshot.referencePool).toEqual({ trials: 2, hiddenCheck: 1, skillCheck: 1 });
     expect(snapshot.harvestLastRun).toEqual(new Date(minutesAgo(90)));
     expect(snapshot.nextPartitionReady).toBe(false);
   });
@@ -159,6 +161,7 @@ describe('registerGauges', () => {
     expect(text).toContain('knights_queue_oldest_open_age_seconds{stage="yesno"} 1800');
     expect(text).toContain('knights_buzz_grants_stuck{state="pending"} 1');
     expect(text).toContain('knights_reference_pool_items{pool="hiddenCheck"} 1');
+    expect(text).toContain('knights_reference_pool_items{pool="skillCheck"} 1');
     expect(text).toContain(
       `knights_harvest_last_run_timestamp_seconds ${new Date(minutesAgo(90)).getTime() / 1000}`
     );

@@ -26,6 +26,12 @@ import { resetDeps } from '$lib/server/smites/runtime';
 import { expireSmites, resetPendingPlayers } from '$lib/server/smites/smites.service';
 import { tagReviewPort, yesNoConfig } from '$lib/server/yesno/runtime';
 import { closeStrandedYesNo } from '$lib/server/yesno/sweep';
+import {
+  closeIneligibleReviews,
+  expireBeyondCap,
+  sweepMissingReviews,
+} from '$lib/server/inquisitor/review.service';
+import { skillChecks } from '$lib/server/skill-check/runtime';
 import { runTagReview } from '$lib/server/yesno/tag-review';
 import { writeBackTagReviews } from '$lib/server/yesno/tag-writeback';
 import type { RequestHandler } from './$types';
@@ -57,6 +63,18 @@ export const POST: RequestHandler = async ({ request }) => {
   // Before the settle step, which pays out (nothing) the votes these closes leave inconclusive.
   const unservable = await settle('unservable sweep', () =>
     closeUnservableItems(db, { now: new Date(), moved: collect })
+  );
+  const reviews = await settle('inquisitor review sweep', async () =>
+    (await queueDeps.inquisitorQueue?.())
+      ? {
+          opened: await sweepMissingReviews(db, { now: new Date() }),
+          closed: await closeIneligibleReviews(db, { now: new Date() }),
+          expired: await expireBeyondCap(db, {
+            now: new Date(),
+            maxOpen: (await skillChecks()).maxOpen,
+          }),
+        }
+      : { opened: 0, closed: 0, expired: 0 }
   );
   const progression = await settle('progression', () =>
     settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
@@ -131,6 +149,7 @@ export const POST: RequestHandler = async ({ request }) => {
     !writeBacks.ok ||
     !moderatorRuled.ok ||
     !unservable.ok ||
+    !reviews.ok ||
     !progression.ok ||
     !hidden.ok ||
     !yesNo.ok ||
@@ -182,6 +201,9 @@ export const POST: RequestHandler = async ({ request }) => {
     resets: resets.value.due,
     conversionsRetried: conversions.value.retried,
     purchasesRetried: purchases.value.retried,
+    reviewsOpened: reviews.value.opened,
+    reviewsClosed: reviews.value.closed,
+    reviewsExpired: reviews.value.expired,
     labels: labels.value,
   });
 };

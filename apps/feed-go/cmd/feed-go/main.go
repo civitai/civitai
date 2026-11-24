@@ -207,9 +207,17 @@ const imageResourcesFlagMaxStale = time.Minute
 
 // imageResourcesSwitch is the switch attachImageResourcesSwitch starts over read: an "off" older than
 // imageResourcesFlagMaxStale is not off (Node's lookup may have moved to the primary since), so the
-// misses fall back rather than read the replica (12 refreshes at flipt.RefreshInterval).
+// misses fall back rather than read the replica (12 refreshes at flipt.RefreshInterval). A flag Flipt
+// says does not exist reads ON here, not off as flipt.Switch reads a missing flag: absent, Node's read
+// may be anything, so the misses fall back (fail closed).
 func imageResourcesSwitch(read func(ctx context.Context) (bool, error)) *flipt.Switch {
-	sw := flipt.NewSwitch(read)
+	sw := flipt.NewSwitch(func(ctx context.Context) (bool, error) {
+		on, err := read(ctx)
+		if errors.Is(err, flipt.ErrFlagNotFound) {
+			return true, nil
+		}
+		return on, err
+	})
 	sw.MaxStale = imageResourcesFlagMaxStale
 	return sw
 }
@@ -498,7 +506,7 @@ func run(log *slog.Logger) error {
 	}
 	// The REST /api/v1/models shadows read the replica and the caches (read-only) the same way.
 	mc := config.LoadV1Models()
-	if err := mc.Validate(); err != nil {
+	if err := mc.Validate(cfg.BearerAuth); err != nil {
 		return err
 	}
 	v1Models := &server.V1ModelsDeps{
@@ -555,6 +563,7 @@ func run(log *slog.Logger) error {
 		V1Models:       v1Models,
 		ServeV1Models:  mc.Serve,
 		ServeV1Images:  mc.ServeImages,
+		V1BearerAuth:   mc.BearerAuth,
 		Associated:     associated,
 		RequestBudget:  cfg.RequestBudget,
 		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
@@ -604,7 +613,8 @@ func run(log *slog.Logger) error {
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll)
 	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
-	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil)
+	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,
+		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth)
 	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,
 		"mounted", srv.V1ImagesFallback != nil)
 	log.Info("public tRPC answers' write format", "TRPC_WRITE_DEVALUE", cfg.WriteDevalue)

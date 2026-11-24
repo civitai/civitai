@@ -346,6 +346,12 @@ func TestImageResourcesSwitchStalenessBound(t *testing.T) {
 	if !sw.Off() {
 		t.Fatal("a fresh off read: not Off")
 	}
+	// A flag Flipt does not know (a 404) is NOT off here, unlike a plain flipt.Switch (fail closed).
+	missing := imageResourcesSwitch(func(context.Context) (bool, error) { return false, flipt.ErrFlagNotFound })
+	missing.Refresh(ctx)
+	if missing.Off() || !missing.On() {
+		t.Fatalf("a missing flag: Off %v On %v, want not off (on)", missing.Off(), missing.On())
+	}
 	if imageResourcesFlagMaxStale != time.Minute || flipt.DefaultMaxStale <= imageResourcesFlagMaxStale {
 		t.Fatalf("bound %v (shared default %v): want 1m, below the default", imageResourcesFlagMaxStale, flipt.DefaultMaxStale)
 	}

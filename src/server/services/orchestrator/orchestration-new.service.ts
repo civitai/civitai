@@ -21,6 +21,7 @@
  */
 
 import { assertGenerationLicenseAccepted } from '~/server/services/generation-license.service';
+import { dbWrite } from '~/server/db/client';
 import type {
   ImageBackgroundRemovalModel,
   ImageBackgroundRemovalStepTemplate,
@@ -3268,11 +3269,26 @@ function formatStep(
 export async function assertUnlockReleasesOutput({
   token,
   workflowId,
+  outsideComicEditor = false,
 }: {
   token: string;
   workflowId: string;
+  /** Callers outside the comic editor skip the per-panel unlock claim, so a comic panel's workflow is refused. */
+  outsideComicEditor?: boolean;
 }) {
+  // The owner-token read first, so a foreign id fails here alike, comic panel or not.
   const workflow = await getWorkflow({ token, path: { workflowId } });
+  // By the panel row, not a tag the owner can edit. This path takes no claim, so any path that
+  // removes a panel row or clears its workflowId must first wait out the panel's unlock claim, as
+  // the comic deletes do.
+  if (outsideComicEditor) {
+    // primary: the panel row is written at submit, just before its workflow can reach the queue.
+    const panel = await dbWrite.comicPanel.findFirst({
+      where: { workflowId },
+      select: { id: true },
+    });
+    if (panel) throw throwBadRequestError('Unlock this from the comic editor.');
+  }
   if (workflow.allowMatureContent === true)
     throw throwBadRequestError('This generation is already unlocked.');
   // Absent reads as null, the classic API's unrestricted workflow: the queue offers the unlock only
@@ -3322,7 +3338,7 @@ export async function updateWorkflow({
 }: WorkflowUpdateSchema & { token: string; user?: SessionUser; viewer: UnlockViewer }) {
   if (props.allowMatureContent === true) {
     assertUnlockAllowed(viewer);
-    await assertUnlockReleasesOutput(props);
+    await assertUnlockReleasesOutput({ ...props, outsideComicEditor: true });
   }
   const workflow = await clientUpdateWorkflow({ ...props, throwOnError: true });
   const [formatted] = await formatGenerationResponse2([workflow], user);
