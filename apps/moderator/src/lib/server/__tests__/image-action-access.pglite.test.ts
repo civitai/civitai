@@ -870,3 +870,62 @@ describe("the re-removal queue's confirm and decline", () => {
     expect(run()).toHaveBeenCalledOnce();
   });
 });
+
+describe("the re-removal queue's list", () => {
+  beforeEach(() =>
+    db.exec(`CREATE TABLE "ImageRemovalConfirmation" (
+        id INTEGER PRIMARY KEY, "imageId" INTEGER, "appealId" INTEGER, status TEXT, source TEXT,
+        "violationType" TEXT, "violationDetails" TEXT, "reportIds" INTEGER[],
+        "requestedAt" TIMESTAMP(3) DEFAULT now(), "requestedById" INTEGER,
+        "decidedAt" TIMESTAMP(3), "decidedById" INTEGER, "decisionNote" TEXT
+      );
+      INSERT INTO "Appeal" (id, "userId", "entityType", "entityId") VALUES
+        (990000041, 7, 'Image', ${WITHHELD}), (990000042, 7, 'Image', ${CONTROL});
+      INSERT INTO "AppealDecisionRecord" ("appealId", "removalLabel") VALUES
+        (990000041, 'overturned-label'), (990000042, 'overturned-label');
+      INSERT INTO "ImageRemovalConfirmation"
+        (id, "imageId", "appealId", status, source, "violationType", "violationDetails", "reportIds")
+      VALUES
+        (1, ${WITHHELD}, 990000041, 'Pending', 'report', 'some-reason', 'details', '{990000043}'),
+        (2, ${CONTROL}, 990000042, 'Pending', 'report', 'some-reason', 'details', '{990000044}')`)
+  );
+  const list = async (user: { id: number; roles: string[] }) => {
+    const data = (await reRemovalsPage.load({
+      url: new URL('https://mod.test/images/re-removals'),
+      locals: { user },
+    } as never)) as { items: (Record<string, unknown> & { imageId: number })[] };
+    return new Map(data.items.map((item) => [item.imageId, item]));
+  };
+  const REASON = {
+    violationType: 'some-reason',
+    violationDetails: 'details',
+    removalLabel: 'overturned-label',
+  };
+
+  it('lists a withheld image without its media or its removal reason, without the grant', async () => {
+    const items = await list(WITHOUT_GRANT);
+    expect(items.get(WITHHELD)).toMatchObject({
+      url: '',
+      mediaType: null,
+      violationType: null,
+      violationDetails: null,
+      reportIds: [],
+      removalLabel: null,
+      restricted: true,
+    });
+    expect(items.get(CONTROL)).toMatchObject({
+      url: 'control-key',
+      ...REASON,
+      reportIds: [990000044],
+    });
+  });
+
+  it('lists everything for a grant holder', async () => {
+    const items = await list(WITH_GRANT);
+    expect(items.get(WITHHELD)).toMatchObject({
+      url: 'shared-key',
+      ...REASON,
+      reportIds: [990000043],
+    });
+  });
+});
