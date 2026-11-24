@@ -98,7 +98,6 @@ AS $function$
                 END,
                 terms -> 'acceptsBlueBuzz'))
         END,
-        -- Neither key: not a buyer, and the callers never pass one. 1 keeps the sum honest anyway.
         1)
 $function$;
 

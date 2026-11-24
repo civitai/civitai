@@ -28,6 +28,11 @@ export const EARLY_ACCESS_PURCHASES = [
   },
 ] as const;
 
+/** The meta keys one purchase kind writes on a grant, so a revoke or refund moves them together. */
+export function purchaseMetaKeys(kind: (typeof EARLY_ACCESS_PURCHASES)[number]) {
+  return [kind.transactionKey, kind.purchasedAtKey, kind.amountKey, kind.buzzTypeKey];
+}
+
 /** Meta key a gift claim records its permissions under, so a refund can leave the gift's bits. */
 export const GIFT_PERMISSIONS_KEY = 'gift-permissions';
 
@@ -164,10 +169,7 @@ export async function revokeModelVersionAccess({
 
 /** Purchase and gift keys a moderator revoke moves into a `revocations` entry. */
 const ARCHIVED_ON_REVOKE_KEYS = [
-  ...EARLY_ACCESS_PURCHASES.flatMap(({ transactionKey, purchasedAtKey }) => [
-    transactionKey,
-    purchasedAtKey,
-  ]),
+  ...EARLY_ACCESS_PURCHASES.flatMap(purchaseMetaKeys),
   'giftLinkId',
   GIFT_PERMISSIONS_KEY,
 ];

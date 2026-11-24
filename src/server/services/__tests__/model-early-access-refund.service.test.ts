@@ -479,7 +479,12 @@ describe('getModelEarlyAccessRefundRequirement', () => {
         buzzTransactionIds: ['tx-dl'],
         narrow: {
           revokePermissions: 2,
-          removeKeys: ['download-buzzTransactionId', 'download-purchasedAt'],
+          removeKeys: [
+            'download-buzzTransactionId',
+            'download-purchasedAt',
+            'download-amount',
+            'download-buzzType',
+          ],
         },
       },
     ]);
@@ -514,7 +519,12 @@ describe('getModelEarlyAccessRefundRequirement', () => {
         buzzTransactionIds: ['tx-gen'],
         narrow: {
           revokePermissions: 0,
-          removeKeys: ['generation-buzzTransactionId', 'generation-purchasedAt'],
+          removeKeys: [
+            'generation-buzzTransactionId',
+            'generation-purchasedAt',
+            'generation-amount',
+            'generation-buzzType',
+          ],
         },
       },
     ]);
@@ -544,7 +554,12 @@ describe('getModelEarlyAccessRefundRequirement', () => {
         buzzTransactionIds: ['tx-dl'],
         narrow: {
           revokePermissions: 3,
-          removeKeys: ['download-buzzTransactionId', 'download-purchasedAt'],
+          removeKeys: [
+            'download-buzzTransactionId',
+            'download-purchasedAt',
+            'download-amount',
+            'download-buzzType',
+          ],
         },
       },
     ]);

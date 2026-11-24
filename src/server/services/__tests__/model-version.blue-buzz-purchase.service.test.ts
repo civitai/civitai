@@ -440,7 +440,6 @@ describe('earlyAccessPurchase — a sale on a PERMANENT gate, where the price ce
 
     // 200 is under the free cap, so the cap is a no-op and the sale takes 20%.
     expect(charged()).toBe(160);
-    // Hot weighs the buyer by what they were charged, not the stored price.
     expect(mockGrantModelVersionAccess).toHaveBeenCalledWith(
       expect.objectContaining({
         meta: expect.objectContaining({
