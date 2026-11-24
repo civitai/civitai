@@ -364,6 +364,8 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       // mine, sub-listings, upsert: v1/blocks/sub-listings/*.ts
       'mine',
       'models',
+      // `moderation` / `reports`: v1/blocks/moderation/reports.ts, the report moderation API.
+      'moderation',
       'poll',
       'purchase',
       // `v1/blocks/workflows/query.ts` — the app-subqueue read. The cursor and
@@ -371,6 +373,7 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'query',
       'quota',
       'report',
+      'reports',
       // `v1/blocks/resource-intent.ts` — the Jev resource-intent primitive. The
       // prompt and every parameter ride the POST body, so there is no `:seg`
       // position to lose. Added deliberately with the route.
