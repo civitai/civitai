@@ -111,6 +111,106 @@ export function releaseAccountDeletionPendingDeletes(userId: number) {
 export const ACCOUNT_DELETION_DRAIN = 'remove-deleted-user-images';
 
 /**
+ * The rating the grace block recorded, when a restore puts it back instead of re-rating: the row is
+ * still as the block left it (Blocked, same rating lock, no CSAM block, now or recorded), the
+ * recorded level is a whole level, and it was locked or was itself Blocked. Any other row is
+ * re-rated from its current tags, which a tag change during the window may have moved. NULL when
+ * not restored.
+ */
+const restorableRecordedLevelSql = (alias?: 'i') => {
+  const col = (name: string) => Prisma.raw(`${alias ? `"${alias}"` : '"Image"'}."${name}"`);
+  const meta = col('metadata');
+  return Prisma.sql`CASE
+    WHEN ${col('nsfwLevel')} = ${NsfwLevel.Blocked}
+      AND to_jsonb(${col('nsfwLevelLocked')}) = ${meta}->${PRIOR_NSFW_LOCKED_KEY}::text
+      AND (${csamBlockedSql(alias)}) IS NOT TRUE
+      AND ${meta}->>${PRIOR_BLOCKED_FOR_KEY}::text IS DISTINCT FROM ${BlockedReason.CSAM}
+      AND jsonb_typeof(${meta}->${PRIOR_NSFW_LEVEL_KEY}::text) = 'number'
+      AND ${meta}->>${PRIOR_NSFW_LEVEL_KEY}::text ~ '^[1-9][0-9]{0,1}$'
+      AND (${meta}->${PRIOR_NSFW_LOCKED_KEY}::text = 'true'::jsonb
+        OR ${meta}->>${PRIOR_NSFW_LEVEL_KEY}::text = ${String(NsfwLevel.Blocked)})
+    THEN (${meta}->>${PRIOR_NSFW_LEVEL_KEY}::text)::int
+  END`;
+};
+
+/**
+ * One restore pass: claims up to RESTORE_BATCH_SIZE of the account's grace-blocked rows, puts back
+ * what the grace block recorded, and strips the breadcrumbs. `recordedLevel` is set on a row whose
+ * recorded rating was put back; the caller re-rates the others.
+ */
+export function restoreAccountDeletionImageBatch(userId: number) {
+  return dbWrite.$queryRaw<
+    {
+      id: number;
+      postId: number | null;
+      ingestion: string;
+      blockedFor: string | null;
+      needsReview: string | null;
+      currentReview: string | null;
+      recordedReview: string | null;
+      recordedLevel: number | null;
+    }[]
+  >`
+    UPDATE "Image"
+    SET ingestion = CASE
+          WHEN "blockedFor" = ${
+            BlockedReason.CSAM
+          } OR "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text = ${BlockedReason.CSAM}
+          THEN 'Blocked'::"ImageIngestionStatus"
+          ELSE ("metadata"->>${PRIOR_INGESTION_KEY}::text)::"ImageIngestionStatus"
+        END,
+        "blockedFor" = CASE
+          WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor"
+          ELSE "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text
+        END,
+        -- The one column holds one review: of the current flag and the recorded one, the higher in
+        -- IMAGE_REVIEW_PRECEDENCE stays. A current 'csam' is never overwritten, and a recorded value
+        -- outside RESTORABLE_REVIEWS (a recorded 'csam', or a forged one) writes nothing.
+        "needsReview" = CASE
+          WHEN "needsReview" = 'csam' THEN "needsReview"
+          WHEN c."recordedReview" IS NULL
+            OR NOT (c."recordedReview" = ANY(${RESTORABLE_REVIEWS}::text[]))
+          THEN "needsReview"
+          WHEN "needsReview" IS NULL THEN c."recordedReview"
+          WHEN array_position(${IMAGE_REVIEW_PRECEDENCE}::text[], "needsReview")
+            <= array_position(${IMAGE_REVIEW_PRECEDENCE}::text[], c."recordedReview")
+          THEN "needsReview"
+          ELSE c."recordedReview"
+        END,
+        -- Read from the updated row itself, not from the claim's columns.
+        "nsfwLevel" = COALESCE(${restorableRecordedLevelSql()}, "nsfwLevel"),
+        "metadata" = "metadata"${minusPriorKeysSql}
+    FROM (
+      SELECT i.id, i."needsReview" AS "currentReview",
+        -- A recorded appeal decided during the window has no queue left to clear it, and a row
+        -- that keeps a CSAM block never takes the appeal review.
+        CASE
+          WHEN i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text = 'appeal' AND (
+            NOT ${pendingImageAppealSql(Prisma.sql`i.id`)}
+            OR (${csamBlockedSql('i')}) IS TRUE
+            OR i."metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text = ${BlockedReason.CSAM}
+          ) THEN NULL
+          ELSE i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
+        END AS "recordedReview",
+        ${restorableRecordedLevelSql('i')} AS "recordedLevel"
+      FROM "Image" i
+      WHERE i."userId" = ${userId}
+        AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
+        AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IS NOT NULL
+        AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IN (SELECT unnest(enum_range(NULL::"ImageIngestionStatus"))::text)
+        AND (SELECT COALESCE(u."deletedAt", u."bannedAt") IS NULL FROM "User" u WHERE u.id = ${userId})
+      LIMIT ${RESTORE_BATCH_SIZE}
+      -- Locks the claimed rows, so a rating written after this statement began is read here (on
+      -- its newest version) rather than from the statement's snapshot. Without it a moderator's
+      -- rating landing mid-restore could be routed to the caller's re-rate, which unlocks it.
+      FOR UPDATE OF i
+    ) c
+    WHERE "Image".id = c.id
+    RETURNING "Image".id, "postId", ingestion, "blockedFor", "needsReview", c."currentReview", c."recordedReview", c."recordedLevel"
+  `;
+}
+
+/**
  * Undoes the grace block, keyed off the `Image.metadata` breadcrumbs the block wrote rather than
  * off `blockedFor`: a moderator block is also `blockedFor = 'moderated'`, so anything scoped that
  * way would unblock content a moderator hid. Restoring the recorded values rather than forcing
@@ -134,89 +234,7 @@ export async function unblockAccountDeletionImages(userId: number) {
 
   while (passes < MAX_RESTORE_BATCHES) {
     passes++;
-    const restored = await dbWrite.$queryRaw<
-      {
-        id: number;
-        postId: number | null;
-        ingestion: string;
-        blockedFor: string | null;
-        needsReview: string | null;
-        currentReview: string | null;
-        recordedReview: string | null;
-        recordedLevel: number | null;
-      }[]
-    >`
-      UPDATE "Image"
-      SET ingestion = CASE
-            WHEN "blockedFor" = ${
-              BlockedReason.CSAM
-            } OR "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text = ${BlockedReason.CSAM}
-            THEN 'Blocked'::"ImageIngestionStatus"
-            ELSE ("metadata"->>${PRIOR_INGESTION_KEY}::text)::"ImageIngestionStatus"
-          END,
-          "blockedFor" = CASE
-            WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor"
-            ELSE "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text
-          END,
-          -- The one column holds one review: of the current flag and the recorded one, the higher in
-          -- IMAGE_REVIEW_PRECEDENCE stays. A current 'csam' is never overwritten, and a recorded value
-          -- outside RESTORABLE_REVIEWS (a recorded 'csam', or a forged one) writes nothing.
-          "needsReview" = CASE
-            WHEN "needsReview" = 'csam' THEN "needsReview"
-            WHEN c."recordedReview" IS NULL
-              OR NOT (c."recordedReview" = ANY(${RESTORABLE_REVIEWS}::text[]))
-            THEN "needsReview"
-            WHEN "needsReview" IS NULL THEN c."recordedReview"
-            WHEN array_position(${IMAGE_REVIEW_PRECEDENCE}::text[], "needsReview")
-              <= array_position(${IMAGE_REVIEW_PRECEDENCE}::text[], c."recordedReview")
-            THEN "needsReview"
-            ELSE c."recordedReview"
-          END,
-          -- The rating the grace block replaced with Blocked, when nothing has changed it since.
-          -- Checked again on the locked row: a re-rate that landed after the claim read it is kept.
-          "nsfwLevel" = CASE
-            WHEN "nsfwLevel" = ${NsfwLevel.Blocked}
-              AND to_jsonb("nsfwLevelLocked") = "metadata"->${PRIOR_NSFW_LOCKED_KEY}::text
-            THEN COALESCE(c."recordedLevel", "nsfwLevel")
-            ELSE "nsfwLevel"
-          END,
-          "metadata" = "metadata"${minusPriorKeysSql}
-      FROM (
-        SELECT i.id, i."needsReview" AS "currentReview",
-          -- A recorded appeal decided during the window has no queue left to clear it, and a row
-          -- that keeps a CSAM block never takes the appeal review.
-          CASE
-            WHEN i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text = 'appeal' AND (
-              NOT ${pendingImageAppealSql(Prisma.sql`i.id`)}
-              OR (${csamBlockedSql('i')}) IS TRUE
-              OR i."metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text = ${BlockedReason.CSAM}
-            ) THEN NULL
-            ELSE i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
-          END AS "recordedReview",
-          -- Only while the row is as the grace block left it (still Blocked, same rating lock, no CSAM
-          -- block): a rating set during the window, or none recorded, goes through the re-rate below.
-          CASE
-            WHEN i."nsfwLevel" = ${NsfwLevel.Blocked}
-              AND to_jsonb(i."nsfwLevelLocked") = i."metadata"->${PRIOR_NSFW_LOCKED_KEY}::text
-              AND (${csamBlockedSql('i')}) IS NOT TRUE
-              AND i."metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text IS DISTINCT FROM ${
-      BlockedReason.CSAM
-    }
-              AND jsonb_typeof(i."metadata"->${PRIOR_NSFW_LEVEL_KEY}::text) = 'number'
-              AND i."metadata"->>${PRIOR_NSFW_LEVEL_KEY}::text ~ '^[1-9][0-9]{0,1}$'
-            THEN (i."metadata"->>${PRIOR_NSFW_LEVEL_KEY}::text)::int
-          END AS "recordedLevel"
-        FROM "Image" i
-        WHERE i."userId" = ${userId}
-          AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
-          AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IS NOT NULL
-          AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IN (SELECT unnest(enum_range(NULL::"ImageIngestionStatus"))::text)
-          AND (SELECT COALESCE(u."deletedAt", u."bannedAt") IS NULL FROM "User" u WHERE u.id = ${userId})
-        LIMIT ${RESTORE_BATCH_SIZE}
-      ) c
-      WHERE "Image".id = c.id
-      RETURNING "Image".id, "postId", ingestion, "blockedFor", "needsReview", c."currentReview", c."recordedReview", c."recordedLevel"
-    `;
+    const restored = await restoreAccountDeletionImageBatch(userId);
 
     if (!restored.length) {
       drained = true;
@@ -254,7 +272,7 @@ export async function unblockAccountDeletionImages(userId: number) {
     unblocked += ids.length;
     stillBlocked += restored.length - ids.length;
 
-    // A row with its rating recorded got it back above; re-rating it would drop a moderator's lock.
+    // A row whose recorded rating was put back above; re-rating it would drop a moderator's lock.
     const rerate = visible.filter((x) => x.recordedLevel == null).map((x) => x.id);
     const rated = visible.filter((x) => x.recordedLevel != null).map((x) => x.id);
     if (ids.length)

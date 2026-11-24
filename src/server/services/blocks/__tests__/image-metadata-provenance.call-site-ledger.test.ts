@@ -611,7 +611,7 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-server-keys',
     sites: 2,
   },
-  'src/server/services/account-deletion-images.ts#unblockAccountDeletionImages': {
+  'src/server/services/account-deletion-images.ts#restoreAccountDeletionImageBatch': {
     decision: 'raw-server-keys',
     sites: 1,
   },

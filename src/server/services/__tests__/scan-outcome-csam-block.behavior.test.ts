@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'node:fs';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Audit from '~/utils/metadata/audit';
@@ -1607,11 +1608,12 @@ describe('feed thumbnail fields', () => {
 });
 
 /**
- * Decision (account-restore parity): the grace block records the rating and rating lock it replaces
- * with Blocked, and a restore puts both back instead of re-rating the row. A row kept by a block
- * marker (a takedown, `minor`, a lock at Blocked) therefore comes back with its marker, and a
- * moderator's lock comes back locked. A row with nothing recorded (blocked before the keys existed,
- * or lifted while its owner was deleted) is re-rated as before.
+ * Decision (account-restore parity, #10248): the grace block records the rating and rating lock it
+ * replaces with Blocked. A restore puts the recorded rating back only when it was locked or was
+ * itself Blocked: a moderator's lock comes back locked, and a row kept by a block marker (a
+ * takedown, `minor`, a lock at Blocked) comes back with its marker. Every other row is re-rated
+ * from its current tags, so a tag enabled during the window, and the 'minor' review the re-rate
+ * assigns, are not lost. A row with nothing recorded is re-rated as before.
  */
 describe('a restore puts back the rating the grace block replaced', () => {
   const graced = (prior: {
@@ -1688,7 +1690,7 @@ describe('a restore puts back the rating the grace block replaced', () => {
     expect(resetIds()).not.toContain(id);
   });
 
-  it("brings a moderator's rating lock back locked, at its level", async () => {
+  it("brings a moderator's rating lock back locked at its level; an unlocked rating is re-rated", async () => {
     resetLikeProd();
     await holder.db.exec(`
       INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
@@ -1711,25 +1713,83 @@ describe('a restore puts back the rating the grace block replaced', () => {
       nsfwLevel: 4,
       nsfwLevelLocked: true,
     });
-    // The level and the lock are separate keys: an unlocked row comes back unlocked.
+    // Unlocked and not Blocked: handed to the re-rate, which resets it before recomputing.
     expect(await rating(115)).toEqual({
       ingestion: 'Scanned',
-      nsfwLevel: 8,
+      nsfwLevel: 0,
       nsfwLevelLocked: false,
     });
     expect(resetIds()).not.toContain(114);
-    expect(resetIds()).not.toContain(115);
-    // Not re-rated, so the caches that read the level are refreshed for exactly these rows.
+    expect(resetIds()).toContain(115);
+    // Not re-rated, so the caches that read the level are refreshed for exactly this row.
     expect(
       vi
         .mocked(refreshImageLevelCaches)
         .mock.calls.flatMap(([ids]) => ids)
         .sort()
-    ).toEqual([114, 115]);
+    ).toEqual([114]);
     const { rows } = await holder.db.query<{ metadata: Record<string, unknown> }>(
       `SELECT metadata FROM "Image" WHERE id IN (114, 115)`
     );
     expect(rows.map((row) => row.metadata)).toEqual([{}, {}]);
+  });
+
+  it('re-rates an unlocked rating from the tags as they are now, with the minor review', async () => {
+    const recompute = readFileSync(
+      new URL(
+        '../../../../packages/civitai-db-schema/prisma/programmability/update_nsfw_level.sql',
+        import.meta.url
+      ),
+      'utf8'
+    )
+      .split('---')
+      .find((part) => part.includes('FUNCTION update_nsfw_levels_new('));
+    expect(recompute, 'update_nsfw_levels_new not found in its programmability file').toBeTruthy();
+    // resetBlockedNsfwLevel's own statements: the reset, then the recompute it runs.
+    vi.mocked(resetBlockedNsfwLevel).mockImplementation(async (ids) => {
+      const list = Array.isArray(ids) ? ids : [ids];
+      await holder.db.query(
+        `UPDATE "Image" SET "nsfwLevel" = 0, "nsfwLevelLocked" = false WHERE id = ANY($1) AND "nsfwLevel" = 32`,
+        [list]
+      );
+      await holder.db.query(`SELECT update_nsfw_levels_new($1::int[])`, [list]);
+    });
+    await holder.db.exec(`
+      CREATE TABLE IF NOT EXISTS "Tag" (id int PRIMARY KEY, "nsfwLevel" int NOT NULL);
+      CREATE TABLE IF NOT EXISTS "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean NOT NULL DEFAULT false);
+      TRUNCATE "Tag", "TagsOnImageDetails";
+      ${recompute};
+      INSERT INTO "Tag" (id, "nsfwLevel") VALUES (1, 1), (2, 8), (3, 4);
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata, "scanJobs") VALUES
+        -- PG before the deletion; a moderator enabled an X tag during the window.
+        (131, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 1,
+      locked: false,
+    })}, NULL),
+        -- PG-13, and its scan saw a minor: the re-rate gives it the 'minor' review.
+        (132, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 4,
+      locked: false,
+    })}, '{"hasMinor": true}');
+      INSERT INTO "TagsOnImageDetails" ("imageId", "tagId") VALUES (131, 1), (131, 2), (132, 3);
+    `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    const { rows } = await holder.db.query<{
+      id: number;
+      nsfwLevel: number;
+      nsfwLevelLocked: boolean;
+      needsReview: string | null;
+    }>(
+      `SELECT id, "nsfwLevel", "nsfwLevelLocked", "needsReview" FROM "Image" WHERE id IN (131, 132) ORDER BY id`
+    );
+    expect(rows).toEqual([
+      { id: 131, nsfwLevel: 8, nsfwLevelLocked: false, needsReview: null },
+      { id: 132, nsfwLevel: 4, nsfwLevelLocked: false, needsReview: 'minor' },
+    ]);
   });
 
   it('re-rates a row whose rating changed during the window, keeping a moderator lock', async () => {
@@ -1788,7 +1848,7 @@ describe('a restore puts back the rating the grace block replaced', () => {
         (124, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(4.5, false)}),
         (125, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(123456789012, false)}),
         (126, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(4)}),
-        (127, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(4, false)}),
+        (127, ${OWNER}, 'Blocked', 'moderated', 32, true, ${crumbs(4, true)}),
         -- Unrated before the deletion: re-rated, so the rescan of an unrated image still runs.
         (130, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(0, false)});
     `);
@@ -1801,7 +1861,7 @@ describe('a restore puts back the rating the grace block replaced', () => {
     expect(await rating(127)).toEqual({
       ingestion: 'Scanned',
       nsfwLevel: 4,
-      nsfwLevelLocked: false,
+      nsfwLevelLocked: true,
     });
   });
 
