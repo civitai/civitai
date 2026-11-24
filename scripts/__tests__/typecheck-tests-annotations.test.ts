@@ -89,7 +89,7 @@ describe('formatAnnotations', () => {
     ]);
   });
 
-  it('caps ::error lines at 10, lists the rest indented, and ends with a count', () => {
+  it('caps ::error lines at 10, lists the rest as plain lines, and ends with a count', () => {
     expect(MAX_ERROR_ANNOTATIONS).toBe(10);
     const diags = Array.from({ length: 13 }, (_, i) =>
       d(NEW_A, i + 1, 2322, `msg ${i + 1}\n  chain`)
@@ -98,9 +98,9 @@ describe('formatAnnotations', () => {
     expect(lines.filter((l: string) => l.startsWith('::error'))).toHaveLength(10);
     expect(lines.slice(10)).toEqual([
       'typecheck-tests-gate: 3 more blocking diagnostic(s), not annotated:',
-      `    ${NEW_A}:11:1 TS2322 msg 11`,
-      `    ${NEW_A}:12:1 TS2322 msg 12`,
-      `    ${NEW_A}:13:1 TS2322 msg 13`,
+      `${NEW_A}:11:1 TS2322 msg 11`,
+      `${NEW_A}:12:1 TS2322 msg 12`,
+      `${NEW_A}:13:1 TS2322 msg 13`,
       '::notice title=typecheck-tests-gate::3 more blocking type error(s) are listed in the job log ' +
         '(GitHub keeps 10 error annotations per step).',
     ]);

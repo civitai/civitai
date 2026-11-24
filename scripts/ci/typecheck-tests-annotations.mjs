@@ -82,9 +82,8 @@ function errorCommand({ diagnostic: d, worsened }) {
 
 /**
  * The lines to print for a blocked run: one `::error` per blocking diagnostic up
- * to `max`, then — only if there are more — the rest as indented plain lines
- * (indented so setup-node's `tsc` problem matcher does not turn them into
- * annotations of their own) and a final `::notice` saying how many there are.
+ * to `max`, then — only if there are more — the rest as plain log lines and a
+ * final `::notice` saying how many there are.
  * Returns `[]` when the run did not block.
  */
 export function formatAnnotations({ diagnostics, result, max = MAX_ERROR_ANNOTATIONS }) {
@@ -95,7 +94,7 @@ export function formatAnnotations({ diagnostics, result, max = MAX_ERROR_ANNOTAT
   if (rest.length) {
     lines.push(`typecheck-tests-gate: ${rest.length} more blocking diagnostic(s), not annotated:`);
     for (const { diagnostic: d } of rest) {
-      lines.push(`    ${d.file}:${d.line}:${d.col} TS${d.code} ${d.message.split('\n')[0]}`);
+      lines.push(`${d.file}:${d.line}:${d.col} TS${d.code} ${d.message.split('\n')[0]}`);
     }
     lines.push(
       `::notice title=typecheck-tests-gate::${rest.length} more blocking type error(s) are listed ` +
