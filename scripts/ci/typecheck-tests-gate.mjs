@@ -92,7 +92,9 @@
  *
  * The pure comparison/parsing/classification logic lives in
  * `typecheck-tests-compare.mjs` and is unit-tested in
- * `scripts/__tests__/typecheck-tests-gate.test.ts`.
+ * `scripts/__tests__/typecheck-tests-gate.test.ts`. Under GitHub Actions a
+ * blocked run also prints `::error` annotations for the blocking diagnostics
+ * (`typecheck-tests-annotations.mjs`), so the check shows file, line and TS code.
  *
  * Exit codes: 0 pass · 1 regression (blocking) · 2 usage/baseline error ·
  *             3 the environment could not run the check.
@@ -117,6 +119,7 @@ import {
   testFileFloor,
   validateBaseline,
 } from './typecheck-tests-compare.mjs';
+import { formatAnnotations } from './typecheck-tests-annotations.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..', '..');
@@ -508,4 +511,11 @@ console.error('');
 console.error('  Reproduce locally:');
 console.error('    pnpm run typecheck:tests');
 console.error('================================================================');
+// Under Actions, put file/line/TS code on the check run itself; otherwise the
+// check shows only the exit code. Additive: nothing above changes.
+if (process.env.GITHUB_ACTIONS === 'true') {
+  for (const line of formatAnnotations({ diagnostics: measured.parsed.diagnostics, result })) {
+    console.log(line);
+  }
+}
 process.exit(1);
