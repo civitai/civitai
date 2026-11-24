@@ -105,7 +105,8 @@ export function emailSendRecord(sendId: string, tags: EmailTags | undefined, sen
     mailClass: tags?.mailClass && MAIL_CLASSES.includes(tags.mailClass) ? tags.mailClass : '',
     campaign: tags?.campaign ?? '',
     variant: tags?.variant ?? '',
-    userId: Number.isSafeInteger(userId) && userId! > 0 ? userId! : 0,
+    // emailEvents.userId is a UInt32: anything outside it is recorded as unknown.
+    userId: Number.isInteger(userId) && userId! > 0 && userId! <= 0xffffffff ? userId! : 0,
   } satisfies EmailSendRecord;
 }
 
@@ -141,7 +142,16 @@ function compose(
     from: from ?? env.EMAIL_FROM,
     text: text ?? removeTags(data.html),
     ...data,
-    headers: { ...headers, [SEND_ID_HEADER]: sendId },
+    // Ours wins over a caller's in any casing: nodemailer appends headers, so a differently-cased
+    // key would otherwise go out as a second send id.
+    headers: {
+      ...Object.fromEntries(
+        Object.entries(headers ?? {}).filter(
+          ([key]) => key.toLowerCase() !== SEND_ID_HEADER.toLowerCase()
+        )
+      ),
+      [SEND_ID_HEADER]: sendId,
+    },
   });
 }
 

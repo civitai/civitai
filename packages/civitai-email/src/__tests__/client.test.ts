@@ -258,7 +258,11 @@ describe('send rows', () => {
     const mod = await load();
     const rows: EmailSendRecord[] = [];
     mod.setEmailSendRecorder((r) => void rows.push(r));
-    const headers = { 'X-Civitai-Send-Id': 'forged', 'List-Unsubscribe': '<https://u.test>' };
+    const headers = {
+      'X-Civitai-Send-Id': 'forged',
+      'x-civitai-send-id': 'forged-lower',
+      'List-Unsubscribe': '<https://u.test>',
+    };
     await mod.sendEmail({ ...input, headers });
     await mod.sendEmail({ ...input, headers });
     const ids = seen.messages.map(headerOf);
@@ -267,6 +271,10 @@ describe('send rows', () => {
     expect(ids[0]).not.toBe(ids[1]);
     expect(rows.map((r) => r.sendId)).toEqual(ids);
     expect(JSON.parse(seen.messages[0]).headers['List-Unsubscribe']).toBe('<https://u.test>');
+    expect(Object.keys(JSON.parse(seen.messages[0]).headers).sort()).toEqual([
+      'List-Unsubscribe',
+      'X-Civitai-Send-Id',
+    ]);
   });
 
   it('defaults what a send does not say: no campaign or variant, user 0', async () => {
@@ -275,6 +283,14 @@ describe('send rows', () => {
     mod.setEmailSendRecorder((r) => void rows.push(r));
     await mod.sendEmail({ ...input, tags: { template: 'x', mailClass: 'transactional' } });
     expect(rows[0]).toMatchObject({ campaign: '', variant: '', userId: 0 });
+    for (const userId of [-1, 1.5, 2 ** 32, Number.NaN])
+      await mod.sendEmail({
+        ...input,
+        tags: { template: 'x', mailClass: 'transactional', userId },
+      });
+    expect(rows.slice(1).map((r) => r.userId)).toEqual([0, 0, 0, 0]);
+    await mod.sendEmail({ ...input, tags: { ...input.tags, userId: 2 ** 32 - 1 } });
+    expect(rows.at(-1)?.userId).toBe(2 ** 32 - 1);
   });
 
   it.each(['sendEmail', 'sendEmailStrict'] as const)(
