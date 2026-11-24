@@ -1114,18 +1114,39 @@ describe('the reported and review queues, without the grant', () => {
     });
   });
 
-  // Only a CSAM mark, report or hold keeps a card to the grant; a scan flag alone does not.
+  // An automated review flag alone does not withhold a card.
   it.each([
     ['minor review', minor],
     ['reported', reported],
-  ] as const)('%s draws a card with only a csam scan flag with its media', async (_, read) => {
-    await db.exec(`INSERT INTO "ScanLabelItem" (id, "imageId") VALUES (990000090, ${CLEAN});
+  ] as const)(
+    '%s draws a card with only an automated review flag with its media',
+    async (_, read) => {
+      await db.exec(`INSERT INTO "ScanLabelItem" (id, "imageId") VALUES (990000090, ${CLEAN});
       INSERT INTO "ScanLabelFlag" ("itemId", snapshot) VALUES (990000090, '{"csam": "true"}')`);
-    expect((await read(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({
-      url: 'queue-clean-key',
-      restricted: false,
-    });
-  });
+      expect((await read(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({
+        url: 'queue-clean-key',
+        restricted: false,
+      });
+    }
+  );
+
+  // Such a row still gets the scanner read a refused url gets.
+  it.each([
+    ['minor review', minor],
+    ['reported', reported],
+  ] as const)(
+    '%s withholds a flagged card on a pulled post and refused url while the scanner cannot answer',
+    async (_, read) => {
+      await db.exec(`INSERT INTO "Post" (id, "userId", "publishedAt", metadata)
+          VALUES (990000092, 9, NULL, '{"unpublishedAt": "2026-11-24T00:00:00Z", "unpublishedBy": "2"}');
+        UPDATE "Image" SET "postId" = 990000092 WHERE id = ${CLEAN};
+        INSERT INTO "ImageCdnAccess" (url, state) VALUES ('queue-clean-key', 'Denied');
+        INSERT INTO "ScanLabelItem" (id, "imageId") VALUES (990000093, ${CLEAN});
+        INSERT INTO "ScanLabelFlag" ("itemId", snapshot) VALUES (990000093, '{"csam": "true"}')`);
+      scanner.down = true;
+      expect((await read(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({ url: '', restricted: true });
+    }
+  );
 
   it.each([
     ['minor review', minor],

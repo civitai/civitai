@@ -14,10 +14,14 @@ import { blockedForSignal, type BlockedForPatterns, type ScannerVerdict } from '
  *  not held (`heldUrlSql` with `owners: false`). Without `cdnLeg`, the refusal must come from someone
  *  other than the owner unpublishing its post, not by a delete a case keeps, and the row must carry no
  *  CSAM mark of its own. Held media (`heldImageSql`) is excluded: the held-media route and the
- *  moderator app's held leg serve it. Who among moderators may see it is `csamRestrictedSql`'s call. */
-export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): string {
+ *  moderator app's held leg serve it. Who among moderators may see it is `csamRestrictedSql`'s call.
+ *  `scanFlag` is `csamSignalImageSql`'s. */
+export function retractedImageWhereSql(
+  image: string,
+  { cdnLeg = false, scanFlag = true }: { cdnLeg?: boolean; scanFlag?: boolean } = {}
+): string {
   return `(
-    ${retractedEligibleSql(image, cdnLeg)}
+    ${retractedEligibleSql(image, cdnLeg, scanFlag)}
     AND NOT ${heldImageKnownSql(image)}
   )`;
 }
@@ -31,7 +35,7 @@ export function retractedOrOwnerHeldWhereSql(image: string, { cdnLeg = false } =
   )`;
 }
 
-function retractedEligibleSql(image: string, cdnLeg: boolean): string {
+function retractedEligibleSql(image: string, cdnLeg: boolean, scanFlag = true): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const refused = scannedRefusedSql(image);
   if (cdnLeg) return `(${image}.ingestion = 'Blocked' OR ${refused})`;
@@ -41,7 +45,7 @@ function retractedEligibleSql(image: string, cdnLeg: boolean): string {
     ${refused}
     AND ${postPulledSql(image)}
     AND NOT COALESCE(${heldItemImageSql(image)}, false)
-    AND NOT COALESCE(${csamSignalImageSql(image)}, false)
+    AND NOT COALESCE(${csamSignalImageSql(image, { scanFlag })}, false)
   ))`;
 }
 

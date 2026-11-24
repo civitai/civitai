@@ -344,8 +344,7 @@ describe('getRetractedMedia', () => {
     await expectTiers('cleared', [28]);
   });
 
-  // A scan flag is a signal for review, not a CSAM mark.
-  it('serves an image with a csam, minor or clean scan flag to any moderator', async () => {
+  it('serves an image with only an automated review flag, minor or clean, to any moderator', async () => {
     await expectTiers('anyMod', [29, 30, 2]);
   });
 

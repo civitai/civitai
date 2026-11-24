@@ -90,8 +90,8 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
       )} INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (${ITEM}, ${SIBLING}, 'csam-hold');`,
   },
   {
-    // A scan flag is a signal for review, not a CSAM mark: it does not limit which moderators see it.
-    label: 'a row on its url with a csam scan flag',
+    // An automated review flag is a signal for review, not a CSAM mark.
+    label: 'a row on its url with only an automated review flag',
     restricts: false,
     mark: (t) =>
       `${sibling(t)} ${item(
@@ -364,9 +364,9 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
         'Confirmed'
       )}`,
   },
-  // Its own label item: a hold or a vote keeps it with the grant, a scan flag alone does not.
+  // Its own label item: a hold or a vote keeps it with the grant, an automated review flag alone does not.
   {
-    label: 'its own label item with a csam scan flag',
+    label: 'its own label item with only an automated review flag',
     restricts: false,
     mark: (t) =>
       `${item(
