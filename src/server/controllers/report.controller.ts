@@ -22,6 +22,7 @@ import {
 import type { LockReviewContext } from '@civitai/shared/lock-review';
 import {
   createEntityAppeal,
+  assertSongReportTime,
   createReport,
   getAppealCount,
   isImageAppealRefused,
@@ -60,6 +61,7 @@ export async function createReportHandler({
   try {
     if (input.type === ReportEntity.CommentV3) await assertCommentActionable(input.id, ctx);
     if (input.type === ReportEntity.PostText) await assertPostTextVisible(input.id, ctx);
+    await assertSongReportTime(input, ctx);
     // Reviews are shown only behind the flag; without it there is nothing the reporter could see.
     if (input.type === ReportEntity.ServiceDealReview && !ctx.features.creatorServicesNext)
       throw throwNotFoundError('That review is not shown.');

@@ -24,6 +24,11 @@ type ReportTarget = {
    * pressed the one next to the thing they object to.
    */
   placementTarget?: 'sticker' | 'comment';
+  /**
+   * Set when the reported image is a song: the form then asks when in the song and leaves out what a
+   * song cannot be. `durationSec` is its stored length, null when unknown.
+   */
+  song?: { durationSec: number | null };
 };
 
 const ReportTargetContext = createContext<ReportTarget | null>(null);

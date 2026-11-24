@@ -1,7 +1,9 @@
 import { Radio, Stack } from '@mantine/core';
 import { createReportForm } from '~/components/Report/create-report-form';
+import { useReportTarget } from '~/components/Report/report-target.context';
 import { InputRadioGroup, InputTextArea } from '~/libs/form';
 import {
+  MINOR_VIOLATION,
   REAL_PERSON_VIOLATION,
   TOS_VIOLATIONS,
   reportTosViolationDetailsSchema,
@@ -12,12 +14,16 @@ export const TosViolationForm = createReportForm({
   Element: ({ context }) => {
     const violation = context.form.watch('violation');
     const realPerson = violation === REAL_PERSON_VIOLATION;
+    const isSong = !!useReportTarget()?.song;
+    const violations = isSong
+      ? TOS_VIOLATIONS.filter((v) => v !== MINOR_VIOLATION)
+      : TOS_VIOLATIONS;
 
     return (
       <>
         <InputRadioGroup name="violation" label="Violation" withAsterisk>
           <Stack>
-            {TOS_VIOLATIONS.map((value) => (
+            {violations.map((value) => (
               <Radio key={value} value={value} label={value} />
             ))}
           </Stack>

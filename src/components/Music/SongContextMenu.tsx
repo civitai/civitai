@@ -36,6 +36,7 @@ import {
 } from '~/shared/constants/moderator-app';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
+import { storedSongDurationSec } from '~/shared/utils/song-play';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 type SongContextMenuProps = {
@@ -138,7 +139,13 @@ function SongMenuItems({ image, leadingMenuItems, additionalMenuItems }: SongCon
             <Menu.Item
               color="red"
               leftSection={<IconFlag size={16} stroke={1.5} />}
-              onClick={() => openReportModal({ entityType: ReportEntity.Image, entityId: imageId })}
+              onClick={() =>
+                openReportModal({
+                  entityType: ReportEntity.Image,
+                  entityId: imageId,
+                  song: { durationSec: storedSongDurationSec(image.metadata?.duration) },
+                })
+              }
             >
               Report song
             </Menu.Item>

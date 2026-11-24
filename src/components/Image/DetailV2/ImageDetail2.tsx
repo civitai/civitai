@@ -1,4 +1,5 @@
 import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
+import { storedSongDurationSec } from '~/shared/utils/song-play';
 import type { ActionIconProps, BadgeProps, ButtonProps } from '@mantine/core';
 import {
   Anchor,
@@ -306,6 +307,8 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
     openReportModal({
       entityType: ReportEntity.Image,
       entityId: image.id,
+      // A song report carries a time in the song, which the server requires.
+      ...(isSong && { song: { durationSec: storedSongDurationSec(image.metadata?.duration) } }),
     });
   };
 

@@ -228,6 +228,8 @@ export type ReportModalProps = {
   placementId?: number;
   /** Which half of that placement the flag was on. */
   placementTarget?: 'sticker' | 'comment';
+  /** Set when the image is a song; `durationSec` is its stored length, null when unknown. */
+  song?: { durationSec: number | null };
 };
 
 export default function ReportModal({
@@ -236,6 +238,7 @@ export default function ReportModal({
   reportKey: initialReportKey,
   placementId,
   placementTarget,
+  song,
 }: ReportModalProps) {
   const dialog = useDialogContext();
 
@@ -440,7 +443,9 @@ export default function ReportModal({
           )
         )}
         {ReportForm && (
-          <ReportTargetProvider value={{ entityType, entityId, placementId, placementTarget }}>
+          <ReportTargetProvider
+            value={{ entityType, entityId, placementId, placementTarget, song }}
+          >
             <ReportForm onSubmit={handleSubmit} setUploading={setUploading}>
               <Group grow>
                 <Button variant="default" onClick={dialog.onClose}>

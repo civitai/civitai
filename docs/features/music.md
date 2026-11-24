@@ -168,6 +168,16 @@ feed card, the song row, the post page and the song detail view, and offers:
 - For the owner and moderators: Delete song (not on a collection page, which removes from the collection).
 - For moderators: Lookup song and post, Remove as ToS violation, Rescan song and Report CSAM.
 
+Report song asks, whatever the reason, for a required "Time in the song" (m:ss), prefilled from the
+playhead when the song is the current one and 0:00 otherwise, and editable. The report stores it as
+`details.timestampSec` (whole seconds). The server (`assertSongReportTime`, on reports a user files)
+refuses a song report with no time or a time past the song's stored length, a time on anything that is
+not a song, and "Photorealistic depiction of a minor" on a song, which the form does not offer. With no
+stored length, any time is taken. A sticker report on a song is about the placement and takes no time.
+The song rules apply only for a reporter with the music feature who may open the song; otherwise the
+report is treated as an image's, so a refusal never tells a hidden song from a hidden image. Scanner and
+Knights reports are not checked and carry no time.
+
 The image menu's Add to Showcase, art frame and event decorations, More like this, storylines, the
 minor and POI flags, View Post and Edit Post are not offered on a song. The moderator design's "ToS
 cover image" and "Remove from feed" have no action yet.
