@@ -62,6 +62,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { isEqual, uniq } from 'lodash-es';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { assertNotMemorialized, metaWithoutMemorialSql } from '~/server/services/memorial.service';
 import { notifyModAlert } from '~/server/common/mod-alert';
 import dayjs from '~/shared/utils/dayjs';
 import {
@@ -419,7 +420,8 @@ export const getUsers = async ({
     );
 
   if (contestBanned) {
-    select.push(`u."meta"`);
+    // The memorial record is for `user.memorialize` holders, not every moderator.
+    select.push(`${metaWithoutMemorialSql('u."meta"')} AS "meta"`);
   }
 
   // The contest-ban list is a WINDOW over a set larger than itself, so without an order it showed an
@@ -1418,9 +1420,10 @@ export const deleteUser = async ({
   if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   const user = await dbWrite.user.findFirst({
     where: { username, id },
-    select: { id: true, meta: true },
+    select: { id: true, meta: true, flags: true },
   });
   if (!user) throw throwNotFoundError('Could not find user');
+  assertNotMemorialized(user);
   // Here rather than in each caller, so every caller of `deleteUser` is held to it. The scrub below
   // checks again in the same statement as its write.
   const { markerView } = await assertAccountNotUnderLegalHold(user.id);
@@ -1511,9 +1514,14 @@ export const deleteUser = async ({
           ]
         : []),
     ])
-    .catch((e) => {
-      if (isLegalHoldAbort(e)) throw new LegalHoldError();
-      throw e;
+    .catch(async (e) => {
+      if (!isLegalHoldAbort(e)) throw e;
+      // The scrub refuses a memorialized account too, one memorialized after the check above.
+      const [now] = await dbWrite.$queryRaw<{ flags: number }[]>`
+        SELECT flags FROM "User" WHERE id = ${user.id}
+      `;
+      if (now) assertNotMemorialized(now);
+      throw new LegalHoldError();
     });
   const deletedVersions = removeModels ? (result.pop() as DeletedVersionRow[]) : [];
 
@@ -1645,7 +1653,13 @@ export async function setEventPointsExclusion({ id, setTo }: { id: number; setTo
   await dbWrite.$executeRaw`
     UPDATE "User"
     SET flags = CASE WHEN ${setTo} THEN flags | ${bit}::int ELSE flags & ~${bit}::int END,
-      meta = CASE WHEN ${setTo} THEN meta ELSE meta - ${EVENT_POINTS_EXCLUDED_FROM_META_KEY}::text END
+      meta = CASE
+        -- A moderator's own exclusion on a memorialized account: reversing the memorial must keep it.
+        WHEN ${setTo} AND jsonb_typeof(meta) = 'object' AND meta ? 'memorial'
+          THEN jsonb_set(meta, '{memorial,setEventExclusion}', 'false'::jsonb)
+        WHEN ${setTo} THEN meta
+        ELSE meta - ${EVENT_POINTS_EXCLUDED_FROM_META_KEY}::text
+      END
     WHERE id = ${id}
   `;
   userUpdateCounter?.inc({ location: 'user.service:setEventPointsExclusion' });
