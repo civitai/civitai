@@ -2079,7 +2079,14 @@ export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
   key: REDIS_KEYS.CACHES.USER_DOWNLOADS,
   idKey: 'userId',
   ttl: CacheTTL.day,
-  cacheNotFound: false,
+  // A user with no downloads is cached as "none" too: about 30% of lookups find no rows, and
+  // without the marker each one re-ran the query. Both download-recording paths (the model download
+  // route and the download command) call bustUserDownloadsCache, which turns the marker into a short
+  // window of uncached reads, so a first download shows up on the next lookup. The marker lives only
+  // 10 minutes because the download row reaches the table asynchronously: a lookup that lands after
+  // that window but before the row does pins "none" for at most this long.
+  cacheNotFound: true,
+  notFoundTtl: CacheTTL.md,
   lookupFn: async (userIds) => {
     if (!clickhouse) return {};
     if (userIds.length === 0) return {};
