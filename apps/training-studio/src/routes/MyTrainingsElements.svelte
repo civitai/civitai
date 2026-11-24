@@ -1,19 +1,28 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import { IconAlertTriangle, IconPlus, IconTrash } from '@tabler/icons-svelte';
+  import {
+    IconAlertTriangle,
+    IconDotsVertical,
+    IconHourglass,
+    IconMusic,
+    IconPhoto,
+    IconPlus,
+    IconRefresh,
+    IconTrash,
+  } from '@tabler/icons-svelte';
   import '$lib/civitai-elements';
   import type { CivitaiSegmentedControl } from '@civitai/components/civitai-segmented-control';
   import type { CivitaiSelect } from '@civitai/components/civitai-select';
   import { backend, browser, hrefFor } from '$lib/host';
   import { locationHref } from '$lib/actions/locationHref';
+  import { TRAINING_REVIEW_COPY } from '@civitai/shared/training-review';
   import { remixFromRun } from '$lib/reuse';
   import { submitNotice } from '$lib/submit-notice.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
-  import SampleGrid from '$lib/components/SampleGrid.svelte';
-  import GradientTile from '$lib/components/GradientTile.svelte';
-  import { TRAINING_REVIEW_COPY } from '@civitai/shared/training-review';
+  import { grad } from '$lib/components/GradientTile.svelte';
+  import { playOnHover, resetOnLeave } from '$lib/video-preview';
   import {
     canDeleteRun,
     RUN_STATE_BADGE,
@@ -42,6 +51,10 @@
   // button never looks like a dead click (it navigates away on success).
   let remixingId = $state<string | null>(null);
   let remixError = $state('');
+  // A stable placeholder colour per run, so cards without samples don't all look alike.
+  const placeholderIndex = (r: TrainingRow) =>
+    [...(r.workflowId ?? r.name)].reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
+  const remixLabel = (r: TrainingRow) => (r.state === 'failed' ? 'Retry' : 'Remix');
   async function remix(workflowId: string) {
     if (remixingId) return;
     remixingId = workflowId;
@@ -123,12 +136,56 @@
     disabled={!r.workflowId || remixingId !== null}
     onclick={() => r.workflowId && remix(r.workflowId)}
   >
-    {r.state === 'failed' ? 'Retry' : 'Remix'}
+    {remixLabel(r)}
   </civitai-button>
   {#if r.workflowId && canDeleteRun(r)}
-    <civitai-action-button label={`Delete ${r.name}`} onclick={() => askDelete(r)}>
-      <span slot="icon"><IconTrash size={15} stroke={2} /></span>
-    </civitai-action-button>
+    <studio-icon-button label={`Delete ${r.name}`} color="error" onclick={() => askDelete(r)}>
+      <IconTrash size={16} stroke={2} />
+    </studio-icon-button>
+  {:else}
+    <!-- Keeps the Remix buttons in one column whether or not the row can be deleted. -->
+    <span class="inline-block size-7" aria-hidden="true"></span>
+  {/if}
+{/snippet}
+
+{#snippet cardCover(r: TrainingRow)}
+  {#if r.sampleUrls.length > 0 && r.media !== 'audio'}
+    {@const shown = r.sampleUrls.slice(0, 4)}
+    <!-- One sample fills the cover; more show as a 2×2 grid of the run's samples. -->
+    <div class="grid size-full gap-0.5 bg-dark-8 {shown.length > 1 ? 'grid-cols-2 grid-rows-2' : ''}">
+      {#each shown as url, i (i)}
+        {#if r.isVideo}
+          <video
+            src={url}
+            muted
+            loop
+            playsinline
+            preload="metadata"
+            aria-hidden="true"
+            class="size-full min-h-0 object-cover"
+            onmouseenter={playOnHover}
+            onmouseleave={resetOnLeave}
+          ></video>
+        {:else}
+          <img src={url} alt="" loading="lazy" class="size-full min-h-0 object-cover" />
+        {/if}
+      {/each}
+      {#each Array(shown.length > 1 ? 4 - shown.length : 0) as _, i (i)}
+        <div class="bg-dark-7"></div>
+      {/each}
+    </div>
+  {:else}
+    <div class="grid size-full place-items-center" style={`background:${grad(placeholderIndex(r))}`}>
+      {#if r.state === 'failed'}
+        <IconAlertTriangle size={40} stroke={1.5} class="text-white/50" />
+      {:else if r.state === 'review' || r.state === 'rejected' || r.state === 'unreviewed'}
+        <IconHourglass size={40} stroke={1.5} class="text-white/50" />
+      {:else if r.media === 'audio'}
+        <IconMusic size={40} stroke={1.5} class="text-white/50" />
+      {:else}
+        <IconPhoto size={40} stroke={1.5} class="text-white/50" />
+      {/if}
+    </div>
   {/if}
 {/snippet}
 
@@ -278,41 +335,87 @@
       </civitai-table>
     </div>
   {:else}
-    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <!-- The main app's model-card grid: a cover per run, status on the media, actions behind the kebab,
+         title on a scrim (src/components/Cards/ModelCard.tsx). -->
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(232px,1fr))] gap-4">
       {#each visibleRows as r (r.workflowId ?? r.name)}
-        <div
-          class="group relative flex flex-col overflow-hidden rounded-xl border border-dark-4 bg-dark-6 transition-colors hover:border-dark-3 hover:bg-dark-5/50"
+        {@const badge = RUN_STATE_BADGE[r.state]}
+        <civitai-media-card
+          class="group [--civitai-media-card-ratio:4/5] has-[a:focus-visible]:outline-2 has-[a:focus-visible]:outline-offset-2 has-[a:focus-visible]:outline-primary"
         >
-          <!-- Stretched link: the whole card opens the run. Sits under the action buttons (z-index below), so
-               clicking the title/samples navigates while the buttons keep their own behaviour. -->
           {#if r.workflowId}
             <a
+              slot="media"
               href={hrefFor({ view: 'run', workflowId: r.workflowId })}
               use:locationHref={{ view: 'run', workflowId: r.workflowId }}
-              class="absolute inset-0 z-[1]"
               aria-label={`Open ${r.name}`}
-            ></a>
+              class="block size-full overflow-hidden focus:outline-none"
+            >
+              {@render cardCover(r)}
+            </a>
+          {:else}
+            <div slot="media" class="size-full overflow-hidden">{@render cardCover(r)}</div>
           {/if}
 
-          <!-- Badge shares the title's line so the second line gets the full card width: it carries the
-               refund notice on a failed run, which must not be lost to truncation. -->
-          <div class="border-b border-dark-4 p-3.5">
-            <div class="flex items-center gap-3">
-              <div
-                class="min-w-0 flex-1 truncate text-sm font-bold text-dark-0 transition-colors group-hover:text-white"
-              >
-                {r.name}
-              </div>
-              <RunStateBadge state={r.state} />
-            </div>
-            <div class="mt-0.5 break-words font-mono text-xs text-dark-2">
-              <span class="font-bold text-dark-0">{r.base}</span>{r.sub ? ` · ${r.sub}` : ''}
-            </div>
-          </div>
+          <span
+            slot="top-start"
+            class="pointer-events-none inline-flex h-[26px] items-center gap-1.5 rounded-full bg-black/55 px-2.5 text-xs font-bold text-white backdrop-blur-sm"
+          >
+            <span class="size-1.5 rounded-full {badge.dot}"></span>{badge.label}
+          </span>
 
-          <div class="p-3.5">
+          {#if r.workflowId}
+            <civitai-menu
+              slot="top-end"
+              placement="bottom-end"
+              label={`Actions for ${r.name}`}
+              onselect={(e: CustomEvent<{ value: string }>) => {
+                if (e.detail.value === 'remix') remix(r.workflowId!);
+                else if (e.detail.value === 'delete') askDelete(r);
+              }}
+            >
+              <studio-icon-button
+                slot="trigger"
+                size="lg"
+                label={`More options for ${r.name}`}
+                class="[--tone-hover:#fff] [--tone:#fff] drop-shadow-[0_1px_2px_rgb(0_0_0/0.7)]"
+              >
+                <IconDotsVertical size={22} stroke={2} />
+              </studio-icon-button>
+              <civitai-menu-item value="remix" disabled={remixingId !== null}>
+                <span slot="icon"><IconRefresh size={16} stroke={2} /></span>{remixLabel(r)}
+              </civitai-menu-item>
+              {#if canDeleteRun(r)}
+                <civitai-menu-item value="delete" destructive>
+                  <span slot="icon"><IconTrash size={16} stroke={2} /></span>Delete
+                </civitai-menu-item>
+              {/if}
+            </civitai-menu>
+          {/if}
+
+          <!-- Clicks fall through to the cover link; the text is a label, not a target. -->
+          <div slot="bottom" class="pointer-events-none flex w-full min-w-0 flex-col gap-1">
+            <div class="line-clamp-2 text-lg font-bold leading-tight text-white [text-shadow:1px_1px_1px_rgb(0_0_0/0.8)]">
+              {r.name}
+            </div>
+            <!-- Wraps rather than truncates: on a failed run it carries the refund notice. -->
+            <div class="break-words text-xs text-white/80 [text-shadow:1px_1px_1px_rgb(0_0_0/0.8)]">
+              <span class="font-semibold text-white">{r.base}</span>{r.sub ? ` · ${r.sub}` : ''}
+            </div>
+            {#if r.state === 'failed'}
+              <div class="text-xs text-red-300">This run didn't complete.</div>
+            {:else if r.state === 'review' || r.state === 'rejected' || r.state === 'unreviewed'}
+              <div class="text-xs text-white/80">
+                {r.state === 'review'
+                  ? TRAINING_REVIEW_COPY.pendingTitle
+                  : r.state === 'rejected'
+                    ? TRAINING_REVIEW_COPY.notApprovedTitle
+                    : TRAINING_REVIEW_COPY.unreviewedTitle}. Open the run for details.
+              </div>
+            {/if}
             {#if r.state === 'training'}
               <civitai-progress
+                class="mt-1"
                 aria-label="Training progress"
                 size="sm"
                 color="warning"
@@ -320,39 +423,15 @@
                 max={100}
                 indeterminate={r.progressPct <= 0}
               ></civitai-progress>
-              <div class="mt-2 font-mono text-xs text-dark-2">{r.progress}</div>
-              {#if r.sampleUrls.length > 0 && r.media !== 'audio'}
-                <div class="mt-3"><SampleGrid urls={r.sampleUrls} cols={4} isVideo={r.isVideo} /></div>
-              {/if}
-            {:else if r.state === 'failed'}
-              <div
-                class="flex items-center gap-2 rounded-md border border-red-500/20 bg-red-500/5 px-3 py-4 text-xs text-dark-2"
-              >
-                <IconAlertTriangle size={15} stroke={2} class="shrink-0 text-red-400" /> This run didn't complete.
-              </div>
-            {:else if r.state === 'review' || r.state === 'rejected' || r.state === 'unreviewed'}
-              <div class="rounded-md border border-dark-4 bg-dark-7 px-3 py-4 text-xs text-dark-2">
-                {r.state === 'review'
-                  ? TRAINING_REVIEW_COPY.pendingTitle
-                  : r.state === 'rejected'
-                    ? TRAINING_REVIEW_COPY.notApprovedTitle
-                    : TRAINING_REVIEW_COPY.unreviewedTitle}. Open the run for details.
-              </div>
-            {:else if r.sampleUrls.length > 0 && r.media !== 'audio'}
-              <SampleGrid urls={r.sampleUrls} cols={4} isVideo={r.isVideo} />
-            {:else}
-              <div class="grid grid-cols-4 gap-1.5">
-                {#each Array(4) as _, i (i)}
-                  <GradientTile index={r.code.length + i} />
-                {/each}
+              <div class="font-mono text-[11px] text-white/80">{r.progress}</div>
+            {/if}
+            {#if remixingId === r.workflowId}
+              <div class="flex items-center gap-2 text-xs text-white">
+                <civitai-loader size="sm"></civitai-loader>Preparing {remixLabel(r).toLowerCase()}…
               </div>
             {/if}
           </div>
-
-          <div class="relative z-[2] mt-auto flex flex-wrap items-center gap-2 px-3.5 pb-3.5">
-            {@render rowActions(r)}
-          </div>
-        </div>
+        </civitai-media-card>
       {/each}
     </div>
   {/if}
