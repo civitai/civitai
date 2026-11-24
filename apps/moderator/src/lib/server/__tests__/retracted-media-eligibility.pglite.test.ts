@@ -102,6 +102,8 @@ beforeAll(async () => {
       (5, 'key-5', 305, 'Scanned', NULL, NULL, false),
       (6, 'key-6', 306, 'Blocked', NULL, 'tos', false);
     INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (6);
+    INSERT INTO "Image" (id, url, type, "mimeType", "userId", ingestion, "blockedFor") VALUES
+      (50, 'key-50', 'audio', 'audio/mpeg', 350, 'Blocked', 'moderated');
 
     -- The CDN-refusal leg. Each differs from 7 (scanned, url retracted, the url's only row) in one fact.
     INSERT INTO "Image" (id, url, "userId", ingestion, "postId", minor) VALUES
@@ -223,6 +225,16 @@ describe('retracted media eligibility', () => {
   it('never serves held media, an unblocked image or a missing id', async () => {
     for (const id of [4, 5, 999])
       expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
+  });
+
+  it('serves a removed song to any moderator, as audio', async () => {
+    expect(await tierOf(50)).toBe('anyMod');
+    expect(await getModeratorMedia(50, { csamReview: false })).toEqual({
+      url: 'key-50',
+      type: 'audio',
+      mimeType: 'audio/mpeg',
+      kind: 'retracted',
+    });
   });
 
   it('keeps an image under an evidence hold to cleared moderators', async () => {

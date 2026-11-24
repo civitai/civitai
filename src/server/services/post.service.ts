@@ -2,7 +2,6 @@ import { ilikeContains } from '~/server/utils/ilike';
 import {
   deletePostRows,
   isCoverOfSong,
-  isSongsOwnImage,
   type DeleteActor,
 } from '@civitai/db-queries/content-deletion';
 import { postsWithDeleteQueued } from '@civitai/db-queries/pending-deletes';
@@ -126,7 +125,7 @@ import { mediaFromBlobs, type OrchestratorBlobLike } from '~/server/services/blo
 import { Flags } from '~/shared/utils/flags';
 import { hasCompleteSfwFace, imagesForFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
-import { hasBlockMarker } from '~/server/common/image-visibility';
+import { isPlayerSongCover, isSongsOwnCover } from '@civitai/db-queries/profile-picture-clear';
 import {
   getImageIdsVisibleToViewer,
   getVisibleSongIds,
@@ -160,7 +159,6 @@ import {
   CollectionMode,
   CollectionType,
   EntityType,
-  ImageIngestionStatus,
   JobQueueType,
   MediaType,
   Model3DStatus,
@@ -1080,7 +1078,7 @@ async function getSongCovers<S extends Prisma.ImageSelect = typeof songCoverSele
     links.flatMap(({ songId, coverId }) => {
       const song = byId.get(songId);
       const cover = byId.get(coverId);
-      if (!song || !cover || !isSongsOwnImage(cover, song)) return [];
+      if (!song || !cover || !isSongsOwnCover(cover, song)) return [];
       const shown = Object.fromEntries(Object.keys(coverSelect).map((key) => [key, cover[key]]));
       return [[songId, shown as Cover] as const];
     })
@@ -1133,10 +1131,8 @@ export async function getSongCoversForPlayer({
   });
   const covers = await getSongCovers(songs, dbRead, playerCoverSelect);
   return [...covers].flatMap(([songId, cover]) =>
-    cover.ingestion === ImageIngestionStatus.Scanned &&
-    !hasBlockMarker(cover) &&
-    cover.needsReview == null &&
-    cover.acceptableMinor === false &&
+    // The rule the moderator's song card reads too; the browsing level is the public player's own.
+    isPlayerSongCover(cover) &&
     canViewImageMedia(ctx, { nsfwLevel: cover.nsfwLevel, user: { id: cover.userId } })
       ? [{ songId, id: cover.id, url: cover.url, hash: cover.hash, nsfwLevel: cover.nsfwLevel }]
       : []

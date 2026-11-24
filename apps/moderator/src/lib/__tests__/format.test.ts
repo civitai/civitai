@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dateTime, ordinal, plural } from '../format';
+import { dateTime, ordinal, plural, timeSince } from '../format';
 
 /**
  * These call `Intl` for real rather than asserting a rendered string: the defect they cover is a
@@ -84,5 +84,23 @@ describe('ordinal', () => {
       '102nd',
       '111th',
     ]);
+  });
+});
+
+describe('timeSince', () => {
+  const now = Date.parse('2026-11-24T12:00:00Z');
+  const ago = (ms: number) => new Date(now - ms);
+  const DAY = 86_400_000;
+
+  it('names the largest whole unit, with no "ago"', () => {
+    expect(timeSince(ago(4 * 365 * DAY + DAY), now)).toBe('4 years');
+    expect(timeSince(ago(5 * 30 * DAY + DAY), now)).toBe('5 months');
+    expect(timeSince(ago(12 * DAY), now)).toBe('12 days');
+    expect(timeSince(ago(DAY), now)).toBe('1 day');
+  });
+
+  it('reads anything under a day as under a day, and nothing as unknown', () => {
+    expect(timeSince(ago(3_600_000), now)).toBe('less than a day');
+    expect(timeSince(null, now)).toBe('unknown');
   });
 });

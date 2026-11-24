@@ -12,6 +12,7 @@
     reasons = false,
     selected,
     children,
+    class: className,
     ...rest
   }: {
     key: number;
@@ -42,7 +43,8 @@
       : primary
         ? TONE.red
         : 'border-dark-4 bg-transparent dark:bg-transparent',
-    selected && 'border-blue-5 dark:border-blue-5'
+    selected && 'border-blue-5 dark:border-blue-5',
+    className
   )}
   aria-pressed={selected}
   data-triage-key={key}

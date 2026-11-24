@@ -2,6 +2,7 @@ import { sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { GRACE_PRIOR_KEYS } from '@civitai/shared/account-deletion-grace';
 import { childSafetyImageCase, childSafetyPostCase } from './child-safety-case.db';
+import { isSongsOwnCover } from './profile-picture-clear.db';
 import {
   NSFW_LEVEL_BLOCKED,
   PENDING_DELETE_UPSERT,
@@ -334,13 +335,6 @@ export async function deletePostRows(
   return splitOutcome(rows);
 }
 
-/** An image of the song's owner that is in no post. */
-export function isSongsOwnImage(
-  row: { userId: number; postId: number | null } | null | undefined,
-  song: { userId: number }
-) {
-  return !!row && row.userId === song.userId && row.postId == null;
-}
 
 /**
  * A cover row made for this song: its own image naming the song as its parent. Only such a row is
@@ -351,7 +345,7 @@ export function isCoverOfSong(
   song: { id: number; userId: number }
 ) {
   return (
-    isSongsOwnImage(row, song) &&
+    isSongsOwnCover(row, song) &&
     (row?.metadata as { parentId?: unknown } | null)?.parentId === song.id
   );
 }

@@ -12,12 +12,21 @@ import { ratingRecordedUnderGrace } from '@civitai/shared/account-deletion-grace
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
-/** A rating refused because the image is a song. Its message is the moderator-facing copy. */
+const SONG_RATING_REFUSALS = {
+  unreviewed:
+    'This song has not been reviewed yet: its own scans decide it first, and are retried automatically. Rate it once they have.',
+  removed: "This song was removed, so it can't be rated.",
+  changed: 'This song changed while it was being rated. Reload.',
+} as const;
+
+/** Ingestion states of a song with no media to rate: removed, or its file gone. */
+const REMOVED_SONG_STATES = ['Blocked', 'NotFound'];
+
+/** A rating refused because the image is a song its own scans have not reviewed, or a removed one.
+ *  Its message is the moderator-facing copy. */
 export class SongRatingRefusedError extends Error {
-  constructor(readonly imageId: number) {
-    super(
-      'A song is published only by its own scan, which is retried automatically; it cannot be rated here.'
-    );
+  constructor(readonly imageId: number, readonly reason: keyof typeof SONG_RATING_REFUSALS) {
+    super(SONG_RATING_REFUSALS[reason]);
   }
 }
 
@@ -38,12 +47,20 @@ export async function updateImageNsfwLevel({
 }): Promise<void> {
   const image = await dbWrite
     .selectFrom('Image')
-    .select(['type', 'metadata', 'postId', thumbnailParentId.as('parentId')])
+    .select(['type', 'ingestion', 'metadata', 'postId', thumbnailParentId.as('parentId')])
     .where('id', '=', id)
     .executeTakeFirst();
   if (!image) throw new Error('Image not found');
-  // The lock would count as the song's review, which only its own scan may give.
-  if (image.type === 'audio') throw new SongRatingRefusedError(id);
+  // A locked level counts as a review in the main app's `imageReviewedSql`, which has no exception for
+  // songs, and only a song's own scans may review it: so a song is rated only once they have
+  // (`ingestion` Scanned). From then on its lock also stands in for a review: a rated song that a
+  // failed re-scan moves to Error (`markImageScanError`) keeps counting as reviewed. A path that
+  // changes a song's audio or lyrics must clear `nsfwLevelLocked`.
+  if (image.type === 'audio' && image.ingestion !== 'Scanned')
+    throw new SongRatingRefusedError(
+      id,
+      REMOVED_SONG_STATES.includes(image.ingestion) ? 'removed' : 'unreviewed'
+    );
 
   const stored = (image.metadata as Record<string, unknown> | null) ?? {};
   const metadata = {
@@ -52,7 +69,7 @@ export async function updateImageNsfwLevel({
     ...ratingRecordedUnderGrace(stored, nsfwLevel),
   };
 
-  await dbWrite
+  const updated = await dbWrite
     .updateTable('Image')
     .set({
       nsfwLevel,
@@ -60,7 +77,13 @@ export async function updateImageNsfwLevel({
       metadata: sql`${JSON.stringify(metadata)}::jsonb`,
     })
     .where('id', '=', id)
-    .execute();
+    // Re-checked in the write: a rescan that started since the read leaves the song unreviewed.
+    .where((eb) => eb.or([eb('type', '<>', 'audio'), eb('ingestion', '=', 'Scanned')]))
+    .executeTakeFirst();
+  if (Number(updated.numUpdatedRows) === 0) {
+    if (image.type === 'audio') throw new SongRatingRefusedError(id, 'changed');
+    throw new Error('Image not found');
+  }
   await invalidateThumbnails(id, [image.parentId]);
   await bustProfilePictures({ imageIds: [id] });
 
