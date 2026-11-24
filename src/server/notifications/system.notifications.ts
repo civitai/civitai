@@ -1,6 +1,15 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
+/** What a `tos-violation` notice says was removed. A song and its cover are removed apart, so each
+ *  names itself; `modelName` is then the song's title, empty when it has none. */
+function tosViolationSubject(details: { entity?: string; modelName?: string }) {
+  const title = details.modelName ? ` "${details.modelName}"` : '';
+  if (details.entity === 'song') return `Your song${title}`;
+  if (details.entity === 'song cover') return `The cover of your song${title}`;
+  return `Your ${details.entity} on "${details.modelName}"`;
+}
+
 export const systemNotifications = createNotificationProcessor({
   'civitai-features': {
     displayName: 'New Civitai features',
@@ -18,9 +27,11 @@ export const systemNotifications = createNotificationProcessor({
     // that still do not classify a removal — so the unreasoned wording stays, rather than rendering
     // "violation: undefined" over the whole backlog.
     prepareMessage: ({ details }) => ({
-      message: details.reason
-        ? `Your ${details.entity} on "${details.modelName}" has been removed for a Terms of Service violation: ${details.reason}.`
-        : `Your ${details.entity} on "${details.modelName}" has been removed due to a Terms of Service violation.`,
+      message: `${tosViolationSubject(details)} has been removed ${
+        details.reason
+          ? `for a Terms of Service violation: ${details.reason}.`
+          : 'due to a Terms of Service violation.'
+      }`,
       url: details.url,
     }),
   },
