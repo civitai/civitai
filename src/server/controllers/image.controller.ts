@@ -51,6 +51,7 @@ import {
 } from '~/server/services/image-appeal-flag';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { getRequestBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
+import { shownReviewImageLevelsFor } from '~/server/utils/review-image-levels';
 import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
 import { DELETE_PROCESSING_MESSAGE } from '~/shared/constants/delete-after-review.constants';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
@@ -1193,6 +1194,7 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
         userId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
         ownerSeesHeld: isSessionOrFullUserKey(ctx),
+        shownReviewImageLevels: shownReviewImageLevelsFor(ctx),
       }),
       // The hat the image detail draws when it is opened on its own, with no feed to seed it.
       // Safe per viewer only while image.get caches nothing per URL.

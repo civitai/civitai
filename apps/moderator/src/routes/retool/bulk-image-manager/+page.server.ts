@@ -20,6 +20,7 @@ import { sendModNotification } from '$lib/server/moderation-memory.service';
 import {
   countImagesForUser,
   capturesSkippedNote,
+  reviewImagesSkippedNote,
   getBatchOwners,
   getImagesByIds,
   getImagesForCollection,
@@ -212,6 +213,7 @@ export const actions: Actions = {
           ? `Struck ${result.struck.struck} of ${result.struck.owners} owners: ${result.struck.error}`
           : '',
         capturesSkippedNote(result.struck?.capturesSkipped ?? 0),
+        reviewImagesSkippedNote(result.struck?.reviewImagesSkipped ?? 0),
       ]
         .filter(Boolean)
         .join(' ') || undefined;

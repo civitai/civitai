@@ -92,6 +92,7 @@ beforeAll(async () => {
       "collectionId" int NOT NULL, "userId" int NOT NULL,
       permissions "CollectionContributorPermission"[] NOT NULL
     );
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, name text, url text NOT NULL DEFAULT 'u',
       "nsfwLevel" int NOT NULL DEFAULT 1, width int, height int, hash text, type text DEFAULT 'image',

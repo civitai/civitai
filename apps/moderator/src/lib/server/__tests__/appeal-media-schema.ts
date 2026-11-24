@@ -54,4 +54,5 @@ CREATE TABLE "ImageReaction" (
   id SERIAL PRIMARY KEY, "userId" INTEGER, "imageId" INTEGER, reaction TEXT,
   "createdAt" TIMESTAMP(3), "updatedAt" TIMESTAMP(3)
 );
+CREATE TABLE "ServiceDealReviewImage" ("reviewId" INTEGER NOT NULL, "imageId" INTEGER NOT NULL UNIQUE);
 `;
