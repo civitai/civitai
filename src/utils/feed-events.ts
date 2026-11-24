@@ -146,8 +146,8 @@ export function createFeedEventsTracker({ cache, getPage, getSessionKey, send }:
   }
 
   // A cached feed shown again on a later route visit counts as one page-0 load, however many hooks
-  // watch it. The other cached pages keep the loads they were sent under, so a row never names a
-  // page load this visit did not send; under a different route pattern they then match nothing.
+  // watch it. Its other pages keep the loads they were sent under on an earlier visit, so a row only
+  // names a load that was sent; under a different route pattern those pages match nothing.
   function onRevisit(query: Query) {
     const state = emitted.get(query.queryHash);
     if (!state || state.visit === visit) return onData(query);

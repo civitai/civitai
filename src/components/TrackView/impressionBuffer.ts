@@ -73,8 +73,7 @@ const pending = new Map<
   Map<EntityKey, { entityType: ImpressionEntityType; entityId: number }>
 >();
 let pendingCount = 0;
-// Feed seen ids, per load. A load is one context object, so ids dedupe per load, not per session:
-// the same card seen again under a later load of its feed is that load's.
+// Keyed by load (context object identity), so an id is deduped per load, not per session.
 const pendingSeen = new Map<FeedEventContext, Set<number>>();
 const sentSeen = new WeakMap<FeedEventContext, Set<number>>();
 let pendingSeenCount = 0;
@@ -185,8 +184,8 @@ export function clearPendingFeedSeen(): void {
 }
 
 // Move everything pending into the shared telemetry buffer as one event per
-// surface (split further only if a surface exceeds the per-event cap), and one
-// feed seen event per load.
+// surface (split further only if a surface exceeds the per-event cap), and feed
+// seen events grouped by load.
 //
 // `viaBeacon` reaches the shared buffer's beacon path rather than a normal fetch;
 // it is set on the tab-hide path, where a plain fetch would be cancelled.
