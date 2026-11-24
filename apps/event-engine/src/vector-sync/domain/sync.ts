@@ -283,7 +283,8 @@ export type Domain<P extends DomainPayload> = {
    * walk that long after start, so a restart does not wait a full `everyMs`; a process restarting
    * more often than `startupDelayMs` still never walks.
    */
-  refresh?: { everyMs: number; batch: number; startupDelayMs?: number };
+  /** pointsOnly: walk the collection's points rather than the table, for a lane that cannot embed. */
+  refresh?: { everyMs: number; batch: number; startupDelayMs?: number; pointsOnly?: boolean };
   /** What its vectors are made from, when not the text of search_text (3D models: the thumbnail). */
   embedInput?: EmbedInputFor<P>;
   /**

@@ -44,6 +44,8 @@ export const videoDomain: Domain<VideoPayload> = {
     everyMs: config.vectorSync.videoRefreshMinutes * 60_000,
     batch: 500,
     startupDelayMs: 10 * 60_000,
+    // With embedding off, a row with no point cannot gain one, so only the points need a walk.
+    pointsOnly: config.vectorSync.videoRefreshPointsOnly,
   },
   embedInput: (id, payload) => ({ id: String(id), videoUrl: videoEmbedUrl(payload.url) }),
   rejected: redisRejectedMemo,

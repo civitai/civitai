@@ -508,3 +508,66 @@ describe('challenge and crucible refresh walks', () => {
     expect(refresh!.startupDelayMs!).toBeLessThan(refresh!.everyMs);
   });
 });
+
+describe('a points-only walk', () => {
+  const walk = async (rowsFor: (ids: number[]) => number[], points: number[]) => {
+    const sqls: string[] = [];
+    const added: number[] = [];
+    const pg = {
+      query: bounded(async (sql: string, args: unknown[]) => {
+        sqls.push(sql);
+        return { rows: rowsFor(args[0] as number[]).map((id) => ({ id })) };
+      }, 40),
+    };
+    const store = {
+      idsFrom: async (offset: number, limit: number) => {
+        const page = points.filter((id) => id >= offset).slice(0, limit + 1);
+        return { ids: page.slice(0, limit), next: page[limit] ?? 0 };
+      },
+    };
+    const queue = {
+      lanes: new Map([['video', { add: (r: { id: number }) => void added.push(r.id) }]]),
+      isFull: false,
+    };
+    const timers = startRefreshers(
+      [
+        {
+          name: 'video',
+          table: 'Image',
+          refresh: { everyMs: 1000, batch: 2, pointsOnly: true },
+          store: () => store,
+        } as never,
+      ],
+      queue as never,
+      pg as never
+    );
+    await vi.advanceTimersByTimeAsync(1500);
+    for (const t of timers) clearInterval(t);
+    return { sqls, added };
+  };
+
+  test('reads the table only by primary key, for the points, and queues each point once a pass', async () => {
+    vi.useFakeTimers();
+    try {
+      const points = [101, 102, 103, 104, 105];
+      const { sqls, added } = await walk((ids) => ids.filter((id) => id !== 104), points);
+      expect(sqls.every((sql) => sql.includes('= ANY('))).toBe(true);
+      expect(sqls.some((sql) => sql.includes('ORDER BY id'))).toBe(false);
+      expect([...added].sort()).toEqual(points);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a first lookup that finds no rows deletes none of its points', async () => {
+    vi.useFakeTimers();
+    try {
+      const { added } = await walk((ids) => (ids.includes(101) ? [] : ids), [101, 102, 103]);
+      expect(added).not.toContain(101);
+      expect(added).not.toContain(102);
+      expect(added).toContain(103);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

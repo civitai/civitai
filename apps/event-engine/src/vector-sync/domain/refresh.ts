@@ -15,6 +15,26 @@ export const orphanBrake = (orphans: number, points: number) =>
  * The next `batch` ids of the domain's table after `cursor`, by keyset, and the cursor for the
  * following call: 0 once the table is exhausted, so the walk wraps.
  */
+/**
+ * The next `batch` points after `cursor`, the ones whose row is in the domain's slice of its table
+ * (by primary key), and the cursor for the following call: 0 once the collection is exhausted.
+ */
+export async function nextRefreshPoints(
+  pg: Pick<Pool, 'query'>,
+  domain: Pick<Domain<any>, 'table' | 'where'>,
+  store: { idsFrom(offset: number, limit: number): Promise<{ ids: number[]; next: number }> },
+  cursor: number,
+  batch: number
+): Promise<{ ids: number[]; points: number[]; next: number }> {
+  const page = await store.idsFrom(cursor + 1, batch);
+  if (!page.ids.length) return { ids: [], points: [], next: 0 };
+  const { rows } = await pg.query<{ id: number }>(
+    `SELECT id FROM "${domain.table}" WHERE id = ANY($1::int[])${andWhere(domain)}`,
+    [page.ids]
+  );
+  return { ids: rows.map((r) => Number(r.id)), points: page.ids, next: page.next && page.next - 1 };
+}
+
 export async function nextRefreshIds(
   pg: Pick<Pool, 'query'>,
   domain: Pick<Domain<any>, 'table' | 'where'>,
@@ -66,11 +86,18 @@ export function startRefreshers(
     const pass = async () => {
       do {
         if (queue.isFull) await queue.flush();
-        const { ids, next } = await nextRefreshIds(pg, domain, cursor, refresh.batch);
+        const from = cursor + 1;
+        if (refresh.pointsOnly && !store)
+          throw new Error(`${domain.name}-sync: a points-only walk needs a store`);
+        const walked = refresh.pointsOnly
+          ? await nextRefreshPoints(pg, domain, store!, cursor, refresh.batch)
+          : undefined;
+        const { ids, next } = walked ?? (await nextRefreshIds(pg, domain, cursor, refresh.batch));
         // A deleted row is not in the table to walk, so its point is found from the collection
         // side: every point in this batch's id range is queued too, and one with no row is deleted.
-        const from = cursor + 1;
-        const points = store
+        const points = walked
+          ? walked.points
+          : store
           ? await store
               .idsInRange(from, next === 0 ? Number.MAX_SAFE_INTEGER : next + 1)
               .catch((err) => {
