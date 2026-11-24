@@ -29,13 +29,18 @@ export const PUBLISHED_POST_CONTEXT: PostUnpublishContext = {
   parentModelId: null,
 };
 
-/** What a post's unpublish stamp (`Post.metadata`) tells its owner. */
+/**
+ * What a post's unpublish stamp (`Post.metadata`) tells its owner. A kept delete's stamp reads as
+ * unavailable while that delete is queued (`deleteQueued`); once released, as a plain unpublished
+ * post its owner can publish again, never as a parent's unpublish.
+ */
 export function postUnpublishContextOf(
   metadata: Record<string, unknown>,
-  parentModelId: number | null
+  parentModelId: number | null,
+  deleteQueued: boolean
 ): PostUnpublishContext {
   if (metadata.unpublishedReason === POST_PENDING_DELETE_REASON)
-    return { ...PUBLISHED_POST_CONTEXT, unavailable: true };
+    return { ...PUBLISHED_POST_CONTEXT, unavailable: deleteQueued };
   const rawUnpublishedAt = metadata.unpublishedAt;
   const rawUnpublishedBy = metadata.unpublishedBy;
   return {

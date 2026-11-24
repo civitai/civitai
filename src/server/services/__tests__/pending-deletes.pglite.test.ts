@@ -9,7 +9,9 @@ import { childSafetyImageCase, childSafetyPostCase } from '@civitai/db-queries/c
 import {
   imageDeleteBlocked,
   imagesPendingDeletion,
+  postsWithDeleteQueued,
   releaseModeratorPendingDeletes,
+  settleDeletes,
   PENDING_DELETES_ACTOR,
 } from '@civitai/db-queries/pending-deletes';
 import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
@@ -782,7 +784,7 @@ describe('deletePostRows keeps a post under a child-safety report', () => {
       prevPublishedAt: expect.stringContaining('2026-11-01'),
     });
     // Its owner is told only that it isn't available: not that its parent was unpublished.
-    expect(postUnpublishContextOf(rows[0].metadata, 7)).toEqual({
+    expect(postUnpublishContextOf(rows[0].metadata, 7, true)).toEqual({
       wasPublished: false,
       unavailable: true,
       unpublishedAt: null,
@@ -820,7 +822,7 @@ describe('deletePostRows keeps a post under a child-safety report', () => {
     const { rows: meta } = await pg.query<{ metadata: Record<string, unknown> }>(
       `SELECT metadata FROM "Post" WHERE id = 51`
     );
-    expect(postUnpublishContextOf(meta[0].metadata, 7)).toMatchObject({
+    expect(postUnpublishContextOf(meta[0].metadata, 7, false)).toMatchObject({
       wasPublished: true,
       unavailable: false,
       parentModelId: 7,
@@ -907,8 +909,27 @@ describe('deletePostRows keeps a post under a child-safety report', () => {
       ]);
     });
 
+    // What its owner is told: unavailable while the delete is queued; once it is released, a plain
+    // unpublished post they can publish, not one whose parent was unpublished.
+    const ownerContext = async () => {
+      const { rows } = await pg.query<{ metadata: Record<string, unknown> }>(
+        `SELECT metadata FROM "Post" WHERE id = ${KEPT}`
+      );
+      const queued = await postsWithDeleteQueued(db, [KEPT]);
+      return postUnpublishContextOf(rows[0].metadata, 7, queued.has(KEPT));
+    };
+
     it('lets its owner publish it again once its queued delete is released, dropping the stamp', async () => {
-      await pg.exec(`DELETE FROM "JobQueue" WHERE "entityType" = 'Post' AND "entityId" = ${KEPT}`);
+      expect(await ownerContext()).toMatchObject({ unavailable: true, wasPublished: false });
+
+      await settleDeletes(db, 'Post', { done: [KEPT] });
+      expect(await ownerContext()).toEqual({
+        wasPublished: false,
+        unavailable: false,
+        unpublishedAt: null,
+        unpublishedBy: null,
+        parentModelId: null,
+      });
 
       await pg.exec(`UPDATE "Post" SET "publishedAt" = now() WHERE id = ${KEPT}`);
 

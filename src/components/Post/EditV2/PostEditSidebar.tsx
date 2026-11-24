@@ -126,7 +126,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // directly would just restore the stashed date (via the CASE in
   // updatePost) without making the post visible, which is confusing.
   const isUnpublishedByParent = post.wasPublished && !post.publishedAt;
-  // Neither kind can be published from here.
+  // Kept for now by a delete still queued: its owner cannot publish it, and is not told why.
   const isUnavailable = !!post.unavailable && !post.publishedAt;
   const publishBlocked = isUnpublishedByParent || isUnavailable;
   const eventCard = postEditEventCard({
@@ -268,9 +268,9 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   };
 
   const handleScheduleClick = () => {
-    // Defensive: the Schedule controls aren't rendered when
-    // `isUnpublishedByParent`, but guard the entry point in case a future
-    // call site (keyboard shortcut, programmatic trigger) bypasses the UI.
+    // Defensive: the Schedule controls aren't rendered when publishing is
+    // blocked, but guard the entry point in case a future call site
+    // (keyboard shortcut, programmatic trigger) bypasses the UI.
     if (publishBlocked) return;
     dialogStore.trigger({
       component: SchedulePostModal,
@@ -322,9 +322,9 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   };
 
   useCatchNavigation({
-    // When the post is unpublished because the parent model/version is
-    // unpublished, the user can't republish from this page anyway —
-    // showing the "you haven't published this post" warning is misleading.
+    // When publishing is blocked (a parent unpublish, or a delete still
+    // queued), the user can't publish from this page anyway — showing the
+    // "you haven't published this post" warning is misleading.
     unsavedChanges: !post.publishedAt && !deleted && !publishBlocked,
     // Every edit is autosaved and the provider flushes anything still pending on the way out,
     // so nothing is lost here — what the user needs warning about is that a draft is invisible

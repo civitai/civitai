@@ -216,6 +216,17 @@ export async function imagesPendingDeletion(db: Kysely<DB>, imageIds: number[]) 
   return new Set(rows.map((row) => row.id));
 }
 
+/** Of `postIds`, those with a pending delete still queued. */
+export async function postsWithDeleteQueued(db: Kysely<DB>, postIds: number[]) {
+  const ids = [...new Set(postIds)];
+  if (!ids.length) return new Set<number>();
+  const { rows } = await sql<{ id: number }>`
+    SELECT id FROM "Post"
+    WHERE id = ANY(${ids}::int[]) AND ${pendingDeleteQueued('Post', sql.ref('Post.id'))}
+  `.execute(db);
+  return new Set(rows.map((row) => row.id));
+}
+
 /**
  * Up to `limit` pending deletes of `entityType` due now, first attempts before retries, earliest due
  * first. A row is due from its `createdAt`, which a waiting row has moved to when it is next due.

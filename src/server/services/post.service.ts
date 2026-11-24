@@ -1,5 +1,6 @@
 import { ilikeContains } from '~/server/utils/ilike';
 import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-deletion';
+import { postsWithDeleteQueued } from '@civitai/db-queries/pending-deletes';
 import {
   postUnpublishContextOf,
   PUBLISHED_POST_CONTEXT,
@@ -929,9 +930,11 @@ async function getPostUnpublishContext({
   `;
 
   const row = rows[0];
+  const queued = await postsWithDeleteQueued(kyselyOver(db), [id]);
   return postUnpublishContextOf(
     (row?.metadata ?? {}) as Record<string, unknown>,
-    row?.modelId ?? null
+    row?.modelId ?? null,
+    queued.has(id)
   );
 }
 

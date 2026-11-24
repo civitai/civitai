@@ -50,8 +50,9 @@ so it leaves public reads and stays visible to its owner and moderators; `delete
 unpublish follow-ups. The `trg_post_pending_delete_keep_unpublished` trigger (migration
 `20271126120000_post_pending_delete_publish_guard`) keeps such a post unpublished, its stamp intact,
 whatever path tries to publish it, while its `PendingDelete` row exists. A kept draft is stamped too; a
-post a moderator already unpublished keeps its own reason. Once that row is gone without
-the post, a publish goes through and drops the stamp. An account restore
+post a moderator already unpublished keeps its own reason. While the row exists its owner is told only
+that the post isn't available, with no publish controls; once that row is gone without the post, it
+reads as a plain unpublished post, and a publish goes through and drops the stamp. An account restore
 (`releaseAccountDeletionPendingDeletes`) leaves the drain's delete of an image or post whose case is
 still open, marked `releasedOnRestore`, so it cannot make that content publishable: the content stays
 hidden until the case closes. Then `pending-deletes` releases it (drops the row and keeps the content) only if the case found nothing and the account has

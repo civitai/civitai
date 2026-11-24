@@ -221,8 +221,7 @@ export const pendingDeletes = createJob('pending-deletes', '*/5 * * * *', async 
       (row) => before.get(row.id)?.present && !before.get(row.id)?.blocked && !textHeld.has(row.id)
     );
     const dueIds = new Set(due.map((row) => row.id));
-    // Only the drain asked and the account came back: a case that found nothing keeps the item, and
-    // only the row goes. Any finding, or an outcome not read as none, deletes it as queued.
+    // A restore-marked row is released (dropped, the item kept) only on a no-finding close.
     const marked = due
       .filter(({ data }) => data.releasedOnRestore && data.ownerId === undefined && !data.cleanup)
       .map((row) => row.id);
