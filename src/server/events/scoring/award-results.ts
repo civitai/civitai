@@ -94,7 +94,7 @@ export async function readFlagRaceJson(event: string): Promise<unknown> {
   return raw ? JSON.parse(raw) : undefined;
 }
 
-type FreezeEvent = {
+export type FreezeEvent = {
   name: string;
   startDate: Date;
   endDate: Date;
@@ -176,26 +176,4 @@ export async function loadAwardResults(
     WHERE event = ${event.name} AND "voidedAt" IS NULL AND team IS NOT NULL AND points > 0
   `;
   return rows.map((r) => ({ team: r.team, points: r.points, at: r.at, reason: r.sourceId }));
-}
-
-/**
- * The settle's freeze step. A failure is logged and skipped: nothing is lost, the next settle freezes
- * it, and the award still counts from its own date.
- */
-export async function freezeEventAwards(event: FreezeEvent, now = new Date()) {
-  try {
-    const config = await readFlagRaceConfig(event.name);
-    const places = await freezeCruciblePlacements(event, config);
-    if (!config.flags) return places;
-    const { freezeFlagDays } = await import('~/server/events/turf/flag-freeze');
-    return places + (await freezeFlagDays(event, config.flags, now));
-  } catch (error) {
-    logToAxiom({
-      type: 'error',
-      name: 'event-award-freeze-failed',
-      event: event.name,
-      error,
-    });
-    return 0;
-  }
 }
