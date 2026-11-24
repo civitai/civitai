@@ -31,7 +31,10 @@ describe('setImageLevelAsModerator', () => {
     expect(init?.method).toBe('POST');
     expect(new Headers(init?.headers).get('cookie')).toBe(`${NAME}=very-secret-session`);
     expect(init?.redirect).toBe('error');
-    expect(JSON.parse(String(init?.body))).toEqual({ items: [{ imageId: 12, nsfwLevel: 8 }] });
+    expect(JSON.parse(String(init?.body))).toEqual({
+      items: [{ imageId: 12, nsfwLevel: 8 }],
+      status: 'Actioned',
+    });
     expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 

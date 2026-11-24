@@ -370,7 +370,7 @@ describe('ruleOnInquisitorItem', () => {
 
     expect(await ruleOnInquisitorItem(1, { level: 8 }, MOD)).toEqual({ ok: true });
 
-    expect(setLevel).toHaveBeenCalledWith({ id: 1, nsfwLevel: 8, userId: MOD });
+    expect(setLevel).toHaveBeenCalledWith({ id: 1, nsfwLevel: 8, status: 'Actioned', userId: MOD });
     expect(await item(1)).toMatchObject({
       status: 'Closed',
       resolvedValue: '8',
@@ -398,6 +398,7 @@ describe('ruleOnInquisitorItem', () => {
       id: 1,
       nsfwLevel: 32,
       reason: 'Inquisitor ruling: Realistic Minors',
+      status: 'Actioned',
       userId: MOD,
     });
     expect(await verdicts(1)).toEqual([
@@ -598,6 +599,7 @@ describe('ruleOnInquisitorItem', () => {
       id: 1,
       nsfwLevel: 32,
       reason: 'Inquisitor ruling: Realistic Minors',
+      status: 'Actioned',
       userId: MOD,
     });
     expect(await item(1)).toMatchObject({ status: 'Closed', resolvedValue: '32' });
