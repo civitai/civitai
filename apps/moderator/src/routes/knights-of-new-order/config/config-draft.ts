@@ -84,9 +84,9 @@ type ToggleOption = { value: ToggleChoice; label: string };
 export const TOGGLE_ROWS: Record<ToggleKey, { description: string; options: ToggleOption[] }> = {
   yesNoPlayerDefault: {
     description:
-      'Whether players who never touched the questions switch in Knights settings get yes/no questions. Their own choice always wins.',
+      'Whether players who never touched the questions switch in Knights settings get yes/no questions. Default follows KNIGHTS_YESNO_PLAYER_DEFAULT, which is off unless set to on. A player\'s own choice always wins.',
     options: [
-      { value: 'default', label: 'Default (off)' },
+      { value: 'default', label: 'Default' },
       { value: 'on', label: 'On' },
       { value: 'off', label: 'Off' },
     ],

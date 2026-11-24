@@ -35,7 +35,7 @@
             <span class="beta">Beta</span>
           </p>
           {#if data.questions.available}
-            <p class="description">
+            <p class="description" id="questions-description">
               Between ratings, some images ask a yes or no question. Turn this off to rate only.
             </p>
             <p class="note">
@@ -54,7 +54,8 @@
           <form
             method="POST"
             action="?/questions"
-            use:enhance={({ formData }) => {
+            use:enhance={({ formData, cancel }) => {
+              if (saving) return cancel();
               pending = formData.get('questions') === 'on';
               saving = true;
               error = null;
@@ -66,6 +67,8 @@
                     savedOn = saved;
                   } else if (result.type === 'failure') {
                     error = String(result.data?.message ?? 'Your choice was not saved. Try again.');
+                  } else if (result.type === 'error') {
+                    error = 'Your choice was not saved. Check your connection and try again.';
                   } else {
                     await update();
                   }
@@ -85,7 +88,8 @@
               role="switch"
               aria-checked={on}
               aria-labelledby="questions-label"
-              disabled={saving}
+              aria-describedby="questions-description"
+              aria-disabled={saving}
             >
               <span class="knob"></span>
             </button>
@@ -206,17 +210,17 @@
     background: var(--io-gold);
   }
 
-  .switch:hover:not(:disabled) {
+  .switch:hover:not([aria-disabled='true']) {
     border-color: var(--io-gold);
     background: var(--io-matte);
   }
 
-  .switch[aria-checked='true']:hover:not(:disabled) {
+  .switch[aria-checked='true']:hover:not([aria-disabled='true']) {
     border-color: var(--io-parchment);
     background: var(--io-gold);
   }
 
-  .switch:disabled {
+  .switch[aria-disabled='true'] {
     cursor: progress;
     opacity: 0.6;
   }

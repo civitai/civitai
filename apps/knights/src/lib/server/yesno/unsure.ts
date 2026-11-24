@@ -25,6 +25,7 @@ export async function recordUnsure(
             eb.val(utc(now)).as('createdAt'),
           ])
           .where('i.id', '=', itemId)
+          .where('i.status', '=', 'Open')
       )
       .onConflict((oc) => oc.columns(['playerId', 'itemId']).doNothing())
       .executeTakeFirst();

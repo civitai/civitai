@@ -7,32 +7,37 @@
   /** Shown over the stage before a run of yes/no questions; it ends by itself, or at once on a click, tap or Space. */
   let { category, onstart }: { category: string | null; onstart: () => void } = $props();
 
+  let start = $state<HTMLButtonElement>();
+
   onMount(() => {
+    start?.focus({ preventScroll: true });
     const timer = setTimeout(onstart, QUESTION_TIME_MS);
     return () => clearTimeout(timer);
   });
 </script>
 
-<button
-  type="button"
+<!-- The backdrop is a large click target only; the keyboard and screen readers use the Start now button. -->
+<div
   class="backdrop"
+  role="presentation"
   style:--question-time="{QUESTION_TIME_MS}ms"
-  aria-label="Question time: start now"
   onclick={onstart}
   out:fade={{ duration: reducedMotion() ? 120 : 160 }}
 >
-  <span class="card" role="status">
-    <span class="title">Question time</span>
+  <div class="card" role="dialog" aria-labelledby="question-time-title" aria-describedby="question-time-line">
+    <h2 class="title" id="question-time-title">Question time</h2>
     {#if category}<span class="chip">{category}</span>{/if}
-    <span class="line">
+    <p class="line" id="question-time-line">
       The next few images ask a yes or no question. Your answers help build Civitai's new moderation
       model.
-    </span>
+    </p>
     <span class="bar" aria-hidden="true"><span class="fill"></span></span>
-    <span class="reduced" aria-hidden="true">Starting in 3 s</span>
-    <span class="start"><span class="desktop">Start now · Space</span><span class="touch">Tap to start</span></span>
-  </span>
-</button>
+    <span class="reduced" aria-hidden="true">Starting in {QUESTION_TIME_MS / 1000} s</span>
+    <button type="button" class="start" bind:this={start} onclick={onstart}>
+      Start now<kbd aria-hidden="true">Space</kbd>
+    </button>
+  </div>
+</div>
 
 <style>
   .backdrop {
@@ -42,17 +47,10 @@
     display: grid;
     place-items: center;
     padding: 16px;
-    border: 0;
     border-radius: 8px;
     background: rgb(14 12 9 / 0.7);
-    color: inherit;
-    font: inherit;
     cursor: pointer;
     animation: fade-in var(--motion-base) var(--ease-out-quart) both;
-  }
-
-  .backdrop:hover:not(:disabled) {
-    background: rgb(14 12 9 / 0.7);
   }
 
   .card {
@@ -73,6 +71,7 @@
   }
 
   .title {
+    margin: 0;
     color: var(--io-parchment);
     font: 700 28px/1.15 var(--io-font-display);
     letter-spacing: 1.5px;
@@ -95,6 +94,7 @@
   }
 
   .line {
+    margin: 0;
     color: var(--io-parchment-muted);
     font: 16px/1.4 var(--io-font-body);
   }
@@ -117,21 +117,39 @@
   }
 
   .start {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    min-height: 0;
+    padding: 4px 8px;
+    border: 0;
+    background: none;
     color: var(--io-parchment-muted);
     font: 12px/1.3 var(--io-font-ui);
+    cursor: pointer;
   }
 
-  .reduced,
-  .touch {
+  .start:hover:not(:disabled) {
+    background: none;
+    color: var(--io-parchment);
+  }
+
+  .start:focus-visible {
+    outline: 2px solid var(--io-gold);
+    outline-offset: 2px;
+  }
+
+  .start kbd {
+    font: inherit;
+  }
+
+  .reduced {
     display: none;
   }
 
   @media (hover: none) {
-    .desktop {
+    .start kbd {
       display: none;
-    }
-    .touch {
-      display: inline;
     }
   }
 

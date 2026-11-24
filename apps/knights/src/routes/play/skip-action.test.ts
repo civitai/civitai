@@ -47,9 +47,10 @@ const { sealItem } = await import('$lib/server/feed-token');
 const { skippedFor } = await import('$lib/server/skips');
 const { actions } = await import('./+page.server');
 
-const skip = (item: string, userId = 7) => {
+const skip = (item: string, userId = 7, extra: Record<string, string> = {}) => {
   const body = new FormData();
   body.set('item', item);
+  for (const [key, value] of Object.entries(extra)) body.set(key, value);
   return actions.skip({
     request: new Request('http://knights.test/play', { method: 'POST', body }),
     locals: { user: { id: userId } },
@@ -118,6 +119,14 @@ describe('skip action', () => {
     await skip(sealItem('secret', 7, { kind: 'queue', id: 13 }));
     await skip(sealItem('secret', 7, { kind: 'hidden', id: 14 }));
     expect(recordUnsure).not.toHaveBeenCalled();
+  });
+
+  it('records no Not sure when the player only dismissed a question other players settled, and still moves them on', async () => {
+    expect(await skip(sealItem('secret', 7, { kind: 'yesno', id: 12 }), 7, { settled: '1' })).toEqual({
+      success: true,
+    });
+    expect(recordUnsure).not.toHaveBeenCalled();
+    expect((await skippedFor(store.current as never, 7)).yesno).toEqual([12]);
   });
 
   it('answers a yes/no skip the same whether or not the Not sure was stored', async () => {

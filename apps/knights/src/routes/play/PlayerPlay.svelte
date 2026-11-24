@@ -73,6 +73,7 @@
   let submitting = $state(false);
   let answers = $state<HTMLFormElement>();
   let skipForm = $state<HTMLFormElement>();
+  let settledSubmit = $state<HTMLButtonElement>();
   // What is on screen. Right after a vote it is the item fetched ahead (`local`), not what `load` returns, so the next
   // image never waits for the vote to land; `local` is dropped whenever the page must show the server's own view.
   let local = $state<PickedItem | null>(null);
@@ -113,7 +114,8 @@
   let questionsDoneShowing = $derived(!!view && questionsDoneItem === view.item.key);
   let cuedItem: string | null = null;
   let lastWasQuestion: boolean | null = null;
-  $effect(() => {
+  // Before the DOM updates, so the first frame of a run never shows live answers.
+  $effect.pre(() => {
     if (!view || view.item.key === cuedItem) return;
     const isQuestion = view.question.kind === 'bool';
     const cue = runCue(lastWasQuestion, isQuestion);
@@ -173,6 +175,7 @@
       return;
     }
     if (questionTimeShowing) {
+      if ((event.target as HTMLElement | null)?.closest('header')) return;
       if (event.key === ' ' || event.key === 'Enter') {
         event.preventDefault();
         startQuestions();
@@ -616,7 +619,7 @@
   function continueFromSettled() {
     if (!settledOnScreen || !settledReady) return;
     settledItem = null;
-    skipForm?.requestSubmit();
+    skipForm?.requestSubmit(settledSubmit);
   }
 
   // Live keys dropped lately: a refill or reload already in flight when the drop came must not bring the item back.
@@ -970,7 +973,11 @@
       {@render questionTools()}
       </div>
       <span class="vh" role="status" aria-live="polite"
-        >{shown.banner ? `New questions: ${shown.banner.heading}` : ''}</span
+        >{shown.banner
+          ? `New questions: ${shown.banner.heading}`
+          : questionsDoneShowing
+            ? 'Questions done, back to rating'
+            : ''}</span
       >
       <div class="stagewrap">
         {#key shown.item.key}
@@ -987,7 +994,7 @@
         {#if questionTimeShowing}
           <QuestionTime category={shown.category?.heading ?? null} onstart={startQuestions} />
         {:else if questionsDoneShowing}
-          <p class="questions-done" role="status">
+          <p class="questions-done" aria-hidden="true">
             <Icon name="check" size={14} /><b>Questions done</b><span aria-hidden="true">·</span>back to rating
           </p>
         {/if}
@@ -1015,6 +1022,7 @@
         </form>
         <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
           <input type="hidden" name="item" value={shown.item.id} />
+          <button type="submit" name="settled" value="1" hidden tabindex="-1" aria-label="Continue" bind:this={settledSubmit}></button>
           {#if yesNo}
             <!-- Same action as Skip (no pay, no smite), named for what it means on a question; Space still sends it. -->
             <button type="submit" class="unsure" disabled={submitting || settledOnScreen || questionTimeShowing} title="Not sure (Space)">

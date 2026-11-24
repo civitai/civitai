@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getPlayerStatus = vi.hoisted(() => vi.fn());
+const getStanding = vi.hoisted(() => vi.fn());
 const playerPrefs = vi.hoisted(() => vi.fn());
 const setYesNoQuestions = vi.hoisted(() => vi.fn());
 const yesNo = vi.hoisted(() => ({ playerDefault: false }));
 const PRIMARY = vi.hoisted(() => ({ client: 'primary' }));
 vi.mock('$lib/server/db', () => ({ db: PRIMARY }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
+vi.mock('$lib/server/standing', async (original) => ({
+  ...(await original<typeof import('$lib/server/standing')>()),
+  getStanding,
+}));
 vi.mock('$lib/server/player-prefs', () => ({ playerPrefs, setYesNoQuestions }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ ...yesNo }) }));
 
@@ -29,6 +34,8 @@ beforeEach(() => {
   vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
   getPlayerStatus.mockReset();
   getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 22 });
+  getStanding.mockReset();
+  getStanding.mockResolvedValue({ banned: false, muted: false });
   playerPrefs.mockReset();
   playerPrefs.mockResolvedValue({ yesNo: true });
   setYesNoQuestions.mockReset();
@@ -68,6 +75,12 @@ describe('the questions action', () => {
   it('refuses anything but on or off, storing nothing', async () => {
     expect(await post({ questions: 'maybe' })).toMatchObject({ status: 400 });
     expect(await post({})).toMatchObject({ status: 400 });
+    expect(setYesNoQuestions).not.toHaveBeenCalled();
+  });
+
+  it('refuses a muted player, storing nothing', async () => {
+    getStanding.mockResolvedValue({ banned: false, muted: true });
+    expect(await post({ questions: 'off' })).toMatchObject({ status: 403 });
     expect(setYesNoQuestions).not.toHaveBeenCalled();
   });
 

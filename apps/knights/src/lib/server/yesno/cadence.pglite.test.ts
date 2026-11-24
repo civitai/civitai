@@ -137,4 +137,20 @@ describe('servedHistory', () => {
       await pg.exec(`ALTER TABLE "KnightsUnsureGone" RENAME TO "KnightsUnsure"`);
     }
   });
+
+  it('counts a question once when it has both a Not sure and a later vote', async () => {
+    await seedPlayer(pg, 1);
+    const question = await yesNoItem(50);
+    await pg.query(
+      `INSERT INTO "KnightsUnsure" ("playerId", "itemId", "questionKey", "imageId", "createdAt") VALUES (1, $1, 'knights.yesno.violence', 50, $2)`,
+      [question, at(1)]
+    );
+    await seedSettledVote(pg, { itemId: 9001, playerId: 1, imageId: 10, createdAt: at(2) });
+    await seedSettledVote(pg, { itemId: question, playerId: 1, imageId: 50, createdAt: at(3) });
+
+    expect(await servedHistory(db, 1)).toEqual([
+      { yesno: false, key: 'r9001' },
+      { yesno: true, key: `y${question}` },
+    ]);
+  });
 });

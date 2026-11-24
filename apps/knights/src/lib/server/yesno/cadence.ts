@@ -86,10 +86,10 @@ export async function servedHistory(
     .sort((a, b) => b.at - a.at)
     .slice(0, HISTORY)
     .reverse();
-  const voted: Served[] = recent.map((row) => ({
-    yesno: row.yesno,
-    key: `${row.yesno ? 'y' : 'r'}${row.itemId}`,
-  }));
+  // A question answered "Not sure" and voted later (its skip aged out) was served once: it keeps its latest place.
+  const voted: Served[] = recent
+    .map((row) => ({ yesno: row.yesno, key: `${row.yesno ? 'y' : 'r'}${row.itemId}` }))
+    .filter((s, i, all) => all.findLastIndex((t) => t.key === s.key) === i);
   const recorded = new Set(voted.map((s) => s.key));
   const pending = ahead
     .map((ref) => ({ yesno: ref.kind === 'yesno', key: keyOf(ref) }))

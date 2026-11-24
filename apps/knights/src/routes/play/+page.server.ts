@@ -438,7 +438,8 @@ export const actions: Actions = {
       skipRefused('no-consent');
       return consentFailure();
     }
-    const token = (await request.formData()).get('item');
+    const form = await request.formData();
+    const token = form.get('item');
     let ref: ReturnType<typeof openItem> = null;
     try {
       if (typeof token === 'string') ref = openItem(feedSecret(), locals.user.id, token);
@@ -452,7 +453,9 @@ export const actions: Actions = {
     const now = queueDeps.now();
     await recordSkip(skipStore, locals.user.id, ref, now);
     // On a question the skip is the "Not sure" answer, counted per question; the reply stays the same for every kind.
-    if (ref.kind === 'yesno') await recordUnsure(db, { playerId: locals.user.id, itemId: ref.id, now });
+    // Dismissing a question other players settled posts the same skip (`settled`), and is no answer at all.
+    if (ref.kind === 'yesno' && form.get('settled') !== '1')
+      await recordUnsure(db, { playerId: locals.user.id, itemId: ref.id, now });
     return { success: true };
   },
 

@@ -84,6 +84,12 @@ describe('recordUnsure', () => {
     expect(await perQuestion()).toEqual([expect.objectContaining({ itemId: itemIds.a, n: 1 })]);
   });
 
+  it('stores nothing for a question that is no longer open', async () => {
+    await pg.query(`UPDATE "KnightsQueueItem" SET status = 'Closed' WHERE id = $1`, [itemIds.a]);
+    expect(await recordUnsure(db, { playerId: 1, itemId: itemIds.a, now: NOW })).toBe(false);
+    expect(await perQuestion()).toEqual([]);
+  });
+
   it('stores nothing for an item that does not exist', async () => {
     expect(await recordUnsure(db, { playerId: 1, itemId: 999_999, now: NOW })).toBe(false);
     expect(await perQuestion()).toEqual([]);

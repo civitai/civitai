@@ -1,6 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { requireMember } from '$lib/server/membership';
+import { getStanding, mutedFailure } from '$lib/server/standing';
 import { playerPrefs, setYesNoQuestions } from '$lib/server/player-prefs';
 import { yesNoConfig } from '$lib/server/yesno/runtime';
 import type { Actions, PageServerLoad } from './$types';
@@ -19,6 +20,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 export const actions: Actions = {
   questions: async ({ locals, request }) => {
     const status = await requireMember(db, locals.user.id);
+    if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
     if (!choosesQuestions(status.rank))
       return fail(403, { message: 'Yes/no questions can be turned off from Knight.' });
     const value = (await request.formData()).get('questions');
