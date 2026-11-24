@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
-import type * as LegalHold from '~/server/services/legal-hold.service';
 import type * as Revocation from '~/server/services/user-token-revocation.service';
 import type * as ApiKeyService from '~/server/services/api-key.service';
 
@@ -19,11 +18,6 @@ vi.mock('~/server/services/api-key.service', async (importOriginal) => ({
 vi.mock('~/server/services/user-token-revocation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Revocation>()),
   revokeUserTokens,
-}));
-
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof LegalHold>()),
-  assertAccountNotUnderLegalHold: vi.fn(async () => ({ legs: [], markerView: false })),
 }));
 
 // event-engine-common is a git submodule and is not checked out by default; user.service's graph

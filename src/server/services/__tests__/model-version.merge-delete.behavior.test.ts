@@ -2,32 +2,24 @@ import type { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
-  CLEAN,
-  MARKED,
-  REPORTED,
-  createModelHoldDb,
-  accessRowsOf,
+  OTHER,
+  OWNER,
   commentsLeft,
-  dropMarkerView,
+  createModelDb,
   failDeletesFrom,
-  FORMER_CLEAN,
-  holdOwner,
-  ownedBefore,
-  realTransactions,
   fileIds,
   fileOf,
   modelOf,
   routeToDb,
-  seedModelHoldDb,
+  seedModelDb,
   seedReviewThread,
   versionIds,
   versionOf,
-} from './model-legal-hold.fixture';
+} from './model-delete.fixture';
 
 /**
- * Deleting or merging away a model version removes its files' rows and stored bytes, so a held owner's
- * versions are refused. The statements that decide it run against a Postgres stand-in; the rest of
- * each service is real.
+ * Deleting or merging away a model version: the statements that decide what goes run against a
+ * Postgres stand-in; the rest of each service is real.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -127,21 +119,19 @@ vi.mock('~/server/services/restricted-images.service', async (importOriginal) =>
   flagImagesOnRestrictedVersions,
 }));
 
-import { LEGAL_HOLD_REFUSAL, OWNER_CONTENT_KEPT } from '~/server/services/legal-hold.service';
 import { deleteVersionById, mergeVersions } from '~/server/services/model-version.service';
 
 let db: PGlite;
 
 beforeAll(async () => {
-  db = await createModelHoldDb();
+  db = await createModelDb();
 });
 
 beforeEach(async () => {
   vi.clearAllMocks();
   mockDeleteModelFileObjects.mockResolvedValue(undefined);
-  await seedModelHoldDb(db);
+  await seedModelDb(db);
   routeToDb(db);
-  // clearAllMocks keeps implementations, so undo a case's real transaction for the next one.
   vi.mocked(dbMock.dbWrite.$transaction).mockImplementation((async (fn: (tx: unknown) => unknown) =>
     fn(dbMock.dbWrite)) as never);
   dbMock.dbWrite.entityAccess.deleteMany.mockResolvedValue({ count: 0 } as never);
@@ -161,8 +151,8 @@ function stubVersion(owner: number) {
 }
 
 describe('deleteVersionById', () => {
-  it('deletes a version whose owner no hold covers, files and all', async () => {
-    const id = stubVersion(CLEAN);
+  it('deletes the version, its files and their stored bytes', async () => {
+    const id = stubVersion(OWNER);
 
     await deleteVersionById({ id, isModerator: false });
 
@@ -173,75 +163,8 @@ describe('deleteVersionById', () => {
     ]);
   });
 
-  it.each([
-    ['named on a pending report', REPORTED],
-    ['under a hold marker', MARKED],
-  ])('keeps a version whose owner is %s, and deletes no bytes', async (_, owner) => {
-    const id = stubVersion(owner);
-
-    await expect(deleteVersionById({ id, isModerator: false })).rejects.toThrow(OWNER_CONTENT_KEPT);
-
-    expect(await versionIds(db)).toContain(id);
-    expect(await fileIds(db)).toContain(fileOf(id));
-    expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
-    expect(mockDeregisterFileLocations).not.toHaveBeenCalled();
-  });
-
-  it('keeps a version of a model a held account owned before, and deletes no bytes', async () => {
-    const id = stubVersion(CLEAN);
-    await ownedBefore(db, CLEAN, REPORTED);
-
-    await expect(deleteVersionById({ id, isModerator: false })).rejects.toThrow(OWNER_CONTENT_KEPT);
-
-    expect(await versionIds(db)).toContain(id);
-    expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
-  });
-
-  it('deletes a version of a model only unheld accounts owned (control)', async () => {
-    const id = stubVersion(CLEAN);
-    await ownedBefore(db, CLEAN, FORMER_CLEAN);
-
-    await deleteVersionById({ id, isModerator: false });
-
-    expect(await versionIds(db)).not.toContain(id);
-  });
-
-  it('rolls back the access rows it removed before the refusal, in a real transaction', async () => {
-    realTransactions(db);
-    const held = stubVersion(REPORTED);
-    await expect(deleteVersionById({ id: held, isModerator: false })).rejects.toThrow(
-      OWNER_CONTENT_KEPT
-    );
-    expect(await accessRowsOf(db)).toContain(held);
-
-    // Positive control: the same transaction commits them away for an owner no hold covers.
-    const clean = stubVersion(CLEAN);
-    await deleteVersionById({ id: clean, isModerator: false });
-    expect(await accessRowsOf(db)).not.toContain(clean);
-    expect(await versionIds(db)).not.toContain(clean);
-  });
-
-  it('tells a moderator why, and an owner nothing about it', async () => {
-    const id = stubVersion(REPORTED);
-
-    await expect(deleteVersionById({ id, isModerator: true })).rejects.toThrow(LEGAL_HOLD_REFUSAL);
-    const owner = await deleteVersionById({ id, isModerator: false }).catch((e: Error) => e);
-    expect((owner as Error).message).not.toMatch(/legal|hold|investigation|safety/i);
-  });
-
-  it('deletes nothing when the hold cannot be read', async () => {
-    const id = stubVersion(CLEAN);
-    await dropMarkerView(db);
-
-    await expect(deleteVersionById({ id, isModerator: false })).rejects.toThrow(OWNER_CONTENT_KEPT);
-    expect(await versionIds(db)).toContain(id);
-    expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
-  });
-});
-
-describe('deleteVersionById on a database error', () => {
-  it('reports the error, not a hold, and deletes nothing', async () => {
-    const id = stubVersion(CLEAN);
+  it('reports a database error and deletes nothing', async () => {
+    const id = stubVersion(OWNER);
     await failDeletesFrom(db, 'ModelVersion');
 
     for (const isModerator of [false, true]) {
@@ -251,13 +174,9 @@ describe('deleteVersionById on a database error', () => {
     expect(await versionIds(db)).toContain(id);
     expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
   });
-});
 
-const STRAGGLER = 'https://files.example.invalid/straggler';
-
-describe('deleteVersionById on a version deleted by someone else', () => {
-  it('reports it not found, not held, when it is gone by its delete', async () => {
-    const id = stubVersion(CLEAN);
+  it('reports a version another writer deleted first as not found', async () => {
+    const id = stubVersion(OWNER);
     routeToDb(db, async (sql) => {
       if (sql.includes('DELETE FROM "ModelVersion"'))
         await db.query(`DELETE FROM "ModelVersion" WHERE id = $1`, [id]);
@@ -267,7 +186,18 @@ describe('deleteVersionById on a version deleted by someone else', () => {
       `No model version with id ${id}`
     );
   });
+
+  it("takes a review's comment thread with the version", async () => {
+    const id = stubVersion(OWNER);
+    await seedReviewThread(db, { reviewId: 1, versionId: id, reviewer: OWNER, commenter: OTHER });
+
+    await deleteVersionById({ id, isModerator: false });
+
+    expect(await commentsLeft(db)).toEqual([]);
+  });
 });
+
+const STRAGGLER = 'https://files.example.invalid/straggler';
 
 /** Stubs the model read `mergeVersions` validates against, for `owner`'s three versions. */
 function stubModel(owner: number) {
@@ -298,10 +228,10 @@ const merge = (owner: number) =>
   });
 
 describe('mergeVersions', () => {
-  it('deletes the merged versions of an owner no hold covers', async () => {
-    const { sourceVersionIds, targetVersionId } = stubModel(CLEAN);
+  it('deletes the merged versions and the files the move missed', async () => {
+    const { sourceVersionIds, targetVersionId } = stubModel(OWNER);
 
-    await merge(CLEAN);
+    await merge(OWNER);
 
     const left = await versionIds(db);
     expect(left).toContain(targetVersionId);
@@ -317,14 +247,14 @@ describe('mergeVersions', () => {
       modelId,
       targetVersionId,
       sourceVersionIds: [a, b],
-    } = stubModel(CLEAN);
+    } = stubModel(OWNER);
     mockVersionAirs.mockResolvedValueOnce(['urn:air:source']);
     dbMock.dbWrite.modelFile.findMany.mockResolvedValueOnce([
       { id: 501, modelVersionId: a },
       { id: 502, modelVersionId: b },
     ] as never);
 
-    await merge(CLEAN);
+    await merge(OWNER);
 
     // What the orchestrator cached the AIRs under: a wrong one evicts nothing.
     const version = { modelId, baseModel: 'SDXL 1.0', model: { type: 'LORA' } };
@@ -339,10 +269,10 @@ describe('mergeVersions', () => {
   });
 
   it('forgets which version its re-pointed posts were on', async () => {
-    const { sourceVersionIds } = stubModel(CLEAN);
+    const { sourceVersionIds } = stubModel(OWNER);
     dbMock.dbWrite.post.findMany.mockResolvedValueOnce([{ id: 77 }] as never);
 
-    await merge(CLEAN);
+    await merge(OWNER);
 
     expect(dbMock.dbWrite.post.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { modelVersionId: { in: sourceVersionIds } } })
@@ -354,21 +284,8 @@ describe('mergeVersions', () => {
     expect(read).toBeLessThan(moved);
   });
 
-  it.each([
-    ['named on a pending report', REPORTED],
-    ['under a hold marker', MARKED],
-  ])('keeps every version of an owner %s', async (_, owner) => {
-    const { sourceVersionIds } = stubModel(owner);
-
-    await expect(merge(owner)).rejects.toThrow(OWNER_CONTENT_KEPT);
-
-    const left = await versionIds(db);
-    for (const id of sourceVersionIds) expect(left).toContain(id);
-    expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
-  });
-
   // Another writer deletes one source while the merge runs: before its lock, or between the lock
-  // and the delete. Either way the merge is not found rather than held, and nothing it did commits.
+  // and the delete. Either way the merge is not found, and nothing it did commits.
   it.each([
     ['before the lock', 'FOR UPDATE', 'One or more versions to merge no longer exist.'],
     [
@@ -377,7 +294,7 @@ describe('mergeVersions', () => {
       'One or more source versions no longer exist.',
     ],
   ])('reports a source deleted %s as not found', async (_, at, message) => {
-    const { sourceVersionIds } = stubModel(CLEAN);
+    const { sourceVersionIds } = stubModel(OWNER);
     const [gone, kept] = sourceVersionIds;
     let deleted = false;
     routeToDb(db, async (sql) => {
@@ -386,14 +303,14 @@ describe('mergeVersions', () => {
       await db.query(`DELETE FROM "ModelVersion" WHERE id = $1`, [gone]);
     });
 
-    await expect(merge(CLEAN)).rejects.toThrow(message);
+    await expect(merge(OWNER)).rejects.toThrow(message);
     expect(deleted).toBe(true);
     if (at === 'FOR UPDATE') expect(await versionIds(db)).toContain(kept);
     expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
   });
 
   it('merges a source listed twice, as once', async () => {
-    const { sourceVersionIds, ...rest } = stubModel(CLEAN);
+    const { sourceVersionIds, ...rest } = stubModel(OWNER);
     const twice = [sourceVersionIds[0], sourceVersionIds[0]];
 
     await mergeVersions({
@@ -401,17 +318,17 @@ describe('mergeVersions', () => {
       sourceVersionIds: twice,
       fileTypeMappings: [],
       appendDescriptions: false,
-      userId: CLEAN,
+      userId: OWNER,
     });
 
     expect(await versionIds(db)).not.toContain(sourceVersionIds[0]);
   });
 
-  it('reports a database error, not a hold, and deletes nothing', async () => {
-    const { sourceVersionIds } = stubModel(CLEAN);
+  it('reports a database error and deletes nothing', async () => {
+    const { sourceVersionIds } = stubModel(OWNER);
     await failDeletesFrom(db, 'ModelVersion');
 
-    const error = await merge(CLEAN).catch((e: Error) => e);
+    const error = await merge(OWNER).catch((e: Error) => e);
     expect((error as Error).message).toContain('deadlock detected');
     const left = await versionIds(db);
     for (const id of sourceVersionIds) expect(left).toContain(id);
@@ -419,9 +336,9 @@ describe('mergeVersions', () => {
   });
 
   it("applies the restricted-base-model rule to the target version, which now holds the sources' images", async () => {
-    const { targetVersionId } = stubModel(CLEAN);
+    const { targetVersionId } = stubModel(OWNER);
 
-    await merge(CLEAN);
+    await merge(OWNER);
 
     expect(flagImagesOnRestrictedVersions).toHaveBeenCalledTimes(1);
     expect(flagImagesOnRestrictedVersions).toHaveBeenCalledWith({
@@ -430,129 +347,15 @@ describe('mergeVersions', () => {
   });
 
   it('refreshes the posts of the images it restricts', async () => {
-    stubModel(CLEAN);
+    stubModel(OWNER);
     flagImagesOnRestrictedVersions.mockResolvedValueOnce({ flagged: 2, postIds: [7, 8] });
 
-    await merge(CLEAN);
+    await merge(OWNER);
 
     expect(mockBustCachesForPosts).toHaveBeenCalledWith([7, 8]);
   });
 
-  it('refuses the merge of a model a held account owned before, before the transaction', async () => {
-    stubModel(CLEAN);
-    await ownedBefore(db, CLEAN, MARKED);
-
-    await expect(merge(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
-    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
-  });
-
-  // The record lands after the check before the transaction, so only the DELETE's own guard sees it.
-  it('refuses at the delete when an earlier held owner is recorded after the first check', async () => {
-    const { sourceVersionIds } = stubModel(CLEAN);
-    let changed = false;
-    routeToDb(db, async (sql) => {
-      if (changed || !sql.includes('FOR UPDATE')) return;
-      changed = true;
-      await ownedBefore(db, CLEAN, REPORTED);
-    });
-
-    await expect(merge(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
-    expect(changed).toBe(true);
-    const left = await versionIds(db);
-    for (const id of sourceVersionIds) expect(left).toContain(id);
-  });
-
-  it('merges the versions of a model only unheld accounts owned (control)', async () => {
-    const { sourceVersionIds } = stubModel(CLEAN);
-    await ownedBefore(db, CLEAN, FORMER_CLEAN);
-
-    await merge(CLEAN);
-
-    const left = await versionIds(db);
-    for (const id of sourceVersionIds) expect(left).not.toContain(id);
-  });
-
-  it('refuses a held owner before the transaction starts', async () => {
-    stubModel(REPORTED);
-
-    await expect(merge(REPORTED)).rejects.toThrow(OWNER_CONTENT_KEPT);
-    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
-  });
-
-  // The check before the transaction reads the owner as not held; each case changes that between it
-  // and the transaction, so only the guard on the DELETE itself can stop the merge.
-  it.each([
-    ['a hold that lands after the first check', (d: PGlite) => holdOwner(d, CLEAN)],
-    ['a hold that can no longer be read', (d: PGlite) => dropMarkerView(d)],
-  ])('refuses on %s, at the delete', async (_, change) => {
-    const { sourceVersionIds } = stubModel(CLEAN);
-    let changed = false;
-    routeToDb(db, async (sql) => {
-      if (changed || !sql.includes('FOR UPDATE')) return;
-      changed = true;
-      await change(db);
-    });
-
-    await expect(merge(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
-    expect(changed).toBe(true);
-    const left = await versionIds(db);
-    for (const id of sourceVersionIds) expect(left).toContain(id);
-    expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
-  });
-
-  it('deletes nothing when the hold cannot be read', async () => {
-    const { sourceVersionIds } = stubModel(CLEAN);
-    await dropMarkerView(db);
-
-    await expect(merge(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
-    const left = await versionIds(db);
-    for (const id of sourceVersionIds) expect(left).toContain(id);
-  });
-});
-
-// A review cascades with its version, and its comment threads with it, a held author's comments
-// included: comments are not kept for a hold.
-describe('comments on a review the version takes with it', () => {
-  it('go with the version', async () => {
-    const id = stubVersion(CLEAN);
-    await seedReviewThread(db, {
-      reviewId: 1,
-      versionId: id,
-      reviewer: CLEAN,
-      commenter: REPORTED,
-    });
-
-    await deleteVersionById({ id, isModerator: false });
-
-    expect(await versionIds(db)).not.toContain(id);
-    expect(await commentsLeft(db)).toEqual([]);
-  });
-
-  // A reviewer's review of a source version goes when they also reviewed the target.
-  it('go with a review a merge drops as superseded', async () => {
-    const { sourceVersionIds, targetVersionId } = stubModel(CLEAN);
-    await seedReviewThread(db, {
-      reviewId: 1,
-      versionId: sourceVersionIds[0],
-      reviewer: 9,
-      commenter: MARKED,
-    });
-    await seedReviewThread(db, {
-      reviewId: 2,
-      versionId: targetVersionId,
-      reviewer: 9,
-      commenter: CLEAN,
-    });
-
-    await merge(CLEAN);
-
-    // The comment on the kept target review stays (control).
-    expect(await commentsLeft(db)).toEqual([{ id: 2, onReview: true }]);
-  });
-});
-
-describe("a held author's review the version takes with it", () => {
-  beforeEach(() => {
+  it('moves the reviews on its sources to the target', async () => {
     vi.mocked(dbMock.dbWrite.resourceReview.updateMany).mockImplementation((async (args: {
       where: { modelVersionId: { in: number[] } };
       data: { modelVersionId: number };
@@ -564,72 +367,36 @@ describe("a held author's review the version takes with it", () => {
         )
       ).affectedRows,
     })) as never);
-  });
-  const review = (id: number, reviewer: number, versionId: number) =>
-    db.query(
-      `INSERT INTO "ResourceReview" (id, "userId", "modelVersionId", "modelId") VALUES ($1, $2, $3, $4)`,
-      [id, reviewer, versionId, modelOf(CLEAN)]
-    );
-  const copies = async () =>
-    (await db.query(`SELECT id, "userId", "holdReasons" FROM "HeldResourceReview" ORDER BY id`))
-      .rows;
-  const reviewIds = async () =>
-    (await db.query<{ id: number }>(`SELECT id FROM "ResourceReview" ORDER BY id`)).rows.map(
-      (r) => r.id
+    const { sourceVersionIds, targetVersionId } = stubModel(OWNER);
+    await db.query(
+      `INSERT INTO "ResourceReview" (id, "userId", "modelVersionId", "modelId") VALUES (1, $1, $2, $3)`,
+      [OTHER, sourceVersionIds[0], modelOf(OWNER)]
     );
 
-  it('copies a held reviewer’s review of a deleted version, and not an unheld one’s', async () => {
-    const id = stubVersion(CLEAN);
-    await review(1, REPORTED, id);
-    await review(2, FORMER_CLEAN, id);
-
-    await deleteVersionById({ id, isModerator: false });
-
-    expect(await reviewIds()).toEqual([]);
-    expect(await copies()).toEqual([{ id: 1, userId: REPORTED, holdReasons: ['report'] }]);
-  });
-
-  it.each([
-    ['the target', 0, REPORTED, ['report']],
-    ['a later source', 2, MARKED, ['hold-marker']],
-  ])(
-    'copies a held reviewer’s review a merge drops as superseded by one on %s, and not an unheld one’s',
-    async (_, n, reviewer, holdReasons) => {
-      const { sourceVersionIds, targetVersionId } = stubModel(CLEAN);
-      const keeper = n === 0 ? targetVersionId : sourceVersionIds[1];
-      await review(1, reviewer, sourceVersionIds[0]);
-      await review(2, reviewer, keeper);
-      await review(3, FORMER_CLEAN, sourceVersionIds[0]);
-      await review(4, FORMER_CLEAN, keeper);
-
-      await merge(CLEAN);
-
-      expect(await reviewIds()).toEqual([2, 4]);
-      expect(await copies()).toEqual([{ id: 1, userId: reviewer, holdReasons }]);
-    }
-  );
-
-  it('moves the reviews on its sources to the target, and copies none', async () => {
-    const { sourceVersionIds, targetVersionId } = stubModel(CLEAN);
-    await review(1, REPORTED, sourceVersionIds[0]);
-
-    await merge(CLEAN);
+    await merge(OWNER);
 
     const moved = await db.query(`SELECT "modelVersionId" FROM "ResourceReview" WHERE id = 1`);
     expect(moved.rows).toEqual([{ modelVersionId: targetVersionId }]);
-    expect(await copies()).toEqual([]);
   });
 
-  it('copies a held reviewer’s review written on a source version after the re-point', async () => {
-    const { sourceVersionIds } = stubModel(CLEAN);
-    routeToDb(db, async (sql) => {
-      if (sql.includes('DELETE FROM "ModelVersion"'))
-        await review(1, REPORTED, sourceVersionIds[0]).catch(() => undefined);
+  // A reviewer's review of a source version goes when they also reviewed the target.
+  it("takes the comment thread of a review it drops as superseded, and keeps the target review's", async () => {
+    const { sourceVersionIds, targetVersionId } = stubModel(OWNER);
+    await seedReviewThread(db, {
+      reviewId: 1,
+      versionId: sourceVersionIds[0],
+      reviewer: 9,
+      commenter: OTHER,
+    });
+    await seedReviewThread(db, {
+      reviewId: 2,
+      versionId: targetVersionId,
+      reviewer: 9,
+      commenter: OWNER,
     });
 
-    await merge(CLEAN);
+    await merge(OWNER);
 
-    expect(await reviewIds()).toEqual([]);
-    expect(await copies()).toEqual([{ id: 1, userId: REPORTED, holdReasons: ['report'] }]);
+    expect(await commentsLeft(db)).toEqual([{ id: 2, onReview: true }]);
   });
 });

@@ -1,11 +1,10 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { ModelMeta } from '~/server/schema/model.schema';
-import { withoutRemovedWithOwner } from '~/server/utils/legal-hold';
 
 /**
- * publishModelHandler reads the model's meta on the replica, before the publish. A content wipe, a
- * moderator or a text scan that writes the model after that read must still be seen: publishModelById
+ * publishModelHandler reads the model's meta on the replica, before the publish. A moderator or a
+ * text scan that writes the model after that read must still be seen: publishModelById
  * re-reads the row under a lock in its own transaction and builds the meta it writes from it.
  */
 
@@ -54,39 +53,7 @@ const written = () =>
 const publish = (
   enforceModelRules: boolean,
   meta: Parameters<typeof publishModelById>[0]['meta'] = {}
-) =>
-  publishModelById({
-    id: MODEL,
-    meta,
-    enforceModelRules,
-    refuseRemovedWithOwner: enforceModelRules,
-  });
-
-it("refuses an owner's publish when the wipe hid the model after the caller's read", async () => {
-  lockedMeta = { removedWithOwner: true };
-  await expect(publish(true)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-  expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
-});
-
-it("writes an owner's publish when the locked row carries no removal record (control)", async () => {
-  lockedMeta = { showcaseCollectionId: 3 };
-  await publish(true, { showcaseCollectionId: 3 });
-  expect(written()).toEqual({ showcaseCollectionId: 3 });
-});
-
-it('refuses before the literal-rules check, which writes, when the primary already has the record', async () => {
-  dbMock.dbWrite.model.findUnique.mockResolvedValue({ meta: { removedWithOwner: true } } as never);
-  await expect(publish(true, (stored) => stored ?? {})).rejects.toMatchObject({
-    code: 'UNAUTHORIZED',
-  });
-  expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
-});
-
-it('lets a moderator publish it, ending the removal', async () => {
-  lockedMeta = { removedWithOwner: true, statusBeforeRemoval: 'Published', note: 1 } as ModelMeta;
-  await publish(false, (stored) => withoutRemovedWithOwner(stored ?? {}));
-  expect(written()).toEqual({ note: 1 });
-});
+) => publishModelById({ id: MODEL, meta, enforceModelRules });
 
 it('keeps a server-owned key written after the caller read the meta', async () => {
   lockedMeta = {
@@ -101,7 +68,7 @@ it('keeps a server-owned key written after the caller read the meta', async () =
 
 it("never writes a server-owned key from the caller's meta", async () => {
   lockedMeta = {};
-  await publish(true, { removedWithOwner: true, cannotPromote: true, showcaseCollectionId: 3 });
+  await publish(true, { cannotPromote: true, showcaseCollectionId: 3 });
   expect(written()).toEqual({ showcaseCollectionId: 3 });
 });
 

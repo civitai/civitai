@@ -59,7 +59,6 @@ CREATE TABLE "TextScanHold" (
   "userId" INTEGER, "text" TEXT, "reason" TEXT, "meta" JSONB,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(), "updatedAt" TIMESTAMP(3)
 );
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
 `;
 
 const AUTHOR = 7;
@@ -95,6 +94,9 @@ beforeAll(async () => {
   await pg.exec(SCHEMA);
   await pg.exec(migration('20270108093000_post_text'));
   await pg.exec(migration('20271117120000_post_text_report'));
+  const drop = migration('20271127120000_drop_legal_holds');
+  const start = drop.indexOf('CREATE OR REPLACE FUNCTION post_text_held(');
+  await pg.exec(drop.slice(start, drop.indexOf('pg_temp;', start) + 'pg_temp;'.length));
 });
 
 afterAll(async () => {
@@ -104,7 +106,7 @@ afterAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   await pg.exec(`
-    DELETE FROM "CsamReport"; DELETE FROM "EvidenceHeldUser"; DELETE FROM "TextScanHold";
+    DELETE FROM "CsamReport"; DELETE FROM "TextScanHold";
     UPDATE "PostText" SET "csamHeld" = false;
     DELETE FROM "PostTextReport"; DELETE FROM "Report";
     DELETE FROM "PostText"; DELETE FROM "Post";
@@ -180,10 +182,6 @@ describe('restorePostText', () => {
       'a csam hold on it was confirmed',
       `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('PostText', $1, 'csam', 'Confirmed')`,
     ],
-    [
-      'a pending CSAM report names its author',
-      `INSERT INTO "CsamReport" ("userId") SELECT "userId" FROM "PostText" WHERE id = $1`,
-    ],
   ])('is refused while %s, and the text stays refused', async (_, hold) => {
     await pg.query(hold, [reported]);
 
@@ -193,6 +191,17 @@ describe('restorePostText', () => {
       error: 'held',
     });
     expect(await row(reported)).toMatchObject({ refused: true, refusedByModerator: true });
+  });
+
+  // A report naming the author holds nothing: only the text's own CSAM hold does.
+  it('lifts the refusal of a text whose author a pending CSAM report names', async () => {
+    await pg.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [AUTHOR]);
+
+    expect(await restorePostText({ textId: reported, moderatorId: 2 })).toMatchObject({
+      ok: true,
+      changed: true,
+    });
+    expect(await row(reported)).toMatchObject({ refused: false, refusedByModerator: false });
   });
 
   it("puts back a refusal the scan made before the moderator's: readers still do not see it", async () => {

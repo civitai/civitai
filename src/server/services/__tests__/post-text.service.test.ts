@@ -23,7 +23,8 @@ const { addPostText, setPostText, deletePostText, getPostTextsForViewer, getStor
   await import('~/server/services/post-text.service');
 const { throwOnBlockedUserContent } = await import('~/server/services/blocklist.service');
 const { setStorylineTextSchema } = await import('~/server/schema/storyline.schema');
-const { OWNER_CONTENT_KEPT } = await import('~/server/services/legal-hold.service');
+const OWNER_CONTENT_KEPT =
+  "This can't be removed right now. Contact support if you need it removed.";
 const { scanEntityInBackground } = await import('~/server/services/text-scan/submit');
 const { updatePostNsfwLevels } = await import('~/server/services/nsfwLevels.service');
 const { postTextTextScanSubject } = await import(

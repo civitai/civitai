@@ -1,7 +1,6 @@
 import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { DELETED_ROW_COLUMNS_SQL } from './deleted-row-columns.fixture';
 import { readFileSync } from 'node:fs';
-import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
 import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { ltree } from '@electric-sql/pglite/contrib/ltree';
@@ -11,19 +10,14 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
- * The two account-wide content wipes refuse a held account, and a hold that lands mid-wipe stops
- * every delete that destroys evidence. The hold query and the guarded deletes run as SQL against a
- * Postgres stand-in; `removeAllContent` and the delete-user-images endpoint are the real code.
+ * The two account-wide content wipes. Their deletes run as SQL against a Postgres stand-in;
+ * `removeAllContent` and the delete-user-images endpoint are the real code.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const { holder, indexes, metrics, session, pictures, tracked, docStore } = vi.hoisted(() => ({
-  holder: {
-    db: null as unknown as PGlite,
-    /** Runs just before the first image delete: a hold landing mid-run. */
-    beforeImages: null as (() => Promise<unknown>) | null,
-  },
+  holder: { db: null as unknown as PGlite },
   indexes: Object.fromEntries(
     ['models', 'imagesMetrics', 'articles', 'collections', 'bounties', 'users'].map((name) => [
       name,
@@ -113,10 +107,6 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   deleteImages: vi.fn(async (ids: number[], opts?: { onlyWhere?: Prisma.Sql }) => {
     if (!ids.length) return [];
-    if (holder.beforeImages) {
-      await holder.beforeImages();
-      holder.beforeImages = null;
-    }
     const where = opts?.onlyWhere ? Prisma.sql`AND (${opts.onlyWhere})` : Prisma.empty;
     const sql = Prisma.sql`DELETE FROM "Image" WHERE id = ANY(${ids}::int[]) ${where} RETURNING id`;
     return (await holder.db.query(sql.text, sql.values)).rows;
@@ -149,14 +139,8 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: async () => session,
 }));
 
-import {
-  LEGAL_HOLD_STOPPED,
-  LegalHoldError,
-  LegalHoldStoppedError,
-  LegalHoldUnconfirmedError,
-  ProfileArchiveRefusedError,
-} from '~/server/services/legal-hold.service';
-import { removeAllContent } from '~/server/services/user.service';
+import { ProfileArchiveRefusedError, removeAllContent } from '~/server/services/user.service';
+import { PURGE_ARCHIVE_REFUSAL } from '@civitai/shared/account-action-texts';
 import {
   deleteSettledKeptBounties,
   retryUnsettledBountyPayouts,
@@ -164,15 +148,13 @@ import {
 import { deleteImages } from '~/server/services/image.service';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { refundBidsForVersions } from '~/server/services/auction.service';
-import { KEPT_MODEL_STATUS } from '~/server/utils/legal-hold';
-import { restoreModelRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
 import { purgeUserAppStorageForAccountWipe } from '~/server/services/apps/user-storage-purge.service';
 import deleteUserImages from '~/server/api-routes/mod/delete-user-images';
 import removeAllContentWebhook from '~/server/api-routes/mod/remove-all-content';
 
 const CLEAN = 1;
-const HELD = 2; // named on a pending report
-const MARKED = 3; // held by the marker view
+const REPORTED = 2; // named on a pending report
+const OTHER = 3;
 const BYSTANDER = 9;
 // CLEAN's rows, seeded first; each table's ids start apart so an id names one table.
 const COLLECTION = 300;
@@ -180,9 +162,6 @@ const ARTICLE = 500;
 const MODEL = 700;
 const BOUNTY = 900;
 const MODEL_VERSION = (modelId: number) => modelId * 10;
-const GIVEN_BY_HELD = 7901;
-const GIVEN_BY_BYSTANDER = 7902;
-const SCHEDULED_GIVEN_BY_HELD = 7911;
 const EVIDENCE = [
   'BountyEntry',
   'Bounty',
@@ -198,17 +177,10 @@ const SEEDED_TABLES = EVIDENCE;
 // Kept as data with no code for them: the wipe leaves these rows alone.
 const QA_DATA = ['Question', 'Answer'];
 
-/** Runs just before the delete from `landsBefore`: a hold landing after the check. */
-let beforeEvidence: (() => Promise<unknown>) | null = null;
-/** The first guarded delete, unless a test lands the hold later. */
-let landsBefore = EVIDENCE[0];
-let failLookups = false;
 /** Fails the wipe's read of which of its models are gone. */
 let failGoneModels = false;
 /** Rows the primary has and the replica does not yet: made inside replication lag. */
 let notYetOnReplica: number[] = [];
-/** Replaces what the wipe's re-check after its evidence deletes reads back. */
-let afterHeld: unknown = undefined;
 
 const run = (sql: Prisma.Sql) => holder.db.query(sql.text, sql.values);
 const asSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
@@ -227,7 +199,6 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "needsReview" text, "blockedFor" text,
       minor boolean NOT NULL DEFAULT false
     );
-    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
     CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb DEFAULT '{}', "bannedAt" timestamp(3));
     ${[...SEEDED_TABLES, ...QA_DATA]
       .map((t) => `CREATE TABLE "${t}" (id serial PRIMARY KEY, "userId" int NOT NULL);`)
@@ -334,47 +305,33 @@ beforeAll(async () => {
       'utf8'
     )
   );
-  await holder.db.exec(heldCopiesSchemaSql());
-  // Append-only, so set once: two models CLEAN was given, one by a held owner.
-  await holder.db.exec(`
-    INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
-      (${GIVEN_BY_HELD}, ${HELD}, 'create'), (${GIVEN_BY_HELD}, ${CLEAN}, 'transfer'),
-      (${GIVEN_BY_BYSTANDER}, ${BYSTANDER}, 'create'), (${GIVEN_BY_BYSTANDER}, ${CLEAN}, 'transfer');
-  `);
   await holder.db.exec(DELETED_ROW_COLUMNS_SQL);
 });
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  beforeEvidence = null;
-  landsBefore = EVIDENCE[0];
-  holder.beforeImages = null;
-  failLookups = false;
   failGoneModels = false;
   notYetOnReplica = [];
-  afterHeld = undefined;
   session.user = { id: 9, isModerator: true, bannedAt: null };
   await holder.db.exec(`
-    DROP VIEW IF EXISTS "EvidenceHeldUser";
-    DROP TABLE IF EXISTS "EvidenceHold";
     TRUNCATE "CsamReport", "Image", "PostText", "BountyBenefactor", "Collection", "ModelVersion",
       "CommentV3", "CommentV3Report", "CommentV3Reaction", "CommentTopic",
-      "ModActivity", "BountyUnpaidAward", "HeldResourceReview",
+      "ModActivity", "BountyUnpaidAward",
       ${[...SEEDED_TABLES, ...QA_DATA].map((t) => `"${t}"`).join(', ')} RESTART IDENTITY;
     ALTER SEQUENCE "Collection_id_seq" RESTART ${COLLECTION};
     ALTER SEQUENCE "Article_id_seq" RESTART ${ARTICLE};
     ALTER SEQUENCE "Model_id_seq" RESTART ${MODEL};
     ALTER SEQUENCE "Bounty_id_seq" RESTART ${BOUNTY};
-    INSERT INTO "Collection" ("userId") VALUES (${CLEAN}), (${HELD}), (${MARKED}), (${BYSTANDER});
-    INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
+    INSERT INTO "Collection" ("userId") VALUES (${CLEAN}), (${REPORTED}), (${OTHER}), (${BYSTANDER});
+    INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED});
     INSERT INTO "Image" (id, "userId", "postId") VALUES
       (${CLEAN * 100}, ${CLEAN}, 1), (${CLEAN * 100 + 1}, ${CLEAN}, 1),
-      (${HELD * 100}, ${HELD}, NULL), (${MARKED * 100}, ${MARKED}, NULL),
+      (${REPORTED * 100}, ${REPORTED}, NULL), (${OTHER * 100}, ${OTHER}, NULL),
       (${BYSTANDER * 100}, ${BYSTANDER}, NULL);
     ${[...SEEDED_TABLES, ...QA_DATA]
       .map(
         (t) =>
-          `INSERT INTO "${t}" ("userId") VALUES (${CLEAN}), (${HELD}), (${MARKED}), (${BYSTANDER});`
+          `INSERT INTO "${t}" ("userId") VALUES (${CLEAN}), (${REPORTED}), (${OTHER}), (${BYSTANDER});`
       )
       .join('\n')}
   `);
@@ -383,12 +340,9 @@ beforeEach(async () => {
     first: TemplateStringsArray | Prisma.Sql,
     ...values: unknown[]
   ) => {
-    if (failLookups) throw new Error('connection reset');
     const sql = asSql(first, values);
     if (failGoneModels && sql.text.includes('FROM "Model" WHERE id = ANY'))
       throw new Error('connection reset');
-    if (afterHeld !== undefined && sql.text.trimEnd().endsWith('AS held'))
-      return [{ held: afterHeld }];
     return (await run(sql)).rows;
   }) as never);
   vi.mocked(dbMock.dbWrite.$queryRawUnsafe).mockImplementation(
@@ -400,10 +354,6 @@ beforeEach(async () => {
     ...values: unknown[]
   ) => {
     const sql = asSql(first, values);
-    if (beforeEvidence && sql.text.includes(`DELETE FROM "${landsBefore}"`)) {
-      await beforeEvidence();
-      beforeEvidence = null;
-    }
     return (await run(sql)).affectedRows ?? 0;
   }) as never);
   const rowsOf = (table: string, columns: string, replica = false) =>
@@ -491,15 +441,6 @@ const NONE = {
   users: [],
 };
 
-async function createMarkerView() {
-  await holder.db.exec(`
-    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
-    CREATE VIEW "EvidenceHeldUser" AS
-      SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
-    INSERT INTO "EvidenceHold" VALUES (${MARKED}, NULL);
-  `);
-}
-
 /** Rows left per table for `userId`, images included. */
 async function remaining(userId: number) {
   const counts: Record<string, number> = {};
@@ -527,8 +468,8 @@ const commentsOf = async (userId: number) =>
   ).rows.map((r) => r.id);
 
 describe('removeAllContent', () => {
-  it('wipes an account no hold covers, and no one else’s', async () => {
-    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: [], keptModelIds: [] });
+  it('wipes the account, and no one else’s', async () => {
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: [] });
 
     expect(await remaining(CLEAN)).toEqual(all(0));
     expect(await remaining(BYSTANDER)).toEqual(all(1));
@@ -546,12 +487,11 @@ describe('removeAllContent', () => {
     });
     expect(metrics.user.queueUpdate).toHaveBeenCalledWith(CLEAN);
     expect(metrics.article.queueUpdate).toHaveBeenCalledWith([ARTICLE]);
-    // Rows, storage objects and caches, held to the hold: the listed images, then any uploaded
-    // since the list was read (none here).
+    // Rows, storage objects and caches: the listed images, then any uploaded since the list was
+    // read (none here).
     expect(deleteImages).toHaveBeenCalledTimes(2);
     expect(deleteImages).toHaveBeenNthCalledWith(1, [CLEAN * 100, CLEAN * 100 + 1], {
       actor: { system: 'remove-all-content' },
-      onlyWhere: expect.anything(),
       moderatorDelete: true,
     });
     expect(deleteImages).toHaveBeenNthCalledWith(2, [], {
@@ -562,6 +502,28 @@ describe('removeAllContent', () => {
     expect(purgeUserAppStorageForAccountWipe).toHaveBeenCalledWith(
       expect.objectContaining({ targetUserId: CLEAN })
     );
+  });
+
+  // In-case images are kept by the delete's own case check, not by refusing the account.
+  it('wipes an account named on a pending CSAM report', async () => {
+    expect(await removeAllContent({ id: REPORTED })).toEqual({ incomplete: [] });
+
+    expect(await remaining(REPORTED)).toEqual(all(0));
+    expect(await remaining(BYSTANDER)).toEqual(all(1));
+    expect(deleteImages).toHaveBeenNthCalledWith(1, [REPORTED * 100], expect.anything());
+  });
+
+  it('wipes an account banned with a note naming CSAM or NCMEC', async () => {
+    await holder.db.query(
+      `INSERT INTO "User" (id, meta, "bannedAt") VALUES ($1, $2, now() - interval '1 day')`,
+      [CLEAN, JSON.stringify({ banDetails: { detailsExternal: 'Reported to NCMEC' } })]
+    );
+    try {
+      await removeAllContent({ id: CLEAN });
+      expect(await remaining(CLEAN)).toEqual(all(0));
+    } finally {
+      await holder.db.exec(`DELETE FROM "User"`);
+    }
   });
 
   // A moderator's wipe deletes as that moderator, so no member ownership limit applies.
@@ -597,8 +559,8 @@ describe('removeAllContent', () => {
           (92, 'image', 1, NULL, '92', ${CLEAN}, 'kept as a placeholder'),
           (93, 'image', 1, 92, '92.93', ${BYSTANDER}, 'a reply by someone else'),
           (94, 'model3dReview', 1, NULL, '94', ${CLEAN}, 'a 3D model review comment'),
-          (95, 'image', 1, NULL, '95', ${CLEAN}, 'above a held author''s reply'),
-          (96, 'image', 1, 95, '95.96', ${HELD}, 'a held author''s reply');
+          (95, 'image', 1, NULL, '95', ${CLEAN}, 'above a reported author''s reply'),
+          (96, 'image', 1, 95, '95.96', ${REPORTED}, 'a reported author''s reply');
         INSERT INTO "CommentV3Reaction" ("commentId", "userId") VALUES (93, ${CLEAN}), (93, ${BYSTANDER});
       `);
     });
@@ -610,13 +572,13 @@ describe('removeAllContent', () => {
         )
       ).rows;
 
-    it('are wiped on every surface, with a placeholder above a reply, a held author’s too', async () => {
+    it('are wiped on every surface, with a placeholder above a reply', async () => {
       await removeAllContent({ id: CLEAN });
       expect(await v3()).toEqual([
         { id: 92, content: '', deleted: true, tos: false },
         { id: 93, content: 'a reply by someone else', deleted: false, tos: false },
         { id: 95, content: '', deleted: true, tos: false },
-        { id: 96, content: "a held author's reply", deleted: false, tos: false },
+        { id: 96, content: "a reported author's reply", deleted: false, tos: false },
       ]);
       // The account's reactions go too, and no one else's.
       const reactors = await holder.db.query<{ userId: number }>(
@@ -625,137 +587,18 @@ describe('removeAllContent', () => {
       expect(reactors.rows).toEqual([{ userId: BYSTANDER }]);
     });
 
-    it('deletes an article of the account and its comments, a held author’s comment on it notwithstanding', async () => {
+    it('deletes an article of the account and its comments, a reported author’s comment included', async () => {
       await holder.db.exec(`
         INSERT INTO "Article" (id, "userId") VALUES (777, ${CLEAN});
         INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('article', 777);
         INSERT INTO "CommentV3" (id, "entityType", "entityId", "parentId", path, "userId", content) VALUES
-          (97, 'article', 777, NULL, '97', ${HELD}, 'held, on the account''s article');
+          (97, 'article', 777, NULL, '97', ${REPORTED}, 'reported, on the account''s article');
       `);
       await removeAllContent({ id: CLEAN });
       expect(
         (await holder.db.query(`SELECT id FROM "Article" WHERE "userId" = ${CLEAN}`)).rows
       ).toEqual([]);
-      expect(await commentsOf(HELD)).not.toContain(97);
-    });
-  });
-
-  it.each([
-    ['named on a report', HELD, async () => undefined],
-    ['held by the marker', MARKED, createMarkerView],
-  ])('refuses an account %s before deleting anything', async (_, userId, setup) => {
-    await setup();
-    const before = await remaining(userId);
-
-    const refused = await removeAllContent({ id: userId }).catch((e: unknown) => e);
-    expect(refused).toBeInstanceOf(LegalHoldError);
-    expect(refused).not.toBeInstanceOf(LegalHoldStoppedError);
-    expect(refused).not.toBeInstanceOf(LegalHoldUnconfirmedError);
-
-    expect(await remaining(userId)).toEqual(before);
-    expect(dbMock.dbWrite.imageReaction.deleteMany).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
-  });
-
-  // A ban note alone is not a hold.
-  it('wipes an account banned with a note naming CSAM or NCMEC and no hold', async () => {
-    await holder.db.query(
-      `INSERT INTO "User" (id, meta, "bannedAt") VALUES ($1, $2, now() - interval '1 day')`,
-      [CLEAN, JSON.stringify({ banDetails: { detailsExternal: 'Reported to NCMEC' } })]
-    );
-    try {
-      await removeAllContent({ id: CLEAN });
-      expect(await remaining(CLEAN)).toEqual(all(0));
-    } finally {
-      await holder.db.exec(`DELETE FROM "User"`);
-    }
-  });
-
-  it('refuses when the hold cannot be checked', async () => {
-    failLookups = true;
-    const refused = await removeAllContent({ id: CLEAN }).catch((e: unknown) => e);
-    expect(refused).toBeInstanceOf(LegalHoldUnconfirmedError);
-    expect(refused).not.toBeInstanceOf(LegalHoldStoppedError);
-    expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
-    expect(dbMock.dbWrite.imageReaction.deleteMany).not.toHaveBeenCalled();
-  });
-
-  // PGlite has one connection, so this lands the hold strictly between the check and the deletes; it
-  // shows each delete re-reads the hold, not how they behave under true concurrency.
-  it('keeps every piece of evidence when a hold lands mid-wipe, and says so', async () => {
-    await holder.db.exec(
-      `INSERT INTO "ModelVersion" ("modelId") SELECT id FROM "Model" WHERE "userId" = ${CLEAN}`
-    );
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-
-    expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
-    // Not even hidden: a wipe stopped before the hide leaves its models as they were.
-    const statuses = await holder.db.query<{ status: string }>(
-      `SELECT DISTINCT status FROM "Model" WHERE "userId" = ${CLEAN}
-       UNION ALL
-       SELECT DISTINCT mv.status FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
-       WHERE m."userId" = ${CLEAN}`
-    );
-    expect(statuses.rows).toEqual([{ status: 'Published' }, { status: 'Published' }]);
-    // The low-impact rows before the evidence go, and only those leave the index; nothing is purged
-    // elsewhere.
-    expect(dbMock.dbWrite.imageReaction.deleteMany).toHaveBeenCalled();
-    expect(dropped()).toEqual({ ...NONE, collections: [COLLECTION] });
-    expect(metrics.user.queueUpdate).not.toHaveBeenCalled();
-    expect(metrics.article.queueUpdate).not.toHaveBeenCalled();
-    expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
-  });
-
-  it('keeps evidence when the marker appears mid-wipe after a check that found none', async () => {
-    beforeEvidence = () => holder.db.exec(`CREATE TABLE "EvidenceHold" ("userId" int NOT NULL)`);
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
-  });
-
-  it('wipes an unheld account while the marker view exists', async () => {
-    await createMarkerView();
-    await removeAllContent({ id: CLEAN });
-    expect(await remaining(CLEAN)).toEqual(all(0));
-  });
-
-  it('keeps evidence when a marker lands mid-wipe', async () => {
-    await createMarkerView();
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "EvidenceHold" VALUES (${CLEAN}, NULL)`);
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
-  });
-
-  it.each([
-    [
-      'an image put to review',
-      `UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${CLEAN * 100}`,
-    ],
-    [
-      'an image blocked with no sent report',
-      `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${CLEAN * 100}`,
-    ],
-    [
-      'an image listed on a pending report',
-      `INSERT INTO "CsamReport" (images) VALUES ('[{"id": ${CLEAN * 100}}]')`,
-    ],
-  ])('keeps evidence when %s lands mid-wipe', async (_, landing) => {
-    beforeEvidence = () => holder.db.exec(landing);
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
-  });
-
-  it('reports a hold when its re-check cannot be read', async () => {
-    afterHeld = null;
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    // Everything went, so all of it leaves the index; the account itself stays in it.
-    expect(dropped()).toEqual({
-      ...NONE,
-      models: [MODEL],
-      articles: [ARTICLE],
-      collections: [COLLECTION],
-      bounties: [BOUNTY],
+      expect(await commentsOf(REPORTED)).not.toContain(97);
     });
   });
 
@@ -768,140 +611,10 @@ describe('removeAllContent', () => {
         FROM "ResourceReview" WHERE "userId" = ${CLEAN};
     `);
 
-  it('keeps another user’s comment on a review of theirs when a hold lands mid-wipe', async () => {
-    await bystanderCommentsOnItsReviews();
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-
-    expect(await commentsOf(BYSTANDER)).toHaveLength(1);
-  });
-
-  it('takes the comments on its reviews with it when no hold lands (control for the above)', async () => {
+  it('takes the comments on its reviews with it', async () => {
     await bystanderCommentsOnItsReviews();
     await removeAllContent({ id: CLEAN });
     expect(await commentsOf(BYSTANDER)).toEqual([]);
-  });
-
-  describe('a held author’s rows under the wiped account’s own', () => {
-    const rows = async (sql: string) => (await holder.db.query(sql)).rows;
-
-    it('copies a held author’s review of its model, and not a bystander’s', async () => {
-      await holder.db.exec(`
-        INSERT INTO "ResourceReview" ("userId", "modelId", "modelVersionId", details) VALUES
-          (${HELD}, ${MODEL}, ${MODEL_VERSION(MODEL)}, 'held'),
-          (${BYSTANDER}, ${MODEL}, ${MODEL_VERSION(MODEL)}, 'bystander');
-      `);
-
-      expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: [], keptModelIds: [] });
-
-      expect(await rows(`SELECT id FROM "ResourceReview" WHERE "modelId" = ${MODEL}`)).toEqual([]);
-      expect(
-        await rows(`SELECT "userId", "modelId", details, "holdReasons" FROM "HeldResourceReview"`)
-      ).toEqual([{ userId: HELD, modelId: MODEL, details: 'held', holdReasons: ['report'] }]);
-    });
-
-    it('keeps, hidden, a bounty a held author entered, and deletes one only a bystander entered', async () => {
-      const [{ id: bystanders }] = (await rows(
-        `INSERT INTO "Bounty" ("userId") VALUES (${CLEAN}) RETURNING id`
-      )) as { id: number }[];
-      await holder.db.exec(`
-        INSERT INTO "BountyEntry" ("userId", "bountyId") VALUES
-          (${HELD}, ${BOUNTY}), (${BYSTANDER}, ${bystanders});
-      `);
-
-      await removeAllContent({ id: CLEAN });
-
-      expect(
-        await rows(`SELECT id, availability, meta->>'removedWithOwner' AS removed FROM "Bounty"
-          WHERE id IN (${BOUNTY}, ${bystanders})`)
-      ).toEqual([{ id: BOUNTY, availability: 'Private', removed: 'true' }]);
-      expect(await rows(`SELECT "userId" FROM "BountyEntry" WHERE "bountyId" IS NOT NULL`)).toEqual(
-        [{ userId: HELD }]
-      );
-    });
-
-    it('copies a held author’s review of one of its versions that names another model', async () => {
-      const [{ id: other }] = (await rows(
-        `SELECT id FROM "Model" WHERE "userId" = ${BYSTANDER}`
-      )) as { id: number }[];
-      await holder.db.exec(`
-        INSERT INTO "ModelVersion" (id, "modelId") VALUES (${MODEL_VERSION(MODEL)}, ${MODEL});
-        INSERT INTO "ResourceReview" ("userId", "modelId", "modelVersionId", details) VALUES
-          (${HELD}, ${other}, ${MODEL_VERSION(MODEL)}, 'by version');
-      `);
-
-      await removeAllContent({ id: CLEAN });
-
-      expect(await rows(`SELECT "userId", details FROM "HeldResourceReview"`)).toEqual([
-        { userId: HELD, details: 'by version' },
-      ]);
-    });
-
-    it('drops a bounty kept for a held entry from search when a hold stops the wipe after it', async () => {
-      await holder.db.exec(
-        `INSERT INTO "BountyEntry" ("userId", "bountyId") VALUES (${HELD}, ${BOUNTY})`
-      );
-      landsBefore = 'ResourceReview';
-      beforeEvidence = () =>
-        holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-
-      await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-
-      expect(await rows(`SELECT availability FROM "Bounty" WHERE id = ${BOUNTY}`)).toEqual([
-        { availability: 'Private' },
-      ]);
-      expect(dropped().bounties).toContain(BOUNTY);
-    });
-
-    it('leaves a kept bounty whose supporters are not refunded yet', async () => {
-      await holder.db.exec(`
-        UPDATE "Bounty" SET availability = 'Private', meta = '{"removedWithOwner": true}'
-          WHERE id = ${BOUNTY};
-        INSERT INTO "BountyBenefactor" ("bountyId") VALUES (${BOUNTY});
-      `);
-      await createMarkerView();
-
-      expect(await deleteSettledKeptBounties()).toBe(0);
-      expect(await rows(`SELECT id FROM "Bounty" WHERE id = ${BOUNTY}`)).toEqual([{ id: BOUNTY }]);
-    });
-
-    it('deletes the kept bounty once the entrant’s hold ends, and not before', async () => {
-      await holder.db.exec(
-        `INSERT INTO "BountyEntry" ("userId", "bountyId") VALUES (${HELD}, ${BOUNTY})`
-      );
-      await removeAllContent({ id: CLEAN });
-      await createMarkerView();
-
-      expect(await deleteSettledKeptBounties()).toBe(0);
-      expect(await rows(`SELECT id FROM "Bounty" WHERE id = ${BOUNTY}`)).toEqual([{ id: BOUNTY }]);
-
-      await holder.db.exec(`DELETE FROM "CsamReport" WHERE "userId" = ${HELD}`);
-      expect(await deleteSettledKeptBounties()).toBe(1);
-      expect(await rows(`SELECT id FROM "Bounty" WHERE id = ${BOUNTY}`)).toEqual([]);
-    });
-  });
-
-  it('stops before the App Blocks stores when a hold lands after the deletes', async () => {
-    vi.mocked(refundBidsForVersions).mockImplementationOnce(async () => {
-      await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-      return { bidsDeleted: [], recurringBidsDeleted: [], refundFailed: [] };
-    });
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
-    expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
-    expect(docStore.wipeAccount).not.toHaveBeenCalled();
-  });
-
-  it('stops before the App Blocks stores when the hold cannot be checked after the deletes', async () => {
-    vi.mocked(refundBidsForVersions).mockImplementationOnce(async () => {
-      failLookups = true;
-      return { bidsDeleted: [], recurringBidsDeleted: [], refundFailed: [] };
-    });
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
-    expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
-    expect(docStore.wipeAccount).not.toHaveBeenCalled();
   });
 
   // Not refund idempotency (that is the bid filter, in auction-refund-bids-for-versions.test.ts):
@@ -909,7 +622,7 @@ describe('removeAllContent', () => {
   it('runs a second time without refusing, and with no models left to refund', async () => {
     await removeAllContent({ id: CLEAN });
     vi.mocked(refundBidsForVersions).mockClear();
-    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: [], keptModelIds: [] });
+    expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: [] });
     expect(refundBidsForVersions).not.toHaveBeenCalled();
   });
 
@@ -921,7 +634,6 @@ describe('removeAllContent', () => {
     });
     expect(await removeAllContent({ id: CLEAN, actorUserId: 9 })).toEqual({
       incomplete: ['bid-refunds'],
-      keptModelIds: [],
     });
     expect(refundAlerts()).toEqual([
       expect.objectContaining({
@@ -933,32 +645,15 @@ describe('removeAllContent', () => {
     ]);
   });
 
-  it('raises a refund alert from a stopped wipe too', async () => {
-    landsBefore = 'ChatMessage';
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-    vi.mocked(refundBidsForVersions).mockResolvedValueOnce({
-      bidsDeleted: [1],
-      recurringBidsDeleted: [],
-      refundFailed: ['tx-2'],
-    });
-    await expect(removeAllContent({ id: CLEAN, actorUserId: 9 })).rejects.toBeInstanceOf(
-      LegalHoldStoppedError
-    );
-    expect(refundAlerts()).toEqual([
-      expect.objectContaining({ moderatorId: 9, transactionIds: ['tx-2'] }),
-    ]);
-  });
-
   it('raises no refund alert when every refund went through', async () => {
     await removeAllContent({ id: CLEAN, actorUserId: 9 });
     expect(refundAlerts()).toEqual([]);
   });
 
-  it('names the model index and the bid refunds, and refunds nothing, when it cannot tell which models went', async () => {
+  it('names the bid refunds, and refunds nothing, when it cannot tell which models went', async () => {
     failGoneModels = true;
     expect(await removeAllContent({ id: CLEAN })).toEqual({
-      incomplete: ['index-models', 'bid-refunds'],
-      keptModelIds: [],
+      incomplete: ['bid-refunds'],
     });
     expect(refundBidsForVersions).not.toHaveBeenCalled();
   });
@@ -970,7 +665,6 @@ describe('removeAllContent', () => {
     expect(alerts).toEqual([
       expect.objectContaining({ modelIds: [MODEL], candidateVersionIds: [MODEL_VERSION(MODEL)] }),
     ]);
-    // A model a hold kept may be among them, and its bids still stand.
     expect(alerts[0]).not.toHaveProperty('versionIds');
     expect(alerts[0].message).not.toMatch(/refund them/);
   });
@@ -998,20 +692,11 @@ describe('removeAllContent', () => {
     );
   });
 
-  it('still reports a stopped wipe when its bid refunds fail', async () => {
-    landsBefore = 'ChatMessage';
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-    vi.mocked(refundBidsForVersions).mockRejectedValueOnce(new Error('buzz down'));
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
-  });
-
   it('still refunds the next model when one model’s refund throws', async () => {
     await holder.db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${MODEL + 50}, ${CLEAN})`);
     vi.mocked(refundBidsForVersions).mockRejectedValueOnce(new Error('auction read failed'));
     expect(await removeAllContent({ id: CLEAN })).toEqual({
       incomplete: ['bid-refunds'],
-      keptModelIds: [],
     });
     expect(refundBidsForVersions).toHaveBeenCalledTimes(2);
     expect(refundBidsForVersions).toHaveBeenLastCalledWith(
@@ -1035,7 +720,6 @@ describe('removeAllContent', () => {
     vi.mocked(refundBidsForVersions).mockRejectedValueOnce(new Error('buzz down'));
     expect(await removeAllContent({ id: CLEAN })).toEqual({
       incomplete: ['bid-refunds'],
-      keptModelIds: [],
     });
     expect(purgeUserAppStorageForAccountWipe).toHaveBeenCalledTimes(1);
     expect(docStore.wipeAccount).toHaveBeenCalledWith(CLEAN);
@@ -1045,7 +729,6 @@ describe('removeAllContent', () => {
     vi.mocked(purgeUserAppStorageForAccountWipe).mockRejectedValueOnce(new Error('apps db down'));
     expect(await removeAllContent({ id: CLEAN })).toEqual({
       incomplete: ['app-storage'],
-      keptModelIds: [],
     });
     expect(docStore.wipeAccount).toHaveBeenCalledWith(CLEAN);
   });
@@ -1054,7 +737,6 @@ describe('removeAllContent', () => {
     indexes.models.queueUpdate.mockRejectedValueOnce(new Error('queue down'));
     expect(await removeAllContent({ id: CLEAN })).toEqual({
       incomplete: ['index-models'],
-      keptModelIds: [],
     });
     expect(dropped().users).toEqual([CLEAN]);
     expect(metrics.article.queueUpdate).toHaveBeenCalledWith([ARTICLE]);
@@ -1065,390 +747,12 @@ describe('removeAllContent', () => {
     docStore.wipeAccount.mockRejectedValueOnce(new Error('store down'));
     expect(await removeAllContent({ id: CLEAN })).toEqual({
       incomplete: ['doc-store'],
-      keptModelIds: [],
     });
   });
 
-  it('keeps a model an earlier owner of which is held, and deletes one only unheld owners had', async () => {
-    await holder.db.exec(`
-      INSERT INTO "Model" (id, "userId") VALUES (${GIVEN_BY_HELD}, ${CLEAN}), (${GIVEN_BY_BYSTANDER}, ${CLEAN})
-    `);
-
-    const result = await removeAllContent({ id: CLEAN });
-
-    const left = await holder.db.query<{ id: number }>(`SELECT id FROM "Model" ORDER BY id`);
-    expect(left.rows.map((r) => r.id)).toContain(GIVEN_BY_HELD);
-    expect(result.keptModelIds).toEqual([GIVEN_BY_HELD]);
-    expect(dropped().models).toContain(GIVEN_BY_BYSTANDER);
-    expect(left.rows.map((r) => r.id)).not.toContain(GIVEN_BY_BYSTANDER);
-    expect(left.rows.map((r) => r.id)).not.toContain(MODEL);
-  });
-
-  it('takes a kept model off the site and out of search, keeping its record', async () => {
-    await holder.db.exec(`
-      INSERT INTO "Model" (id, "userId", meta) VALUES
-        (${GIVEN_BY_HELD}, ${CLEAN}, '{"note": 1}'), (${GIVEN_BY_BYSTANDER}, ${CLEAN}, NULL);
-      INSERT INTO "ModelVersion" ("modelId", status) VALUES
-        (${GIVEN_BY_HELD}, 'Published'), (${GIVEN_BY_HELD}, 'Draft');
-    `);
-
+  it('refreshes the account’s content counts', async () => {
     await removeAllContent({ id: CLEAN });
-
-    const versions = await holder.db.query<{ id: number; status: string }>(
-      `SELECT id, status FROM "ModelVersion" WHERE "modelId" = ${GIVEN_BY_HELD} ORDER BY id`
-    );
-    expect(versions.rows.map((r) => r.status)).toEqual(['Unpublished', 'Draft']);
-    // What a moderator's restore needs: the prior status, and only the versions the wipe took down.
-    const kept = await holder.db.query<{ status: string; meta: Record<string, unknown> }>(
-      `SELECT status, meta FROM "Model" WHERE id = ${GIVEN_BY_HELD}`
-    );
-    expect(kept.rows).toEqual([
-      {
-        status: KEPT_MODEL_STATUS,
-        meta: {
-          note: 1,
-          removedWithOwner: true,
-          statusBeforeRemoval: 'Published',
-          versionsUnpublishedByRemoval: [{ id: versions.rows[0].id, status: 'Published' }],
-        },
-      },
-    ]);
-    expect(dropped().models).toContain(GIVEN_BY_HELD);
-    // Control: a model only unheld owners had is deleted, as before.
-    const gone = await holder.db.query(`SELECT 1 FROM "Model" WHERE id = ${GIVEN_BY_BYSTANDER}`);
-    expect(gone.rows).toEqual([]);
-  });
-
-  describe('a moderator restore of a model the wipe kept', () => {
-    const wipeThenRestore = async (status: string, versions: string[]) => {
-      await holder.db.exec(`
-        INSERT INTO "Model" (id, "userId", status, meta)
-          VALUES (${GIVEN_BY_HELD}, ${CLEAN}, '${status}', '{"note": 1}');
-        INSERT INTO "ModelVersion" ("modelId", status)
-          SELECT ${GIVEN_BY_HELD}, s FROM unnest(ARRAY[${versions
-        .map((v) => `'${v}'`)
-        .join(',')}]) s;
-      `);
-      await removeAllContent({ id: CLEAN });
-      const restored = await restoreModelRemovedWithOwner(GIVEN_BY_HELD);
-      const model = await holder.db.query<{ status: string; meta: unknown }>(
-        `SELECT status, meta FROM "Model" WHERE id = ${GIVEN_BY_HELD}`
-      );
-      const after = await holder.db.query<{ status: string }>(
-        `SELECT status FROM "ModelVersion" WHERE "modelId" = ${GIVEN_BY_HELD} ORDER BY id`
-      );
-      return { restored, model: model.rows[0], versions: after.rows.map((r) => r.status) };
-    };
-
-    it('puts back a published model and only the versions the wipe took down', async () => {
-      const { restored, model, versions } = await wipeThenRestore('Published', [
-        'Published',
-        'Unpublished',
-        'Scheduled',
-        'Draft',
-      ]);
-      expect(model).toEqual({ status: 'Published', meta: { note: 1 } });
-      // The version unpublished before the wipe, and the draft, stay as they were.
-      expect(versions).toEqual(['Published', 'Unpublished', 'Scheduled', 'Draft']);
-      expect(restored).toMatchObject({ status: 'Published', userId: CLEAN });
-    });
-
-    it('puts a model its owner had unpublished back to unpublished', async () => {
-      const { model, versions } = await wipeThenRestore('Unpublished', ['Unpublished']);
-      expect(model).toEqual({ status: 'Unpublished', meta: { note: 1 } });
-      expect(versions).toEqual(['Unpublished']);
-    });
-
-    it('clears the record on a draft it kept in place, so its owner may publish it again', async () => {
-      const { restored, model, versions } = await wipeThenRestore('Draft', ['Draft']);
-      expect(model).toEqual({ status: 'Draft', meta: { note: 1 } });
-      expect(versions).toEqual(['Draft']);
-      expect(restored).toMatchObject({ status: 'Draft', userId: CLEAN, versionIds: [] });
-    });
-
-    // Only a status the wipe keeps a model in where it found it counts as kept in place.
-    it('restores nothing on a recorded model back at a status the wipe moves', async () => {
-      await holder.db.exec(`
-        INSERT INTO "Model" (id, "userId", status, meta) VALUES (${GIVEN_BY_HELD}, ${CLEAN}, 'Published',
-          '{"removedWithOwner": true, "statusBeforeRemoval": "Published", "versionsUnpublishedByRemoval": []}')
-      `);
-      expect(await restoreModelRemovedWithOwner(GIVEN_BY_HELD)).toBeNull();
-    });
-
-    it('restores nothing on a recorded model that has moved since the wipe', async () => {
-      await holder.db.exec(`
-        INSERT INTO "Model" (id, "userId", status, meta) VALUES (${GIVEN_BY_HELD}, ${CLEAN}, 'Unpublished',
-          '{"removedWithOwner": true, "statusBeforeRemoval": "Published", "versionsUnpublishedByRemoval": []}')
-      `);
-      expect(await restoreModelRemovedWithOwner(GIVEN_BY_HELD)).toBeNull();
-    });
-
-    it('leaves a version a moderator took down while the model was hidden', async () => {
-      await holder.db.exec(`
-        INSERT INTO "Model" (id, "userId", status) VALUES (${GIVEN_BY_HELD}, ${CLEAN}, 'Published');
-        INSERT INTO "ModelVersion" ("modelId", status) VALUES (${GIVEN_BY_HELD}, 'Published');
-      `);
-      await removeAllContent({ id: CLEAN });
-      await holder.db.exec(
-        `UPDATE "ModelVersion" SET status = 'UnpublishedViolation' WHERE "modelId" = ${GIVEN_BY_HELD}`
-      );
-
-      await restoreModelRemovedWithOwner(GIVEN_BY_HELD);
-
-      const after = await holder.db.query<{ status: string }>(
-        `SELECT status FROM "ModelVersion" WHERE "modelId" = ${GIVEN_BY_HELD}`
-      );
-      expect(after.rows).toEqual([{ status: 'UnpublishedViolation' }]);
-    });
-
-    it('restores nothing on a record with no prior status', async () => {
-      await holder.db.exec(`
-        INSERT INTO "Model" (id, "userId", status, meta) VALUES
-          (${GIVEN_BY_HELD}, ${CLEAN}, 'UnpublishedViolation', '{"removedWithOwner": true}')
-      `);
-      expect(await restoreModelRemovedWithOwner(GIVEN_BY_HELD)).toBeNull();
-    });
-
-    it('restores nothing on a model the wipe did not hide', async () => {
-      await holder.db.exec(
-        `INSERT INTO "Model" (id, "userId", status) VALUES (${GIVEN_BY_HELD}, ${HELD}, 'UnpublishedViolation')`
-      );
-      expect(await restoreModelRemovedWithOwner(GIVEN_BY_HELD)).toBeNull();
-    });
-  });
-
-  it('hides a kept model its owner had unpublished, and records a kept draft without moving it', async () => {
-    const DRAFT_GIVEN_BY_HELD = SCHEDULED_GIVEN_BY_HELD + 1;
-    await holder.db.exec(`
-      INSERT INTO "ModelOwnership" ("modelId", "userId", reason)
-        SELECT ${DRAFT_GIVEN_BY_HELD}, ${HELD}, 'create'
-        WHERE NOT EXISTS (SELECT 1 FROM "ModelOwnership" WHERE "modelId" = ${DRAFT_GIVEN_BY_HELD});
-      INSERT INTO "Model" (id, "userId", status) VALUES
-        (${GIVEN_BY_HELD}, ${CLEAN}, 'Unpublished'), (${DRAFT_GIVEN_BY_HELD}, ${CLEAN}, 'Draft');
-      INSERT INTO "ModelVersion" ("modelId", status) VALUES (${GIVEN_BY_HELD}, 'Unpublished');
-    `);
-
-    await removeAllContent({ id: CLEAN });
-
-    const kept = await holder.db.query<{ id: number; status: string; meta: unknown }>(
-      `SELECT id, status, meta FROM "Model" WHERE id IN (${GIVEN_BY_HELD}, ${DRAFT_GIVEN_BY_HELD}) ORDER BY id`
-    );
-    expect(kept.rows).toEqual([
-      {
-        id: GIVEN_BY_HELD,
-        status: KEPT_MODEL_STATUS,
-        meta: {
-          removedWithOwner: true,
-          statusBeforeRemoval: 'Unpublished',
-          versionsUnpublishedByRemoval: [],
-        },
-      },
-      // Its status stays; the record is what stops its owner publishing it.
-      {
-        id: DRAFT_GIVEN_BY_HELD,
-        status: 'Draft',
-        meta: {
-          removedWithOwner: true,
-          statusBeforeRemoval: 'Draft',
-          versionsUnpublishedByRemoval: [],
-        },
-      },
-    ]);
-  });
-
-  it('hides only the wiped account’s models, scheduled ones included, and drops their caches', async () => {
-    await holder.db.exec(`
-      INSERT INTO "ModelOwnership" ("modelId", "userId", reason)
-        SELECT ${SCHEDULED_GIVEN_BY_HELD}, ${HELD}, 'create'
-        WHERE NOT EXISTS (SELECT 1 FROM "ModelOwnership" WHERE "modelId" = ${SCHEDULED_GIVEN_BY_HELD});
-      INSERT INTO "Model" (id, "userId", status) VALUES
-        (${GIVEN_BY_HELD}, ${CLEAN}, 'Published'), (${SCHEDULED_GIVEN_BY_HELD}, ${CLEAN}, 'Scheduled');
-      INSERT INTO "ModelVersion" ("modelId", status) VALUES
-        (${GIVEN_BY_HELD}, 'Published'), (${SCHEDULED_GIVEN_BY_HELD}, 'Scheduled');
-      INSERT INTO "ModelVersion" ("modelId", status)
-        SELECT id, 'Published' FROM "Model" WHERE "userId" = ${HELD};
-    `);
-
-    const result = await removeAllContent({ id: CLEAN });
-
-    const status = async (where: string) =>
-      (
-        await holder.db.query<{ status: string }>(
-          `SELECT DISTINCT status FROM ${where} ORDER BY status`
-        )
-      ).rows.map((r) => r.status);
-    expect(
-      await status(`"Model" WHERE id IN (${GIVEN_BY_HELD}, ${SCHEDULED_GIVEN_BY_HELD})`)
-    ).toEqual([KEPT_MODEL_STATUS]);
-    expect(
-      await status(
-        `"ModelVersion" WHERE "modelId" IN (${GIVEN_BY_HELD}, ${SCHEDULED_GIVEN_BY_HELD})`
-      )
-    ).toEqual(['Unpublished']);
-    // Another account's model and version are untouched.
-    expect(await status(`"Model" WHERE "userId" = ${HELD}`)).toEqual(['Published']);
-    expect(
-      await status(
-        `"ModelVersion" WHERE "modelId" IN (SELECT id FROM "Model" WHERE "userId" = ${HELD})`
-      )
-    ).toEqual(['Published']);
-
-    expect(result.keptModelIds).toEqual([GIVEN_BY_HELD, SCHEDULED_GIVEN_BY_HELD]);
-    const keptVersions = await holder.db.query<{ id: number }>(
-      `SELECT id FROM "ModelVersion" WHERE "modelId" IN (${GIVEN_BY_HELD}, ${SCHEDULED_GIVEN_BY_HELD}) ORDER BY id`
-    );
-    expect(bustMvCache).toHaveBeenCalledWith(
-      keptVersions.rows.map((r) => r.id),
-      [GIVEN_BY_HELD, SCHEDULED_GIVEN_BY_HELD],
-      CLEAN
-    );
     expect(contentCounts.refresh).toHaveBeenCalledWith(CLEAN);
-  });
-
-  it('refunds the bids on a model it keeps and hides', async () => {
-    await holder.db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${GIVEN_BY_HELD}, ${CLEAN})`);
-
-    await removeAllContent({ id: CLEAN });
-
-    expect(refundBidsForVersions).toHaveBeenCalledWith({
-      versionIds: [MODEL_VERSION(GIVEN_BY_HELD)],
-      name: 'zzfixture',
-      notificationKey: GIVEN_BY_HELD,
-    });
-  });
-
-  it('hides a kept model and alerts when its bid refund fails', async () => {
-    await holder.db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${GIVEN_BY_HELD}, ${CLEAN})`);
-    const refund = vi.mocked(refundBidsForVersions);
-    const usual = refund.getMockImplementation();
-    refund.mockImplementation(async (args) => {
-      if (args.versionIds.includes(MODEL_VERSION(GIVEN_BY_HELD))) throw new Error('buzz down');
-      return usual!(args);
-    });
-    let result: Awaited<ReturnType<typeof removeAllContent>>;
-    try {
-      result = await removeAllContent({ id: CLEAN, actorUserId: 9 });
-    } finally {
-      refund.mockImplementation(usual!);
-    }
-
-    expect(result.incomplete).toEqual(['bid-refunds']);
-    const kept = await holder.db.query<{ status: string }>(
-      `SELECT status FROM "Model" WHERE id = ${GIVEN_BY_HELD}`
-    );
-    expect(kept.rows).toEqual([{ status: KEPT_MODEL_STATUS }]);
-    expect(refundAlerts()).toEqual([
-      expect.objectContaining({
-        versionIds: [MODEL_VERSION(GIVEN_BY_HELD)],
-        error: 'buzz down',
-      }),
-    ]);
-  });
-
-  it('drops a hidden model from search when a hold stops the wipe after the hide', async () => {
-    await holder.db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${GIVEN_BY_HELD}, ${CLEAN})`);
-    landsBefore = 'ChatMessage';
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-
-    const kept = await holder.db.query<{ status: string }>(
-      `SELECT status FROM "Model" WHERE id = ${GIVEN_BY_HELD}`
-    );
-    expect(kept.rows).toEqual([{ status: KEPT_MODEL_STATUS }]);
-    expect(dropped().models).toContain(GIVEN_BY_HELD);
-    // Its bids and caches go with it, as on a completed wipe.
-    expect(refundBidsForVersions).toHaveBeenCalledWith(
-      expect.objectContaining({ versionIds: [MODEL_VERSION(GIVEN_BY_HELD)] })
-    );
-    expect(bustMvCache).toHaveBeenCalledWith(expect.any(Array), [GIVEN_BY_HELD], CLEAN);
-  });
-
-  it('leaves the bids on a kept model a moderator had already taken down', async () => {
-    await holder.db.exec(`
-      INSERT INTO "Model" (id, "userId", status, meta)
-        VALUES (${GIVEN_BY_HELD}, ${CLEAN}, 'UnpublishedViolation', '{"unpublishedReason": "other"}')
-    `);
-
-    await removeAllContent({ id: CLEAN });
-
-    expect(refundBidsForVersions).not.toHaveBeenCalledWith(
-      expect.objectContaining({ versionIds: [MODEL_VERSION(GIVEN_BY_HELD)] })
-    );
-  });
-
-  it('refreshes the account’s content counts when it keeps no model', async () => {
-    expect(await removeAllContent({ id: CLEAN })).toMatchObject({ keptModelIds: [] });
-    expect(contentCounts.refresh).toHaveBeenCalledWith(CLEAN);
-  });
-
-  it('leaves the bids on a model an earlier wipe hid and a moderator republished', async () => {
-    await holder.db.exec(`
-      INSERT INTO "Model" (id, "userId", meta) VALUES
-        (${GIVEN_BY_HELD}, ${CLEAN}, '{"removedWithOwner": true}')
-    `);
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-
-    expect(refundBidsForVersions).not.toHaveBeenCalledWith(
-      expect.objectContaining({ versionIds: [MODEL_VERSION(GIVEN_BY_HELD)] })
-    );
-    expect(bustMvCache).not.toHaveBeenCalled();
-  });
-
-  it('leaves the bids on a model a hold kept', async () => {
-    landsBefore = 'Model';
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    expect((await remaining(CLEAN)).Model).toBe(1);
-    expect(refundBidsForVersions).not.toHaveBeenCalled();
-  });
-
-  it('refunds the bids on a model that went before a hold stopped the wipe', async () => {
-    landsBefore = 'ChatMessage';
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    expect((await remaining(CLEAN)).Model).toBe(0);
-    expect(refundBidsForVersions).toHaveBeenCalledWith(
-      expect.objectContaining({ versionIds: [MODEL_VERSION(MODEL)] })
-    );
-  });
-
-  it('stops, keeping the evidence, when the marker view is dropped mid-wipe', async () => {
-    await createMarkerView();
-    beforeEvidence = () => holder.db.exec(`DROP VIEW "EvidenceHeldUser"`);
-
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-
-    expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
-    expect(metrics.user.queueUpdate).not.toHaveBeenCalled();
-  });
-
-  it('drops from the search index only what a stopped wipe really deleted', async () => {
-    landsBefore = 'Model';
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-
-    // The article went before the hold landed; the model did not.
-    expect((await remaining(CLEAN)).Model).toBe(1);
-    expect(dropped()).toEqual({
-      ...NONE,
-      articles: [ARTICLE],
-      collections: [COLLECTION],
-      bounties: [BOUNTY],
-    });
-  });
-
-  it('keeps in the index a bounty a stopped wipe did not delete', async () => {
-    landsBefore = 'Bounty';
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-
-    expect((await remaining(CLEAN)).Bounty).toBe(1);
-    expect(dropped()).toEqual({ ...NONE, collections: [COLLECTION] });
   });
 
   it('keeps a bounty entry that won an award', async () => {
@@ -1467,34 +771,25 @@ describe('removeAllContent', () => {
 });
 
 /**
- * The moderator app's real body reader and refusal texts, loaded across the app boundary by path. It
- * matches the reason against those texts by equality, so a body-shape drift, or a text one app stops
- * taking from `@civitai/shared/legal-hold-texts`, turns a refusal into a generic failure.
+ * The moderator app's real body reader and purge texts, loaded across the app boundary by path. It
+ * matches the reason against those texts by equality, so a body-shape drift turns a refusal into a
+ * generic failure.
  */
 const moderator = {} as {
   restErrorReason: (body: unknown, status: number) => string | null;
-  LEGAL_HOLD_REFUSAL: string;
-  LEGAL_HOLD_STOPPED: string;
-  LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE: string;
-  HOLD_UNKNOWN_REFUSAL: string;
   PURGE_ARCHIVE_REFUSAL: string;
   purgeWarning: (body: unknown) => string | undefined;
   PURGE_INCOMPLETE: string;
 };
 beforeAll(async () => {
   const lib = path.resolve(__dirname, '../../../..', 'apps/moderator/src/lib');
-  const [reader, texts, purge] = await Promise.all([
+  const [reader, purge] = await Promise.all([
     import(/* @vite-ignore */ path.join(lib, 'server/rest-error-reason.ts')),
-    import(/* @vite-ignore */ path.join(lib, 'legal-hold.ts')),
     import(/* @vite-ignore */ path.join(lib, 'purge-result.ts')),
   ]);
   Object.assign(moderator, {
     restErrorReason: reader.restErrorReason,
-    LEGAL_HOLD_REFUSAL: texts.LEGAL_HOLD_REFUSAL,
-    LEGAL_HOLD_STOPPED: texts.LEGAL_HOLD_STOPPED,
-    LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE: texts.LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
-    HOLD_UNKNOWN_REFUSAL: texts.HOLD_UNKNOWN_REFUSAL,
-    PURGE_ARCHIVE_REFUSAL: texts.PURGE_ARCHIVE_REFUSAL,
+    PURGE_ARCHIVE_REFUSAL,
     purgeWarning: purge.purgeWarning,
     PURGE_INCOMPLETE: purge.PURGE_INCOMPLETE,
   });
@@ -1523,17 +818,17 @@ function fakeRes() {
   return res;
 }
 
-// Comments are not kept for a held author: they go with the content they are on.
+// Comments go with the content they are on, whoever wrote them.
 describe('removeAllContent and other people’s comments on its content', () => {
   const rows = async (sql: string) => (await holder.db.query<Record<string, unknown>>(sql)).rows;
 
-  it('takes the comments on a deleted post with it, a held author’s reply included', async () => {
-    // BYSTANDER comments on CLEAN's post; HELD answers.
+  it('takes the comments on a deleted post with it, a reported author’s reply included', async () => {
+    // BYSTANDER comments on CLEAN's post; REPORTED answers.
     await holder.db.exec(`
       INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('post', 1);
       INSERT INTO "CommentV3" (id, "entityType", "entityId", "parentId", path, "userId", content) VALUES
         (5000, 'post', 1, NULL, '5000', ${BYSTANDER}, 'on its post'),
-        (5001, 'post', 1, 5000, '5000.5001', ${HELD}, 'a held author''s reply');
+        (5001, 'post', 1, 5000, '5000.5001', ${REPORTED}, 'a reported author''s reply');
     `);
 
     await removeAllContent({ id: CLEAN });
@@ -1541,11 +836,11 @@ describe('removeAllContent and other people’s comments on its content', () => 
     expect(await rows(`SELECT id FROM "CommentV3" WHERE id >= 5000`)).toEqual([]);
   });
 
-  it('deletes a model a held author commented on, with the comment', async () => {
+  it('deletes a model a reported author commented on, with the comment', async () => {
     await holder.db.exec(`
       INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('model', ${MODEL});
       INSERT INTO "CommentV3" (id, "entityType", "entityId", path, "userId", content) VALUES
-        (5000, 'model', ${MODEL}, '5000', ${HELD}, 'held, on its model');
+        (5000, 'model', ${MODEL}, '5000', ${REPORTED}, 'reported, on its model');
     `);
 
     await removeAllContent({ id: CLEAN });
@@ -1570,10 +865,10 @@ describe('/api/mod/remove-all-content', () => {
     return res;
   };
 
-  it('wipes an unheld account', async () => {
+  it('wipes the account', async () => {
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(200);
-    expect(res.body).toEqual({ userId: CLEAN, incomplete: [], keptModelIds: [] });
+    expect(res.body).toEqual({ userId: CLEAN, incomplete: [] });
     expect(moderatorReads(res)).toBeNull();
     expect(moderator.purgeWarning(res.body)).toBeUndefined();
     expect(await remaining(CLEAN)).toEqual(all(0));
@@ -1583,7 +878,7 @@ describe('/api/mod/remove-all-content', () => {
     vi.mocked(refundBidsForVersions).mockRejectedValueOnce(new Error('buzz down'));
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(200);
-    expect(res.body).toEqual({ userId: CLEAN, incomplete: ['bid-refunds'], keptModelIds: [] });
+    expect(res.body).toEqual({ userId: CLEAN, incomplete: ['bid-refunds'] });
     expect(tracked).toHaveBeenCalledWith({ type: 'RemoveContent', targetUserId: CLEAN });
     expect(moderator.purgeWarning(res.body)).toBe(moderator.PURGE_INCOMPLETE);
   });
@@ -1600,88 +895,6 @@ describe('/api/mod/remove-all-content', () => {
     expect(purgeUserAppStorageForAccountWipe).toHaveBeenCalledWith(
       expect.objectContaining({ actorUserId: null })
     );
-  });
-
-  it('answers 403 with the hold refusal for a held account, deleting nothing', async () => {
-    const res = await call(HELD);
-    expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ message: 'Account under legal hold; contact Legal.' });
-    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_REFUSAL);
-    expect(await remaining(HELD)).toEqual(seeded(HELD));
-    expect(tracked).not.toHaveBeenCalled();
-  });
-
-  it('answers 403 saying the hold could not be checked, deleting nothing', async () => {
-    failLookups = true;
-    const res = await call(CLEAN);
-    failLookups = false;
-    expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ message: "Couldn't check legal hold status; try again." });
-    expect(moderatorReads(res)).toBe(moderator.HOLD_UNKNOWN_REFUSAL);
-    expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
-    expect(tracked).not.toHaveBeenCalled();
-  });
-
-  it('answers 409 and records the activity when a hold stops the wipe part-way', async () => {
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-    const res = await call(CLEAN);
-    expect(res.statusCode).toBe(409);
-    expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
-    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED);
-    expect(tracked).toHaveBeenCalledWith({ type: 'RemoveContent', targetUserId: CLEAN });
-  });
-
-  it('says a stopped wipe left bids unrefunded, when one of its refunds failed', async () => {
-    landsBefore = 'ChatMessage';
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-    vi.mocked(refundBidsForVersions).mockResolvedValueOnce({
-      bidsDeleted: [1],
-      recurringBidsDeleted: [],
-      refundFailed: ['tx-3'],
-    });
-    const res = await call(CLEAN);
-    expect(res.statusCode).toBe(409);
-    expect(res.body).toEqual({
-      message: moderator.LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
-      incomplete: ['bid-refunds'],
-    });
-    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE);
-  });
-
-  it('says bids were left unrefunded when the hold lands after the refunds, before the App Blocks stores', async () => {
-    vi.mocked(refundBidsForVersions).mockImplementationOnce(async () => {
-      await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-      return { bidsDeleted: [1], recurringBidsDeleted: [], refundFailed: ['tx-4'] };
-    });
-    const res = await call(CLEAN);
-    expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
-    expect(res.statusCode).toBe(409);
-    expect(res.body).toEqual({
-      message: moderator.LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
-      incomplete: ['bid-refunds'],
-    });
-  });
-
-  it('says only that it stopped when every refund of a stopped wipe went through', async () => {
-    landsBefore = 'ChatMessage';
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-    const res = await call(CLEAN);
-    expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
-    expect(res.statusCode).toBe(409);
-    expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
-  });
-
-  it('names a failed step other than the refunds without saying bids were left unrefunded', async () => {
-    indexes.models.queueUpdate.mockRejectedValueOnce(new Error('queue down'));
-    vi.mocked(refundBidsForVersions).mockImplementationOnce(async () => {
-      await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-      return { bidsDeleted: [1], recurringBidsDeleted: [], refundFailed: [] };
-    });
-    const res = await call(CLEAN);
-    expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
-    expect(res.statusCode).toBe(409);
-    expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED, incomplete: ['index-models'] });
-    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED);
   });
 });
 
@@ -1700,7 +913,7 @@ describe('/api/mod/delete-user-images', () => {
     return res;
   };
 
-  it('deletes an unheld account’s images', async () => {
+  it('deletes the account’s images', async () => {
     const res = await call(CLEAN);
     expect(res.statusCode).toBe(200);
     expect((await remaining(CLEAN)).Image).toBe(0);
@@ -1710,70 +923,17 @@ describe('/api/mod/delete-user-images', () => {
     expect((await remaining(BYSTANDER)).Post).toBe(1);
   });
 
-  it("takes a held author's comment on the deleted post", async () => {
+  it("takes a reported author's comment on the deleted post", async () => {
     await holder.db.exec(`
       INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('post', 1);
       INSERT INTO "CommentV3" (id, "entityType", "entityId", path, "userId", content) VALUES
-        (5000, 'post', 1, '5000', ${HELD}, 'held, on its post');
+        (5000, 'post', 1, '5000', ${REPORTED}, 'reported, on its post');
     `);
 
     expect((await call(CLEAN)).statusCode).toBe(200);
 
     expect((await remaining(CLEAN)).Post).toBe(0);
-    expect(await commentsOf(HELD)).toEqual([]);
-  });
-
-  it('deletes an unheld account’s images while the marker view exists', async () => {
-    await createMarkerView();
-    expect((await call(CLEAN)).statusCode).toBe(200);
-    expect((await remaining(CLEAN)).Image).toBe(0);
-  });
-
-  it('refuses a held account with the hold refusal, deleting nothing', async () => {
-    const res = await call(HELD);
-    expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ message: 'Account under legal hold; contact Legal.' });
-    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_REFUSAL);
-    expect((await remaining(HELD)).Image).toBe(1);
-  });
-
-  it('refuses, saying the hold could not be checked, deleting nothing', async () => {
-    failLookups = true;
-    const res = await call(CLEAN);
-    failLookups = false;
-    expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ message: "Couldn't check legal hold status; try again." });
-    expect(moderatorReads(res)).toBe(moderator.HOLD_UNKNOWN_REFUSAL);
-    expect((await remaining(CLEAN)).Image).toBe(2);
-  });
-
-  it('keeps the images and posts when a hold lands mid-run, and says it stopped', async () => {
-    holder.beforeImages = () =>
-      holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-    const res = await call(CLEAN);
-    expect(res.statusCode).toBe(409);
-    expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
-    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED);
-    expect((await remaining(CLEAN)).Image).toBe(2);
-    expect((await remaining(CLEAN)).Post).toBe(1);
-  });
-
-  it('says it stopped, naming nothing, when the marker view is dropped mid-run', async () => {
-    await createMarkerView();
-    holder.beforeImages = () => holder.db.exec(`DROP VIEW "EvidenceHeldUser"`);
-    const res = await call(CLEAN);
-    expect(res.statusCode).toBe(409);
-    expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
-    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED);
-    expect((await remaining(CLEAN)).Image).toBe(2);
-  });
-
-  it('says it stopped when its re-check cannot be read', async () => {
-    afterHeld = null;
-    const res = await call(CLEAN);
-    expect(res.statusCode).toBe(409);
-    expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
-    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED);
+    expect(await commentsOf(REPORTED)).toEqual([]);
   });
 
   it('refuses a batch size of zero, deleting nothing', async () => {
@@ -1821,23 +981,6 @@ describe('a bounty a content wipe kept for its unsettled payout', () => {
     expect(await bounty()).toEqual({ availability: 'Private', meta: RECORD });
   });
 
-  it.each([
-    [
-      'after it was hidden, leaves it hidden and out of search',
-      'ResourceReview',
-      RECORD,
-      'Private',
-    ],
-    ['before it was hidden, leaves it as it was', 'Bounty', null, 'Public'],
-  ])('a hold landing mid-wipe %s', async (_, before, meta, availability) => {
-    landsBefore = before;
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    expect(await bounty()).toEqual({ availability, meta });
-    expect(searchDeletes().some((r) => (r as { id: number }).id === BOUNTY)).toBe(!!meta);
-  });
-
   it('is deleted by the wipe when its payout settles there (control)', async () => {
     payout.settles = true;
     await removeAllContent({ id: CLEAN });
@@ -1848,7 +991,6 @@ describe('a bounty a content wipe kept for its unsettled payout', () => {
   describe('and the payout retry after it', () => {
     beforeEach(async () => {
       await removeAllContent({ id: CLEAN });
-      await createMarkerView();
       vi.clearAllMocks();
     });
 
@@ -1934,19 +1076,6 @@ describe('a bounty a content wipe kept for its unsettled payout', () => {
     it('leaves it hidden while its payout is still pending', async () => {
       expect(await deleteSettledKeptBounties()).toBe(0);
       expect(await bounty()).toEqual({ availability: 'Private', meta: RECORD });
-    });
-
-    it('leaves it hidden while its owner is held, and deletes it once the hold ends', async () => {
-      await settle();
-      await holder.db.exec(`INSERT INTO "EvidenceHold" VALUES (${CLEAN}, NULL)`);
-
-      expect(await deleteSettledKeptBounties()).toBe(0);
-      expect(await bounty()).toEqual({ availability: 'Private', meta: RECORD });
-
-      await holder.db.exec(
-        `UPDATE "EvidenceHold" SET "releasedAt" = now() WHERE "userId" = ${CLEAN}`
-      );
-      expect(await deleteSettledKeptBounties()).toBe(1);
     });
 
     it('leaves a settled bounty no wipe kept alone (control)', async () => {
@@ -2053,25 +1182,12 @@ describe('an open bounty with supporters, in a content wipe', () => {
     expect(payout.claimed).toEqual([BOUNTY]);
     expect(await bountyRow()).toBeUndefined();
   });
-
-  it.each([
-    ['refund settles', true],
-    ['refund throws', 'throws'],
-  ] as const)('is kept for a hold landing mid-wipe after its %s', async (_, settles) => {
-    payout.settles = settles;
-    landsBefore = 'Bounty';
-    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
-
-    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
-    expect(payout.claimed).toEqual([BOUNTY]);
-    expect((await remaining(CLEAN)).Bounty).toBe(1);
-  });
 });
 
-// A wipe archives the profile and links of any account a CSAM report names, held or not, before
+// A wipe archives the profile and links of any account a CSAM report names, before
 // deleting; a failed archive deletes nothing.
 describe('removeAllContent and the profile archive', () => {
-  const OLD_REPORT = 4; // named only on a report sent over a year ago and archived: no hold
+  const OLD_REPORT = 4; // named only on a report sent over a year ago and archived
   const PROFILE = { bio: 'zzbio', message: null };
   const LINKS = [{ id: 41, url: 'https://example.com/zz', type: 'Social' }];
 
@@ -2090,7 +1206,7 @@ describe('removeAllContent and the profile archive', () => {
     vi.mocked(dbMock.dbWrite.userLink.findMany).mockResolvedValue(LINKS as never);
   });
 
-  it('archives the profile and links of an account an unheld report names, before any delete', async () => {
+  it('archives the profile and links of an account an old report names, before any delete', async () => {
     const archive = vi.fn(async () => undefined);
 
     await removeAllContent({ id: OLD_REPORT, actorUserId: 9, archive });

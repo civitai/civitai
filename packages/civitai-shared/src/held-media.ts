@@ -4,9 +4,6 @@
  * cannot disagree on what a browser is allowed to render from their origin.
  */
 
-/** The owner `deleteUser` hands kept content to; the main app's `PLACEHOLDER_OWNER_ID`. */
-const PLACEHOLDER_OWNER_ID = -1;
-
 /** An alias (`i`) or an aliased column (`m."userId"`), checked because the SQL splices it as written. */
 export function sqlRef(ref: string): string {
   if (!/^[a-z_][a-z0-9_]*(\."[a-z_][a-z0-9_]*")?$/i.test(ref))
@@ -16,8 +13,7 @@ export function sqlRef(ref: string): string {
 
 /**
  * Whether the user `column` (an int SQL expression) is named on any CsamReport (subject or secondary
- * user) or has an active evidence hold. Names the "EvidenceHeldUser" view, so a database without it
- * fails the statement, which refuses.
+ * user).
  */
 export function heldUserSql(column: string): string {
   const user = sqlRef(column);
@@ -33,7 +29,6 @@ export function heldUserSql(column: string): string {
         FROM "CsamReport" hs
         WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
       ), false)
-      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = ${user})
     )`;
 }
 
@@ -48,8 +43,7 @@ export function heldItemImageSql(image: string): string {
  * is held (`heldUserSql`). The one definition both routes run, as plain SQL so each app wraps it in
  * its own builder.
  *
- * The owner legs skip an AiNotVerified block, which the owner lifts by verifying, and never count the
- * placeholder owner, whose content a report naming it would otherwise open.
+ * The owner legs skip an AiNotVerified block, which the owner lifts by verifying.
  */
 export function heldImageSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
@@ -57,8 +51,7 @@ export function heldImageSql(image: string): string {
   return `(
     ${image}."needsReview" = 'csam'
     OR ${image}."blockedFor" = 'CSAM'
-    OR (${owner} <> ${PLACEHOLDER_OWNER_ID}
-      AND ${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND ${heldUserSql(owner)})
+    OR (${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND ${heldUserSql(owner)})
   )`;
 }
 

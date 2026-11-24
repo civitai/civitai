@@ -18,8 +18,7 @@ describe('collection payload, against the real query', () => {
         mode text, read text, availability text, "nsfwLevel" int, "userId" int, "imageId" int);
       CREATE TABLE "CollectionItem" (id int PRIMARY KEY, "collectionId" int, status text);
       CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, details jsonb, images jsonb);
-      CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
-      INSERT INTO "EvidenceHeldUser" VALUES (9);
+      INSERT INTO "CsamReport" VALUES (1, 9, '{}', '[]');
       INSERT INTO "User" VALUES (7, 'someone', NULL, NULL), (8, 'banned', now(), NULL),
         (9, 'held', NULL, NULL);
       INSERT INTO "Collection" VALUES
@@ -80,8 +79,7 @@ describe('bounty payload, against the real query', () => {
       CREATE TABLE "Tag" (id int PRIMARY KEY, name citext);
       CREATE TABLE "TagsOnBounty" ("bountyId" int, "tagId" int);
       CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, details jsonb, images jsonb);
-      CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
-      INSERT INTO "EvidenceHeldUser" VALUES (9);
+      INSERT INTO "CsamReport" VALUES (1, 9, '{}', '[]');
       INSERT INTO "User" VALUES (7, 'someone', NULL, NULL), (8, 'banned', now(), NULL),
         (9, 'held', NULL, NULL);
       INSERT INTO "Tag" VALUES (1, 'style'), (2, 'anime');

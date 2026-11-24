@@ -3,14 +3,7 @@ import {
   isFeedbackCaptureOwner,
 } from '@civitai/shared/feedback-capture';
 import { z } from 'zod';
-import {
-  HOLD_UNKNOWN_REFUSAL,
-  LEGAL_HOLD_REFUSAL,
-  LEGAL_HOLD_STOPPED,
-  LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
-  PURGE_ARCHIVE_REFUSAL,
-  type DeleteHold,
-} from '$lib/legal-hold';
+import { PURGE_ARCHIVE_REFUSAL } from '@civitai/shared/account-action-texts';
 import { PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
 import { purgeWarning } from '$lib/purge-result';
 import { env } from '$env/dynamic/private';
@@ -349,7 +342,6 @@ export type ModReadEndpoint =
   | 'creator-services/disputes'
   | 'messages/inbox'
   | 'messages/thread'
-  | 'user/legal-hold'
   | 'user/membership-cancel-preview'
   | 'user/membership-extend-preview'
   | 'user/membership-resync-preview'
@@ -1815,8 +1807,7 @@ export const PURGE_MAY_BE_RUNNING =
 
 // PURGE ALL CONTENT (Retool's PURGEAPI). Irreversible from here: the endpoint deletes models, images,
 // posts, articles and comments for the account. The confirmation lives in the UI; this only refuses to
-// act on an id that does not resolve, so a mistyped id cannot reach the endpoint, and on an account
-// under a legal hold. The endpoint refuses a held account too; this answers before anything is sent.
+// act on an id that does not resolve, so a mistyped id cannot reach the endpoint.
 export async function purgeAllContent(input: {
   userId: number;
   moderatorId: number;
@@ -1828,10 +1819,6 @@ export async function purgeAllContent(input: {
     .executeTakeFirst();
   if (!exists) return { ok: false, error: 'User not found.' };
 
-  const hold = await deleteAccountHold(input.userId);
-  if (hold === 'held') return { ok: false, error: LEGAL_HOLD_REFUSAL };
-  if (hold !== 'clear') return { ok: false, error: HOLD_UNKNOWN_REFUSAL };
-
   const result = await postJson({
     path: '/api/mod/remove-all-content',
     body: {},
@@ -1841,19 +1828,6 @@ export async function purgeAllContent(input: {
     timeoutMs: 15_000,
   });
   if (!result.ok) {
-    if (result.status === 403 && result.reason === LEGAL_HOLD_REFUSAL)
-      return { ok: false, error: LEGAL_HOLD_REFUSAL };
-    if (result.status === 403 && result.reason === HOLD_UNKNOWN_REFUSAL)
-      return { ok: false, error: HOLD_UNKNOWN_REFUSAL };
-    // A hold stopped it part-way, after some of the account was deleted: that is recorded.
-    if (
-      result.status === 409 &&
-      (result.reason === LEGAL_HOLD_STOPPED ||
-        result.reason === LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE)
-    ) {
-      await logAction('purgeAllContent', input.userId, input.moderatorId);
-      return { ok: false, error: result.reason };
-    }
     if (result.status === 503 && result.reason === PURGE_ARCHIVE_REFUSAL)
       return { ok: false, error: PURGE_ARCHIVE_REFUSAL };
     // The wipe runs to completion on the main app whether or not this side is still waiting, so a
@@ -2139,16 +2113,6 @@ export async function revokeCreatorScoreGrant(input: {
   return { ok: true, total };
 }
 
-/** Whether a legal hold blocks deleting the account. Only `held: false` is `clear`; the endpoint
- *  refuses a held account regardless. */
-export async function deleteAccountHold(userId: number): Promise<DeleteHold> {
-  // Short: the Admin tab waits on this, and a slow answer blocks deletion anyway.
-  const result = await readModEndpoint('user/legal-hold', { userId }, 'Legal hold check', 5_000);
-  if (!result.ok) return 'unknown';
-  if (result.body.held === false) return 'clear';
-  return result.body.held === true ? 'held' : 'unknown';
-}
-
 export async function deleteAccount(input: {
   userId: number;
   /** The account's current username. **REQUIRED by the endpoint for any account that has one** —
@@ -2181,10 +2145,6 @@ export async function deleteAccount(input: {
   // window the operator reads as a failed deletion.
   const result = await callModEndpoint('user/delete', body, 'Account deletion', 60_000);
   if (!result.ok) {
-    if (result.status === 403 && result.reason === LEGAL_HOLD_REFUSAL)
-      return { ok: false, error: LEGAL_HOLD_REFUSAL };
-    if (result.status === 403 && result.reason === HOLD_UNKNOWN_REFUSAL)
-      return { ok: false, error: HOLD_UNKNOWN_REFUSAL };
     // 🔴 ONE QUESTION: could this request have reached the handler?
     //
     // `deleteUser` commits before an unbounded post-commit step, so a lost response does NOT mean
@@ -2315,7 +2275,7 @@ export async function clearProfileText(input: {
   const fields = input.fields.filter((f) => PROFILE_FIELD_KEYS.includes(f));
   if (!fields.length) return { ok: false, error: 'Nothing selected to clear.' };
 
-  // Through the main app, which archives the profile first where a CSAM report or hold names the
+  // Through the main app, which archives the profile first where a CSAM report names the
   // user, and records the clear itself: a `logAction` here would be a second ModActivity row.
   const result = await callModEndpoint(
     'user/clear-profile',

@@ -14,7 +14,6 @@ describe('comic payload, against the real query', () => {
         "deletedAt" timestamp);
       CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL
         DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]');
-      CREATE TABLE "EvidenceHeldUser" ("userId" int);
       CREATE TABLE "ComicProject" (id int PRIMARY KEY, name text, description text,
         genre "ComicGenre", "nsfwLevel" int, "updatedAt" timestamp, "userId" int,
         "coverImageId" int, status text, "tosViolation" boolean);

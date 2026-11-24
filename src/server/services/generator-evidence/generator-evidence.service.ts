@@ -1,11 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import plimit from 'p-limit';
-import {
-  GENERATOR_EVIDENCE_HOLD_REASON,
-  placeEvidenceHold,
-} from '@civitai/db-queries/evidence-hold';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { kyselyWrite } from '~/server/db/kyselyDb';
 import { createCsamReport } from '~/server/services/csam.service';
 import { csamEvidenceStore } from '~/server/services/generator-evidence/evidence-store';
 import { getViewedEvidence } from '~/server/services/generator-evidence/evidence-views';
@@ -46,8 +41,6 @@ import {
   generatorEvidenceReportWhere,
   isGeneratorEvidenceDetails,
 } from '~/server/services/generator-evidence/evidence-meta';
-
-export { GENERATOR_EVIDENCE_HOLD_REASON };
 
 type TriggerRow = {
   prompt?: unknown;
@@ -310,13 +303,6 @@ export async function preserveGeneratorEvidence(
   const counts: Record<string, number> = {};
   for (const job of stored)
     for (const blob of job.blobs) counts[blob.status] = (counts[blob.status] ?? 0) + 1;
-
-  await placeEvidenceHold(kyselyWrite, {
-    userId: input.userId,
-    role: 'manual',
-    reason: GENERATOR_EVIDENCE_HOLD_REASON,
-    createdById: input.moderatorId,
-  });
 
   const details: GeneratorEvidenceDetails = {
     generatedImages: stored,

@@ -3324,57 +3324,6 @@ export type EventTurfStock = {
   stock: number;
   refilledAt: Timestamp;
 };
-export type EvidenceHeldUser = {
-  userId: number;
-  heldUntil: Timestamp | null;
-};
-export type EvidenceHold = {
-  id: Generated<number>;
-  userId: number;
-  csamReportId: number | null;
-  /**
-   * subject | secondary | manual
-   */
-  role: string;
-  reportSentAt: Timestamp | null;
-  /**
-   * NULL holds until released.
-   */
-  releaseAt: Timestamp | null;
-  extendedUntil: Timestamp | null;
-  /**
-   * Who asked for the extension, and their reference.
-   */
-  extensionRequestedBy: string | null;
-  extensionReference: string | null;
-  reason: string;
-  createdAt: Generated<Timestamp>;
-  createdById: number | null;
-  releasedAt: Timestamp | null;
-  releasedById: number | null;
-  releaseReason: string | null;
-};
-export type EvidenceHoldImage = {
-  imageId: number;
-  userId: number;
-  postId: number | null;
-  keptAt: Generated<Timestamp>;
-  priorIngestion: string | null;
-  priorBlockedFor: string | null;
-  priorNsfwLevel: number | null;
-};
-export type EvidenceHoldPost = {
-  postId: number;
-  userId: number;
-  title: string | null;
-  detail: string | null;
-  createdAt: Timestamp | null;
-  publishedAt: Timestamp | null;
-  modelVersionId: number | null;
-  collectionId: number | null;
-  metadata: unknown | null;
-  keptAt: Generated<Timestamp>;
-};
 export type FeaturedModelVersion = {
   id: Generated<number>;
   modelVersionId: number;
@@ -3546,29 +3495,6 @@ export type GenerationSizePreset = {
   width: number;
   height: number;
   createdAt: Generated<Timestamp>;
-};
-export type HeldResourceReview = {
-  /**
-   * The original ResourceReview id.
-   */
-  id: number;
-  modelId: number;
-  modelVersionId: number;
-  userId: number;
-  rating: number;
-  recommended: boolean;
-  details: string | null;
-  exclude: boolean;
-  nsfw: boolean;
-  tosViolation: boolean;
-  metadata: unknown | null;
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
-  heldAt: Generated<Timestamp>;
-  /**
-   * The holds on the author when it was copied.
-   */
-  holdReasons: string[];
 };
 export type HomeBlock = {
   id: Generated<number>;
@@ -7339,10 +7265,6 @@ export type DB = {
   EventTurfFlagSticker: EventTurfFlagSticker;
   EventTurfSticker: EventTurfSticker;
   EventTurfStock: EventTurfStock;
-  EvidenceHeldUser: EvidenceHeldUser;
-  EvidenceHold: EvidenceHold;
-  EvidenceHoldImage: EvidenceHoldImage;
-  EvidenceHoldPost: EvidenceHoldPost;
   FeaturedModelVersion: FeaturedModelVersion;
   FeaturePageCommentMirror: FeaturePageCommentMirror;
   FeaturePageTopic: FeaturePageTopic;
@@ -7357,7 +7279,6 @@ export type DB = {
   GenerationPreset: GenerationPreset;
   GenerationServiceProvider: GenerationServiceProvider;
   GenerationSizePreset: GenerationSizePreset;
-  HeldResourceReview: HeldResourceReview;
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;

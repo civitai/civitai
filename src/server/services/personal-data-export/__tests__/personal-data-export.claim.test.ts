@@ -19,16 +19,7 @@ const m = vi.hoisted(() => ({
   refusedSend: vi.fn(),
   heldSend: vi.fn(),
   del: vi.fn(),
-  accountHeld: false,
 }));
-vi.mock('~/server/services/legal-hold.service', async () => {
-  const { Prisma: P } = await import('@prisma/client');
-  return {
-    getAccountLegalHold: async () => ({ legs: [], markerView: true }),
-    // The account-hold clause of the claim, as SQL the claim runs: held or not, per test.
-    accountHoldSql: () => (m.accountHeld ? P.sql`true` : P.sql`false`),
-  };
-});
 vi.mock('~/server/email/templates/personalDataExport.email', () => ({
   personalDataExportReadyEmail: { send: m.readySend },
   personalDataExportBuiltEmail: { send: vi.fn() },
@@ -79,7 +70,8 @@ beforeAll(async () => {
   await db.exec(`
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, "blockedFor" text, "needsReview" text,
       minor boolean DEFAULT false, ingestion text DEFAULT 'Scanned');
-    CREATE TABLE "CsamReport" (id int, "userId" int, images jsonb);
+    CREATE TABLE "CsamReport" (id int, "userId" int, images jsonb, details jsonb NOT NULL DEFAULT '{}',
+      "reportSentAt" timestamp(3), "archivedAt" timestamp(3));
     CREATE TABLE "Report" (id int PRIMARY KEY, reason text, status text);
     CREATE TABLE "UserReport" ("reportId" int, "userId" int);
   `);
@@ -91,7 +83,6 @@ beforeEach(async () => {
   m.refusedSend.mockReset().mockResolvedValue(undefined);
   m.heldSend.mockReset().mockResolvedValue(undefined);
   m.del.mockReset().mockResolvedValue(undefined);
-  m.accountHeld = false;
   await db.exec(
     `DELETE FROM "Image"; DELETE FROM "Report"; DELETE FROM "UserReport"; DELETE FROM "PersonalDataExport";`
   );
@@ -115,7 +106,7 @@ beforeEach(async () => {
   // The check before the claim saw nothing: what the claim itself finds decides.
   vi.mocked(dbMock.dbWrite.$queryRaw)
     .mockReset()
-    .mockResolvedValue([{ present: false, review: false }] as never);
+    .mockResolvedValue([{ report: false, present: false, review: false }] as never);
   // Every raw write runs, for real, against Postgres.
   vi.mocked(dbMock.dbWrite.$executeRaw)
     .mockReset()
@@ -168,6 +159,33 @@ describe('hold check, run', () => {
     await caseAbout(OWNER + 1, 4, 'CSAM', 'Actioned');
     expect((await exportHoldReasons(OWNER)).legs).toEqual([]);
   });
+
+  it.each([
+    ['subject', `${OWNER}, '{}'`],
+    ['secondary user', `NULL, '{"secondaryUserId": "${OWNER}"}'`],
+  ])('puts the account under a hold while a CSAM report names it as %s', async (_, values) => {
+    await db.exec(`INSERT INTO "CsamReport" (id, "userId", details) VALUES (1, ${values})`);
+    expect((await exportHoldReasons(OWNER)).legs).toEqual(['report']);
+    await db.exec(`DELETE FROM "CsamReport"`);
+  });
+
+  it('puts the account under a hold for a report sent and archived within the year', async () => {
+    await db.exec(`
+      INSERT INTO "CsamReport" (id, "userId", "reportSentAt", "archivedAt")
+        VALUES (1, ${OWNER}, now() - interval '6 months', now() - interval '6 months')
+    `);
+    expect((await exportHoldReasons(OWNER)).legs).toEqual(['report']);
+    await db.exec(`DELETE FROM "CsamReport"`);
+  });
+
+  it('puts no hold for a report sent and archived over a year ago', async () => {
+    await db.exec(`
+      INSERT INTO "CsamReport" (id, "userId", "reportSentAt", "archivedAt")
+        VALUES (1, ${OWNER}, now() - interval '2 years', now() - interval '2 years')
+    `);
+    expect((await exportHoldReasons(OWNER)).legs).toEqual([]);
+    await db.exec(`DELETE FROM "CsamReport"`);
+  });
 });
 
 describe('release claim, run', () => {
@@ -190,17 +208,6 @@ describe('release claim, run', () => {
     expect(await status()).toBe('released');
   });
 
-  it('claims nothing, and sends nothing, when an account hold lands before the claim', async () => {
-    await db.exec(`INSERT INTO "Image" (id, "userId") VALUES (1, ${OWNER})`);
-    m.accountHeld = true;
-    expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toEqual({
-      ok: false,
-      reason: 'not-releasable',
-    });
-    expect(m.readySend).not.toHaveBeenCalled();
-    expect(await status()).toBe('built');
-  });
-
   it('claims nothing, and sends nothing, when a decided case puts the account under a hold', async () => {
     await caseAbout(OWNER, 1, 'CSAM', 'Actioned');
     expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toEqual({
@@ -209,6 +216,17 @@ describe('release claim, run', () => {
     });
     expect(m.readySend).not.toHaveBeenCalled();
     expect(await status()).toBe('built');
+  });
+
+  it('claims nothing, and sends nothing, while a CSAM report names the account', async () => {
+    await db.exec(`INSERT INTO "CsamReport" (id, "userId") VALUES (1, ${OWNER})`);
+    expect(await releaseExport({ exportId: 5, actorId: 9, bucket, now })).toEqual({
+      ok: false,
+      reason: 'not-releasable',
+    });
+    expect(m.readySend).not.toHaveBeenCalled();
+    expect(await status()).toBe('built');
+    await db.exec(`DELETE FROM "CsamReport"`);
   });
 
   it('claims past a case that puts no hold on the account (control)', async () => {

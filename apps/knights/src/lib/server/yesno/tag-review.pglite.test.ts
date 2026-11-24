@@ -155,7 +155,10 @@ describe('creating tag review items', () => {
     ['an image flagged as a real person', `UPDATE "Image" SET poi = true`],
     ['an image flagged for CSAM', `UPDATE "Image" SET "needsReview" = 'csam'`],
     ['an image on a CSAM report', `INSERT INTO "CsamReport" (images) VALUES ('[100]')`],
-    ['an image whose owner is under a legal hold', `INSERT INTO "EvidenceHeldUser" VALUES (5)`],
+    [
+      'an image whose owner is named on a CSAM report',
+      `INSERT INTO "CsamReport" ("userId") VALUES (5)`,
+    ],
     [
       'an image with an open report',
       `INSERT INTO "Report" (id, status) VALUES (1, 'Processing'); INSERT INTO "ImageReport" ("imageId", "reportId") VALUES (100, 1)`,

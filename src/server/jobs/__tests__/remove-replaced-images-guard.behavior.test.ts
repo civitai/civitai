@@ -1,15 +1,12 @@
 import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
-import { readFileSync } from 'fs';
-import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 
 /**
  * `remove-replaced-images` reaps a replaced profile picture once its retention window has passed.
- * An account under any hold keeps its images, so the reap's DELETE re-checks every hold on the
- * owner. Driven through the real job and the real `deleteImages`, whose DELETE runs against a
+ * An image flagged for CSAM review is kept, and the reap's DELETE re-checks the flag. Driven through the real job and the real `deleteImages`, whose DELETE runs against a
  * Postgres stand-in here, so the guard and its composition into the statement are both exercised.
  */
 
@@ -58,71 +55,17 @@ const holder = vi.hoisted(() => ({
   restamped: [] as number[],
 }));
 
-const HOLD_MIGRATION = path.resolve(
-  __dirname,
-  '../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
-);
-
-// Owners, each with one replaced image in the queue, named for the case it pins.
-const PLAIN_USER = 1; // no hold -> deleted
-const REPORT_USER = 2; // named on an open report -> kept
-const REVIEW_USER = 3; // another of their images is flagged for CSAM review -> kept
-const BLOCKED_USER = 4; // another of their images is CSAM-blocked, on no sent report -> kept
-const LISTED_USER = 5; // another of their images is listed on a holding report -> kept
-const MARKED_USER = 6; // an active hold marker -> kept
-const PLACEHOLDER_OWNER = -1; // -> kept
-// The replaced image itself is flagged for CSAM review -> kept. Its flag also holds the account, so
-// this pins the outcome, not the row-level re-check, which only matters for a flag landing mid-DELETE.
-const SELF_FLAGGED_USER = 7;
-const LAPSED_USER = 8; // their report was sent and archived over a year ago -> deleted
-const OTHER_FLAG_USER = 10; // another image has a review flag that is not CSAM -> deleted
-const RELEASED_USER = 11; // their hold marker was released -> deleted
-const LAPSED_LISTED_USER = 12; // a CSAM-blocked image listed on their own lapsed sent report -> deleted
+const PLAIN_USER = 1; // -> deleted
+const SELF_FLAGGED_USER = 7; // the replaced image is flagged for CSAM review -> kept
 const READOPTED_USER = 13; // made the replaced image their profile picture again -> kept
-const BAN_NOTE_USER = 14; // banned with a note naming NCMEC, no account hold -> deleted
-const REPORT_SUBJECT = 9; // owns nothing; the subject of the report listing LISTED_USER's image
 
 const PLAIN = 10;
-const REPORT = 11;
-const REVIEW = 12;
-const BLOCKED = 13;
-const LISTED = 14;
-const MARKED = 15;
-const PLACEHOLDER = 16;
 const SELF_FLAGGED = 17;
-const LAPSED = 18;
-const OTHER_FLAG = 19;
-const RELEASED = 20;
-const LAPSED_LISTED = 21;
 const READOPTED = 22;
 const GONE = 23; // queued, but the image was already deleted some other way
-const BAN_NOTE = 24;
-const QUEUED = [
-  PLAIN,
-  REPORT,
-  REVIEW,
-  BLOCKED,
-  LISTED,
-  MARKED,
-  PLACEHOLDER,
-  SELF_FLAGGED,
-  LAPSED,
-  OTHER_FLAG,
-  RELEASED,
-  LAPSED_LISTED,
-  READOPTED,
-  GONE,
-  BAN_NOTE,
-];
-const DELETED = [PLAIN, LAPSED, OTHER_FLAG, RELEASED, LAPSED_LISTED, BAN_NOTE];
-const HELD = [REPORT, REVIEW, BLOCKED, LISTED, MARKED, PLACEHOLDER, SELF_FLAGGED];
-
-// Not queued: the images that put their owner under a hold, or that stand beside one.
-const REVIEW_OTHER = 30;
-const BLOCKED_OTHER = 31;
-const LISTED_OTHER = 32;
-const OTHER_FLAG_OTHER = 33;
-const LAPSED_LISTED_OTHER = 34;
+const QUEUED = [PLAIN, SELF_FLAGGED, READOPTED, GONE];
+const DELETED = [PLAIN];
+const HELD = [SELF_FLAGGED];
 
 const SCHEMA = `
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
@@ -187,13 +130,6 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(SCHEMA);
   await holder.db.exec(imageUseTablesSql);
-  await holder.db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
-  // Off, so the guard is what keeps a held image rather than the marker's delete trigger, and so
-  // the report fixtures write no markers of their own.
-  await holder.db.exec(`
-    ALTER TABLE "Image" DISABLE TRIGGER "Image_evidence_hold";
-    ALTER TABLE "CsamReport" DISABLE TRIGGER "CsamReport_evidence_hold";
-  `);
 });
 
 afterAll(async () => {
@@ -209,19 +145,13 @@ beforeEach(async () => {
 
   // Every queued image is past its window; the retention filter is pinned in the job's own test.
   dbMock.dbRead.jobQueue.findMany.mockResolvedValue(QUEUED.map((entityId) => ({ entityId })));
-  // The re-adoption probe, the marker-view probe, the DELETE and its kept-image read run on PGlite.
+  // The re-adoption probe, the DELETE and its kept-image read run on PGlite.
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
   ) => {
     const flat = Prisma.sql(strings, ...(values as never[]));
-    const onPglite = [
-      'FROM "User"',
-      'to_regclass',
-      'DELETE FROM "Image"',
-      'SELECT id FROM "Image"',
-      '"EvidenceHoldImage"',
-    ];
+    const onPglite = ['FROM "User"', 'DELETE FROM "Image"', 'SELECT id FROM "Image"'];
     if (!onPglite.some((s) => flat.text.includes(s))) return [];
     return (await holder.db.query(flat.text, flat.values as unknown[])).rows;
   }) as never);
@@ -237,41 +167,14 @@ beforeEach(async () => {
   }) as never);
 
   await reset(
-    '"Image", "User", "CsamReport", "EvidenceHold", "EvidenceHoldImage", "Post", "EvidenceHoldPost", "Model", "JobQueue", "Report", "ImageReport"'
+    '"Image", "User", "CsamReport", "Post", "Model", "JobQueue", "Report", "ImageReport"'
   );
   await holder.db.exec(`
-    INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor", ingestion) VALUES
-      (${PLAIN}, ${PLAIN_USER}, NULL, NULL, 'Scanned'),
-      (${REPORT}, ${REPORT_USER}, NULL, NULL, 'Scanned'),
-      (${REVIEW}, ${REVIEW_USER}, NULL, NULL, 'Scanned'),
-      (${BLOCKED}, ${BLOCKED_USER}, NULL, NULL, 'Scanned'),
-      (${LISTED}, ${LISTED_USER}, NULL, NULL, 'Scanned'),
-      (${MARKED}, ${MARKED_USER}, NULL, NULL, 'Scanned'),
-      (${PLACEHOLDER}, ${PLACEHOLDER_OWNER}, NULL, NULL, 'Scanned'),
-      (${SELF_FLAGGED}, ${SELF_FLAGGED_USER}, 'csam', NULL, 'Scanned'),
-      (${LAPSED}, ${LAPSED_USER}, NULL, NULL, 'Scanned'),
-      (${OTHER_FLAG}, ${OTHER_FLAG_USER}, NULL, NULL, 'Scanned'),
-      (${RELEASED}, ${RELEASED_USER}, NULL, NULL, 'Scanned'),
-      (${LAPSED_LISTED}, ${LAPSED_LISTED_USER}, NULL, NULL, 'Scanned'),
-      (${READOPTED}, ${READOPTED_USER}, NULL, NULL, 'Scanned'),
-      (${BAN_NOTE}, ${BAN_NOTE_USER}, NULL, NULL, 'Scanned'),
-      (${REVIEW_OTHER}, ${REVIEW_USER}, 'csam', NULL, 'Scanned'),
-      (${BLOCKED_OTHER}, ${BLOCKED_USER}, NULL, 'CSAM', 'Blocked'),
-      (${LISTED_OTHER}, ${LISTED_USER}, NULL, NULL, 'Scanned'),
-      (${OTHER_FLAG_OTHER}, ${OTHER_FLAG_USER}, 'minor', NULL, 'Scanned'),
-      (${LAPSED_LISTED_OTHER}, ${LAPSED_LISTED_USER}, NULL, 'CSAM', 'Blocked');
+    INSERT INTO "Image" (id, "userId", "needsReview") VALUES
+      (${PLAIN}, ${PLAIN_USER}, NULL),
+      (${SELF_FLAGGED}, ${SELF_FLAGGED_USER}, 'csam'),
+      (${READOPTED}, ${READOPTED_USER}, NULL);
     INSERT INTO "User" (id, "profilePictureId") VALUES (${READOPTED_USER}, ${READOPTED});
-    INSERT INTO "User" (id, meta, "bannedAt") VALUES (${BAN_NOTE_USER},
-      '{"banDetails": {"detailsExternal": "NCMEC"}}', now() - interval '1 day');
-    INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images) VALUES
-      (${REPORT_USER}, NULL, NULL, '[]'),
-      (${REPORT_SUBJECT}, now() - interval '30 days', NULL, '[{"id": ${LISTED_OTHER}}]'),
-      (${LAPSED_USER}, now() - interval '400 days', now() - interval '400 days', '[]'),
-      (${LAPSED_LISTED_USER}, now() - interval '400 days', now() - interval '400 days',
-        '[{"id": ${LAPSED_LISTED_OTHER}}]');
-    INSERT INTO "EvidenceHold" ("userId", role, reason, "releasedAt", "releasedById", "releaseReason") VALUES
-      (${MARKED_USER}, 'manual', 'review', NULL, NULL, NULL),
-      (${RELEASED_USER}, 'manual', 'review', now(), 1, 'done');
   `);
 });
 
@@ -287,8 +190,8 @@ const remaining = async () =>
   );
 const sorted = (ids: number[]) => [...ids].sort((a, b) => a - b);
 
-describe('remove-replaced-images under an account hold', () => {
-  it("keeps every held account's replaced image and deletes the rest", async () => {
+describe('remove-replaced-images', () => {
+  it('keeps a flagged or re-adopted image and deletes the rest', async () => {
     const result = await run();
 
     const left = await remaining();
@@ -297,13 +200,13 @@ describe('remove-replaced-images under an account hold', () => {
     expect(result).toEqual({ deleted: DELETED.length, readopted: 1, heldAtDelete: HELD.length });
   });
 
-  it('leaves a held image queued, so it is reaped once the hold ends', async () => {
+  it('leaves a kept image queued, so it is checked again later', async () => {
     await run();
 
     expect(sorted(holder.dequeued)).toEqual(sorted([...DELETED, READOPTED, GONE]));
   });
 
-  it('moves a held image to the back of the queue, so held rows cannot fill the batch', async () => {
+  it('moves a kept image to the back of the queue, so kept rows cannot fill the batch', async () => {
     await run();
 
     expect(sorted(holder.restamped)).toEqual(sorted(HELD));
@@ -325,21 +228,5 @@ describe('remove-replaced-images under an account hold', () => {
     expect(holder.restamped).toEqual([CASE_KEPT]);
     const { rows } = await holder.db.query(`SELECT 1 FROM "JobQueue" WHERE type = 'PendingDelete'`);
     expect(rows).toEqual([]);
-  });
-
-  it('holds every image when the marker table exists without its view', async () => {
-    await holder.db.exec(`ALTER VIEW "EvidenceHeldUser" RENAME TO "EvidenceHeldUserMoved"`);
-    try {
-      const result = await run();
-
-      expect(result.deleted).toBe(0);
-      for (const id of QUEUED.filter((id) => id !== GONE)) expect(await remaining()).toContain(id);
-      expect(sorted(holder.dequeued)).toEqual([READOPTED, GONE]);
-      expect(sorted(holder.restamped)).toEqual(
-        sorted(QUEUED.filter((id) => id !== READOPTED && id !== GONE))
-      );
-    } finally {
-      await holder.db.exec(`ALTER VIEW "EvidenceHeldUserMoved" RENAME TO "EvidenceHeldUser"`);
-    }
   });
 });

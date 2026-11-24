@@ -15,7 +15,7 @@ export const BLOCKED = 32;
 export async function resetTagReview(pg: PGlite, tags: [number, string, string, number][]) {
   await pg.exec(`
     TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","KnightsPlayerDay","Image","Post",
-      "TagsOnImageNew","Tag","CsamReport","EvidenceHeldUser","Report","ImageReport" RESTART IDENTITY CASCADE;
+      "TagsOnImageNew","Tag","CsamReport","Report","ImageReport" RESTART IDENTITY CASCADE;
     DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%';
   `);
   for (const [id, name, type, level] of tags)

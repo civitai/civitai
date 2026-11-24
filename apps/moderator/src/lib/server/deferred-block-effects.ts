@@ -66,7 +66,7 @@ export async function dropDeferredBlockEffects(
 
 /**
  * Owners whose notice is not sent. Read on the primary; a failed read returns all of them. The main
- * app's twin is `usersWithNoticeWithheld`; a different set from its `accountHoldSql`, on purpose.
+ * app's twin is `usersWithNoticeWithheld`.
  */
 async function ownersWithNoticeWithheld(ownerIds: number[]): Promise<Set<number>> {
   if (!ownerIds.length) return new Set();
@@ -76,8 +76,6 @@ async function ownersWithNoticeWithheld(ownerIds: number[]): Promise<Set<number>
       UNION
       SELECT u.id FROM "CsamReport" c, unnest(${ownerIds}::int[]) AS u(id)
       WHERE c.details ->> 'secondaryUserId' = u.id::text
-      UNION
-      SELECT "userId" FROM "EvidenceHold" WHERE "userId" = ANY(${ownerIds}::int[])
     `.execute(dbWrite);
     return new Set(rows.map((r) => r.userId));
   } catch (e) {

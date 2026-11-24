@@ -22,9 +22,6 @@ const { publishModelById, publishPrivateModel, privateModelFromTraining } = awai
   '~/server/services/model.service'
 );
 const { publishModelVersionById } = await import('~/server/services/model-version.service');
-const { restoreModelRemovedWithOwner } = await import(
-  '~/server/services/model-removed-with-owner.service'
-);
 const { failedScanPublishMessage } = await import('~/server/utils/failed-scan');
 
 const FAILED = 7;
@@ -156,19 +153,6 @@ describe('publishing a version with a file that failed its scan', () => {
     expect(
       await failure(publishPrivateModel({ modelId: 1, publishVersions: true, isModerator: true }))
     ).not.toBe(failedScanPublishMessage);
-  });
-
-  it('is refused by a moderator restoring a model a content wipe kept', async () => {
-    const restore = (taken: { id: number; status: string }[]) => {
-      dbMock.dbWrite.model.findUnique.mockResolvedValue({
-        meta: { removedWithOwner: true, versionsUnpublishedByRemoval: taken },
-      } as never);
-      return failure(restoreModelRemovedWithOwner(1));
-    };
-
-    expect(await restore([{ id: FAILED, status: 'Published' }])).toBe(failedScanPublishMessage);
-    // Restored as a draft, it is not made public.
-    expect(await restore([{ id: FAILED, status: 'Draft' }])).not.toBe(failedScanPublishMessage);
   });
 
   it('is refused by privateModelFromTraining, ignoring versions a moderator took down', async () => {

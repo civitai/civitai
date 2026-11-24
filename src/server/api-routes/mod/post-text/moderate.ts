@@ -15,7 +15,7 @@ export default defineModeratorEndpoint('postText.moderate', {
   returns: '{ textId, postId, action, changed, stillRefused?, holdId? }',
   notes: [
     '`refuse` hides the text from every reader until a moderator restores it; no scan verdict lifts it. The text and the rest of its post are kept.',
-    "`restore` lifts a moderator's refusal; a refusal the text scan made stands (`stillRefused`). Refused with CONFLICT while the text is held for csam review or kept by a CSAM report or evidence hold.",
+    "`restore` lifts a moderator's refusal; a refusal the text scan made stands (`stillRefused`). Refused with CONFLICT while the text is held for csam review, until a CSAM report captures it.",
     '`hold` opens a Pending csam hold on the text, decided in the CSAM text-hold queue, and hides it meanwhile. It needs `reportId`: a report on this text with a CSAM or minor-sexualization reason (BAD_REQUEST otherwise).',
     "Requires the moderator app's post report queue, granted by its `/reports` section (FORBIDDEN otherwise).",
     '`changed` is false when the text was already in the requested state.',

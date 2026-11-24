@@ -18,8 +18,7 @@ import (
 )
 
 // The Training Data listing (trainingDataListing in src/server/services/training-data-restricted.service.ts).
-// The statement's own refusals (owner legal hold, the placeholder owner, a hold marker, a CSAM report
-// naming the owner as its subject or secondary user, a POI / minor / ToS-violation model, a post
+// The statement's own refusals (a CSAM report naming the owner as its subject or secondary user, a POI / minor / ToS-violation model, a post
 // image needing review, blocked or with ingestion Blocked) all arrive here as the row's `restricted`;
 // that the embedded statement computes each of them as Node's does is held on Postgres by
 // src/server/services/__tests__/feed-go-training-data-listing.parity.test.ts, one case per reason.

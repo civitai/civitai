@@ -47,7 +47,7 @@ leaves `reportSentAt` (or `archivedAt`) NULL and retries hourly, with the except
   (`MAX_ARCHIVE_SOURCE_BYTES`).
 - `data.json` carries the reported user's record and `reportId`, their `models`, `modelVersions` and
   `images`, then one section per entry of `userContentSections` in `csam.service-new.ts` (today
-  `comments`, every `CommentV3` row by the user, keyset-paged). Comments carry no legal hold; this
+  `comments`, every `CommentV3` row by the user, keyset-paged). This
   archive is their evidence copy. To archive more of a user's content, add an entry there (`name`
   plus a paged `rows(userId)`).
 
@@ -76,9 +76,8 @@ max 7,802h (325 days). **119 reports (26%) took longer than 7 days to archive.**
       `details.readFailures`, and a stale full-URL archive file is recorded `missing`; this is for
       the other causes (a non-zero NCMEC status, missing credentials).
 
-In `remove-blocked-images`, the legal hold (`src/server/utils/legal-hold.ts`) keeps a user's blocked
-media while any report naming them is unsent, unarchived, or sent within the last year, with no
-ceiling. A stranded report therefore holds its owner's media rather than losing it.
+`remove-blocked-images` leaves an image in an open child-safety case to the `PendingDelete` case
+check (`docs/features/pending-deletes.md`).
 
 ## 3. `archivedAt` is doing double duty
 
@@ -154,9 +153,6 @@ WHERE i.ingestion = 'Blocked'::"ImageIngestionStatus"
       rate. Expect sustained S3/DB delete load and heavy use of the 20-minute job lock. This is a
       backlog being paid down — the new clock is strictly more conservative than the old one — but
       it will look like a spike.
-- [ ] **The legal hold.** Each run logs the held images it would otherwise delete as `Would skip`
-      (reason `legal-hold`). Check those lines after deploy, and watch the first real report
-      through the full send → archive → release cycle.
 - [ ] **External cron config.** `remove-csam-content` is still not exported in `csamJobs`, so if the
       out-of-repo scheduler has an entry for it, that entry 404s. Harmless (the job does nothing),
       but it will show as a failing cron.

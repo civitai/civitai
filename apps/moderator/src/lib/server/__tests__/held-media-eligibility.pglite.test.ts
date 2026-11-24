@@ -41,8 +41,6 @@ CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB,
   "archivedAt" TIMESTAMP(3), "reportSentAt" TIMESTAMP(3)
 );
-CREATE TABLE "EvidenceHold" ("userId" INTEGER);
-CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold";
 `;
 
 let db: PGlite;
@@ -51,7 +49,7 @@ beforeAll(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
   // Owners: 201 nothing; 202 on an archived report sent long ago; 203 secondary on a report;
-  // 204 nothing; 206 evidence hold; 207 nothing; 208 nothing, one image flagged; -1 the placeholder.
+  // 204 nothing; 207 nothing; 208 nothing, one image flagged.
   await db.exec(`
     INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "url", "mimeType") VALUES
       (1, 201, 'csam', NULL, 'key-1', 'image/png'),
@@ -59,9 +57,6 @@ beforeAll(async () => {
       (3, 203, NULL, NULL, 'key-3', NULL),
       (4, 204, NULL, NULL, 'key-4', NULL),
       (5, 204, 'minor', 'moderated', 'key-5', NULL),
-      (7, 206, NULL, NULL, 'key-7', NULL),
-      (8, -1, NULL, NULL, 'key-8', NULL),
-      (9, -1, 'csam', NULL, 'key-9', NULL),
       (10, 207, NULL, 'CSAM', 'key-10', NULL),
       (11, 208, NULL, NULL, 'key-11', NULL),
       (12, 208, 'csam', NULL, 'key-12', NULL),
@@ -71,7 +66,6 @@ beforeAll(async () => {
       (202, '{}', '2024-01-01', '2023-01-01'),
       (-1, '{"secondaryUserId": "203"}', NULL, NULL),
       (NULL, '{"secondaryUserId": "not-a-number"}', NULL, NULL);
-    INSERT INTO "EvidenceHold" ("userId") VALUES (206);
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -88,8 +82,8 @@ const served = async (ids: number[]) => {
 };
 
 describe('held media eligibility', () => {
-  it('serves a flagged image, and images of owners on any report or an evidence hold', async () => {
-    expect(await served([1, 2, 3, 7, 10, 12])).toEqual([1, 2, 3, 7, 10, 12]);
+  it('serves a flagged image, and images of owners on any report', async () => {
+    expect(await served([1, 2, 3, 10, 12])).toEqual([1, 2, 3, 10, 12]);
     expect(await getHeldMedia(1)).toEqual({ url: 'key-1', type: 'image', mimeType: 'image/png' });
   });
 
@@ -103,15 +97,5 @@ describe('held media eligibility', () => {
 
   it('skips an AiNotVerified block on the owner legs, but not when the image itself is flagged', async () => {
     expect(await served([13, 14])).toEqual([14]);
-  });
-
-  it('never treats the placeholder owner as held, though a report names it', async () => {
-    expect(await served([8, 9])).toEqual([9]);
-  });
-
-  // Last: it drops the view.
-  it('refuses everything when the evidence-hold view is missing, rather than skipping that leg', async () => {
-    await db.exec(`DROP VIEW "EvidenceHeldUser"`);
-    await expect(getHeldMedia(4)).rejects.toThrow(/EvidenceHeldUser/);
   });
 });

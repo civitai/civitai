@@ -400,9 +400,8 @@ describe('createEntityAppealHandler — Storyline', () => {
   });
 });
 
-// A hold marker's kept image, or one a CSAM report names, reads as a moderator block. The image
-// cases above are the control.
-describe('createEntityAppealHandler — an image a hold keeps or a CSAM report names', () => {
+// An image a CSAM report names reads as a moderator block. The image cases above are the control.
+describe('createEntityAppealHandler — an image a CSAM report names', () => {
   it('refuses, before any charge, in the usual words', async () => {
     mockGetImageById.mockResolvedValue({
       id: 99,

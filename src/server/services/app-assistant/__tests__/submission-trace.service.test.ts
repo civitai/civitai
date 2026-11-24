@@ -445,13 +445,11 @@ describe('deleteAssistantTracesOfAccount (retention: deleted with the account)',
 });
 
 describe('sweepDeletedAccountTraces (the retry of unfinished deletions)', () => {
-  function sweep(overrides: { held?: Record<number, boolean | null>; failFor?: number } = {}) {
+  function sweep(overrides: { failFor?: number } = {}) {
     const deleted: number[] = [];
     const deps = {
       deletedAccountsWithTraces: async (after: number, limit: number) =>
         [7301, 7402, 7503].filter((id) => id > after).slice(0, limit),
-      isHeld: async (userId: number) =>
-        overrides.held && userId in overrides.held ? overrides.held[userId]! : false,
       deletion: {
         traces: async (userId: number) => [
           {
@@ -480,21 +478,9 @@ describe('sweepDeletedAccountTraces (the retry of unfinished deletions)', () => 
     expect(await sweepDeletedAccountTraces(deps)).toEqual({
       accounts: 3,
       finished: 3,
-      held: 0,
       failed: 0,
     });
     expect(deleted).toEqual([7301, 7402, 7503]);
-  });
-
-  it('skips a held account, and one whose hold cannot be read', async () => {
-    const { deleted, deps } = sweep({ held: { 7402: true, 7503: null } });
-    expect(await sweepDeletedAccountTraces(deps)).toEqual({
-      accounts: 3,
-      finished: 1,
-      held: 2,
-      failed: 0,
-    });
-    expect(deleted).toEqual([7301]);
   });
 
   it('an account the store still refuses is counted failed, keeps its rows, and the rest go on', async () => {
@@ -502,22 +488,18 @@ describe('sweepDeletedAccountTraces (the retry of unfinished deletions)', () => 
     expect(await sweepDeletedAccountTraces(deps)).toEqual({
       accounts: 3,
       finished: 2,
-      held: 0,
       failed: 1,
     });
     expect(deleted).toEqual([7301, 7503]);
   });
 
-  it('held accounts can never fill every page: an account after more than a batch of them is reached', async () => {
-    // More held accounts than one page holds (and not a multiple of it), then one to finish.
-    const held = Array.from({ length: TRACE_SWEEP_BATCH + 57 }, (_, i) => 3000 + i);
-    const last = 9999;
-    const all = [...held, last];
+  it('pages on past a full batch: an account after more than a batch of them is reached', async () => {
+    // More accounts than one page holds (and not a multiple of it).
+    const all = Array.from({ length: TRACE_SWEEP_BATCH + 58 }, (_, i) => 3000 + i);
     const finished: number[] = [];
     const summary = await sweepDeletedAccountTraces({
       deletedAccountsWithTraces: async (after, limit) =>
         all.filter((id) => id > after).slice(0, limit),
-      isHeld: async (userId) => userId !== last,
       deletion: {
         traces: async () => [],
         listKeys: async () => [],
@@ -528,12 +510,7 @@ describe('sweepDeletedAccountTraces (the retry of unfinished deletions)', () => 
         },
       },
     });
-    expect(summary).toEqual({
-      accounts: held.length + 1,
-      finished: 1,
-      held: held.length,
-      failed: 0,
-    });
-    expect(finished).toEqual([last]);
+    expect(summary).toEqual({ accounts: all.length, finished: all.length, failed: 0 });
+    expect(finished).toEqual(all);
   });
 });

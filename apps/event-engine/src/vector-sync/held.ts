@@ -5,9 +5,6 @@
  * function's SQL to its original, text for text.
  */
 
-/** The owner deleted accounts hand kept content to; a report naming it holds nothing. */
-const PLACEHOLDER_OWNER_ID = -1;
-
 const CSAM_REPORT_LISTED_IMAGE_IDS_SQL = `SELECT listed.id FROM (
     SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
     FROM "CsamReport" lr
@@ -24,7 +21,7 @@ function sqlRef(ref: string): string {
   return ref;
 }
 
-/** The user `column` is named on a CsamReport (subject or secondary user) or under an evidence hold. */
+/** The user `column` is named on a CsamReport (subject or secondary user). */
 export function heldUserSql(column: string): string {
   const user = sqlRef(column);
   return `(
@@ -39,7 +36,6 @@ export function heldUserSql(column: string): string {
         FROM "CsamReport" hs
         WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
       ), false)
-      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = ${user})
     )`;
 }
 
@@ -53,8 +49,7 @@ export function heldImageSql(image: string): string {
   const flagged = `(
     ${image}."needsReview" = 'csam'
     OR ${image}."blockedFor" = 'CSAM'
-    OR (${owner} <> ${PLACEHOLDER_OWNER_ID}
-      AND ${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND ${heldUserSql(owner)})
+    OR (${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND ${heldUserSql(owner)})
   )`;
   return `COALESCE((${flagged} OR (${image}.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})), false)`;
 }

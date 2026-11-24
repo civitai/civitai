@@ -15,16 +15,12 @@ const SCHEMA = `
   CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
   CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
   CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
-  -- 3 deleted, 4 a CsamReport's subject, 5 under an evidence hold.
+  -- 3 deleted, 4 a CsamReport's subject.
   INSERT INTO "User" VALUES (1, NULL, NULL), (2, now(), NULL), (3, NULL, now()), (4, NULL, NULL),
-    (5, NULL, NULL), (-1, NULL, NULL);
+    (-1, NULL, NULL);
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
   INSERT INTO "CsamReport" ("userId") VALUES (4);
-  CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
-  INSERT INTO "EvidenceHold" VALUES (5, NULL);
-  CREATE VIEW "EvidenceHeldUser" AS
-    SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
   CREATE TABLE "ComicProject" (
     id int PRIMARY KEY, "userId" int NOT NULL, status "ComicProjectStatus" NOT NULL,
     "tosViolation" boolean NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1, "coverImageId" int
@@ -124,7 +120,6 @@ const spec: ParitySpec = {
     }),
     comic(15, 'deletedOwner', false, { project: `3, 'Active', false` }),
     comic(16, 'ownerReported', false, { project: `4, 'Active', false` }),
-    comic(17, 'ownerEvidenceHold', false, { project: `5, 'Active', false` }),
     withSql(
       comic(18, 'chapterPublic', false),
       `UPDATE "ComicChapter" SET availability = 'Private' WHERE "projectId" = 18`
@@ -176,7 +171,7 @@ const spec: ParitySpec = {
     withSql(
       comic(37, 'heldPanelInSecondChapter', false),
       `INSERT INTO "ComicChapter" ("projectId", position, status) VALUES (37, 2, 'Published')`,
-      `INSERT INTO "Image" (id, ingestion, "tosViolation", "userId") VALUES (3701, 'Scanned', false, 5)`,
+      `INSERT INTO "Image" (id, ingestion, "tosViolation", "userId") VALUES (3701, 'Scanned', false, 4)`,
       `INSERT INTO "ComicPanel" ("projectId", "chapterPosition", "imageId", "imageUrl", status) VALUES (37, 2, 3701, 'u', 'Ready')`
     ),
     // Chapter 1 clean; a Ready panel in a second Published, Public chapter is of a minor.
@@ -208,7 +203,6 @@ const spec: ParitySpec = {
     'everyReadyPanelClean',
     'deletedOwner',
     'ownerReported',
-    'ownerEvidenceHold',
     'chapterPublic',
     'projectUnrated',
     'projectBlocked',

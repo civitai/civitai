@@ -958,8 +958,6 @@ export type ReportedModelState = {
   unpublishedReason: string | null;
   unpublishedAt: string | null;
   takenDownAt: string | null;
-  /** Kept when its owner's content was removed, in the violation status without a take-down. */
-  removedWithOwner: boolean;
 };
 
 const metaString = (meta: unknown, key: string): string | null => {
@@ -991,10 +989,6 @@ export async function getReportedModelStates(ids: number[]): Promise<ReportedMod
     unpublishedReason: metaString(meta, 'unpublishedReason'),
     unpublishedAt: metaString(meta, 'unpublishedAt'),
     takenDownAt: metaString(meta, 'takenDownAt'),
-    removedWithOwner:
-      !!meta &&
-      typeof meta === 'object' &&
-      (meta as Record<string, unknown>).removedWithOwner === true,
   }));
 }
 

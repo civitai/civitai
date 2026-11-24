@@ -4,7 +4,6 @@ import { logToAxiom } from '~/server/logging/client';
 import { purgeViewerDocuments } from '~/server/services/apps/doc-store-purge';
 import type { DocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
-import { isContentRemovalHeld } from '~/server/services/legal-hold.service';
 import { createLogThrottle } from '~/server/utils/log-throttle';
 import type { JobContext } from './job';
 import { createJob } from './job';
@@ -23,19 +22,17 @@ import { createJob } from './job';
  *
  * GRACE: an account is wiped only once `APP_DATA_REMOVAL_GRACE_DAYS` (the 7 days a grace-deleted
  * account's images are kept) have passed since its deletion. A restore inside the grace drops the
- * request (`restoreUser`), and a legal hold placed inside it keeps the account out for as long
- * as the hold stands.
+ * request (`restoreUser`).
  *
  * Every check that can stop a wipe is made on the PRIMARY immediately before it and again before
- * every namespace of it (`proceed`): still deleted, still requested, past the grace, not under a
- * legal hold (an unreadable hold counts as a hold). A restore or a hold that lands mid-wipe stops
- * it before the next namespace. Only the worklist comes from the replica: an account it has not
+ * every namespace of it (`proceed`): still deleted, still requested, past the grace. A restore that
+ * lands mid-wipe stops it before the next namespace. Only the worklist comes from the replica: an account it has not
  * caught up on waits for a later run.
  *
  * NEVER STALLS: the worklist is read in keyset pages of (`deletedAt`, id) from a cursor kept
- * between runs, so held and failing accounts are passed over rather than filling every run; the
- * cursor returns to the start after the last page, and they are retried then. Skipped, marker
- * kept: an account under a hold, and one whose wipe failed or left a namespace failed.
+ * between runs, so failing accounts are passed over rather than filling every run; the cursor
+ * returns to the start after the last page, and they are retried then. Skipped, marker kept: an
+ * account whose wipe failed or left a namespace failed.
  * Idempotent: a wipe only removes what is still there.
  *
  * REQUIRED index: manual migration `20261219120000_user_app_data_removal_idx`; the job does
@@ -48,7 +45,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Wipes attempted per run at most (successful or failed); a backlog drains over several runs. */
 export const APP_DATA_REMOVAL_BATCH = 25;
-/** Accounts looked at per run at most, held ones included. */
+/** Accounts looked at per run at most. */
 export const APP_DATA_REMOVAL_SCAN = 200;
 const PAGE = 50;
 
@@ -87,9 +84,7 @@ export type RemoveDeletedAccountAppDataResult = {
   /** Accounts carrying the request, past the grace, that the run looked at. */
   scanned: number;
   wiped: number;
-  /** Held, or the hold could not be read: left for a later run. */
-  held: number;
-  /** Restored or put under a hold DURING the wipe: stopped before its next namespace. */
+  /** Restored DURING the wipe: stopped before its next namespace. */
   stopped: number;
   /** The wipe failed or left a namespace failed; retried after the cursor comes round. */
   failed: number;
@@ -143,9 +138,7 @@ async function stillRequested(userId: number, cutoff: Date): Promise<boolean> {
 }
 
 /** Why an account must not be wiped right now, or null when it may be. */
-async function blocker(userId: number, cutoff: Date): Promise<'held' | 'withdrawn' | null> {
-  // `null` (the hold could not be read) blocks like a hold.
-  if ((await isContentRemovalHeld(userId)) !== false) return 'held';
+async function blocker(userId: number, cutoff: Date): Promise<'withdrawn' | null> {
   if (!(await stillRequested(userId, cutoff))) return 'withdrawn';
   return null;
 }
@@ -223,7 +216,6 @@ export async function removeDeletedAccountAppData(
   const result: RemoveDeletedAccountAppDataResult = {
     scanned: 0,
     wiped: 0,
-    held: 0,
     stopped: 0,
     failed: 0,
     docs: 0,
@@ -241,9 +233,7 @@ export async function removeDeletedAccountAppData(
         opts.jobContext?.checkIfCanceled();
         const { id } = account;
         result.scanned += 1;
-        const before = await blocker(id, cutoff);
-        if (before === 'held') result.held += 1;
-        if (before === null) await wipeOne(id, cutoff, opts.store, result);
+        if ((await blocker(id, cutoff)) === null) await wipeOne(id, cutoff, opts.store, result);
         // Past this account only once it was handled: a throw (a disabled store, a cancel)
         // leaves the cursor before it, so the next run starts with it.
         cursor = account;

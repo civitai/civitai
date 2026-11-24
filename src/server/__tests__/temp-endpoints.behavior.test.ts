@@ -8,8 +8,8 @@ import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 import type * as ModelNsfw from '~/server/services/text-scan/actions/model-nsfw';
 
 /**
- * Two one-off admin endpoints delete posts and images. A held owner's rows are left. The SQL runs
- * on a Postgres stand-in with the real foreign keys.
+ * Two one-off admin endpoints delete posts and images. The SQL runs on a Postgres stand-in with the
+ * real foreign keys.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -48,26 +48,11 @@ vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal)
   finishHeldVerdictApply: vi.fn(async () => undefined),
 }));
 
-const { mockArchiveUserComments } = vi.hoisted(() => ({
-  mockArchiveUserComments: vi.fn(async (userId: number) => ({
-    userId,
-    key: `${userId}/comments.json`,
-    etag: null,
-    comments: 1,
-  })),
-}));
-vi.mock('~/server/services/csam.service-new', () => ({
-  archiveUserComments: mockArchiveUserComments,
-}));
-import archiveHeldUserComments from '~/server/api-routes/admin/temp/archive-held-user-comments';
 import resetTrainingModel from '~/server/api-routes/admin/temp/reset-training-model';
 import migrateArticleImages from '~/server/api-routes/admin/temp/migrate-article-images';
 import '~/__tests__/mocks/logging.mock';
 
 const OWNER = 1;
-const HELD = 2; // named on a pending report
-const MARKED = 3; // held by a hold marker
-const BAN_NOTE = 6; // banned with a note naming CSAM, no account hold: not held
 
 let db: PGlite;
 const run = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) => {
@@ -89,12 +74,6 @@ const left = async (table: string) =>
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
-    CREATE TABLE "CsamReport" (
-      id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
-      details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]'
-    );
-    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL);
-    CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold";
     CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp, metadata jsonb);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int REFERENCES "Post"(id) ON DELETE SET NULL,
@@ -117,10 +96,6 @@ beforeAll(async () => {
       data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(),
       UNIQUE ("entityType", "entityId", type)
     );
-    INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
-    INSERT INTO "EvidenceHold" VALUES (${MARKED});
-    INSERT INTO "User" (id, meta, "bannedAt") VALUES
-      (${BAN_NOTE}, '{"banDetails": {"detailsInternal": "CSAM"}}', now() - interval '1 day');
   `);
   await db.exec(imageUseTablesSql);
   await db.exec(DELETED_ROW_COLUMNS_SQL);
@@ -159,7 +134,7 @@ describe('reset-training-model', () => {
   });
   const call = () => resetTrainingModel({ query: { id: '5' } } as never, fakeRes() as never);
 
-  it('deletes the posts and their images, not just unlinks the images (control)', async () => {
+  it('deletes the posts and their images, not just unlinks the images', async () => {
     await seed(OWNER);
     await call();
     expect(await left('Post')).toEqual([]);
@@ -180,20 +155,6 @@ describe('reset-training-model', () => {
     expect(mockLeavingPrivate).toHaveBeenCalledTimes(1);
     expect(mockLeavingPrivate.mock.calls[0]).toEqual([tx, 5]);
   });
-
-  it('deletes the post and image of an owner banned with a CSAM note and no hold', async () => {
-    await seed(BAN_NOTE);
-    await call();
-    expect(await left('Post')).toEqual([]);
-    expect(await left('Image')).toEqual([]);
-  });
-
-  it.each([HELD, MARKED])("leaves a held owner's post and image (owner %i)", async (owner) => {
-    await seed(owner);
-    await call();
-    expect(await left('Post')).toEqual([10]);
-    expect(await left('Image')).toEqual([20]);
-  });
 });
 
 describe('migrate-article-images rollback', () => {
@@ -210,59 +171,10 @@ describe('migrate-article-images rollback', () => {
     );
   const tags = async () => (await db.query(`SELECT 1 FROM "TagsOnImageNew"`)).rows.length;
 
-  it("deletes an unheld owner's article-only image, and its tags (control)", async () => {
+  it('deletes an article-only image, and its tags', async () => {
     await seed(OWNER);
     await call();
     expect(await left('Image')).toEqual([]);
     expect(await tags()).toBe(0);
-  });
-
-  it('deletes the article-only image of an owner banned with a CSAM note and no hold', async () => {
-    await seed(BAN_NOTE);
-    await call();
-    expect(await left('Image')).toEqual([]);
-    expect(await tags()).toBe(0);
-  });
-
-  it.each([HELD, MARKED])(
-    "leaves a held owner's article-only image, and its tags (owner %i)",
-    async (owner) => {
-      await seed(owner);
-      await call();
-      expect(await left('Image')).toEqual([30]);
-      expect(await tags()).toBe(1);
-    }
-  );
-});
-
-describe('archive-held-user-comments', () => {
-  beforeEach(() => {
-    vi.mocked(dbMock.dbRead.$queryRaw).mockImplementation(
-      (async (first: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) =>
-        (await run(first, values)).rows) as never
-    );
-  });
-  const call = async (dryRun: boolean) => {
-    const res = fakeRes();
-    await archiveHeldUserComments({ query: { dryRun: String(dryRun) } } as never, res as never);
-    return res;
-  };
-
-  it('archives each user a report or a hold marker holds, and no one else', async () => {
-    await db.exec(`
-      INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt")
-        VALUES (4, now() - interval '2 years', now() - interval '2 years');
-      INSERT INTO "CsamReport" ("userId", details) VALUES (${HELD}, '{"secondaryUserId": "5"}');
-    `);
-    try {
-      expect((await call(true)).body).toMatchObject({ userIds: [HELD, MARKED, 5] });
-      expect(mockArchiveUserComments).not.toHaveBeenCalled();
-
-      const res = await call(false);
-      expect(mockArchiveUserComments.mock.calls.map(([id]) => id)).toEqual([HELD, MARKED, 5]);
-      expect(res).toMatchObject({ statusCode: 200, body: { users: 3, comments: 3 } });
-    } finally {
-      await db.exec(`DELETE FROM "CsamReport" WHERE "userId" = 4 OR details ? 'secondaryUserId'`);
-    }
   });
 });
