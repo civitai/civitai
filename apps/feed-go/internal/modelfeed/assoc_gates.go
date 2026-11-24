@@ -17,9 +17,9 @@ import (
 // The generation gate rules, as getCanGenerateHiddenGates (src/server/services/generation/
 // generation.service.ts) reads them for canGenerate: the operator-authored rules
 // (src/shared/generation/gates.ts), narrowed to the ones that gate this viewer, then the targets the
-// `hidden` ones name. Only the parts canGenerate reads are ported: the `hidden` presentation, the
-// version-id targets, and whether a rule names any ecosystem at all (an ecosystem target needs the
-// base model's ecosystem key, which this service does not hold: such a rule falls back).
+// `hidden` ones name. Only the parts canGenerate reads are ported: the `hidden` presentation and the
+// version-id and ecosystem targets. An ecosystem target reaches a version through its base model's
+// ecosystem key, read from basemodels.json (gateEcosystems: isTargetedBy's own answers).
 
 // GateRule is one stored rule, the fields gateRuleSchema keeps that canGenerate reads.
 type GateRule struct {
@@ -224,12 +224,34 @@ func gateApplies(r GateRule, viewer *Viewer) (applies, known bool) {
 	return false, true
 }
 
-// hiddenGateVersions is canGenerateBlockedTargets(applicableRulesFor(rules, user)) for the version
-// ids canGenerate would otherwise answer true for (candidates): the ones a `hidden` rule that gates
-// this viewer names. An ecosystem target on such a rule (`gate-rules-ecosystem`), and a `hidden`
-// rule whose audience is not known here that names a candidate or any ecosystem
-// (`gate-rules-testers`), fall back.
-func hiddenGateVersions(rules []GateRule, viewer *Viewer, candidates map[int]bool) (map[int]bool, error) {
+// ruleTargets is isTargetedBy for one rule's targets: the version by id, or its base model through
+// an ecosystem key that reaches it (only the base model's own ecosystem: a parent's key does not).
+// A base model basemodels.json does not hold is reached by no ecosystem target.
+func ruleTargets(r GateRule, versionID int, baseModel string) bool {
+	for _, id := range r.ModelVersionIDs {
+		if id == versionID {
+			return true
+		}
+	}
+	if len(r.Ecosystems) == 0 {
+		return false
+	}
+	for _, key := range gateEcosystems[baseModel] {
+		for _, e := range r.Ecosystems {
+			if e == key {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hiddenGateVersions is canGenerateBlockedTargets(applicableRulesFor(rules, user)) then isTargetedBy
+// for the versions canGenerate would otherwise answer true for (candidates: version id to its base
+// model): the ones a `hidden` rule that gates this viewer names, by id or by ecosystem. A `hidden`
+// rule whose audience is not known here that names a candidate either way falls back
+// (`gate-rules-testers`).
+func hiddenGateVersions(rules []GateRule, viewer *Viewer, candidates map[int]string) (map[int]bool, error) {
 	blocked := map[int]bool{}
 	for _, r := range rules {
 		// experimental never gates; disabled keeps the version selectable (canGenerate stays true).
@@ -238,11 +260,8 @@ func hiddenGateVersions(rules []GateRule, viewer *Viewer, candidates map[int]boo
 		}
 		applies, known := gateApplies(r, viewer)
 		if !known {
-			if len(r.Ecosystems) > 0 {
-				return nil, fallback.New("gate-rules-testers")
-			}
-			for _, id := range r.ModelVersionIDs {
-				if candidates[id] {
+			for id, bm := range candidates {
+				if ruleTargets(r, id, bm) {
 					return nil, fallback.New("gate-rules-testers")
 				}
 			}
@@ -251,11 +270,10 @@ func hiddenGateVersions(rules []GateRule, viewer *Viewer, candidates map[int]boo
 		if !applies {
 			continue
 		}
-		if len(r.Ecosystems) > 0 {
-			return nil, fallback.New("gate-rules-ecosystem")
-		}
-		for _, id := range r.ModelVersionIDs {
-			blocked[id] = true
+		for id, bm := range candidates {
+			if ruleTargets(r, id, bm) {
+				blocked[id] = true
+			}
 		}
 	}
 	return blocked, nil

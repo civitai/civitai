@@ -23,16 +23,28 @@ const handler = (await import('~/pages/api/training-studio/model-status')).defau
 
 const OWNER = { id: 1, username: 'owner' } as SessionUser;
 const MODELS: Row[] = [
-  { id: 77, userId: 1, status: ModelStatus.Draft, deletedBy: null },
+  { id: 77, userId: 1, status: ModelStatus.Draft, deletedBy: null, versionIds: [770] },
   { id: 78, userId: 1, status: ModelStatus.Deleted, deletedBy: 1 },
   { id: 79, userId: 2, status: ModelStatus.Draft, deletedBy: null },
   { id: 80, userId: 1, status: ModelStatus.Deleted, deletedBy: 999 },
   { id: 81, userId: 1, status: ModelStatus.Deleted, deletedBy: null },
 ];
 
-type Row = { id: number; userId: number; status: ModelStatus; deletedBy: number | null };
+type Row = {
+  id: number;
+  userId: number;
+  status: ModelStatus;
+  deletedBy: number | null;
+  versionIds?: number[];
+};
 type Clause = { status?: { not: ModelStatus }; deletedBy?: { not: number } | null };
-type Where = { id: number; userId?: number; status?: { not: ModelStatus }; OR?: Clause[] };
+type Where = {
+  id: number;
+  userId?: number;
+  status?: { not: ModelStatus };
+  OR?: Clause[];
+  modelVersions?: { some: { id: number } };
+};
 // SQL's rules, not JS's: `deletedBy <> x` is not true for a NULL deletedBy.
 const passes = (r: Row, c: Clause) =>
   c.status
@@ -71,7 +83,8 @@ beforeEach(() => {
         m.id === where.id &&
         (where.userId === undefined || m.userId === where.userId) &&
         (!where.status || m.status !== where.status.not) &&
-        (!where.OR || where.OR.some((c) => passes(m, c)))
+        (!where.OR || where.OR.some((c) => passes(m, c))) &&
+        (!where.modelVersions || !!m.versionIds?.includes(where.modelVersions.some.id))
     );
     return row ? { id: row.id } : null;
   }) as never);
@@ -101,6 +114,19 @@ describe('GET /api/training-studio/model-status', () => {
 
   it('refuses a malformed id', async () => {
     expect((await status('abc')).code).toBe(400);
+  });
+
+  // A run added to an existing model links that model's version; the owner deleting the version
+  // ends the link while the model stays.
+  it('reports the run gone once its version is deleted, while the model lives', async () => {
+    expect(await call({ id: '77', versionId: '770' }, OWNER)).toEqual({
+      code: 200,
+      body: { live: true },
+    });
+    expect(await call({ id: '77', versionId: '771' }, OWNER)).toEqual({
+      code: 200,
+      body: { live: false },
+    });
   });
 });
 

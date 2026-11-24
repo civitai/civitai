@@ -12,6 +12,7 @@ import type {
 } from '~/server/schema/feature-pages.schema';
 import { fetchThroughCache, setFetchThroughCache } from '~/server/utils/cache-helpers';
 import { fetchTimeoutSignal, outboundFetch } from '~/server/utils/fetch-timeout';
+import { FEATURE_PAGES_HOST_ORIGINS } from '~/shared/constants/feature-pages.constants';
 import {
   PLATFORM_HANDLE_PATH,
   PLATFORM_ROUTE_MISSING,
@@ -43,9 +44,18 @@ const log = (data: MixedObject) => logToAxiom({ name: 'feature-pages', type: 'er
  */
 export function resolveFeaturePageEmbed(
   embedUrl: string | undefined,
-  feature: string
+  feature: string,
+  servingHost: string | undefined
 ): { src: string; origin: string } | null {
   if (!embedUrl) return null;
+  // The frame trusts the host it is given: pass only a listed origin, or a local one outside production.
+  const served = (servingHost ?? '').toLowerCase();
+  const host = (FEATURE_PAGES_HOST_ORIGINS as readonly string[]).includes(`https://${served}`)
+    ? `https://${served}`
+    : served && env.NODE_ENV !== 'production' && isLocalOrigin(`http://${served}`, env.NODE_ENV)
+    ? `http://${served}`
+    : null;
+  if (!host) return null;
   let url: URL;
   try {
     url = new URL(embedUrl);
@@ -57,6 +67,7 @@ export function resolveFeaturePageEmbed(
   const site = registrableDomain(url.hostname.replace(/\.$/, ''));
   if (site && (CIVITAI_OWNED_DOMAINS as readonly string[]).includes(site)) return null;
   url.searchParams.set('feature', feature);
+  url.searchParams.set('host', host);
   return { src: url.href, origin: url.origin };
 }
 

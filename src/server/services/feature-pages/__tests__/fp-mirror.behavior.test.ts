@@ -14,6 +14,7 @@ import {
   mirrorRow,
   OTHER,
   pg,
+  pipelineVerdict,
   platform,
   platformReply,
   posts,
@@ -1737,6 +1738,29 @@ describe('the hide state', () => {
       ]);
       expect(await reconcile()).toMatchObject({ on: false, mismatched: 1 });
       expect((await mirrorRow(id)).nextPushAt).toBeNull();
+    });
+
+    it("hidden there by the platform's pipeline while shown here: counted apart, never answered", async () => {
+      const id = (await seed('pipeline hid it')).comment.sourceId;
+      pipelineVerdict(id, 'hidden');
+      const before = signerPosts();
+      for (let i = 0; i < 2; i++) {
+        expect(await reconcile()).toMatchObject({ mismatched: 0, pipelineHidden: 1 });
+        await runMirror(mirror);
+      }
+      expect(signerPosts() - before).toBe(0);
+      expect(decided(id)).toBe('hidden');
+    });
+
+    it("hidden there by the platform's pipeline on a moved token: still never answered", async () => {
+      const id = (await seed('pipeline hid it, token moved')).comment.sourceId;
+      pipelineVerdict(id, 'hidden');
+      readback(id, { digest: 'moved' });
+      const before = signerPosts();
+      expect(await reconcile()).toMatchObject({ mismatched: 0, pipelineHidden: 1 });
+      platform.readback = null;
+      await runMirror(mirror);
+      expect(signerPosts() - before).toBe(0);
     });
 
     it('hidden or gone here, only the token differs there: nothing', async () => {
