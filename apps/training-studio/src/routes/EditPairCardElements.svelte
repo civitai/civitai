@@ -154,15 +154,9 @@
           {sourceLabel} · {pair.before.name}
         </span>
       {/if}
-      <!-- Not civitai-action-button: it expands to show its label on hover, and this one carries the file name. -->
-      <button
-        type="button"
-        aria-label="Remove pair {pair.before.name}"
-        onclick={onRemove}
-        class="grid size-7 shrink-0 place-items-center rounded text-dark-2 transition-colors hover:bg-dark-5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-      >
+      <studio-icon-button class="shrink-0" label="Remove pair {pair.before.name}" onclick={onRemove}>
         <IconX size={14} stroke={2} />
-      </button>
+      </studio-icon-button>
     </div>
   </div>
 </article>

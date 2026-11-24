@@ -952,13 +952,14 @@
                   oninput={(e: Event) => (prompts[i]!.text = (e.currentTarget as CivitaiTextInput).value)}
                 ></civitai-text-input>
                 {#if prompts.length > 1}
-                  <civitai-action-button
-                    class="shrink-0 self-end"
+                  <studio-icon-button
+                    class="mb-px shrink-0 self-end"
+                    size="lg"
                     label={`Remove prompt ${i + 1}`}
                     onclick={() => removePrompt(i)}
                   >
-                    <span slot="icon"><IconX size={14} stroke={2} /></span>
-                  </civitai-action-button>
+                    <IconX size={16} stroke={2} />
+                  </studio-icon-button>
                 {/if}
               </div>
               {#if imageErrors[p.id]}
