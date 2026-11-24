@@ -289,6 +289,11 @@ export type AccountWipeNamespaceResult = {
   marks: number;
   /** Rows deleted in `namespace` mode, across every table (index rows not counted). */
   namespaceRows: number;
+  /**
+   * Maintenance runs (purge dumps and their results, mark-migration results) that named the
+   * account and lost it (`user` mode; in `namespace` mode they are deleted with the rest).
+   */
+  maintRunsScrubbed: number;
 };
 
 export type AccountWipeResult = {

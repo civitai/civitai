@@ -1399,15 +1399,45 @@ const SQL_MAINT_RUN_LOCK_BY_TARGET = `SELECT mr.coll, mr.kind, mr.name, mr.statu
     AND mr.params ->> 'to' = $3 AND mr.status <> 'rolled_back'
   ORDER BY mr.coll, mr.name
   FOR UPDATE`;
-// Every run of the namespace, without the dumps. $1 app, $2 ns
+// Every run of the namespace (mark migrations and purge headers), without the dump rows.
+// $1 app, $2 ns
 const SQL_MAINT_RUN_LIST = `SELECT mr.coll, mr.kind, mr.name, mr.status, mr.params, mr.result,
     mr.actor_uid, mr.created_at, mr.updated_at
   FROM appdata.maint_run mr
-  WHERE mr.app_id = $1 AND mr.ns = $2
+  WHERE mr.app_id = $1 AND mr.ns = $2 AND mr.kind <> 'purge_dump'
   ORDER BY mr.created_at, mr.coll, mr.kind, mr.name`;
-// One purge's dump. $1 app, $2 ns, $3 coll, $4 run id
-const SQL_MAINT_RUN_DUMP = `SELECT mr.dump FROM appdata.maint_run mr
-  WHERE mr.app_id = $1 AND mr.ns = $2 AND mr.coll = $3 AND mr.kind = 'purge' AND mr.name = $4`;
+// One purge's batch dumps, in batch order (each named `<run id>.<batch>`). $1 app, $2 ns, $3 coll,
+// $4 the name pattern `<run id>.%`
+const SQL_MAINT_RUN_DUMPS = `SELECT mr.name, mr.dump FROM appdata.maint_run mr
+  WHERE mr.app_id = $1 AND mr.ns = $2 AND mr.coll = $3 AND mr.kind = 'purge_dump'
+    AND mr.name LIKE $4 AND mr.dump IS NOT NULL
+  ORDER BY mr.name`;
+// The runs naming one user in their dump or result, locked (the account wipe's scrub). jsonpath
+// over the dump's documents and marks, a purge's refunds and a copy's over-ceiling list.
+// $1 app, $2 ns, $3 user
+const SQL_MAINT_RUN_NAMING_USER = `SELECT mr.coll, mr.kind, mr.name, mr.dump, mr.result
+  FROM appdata.maint_run mr
+  WHERE mr.app_id = $1 AND mr.ns = $2
+    AND (jsonb_path_exists(mr.dump, '$.docs[*] ? (@.authorUid == $u || @.lastWriterUid == $u || @.hiddenBy == $u)', jsonb_build_object('u', $3::int))
+      OR jsonb_path_exists(mr.dump, '$.marks[*] ? (@.userId == $u)', jsonb_build_object('u', $3::int))
+      OR jsonb_path_exists(mr.result, '$.refunds[*] ? (@.userId == $u)', jsonb_build_object('u', $3::int))
+      OR jsonb_path_exists(mr.result, '$.copy.overCeiling[*] ? (@ == $u)', jsonb_build_object('u', $3::int)))
+  ORDER BY mr.coll, mr.kind, mr.name
+  FOR UPDATE`;
+// The scrubbed dump and result; `updated_at` is left alone (it dates the run, and a dump's expiry
+// counts from its purge header's). $1 app, $2 ns, $3 coll, $4 kind, $5 name, $6 dump, $7 result
+const SQL_MAINT_RUN_SCRUB = `UPDATE appdata.maint_run mr SET dump = $6::jsonb, result = $7::jsonb
+  WHERE mr.app_id = $1 AND mr.ns = $2 AND mr.coll = $3 AND mr.kind = $4 AND mr.name = $5`;
+// Retention: the dump rows of every purge that finished at least $3 days ago. $1 app, $2 ns,
+// $3 days
+const SQL_MAINT_RUN_EXPIRE_DUMPS = `WITH gone AS (DELETE FROM appdata.maint_run mr
+    WHERE mr.app_id = $1 AND mr.ns = $2 AND mr.kind = 'purge_dump'
+      AND EXISTS (SELECT 1 FROM appdata.maint_run hr
+        WHERE hr.app_id = $1 AND hr.ns = $2 AND hr.coll = mr.coll AND hr.kind = 'purge'
+          AND hr.status = 'purged' AND mr.name LIKE hr.name || '.%'
+          AND hr.updated_at < now() - make_interval(days => $3::int))
+    RETURNING 1)
+  SELECT count(*)::int AS n FROM gone`;
 // $1 app, $2 ns, $3 coll, $4 kind, $5 name, $6 status, $7 params, $8 result, $9 dump, $10 actor
 const SQL_MAINT_RUN_INSERT = `INSERT INTO appdata.maint_run AS mr
     (app_id, ns, coll, kind, name, status, params, result, dump, actor_uid)
@@ -1467,18 +1497,37 @@ const SQL_PURGE_LOCK_DOCS = `SELECT d.key, d.scope_uid, d.data, d.version, d.seq
   ORDER BY d.scope_uid, d.key
   LIMIT $4::int
   FOR UPDATE`;
-// The rows beside those documents, for the dump. $1 app, $2 ns, $3 coll
+// The rows beside one batch's documents, for its dump. $1 app, $2 ns, $3 coll, $4 keys
 const SQL_PURGE_INDEX_ROWS = `SELECT ix.key, ix.name, ix.v_type, ix.v_text, ix.v_num
   FROM appdata.doc_index ix
   WHERE ix.app_id = $1 AND ix.ns = $2 AND ix.coll = $3 AND ix.scope_uid = 0
+    AND ix.key = ANY($4::text[])
   ORDER BY ix.key, ix.name`;
 const SQL_PURGE_TALLY_ROWS = `SELECT t.key, t.kind, t.name, t.count FROM appdata.doc_tally t
-  WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = $3
+  WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = $3 AND t.key = ANY($4::text[])
   ORDER BY t.key, t.kind, t.name`;
 const SQL_PURGE_MARK_ROWS = `SELECT mk.key, mk.name, mk.user_id, mk.reason, mk.created_at
   FROM appdata.doc_mark mk
-  WHERE mk.app_id = $1 AND mk.ns = $2 AND mk.coll = $3
+  WHERE mk.app_id = $1 AND mk.ns = $2 AND mk.coll = $3 AND mk.key = ANY($4::text[])
   ORDER BY mk.key, mk.name, mk.user_id`;
+// The distinct mark names other than the report one with rows on the collection.
+// $1 app, $2 ns, $3 coll, $4 the report mark name
+const SQL_PURGE_MARK_NAMES = `SELECT DISTINCT mk.name FROM appdata.doc_mark mk
+  WHERE mk.app_id = $1 AND mk.ns = $2 AND mk.coll = $3 AND mk.name <> $4
+  ORDER BY mk.name`;
+// How many of the collection's documents are not counter documents. $1 app, $2 ns, $3 coll
+const SQL_COLL_NON_COUNTER_DOCS = `SELECT count(*)::int AS n FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.author_kind <> 'counter'`;
+// Whether the collection holds any document. $1 app, $2 ns, $3 coll
+const SQL_COLL_ANY_DOC = `SELECT 1 AS one FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 LIMIT 1`;
+// Every document of a rollback's target with what tells a copy from a viewer's write (the
+// rollback's guard). $1 app, $2 ns, $3 coll, $4 limit
+const SQL_COLL_DOC_COPY_STATE = `SELECT d.key, d.scope_uid, d.version, d.author_uid, d.author_kind,
+    d.created_at, d.updated_at
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3
+  ORDER BY d.scope_uid, d.key LIMIT $4::int`;
 // The collection's OPEN reports: report rows newer than their document's dismissal (the queue's
 // rule, `sqlModOpenReported`). $1 app, $2 ns, $3 coll, $4 the report mark name
 const SQL_PURGE_OPEN_REPORTS = `SELECT count(*)::int AS n FROM appdata.doc_mark rm
@@ -2027,10 +2076,10 @@ export type MigrateDocumentsResult = {
 /** One maintenance run (`appdata.maint_run`): a mark migration or a per-collection purge. */
 export type MaintRun = {
   collection: string;
-  kind: 'mark_migration' | 'purge';
-  /** The mark name (`mark_migration`) or the run id (`purge`). */
+  kind: 'mark_migration' | 'purge' | 'purge_dump';
+  /** The mark name (`mark_migration`), the run id (`purge`) or `<run id>.<batch>` (`purge_dump`). */
   name: string;
-  /** `frozen`, `copied`, `verified`, `mismatch` or `rolled_back`; a purge is `purged`. */
+  /** `frozen`, `copied`, `verified`, `mismatch` or `rolled_back`; a purge `purging` or `purged`. */
   status: string;
   params: Record<string, unknown>;
   result: Record<string, unknown>;
@@ -2073,9 +2122,9 @@ export type PurgeDump = {
   marks: { key: string; name: string; userId: number; reason: string | null; createdAt: string }[];
 };
 
-export type PurgeCollectionResult = {
-  runId: string;
-  mode: 'purge' | 'rollback';
+/** What a purge deleted: one call's, or its whole run's (`totals`, and the header's result). */
+export type PurgeTotals = {
+  batches: number;
   deleted: number;
   bytes: number;
   /** Each author refunded, with the documents and bytes their usage gave back. */
@@ -2084,14 +2133,27 @@ export type PurgeCollectionResult = {
   /** Report rows deleted with their documents (every one was dismissed: none was open). */
   reportsDeleted: number;
   talliesDeleted: number;
-  /** The mark migration a rollback undid (now `rolled_back`, its freeze lifted). */
+};
+
+/** One call of a per-collection purge: its batch, and the run's totals so far. */
+export type PurgeCollectionResult = Omit<PurgeTotals, 'batches'> & {
+  runId: string;
+  mode: 'purge' | 'rollback';
+  /** No document is left: the run is `purged` (and a rollback's migration `rolled_back`). */
+  done: boolean;
+  /** This call's batch number, null when it found nothing to delete. */
+  batch: number | null;
+  totals: PurgeTotals;
+  /** The mark migration a rollback undid (now `rolled_back`, its freeze lifted), once done. */
   rolledBack: { from: string; mark: string } | null;
 };
 
-/** Documents one per-collection purge deletes at most (its dump is one row). */
-export const PURGE_MAX_DOCS = 1000;
-/** Bytes of document bodies one purge dumps at most. */
+/** Documents one call of a per-collection purge deletes at most (one batch, one dump row). */
+export const PURGE_BATCH = 1000;
+/** Bytes of document bodies one batch dumps at most (a smaller batch when they would exceed it). */
 export const PURGE_MAX_DUMP_BYTES = 16 * 1024 * 1024;
+/** Days a finished purge's dumps are kept (`expireMaintDumps`). */
+export const PURGE_DUMP_RETENTION_DAYS = 30;
 
 /** The production namespace: published data, never a developer's dev or a moderator's review namespace. */
 export const PUBLISHED_NS = 'prod';
@@ -2104,8 +2166,11 @@ const SCHEMA_MAJOR_RECHECK_MS = 60_000;
 const MARK_HEAD_RECHECK_MS = 60_000;
 /** undefined_table: `appdata.mark_head` does not exist (its migration is not applied). */
 const PG_UNDEFINED_TABLE = '42P01';
-/** How often a store that found `appdata.maint_run` absent looks for it again. */
-const MAINT_RUN_RECHECK_MS = 60_000;
+/** How long a store that found `appdata.maint_run` absent trusts that before looking again. */
+// ZERO: absence is never trusted, only presence is kept. The freeze is read on every mark; a store
+// that remembered "no table" would let a mark through for the length of that memory after the
+// table was created and a freeze committed, and the copy would miss it.
+const MAINT_RUN_RECHECK_MS = 0;
 /** The manual migration that adds `appdata.maint_run`. */
 export const MAINT_RUN_MIGRATION = '20261123120000_appdata_maint_run.sql';
 
@@ -3321,6 +3386,7 @@ function buildDocStore(deps: DocStoreDeps) {
       counterDocsReleased: 0,
       marks: 0,
       namespaceRows: 0,
+      maintRunsScrubbed: 0,
     };
     const n = (res: DocStoreQueryResult, col = 'n') => Number(res.rows[0]?.[col] ?? 0);
     return withTx(ctx, async (c) => {
@@ -3392,6 +3458,8 @@ function buildDocStore(deps: DocStoreDeps) {
       // usage row it just charged (as a negative); remove it again.
       await c.query(SQL_WIPE_USAGE_USER, args);
       await c.query(SQL_WIPE_PRIVATE_TOMBS, args);
+      // After every document lock (the maintenance runs come after documents in the lock order).
+      result.maintRunsScrubbed = await scrubMaintRuns(c, ctx, userId);
       return result;
     });
   }
@@ -3971,6 +4039,8 @@ function buildDocStore(deps: DocStoreDeps) {
       deriveKey: (parent: string, viewerUid: number) => string;
       pageSize?: number;
       actorUid: number;
+      /** Called after each page's transaction COMMITTED, with what that page did. */
+      onPage?: (page: { rows: number; inserted: number }) => void;
     }
   ): Promise<MarkCopyResult> {
     assertMarkSource(args.from, args.mark);
@@ -4079,6 +4149,7 @@ function buildDocStore(deps: DocStoreDeps) {
         }
         return { rows, inserted: inserted.length };
       });
+      args.onPage?.({ rows: page.rows.length, inserted: page.inserted });
       out.rows += page.rows.length;
       out.inserted += page.inserted;
       out.existing += page.rows.length - page.inserted;
@@ -4122,6 +4193,30 @@ function buildDocStore(deps: DocStoreDeps) {
     return out;
   }
 
+  /** Every mark row of (from, mark), in primary-key order, up to the migration bound plus one. */
+  async function readSourceMarks(
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    from: string,
+    mark: string
+  ): Promise<{ key: string; userId: number; createdAt: number }[]> {
+    const cap = MARK_MIGRATION_MAX_ROWS + 1;
+    const source: { key: string; userId: number; createdAt: number }[] = [];
+    let after = { key: '', userId: -1 };
+    for (;;) {
+      const rows = (
+        await c.query(SQL_MARK_PAGE, [ctx.appId, ctx.ns, from, mark, after.key, after.userId, 1000])
+      ).rows.map((r) => ({
+        key: r.key as string,
+        userId: Number(r.user_id),
+        createdAt: new Date(r.created_at as string | Date).getTime(),
+      }));
+      source.push(...rows);
+      if (rows.length < 1000 || source.length >= cap) return source;
+      after = rows[rows.length - 1];
+    }
+  }
+
   /**
    * STEP 4, the VERIFY, in the store: the source's `doc_mark` rows against the target's documents,
    * counted per parent and per user straight from the rows (never through the list API, which
@@ -4142,27 +4237,9 @@ function buildDocStore(deps: DocStoreDeps) {
     return withTx(ctx, async (c) => {
       const run = await lockActiveMarkRun(c, ctx, args.from, args.mark);
       const params = runParams(run);
-      const cap = MARK_MIGRATION_MAX_ROWS + 1;
-      const source: { key: string; userId: number }[] = [];
-      let after = { key: '', userId: -1 };
-      for (;;) {
-        const rows = (
-          await c.query(SQL_MARK_PAGE, [
-            appId,
-            ctx.ns,
-            args.from,
-            args.mark,
-            after.key,
-            after.userId,
-            1000,
-          ])
-        ).rows.map((r) => ({ key: r.key as string, userId: Number(r.user_id) }));
-        source.push(...rows);
-        if (rows.length < 1000 || source.length >= cap) break;
-        after = rows[rows.length - 1];
-      }
+      const source = await readSourceMarks(c, ctx, args.from, args.mark);
       const target = (
-        await c.query(SQL_COLL_DOC_AUTHORS, [appId, ctx.ns, params.to, cap])
+        await c.query(SQL_COLL_DOC_AUTHORS, [appId, ctx.ns, params.to, MARK_MIGRATION_MAX_ROWS + 1])
       ).rows.map((r) => ({
         key: r.key as string,
         scopeUid: Number(r.scope_uid),
@@ -4202,47 +4279,65 @@ function buildDocStore(deps: DocStoreDeps) {
     });
   }
 
-  /** One purge's dump, or null when there is no such purge. */
+  /** One purge's dump, every batch in order; null when no batch of it holds one (or they expired). */
   async function purgeDump(
     appId: string,
     args: { collection: string; runId: string }
   ): Promise<PurgeDump | null> {
     if (!B.collectionName.test(args.collection)) throw invalid('invalid collection name');
+    if (!/^[0-9A-Z]{26}$/.test(args.runId)) throw invalid('invalid run id');
     const ctx = maintCtx(appId);
     return withTx(ctx, async (c) => {
-      const row = await maintRunRequired(
+      const rows = await maintRunRequired(
         c,
         async () =>
           (
-            await c.query(SQL_MAINT_RUN_DUMP, [appId, ctx.ns, args.collection, args.runId])
-          ).rows[0]
+            await c.query(SQL_MAINT_RUN_DUMPS, [appId, ctx.ns, args.collection, `${args.runId}.%`])
+          ).rows
       );
-      return row ? (row.dump as PurgeDump) : null;
+      if (rows.length === 0) return null;
+      const out: PurgeDump = { docs: [], index: [], tallies: [], marks: [] };
+      for (const r of rows) {
+        const d = r.dump as PurgeDump;
+        out.docs.push(...d.docs);
+        out.index.push(...d.index);
+        out.tallies.push(...d.tallies);
+        out.marks.push(...d.marks);
+      }
+      return out;
     });
   }
 
   /**
-   * THE PER-COLLECTION PURGE: delete every document of ONE collection in the app's production
-   * namespace through the moderator delete path (`deleteLockedSharedDocs`: index rows by the
-   * cascade, tallies and EVERY mark row on each document — report rows included — tombstones, and
-   * each document's size refunded to the app and to its `author_uid`, never to the caller), after
-   * dumping every row it deletes into its run record, in the SAME transaction.
+   * THE PER-COLLECTION PURGE, BATCHED AND RESUMABLE: one call deletes at most `batchSize`
+   * ({@link PURGE_BATCH}) documents of ONE collection in the app's production namespace, in key
+   * order, through the moderator delete path (`deleteLockedSharedDocs`: index rows by the cascade,
+   * tallies and EVERY mark row on each document — report rows included — tombstones, and each
+   * document's size refunded to the app and to its `author_uid`, never to the caller). Each call is
+   * one transaction: it dumps the rows it deletes into its own `purge_dump` row, deletes them, and
+   * advances the purge's header run (`kind 'purge'`, `purging` until no document is left, then
+   * `purged`). A re-call continues the purge in progress; every gate is checked again on every call,
+   * under the documents' locks.
    *
-   * `mode: 'purge'` (a counter collection, rollout step 4) runs only when all hold, checked under
-   * the documents' locks:
+   * `mode: 'purge'` (a COUNTER collection, rollout step 4) runs only on counter documents
+   * (`author_kind 'counter'`, every one of them: any other document refuses it), and only when:
    *   - no increment can re-create a document: `declared` (the collection as the app's enforced
    *     manifest declares it, null when it does not) declares no counter, so `$inc` is refused;
    *   - every mark with rows on the collection has a migration run `verified` whose target is in
    *     `openTargets` (its switch is open);
    *   - no report on the collection's documents is open (newer than its dismissal).
-   * A viewer-keyed collection is refused here: its purge is the rollback.
+   * A viewer-keyed collection — declared so, or the target of a mark migration whatever the
+   * manifest now says — is refused here: its purge is the rollback.
    *
-   * `mode: 'rollback'` purges the TARGET of an active mark migration before its switch opens (the
-   * collection is not in `openTargets`), under the same open-report rule, and marks that run
-   * `rolled_back`, which lifts the freeze.
-   *
-   * At most {@link PURGE_MAX_DOCS} documents and {@link PURGE_MAX_DUMP_BYTES} bytes per purge (one
-   * dump row); a larger collection is refused. A collection holding private documents is refused.
+   * `mode: 'rollback'` purges the TARGET of an active mark migration (`deriveKey` is its `@me`
+   * derivation) before its switch opens (the collection is not in `openTargets`), under the same
+   * open-report rule, and, once no document is left, marks that run `rolled_back`, which lifts the
+   * freeze. Because a switch that reads closed might still have been open (the switch fails
+   * closed), it refuses unless every document left in the target is exactly a copy: a user-authored
+   * version-1 document at a key a source mark derives, by that mark's voter, created (and last
+   * updated) when that mark was. On its first call no copy may be missing either, once the copy
+   * completed. And it refuses once the source collection was purged: its marks are gone, so lifting
+   * the freeze would bring nothing back.
    */
   async function purgeCollection(
     appId: string,
@@ -4253,14 +4348,20 @@ function buildDocStore(deps: DocStoreDeps) {
       openTargets: ReadonlySet<string>;
       actorUid: number;
       reason: string;
+      deriveKey?: (parent: string, viewerUid: number) => string;
+      batchSize?: number;
     }
   ): Promise<PurgeCollectionResult> {
     const { collection, declared, mode } = args;
+    const batchSize = args.batchSize ?? PURGE_BATCH;
     if (!B.collectionName.test(collection)) throw invalid('invalid collection name');
     if (declared && declared.name !== collection)
       throw new Error('doc-store: declaration mismatch');
     if (!(Number.isSafeInteger(args.actorUid) && args.actorUid > 0)) {
       throw new Error('doc-store: malformed actor id');
+    }
+    if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > PURGE_BATCH) {
+      throw new Error(`doc-store: batchSize must be 1–${PURGE_BATCH}`);
     }
     const refuse = (reason: string, message: string, details: Record<string, unknown> = {}) =>
       invalid(message, { reason, collection, ...details });
@@ -4278,44 +4379,109 @@ function buildDocStore(deps: DocStoreDeps) {
           { counters: declared?.config.counters }
         );
       }
-    } else if (args.openTargets.has(collection)) {
-      throw refuse(
-        'target_open',
-        `collection ${collection} is open for writes: a rollback would lose its viewers' own documents`
-      );
+    } else {
+      if (args.openTargets.has(collection)) {
+        throw refuse(
+          'target_open',
+          `collection ${collection} is open for writes: a rollback would lose its viewers' own documents`
+        );
+      }
+      if (!args.deriveKey) throw new Error('doc-store: a rollback needs the target key derivation');
     }
     const ctx = maintCtx(appId);
     return withTx(ctx, async (c) => {
-      let rolledBack: MaintRun | null = null;
+      let migration: MaintRun | null = null;
       if (mode === 'rollback') {
         // The run first, then the target's documents: the copy's lock order.
-        const runs = await maintRunRequired(
+        const active = await maintRunRequired(
           c,
           async () =>
             (
               await c.query(SQL_MAINT_RUN_LOCK_BY_TARGET, [appId, ctx.ns, collection])
             ).rows
         );
-        if (runs.length !== 1) {
+        if (active.length !== 1) {
           throw refuse(
             'no_migration_run',
             `collection ${collection} is not the target of an active mark migration`
           );
         }
-        rolledBack = toMaintRun(runs[0]);
+        migration = toMaintRun(active[0]);
       }
-      const docs = (
-        await c.query(SQL_PURGE_LOCK_DOCS, [appId, ctx.ns, collection, PURGE_MAX_DOCS + 1])
-      ).rows;
-      if (docs.length > PURGE_MAX_DOCS) {
-        throw refuse('too_many_documents', `a purge deletes at most ${PURGE_MAX_DOCS} documents`);
+      const runs = (
+        await maintRunRequired(
+          c,
+          async () => (await c.query(SQL_MAINT_RUN_LIST, [appId, ctx.ns])).rows
+        )
+      ).map(toMaintRun);
+      if (migration) {
+        const from = migration.collection;
+        if (runs.some((r) => r.kind === 'purge' && r.collection === from)) {
+          throw refuse(
+            'source_purged',
+            `the source collection ${from} was purged: its marks are gone, so this migration can only go forward`,
+            { from }
+          );
+        }
+      } else if (
+        runs.some(
+          (r) =>
+            r.kind === 'mark_migration' &&
+            r.status !== 'rolled_back' &&
+            String(r.params.to) === collection
+        )
+      ) {
+        throw refuse(
+          'viewer_keyed',
+          `collection ${collection} is the target of a mark migration: purge it with the rollback, before its switch opens`
+        );
       }
-      if (docs.some((d) => Number(d.scope_uid) !== 0)) {
+      const inProgress = runs.find(
+        (r) => r.kind === 'purge' && r.collection === collection && r.status === 'purging'
+      );
+      if (inProgress && inProgress.params.mode !== mode) {
+        throw refuse(
+          'purge_in_progress',
+          `a ${String(
+            inProgress.params.mode
+          )} of collection ${collection} is in progress: continue it first`,
+          { runId: inProgress.name }
+        );
+      }
+      const locked = (await c.query(SQL_PURGE_LOCK_DOCS, [appId, ctx.ns, collection, batchSize]))
+        .rows;
+      if (locked.some((d) => Number(d.scope_uid) !== 0)) {
         throw refuse('private_documents', `collection ${collection} holds private documents`);
       }
-      const bytes = docs.reduce((n, d) => n + Number(d.size_bytes), 0);
-      if (bytes > PURGE_MAX_DUMP_BYTES) {
-        throw refuse('too_large', `a purge dumps at most ${PURGE_MAX_DUMP_BYTES} bytes`);
+      if (mode === 'purge') {
+        const others = Number(
+          (await c.query(SQL_COLL_NON_COUNTER_DOCS, [appId, ctx.ns, collection])).rows[0]?.n ?? 0
+        );
+        if (others > 0) {
+          throw refuse(
+            'not_counter_documents',
+            `collection ${collection} holds ${others} document(s) that are not counter documents: this purge deletes counter documents only`,
+            { others }
+          );
+        }
+      }
+      if (migration && args.deriveKey) {
+        assertPristineTarget(
+          migration,
+          await readSourceMarks(c, ctx, migration.collection, migration.name),
+          (
+            await c.query(SQL_COLL_DOC_COPY_STATE, [
+              appId,
+              ctx.ns,
+              collection,
+              MARK_MIGRATION_MAX_ROWS + 1,
+            ])
+          ).rows,
+          args.deriveKey,
+          // A copy a viewer deleted is evidence too, but only before this rollback deleted any.
+          { missingIsWritten: !inProgress && migration.status !== 'frozen' },
+          refuse
+        );
       }
       const open = Number(
         (await c.query(SQL_PURGE_OPEN_REPORTS, [appId, ctx.ns, collection, REPORT_MARK])).rows[0]
@@ -4328,33 +4494,19 @@ function buildDocStore(deps: DocStoreDeps) {
           { open }
         );
       }
-      const marks = (await c.query(SQL_PURGE_MARK_ROWS, [appId, ctx.ns, collection])).rows;
-      const runs = (
-        await maintRunRequired(
-          c,
-          async () => (await c.query(SQL_MAINT_RUN_LIST, [appId, ctx.ns])).rows
-        )
-      ).map(toMaintRun);
-      const unmigrated = [...new Set(marks.map((m) => m.name as string))]
-        .filter((name) => name !== REPORT_MARK)
-        .sort()
-        .flatMap((name) => {
-          const run = runs.find(
-            (r) => r.kind === 'mark_migration' && r.collection === collection && r.name === name
-          );
-          const to = run ? String(run.params.to) : null;
-          const ok = run?.status === 'verified' && to !== null && args.openTargets.has(to);
-          return ok
-            ? []
-            : [
-                {
-                  mark: name,
-                  status: run?.status ?? null,
-                  to,
-                  open: to !== null && args.openTargets.has(to),
-                },
-              ];
-        });
+      const markNames = (
+        await c.query(SQL_PURGE_MARK_NAMES, [appId, ctx.ns, collection, REPORT_MARK])
+      ).rows.map((r) => r.name as string);
+      const unmigrated = markNames.flatMap((name) => {
+        const run = runs.find(
+          (r) => r.kind === 'mark_migration' && r.collection === collection && r.name === name
+        );
+        const to = run ? String(run.params.to) : null;
+        const isOpen = to !== null && args.openTargets.has(to);
+        return run?.status === 'verified' && isOpen
+          ? []
+          : [{ mark: name, status: run?.status ?? null, to, open: isOpen }];
+      });
       if (unmigrated.length > 0) {
         throw refuse(
           'marks_not_migrated',
@@ -4362,6 +4514,17 @@ function buildDocStore(deps: DocStoreDeps) {
           { marks: unmigrated }
         );
       }
+      // This batch: the locked documents in key order, within the dump's byte budget (at least one).
+      const docs: Record<string, unknown>[] = [];
+      let bytes = 0;
+      for (const d of locked) {
+        const size = Number(d.size_bytes);
+        if (docs.length > 0 && bytes + size > PURGE_MAX_DUMP_BYTES) break;
+        docs.push(d);
+        bytes += size;
+      }
+      const keys = docs.map((d) => d.key as string);
+      const marks = (await c.query(SQL_PURGE_MARK_ROWS, [appId, ctx.ns, collection, keys])).rows;
       const dump: PurgeDump = {
         docs: docs.map((d) => ({
           key: d.key as string,
@@ -4380,14 +4543,16 @@ function buildDocStore(deps: DocStoreDeps) {
             ? new Date(d.reports_dismissed_at as string | Date).toISOString()
             : null,
         })),
-        index: (await c.query(SQL_PURGE_INDEX_ROWS, [appId, ctx.ns, collection])).rows.map((r) => ({
-          key: r.key as string,
-          name: r.name as string,
-          type: r.v_type as string,
-          text: (r.v_text ?? null) as string | null,
-          num: r.v_num === null || r.v_num === undefined ? null : Number(r.v_num),
-        })),
-        tallies: (await c.query(SQL_PURGE_TALLY_ROWS, [appId, ctx.ns, collection])).rows.map(
+        index: (await c.query(SQL_PURGE_INDEX_ROWS, [appId, ctx.ns, collection, keys])).rows.map(
+          (r) => ({
+            key: r.key as string,
+            name: r.name as string,
+            type: r.v_type as string,
+            text: (r.v_text ?? null) as string | null,
+            num: r.v_num === null || r.v_num === undefined ? null : Number(r.v_num),
+          })
+        ),
+        tallies: (await c.query(SQL_PURGE_TALLY_ROWS, [appId, ctx.ns, collection, keys])).rows.map(
           (r) => ({
             key: r.key as string,
             kind: r.kind as string,
@@ -4409,53 +4574,233 @@ function buildDocStore(deps: DocStoreDeps) {
         const r = refunds.get(d.authorUid) ?? { docs: 0, bytes: 0 };
         refunds.set(d.authorUid, { docs: r.docs + 1, bytes: r.bytes + d.sizeBytes });
       }
-      const runId = newUlid();
-      const result: PurgeCollectionResult = {
-        runId,
-        mode,
+      const runId = inProgress?.name ?? newUlid();
+      const prior = (inProgress?.result ?? {}) as Partial<PurgeTotals>;
+      const batch = (prior.batches ?? 0) + 1;
+      if (!inProgress) {
+        await c.query(SQL_MAINT_RUN_INSERT, [
+          appId,
+          ctx.ns,
+          collection,
+          'purge',
+          runId,
+          'purging',
+          JSON.stringify({ mode, reason: args.reason }),
+          JSON.stringify({}),
+          null,
+          args.actorUid,
+        ]);
+      }
+      if (docs.length > 0) {
+        await c.query(SQL_MAINT_RUN_INSERT, [
+          appId,
+          ctx.ns,
+          collection,
+          'purge_dump',
+          `${runId}.${String(batch).padStart(6, '0')}`,
+          'dumped',
+          JSON.stringify({ batch }),
+          JSON.stringify({ deleted: docs.length, bytes }),
+          JSON.stringify(dump),
+          args.actorUid,
+        ]);
+        await deleteLockedSharedDocs(
+          c,
+          ctx,
+          charge,
+          docs.map((d) => toLockedSharedDoc({ ...d, coll: collection }))
+        );
+      }
+      const done = (await c.query(SQL_COLL_ANY_DOC, [appId, ctx.ns, collection])).rows.length === 0;
+      const thisCall = {
         deleted: dump.docs.length,
         bytes,
         refunds: [...refunds].sort(([a], [b]) => a - b).map(([userId, r]) => ({ userId, ...r })),
         marksDeleted: dump.marks.length,
         reportsDeleted: dump.marks.filter((m) => m.name === REPORT_MARK).length,
         talliesDeleted: dump.tallies.length,
-        rolledBack: rolledBack ? { from: rolledBack.collection, mark: rolledBack.name } : null,
       };
-      await c.query(SQL_MAINT_RUN_INSERT, [
+      const merged = new Map<number, { docs: number; bytes: number }>(
+        (prior.refunds ?? []).map((r) => [r.userId, { docs: r.docs, bytes: r.bytes }])
+      );
+      for (const r of thisCall.refunds) {
+        const m = merged.get(r.userId) ?? { docs: 0, bytes: 0 };
+        merged.set(r.userId, { docs: m.docs + r.docs, bytes: m.bytes + r.bytes });
+      }
+      const totals: PurgeTotals = {
+        batches: docs.length > 0 ? batch : batch - 1,
+        deleted: (prior.deleted ?? 0) + thisCall.deleted,
+        bytes: (prior.bytes ?? 0) + thisCall.bytes,
+        refunds: [...merged].sort(([a], [b]) => a - b).map(([userId, r]) => ({ userId, ...r })),
+        marksDeleted: (prior.marksDeleted ?? 0) + thisCall.marksDeleted,
+        reportsDeleted: (prior.reportsDeleted ?? 0) + thisCall.reportsDeleted,
+        talliesDeleted: (prior.talliesDeleted ?? 0) + thisCall.talliesDeleted,
+      };
+      await c.query(SQL_MAINT_RUN_UPDATE, [
         appId,
         ctx.ns,
         collection,
         'purge',
         runId,
-        'purged',
-        JSON.stringify({ mode, reason: args.reason }),
-        JSON.stringify(result),
-        JSON.stringify(dump),
+        done ? 'purged' : 'purging',
+        JSON.stringify({ mode, reason: (inProgress?.params.reason as string) ?? args.reason }),
+        JSON.stringify({ ...totals, ...(done ? { finishedAt: new Date().toISOString() } : {}) }),
         args.actorUid,
       ]);
-      await deleteLockedSharedDocs(
-        c,
-        ctx,
-        charge,
-        docs.map((d) => toLockedSharedDoc({ ...d, coll: collection }))
-      );
-      if (rolledBack) {
+      if (done && migration) {
         await c.query(SQL_MAINT_RUN_UPDATE, [
           appId,
           ctx.ns,
-          rolledBack.collection,
+          migration.collection,
           'mark_migration',
-          rolledBack.name,
+          migration.name,
           'rolled_back',
-          JSON.stringify(rolledBack.params),
+          JSON.stringify(migration.params),
           JSON.stringify({
-            ...rolledBack.result,
+            ...migration.result,
             rollback: { purge: runId, at: new Date().toISOString() },
           }),
           args.actorUid,
         ]);
       }
-      return result;
+      return {
+        runId,
+        mode,
+        done,
+        batch: docs.length > 0 ? batch : null,
+        ...thisCall,
+        totals,
+        rolledBack: done && migration ? { from: migration.collection, mark: migration.name } : null,
+      };
+    });
+  }
+
+  /**
+   * The rollback's guard: every document left in the target is exactly what the copy wrote, so a
+   * target whose switch was open (and read closed) is never wiped. `missingIsWritten` also counts a
+   * copy that is gone (a viewer deleted their vote) as written.
+   */
+  function assertPristineTarget(
+    migration: MaintRun,
+    source: { key: string; userId: number; createdAt: number }[],
+    target: Record<string, unknown>[],
+    deriveKey: (parent: string, viewerUid: number) => string,
+    opts: { missingIsWritten: boolean },
+    refuse: (reason: string, message: string, details?: Record<string, unknown>) => Error
+  ): void {
+    const params = runParams(migration);
+    const expected = new Map<string, { userId: number; createdAt: number }>();
+    for (const m of source) {
+      expected.set(deriveKey(parentOf(m.key, params.keyMap), m.userId), {
+        userId: m.userId,
+        createdAt: m.createdAt,
+      });
+    }
+    const written: string[] = [];
+    const seen = new Set<string>();
+    for (const d of target) {
+      const key = d.key as string;
+      seen.add(key);
+      const want = expected.get(key);
+      const created = new Date(d.created_at as string | Date).getTime();
+      const pristine =
+        want !== undefined &&
+        Number(d.scope_uid) === 0 &&
+        d.author_kind === 'user' &&
+        Number(d.author_uid) === want.userId &&
+        Number(d.version) === 1 &&
+        created === want.createdAt &&
+        new Date(d.updated_at as string | Date).getTime() === created;
+      if (!pristine) written.push(key);
+    }
+    const missing = opts.missingIsWritten ? [...expected.keys()].filter((k) => !seen.has(k)) : [];
+    if (written.length > 0 || missing.length > 0) {
+      throw refuse(
+        'target_written',
+        `collection ${
+          migration.params.to as string
+        } holds documents the copy did not write (or lacks ones it did): it was open for writes, so it can only go forward`,
+        {
+          written: written.length,
+          writtenSample: written.sort().slice(0, MARK_MIGRATION_SAMPLES),
+          missing: missing.length,
+        }
+      );
+    }
+  }
+
+  /**
+   * ACCOUNT DELETION reaches the maintenance runs (operator decision: the wipe covers dumps):
+   * every row naming `userId` — as a dumped document's author, last writer or hider, as a dumped
+   * mark's (or report's) user, in a purge's refunds or a copy's over-ceiling list — loses it. A
+   * dumped document the user authored goes whole, with its index, tally and mark rows; the rest
+   * keep only what names someone else. Runs in the wipe's own transaction, after its document locks.
+   */
+  async function scrubMaintRuns(c: DocStoreClient, ctx: DocStoreContext, userId: number) {
+    const rows = await withMaintRun(
+      c,
+      async () => (await c.query(SQL_MAINT_RUN_NAMING_USER, [ctx.appId, ctx.ns, userId])).rows
+    );
+    let scrubbed = 0;
+    for (const r of rows ?? []) {
+      const dump = (r.dump ?? null) as PurgeDump | null;
+      let nextDump: PurgeDump | null = dump;
+      if (dump) {
+        const gone = new Set(dump.docs.filter((d) => d.authorUid === userId).map((d) => d.key));
+        nextDump = {
+          docs: dump.docs
+            .filter((d) => !gone.has(d.key))
+            .map((d) => ({
+              ...d,
+              lastWriterUid: d.lastWriterUid === userId ? null : d.lastWriterUid,
+              hiddenBy: d.hiddenBy === userId ? null : d.hiddenBy,
+            })),
+          index: dump.index.filter((x) => !gone.has(x.key)),
+          tallies: dump.tallies.filter((t) => !gone.has(t.key)),
+          marks: dump.marks.filter((m) => !gone.has(m.key) && m.userId !== userId),
+        };
+      }
+      const result = { ...((r.result ?? {}) as Record<string, unknown>) };
+      if (Array.isArray(result.refunds)) {
+        result.refunds = (result.refunds as { userId: number }[]).filter(
+          (x) => x.userId !== userId
+        );
+      }
+      const copy = result.copy as { overCeiling?: number[] } | undefined;
+      if (copy && Array.isArray(copy.overCeiling)) {
+        result.copy = { ...copy, overCeiling: copy.overCeiling.filter((u) => u !== userId) };
+      }
+      await c.query(SQL_MAINT_RUN_SCRUB, [
+        ctx.appId,
+        ctx.ns,
+        r.coll,
+        r.kind,
+        r.name,
+        nextDump === null ? null : JSON.stringify(nextDump),
+        JSON.stringify(result),
+      ]);
+      scrubbed += 1;
+    }
+    return scrubbed;
+  }
+
+  /**
+   * RETENTION: drop the dumps of every purge of the app's production namespace that finished
+   * (`purged`) at least `days` ago (default {@link PURGE_DUMP_RETENTION_DAYS}); its header run, with
+   * its counts, stays. Returns the dump rows deleted. Nothing to do where the table does not exist.
+   */
+  async function expireMaintDumps(
+    appId: string,
+    opts: { days?: number } = {}
+  ): Promise<{ dumps: number }> {
+    const days = opts.days ?? PURGE_DUMP_RETENTION_DAYS;
+    if (!Number.isSafeInteger(days) || days < 1) throw new Error('doc-store: days must be ≥ 1');
+    const ctx = maintCtx(appId);
+    return withTx(ctx, async (c) => {
+      const n = await withMaintRun(c, async () =>
+        Number((await c.query(SQL_MAINT_RUN_EXPIRE_DUMPS, [appId, ctx.ns, days])).rows[0]?.n ?? 0)
+      );
+      return { dumps: n ?? 0 };
     });
   }
 
@@ -5225,6 +5570,7 @@ function buildDocStore(deps: DocStoreDeps) {
       listMaintRuns,
       purgeDump,
       purgeCollection,
+      expireMaintDumps,
     },
     viewerData: { listViewerUsage, viewerHoldings, viewerRecords, emptyViewerData, limits },
   };

@@ -38,10 +38,11 @@ describe('document-store maintenance is reachable from its five callers only', (
     ]);
   });
 
-  it('the maintenance object is exactly the twelve maintenance operations; the viewer store has none', () => {
+  it('the maintenance object is exactly the thirteen maintenance operations; the viewer store has none', () => {
     const MAINTENANCE = [
       'checkMarkMigration',
       'copyMarksToDocs',
+      'expireMaintDumps',
       'freezeMarks',
       'listMaintRuns',
       'listReviewAppIds',

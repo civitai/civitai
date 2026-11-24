@@ -21,7 +21,7 @@
 // holds the op's parameters, never a document's content; `after` the outcome and its counts. A dry
 // run, the status read and the dump read write nothing and are not audited.
 import type { Prisma } from '@prisma/client';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import type {
   DocStoreMaintenance,
   MaintRun,
@@ -126,7 +126,11 @@ async function audited<T extends Record<string, unknown>>(
     detail: string;
     before: Record<string, unknown>;
   },
-  run: () => Promise<T>
+  /**
+   * `progress` is the op's own record of what it has COMMITTED so far (each step, each copy page):
+   * a failure stamps it on the audit row, so a run that stopped part-way says how far it got.
+   */
+  run: (progress: Record<string, unknown>) => Promise<T>
 ): Promise<T & { auditEventId: string }> {
   const id = newAppListingModerationEventId();
   await dbWrite.appListingModerationEvent.create({
@@ -146,8 +150,9 @@ async function audited<T extends Record<string, unknown>>(
     },
   });
   let result: T;
+  const progress: Record<string, unknown> = {};
   try {
-    result = await run();
+    result = await run(progress);
   } catch (err) {
     await dbWrite.appListingModerationEvent
       .update({
@@ -157,6 +162,7 @@ async function audited<T extends Record<string, unknown>>(
             outcome: isDocStoreError(err) ? 'failed' : 'unknown',
             error: err instanceof Error ? err.message : String(err),
             reason: isDocStoreError(err) ? err.details?.reason ?? null : null,
+            committed: progress,
             failedAt: new Date().toISOString(),
           } as Prisma.InputJsonValue,
         },
@@ -276,7 +282,7 @@ export async function migrateMarksToDocs(
         keyMapEntries: input.keyMap ? Object.keys(input.keyMap).length : 0,
       },
     },
-    async () => {
+    async (progress) => {
       const frozen = await store.freezeMarks(app.appBlockId, {
         from: input.from,
         mark: input.mark,
@@ -285,13 +291,22 @@ export async function migrateMarksToDocs(
         keyMap: input.keyMap,
         actorUid: input.actorUserId,
       });
+      progress.frozen = { created: frozen.created };
+      const copied = { pages: 0, rows: 0, inserted: 0 };
+      progress.copy = copied;
       const copy = await store.copyMarksToDocs(app.appBlockId, {
         from: input.from,
         mark: input.mark,
         target,
         deriveKey,
         actorUid: input.actorUserId,
+        onPage: (page) => {
+          copied.pages += 1;
+          copied.rows += page.rows;
+          copied.inserted += page.inserted;
+        },
       });
+      progress.copy = { ...copied, done: true };
       const verify = await store.verifyMarkMigration(app.appBlockId, {
         from: input.from,
         mark: input.mark,
@@ -304,10 +319,12 @@ export async function migrateMarksToDocs(
 }
 
 /**
- * The ROLLBACK of a mark migration, valid only before its target's switch opens: purge every
- * document of the target through the moderator delete path (dumped first) and mark the run
- * `rolled_back`, which lifts the freeze. The app's revert to its previous approved version is the
- * moderator's own step.
+ * The ROLLBACK of a mark migration, valid only before its target's switch opens: purge the target
+ * through the moderator delete path (each batch dumped first), at most one batch of
+ * `PURGE_BATCH` documents per call; call again until `done`, when the run is `rolled_back` and the
+ * freeze lifted. Refused when the target holds anything the copy did not write (the switch fails
+ * closed, so "closed" alone does not prove nobody wrote), and once the source was purged. The
+ * app's revert to its previous approved version is the moderator's own step.
  */
 export async function rollbackMarkMigration(
   input: { actorUserId: number; appBlockId: string; to: string; reason: string },
@@ -317,6 +334,13 @@ export async function rollbackMarkMigration(
   const app = await loadApp(input.appBlockId);
   const open = await isViewerKeyedOpen(prodCtx(app), input.to);
   const declared = await declaredCollection(app, input.to);
+  // Before the audit row, as for the copy: the guard compares the target with the derived keys.
+  const deriveKey = viewerKeyDeriver({
+    appId: app.appBlockId,
+    ns: PUBLISHED_NS,
+    collection: input.to,
+    mode: 'parent+viewer',
+  });
   return audited(
     {
       app,
@@ -334,15 +358,17 @@ export async function rollbackMarkMigration(
         openTargets: new Set(open ? [input.to] : []),
         actorUid: input.actorUserId,
         reason: input.reason,
+        deriveKey,
       })
   );
 }
 
 /**
- * The PER-COLLECTION PURGE of rollout step 4 (a counter collection's documents, once its marks are
- * migrated): every document of `collection` in the app's production namespace, dumped first, under
- * the gates `purgeCollection` in the store checks: no counter declared by the enforced manifest
- * (`$inc` refused), every mark on it migrated, verified and its target open, no open report.
+ * The PER-COLLECTION PURGE of rollout step 4 (a COUNTER collection's documents, once its marks are
+ * migrated): at most one batch of `PURGE_BATCH` documents of `collection` per call, each dumped
+ * first; call again until `done`. Under the gates `purgeCollection` in the store checks: counter
+ * documents only, no counter declared by the enforced manifest (`$inc` refused), every mark on it
+ * migrated, verified and its target open, no open report, never a viewer-keyed collection.
  */
 export async function purgeStorageCollection(
   input: { actorUserId: number; appBlockId: string; collection: string; reason: string },
@@ -408,4 +434,42 @@ export async function storagePurgeDump(
   const store = deps.store ?? getDocStoreMaintenance();
   const app = await loadApp(input.appBlockId);
   return store.purgeDump(app.appBlockId, { collection: input.collection, runId: input.runId });
+}
+
+/** App blocks read per page by the dump expiry. */
+const EXPIRY_APP_PAGE = 500;
+
+/**
+ * RETENTION of purge dumps (`expire-storage-maintenance-dumps` job): in every on-platform app's
+ * production namespace, the dumps of each purge that finished at least
+ * `PURGE_DUMP_RETENTION_DAYS` ago are deleted (`expireMaintDumps`); its header, with its counts,
+ * stays. One store transaction per app. An app whose call fails is counted and the rest go on; a
+ * store that is switched off stops the sweep.
+ */
+export async function expireStorageMaintenanceDumps(
+  opts: { store?: DocStoreMaintenance; checkIfCanceled?: () => void } = {}
+): Promise<{ apps: number; dumps: number; failures: number }> {
+  const store = opts.store ?? getDocStoreMaintenance();
+  const out = { apps: 0, dumps: 0, failures: 0 };
+  let after: string | undefined;
+  for (;;) {
+    const page = await dbRead.appBlock.findMany({
+      where: { externalUrl: null, ...(after ? { id: { gt: after } } : {}) },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+      take: EXPIRY_APP_PAGE,
+    });
+    for (const { id } of page) {
+      opts.checkIfCanceled?.();
+      out.apps += 1;
+      try {
+        out.dumps += (await store.expireMaintDumps(id)).dumps;
+      } catch (err) {
+        if (isDocStoreError(err, 'storage_disabled')) throw err;
+        out.failures += 1;
+      }
+    }
+    if (page.length < EXPIRY_APP_PAGE) return out;
+    after = page[page.length - 1].id;
+  }
 }

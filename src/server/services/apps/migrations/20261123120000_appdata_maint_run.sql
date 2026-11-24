@@ -14,9 +14,13 @@
 --     or `rolled_back`; `result` holds the last copy's and verify's counts. While the row exists
 --     and is not `rolled_back`, the store refuses `$mark` / `$unmark` of that mark on that
 --     collection (`410 removed`): the row IS the freeze, read in the mark's own transaction.
---   - kind `purge`: one per per-collection purge (`name` is the run's ULID). `dump` holds every
---     row the purge deleted (documents, index rows, tallies and marks, report rows included),
---     written in the same transaction as the delete, so a purged document always has its dump.
+--   - kind `purge`: the header of one per-collection purge (`name` is the run's ULID): `purging`
+--     until no document is left, then `purged`, with its running totals in `result`.
+--   - kind `purge_dump`: one per batch of a purge (`name` is `<run id>.<batch>`). `dump` holds
+--     every row that batch deleted (documents, index rows, tallies and marks, report rows
+--     included), written in the same transaction as the delete, so a purged document always has
+--     its dump. Dumps are deleted 30 days after their purge finished, and an account deletion
+--     removes the account from them.
 --   `actor_uid` is the moderator who started the run.
 --
 -- ROW-LEVEL SECURITY on the new table: the policies every other `appdata` table has: the
@@ -50,7 +54,7 @@ CREATE TABLE IF NOT EXISTS appdata.maint_run (
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT maint_run_scope_nonempty CHECK (app_id <> '' AND ns <> ''),
   CONSTRAINT maint_run_pkey PRIMARY KEY (app_id, ns, coll, kind, name),
-  CONSTRAINT maint_run_kind CHECK (kind IN ('mark_migration', 'purge'))
+  CONSTRAINT maint_run_kind CHECK (kind IN ('mark_migration', 'purge', 'purge_dump'))
 );
 
 ALTER TABLE appdata.maint_run ENABLE ROW LEVEL SECURITY;

@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   createDocStore,
@@ -9,7 +10,7 @@ import {
 } from '~/server/services/apps/doc-store';
 import { deriveViewerKey } from '~/server/services/apps/doc-store-viewer-keyed';
 import type { DocCollection } from '~/server/services/apps/doc-store.types';
-import { createPgliteHarness, type Harness } from './doc-store.harness';
+import { createPgliteHarness, MIGRATION_MAINT_RUN_UP, type Harness } from './doc-store.harness';
 import {
   assertUsageConsistent,
   ctx,
@@ -540,7 +541,8 @@ describe('the per-collection purge', () => {
     app: string,
     declared: DocCollection | null,
     openTargets: string[],
-    collection = 'popular_plays'
+    collection = 'popular_plays',
+    batchSize?: number
   ) =>
     maint.purgeCollection(app, {
       collection,
@@ -549,7 +551,14 @@ describe('the per-collection purge', () => {
       openTargets: new Set(openTargets),
       actorUid: MOD,
       reason: 'retire the counter collection',
+      batchSize,
     });
+  /** seedCounters, its `played` marks migrated into an open `plays`, its report dismissed. */
+  async function readyToPurge(app: string) {
+    await seedCounters(app);
+    expect((await migratePlayed(app)).ok).toBe(true);
+    await mod.dismissReports(app, NS_PROD, 'popular_plays', 'song_b');
+  }
   const counterDocs = async (app: string) => (await docsOf(app, 'popular_plays')).map((d) => d.key);
 
   it('refuses while the collection still declares counters ($inc would re-create a document)', async () => {
@@ -698,10 +707,138 @@ describe('the per-collection purge', () => {
     const err = await expectCode(purge(app, PLAYS, [], 'plays'), 'invalid_request');
     expect(err.details).toMatchObject({ reason: 'viewer_keyed' });
   });
+
+  it('deletes counter documents only: a collection holding any other document is refused', async () => {
+    const app = freshApp('PGNOTCOUNTER');
+    await seedVotes(app);
+    // `records` holds user-authored documents and no marks once migrated: still not a counter collection.
+    const err = await expectCode(purge(app, null, [], 'records'), 'invalid_request');
+    expect(err.details).toMatchObject({ reason: 'not_counter_documents', others: 3 });
+    expect(await docsOf(app, 'records')).toHaveLength(3);
+  });
+
+  it('refuses a mark-migration target as viewer-keyed even when the manifest no longer declares it', async () => {
+    const app = freshApp('PGVKUNDECL');
+    await seedVotes(app);
+    await migrate(app);
+    const err = await expectCode(purge(app, null, ['votes'], 'votes'), 'invalid_request');
+    expect(err.details).toMatchObject({ reason: 'viewer_keyed' });
+    expect(await docsOf(app, 'votes')).toHaveLength(5);
+  });
+
+  it('is batched and resumable: each call deletes one batch, dumped in its own row; a re-call continues', async () => {
+    const app = freshApp('PGBATCH');
+    await readyToPurge(app);
+    const first = await purge(app, POPULAR_NO_COUNTERS, ['plays'], 'popular_plays', 2);
+    expect(first).toMatchObject({ done: false, batch: 1, deleted: 2, totals: { deleted: 2 } });
+    expect(await counterDocs(app)).toEqual(['song_c']);
+    expect((await maint.listMaintRuns(app)).find((r) => r.kind === 'purge')).toMatchObject({
+      name: first.runId,
+      status: 'purging',
+    });
+    const second = await purge(app, POPULAR_NO_COUNTERS, ['plays'], 'popular_plays', 2);
+    expect(second).toMatchObject({
+      runId: first.runId,
+      done: true,
+      batch: 2,
+      deleted: 1,
+      totals: { batches: 2, deleted: 3, reportsDeleted: 1 },
+    });
+    expect(second.totals.refunds.map((r) => [r.userId, r.docs])).toEqual([
+      [V1, 2],
+      [V2, 1],
+    ]);
+    const dumps = await h.raw(
+      `SELECT name FROM appdata.maint_run WHERE app_id = $1 AND kind = 'purge_dump' ORDER BY name`,
+      [app]
+    );
+    expect(dumps.map((d) => d.name)).toEqual([`${first.runId}.000001`, `${first.runId}.000002`]);
+    const dump = await maint.purgeDump(app, { collection: 'popular_plays', runId: first.runId });
+    expect(dump?.docs.map((d) => d.key)).toEqual(['song_a', 'song_b', 'song_c']);
+    await assertUsageConsistent(h, app, NS_PROD);
+  });
+
+  it('a rollback is refused once the source collection was purged', async () => {
+    const app = freshApp('RBSRCPURGED');
+    await readyToPurge(app);
+    expect((await purge(app, POPULAR_NO_COUNTERS, ['plays'])).done).toBe(true);
+    const err = await expectCode(
+      maint.purgeCollection(app, {
+        collection: 'plays',
+        declared: PLAYS,
+        mode: 'rollback',
+        openTargets: new Set(),
+        actorUid: MOD,
+        reason: 'roll back',
+        deriveKey: deriver(app, 'plays'),
+      }),
+      'invalid_request'
+    );
+    expect(err.details).toMatchObject({ reason: 'source_purged', from: 'popular_plays' });
+    expect(await docsOf(app, 'plays')).toHaveLength(3);
+  });
+
+  it('an account deletion removes the account from every dump and purge result (operator decision: the wipe covers dumps)', async () => {
+    const app = freshApp('PGWIPE');
+    await readyToPurge(app);
+    const out = await purge(app, POPULAR_NO_COUNTERS, ['plays']);
+    const wiped = await maint.wipeAccount(V1);
+    expect(wiped.namespaces.find((n) => n.appId === app)?.maintRunsScrubbed).toBe(2);
+    const dump = await maint.purgeDump(app, { collection: 'popular_plays', runId: out.runId });
+    // V1 authored song_a and song_b (their marks and the report on song_b go with them); V2's
+    // song_c and V3's mark on it stay.
+    expect(dump?.docs.map((d) => [d.key, d.authorUid])).toEqual([['song_c', V2]]);
+    expect(dump?.marks.map((m) => `${m.key}|${m.name}|${m.userId}`)).toEqual([
+      `song_c|played|${V3}`,
+    ]);
+    expect(dump?.tallies.map((t) => t.key)).toEqual(['song_c', 'song_c']);
+    const header = (await maint.listMaintRuns(app)).find((r) => r.kind === 'purge');
+    expect((header?.result.refunds as { userId: number }[]).map((r) => r.userId)).toEqual([V2]);
+    // Positive control: nothing in the runs still names V1.
+    const naming = await h.raw(
+      `SELECT count(*)::int AS n FROM appdata.maint_run
+        WHERE app_id = $1 AND (dump::text ~ $2 OR result::text ~ $2)`,
+      [app, `[^0-9]${V1}[^0-9]`]
+    );
+    expect(naming[0].n).toBe(0);
+  });
+
+  it('dumps expire 30 days after their purge finished; a purge still in progress keeps them', async () => {
+    const done = freshApp('PGEXPIRE');
+    await readyToPurge(done);
+    const out = await purge(done, POPULAR_NO_COUNTERS, ['plays']);
+    const age = (app: string, days: number) =>
+      h.raw(
+        `UPDATE appdata.maint_run SET updated_at = now() - make_interval(days => $2)
+          WHERE app_id = $1 AND kind = 'purge'`,
+        [app, days]
+      );
+    await age(done, 29);
+    expect(await maint.expireMaintDumps(done)).toEqual({ dumps: 0 });
+    expect(
+      await maint.purgeDump(done, { collection: 'popular_plays', runId: out.runId })
+    ).not.toBeNull();
+    await age(done, 31);
+    expect(await maint.expireMaintDumps(done)).toEqual({ dumps: 1 });
+    expect(
+      await maint.purgeDump(done, { collection: 'popular_plays', runId: out.runId })
+    ).toBeNull();
+    // The header and its counts stay.
+    expect((await maint.listMaintRuns(done)).find((r) => r.kind === 'purge')).toMatchObject({
+      status: 'purged',
+      result: { deleted: 3 },
+    });
+
+    const partial = freshApp('PGEXPIREPART');
+    await readyToPurge(partial);
+    await purge(partial, POPULAR_NO_COUNTERS, ['plays'], 'popular_plays', 1);
+    await age(partial, 90);
+    expect(await maint.expireMaintDumps(partial)).toEqual({ dumps: 0 });
+  });
 });
 
 describe('the rollback', () => {
-  const rollback = (app: string, openTargets: string[]) =>
+  const rollback = (app: string, openTargets: string[], batchSize?: number) =>
     maint.purgeCollection(app, {
       collection: 'votes',
       declared: VOTES,
@@ -709,7 +846,68 @@ describe('the rollback', () => {
       openTargets: new Set(openTargets),
       actorUid: MOD,
       reason: 'roll the vote migration back',
+      deriveKey: deriver(app, 'votes'),
+      batchSize,
     });
+
+  it('refuses when the target holds anything the copy did not write: an @me edit, or a new vote', async () => {
+    // The switch fails closed, so a target that WAS open can read closed: the documents decide.
+    for (const [tag, write] of [
+      [
+        'EDIT',
+        (app: string) =>
+          store.put(ctx(app, NS_PROD, V1), VOTES, deriver(app, 'votes')('rec_a', V1), {
+            value: -1,
+          }),
+      ],
+      [
+        'NEW',
+        (app: string) =>
+          store.put(ctx(app, NS_PROD, V3), VOTES, deriver(app, 'votes')('rec_c', V3), { value: 1 }),
+      ],
+    ] as const) {
+      const app = freshApp(`RBWRITTEN${tag}`);
+      await seedVotes(app);
+      await migrate(app);
+      // (The untouched copies pass the guard: the rollback cases below roll them back.)
+      await write(app);
+      const err = await expectCode(rollback(app, []), 'invalid_request');
+      expect({ tag, details: err.details }).toMatchObject({
+        tag,
+        details: { reason: 'target_written', written: 1 },
+      });
+      expect(await docsOf(app, 'votes')).toHaveLength(tag === 'NEW' ? 6 : 5);
+      expect((await runOf(app, 'records', 'mark_migration', 'vote'))?.status).toBe('verified');
+    }
+  });
+
+  it('refuses when a copy is gone (a viewer deleted their vote through @me)', async () => {
+    const app = freshApp('RBDELETED');
+    await seedVotes(app);
+    await migrate(app);
+    await store.delete(ctx(app, NS_PROD, V2), VOTES, deriver(app, 'votes')('rec_c', V2));
+    const err = await expectCode(rollback(app, []), 'invalid_request');
+    expect(err.details).toMatchObject({ reason: 'target_written', written: 0, missing: 1 });
+  });
+
+  it('is batched: the freeze lifts only when the last batch is gone', async () => {
+    const app = freshApp('RBBATCH');
+    await seedVotes(app);
+    await migrate(app);
+    const first = await rollback(app, [], 2);
+    expect(first).toMatchObject({ done: false, deleted: 2, rolledBack: null });
+    await expectCode(store.mark(ctx(app, NS_PROD, V3), RECORDS, 'rec_c', 'vote'), 'removed');
+    expect(await rollback(app, [], 2)).toMatchObject({ done: false, deleted: 2 });
+    expect(await rollback(app, [], 2)).toMatchObject({
+      done: true,
+      deleted: 1,
+      totals: { batches: 3, deleted: 5 },
+      rolledBack: { from: 'records', mark: 'vote' },
+    });
+    expect(await store.mark(ctx(app, NS_PROD, V3), RECORDS, 'rec_c', 'vote')).toMatchObject({
+      marked: true,
+    });
+  });
 
   it('before the switch opens: purges the copies, refunds the voters, lifts the freeze', async () => {
     const app = freshApp('RBDONE');
@@ -742,5 +940,38 @@ describe('the rollback', () => {
     const none = freshApp('RBNONE');
     err = await expectCode(rollback(none, []), 'invalid_request');
     expect(err.details).toMatchObject({ reason: 'no_migration_run' });
+  });
+});
+
+describe('the freeze never trusts a cached "no table"', () => {
+  // The race: a store that once found `maint_run` absent, the migration applied, a freeze
+  // committed — the very next mark through that same store must read the freeze.
+  it('a mark right after the table appears and a freeze commits is refused', async () => {
+    const bare = await createPgliteHarness({ rls: true, maintRun: false });
+    try {
+      const viewerStore = createDocStore({ db: bare.db });
+      const app = freshApp('FRZRACE');
+      await viewerStore.put(ctx(app, NS_PROD, V1), RECORDS, 'rec_a', { title: 'a' });
+      // The store looks for the table and finds none.
+      await viewerStore.mark(ctx(app, NS_PROD, V1), RECORDS, 'rec_a', 'vote');
+      await bare.raw(readFileSync(MIGRATION_MAINT_RUN_UP, 'utf8'));
+      await createDocStoreMaintenance({ db: bare.db }).freezeMarks(app, {
+        from: 'records',
+        mark: 'vote',
+        target: VOTES,
+        data: BODY,
+        actorUid: MOD,
+      });
+      await expectCode(
+        viewerStore.mark(ctx(app, NS_PROD, V2), RECORDS, 'rec_a', 'vote'),
+        'removed'
+      );
+      await expectCode(
+        viewerStore.unmark(ctx(app, NS_PROD, V1), RECORDS, 'rec_a', 'vote'),
+        'removed'
+      );
+    } finally {
+      await bare.close();
+    }
   });
 });

@@ -373,8 +373,18 @@ verify in one call, idempotent), `rollbackMarks`, `purgeCollection`, `purgeDump`
 recorded in `appdata.maint_run` (manual migration `20261123120000_appdata_maint_run.sql`), which is also
 where a mark's freeze lives and where a purge's dump is written, in the transaction that deletes. Each op
 that writes is audited first as an `AppListingModerationEvent` (`storage-mark-migration`,
-`storage-collection-purge`; their CHECK widen is a manual main-database migration). A purge handles at
-most 1,000 documents per call.
+`storage-collection-purge`; their CHECK widen is a manual main-database migration).
+
+A purge (and so a rollback) is **batched and resumable**: one call deletes at most 1,000 documents
+(fewer when their dump would pass 16 MiB), dumps them in their own row and transaction, and advances the
+purge's run; the moderator calls again until it answers `done`, and a rollback lifts the freeze only with
+its last batch, so a target of any size can be rolled back. The normal purge deletes counter documents
+only (`author_kind = 'counter'`) and refuses anything else, a viewer-keyed collection included whether or
+not the manifest still declares it. The rollback refuses unless every document left in the target is
+exactly a copy (version 1, at a derived key, by its mark's voter, created when that mark was), because the
+switch fails closed and "closed" therefore does not prove nobody wrote; it also refuses once the source
+collection was purged. Dumps are deleted 30 days after their purge finished (a daily job), and an
+account deletion removes the account from every dump and purge result.
 
 ### `doc_mark` votes to viewer-keyed documents
 

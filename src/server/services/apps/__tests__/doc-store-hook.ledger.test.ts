@@ -78,6 +78,7 @@ const LEDGER = {
     listMaintRuns: 'read',
     purgeDump: 'read',
     purgeCollection: 'exempt',
+    expireMaintDumps: 'exempt',
   },
   rater: {
     ready: 'read',
