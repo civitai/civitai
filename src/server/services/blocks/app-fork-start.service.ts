@@ -82,6 +82,7 @@ import {
   APP_STORAGE_IMPORT_SCOPE,
   APP_STORAGE_MAX_IMPORT_COLLECTIONS,
   APP_STORAGE_MAX_IMPORTS,
+  APP_STORAGE_PUBLISH_SCOPE,
   isCollectionExportable,
   type DeclaredStorageCollection,
 } from '~/shared/constants/block-storage.constants';
@@ -280,6 +281,9 @@ export function prefillParentStorageImports(manifest: Record<string, unknown>): 
  * with `write: "none"` goes whole (it held nothing but counters and marks). Everything else (schemas,
  * indexes, the imports prefill) is kept. A `collections` left empty is removed, and a `storage` left
  * with neither collections nor imports too, since the schema requires at least one of them.
+ * When `storage` goes, so do the storage scopes and their `scopeJustifications` entries:
+ * `appStorageScopeErrors` refuses each of them with nothing in `storage` for it to reach, and the
+ * manifest validator refuses a justification for a scope that is not requested.
  */
 export function stripDeprecatedStoragePrimitives(manifest: Record<string, unknown>): void {
   const storage = manifest.storage;
@@ -299,7 +303,22 @@ export function stripDeprecatedStoragePrimitives(manifest: Record<string, unknow
   }
   if (Object.keys(kept).length > 0) store.collections = kept;
   else delete store.collections;
-  if (store.collections === undefined && store.imports === undefined) delete manifest.storage;
+  if (store.collections !== undefined || store.imports !== undefined) return;
+  delete manifest.storage;
+  const storageScopes = [
+    APP_STORAGE_BASE_SCOPE,
+    APP_STORAGE_PUBLISH_SCOPE,
+    APP_STORAGE_IMPORT_SCOPE,
+  ];
+  if (Array.isArray(manifest.scopes)) {
+    manifest.scopes = (manifest.scopes as unknown[]).filter(
+      (s) => !(storageScopes as unknown[]).includes(s)
+    );
+  }
+  const justifications = manifest.scopeJustifications;
+  if (justifications && typeof justifications === 'object' && !Array.isArray(justifications)) {
+    for (const scope of storageScopes) delete (justifications as Record<string, unknown>)[scope];
+  }
 }
 
 /** The sandbox service's cap on a seed's uncompressed size (`SEED_MAX_UNCOMPRESSED_BYTES`). */

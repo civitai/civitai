@@ -22,7 +22,7 @@ import { isRatingLevel } from '$lib/nsfw-levels';
 import { logToAxiom } from '../axiom';
 import { dbRead, dbWrite } from '../db';
 import { updateImageNsfwLevel } from '../image-nsfw-level';
-import { readRetractedMedia, restrictedImageIds } from '../retracted-media';
+import { listWithheldIds, readRetractedMedia } from '../retracted-media';
 import { readScannerCsamVerdicts } from '../review-batch';
 import {
   consensusBlockReason,
@@ -179,7 +179,7 @@ export async function getInquisitorQueue(
     )
     .map((item) => item.imageId);
   // A failed read withholds every row it was asked about.
-  const withheld = await restrictedImageIds(cdnIds, { csamReview }).catch(() => new Set(cdnIds));
+  const withheld = await listWithheldIds(cdnIds, { csamReview }, 'inquisitor');
 
   return items.map(({ options, ingestion, reason, escalationReason, ...item }) => {
     const media: InquisitorMedia = viewable.has(item.imageId)

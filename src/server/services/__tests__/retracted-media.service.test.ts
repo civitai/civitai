@@ -334,9 +334,8 @@ describe('getRetractedMedia', () => {
     await expectTiers('cleared', [28]);
   });
 
-  it('keeps a csam scan flag to cleared moderators, but not a minor or clean one', async () => {
-    await expectTiers('cleared', [29]);
-    await expectTiers('anyMod', [30, 2]);
+  it('serves an image with only an automated review flag, minor or clean, to any moderator', async () => {
+    await expectTiers('anyMod', [29, 30, 2]);
   });
 
   it('keeps a csam vote to cleared moderators, but not a minor vote or another reason', async () => {
