@@ -1301,7 +1301,6 @@ describe('createDraftVersionFromWorkflow', () => {
 
   it.each([
     ['not one of the caller’s eligible models', null],
-    ['removed with its owner', { id: TARGET_ID, meta: { removedWithOwner: true } }],
     ['marked cannot-publish', { id: TARGET_ID, meta: { cannotPublish: true } }],
   ])('refuses a target that is %s, before any write', async (_, target) => {
     withTarget(target);

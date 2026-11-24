@@ -17,10 +17,10 @@ const MIGRATIONS = path.resolve(
   '../../../../packages/civitai-db-schema/prisma/migrations'
 );
 const MIGRATION = path.join(MIGRATIONS, '20270108093000_post_text/migration.sql');
-/** `post_text_held` as defined by the `20271127120000_drop_legal_holds` migration. */
+/** `post_text_held` as defined by the `20271127130000_drop_legal_hold_triggers` migration. */
 const postTextHeldSql = () => {
   const text = readFileSync(
-    path.join(MIGRATIONS, '20271127120000_drop_legal_holds/migration.sql'),
+    path.join(MIGRATIONS, '20271127130000_drop_legal_hold_triggers/migration.sql'),
     'utf8'
   );
   const start = text.indexOf('CREATE OR REPLACE FUNCTION post_text_held(');

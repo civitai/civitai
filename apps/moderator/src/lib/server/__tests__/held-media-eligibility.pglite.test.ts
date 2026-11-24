@@ -49,7 +49,7 @@ beforeAll(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
   // Owners: 201 nothing; 202 on an archived report sent long ago; 203 secondary on a report;
-  // 204 nothing; 207 nothing; 208 nothing, one image flagged.
+  // 204 nothing; 207 nothing; 208 nothing, one image flagged; -1 the placeholder.
   await db.exec(`
     INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "url", "mimeType") VALUES
       (1, 201, 'csam', NULL, 'key-1', 'image/png'),
@@ -57,6 +57,8 @@ beforeAll(async () => {
       (3, 203, NULL, NULL, 'key-3', NULL),
       (4, 204, NULL, NULL, 'key-4', NULL),
       (5, 204, 'minor', 'moderated', 'key-5', NULL),
+      (8, -1, NULL, NULL, 'key-8', NULL),
+      (9, -1, 'csam', NULL, 'key-9', NULL),
       (10, 207, NULL, 'CSAM', 'key-10', NULL),
       (11, 208, NULL, NULL, 'key-11', NULL),
       (12, 208, 'csam', NULL, 'key-12', NULL),
@@ -97,5 +99,9 @@ describe('held media eligibility', () => {
 
   it('skips an AiNotVerified block on the owner legs, but not when the image itself is flagged', async () => {
     expect(await served([13, 14])).toEqual([14]);
+  });
+
+  it('never treats the placeholder owner as held, though a report names it', async () => {
+    expect(await served([8, 9])).toEqual([9]);
   });
 });

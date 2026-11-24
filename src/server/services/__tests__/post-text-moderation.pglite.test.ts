@@ -94,7 +94,7 @@ beforeAll(async () => {
   await pg.exec(SCHEMA);
   await pg.exec(migration('20270108093000_post_text'));
   await pg.exec(migration('20271117120000_post_text_report'));
-  const drop = migration('20271127120000_drop_legal_holds');
+  const drop = migration('20271127130000_drop_legal_hold_triggers');
   const start = drop.indexOf('CREATE OR REPLACE FUNCTION post_text_held(');
   await pg.exec(drop.slice(start, drop.indexOf('pg_temp;', start) + 'pg_temp;'.length));
 });
