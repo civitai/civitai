@@ -392,10 +392,11 @@ describe('Hat Turf sticker lifetime', () => {
 
 describe("Hat Turf: the viewer's expired hats", () => {
   const VIEWER = 4;
-  const expiredPage = async (now: Date, cursor?: string, limit = 10) =>
+  const expiredPage = async (now: Date, cursor?: string, limit = 10, sort?: 'most' | 'fewest') =>
     readMyTurfPage({
       event: (await getTurfEvent('e', now))!,
       userId: VIEWER,
+      sort,
       cursor,
       limit,
       expired: true,
@@ -418,7 +419,8 @@ describe("Hat Turf: the viewer's expired hats", () => {
     await sticker(removed, VIEWER, hoursBefore(now, 50), hoursBefore(now, 49));
     await sticker(others, 5, hoursBefore(now, 50));
     expect((await expiredPage(now)).ids).toEqual([newer, older]);
-    // Pages on: the cursor continues after the last image served.
+    // An expired hat has no rank: a Hat Turf sort leaves the order as it is.
+    expect((await expiredPage(now, undefined, 10, 'fewest')).ids).toEqual([newer, older]);
     const first = await expiredPage(now, undefined, 1);
     expect(first.ids).toEqual([newer]);
     expect((await expiredPage(now, first.nextCursor, 1)).ids).toEqual([older]);
