@@ -622,6 +622,14 @@ describe('API routes outside the moderator wrappers', () => {
   it.each(APP_BLOCKS_CLI_ROUTES)('%s is an App Blocks CLI route', (route) => {
     const source = sources.get(route) ?? '';
     expect(source).not.toBe('');
-    expect(namesIdentifier(route, source, 'AppBlocksSubmit')).toBe(true);
+    // The `AppBlocksSubmit` check lives in `checkAppBlocksCliCredential`.
+    expect(
+      callsImported(
+        route,
+        source,
+        'checkAppBlocksCliCredential',
+        '~/server/auth/bearer-scope-tighten'
+      )
+    ).toBe(true);
   });
 });

@@ -4,6 +4,7 @@ import {
   moderatorPurge,
   queuePostNsfwLevelUpdates,
   type DeleteActor,
+  type HiddenImage,
 } from '@civitai/db-queries/content-deletion';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
@@ -13,7 +14,8 @@ import { getSysRedis } from './redis';
 import { bustCachedObject } from './cache';
 import { bustProfilePictures, profilePictureUserIds } from './profile-picture-cache';
 import { invalidateThumbnails } from './thumbnail-cache';
-import { bustPostGalleryCaches } from './image-moderation-effects';
+import { bustPostGalleryCaches, queueComicsForImages } from './image-moderation-effects';
+import { evictHomeBlocks } from './home-blocks';
 import { syncSearchIndexBulk } from './search-index';
 import { logAxiomError } from './axiom';
 import { imageDeleteHeldSqlText, imageDeleteHoldLegs } from './delete-hold-sql';
@@ -24,10 +26,13 @@ type DeletedImage = { id: number; postId: number | null; parentId: number | null
 export type DeletedImageRows = {
   deleted: DeletedImage[];
   notReturned: number[];
+  /** Kept for its child-safety case and blocked by the delete, so out of search like a deleted one. */
+  hidden: HiddenImage[];
   avatarUserIds: number[];
   /**
-   * Not deleted. An `evidence` image was blocked by the hold marker's delete trigger; every other
-   * one is left exactly as it was, stored file included.
+   * Not deleted. `evidence`: blocked by the hold marker's delete trigger. `review`: kept for its
+   * child-safety case, and also in `hidden` if the delete blocked it. Any other image, a `review` one
+   * a hold refused included, is left as it was.
    */
   refused: KeptImage[];
 };
@@ -90,12 +95,14 @@ async function deleteImageRows(
   // No row came back: already gone, kept by a hold marker's trigger, or held since the check.
   const notReturned: number[] = [];
   const keptForReview: KeptImage[] = [];
+  const hidden: HiddenImage[] = [];
   for (const id of toDelete) {
     // The guard is re-checked here, so a hold placed after the check above still keeps the image.
     // Every delete here is a moderator's, so the file goes with all its versions (see `moderatorPurge`).
     const {
       deleted: [image],
       kept,
+      hidden: blocked,
     } = await deleteRows(trx, {
       ids: [id],
       actor,
@@ -112,8 +119,9 @@ async function deleteImageRows(
       .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM "Image" WHERE "Image".id = ${id})`)
       .execute();
     if (kept.length) {
-      // Left and queued for its child-safety case, untouched.
+      // Kept for its child-safety case; blocked (`hidden`) unless it is the moderator's own.
       keptForReview.push({ id, reason: 'review' });
+      hidden.push(...blocked);
       continue;
     }
     if (!image) {
@@ -130,6 +138,7 @@ async function deleteImageRows(
   return {
     deleted,
     notReturned: notReturned.filter((id) => !untouchedLate.has(id)),
+    hidden,
     avatarUserIds,
     refused: [...untouched, ...heldLate, ...keptForReview],
   };
@@ -141,10 +150,11 @@ async function deleteImageRows(
 async function finishImageDeletes({
   deleted,
   notReturned,
+  hidden,
   avatarUserIds,
 }: Omit<DeletedImageRows, 'refused'>): Promise<void> {
   const affectedPostIds = new Set<number>();
-  for (const image of deleted) {
+  for (const image of [...deleted, ...hidden]) {
     if (image.postId != null) affectedPostIds.add(image.postId);
     try {
       await getSysRedis()
@@ -165,10 +175,16 @@ async function finishImageDeletes({
   const deletedIds = deleted.map((image) => image.id);
   void syncSearchIndexBulk({
     entityType: 'image',
-    entityIds: [...deletedIds, ...notReturned],
+    entityIds: [...deletedIds, ...notReturned, ...hidden.map((image) => image.id)],
     action: 'delete',
   });
   await bustKeptImages(notReturned, affectedPostIds);
+  if (hidden.length) {
+    const hiddenIds = hidden.map((image) => image.id);
+    await Promise.all([queueComicsForImages(hiddenIds), evictHomeBlocks(hiddenIds)]).catch((err) =>
+      logImageDeletionError(err, 'hidden image effects', hiddenIds)
+    );
+  }
   await invalidateThumbnails(
     deletedIds,
     deleted.map((image) => image.parentId)

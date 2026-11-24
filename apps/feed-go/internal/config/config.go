@@ -182,11 +182,15 @@ type Config struct {
 	// populate locks within seconds (a write-back populate is otherwise bounded only by its own minute).
 	MetricsClickHouseRequestTimeout time.Duration
 
-	// The Flipt server the `image-metrics-dedicated-clickhouse` flag is read from, under the Node
-	// app's names (packages/civitai-flipt/src/env.ts): FLIPT_URL, FLIPT_FETCHER_SECRET,
-	// FLIPT_ENVIRONMENT (default civitai-app). Read only when the dedicated reader is configured; with
-	// FLIPT_URL unset the flag reads off.
+	// The Flipt server, under the Node app's names (packages/civitai-flipt/src/env.ts): FLIPT_URL,
+	// FLIPT_FETCHER_SECRET, FLIPT_ENVIRONMENT (default civitai-app). Always read. The
+	// `image-metrics-dedicated-clickhouse` flag is read from it only when the dedicated reader is
+	// configured (with FLIPT_URL unset it reads off); the per-viewer `personal-hot-lead` flag on
+	// model.getAll whenever it is set (with FLIPT_URL unset every page that flag could lead falls back).
 	FliptURL, FliptClientToken, FliptEnvironment string
+	// FliptDeploymentID is FLIPT_DEPLOYMENT_ID: the `deploymentId` targeting property the Node app's
+	// buildFliptContext adds when it is set ("" = none).
+	FliptDeploymentID string
 
 	// AllowedOriginHosts is the app's allowedOriginHosts (src/server/utils/origin-helpers.ts): every
 	// SERVER_DOMAIN_* host and alias, each TRPC_ORIGINS entry's host, and NEXTAUTH_URL's host.
@@ -297,10 +301,11 @@ func Load() (*Config, error) {
 		c.MetricsClickHouseURL = os.Getenv("CLICKHOUSE_METRICS_HOST")
 		c.MetricsClickHouseUsername = os.Getenv("CLICKHOUSE_METRICS_USERNAME")
 		c.MetricsClickHousePassword = os.Getenv("CLICKHOUSE_METRICS_PASSWORD")
-		c.FliptURL = os.Getenv("FLIPT_URL")
-		c.FliptClientToken = os.Getenv("FLIPT_FETCHER_SECRET")
-		c.FliptEnvironment = env("FLIPT_ENVIRONMENT", "civitai-app")
 	}
+	c.FliptURL = os.Getenv("FLIPT_URL")
+	c.FliptClientToken = os.Getenv("FLIPT_FETCHER_SECRET")
+	c.FliptEnvironment = env("FLIPT_ENVIRONMENT", "civitai-app")
+	c.FliptDeploymentID = os.Getenv("FLIPT_DEPLOYMENT_ID")
 	c.MetricsClickHouseRequestTimeout = time.Duration(positiveIntEnv("CLICKHOUSE_METRICS_REQUEST_TIMEOUT_MS", 10_000)) * time.Millisecond
 	c.AllowedOriginHosts = AllowedOriginHosts(c.Hosts, list(os.Getenv("TRPC_ORIGINS")), os.Getenv("NEXTAUTH_URL"))
 	c.Tracing = tracing.FromEnv(os.Getenv)
