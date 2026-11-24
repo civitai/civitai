@@ -316,7 +316,9 @@ describe('surfaces a review image is refused on', () => {
 
   it('comments', async () => {
     const { commentSurfaces } = await import('~/server/services/commentv3/surfaces');
-    await expect(commentSurfaces.image.assertVisible(IMAGE, {} as never)).rejects.toMatchObject({
+    const { assertVisible } = commentSurfaces.image;
+    if (!assertVisible) throw new Error('image comments have no visibility check');
+    await expect(assertVisible(IMAGE, {} as never)).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
   });
