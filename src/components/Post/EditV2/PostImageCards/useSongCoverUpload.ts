@@ -28,6 +28,7 @@ export function useSongCoverUpload({
   onSaved: (cover: SongCover) => void;
 }) {
   const { uploadToCF, files, resetFiles } = useCFImageUpload();
+  const queryUtils = trpc.useUtils();
   const { mutateAsync } = trpc.image.setSongCover.useMutation();
   const [phase, setPhase] = useState<Phase>({ status: 'idle' });
   const picked = useRef<File>();
@@ -52,6 +53,8 @@ export function useSongCoverUpload({
       });
       setPhase({ status: 'idle' });
       onSaved(cover);
+      // The replaced cover's file is deleted: the players must stop naming it.
+      void queryUtils.image.getSongCovers.invalidate();
     } catch {
       setPhase({ status: 'error', message: SAVE_FAILED, canRetry: true });
     }
