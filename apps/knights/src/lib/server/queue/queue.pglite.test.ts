@@ -2406,6 +2406,10 @@ describe('vote partitions', () => {
     // The owner's function creates a month near the real one only, so the vote is cast in one.
     const at = monthsFromNow(3);
     const name = await dropEmptyPartition(at);
+    const before = await pg.query<{ found: boolean }>(
+      `SELECT to_regclass('"${name}"') IS NOT NULL AS found`
+    );
+    expect(before.rows[0].found).toBe(false);
     await player(1, 'Knight');
     await image(10);
     const id = await item(10);
