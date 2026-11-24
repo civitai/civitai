@@ -316,6 +316,10 @@ describe('PreviewRestarter', () => {
         start?: (args: Record<string, unknown>) => string;
         /** Port probes that find nothing listening before one does (Infinity: never). */
         quietProbes?: number;
+        /** Whether the project has a `node_modules` directory (by default it has). */
+        nodeModules?: boolean;
+        /** What its `npm install` answers; by default it exits 0 and makes `node_modules`. */
+        install?: (args: Record<string, unknown>) => string;
       } = {}
     ) {
       const state = {
@@ -323,6 +327,7 @@ describe('PreviewRestarter', () => {
         command: null as string | null,
         probes: 0,
         lastExit: null as unknown,
+        nodeModules: options.nodeModules ?? true,
       };
       const status = () =>
         JSON.stringify({
@@ -346,12 +351,77 @@ describe('PreviewRestarter', () => {
         const command = String(args.command);
         if (command.includes('block.manifest.json'))
           return runResult(0, (options.projects ?? ['web']).map((p) => `${p}\n`).join(''));
+        if (command.startsWith('test -d ')) return runResult(state.nodeModules ? 0 : 1);
+        if (command.includes('npm install')) {
+          if (options.install) return options.install(args);
+          state.nodeModules = true;
+          return runResult(0, 'added 42 packages');
+        }
         state.probes++;
         return state.probes > (options.quietProbes ?? 0) ? runResult(0) : runResult(3);
       });
       return state;
     }
     const starts = () => fake.calls.filter((c) => c.tool === 'dev_server_start').map((c) => c.args);
+    /** Every sandbox call, as `tool` or `run_command: <command>`, in order. */
+    const steps = () =>
+      fake.calls.map((c) =>
+        c.tool === 'run_command' ? `run_command: ${String(c.args.command)}` : c.tool
+      );
+
+    describe('a project with no node_modules (woken from hibernation, remixed)', () => {
+      it('installs its dependencies before it starts the dev server, then opens the preview', async () => {
+        fake.add(APP);
+        resumed({ nodeModules: false });
+        const outcome = await restarter().restart('u-1', APP, 'g');
+
+        expect(outcome).toEqual({ ok: true, blockId: MANIFEST_BLOCK, host: HOST });
+        const order = steps();
+        const install = order.indexOf('run_command: cd web && npm install --no-audit --no-fund');
+        expect(install).toBeGreaterThan(-1);
+        expect(order.indexOf('run_command: test -d web/node_modules')).toBeLessThan(install);
+        expect(install).toBeLessThan(order.indexOf('dev_server_start'));
+        // Bounded in the sandbox as the SDK upgrade's install is (90 s).
+        expect(
+          fake.calls.find((c) => String(c.args.command).includes('npm install'))?.args.timeout_ms
+        ).toBe(90_000);
+        expect(starts()).toEqual([{ command: devCommand('web') }]);
+      });
+
+      it('installs nothing in a project that has node_modules', async () => {
+        fake.add(APP);
+        resumed({ nodeModules: true });
+        expect(await restarter().restart('u-1', APP, 'g')).toMatchObject({ ok: true });
+        expect(steps()).toContain('run_command: test -d web/node_modules');
+        expect(steps().filter((s) => s.includes('npm install'))).toEqual([]);
+        expect(starts()).toEqual([{ command: devCommand('web') }]);
+      });
+
+      it.each([
+        ['exits non-zero', () => runResult(1, 'npm ERR! code E404')],
+        [
+          'does not answer',
+          () => {
+            throw new Error('the install did not answer');
+          },
+        ],
+      ])(
+        'says the dependencies could not be installed, and starts nothing, when the install %s',
+        async (_, install) => {
+          fake.add(APP);
+          resumed({ nodeModules: false, install });
+          expect(await restarter().restart('u-1', APP, 'g')).toEqual({
+            ok: false,
+            error: 'not-running',
+            message:
+              'Your app’s dependencies could not be installed, so its dev server could not start. Ask the assistant to look at it, and the preview opens by itself.',
+          });
+          expect(steps()).toContain('run_command: cd web && npm install --no-audit --no-fund');
+          expect(starts()).toEqual([]);
+          expect(tunnels.started).toEqual([]);
+        }
+      );
+    });
 
     it('starts the dev server itself, then opens the preview, with no run', async () => {
       fake.add(APP);
@@ -435,6 +505,8 @@ describe('PreviewRestarter', () => {
       // It crashes after its start answered running (vite failing to load its config, say).
       fake.tools.set('run_command', (args) => {
         if (String(args.command).includes('block.manifest.json')) return runResult(0, 'web\n');
+        // Its node_modules is there: nothing is installed.
+        if (String(args.command).startsWith('test -d ')) return runResult(0);
         state.probes++;
         state.running = false;
         state.lastExit = { code: 2, signal: null, at: '2026-10-25T03:29:00.000Z' };

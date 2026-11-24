@@ -77,6 +77,8 @@ export const RESTART_MESSAGES = {
   // Restart starts a dev server that is not running; these say why it still does not run.
   'dev-server-no-project':
     'Your app’s dev server is not running, and the preview could not tell which project to start. Ask the assistant to start it, and the preview opens by itself.',
+  'dev-server-install-failed':
+    'Your app’s dependencies could not be installed, so its dev server could not start. Ask the assistant to look at it, and the preview opens by itself.',
   'dev-server-refused':
     'Your app’s dev server is not running, and your app would not start it. Ask the assistant to start it, and the preview opens by itself.',
   'dev-server-timeout':
@@ -93,6 +95,7 @@ export const RESTART_MESSAGES = {
 /** Which words say why a dev server the restart started does not run. */
 const DEV_SERVER_FAILED = {
   'no-project': 'dev-server-no-project',
+  'install-failed': 'dev-server-install-failed',
   refused: 'dev-server-refused',
   timeout: 'dev-server-timeout',
 } as const satisfies Record<
@@ -231,10 +234,14 @@ export class PreviewRestarter implements PreviewRestarts {
         shown = await preview.reopen();
       } catch (error) {
         if (!(error instanceof DevServerNotRunningError)) throw error;
-        // Not running (as after every resume): start it as the assistant would, then the same
-        // reopen. Still no run, no model call and no Buzz. Assumed: no reply is working in this
-        // sandbox meanwhile (one mid-`npm install` would see its dev server started early); the
-        // runner cannot see the page's replies from here.
+        // Not running (as after every resume): start it as the assistant would (installing first
+        // when the project has no `node_modules`, as a woken or remixed app has none), then the
+        // same reopen. Still no run, no model call and no Buzz. Assumed: no reply is working in
+        // this sandbox meanwhile (one mid-`npm install` of its own would see its dev server started
+        // early, or a second install beside its own when `node_modules` is not there yet); the
+        // runner cannot see the page's replies from here. An install that takes most of its bound
+        // can leave the grant too little for a tunnel start (`TUNNEL_START_BUDGET_MS`): that click
+        // answers `unavailable`, and the next finds `node_modules` there and installs nothing.
         await preview.startDevServer();
         try {
           shown = await preview.reopen();

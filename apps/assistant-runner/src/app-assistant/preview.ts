@@ -11,6 +11,8 @@ import type { ChatTool } from '@civitai/components-chat/core';
 
 import type { Logger } from '../core/interfaces';
 import { DevTunnelError, type DevTunnels, type PreviewOpenAnswer } from './dev-tunnel';
+// A cycle (sdk-pin imports this file's helpers): only read inside a call, never as a module loads.
+import { CALL_SLACK_MS, SDK_INSTALL_TIMEOUT_MS } from './sdk-pin';
 
 /**
  * How often a live run stamps its app's tunnel's idle clock. civitai reaps a tunnel 30 minutes
@@ -28,8 +30,8 @@ const DETAIL_CHARS = 500;
  * How long `startDevServer` waits for the dev server it started to listen; its last probe can run
  * up to `PROBE_TIMEOUT_MS` past it. Vite on a scaffolded App Block listens within seconds. The whole
  * Restart is one request whose grant must still cover the tunnel's start after this
- * (`TUNNEL_START_BUDGET_MS`), behind up to `RESTART_WAIT_MS` of waiting for a starting app, so
- * this is kept short.
+ * (`TUNNEL_START_BUDGET_MS`), behind up to `RESTART_WAIT_MS` of waiting for a starting app and, for
+ * a project with no `node_modules`, its install (`SDK_INSTALL_TIMEOUT_MS`), so this is kept short.
  */
 export const DEV_SERVER_WAIT_MS = 20_000;
 const DEV_SERVER_POLL_MS = 1_000;
@@ -53,7 +55,9 @@ export interface RunnerPreviewDeps {
     call(
       tool: string,
       args: Record<string, unknown>,
-      signal?: AbortSignal
+      signal?: AbortSignal,
+      /** `timeoutMs`: how long to wait for its answer (`AppSandbox.call`'s own default unless set). */
+      options?: { timeoutMs?: number }
     ): Promise<{ text: string; isError: boolean }>;
     /**
      * The open app's current preview id (`AppSandbox.previewId`), and a new one
@@ -300,7 +304,11 @@ export class RunnerPreview {
    * to listen. Never a second one: one already running (or started meanwhile by another start, which
    * the sandbox refuses ours for) is only waited for. The project is the directory the sandbox last
    * ran it in, else the app key's own, else the only top-level directory, that holds a
-   * `block.manifest.json`. Throws `DevServerStartError`, saying what failed, when it does not run.
+   * `block.manifest.json`. A project with no `node_modules` (an app whose files were seeded: woken
+   * from hibernation, remixed) gets `npm install` first, bounded by `SDK_INSTALL_TIMEOUT_MS`, as the
+   * assistant is told to before it starts one; else `npm run dev` finds no `vite` and exits 127.
+   * One with `node_modules` is never installed into. Throws `DevServerStartError`, saying what
+   * failed, when it does not run (`install-failed`: the install did not exit 0, or did not answer).
    */
   startDevServer(signal?: AbortSignal): Promise<void> {
     return this.#serial(async () => {
@@ -310,6 +318,7 @@ export class RunnerPreview {
       if (status?.running !== true) {
         const dir = await this.#projectDir(app.app, status, signal);
         if (!dir) throw new DevServerStartError('no-project');
+        if (await this.#lacksNodeModules(dir, signal)) await this.#install(dir, signal);
         const started = await this.#deps.sandbox.call(
           'dev_server_start',
           { command: `cd ${dir} && ${DEV_SERVER_COMMAND}` },
@@ -356,6 +365,47 @@ export class RunnerPreview {
       .map((line) => line.trim())
       .filter(Boolean);
     return dirs.length === 1 && isProjectDir(dirs[0]!) ? dirs[0]! : null;
+  }
+
+  /**
+   * Whether the project certainly has no `node_modules` directory: only `test -d`'s own exit 1 says
+   * so. A probe that failed otherwise (no answer, a tool error) installs nothing, as before.
+   */
+  async #lacksNodeModules(dir: string, signal?: AbortSignal): Promise<boolean> {
+    try {
+      const probe = await this.#deps.sandbox.call(
+        'run_command',
+        { command: `test -d ${dir}/node_modules`, timeout_ms: PROBE_TIMEOUT_MS },
+        signal
+      );
+      return !probe.isError && exitCodeOf(probe.text) === 1;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * `cd <dir> && npm install`, bounded in the sandbox by `SDK_INSTALL_TIMEOUT_MS` (which kills it
+   * past that) and waited for that long plus `CALL_SLACK_MS`. Throws `install-failed` unless it
+   * exited 0. It runs inside the start's turn of `#serial`, so a `start_preview` meanwhile waits.
+   */
+  async #install(dir: string, signal?: AbortSignal): Promise<void> {
+    let installed: { text: string; isError: boolean };
+    try {
+      installed = await this.#deps.sandbox.call(
+        'run_command',
+        {
+          command: `cd ${dir} && npm install --no-audit --no-fund`,
+          timeout_ms: SDK_INSTALL_TIMEOUT_MS,
+        },
+        signal,
+        { timeoutMs: SDK_INSTALL_TIMEOUT_MS + CALL_SLACK_MS }
+      );
+    } catch {
+      throw new DevServerStartError('install-failed');
+    }
+    if (installed.isError || exitCodeOf(installed.text) !== 0)
+      throw new DevServerStartError('install-failed');
   }
 
   async #hasManifest(dir: string, signal?: AbortSignal): Promise<boolean> {
@@ -846,15 +896,16 @@ export class DevServerNotRunningError extends Error {
 }
 
 /**
- * Starting the dev server failed: `no-project` (which project to start was not clear), `refused` (the
- * sandbox would not start it), `exited` (it stopped as soon as it started; `exitCode` is its code),
- * or `timeout` (it never listened in time).
+ * Starting the dev server failed: `no-project` (which project to start was not clear),
+ * `install-failed` (the project had no `node_modules`, and `npm install` did not exit 0 or did not
+ * answer; nothing was started), `refused` (the sandbox would not start it), `exited` (it stopped as
+ * soon as it started; `exitCode` is its code), or `timeout` (it never listened in time).
  */
 export class DevServerStartError extends Error {
   override name = 'DevServerStartError';
   readonly exitCode: number | null;
   constructor(
-    readonly reason: 'no-project' | 'refused' | 'exited' | 'timeout',
+    readonly reason: 'no-project' | 'install-failed' | 'refused' | 'exited' | 'timeout',
     status?: DevServerStatus
   ) {
     super(`The dev server did not start (${reason}).`);

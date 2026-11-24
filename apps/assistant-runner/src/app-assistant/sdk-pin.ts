@@ -19,7 +19,8 @@ export const SDK_PIN_READ_TIMEOUT_MS = 5_000;
  * install's whole process group past it, and answers). An App Block has a handful of dependencies
  * and keeps its `node_modules` across a pause, so bumping one of them is an install of seconds to a
  * few tens of seconds; 90 s leaves room for a cold npm cache without letting a wedged registry hold
- * the reply.
+ * the reply. Also the bound on the install `RunnerPreview.startDevServer` runs first in a project
+ * with no `node_modules` at all (an app whose files were seeded: woken, remixed).
  */
 export const SDK_INSTALL_TIMEOUT_MS = 90_000;
 /**
@@ -34,7 +35,7 @@ export const SDK_INSTALL_TIMEOUT_MS = 90_000;
  */
 export const SDK_UPGRADE_TIMEOUT_MS = 150_000;
 /** How long one MCP call waits past the sandbox's own bound on its command, for its answer. */
-const CALL_SLACK_MS = 10_000;
+export const CALL_SLACK_MS = 10_000;
 /** The most of `package-lock.json` that is kept to put back: an app's lockfile larger than this is not upgraded. */
 const LOCKFILE_MAX_BYTES = 1024 * 1024;
 /** How many tries an app gets per conversation for one (declared, installed) pair: once, and once more. */
