@@ -45,8 +45,6 @@ export const routes: ApiRoutes = {
   'send-discount': () => import('~/server/api-routes/admin/send-discount'),
   'system-account-api-key': () => import('~/server/api-routes/admin/system-account-api-key'),
   'system-account-profile': () => import('~/server/api-routes/admin/system-account-profile'),
-  'temp/__tests__/model-nsfw-lock-backfill.pglite.test': () =>
-    import('~/server/api-routes/admin/temp/__tests__/model-nsfw-lock-backfill.pglite.test'),
   'temp/app-doc-levels-backfill': () =>
     import('~/server/api-routes/admin/temp/app-doc-levels-backfill'),
   'temp/apply-models-index-displayed-attributes': () =>
