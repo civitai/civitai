@@ -59,14 +59,16 @@ vi.mock('~/components/Buzz/BuzzTransactionButton', () => ({
     ),
 }));
 vi.mock('next/router', () => ({ useRouter: () => ({ push: () => undefined }) }));
-// The avatar reads the signed-in user; these tests are about the disclosure and what is sent.
-vi.mock('~/components/UserAvatar/UserAvatar', () => ({ UserAvatar: () => null }));
 vi.mock('~/components/Currency/CurrencyBadge', () => ({ CurrencyBadge: () => null }));
 // The uploader needs a signed-in session; these tests are about publishing.
 vi.mock('~/libs/form/components/SimpleImageUpload', () => ({ SimpleImageUpload: () => null }));
 
 const { PublishServiceModal } = await import('~/components/CreatorShop/Services/SellerAffirmation');
 const { FeatureFlagsProvider } = await import('~/providers/FeatureFlagsProvider');
+const { SignedOutSessionProvider } = await import(
+  '~/components/CivitaiWrapped/CivitaiSessionProvider'
+);
+const { FixedBrowserSettingsProvider } = await import('~/providers/BrowserSettingsProvider');
 const { ServiceRequestModal } = await import(
   '~/components/CreatorShop/Services/deals/ServiceRequestModal'
 );
@@ -100,7 +102,15 @@ const mount = async (node: ReactNode, flags: object = {}) => {
       createElement(
         MantineProvider,
         null,
-        createElement(FeatureFlagsProvider, { flags: flags as never, children: node })
+        createElement(
+          SignedOutSessionProvider,
+          null,
+          createElement(
+            FixedBrowserSettingsProvider,
+            { domain: 'green' },
+            createElement(FeatureFlagsProvider, { flags: flags as never } as never, node)
+          )
+        )
       )
     );
   });

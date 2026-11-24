@@ -44,15 +44,15 @@ vi.mock('~/components/Buzz/BuzzTransactionButton', () => ({
     ),
 }));
 vi.mock('next/router', () => ({ useRouter: () => ({ push: () => undefined }) }));
-// The avatar reads the signed-in user; these tests are about the disclosure and what is sent.
-vi.mock('~/components/UserAvatar/UserAvatar', () => ({
-  UserAvatar: () => createElement('span', { 'data-avatar': true }),
-}));
 vi.mock('~/components/Currency/CurrencyBadge', () => ({
   CurrencyBadge: () => null,
 }));
 
 const { FeatureFlagsProvider } = await import('~/providers/FeatureFlagsProvider');
+const { SignedOutSessionProvider } = await import(
+  '~/components/CivitaiWrapped/CivitaiSessionProvider'
+);
+const { FixedBrowserSettingsProvider } = await import('~/providers/BrowserSettingsProvider');
 const { ServiceRequestModal, ServiceOfferingTerms, ServiceBuyerDisclosure } = await import(
   '~/components/CreatorShop/Services/deals/ServiceRequestModal'
 );
@@ -64,7 +64,15 @@ const html = (component: ReactNode, flags: object = {}) =>
     createElement(
       MantineProvider,
       null,
-      createElement(FeatureFlagsProvider, { flags: flags as never } as never, component)
+      createElement(
+        SignedOutSessionProvider,
+        null,
+        createElement(
+          FixedBrowserSettingsProvider,
+          { domain: 'green' },
+          createElement(FeatureFlagsProvider, { flags: flags as never } as never, component)
+        )
+      )
     )
   );
 
@@ -131,11 +139,11 @@ describe('the request modal outside the creatorServicesNext rollout', () => {
     const off = terms({});
     expect(off).toContain('From seller · ');
     expect(off).toContain('A hand-drawn badge.');
-    expect(off).not.toContain('data-avatar');
+    expect(off).not.toContain('/user/seller');
     expect(off).not.toContain('About this service');
     // Control: inside the rollout the same component does show them, so the checks above can fail.
     const on = terms({ creatorServicesNext: true });
-    expect(on).toContain('data-avatar');
+    expect(on).toContain('/user/seller');
     expect(on).toContain('About this service');
     expect(on).not.toContain('From seller · ');
   });
