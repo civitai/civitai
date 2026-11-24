@@ -15,7 +15,7 @@ import {
   getImagesForConnection,
   withholdBatchMedia,
 } from './bulk-image.service';
-import { HELD_MEDIA_PAGE } from './held-media';
+import { holdsCsamReview } from './held-media';
 import { articleBody, type ArticleBody } from './article-body';
 import { restrictedImageIds } from './retracted-media';
 import { cappedText } from './html-to-text';
@@ -579,7 +579,7 @@ function itemEvidence(
   cursor: TranscriptCursor
 ) {
   // Each image batch is sent as the media access rule lets this moderator see it.
-  const csamReview = canAccess(locals.user, HELD_MEDIA_PAGE);
+  const csamReview = holdsCsamReview(locals.user);
   switch (type) {
     case 'article':
       return articleItem(id, csamReview);

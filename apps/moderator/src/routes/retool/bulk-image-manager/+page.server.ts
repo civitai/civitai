@@ -1,8 +1,8 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { canAccess, denied } from '$lib/server/access';
-import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
+import { denied } from '$lib/server/access';
+import { holdsCsamReview } from '$lib/server/held-media';
 import { withheldAccountRefusal, withheldRefusal } from '$lib/server/retracted-media';
 import type { PermissionId } from '$lib/permissions';
 import { parseForm, parseIdList, parseQuery, checkboxField } from '$lib/server/query';
@@ -85,7 +85,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   if (source === 'imageIds') {
     const ids = parseIdList(q.replace(/[\s\n]+/g, ','));
     const batch = await withholdBatchMedia(await getImagesByIds(ids, window), {
-      csamReview: canAccess(locals.user, HELD_MEDIA_PAGE),
+      csamReview: holdsCsamReview(locals.user),
     });
     const ownerIds = [...new Set(batch.items.map((i) => i.userId))];
     const owners = [...(await usersByIds(ownerIds))].map(([id, u]) => ({ id, ...u }));
@@ -134,7 +134,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       ? await getImagesForCollection(id, window)
       : await getImagesForUser(id, window, source === 'userRemoved');
   const batch = await withholdBatchMedia(read, {
-    csamReview: canAccess(locals.user, HELD_MEDIA_PAGE),
+    csamReview: holdsCsamReview(locals.user),
   });
 
   // Whose content this batch actually is. A model's images belong to whoever posted them, which is

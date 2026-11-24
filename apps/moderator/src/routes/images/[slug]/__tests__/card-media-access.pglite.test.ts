@@ -58,7 +58,7 @@ vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
 const { load, actions } = await import('../+page.server');
-const { getModeratorMedia } = await import('$lib/server/retracted-media');
+const { getModeratorMedia, withheldMedia } = await import('$lib/server/retracted-media');
 
 const RESTRICTED = 201;
 const CONTROL = 202;
@@ -135,7 +135,7 @@ const card = async (user: { id: number; roles: string[] }, id: number) => {
 
 describe('card load, without the grant', () => {
   it('keeps the restricted row, marked restricted', async () => {
-    expect(await card(WITHOUT_GRANT, RESTRICTED)).toMatchObject({ restricted: true });
+    expect(await card(WITHOUT_GRANT, RESTRICTED)).toMatchObject(withheldMedia());
   });
 
   it.each([

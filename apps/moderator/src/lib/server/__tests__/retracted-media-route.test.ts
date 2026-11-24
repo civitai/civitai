@@ -32,6 +32,7 @@ vi.mock('$lib/server/retracted-media-rate', () => ({ retractedMediaRetryAfter })
 vi.mock('$lib/server/storage', () => ({ getStorage: () => ({ getGetUrl }) }));
 vi.mock('$lib/server/held-media', () => ({
   HELD_MEDIA_PAGE: '/images/csam',
+  holdsCsamReview: (_user: unknown) => grants.paths.has('/images/csam'),
   recordHeldView,
   recordHeldServe: () => undefined,
 }));

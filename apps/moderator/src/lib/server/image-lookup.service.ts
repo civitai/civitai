@@ -3,7 +3,7 @@ import { dbRead } from './db';
 import { getModActivityFor, type ModActivityRow } from './mod-activity';
 import { usersByIds } from './users.service';
 import { getImagesForPost, withholdBatchMedia, type ServedBulkImage } from './bulk-image.service';
-import { restrictedImageIds } from './retracted-media';
+import { restrictedImageIds, withheldMedia } from './retracted-media';
 import { getReactions, type ImageReactionRow, type ReactionPage } from './image-reactions.service';
 import type { MediaType } from '../media/edge-url';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
@@ -182,16 +182,9 @@ export async function getImageLookup(
     return {
       image: {
         ...found,
-        ...WITHHELD,
+        ...withheldMedia(),
         hash: null,
         pHash: null,
-        width: null,
-        height: null,
-        name: null,
-        blockedFor: null,
-        needsReview: null,
-        prompt: null,
-        negativePrompt: null,
         meta: null,
         promptHighlight: null,
         scanJobs: null,
@@ -242,7 +235,6 @@ export type PostDetail = {
 };
 
 /** What a withheld image is served with in place of its media. */
-const WITHHELD = { url: '', type: null, restricted: true } as const;
 
 export type PostLookupResult = {
   post: PostDetail;
@@ -315,7 +307,7 @@ export async function getRecentImagesOutsidePost(
     { csamReview }
   );
   return rows.map((r) =>
-    withheld.has(r.id) ? { ...r, ...WITHHELD } : { ...r, restricted: false }
+    withheld.has(r.id) ? { ...r, ...withheldMedia() } : { ...r, restricted: false }
   );
 }
 

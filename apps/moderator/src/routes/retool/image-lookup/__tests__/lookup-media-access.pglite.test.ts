@@ -31,6 +31,7 @@ vi.mock('$lib/server/clickhouse', async () => {
   const { imageAuditContentHash } = await import('@civitai/shared/media-signals');
   return {
     getClickhouse: () => ({
+      $query: async () => [],
       query: async ({ query_params }: { query_params: { hashes?: string[] } }) => {
         const hit = new Set(scanner.hits.map(imageAuditContentHash));
         return {
@@ -48,7 +49,9 @@ vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
 const { load } = await import('../+page.server');
 const { getRecentImagesOutsidePost } = await import('$lib/server/image-lookup.service');
-const { restrictedImageIds } = await import('$lib/server/retracted-media');
+const { restrictedImageIds, withheldMedia } = await import('$lib/server/retracted-media');
+const signals = await import('../../../api/image-signals/[imageId]/+server');
+const { applyGrants } = await import('$lib/server/access');
 
 const POST = 50;
 const WITHHELD = 401;
@@ -125,6 +128,10 @@ const postImageFor = async (user: { id: number; roles: string[] }, id: number) =
 };
 
 describe('Image Lookup by id, without the grant', () => {
+  it('serves the withheld image with every withheld-media field blanked', async () => {
+    expect(await imageFor(WITHOUT_GRANT, WITHHELD)).toMatchObject(withheldMedia());
+  });
+
   it.each([
     ['url', ''],
     ['type', null],
@@ -155,8 +162,13 @@ describe('Image Lookup by id, without the grant', () => {
     expect((await resultFor(WITHOUT_GRANT, WITHHELD))[key]).toEqual([]);
   });
 
-  it('withholds an image only the scanner marks', async () => {
-    expect(await imageFor(WITHOUT_GRANT, SCANNER_HIT)).toMatchObject({ url: '', restricted: true });
+  // A scanner verdict withholds only a row /api/retracted-media could serve; this one the CDN still
+  // serves (civitai/civitai#10170, the moderation lead's ruling on the scanner's scope).
+  it('serves a live image only the scanner marks', async () => {
+    expect(await imageFor(WITHOUT_GRANT, SCANNER_HIT)).toMatchObject({
+      url: 'scanner-key',
+      restricted: false,
+    });
   });
 
   it('serves the storage key in no field', async () => {
@@ -235,5 +247,35 @@ describe('Image Lookup, with the grant', () => {
       url: KEY,
       restricted: false,
     });
+  });
+});
+
+describe("Image Lookup's signals", () => {
+  // A role that may open Image Lookup, and not the held-media page.
+  const LOOKUP = { id: 4, roles: ['moderator:lookup'] };
+  beforeEach(() => applyGrants({ '/retool/image-lookup': ['moderator:lookup'] }));
+  afterEach(() => applyGrants({}));
+  const status = async (user: { id: number; roles: string[] }, imageId: number) => {
+    try {
+      const res = await signals.GET({
+        params: { imageId: String(imageId) },
+        locals: { user },
+      } as never);
+      return res.status;
+    } catch (e) {
+      return (e as { status?: number }).status;
+    }
+  };
+
+  it("refuses a withheld image's events and remixes without the grant", async () => {
+    expect(await status(LOOKUP, WITHHELD)).toBe(403);
+  });
+
+  it('serves an unrestricted image without the grant', async () => {
+    expect(await status(LOOKUP, CONTROL)).toBe(200);
+  });
+
+  it('serves the withheld image to a grant holder', async () => {
+    expect(await status(WITH_GRANT, WITHHELD)).toBe(200);
   });
 });

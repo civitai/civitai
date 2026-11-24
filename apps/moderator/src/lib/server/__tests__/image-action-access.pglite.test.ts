@@ -3,6 +3,7 @@ import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../test/pglite';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
+import { SCANNER_UNAVAILABLE_REFUSED } from '$lib/held-media';
 import { applyGrants } from '../access';
 import { IMAGE_PAGES_SCHEMA } from './appeal-media-schema';
 
@@ -10,7 +11,7 @@ import { IMAGE_PAGES_SCHEMA } from './appeal-media-schema';
  * Pins the media access rule (`restrictedImageIds` in retracted-media.ts, civitai/civitai#10170). Image actions refuse a batch with an image the media access rule withholds from this moderator,
  * as the appeal rulings do, and Bulk Image Manager's load sends that image without its media. The
  * reads and the rule run against pglite; the writes an action makes are faked, as a test only needs
- * to see them reached or not.
+ * to see them reached or not. So a case that acts proves only that the gate lets the call through.
  */
 
 vi.setConfig({ hookTimeout: 60_000 });
@@ -22,6 +23,9 @@ const { dbHandle, writes } = vi.hoisted(() => ({
     setImageFlag: vi.fn(async (_input: unknown) => ({ ok: true as const })),
     removeImages: vi.fn(async (_input: unknown) => ({ ok: true as const, removed: 1, held: [] })),
     removeAllImagesForUser: vi.fn(async (_input: unknown) => ({ ok: true as const, count: 1 })),
+    purgeAllContent: vi.fn(async (_input: unknown) => ({ ok: true as const })),
+    deleteAccount: vi.fn(async (_input: unknown) => ({ ok: true as const })),
+    deleteAccountHold: vi.fn(async (_userId: number) => 'clear' as const),
   },
 }));
 
@@ -84,10 +88,12 @@ const bulkPage = await import('../../../routes/retool/bulk-image-manager/+page.s
 const lookupPage = await import('../../../routes/retool/image-lookup/+page.server');
 const queuePage = await import('../../../routes/images/[slug]/+page.server');
 const { collectionImages, loadEntityItem } = await import('../entity-queue-load');
+const { withheldMedia } = await import('../retracted-media');
 const comicsPage = await import('../../../routes/comics-review/+page.server');
 const ratingsPage = await import('../../../routes/images/ratings/+page.server');
 const downleveledPage = await import('../../../routes/images/downleveled/+page.server');
 const sweepPage = await import('../../../routes/retool/front-page-audit/[media]/+page.server');
+const userLookupPage = await import('../../../routes/retool/user-lookup/[section]/+page.server');
 
 // A routine block reason, kept by the other row on its url, which has not finished its scan.
 const WITHHELD = 501;
@@ -156,13 +162,34 @@ describe('report image actions, without the grant', () => {
     expect(write).not.toHaveBeenCalled();
   });
 
-  it('refuses a clean image while the scanner cannot answer', async () => {
+  it('refuses a retracted image while the scanner cannot answer, saying so', async () => {
     scanner.down = true;
     const result = (await reportActions.restore(
       event(WITHOUT_GRANT, { imageIds: String(CONTROL) })
     )) as Result;
     expect(result.status).toBe(403);
+    expect(result.data?.error).toContain(SCANNER_UNAVAILABLE_REFUSED);
     expect(writes.restoreImages).not.toHaveBeenCalled();
+  });
+
+  // Ordinary moderation does not wait on ClickHouse: only a row /api/retracted-media could serve is
+  // read from the scanner.
+  it('acts on a scanned image nothing withholds while the scanner cannot answer', async () => {
+    scanner.down = true;
+    await queuePage.actions.accept(event(WITHOUT_GRANT, { imageId: '504' }));
+    await queuePage.actions.block(event(WITHOUT_GRANT, { imageId: '504' }));
+    expect(acceptImage).toHaveBeenCalledOnce();
+    expect(blockImage).toHaveBeenCalledOnce();
+  });
+
+  it('refuses to accept or remove a retracted image while the scanner cannot answer', async () => {
+    scanner.down = true;
+    for (const action of [queuePage.actions.accept, queuePage.actions.block]) {
+      const result = (await action(event(WITHOUT_GRANT, { imageId: String(CONTROL) }))) as Result;
+      expect(result.data?.error).toContain(SCANNER_UNAVAILABLE_REFUSED);
+    }
+    expect(acceptImage).not.toHaveBeenCalled();
+    expect(blockImage).not.toHaveBeenCalled();
   });
 
   it('restores a batch with nothing withheld', async () => {
@@ -191,12 +218,7 @@ describe('Bulk Image Manager', () => {
     (await load(user)).batch.items.find((i) => i.id === id);
 
   it('sends a withheld image without its media', async () => {
-    expect(await item(WITHOUT_GRANT, WITHHELD)).toMatchObject({
-      url: '',
-      type: null,
-      blockedFor: null,
-      restricted: true,
-    });
+    expect(await item(WITHOUT_GRANT, WITHHELD)).toMatchObject(withheldMedia());
   });
 
   it('sends an unrestricted image as before', async () => {
@@ -603,5 +625,52 @@ describe("the image queues' gated actions, on an image nothing withholds, withou
     );
     expect(dismissFromCsamQueue).toHaveBeenCalledOnce();
     expect(dismissUserFromCsamQueue).toHaveBeenCalledOnce();
+  });
+});
+
+describe("User Lookup's account-wide removals", () => {
+  const ACCOUNT_GRANTS = { 'user.purge': true, 'user.deleteAccount': true };
+  const act = (
+    action: 'purgeContent' | 'deleteAccount',
+    user: { id: number; roles: string[] },
+    userId: number,
+    username: string
+  ) => {
+    const form = new FormData();
+    form.set('userId', String(userId));
+    form.set('confirm', username);
+    form.set('username', username);
+    form.set('removeImages', 'true');
+    return (userLookupPage.actions[action] as (e: never) => Promise<unknown>)({
+      request: new Request('https://mod.test/retool/user-lookup', { method: 'POST', body: form }),
+      locals: { user, grants: ACCOUNT_GRANTS },
+    } as never) as Promise<Result>;
+  };
+
+  it.each([
+    ['purgeContent', () => writes.purgeAllContent],
+    ['deleteAccount', () => writes.deleteAccount],
+  ] as const)(
+    '%s refuses an account with a withheld image without the grant',
+    async (action, write) => {
+      expect((await act(action, WITHOUT_GRANT, 7, 'owner')).status).toBe(403);
+      expect(write()).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['purgeContent', () => writes.purgeAllContent],
+    ['deleteAccount', () => writes.deleteAccount],
+  ] as const)('%s acts on a clean account without the grant', async (action, write) => {
+    await act(action, WITHOUT_GRANT, 9, 'clean');
+    expect(write()).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['purgeContent', () => writes.purgeAllContent],
+    ['deleteAccount', () => writes.deleteAccount],
+  ] as const)('%s acts on the account for a grant holder', async (action, write) => {
+    await act(action, WITH_GRANT, 7, 'owner');
+    expect(write()).toHaveBeenCalledOnce();
   });
 });

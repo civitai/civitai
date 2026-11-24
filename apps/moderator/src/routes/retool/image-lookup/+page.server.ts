@@ -1,8 +1,8 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { canAccess, denied } from '$lib/server/access';
-import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
+import { denied } from '$lib/server/access';
+import { holdsCsamReview } from '$lib/server/held-media';
 import { withheldRefusal } from '$lib/server/retracted-media';
 import { setImageFlag } from '$lib/server/user-actions.service';
 import { lookupQuerySchema, parseForm, parseQuery } from '$lib/server/query';
@@ -27,7 +27,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
   // `asId`, not `Number`: `Post.id` is a Postgres integer, so an over-long id ERRORS the comparison
   // rather than missing it, and an uncaught throw in `load` renders a 500 instead of "no post matches".
   const postId = /^\d+$/.test(postParam) ? asId(postParam) : resolvePostId(q);
-  const csamReview = canAccess(locals.user, HELD_MEDIA_PAGE);
+  const csamReview = holdsCsamReview(locals.user);
 
   if (postId) {
     const post = await getPostLookup(postId, { csamReview });

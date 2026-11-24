@@ -3,8 +3,7 @@ import { agentReportFilterOf, agentReportWhere } from '$lib/server/agent-reporte
 import { FEEDBACK_CAPTURE_OWNER_REFUSAL } from '@civitai/shared/feedback-capture';
 import { z } from 'zod';
 import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
-import { canAccess } from '$lib/server/access';
-import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
+import { holdsCsamReview } from '$lib/server/held-media';
 import { APPEAL_RULING_REFUSED } from '$lib/held-media';
 import {
   withheldAccountRefusal,
@@ -159,7 +158,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
       browsingLevel: level,
       cursor,
       limit,
-      csamReview: canAccess(user, HELD_MEDIA_PAGE),
+      csamReview: holdsCsamReview(user),
     });
     // A restricted image's 3D model parent shows the image on the site.
     const cards = (await withModel3d(items)).map((item) =>

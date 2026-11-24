@@ -1,5 +1,4 @@
-import { canAccess } from '$lib/server/access';
-import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
+import { holdsCsamReview } from '$lib/server/held-media';
 import { getPostLookup, getRecentImagesOutsidePost } from '$lib/server/image-lookup.service';
 import { loadAccountHistory } from '$lib/server/account-history';
 import { getReportedPostTexts } from '$lib/server/post-text-reports.service';
@@ -17,7 +16,7 @@ import type { PostTab } from './tabs';
  * no owner to look up until it has been read, hence the second round trip.
  */
 export async function loadPostItem(postId: number, tab: PostTab, locals: App.Locals) {
-  const csamReview = canAccess(locals.user, HELD_MEDIA_PAGE);
+  const csamReview = holdsCsamReview(locals.user);
   const [lookup, reports, storylineChapter] = await Promise.all([
     getPostLookup(postId, { csamReview }),
     loadItemReports(ReportEntity.Post, postId),

@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { isAgentReporter, type AgentReportWhere } from './agent-reporters';
 import { dbRead } from './db';
-import { restrictedImageIds } from './retracted-media';
+import { restrictedImageIds, withheldMedia } from './retracted-media';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
 import { getFlagClearHolds, holdMarkerState, type FlagClearHoldLeg } from './csam-flag-clear';
@@ -746,32 +746,35 @@ export async function getAppealImageQueue({
     }
   }
 
-  const items: AppealImageItem[] = rows.map((r) => ({
-    id: r.id,
-    ...(restricted.has(r.id)
-      ? { url: '', width: null, height: null, type: null, restricted: true }
-      : { url: r.url, width: r.width, height: r.height, type: r.type, restricted: false }),
-    nsfwLevel: r.nsfwLevel,
-    needsReview: r.needsReview,
-    minor: r.minor,
-    poi: r.poi,
-    modelRestricted: r.modelRestricted,
-    blockedFor: r.blockedFor,
-    userId: r.userId,
-    username: r.username,
-    appeal: {
-      id: r.appealId,
-      message: r.appealMessage,
-      createdAt: r.appealCreatedAt,
-      username: r.appealUsername,
-      userId: r.appealUserId,
-    },
-    moderatorUsername: r.moderatorUsername,
-    removedAt: r.removedAt,
-    tosReason: tosByImage.get(r.id) ?? null,
-    reports: reportsByImage.get(r.id) ?? [],
-    // These would say why it is withheld.
-    ...(restricted.has(r.id) && { blockedFor: null, tosReason: null, reports: [] }),
-  }));
+  const items: AppealImageItem[] = rows.map((r) => {
+    const item = {
+      id: r.id,
+      url: r.url,
+      width: r.width,
+      height: r.height,
+      type: r.type,
+      restricted: false,
+      nsfwLevel: r.nsfwLevel,
+      needsReview: r.needsReview,
+      minor: r.minor,
+      poi: r.poi,
+      modelRestricted: r.modelRestricted,
+      blockedFor: r.blockedFor,
+      userId: r.userId,
+      username: r.username,
+      appeal: {
+        id: r.appealId,
+        message: r.appealMessage,
+        createdAt: r.appealCreatedAt,
+        username: r.appealUsername,
+        userId: r.appealUserId,
+      },
+      moderatorUsername: r.moderatorUsername,
+      removedAt: r.removedAt,
+      tosReason: tosByImage.get(r.id) ?? null,
+      reports: reportsByImage.get(r.id) ?? [],
+    };
+    return restricted.has(r.id) ? { ...item, ...withheldMedia() } : item;
+  });
   return { items, nextCursor };
 }

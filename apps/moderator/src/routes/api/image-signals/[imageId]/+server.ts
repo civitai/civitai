@@ -1,8 +1,10 @@
-import { json } from '@sveltejs/kit';
+import { error, json } from '@sveltejs/kit';
 import { sql } from '@civitai/db/kysely';
 import type { RequestHandler } from './$types';
 import { requireIdParam } from '$lib/server/api-guard';
 import { dbRead } from '$lib/server/db';
+import { holdsCsamReview } from '$lib/server/held-media';
+import { restrictedImageIds } from '$lib/server/retracted-media';
 import {
   getFlaggedRemixes,
   getImageEvents,
@@ -19,6 +21,11 @@ import { section } from '$lib/server/section';
 // by the server's UTC offset; formatting in SQL keeps the conversion out of JS entirely.
 export const GET: RequestHandler = async ({ params, locals }) => {
   const imageId = requireIdParam(locals, params.imageId, '/retool/image-lookup', 'imageId');
+  // Its events and remixes say why an image was withheld, so they are withheld with it.
+  const withheld = await restrictedImageIds([imageId], {
+    csamReview: holdsCsamReview(locals.user),
+  });
+  if (withheld.has(imageId)) error(403, 'Not available to you');
 
   const image = await dbRead
     .selectFrom('Image')

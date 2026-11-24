@@ -1,11 +1,16 @@
 import { sql } from '@civitai/db/kysely';
 import { heldImageSql, SERVED_ACTIVITY } from '@civitai/shared/held-media';
+import { canAccess } from './access';
 import { dbRead } from './db';
 import { insertModActivity, recordModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
 
 /** The page whose grant opens held media. */
 export const HELD_MEDIA_PAGE = '/images/csam';
+
+/** The CSAM grant: what decides which media a moderator is shown. */
+export const holdsCsamReview = (user: App.Locals['user'] | undefined) =>
+  canAccess(user, HELD_MEDIA_PAGE);
 
 export type HeldMedia = { url: string; type: string; mimeType: string | null };
 
