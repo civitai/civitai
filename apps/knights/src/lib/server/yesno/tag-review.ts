@@ -3,10 +3,9 @@ import {
   mergeMeta,
   MOD_TAG_REVIEW_AXIS,
   MOD_TAG_REVIEW_SOURCE,
-  modReviewEligibleImage,
   readWithoutJit,
-  servableImage,
 } from '@civitai/db/knights';
+import { modReviewEligibleImage, servableImage } from '../image-gate';
 import type { DB } from '@civitai/db-schema/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import { staffedRanks } from '../queue/queue.service';
