@@ -4,6 +4,7 @@ import { FEEDBACK_CAPTURE_OWNER_REFUSAL } from '@civitai/shared/feedback-capture
 import { z } from 'zod';
 import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
 import { holdsCsamReview } from '$lib/server/held-media';
+import { logToAxiom } from '$lib/server/axiom';
 import {
   restrictedImageIds,
   withheldAccountRefusal,
@@ -114,9 +115,17 @@ async function withModel3d<T extends { id: number }>(items: T[]) {
 /** Cards withheld from `user` go out as `withheldRow`s, with no prompt, rule, review tags, report
  *  reason or 3D model parent. */
 async function withheldCards<T extends { id: number }>(items: T[], user?: App.Locals['user']) {
-  const withheld = await restrictedImageIds(
-    items.map((i) => i.id),
-    { csamReview: holdsCsamReview(user) }
+  const ids = items.map((i) => i.id);
+  // A failed read withholds the page's cards rather than failing the queue.
+  const withheld = await restrictedImageIds(ids, { csamReview: holdsCsamReview(user) }).catch(
+    (e) => {
+      void logToAxiom({
+        name: 'image-queue-withheld-read-failed',
+        type: 'error',
+        payload: { count: ids.length, message: e instanceof Error ? e.message : String(e) },
+      });
+      return new Set(ids);
+    }
   );
   return items.map((item) => {
     if (!withheld.has(item.id)) return { ...item, restricted: false };

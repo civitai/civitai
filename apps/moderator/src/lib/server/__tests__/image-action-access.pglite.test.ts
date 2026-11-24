@@ -1090,6 +1090,12 @@ describe('the reported and review queues, without the grant', () => {
     });
   });
 
+  it('withholds every card, rather than failing to load, when the read fails', async () => {
+    await db.exec(`DROP TABLE "CsamReport"`);
+    const cards = await minor(WITHOUT_GRANT);
+    expect([...cards.values()].map((c) => c.restricted)).toEqual([true, true]);
+  });
+
   // The grid leaves a restricted card out of the selection, so a bulk accept posts the rest.
   it('bulk accepts the rest of the page', async () => {
     await queuePage.actions.bulkAccept(event(WITHOUT_GRANT, { imageIds: String(CLEAN) }));
