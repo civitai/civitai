@@ -1,10 +1,6 @@
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
-import {
-  readWithoutJit,
-  REFERENCE_SOURCE,
-  REFERENCE_STATUS,
-  servableImage,
-} from '@civitai/db/knights';
+import { readWithoutJit, REFERENCE_SOURCE, REFERENCE_STATUS } from '@civitai/db/knights';
+import { servableImage } from '../image-gate';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';

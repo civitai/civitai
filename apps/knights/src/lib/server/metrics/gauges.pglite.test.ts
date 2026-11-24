@@ -4,7 +4,6 @@ import { Registry } from 'prom-client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { ensureMonthPartition } from '../queue/queue.service';
 import { cachedSnapshot, readGaugeSnapshot, registerGauges } from './gauges';
 
 // Far from the real clock, so next month's partition is one only this file creates.
@@ -141,7 +140,9 @@ describe('readGaugeSnapshot', () => {
   });
 
   it("sees next month's vote partition once it exists", async () => {
-    await ensureMonthPartition(db, { year: 2030, month: 2 });
+    await pg.exec(
+      `CREATE TABLE "KnightsVote_2030_02" PARTITION OF "KnightsVote" FOR VALUES FROM ('2030-02-01') TO ('2030-03-01')`
+    );
     expect((await readGaugeSnapshot(db, NOW)).nextPartitionReady).toBe(true);
   });
 });

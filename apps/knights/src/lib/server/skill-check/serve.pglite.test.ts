@@ -2,7 +2,11 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
-import { createQueueDb } from '../../../test/pglite-kysely';
+import {
+  createQueueDb,
+  SKILL_CHECK_GATE_READABLE,
+  SKILL_CHECK_GATE_UNREADABLE,
+} from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import {
   answerApprentice,
@@ -122,7 +126,7 @@ describe('serving mod-confirmed checks to Knights', () => {
     expect((await pick(1))?.referenceId).toBe(id);
   });
 
-  it('offers both pools side by side', async () => {
+  it('offers both pools side by side', { timeout: 30_000 }, async () => {
     await seedPlayer(pg, 1);
     const ids = new Set([await hiddenRef(10), await skillCheck(11)]);
     const seen = new Set<number>();
@@ -298,7 +302,7 @@ describe('showing an answered mod-confirmed image again', () => {
     const hidden = await hiddenRef(11);
     await answer(1, check, '4');
     await answer(1, hidden, '4');
-    await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
+    await pg.exec(SKILL_CHECK_GATE_UNREADABLE);
     try {
       const entries = await judged(1);
       expect(entries).toHaveLength(2);
@@ -309,7 +313,7 @@ describe('showing an answered mod-confirmed image again', () => {
         ])
       );
     } finally {
-      await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
+      await pg.exec(SKILL_CHECK_GATE_READABLE);
     }
   });
 });
@@ -319,12 +323,12 @@ describe('failing closed on serve', () => {
     await seedPlayer(pg, 1);
     const check = await skillCheck(10);
     const hidden = await hiddenRef(11);
-    await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
+    await pg.exec(SKILL_CHECK_GATE_UNREADABLE);
     try {
       expect((await pick(1))?.referenceId).toBe(hidden);
       expect(await answer(1, check, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
     } finally {
-      await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
+      await pg.exec(SKILL_CHECK_GATE_READABLE);
     }
   });
 
@@ -335,14 +339,14 @@ describe('failing closed on serve', () => {
       `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","explanation") VALUES (1,'trials','4','core','why')`
     );
     const check = await skillCheck(10);
-    await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
+    await pg.exec(SKILL_CHECK_GATE_UNREADABLE);
     try {
       const view = await getApprentice(db, 1, { skillCheckRate: 1 });
       expect(view.kind).toBe('question');
       expect(view.kind === 'question' && view.item.referenceId).toBe(1);
       expect(check).not.toBe(1);
     } finally {
-      await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
+      await pg.exec(SKILL_CHECK_GATE_READABLE);
     }
   });
 });

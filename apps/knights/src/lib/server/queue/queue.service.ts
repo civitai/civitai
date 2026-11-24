@@ -13,12 +13,8 @@ import {
 import { PROGRESSION } from '../progression/config';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
 import { settleAndMirror, settleItemVotes } from '../progression/progression';
-import {
-  ESCALATED_FROM_LEVEL_META_KEY,
-  postShownToKnights,
-  servableImage,
-  servableImageContent,
-} from '@civitai/db/knights';
+import { ESCALATED_FROM_LEVEL_META_KEY, postShownToKnights } from '@civitai/db/knights';
+import { servableImage, servableImageContent } from '../image-gate';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
 import { votePartitionName } from './vote-partition';
 import { RANKS, rankIndex, type Rank } from '../ranks';
@@ -1476,7 +1472,6 @@ export async function closeWithoutOutcome(db: Kysely<DB>, itemId: number, now: D
   });
 }
 
-const pad = (n: number) => String(n).padStart(2, '0');
 const monthStart = (year: number, month: number) => {
   const d = new Date(Date.UTC(year, month, 1));
   return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
@@ -1491,20 +1486,8 @@ export async function ensureMonthPartition(db: Kysely<DB>, { year, month }: Mont
   `.execute(db);
   if (existing.rows[0]?.found) return;
 
-  const from = monthStart(year, month - 1);
-  const to = monthStart(year, month);
-  await db.transaction().execute(async (trx) => {
-    // Two voters can find the same month missing; without the lock the loser fails on a duplicate relation.
-    await sql`SELECT pg_advisory_xact_lock(hashtext('KnightsVote partitions'))`.execute(trx);
-    await sql
-      .raw(
-        `CREATE TABLE IF NOT EXISTS "${name}" PARTITION OF "KnightsVote" ` +
-          `FOR VALUES FROM ('${from.year}-${pad(from.month)}-01') TO ('${to.year}-${pad(
-            to.month
-          )}-01')`
-      )
-      .execute(trx);
-  });
+  // Only the table's owner may add a partition: the owner's function does, for a month near now, under the partition lock.
+  await sql`SELECT public.knights_ensure_vote_partition(${year}::int, ${month}::int)`.execute(db);
 }
 
 export async function ensureVotePartitions(

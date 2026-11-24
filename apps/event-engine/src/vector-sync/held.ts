@@ -29,16 +29,15 @@ export function heldUserSql(column: string): string {
   const user = sqlRef(column);
   return `(
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = ${user})
-      -- Uncorrelated, so Postgres reads the reports once per statement rather than once per row.
-      -- CASE as well as the filter: Postgres may cast before it tests the pattern, and one bad
-      -- row would fail every request. The filter keeps NULLs out of the list; COALESCE covers a
-      -- NULL user.
-      OR COALESCE(${user} IN (
-        SELECT CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-                    THEN (hs.details ->> 'secondaryUserId')::bigint END
-        FROM "CsamReport" hs
-        WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-      ), false)
+      -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
+      -- index probe per row for a few rows or one hashed read per statement for many.
+      -- secondaryUserId is stored as a JSON number; a writer that stores text must normalize it.
+      -- A hand-written "007" matches no one; the pattern keeps a negative id matching no one.
+      OR EXISTS (
+        SELECT 1 FROM "CsamReport" hs
+        WHERE hs.details ->> 'secondaryUserId' = (${user})::text
+          AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+      )
     )`;
 }
 

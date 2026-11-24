@@ -2124,12 +2124,12 @@ read would see. Serving needs a Go-first miss measurement and Go-side miss filli
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `hidePaid`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor`, `collectionId` with `collectionTagId` (§15.2.1); Hot with a base-model filter (the official-checkpoint pin, §15.2.2) | `query` (Meilisearch), `hidden`, `followed`, `newCreators`, `ids`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); Recently Added, with or without a collection (`model-sort-recently-added`); a `collectionId` or `collectionTagId` that is not an int4 integer (`model-collection-id`; not a number, `null` included, is `input-invalid`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included (`input-ids`) |
+| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `hidePaid`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor`, `collectionId` with `collectionTagId` (§15.2.1); Hot with a base-model filter (the official-checkpoint pin, §15.2.2); `ids` and `followed`, each only behind its own switch (§15.2.4) | `query` (Meilisearch), `hidden`, `followed` and `ids` with their switches off (§15.2.4), `newCreators`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); Recently Added, with or without a collection (`model-sort-recently-added`); a `collectionId` or `collectionTagId` that is not an int4 integer (`model-collection-id`; not a number, `null` included, is `input-invalid`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included, with its switch off (`input-ids`); with it on, an id JS `Number` does not read as an int4 integer (`model-ids`) |
 | Viewer | as §4 | as §4; a signed-in request with no level (`model-level-absent`: the saved level is not read); a viewer the `personal-hot-lead` flag is on for on any page of a Hot feed Node leads, or one it could not be read for (`model-getall-personal-hot-lead`, `model-getall-personal-hot-lead-unknown`; temporary, §15.2.3) |
 | Flags | the state production runs (§15.3) | any model flag mirror off (`flag-off-state`) |
 | Lookups | the tag by name and the creator by name on the replica; the blocked tag list; the collection read permission on the replica | a creator the replica does not hold (`model-username-miss`: Node reads the primary, then 404s); the blocked list absent or unreadable (`blocked-tags-miss`, `blocked-tags-stale`) |
 | Covers | the owner's image on the shown version, or located on another of the model's versions (§15.1 step 4); a chosen cover neither finds and that has no featured community showcase row for the model (Node's `withCommunityCovers` finds nothing either) | a chosen cover neither finds that has a Community, not-removed `ModelVersionShowcaseItem` row on a version of the model (`model-community-cover`: Node may serve that community image as the cover, §16.9) |
-| Caches | basic users, profile pictures, cosmetics and tags by id on a miss (the replica); privacy defaults on a miss (`User.settings` on the replica); computed misses (§3.1) on the model data, the model tags, the model frames, the model hats, the version showcases and the showcase images' tag ids; the official models (§15.2.2) | misses on user cosmetics and memberships (`user-cosmetics-miss`, `membership-miss`; memberships with their switch on are computed, §15.2.6), and on the model data, model tags, model frames, model hats, version showcases, image tags and the official models without the computation (`model-data-miss`, `model-tags-miss`, `model-frame-miss`, `model-decoration-miss`, `model-images-miss`, `tag-ids-miss`, `official-models-miss`); a failed miss computation (`<reason>-failed`); a gallery-settings key Node would rebuild (`gallery-settings-miss`, `gallery-settings-stale`); a held setting with no level (`model-held-level-unset`) |
+| Caches | basic users, profile pictures, cosmetics and tags by id on a miss (the replica); privacy defaults on a miss (`User.settings` on the replica); computed misses (§3.1) on the model data, the model tags, the model frames, the model hats, the version showcases and the showcase images' tag ids; the official models (§15.2.2) | misses on user cosmetics (`user-cosmetics-miss`; with its switch on, computed: §15.2.5) and memberships (`membership-miss`; with its switch on, computed: §15.2.6), and on the model data, model tags, model frames, model hats, version showcases, image tags and the official models without the computation (`model-data-miss`, `model-tags-miss`, `model-frame-miss`, `model-decoration-miss`, `model-images-miss`, `tag-ids-miss`, `official-models-miss`); a failed miss computation (`<reason>-failed`); a gallery-settings key Node would rebuild (`gallery-settings-miss`, `gallery-settings-stale`); a held setting with no level (`model-held-level-unset`) |
 
 ### 15.2.1 Collections
 
@@ -2196,8 +2196,9 @@ is ported, so EVERY such page falls back, page 1 and every cursor page alike
 ported, or the fallback and this section are removed.
 
 - **Which pages** (`modelfeed.Input.PersonalHotLeadEligible`): sort Hot, any page, and none of
-  `username`, `user`, `collectionId`, `favorites`, `archived` (`query`, `hidden`, `followed` and `ids`
-  already fall back), for a signed-in viewer (a banned one has none). Node also skips a request with
+  `username`, `user`, `collectionId`, `favorites`, `archived`, a truthy `followed`, a non-empty `ids`
+  (`input.ids?.length`: an empty list keeps the lead; `query` and `hidden` already fall back), for a
+  signed-in viewer (a banned one has none). Node also skips a request with
   no browsing level; that is not checked here, so this side can only ask more often than Node.
 - **The read.** The flag is evaluated per viewer as Node's `isFlipt` is called: entity id the user
   id, context `buildFliptContext(user)` (`flipt.UserContext`: `userId`, `isModerator`, `tier`,
@@ -2222,6 +2223,48 @@ ported, or the fallback and this section are removed.
   viewer's sample, on any page, is `unsupported`, never a diff against Node's led page or its
   lead-excluding later page. The Go-first probe (§7.1) does not run the gate: it measures cache
   presence, which the gate does not read.
+
+### 15.2.4 `ids` and `followed` (each behind its own switch, default off)
+
+`FEED_GO_GETALL_SERVE_INPUT_IDS` and `FEED_GO_GETALL_SERVE_INPUT_FOLLOWED` (both default off) each
+port one input shape. Off, the shape is the fallback it always was (`input-ids` whenever `ids` is
+present, `input-followed` for a truthy `followed`), checked in the same order as before; on, it is
+computed on the public route and in the shadow alike (`modelfeed.ParseWith`, `servePage`). Neither
+changes anything while `FEED_GO_SERVE_MODEL_GETALL` is off, except what the shadow computes.
+
+- **`ids`** (`commaDelimitedNumberArray`): a string is split on `,` and each part trimmed, an array
+  is taken as it is, `null` is `[]`, and each element goes through JS `Number`. Only what `Number`
+  reads unambiguously as an int4 integer is read (a JSON integer; a string of an optional sign and
+  decimal digits, ASCII blanks around it; an empty string, 0); any other element, and any other
+  value, is `model-ids`, which Node answers (its 400 included). Every present `ids`, `[]` included,
+  turns `hidePrivateModels` off (Private versions are listed, as for a creator or a collection); a
+  non-empty one adds `mm."modelId" = ANY($n::integer[])` (Node's `IN (…)`; the `integer[]` cast keeps
+  its text apart from the pin's `int[]` filter), in the order sent. The answer is in the sort's
+  order, as Node's (the profile showcase sorts it client-side). The personal Hot lead skips a
+  non-empty list only (§15.2.3).
+- **`followed`** (`booleanString`): a truthy value turns `hidePrivateModels` off, signed out too
+  (Node's `!followed`). For a signed-in viewer every page reads the viewer's Follow rows of
+  `UserEngagement` on the replica (`hydrate.Sources.FollowedUserIDs`: Node's `dbRead` read, never
+  `userFollowsCache`, which image.getInfinite reads), after the creator lookup and before the
+  collection check, as Node orders them, and adds `mm."userId" = ANY(…)`, or `1 = 0` for a viewer
+  who follows no one. Signed out nothing is read and nothing filtered. The personal Hot lead skips
+  it (§15.2.3).
+- **Cache policy.** Unchanged: a signed-in `followed` sets Node's `isPrivate`, which no header reads
+  on this procedure (§15.2.1); a signed-in answer is never edge-cached either way.
+
+### 15.2.5 User-cosmetics misses (behind a switch, default off)
+
+`FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS` (default off). Off, an owner whose `user-cosmetics`
+entry is absent (or undecodable) falls back (`user-cosmetics-miss`), as it always has here. On, the
+model page computes it as the image pages do (`hydrate.Sources.ModelPage` with
+`ComputeUserCosmetics`, `fillUserCosmetics`): `userCosmeticCache`'s lookup on the replica, one query
+for every owner the page misses, the creator-made cosmetics no holder may show dropped, each answer
+packed as Node's fetch packs it (`{userId, cosmetics, cachedAt}`, or a notFound marker for an owner
+with none equipped), single-flighted across concurrent requests and, when not written back, kept in
+process for 10 s (§3.1), and written back (SET NX, a day) only when `FEED_GO_CACHE_WRITEBACK` lists `user-cosmetics` and only for a miss Node
+would write too. It needs the miss computation (`FEED_GO_COMPUTE_MISSES`, default on); without it the
+miss still falls back. Under the Go-first probe the miss is recorded as one Go computes, as for the
+other computed caches. The switch decides the public route and the shadow alike.
 
 ### 15.2.6 Creator-membership misses (behind a switch, default off)
 
@@ -2344,8 +2387,9 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-getal
   falls back;
 - the collection read permission: Node's read also joins the viewer's accepted invite, which feeds
   only `isCollaborator`, not `read`; it is not read here;
-- `ids` falls back whenever it is present, empty included: Node reads `[]` as `[]` and `""` as `[0]`,
-  both truthy, so either turns off the private-model filter;
+- `ids` falls back whenever it is present, empty included, while its switch is off (§15.2.4); on,
+  an element JS `Number` reads other than as a plain integer falls back (`model-ids`) where Node
+  would bind it (a fraction or an id past int4 matches no row there);
 - `canGenerate`, `isMatureRestricted` and the level constants come from `internal/modelfeed/basemodels.json`,
   generated by `scripts/feed-go-basemodels.ts` from the Node functions and held to them by
   `scripts/__tests__/feed-go-basemodels.schema-drift.test.ts`: a constants change that is not regenerated fails CI.

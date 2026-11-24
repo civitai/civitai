@@ -230,6 +230,46 @@ func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
 	}
 }
 
+// FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS defaults off.
+func TestLoadGetAllUserCosmeticsMissDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true} {
+		t.Setenv("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.GetAllServeUserCosmeticsMiss != want {
+			t.Errorf("FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS=%q -> %v, want %v", in, c.GetAllServeUserCosmeticsMiss, want)
+		}
+	}
+}
+
+// The model.getAll input ports' switches default off, and each turns on only its own port.
+func TestLoadGetAllInputPortsDefaultOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GetAllServeInputIDs || c.GetAllServeInputFollowed {
+		t.Fatalf("unset: ids %v followed %v, want both off", c.GetAllServeInputIDs, c.GetAllServeInputFollowed)
+	}
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_IDS", "true")
+	if c, err = Load(); err != nil || !c.GetAllServeInputIDs || c.GetAllServeInputFollowed {
+		t.Fatalf("ids on: ids %v followed %v err %v", c.GetAllServeInputIDs, c.GetAllServeInputFollowed, err)
+	}
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_IDS", "")
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", "true")
+	if c, err = Load(); err != nil || c.GetAllServeInputIDs || !c.GetAllServeInputFollowed {
+		t.Fatalf("followed on: ids %v followed %v err %v", c.GetAllServeInputIDs, c.GetAllServeInputFollowed, err)
+	}
+}
+
 // FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS defaults off; TIER_METADATA_KEY is the app's own variable,
 // `tier` only when unset (`z.string().default('tier')`): set empty, it is the empty key.
 func TestLoadGetAllMembershipMiss(t *testing.T) {

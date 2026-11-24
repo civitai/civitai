@@ -40,6 +40,11 @@ type ModelPageRequest struct {
 	ModelIDs []int
 	// VisibleEvents is the decoration events every viewer sees; empty = no decoration read.
 	VisibleEvents map[string]bool
+	// ComputeUserCosmetics computes the owners' user-cosmetics misses with s.Compute
+	// (fillUserCosmetics, the lookup the image pages run), written back as FEED_GO_CACHE_WRITEBACK
+	// says; false (FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS off) leaves a miss falling back
+	// (`user-cosmetics-miss`), as it always has here.
+	ComputeUserCosmetics bool
 }
 
 // ModelPage is getModelsRaw's parallel fetch, plus the owners' metric-privacy defaults
@@ -64,7 +69,8 @@ type PrivacyDefaults struct{ Buzz, Downloads, Generations bool }
 // cosmetics and the frames, basic tags for the model tags). The replica reads for misses run after,
 // concurrently. With s.Compute the frame, decoration, model-data and model-tags misses are computed
 // (fillModelFrames, fillModelEvents: the image lookups over the models; fillModelData,
-// fillModelTags: the model caches' own lookups); a user-cosmetics miss falls back; the rest are
+// fillModelTags: the model caches' own lookups), and with req.ComputeUserCosmetics the user-cosmetics
+// misses (fillUserCosmetics), which otherwise fall back; the rest are
 // read from the replica as the image feed's are (basic users, profile pictures, cosmetics) or as
 // Node's origin does (tags by id, the privacy defaults). Under a Go-first probe (WithPresence) each call counts as a page.
 func (s *Sources) ModelPage(ctx context.Context, req ModelPageRequest) (*ModelPage, error) {
@@ -115,7 +121,7 @@ func (s *Sources) ModelPage(ctx context.Context, req ModelPageRequest) (*ModelPa
 		return
 	}))
 	g.Go(safe.Go(func() (err error) {
-		out.UserCosmetics, out.Frames, err = s.modelCosmetics(gctx, owners, models, userCosmetics, frames)
+		out.UserCosmetics, out.Frames, err = s.modelCosmetics(gctx, owners, models, userCosmetics, frames, req.ComputeUserCosmetics)
 		return
 	}))
 	if err := g.Wait(); err != nil {
@@ -125,9 +131,18 @@ func (s *Sources) ModelPage(ctx context.Context, req ModelPageRequest) (*ModelPa
 }
 
 // modelCosmetics is the second cosmetics stage: user cosmetics and the models' frames joined with one
-// cosmetic-records read (as Page's pageCosmetics does for image frames).
-func (s *Sources) modelCosmetics(ctx context.Context, owners, models []int, userCosmetics, frames *PackedRead) (map[int][]any, map[int]superjson.Object, error) {
-	perUser, userCIDs, err := userCosmeticsFrom(owners, userCosmetics.Entries())
+// cosmetic-records read (as Page's pageCosmetics does for image frames). computeUsers computes the
+// user-cosmetics misses first (fillUserCosmetics; a no-op without s.Compute).
+func (s *Sources) modelCosmetics(ctx context.Context, owners, models []int, userCosmetics, frames *PackedRead, computeUsers bool) (map[int][]any, map[int]superjson.Object, error) {
+	ucGot, ucWritable := userCosmetics.read()
+	if computeUsers {
+		// userCosmeticCache.fetch's lookup, as the image pages compute it; its write is SET NX, only
+		// for a miss Node would write too (PackedRead.read's writable).
+		if err := s.fillUserCosmetics(ctx, owners, ucGot, ucWritable); err != nil {
+			return nil, nil, err
+		}
+	}
+	perUser, userCIDs, err := userCosmeticsFrom(owners, ucGot)
 	if err != nil {
 		return nil, nil, err
 	}
