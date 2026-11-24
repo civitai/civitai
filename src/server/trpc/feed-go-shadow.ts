@@ -16,6 +16,7 @@ import { pickSessionCookies } from '~/server/utils/session-cookies';
 import { trainingDataListingRulesId } from '~/server/services/training-data-restricted.service';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler';
+import { isFeedGoParityReplay } from '~/server/trpc/feed-go-parity-replay';
 
 /**
  * Shadow sampler for the Go feed service (see its DESIGN.md): after Node has answered a sampled
@@ -526,6 +527,9 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     try {
       if (config.rate <= 0) return undefined;
       if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
+      // feed-go's own replay of a request it served (feed-go-parity-replay.ts): it compares that
+      // answer itself, so a sample of it would only be a second comparison of the same request.
+      if (isFeedGoParityReplay(req.headers)) return undefined;
       // Exactly the mirrored procedures, unbatched (the web client never batches either:
       // NEVER_BATCH_PROCEDURES in src/utils/trpc.ts).
       const procedure = req.query.trpc;

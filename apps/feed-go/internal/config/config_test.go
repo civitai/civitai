@@ -761,3 +761,36 @@ func TestCookieNamesPerMode(t *testing.T) {
 		})
 	}
 }
+
+// FEED_GO_SERVE_PARITY_SAMPLE_RATE: unset is 0 (the serve-side parity sampler off); a rate in [0, 1]
+// is read as is; junk, NaN or out of range is 0, never a rate that replays more than asked. The
+// workers and the timeout default to 4 and 10 s.
+func TestServeParityEnv(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	t.Setenv("FEED_GO_SERVE_PARITY_WORKERS", "")
+	t.Setenv("FEED_GO_SERVE_PARITY_TIMEOUT_MS", "")
+	for v, want := range map[string]float64{"": 0, "0.005": 0.005, "1": 1, "0": 0, "junk": 0, "-0.1": 0, "1.5": 0, "NaN": 0, "0.25": 0.25} {
+		t.Setenv("FEED_GO_SERVE_PARITY_SAMPLE_RATE", v)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.ServeParityRate != want {
+			t.Errorf("FEED_GO_SERVE_PARITY_SAMPLE_RATE=%q reads %v, want %v", v, c.ServeParityRate, want)
+		}
+		if c.ServeParityWorkers != 4 || c.ServeParityTimeout != 10*time.Second {
+			t.Errorf("defaults: workers=%d timeout=%v, want 4, 10s", c.ServeParityWorkers, c.ServeParityTimeout)
+		}
+	}
+	t.Setenv("FEED_GO_SERVE_PARITY_WORKERS", "16")
+	t.Setenv("FEED_GO_SERVE_PARITY_TIMEOUT_MS", "2500")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ServeParityWorkers != 16 || c.ServeParityTimeout != 2500*time.Millisecond {
+		t.Errorf("set: workers=%d timeout=%v, want 16, 2.5s", c.ServeParityWorkers, c.ServeParityTimeout)
+	}
+}

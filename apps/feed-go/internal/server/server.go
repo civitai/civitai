@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
@@ -130,6 +131,9 @@ type Server struct {
 	// ProbeQueue bounds concurrent Go-first probes (probe.go); a full queue drops the probe. Its own
 	// queue, so a probe never takes a comparison's slot; the solo-phase CPU method sees both.
 	ProbeQueue chan struct{}
+	// Parity is the serve-side parity sampler (serveparity.go): a sampled served answer is replayed to
+	// the Node app after it is written, and compared. nil (or a zero Rate) = off.
+	Parity *ServeParity
 	// AllowedOrigins is the app's origin allow-list (config.AllowedOriginHosts). A public request whose
 	// Origin (else Referer) host is not on it is handed to Fallback: the app's isAcceptableOrigin then
 	// answers it (401 in production), and this service never serves one the app would refuse.
@@ -275,9 +279,10 @@ func (s *Server) endPhase(ctx context.Context, p phaseClock, endpoint, phase, ou
 	s.Metrics.ShadowPhaseSoloWall.WithLabelValues(endpoint, phase, outcome).Add(wall)
 }
 
-// aloneInFlight: the caller's shadow sample is the only sample or probe holding a queue slot.
+// aloneInFlight: the caller's shadow sample is the only sample, probe or serve-parity replay holding a
+// queue slot.
 func (s *Server) aloneInFlight() bool {
-	return len(s.ShadowQueue) == 1 && len(s.ProbeQueue) == 0
+	return len(s.ShadowQueue) == 1 && len(s.ProbeQueue) == 0 && s.parityQueueLen() == 0
 }
 
 // computed is one answer. payload may be a pooled buffer's bytes (buf): whoever ends up holding the
@@ -943,10 +948,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		w.Header().Set(ServedByHeader, ServedByGo)
 		trpc.WriteResult(w, c.payload, c.ttl)
 		s.noteWriteFormat(ctx, endpoint, c)
+		// The serve-side parity sample (off by default) copies what it compares before the release;
+		// its replay starts only after the answer is written and never touches w.
+		replay := s.sampleParity(r, endpoint, c)
 		c.release() // WriteResult has sent payload and keeps no reference
 		setOutcome(span, served)
 		s.Metrics.Requests.WithLabelValues(endpoint, "serve", served).Inc()
 		tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "serve", served), time.Since(start).Seconds())
+		s.startParity(replay) //nolint:contextcheck // the replay runs after the answer, on the server's background context (Close cancels it): it must outlive the request
 		return
 	}
 	if !s.serveFallback(ctx, span, start, endpoint, err) {
@@ -1190,14 +1199,14 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	case EndpointInfinite:
 		// The superjson envelope, as for the gallery; classified by image id (a flat page).
 		build, computeFn = SyntheticInfiniteRequest, s.computeInfinite
-		classify = shadow.ClassifyFlat
+		classify = trpcClassify(endpoint)
 		if s.computeInfiniteFn != nil {
 			computeFn = s.computeInfiniteFn
 		}
 	case EndpointModelGetAll:
 		// The superjson envelope, as for the gallery; classified by model id (a flat page).
 		build, computeFn = SyntheticModelGetAllRequest, s.computeModelGetAll
-		classify = shadow.ClassifyFlat
+		classify = trpcClassify(endpoint)
 		if s.computeModelsFn != nil {
 			computeFn = s.computeModelsFn
 		}
@@ -1262,13 +1271,53 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	s.Metrics.Requests.WithLabelValues(endpoint, "shadow", served).Inc()
 	tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "shadow", served), time.Since(start).Seconds())
 	phase = s.startPhase()
-	report, err := compareFn(c.payload, req.Node)
+	sink := compareSink{source: SourceShadow, results: s.Metrics.ShadowResults, diffs: s.Metrics.ShadowDiffs, response: s.Metrics.ShadowResponse}
+	// The phase ends once compared, before the result is counted (a reader of the result then sees
+	// the phase).
+	s.compareAnswer(ctx, endpoint, sink, c, req.Node, req.ResponseHeaders, req.ResponseHeaderSet, compareFn, classify,
+		func(ok bool) {
+			outcome := "ok"
+			if !ok {
+				outcome = "bad_request"
+			}
+			s.endPhase(ctx, phase, endpoint, "compare", outcome)
+		})
+}
+
+// compareSink is where one comparison is counted: the comparison families curried with its source
+// (shadow: a Node sample; serve-parity: a replay of a served answer, serveparity.go).
+type compareSink struct {
+	source                   string
+	results, diffs, response *prometheus.CounterVec
+}
+
+// trpcClassify is the classifier of a tRPC endpoint's superjson envelope: the gallery's posts
+// (shadow.Classify), or a flat page classified by item id (image.getInfinite, model.getAll).
+func trpcClassify(endpoint string) func(*shadow.Report, []byte, []byte) string {
+	switch endpoint {
+	case EndpointInfinite, EndpointModelGetAll:
+		return shadow.ClassifyFlat
+	}
+	return shadow.Classify
+}
+
+// compareAnswer compares Go's answer c with Node's (node; nodeHeaders, nil = not sent) and counts the
+// result, the differing categories and the header comparison into sink. It is the one comparison
+// both the shadow sample and the serve-side parity replay run. The two bodies that cannot be
+// compared are result bad_request. compared (nil = none) runs once the comparison is done (ok false:
+// bad_request), before the result is counted.
+func (s *Server) compareAnswer(ctx context.Context, endpoint string, sink compareSink, c *computed, node []byte, nodeHeaders map[string]string, headerSet string,
+	compareFn func([]byte, []byte) (*shadow.Report, error), classify func(*shadow.Report, []byte, []byte) string, compared func(ok bool)) {
+	span := trace.SpanFromContext(ctx)
+	report, err := compareFn(c.payload, node)
 	if err != nil {
-		s.endPhase(ctx, phase, endpoint, "compare", "bad_request")
-		s.Metrics.ShadowResults.WithLabelValues(endpoint, "bad_request").Inc()
+		if compared != nil {
+			compared(false)
+		}
+		sink.results.WithLabelValues(endpoint, "bad_request").Inc()
 		return
 	}
-	result := classify(report, c.payload, req.Node)
+	result := classify(report, c.payload, node)
 	if c.trivial && result == "match" {
 		// A trivial answer that differs is still counted as the diff it is (fields, membership, …).
 		result = "match_empty"
@@ -1280,40 +1329,42 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	// meaning, and the response's is its own figure. The status is not compared (DESIGN.md §7).
 	var respDiffs []shadow.Diff
 	switch {
-	case req.ResponseHeaders == nil || (isRESTEndpoint(endpoint) && c.headers == nil):
+	case nodeHeaders == nil || (isRESTEndpoint(endpoint) && c.headers == nil):
 		// A sampler that predates the field sends none; a model list sample with an `etag` query has
 		// none computed (v1ModelsHeadersUnknown), nor an images sample whose body has no known
 		// JSON.stringify text (v1ImagesCompute): nothing to compare.
-		s.Metrics.ShadowResponse.WithLabelValues(endpoint, "uncompared").Inc()
+		sink.response.WithLabelValues(endpoint, "uncompared").Inc()
 	default:
 		goHeaders, names := trpc.ResultHeaders(c.ttl), shadow.ComparedHeaders
 		if isRESTEndpoint(endpoint) {
 			// The REST routes: the headers the public route writes (v1models_serve.go, v1images_serve.go).
 			goHeaders = v1models.HeaderMap(c.headers)
-			if req.ResponseHeaderSet == ResponseHeaderSetREST {
+			if headerSet == ResponseHeaderSetREST {
 				names = shadow.RESTComparedHeaders
 			}
 		}
-		respDiffs = shadow.CompareResponseHeaders(goHeaders, req.ResponseHeaders, names)
+		respDiffs = shadow.CompareResponseHeaders(goHeaders, nodeHeaders, names)
 		if len(respDiffs) > 0 {
-			s.Metrics.ShadowResponse.WithLabelValues(endpoint, "mismatch").Inc()
+			sink.response.WithLabelValues(endpoint, "mismatch").Inc()
 		} else {
-			s.Metrics.ShadowResponse.WithLabelValues(endpoint, "match").Inc()
+			sink.response.WithLabelValues(endpoint, "match").Inc()
 		}
 	}
-	s.endPhase(ctx, phase, endpoint, "compare", "ok")
+	if compared != nil {
+		compared(true)
+	}
 	if span.IsRecording() {
 		span.SetAttributes(attrShadowResult.String(result))
 	}
-	s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
-	if c.viewerClass != "" {
+	sink.results.WithLabelValues(endpoint, result).Inc()
+	if c.viewerClass != "" && sink.source == SourceShadow {
 		s.Metrics.ShadowViewer.WithLabelValues(endpoint, c.viewerClass, result).Inc()
 	}
 	diffs := make([]shadow.Diff, 0, len(report.Diffs)+len(respDiffs))
 	diffs = append(diffs, report.Diffs...)
 	diffs = append(diffs, respDiffs...)
 	for _, d := range diffs {
-		s.Metrics.ShadowDiffs.WithLabelValues(endpoint, d.Category, d.Kind).Inc()
+		sink.diffs.WithLabelValues(endpoint, d.Category, d.Kind).Inc()
 	}
 	unexpected := 0
 	for _, d := range respDiffs {
@@ -1333,7 +1384,7 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		if bodyDiffers(result) || unexpected > 0 {
 			level = slog.LevelInfo
 		}
-		s.Log.Log(ctx, level, "shadow diff", traceAttrs(ctx, []any{"endpoint", endpoint, "result", result, "paths", paths,
+		s.Log.Log(ctx, level, "shadow diff", traceAttrs(ctx, []any{"endpoint", endpoint, "source", sink.source, "result", result, "paths", paths,
 			"truncated", report.Truncated})...)
 	}
 }

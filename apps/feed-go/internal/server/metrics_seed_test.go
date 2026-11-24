@@ -82,10 +82,12 @@ func TestRequestOutcomesAreSeeded(t *testing.T) {
 func TestShadowResultsAreSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
-	// 7 endpoints x 10 results, less match_cached on the 6 without a cached answer, order on
-	// v1-models-id (one model: ClassifyV1ModelID has no order) and match_empty on as-posts.
-	if n := testutil.CollectAndCount(m.ShadowResults); n != 7*10-6-1-1 {
-		t.Fatalf("feed_go_shadow_compare_total has %d series at construction, want 62", n)
+	// source="shadow": 7 endpoints x 10 results, less match_cached on the 6 without a cached answer,
+	// order on v1-models-id (one model: ClassifyV1ModelID has no order) and match_empty on as-posts.
+	// source="serve-parity" (the same family, seedServeParity): 3 replayed endpoints x 6 results, less
+	// match_empty on as-posts. A curried vector collects the whole family.
+	if n := testutil.CollectAndCount(m.ShadowResults); n != 7*10-6-1-1+3*6-1 {
+		t.Fatalf("feed_go_shadow_compare_total has %d series at construction, want 62 + 17", n)
 	}
 	common := []string{"match", "fields", "membership", "unsupported", "deadline", "go_error", "bad_request"}
 	for _, e := range []string{"as-posts", "v1-images", "infinite", "model-getall", "v1-models", "v1-models-id", "model-associated"} {
@@ -149,10 +151,10 @@ func TestComputeFallbackReasonsAreSeeded(t *testing.T) {
 func TestPanicsDevalueSeededErrorsLazy(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
-	if n := testutil.CollectAndCount(m.Panics); n != 3 {
-		t.Errorf("feed_go_panics_total has %d series, want 3", n)
+	if n := testutil.CollectAndCount(m.Panics); n != 4 {
+		t.Errorf("feed_go_panics_total has %d series, want 4", n)
 	}
-	for _, w := range []string{"serve", "shadow", "probe"} {
+	for _, w := range []string{"serve", "shadow", "probe", "serve-parity"} {
 		if v, found := metricValue(t, reg, "feed_go_panics_total", map[string]string{"where": w}); !found || v != 0 {
 			t.Errorf("panics{%s} = %v found=%v, want a 0 series", w, v, found)
 		}
