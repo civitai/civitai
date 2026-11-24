@@ -377,10 +377,10 @@ func assocCards(ctx context.Context, d *AssocDeps, ids []int, level int, viewer 
 
 // resolveCanGenerate is resolveCanGenerateForVersions for the shown cards (the cards it drops change
 // nothing on the wire): getResourceCanGenerate && isGenerationEligible per first version, then the
-// hidden gate rules over the versions that would generate. A Wildcards card (its own gate: a visible
-// System wildcard set) falls back.
+// hidden gate rules (version and ecosystem targets) over the versions that would generate. A
+// Wildcards card (its own gate: a visible System wildcard set) falls back.
 func resolveCanGenerate(ctx context.Context, d *AssocDeps, cards []*assocCard, viewer *Viewer) error {
-	candidates := map[int]bool{}
+	candidates := map[int]string{}
 	for _, c := range cards {
 		if c.it.row.Type == "Wildcards" {
 			return fallback.New("model-assoc-wildcards")
@@ -388,7 +388,8 @@ func resolveCanGenerate(ctx context.Context, d *AssocDeps, cards []*assocCard, v
 		ok := assocBaseCanGenerate(c.it, viewer, d.Config.CoverageNext)
 		c.canGenerate = ok
 		if ok {
-			candidates[c.it.versionID] = true
+			bm, _ := recField(c.it.version, "baseModel").(string)
+			candidates[c.it.versionID] = bm
 		}
 	}
 	if len(candidates) == 0 {
