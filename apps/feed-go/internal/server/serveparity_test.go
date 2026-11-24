@@ -48,7 +48,11 @@ func (n *nodeStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	n.hosts = append(n.hosts, r.Host)
 	n.mu.Unlock()
 	if n.gate != nil {
-		<-n.gate
+		select {
+		case <-n.gate:
+		case <-r.Context().Done():
+			return
+		}
 	}
 	if n.sleep > 0 {
 		select {
@@ -133,6 +137,9 @@ func TestServeParityReplaysOnceAfterTheResponse(t *testing.T) {
 	r.Host = "civitai.example"
 	r.Header.Set("Cookie", "__Secure-civitai-token=abc")
 	r.Header.Set("Accept-Encoding", "br")
+	r.Header.Set("Traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+	r.Header.Set("Tracestate", "vendor=x")
+	r.Header.Set("Baggage", "user=7")
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 	// ServeHTTP returned with the whole answer while the replay waits in Node: never on the latency path.
@@ -150,6 +157,12 @@ func TestServeParityReplaysOnceAfterTheResponse(t *testing.T) {
 	h := node.headers[0]
 	if h.Get("Cookie") != "__Secure-civitai-token=abc" || h.Get(ParityReplayHeader) != "1" || h.Get("Accept-Encoding") == "br" {
 		t.Fatalf("replay headers cookie=%q marker=%q accept-encoding=%q", h.Get("Cookie"), h.Get(ParityReplayHeader), h.Get("Accept-Encoding"))
+	}
+	// The client's trace context is not the replay's: Node's span of it never joins the user's trace.
+	for _, k := range []string{"Traceparent", "Tracestate", "Baggage"} {
+		if v := h.Get(k); v != "" {
+			t.Fatalf("replay forwarded %s=%q", k, v)
+		}
 	}
 	if node.hosts[0] != "civitai.example" || node.urls[0] != "/api/trpc/"+Procedure+"?input=%7B%7D" {
 		t.Fatalf("replay host=%q url=%q", node.hosts[0], node.urls[0])
@@ -264,6 +277,35 @@ func TestServeParityReplayFailuresAreCountedNotServed(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A replay still in Node when shutdown begins is cancelled with the background context: counted
+// skipped_closing (a rollout), never timeout (a slow Node).
+func TestServeParityShutdownIsNotATimeout(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	node := nodeAnswering(servedPayload)
+	node.gate = make(chan struct{}) // never closed: only the cancellation ends the replay
+	s, _ := paritySrv(reg, served(nil), node)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, publicRequest())
+	deadline := time.Now().Add(5 * time.Second)
+	for node.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if node.callCount() != 1 {
+		t.Fatal("the replay never reached Node")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if v := parityOutcome(t, reg, EndpointAsPosts, ParitySkippedClosing); v != 1 {
+		t.Fatalf("serve_parity{skipped_closing} = %v, want 1 (timeout=%v)", v, parityOutcome(t, reg, EndpointAsPosts, ParityTimeout))
+	}
+	if v := parityOutcome(t, reg, EndpointAsPosts, ParityTimeout); v != 0 {
+		t.Fatalf("serve_parity{timeout} = %v, want 0", v)
 	}
 }
 

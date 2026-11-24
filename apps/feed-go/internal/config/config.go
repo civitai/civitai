@@ -56,11 +56,6 @@ type Config struct {
 	// tRPC answers replayed to the Node app and compared (server.ServeParity, DESIGN.md §7.2). Outside
 	// [0, 1] or junk reads as 0.
 	ServeParityRate float64
-	// ServeParityWorkers is FEED_GO_SERVE_PARITY_WORKERS (default 4): replays in flight at once; past
-	// it a replay is dropped.
-	ServeParityWorkers int
-	// ServeParityTimeout is FEED_GO_SERVE_PARITY_TIMEOUT_MS (default 10000): one replay's deadline.
-	ServeParityTimeout time.Duration
 	// PrioritizedVersionCache is FEED_GO_PRIORITIZED_VERSION_CACHE (default off, as in production):
 	// mirrors `use-model-version-cache-for-images`. On, image.getInfinite's prioritizedUserIds requests
 	// on the Postgres path fall back (the cache-ordered branch is not ported).
@@ -246,9 +241,7 @@ func Load() (*Config, error) {
 		DecorationEvents: setEnv("FEED_GO_DECORATION_EVENTS"),
 		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
 
-		ServeParityRate:    rateEnv("FEED_GO_SERVE_PARITY_SAMPLE_RATE"),
-		ServeParityWorkers: positiveIntEnv("FEED_GO_SERVE_PARITY_WORKERS", 4),
-		ServeParityTimeout: time.Duration(positiveIntEnv("FEED_GO_SERVE_PARITY_TIMEOUT_MS", 10000)) * time.Millisecond,
+		ServeParityRate: rateEnv("FEED_GO_SERVE_PARITY_SAMPLE_RATE"),
 
 		PrioritizedVersionCache: boolEnv("FEED_GO_PRIORITIZED_VERSION_CACHE", false),
 

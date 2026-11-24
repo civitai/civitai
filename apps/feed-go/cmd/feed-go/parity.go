@@ -2,7 +2,6 @@ package main
 
 import (
 	"net/url"
-	"time"
 
 	"go.opentelemetry.io/otel/propagation"
 
@@ -14,14 +13,14 @@ import (
 // the Node app the fallbacks are handed to (FEED_GO_FALLBACK_URL), through the fallback proxy code
 // but their own instance with no error hook: a replay's failure is its outcome
 // (feed_go_serve_parity_total), never a fallback proxy error.
-func newServeParity(rate float64, workers int, timeout time.Duration, target *url.URL, prop propagation.TextMapPropagator) *server.ServeParity {
+func newServeParity(rate float64, target *url.URL, prop propagation.TextMapPropagator) *server.ServeParity {
 	if rate <= 0 || target == nil {
 		return nil
 	}
 	return &server.ServeParity{
 		Rate:     rate,
 		Upstream: fallbackProxy(target, fallbackIdleTimeout, nil, prop),
-		Queue:    make(chan struct{}, max(workers, 1)),
-		Timeout:  timeout,
+		Queue:    make(chan struct{}, server.DefaultServeParityWorkers),
+		Timeout:  server.DefaultServeParityTimeout,
 	}
 }

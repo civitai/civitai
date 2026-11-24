@@ -1178,24 +1178,31 @@ with what Go served.
   outcome, never in `feed_go_fallback_proxy_errors_total`. It carries the original's headers,
   cookies included, so Node resolves the same session and computes for the same viewer; the
   original `Accept-Encoding` is dropped so the transport negotiates (and decodes) its own
-  compression. A request with an API credential (an `Authorization` header or a `?token=`) is never
+  compression, and so are the client's `traceparent`, `tracestate` and `baggage` (the replay is not
+  part of the user's request, and the span-less background context would inject nothing over
+  them). A request with an API credential (an `Authorization` header or a `?token=`) is never
   replayed (`skipped_credential`): Node would resolve the key's own viewer and scopes again.
 - **Marked.** The replay carries `X-Feed-Go-Parity-Replay: 1` (`ParityReplayHeader`). The Node app
   (`src/server/trpc/feed-go-parity-replay.ts`) then does not shadow-sample it (it would be posted
-  back here as a second comparison of the same request) and writes it as superjson, never devalue.
-  Node's own per-procedure request and duration series do count the replays, at the sample rate.
-- **Bounds.** At most `FEED_GO_SERVE_PARITY_WORKERS` (default 4) replays in flight per pod, taken
-  without waiting: a replay past it is dropped (`dropped_queue`), never queued. Each replay, Node's
-  answer and the comparison included, has `FEED_GO_SERVE_PARITY_TIMEOUT_MS` (default 10 s;
+  back here as a second comparison of the same request), writes it as superjson, never devalue,
+  and leaves it out of its per-procedure metrics (`civitai_app_trpc_procedure_duration_seconds`,
+  the call-traffic and caller counters, `src/server/trpc.ts`): after a procedure moves to Go the
+  replays would otherwise be a large share of what reads as Node's calls and latency there. Its
+  slow-procedure log still names a slow replay. The replay's compute is still real Node CPU.
+- **Bounds** (constants, no setting): at most `DefaultServeParityWorkers` (4) replays in flight per
+  pod, taken without waiting: a replay past it is dropped (`dropped_queue`), never queued. Each
+  replay, Node's answer and the comparison included, has `DefaultServeParityTimeout` (10 s;
   `timeout`). A pod holding three quarters or more of its serve slots (`FEED_GO_MAX_IN_FLIGHT`)
   skips the replay (`skipped_bulkhead`). Node's body is read up to the shadow sample's bound
-  (32 MiB; past it `bad_body`). Shutdown stops new replays (`skipped_closing`) and cancels and waits
-  for the running ones with the shadow samples. A replay in flight makes any overlapping shadow
+  (32 MiB; past it `bad_body`). Shutdown stops new replays and cancels and waits for the running
+  ones with the shadow samples; both count `skipped_closing` (a rollout, never `timeout`). A replay in flight makes any overlapping shadow
   phase non-solo (§10.1).
 - **Outcomes.** `feed_go_serve_parity_total{feed_endpoint,outcome}`, one per sampled served request:
   `compared`, `dropped_queue`, `skipped_bulkhead`, `skipped_credential`, `skipped_closing`,
   `upstream_error` (Node unreachable or the connection broken), `upstream_status` (a status other
-  than 200, e.g. Node's own bulkhead's 429), `timeout`, `bad_body` (not a tRPC result).
+  than 200, e.g. Node's own bulkhead's 429), `timeout`, `bad_body` (not a tRPC result). A body
+  that is a tRPC result but not a superjson envelope (Node answered devalue: a web release without
+  the marker) is `compared` with result `bad_request`.
 - **Same comparator, same series.** A compared replay runs `compareAnswer`, the function the shadow
   path runs (`shadow.Compare`, the route's classifier, the response headers of
   `shadow.ComparedHeaders` picked as the Node sampler picks them), into the same families:

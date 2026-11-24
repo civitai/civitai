@@ -67,7 +67,7 @@ var parityResults = []string{"match", "match_empty", "fields", "order", "members
 // DefaultServeParityTimeout bounds one replay, the Node app's answer and the comparison included.
 const DefaultServeParityTimeout = 10 * time.Second
 
-// DefaultServeParityWorkers is the replay slots when FEED_GO_SERVE_PARITY_WORKERS is unset.
+// DefaultServeParityWorkers is the replay slots per pod (Queue's capacity in production).
 const DefaultServeParityWorkers = 4
 
 // maxParityBody bounds Node's body held for one replay, as maxShadowBody bounds a sample.
@@ -80,7 +80,7 @@ type ServeParity struct {
 	// Upstream answers the replay: the fallback proxy to the Node app (FEED_GO_FALLBACK_URL), with
 	// its own error accounting (a replay's failure is not a fallback's).
 	Upstream http.Handler
-	// Queue holds one slot per replay in flight (FEED_GO_SERVE_PARITY_WORKERS); a full queue drops the
+	// Queue holds one slot per replay in flight (DefaultServeParityWorkers); a full queue drops the
 	// replay (dropped_queue). Never waited on.
 	Queue chan struct{}
 	// Timeout bounds one replay (0 = DefaultServeParityTimeout).
@@ -253,10 +253,18 @@ func (s *Server) replay(ctx context.Context, rep *parityReplay) string {
 	req.Header = rep.header
 	// The transport negotiates (and decodes) its own compression: the comparison reads a plain body.
 	req.Header.Del("Accept-Encoding")
+	// The client's trace context is not the replay's: kept, Node's span of a background replay would
+	// join the user's trace (the proxy injects nothing over it from this span-less context).
+	for _, h := range replayStrippedTraceHeaders {
+		req.Header.Del(h)
+	}
 	req.Header.Set(ParityReplayHeader, "1")
 	rec := &replayRecorder{header: http.Header{}}
 	status := s.serveReplay(rec, req)
 	switch {
+	case s.isClosing():
+		// Shutdown cancelled it (Close cancels the background context): a rollout, not a slow Node.
+		return ParitySkippedClosing
 	case ctx.Err() != nil:
 		return ParityTimeout
 	case status != "":
@@ -291,6 +299,16 @@ func (s *Server) replay(ctx context.Context, rep *parityReplay) string {
 	sink := compareSink{source: SourceServeParity, results: s.Metrics.ParityResults, diffs: s.Metrics.ParityDiffs, response: s.Metrics.ParityResponse}
 	s.compareAnswer(ctx, rep.endpoint, sink, c, env.Result.Data, pickResponseHeaders(rec.header), "", shadow.Compare, trpcClassify(rep.endpoint), nil)
 	return ParityCompared
+}
+
+// replayStrippedTraceHeaders are the W3C trace-context and baggage headers a replay never forwards.
+var replayStrippedTraceHeaders = []string{"Traceparent", "Tracestate", "Baggage"}
+
+// isClosing: Close has begun.
+func (s *Server) isClosing() bool {
+	s.shadowMu.Lock()
+	defer s.shadowMu.Unlock()
+	return s.closing
 }
 
 // serveReplay runs the upstream for req, turning ReverseProxy's mid-body abort (a panic with
