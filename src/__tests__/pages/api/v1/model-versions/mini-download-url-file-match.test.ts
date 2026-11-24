@@ -106,6 +106,7 @@ import handler from '~/pages/api/v1/model-versions/mini/[id]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getDownloadFilename } from '~/server/services/file.service';
+import { sanitizeOverrideName } from '~/utils/model-file-naming';
 import { modelVersionToAir } from '~/server/utils/resource-air';
 import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 
@@ -1684,5 +1685,67 @@ describe('GET /api/v1/model-versions/mini/[id] — fileName is the download name
     const renamed = { ...SAFETENSOR, overrideName: 'my-model.safetensors' };
     const { body } = await run([renamed, GGUF]);
     expect(body.fileName).toBe('my-model.safetensors');
+  });
+
+  // The orchestrator reads only the extension of `fileName`, to infer the format when `format` is
+  // null. Every branch that renames must keep the stored file's extension, or such a file loses it.
+  const extOf = (name: string) => name.slice(name.lastIndexOf('.'));
+  const noFormat = { format: undefined } as unknown as typeof SAFETENSOR.metadata;
+  it.each([
+    [
+      'a Textual Inversion (trained word)',
+      { ...SAFETENSOR, metadata: noFormat, name: 'my_upload.pt' },
+      tiVersion,
+    ],
+    [
+      "a creator's rename",
+      {
+        ...SAFETENSOR,
+        metadata: noFormat,
+        name: 'upload.gguf',
+        overrideName: sanitizeOverrideName('Renamed by creator', 'upload.gguf'),
+      },
+      {},
+    ],
+    [
+      'a trainer blob name',
+      { ...SAFETENSOR, metadata: noFormat, name: '01HZX5V3K8Q9R2T4W6Y8A0C2E4.safetensors' },
+      { type: 'LORA' },
+    ],
+    ['a generic uploaded name', { ...SAFETENSOR, metadata: noFormat, name: 'model.ckpt' }, {}],
+  ])('%s keeps the stored extension', async (_label, file, version) => {
+    const { status, body } = await run([file], {}, version as Partial<typeof versionRow>);
+    expect(status).toBe(200);
+    // Positive control: this branch really renamed the file.
+    expect(body.fileName).not.toBe(file.name);
+    expect(extOf(body.fileName)).toBe(extOf(file.name));
+  });
+
+  it('a training-data zip keeps .zip', async () => {
+    const dataset = {
+      id: 404,
+      type: 'Training Data',
+      visibility: 'Public',
+      url: 'https://example.invalid/data.zip',
+      metadata: { nsfwLevel: 1, fullyRated: true },
+      sizeKB: 1024,
+      name: 'data.zip',
+      hashes: {},
+    };
+    currentUser.value = { id: OWNER_ID };
+    const pending = run([SAFETENSOR, dataset], { modelFileId: String(dataset.id) });
+    mockQueryRaw.mockResolvedValueOnce([
+      {
+        id: dataset.id,
+        nsfwLevel: 1,
+        fullyRated: true,
+        restricted: false,
+        virusScanResult: 'Success',
+      },
+    ]);
+    const { status, body } = await pending;
+    expect(status).toBe(200);
+    expect(body.fileName).not.toBe(dataset.name);
+    expect(extOf(body.fileName)).toBe('.zip');
   });
 });
