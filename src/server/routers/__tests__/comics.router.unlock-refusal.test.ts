@@ -76,6 +76,7 @@ beforeEach(() => {
       ? { muted: false, bannedAt: null }
       : undefined) as never);
   vi.clearAllMocks();
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: PANEL_ID }] as never);
   vi.mocked(handleError).mockImplementation((error) => (error as { detail: string }).detail);
   const panel = {
     id: PANEL_ID,

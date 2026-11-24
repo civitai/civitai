@@ -54,4 +54,20 @@ describe('workflows.updateWorkflow refusal', () => {
     ).rejects.toThrow('bad-request: The cap blocks every mature output.');
     expect(clientGetWorkflow).not.toHaveBeenCalled();
   });
+
+  it("bounds the write with the caller's signal", async () => {
+    const { signal } = new AbortController();
+
+    await expect(
+      updateWorkflow({
+        token: 't',
+        workflowId: 'wf-1',
+        allowMatureContent: true,
+        throwOnError: true,
+        signal,
+      })
+    ).rejects.toThrow('bad-request: The cap blocks every mature output.');
+
+    expect(vi.mocked(clientUpdateWorkflow).mock.calls[0]?.[0]).toHaveProperty('signal', signal);
+  });
 });
