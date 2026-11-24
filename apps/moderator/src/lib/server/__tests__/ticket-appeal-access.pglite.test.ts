@@ -37,6 +37,8 @@ const { APPEAL_RULING_REFUSED } = await import('$lib/held-media');
 const OWNER = 7;
 const WITHHELD = 301;
 const APPEAL = 31;
+const CLEAN = 990000030;
+const CLEAN_APPEAL = 990000031;
 const APPEALS_ROLE = 'appeals-reviewer';
 
 const WITHOUT_GRANT = { id: 2, roles: [APPEALS_ROLE] };
@@ -61,9 +63,11 @@ beforeEach(async () => {
   await db.exec(`
     INSERT INTO "User" (id, username) VALUES (${OWNER}, 'owner');
     INSERT INTO "Image" (id, url, ingestion, "needsReview", "blockedFor", "userId") VALUES
-      (${WITHHELD}, 'withheld-key', 'Blocked', 'appeal', 'CSAM', ${OWNER});
+      (${WITHHELD}, 'withheld-key', 'Blocked', 'appeal', 'CSAM', ${OWNER}),
+      (${CLEAN}, 'clean-key', 'Scanned', 'appeal', NULL, ${OWNER});
     INSERT INTO "Appeal" (id, "userId", "entityType", "entityId") VALUES
-      (${APPEAL}, ${OWNER}, 'Image', ${WITHHELD});
+      (${APPEAL}, ${OWNER}, 'Image', ${WITHHELD}),
+      (${CLEAN_APPEAL}, ${OWNER}, 'Image', ${CLEAN});
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -74,12 +78,16 @@ afterEach(async () => {
   await db.close();
 });
 
-const rule = (user: { id: number; roles: string[] }, status: 'Approved' | 'Rejected') => {
+const rule = (
+  user: { id: number; roles: string[] },
+  status: 'Approved' | 'Rejected',
+  appealId = APPEAL
+) => {
   const form = new FormData();
   for (const [k, v] of Object.entries({
     ticketId: '5',
     userId: String(OWNER),
-    appealId: String(APPEAL),
+    appealId: String(appealId),
     status,
     resolvedReason: status === 'Approved' ? 'misclassified' : 'violation-confirmed',
   }))
@@ -106,6 +114,17 @@ describe('ticket appeal ruling on a withheld image', () => {
 
     expect(resolve).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ imageId: WITHHELD, status })
+    );
+  });
+});
+
+// A gate that refused every ruling would pass the refusals above.
+describe('ticket appeal ruling on an image nothing withholds', () => {
+  it.each(['Approved', 'Rejected'] as const)('rules %s without the grant', async (status) => {
+    await rule(WITHOUT_GRANT, status, CLEAN_APPEAL);
+
+    expect(resolve).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ imageId: CLEAN, status })
     );
   });
 });

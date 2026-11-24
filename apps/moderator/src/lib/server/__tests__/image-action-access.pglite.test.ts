@@ -75,6 +75,18 @@ vi.mock('../image-moderation.service', async (importOriginal) => ({
   sendBulkAppealEmails: vi.fn(async () => undefined),
 }));
 vi.mock('../image-nsfw-level', () => ({ updateImageNsfwLevel }));
+const { resolveIngestionError, ruleOnInquisitorItem } = vi.hoisted(() => ({
+  resolveIngestionError: vi.fn(async (_input: unknown) => undefined),
+  ruleOnInquisitorItem: vi.fn(async (..._args: unknown[]) => ({ ok: true as const })),
+}));
+vi.mock('../ingestion.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../ingestion.service')>()),
+  resolveIngestionError,
+}));
+vi.mock('../knights/inquisitor.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../knights/inquisitor.service')>()),
+  ruleOnInquisitorItem,
+}));
 // The open item's reports are not what these tests read.
 vi.mock('../report-queue-load', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../report-queue-load')>()),
@@ -94,6 +106,9 @@ const ratingsPage = await import('../../../routes/images/ratings/+page.server');
 const downleveledPage = await import('../../../routes/images/downleveled/+page.server');
 const sweepPage = await import('../../../routes/retool/front-page-audit/[media]/+page.server');
 const userLookupPage = await import('../../../routes/retool/user-lookup/[section]/+page.server');
+const ingestionPage = await import('../../../routes/images/ingestion-errors/+page.server');
+const inquisitorPage = await import('../../../routes/knights-of-new-order/inquisitor/+page.server');
+const { getImageLookup } = await import('../image-lookup.service');
 
 // A routine block reason, kept by the other row on its url, which has not finished its scan.
 const WITHHELD = 501;
@@ -115,6 +130,8 @@ beforeEach(async () => {
   blockImage.mockClear();
   dismissFromCsamQueue.mockClear();
   dismissUserFromCsamQueue.mockClear();
+  resolveIngestionError.mockClear();
+  ruleOnInquisitorItem.mockClear();
   db = await freshPglite();
   await db.exec(IMAGE_PAGES_SCHEMA);
   await db.exec(
@@ -672,5 +689,126 @@ describe("User Lookup's account-wide removals", () => {
   ] as const)('%s acts on the account for a grant holder', async (action, write) => {
     await act(action, WITH_GRANT, 7, 'owner');
     expect(write()).toHaveBeenCalledOnce();
+  });
+});
+
+// Rows nothing retracts or holds are decided on Postgres alone, their url siblings included.
+describe('a live image sharing its url, without the grant', () => {
+  const SIGNAL_SHARED = 990000001;
+  const CLEAN_SHARED = 990000003;
+  beforeEach(() =>
+    db.exec(`
+      INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
+        (${SIGNAL_SHARED}, 'signal-shared-key', 'Scanned', NULL, 9),
+        (990000002, 'signal-shared-key', 'Blocked', 'unrecognised-reason', 8),
+        (${CLEAN_SHARED}, 'clean-shared-key', 'Scanned', NULL, 9),
+        (990000004, 'clean-shared-key', 'Scanned', NULL, 8);
+    `)
+  );
+
+  it('is refused when a sibling on its url carries a signal block reason', async () => {
+    const result = (await queuePage.actions.accept(
+      event(WITHOUT_GRANT, { imageId: String(SIGNAL_SHARED) })
+    )) as Result;
+    expect(result.status).toBe(403);
+    expect(acceptImage).not.toHaveBeenCalled();
+  });
+
+  it('is acted on when every sibling on its url is clean, even while the scanner cannot answer', async () => {
+    scanner.down = true;
+    await queuePage.actions.accept(event(WITHOUT_GRANT, { imageId: String(CLEAN_SHARED) }));
+    expect(acceptImage).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the ingestion-error queue's resolve", () => {
+  const CLEAN_ERROR = 990000010;
+  beforeEach(() =>
+    db.exec(`INSERT INTO "Image" (id, url, ingestion, "userId") VALUES
+      (${CLEAN_ERROR}, 'error-key', 'Error', 9)`)
+  );
+  const resolve = (user: { id: number; roles: string[] }, id: number) =>
+    ingestionPage.actions.resolve(
+      event(user, { id: String(id), nsfwLevel: '1' })
+    ) as Promise<Result>;
+
+  it('refuses a withheld image without the grant, writing nothing', async () => {
+    expect((await resolve(WITHOUT_GRANT, WITHHELD)).status).toBe(403);
+    expect(resolveIngestionError).not.toHaveBeenCalled();
+  });
+
+  it('resolves a clean Error image without the grant', async () => {
+    await resolve(WITHOUT_GRANT, CLEAN_ERROR);
+    expect(resolveIngestionError).toHaveBeenCalledOnce();
+  });
+
+  it('resolves the withheld image for a grant holder', async () => {
+    await resolve(WITH_GRANT, WITHHELD);
+    expect(resolveIngestionError).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the front page sweep's tag vote", () => {
+  const SWEEPER = { id: 4, roles: ['moderator:sweeper'] };
+  beforeEach(() => applyGrants({ '/retool/front-page-audit': ['moderator:sweeper'] }));
+  afterEach(() => applyGrants({}));
+
+  it('refuses a withheld image without the grant', async () => {
+    const result = (await (sweepPage.actions.voteTag as (e: never) => Promise<unknown>)(
+      event(SWEEPER, { imageId: String(WITHHELD), tagId: '1', direction: 'up' })
+    )) as Result;
+    expect(result.status).toBe(403);
+  });
+});
+
+describe("the Inquisitor's ruling", () => {
+  const KNIGHT = { id: 5, roles: ['moderator:knight'] };
+  const PATH = '/knights-of-new-order/inquisitor';
+  beforeEach(async () => {
+    applyGrants({ [PATH]: ['moderator:knight'] });
+    await db.exec(`CREATE TABLE "KnightsQueueItem" (id INTEGER PRIMARY KEY, "imageId" INTEGER);
+      INSERT INTO "KnightsQueueItem" (id, "imageId") VALUES (1, ${WITHHELD}), (2, ${CONTROL})`);
+  });
+  afterEach(() => applyGrants({}));
+  const rule = (user: { id: number; roles: string[] }, itemId: number) =>
+    inquisitorPage.actions.rule({
+      ...(event(user, { itemId: String(itemId), level: '1' }) as object),
+      url: new URL(`https://mod.test${PATH}`),
+    } as never) as Promise<Result>;
+
+  it('refuses an item whose image is withheld, without the grant', async () => {
+    expect((await rule(KNIGHT, 1)).status).toBe(403);
+    expect(ruleOnInquisitorItem).not.toHaveBeenCalled();
+  });
+
+  it('rules on an item whose image nothing withholds, without the grant', async () => {
+    await rule(KNIGHT, 2);
+    expect(ruleOnInquisitorItem).toHaveBeenCalledOnce();
+  });
+
+  it('rules on the withheld item for a grant holder', async () => {
+    await rule(WITH_GRANT, 1);
+    expect(ruleOnInquisitorItem).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Image Lookup's activity for a withheld image", () => {
+  beforeEach(() =>
+    db.exec(`INSERT INTO "ModActivity" ("userId", "entityType", "entityId", activity, "createdAt") VALUES
+      (3, 'image', ${WITHHELD}, 'dismissFromCsamQueue', now()),
+      (3, 'image', ${WITHHELD}, 'heldMedia:view', now())`)
+  );
+
+  it('lists none without the grant', async () => {
+    const found = await getImageLookup(WITHHELD, { csamReview: false });
+    expect(found?.modActivity.rows).toEqual([]);
+  });
+
+  it('lists it for a grant holder', async () => {
+    const found = await getImageLookup(WITHHELD, { csamReview: true });
+    expect(found?.modActivity.rows.map((row) => row.activity).sort()).toEqual([
+      'dismissFromCsamQueue',
+      'heldMedia:view',
+    ]);
   });
 });

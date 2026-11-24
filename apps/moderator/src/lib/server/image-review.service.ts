@@ -594,8 +594,8 @@ export type AppealImageItem = {
   width: number | null;
   height: number | null;
   type: MediaType | null;
-  /** Withheld from this moderator by the media access rule (`restrictedImageIds`): served without
-   *  `url`, `width`, `height`, `type`, `blockedFor`, `tosReason` or `reports`. */
+  /** Withheld from this moderator by the media access rule (`restrictedImageIds`): served with
+   *  `withheldMedia()` in place of its fields. */
   restricted: boolean;
   needsReview: string | null;
   minor: boolean;

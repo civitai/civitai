@@ -174,9 +174,8 @@ export async function getImageLookup(
   if (!found) return null;
   // Withheld: no media, and nothing that says why (as the appeal cards).
   if ((await restrictedImageIds([imageId], { csamReview })).has(imageId)) {
-    const [reactions, modActivity, appeals] = await Promise.all([
+    const [reactions, appeals] = await Promise.all([
       getReactions(imageId),
-      getModActivity(imageId),
       getLatestApprovedImageAppeals(dbRead, [imageId]),
     ]);
     return {
@@ -194,7 +193,7 @@ export async function getImageLookup(
       shadowTags: [],
       reactions,
       reports: [],
-      modActivity,
+      modActivity: { rows: [], truncated: false },
       approvedAppeal: approvedAppealOf(appeals.get(imageId)),
     };
   }

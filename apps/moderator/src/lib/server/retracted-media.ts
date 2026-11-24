@@ -12,6 +12,7 @@ import {
   retractedImageWhereSql,
   moderatorMediaWhereSql,
   retractedViewable,
+  siblingsClearInPostgres,
   type UrlSibling,
 } from '@civitai/shared/retracted-media-tier';
 import { blockedForPatterns } from './blocked-for-patterns';
@@ -141,7 +142,7 @@ const RESTRICTED_READ_PAGE = 200;
  * a row without its media withholds what `/api/retracted-media` would refuse. Only a row that route
  * could serve, retracted or held, is read from the scanner (`viewableToNonGrant`), and one whose
  * verdict could not be read is kept and named in `unreadable`; every other row is decided on the
- * Postgres signals alone, so ordinary moderation does not wait on ClickHouse. An id the primary does
+ * Postgres signals alone, its url siblings' included, so ordinary moderation does not wait on ClickHouse. An id the primary does
  * not have is kept too. Read on the primary, a page of ids at a time. None for a moderator with the
  * grant; a Postgres read that fails throws.
  */
@@ -179,8 +180,14 @@ export async function restrictedImageAccess(
     );
     for (const id of scanned.unreadable) unreadable.add(id);
     const viewable = new Set(scanned.viewable);
+    const isSignal = (blockedFor: string | null) => blockedForSignal(blockedFor, patterns);
     for (const row of rows)
-      if (!row.scanned && !row.restricted && !blockedForSignal(row.blockedFor, patterns))
+      if (
+        !row.scanned &&
+        !row.restricted &&
+        !isSignal(row.blockedFor) &&
+        siblingsClearInPostgres(row.siblings, isSignal)
+      )
         viewable.add(row.id);
     for (const id of page) if (!viewable.has(id)) kept.add(id);
   }
@@ -200,6 +207,11 @@ export const withheldMedia = () => ({
   prompt: null,
   negativePrompt: null,
   tosReason: null,
+  minor: false,
+  poi: false,
+  modelRestricted: false,
+  removedAt: null,
+  moderatorUsername: null,
   reports: [] as never[],
   tags: [] as never[],
   restricted: true as const,

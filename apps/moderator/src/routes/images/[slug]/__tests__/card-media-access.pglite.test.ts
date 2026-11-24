@@ -153,6 +153,19 @@ describe('card load, without the grant', () => {
 
   // No other field carries the storage key either: the image id is the only handle left, and the
   // two routes that take one refuse it (below).
+  it('serves no flag that could say why it is withheld', async () => {
+    await db.exec(
+      `UPDATE "Image" SET minor = true, poi = true, "modelRestricted" = true WHERE id = ${RESTRICTED}`
+    );
+    expect(await card(WITHOUT_GRANT, RESTRICTED)).toMatchObject({
+      minor: false,
+      poi: false,
+      modelRestricted: false,
+      removedAt: null,
+      moderatorUsername: null,
+    });
+  });
+
   it('serves the storage key in no field at all', async () => {
     expect(JSON.stringify(await card(WITHOUT_GRANT, RESTRICTED))).not.toContain(KEY);
   });

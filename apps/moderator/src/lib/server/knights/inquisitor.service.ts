@@ -17,7 +17,7 @@ import { isRatingLevel } from '$lib/nsfw-levels';
 import { logToAxiom } from '../axiom';
 import { dbRead, dbWrite } from '../db';
 import { updateImageNsfwLevel } from '../image-nsfw-level';
-import { readRetractedMedia } from '../retracted-media';
+import { readRetractedMedia, restrictedImageIds } from '../retracted-media';
 import { readScannerCsamVerdicts } from '../review-batch';
 import {
   consensusBlockReason,
@@ -218,11 +218,19 @@ export async function getInquisitorQueue(
     items.map((item) => item.imageId),
     { csamReview }
   );
+  const cdnIds = items
+    .filter(
+      (item) =>
+        !viewable.has(item.imageId) && !eligible.has(item.imageId) && item.ingestion !== 'Blocked'
+    )
+    .map((item) => item.imageId);
+  // A read that fails withholds them all, as `retractedMediaFor` does.
+  const withheld = await restrictedImageIds(cdnIds, { csamReview }).catch(() => new Set(cdnIds));
 
   return items.map(({ options, ingestion, reason, escalationReason, ...item }) => {
     const media: InquisitorMedia = viewable.has(item.imageId)
       ? 'retracted'
-      : eligible.has(item.imageId) || ingestion === 'Blocked'
+      : eligible.has(item.imageId) || ingestion === 'Blocked' || withheld.has(item.imageId)
       ? 'restricted'
       : 'cdn';
     const labels = new Map(parseOptions(options).map((option) => [option.value, option.label]));
@@ -268,6 +276,16 @@ async function retractedMediaFor(
     });
     return { eligible: new Set(), viewable: new Set() };
   }
+}
+
+/** The image a queue item asks about; `null` for an item that does not exist. */
+export async function inquisitorItemImageId(itemId: number): Promise<number | null> {
+  const row = await dbWrite
+    .selectFrom('KnightsQueueItem')
+    .select('imageId')
+    .where('id', '=', itemId)
+    .executeTakeFirst();
+  return row?.imageId ?? null;
 }
 
 export type RulingOutcome = { ok: true } | { ok: false; error: string };

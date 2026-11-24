@@ -9,8 +9,10 @@ import {
   countInquisitorQueueByFilter,
   getInquisitorQueue,
   INQUISITOR_QUEUE_LIMIT,
+  inquisitorItemImageId,
   ruleOnInquisitorItem,
 } from '$lib/server/knights/inquisitor.service';
+import { withheldRefusal } from '$lib/server/retracted-media';
 
 const rulingForm = z.object({
   itemId: int4Id,
@@ -42,6 +44,9 @@ export const actions: Actions = {
     if (typeof input === 'string') return fail(400, { error: input });
     try {
       const { itemId, level, blockReason } = input;
+      const imageId = await inquisitorItemImageId(itemId);
+      const withheld = imageId === null ? null : await withheldRefusal(locals.user, [imageId]);
+      if (withheld) return fail(403, { error: withheld, key: itemId });
       const result = await ruleOnInquisitorItem(itemId, { level, blockReason }, locals.user.id);
       return result.ok ? { success: true } : fail(409, { error: result.error, key: itemId });
     } catch (error) {

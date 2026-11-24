@@ -2,6 +2,7 @@ import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { getIngestionErrorImages, resolveIngestionError } from '$lib/server/ingestion.service';
 import { ingestionErrorLevelSet } from '@civitai/shared';
+import { withheldRefusal } from '$lib/server/retracted-media';
 
 const LIMIT_OPTIONS = [10, 25, 50, 100];
 
@@ -23,6 +24,8 @@ export const actions: Actions = {
 
     if (!id) return fail(400, { error: 'Missing image id' });
     if (!ingestionErrorLevelSet.has(nsfwLevel)) return fail(400, { error: 'Invalid NSFW level' });
+    const withheld = await withheldRefusal(locals.user, [id]);
+    if (withheld) return fail(403, { error: withheld });
 
     try {
       await resolveIngestionError({ id, nsfwLevel, userId: locals.user.id });

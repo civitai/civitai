@@ -231,6 +231,8 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return actionFail(input);
+    const withheld = await withheldRefusal(locals.user, [input.imageId]);
+    if (withheld) return fail(403, { error: withheld });
 
     // BEFORE the vote, for the same reason `setRating` reads it before the update: it is the level the
     // sweep is looking at, which is what Retool recorded as `originalRating`.
