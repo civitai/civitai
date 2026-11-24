@@ -292,6 +292,8 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //     `20271120030000_service_license_presets`
     //   `ServiceDeal.reviewEnabledAt` and the four `ServiceOffering` review columns:
     //     `20271120100100_service_deal_reviews`
+    //   `ServiceDeal.buyerDisclosureVersion` / `.buyerDisclosureLines`:
+    //     `20271125130000_service_deal_buyer_disclosure`
     const inFlightColumns = new Set([
       'ServiceOffering.licensePreset',
       'ServiceOffering.licenseCustomText',
@@ -301,6 +303,8 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ServiceDeal.licenseAllowResale',
       'ServiceDeal.licenseAgreedAt',
       'ServiceDeal.reviewEnabledAt',
+      'ServiceDeal.buyerDisclosureVersion',
+      'ServiceDeal.buyerDisclosureLines',
       'ServiceOffering.allowReviewWork',
       'ServiceOffering.happyCount',
       'ServiceOffering.reviewCount',

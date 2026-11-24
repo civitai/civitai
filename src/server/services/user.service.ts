@@ -161,7 +161,10 @@ import {
 import { createNotification } from '~/server/services/notification.service';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { UserFlag } from '~/shared/constants/user-flags.constants';
+import {
+  EVENT_POINTS_EXCLUDED_FROM_META_KEY,
+  UserFlag,
+} from '~/shared/constants/user-flags.constants';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { chunkIds } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -1583,12 +1586,14 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
   userUpdateCounter?.inc({ location: 'user.service:setLeaderboardEligibility' });
 }
 
-// Sets or clears the one bit in place, so a concurrent write to another flag is never lost.
+// Sets or clears the one bit in place, so a concurrent write to another flag is never lost. Lifting it
+// also drops the exclusion start, so a later exclusion is whole-season unless a start is set again.
 export async function setEventPointsExclusion({ id, setTo }: { id: number; setTo: boolean }) {
   const bit = UserFlag.ExcludeFromEventPoints;
   await dbWrite.$executeRaw`
     UPDATE "User"
-    SET flags = CASE WHEN ${setTo} THEN flags | ${bit}::int ELSE flags & ~${bit}::int END
+    SET flags = CASE WHEN ${setTo} THEN flags | ${bit}::int ELSE flags & ~${bit}::int END,
+      meta = CASE WHEN ${setTo} THEN meta ELSE meta - ${EVENT_POINTS_EXCLUDED_FROM_META_KEY}::text END
     WHERE id = ${id}
   `;
   userUpdateCounter?.inc({ location: 'user.service:setEventPointsExclusion' });

@@ -4,7 +4,7 @@ import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import * as yauzl from 'yauzl';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
+import { BUYER_DISCLOSURE_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as BuzzService from '~/server/services/buzz.service';
@@ -212,6 +212,7 @@ const MIGRATIONS = [
   '20271120030000_service_license_presets',
   '20271120100000_service_deal_reviewed_happy',
   '20271120100100_service_deal_reviews',
+  '20271125130000_service_deal_buyer_disclosure',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -259,7 +260,8 @@ async function accepted() {
     expectedDeliveryDays: 3,
     buyerId: BUYER,
     requestText: 'please',
-    disclosureVersion: SERVICES_TERMS_VERSION,
+    disclosureVersion: BUYER_DISCLOSURE_VERSION,
+    disclosureReviewEnabled: false,
     buzzType: 'yellow',
     servableLevels: 31,
     consentLevels: 1,
