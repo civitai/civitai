@@ -128,9 +128,9 @@ function eagerReads(factory: ts.ArrowFunction | ts.FunctionExpression): Set<stri
   return names;
 }
 
-type Mock = { target: string; factory: ts.ArrowFunction | ts.FunctionExpression | null };
+type Mock = { spec: string; factory: ts.ArrowFunction | ts.FunctionExpression | null };
 
-function mocks(sf: ts.SourceFile, absFile: string): Mock[] {
+function mocks(sf: ts.SourceFile): Mock[] {
   const out: Mock[] = [];
   const visit = (n: ts.Node) => {
     if (
@@ -142,14 +142,11 @@ function mocks(sf: ts.SourceFile, absFile: string): Mock[] {
       n.arguments[0] &&
       ts.isStringLiteral(n.arguments[0])
     ) {
-      const target = resolveSpecifier(n.arguments[0].text, absFile);
       const fac = n.arguments[1];
-      if (target) {
-        out.push({
-          target: rel(target),
-          factory: fac && (ts.isArrowFunction(fac) || ts.isFunctionExpression(fac)) ? fac : null,
-        });
-      }
+      out.push({
+        spec: n.arguments[0].text,
+        factory: fac && (ts.isArrowFunction(fac) || ts.isFunctionExpression(fac)) ? fac : null,
+      });
     }
     ts.forEachChild(n, visit);
   };
@@ -180,28 +177,115 @@ function loads(
   return false;
 }
 
-type Checked = { findings: Finding[]; factoriesReadingImports: number };
+/** Imported value names, read with a regex: a superset is fine, a missed name is not. */
+function importedNames(source: string): string[] {
+  const names: string[] = [];
+  const re = /(?:^|[\n;])\s*import\s+(?!type\s)([\s\S]*?)\s+from\s*['"]([^'"]+)['"]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(source))) {
+    // `vi` and friends are bound before any factory runs.
+    if (isVitest(m[2]!)) continue;
+    const clause = m[1]!;
+    for (const part of clause.replace(/[{}]/g, ',').split(',')) {
+      const words = part.trim().split(/\s+/);
+      const name = words[words.length - 1];
+      if (name && /^[A-Za-z_$][\w$]*$/.test(name) && name !== 'type') names.push(name);
+    }
+  }
+  return names;
+}
 
-function check(relFile: string, source: string, graph?: Map<string, string[]>): Checked {
+/**
+ * The text of each `vi.mock(...)` call, found by matching brackets past strings, template
+ * literals and comments. A regex literal holding a bracket can misplace an end; the scan errs long
+ * (to the end of the file) when brackets never balance.
+ */
+function mockCallTexts(source: string): string[] {
+  const out: string[] = [];
+  let at = source.indexOf('vi.mock(');
+  while (at !== -1) {
+    let depth = 0;
+    let i = at + 'vi.mock'.length;
+    let end = source.length;
+    for (; i < source.length; i++) {
+      const c = source[i]!;
+      if (c === '/' && source[i + 1] === '/')
+        i = source.indexOf('\n', i) === -1 ? source.length : source.indexOf('\n', i);
+      else if (c === '/' && source[i + 1] === '*')
+        i = source.indexOf('*/', i + 2) === -1 ? source.length : source.indexOf('*/', i + 2) + 1;
+      else if (c === "'" || c === '"' || c === '`') {
+        for (i++; i < source.length && source[i] !== c; i++) if (source[i] === '\\') i++;
+      } else if (c === '(' || c === '{' || c === '[') depth++;
+      else if (c === ')' || c === '}' || c === ']') {
+        if (--depth === 0) {
+          end = i + 1;
+          break;
+        }
+      }
+    }
+    out.push(source.slice(at, end));
+    at = source.indexOf('vi.mock(', at + 1);
+  }
+  return out;
+}
+
+/**
+ * Whether a factory might read an import: worth parsing the whole file. Parses only the text of each
+ * `vi.mock` call, and answers true whenever that text does not parse as one whole call, so a
+ * misplaced end costs speed, never a finding.
+ */
+function mayReadImport(source: string): boolean {
+  const calls = mockCallTexts(source);
+  if (!calls.length) return false;
+  const names = new Set(importedNames(source));
+  if (!names.size) return false;
+  return calls.some((text) => {
+    const sf = ts.createSourceFile(
+      'call.ts',
+      text,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TSX
+    );
+    const diagnostics = (sf as { parseDiagnostics?: unknown[] }).parseDiagnostics ?? [];
+    const [statement] = sf.statements;
+    const call =
+      statement && ts.isExpressionStatement(statement) && ts.isCallExpression(statement.expression)
+        ? statement.expression
+        : null;
+    if (
+      diagnostics.length ||
+      sf.statements.length !== 1 ||
+      !call ||
+      call.end !== text.trimEnd().length
+    )
+      return true;
+    const factory = call.arguments[1];
+    if (!factory || !(ts.isArrowFunction(factory) || ts.isFunctionExpression(factory)))
+      return false;
+    return [...eagerReads(factory)].some((n) => names.has(n));
+  });
+}
+
+type Analysis = {
+  factoriesReadingImports: number;
+  /** The earlier imports whose module graph decides a finding. */
+  entries: string[];
+  judge: (graph: Map<string, string[]>) => Finding[];
+};
+
+/** Parses one file; resolves and walks nothing unless a factory reads a static import. */
+function analyze(relFile: string, source: string): Analysis {
+  const none: Analysis = { factoriesReadingImports: 0, entries: [], judge: () => [] };
+  // Cheap text test first: parsing is the scan's cost, and most files cannot match.
+  if (!mayReadImport(source)) return none;
   const absFile = path.join(REPO_ROOT, relFile);
   const sf = ts.createSourceFile(relFile, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const imports = staticImports(sf);
-  const fileMocks = mocks(sf, absFile);
-  const replaced = new Set(fileMocks.filter((m) => m.factory).map((m) => m.target));
-  const resolved = new Map(
-    imports.map((imp) => {
-      const r = isVitest(imp.spec) ? null : resolveSpecifier(imp.spec, absFile);
-      return [imp, r ? rel(r) : null] as const;
-    })
-  );
-  const g =
-    graph ??
-    importGraph(
-      [...resolved.values()].filter((x): x is string => !!x),
-      { followDynamic: false }
-    );
+  const fileMocks = mocks(sf);
 
-  const findings: Finding[] = [];
+  type Pair = { target: string; imp: StaticImport; name: string };
+  const pairs: Pair[] = [];
   let factoriesReadingImports = 0;
   for (const mock of fileMocks) {
     if (!mock.factory) continue;
@@ -210,18 +294,57 @@ function check(relFile: string, source: string, graph?: Map<string, string[]>): 
       (imp) => !isVitest(imp.spec) && imp.names.some((n) => reads.has(n))
     );
     if (bound.length) factoriesReadingImports++;
+    if (!bound.length) continue;
+    // Resolved only here: probing the disk for every mock in the tree is the scan's cost.
+    const target = resolveSpecifier(mock.spec, absFile);
+    if (!target) continue;
     for (const imp of bound) {
-      for (const earlier of imports) {
-        // The binding import itself counts: the factory fires during its own load.
-        if (earlier.index > imp.index || !earlier.value) continue;
-        const from = resolved.get(earlier);
+      pairs.push({
+        target: rel(target),
+        imp,
+        name: imp.names.filter((n) => reads.has(n)).join(', '),
+      });
+    }
+  }
+  if (!pairs.length) return { ...none, factoriesReadingImports };
+
+  const resolved = new Map<StaticImport, string | null>();
+  const resolve = (imp: StaticImport) => {
+    if (!resolved.has(imp)) {
+      const r = isVitest(imp.spec) ? null : resolveSpecifier(imp.spec, absFile);
+      resolved.set(imp, r ? rel(r) : null);
+    }
+    return resolved.get(imp)!;
+  };
+  // The binding import itself counts: the factory fires during its own load.
+  const loaders = (imp: StaticImport) =>
+    imports.filter((earlier) => earlier.index <= imp.index && earlier.value);
+  const entries = new Set<string>();
+  for (const { imp } of pairs) {
+    for (const earlier of loaders(imp)) {
+      const from = resolve(earlier);
+      if (from) entries.add(from);
+    }
+  }
+
+  const judge = (graph: Map<string, string[]>) => {
+    const replaced = new Set(
+      fileMocks
+        .filter((m) => m.factory)
+        .map((m) => resolveSpecifier(m.spec, absFile))
+        .filter((t): t is string => !!t)
+        .map(rel)
+    );
+    const findings: Finding[] = [];
+    for (const { target, imp, name } of pairs) {
+      for (const earlier of loaders(imp)) {
+        const from = resolve(earlier);
         // A module this file replaces never loads its real imports.
-        if (!from || replaced.has(from) || !loads(g, from, mock.target, replaced)) continue;
-        const name = imp.names.filter((n) => reads.has(n)).join(', ');
+        if (!from || replaced.has(from) || !loads(graph, from, target, replaced)) continue;
         findings.push(
           relFile +
             ': the vi.mock factory for ' +
-            mock.target +
+            target +
             ' reads ' +
             name +
             ' (imported on line ' +
@@ -231,7 +354,7 @@ function check(relFile: string, source: string, graph?: Map<string, string[]>): 
             "' on line " +
             earlier.line +
             ' loads ' +
-            mock.target +
+            target +
             ' first, so ' +
             name +
             ' is still unbound when the factory runs'
@@ -239,8 +362,16 @@ function check(relFile: string, source: string, graph?: Map<string, string[]>): 
         break;
       }
     }
-  }
-  return { findings, factoriesReadingImports };
+    return findings;
+  };
+  return { factoriesReadingImports, entries: [...entries], judge };
+}
+
+let controlGraph: Map<string, string[]> | undefined;
+/** The fixtures below share the control's imports, so they share one graph of them. */
+function check(relFile: string, source: string, graph?: Map<string, string[]>): Finding[] {
+  controlGraph ??= importGraph(analyze(REPORT_TEST, PRE_FIX).entries, { followDynamic: false });
+  return analyze(relFile, source).judge(graph ?? controlGraph);
 }
 
 function filesUnder(dir: string, keep: (name: string) => boolean, out: string[] = []): string[] {
@@ -264,17 +395,24 @@ function scanned(): string[] {
   ];
 }
 
-let memo: { graph: Map<string, string[]>; results: Checked[] } | undefined;
+let memo:
+  | { graph: Map<string, string[]>; findings: Finding[]; factoriesReadingImports: number }
+  | undefined;
 /** Built on first use, so a read or parse error fails a named test rather than collection. */
 function tree() {
   if (!memo) {
-    const files = scanned();
-    // One graph for every file: built per file, the walk costs minutes.
-    const graph = importGraph(files, { followDynamic: false });
-    const results = files.map((f) =>
-      check(f, fs.readFileSync(path.join(REPO_ROOT, f), 'utf8'), graph)
+    const analyses = scanned().map((f) =>
+      analyze(f, fs.readFileSync(path.join(REPO_ROOT, f), 'utf8'))
     );
-    memo = { graph, results };
+    // One graph over the imports that decide a finding, the control's included; one per file is
+    // far slower.
+    const entries = new Set([...analyses, analyze(REPORT_TEST, PRE_FIX)].flatMap((a) => a.entries));
+    const graph = importGraph([...entries], { followDynamic: false });
+    memo = {
+      graph,
+      findings: analyses.flatMap((a) => a.judge(graph)),
+      factoriesReadingImports: analyses.reduce((n, a) => n + a.factoriesReadingImports, 0),
+    };
   }
   return memo;
 }
@@ -303,9 +441,9 @@ describe('vi.mock factories read no import that is still unbound', () => {
     const expected = [
       expect.stringContaining("'~/components/Feedback/ReportProblemButton' on line 5"),
     ];
-    expect(check(REPORT_TEST, PRE_FIX).findings).toEqual(expected);
+    expect(check(REPORT_TEST, PRE_FIX)).toEqual(expected);
     // The same through the graph the tree scan uses, so a broken shared graph fails here.
-    expect(check(REPORT_TEST, PRE_FIX, tree().graph).findings).toEqual(expected);
+    expect(check(REPORT_TEST, PRE_FIX, tree().graph)).toEqual(expected);
   });
 
   it('passes the same factory once it imports the stub itself', () => {
@@ -318,7 +456,7 @@ describe('vi.mock factories read no import that is still unbound', () => {
     );
     expect(fixed).not.toContain("from '../../../test/trpcProxyStub'");
     expect(fixed).toContain("await import('../../../test/trpcProxyStub')");
-    expect(check(REPORT_TEST, fixed).findings).toEqual([]);
+    expect(check(REPORT_TEST, fixed)).toEqual([]);
   });
 
   it('ignores a read inside a function the factory builds, which runs later', () => {
@@ -326,7 +464,7 @@ describe('vi.mock factories read no import that is still unbound', () => {
       'return { ...actual, trpc: makeTrpcProxy({}) };',
       'return { ...actual, get trpc() { return makeTrpcProxy({}); } };'
     );
-    expect(check(REPORT_TEST, deferred).findings).toEqual([]);
+    expect(check(REPORT_TEST, deferred)).toEqual([]);
   });
 
   it('reads a function the factory calls at once, and a class base', () => {
@@ -337,8 +475,8 @@ describe('vi.mock factories read no import that is still unbound', () => {
     );
     expect(iife).not.toBe(PRE_FIX);
     expect(base).not.toBe(PRE_FIX);
-    expect(check(REPORT_TEST, iife).findings).toHaveLength(1);
-    expect(check(REPORT_TEST, base).findings).toHaveLength(1);
+    expect(check(REPORT_TEST, iife)).toHaveLength(1);
+    expect(check(REPORT_TEST, base)).toHaveLength(1);
   });
 
   it('reports a factory reading a name from the import that loads the mocked module', () => {
@@ -347,7 +485,7 @@ describe('vi.mock factories read no import that is still unbound', () => {
       "import { ReportProblemButton } from '~/components/Feedback/ReportProblemButton';",
       'vi' + ".mock('~/utils/trpc', () => ({ trpc: ReportProblemButton }));",
     ].join('\n');
-    expect(check(REPORT_TEST, same).findings).toHaveLength(1);
+    expect(check(REPORT_TEST, same)).toHaveLength(1);
   });
 
   it('does not walk an earlier import this file replaces with a factory', () => {
@@ -358,19 +496,19 @@ describe('vi.mock factories read no import that is still unbound', () => {
         ".mock('~/components/Feedback/ReportProblemButton', () => ({ ReportProblemButton: null }));"
     );
     expect(replacedFirst).not.toBe(PRE_FIX);
-    expect(check(REPORT_TEST, replacedFirst).findings).toEqual([]);
+    expect(check(REPORT_TEST, replacedFirst)).toEqual([]);
   });
 
   // A parser that stopped seeing factories, or a graph with no edges, would pass everything.
   it('reads the factories in the tree, over a graph with edges', () => {
-    const { graph, results } = tree();
-    expect(results.reduce((n, r) => n + r.factoriesReadingImports, 0)).toBeGreaterThan(150);
+    const { graph, factoriesReadingImports } = tree();
+    expect(factoriesReadingImports).toBeGreaterThan(150);
     expect(graph.get('src/components/Feedback/ReportProblemButton.tsx')).toContain(
       'src/utils/trpc.ts'
     );
   });
 
   it('finds none in src/ or test/', () => {
-    expect(tree().results.flatMap((r) => r.findings)).toEqual([]);
+    expect(tree().findings).toEqual([]);
   });
 });
