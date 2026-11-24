@@ -198,10 +198,33 @@ describe('getFeaturePageViewerHandle', () => {
   it.each([
     ['a refusal', () => json(400, { code: 'bad_request' })],
     ['a reply that is not a handle', () => json(200, { author: 'u42' })],
-  ])('gives no handle on %s, and asks again next time', async (_, reply) => {
-    signerReplies.push(reply, () => json(200, { author }));
+  ])('gives no handle on %s, asks nothing for a minute, then asks again', async (_, reply) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      signerReplies.push(reply, () => json(200, { author }));
+
+      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+      expect(signerCalls()).toHaveLength(1);
+
+      vi.setSystemTime(Date.now() + 61_000);
+      await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up on a platform that does not answer well before the signer timeout', async () => {
+    fetchMock.mockImplementation(async (input: string, init: RequestInit) => {
+      if (input === `${HUB}/api/auth/oauth/token`)
+        return json(200, { access_token: 'token-1', expires_in: 900 });
+      return new Promise<Response>((_, reject) =>
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason))
+      );
+    });
+    const started = Date.now();
 
     await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
-    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+    expect(Date.now() - started).toBeLessThan(4_000);
   });
 });

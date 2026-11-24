@@ -4,7 +4,8 @@ import { CIVITAI_OWNED_DOMAINS, hubBaseUrl, hubFetch, registrableDomain } from '
 import { env } from '~/env/server';
 import { isLocalOrigin } from '~/env/local-origin';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import type {
   FeaturePageMineInput,
   FeaturePageVoteInput,
@@ -29,8 +30,9 @@ const HUB_TOKEN_TIMEOUT_MS = 8_000;
 // its refresh while another pod refreshes it, so the TTL stays under half the token's life.
 const SERVICE_TOKEN_TTL_SECONDS = 5 * 60;
 const SERVICE_TOKEN_KEY = REDIS_KEYS.CACHES.FEATURE_PAGES_SERVICE_TOKEN;
-// A handle is fixed per account, so it is kept long.
 const VIEWER_HANDLE_TTL_SECONDS = 24 * 60 * 60;
+const VIEWER_HANDLE_TIMEOUT_MS = 1_500;
+const VIEWER_HANDLE_MISS_TTL_SECONDS = 60;
 
 const log = (data: MixedObject) => logToAxiom({ name: 'feature-pages', type: 'error', ...data });
 
@@ -114,9 +116,10 @@ export type SignerReply = { status: number; body: unknown };
  */
 export async function callSigner(
   path: string,
-  init:
+  init: (
     | { method: 'POST'; body: Record<string, unknown> }
     | { method: 'GET'; query: URLSearchParams }
+  ) & { timeoutMs?: number }
 ): Promise<SignerReply> {
   const config = signerConfig();
   if (!config)
@@ -128,7 +131,7 @@ export async function callSigner(
       : `${config.signerUrl}${path}`;
   const send = (token: string) =>
     outboundFetch(url, {
-      timeoutMs: SIGNER_TIMEOUT_MS,
+      timeoutMs: init.timeoutMs ?? SIGNER_TIMEOUT_MS,
       method: init.method,
       headers: {
         Authorization: `Bearer ${token}`,
@@ -163,16 +166,26 @@ export async function callSigner(
 
 /** The viewer's platform handle for fp-init, or null when the platform gives none. */
 export async function getFeaturePageViewerHandle(userId: number): Promise<string | null> {
+  const key = `${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:${userId}` as const;
+  const missKey = `${key}:miss` as const;
+  // The page render waits on this, so after a failure it is not asked again for a while.
+  const missed = await clusterCacheGuard.readOr(
+    'feature-pages.viewerHandleMiss',
+    () => redis.packed.get(missKey),
+    null
+  );
+  if (missed) return null;
   try {
     return await fetchThroughCache(
-      `${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:${userId}`,
+      key,
       async () => {
         const reply = await callSigner(PLATFORM_HANDLE_PATH, {
           method: 'GET',
           query: new URLSearchParams({ uid: String(userId) }),
+          timeoutMs: VIEWER_HANDLE_TIMEOUT_MS,
         });
         const parsed = viewerHandleSchema.safeParse(reply.body);
-        // Thrown, so a failure is never cached.
+        // Thrown, so the handle key never holds a failure.
         if (!parsed.success) throw new Error(`viewer handle unavailable (${reply.status})`);
         return parsed.data.author;
       },
@@ -180,6 +193,9 @@ export async function getFeaturePageViewerHandle(userId: number): Promise<string
     );
   } catch (e) {
     log({ message: 'viewer handle unavailable', error: safeError(e) });
+    await clusterCacheGuard.writeBestEffort('feature-pages.viewerHandleMiss', () =>
+      redis.packed.set(missKey, 1, { EX: VIEWER_HANDLE_MISS_TTL_SECONDS })
+    );
     return null;
   }
 }

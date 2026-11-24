@@ -755,6 +755,32 @@ describe('the platform ends on what civitai decided', () => {
     expect(deciding(id)).toEqual({ source: 'moderator', verdict: 'hidden' });
   });
 
+  it.each([
+    ['removed', 'mod-removed'],
+    ['erased', 'erased'],
+  ])(
+    'a lost first-post reply on a hidden comment the platform holds %s: recorded so, nothing applied there',
+    async (held, pushedState) => {
+      const id = await seedLost(`posted, reply lost, then hidden, ${held} there`);
+      await setHidden(id, true);
+      if (held === 'removed') platform.removed.add(id);
+      else platform.erasedUids.add(AUTHOR);
+      await runMirror(mirror);
+      await runMirror(mirror);
+      expect(platform.verdicts).toEqual([]);
+      expect(await mirrorRow(id)).toMatchObject({ pushedState, pushAttempts: 0 });
+    }
+  );
+
+  it('a lost first-post reply on a hidden comment, the by-source reply unreadable: nothing sent, retried', async () => {
+    const id = await seedLost('posted, reply lost, then hidden, unreadable lookup');
+    await setHidden(id, true);
+    platform.badBySource = true;
+    await runMirror(mirror);
+    expect(platform.verdicts).toEqual([]);
+    expect(await mirrorRow(id)).toMatchObject({ urn: null, pushAttempts: 1 });
+  });
+
   it('a lost first-post reply on a hidden comment, the platform unreachable: nothing sent, retried', async () => {
     const id = await seedLost('posted, reply lost, then hidden, platform down');
     await setHidden(id, true);

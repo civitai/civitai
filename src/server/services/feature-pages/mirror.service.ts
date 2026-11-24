@@ -599,7 +599,6 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
       const held = await readBySource(row.commentId);
       if (held.kind === 'retry') return fail(held.status, 'by-source');
       if (held.kind === 'held') {
-        if (held.state === 'removed') return removed('by-source');
         if (held.state === 'erased') return erased();
         urn = held.urn;
         platformDigest = held.digest;
