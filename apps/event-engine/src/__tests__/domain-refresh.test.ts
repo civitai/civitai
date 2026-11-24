@@ -510,7 +510,12 @@ describe('challenge and crucible refresh walks', () => {
 });
 
 describe('a points-only walk', () => {
-  const walk = async (rowsFor: (ids: number[]) => number[], points: number[]) => {
+  const walk = async (
+    rowsFor: (ids: number[]) => number[],
+    points: number[],
+    ms = 1500,
+    where?: string
+  ) => {
     const sqls: string[] = [];
     const added: number[] = [];
     const pg = {
@@ -534,6 +539,7 @@ describe('a points-only walk', () => {
         {
           name: 'video',
           table: 'Image',
+          where,
           refresh: { everyMs: 1000, batch: 2, pointsOnly: true },
           store: () => store,
         } as never,
@@ -541,7 +547,7 @@ describe('a points-only walk', () => {
       queue as never,
       pg as never
     );
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(ms);
     for (const t of timers) clearInterval(t);
     return { sqls, added };
   };
@@ -554,6 +560,28 @@ describe('a points-only walk', () => {
       expect(sqls.every((sql) => sql.includes('= ANY('))).toBe(true);
       expect(sqls.some((sql) => sql.includes('ORDER BY id'))).toBe(false);
       expect([...added].sort()).toEqual(points);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a table that reads empty for several passes deletes none of its points', async () => {
+    vi.useFakeTimers();
+    try {
+      const points = Array.from({ length: 9 }, (_, i) => 101 + i);
+      const { added } = await walk(() => [], points, 3500);
+      expect(added).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("looks points up within the domain's slice of its table", async () => {
+    vi.useFakeTimers();
+    try {
+      const { sqls } = await walk((ids) => ids, [101, 102], 1500, "type = 'video'");
+      expect(sqls.length).toBeGreaterThan(0);
+      expect(sqls.every((sql) => sql.includes("AND (type = 'video')"))).toBe(true);
     } finally {
       vi.useRealTimers();
     }

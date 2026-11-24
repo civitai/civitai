@@ -272,7 +272,6 @@ export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
     return ids;
   }
 
-  /** Point ids with lo <= id < hi. Scroll walks ids in ascending order from `offset`. */
   /** Up to `limit` point ids from `offset` up, in id order, and the id to read from next (0 at the end). */
   async idsFrom(offset: number, limit: number): Promise<{ ids: number[]; next: number }> {
     const page = await idempotent(() =>
@@ -289,6 +288,7 @@ export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
     };
   }
 
+  /** Point ids with lo <= id < hi. Scroll walks ids in ascending order from `offset`. */
   async idsInRange(lo: number, hi: number, pageSize = 10_000): Promise<number[]> {
     const ids: number[] = [];
     let offset: number | undefined = lo;

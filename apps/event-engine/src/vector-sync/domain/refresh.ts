@@ -12,10 +12,6 @@ export const orphanBrake = (orphans: number, points: number) =>
   orphans > 10 && orphans > points / 10;
 
 /**
- * The next `batch` ids of the domain's table after `cursor`, by keyset, and the cursor for the
- * following call: 0 once the table is exhausted, so the walk wraps.
- */
-/**
  * The next `batch` points after `cursor`, the ones whose row is in the domain's slice of its table
  * (by primary key), and the cursor for the following call: 0 once the collection is exhausted.
  */
@@ -35,6 +31,10 @@ export async function nextRefreshPoints(
   return { ids: rows.map((r) => Number(r.id)), points: page.ids, next: page.next && page.next - 1 };
 }
 
+/**
+ * The next `batch` ids of the domain's table after `cursor`, by keyset, and the cursor for the
+ * following call: 0 once the table is exhausted, so the walk wraps.
+ */
 export async function nextRefreshIds(
   pg: Pick<Pool, 'query'>,
   domain: Pick<Domain<any>, 'table' | 'where'>,
@@ -77,6 +77,10 @@ export function startRefreshers(
     const lane = queue.lanes.get(domain.name);
     if (!refresh || !lane) return [];
     const store = domain.store?.();
+    if (refresh.pointsOnly && !store) {
+      logger.error(`${domain.name}-sync: a points-only walk needs a store; not walking`);
+      return [];
+    }
     // Orphans held on the last full pass: still orphans a pass later, they are rows really deleted.
     let heldLastPass = new Set<number>();
     // This pass's holds; kept when a pass fails partway, since its next tick resumes the same pass.
@@ -87,8 +91,6 @@ export function startRefreshers(
       do {
         if (queue.isFull) await queue.flush();
         const from = cursor + 1;
-        if (refresh.pointsOnly && !store)
-          throw new Error(`${domain.name}-sync: a points-only walk needs a store`);
         const walked = refresh.pointsOnly
           ? await nextRefreshPoints(pg, domain, store!, cursor, refresh.batch)
           : undefined;
@@ -110,7 +112,9 @@ export function startRefreshers(
         // A table read that came back empty is a bad read, or a cleanup to run by hand: never trusted,
         // however few points it would delete. Its orphans are not held either, since a hold would
         // exempt them from the brake on the next pass.
-        if (cursor === 0 && ids.length === 0) {
+        // A points batch is read by primary key, so one that finds no rows is the same bad read anywhere
+        // in the pass, and the held-orphan recheck would repeat it rather than check it.
+        if ((cursor === 0 || walked) && ids.length === 0) {
           if (orphans.length) {
             logger.error(
               { points: points.length, sample: orphans.slice(0, 10) },
