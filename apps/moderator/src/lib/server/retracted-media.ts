@@ -21,6 +21,7 @@ import { holdsCsamReview } from './held-media';
 import { WITHHELD_REFUSED, SCANNER_UNAVAILABLE_REFUSED } from '$lib/held-media';
 import { insertModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
+import type { AppealCoverImage } from './minor-hash.service';
 import { readScannerCsamVerdict, readScannerCsamVerdicts } from './review-batch';
 
 export const scannerVerdicts = createScannerVerdictCache(readScannerCsamVerdict);
@@ -240,6 +241,25 @@ export function withheldRow<T extends object>(row: T) {
     ...(appeal ? { appeal: { ...appeal, message: '' } } : {}),
     ...(approvedAppeal ? { approvedAppeal: withheldApprovedAppeal(approvedAppeal) } : {}),
   } as Omit<T, keyof ReturnType<typeof withheldMedia>> & ReturnType<typeof withheldMedia>;
+}
+
+/** Each row's cover images, those withheld from `user` with no key and nothing that says why, as the
+ *  image queues send a withheld card. */
+export async function withheldCoverImages<T extends { coverImages: AppealCoverImage[] }>(
+  rows: T[],
+  user: App.Locals['user'] | undefined,
+  list: string
+): Promise<(Omit<T, 'coverImages'> & { coverImages: AppealCoverImage[] })[]> {
+  const ids = rows.flatMap((row) => row.coverImages.map((image) => image.id));
+  const withheld = await listWithheldIds(ids, { csamReview: holdsCsamReview(user) }, list);
+  return rows.map((row) => ({
+    ...row,
+    coverImages: row.coverImages.map((image) =>
+      withheld.has(image.id)
+        ? { id: image.id, url: '', nsfwLevel: image.nsfwLevel, restricted: true }
+        : image
+    ),
+  }));
 }
 
 /** `restrictedImageAccess`'s kept ids. */

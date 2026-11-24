@@ -1191,7 +1191,7 @@ describe("the model flag appeals queue's cover images", () => {
   ];
 
   it('sends a withheld cover with no key or flag, and the rest as they are, without the grant', async () => {
-    const { withheldCoverImages } = await import('../minor-flag-queue');
+    const { withheldCoverImages } = await import('../retracted-media');
     const [row] = await withheldCoverImages(rows(), WITHOUT_GRANT as never, 'test');
     expect(row.coverImages).toEqual([
       { id: WITHHELD, url: '', nsfwLevel: 4, restricted: true },
@@ -1200,7 +1200,7 @@ describe("the model flag appeals queue's cover images", () => {
   });
 
   it('sends every cover to a grant holder', async () => {
-    const { withheldCoverImages } = await import('../minor-flag-queue');
+    const { withheldCoverImages } = await import('../retracted-media');
     expect(await withheldCoverImages(rows(), WITH_GRANT as never, 'test')).toEqual(rows());
   });
 });
