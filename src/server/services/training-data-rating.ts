@@ -32,6 +32,24 @@ type ExtractionOutput = {
   rejected?: unknown[];
 };
 
+/**
+ * Skips Studio dataset rows (the archive rates them) and a zip swapped in meanwhile (url check). A
+ * pre-stamp zip, which has no fullyRated, is only ever moved to fully rated, never newly hidden.
+ */
+export async function writeTrainingDataRating(
+  db: { $executeRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<number> },
+  { fileId, url, rating }: { fileId: number; url: string; rating: ReturnType<typeof datasetRating> }
+) {
+  return db.$executeRaw`
+    UPDATE "ModelFile"
+    SET metadata = (COALESCE(metadata, '{}'::jsonb) - 'nsfwLevel') || ${JSON.stringify(
+      rating
+    )}::jsonb
+    WHERE id = ${fileId} AND url = ${url} AND type = 'Training Data'
+      AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'datasetArchive')
+      AND (${rating.fullyRated} OR COALESCE(metadata, '{}'::jsonb) ? 'fullyRated')`;
+}
+
 const HEADER_TIMEOUT_MS = 5_000;
 const HEADER_CONCURRENCY = 8;
 /**

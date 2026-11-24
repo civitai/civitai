@@ -55,7 +55,7 @@ import {
   trainingDataObjectUnchanged,
   uncountUnconfirmedResubmit,
 } from '~/server/services/training-data-scan.service';
-import { extractionRating } from '~/server/services/training-data-rating';
+import { extractionRating, writeTrainingDataRating } from '~/server/services/training-data-rating';
 
 // -----------------------------------------------------------------------------
 // Shared scan outcome — the normalized shape that both webhook adapters produce
@@ -311,18 +311,12 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     data,
     select: { pickleScanResult: true, virusScanResult: true },
   });
-  // One writer per row: a Studio dataset's rating is the archive's, so this write skips it, and a zip
-  // swapped in meanwhile. A zip from before the stamp has no fullyRated and stays served until the
-  // backfill, so a rescan only moves it to fully rated, never to not fully rated.
-  if (isTrainingData && outcome.trainingDataRating) {
-    const patch = JSON.stringify(outcome.trainingDataRating);
-    await dbWrite.$executeRaw`
-      UPDATE "ModelFile"
-      SET metadata = (COALESCE(metadata, '{}'::jsonb) - 'nsfwLevel') || ${patch}::jsonb
-      WHERE id = ${fileId} AND url = ${file.url} AND type = 'Training Data'
-        AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'datasetArchive')
-        AND (${outcome.trainingDataRating.fullyRated} OR COALESCE(metadata, '{}'::jsonb) ? 'fullyRated')`;
-  }
+  if (isTrainingData && outcome.trainingDataRating)
+    await writeTrainingDataRating(dbWrite, {
+      fileId,
+      url: file.url,
+      rating: outcome.trainingDataRating,
+    });
   const failedScan = ranScan && hasFailedScan(written);
   const coverageMoved =
     ranScan &&

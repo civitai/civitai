@@ -1488,9 +1488,7 @@ describe('model-file-scan.service', () => {
           // The stored scan result keeps the extraction's entries as counts.
           const stored = mockDbWrite.modelFile.update.mock.calls[0][0].data.rawScanResult;
           expect(stored.steps[1].output).toEqual({ entries: 3, rejected: 0 });
-          // One writer per row: the write skips a Studio dataset row and a zip swapped meanwhile.
-          expect(written?.sql).toContain('datasetArchive');
-          expect(written?.sql).toContain('AND url =');
+          // The write names the row it read; its guards run on Postgres in the .sql.behavior test.
           expect(mockDbWrite.$executeRaw.mock.calls.at(-1)).toContain(ZIP);
         });
 
@@ -1505,9 +1503,6 @@ describe('model-file-scan.service', () => {
           extracted([{ path: '01.png', mediaType: 'image' }]);
           await deliver();
           expect(writtenRating()?.rating).toEqual({ fullyRated: false });
-          // Only onto a row already stamped: a zip from before the stamp is not newly hidden.
-          expect(writtenRating()?.sql).toContain("? 'fullyRated'");
-          expect(mockDbWrite.$executeRaw.mock.calls.at(-1)).toContain(false);
 
           mockDbWrite.$executeRaw.mockClear();
           extracted(
