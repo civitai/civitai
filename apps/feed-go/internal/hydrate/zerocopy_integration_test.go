@@ -27,12 +27,12 @@ func TestIntegrationZeroCopyReplyStringsSurviveTheNextReply(t *testing.T) {
 	tag := "{" + integtest.Prefix(t) + "}" // one hash slot for both keys
 	keyA, keyB := tag+":a", tag+":b"
 	nameA, nameB := strings.Repeat("a", 200), strings.Repeat("b", 200)
+	integtest.Del(t, cluster, keyA, keyB) // before the writes: it also clears the keys now
 	for k, name := range map[string]string{keyA: nameA, keyB: nameB} {
 		if err := cluster.Set(ctx, k, jspack.Pack(jspack.O("id", 1, "name", name)), time.Minute).Err(); err != nil {
 			t.Fatalf("set %s: %v", k, err)
 		}
 	}
-	integtest.Del(t, cluster, keyA, keyB)
 	master, err := cluster.MasterForKey(ctx, keyA)
 	if err != nil {
 		t.Fatalf("master for %s: %v", keyA, err)
