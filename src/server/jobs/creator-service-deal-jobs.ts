@@ -1,10 +1,13 @@
-import { createJob } from './job';
+import { createJob, getJobDate } from './job';
+import { logToAxiom } from '~/server/logging/client';
 import {
   autoCancelServiceDeals,
   autoCompleteServiceDeals,
   cancelOverdueServiceDeals,
   expireServiceDeals,
+  remindServiceDeals,
 } from '~/server/services/creator-service-deal.service';
+import { reconcileServiceDealReviews } from '~/server/services/creator-service-deal-review-reconcile';
 import {
   reconcileUnconfirmedHolds,
   sweepServiceDealRefunds,
@@ -12,6 +15,8 @@ import {
 } from '~/server/services/creator-service-escrow.service';
 
 const BATCH = 100;
+const REMINDERS_SINCE = 'creator-service-deal-reminders';
+const REVIEW_COUNTERS_SINCE = 'creator-service-deal-review-counters';
 
 /**
  * Every Creator Services deadline and the escrow's recovery, in dependency order: settle unknown
@@ -31,11 +36,46 @@ export const creatorServiceDealsJob = createJob(
     const completed = await autoCompleteServiceDeals({ limit: BATCH });
     const cancelled = await autoCancelServiceDeals({ limit: BATCH });
     const overdue = await cancelOverdueServiceDeals({ limit: BATCH });
+    // After the transitions, so a deal that just completed or canceled is not reminded.
+    const [since, setSince] = await getJobDate(REMINDERS_SINCE, new Date(Date.now() - 60 * 60_000));
+    const upTo = new Date();
+    // A failed run keeps its window for the next one, and must not hold up the payouts below.
+    const reminded = await remindServiceDeals({ since, upTo })
+      .then(async (sent) => {
+        await setSince(upTo);
+        return sent;
+      })
+      .catch((error) => {
+        logToAxiom({
+          name: 'creator-service-deal',
+          type: 'error',
+          message: 'deal reminders failed',
+          error: (error as Error)?.message,
+        });
+        return 0;
+      });
     jobContext.checkIfCanceled();
     const releases = await sweepServiceDealReleases({ limit: BATCH });
     // Last: its gauge counts every exhausted leg, the releases' included.
     const refunds = await sweepServiceDealRefunds({ limit: BATCH });
-    return { holds, expired, completed, cancelled, overdue, releases, refunds };
+    // After the payouts, so its read-back sees this run's releases. Counters are recounted hourly.
+    const [countersAt, setCountersAt] = await getJobDate(REVIEW_COUNTERS_SINCE, new Date(0));
+    const counters = Date.now() - countersAt.getTime() >= 60 * 60_000;
+    const reviews = await reconcileServiceDealReviews({ limit: BATCH, counters })
+      .then(async (result) => {
+        if (counters) await setCountersAt(new Date());
+        return result;
+      })
+      .catch((error) => {
+        logToAxiom({
+          name: 'creator-service-deal',
+          type: 'error',
+          message: 'review reconcile failed',
+          error: (error as Error)?.message,
+        });
+        return null;
+      });
+    return { holds, expired, completed, cancelled, overdue, reminded, releases, refunds, reviews };
   },
   { lockExpiration: 30 * 60 }
 );

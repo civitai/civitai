@@ -7,6 +7,7 @@ import type * as StorylineService from '~/server/services/storyline.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
 
 const resolveSpace = vi.fn();
 const settlePlacement = vi.fn();
@@ -271,6 +272,7 @@ describe('getPendingStorylineContinuations', () => {
       minor: false,
       poi: false,
       needsReview: null,
+      ...imageNotRestrictedWhere(),
     });
   });
 

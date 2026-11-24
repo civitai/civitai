@@ -10,8 +10,9 @@
 // /api/metrics), same as trpc_procedure_duration etc. Cardinality-safe: only bounded `leg` / `outcome` labels,
 // NEVER per-user. The package emits the raw timings via injected callbacks (it stays infra-dep-free); this
 // module owns the prom-client wiring.
-import type { RefreshFailure, RevocationDegradedVerdict } from '@civitai/auth';
+import type { CookieSlot, RefreshFailure, RevocationDegradedVerdict } from '@civitai/auth';
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
+import { isHostForColor } from '~/server/utils/server-domain';
 
 // `identity` = token cookie path (getSessionUser); `identity-by-id` = API-key/OAuth by-userId read
 // (getSessionUserById); `hub-write` = the invalidate/refresh/invalidateAll hub writes; `jwks` = ES256 verify
@@ -146,12 +147,34 @@ export function observeSessionStateUpdate(
 const rollFailedCounter = registerCounterWithLabels({
   name: 'session_roll_failed_total',
   help:
-    'Rolling session refreshes that did not return a fresh token: declined (the hub refused) or unreachable. ' +
+    'Rolling session refreshes that did not return a fresh token: declined (the hub refused), unavailable ' +
+    '(the hub answered 503 and asked for a retry) or unreachable. ' +
     'The user keeps the current token, so nothing else shows these.',
   labelNames: ['reason'] as const,
 });
-for (const reason of ['declined', 'unreachable'] as const) rollFailedCounter.inc({ reason }, 0);
+for (const reason of ['declined', 'unavailable', 'unreachable'] as const)
+  rollFailedCounter.inc({ reason }, 0);
 
 export function observeSessionRollFailed(reason: RefreshFailure): void {
   rollFailedCounter.inc({ reason });
+}
+
+// --- Session cookie slot ------------------------------------------------------------------------------------
+
+const SITE_COLORS = ['green', 'blue', 'red'] as const;
+
+const cookieSlotCounter = registerCounterWithLabels({
+  name: 'session_cookie_slot_total',
+  help:
+    'Requests whose hub session was read from the session cookie, by site (the domain color, or other) and ' +
+    'the cookie slot it was read from (host | shared).',
+  labelNames: ['site', 'slot'] as const,
+});
+for (const site of [...SITE_COLORS, 'other'])
+  for (const slot of ['host', 'shared'] as const) cookieSlotCounter.inc({ site, slot }, 0);
+
+export function observeSessionCookieSlot(host: string | undefined, slot: CookieSlot): void {
+  const h = host?.toLowerCase();
+  const site = (h && SITE_COLORS.find((color) => isHostForColor(h, color))) || 'other';
+  cookieSlotCounter.inc({ site, slot });
 }

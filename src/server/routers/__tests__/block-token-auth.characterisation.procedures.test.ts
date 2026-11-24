@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClientModule from '~/server/flipt/client';
 import type * as BuzzPackage from '@civitai/buzz';
 // Setup-order import: shared db/redis/env/prom mocks and the REAL test RSA keypair, so the
 // tokens below are really signed and the procedures really verify them.
 import '~/__tests__/setup';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 import type * as ConsentRevocationModule from '~/server/services/blocks/consent-revocation.service';
 import type * as DevTunnelModule from '~/server/services/blocks/dev-tunnel.service';
@@ -96,6 +98,7 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   isAppBlocksConfirmedStepEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
   isAppBlocksAppReactionsEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
   isAppBlocksBatchMediaUploadEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
+  isAppConfirmedStepWithinLimitEnabled: flagFor(() => (h.runFlag.on ? [42] : [])),
 }));
 /**
  * POSITIVE ANCHORS. A cell that is not refused must say how far it got, not only what it did
@@ -133,6 +136,21 @@ vi.mock('~/server/services/blocks/block-token-access.service', async (importOrig
         throw err;
       }
     },
+  };
+});
+// The scanned-rows flag reads as off, as an unconfigured Flipt answered before that flag failed
+// closed: these cells characterise the token gate, not the flag.
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof FliptClientModule>();
+  return {
+    ...actual,
+    isFliptSync: ((flag: string, ...rest: unknown[]) =>
+      flag === actual.FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS
+        ? false
+        : (actual.isFliptSync as (...a: unknown[]) => boolean | null)(
+            flag,
+            ...rest
+          )) as typeof actual.isFliptSync,
   };
 });
 vi.mock('~/server/db/appsDb', () => ({
@@ -229,6 +247,7 @@ const PAGE_PROCS = new Set([
   'blocks.consentTrainingQuote',
   'blocks.previewQuoteGrant',
   'blocks.consentQuoteGrant',
+  'blocks.consentQuoteGrantStanding',
 ]);
 let currentPath = '';
 
@@ -239,19 +258,23 @@ let currentPath = '';
  */
 const SESSION_BOUND = new Set([
   'blocks.consentQuoteGrant',
+  'blocks.consentQuoteGrantStanding',
   'blocks.consentTrainingQuote',
   'blocks.createPostFromApp',
   'blocks.getReactionsForApp',
   'blocks.persistAppUploadImage',
   'blocks.presignMediaUploadBatchItem',
   'blocks.previewPostFromApp',
+  'blocks.previewOutputUnlock',
   'blocks.previewQuoteGrant',
   'blocks.previewTrainingQuote',
   'blocks.persistGenerationSource',
+  'blocks.persistUploadedGenerationSource',
   'blocks.publishGenerationOutputs',
   'blocks.recordMediaUploadBatchItem',
   'blocks.setReactionFromApp',
   'blocks.startMediaUploadBatch',
+  'blocks.unlockOutput',
 ]);
 
 async function mint(over: { scopes?: string[]; anon?: boolean } = {}) {
@@ -286,6 +309,7 @@ const INPUTS: Record<string, Record<string, unknown>> = {
   'blocks.cancelWorkflow': { workflowId: 'wf_1' },
   'blocks.consentQuoteGrant': { kind: 'training', quoteId: QUOTE_ID },
   'blocks.consentTrainingQuote': { quoteId: QUOTE_ID },
+  'blocks.consentQuoteGrantStanding': { quoteId: `sq_${'a'.repeat(32)}` },
   'blocks.createPostFromApp': { ...POST_PAYLOAD, confirmedImageCount: 1 },
   'blocks.estimateWorkflow': { body: WORKFLOW_BODY },
   'blocks.estimateWorkflowBatch': { bodies: [WORKFLOW_BODY] },
@@ -305,10 +329,15 @@ const INPUTS: Record<string, Record<string, unknown>> = {
   'blocks.recordMediaUploadBatchItem': { batchId: 1, blobKey: `${'a'.repeat(32)}.jpeg` },
   'blocks.startMediaUploadBatch': { items: [{ kind: 'image', sizeBytes: 1000 }] },
   'blocks.previewPostFromApp': POST_PAYLOAD,
+  'blocks.previewOutputUnlock': { workflowId: 'wf_1', position: 0 },
   'blocks.previewQuoteGrant': { kind: 'training', quoteId: QUOTE_ID },
   'blocks.previewTrainingQuote': { quoteId: QUOTE_ID },
+  'blocks.unlockOutput': { workflowId: 'wf_1', position: 0, expectedTotal: 0 },
   'blocks.publishGenerationOutputs': { workflowId: 'wf_1' },
   'blocks.persistGenerationSource': { workflowId: 'wf_1', imageIndex: 0 },
+  // Not a consumer blob, so a call past every auth step and bound stops at the url check,
+  // before anything is fetched.
+  'blocks.persistUploadedGenerationSource': { url: 'https://example.com/not-a-blob.png' },
   'blocks.queryAppWorkflows': {},
   // No ticket, so a token that passes every auth step stops at the provenance guard.
   'blocks.setReactionFromApp': {
@@ -366,6 +395,8 @@ function procFn(path: string): (input: unknown) => Promise<unknown> {
 
 type Outcome = {
   result: { ok: true } | { error: string; code?: string; message: string };
+  /** A TOO_MANY_REQUESTS refusal's `rateLimit` meta, as the tRPC formatter lifts it. */
+  rateLimit?: unknown;
   limiter: string[];
   /** The positive anchors this call passed through, in order (see the spies above). */
   reached: string[];
@@ -375,10 +406,12 @@ async function invoke(path: string, token: string): Promise<Outcome> {
   h.limiterCalls.length = 0;
   h.reached.length = 0;
   let result: Outcome['result'];
+  let rateLimit: unknown;
   try {
     await procFn(path)({ blockToken: token, ...INPUTS[path] });
     result = { ok: true };
   } catch (err) {
+    rateLimit = rateLimitMetaOf(err);
     const e = err as { constructor?: { name?: string }; code?: unknown; message?: unknown };
     result = {
       error: e?.constructor?.name ?? typeof err,
@@ -386,8 +419,25 @@ async function invoke(path: string, token: string): Promise<Outcome> {
       message: String(e?.message),
     };
   }
-  return { result, limiter: [...h.limiterCalls], reached: [...h.reached] };
+  return { result, rateLimit, limiter: [...h.limiterCalls], reached: [...h.reached] };
 }
+
+/**
+ * The id each stub limiter's refusal must name, by the limiter the cell calls. Literal: the ids a
+ * client reads, not derived from the code under test.
+ */
+const REFUSAL_ID_BY_LIMITER: Record<string, string> = {
+  checkBlockCatalogRateLimit: 'apps.catalog',
+  checkBlockGenerationSourceUserRateLimit: 'apps.generation-source',
+  checkBlockPostRateLimit: 'apps.post',
+  checkBlockPublishRateLimit: 'apps.publish',
+  checkBlockSubmitRateLimit: 'apps.submit',
+  checkBlockUploadAppRateLimit: 'apps.upload-app',
+  checkSharedReportRateLimit: 'apps.shared-storage',
+  checkSharedVoteRateLimit: 'apps.shared-storage',
+  checkSharedWithdrawRateLimit: 'apps.shared-storage',
+  reserveSharedWrite: 'apps.shared-storage',
+};
 
 // ── population, derived from the routers themselves ──────────────────────────────────────
 
@@ -713,6 +763,46 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['bridge-auth:ok']
     ),
   },
+  'blocks.consentQuoteGrantStanding': {
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'a confirmed step requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+  },
   'blocks.consentTrainingQuote': {
     'valid token': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
@@ -756,7 +846,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
   'blocks.createPostFromApp': {
     'valid token': PASSED(
       ['checkBlockPostRateLimit("bki_char", 42)', 'checkBlockPostAppRateLimit("app_char")'],
-      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42', 'hydrate:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -905,14 +995,14 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
   'blocks.getWorkflowMedia': {
     'valid token': OK(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
     'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
     'missing scope': OK(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     'anonymous subject': E(
       'UNAUTHORIZED',
@@ -934,11 +1024,11 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     ),
     "session user is not the token subject (session user's run flag off)": OK(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     "session user is not the token subject (session user's run flag on)": OK(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
   },
   'blocks.getMyBuzzAccounts': {
@@ -1406,7 +1496,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
   'blocks.previewPostFromApp': {
     'valid token': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42', 'hydrate:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -1483,6 +1573,86 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['bridge-auth:ok']
     ),
   },
+  'blocks.previewOutputUnlock': {
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'unlocking an output requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+  },
+  'blocks.unlockOutput': {
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'unlocking an output requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+  },
   'blocks.previewTrainingQuote': {
     'valid token': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
@@ -1531,7 +1701,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'FORBIDDEN',
       'workflow is not in this app subqueue',
       ['checkBlockGenerationSourceUserRateLimit(42)'],
-      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42', 'hydrate:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
@@ -1553,6 +1723,50 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'TOO_MANY_REQUESTS',
       'Too many generation sources saved — slow down.',
       ['checkBlockGenerationSourceUserRateLimit(42)'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+  },
+  // `persistGenerationSource`'s preamble, then the scanned-rows flag, which no Flipt answers here,
+  // so a call past the preamble stops there, before its own bounds.
+  'blocks.persistUploadedGenerationSource': {
+    'valid token': E(
+      'FORBIDDEN',
+      'picked generation sources are not enabled',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'saving a generation source requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'FORBIDDEN',
+      'picked generation sources are not enabled',
+      [],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     "session user is not the token subject (session user's run flag off)": E(
@@ -2429,6 +2643,17 @@ describe('block-token tRPC procedures — characterisation table', () => {
             code: want.code,
             message: want.message,
           });
+          // Every bridge 429 carries the house meta: the stub limiter's 7 s at the frozen clock,
+          // and the id of the limit that refused, with no counts (all of these are abuse limits).
+          if (want.code === 'TOO_MANY_REQUESTS') {
+            const limiter = want.limiter[want.limiter.length - 1]?.split('(')[0] ?? '';
+            expect(got.rateLimit, 'the refusal carries no rateLimit meta').toEqual({
+              retryAfterSeconds: 7,
+              retryAt: new Date(FROZEN_NOW.getTime() + 7_000).toISOString(),
+              id: REFUSAL_ID_BY_LIMITER[limiter],
+              kind: 'abuse',
+            });
+          }
         } else {
           const r = got.result as { code?: string; message?: string };
           expect(REFUSAL_CODES, `refused: ${r.code} ${r.message}`).not.toContain(r.code);

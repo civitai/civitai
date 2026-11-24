@@ -65,3 +65,17 @@ describe.each([
     );
   });
 });
+
+describe('s3-utils getGetUrlByKey with a version', () => {
+  it('signs that object version', async () => {
+    signed.inputs.length = 0;
+    await getGetUrlByKey('a.mp4', { s3: client, versionId: 'ver1' });
+    expect(signed.inputs[0]).toMatchObject({ Key: 'a.mp4', VersionId: 'ver1' });
+  });
+
+  it('signs the current object when no version is given', async () => {
+    signed.inputs.length = 0;
+    await getGetUrlByKey('a.mp4', { s3: client });
+    expect(signed.inputs[0]).not.toHaveProperty('VersionId');
+  });
+});

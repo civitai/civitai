@@ -78,8 +78,22 @@ beforeAll(async () => {
   await db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM
       ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+    -- The scan write re-checks the owner's ban and holds (empty here, so nothing is kept).
+    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
+    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
+    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
+    CREATE TABLE "CsamReport" (
+      id serial PRIMARY KEY,
+      "userId" int,
+      details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]',
+      "reportSentAt" timestamp(3),
+      "archivedAt" timestamp(3)
+    );
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3) DEFAULT now());
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "userId" int,
       "updatedAt" timestamp(3),
       "pHash" bigint,
       ingestion "ImageIngestionStatus" NOT NULL,
@@ -99,6 +113,9 @@ beforeAll(async () => {
       type "JobQueueType" NOT NULL, "entityType" "EntityType" NOT NULL, "entityId" int NOT NULL,
       PRIMARY KEY ("entityType", "entityId", type)
     );
+    -- Read by a blocking scan's write: a pending appeal keeps its review.
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
   `);
 });
 afterAll(() => db.close());
@@ -178,7 +195,9 @@ beforeEach(() => {
     ...values: unknown[]
   ) => {
     if (!isImageWrite(strings)) return 0;
-    if (strings.join('').includes('"needsReview" = CASE')) await holder.beforeVerdict?.();
+    // The verdict write, the only one that clears a lock on no rating.
+    if (strings.join('').includes('"nsfwLevelLocked" = "nsfwLevelLocked"'))
+      await holder.beforeVerdict?.();
     return raw.executeRaw(strings, ...values);
   }) as never);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
@@ -270,6 +289,48 @@ describe('resolveScanOutcome with a collection judge rating', () => {
     }
   });
 
+  // Decision (civitai/civitai#10152, scan verdicts never clear or lower a review): the floor's minor signal raises the
+  // stored review by IMAGE_REVIEW_PRECEDENCE and is ORed into "minor"; it never replaces 'appeal' or
+  // 'csam'. If you are about to make the floor write 'minor' over every key, it is not a bug.
+  describe('the review the floor leaves on a minor-flagged image', () => {
+    const afterFloor = async (needsReview: string | null, hasMinor = true) => {
+      scanTagLevel = PG13;
+      const { row } = await scan(
+        await arrange({
+          nsfwLevel: PG13,
+          metadata: judgeRated(R),
+          needsReview,
+          scanJobs: { hasMinor },
+        })
+      );
+      // Control: the floor write landed, so the review below is its doing.
+      expect(row).toMatchObject({ nsfwLevel: R });
+      const { rows } = await db.query<{ needsReview: string | null; minor: boolean }>(
+        `SELECT "needsReview", minor FROM "Image" WHERE id = $1`,
+        [ID]
+      );
+      return rows[0];
+    };
+
+    it.each([
+      [null, 'minor'],
+      ['tag', 'minor'],
+      ['newUser', 'minor'],
+      ['minor', 'minor'],
+      ['poi', 'minor'],
+      ['remixSource', 'minor'],
+      ['modRule', 'minor'],
+      ['appeal', 'appeal'],
+      ['csam', 'csam'],
+    ])('stored %s leaves %s, and marks the image minor', async (stored, expected) => {
+      expect(await afterFloor(stored)).toEqual({ needsReview: expected, minor: true });
+    });
+
+    it('leaves the review and the minor flag alone without the minor signal (control)', async () => {
+      expect(await afterFloor('tag', false)).toEqual({ needsReview: 'tag', minor: false });
+    });
+  });
+
   it('does not send a held image back for a rescan when the floor write fails', async () => {
     scanTagLevel = PG13;
     holder.holdRule = true;
@@ -344,6 +405,43 @@ describe('resolveScanOutcome with a collection judge rating', () => {
     const { row } = await scan(await arrange(locked));
 
     expect(row.nsfwLevel).toBe(PG13);
+  });
+
+  it('rates an image locked with no rating, and drops that lock', async () => {
+    scanTagLevel = X;
+    const lockedUnrated = { ingestion: 'Scanned', nsfwLevel: 0, nsfwLevelLocked: true };
+    const { row } = await scan(await arrange(lockedUnrated));
+
+    expect(row.nsfwLevel).toBe(X);
+    const { rows } = await db.query<{ nsfwLevelLocked: boolean }>(
+      `SELECT "nsfwLevelLocked" FROM "Image" WHERE id = $1`,
+      [ID]
+    );
+    expect(rows[0].nsfwLevelLocked).toBe(false);
+  });
+
+  it('keeps a rating a moderator locked after the scan loaded the image', async () => {
+    scanTagLevel = X;
+    holder.beforeVerdict = () =>
+      db.query(`UPDATE "Image" SET "nsfwLevel" = $1, "nsfwLevelLocked" = true WHERE id = $2`, [
+        PG13,
+        ID,
+      ]);
+    const { row } = await scan(
+      await arrange({ ingestion: 'Scanned', nsfwLevel: 0, nsfwLevelLocked: true })
+    );
+
+    expect(row.nsfwLevel).toBe(PG13);
+  });
+
+  it('keeps the lock on a moderator rating it respects', async () => {
+    scanTagLevel = X;
+    await scan(await arrange({ nsfwLevel: PG13, nsfwLevelLocked: true }));
+    const { rows } = await db.query<{ nsfwLevelLocked: boolean }>(
+      `SELECT "nsfwLevelLocked" FROM "Image" WHERE id = $1`,
+      [ID]
+    );
+    expect(rows[0].nsfwLevelLocked).toBe(true);
   });
 
   it('blocks on an audit block, whatever the judge rated', async () => {

@@ -93,7 +93,7 @@ export async function scanUploadPrompt({
         type: 'warning',
         message: 'no verdict',
         imageId,
-      }).catch(() => null);
+      });
     return { verdict, workflowId, output };
   } catch (error) {
     logToAxiom({
@@ -101,7 +101,7 @@ export async function scanUploadPrompt({
       type: 'error',
       message: error instanceof Error ? error.message : 'Unknown error',
       imageId,
-    }).catch(() => null);
+    });
     return { verdict: 'unknown' };
   } finally {
     clearTimeout(timer);
@@ -138,7 +138,7 @@ export async function labelUploadPrompt({
       type: 'error',
       message: error instanceof Error ? error.message : 'Unknown error',
       imageId,
-    }).catch(() => null);
+    });
     // The checks failed, not the prompt: try again later rather than lose the scan.
     await queueUploadPromptRetry({ imageId, attempt: attempt + 1 });
     return;

@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
@@ -210,16 +211,6 @@ function gradientDefs(seed: string): { hue: number; hue2: number } {
   return placeholderHues(seed);
 }
 
-/** Escape the few chars that are unsafe inside SVG text content. */
-function svgEscape(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
 /**
  * Deterministic square icon SVG: a diagonal gradient (hue seeded by slug/
  * category) with the app's initial centered. Mirrors the marketplace coverless-
@@ -234,7 +225,7 @@ export function buildPlaceholderIconSvg(args: {
   const size = args.size ?? 512;
   const seed = listingPlaceholderSeed(args.slug, args.category);
   const { hue, hue2 } = gradientDefs(seed);
-  const initial = svgEscape(appInitial(args.name, args.slug));
+  const initial = escapeHtml(appInitial(args.name, args.slug));
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`,
     `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">`,
@@ -265,8 +256,8 @@ export function buildPlaceholderCoverSvg(args: {
   const height = args.height ?? 720;
   const seed = listingPlaceholderSeed(args.slug, args.category);
   const { hue, hue2 } = gradientDefs(seed);
-  const glyph = svgEscape(categoryGlyph(args.category));
-  const name = svgEscape((args.name || args.slug).slice(0, 48));
+  const glyph = escapeHtml(categoryGlyph(args.category));
+  const name = escapeHtml((args.name || args.slug).slice(0, 48));
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
     `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">`,
@@ -739,15 +730,7 @@ async function assertStoredObjectUnchanged(
     reason: verdict.status === 'unverifiable' ? verdict.reason : null,
     kind,
     imageId: image.id,
-  }).catch(() => null);
-  // 🔴 That `.catch(() => null)` is LOAD-BEARING, not tidiness. Nothing awaits the
-  // call above, so a rejecting sink — `logToAxiom` awaits an ingest that rejects
-  // when Axiom itself is degraded — has nowhere to go but `unhandledRejection`, and
-  // the attach it is merely OBSERVING would be taken down by the observation. Same
-  // reasoning as `~/server/redis/fail-open-log`, `~/server/meilisearch/client` and
-  // `~/server/signals/wrapper`. Pinned by
-  // `./__tests__/listing-asset-integrity-logging.test.ts`, which needs a file of its
-  // own to be falsifiable at all — a `vi.fn()` sink marks the rejection handled.
+  });
 
   if (verdict.status !== 'mismatch') return;
 
@@ -1026,7 +1009,9 @@ export async function assertListingAssetsScanCleanInTx(
 
 /**
  * Go-live RATING FLOOR for a listing whose media was attached while it was directly
- * asset-editable (a pre-approval `draft` / reset `pending` listing). Re-derives the
+ * asset-editable (a pre-approval `draft` / reset `pending` listing), and the base of the
+ * rating `resolveVersionListingRating` gives a listing on every later approved version, with the
+ * new manifest's rating as `declaredRating` (so that caller can lower when the app does). Re-derives the
  * rating from the current assets' max `nsfwLevel` — the icon, cover and screenshots, and the
  * civitai.red icon / cover overrides — and returns `declaredRating` RAISED
  * to the derived value when the media is more mature — never lowered. With `mediaSplit`
@@ -1083,6 +1068,58 @@ export async function resolveListingRatingFloorInTx(
   return nsfwLevelFromContentRating(derived) > nsfwLevelFromContentRating(declaredRating)
     ? derived
     : declaredRating;
+}
+
+/**
+ * The rating an on-site listing gets when a new version of its app is approved
+ * (`approveRequest`, (3b-sync)), and the one the approve bar previews
+ * (`previewVersionListingRating`). One function, so the preview and the write cannot disagree.
+ *
+ * Normally: the new version's declared rating, raised to the store media's rating when that is
+ * more mature (`resolveListingRatingFloorInTx`, the first approve's floor). That can LOWER the
+ * listing, which the moderator approving the new manifest sees in the preview.
+ *
+ * 🔴 A MODERATOR'S RAISE IS KEPT. No override is stored for an on-site listing: a review's
+ * override and a moderator's live-edit raise write only `contentRating`. So a raise is
+ * recognised from the rating itself: a `current` rating above what every EARLIER approved
+ * version's declared rating, floored at the same media, gives was put there by something other
+ * than an approve. Then the result never goes below `current`. `earlierDeclared` holds those
+ * declarations (the highest is the one compared), read before this approve overwrites the app's
+ * rating. Every earlier version, not only the last: a listing an `x` version rated and a later
+ * `pg13` approve left at `x` (before this sync existed) is an approve's rating, not a raise.
+ *
+ * The test reads the media as it is NOW, so a rating that mature media raised and that stayed
+ * after the media was removed (an on-site revision copies assets without re-rating) also reads
+ * as a raise and is kept. That errs towards the stricter rating.
+ *
+ * The floor uses the media split a moderator granted, if any (`readListingMediaSplit`): this
+ * approve publishes no listing, so it takes no split decision.
+ */
+export async function resolveVersionListingRating(
+  db: Prisma.TransactionClient,
+  args: {
+    appListingId: string;
+    current: string | null;
+    earlierDeclared: (string | null)[];
+    nextDeclared: string | null;
+  }
+): Promise<string | null> {
+  const highestEarlier = args.earlierDeclared.reduce<string | null>(
+    (top, r) =>
+      r != null && nsfwLevelFromContentRating(r) > nsfwLevelFromContentRating(top) ? r : top,
+    args.earlierDeclared.find((r) => r != null) ?? null
+  );
+  const split = await readListingMediaSplit(db, args.appListingId);
+  const next = await resolveListingRatingFloorInTx(db, args.appListingId, args.nextDeclared, split);
+  const previous = await resolveListingRatingFloorInTx(
+    db,
+    args.appListingId,
+    highestEarlier,
+    split
+  );
+  const currentLevel = nsfwLevelFromContentRating(args.current);
+  const raisedByModerator = currentLevel > nsfwLevelFromContentRating(previous);
+  return raisedByModerator && currentLevel > nsfwLevelFromContentRating(next) ? args.current : next;
 }
 
 // ---------------------------------------------------------------------------

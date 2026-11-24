@@ -44,6 +44,7 @@ describe('runArticleCategoryBackfill', () => {
       limit: 4,
       concurrency: 1,
       dryRun: false,
+      includeMature: false,
     });
     expect(result.byStatus).toEqual({ failed: 1, 'not-public': 1, gone: 1, submitted: 1 });
   });
@@ -54,10 +55,11 @@ describe('runArticleCategoryBackfill', () => {
       limit: 4,
       concurrency: 2,
       dryRun: true,
+      includeMature: false,
     });
     expect(submit).not.toHaveBeenCalled();
     expect(result).toMatchObject({ selected: 4, nextAfterId: 8, byStatus: { 'dry-run': 4 } });
-    expect(queryRaw).toHaveBeenCalledWith(expect.any(String), 0, 4);
+    expect(queryRaw).toHaveBeenCalledWith(expect.any(String), 0, 4, false, expect.any(Date));
   });
 
   it('sends one call per public article and counts each outcome, a failed submit included', async () => {
@@ -69,6 +71,7 @@ describe('runArticleCategoryBackfill', () => {
       limit: 4,
       concurrency: 2,
       dryRun: false,
+      includeMature: false,
     });
     expect(submit.mock.calls.map(([arg]) => arg)).toEqual([
       expect.objectContaining({

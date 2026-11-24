@@ -60,9 +60,9 @@ import { BlockTokenService } from '~/server/services/block-token.service';
  *
  * ── WHY IT LIVES HERE ───────────────────────────────────────────────────────
  * The `no-*.test.ts` convention-guard name in THIS directory is what makes it
- * visible to `no-lint-rules-script-drift` and runnable by the fast
+ * listed in `docs/dev/convention-guards.md` and runnable by the fast
  * `pnpm run test:lint-rules` selector. A guard of this class parked beside the
- * module it protects is invisible to that ratchet and would surface only in a full
+ * module it protects is missing from both and would surface only in a full
  * unit run, minutes later, in a file nobody was looking at.
  *
  * ── RED AT BASE — AND EXACTLY WHICH PARTS ───────────────────────────────────

@@ -72,10 +72,14 @@ const MATURE_ARTICLE_BOTH = 8040;
 const ARTICLE_SRC_PENDING_IMAGE = 8041;
 const BLOCKED_IMAGE_ITEM = 8042;
 const UNRATED_IMAGE_ITEM = 8043;
+const IMAGE_MINOR_R = 8044;
+const IMAGE_MINOR_PG13 = 8045;
+const POST_ITEM_MINOR_R_FIRST = 8046;
 
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       "id"          integer PRIMARY KEY,
       "index"       integer,
@@ -96,8 +100,17 @@ beforeAll(async () => {
       "ingestion"   text NOT NULL DEFAULT 'Scanned',
       "needsReview" text,
       "blockedFor"  text,
-      "tosViolation" boolean NOT NULL DEFAULT false
+      "tosViolation" boolean NOT NULL DEFAULT false,
+      "poi"         boolean NOT NULL DEFAULT false,
+      "minor"       boolean NOT NULL DEFAULT false
     );
+    CREATE TABLE "TagsOnImageDetails" (
+      "imageId" integer NOT NULL, "tagId" integer NOT NULL, "source" text NOT NULL,
+      "disabled" boolean NOT NULL DEFAULT false
+    );
+    INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", "source", "disabled") VALUES
+      (100, 777, 'WD14', false),
+      (100, 778, 'WD14', true);
     CREATE TABLE "Post" (
       "id" integer PRIMARY KEY, "userId" integer, "modelVersionId" integer,
       "publishedAt" timestamp, "availability" text NOT NULL DEFAULT 'Public'
@@ -237,6 +250,16 @@ beforeAll(async () => {
     INSERT INTO "Image" ("id", "url", "needsReview") VALUES (135, 'pending-article-cover', 'minor');
     INSERT INTO "Article" ("id", "cover", "coverId") VALUES (29, 'pending-src', 135);
     INSERT INTO "CollectionItem" ("id", "collectionId", "articleId") VALUES (41, ${ARTICLE_SRC_PENDING_IMAGE}, 29);
+    INSERT INTO "Post" ("id", "userId", "publishedAt") VALUES (1017, 2, now() - interval '1 day');
+    INSERT INTO "Image" ("id", "url", "postId", "userId", "index", "nsfwLevel", "minor") VALUES
+      (1132, 'minor-r', 1, 2, 0, 4, true),
+      (1133, 'minor-pg13', 1, 2, 0, 2, true),
+      (1134, 'post-1017-minor-r', 1017, 2, 0, 4, true),
+      (1135, 'post-1017-second', 1017, 2, 1, 4, false);
+    INSERT INTO "CollectionItem" ("id", "collectionId", "imageId", "postId", "addedById") VALUES
+      (1038, ${IMAGE_MINOR_R}, 1132, NULL, 2),
+      (1039, ${IMAGE_MINOR_PG13}, 1133, NULL, 2),
+      (1040, ${POST_ITEM_MINOR_R_FIRST}, NULL, 1017, 2);
     INSERT INTO "ModelVersion" ("id", "modelId", "index") VALUES (53, 43, 0);
     INSERT INTO "Post" ("id", "userId", "modelVersionId", "publishedAt") VALUES
       (8, 2, 53, now() - interval '1 day'),
@@ -291,16 +314,33 @@ beforeAll(async () => {
   `);
 });
 
-async function coversFor(collectionId: number, browsingLevel = allBrowsingLevelsFlag) {
+const showsEveryImage = () => true;
+
+async function coversFor(
+  collectionId: number,
+  browsingLevel = allBrowsingLevelsFlag,
+  showsImage: Parameters<typeof getCollectionCoverImages>[0]['showsImage'] = showsEveryImage
+) {
   const rows = await getCollectionCoverImages({
     collectionIds: [collectionId],
     imagesPerCollection: 10,
     browsingLevel,
+    showsImage,
   });
   return rows.map(({ image, src }) => ({ imageId: image?.id ?? null, src }));
 }
 
 describe('getCollectionCoverImages', () => {
+  it("passes each cover's poi, minor and enabled tag ids to the browsing filter, and drops what it refuses", async () => {
+    const seen: unknown[] = [];
+    const refuseAll = (image: unknown) => {
+      seen.push(image);
+      return false;
+    };
+    expect(await coversFor(IMAGE_ITEM, allBrowsingLevelsFlag, refuseAll)).toEqual([]);
+    expect(seen).toEqual([expect.objectContaining({ poi: false, minor: false, tags: [777] })]);
+  });
+
   it('resolves an Image item to its image (harness control)', async () => {
     expect(await coversFor(IMAGE_ITEM)).toEqual([{ imageId: 100, src: null }]);
   });
@@ -375,6 +415,7 @@ describe('getCollectionCoverImages', () => {
       collectionIds: [SHARED_UPLOAD_OWNER_ADDED, SHARED_UPLOAD_STRANGER_ADDED],
       imagesPerCollection: 10,
       browsingLevel: allBrowsingLevelsFlag,
+      showsImage: showsEveryImage,
     });
     expect(rows.map(({ id, image }) => [id, image?.id ?? null])).toEqual([
       [SHARED_UPLOAD_OWNER_ADDED, 118],
@@ -414,6 +455,15 @@ describe('getCollectionCoverImages', () => {
 
   it('skips a Model item whose version is a draft', async () => {
     expect(await coversFor(MODEL_ITEM_DRAFT_VERSION)).toEqual([]);
+  });
+
+  it('skips a minor-flagged Image item rated R, and keeps one rated PG-13', async () => {
+    expect(await coversFor(IMAGE_MINOR_R)).toEqual([]);
+    expect(await coversFor(IMAGE_MINOR_PG13)).toEqual([{ imageId: 1133, src: null }]);
+  });
+
+  it("passes over a post's first image when it is minor-flagged and rated R", async () => {
+    expect(await coversFor(POST_ITEM_MINOR_R_FIRST)).toEqual([{ imageId: 1135, src: null }]);
   });
 
   it('serves a mature cover to a viewer at that level (control)', async () => {

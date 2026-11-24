@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as Cloudflare from '~/server/cloudflare/client';
 import type * as SearchIndex from '~/server/search-index';
 import type * as UserProfileService from '~/server/services/user-profile.service';
@@ -15,6 +16,65 @@ import type * as UtilService from '~/server/services/util.service';
  * back. `refreshSession` is the global no-op stub here (src/__tests__/setup.ts), so the handler's own
  * `bustUserCreator` is the only thing that can drop the entry.
  */
+
+// The CSAM bucket upload a moderator's edit of a reported user waits on.
+const upload = vi.hoisted(() => ({
+  fail: undefined as Error | undefined,
+  done: [] as string[],
+  bodies: [] as string[],
+}));
+// Both carry `default`: the package is pre-bundled for CJS interop, so consumers resolve through it.
+vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@aws-sdk/client-s3')>();
+  const objects = new Map<string, { body: Uint8Array; Metadata?: Record<string, string> }>();
+  const S3Client = class {
+    async send(command: unknown) {
+      if (command instanceof real.PutObjectCommand) {
+        if (upload.fail) throw upload.fail;
+        const { Key, Body, Metadata } = command.input;
+        objects.set(Key!, { body: Body as Uint8Array, Metadata });
+        upload.done.push(Key!);
+        upload.bodies.push(Buffer.from(Body as Uint8Array).toString('utf8'));
+        return {};
+      }
+      if (command instanceof real.GetObjectCommand) {
+        const found = objects.get(command.input.Key!)!;
+        return { Metadata: found.Metadata, Body: { transformToByteArray: async () => found.body } };
+      }
+      return {};
+    }
+    destroy() {
+      return undefined;
+    }
+  };
+  const mocked = { ...real, S3Client };
+  return { ...mocked, default: mocked };
+});
+
+/** ModActivity rows written through `trackModActivity`: [actor, entityType, activity, entityIds]. */
+const modActivityRows = () =>
+  dbMock.dbWrite.$executeRaw.mock.calls
+    .filter(([s]) => (s as unknown as readonly string[]).join('?').includes('"ModActivity"'))
+    .map(([, ...values]) => values);
+/** The next ModActivity write fails; every other raw write succeeds. */
+const failModActivityOnce = () => {
+  let armed = true;
+  dbMock.dbWrite.$executeRaw.mockImplementation((async (s: readonly string[]) => {
+    if (armed && s.join('?').includes('"ModActivity"')) {
+      armed = false;
+      throw new Error('db blip');
+    }
+    return 0;
+  }) as never);
+};
+/** Whether the CSAM report lookup names the user. */
+const reportNames = (named: boolean) =>
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (s: readonly string[]) =>
+    s.join('?').includes('"CsamReport"') ? [{ named }] : []) as never);
+const reportLookups = () =>
+  dbMock.dbWrite.$queryRaw.mock.calls.filter(([s]) =>
+    (s as unknown as readonly string[]).join('?').includes('"CsamReport"')
+  ).length;
 
 const { purgeCache, readCreator, mocks } = vi.hoisted(() => ({
   purgeCache: vi.fn(),
@@ -56,7 +116,9 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
   usersSearchIndex: { queueUpdate: vi.fn(async () => undefined) },
 }));
 
-const { getUserCreator } = await import('~/server/services/user.service');
+const { getUserCreator, removeUserLinkAsModerator } = await import(
+  '~/server/services/user.service'
+);
 const { updateUserProfileHandler, addEntityToShowcaseHandler } = await import(
   '~/server/controllers/user-profile.controller'
 );
@@ -68,6 +130,8 @@ let usernames: Record<number, string>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  reportNames(false);
+  dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-10-17T12:00:00.000Z'));
   installFakeCacheRedis();
@@ -119,6 +183,30 @@ async function cardsAfter(write: () => Promise<unknown>) {
 }
 
 describe('creator-card bust in the profile and user write handlers', () => {
+  describe("a moderator's link removal", () => {
+    const remove = () =>
+      removeUserLinkAsModerator({
+        userId: OWNER,
+        linkId: 990300009,
+        actorId: MODERATOR,
+        archive: async () => undefined,
+      });
+    beforeEach(() => {
+      dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(null as never);
+      dbMock.dbWrite.userLink.findMany.mockResolvedValue([] as never);
+    });
+
+    it('busts the owner’s card when a link was removed', async () => {
+      dbMock.dbWrite.userLink.deleteMany.mockResolvedValue({ count: 1 } as never);
+      expect(await cardsAfter(remove)).toEqual({ owner: 'owner-after', moderator: 'mod-before' });
+    });
+
+    it('leaves the card alone when nothing was removed', async () => {
+      dbMock.dbWrite.userLink.deleteMany.mockResolvedValue({ count: 0 } as never);
+      expect(await cardsAfter(remove)).toEqual({ owner: 'owner-before', moderator: 'mod-before' });
+    });
+  });
+
   it('control: with no write, both cached cards are served', async () => {
     expect(await cardsAfter(async () => undefined)).toEqual({
       owner: 'owner-before',
@@ -136,6 +224,140 @@ describe('creator-card bust in the profile and user write handlers', () => {
     expect(cards).toEqual({ owner: 'owner-after', moderator: 'mod-before' });
     expect(purgeCache).toHaveBeenCalledWith({
       tags: [`user-creator-${OWNER}`, 'user-creator-owner-after'],
+    });
+  });
+
+  describe("a moderator editing another user's profile", () => {
+    const edit = (ctxUser: { id: number; isModerator: boolean }) =>
+      updateUserProfileHandler({
+        input: { userId: OWNER, bio: '' },
+        ctx: { user: { ...ctxUser, muted: false } },
+      } as never);
+
+    it('records the edit, and archives nothing for a user no report names', async () => {
+      reportNames(false);
+      await edit({ id: MODERATOR, isModerator: true });
+      expect(reportLookups()).toBe(1);
+      expect(dbMock.dbWrite.userProfile.findUnique).not.toHaveBeenCalled();
+      expect(modActivityRows()).toEqual([[MODERATOR, 'user', 'editProfile', [OWNER]]]);
+    });
+
+    it('returns the committed edit when its record fails to write', async () => {
+      reportNames(false);
+      failModActivityOnce();
+      await expect(edit({ id: MODERATOR, isModerator: true })).resolves.not.toThrow();
+      expect(mocks.updateUserProfile).toHaveBeenCalledTimes(1);
+    });
+
+    describe('of a user a report names', () => {
+      const stored = {
+        bio: 'b',
+        message: null,
+        messageAddedAt: null,
+        sfwBio: null,
+        sfwMessage: null,
+        location: null,
+        showcaseSections: [],
+      };
+      beforeEach(() => {
+        setEnv({
+          CSAM_UPLOAD_KEY: 'test-key',
+          CSAM_UPLOAD_SECRET: 'test-secret',
+          CSAM_UPLOAD_REGION: 'test-region',
+          CSAM_UPLOAD_ENDPOINT: 'https://example.invalid',
+          CSAM_BUCKET_NAME: 'test-bucket',
+        });
+        upload.fail = undefined;
+        upload.done = [];
+        upload.bodies = [];
+        dbMock.dbWrite.userLink.findMany.mockResolvedValue([] as never);
+        reportNames(true);
+        dbMock.dbWrite.userProfile.findUnique.mockResolvedValue(stored as never);
+      });
+
+      it('archives the profile before the edit lands', async () => {
+        mocks.updateUserProfile.mockImplementationOnce(async () => {
+          expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
+          return {} as never;
+        });
+        await edit({ id: MODERATOR, isModerator: true });
+        expect(mocks.updateUserProfile).toHaveBeenCalledTimes(1);
+      });
+
+      it('refuses the edit when the archive fails', async () => {
+        upload.fail = new Error('s3 down');
+        await expect(edit({ id: MODERATOR, isModerator: true })).rejects.toThrow();
+        expect(mocks.updateUserProfile).not.toHaveBeenCalled();
+        expect(modActivityRows()).toEqual([]);
+      });
+
+      it('archives before an edit of only the profile section settings', async () => {
+        await updateUserProfileHandler({
+          input: { userId: OWNER, profileSectionsSettings: [] },
+          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+        } as never);
+        expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
+      });
+
+      it('archives before an edit of only the showcase', async () => {
+        await updateUserProfileHandler({
+          input: { userId: OWNER, showcaseItems: [] },
+          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+        } as never);
+        expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
+      });
+
+      it('archives before an edit of only the civitai.com copies', async () => {
+        await updateUserProfileHandler({
+          input: { userId: OWNER, sfwBio: '' },
+          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+        } as never);
+        expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
+      });
+
+      it.each(['message', 'sfwMessage', 'location'])(
+        'archives before an edit of %s',
+        async (key) => {
+          await updateUserProfileHandler({
+            input: { userId: OWNER, [key]: '' },
+            ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+          } as never);
+          expect(upload.done.some((k) => k.endsWith('_profile.json'))).toBe(true);
+        }
+      );
+
+      it.each(['socialLinks', 'sponsorshipLinks'])(
+        'archives the old links before a moderator replaces %s',
+        async (key) => {
+          dbMock.dbWrite.userLink.findMany.mockResolvedValue([
+            { id: 5, url: 'https://example.invalid/old', type: 'Social' },
+          ] as never);
+          await updateUserProfileHandler({
+            input: { userId: OWNER, [key]: [] },
+            ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+          } as never);
+          const archived = JSON.parse(upload.bodies[0]);
+          expect(archived.links).toEqual([
+            { id: 5, url: 'https://example.invalid/old', type: 'Social' },
+          ]);
+          expect(archived.clearedFields).toEqual(['links']);
+        }
+      );
+
+      it('archives nothing for an edit that touches no profile text', async () => {
+        await updateUserProfileHandler({
+          input: { userId: OWNER, coverImageId: null },
+          ctx: { user: { id: MODERATOR, isModerator: true, muted: false } },
+        } as never);
+        expect(reportLookups()).toBe(0);
+        expect(upload.done).toEqual([]);
+      });
+    });
+
+    it('leaves an owner editing their own profile alone', async () => {
+      await edit({ id: OWNER, isModerator: false });
+      expect(reportLookups()).toBe(0);
+      expect(modActivityRows()).toEqual([]);
     });
   });
 

@@ -2,6 +2,7 @@ import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
 import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
+import { lazyProxy } from '~/shared/utils/lazy';
 import { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -163,7 +164,7 @@ class NOWPaymentsCaller extends HttpCaller {
         stage: 'payment-status-failed',
         paymentId: payment_id,
         status: response.status,
-      }).catch(() => null);
+      });
       return { payment: null, status: response.status };
     }
     const data = await response.json();
@@ -296,4 +297,4 @@ class NOWPaymentsCaller extends HttpCaller {
   }
 }
 
-export default NOWPaymentsCaller.getInstance();
+export default lazyProxy(() => NOWPaymentsCaller.getInstance());

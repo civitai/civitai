@@ -1,5 +1,6 @@
 import { ComicGenre } from '~/shared/utils/prisma/enums';
 import { formatGenreLabel } from '~/utils/comic-helpers';
+import { showWarningNotification } from '~/utils/notifications';
 
 export const COMIC_MODEL_MAX_IMAGES: Record<string, number> = {
   NanoBanana2: 7,
@@ -53,3 +54,9 @@ export type BulkPanelItem = {
   // so the underlying Image carries proper resource attribution.
   meta?: Record<string, unknown>;
 };
+
+/** A generation ran without an @mentioned reference none of whose images could be used. No reason is given. */
+export function notifyIfReferenceImagesSkipped(result: { referenceImagesSkipped?: boolean }) {
+  if (result.referenceImagesSkipped)
+    showWarningNotification({ message: 'Some reference images were not used.' });
+}

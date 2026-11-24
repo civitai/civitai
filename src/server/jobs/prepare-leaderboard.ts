@@ -22,6 +22,8 @@ import { createLogger } from '~/utils/logging';
 import type { JobContext } from './job';
 import { createJob, getJobDate } from './job';
 
+import { intArrayLiteral, withMetricExcludedUsers } from '~/server/jobs/leaderboard-board-query';
+
 const log = createLogger('leaderboard', 'blue');
 
 // Accounts that must never appear on any leaderboard, regardless of the board's query.
@@ -36,11 +38,6 @@ const eligibleAccountSql = (excludedUserIds: number[], alias = 'u') =>
 // `isModerator` is nullable: `IS TRUE` keeps a NULL from excluding the account.
 const leaderboardExcludedSql = (alias = 'u') =>
   `(${alias}."excludeFromLeaderboards" OR ${alias}."isModerator" IS TRUE)`;
-
-function intArrayLiteral(ids: number[]) {
-  if (!ids.every(Number.isSafeInteger)) throw new Error('excluded user ids must be integers');
-  return `'{${ids.join(',')}}'::int[]`;
-}
 
 /** Must run before the board is sliced, or an excluded account costs the board a slot. */
 function withoutExcluded<T extends { userId: number }>(rows: T[], excludedUserIds: number[]) {
@@ -62,7 +59,7 @@ async function getExcludedUserIdsOrUnfiltered() {
       type: 'error',
       name: 'leaderboard-metric-exclusion-unavailable',
       message: (e as Error).message,
-    }).catch();
+    });
     return [];
   }
 }
@@ -116,7 +113,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
           logToAxiom({
             type: 'leaderboard-start',
             id,
-          }).catch();
+          });
 
           const populated = await populateLeaderboard(context, async () => {
             if (!imageRange) imageRange = await getImageRange();
@@ -129,7 +126,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
             type: 'leaderboard-done',
             id,
             duration: Date.now() - start,
-          }).catch();
+          });
         }, 3)
   );
   try {
@@ -143,7 +140,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
     await redis.purgeTags('leaderboard');
   } catch (e) {
     const error = e as Error;
-    logToAxiom({ type: 'leaderboard-error', message: error.message }).catch();
+    logToAxiom({ type: 'leaderboard-error', message: error.message });
     throw error;
   }
 });
@@ -170,7 +167,7 @@ export async function populateLeaderboard(
     }
   } catch (e) {
     const error = e as Error;
-    logToAxiom({ type: 'leaderboard-error', id, message: error.message }).catch();
+    logToAxiom({ type: 'leaderboard-error', id, message: error.message });
     throw e;
   }
 
@@ -178,7 +175,7 @@ export async function populateLeaderboard(
   // cosmetic revocation strip every holder.
   if (skipped) {
     log(`Leaderboard ${id} - Skipped, ClickHouse unavailable`);
-    logToAxiom({ type: 'leaderboard-skipped', id }).catch();
+    logToAxiom({ type: 'leaderboard-skipped', id });
     return false;
   }
 
@@ -315,7 +312,7 @@ export async function rebuildUserRanks() {
       name: 'user-rank-partially-populated',
       // civitai-prod is at its column cap, so `error` is the only top-level container new fields can go in.
       error: { unpopulated: unmarked },
-    }).catch();
+    });
 
   await updateLeaderboardRank({
     carriedBoardIds: unmarked,
@@ -356,8 +353,9 @@ type LeaderboardResult = {
   position: number;
 };
 async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
+  const query = withMetricExcludedUsers(ctx.query, ctx.excludedUserIds);
   const leaderboardScoreQuery = await pgDbReadLong.cancellableQuery<LeaderboardResult>(`
-    ${ctx.includesCTE ? ctx.query : `WITH scores AS (${ctx.query})`}
+    ${ctx.includesCTE ? query : `WITH scores AS (${query})`}
     SELECT
       s."userId",
       ROUND(s.score)::int as score,
@@ -558,7 +556,7 @@ export async function setCoverImageNsfwLevelOrLog() {
       type: 'error',
       name: 'leaderboard-cover-nsfw-level-failed',
       message: (e as Error).message,
-    }).catch();
+    });
   }
 }
 
@@ -576,7 +574,7 @@ function withoutMalformedMeta(rows: NsfwLevelRow[], table: 'Model' | 'ModelVersi
       name: 'leaderboard-malformed-meta',
       // civitai-prod is at its column cap, so `error` is the only top-level container new fields can go in.
       error: { table, count: malformed.length, ids: malformed.slice(0, 100).map((row) => row.id) },
-    }).catch();
+    });
   return rows.filter(isWritable);
 }
 

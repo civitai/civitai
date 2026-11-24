@@ -3,6 +3,7 @@ import { dbWrite } from '~/server/db/client';
 import { captureHoldLegsSql } from '~/server/services/legal-hold.service';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { csamBlockedSql, pendingImageAppealSql } from '~/server/common/image-visibility';
 
 /**
  * The appeals queue lists images by `needsReview = 'appeal'`, and the blocked-image purge spares
@@ -99,7 +100,10 @@ export async function releaseReviewFlagsToReportHold(imageIds: number[]): Promis
   });
 }
 
-/** Puts the flag back on any of these images whose appeal is still Pending. */
+/**
+ * Puts the flag back on any of these images whose appeal is still Pending, unless it holds a CSAM
+ * block.
+ */
 export async function keepPendingAppealFlags(imageIds: number[]): Promise<void> {
   if (!imageIds.length) return;
   await dbWrite.$executeRaw`
@@ -108,9 +112,22 @@ export async function keepPendingAppealFlags(imageIds: number[]): Promise<void> 
     WHERE i.id IN (${Prisma.join(imageIds)})
       AND i."needsReview" IS DISTINCT FROM 'appeal'
       AND i."needsReview" IS DISTINCT FROM 'csam'
-      AND EXISTS (
-        SELECT 1 FROM "Appeal" a
-        WHERE a."entityType" = 'Image' AND a."entityId" = i.id AND a."status" = 'Pending'
-      )
+      AND (${csamBlockedSql('i')}) IS NOT TRUE
+      AND ${pendingImageAppealSql(Prisma.sql`i.id`)}
+  `;
+}
+
+/**
+ * Takes the appeal flag off any of these images whose appeal is no longer Pending, for a path that
+ * closes appeals itself: nothing else would clear it, and a blocking scan keeps a stored one.
+ */
+export async function releaseSettledAppealFlags(imageIds: number[]): Promise<number> {
+  if (!imageIds.length) return 0;
+  return dbWrite.$executeRaw`
+    UPDATE "Image" i
+    SET "needsReview" = NULL
+    WHERE i.id IN (${Prisma.join(imageIds)})
+      AND i."needsReview" = 'appeal'
+      AND NOT ${pendingImageAppealSql(Prisma.sql`i.id`)}
   `;
 }

@@ -7,16 +7,18 @@ import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 // A seller who loses the services flag must still pause or remove an Active offering: buyers can
 // request it, and the seller can no longer accept. Publishing stays behind both flags.
 
-const { mockSetStatus, mockRemove, mockGetMine, flags } = vi.hoisted(() => ({
+const { mockSetStatus, mockUpsert, mockRemove, mockGetMine, flags } = vi.hoisted(() => ({
   mockSetStatus: vi.fn(),
+  mockUpsert: vi.fn(),
   mockRemove: vi.fn(),
   mockGetMine: vi.fn(),
-  flags: { creatorShop: true, creatorServices: false },
+  flags: { creatorShop: true, creatorServices: false } as Record<string, boolean>,
 }));
 
 vi.mock('~/server/services/creator-service.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorServiceService>()),
   setServiceOfferingStatus: mockSetStatus,
+  upsertServiceOffering: mockUpsert,
   removeServiceOffering: mockRemove,
   getMyServiceOfferings: mockGetMine,
 }));
@@ -31,7 +33,15 @@ const { creatorServiceRouter } = await import('~/server/routers/creator-service.
 
 const caller = () =>
   creatorServiceRouter.createCaller({
-    user: { id: 7, showNsfw: true, browsingLevel: allBrowsingLevelsFlag },
+    user: {
+      id: 7,
+      showNsfw: true,
+      browsingLevel: allBrowsingLevelsFlag,
+      // Onboarded, unmuted and verified, so upsert's guard lets the call through.
+      onboarding: 0xff,
+      muted: false,
+      emailVerified: new Date('2026-01-01'),
+    },
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     apiKeyId: null,
@@ -47,6 +57,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   flags.creatorShop = true;
   flags.creatorServices = false;
+  flags.creatorServicesNext = false;
   mockGetMine.mockResolvedValue({ items: [], hiddenOffDomain: 0 });
 });
 
@@ -62,6 +73,7 @@ describe('creator service router: a seller without the services flag', () => {
     expect(mockSetStatus).toHaveBeenCalledWith({
       sellerId: 7,
       input: { id: 5, status: 'Paused' },
+      licenseRequired: false,
     });
     expect(mockRemove).toHaveBeenCalledWith({ sellerId: 7, id: 5 });
     expect(mockGetMine).toHaveBeenCalledWith(expect.objectContaining({ sellerId: 7 }));
@@ -88,5 +100,29 @@ describe('creator service router: a seller without the services flag', () => {
     flags.creatorServices = true;
     await caller().setStatus({ id: 5, status: 'Active' });
     expect(mockSetStatus).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('creator service router: the license rules follow creatorServicesNext', () => {
+  const input = {
+    title: 'Custom badge',
+    description: 'One animated badge.',
+    price: 4000,
+    deliveryDays: 5,
+    revisionsIncluded: 2,
+    maxOpenDeals: 3,
+    previewKind: 'Image' as const,
+  };
+
+  it.each([
+    ['in the rollout', true],
+    ['outside it', false],
+  ])('a seller %s gets the license editor and the publish rule', async (_, next) => {
+    flags.creatorServices = true;
+    flags.creatorServicesNext = next;
+    await caller().setStatus({ id: 5, status: 'Active' });
+    await caller().upsert(input);
+    expect(mockSetStatus).toHaveBeenCalledWith(expect.objectContaining({ licenseRequired: next }));
+    expect(mockUpsert).toHaveBeenCalledWith(expect.objectContaining({ licenseEditor: next }));
   });
 });

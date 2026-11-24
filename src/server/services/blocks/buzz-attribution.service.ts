@@ -120,7 +120,7 @@ export async function recordAttribution(
         paymentTransactionId,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     throw new AttributionAppMissingError(attribution.appId);
   }
 
@@ -196,7 +196,7 @@ export async function recordAttribution(
         isSelfPurchase,
       },
       'webhooks'
-    ).catch(() => null);
+    );
 
     // Best-effort Prometheus increment. Never fail the call on a
     // metric write error — metric infrastructure issues should not
@@ -651,7 +651,7 @@ export async function recordSpendAttribution(
         workflowId,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     throw new AttributionAppMissingError(appId);
   }
 
@@ -980,7 +980,7 @@ export async function recordSpendAttribution(
         authorFeeParamsSource: authorFee.observed ? authorFee.computation.source : null,
       },
       'webhooks'
-    ).catch(() => null);
+    );
 
     try {
       blockSpendAttributionWriteCounter.inc({ status });
@@ -1160,7 +1160,7 @@ export async function recordSubscriptionAttribution(
         invoiceId,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     throw new AttributionAppMissingError(attribution.appId);
   }
 
@@ -1258,7 +1258,7 @@ export async function recordSubscriptionAttribution(
         isSelfPurchase,
       },
       'webhooks'
-    ).catch(() => null);
+    );
 
     try {
       blockSubscriptionAttributionWriteCounter.inc({
@@ -1368,7 +1368,7 @@ export async function voidSubscriptionAttributionsForInvoice({
         count: result.count,
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
 
   return result.count;
@@ -1520,7 +1520,7 @@ export async function voidAttributionsForPayment({
         clawbackCount,
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
 
   return result.count;
@@ -1871,7 +1871,7 @@ export function unreadableIfGoodsTableMissing(
         error: error instanceof Error ? error.message : String(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return unreadableGoodsSales();
   });
 }

@@ -9,6 +9,7 @@ import { userPostCountCache } from '~/server/redis/caches';
 import type { MoveImagesToPostInput } from '~/server/schema/post.schema';
 import { createImageResources, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { enqueueJobs } from '~/server/services/job-queue.service';
+import { queueLeftPrivateForKnights } from '~/server/services/knights/sources';
 import { assertAccountNotUnderLegalHold } from '~/server/services/legal-hold.service';
 import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
@@ -22,8 +23,12 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import type { Availability } from '~/shared/utils/prisma/enums';
-import { EntityType, ImageIngestionStatus, JobQueueType } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  EntityType,
+  ImageIngestionStatus,
+  JobQueueType,
+} from '~/shared/utils/prisma/enums';
 import type { ImageMoveRefusal, MovePostRow } from '~/server/services/post-image-move.rules';
 import { getImageMoveRefusal, IMAGES_NOT_MOVABLE } from '~/server/services/post-image-move.rules';
 
@@ -45,6 +50,7 @@ export async function moveImagesToPost({
     throw throwBadRequestError(IMAGES_NOT_MOVABLE);
   });
 
+  let leftPrivate = false;
   const { targetPostId, targetModelVersionId } = await dbWrite.$transaction(async (tx) => {
     // A split publishes a new post on the source's version, so it reads the takedown as createPost
     // does. Locked before the posts: a takedown locks the version and then its posts.
@@ -193,6 +199,9 @@ export async function moveImagesToPost({
       tx
     );
 
+    leftPrivate =
+      sourcePost.availability === Availability.Private &&
+      destination.availability !== Availability.Private;
     return { targetPostId: destination.id, targetModelVersionId: target?.modelVersionId ?? null };
   });
 
@@ -209,7 +218,7 @@ export async function moveImagesToPost({
   ]);
   const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
   if (failures.length)
-    await logToAxiom({
+    logToAxiom({
       type: 'error',
       name: 'move-images-to-post-followup-failed',
       message: 'Images moved, but a follow-up step failed',
@@ -217,7 +226,8 @@ export async function moveImagesToPost({
       fromPostId,
       toPostId: targetPostId,
       errors: failures.map((f) => safeError(f.reason)),
-    }).catch(() => undefined);
+    });
+  if (leftPrivate) void queueLeftPrivateForKnights({ imageIds });
 
   return { postId: targetPostId };
 }

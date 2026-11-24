@@ -28,7 +28,9 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/storyline.service', () => ({ moderateStorylineTitle }));
 
-const { default: handler } = (await import('~/pages/api/mod/storyline/lift-title-takedown')) as {
+const { default: handler } = (await import(
+  '~/server/api-routes/mod/storyline/lift-title-takedown'
+)) as {
   default: (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>;
 };
 

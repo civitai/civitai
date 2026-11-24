@@ -99,7 +99,7 @@ function logUnmapped(reason: string, input: CapturableSearchInput) {
       cursor: reason === 'cursor:unparsed' ? String(input.cursor).slice(0, 80) : undefined,
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 }
 
 // The caller's wall-clock time for the feed call, from just before the request to the parsed answer

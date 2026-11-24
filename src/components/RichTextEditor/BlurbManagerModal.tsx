@@ -27,7 +27,7 @@ import {
   IconRepeat,
   IconTrash,
 } from '@tabler/icons-react';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { showNotification } from '@mantine/notifications';
 import clsx from 'clsx';
 import type { MouseEvent } from 'react';
@@ -42,6 +42,7 @@ import { MAX_BLURBS_PER_USER } from '~/shared/constants/blurb.constants';
 import { getBlurbText } from '~/utils/html-sanitize-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 const COLLAPSED_ROW_COUNT = 8;
 
@@ -468,12 +469,14 @@ function BlurbForm({
 
 // The same confirm the other entities use (see the model page) rather than a bespoke modal, so
 // a destructive action reads the same way wherever a creator meets one.
+const DELETE_BLURB_DIALOG_ID = 'delete-blurb';
+
 function useDeleteBlurb(blurb: BlurbItem | undefined, onDeleted?: () => void) {
   const utils = trpc.useUtils();
   const deleteMutation = trpc.blurb.delete.useMutation({
     onSuccess: async () => {
       await utils.blurb.getMine.invalidate();
-      closeAllModals();
+      dialogStore.closeById(DELETE_BLURB_DIALOG_ID);
       onDeleted?.();
     },
     onError: (error) =>
@@ -482,10 +485,10 @@ function useDeleteBlurb(blurb: BlurbItem | undefined, onDeleted?: () => void) {
 
   return () =>
     blurb &&
-    openConfirmModal({
+    openConfirm({
+      id: DELETE_BLURB_DIALOG_ID,
       title: 'Delete Snippet',
-      children: `Are you sure you want to delete "${blurb.name}"? Anywhere it is used keeps the words exactly as they are — they just become ordinary text and stop updating. This cannot be reverted.`,
-      centered: true,
+      message: `Are you sure you want to delete "${blurb.name}"? Anywhere it is used keeps the words exactly as they are — they just become ordinary text and stop updating. This cannot be reverted.`,
       labels: { confirm: 'Delete Snippet', cancel: "No, don't delete it" },
       confirmProps: { color: 'red', disabled: deleteMutation.isPending },
       closeOnConfirm: false,

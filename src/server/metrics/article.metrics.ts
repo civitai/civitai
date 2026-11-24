@@ -9,7 +9,7 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 // where this module's `articleMetrics` export was read before it was assigned →
 // `ReferenceError: Cannot access 'S' before initialization` → 500s on api-heavy.
 // Both are only used at runtime inside update(), so deferring the import is safe and
-// breaks the cycle. These are the only two imports unique to article.metrics vs the
+// avoids the init-order crash (it is still a cycle edge for the guards). These are the only two imports unique to article.metrics vs the
 // other 14 metric processors, which is why only this one threw.
 import { createLogger } from '~/utils/logging';
 import type { Task } from '~/server/utils/concurrency-helpers';
@@ -85,7 +85,7 @@ export const articleMetrics = createMetricProcessor({
     //---------------------------------------
     const affectedArticleIds = Object.keys(ctx.updates).map((id) => parseInt(id, 10));
     log('update search index', affectedArticleIds.length, 'articles');
-    // Lazy import — breaks the static circular import (see top-of-file note).
+    // Lazy import — avoids the init-order crash (see top-of-file note).
     const { articlesSearchIndex } = await import('~/server/search-index');
     await articlesSearchIndex.queueUpdate(
       affectedArticleIds.map((id) => ({
@@ -99,7 +99,7 @@ export const articleMetrics = createMetricProcessor({
     //---------------------------------------
     log('bust article stat cache', affectedArticleIds.length, 'articles');
     if (affectedArticleIds.length > 0) {
-      // Lazy import — breaks the static circular import (see top-of-file note).
+      // Lazy import — avoids the init-order crash (see top-of-file note).
       const { articleStatCache } = await import('~/server/redis/caches');
       await articleStatCache.bust(affectedArticleIds);
     }

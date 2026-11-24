@@ -169,6 +169,9 @@ vi.mock('~/utils/trpc', () => {
       useUtils: () => utils,
       blocks: {
         approveRequest: { useMutation: mutation('approve') },
+        listPublishRequestHolds: { useQuery: () => ({ data: [] }) },
+        // The approve bar's version re-rate notice (renders nothing without data).
+        getVersionListingRatingPreview: { useQuery: () => ({ data: undefined }) },
         rejectRequest: { useMutation: mutation('reject') },
         // Sub-panel queries the modal mounts (Review-preview / Screenshots / Code
         // diff) — kept network-free with empty/no-op state.
@@ -926,6 +929,38 @@ describe('OnsiteReviewModal — sensitive scopes are grouped + flagged for the m
     // No sensitive header and no sensitive badge when nothing is sensitive.
     expect(page.getByText(/Sensitive permissions/).elements()).toHaveLength(0);
     expect(page.getByTestId('sensitive-scope-badge').elements()).toHaveLength(0);
+  });
+});
+
+describe('OnsiteReviewModal — the per-job Buzz budget is shown to the mod', () => {
+  function renderWithPage(pageField: Record<string, unknown>) {
+    const request = {
+      ...ONSITE_PENDING,
+      id: 'onsite-req-budget',
+      manifest: { ...ONSITE_PENDING.manifest, scopes: ['ai:write:budgeted'], page: pageField },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request, mode: 'pending' }} onClose={vi.fn()} />
+    );
+  }
+
+  test.each([
+    ['declared 1000', { buzzBudgetPerGen: 1000 }, 'Per-job Buzz budget: 1000', true],
+    ['declared 250', { buzzBudgetPerGen: 250 }, 'Per-job Buzz budget: 250', false],
+    ['undeclared', {}, 'Per-job Buzz budget: 1000 (default)', true],
+    [
+      'fractional (the mint ignores it)',
+      { buzzBudgetPerGen: 12.5 },
+      'Per-job Buzz budget: 1000 (default)',
+      true,
+    ],
+  ])('%s', async (_name, pageField, text, flagged) => {
+    renderWithPage(pageField);
+    const row = page.getByTestId('apps-review-per-job-budget');
+    await expect.element(row).toHaveTextContent(text);
+    expect(page.getByTestId('apps-review-per-job-budget-over').elements()).toHaveLength(
+      flagged ? 1 : 0
+    );
   });
 });
 

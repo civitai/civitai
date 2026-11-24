@@ -468,7 +468,7 @@ reason every other mutation in this app does.
 product code has a ClickUp **webhook secret** (`CLICKUP_WEBHOOK_SECRET`,
 [`src/env/server-schema.ts`](../../src/env/server-schema.ts):852) and nothing else — no client, no token,
 no base URL. The one `api.clickup.com` string in the tree lives in
-`apps/event-engine/.claude/skills/clickup/api/client.mjs`, agent tooling that no application code imports
+`.claude/skills/clickup/api/client.mjs`, agent tooling that no application code imports
 and whose `CLICKUP_API_TOKEN` is not in the env schema. **The ClickUp task is still created by hand
 today**, by a moderator, in ClickUp, and its URL pasted onto the Bug.
 

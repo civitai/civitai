@@ -1,5 +1,7 @@
 import type { SessionUser } from '~/types/session';
+import { ownerOrModeratorViewer } from '~/server/auth/full-user-credential';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import { readCollectionForViewer } from '~/server/services/collection-viewer';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
@@ -40,6 +42,9 @@ import {
 } from '~/server/services/hot-reads-3.reads';
 import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
 import { readModelMetaViaKysely } from '~/server/services/hot-reads-5.reads';
+import { canReadCollectionItems } from '~/server/services/collection-item-access';
+import { isCoverWithinBrowsingLevel } from '~/server/services/collection-cover-visibility';
+import { isCoverShownByBrowsingRules } from '~/server/services/blocked-browsing-tags.service';
 import { getComCoverState } from '~/server/services/model-cover.service';
 import { readModelAssociationTargetsViaKysely } from '~/server/services/hot-reads-6.reads';
 import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
@@ -121,7 +126,7 @@ import {
 } from '~/server/selectors/model.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
-import { getCollectionById, getCollectionItemCount } from '~/server/services/collection.service';
+import { getCollectionItemCount } from '~/server/services/collection.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
@@ -142,6 +147,7 @@ import {
   getModelsRaw,
   getModelsWithImagesAndModelVersions,
   getModelVersionsMicro,
+  getPersonalLeadModelIds,
   getPrivateModelCount,
   getTrainingModelsByUserId,
   getVaeFiles,
@@ -164,6 +170,7 @@ import {
   holdShowcaseImages,
 } from '~/server/services/model.service';
 import { getOfficialModelIds } from '~/server/services/resource-select.service';
+import { buildFliptContext } from '~/server/services/feature-flags.service';
 import {
   closeAppealsDeletedByOwner,
   closeAppealsOnDeletedModel,
@@ -194,6 +201,7 @@ import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import {
   getRequestBrowsingLevel,
+  relatedPostsBrowsingLevel,
   resolveRequestBrowsingLevels,
 } from '~/server/utils/browsing-level';
 import { hasCompleteSfwFace, resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
@@ -277,7 +285,8 @@ export const getModelHandler = async ({
       user: ctx.user,
       select: modelWithDetailsSelect,
     });
-    if (!model || !canViewPoiModel(model.poi, model.user.id, ctx.user))
+    const ownerViewer = ownerOrModeratorViewer(ctx);
+    if (!model || !canViewPoiModel(model.poi, model.user.id, ownerViewer))
       throw throwNotFoundError(`No model with id ${input.id}`);
 
     if (ctx.user && !ctx.user.isModerator) {
@@ -286,7 +295,7 @@ export const getModelHandler = async ({
     }
 
     const features = ctx.features;
-    const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
+    const isOwner = ownerViewer?.id === model.user.id || !!ownerViewer?.isModerator;
     // The editor needs the stored .red pair; the page shows owners and mods the same face as everyone.
     const editorRead = isOwner && !!forEditor;
     const withSfwFace =
@@ -299,7 +308,7 @@ export const getModelHandler = async ({
 
     const filteredVersions = model.modelVersions.filter((version) =>
       canViewModelVersionStatus({
-        viewer: ctx.user,
+        viewer: ownerViewer,
         ownerId: model.user.id,
         modelStatus: model.status,
         versionStatus: version.status,
@@ -348,7 +357,6 @@ export const getModelHandler = async ({
     );
 
     const metrics = model.metrics[0];
-    const canManage = ctx.user?.id === model.user.id || ctx.user?.isModerator;
     const entityAccess = await hasEntityAccess({
       entityIds: filteredVersions.map((x) => x.id),
       entityType: 'ModelVersion',
@@ -457,7 +465,7 @@ export const getModelHandler = async ({
       // The list endpoint and public API still push them for backward compat.
       const files = isDownloadable
         ? version.files
-            .filter((x) => x.visibility === 'Public' || canManage)
+            .filter((x) => x.visibility === 'Public' || isOwner)
             .sort((a, b) => {
               const aType = a.type as ModelFileType;
               const bType = b.type as ModelFileType;
@@ -581,7 +589,7 @@ export const getModelHandler = async ({
     const matureLockReason = forEditor
       ? await getMatureLockReason({
           model: { ...model, userId: model.user.id },
-          viewerId: ctx.user?.id,
+          viewerId: ownerViewer?.id,
         })
       : null;
 
@@ -675,53 +683,106 @@ export const getModelsInfiniteHandler = async ({
   return getModelsFeed(input, ctx);
 };
 
+/** The options model.getAll reads its rows with, beside its input; the models search uses them too. */
+export async function modelFeedQueryOptions(ctx: Context) {
+  // Serialize-freeze lever: the browse feed is the #1 producer of oversized tRPC
+  // responses. When the DARK `getAllModelImagesSlim` flag is on, cap each model's
+  // images to the SLIM count AND pick the nsfw-biased coverage slice (drives the
+  // browsing-level feed-drop regression of the smaller cap to ~0); OFF ⇒ today's
+  // `GET_ALL_IMAGES_PER_MODEL`, naive first-N. The always-on per-image field trim
+  // applies either way (see model-getall-images).
+  const slim = ctx.features.getAllModelImagesSlim;
+  return {
+    user: ctx.user,
+    heldViewer: isSessionOrFullUserKey(ctx),
+    domain: getRequestBoardDomainColor(ctx.req),
+    imagesPerModel: slim ? GET_ALL_IMAGES_PER_MODEL_SLIM : GET_ALL_IMAGES_PER_MODEL,
+    biasImageSlice: slim,
+    // Flag-gated (#3266 A/B): pass the once-per-request `modelMetricPrivacyReadtime`
+    // value so the feed-hydration path skips the metric-privacy resolution when OFF.
+    metricPrivacyEnabled: !!ctx.features.modelMetricPrivacyReadtime,
+    // model.getAll never edge-caches a signed-in response (skipEdgeCache).
+    eventDecorationViewer: eventViewerOf(ctx),
+    coverage: await coverageAudience(ctx.user ?? undefined),
+  };
+}
+
+/**
+ * The personal Hot lead applies to the default browse only: Hot, a session viewer (scoped API tokens
+ * get plain Hot), and none of the inputs that turn the feed into a search, a profile, a collection or
+ * a list. The flag is evaluated per viewer with their context, before any cache is read.
+ */
+async function getPersonalLeadIdsForFeed(input: GetAllModelsOutput, ctx: Context) {
+  const user = ctx.user;
+  const browsingLevel = input.browsingLevel;
+  if (input.sort !== ModelSort.Hot || !user || !browsingLevel || !isSessionOrFullUserKey(ctx))
+    return [];
+  if (
+    input.query ||
+    input.username ||
+    input.user ||
+    input.collectionId ||
+    input.followed ||
+    input.favorites ||
+    input.hidden ||
+    input.ids?.length ||
+    input.archived
+  )
+    return [];
+  if (
+    !(await isFlipt(
+      FLIPT_FEATURE_FLAGS.PERSONAL_HOT_LEAD,
+      String(user.id),
+      buildFliptContext(user)
+    ))
+  )
+    return [];
+  return getPersonalLeadModelIds({
+    userId: user.id,
+    browsingLevel,
+    firstPage: !input.cursor,
+  });
+}
+
 /** model.getAll's query, at whatever levels `input` already carries. */
 export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
   try {
     let loopCount = 0;
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
-    // Serialize-freeze lever: the browse feed is the #1 producer of oversized tRPC
-    // responses. When the DARK `getAllModelImagesSlim` flag is on, cap each model's
-    // images to the SLIM count AND pick the nsfw-biased coverage slice (drives the
-    // browsing-level feed-drop regression of the smaller cap to ~0); OFF ⇒ today's
-    // `GET_ALL_IMAGES_PER_MODEL`, naive first-N. The always-on per-image field trim
-    // applies either way (see model-getall-images).
-    const slim = ctx.features.getAllModelImagesSlim;
-    const imagesPerModel = slim ? GET_ALL_IMAGES_PER_MODEL_SLIM : GET_ALL_IMAGES_PER_MODEL;
-    // Flag-gated (#3266 A/B): pass the once-per-request `modelMetricPrivacyReadtime`
-    // value so the feed-hydration path skips the metric-privacy resolution when OFF.
-    const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacyReadtime;
-    const queryOptions = {
-      user: ctx.user,
-      heldViewer: isSessionOrFullUserKey(ctx),
-      domain: getRequestBoardDomainColor(ctx.req),
-      imagesPerModel,
-      biasImageSlice: slim,
-      metricPrivacyEnabled,
-      // model.getAll never edge-caches a signed-in response (skipEdgeCache).
-      eventDecorationViewer: eventViewerOf(ctx),
-      coverage: await coverageAudience(ctx.user ?? undefined),
-    };
+    const queryOptions = await modelFeedQueryOptions(ctx);
 
-    // Hot with a base-model filter leads with the official checkpoints for that base. They are
-    // dropped from the main stream on every page, so the cursor never re-emits them, and fetched on
-    // the first page through the same query, so every other filter still applies to them.
-    const pinnedIds =
+    // Hot with a base-model filter leads with the official checkpoints for that base, and a viewer in
+    // the personal-hot-lead flag gets their own lead ahead of those. Both are excluded from the main
+    // stream on every page so the cursor never re-emits them (the lead only while its cached entry
+    // lives), and fetched on the first page through the same query so every other filter still applies.
+    const [officialIds, leadIds] = await Promise.all([
       input.sort === ModelSort.Hot && input.baseModels?.length && !input.query
-        ? ((await getOfficialModelIds()) ?? [])
-            .filter((m) => m.type === ModelType.Checkpoint)
-            .map((m) => m.id)
-        : [];
-    const pinned =
-      pinnedIds.length && !input.cursor
-        ? await getModelsWithImagesAndModelVersions({
+        ? getOfficialModelIds().then((models) =>
+            (models ?? []).filter((m) => m.type === ModelType.Checkpoint).map((m) => m.id)
+          )
+        : [],
+      getPersonalLeadIdsForFeed(input, ctx),
+    ]);
+    const pinnedIds = [...new Set([...leadIds, ...officialIds])];
+    const fetchPinned = (onlyModelIds: number[]) =>
+      onlyModelIds.length && !input.cursor
+        ? getModelsWithImagesAndModelVersions({
             ...queryOptions,
-            input: { ...input, limit: pinnedIds.length },
-            onlyModelIds: pinnedIds,
+            input: { ...input, limit: onlyModelIds.length },
+            onlyModelIds,
           })
         : undefined;
-    if (pinned?.isPrivate) isPrivate = true;
+    const [lead, pinned] = await Promise.all([
+      fetchPinned(leadIds),
+      fetchPinned(officialIds.filter((id) => !leadIds.includes(id))),
+    ]);
+    // A lead is per viewer: never let a shared cache hold this page.
+    if (leadIds.length || lead?.isPrivate || pinned?.isPrivate) isPrivate = true;
+    // The query returns Hot order; the lead keeps its own (stake arm first).
+    const leadItems = (lead?.items ?? []).sort(
+      (a, b) => leadIds.indexOf(a.id) - leadIds.indexOf(b.id)
+    );
 
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
     while (results.length < (input.limit ?? 100) && loopCount < 3) {
@@ -740,7 +801,7 @@ export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
     }
 
     if (isPrivate) ctx.cache.canCache = false;
-    return { items: [...(pinned?.items ?? []), ...results], nextCursor };
+    return { items: [...leadItems, ...(pinned?.items ?? []), ...results], nextCursor };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -2497,7 +2558,7 @@ export const updateGallerySettingsHandler = async ({
           name: 'model-gallery-post-pinned',
           message: (e as Error).message,
           details: { modelId: id },
-        }).catch()
+        })
       );
     }
 
@@ -2560,7 +2621,13 @@ export async function copyGalleryBrowsingLevelHandler({
   }
 }
 
-export async function getModelCollectionShowcaseHandler({ input }: { input: GetByIdInput }) {
+export async function getModelCollectionShowcaseHandler({
+  ctx,
+  input,
+}: {
+  ctx: Context;
+  input: GetByIdInput;
+}) {
   try {
     const model = await readModelMetaViaKysely(
       await getKyselyWithoutLag('model', input.id),
@@ -2571,7 +2638,20 @@ export async function getModelCollectionShowcaseHandler({ input }: { input: GetB
     const modelMeta = model.meta as ModelMeta | null;
     if (!modelMeta?.showcaseCollectionId) return null;
 
-    const collection = await getCollectionById({ input: { id: modelMeta.showcaseCollectionId } });
+    const { permissions, collection: read } = await readCollectionForViewer(
+      ctx,
+      modelMeta.showcaseCollectionId
+    );
+    if (!read) return null;
+
+    const { coverHidden: _coverHidden, ...found } = read;
+    // The cover as collection lists show it to this viewer: within their browsing level and rules.
+    const coverShown =
+      !!found.image &&
+      isCoverWithinBrowsingLevel(found.image, relatedPostsBrowsingLevel(ctx, undefined)) &&
+      (await isCoverShownByBrowsingRules(found.image, ctx));
+    const collection = { ...found, image: coverShown ? found.image : null };
+    if (!canReadCollectionItems(permissions)) return { ...collection, itemCount: null };
     const [itemCount] = await getCollectionItemCount({
       collectionIds: [collection.id],
       status: CollectionItemStatus.ACCEPTED,

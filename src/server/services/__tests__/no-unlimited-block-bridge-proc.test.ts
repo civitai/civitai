@@ -101,6 +101,7 @@ const BUCKET_BY_FN: Readonly<Record<string, string>> = Object.freeze({
   checkBlockSubmitRateLimit: 'submit',
   checkBlockSubmitUserRateLimit: 'submit-user',
   checkBlockGenerationSourceUserRateLimit: 'gen-source-user',
+  checkBlockUploadedGenerationSourceUserRateLimit: 'uploaded-gen-source-user',
 });
 
 type Decision = {
@@ -146,6 +147,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   consentQuoteGrant: {
     buckets: ['catalog'],
     why: 'The session-bound confirmation of a viewer-confirmed quote of either kind (training or confirmed step): one Redis read + write, reached only from a viewer click in host chrome. The read bucket; consentTrainingQuote is its training-named delegate.',
+  },
+  consentQuoteGrantStanding: {
+    buckets: ['catalog'],
+    why: 'The session-bound standing consent to a step quote for a viewer who opted in: Redis and two primary reads, reached only from the host after a preview said standing. The read bucket like consentQuoteGrant; the per-(viewer, app) burst bound that limits what it lets run is a separate fail-closed bucket checked inside it, not a bridge bucket.',
   },
   createPostFromApp: {
     buckets: ['post', 'post-app', 'publish'],
@@ -203,6 +208,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['upload-app'],
     why: 'The server half of OPEN_IMAGE_UPLOAD { bytes }: each persist creates a real, scanned Image row, so it takes one token, before the row is created, from its OWN app-wide bucket keyed on appId, shared by every viewer and install of the app. NOT the per-install publish bucket: a page app install id is shared by every viewer, so charging it let one viewer’s uploads use up the allowance publishGenerationOutputs and post creation draw on. No per-viewer upload bucket: the 60/h per-user rateLimit is tighter for every prod non-moderator, and the host’s 8-per-60-s bytes window holds a single-page moderator to 40 per 300 s.',
   },
+  persistUploadedGenerationSource: {
+    buckets: ['uploaded-gen-source-user'],
+    why: 'The server half of a picked generation source while app-block-source-scanned-rows is on: one server-side fetch of a consumer blob, one private scanned Image row and up to a 30 s scan wait per call, the same work as persistGenerationSource. Its OWN bucket (60 per hour keyed on the token subject, no moderator or dev/test/preview exemption) and its OWN 2-in-flight pool, the same sizes as persistGenerationSource’s, so an app saving outputs and a viewer picking sources cannot starve each other. Also carries the per-user rateLimit middleware, keyed on its own path.',
+  },
   persistGenerationSource: {
     buckets: ['gen-source-user'],
     why: 'The server half of PERSIST_GENERATION_SOURCE: one private, scanned Image row and up to a 30 s scan wait per call. Its OWN bucket, 60 per hour keyed on the token subject, with no moderator or dev/test/preview exemption (the per-user rateLimit middleware it also carries has both, and moderators are the flag audience). NOT the per-install publish bucket, which every viewer of a page app shares. Concurrency is capped separately at 2 in flight per user, before the bucket is charged.',
@@ -211,6 +220,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   presignMediaUploadBatchItem: {
     buckets: [],
     why: 'NONE OF THESE BUCKETS. Bounded by its batch instead: only for an open batch of this viewer and app, and at most three upload URLs per file the daily batch quota was charged for at startMediaUploadBatch. The per-install catalog bucket would let one viewer’s 1,000-file batch drain every viewer’s allowance on a page app.',
+  },
+  previewOutputUnlock: {
+    buckets: ['catalog'],
+    why: 'The read-only half of the output unlock: one orchestrator workflow read, classified at the token ceiling; prices and materialises nothing. A signed-in session that is the token subject is required as well.',
   },
   previewQuoteGrant: {
     buckets: ['catalog'],
@@ -247,6 +260,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   submitWorkflow: {
     buckets: ['submit', 'submit-user'],
     why: 'Its own :submit: bucket per (install, token subject), at twice the catalog ceiling estimateWorkflow charges, plus :submit-user: per subject across all installs at twice that, both above every kind branch so a submit refused before reserveAppSpend still counts. reserveAppSpend still bounds accepted generations.',
+  },
+  unlockOutput: {
+    buckets: ['catalog'],
+    why: 'The confirmed output unlock: at most one per workflow at a time (a Redis NX lock refuses a concurrent second), a click in the host dialog under a signed-in session that is the token subject, and the orchestrator’s own Yellow balance check (it counts against no limit: the original spend already did). The catalog bucket bounds the reads a refused or repeated click costs.',
   },
   updateUserSettings: {
     buckets: [],

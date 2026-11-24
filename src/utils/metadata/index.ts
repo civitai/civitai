@@ -10,6 +10,7 @@ import {
 } from '@civitai/generation-metadata';
 /* eslint-enable no-restricted-imports */
 import { civitai, readCivitaiMetadata } from '@civitai/generation-metadata/civitai';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
@@ -141,7 +142,7 @@ const CIVITAI_META_ATTR = 'data-civitai-metadata';
 export async function copyMetadataToClipboard(meta: ImageMetaProps): Promise<boolean> {
   const textPlain = encodeMetadata(meta);
   const jsonMeta = JSON.stringify(meta);
-  const escapedText = textPlain.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const escapedText = escapeHtml(textPlain);
   const textHtml = `<div ${CIVITAI_META_ATTR}="${encodeURIComponent(
     jsonMeta
   )}">${escapedText}</div>`;

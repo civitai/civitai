@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import { useDisclosure } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { trpc } from '~/utils/trpc';
 import {
   Text,
@@ -132,10 +132,9 @@ export function ApiKeysCard({ flat }: { flat?: boolean } = {}) {
   });
 
   const handleDeleteApiKey = (id: number) => {
-    openConfirmModal({
+    openConfirm({
       title: 'Delete API Key',
-      children: <Text size="sm">Are you sure you want to delete this API Key?</Text>,
-      centered: true,
+      message: <Text size="sm">Are you sure you want to delete this API Key?</Text>,
       labels: { confirm: 'Delete API Key', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       onConfirm: () => deleteApiKeyMutation.mutateAsync({ id }),

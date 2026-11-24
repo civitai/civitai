@@ -12,6 +12,9 @@ const { currentUser } = vi.hoisted(() => ({
 }));
 
 vi.mock('~/server/services/generation/generation.service', () => ({
+  getGateRuleState: vi.fn(async () => ({ known: true, value: [] })),
+  getGateSubjects: vi.fn(async () => new Map()),
+  gatedVersionIds: vi.fn(() => new Set()),
   resolveCanGenerateForVersions: vi.fn(async () => new Map([[VERSION_ID, { canGenerate: true }]])),
   getShouldChargeForResources: vi.fn(async () => ({ 77: false })),
 }));
@@ -49,6 +52,8 @@ const versionRow = {
   sfwOnly: false,
   usageControl: 'Download',
   modelUserId: OWNER_ID,
+  modelStatus: 'Published',
+  modelAvailability: 'Public',
   poi: true,
   licensingFee: null,
   licensingFeeType: null,

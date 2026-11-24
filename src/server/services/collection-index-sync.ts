@@ -1,4 +1,5 @@
 import { dbRead } from '~/server/db/client';
+import { COLLECTION_SEARCH_ELIGIBLE } from '~/server/search-index/collection-search-eligibility';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
@@ -48,7 +49,7 @@ export async function queueCollectionMembershipUpdate({
       message: error instanceof Error ? error.message : 'unknown',
       collectionIds,
       imageCount: imageIds.length,
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -87,48 +88,75 @@ export async function queueCollectionReadConfigChange({
       name: 'collection-read-change-enqueue-truncated',
       message: `Collection ${collectionId} exceeded ${limit} items; remaining membership is stale until a reindex.`,
       collectionId,
-    }).catch(() => undefined);
+    });
 
   return { queued: imageIds.length, truncated };
 }
 
+/** Whether the post is on a minor or SFW-only model, whose gallery level holds its images. */
+const postOnHeldModelSql = (postId: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "Post" hp
+  JOIN "ModelVersion" hmv ON hmv.id = hp."modelVersionId"
+  JOIN "Model" hm ON hm.id = hmv."modelId"
+  WHERE hp.id = ${postId} AND (hm.minor OR hm."sfwOnly")
+)`;
+
 /**
- * The collections whose cover may come from these models' posts: by a model item, a post or image
- * item on one of their posts, an article item whose cover or banner is on one, or a stored cover
- * image on one.
+ * One page, by collection id after `cursor`, of the search-indexed collections whose cover may come
+ * from a minor or SFW-only model: by a model item, a post or image item on one of its posts, an
+ * article item whose cover or banner is on one, or a stored cover image on one. The page is `limit`
+ * collections scanned, not matched, so its cost does not grow with how many collections one model
+ * reaches; a collection the index does not hold has no document to rebuild and is not selected.
+ * `lastScannedId` is the cursor for the next page; it is null when the page scanned nothing.
  */
-export async function getCollectionIdsCoveredByModels(modelIds: number[]) {
-  if (!modelIds.length) return [];
-  const models = Prisma.join(modelIds);
-  const rows = await dbRead.$queryRaw<{ id: number }[]>`
-    WITH posts AS MATERIALIZED (
-      SELECT p.id FROM "Post" p
-      JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-      WHERE mv."modelId" IN (${models})
+export async function getCollectionPageCoveredByHeldModels({
+  cursor,
+  limit,
+}: {
+  cursor: number;
+  limit: number;
+}) {
+  const rows = await dbRead.$queryRaw<{ id: number; held: boolean }[]>`
+    WITH page AS MATERIALIZED (
+      SELECT c.id, c."imageId", (${Prisma.join(COLLECTION_SEARCH_ELIGIBLE, ' AND ')}) AS eligible
+      FROM "Collection" c
+      WHERE c.id > ${cursor}
+      ORDER BY c.id
+      LIMIT ${limit}
     )
-    SELECT ci."collectionId" id FROM "CollectionItem" ci WHERE ci."modelId" IN (${models})
-    UNION
-    SELECT ci."collectionId" FROM "CollectionItem" ci WHERE ci."postId" IN (SELECT id FROM posts)
-    UNION
-    SELECT ci."collectionId" FROM "CollectionItem" ci
-    JOIN "Image" i ON i.id = ci."imageId"
-    WHERE i."postId" IN (SELECT id FROM posts)
-    UNION
-    SELECT c.id FROM "Collection" c
-    JOIN "Image" i ON i.id = c."imageId"
-    WHERE i."postId" IN (SELECT id FROM posts)
-    UNION
-    SELECT ci."collectionId" FROM "CollectionItem" ci
-    JOIN "Article" a ON a.id = ci."articleId"
-    JOIN "Image" i ON i.id = a."coverId"
-    WHERE i."postId" IN (SELECT id FROM posts)
-    UNION
-    SELECT ci."collectionId" FROM "CollectionItem" ci
-    JOIN "Article" a ON a.id = ci."articleId"
-    JOIN "Image" i ON i.id = a."bannerId"
-    WHERE i."postId" IN (SELECT id FROM posts)
+    SELECT p.id, p.eligible AND (
+      EXISTS (
+        SELECT 1 FROM "CollectionItem" ci JOIN "Model" m ON m.id = ci."modelId"
+        WHERE ci."collectionId" = p.id AND (m.minor OR m."sfwOnly")
+      )
+      OR EXISTS (
+        SELECT 1 FROM "CollectionItem" ci
+        WHERE ci."collectionId" = p.id AND ci."postId" IS NOT NULL
+          AND ${postOnHeldModelSql(Prisma.sql`ci."postId"`)}
+      )
+      OR EXISTS (
+        SELECT 1 FROM "CollectionItem" ci JOIN "Image" i ON i.id = ci."imageId"
+        WHERE ci."collectionId" = p.id AND ${postOnHeldModelSql(Prisma.sql`i."postId"`)}
+      )
+      OR EXISTS (
+        SELECT 1 FROM "Image" i
+        WHERE i.id = p."imageId" AND ${postOnHeldModelSql(Prisma.sql`i."postId"`)}
+      )
+      OR EXISTS (
+        SELECT 1 FROM "CollectionItem" ci
+        JOIN "Article" a ON a.id = ci."articleId"
+        JOIN "Image" i ON i.id IN (a."coverId", a."bannerId")
+        WHERE ci."collectionId" = p.id AND ${postOnHeldModelSql(Prisma.sql`i."postId"`)}
+      )
+    ) held
+    FROM page p
+    ORDER BY p.id
   `;
-  return rows.map((row) => Number(row.id));
+  return {
+    collectionIds: rows.filter((row) => row.held).map((row) => Number(row.id)),
+    scanned: rows.length,
+    lastScannedId: rows.length ? Number(rows[rows.length - 1].id) : null,
+  };
 }
 
 /**

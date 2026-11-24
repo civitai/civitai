@@ -1,0 +1,550 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { PGlite } from '@electric-sql/pglite';
+import {
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+  type DatabaseConnection,
+  type Dialect,
+} from 'kysely';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DB } from '@civitai/db-schema/kysely';
+import { enqueueKnightsItems } from '~/server/services/knights/enqueue.service';
+
+vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+const migration = (name: string) =>
+  readFileSync(
+    path.resolve(
+      __dirname,
+      `../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`
+    ),
+    'utf8'
+  );
+
+const dialect = (pg: PGlite): Dialect => {
+  const connection: DatabaseConnection = {
+    async executeQuery(compiled) {
+      const result = await pg.query(compiled.sql, compiled.parameters as unknown[]);
+      return { rows: result.rows as never[], numAffectedRows: BigInt(result.affectedRows ?? 0) };
+    },
+    // eslint-disable-next-line require-yield
+    async *streamQuery() {
+      throw new Error('not used');
+    },
+  };
+  const noop = async () => undefined;
+  return {
+    createAdapter: () => new PostgresAdapter(),
+    createDriver: () => ({
+      init: noop,
+      acquireConnection: async () => connection,
+      beginTransaction: noop,
+      commitTransaction: noop,
+      rollbackTransaction: noop,
+      releaseConnection: noop,
+      destroy: noop,
+    }),
+    createIntrospector: (k) => new PostgresIntrospector(k),
+    createQueryCompiler: () => new PostgresQueryCompiler(),
+  };
+};
+
+const Q = 'knights.image.nsfwLevel';
+const NOW = new Date('2026-12-11T10:00:00.000Z');
+
+let pg: PGlite;
+let db: Kysely<DB>;
+
+const items = async () =>
+  (
+    await pg.query<{
+      imageId: number;
+      source: string;
+      minRank: string;
+      votesNeeded: number;
+      priority: number;
+      status: string;
+      expiresAt: string | null;
+      prediction: unknown;
+    }>(
+      `SELECT "imageId", "source", "minRank", "votesNeeded", "priority", "status", "expiresAt"::text, "prediction"
+       FROM "KnightsQueueItem" ORDER BY "imageId"`
+    )
+  ).rows;
+
+beforeAll(async () => {
+  pg = new PGlite();
+  await pg.exec(
+    `CREATE TABLE "Post" (id integer PRIMARY KEY, "publishedAt" timestamp, availability text NOT NULL DEFAULT 'Public');
+     CREATE TABLE "Image" (
+       id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
+       type text NOT NULL DEFAULT 'image', "nsfwLevel" integer NOT NULL DEFAULT 1,
+       ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "postId" integer,
+       poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false
+     );
+     ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "tosViolation" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS "userId" INTEGER;
+     ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "modelVersionId" INTEGER;
+     CREATE TABLE "User" (id INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP, "bannedAt" TIMESTAMP, muted BOOLEAN NOT NULL DEFAULT false);
+     CREATE TABLE "Model" (id INTEGER PRIMARY KEY, status TEXT NOT NULL, availability TEXT NOT NULL, "deletedAt" TIMESTAMP);
+     CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, status TEXT NOT NULL, availability TEXT NOT NULL);
+     CREATE TABLE "CsamReport" (id SERIAL PRIMARY KEY, "userId" INTEGER, images JSONB NOT NULL DEFAULT '[]', details JSONB);
+     CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);`
+  );
+  await pg.exec(migration('20261210120000_knights_v2_tables'));
+  db = new Kysely<DB>({ dialect: dialect(pg) });
+});
+
+afterAll(async () => {
+  await pg?.close();
+});
+
+beforeEach(async () => {
+  await pg.exec(`DELETE FROM "KnightsQueueItem"; DELETE FROM "Image"; DELETE FROM "Post";`);
+  await pg.exec(`INSERT INTO "Image" (id) VALUES (1), (2), (3), (4);`);
+});
+
+describe('enqueueKnightsItems', () => {
+  it.each([
+    ['held for review', `UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 1`],
+    ['an acceptable minor', `UPDATE "Image" SET "acceptableMinor" = true WHERE id = 1`],
+  ])('refuses an image that is %s and queues the rest', async (_label, hold) => {
+    await pg.exec(hold);
+
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'owner-rating',
+        questionKey: Q,
+        items: [
+          { imageId: 1, priority: 1 },
+          { imageId: 2, priority: 1 },
+        ],
+      },
+      NOW
+    );
+
+    expect(outcomes).toMatchObject([
+      { imageId: 1, outcome: 'refused', reason: 'held-for-review' },
+      { imageId: 2, outcome: 'enqueued' },
+    ]);
+    expect((await items()).map((i) => i.imageId)).toEqual([2]);
+  });
+
+  it('refuses a Blocked image and an unpublished one as not-servable when the caller asks for servable images, and queues the rest', async () => {
+    await pg.exec(`
+      INSERT INTO "Post" (id, "publishedAt") VALUES (10, '2026-01-01'), (20, NULL);
+      UPDATE "Image" SET "postId" = 10 WHERE id IN (1, 3);
+      UPDATE "Image" SET "nsfwLevel" = 32 WHERE id = 1;
+      UPDATE "Image" SET "postId" = 20 WHERE id = 2;
+      UPDATE "Image" SET "postId" = 10, "needsReview" = 'minor' WHERE id = 4;
+    `);
+
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'dataset-import',
+        questionKey: Q,
+        items: [1, 2, 3, 4, 99].map((imageId) => ({ imageId, priority: 1 as const })),
+      },
+      NOW,
+      { servableOnly: true }
+    );
+
+    expect(outcomes).toMatchObject([
+      { imageId: 1, outcome: 'refused', reason: 'not-servable' },
+      { imageId: 2, outcome: 'refused', reason: 'not-servable' },
+      { imageId: 3, outcome: 'enqueued' },
+      { imageId: 4, outcome: 'refused', reason: 'held-for-review' },
+      { imageId: 99, outcome: 'refused', reason: 'image-not-found' },
+    ]);
+    expect((await items()).map((i) => i.imageId)).toEqual([3]);
+  });
+
+  it('refuses a video when the caller asks for still images only, and queues still images', async () => {
+    await pg.exec(`UPDATE "Image" SET type = 'video' WHERE id = 1;`);
+    const input = {
+      source: 'owner-rating',
+      questionKey: Q,
+      items: [1, 2].map((imageId) => ({ imageId, priority: 1 as const })),
+    };
+
+    expect(await enqueueKnightsItems(db, input, NOW, { stillImagesOnly: true })).toMatchObject([
+      { imageId: 1, outcome: 'refused', reason: 'not-still-image' },
+      { imageId: 2, outcome: 'enqueued' },
+    ]);
+    expect((await items()).map((i) => i.imageId)).toEqual([2]);
+
+    // A caller that does not ask still queues the video.
+    expect(await enqueueKnightsItems(db, input, NOW)).toMatchObject([
+      { imageId: 1, outcome: 'enqueued' },
+      { imageId: 2, outcome: 'duplicate' },
+    ]);
+  });
+
+  it('still queues an unpublished image for a caller that does not ask (intake)', async () => {
+    await pg.exec(`
+      INSERT INTO "Post" (id, "publishedAt") VALUES (20, NULL);
+      UPDATE "Image" SET "postId" = 20 WHERE id = 1;
+    `);
+
+    const outcomes = await enqueueKnightsItems(
+      db,
+      { source: 'scan-sample', questionKey: Q, items: [{ imageId: 1, priority: 1 }] },
+      NOW
+    );
+
+    expect(outcomes).toMatchObject([{ imageId: 1, outcome: 'enqueued' }]);
+    expect((await items()).map((i) => i.imageId)).toEqual([1]);
+  });
+
+  it('writes items with the question defaults and per-item overrides', async () => {
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'scan-sample',
+        questionKey: Q,
+        items: [
+          { imageId: 1, priority: 1 },
+          {
+            imageId: 2,
+            priority: 3,
+            minRank: 'Templar',
+            votesNeeded: 7,
+            expiresAt: new Date('2026-12-20T00:00:00.000Z'),
+            prediction: { value: '4' },
+          },
+          { imageId: 3, priority: 2, expiresAt: null },
+        ],
+      },
+      NOW
+    );
+
+    expect(outcomes.map((o) => o.outcome)).toEqual(['enqueued', 'enqueued', 'enqueued']);
+    expect(await items()).toEqual([
+      {
+        imageId: 1,
+        source: 'scan-sample',
+        minRank: 'Knight',
+        votesNeeded: 5,
+        priority: 1,
+        status: 'Open',
+        expiresAt: '2026-12-14 10:00:00',
+        prediction: null,
+      },
+      {
+        imageId: 2,
+        source: 'scan-sample',
+        minRank: 'Templar',
+        votesNeeded: 7,
+        priority: 3,
+        status: 'Open',
+        expiresAt: '2026-12-20 00:00:00',
+        prediction: { value: '4' },
+      },
+      {
+        imageId: 3,
+        source: 'scan-sample',
+        minRank: 'Knight',
+        votesNeeded: 5,
+        priority: 2,
+        status: 'Open',
+        expiresAt: null,
+        prediction: null,
+      },
+    ]);
+  });
+
+  it('reports a repeat as a duplicate while the first is open, and writes nothing twice', async () => {
+    const first = await enqueueKnightsItems(
+      db,
+      { source: 'a', questionKey: Q, items: [{ imageId: 1, priority: 1 }] },
+      NOW
+    );
+    const again = await enqueueKnightsItems(
+      db,
+      {
+        source: 'b',
+        questionKey: Q,
+        items: [
+          { imageId: 1, priority: 1 },
+          { imageId: 2, priority: 1 },
+        ],
+      },
+      NOW
+    );
+
+    expect(first[0]).toMatchObject({ imageId: 1, outcome: 'enqueued' });
+    expect(again).toMatchObject([
+      { imageId: 1, outcome: 'duplicate' },
+      { imageId: 2, outcome: 'enqueued' },
+    ]);
+    expect((await items()).map((i) => [i.imageId, i.source])).toEqual([
+      [1, 'a'],
+      [2, 'b'],
+    ]);
+  });
+
+  it('treats an image repeated inside one batch as a duplicate', async () => {
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'a',
+        questionKey: Q,
+        items: [
+          { imageId: 1, priority: 1 },
+          { imageId: 1, priority: 2 },
+        ],
+      },
+      NOW
+    );
+
+    expect(outcomes.map((o) => o.outcome)).toEqual(['enqueued', 'duplicate']);
+    expect(await items()).toHaveLength(1);
+  });
+
+  it.each(['Resolved', 'Closed'])(
+    'lets an image be asked again once its item is %s',
+    async (status) => {
+      await enqueueKnightsItems(
+        db,
+        { source: 'a', questionKey: Q, items: [{ imageId: 1, priority: 1 }] },
+        NOW
+      );
+      await pg.query(`UPDATE "KnightsQueueItem" SET "status" = $1`, [status]);
+
+      const [outcome] = await enqueueKnightsItems(
+        db,
+        { source: 'a', questionKey: Q, items: [{ imageId: 1, priority: 1 }] },
+        NOW
+      );
+
+      expect(outcome.outcome).toBe('enqueued');
+    }
+  );
+
+  it('keeps an image waiting on the Inquisitors from being asked again', async () => {
+    await enqueueKnightsItems(
+      db,
+      { source: 'a', questionKey: Q, items: [{ imageId: 1, priority: 1 }] },
+      NOW
+    );
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET "status" = 'Inquisitor', "minRank" = 'Inquisitor'`
+    );
+
+    const [outcome] = await enqueueKnightsItems(
+      db,
+      { source: 'a', questionKey: Q, items: [{ imageId: 1, priority: 1 }] },
+      NOW
+    );
+
+    expect(outcome.outcome).toBe('duplicate');
+  });
+
+  it('refuses an image with no post, a gone post, or a post that is a draft or not live yet when the caller requires a published post, and queues live ones', async () => {
+    // NOW is 2026-12-11 10:00 UTC.
+    await pg.exec(`
+      INSERT INTO "Post" (id, "publishedAt") VALUES
+        (10, '2026-12-11 09:59:00'), (20, NULL), (30, '2026-12-11 10:01:00'), (40, '2026-12-11 10:00:00');
+      UPDATE "Image" SET "postId" = 10 WHERE id = 1;
+      INSERT INTO "Image" (id) VALUES (5);
+      INSERT INTO "Image" (id, "postId") VALUES (6, 999);
+      UPDATE "Image" SET "postId" = 20 WHERE id = 2;
+      UPDATE "Image" SET "postId" = 30 WHERE id = 3;
+      UPDATE "Image" SET "postId" = 40 WHERE id = 4;
+    `);
+
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'scan-sample',
+        questionKey: Q,
+        items: [1, 2, 3, 4, 5, 6, 99].map((imageId) => ({ imageId, priority: 1 as const })),
+      },
+      NOW,
+      { requirePublished: true }
+    );
+
+    expect(outcomes).toMatchObject([
+      { imageId: 1, outcome: 'enqueued' },
+      { imageId: 2, outcome: 'refused', reason: 'unpublished' },
+      { imageId: 3, outcome: 'refused', reason: 'unpublished' },
+      { imageId: 4, outcome: 'enqueued' },
+      { imageId: 5, outcome: 'refused', reason: 'no-post' },
+      { imageId: 6, outcome: 'refused', reason: 'no-post' },
+      { imageId: 99, outcome: 'refused', reason: 'image-not-found' },
+    ]);
+    expect((await items()).map((i) => i.imageId)).toEqual([1, 4]);
+  });
+
+  it('refuses an image on a Private post when the caller requires a published post, and queues Unsearchable and EarlyAccess ones', async () => {
+    await pg.exec(`
+      INSERT INTO "Post" (id, "publishedAt", availability) VALUES
+        (10, '2026-12-11 09:00:00', 'Private'), (20, '2026-12-11 09:00:00', 'Unsearchable'),
+        (30, '2026-12-11 09:00:00', 'EarlyAccess');
+      UPDATE "Image" SET "postId" = 10 WHERE id = 1;
+      UPDATE "Image" SET "postId" = 20 WHERE id = 2;
+      UPDATE "Image" SET "postId" = 30 WHERE id = 3;
+    `);
+
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'owner-rating',
+        questionKey: Q,
+        items: [1, 2, 3].map((imageId) => ({ imageId, priority: 1 as const })),
+      },
+      NOW,
+      { requirePublished: true }
+    );
+
+    expect(outcomes).toMatchObject([
+      { imageId: 1, outcome: 'refused', reason: 'private-post' },
+      { imageId: 2, outcome: 'enqueued' },
+      { imageId: 3, outcome: 'enqueued' },
+    ]);
+  });
+
+  it('refuses an image on a Private post as not-servable when the caller asks for servable images only', async () => {
+    // servableImage compares publishedAt with the database clock, not NOW.
+    await pg.exec(`
+      INSERT INTO "Post" (id, "publishedAt", availability) VALUES
+        (10, '2026-01-01', 'Private'), (20, '2026-01-01', 'Public');
+      UPDATE "Image" SET "postId" = 10 WHERE id = 1;
+      UPDATE "Image" SET "postId" = 20 WHERE id = 2;
+    `);
+
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'dataset-import',
+        questionKey: Q,
+        items: [1, 2].map((imageId) => ({ imageId, priority: 1 as const })),
+      },
+      NOW,
+      { servableOnly: true }
+    );
+
+    expect(outcomes).toMatchObject([
+      { imageId: 1, outcome: 'refused', reason: 'not-servable' },
+      { imageId: 2, outcome: 'enqueued' },
+    ]);
+  });
+
+  it.each(['Closed', 'Resolved', 'Open'])(
+    'never queues an image a second time once it had an item in any status (%s) when the caller asks for once per image',
+    async (status) => {
+      await enqueueKnightsItems(
+        db,
+        { source: 'scan-sample', questionKey: Q, items: [{ imageId: 1, priority: 1 }] },
+        NOW
+      );
+      await pg.query(`UPDATE "KnightsQueueItem" SET "status" = $1`, [status]);
+
+      const outcomes = await enqueueKnightsItems(
+        db,
+        {
+          source: 'scan-sample',
+          questionKey: Q,
+          items: [
+            { imageId: 1, priority: 1 },
+            { imageId: 2, priority: 1 },
+          ],
+        },
+        NOW,
+        { oncePerImage: true }
+      );
+
+      expect(outcomes).toMatchObject([
+        { imageId: 1, outcome: 'duplicate' },
+        { imageId: 2, outcome: 'enqueued' },
+      ]);
+      expect((await items()).map((i) => [i.imageId, i.status])).toEqual([
+        [1, status],
+        [2, 'Open'],
+      ]);
+    }
+  );
+
+  it('does not count a hidden-check copy of an image as its rating item for once per image', async () => {
+    await pg.query(
+      `INSERT INTO "KnightsQueueItem" ("questionKey","imageId","source","minRank","votesNeeded","status","isHiddenCheck")
+       VALUES ($1, 1, 'harvest', 'Knight', 5, 'Closed', true)`,
+      [Q]
+    );
+
+    const [outcome] = await enqueueKnightsItems(
+      db,
+      { source: 'scan-sample', questionKey: Q, items: [{ imageId: 1, priority: 1 }] },
+      NOW,
+      { oncePerImage: true }
+    );
+
+    expect(outcome.outcome).toBe('enqueued');
+  });
+
+  it('refuses what the queue could not serve, per item, and still writes the rest', async () => {
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'a',
+        questionKey: Q,
+        items: [
+          { imageId: 1, priority: 1, minRank: 'Acolyte' },
+          { imageId: 2, priority: 1, minRank: 'Inquisitor' },
+          { imageId: 3, priority: 4 as never },
+          { imageId: 4, priority: 1, votesNeeded: 0 },
+          { imageId: 99, priority: 1 },
+          { imageId: 4, priority: 1, expiresAt: new Date('2026-12-01T00:00:00.000Z') },
+          { imageId: 4, priority: 1 },
+        ],
+      },
+      NOW
+    );
+
+    expect(outcomes).toMatchObject([
+      { imageId: 1, outcome: 'refused', reason: 'bad-rank' },
+      { imageId: 2, outcome: 'refused', reason: 'bad-rank' },
+      { imageId: 3, outcome: 'refused', reason: 'bad-priority' },
+      { imageId: 4, outcome: 'refused', reason: 'bad-votes' },
+      { imageId: 99, outcome: 'refused', reason: 'image-not-found' },
+      { imageId: 4, outcome: 'refused', reason: 'bad-expiry' },
+      { imageId: 4, outcome: 'enqueued' },
+    ]);
+    expect((await items()).map((i) => i.imageId)).toEqual([4]);
+  });
+
+  it('refuses every item of a question that is missing or switched off', async () => {
+    await pg.query(
+      `INSERT INTO "KnightsQuestion" ("key","kind","prompt","options","active") VALUES ('off.q','choice','p','[]'::jsonb,false)`
+    );
+
+    const missing = await enqueueKnightsItems(
+      db,
+      { source: 'a', questionKey: 'nope', items: [{ imageId: 1, priority: 1 }] },
+      NOW
+    );
+    const off = await enqueueKnightsItems(
+      db,
+      { source: 'a', questionKey: 'off.q', items: [{ imageId: 1, priority: 1 }] },
+      NOW
+    );
+
+    expect(missing).toMatchObject([{ outcome: 'refused', reason: 'unknown-question' }]);
+    expect(off).toMatchObject([{ outcome: 'refused', reason: 'inactive-question' }]);
+    expect(await items()).toEqual([]);
+  });
+
+  it('has the database refuse a second open item for the same question and image', async () => {
+    const insert = () =>
+      pg.query(
+        `INSERT INTO "KnightsQueueItem" ("questionKey","imageId","source","minRank","votesNeeded") VALUES ($1, 1, 'a', 'Knight', 5)`,
+        [Q]
+      );
+    await insert();
+    await expect(insert()).rejects.toThrow(/KnightsQueueItem_open_question_image_key/);
+  });
+});

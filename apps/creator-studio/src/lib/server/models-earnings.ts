@@ -1,3 +1,4 @@
+import { PLATFORM_REVENUE_SOURCES_SQL } from '@civitai/buzz';
 import { getClickhouse } from '$lib/server/clickhouse';
 import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
@@ -103,6 +104,8 @@ const TOP_N = 100;
 // The table is written by the external .NET orchestrator and carries known garbage rows (binary-junk accountType,
 // absurd amounts up to ~2e267). A letters-only accountType + a sane amount bound keep those out of the sum.
 const CORRUPT_FILTER = `match(accountType, '^[A-Za-z]+$') AND amount > 0 AND amount < 1e12`;
+// Platform revenue the orchestrator logs on the creator's version; the payout job never pays it.
+const EARNINGS_FILTER = `${CORRUPT_FILTER} AND source NOT IN (${PLATFORM_REVENUE_SOURCES_SQL})`;
 
 const lowerFirst = (s: string) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s);
 
@@ -233,7 +236,7 @@ async function fetchModelEarnings({
   }>(
     `SELECT modelVersionId, accountType, sum(amount) AS total
      FROM orchestration.resourceCompensations
-     WHERE userId = ${uid} AND date >= toDate('${from}') AND date <= toDate('${to}') AND ${CORRUPT_FILTER}
+     WHERE userId = ${uid} AND date >= toDate('${from}') AND date <= toDate('${to}') AND ${EARNINGS_FILTER}
      GROUP BY modelVersionId, accountType`
   );
 
@@ -320,12 +323,14 @@ async function fetchModelPerformance({
   to,
   compareFrom,
   compareTo,
+  maxExecutionSeconds,
 }: {
   userId: number;
   from: string;
   to: string;
   compareFrom: string;
   compareTo: string;
+  maxExecutionSeconds?: number;
 }): Promise<ModelPerformance[]> {
   const uid = Number(userId);
 
@@ -359,6 +364,9 @@ async function fetchModelPerformance({
   const prev = { from: compareFrom, to: compareTo };
   const w: Window = { from, to, prev };
   const ch = getClickhouse();
+  const limit = maxExecutionSeconds
+    ? `\n     SETTINGS max_execution_time = ${Math.floor(maxExecutionSeconds)}`
+    : '';
   // Each query sums the current + previous window (for the delta chips); `to` also fences out garbage future rows.
   const [earnRows, genRows, dlRows, imprRows, accessRows, donationRows] = await Promise.all([
     ch.$query<{
@@ -372,8 +380,8 @@ async function fetchModelPerformance({
          sumIf(amount, date BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
          sumIf(amount, date BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM orchestration.resourceCompensations
-       WHERE userId = ${uid} AND date BETWEEN toDate('${prev.from}') AND toDate('${to}') AND ${CORRUPT_FILTER}
-       GROUP BY modelVersionId, accountType, source`
+       WHERE userId = ${uid} AND date BETWEEN toDate('${prev.from}') AND toDate('${to}') AND ${EARNINGS_FILTER}
+       GROUP BY modelVersionId, accountType, source${limit}`
     ),
     ch.$query<{ modelVersionId: number | string; cur: number | string; prev: number | string }>(
       `SELECT modelVersionId,
@@ -381,7 +389,7 @@ async function fetchModelPerformance({
          sumIf(count, createdDate BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM orchestration.daily_resource_generation_counts
        WHERE modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
-       GROUP BY modelVersionId`
+       GROUP BY modelVersionId${limit}`
     ),
     ch.$query<{ modelVersionId: number | string; cur: number | string; prev: number | string }>(
       `SELECT modelVersionId,
@@ -389,7 +397,7 @@ async function fetchModelPerformance({
          sumIf(downloads, createdDate BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM default.daily_downloads
        WHERE modelId IN (${modelIdList}) AND modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
-       GROUP BY modelVersionId`
+       GROUP BY modelVersionId${limit}`
     ),
     ch.$query<{ entityId: number | string; cur: number | string; prev: number | string }>(
       `SELECT entityId,
@@ -397,12 +405,12 @@ async function fetchModelPerformance({
          sumIf(impressions, createdDate BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM default.daily_impressions
        WHERE entityType = '${IMPRESSION_ENTITY.model}' AND entityId IN (${modelIdList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
-       GROUP BY entityId`
+       GROUP BY entityId${limit}`
     ),
-    ch.$query<AccessRow>(accessSalesQuery(uid, w)),
+    ch.$query<AccessRow>(accessSalesQuery(uid, w) + limit),
     versionByGoal.size === 0
       ? Promise.resolve([] as DonationRow[])
-      : ch.$query<DonationRow>(donationsQuery(uid, w, [...versionByGoal.keys()])),
+      : ch.$query<DonationRow>(donationsQuery(uid, w, [...versionByGoal.keys()]) + limit),
   ]);
 
   const byId = new Map<number, ModelPerformance>();
@@ -544,6 +552,24 @@ export const getModelPerformance = createCache({
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
+// Lower bound for the all-time read: nothing a creator earns or is counted for predates their first version, and
+// without a bound the owner-keyed earnings reads would scan from the start of the tables.
+async function fetchFirstVersionDate({ userId }: { userId: number }): Promise<string | null> {
+  const row = await dbRead
+    .selectFrom('ModelVersion as mv')
+    .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .where('m.userId', '=', Number(userId))
+    .select((eb) => eb.fn.min('mv.createdAt').as('first'))
+    .executeTakeFirst();
+  return row?.first ? new Date(row.first).toISOString().slice(0, 10) : null;
+}
+
+export const getFirstVersionDate = createCache({
+  name: 'models:first-version-date',
+  fetch: fetchFirstVersionDate,
+  ttlSeconds: 1800,
+}).get;
+
 // Per-version analytics for a single model (feedback 4.5) — generations / downloads / buzz per version over the
 // selected range, plus the previous equal-length period (for % deltas, like the earnings page). Ownership is
 // enforced from Postgres (the model must belong to the caller); returns null when it doesn't exist or isn't theirs.
@@ -661,7 +687,7 @@ async function fetchModelVersionAnalytics({
          sumIf(amount, date BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
          sumIf(amount, date BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM orchestration.resourceCompensations
-       WHERE userId = ${uid} AND modelVersionId IN (${idList}) AND date BETWEEN toDate('${prev.from}') AND toDate('${to}') AND ${CORRUPT_FILTER}
+       WHERE userId = ${uid} AND modelVersionId IN (${idList}) AND date BETWEEN toDate('${prev.from}') AND toDate('${to}') AND ${EARNINGS_FILTER}
        GROUP BY modelVersionId, accountType, source`
     ),
     ch.$query<AccessRow>(accessSalesQuery(uid, w, idList)),
@@ -807,7 +833,7 @@ async function fetchBaseModelPerformance({
          sumIf(amount, date BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
          sumIf(amount, date BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM orchestration.resourceCompensations
-       WHERE userId = ${uid} AND date BETWEEN toDate('${prev.from}') AND toDate('${to}') AND ${CORRUPT_FILTER}
+       WHERE userId = ${uid} AND date BETWEEN toDate('${prev.from}') AND toDate('${to}') AND ${EARNINGS_FILTER}
        GROUP BY modelVersionId, accountType`
     ),
     ch.$query<{ modelVersionId: number | string; cur: number | string; prev: number | string }>(

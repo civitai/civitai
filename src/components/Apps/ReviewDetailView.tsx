@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
 import {
   ReviewDecisionAlert,
+  ReviewSourceProvenanceMeta,
   ReviewSubmitterMeta,
   type ManifestDiffSummary,
   type OnsiteReviewSelection,
@@ -131,6 +132,7 @@ export function ReviewDetailView({
           <Stack gap={6}>
             <ReviewDetailHeader selection={selection} />
             <ReviewSubmitterMeta request={selection.request} now={now} />
+            <ReviewSourceProvenanceMeta provenance={selection.request.sourceProvenance} />
           </Stack>
           <ReviewDecisionAlert selection={selection} now={now} />
           <ReviewDetailTabsView selection={selection} />

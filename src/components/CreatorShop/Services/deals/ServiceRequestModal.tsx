@@ -1,14 +1,40 @@
-import { Anchor, Button, Group, List, Modal, Paper, Stack, Text, Textarea } from '@mantine/core';
+import {
+  Anchor,
+  Button,
+  Checkbox,
+  Group,
+  List,
+  Modal,
+  Paper,
+  Stack,
+  Text,
+  Textarea,
+} from '@mantine/core';
 import { useRouter } from 'next/router';
+import type { ReactNode } from 'react';
 import { useRef, useState } from 'react';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { useServiceBuzzType } from '~/components/CreatorShop/Services/useServiceBuzzType';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
-import { serviceTermsLine } from '~/components/CreatorShop/Services/creator-service.util';
+import {
+  serviceHoldButtonProps,
+  serviceTermsLine,
+} from '~/components/CreatorShop/Services/creator-service.util';
+import {
+  ServiceLicenseTerms,
+  hasServiceLicense,
+} from '~/components/CreatorShop/Services/ServiceLicenseTerms';
 import { isConflict } from '~/components/CreatorShop/Services/deals/deal.util';
 import { requestSentMessage } from '~/components/CreatorShop/Services/deals/deal-ui';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  SERVICE_LICENSE_AGREE_LABEL,
+  SERVICE_LICENSE_NONE_LINE,
+} from '~/shared/constants/creator-service-license.constants';
 import {
   BUYER_DISCLOSURE_INTRO,
   SERVICES_TERMS_VERSION,
@@ -27,15 +53,26 @@ export function ServiceRequestModal({
 }: {
   offering: Pick<
     ServiceOffering,
-    'id' | 'title' | 'description' | 'price' | 'deliveryDays' | 'revisionsIncluded'
+    | 'id'
+    | 'title'
+    | 'description'
+    | 'price'
+    | 'deliveryDays'
+    | 'revisionsIncluded'
+    | 'licensePreset'
+    | 'licenseCustomText'
+    | 'licenseAllowResale'
   >;
   sellerUsername: string;
 }) {
   const dialog = useDialogContext();
+  const features = useOptionalFeatureFlags();
+  const buzzType = useServiceBuzzType();
   const router = useRouter();
-  const domain = useDomainColor();
   const utils = trpc.useUtils();
   const [text, setText] = useState('');
+  const [licenseAgreed, setLicenseAgreed] = useState(false);
+  const licensed = hasServiceLicense(offering);
   // Each request is a separate hold, so a second click must never fire before the first settles.
   const inFlight = useRef(false);
 
@@ -76,16 +113,30 @@ export function ServiceRequestModal({
   });
 
   const trimmed = text.trim();
+  const disabled = !trimmed || (licensed && !licenseAgreed);
+  const sendRequest = () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    request.mutate({
+      offeringId: offering.id,
+      expectedPrice: offering.price,
+      expectedRevisionsIncluded: offering.revisionsIncluded,
+      expectedDeliveryDays: offering.deliveryDays,
+      expectedLicense: {
+        licensePreset: offering.licensePreset,
+        licenseCustomText: offering.licenseCustomText,
+        licenseAllowResale: offering.licenseAllowResale,
+      },
+      licenseAgreed: licensed && licenseAgreed,
+      requestText: trimmed,
+      disclosureVersion: SERVICES_TERMS_VERSION,
+    });
+  };
 
   return (
     <Modal {...dialog} size="lg" title={`Request: ${offering.title}`}>
       <Stack gap="md">
-        <Text size="sm" c="dimmed">
-          From {sellerUsername} · {serviceTermsLine(offering)}
-        </Text>
-        <Text size="sm" className="whitespace-pre-line">
-          {offering.description}
-        </Text>
+        <ServiceOfferingTerms offering={offering} sellerUsername={sellerUsername} />
         <Textarea
           label="What do you want?"
           value={text}
@@ -95,49 +146,109 @@ export function ServiceRequestModal({
           maxLength={REQUEST_MAX}
           withAsterisk
         />
-        <Paper withBorder radius="md" p="md">
-          <Stack gap="xs">
-            <Group justify="space-between">
-              <Text fw={600}>{BUYER_DISCLOSURE_INTRO}</Text>
-              <CurrencyBadge
-                currency={Currency.BUZZ}
-                type={domain === 'green' ? 'green' : 'yellow'}
-                unitAmount={offering.price}
-                variant="transparent"
-              />
-            </Group>
-            <List size="sm" spacing={4}>
-              {buyerDisclosureItems(offering).map((item) => (
-                <List.Item key={item}>{item}</List.Item>
-              ))}
-            </List>
-          </Stack>
-        </Paper>
+        <ServiceBuyerDisclosure offering={offering} />
+        <ServiceOfferingLicense offering={offering}>
+          <Checkbox
+            label={SERVICE_LICENSE_AGREE_LABEL}
+            checked={licenseAgreed}
+            onChange={(e) => setLicenseAgreed(e.currentTarget.checked)}
+          />
+        </ServiceOfferingLicense>
         <Group justify="flex-end">
           <Button variant="default" onClick={dialog.onClose}>
             Cancel
           </Button>
-          <Button
-            color="yellow"
-            disabled={!trimmed}
-            loading={request.isPending}
-            onClick={() => {
-              if (inFlight.current) return;
-              inFlight.current = true;
-              request.mutate({
-                offeringId: offering.id,
-                expectedPrice: offering.price,
-                expectedRevisionsIncluded: offering.revisionsIncluded,
-                expectedDeliveryDays: offering.deliveryDays,
-                requestText: trimmed,
-                disclosureVersion: SERVICES_TERMS_VERSION,
-              });
-            }}
-          >
-            {buyerHoldButtonLabel(offering.price)}
-          </Button>
+          {features?.creatorServicesNext ? (
+            <BuzzTransactionButton
+              buzzAmount={offering.price}
+              colorType={buzzType}
+              {...serviceHoldButtonProps(offering.price)}
+              disabled={disabled}
+              loading={request.isPending}
+              onPerformTransaction={sendRequest}
+            />
+          ) : (
+            <Button
+              color="yellow"
+              disabled={disabled}
+              loading={request.isPending}
+              onClick={sendRequest}
+            >
+              {buyerHoldButtonLabel(offering.price)}
+            </Button>
+          )}
         </Group>
       </Stack>
     </Modal>
+  );
+}
+
+type RequestOffering = Parameters<typeof ServiceRequestModal>[0]['offering'];
+
+/** Who it's from, its terms and its full description: what a buyer reads before requesting. */
+export function ServiceOfferingTerms({
+  offering,
+  sellerUsername,
+}: {
+  offering: RequestOffering;
+  sellerUsername: string;
+}) {
+  return (
+    <>
+      <Text size="sm" c="dimmed">
+        From {sellerUsername} · {serviceTermsLine(offering)}
+      </Text>
+      <Text size="sm" className="whitespace-pre-line">
+        {offering.description}
+      </Text>
+    </>
+  );
+}
+
+/**
+ * The seller's license, shown to every buyer whatever their flags: terms a seller set apply to
+ * each deal. With none set, only viewers in the `creatorServicesNext` rollout are told so.
+ */
+export function ServiceOfferingLicense({
+  offering,
+  children,
+}: {
+  offering: RequestOffering;
+  /** Under the terms, when there are any. */
+  children?: ReactNode;
+}) {
+  const features = useOptionalFeatureFlags();
+  if (hasServiceLicense(offering))
+    return <ServiceLicenseTerms license={offering}>{children}</ServiceLicenseTerms>;
+  if (!features?.creatorServicesNext) return null;
+  return (
+    <Text size="sm" c="dimmed">
+      {SERVICE_LICENSE_NONE_LINE}
+    </Text>
+  );
+}
+
+/** The hold disclosure a buyer agrees to with the price. */
+export function ServiceBuyerDisclosure({ offering }: { offering: RequestOffering }) {
+  const domain = useDomainColor();
+  return (
+    <Paper withBorder radius="md" p="md">
+      <Stack gap="xs">
+        <Group justify="space-between">
+          <Text fw={600}>{BUYER_DISCLOSURE_INTRO}</Text>
+          <CurrencyBadge
+            currency={Currency.BUZZ}
+            type={domain === 'green' ? 'green' : 'yellow'}
+            unitAmount={offering.price}
+            variant="transparent"
+          />
+        </Group>
+        <List size="sm" spacing={4}>
+          {buyerDisclosureItems(offering).map((item) => (
+            <List.Item key={item}>{item}</List.Item>
+          ))}
+        </List>
+      </Stack>
+    </Paper>
   );
 }

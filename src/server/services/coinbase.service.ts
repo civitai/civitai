@@ -16,7 +16,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { generateRedeemCode } from '~/server/utils/redeem-code';
 
 const log = async (data: MixedObject) => {
-  await logToAxiom({ name: 'coinbase-service', type: 'error', ...data }).catch();
+  logToAxiom({ name: 'coinbase-service', type: 'error', ...data });
 };
 
 export const createBuzzOrder = async (input: CreateBuzzCharge & { userId: number }) => {

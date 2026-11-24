@@ -19,12 +19,10 @@ import type * as PromClient from '~/server/prom/client';
  * of different magnitudes, so a value read from the wrong variable cannot pass.
  */
 
-const { mockCollectionsQueueUpdate, mockQueueImageSearchIndexUpdate, mockDeleteImageFromS3 } =
-  vi.hoisted(() => ({
-    mockCollectionsQueueUpdate: vi.fn(),
-    mockQueueImageSearchIndexUpdate: vi.fn(),
-    mockDeleteImageFromS3: vi.fn(),
-  }));
+const { mockCollectionsQueueUpdate, mockQueueImageSearchIndexUpdate } = vi.hoisted(() => ({
+  mockCollectionsQueueUpdate: vi.fn(),
+  mockQueueImageSearchIndexUpdate: vi.fn(),
+}));
 
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<typeof PromClient>();
@@ -74,7 +72,7 @@ import * as imageService from '~/server/services/image.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const { deleteImageById, deleteImages } = imageService;
+const { deleteImages } = imageService;
 
 const IMAGE_ID = 6631;
 const OTHER_IMAGE_ID = 6684;
@@ -84,6 +82,14 @@ const COLLECTION_A = 8801;
 const COLLECTION_B = 9107;
 
 const mockDbWrite = dbMock.dbWrite;
+
+// The home-block refresh (`evictHomeBlocksForImages`) is seen at the database: its lookup binds the
+// ids as one array.
+const homeBlockLookupsFor = (calls: unknown[][], table: string) =>
+  calls
+    .map(([query]) => query as { sql?: string; values?: unknown[] })
+    .filter((query) => !!query?.sql?.includes(table))
+    .flatMap((query) => (query.values ?? []).filter(Array.isArray));
 
 const expectedUpdatePayload = (ids: number[]) =>
   ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }));
@@ -102,10 +108,9 @@ beforeEach(() => {
   vi.spyOn(imageService, 'queueImageSearchIndexUpdate').mockImplementation(
     mockQueueImageSearchIndexUpdate as never
   );
-  vi.spyOn(imageService, 'deleteImageFromS3').mockImplementation(mockDeleteImageFromS3 as never);
 });
 
-describe('deleteImageById', () => {
+describe('deleteImages — one image', () => {
   const deleted = { url: 'some-url', postId: POST_ID, nsfwLevel: 1, userId: OWNER_ID };
   const isImageDelete = (strings: TemplateStringsArray) =>
     Array.from(strings).join('?').includes('DELETE FROM "Image"');
@@ -120,11 +125,19 @@ describe('deleteImageById', () => {
   });
 
   it('queues an Update for every collection that contained the deleted image', async () => {
-    await deleteImageById({ id: IMAGE_ID, updatePost: false });
+    await deleteImages([IMAGE_ID], { updatePosts: false, actor: { system: 'test' } });
 
     expect(mockCollectionsQueueUpdate).toHaveBeenCalledWith(
       expectedUpdatePayload([COLLECTION_A, COLLECTION_B])
     );
+  });
+
+  it('refreshes the home blocks of every collection that contained the deleted image', async () => {
+    await deleteImages([IMAGE_ID], { updatePosts: false, actor: { system: 'test' } });
+
+    expect(
+      homeBlockLookupsFor(dbMock.dbRead.$queryRaw.mock.calls, 'FROM "Collection" c')
+    ).toContainEqual([COLLECTION_A, COLLECTION_B]);
   });
 
   it('resolves the collections BEFORE the delete, since CollectionItem cascades away', async () => {
@@ -139,13 +152,13 @@ describe('deleteImageById', () => {
       return [{ collectionId: COLLECTION_A }];
     });
 
-    await deleteImageById({ id: IMAGE_ID, updatePost: false });
+    await deleteImages([IMAGE_ID], { updatePosts: false, actor: { system: 'test' } });
 
     expect(order).toEqual(['resolve', 'delete']);
   });
 
   it('resolves by the deleted image id', async () => {
-    await deleteImageById({ id: IMAGE_ID, updatePost: false });
+    await deleteImages([IMAGE_ID], { updatePosts: false, actor: { system: 'test' } });
 
     const call = mockDbWrite.$queryRaw.mock.calls.find(([strings]: [string[]]) =>
       isCollectionLookup(strings)
@@ -165,7 +178,7 @@ describe('deleteImageById', () => {
       return [];
     });
 
-    await deleteImageById({ id: IMAGE_ID, updatePost: false });
+    await deleteImages([IMAGE_ID], { updatePosts: false, actor: { system: 'test' } });
 
     expect(mockDbWrite.$queryRaw.mock.calls.some(([strings]) => isImageDelete(strings))).toBe(true);
     expect(mockCollectionsQueueUpdate).not.toHaveBeenCalled();
@@ -187,7 +200,10 @@ describe('deleteImages — bulk', () => {
   });
 
   it('queues an Update for every collection holding any of the deleted images', async () => {
-    await deleteImages([IMAGE_ID, OTHER_IMAGE_ID], false);
+    await deleteImages([IMAGE_ID, OTHER_IMAGE_ID], {
+      updatePosts: false,
+      actor: { system: 'test' },
+    });
 
     expect(mockCollectionsQueueUpdate).toHaveBeenCalledWith(
       expectedUpdatePayload([COLLECTION_B, COLLECTION_A])
@@ -211,15 +227,14 @@ describe('deleteImages — bulk', () => {
       return [];
     });
 
-    await deleteImages([IMAGE_ID], false);
+    await deleteImages([IMAGE_ID], { updatePosts: false, actor: { system: 'test' } });
 
     expect(order).toEqual(['resolve', 'delete']);
   });
 
-  // `deleteImages` has no try/catch of its own and the resolve is its FIRST statement,
-  // so the whole bulk delete — the DELETE itself, the index de-queue and the S3
-  // cleanup that follows — rests on the resolve never throwing. Nothing else in this
-  // suite would notice if that contract broke.
+  // `deleteImages` has no try/catch and the resolve is its FIRST statement, so the whole
+  // delete rests on the collections lookup never throwing. Nothing else in this suite would
+  // notice if that broke.
   it('still issues the bulk DELETE when the collections lookup fails', async () => {
     const seen: string[] = [];
     mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
@@ -236,7 +251,10 @@ describe('deleteImages — bulk', () => {
     // helpers: `vi.spyOn(imageService, …)` cannot intercept a call image.service makes
     // to its own binding, so a "was deleteImageFromS3 called" assertion would be
     // unobservable here and would pass or fail for reasons unrelated to this contract.
-    const result = await deleteImages([IMAGE_ID], false);
+    const result = await deleteImages([IMAGE_ID], {
+      updatePosts: false,
+      actor: { system: 'test' },
+    });
 
     expect(seen).toEqual(['delete']);
     expect(result).toBeDefined();

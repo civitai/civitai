@@ -469,7 +469,7 @@ describe('user token exchange — request checks, in order', () => {
     ['a token with no expiry', (r) => (r.expiresAt = null)],
     [
       'a client-only scope',
-      (r) => (r.tokenScope = (r.tokenScope as number) | TokenScope.WorkerRegister),
+      (r) => (r.tokenScope = (r.tokenScope as bigint) | TokenScope.WorkerRegister),
     ],
     ['a client-credentials token', (r) => (r.name = `oauth-cc:${APP}`)],
     [
@@ -605,6 +605,29 @@ describe('user token exchange — scope', () => {
     );
   });
 
+  it('carries AppsRead and AppDataRead (bits 31, 32) through to a resource that lists them', async () => {
+    // A token minted after consenting to UserRead|AppsRead|AppDataRead|AIServicesRead: the bits past
+    // 30 live only in `tokenScopeWide`; `tokenScope` holds the low 31 bits, as the writer splits them.
+    // pg hands an int8 back as a JS number, so the fake row does too.
+    Object.assign(subjectRow(), { tokenScope: 16385, tokenScopeWide: 6442467329 });
+    clientRow(APP).allowedScopes = 6442467329;
+    process.env.OAUTH_EXCHANGE_RESOURCES = registry({
+      scopes: ['AIServicesRead', 'AppsRead', 'AppDataRead'],
+    });
+
+    const token = await minted({ caller: RELAY });
+    expect(decodeJwt(token).scope).toBe('AIServicesRead AppsRead AppDataRead');
+    const record = JSON.parse(h.redis.get(`oauth:xchg:${decodeJwt(token).jti}`)!.value);
+    expect(record.scopeBits).toBe(6442467328);
+    // Introspection re-applies the same ceiling to the stored record, and keeps both bits.
+    expect((await introspect(token)).body.scope).toBe('AIServicesRead AppsRead AppDataRead');
+  });
+
+  it('reads a subject token written before tokenScopeWide from tokenScope', async () => {
+    Object.assign(subjectRow(), { tokenScopeWide: null });
+    expect((await exchange()).body.scope).toBe('AIServicesRead AIServicesWrite');
+  });
+
   it("follows the app's current ceiling, and refuses when nothing is left", async () => {
     clientRow(APP).allowedScopes = TokenScope.AIServicesRead | TokenScope.UserRead;
     expect((await exchange()).body.scope).toBe('AIServicesRead');
@@ -662,7 +685,8 @@ describe('user token exchange — the JWT', () => {
       clientId: APP,
       actor: RELAY,
       resource: RESOURCE,
-      scopeBits: AI,
+      // Stored as a JSON number: AIServicesRead (16384) | AIServicesWrite (32768).
+      scopeBits: 49152,
       exp: claims.exp,
     });
     expect(entry.ex).toBe((claims.exp as number) - (claims.iat as number) + 60);

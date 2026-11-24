@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
@@ -26,17 +27,6 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-// The stored-file delete, captured by key: the only place a file leaves storage.
-const storage = vi.hoisted(() => ({ deletedKeys: [] as string[] }));
-vi.mock('~/utils/s3-utils', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  getB2ImageS3Client: () => ({
-    send: async (command: { input: { Key: string } }) => {
-      storage.deletedKeys.push(command.input.Key);
-      return {};
-    },
-  }),
-}));
 vi.mock('~/server/services/storage-resolver', () => ({
   resolveMediaLocation: async () => ({ backend: 'b2Image' }),
   registerMediaLocation: vi.fn(),
@@ -51,12 +41,17 @@ vi.mock('~/server/search-index', () => ({
 import * as imageService from '~/server/services/image.service';
 import {
   accountHeldBlockedImagesSql,
+  legalHeldImagesSql,
   blockedQueueBatchSql,
   reviewHeldBlockedImagesSql,
   blockedQueueExpiredAmongSql,
   purgeHoldGuard,
 } from '~/server/jobs/image-ingestion';
-import { legalHoldUserIdsSql, userNamedOnHoldingReportSql } from '~/server/utils/legal-hold';
+import {
+  legalHoldUserIdsSql,
+  reportNamedUserIdsSql,
+  userNamedOnHoldingReportSql,
+} from '~/server/utils/legal-hold';
 import {
   accountHoldSql,
   assertOwnersNotUnderLegalHold,
@@ -66,7 +61,6 @@ import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches
 import { imagesMetricsSearchIndex } from '~/server/search-index';
 import * as postService from '~/server/services/post.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { setEnv } from '~/__tests__/mocks/env.mock';
 import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 
@@ -166,6 +160,11 @@ const BASE_SCHEMA = `
       "cascadeParentId" int
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb DEFAULT '{}', "bannedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (
+      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
     CREATE TABLE "Post" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
@@ -196,11 +195,22 @@ const BASE_SCHEMA = `
       "aiNsfwLevel" int,
       "trainingCopyState" text
     );
+    CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'BlockedImageDelete', 'ImageScan', 'ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel');
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+    CREATE TABLE "JobQueue" (
+      type "JobQueueType" NOT NULL,
+      "entityType" "EntityType" NOT NULL,
+      "entityId" int NOT NULL,
+      data jsonb,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now(),
+      PRIMARY KEY ("entityType", "entityId", type)
+    );
 `;
 
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(BASE_SCHEMA);
+  await holder.db.exec(imageUseTablesSql);
   // Reports already sent when the migration runs, for its backfill.
   await holder.db.exec(`
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details) VALUES
@@ -248,11 +258,14 @@ beforeEach(async () => {
     const flat = Array.isArray(strings)
       ? Prisma.sql(strings as TemplateStringsArray, ...(values as never[]))
       : (strings as Prisma.Sql);
-    if (!flat.text.includes('DELETE FROM "Image"') && !flat.text.includes('"EvidenceHoldImage"'))
-      return [];
+    if (!/DELETE FROM "Image"|"EvidenceHoldImage"|"JobQueue"/.test(flat.text)) return [];
     return (await holder.db.query(flat.text, flat.values as unknown[])).rows;
   }) as never);
 
+  // Only what a delete queues: the blocked-image queue's own rows are seeded once, below.
+  await holder.db.exec(
+    `DELETE FROM "JobQueue" WHERE type IN ('ImageStorageDelete', 'UpdateNsfwLevel')`
+  );
   await reset(
     '"Image", "CsamReport", "AppealDecisionRecord", "EvidenceHold", "EvidenceHoldImage", "Post", "EvidenceHoldPost", "Model"'
   );
@@ -311,6 +324,13 @@ const remaining = async () =>
 const sorted = (ids: number[]) => [...ids].sort((a, b) => a - b);
 
 describe('legalHoldUserIdsSql', () => {
+  // The shared builder keeps only the filter's text: a bound value would be dropped, not sent.
+  it('refuses a report filter that binds a value', () => {
+    expect(() => reportNamedUserIdsSql((r) => Prisma.sql`${Prisma.raw(r)}.id = ${1}`)).toThrow(
+      'A report filter must bind no values'
+    );
+  });
+
   it('names the subject and secondary user of every report still inside the hold', async () => {
     // The query the job runs, as it runs it.
     const { rows } = await holder.db.query<{ userId: string }>(
@@ -331,7 +351,8 @@ describe('legalHoldUserIdsSql', () => {
 
 describe('purgeHoldGuard on the delete', () => {
   it('deletes only images no hold covers at the moment of the delete', async () => {
-    const deleted = await imageService.deleteImages(ALL, true, {
+    const deleted = await imageService.deleteImages(ALL, {
+      actor: { system: 'test' },
       onlyWhere: purgeHoldGuard(NO_COPY),
     });
 
@@ -344,6 +365,22 @@ describe('purgeHoldGuard on the delete', () => {
     expect(sorted(deindexed)).toEqual(DELETED);
   });
 
+  it('leaves rows outside the delete selection', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES
+        (140, ${PLAIN_USER}, 'Error', 'moderated', 32),
+        (141, ${PLAIN_USER}, 'Error', NULL, 0);
+    `);
+
+    const deleted = await imageService.deleteImages([140, 141], {
+      actor: { system: 'test' },
+      onlyWhere: purgeHoldGuard(NO_COPY),
+    });
+
+    expect(deleted).toEqual([]);
+    expect((await remaining()).filter((id) => id === 140 || id === 141)).toEqual([140, 141]);
+  });
+
   it('applies the guard to every batch, not only the first', async () => {
     const extra = Array.from({ length: 150 }, (_, i) => 1000 + i);
     const lastFlagged = extra[extra.length - 1];
@@ -353,7 +390,10 @@ describe('purgeHoldGuard on the delete', () => {
       FROM generate_series(${extra[0]}, ${lastFlagged}) g;
     `);
 
-    await imageService.deleteImages(extra, true, { onlyWhere: purgeHoldGuard(NO_COPY) });
+    await imageService.deleteImages(extra, {
+      actor: { system: 'test' },
+      onlyWhere: purgeHoldGuard(NO_COPY),
+    });
 
     // One flagged image holds the account, so the first batch is kept as well as the last.
     expect((await remaining()).filter((id) => id >= extra[0])).toEqual(extra);
@@ -369,7 +409,8 @@ describe('purgeHoldGuard on the delete', () => {
     });
 
     it('keeps a rejected image waiting for its copy when the copy job is configured', async () => {
-      await imageService.deleteImages(ALL, true, {
+      await imageService.deleteImages(ALL, {
+        actor: { system: 'test' },
         onlyWhere: purgeHoldGuard({ holdForTrainingCopy: true }),
       });
 
@@ -377,7 +418,10 @@ describe('purgeHoldGuard on the delete', () => {
     });
 
     it('holds nothing for it when the copy job is not configured', async () => {
-      await imageService.deleteImages(ALL, true, { onlyWhere: purgeHoldGuard(NO_COPY) });
+      await imageService.deleteImages(ALL, {
+        actor: { system: 'test' },
+        onlyWhere: purgeHoldGuard(NO_COPY),
+      });
 
       expect(await remaining()).toEqual(KEPT);
     });
@@ -387,7 +431,8 @@ describe('purgeHoldGuard on the delete', () => {
     beforeEach(insertMarkedOwners);
 
     it('keeps every image of a held owner, and only of a held owner', async () => {
-      await imageService.deleteImages([...ALL, ...MARKED], true, {
+      await imageService.deleteImages([...ALL, ...MARKED], {
+        actor: { system: 'test' },
         onlyWhere: purgeHoldGuard(NO_COPY),
       });
 
@@ -408,7 +453,10 @@ describe('purgeHoldGuard on the delete', () => {
           VALUES (${LAPSED_USER}, 'manual', 'review', now() - interval '1 day');
       `);
 
-      await imageService.deleteImages([LAPSED], true, { onlyWhere: purgeHoldGuard(NO_COPY) });
+      await imageService.deleteImages([LAPSED], {
+        actor: { system: 'test' },
+        onlyWhere: purgeHoldGuard(NO_COPY),
+      });
 
       expect(await remaining()).not.toContain(LAPSED);
     });
@@ -464,7 +512,9 @@ describe('purgeHoldGuard on the delete', () => {
     afterEach(() => holder.db.exec(`ALTER TABLE "Image" DISABLE TRIGGER "Image_evidence_hold"`));
 
     it("keeps a held owner's rows with no guard given, and every requested id leaves search", async () => {
-      const deleted = await imageService.deleteImages([PLAIN, ...MARKED], true);
+      const deleted = await imageService.deleteImages([PLAIN, ...MARKED], {
+        actor: { system: 'test' },
+      });
 
       expect(deleted.map((r) => r.id).sort((a, b) => a - b)).toEqual([PLAIN, RELEASED]);
       expect((await remaining()).filter((id) => MARKED.includes(id))).toEqual([
@@ -481,7 +531,8 @@ describe('purgeHoldGuard on the delete', () => {
 
     // A guard that knows only the report holds lets the marker-held row through to the trigger.
     it('takes a kept row out of search under a guard, and leaves a row the guard excluded', async () => {
-      await imageService.deleteImages([PLAIN, MANUAL, REPORTED], true, {
+      await imageService.deleteImages([PLAIN, MANUAL, REPORTED], {
+        actor: { system: 'test' },
         onlyWhere: Prisma.sql`NOT ${userNamedOnHoldingReportSql(Prisma.raw('"Image"."userId"'))}`,
       });
 
@@ -497,18 +548,24 @@ describe('purgeHoldGuard on the delete', () => {
     });
 
     // Keyed on the rows the DELETE returned, never on the ids asked for: a kept image's file is
-    // the evidence.
-    it("deletes the stored file of each deleted image and never a kept one's", async () => {
+    // the evidence, every version of it.
+    it("queues every version of each deleted image's file and none of a kept one's", async () => {
       await holder.db.exec(`UPDATE "Image" SET url = 'file-' || id`);
-      storage.deletedKeys = [];
-      setEnv({ DATABASE_IS_PROD: true });
-      try {
-        await imageService.deleteImages([PLAIN, ...MARKED], true);
-      } finally {
-        setEnv({ DATABASE_IS_PROD: false });
-      }
 
-      expect(storage.deletedKeys.sort()).toEqual([`file-${PLAIN}`, `file-${RELEASED}`]);
+      await imageService.deleteImages([PLAIN, ...MARKED], {
+        actor: { system: 'test' },
+        moderatorDelete: true,
+      });
+
+      const { rows } = await holder.db.query(
+        `SELECT "entityId", data FROM "JobQueue" WHERE type = 'ImageStorageDelete' ORDER BY "entityId"`
+      );
+      expect(rows).toEqual(
+        [PLAIN, RELEASED].map((id) => ({
+          entityId: id,
+          data: { url: `file-${id}`, allVersions: true },
+        }))
+      );
     });
 
     // Kept counts as moderated: the account-deletion markers go, already-blocked rows included, or
@@ -530,7 +587,9 @@ describe('purgeHoldGuard on the delete', () => {
         ]
       );
       // The neighbour is unheld and deleted, so only the kept row is read back.
-      await imageService.deleteImages([LIVE_HELD, POST_NEIGHBOUR], true);
+      await imageService.deleteImages([LIVE_HELD, POST_NEIGHBOUR], {
+        actor: { system: 'test' },
+      });
 
       const rows = (
         await holder.db.query<{ id: number; metadata: unknown }>(
@@ -560,7 +619,7 @@ describe('purgeHoldGuard on the delete', () => {
           )
         ).rows;
 
-      await imageService.deleteImages([LIVE_HELD], true);
+      await imageService.deleteImages([LIVE_HELD], { actor: { system: 'test' } });
 
       expect(await remaining()).toContain(LIVE_HELD);
       expect(await inPost()).toEqual([POST_NEIGHBOUR]);
@@ -569,7 +628,7 @@ describe('purgeHoldGuard on the delete', () => {
       expect(postBust.mock.calls.filter(([ids]) => (ids as number[]).length)).toEqual([[[POST]]]);
 
       // A second delete finds it already out of the post; the first record stands.
-      await imageService.deleteImages([LIVE_HELD], true);
+      await imageService.deleteImages([LIVE_HELD], { actor: { system: 'test' } });
       expect(await record()).toEqual([{ imageId: LIVE_HELD, userId: MANUAL_USER, postId: POST }]);
       postBust.mockRestore();
     });
@@ -580,9 +639,11 @@ describe('purgeHoldGuard on the delete', () => {
       await holder.db.exec(`
         INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel", "needsReview")
         VALUES (${LIVE_HELD}, ${MANUAL_USER}, 'Scanned', 1, 'csam');
+        -- Kept by the trigger, not by an open case.
+        INSERT INTO "CsamQueueSetAside" ("imageId", outcome) VALUES (${LIVE_HELD}, 'Dismissed');
       `);
 
-      await imageService.deleteImages([LIVE_HELD], true);
+      await imageService.deleteImages([LIVE_HELD], { actor: { system: 'test' } });
 
       const row = (
         await holder.db.query<Record<string, unknown>>(
@@ -606,7 +667,7 @@ describe('purgeHoldGuard on the delete', () => {
         VALUES (${LIVE_HELD}, ${MANUAL_USER}, 'Blocked', 4, '${BlockedReason.AiNotVerified}');
       `);
 
-      await imageService.deleteImages([LIVE_HELD], true);
+      await imageService.deleteImages([LIVE_HELD], { actor: { system: 'test' } });
 
       const row = (
         await holder.db.query<Record<string, unknown>>(
@@ -627,7 +688,7 @@ describe('purgeHoldGuard on the delete', () => {
         VALUES (${LIVE_HELD}, ${MANUAL_USER}, 'Blocked', 4);
       `);
 
-      await imageService.deleteImages([LIVE_HELD], true);
+      await imageService.deleteImages([LIVE_HELD], { actor: { system: 'test' } });
 
       const row = (
         await holder.db.query<Record<string, unknown>>(
@@ -645,7 +706,7 @@ describe('purgeHoldGuard on the delete', () => {
           VALUES (${LIVE_HELD}, ${MANUAL_USER}, 'Blocked', ${NsfwLevel.Blocked}, '${blockedFor}');
         `);
 
-        await imageService.deleteImages([LIVE_HELD], true);
+        await imageService.deleteImages([LIVE_HELD], { actor: { system: 'test' } });
 
         const row = (
           await holder.db.query<Record<string, unknown>>(
@@ -1143,12 +1204,13 @@ describe('purgeHoldGuard on the delete', () => {
   });
 
   // The positive control for the cases above: without the guard or the trigger the same call
-  // deletes every fixture row, so what they keep is the guard's or the trigger's doing.
-  it('deletes every listed image when no guard is given', async () => {
+  // deletes every fixture row but the one its child-safety case keeps, so what they keep is the
+  // guard's or the trigger's doing.
+  it('deletes every listed image but one in a child-safety case when no guard is given', async () => {
     await insertMarkedOwners();
-    await imageService.deleteImages([...ALL, ...MARKED], true);
+    await imageService.deleteImages([...ALL, ...MARKED], { actor: { system: 'test' } });
 
-    expect(await remaining()).toEqual([]);
+    expect(await remaining()).toEqual([FLAGGED]);
   });
 });
 
@@ -1164,7 +1226,10 @@ describe('purgeHoldGuard holds every image of an account under any account hold'
     `)
   );
   const purge = async () => {
-    await imageService.deleteImages([A, B, C, PLAIN], true, { onlyWhere: purgeHoldGuard(NO_COPY) });
+    await imageService.deleteImages([A, B, C, PLAIN], {
+      actor: { system: 'test' },
+      onlyWhere: purgeHoldGuard(NO_COPY),
+    });
     return (await remaining()).filter((id) => [A, B, C, PLAIN].includes(id));
   };
 
@@ -1264,6 +1329,34 @@ describe('accountHeldBlockedImagesSql, the batch exclusion', () => {
     // FLAGGED (12) is the base fixture's flagged image; its owner is held the same way.
     expect(await read()).toEqual([FLAGGED, 91, 93, 94, 98]);
   });
+
+  it('matches the shared hold selection', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES
+        (120, ${BLOCK_OWNER}, 'Blocked', 'CSAM', 32),
+        (121, ${BLOCK_OWNER}, 'Error', 'moderated', 32),
+        (122, ${BLOCK_OWNER}, 'Error', NULL, 32),
+        (123, ${BLOCK_OWNER}, 'Error', NULL, 0);
+    `);
+
+    expect(await read()).toEqual([FLAGGED, 120, 121, 122]);
+  });
+});
+
+describe('legalHeldImagesSql, the batch exclusion', () => {
+  it('returns the held owner’s rows the shared hold selection keeps, and nothing else', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES
+        (150, 71, 'Blocked', 'moderated', 32),
+        (151, 71, 'Error', 'moderated', 32),
+        (152, 71, 'Error', NULL, 0),
+        (153, 71, 'Scanned', NULL, 0),
+        (154, 72, 'Error', 'moderated', 32);
+    `);
+    const flat = legalHeldImagesSql([71]);
+    const { rows } = await holder.db.query<{ id: number }>(flat.text, flat.values as unknown[]);
+    expect(sorted(rows.map((r) => r.id))).toEqual([150, 151]);
+  });
 });
 
 describe('reviewHeldBlockedImagesSql, the batch exclusion', () => {
@@ -1281,6 +1374,22 @@ describe('reviewHeldBlockedImagesSql, the batch exclusion', () => {
     );
 
     expect(sorted(rows.map((r) => r.id))).toEqual(sorted([APPEALED, FLAGGED, 110]));
+  });
+
+  it('matches the shared hold selection', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "needsReview", "blockedFor", "nsfwLevel") VALUES
+        (130, ${PLAIN_USER}, 'Error', NULL, 'CSAM', 32),
+        (131, ${PLAIN_USER}, 'Error', 'appeal', NULL, 32),
+        (132, ${PLAIN_USER}, 'Error', 'appeal', NULL, 0);
+    `);
+
+    const { rows } = await holder.db.query<{ id: number }>(
+      reviewHeldBlockedImagesSql.text,
+      reviewHeldBlockedImagesSql.values as unknown[]
+    );
+
+    expect(sorted(rows.map((r) => r.id))).toEqual(sorted([APPEALED, FLAGGED, 130, 131]));
   });
 });
 
@@ -1361,6 +1470,7 @@ describe('the migration backfill with a keep list', () => {
   beforeAll(async () => {
     db = new PGlite();
     await db.exec(BASE_SCHEMA);
+    await db.exec(imageUseTablesSql);
     await db.exec(`
       INSERT INTO "CsamReport" (id, "userId", "reportSentAt", details) VALUES
         (1, ${KEPT_USER}, now() - interval '400 days', '{"secondaryUserId": ${KEPT_SECONDARY_USER}}'),
@@ -1428,15 +1538,6 @@ describe('the blocked-image queue reads, with a held set past the bind-variable 
 
   beforeAll(async () => {
     await holder.db.exec(`
-      CREATE TYPE "JobQueueType" AS ENUM ('BlockedImageDelete', 'ImageScan');
-      CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
-      CREATE TABLE "JobQueue" (
-        type "JobQueueType" NOT NULL,
-        "entityType" "EntityType" NOT NULL,
-        "entityId" int NOT NULL,
-        "createdAt" timestamp(3) NOT NULL DEFAULT now(),
-        PRIMARY KEY ("entityType", "entityId", type)
-      );
       INSERT INTO "JobQueue" (type, "entityType", "entityId", "createdAt")
         SELECT 'BlockedImageDelete', 'Image', id, now() - interval '30 days' + (id - 990000000) * interval '1 second'
         FROM generate_series(990000000, 990039999) id;
@@ -1516,5 +1617,42 @@ describe('the blocked-image queue reads, with a held set past the bind-variable 
 
     expect(rows).toHaveLength(HELD.length + 5);
     expect(rows[0].entityId).toBe(3);
+  });
+});
+
+// A ban note is not a hold: such a user's blocked media purges as anyone's does.
+describe('a CSAM/NCMEC ban note alone', () => {
+  const NOTE_USER = 990077001;
+  const PLAIN_USER = 990077002;
+  const NOTE_IMAGE = 990077101;
+  const PLAIN_IMAGE = 990077102;
+
+  beforeEach(() =>
+    holder.db.exec(`
+      INSERT INTO "User" (id, meta, "bannedAt") VALUES
+        (${NOTE_USER}, '{"banDetails": {"detailsInternal": "NCMEC report filed"}}', NULL),
+        (${PLAIN_USER}, '{}', NULL);
+      INSERT INTO "Image" (id, "userId", ingestion) VALUES
+        (${NOTE_IMAGE}, ${NOTE_USER}, 'Blocked'), (${PLAIN_IMAGE}, ${PLAIN_USER}, 'Blocked');
+      INSERT INTO "JobQueue" (type, "entityType", "entityId", "createdAt") VALUES
+        ('BlockedImageDelete', 'Image', ${NOTE_IMAGE}, now() - interval '30 days'),
+        ('BlockedImageDelete', 'Image', ${PLAIN_IMAGE}, now() - interval '30 days');
+    `)
+  );
+  afterEach(() =>
+    holder.db.exec(`
+      DELETE FROM "JobQueue" WHERE "entityId" IN (${NOTE_IMAGE}, ${PLAIN_IMAGE});
+      DELETE FROM "Image" WHERE id IN (${NOTE_IMAGE}, ${PLAIN_IMAGE});
+      DELETE FROM "User" WHERE id IN (${NOTE_USER}, ${PLAIN_USER});
+    `)
+  );
+
+  it("does not keep the blocked media: the purge deletes it like anyone else's", async () => {
+    const deleted = await imageService.deleteImages([NOTE_IMAGE, PLAIN_IMAGE], {
+      actor: { system: 'test' },
+      onlyWhere: purgeHoldGuard(NO_COPY),
+    });
+    expect(deleted.map((r) => r.id).sort()).toEqual([NOTE_IMAGE, PLAIN_IMAGE].sort());
+    expect(await remaining()).not.toContain(NOTE_IMAGE);
   });
 });

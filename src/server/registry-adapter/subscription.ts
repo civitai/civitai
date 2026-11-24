@@ -9,7 +9,9 @@
  *      it has no source for (`Adapter.serves`: `end` means never), or `urns` none of which is of
  *      its namespace ({@link servesAnyUrn});
  *   2. the filter is compiled (`bad_request` for one that is not a schema, or one this source
- *      will not evaluate: rule 6, a filter is applied in full or refused, never ignored);
+ *      will not evaluate: rule 6, a filter is applied in full or refused, never ignored, except
+ *      that a `pattern` is best-effort on very long values and bodies, see
+ *      `FILTER_PATTERN_MAX_INPUT_LENGTH` and `FILTER_PATTERN_BODY_BUDGET` in `filter-pattern.ts`);
  *   3. a resume's cursor is checked against the request and the token's subject (rule 2, the
  *      auth extension; {@link unbindCursor}), then by the adapter, which for a document, app,
  *      release or schema stream also checks the token's audience, all before `live`, so a refused cursor is
@@ -17,7 +19,9 @@
  *   4. a snapshot (no cursor) is sent with empty cursors, since a snapshot cannot be continued
  *      (rule 2), then `live`, then each change, and a `progress` whenever the position moves
  *      with nothing sent for it (rule 9): a change of another URN, a change the filter excluded,
- *      or the adapter's own `progress`.
+ *      or the adapter's own `progress`. An adapter's `meta` (`EventMeta`) is passed on as it gave
+ *      it: on `live` (`Changes.liveMeta`), and on its own `progress`, which is then sent even when
+ *      the cursor has not moved, since the meta is news the consumer has not had.
  * An error is thrown; each binding sends it as its own status, or as an error event once the
  * stream has started.
  */
@@ -25,7 +29,12 @@ import type { EventEmitter } from 'node:events';
 import type { Principal } from '~/server/registry-adapter/auth';
 import { ANONYMOUS_PRINCIPAL } from '~/server/registry-adapter/auth';
 import { createFilterCompiler } from '~/server/registry-adapter/json-schema';
-import type { Adapter, StreamEvent, SubscribeRequest } from '~/server/registry-adapter/protocol';
+import type {
+  Adapter,
+  EventMeta,
+  StreamEvent,
+  SubscribeRequest,
+} from '~/server/registry-adapter/protocol';
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
 import { sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
 import { urnNamespace } from '~/server/registry-adapter/urn';
@@ -158,7 +167,11 @@ export function createSubscriber(adapter: Adapter) {
     if (!servesAnyUrn(req.urns, adapter.namespace)) return sink.send({ type: 'end' });
     const filter = compileFilter(req.filter);
     const matches = filter ?? (() => true);
-    const ctx = { signal, audience: principal.audience };
+    const reader =
+      principal.subject !== null && principal.token !== null
+        ? { subject: principal.subject, ...principal.token }
+        : null;
+    const ctx = { signal, audience: principal.audience, reader };
 
     const binding = requestBinding(req, principal.subject);
     const bind = (cursor: string) => bindCursor(cursor, binding);
@@ -187,21 +200,25 @@ export function createSubscriber(adapter: Adapter) {
     const changes = await adapter.changes(req.schema, position, ctx);
     if (signal.aborted) return;
     let reported = bind(position);
-    await sink.send({ type: 'live', cursor: reported });
+    await sink.send({
+      type: 'live',
+      cursor: reported,
+      ...(changes.liveMeta ? { meta: changes.liveMeta } : {}),
+    });
 
     // A change this request does not carry (another URN) still moves the position; so does an
     // adapter's own `progress`. Either is reported only when the cursor differs from the last
-    // one the consumer was sent.
-    const progress = async (cursor: string) => {
+    // one the consumer was sent, or when the adapter's `progress` carries `meta`.
+    const progress = async (cursor: string, meta?: EventMeta) => {
       const next = bind(cursor);
-      if (next === reported) return;
+      if (next === reported && meta === undefined) return;
       reported = next;
-      await sink.send({ type: 'progress', cursor: next });
+      await sink.send({ type: 'progress', cursor: next, ...(meta ? { meta } : {}) });
     };
     for await (const change of changes) {
       if (signal.aborted) return;
       if ('progress' in change) {
-        await progress(change.progress);
+        await progress(change.progress, change.meta);
       } else if ('upsert' in change) {
         const { urn } = change.upsert;
         if (!wanted(urn)) {

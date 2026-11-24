@@ -28,6 +28,7 @@ import { describe, expect, it } from 'vitest';
 const SESSION_BOUND_PROCEDURES = [
   'createPostFromApp',
   'persistGenerationSource',
+  'persistUploadedGenerationSource',
   'previewPostFromApp',
   'publishGenerationOutputs',
 ];

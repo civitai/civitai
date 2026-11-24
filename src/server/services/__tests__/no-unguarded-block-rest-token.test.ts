@@ -172,7 +172,7 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
   },
   'src/pages/api/v1/blocks/gated-images.ts': {
     exposure: 'READ_VIEWER_SCOPED',
-    why: 'The per-viewer gated image read — the REST twin of GET_IMAGES_BY_IDS. It shares "no requiredScope" with images.ts and nothing else, and the difference is the corpus: not the public catalog but the rows carrying metadata.blockPublishedAppId = THIS token’s appId, i.e. the calling app’s OWN published outputs. What it returns per id is then decided against the VERIFIED subject — their maxBrowsingLevel ceiling, their blocked-users / blocked-tags sets, and the one owner branch that shows an author their own not-yet-rated image — so it is viewer-scoped twice over. It is also the only route on this surface that MINTS A MODERATED EDGE URL for bytes the caller cannot otherwise reach: the raw storage key never leaves the server, so a `visible` entry hands out a url nothing else could construct. A suspended app left reachable here would keep serving its users’ generated images — including, on the owner path, unrated ones no scan has cleared — after the takedown, which is exactly the retained reach a suspension exists to end. Anon is refused inside the shared body (parseSubjectUserId → UNAUTHORIZED), so nothing here is reachable without a signed-in subject.',
+    why: 'The per-viewer gated image read — the REST twin of GET_IMAGES_BY_IDS. It shares "no requiredScope" with images.ts and nothing else, and the difference is the corpus: not the public catalog but the bare rows carrying metadata.blockPublishedAppId or metadata.blockSharedUploadAppId = THIS token’s appId, i.e. the calling app’s OWN published outputs and the viewer uploads it opted in to share (those only once scanned and SFW). What it returns per id is then decided against the VERIFIED subject — their maxBrowsingLevel ceiling, their blocked-users / blocked-tags sets, and the one owner branch that shows an author their own not-yet-rated image — so it is viewer-scoped twice over. It is also the only route on this surface that MINTS A MODERATED EDGE URL for bytes the caller cannot otherwise reach: the raw storage key never leaves the server, so a `visible` entry hands out a url nothing else could construct. A suspended app left reachable here would keep serving its users’ generated images — including, on the owner path, unrated ones no scan has cleared — after the takedown, which is exactly the retained reach a suspension exists to end. Anon is refused inside the shared body (parseSubjectUserId → UNAUTHORIZED), so nothing here is reachable without a signed-in subject.',
   },
   'src/pages/api/v1/blocks/workflow-media.ts': {
     exposure: 'READ_VIEWER_SCOPED',
@@ -249,6 +249,10 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
   'src/pages/api/v1/blocks/storage/[[...path]].ts': {
     exposure: 'WRITE',
     why: 'The document store, every operation behind one catch-all: it reads the viewer’s PRIVATE documents, reads and writes the app’s SHARED documents (public within the app, attributed to the viewer), sets marks and counters other users see, and files reports. A suspended app left reachable here could keep reading a signed-in user’s stored data, keep publishing under their name and keep moving public tallies after the takedown. ALREADY refused before this gate as well, by delegation: its resolver (apps/doc-store-access.ts) takes the strict approval read (resolveStrictAppBlockApproval) and gives an app that is not approved no storage at all.',
+  },
+  'src/pages/api/v1/blocks/moderation/reports.ts': {
+    exposure: 'WRITE',
+    why: 'Files the viewer’s moderation report on one of the app’s shared documents (a report row the moderator queue reads), attributed to that signed-in user. A suspended app left reachable here could keep filing reports in a viewer’s name and keep pushing documents into the moderators’ queue after the takedown. ALREADY refused before this gate as well, by delegation: it resolves the same storage access as the storage route (apps/doc-store-access.ts), which gives an app that is not approved no storage at all.',
   },
   'src/pages/api/v1/blocks/user-checkpoint/set.ts': {
     exposure: 'WRITE',
@@ -385,6 +389,8 @@ const LOOKUP_FAILURE_SERVE_RATIONALE: Record<string, string> = {
 const DELIBERATELY_UNWRAPPED: Record<string, string> = {
   'src/pages/api/v1/me.ts':
     'NOT a block route. AuthedEndpoint (session cookie / API key / OAuth token). Wrapping it would dead-code the block path — the inner session check 401s before block claims do anything — so blocks use the dedicated /api/v1/blocks/me, which IS wrapped. Nothing here reads a block token, so there is no app to approve.',
+  'src/pages/api/internal/blocks/storage/[[...path]].ts':
+    'WRAPPED, one module away. The document store’s internal route (app-data-go’s forwarded writes) is the public storage route’s exact chain, withBlockScope included with the same options, behind a caller signature that must run BEFORE the middleware; so the chain is built in src/server/services/apps/doc-store-internal-route.ts and the page re-exports it. The entries into that chain are pinned there by doc-store-internal-route.test.ts, which fails if the set grows or shrinks.',
 };
 
 /** The file extensions Next.js dispatches as an API page. */
@@ -1358,7 +1364,7 @@ describe('no unguarded block-REST token verification', () => {
     // The per-viewer gated image read. It sits NEXT TO images.ts in the route
     // tree and on the opposite side of this line from it, which is the pairing
     // worth noticing: images.ts is READ_PUBLIC and opts out, this one may not.
-    // The corpus is the calling app's OWN published rows rather than the public
+    // The corpus is the calling app's OWN published and shared-upload rows rather than the public
     // catalog, every verdict is computed against the verified subject, and a
     // `visible` entry hands out a minted edge url for bytes that are otherwise
     // unreachable — so a suspended app left serving it keeps delivering its
@@ -1375,6 +1381,8 @@ describe('no unguarded block-REST token verification', () => {
     'src/pages/api/v1/blocks/entitlements.ts',
     'src/pages/api/v1/blocks/goods/purchase.ts',
     'src/pages/api/v1/blocks/me.ts',
+    // The report moderation API: files a report in the viewer's name.
+    'src/pages/api/v1/blocks/moderation/reports.ts',
     'src/pages/api/v1/blocks/shared-storage/append.ts',
     'src/pages/api/v1/blocks/shared-storage/counts.ts',
     'src/pages/api/v1/blocks/shared-storage/increment.ts',

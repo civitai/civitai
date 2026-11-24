@@ -1,4 +1,3 @@
-import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ActionIcon, Anchor, Box, Group, Text } from '@mantine/core';
@@ -80,14 +79,15 @@ import {
 } from './projectBlockInit';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { useDailyLimitRaiseBridge } from './useDailyLimitRaiseBridge';
+import { useOutputUnlockBridge, type OutputUnlockBridgeResult } from './useOutputUnlockBridge';
 import { useIframeAwareMenu } from './useIframeAwareMenu';
 import { blockInitFragmentEnabled } from './blockInitFragmentGate';
 import type { BlockHostSurface } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openDialog } from '~/components/Dialog/openDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import {
   buildCollectionFollowConsentCopy,
   createCollectionFollowSettlement,
@@ -103,7 +103,6 @@ import {
   resolveGetEntityReactionsRequest,
   resolveSetEntityReactionRequest,
 } from './reactionGate';
-import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import type { AppFeedbackRecentError } from '~/server/schema/app-feedback.schema';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
@@ -123,7 +122,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openLoginPopup } from '~/utils/auth-helpers';
 import { appsRunBackTarget, type AppsRunOrigin } from '~/shared/utils/apps-run-origin';
 
-const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 // The lazy-consent UI's dynamic import USED to live here, duplicated verbatim in
 // PageBlockHost, and this copy carried NO dedupe id. Both surfaces now go through
 // `openBlockConsentModal`, which owns the lazy component reference alongside the id
@@ -2219,6 +2217,7 @@ export function IframeHost({
     appBlockId: install.appBlockId,
     appName: install.manifest.name,
   });
+  const outputUnlock = useOutputUnlockBridge({ appName: install.manifest.name });
 
   useEffect(() => {
     const off = onMessage<
@@ -2279,6 +2278,41 @@ export function IframeHost({
     );
     return off;
   }, [onMessage, send, dailyLimitRaise]);
+
+  // REQUEST_OUTPUT_UNLOCK → OUTPUT_UNLOCK_RESULT { result }. The app names one restricted output
+  // by workflow and position; the server decides what may be offered and the host's own dialog
+  // (`useOutputUnlockBridge`) draws it. The app's word never sets a price or a url.
+  useEffect(() => {
+    const off = onMessage<
+      { requestId?: unknown; workflowId?: unknown; position?: unknown } | undefined
+    >('REQUEST_OUTPUT_UNLOCK', (raw) => {
+      const requestId = raw?.requestId;
+      if (typeof requestId !== 'string' || requestId.length === 0) return;
+      const reply = (result: OutputUnlockBridgeResult) =>
+        send('OUTPUT_UNLOCK_RESULT', { requestId, result });
+      const workflowId = raw?.workflowId;
+      const position = raw?.position;
+      if (
+        typeof workflowId !== 'string' ||
+        workflowId.length === 0 ||
+        typeof position !== 'number' ||
+        !Number.isInteger(position) ||
+        position < 0
+      ) {
+        reply({
+          outcome: 'unavailable',
+          message: 'workflowId and a non-negative integer position are required',
+        });
+        return;
+      }
+      if (!token) {
+        reply({ outcome: 'unavailable', message: 'The app session is not ready yet.' });
+        return;
+      }
+      void outputUnlock.onUnlockRequest({ blockToken: token, workflowId, position }, reply);
+    });
+    return off;
+  }, [onMessage, send, token, outputUnlock]);
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
@@ -2401,24 +2435,24 @@ export function IframeHost({
               slotId: typeof modelCtx.slotId === 'string' ? modelCtx.slotId : undefined,
             }
           : undefined;
-        dialogStore.trigger<BuyBuzzModalProps>({
-          // Per-request id so multiple OPEN_BUZZ_PURCHASE calls don't dedup
-          // against each other in the dialog store's exists-check.
-          id: `block-buy-buzz-${requestId}`,
-          component: BuyBuzzModal,
-          props: {
+        openDialog(
+          () => import('~/components/Modals/BuyBuzzModal'),
+          {
             minBuzzAmount: amount,
             attribution,
             onPurchaseSuccess: () => {
               purchased = true;
             },
           },
-          options: {
+          {
+            // Per-request id so multiple OPEN_BUZZ_PURCHASE calls don't dedup
+            // against each other in the dialog store's exists-check.
+            id: `block-buy-buzz-${requestId}`,
             onClose: () => {
               send('BUZZ_PURCHASE_RESULT', { requestId, purchased });
             },
-          },
-        });
+          }
+        );
       }
     );
     return off;
@@ -3306,42 +3340,39 @@ export function IframeHost({
           collectionId,
           collection: identity.identity,
         });
-        dialogStore.trigger({
+        openConfirm({
           // Per-request id so two SET_COLLECTION_FOLLOW calls can't dedup against
           // each other in the dialog store's silent `if (!exists)` drop — a
           // dropped dialog would be a request that never replies, i.e. a hang.
           // (Insurance, matching the OPEN_IMAGE_UPLOAD handler; the collision was
           // not reproducible, since rendering a Mantine modal costs >1 ms.)
           id: `block-collection-follow-${requestId}`,
-          component: ConfirmDialog,
-          props: {
-            title: copy.title,
-            message: copy.message,
-            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
-            confirmProps: { color: 'blue' },
-            onConfirm: async () => {
-              // SYNCHRONOUS, before any await: from here on a dismissal must not
-              // be able to claim `declined` for a write that is under way.
-              settlement.markConsented();
-              try {
-                // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
-                // actor and target, so `collectionId` is the ONLY thing the block
-                // influences.
-                if (follow) await followCollectionMutation.mutateAsync({ collectionId });
-                else await unfollowCollectionMutation.mutateAsync({ collectionId });
-                settlement.reply({ result: { collectionId, followed: follow } });
-              } catch (err) {
-                // FORBIDDEN from the collection services (e.g. a private
-                // collection this viewer may not follow) lands here as a message,
-                // never as a hang.
-                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
-              }
-            },
-            // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
-            // the block's promise explicitly rather than leaving it to time out —
-            // unless consent was already given, in which case this is a no-op.
-            onCancel: settlement.decline,
+          title: copy.title,
+          message: copy.message,
+          labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+          confirmProps: { color: 'blue' },
+          onConfirm: async () => {
+            // SYNCHRONOUS, before any await: from here on a dismissal must not
+            // be able to claim `declined` for a write that is under way.
+            settlement.markConsented();
+            try {
+              // Self-bound server-side: the handlers pass `ctx.user.id` as BOTH
+              // actor and target, so `collectionId` is the ONLY thing the block
+              // influences.
+              if (follow) await followCollectionMutation.mutateAsync({ collectionId });
+              else await unfollowCollectionMutation.mutateAsync({ collectionId });
+              settlement.reply({ result: { collectionId, followed: follow } });
+            } catch (err) {
+              // FORBIDDEN from the collection services (e.g. a private
+              // collection this viewer may not follow) lands here as a message,
+              // never as a hang.
+              settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+            }
           },
+          // Dismiss (Cancel / X / escape / overlay) = consent DECLINED. Settle
+          // the block's promise explicitly rather than leaving it to time out —
+          // unless consent was already given, in which case this is a no-op.
+          onCancel: settlement.decline,
         });
       })();
     });

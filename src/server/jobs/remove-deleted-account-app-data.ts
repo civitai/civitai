@@ -4,7 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { purgeViewerDocuments } from '~/server/services/apps/doc-store-purge';
 import type { DocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { isDocStoreError } from '~/server/services/apps/doc-store.types';
-import { isAccountUnderLegalHold } from '~/server/services/legal-hold.service';
+import { isContentRemovalHeld } from '~/server/services/legal-hold.service';
 import { createLogThrottle } from '~/server/utils/log-throttle';
 import type { JobContext } from './job';
 import { createJob } from './job';
@@ -145,7 +145,7 @@ async function stillRequested(userId: number, cutoff: Date): Promise<boolean> {
 /** Why an account must not be wiped right now, or null when it may be. */
 async function blocker(userId: number, cutoff: Date): Promise<'held' | 'withdrawn' | null> {
   // `null` (the hold could not be read) blocks like a hold.
-  if ((await isAccountUnderLegalHold(userId)) !== false) return 'held';
+  if ((await isContentRemovalHeld(userId)) !== false) return 'held';
   if (!(await stillRequested(userId, cutoff))) return 'withdrawn';
   return null;
 }
@@ -181,7 +181,7 @@ async function wipeOne(
           failures: out.failures.slice(0, 5),
         },
         'webhooks'
-      ).catch(() => undefined);
+      );
       return;
     }
     // Only while still deleted: an account that is live again is never written here.
@@ -202,7 +202,7 @@ async function wipeOne(
         message: err instanceof Error ? err.message : String(err),
       },
       'webhooks'
-    ).catch(() => undefined);
+    );
   }
 }
 
@@ -275,7 +275,7 @@ export const removeDeletedAccountAppDataJob = createJob(
               message: `index ${APP_DATA_REMOVAL_INDEX} is missing (apply migration 20261219120000_user_app_data_removal_idx); nothing is wiped until it exists`,
             },
             'webhooks'
-          ).catch(() => undefined);
+          );
         }
         return { indexMissing: APP_DATA_REMOVAL_INDEX };
       }
@@ -284,7 +284,7 @@ export const removeDeletedAccountAppDataJob = createJob(
         logToAxiom(
           { name: 'remove-deleted-account-app-data', type: 'info', ...result },
           'webhooks'
-        ).catch(() => undefined);
+        );
       }
       return result;
     } catch (error) {
@@ -297,7 +297,7 @@ export const removeDeletedAccountAppDataJob = createJob(
           stack: (error as Error)?.stack,
         },
         'webhooks'
-      ).catch(() => undefined);
+      );
       return { error: true as const };
     }
   }

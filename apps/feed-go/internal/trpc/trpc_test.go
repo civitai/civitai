@@ -152,3 +152,46 @@ func TestWriteResultThenReleaseConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// ResultHeaders is what WriteResult sends, for each cache policy (the shadow comparison's Go side).
+func TestResultHeadersMatchWriteResult(t *testing.T) {
+	for _, c := range []struct {
+		ttl  *CacheTTL
+		want string
+	}{
+		{nil, "max-age=0, private, no-cache"},
+		{&CacheTTL{Browser: 60}, "max-age=0, private, no-cache"},
+		{&SignedOutTTL, "public, max-age=60, s-maxage=60, stale-while-revalidate=30"},
+	} {
+		w := httptest.NewRecorder()
+		WriteResult(w, []byte(`{}`), c.ttl)
+		got := ResultHeaders(c.ttl)
+		if got["cache-control"] != c.want || w.Header().Get("Cache-Control") != c.want || len(got) != 2 {
+			t.Errorf("ttl %+v: ResultHeaders %v, WriteResult %q, want %q", c.ttl, got, w.Header().Get("Cache-Control"), c.want)
+		}
+		if got["vary"] != "trpc-accept, accept" || w.Header().Get("Vary") != "trpc-accept, accept" {
+			t.Errorf("ttl %+v: ResultHeaders vary %q, WriteResult Vary %q, want %q", c.ttl, got["vary"], w.Header().Get("Vary"), "trpc-accept, accept")
+		}
+	}
+}
+
+// tRPC v11's resolveResponse starts every response's headers from `vary: trpc-accept, accept`, on a
+// result and on an error alike, so every answer written here carries the same value, whatever its
+// status or cache policy.
+func TestResponsesCarryTRPCVary(t *testing.T) {
+	const want = "trpc-accept, accept"
+	for _, ttl := range []*CacheTTL{nil, &SignedOutTTL} {
+		w := httptest.NewRecorder()
+		WriteResult(w, []byte(`{}`), ttl)
+		if got := w.Header().Values("Vary"); len(got) != 1 || got[0] != want {
+			t.Errorf("WriteResult ttl %+v: Vary = %q, want [%q]", ttl, got, want)
+		}
+	}
+	for _, status := range []int{400, 503} {
+		w := httptest.NewRecorder()
+		WriteError(w, "image.getImagesAsPostsInfinite", &Error{Code: "INTERNAL_SERVER_ERROR", HTTPStatus: status, Message: "x"})
+		if got := w.Header().Values("Vary"); len(got) != 1 || got[0] != want {
+			t.Errorf("WriteError %d: Vary = %q, want [%q]", status, got, want)
+		}
+	}
+}

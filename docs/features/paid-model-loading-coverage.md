@@ -504,7 +504,7 @@ read the new view) was dropped with it: the swap shipped without either.
 ### B — search
 
 [models.search-index.ts](../../src/server/search-index/models.search-index.ts) and
-[models-update.ts](../../src/pages/api/mod/search/models-update.ts) derive an indexed `canGenerate`
+[models-update.ts](../../src/server/api-routes/mod/search/models-update.ts) derive an indexed `canGenerate`
 from `covered`. After the swap, search advertises every one of them as generatable — with no
 indication that many need a paid load first. Load state in search was deliberately deferred, so
 this widens exactly the surface that has no way to express the difference.
@@ -522,8 +522,8 @@ re-checks the same rule through `versionGeneratableFor()`. Both fields collapse 
 
 ### C — display
 
-`model.controller`, `model-version.controller`, `model.selector`, `modelVersion.selector`,
-`generation.selector` and `AutocompleteSearch/renderItems/models.tsx` render a badge or a Generate
+`model.controller`, `model-version.controller`, `model.selector`, `modelVersion.selector` and
+`AutocompleteSearch/renderItems/models.tsx` render a badge or a Generate
 button — mostly correct after the change, since that is where the load CTA belongs.
 
 **`/api/v1/model-versions/mini/[id]`'s `covered` is flag-gated like everything else**

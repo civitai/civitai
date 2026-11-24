@@ -173,6 +173,10 @@ export const userRouter = router({
   getActiveLimits: protectedProcedure
     .meta({ anyOfScopes: USAGE_LIMITS_SCOPES })
     .query(({ ctx }) => getActiveLimits(ctx.user.id)),
+  getUsageLimitTiers: publicProcedure.query(async () => {
+    const { getUsageLimitTierTable } = await import('~/server/services/usage-limit-config.service');
+    return getUsageLimitTierTable();
+  }),
   /** Buzz spent through apps today against the per-user cap; `null` where apps are off. */
   getAppBuzzUsage: protectedProcedure.meta({ blockApiKeys: true }).query(async ({ ctx }) => {
     const { getMyAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
@@ -188,6 +192,15 @@ export const userRouter = router({
     const { optInAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
     return optInAppBuzzToday(ctx.user);
   }),
+  /** The user's free generation allowance per free-tier model, from the orchestrator. */
+  getOrchestrationFreeUsage: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .query(async ({ ctx }) => {
+      const { getMyOrchestrationFreeUsage } = await import(
+        '~/server/services/orchestrator/free-tier-usage.service'
+      );
+      return getMyOrchestrationFreeUsage(ctx.user, ctx);
+    }),
   getSearchHydration: publicProcedure
     .input(getUserSearchHydrationSchema)
     .query(getUserSearchHydrationHandler),
@@ -382,7 +395,11 @@ export const userRouter = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(getByIdSchema)
     .mutation(({ ctx, input }) =>
-      toggleBookmarkedArticle({ articleId: input.id, userId: ctx.user.id })
+      toggleBookmarkedArticle({
+        articleId: input.id,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
     ),
   toggleBountyEngagement: verifiedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })

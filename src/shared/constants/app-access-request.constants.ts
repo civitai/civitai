@@ -10,8 +10,7 @@ export type AppAccessRequestStatus = (typeof APP_ACCESS_REQUEST_STATUSES)[number
 export const APP_ACCESS_REQUEST_DECISIONS = ['approved', 'declined'] as const;
 export type AppAccessRequestDecision = (typeof APP_ACCESS_REQUEST_DECISIONS)[number];
 
-/** "What do you want to build?" — long enough to say something, short enough to read in a queue. */
-export const APP_ACCESS_WHAT_TO_BUILD_MIN = 20;
+/** "What do you want to build?" — optional, and short enough to read in a queue. */
 export const APP_ACCESS_WHAT_TO_BUILD_MAX = 2000;
 
 /**
@@ -21,3 +20,9 @@ export const APP_ACCESS_WHAT_TO_BUILD_MAX = 2000;
  * the link lands on Pending.
  */
 export const APP_ACCESS_REQUESTS_REVIEW_HREF = '/apps/review?tab=access-requests';
+
+/**
+ * `/apps/build?request-access=1` opens the Request access form (signing the viewer in first when
+ * needed). Linked from outside the site (the CLI README), so the name is a public contract: keep it.
+ */
+export const REQUEST_ACCESS_PARAM = 'request-access';

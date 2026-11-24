@@ -47,6 +47,7 @@ export const PERMISSIONS = [
   // an ownership or claim dispute — a legal question, not a content one — and the model reports panel
   // puts the button one click from every report in the queue.
   { id: 'model.takeDown', label: 'Take down a model (ownership / claim)' },
+  { id: 'model.mergeAnalysis.run', label: 'Run a model merge analysis' },
 
   // Also destructive, but never behind the page grant: an erasure request, carried out by the
   // main app's `deleteUser`. That app checks this id by its literal (`ModeratorGrantId` in
@@ -73,6 +74,12 @@ export const PERMISSIONS = [
   {
     id: 'user.membership.gift',
     label: 'Revoke or refund a membership gift whose payment did not clear',
+  },
+  // Money: a membership gift nobody pays for, or taking one back. The id is checked by literal in the
+  // main app's membership-gift-comp.service (`ModeratorGrantId`).
+  {
+    id: 'user.membership.gift.comp',
+    label: 'Comp a membership gift (no charge), or revoke a comp',
   },
   // Money: free days on, or a re-sync of, a member's Stripe subscription. The main app checks this
   // literal (`ModeratorGrantId`), so rename the two together.
@@ -155,8 +162,11 @@ export const PERMISSIONS = [
   // Replies and status changes go out as one agent's Freshdesk key, so who may write to a customer is
   // its own call; reading a ticket view is the page grant.
   { id: 'tickets.reply', label: 'Reply to and change the status of a support ticket' },
-  // Hands a moderation ticket to support, naming the moderator who did it.
-  { id: 'tickets.escalate', label: 'Send a moderation ticket to support' },
+  // Every hand-off of a moderation ticket (support, bug report, mod lead), each naming the moderator.
+  // Privacy needs it too.
+  { id: 'tickets.escalate', label: 'Hand off a moderation ticket (support, bug report, mod lead)' },
+  // Its own grant because the privacy hand-off emails the requester Legal's acknowledgment.
+  { id: 'tickets.privacy', label: 'Hand a moderation ticket to Legal as a privacy request' },
   { id: 'scan-label.quota.edit', label: 'Set scan label voters and their daily quotas' },
   // Submits a real scan with the site's system account; the page shows signals only.
   { id: 'image.scanProbe.run', label: 'Run the image scanner on chosen images (signals only)' },
@@ -173,6 +183,13 @@ export const PERMISSIONS = [
   {
     id: 'creatorServices.reviewDispute',
     label: 'Write Creator Services dispute reviews (no refund or release)',
+  },
+  // Releases or keeps a held Creator Program payout. Gates the button only: the main app's
+  // `/api/admin/creator-program-payout-review` checks the moderator session and the row version, not
+  // this grant. Reading the holds is the page grant.
+  {
+    id: 'creatorProgram.payoutReview.decide',
+    label: 'Decide Creator Program payout-review holds (clear, escalate, withhold)',
   },
   // Checked by this literal in the main app's `/api/mod/label-store/predictions` (`ModeratorGrantId`).
   { id: 'labelStore.submitPrediction', label: 'Submit model predictions to the label store' },
@@ -191,6 +208,10 @@ export const PERMISSIONS = [
     id: 'apps.buzz.refund.large',
     label: 'Refund more than 5,000 App Blocks Buzz in one call',
   },
+  // Money: refunds an allowlisted training run and submits it again on the owner's Buzz. Checked by
+  // this literal in the main app's `/api/mod/training/retrain-source` (`ModeratorGrantId`); rename
+  // them together.
+  { id: 'training.retrain', label: 'Refund and retrain an allowlisted training run' },
   // Model Flags → Needs review lists two kinds of lead, each ruled by its own right: a held text-scan
   // detection (flag or dismiss, recorded with a reason) and a file match (set minor or dismiss). The
   // page grant opens the tab; the tab lists, and its actions rule, only the kinds held here.
@@ -205,6 +226,14 @@ export const PERMISSIONS = [
   // Sends account registration emails to the model provider, a separate call from running turns. Also
   // needs User Lookup, where a moderator reads emails today.
   { id: 'assistant.emails', label: 'Let the mod assistant read account registration emails' },
+  // The `/cases` PAGE grant opens the takedown case list. These are the rights inside it. Three ids
+  // because the harms differ:
+  // - acting sends legal notices;
+  // - reading claimants' names and addresses is personal data, and every read is recorded;
+  // - resuming sends overrides a pause someone else (or the hourly ceiling) set.
+  { id: 'cases.act', label: 'Import, send, pause and act on takedown cases' },
+  { id: 'cases.pii', label: 'Read claimant and recipient details on takedown cases' },
+  { id: 'cases.unpause', label: 'Resume paused takedown notice sends' },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];

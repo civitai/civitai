@@ -218,10 +218,10 @@ actually-served hosts) and the hub's CORS allowlist (`AUTH_CORS_ORIGINS`, env) r
 The framework-agnostic core now covers **both** the session-read side and the login bridge, so a spoke is thin
 per-framework wiring over the package:
 
-- **Session gate (read side):** `createSpokeGuard({ isRevoked, require?, loginPath? })` — cookie header →
+- **Session gate (read side):** `createSpokeGuard({ isRevoked, require? })` — cookie header →
   `{ status: 'ok' | 'login' | 'reauth' | 'forbidden' }`. Resolves the rich user (so
-  `require: u => u.isModerator` works) and builds the sign-in redirect. `isRevoked` is required (it throws
-  without it): build it with `createRevocationCheck` over the shared sys redis, so a sign-out, ban or
+  `require: u => u.isModerator` works) and builds the sign-in redirect to the app's own `/api/auth/authorize`.
+  `isRevoked` is required (it throws without it): build it with `createRevocationCheck` over the shared sys redis, so a sign-out, ban or
   force-logout written anywhere ends the session here too. The check allows the request when the store can't
   be reached, so pass `onError` and log it. The SvelteKit adapter is a `handle` hook; the reference wiring is
   `apps/moderator/src/lib/server/auth.ts`:
@@ -248,9 +248,11 @@ per-framework wiring over the package:
 
   export const guard = createSpokeGuard({ require: (u) => u.isModerator === true, isRevoked });
   ```
-- **Login bridge (cross-domain):** `buildAuthorizeRedirect({ selfOrigin, returnUrl })` → `{ location, setCookie }`
-  and `completeFirstPartyCallback({ selfOrigin, query, bridgeCookieValue })` → `{ token, returnUrl } | { error }`
-  (+ `generatePkce`, `randomState`, `safePath`, `clearBridgeCookie`, `OAUTH_BRIDGE_COOKIE`). The main app's
+- **Login bridge (cross-domain):** `buildAuthorizeRedirect({ selfOrigin, returnUrl, cookieDomain? })` →
+  `{ location, setCookies }` and `completeFirstPartyCallback({ selfOrigin, query, cookies, cookieDomain? })` →
+  `{ token, returnUrl, clearCookies } | { error, clearCookies }` (+ `generatePkce`, `randomState`, `safePath`,
+  `clearBridgeCookie`, `OAUTH_BRIDGE_COOKIE`). Each flow stashes under its own cookie, so parallel sign-in tabs
+  don't overwrite each other; set `clearCookies` on the callback response whatever the outcome. The main app's
   `authorize.ts`/`callback.ts` are now thin wrappers over these; a SvelteKit spoke mounts the same two calls in
   `+server.ts` handlers. Only the per-framework glue stays app-side: deriving the request origin
   (`resolveSelfOrigin`), reading the cookie/query, setting the session cookie, and issuing redirects.

@@ -43,6 +43,8 @@ vi.mock('~/server/flipt/client', () => ({
     APP_BLOCK_REFUSE_EXTERNAL_SOURCES: 'app-block-refuse-external-sources',
   },
   isFlipt: async (flag: string) => flag === 'app-block-source-scanned-rows' && holder.scannedRows,
+  isFliptSync: (flag: string) => flag === 'app-block-source-scanned-rows' && holder.scannedRows,
+  ensureFliptInitialized: async () => undefined,
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: async () => [] } }));
 vi.mock('~/env/client', async (importOriginal) => {
@@ -120,9 +122,9 @@ function workflow(over: Record<string, unknown> = {}) {
         $type: 'textToImage',
         output: {
           images: [
-            { url: ALLOWED_OUTPUT, available: true, width: 640, height: 320 },
-            { url: OFF_HOST_OUTPUT, available: true, width: 640, height: 320 },
-            { url: SECOND_OUTPUT, available: true, width: 640, height: 320 },
+            { url: ALLOWED_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+            { url: OFF_HOST_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+            { url: SECOND_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
           ],
         },
       },
@@ -147,6 +149,8 @@ function persist(
     workflowId: WF,
     imageIndex: 0,
     getWorkflow: async () => wf,
+    // Every browsing level: no fixture output is above the ceiling.
+    ceiling: { maxBrowsingLevel: 31, serving: false },
     ...over,
   });
 }
@@ -174,6 +178,7 @@ async function gate(url: string, userId = VIEWER) {
       userId,
       entry: 'appBlocks',
       isApiCaller: false,
+      appBlockLog: { appBlockId: 'apb_alpha' },
     });
     return 'accepted';
   } catch (e) {
@@ -201,6 +206,7 @@ beforeAll(async () => {
       availability text NOT NULL DEFAULT 'Public', "tosViolation" boolean NOT NULL DEFAULT false);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "modelRestricted" boolean NOT NULL DEFAULT false,
       "userId" int NOT NULL,
       url text NOT NULL,
       "postId" int,
@@ -217,6 +223,16 @@ beforeAll(async () => {
       metadata jsonb
     );
     CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean);
+    -- What the held-url check in the gated read reads, as minimal stand-ins.
+    ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "modelVersionId" int;
+    ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS metadata jsonb;
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, meta jsonb);
+    CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
+    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]', "reportSentAt" timestamp(3));
+    CREATE TABLE "ImageCdnModeratorDelete" (url text, "userId" int, "imageId" int, "csamReview" boolean NOT NULL DEFAULT false);
+    CREATE TABLE "ImageCdnShopTakedown" (url text, "userId" int);
   `);
 });
 
@@ -315,6 +331,145 @@ describe('ownership: refused before anything is fetched or written', () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(createImage).not.toHaveBeenCalled();
   });
+
+  // 🔴 `imageIndex` is a STABLE output position: a restricted output keeps its slot.
+  // The workflow refused mature content (the paying pool) and output 0 is rated R.
+  const restricted = () =>
+    workflow({
+      allowMatureContent: false,
+      steps: [
+        {
+          $type: 'textToImage',
+          output: {
+            images: [
+              { url: ALLOWED_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'r' },
+              { url: SECOND_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+            ],
+          },
+        },
+      ],
+    });
+
+  it('refuses a RESTRICTED position by name, and fetches and writes nothing', async () => {
+    await expect(persist({ imageIndex: 0 }, restricted())).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'output 0 is restricted',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(createImage).not.toHaveBeenCalled();
+  });
+
+  it('🔴 refuses an output STILL BEING RATED before anything is fetched or written', async () => {
+    const held = workflow({
+      allowMatureContent: false,
+      steps: [
+        {
+          $type: 'textToImage',
+          output: {
+            images: [
+              { url: ALLOWED_OUTPUT, available: true, width: 640, height: 320 },
+              { url: SECOND_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+            ],
+          },
+        },
+      ],
+    });
+    await expect(persist({ imageIndex: 0 }, held)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'output 0 is still being rated, try again shortly',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(createImage).not.toHaveBeenCalled();
+    expect(holder.stored).toHaveLength(0);
+  });
+
+  it('refuses a BLOCKED position by the unavailable message, never shifting', async () => {
+    const blocked = workflow({
+      steps: [
+        {
+          $type: 'textToImage',
+          output: {
+            images: [
+              {
+                url: ALLOWED_OUTPUT,
+                available: true,
+                width: 640,
+                height: 320,
+                nsfwLevel: 'pg',
+                blockedReason: 'Moderated',
+              },
+              { url: SECOND_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+            ],
+          },
+        },
+      ],
+    });
+    await expect(persist({ imageIndex: 0 }, blocked)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: GENERATION_SOURCE_OUTPUT_UNAVAILABLE_MESSAGE,
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(createImage).not.toHaveBeenCalled();
+  });
+
+  it('a restricted output still holds its position: index 2 of two outputs is out of range', async () => {
+    // Index 2 is out of range (two positions), not "the second unrestricted output".
+    await expect(persist({ imageIndex: 2 }, restricted())).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: GENERATION_SOURCE_INDEX_OUT_OF_RANGE_MESSAGE,
+    });
+    expect(createImage).not.toHaveBeenCalled();
+  });
+
+  describe('🔴 serving on: persist refuses what the poll restricts', () => {
+    const SERVING = { maxBrowsingLevel: 31, serving: true };
+    const withNa = () =>
+      workflow({
+        steps: [
+          {
+            $type: 'textToImage',
+            output: {
+              images: [
+                { url: ALLOWED_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'na' },
+                { url: SECOND_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+              ],
+            },
+          },
+        ],
+      });
+
+    it('an output rated `na` is refused, and nothing is fetched or written', async () => {
+      await expect(persist({ imageIndex: 0, ceiling: SERVING }, withNa())).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'output 0 is restricted',
+      });
+      expect(fetch).not.toHaveBeenCalled();
+      expect(createImage).not.toHaveBeenCalled();
+    });
+
+    // The controls schedule the scan (persistAfterScan): a bare persist() of an accepted output
+    // waits out the whole scan deadline in real time (~30 s each) to say nothing more.
+    it('CONTROL: the rated output beside it persists', async () => {
+      const wf = withNa();
+      await persistAfterScan({ imageIndex: 1, ceiling: SERVING, getWorkflow: async () => wf });
+      expect(createImage).toHaveBeenCalledTimes(1);
+    });
+
+    it('with serving off the `na` output is refused too, and nothing is fetched or written', async () => {
+      await expect(persist({ imageIndex: 0 }, withNa())).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'output 0 is restricted',
+      });
+      expect(fetch).not.toHaveBeenCalled();
+      expect(createImage).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: with serving off the rated output beside it persists', async () => {
+      const wf = withNa();
+      await persistAfterScan({ imageIndex: 1, getWorkflow: async () => wf });
+      expect(createImage).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe('the written row is private', () => {
@@ -337,7 +492,7 @@ describe('the written row is private', () => {
     expect(row.metadata).not.toHaveProperty('blockUploadedAppId');
   });
 
-  it('🔴 the app’s shared grid read never returns it — not to the viewer, not to anyone else', async () => {
+  it('🔴 the app’s shared grid read returns it to its owner only, never to anyone else', async () => {
     const out = await persistAfterScan();
     // Positive control: a scanned image this app PUBLISHED, by another viewer, IS returned.
     await holder.db.query(
@@ -345,14 +500,17 @@ describe('the written row is private', () => {
        VALUES (77, $1, 'published-key', 1, 'Scanned', 512, 512, $2::jsonb)`,
       [OTHER_USER, JSON.stringify({ blockPublishedAppId: APP })]
     );
-    for (const userId of [VIEWER, OTHER_USER]) {
+    for (const [userId, expected] of [
+      [VIEWER, [out.imageId, 77]],
+      [OTHER_USER, [77]],
+    ] as const) {
       const { images } = await getBlockGatedImagesByIds({
         imageIds: [out.imageId, 77],
         browsingLevel: 1,
         appId: APP,
         userId,
       });
-      expect(images.map((i) => i.imageId)).toEqual([77]);
+      expect(images.map((i) => i.imageId)).toEqual(expected);
     }
   });
 
@@ -415,6 +573,7 @@ describe('the scan wait (the generation gate is the definition of ready)', () =>
       waitForGenerationSource({
         url,
         userId: VIEWER,
+        appBlockId: 'apb_alpha',
         deadline: start + GENERATION_SOURCE_DEADLINE_MS,
       })
     );
@@ -435,6 +594,7 @@ describe('the scan wait (the generation gate is the definition of ready)', () =>
       waitForGenerationSource({
         url,
         userId: VIEWER,
+        appBlockId: 'apb_alpha',
         deadline: start + GENERATION_SOURCE_DEADLINE_MS,
       })
     );
@@ -462,7 +622,12 @@ describe('the scan wait (the generation gate is the definition of ready)', () =>
     await scan(902, set);
     const url = generationSourceUrl('33333333-3333-4333-8333-333333333333');
     await expect(
-      waitForGenerationSource({ url, userId: VIEWER, deadline: Date.now() + 1 })
+      waitForGenerationSource({
+        url,
+        userId: VIEWER,
+        appBlockId: 'apb_alpha',
+        deadline: Date.now() + 1,
+      })
     ).rejects.toMatchObject({ message });
   });
 
@@ -604,6 +769,7 @@ describe('🔴 gate seam on the textToImage path (flag on): the persisted url as
         userId: VIEWER,
         entry: 'appBlocks',
         isApiCaller: false,
+        appBlockLog: { appBlockId: 'apb_alpha' },
       });
       return { urls, verdict: 'accepted' };
     } catch (e) {
@@ -668,10 +834,13 @@ describe('🔴 the deadline bounds the whole request, the fetch included', () =>
   });
 
   it('the budget is the request’s: a call whose budget is already spent writes nothing', async () => {
+    // The budget's own timer never fires here, so a spent budget must be refused without it.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const error = await persist({ budgetMs: 0 }).then(
       () => null,
       (e: unknown) => e
     );
+    vi.useRealTimers();
     expect(error).toMatchObject({ code: 'TIMEOUT' });
     expect(createImage).not.toHaveBeenCalled();
   });

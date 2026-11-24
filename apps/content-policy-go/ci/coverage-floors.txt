@@ -1,0 +1,17 @@
+# Statement-coverage floors for the unit run (`go test -race -coverprofile`, each package measured by
+# its own tests), checked by ci/coverage_gate.py in .github/workflows/content-policy-go.yml.
+#
+# Ratchet: each floor is a measured value rounded DOWN to a whole percent. To raise one, read the
+# measured value the "Coverage floors" step prints and set the floor to it. Never lower a floor to
+# get a red run green. cmd/content-policy-go is below the others because run() needs a database past
+# its config-error paths (serve(), the two listeners, is tested on loopback); internal/users' query
+# also runs against a real Postgres in the integration tier (`-tags integration`), which this
+# profile does not include.
+total 91
+cmd/content-policy-go 56
+internal/api 96
+internal/config 100
+internal/dbpool 95
+internal/metrics 100
+internal/policy 98
+internal/users 100

@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types';
 import { requireUserIdParam } from '$lib/server/api-guard';
 import { listGrantableBoxes } from '$lib/server/mystery-box-builder.service';
 import {
-  getAvailableBadges,
+  getGrantBadges,
   getBounties,
   getBountyEntries,
   getShopPurchases,
@@ -29,7 +29,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     bounties,
     bountyEntries,
     shopPurchases,
-    availableBadges,
+    badges,
     grantedBoxes,
     grantableBoxes,
   ] = await Promise.all([
@@ -39,7 +39,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     getBounties(userId),
     getBountyEntries(userId),
     getShopPurchases(userId),
-    getAvailableBadges(userId),
+    getGrantBadges(userId),
     getGrantedBoxes(userId),
     listGrantableBoxes(),
   ]);
@@ -51,7 +51,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     bounties,
     bountyEntries,
     shopPurchases,
-    availableBadges,
+    badges,
     grantedBoxes,
     grantableBoxes,
   });

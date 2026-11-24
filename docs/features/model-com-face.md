@@ -2,7 +2,9 @@
 
 One model, two faces. A creator can give a model a separate title, description and cover for
 civitai.com, which shows no mature content, while civitai.red keeps the original listing. With
-nothing set, both sites show the same listing.
+nothing set, both sites show the same title and description. The cover can still differ without a
+face: a non-mature model's civitai.com showcase cover (`docs/features/version-showcase.md`) applies
+to civitai.com viewers on its own.
 
 The editor presents the two faces as the model's civitai.red card and its civitai.com card.
 
@@ -90,6 +92,18 @@ rating since. A text-scan rating marker the lock replaces is kept on the verdict
 the lock is lifted. The refusal offers the dispute only while the lock is the listing check's. A
 rating marked mature by the text scan alone carries no lock, so the owner can still add a face, but
 the owner cannot unmark it, or remove the face that listed it, without editing the text.
+
+A model whose .red text the text scan reads as mature is not marked mature while it has a complete
+.com face whose text passed the check (`meta.sfwFaceCheckedAt`, a stamp of what was checked and the
+prompt version that checked it; a new prompt version re-checks the face). The verdict is held on
+the model (`meta.comFaceHeldVerdict`) and applied in the same transaction as any write that takes
+the face away: the model is marked mature and the owner gets the rating notice; an already-mature
+model gets the text scan's marker; where the rating is held (minor, POI, Private, SFW-only lock), it
+waits as a moderator's lead. This holds even when the same save edits the .red title or
+description: the rescan that follows a lost face reads the new text, and if it is no longer mature
+it releases the marker, so the owner can change the rating. While a verdict is held, the owner of a
+model already marked mature cannot unmark it, as for the scan's marker; a rescan that reads edited
+text as not mature drops the held verdict.
 
 ### Dispute
 

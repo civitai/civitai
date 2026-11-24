@@ -5,11 +5,18 @@ import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-hel
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export default PublicEndpoint(
   async function handler(req, res) {
     try {
-      const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
+      const session = await getApiAuthSession(
+        { req, res },
+        {
+          whenBanned: 'anonymous',
+          scope: { anyOf: [TokenScope.AIServicesRead, TokenScope.ModelsRead] },
+        }
+      );
 
       // 🔴 civitai#3845 TIER 1. The catch below used to answer EVERY failure with
       // `400 { message: e.message }` on a `PublicEndpoint`, so a

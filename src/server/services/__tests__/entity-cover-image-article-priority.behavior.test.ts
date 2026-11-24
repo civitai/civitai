@@ -35,6 +35,7 @@ beforeAll(async () => {
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text, "nsfwLevel" int DEFAULT 1, width int, height int,
       hash text, "hideMeta" boolean DEFAULT false, meta jsonb, "createdAt" timestamp DEFAULT now(),
@@ -47,9 +48,10 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "publishedAt" timestamp, "userId" int DEFAULT 1,
-      status text DEFAULT 'Published', ingestion text DEFAULT 'Scanned', "bannerId" int
+      status text DEFAULT 'Published', ingestion text DEFAULT 'Scanned', "bannerId" int, availability "Availability" DEFAULT 'Public'
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int, status text, availability "Availability" DEFAULT 'Public',
       mode "ModelModifier", minor boolean NOT NULL DEFAULT false,
@@ -115,6 +117,24 @@ describe('getEntityCoverImage, an Article with content images', () => {
     `);
     expect(await coverOf(1)).toBe(30);
     expect(await coverOf(2)).toBe(31);
+  });
+
+  it('falls back to a content image when the cover is rated Blocked', async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, url, "nsfwLevel") VALUES (20, 'blocked cover', 32), (30, 'content', 16);
+      INSERT INTO "Article" VALUES (1, 20, now());
+      INSERT INTO "ImageConnection" VALUES (30, 1, 'Article');
+    `);
+    expect(await coverOf(1)).toBe(30);
+  });
+
+  it('skips a connected bounty image rated Blocked', async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, url, "nsfwLevel") VALUES (40, 'blocked', 32), (50, 'xxx', 16);
+      INSERT INTO "Bounty" (id) VALUES (7);
+      INSERT INTO "ImageConnection" VALUES (40, 7, 'Bounty'), (50, 7, 'Bounty');
+    `);
+    expect(await coverOf(7, 'Bounty')).toBe(50);
   });
 
   it('serves the banner of an article with no cover', async () => {

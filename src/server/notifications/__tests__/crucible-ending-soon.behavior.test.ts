@@ -52,6 +52,7 @@ async function seedCrucible({
   coverIngestion = 'Scanned' as string | null,
   coverNeedsReview = null as string | null,
   coverTosViolation = false,
+  coverNsfwLevel = 1,
 }: {
   id: number;
   status?: string;
@@ -63,11 +64,12 @@ async function seedCrucible({
   coverIngestion?: string | null;
   coverNeedsReview?: string | null;
   coverTosViolation?: boolean;
+  coverNsfwLevel?: number;
 }) {
   if (coverIngestion)
     await db.query(
-      `INSERT INTO "Image" (id, ingestion, "needsReview", "tosViolation") VALUES ($1, $2, $3, $4)`,
-      [id, coverIngestion, coverNeedsReview, coverTosViolation]
+      `INSERT INTO "Image" (id, ingestion, "needsReview", "tosViolation", "nsfwLevel") VALUES ($1, $2, $3, $4, $5)`,
+      [id, coverIngestion, coverNeedsReview, coverTosViolation, coverNsfwLevel]
     );
   await db.query(
     `INSERT INTO "Crucible" (id, "userId", name, status, ingestion, "textNsfw", "startAt", "endAt", "createdAt", "imageId")
@@ -115,7 +117,8 @@ beforeAll(async () => {
       id INT PRIMARY KEY,
       ingestion "ImageIngestionStatus" NOT NULL,
       "needsReview" TEXT,
-      "tosViolation" BOOLEAN NOT NULL DEFAULT false
+      "tosViolation" BOOLEAN NOT NULL DEFAULT false,
+      "nsfwLevel" INT NOT NULL DEFAULT 1
     );
     CREATE TABLE "UserEngagement" (
       "userId" INT NOT NULL,
@@ -263,6 +266,7 @@ describe('crucible-ending-soon recipients', () => {
     ['it has no cover', { coverIngestion: null }],
     ['its cover is in review', { coverNeedsReview: 'minor' }],
     ['its cover is a ToS violation', { coverTosViolation: true }],
+    ['its cover is unrated', { coverNsfwLevel: 0 }],
   ])('reaches only the host while %s keeps it hidden', async (_, hidden) => {
     await seedCrucible({ id: 10, ...crossing, ...hidden });
     await follow(10, FOLLOWER);

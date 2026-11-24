@@ -112,6 +112,8 @@ import { DIM_MAX, DIM_MIN } from '~/server/schema/blocks/workflow.schema';
 import { ImagePrepError } from '~/shared/utils/canvas-utils';
 // eslint-disable-next-line import/first
 import { isPickSnapshot, pickOriginal } from '~/utils/unreadable-pick';
+// eslint-disable-next-line import/first
+import type { ScannedRowsPath } from '~/components/AppBlocks/generationSourceScannedRows';
 
 const BLOB_URL =
   'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg?sig=x&exp=2030-01-01T00:00:00Z';
@@ -130,12 +132,12 @@ function fileInputEl(): Promise<HTMLInputElement> {
   });
 }
 
-function openModal(onResolved: (r: unknown) => void) {
+function openModal(onResolved: (r: unknown) => void, scannedRows?: ScannedRowsPath | null) {
   renderWithProviders(<DialogProvider />);
   dialogStore.trigger({
     id: 'gen-source-test',
     component: BlockGenerationSourceUploadModal,
-    props: { onResolved },
+    props: { onResolved, scannedRows },
   });
 }
 
@@ -571,5 +573,115 @@ describe('BlockGenerationSourceUploadModal — a pick the photo picker made unre
     await vi.waitFor(() => expect(mocks.resizeImage).toHaveBeenCalledTimes(2));
     expect(mocks.resizeImage.mock.calls[1][0]).toBe(fromFiles);
     expect(document.body.textContent).not.toContain('Files should not exceed');
+  });
+});
+
+/**
+ * The modal's wiring to `toGenerationSource` (whose ON / OFF / query-fails / copy-fails matrix is
+ * unit-tested in `__tests__/generationSourceScannedRows.test.ts`): one flag-ON and one flag-OFF
+ * case, plus what only the modal does — show a refused copy's error, and resolve nothing when it
+ * is closed mid-copy.
+ */
+describe('BlockGenerationSourceUploadModal — scanned rows', () => {
+  const PERSISTED = {
+    url: 'https://image.civitai.com/x/k/original=true/k.jpeg',
+    width: 638,
+    height: 479,
+    imageId: 9001,
+    ready: true,
+  };
+
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    mocks.currentUser = { id: 1 };
+    mocks.uploadConsumerBlob.mockReset().mockResolvedValue({ url: BLOB_URL });
+    mocks.getImageDimensions.mockReset().mockResolvedValue({ width: 640, height: 480 });
+    mocks.resizeImage.mockReset().mockResolvedValue(RESIZED_BLOB);
+    mocks.imageToJpegBlob.mockReset().mockResolvedValue(JPEG_BLOB);
+    mocks.persistMutate.mockReset();
+    mocks.gateMutate.mockReset();
+  });
+
+  const scannedRows = (over: Partial<ScannedRowsPath> = {}) => {
+    const usesScannedRows = vi.fn<ScannedRowsPath['usesScannedRows']>(async () => true);
+    const persist = vi.fn<ScannedRowsPath['persist']>(async () => PERSISTED);
+    if (over.usesScannedRows) usesScannedRows.mockImplementation(over.usesScannedRows);
+    if (over.persist) persist.mockImplementation(over.persist);
+    return { usesScannedRows, persist };
+  };
+
+  test('🔴 flag ON: resolves the server copy of the uploaded blob, with imageId and ready', async () => {
+    const path = scannedRows();
+    const onResolved = vi.fn();
+    openModal(onResolved, path);
+    await userEvent.upload(await fileInputEl(), makeImageFile());
+
+    await vi.waitFor(() => expect(onResolved).toHaveBeenCalledTimes(1));
+    expect(onResolved).toHaveBeenCalledWith(PERSISTED);
+    expect(path.persist.mock.calls).toEqual([[BLOB_URL]]);
+    // The upload is the one it always was; only the answer changes.
+    expect(mocks.uploadConsumerBlob).toHaveBeenCalledWith(JPEG_BLOB);
+    // Never the moderated display path.
+    expect(mocks.persistMutate).not.toHaveBeenCalled();
+    expect(mocks.gateMutate).not.toHaveBeenCalled();
+  });
+
+  test('flag OFF: resolves the blob exactly as before, and never asks for a copy', async () => {
+    const path = scannedRows({ usesScannedRows: vi.fn(async () => false) });
+    const onResolved = vi.fn();
+    openModal(onResolved, path);
+    await userEvent.upload(await fileInputEl(), makeImageFile());
+
+    await vi.waitFor(() => expect(onResolved).toHaveBeenCalledTimes(1));
+    expect(onResolved).toHaveBeenCalledWith({ url: BLOB_URL, width: 640, height: 480 });
+    expect(Object.keys(onResolved.mock.calls[0][0]).sort()).toEqual(['height', 'url', 'width']);
+    expect(path.persist).not.toHaveBeenCalled();
+  });
+
+  test('🔴 flag ON and the copy is REFUSED (a blocked scan): the error shows, nothing resolves', async () => {
+    const path = scannedRows({
+      persist: vi.fn(async () =>
+        Promise.reject(new Error('One of the images for this generation is no longer available.'))
+      ),
+    });
+    const onResolved = vi.fn();
+    openModal(onResolved, path);
+    await userEvent.upload(await fileInputEl(), makeImageFile());
+
+    await expect.element(page.getByText(/no longer available/i)).toBeInTheDocument();
+    expect(onResolved).not.toHaveBeenCalled();
+  });
+
+  test('🔴 closing the modal before the copy is asked for issues no persist', async () => {
+    let answer: (v: boolean) => void = () => undefined;
+    const path = scannedRows({ usesScannedRows: () => new Promise<boolean>((r) => (answer = r)) });
+    const onResolved = vi.fn();
+    openModal(onResolved, path);
+    await userEvent.upload(await fileInputEl(), makeImageFile());
+    await vi.waitFor(() => expect(path.usesScannedRows).toHaveBeenCalledTimes(1));
+
+    useDialogStore.getState().closeAll();
+    await vi.waitFor(() => expect(document.querySelector('input[type="file"]')).toBeNull());
+    answer(true);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(path.persist).not.toHaveBeenCalled();
+    expect(onResolved).not.toHaveBeenCalled();
+  });
+
+  test('closing the modal while the copy is being made resolves nothing', async () => {
+    let finish: (v: typeof PERSISTED) => void = () => undefined;
+    const path = scannedRows({
+      persist: () => new Promise<typeof PERSISTED>((r) => (finish = r)),
+    });
+    const onResolved = vi.fn();
+    openModal(onResolved, path);
+    await userEvent.upload(await fileInputEl(), makeImageFile());
+    await vi.waitFor(() => expect(path.persist).toHaveBeenCalledTimes(1));
+
+    useDialogStore.getState().closeAll();
+    await vi.waitFor(() => expect(document.querySelector('input[type="file"]')).toBeNull());
+    finish(PERSISTED);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(onResolved).not.toHaveBeenCalled();
   });
 });

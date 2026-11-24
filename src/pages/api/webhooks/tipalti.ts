@@ -47,7 +47,7 @@ function parsePayeeStatus(status: unknown) {
         details: { status },
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
 
   return parsed;
@@ -315,23 +315,23 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
       if (
         event.type === 'paymentGroupApproved' &&
         (await hasPayoutHold(cashWithdrawal.userId).catch(async (e: unknown) => {
-          await logToAxiom({
+          logToAxiom({
             name: 'creator-program-payout-hold-unchecked',
             type: 'error',
             userId: cashWithdrawal.userId,
             withdrawalId: cashWithdrawal.id,
             refCode: payment.refCode,
             message: e instanceof Error ? e.message : String(e),
-          }).catch(() => undefined);
+          });
           return false;
         }))
       )
-        await logToAxiom({
+        logToAxiom({
           name: 'creator-program-payout-approved-while-held',
           type: 'error',
           userId: cashWithdrawal.userId,
           withdrawalId: cashWithdrawal.id,
-          refCode: payment.refCode,
+          payload: { refCode: payment.refCode },
         });
 
       // Update the status of the withdrawal request:

@@ -113,6 +113,13 @@ describe('getPostResourceCovers', () => {
     expect((await coversFor(publicBrowsingLevelsFlag))[1]).toBeNull();
   });
 
+  it('skips an image rated Blocked even when the level carries that bit', async () => {
+    mockFetchCovers.mockResolvedValue({
+      1: { modelVersionId: 1, images: [cached(11, 1, 32), cached(12, 1, 16)] },
+    });
+    expect((await coversFor(allBrowsingLevelsFlag | 32))[1]?.id).toBe(12);
+  });
+
   it('gives a mature model with a .com face only its PG and PG-13 images at a .com level', async () => {
     postHas({ 1: model({ nsfw: true, nsfwLevel: 1 | 4, sfwName: 'safe', sfwCoverImageId: 12 }) });
     mockFetchCovers.mockResolvedValue({

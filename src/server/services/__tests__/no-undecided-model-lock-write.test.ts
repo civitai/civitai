@@ -41,6 +41,13 @@ type Decision =
   | { kind: 'exempt'; why: string };
 
 const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
+  'src/server/api-routes/admin/temp/model-nsfw-lock-backfill.ts': {
+    lockWrites: 2,
+    decision: {
+      kind: 'exempt',
+      why: 'the unlock lifts only the nsfw lock under a text-scan marker and keeps the marker, which an unlocked scan rating carries too (markScanRating); the revert puts the lock back only while that marker is still there',
+    },
+  },
   'src/server/services/model.service.ts': {
     lockWrites: 18,
     decision: {
@@ -74,13 +81,6 @@ const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
     decision: {
       kind: 'exempt',
       why: 'a poi/minor lock forces nsfw off and restricts disputes, so a stale marker never reads',
-    },
-  },
-  'src/pages/api/admin/temp/migrate-profanity-nsfw.ts': {
-    lockWrites: 8,
-    decision: {
-      kind: 'exempt',
-      why: 'one-off backfill; the locks it adds carry no marker, which reads as not disputable',
     },
   },
 };

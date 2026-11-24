@@ -16,11 +16,36 @@ import {
 } from '@mantine/core';
 import { IconInfoCircle, IconPencil, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { GateAvailableTo, GatePresentation, GateRule } from '~/shared/generation/gates';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import {
+  showErrorNotification,
+  showSuccessNotification,
+  showWarningNotification,
+} from '~/utils/notifications';
+
+// The rule is saved either way; these say what the API (orchestrator) may not follow yet.
+const warnIfNotCleared = ({
+  orchestrator,
+}: {
+  orchestrator: { cleared: boolean; ecosystemsNotCleared: string[] };
+}) => {
+  if (!orchestrator.cleared)
+    showWarningNotification({
+      title: 'Orchestrator not updated',
+      message:
+        'The change is stored, but generation through the API may follow the old rule until its cache refreshes. Saving the rule (or re-creating a deleted one and deleting it again) retries.',
+    });
+  else if (orchestrator.ecosystemsNotCleared.length)
+    showWarningNotification({
+      title: 'Ecosystems reach the API later',
+      message: `Generation through the API follows this rule for ${orchestrator.ecosystemsNotCleared.join(
+        ', '
+      )} once the orchestrator refreshes those models, not right away.`,
+    });
+};
 import { trpc } from '~/utils/trpc';
 import {
   TargetDetails,
@@ -128,11 +153,12 @@ function GateRuleModal({ rule }: { rule?: GateRule }) {
   };
 
   const saveMutation = trpc.generation.saveGateRule.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
       showSuccessNotification({
         title: 'Saved',
         message: 'Gate rule saved. Changes propagate as caches refresh.',
       });
+      warnIfNotCleared(data);
       invalidate();
       dialog.onClose();
     },
@@ -265,8 +291,9 @@ export function GateRulesSection() {
   const invalidate = useInvalidateGateRules();
   const { data, isLoading } = trpc.generation.getGateRules.useQuery();
   const deleteMutation = trpc.generation.deleteGateRule.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
       showSuccessNotification({ title: 'Deleted', message: 'Gate rule deleted.' });
+      warnIfNotCleared(data);
       invalidate();
     },
     onError: (err) =>
@@ -274,20 +301,17 @@ export function GateRulesSection() {
   });
 
   const confirmDelete = (rule: GateRule) =>
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Delete gate rule?',
-        message: (
-          <Text size="sm">
-            <b>{rule.name || 'Unnamed rule'}</b> stops applying as soon as caches refresh.
-          </Text>
-        ),
-        labels: { cancel: 'Cancel', confirm: 'Delete' },
-        confirmProps: { color: 'red' },
-        // ConfirmDialog awaits this and never catches; onError already reports it.
-        onConfirm: () => deleteMutation.mutateAsync({ id: rule.id }).catch(() => undefined),
-      },
+    openConfirm({
+      title: 'Delete gate rule?',
+      message: (
+        <Text size="sm">
+          <b>{rule.name || 'Unnamed rule'}</b> stops applying as soon as caches refresh.
+        </Text>
+      ),
+      labels: { cancel: 'Cancel', confirm: 'Delete' },
+      confirmProps: { color: 'red' },
+      // onError reports the failure; the catch lets the confirm close either way.
+      onConfirm: () => deleteMutation.mutateAsync({ id: rule.id }).catch(() => undefined),
     });
 
   const rules = [...(data ?? [])].sort((a, b) => a.name.localeCompare(b.name));

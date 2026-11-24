@@ -140,9 +140,17 @@ that runs the real chokepoint — not in either caller's suite. And an assertion
 `toHaveBeenCalledWith(...)` with no `toHaveBeenCalledTimes(1)` beside it does not catch a doubled call
 even from the layer it *can* see.
 
+### Mocks of this repo's own modules
+
+A new or changed `vi.mock` of a module in this repo is a finding. Mock only what crosses the process
+boundary (network, third-party services, the clock, a database PGlite can't serve). An assertion that turns
+red only because a sibling is mocked (`toHaveBeenCalledWith` on the mock) tests wiring, not behaviour, and
+does not count as coverage. The fix to name: extract the rule into a function that takes its inputs, or
+pass the dependency in, and test that, against the PGlite harness where it reads the database.
+
 ### Mocks that are too broad
 
-**Prefer `importOriginal` over hand-listed `vi.mock` exports.** A `vi.mock` listing exports by hand
+**For a boundary module, prefer `importOriginal` over hand-listed `vi.mock` exports.** A `vi.mock` listing exports by hand
 couples the test to the entire transitive import graph of the thing under test, and nothing warns you
 when that graph grows. `pnpm typecheck` and `pnpm lint` stay green; **only CI catches it**.
 
@@ -216,10 +224,10 @@ Worked examples of both fixes: the two retry tests in
 Every guard and what it enforces is listed in `docs/dev/convention-guards.md`; read it. Check a diff
 against the guards it could trip.
 
-⚠️ **`pnpm run test:lint-rules` is a hand-maintained file list**, so a guard can be missing from it and
-fail only in a full-suite run. If the diff adds a guard, check it was wired into the script and into
-`docs/dev/convention-guards.md` (`no-lint-rules-script-drift` checks both), and don't treat a green
-`test:lint-rules` as "all guards passed".
+⚠️ **`pnpm run test:lint-rules` selects `src/server/services/__tests__/no-*` by path prefix and names
+the other guards one by one**, so a guard outside that directory can be missing from it and fail only in a
+full-suite run. If the diff adds a guard, check it is listed in `docs/dev/convention-guards.md` and, if it
+lives elsewhere, named in the script.
 
 If a guard fails, the code gets fixed. An added exemption needs a stated reason in the diff.
 
@@ -244,6 +252,15 @@ and the **convention guards** are never removed in bulk. A human signs off on ea
 - **Guarded is not untouchable.** A guarded test that cannot fail certifies a path nothing checks. Fix
   it; don't skip it, and don't delete it.
 
+### A policy pin that does not say which policy it pins
+
+A test that pins a rule's outcome (who may see or do something, a limit, a default, a gate) must cite the
+decision it pins, a PR or a doc under `docs/`, in its `describe`/`it` name or a one-line comment. When
+the rule changes, whoever changes it greps for that decision to find the tests that pinned the old one;
+an uncited pin is either rewritten to the new literal or left red with nobody knowing it was a guard. A
+new or changed policy test with no citation is a finding (`maintainability`); give the citation it
+should carry when the diff or PR names it. Never ask for an internal ticket id: this repo is public.
+
 ## Also worth a look
 
 - A diff that changes only an expectation's literal to match new code. Either the test pinned detail (it
@@ -257,6 +274,10 @@ and the **convention guards** are never removed in bulk. A human signs off on ea
   module B) in service code: flag them as cost. Exception: where the log or metric is the product, e.g.
   an endpoint whose job is to record client errors, or a metric label that must stay bounded. Not to be
   confused with a **negative control**, which stays.
+- Input-validation tables (a schema rejecting each bad input) and one test per branch where one test
+  through the caller's path covers the behaviour: flag them as cost.
+- A new test file for a subject that already has one. The case belongs in the existing file, with its
+  fixtures.
 - Production code changed only so a test could pass, for an input no caller can produce. Injecting a
   dependency to reach the real boundary is fine; so is fixing what a convention guard flagged.
 
@@ -281,7 +302,9 @@ Do not run `pnpm test` (Playwright) or the component suite as a check.
 to change. Rank by how much false confidence the test creates: a vacuous test guarding a money or auth path
 outranks a brittle assertion on a formatter.
 
-Separate **"this test does not work"** from **"this behaviour is untested"** — they need different work.
+Separate **"this test does not work"**, **"this behaviour is untested"** and **"this test is not worth
+keeping"** (`.claude/rules/testing.md` → Removing tests) — they need different work. A diff without tests
+is not a finding unless it fixes a bug or adds caller-visible behaviour no existing test reaches.
 
 **Findings only.** Do not inventory the tests you read and found sound. Say plainly if the segment's
 tests are solid; that is a real outcome. One exception, one line: a test you found weak but deliberately

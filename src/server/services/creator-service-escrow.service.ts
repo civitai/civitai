@@ -22,6 +22,7 @@ import {
   MAX_LEG_ATTEMPTS,
 } from '~/server/services/placement-escrow.service';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
+import { syncDealReviewPublication } from '~/server/services/creator-service-deal-review-publish';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
@@ -174,6 +175,8 @@ async function holdForReview(
   await tx.$executeRaw`
     INSERT INTO "ServiceDealEvent" ("dealId", "actorId", "type", "comment")
     VALUES (${dealId}::int, -1, 'Disputed'::"ServiceDealEventType", ${reason}::text)`;
+  // A happy review shown before the hold is unshown until it resolves.
+  await syncDealReviewPublication(tx, dealId);
   return true;
 }
 
@@ -335,7 +338,7 @@ export async function runDealLeg(
           dealId,
           leg,
           amount: claimed.amount,
-        }).catch(() => null);
+        });
 
       let transactionId: string;
       try {
@@ -383,6 +386,23 @@ async function markHeld(tx: Db, dealId: number) {
       VALUES (${dealId}::int, -1, 'Held'::"ServiceDealEventType")`;
   return marked?.status ?? null;
 }
+
+/**
+ * A settled deal's review is published, unless it is a happy review of a refunded deal. Outside the receipt's transaction, so a
+ * recount that fails never rolls back the record of a payout; the deals job retries a missed one.
+ */
+const syncReviewAfterSettle = (dealId: number) =>
+  dbWrite
+    .$transaction((tx) => syncDealReviewPublication(tx, dealId))
+    .catch((error) =>
+      logToAxiom({
+        name: 'creator-service-deal-review',
+        type: 'error',
+        message: 'review publication after settlement failed; the deals job will retry',
+        payload: { dealId },
+        error: (error as Error)?.message,
+      })
+    );
 
 async function markSettled(tx: Db, dealId: number, event: 'Refunded' | 'Released') {
   const marked = await tx.$executeRaw`
@@ -451,7 +471,7 @@ export async function holdDeal({
       message: 'hold outcome unknown; reconcile will settle it',
       dealId,
       error: (error as Error)?.message,
-    }).catch(() => null);
+    });
     return 'unknown';
   }
 }
@@ -504,7 +524,7 @@ export async function refundDeal(dealId: number) {
             message: 'refund answered 409 with the hold not fully refunded',
             dealId,
             shortfall,
-          }).catch(() => null);
+          });
           throw new Error(
             `creator service escrow: deal ${dealId} is not fully refunded: ${shortfall}`
           );
@@ -519,6 +539,7 @@ export async function refundDeal(dealId: number) {
     },
     (tx) => markSettled(tx, dealId, 'Refunded')
   );
+  if (paid !== null) await syncReviewAfterSettle(dealId);
   return paid !== null;
 }
 
@@ -593,6 +614,14 @@ export async function reconcileUnconfirmedHolds({ limit = 100 }: { limit?: numbe
             return updated;
           });
           cancelled += closed;
+          if (closed)
+            await notifyServiceDeal({
+              dealId: hold.dealId,
+              notice: 'cancelled',
+              to: 'parties',
+              actorId: -1,
+              key: 'payment_failed',
+            });
         }
       } else {
         // Part of the price moved. Neither marking it held nor cancelling is safe.
@@ -603,7 +632,7 @@ export async function reconcileUnconfirmedHolds({ limit = 100 }: { limit?: numbe
           dealId: hold.dealId,
           charged,
           amount: hold.amount,
-        }).catch(() => null);
+        });
       }
     } catch (error) {
       logToAxiom({
@@ -612,7 +641,7 @@ export async function reconcileUnconfirmedHolds({ limit = 100 }: { limit?: numbe
         message: 'hold reconcile failed',
         dealId: hold.dealId,
         error: (error as Error)?.message,
-      }).catch(() => null);
+      });
     }
   }
 
@@ -654,7 +683,7 @@ export async function sweepServiceDealRefunds({ limit = 100 }: { limit?: number 
         message: 'refund could not be completed',
         dealId: id,
         error: (error as Error)?.message,
-      }).catch(() => null);
+      });
     }
   }
 
@@ -693,7 +722,7 @@ export async function releaseDeal(dealId: number) {
           message: 'claimed release paying a seller who is now banned or deleted',
           dealId,
           sellerId,
-        }).catch(() => null);
+        });
       let transactionId: string | null = null;
       try {
         ({ transactionId } = await createBuzzTransaction(
@@ -735,7 +764,10 @@ export async function releaseDeal(dealId: number) {
       settled = await markSettled(tx, dealId, 'Released');
     }
   );
-  if (settled) await notifyServiceDeal({ dealId, notice: 'paidOut', to: 'seller' });
+  if (settled) {
+    await notifyServiceDeal({ dealId, notice: 'paidOut', to: 'seller' });
+    await syncReviewAfterSettle(dealId);
+  }
   return paid !== null;
 }
 
@@ -767,7 +799,7 @@ export async function sweepServiceDealReleases({ limit = 100 }: { limit?: number
         message: 'release could not be completed',
         dealId: id,
         error: (error as Error)?.message,
-      }).catch(() => null);
+      });
     }
   }
   return { considered: due.length, released };

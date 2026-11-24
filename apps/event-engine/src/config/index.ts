@@ -31,6 +31,7 @@ export const CONTENT_CDC_TABLES = [
   'public.TagsOnModel3D',
   'public.Storyline',
   'public.StorylineChapter',
+  'public.Collection',
 ];
 
 /**
@@ -53,7 +54,44 @@ export const CONTENT_EXCLUDED_COLUMNS = {
   ChallengeEvent: ['description'],
   Crucible: ['description', 'prizePositions', 'allowedResources', 'takedownReason'],
   Model3D: ['description', 'licenseDetails', 'generationParams', 'meta', 'gallerySettings'],
+  Collection: ['description', 'metadata'],
 };
+
+/** A positive integer from the environment, else the fallback (blank, malformed, zero or negative). */
+function positiveInt(raw: string | undefined, fallback: number) {
+  const n = raw?.trim() && /^\d+$/.test(raw.trim()) ? Number(raw) : NaN;
+  return n > 0 ? n : fallback;
+}
+
+export type SecondaryClickhouseConfig = {
+  /** True only when METRICS_SECONDARY_TEE_ENABLED is exactly 'true' AND a URL is set. */
+  enabled: boolean;
+  url: string;
+  username: string;
+  password: string;
+  database: string;
+  /** Rows held for the secondary destination (queued + in flight) before the oldest are dropped. */
+  maxQueueRows: number;
+};
+
+/**
+ * The optional secondary ClickHouse destination for metric events. Off unless BOTH the switch
+ * and the URL are set; read from the environment like every other event-engine setting, so
+ * turning it off is an env change plus a restart.
+ */
+export function secondaryClickhouseConfig(
+  env: NodeJS.ProcessEnv = process.env
+): SecondaryClickhouseConfig {
+  const url = env.CLICKHOUSE_SECONDARY_URL?.trim() ?? '';
+  return {
+    enabled: env.METRICS_SECONDARY_TEE_ENABLED === 'true' && url !== '',
+    url,
+    username: env.CLICKHOUSE_SECONDARY_USERNAME ?? 'default',
+    password: env.CLICKHOUSE_SECONDARY_PASSWORD ?? '',
+    database: env.CLICKHOUSE_SECONDARY_DATABASE?.trim() || 'metrics',
+    maxQueueRows: positiveInt(env.METRICS_SECONDARY_TEE_MAX_QUEUE_ROWS, 200_000),
+  };
+}
 
 export const config = {
   postgres: {
@@ -69,6 +107,7 @@ export const config = {
   clickhouse: {
     url: process.env.CLICKHOUSE_URL!,
     metricEventsTable: process.env.CLICKHOUSE_METRIC_EVENTS_TABLE ?? 'entityMetricEvents_month',
+    secondary: secondaryClickhouseConfig(),
   },
   redis: {
     url: process.env.REDIS_URL!,
@@ -139,8 +178,6 @@ export const config = {
     nodeEnv: process.env.NODE_ENV ?? 'development',
     logLevel: process.env.LOG_LEVEL ?? 'info',
     batchInsertIntervalMs: parseInt(process.env.BATCH_INSERT_INTERVAL ?? '30') * 1000,
-    indexUpdateIntervalMs: parseInt(process.env.INDEX_UPDATE_INTERVAL ?? '300') * 1000,
-    indexUpdateEnabled: process.env.INDEX_UPDATE_ENABLED !== 'false',
     workerPoolSize: parseInt(process.env.WORKER_POOL_SIZE ?? '10'),
     healthCheckPort: parseInt(process.env.HEALTH_CHECK_PORT ?? '3000'),
     // Outbox reconciliation poller. Drains rows a live CDC event never
@@ -203,6 +240,14 @@ export const config = {
       .map((d) => d.trim())
       .filter(Boolean),
     pgPoolMax: vectorInt('VECTOR_PG_POOL_MAX', 4, 1),
+    // Without these a query on a half-open connection never settles: the flush awaiting it holds
+    // every later flush, and the consumer stops with nothing logged.
+    // Longer than the event processor's: a backfill page or a reconcile range read is bigger. 0 = off.
+    pgQueryTimeoutMs: envTimeoutMs(process.env.VECTOR_PG_QUERY_TIMEOUT_MS, 60_000),
+    // Backfill and reconcile Jobs read bigger slices (a reconcile bucket is 100k ids through the
+    // eligibility filter), and a slow one there only delays a Job, so their bound is looser.
+    pgBatchQueryTimeoutMs: envTimeoutMs(process.env.VECTOR_PG_BATCH_QUERY_TIMEOUT_MS, 300_000),
+    pgConnectionTimeoutMs: envTimeoutMs(process.env.VECTOR_PG_CONNECTION_TIMEOUT_MS, 30_000),
     // Off: nothing embeds (a paid call). The consumer and reconcile still delete and update
     // payloads; backfill refuses to run. Embedding also needs CDC_IMAGE_ENABLED, see
     // embedBlockedReason in vector-sync/sync.ts.
@@ -230,6 +275,15 @@ export const config = {
     storylineAlias: process.env.VECTOR_STORYLINE_ALIAS ?? 'storylines_semantic',
     model3dCollection: process.env.VECTOR_MODEL3D_COLLECTION ?? 'models3d_wemm2b_256_v1',
     model3dAlias: process.env.VECTOR_MODEL3D_ALIAS ?? 'models3d_semantic',
+    collectionCollection: process.env.VECTOR_COLLECTION_COLLECTION ?? 'collections_wemm2b_256_v1',
+    collectionAlias: process.env.VECTOR_COLLECTION_ALIAS ?? 'collections_semantic',
+    bountyCollection: process.env.VECTOR_BOUNTY_COLLECTION ?? 'bounties_wemm2b_256_v1',
+    bountyAlias: process.env.VECTOR_BOUNTY_ALIAS ?? 'bounties_semantic',
+    videoCollection: process.env.VECTOR_VIDEO_COLLECTION ?? 'videos_wemm2b_256_v1',
+    videoAlias: process.env.VECTOR_VIDEO_ALIAS ?? 'videos_semantic',
+    // Each pass reads Image filtered to videos; cheap only once Image_video_id_idx exists.
+    videoRefreshMinutes: vectorInt('VECTOR_VIDEO_REFRESH_MINUTES', 720, 5),
+    videoRefreshPointsOnly: process.env.VECTOR_VIDEO_REFRESH_POINTS_ONLY === 'true',
     // Image CDN base the edge URLs are built on (the main app's NEXT_PUBLIC_IMAGE_LOCATION).
     imageLocation: process.env.VECTOR_IMAGE_LOCATION ?? '',
     orchestratorEndpoint: process.env.ORCHESTRATOR_ENDPOINT ?? '',

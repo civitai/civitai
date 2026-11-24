@@ -330,7 +330,7 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
     mocks.s3Send.mock.calls.map((c) => (c[0] as { input: { Key: string } }).input.Key);
   const recordedOwners = () =>
     vi
-      .mocked(redisMock.sysRedis.set)
+      .mocked(redisMock.redis.set)
       .mock.calls.filter((c) => String(c[0]).startsWith('system:upload-key-owner:'));
   beforeEach(() => track.imageUploadRequest.mockClear());
 

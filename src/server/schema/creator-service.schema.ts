@@ -12,7 +12,8 @@ import {
   SERVICE_OFFERING_RATINGS,
   SERVICE_TITLE_MIN,
 } from '~/shared/constants/creator-service.constants';
-import { ServicePreviewKind } from '~/shared/utils/prisma/enums';
+import { SERVICE_LICENSE_CUSTOM_TEXT_MAX } from '~/shared/constants/creator-service-license.constants';
+import { ServiceLicensePreset, ServicePreviewKind } from '~/shared/utils/prisma/enums';
 import { imageReferenceInputSchema } from '~/server/schema/image.schema';
 import type { ServiceOfferingTakedownReason } from '~/server/common/moderation-helpers';
 import { serviceOfferingTakedownReasons } from '~/server/common/moderation-helpers';
@@ -45,6 +46,8 @@ export const upsertServiceOfferingSchema = z.object({
   revisionsIncluded: z.number().int().min(0).max(SERVICE_REVISIONS_MAX),
   maxOpenDeals: z.number().int().min(SERVICE_OPEN_DEALS_MIN).max(SERVICE_OPEN_DEALS_MAX),
   previewKind: z.enum(ServicePreviewKind),
+  // Buyers may attach the delivered work to their review; omitted leaves it as it is.
+  allowReviewWork: z.boolean().optional(),
   // The seller's rating. The offering's shown rating is never below what its content checks find.
   declaredNsfwLevel: z
     .number()
@@ -57,6 +60,10 @@ export const upsertServiceOfferingSchema = z.object({
     .optional(),
   // null removes the cover; omitted leaves it as it is.
   coverImage: imageReferenceInputSchema.nullish(),
+  // Omitted leaves the license as it is. Only a seller with `creatorServicesNext` may set it.
+  licensePreset: z.enum(ServiceLicensePreset).nullish(),
+  licenseCustomText: z.string().trim().max(SERVICE_LICENSE_CUSTOM_TEXT_MAX).nullish(),
+  licenseAllowResale: z.boolean().optional(),
   // Saves as a draft unless set; publishing goes through the same sell gate as activating.
   publish: z.boolean().default(false),
   // The seller-terms version the seller ticked; publishing is refused without the current one.
@@ -72,14 +79,32 @@ export const setServiceOfferingStatusSchema = z.object({
   affirmedTermsVersion: z.string().optional(),
 });
 
-export const serviceOfferingFeedSorts = ['newest', 'price_asc', 'price_desc'] as const;
+// `happy` is offered only behind creatorServicesNext; the router reads it as `newest` otherwise.
+export const serviceOfferingFeedSorts = ['newest', 'price_asc', 'price_desc', 'happy'] as const;
 export type ServiceOfferingFeedSort = (typeof serviceOfferingFeedSorts)[number];
 export type GetServiceOfferingFeedInput = z.infer<typeof getServiceOfferingFeedSchema>;
 export const getServiceOfferingFeedSchema = z.object({
   browsingLevel: z.number().int().optional(),
   sort: z.enum(serviceOfferingFeedSorts).default('newest'),
+  /** The header bar's text, matched against title and description. Blank is no filter. */
+  query: z
+    .string()
+    .max(500) // what the bar may put in `?query=`
+    .transform((value) => value.trim().slice(0, 100) || undefined)
+    .optional(),
   cursor: z.number().int().positive().optional(),
   limit: z.number().int().min(1).max(50).default(24),
+});
+
+export type GetServiceOfferingByIdInput = z.infer<typeof getServiceOfferingByIdSchema>;
+export const getServiceOfferingByIdSchema = z.object({
+  id: z.number().int().positive(),
+  browsingLevel: z.number().int().optional(),
+});
+
+export type GetServiceOfferingReviewsInput = z.infer<typeof getServiceOfferingReviewsSchema>;
+export const getServiceOfferingReviewsSchema = getServiceOfferingByIdSchema.extend({
+  cursor: z.number().int().positive().optional(),
 });
 
 export type GetShopServiceOfferingsInput = z.infer<typeof getShopServiceOfferingsSchema>;

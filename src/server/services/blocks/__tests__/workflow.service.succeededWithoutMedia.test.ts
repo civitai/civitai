@@ -11,6 +11,9 @@ import {
 import { getStepByOrchestratorType, postureProducesMedia } from '../steps';
 import type { BlockWorkflowSnapshot } from '~/server/schema/blocks/workflow.schema';
 
+/** Every browsing level, so no fixture output is above the ceiling. */
+const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31, serving: false, mint: null };
+
 /**
  * Which finished workflows `civitai_app_block_succeeded_without_media_total`
  * counts: those with a bridge-submitted MEDIA step that succeeded with no media
@@ -34,10 +37,19 @@ function wf(steps: unknown[], over: Record<string, unknown> = {}) {
   } as never;
 }
 const step = (s: Record<string, unknown>) => ({ status: 'succeeded', metadata: {}, ...s });
-const blob = (url: string, available = true) => ({ id: url, type: 'image', url, available });
+const blob = (url: string, available = true) => ({
+  id: url,
+  type: 'image',
+  url,
+  available,
+  nsfwLevel: 'pg',
+});
 
 function result(workflow: never, extra: Partial<BlockWorkflowSnapshot> = {}) {
-  return classifySucceededWithoutMedia(workflow, { ...snapshotFromWorkflow(workflow), ...extra });
+  return classifySucceededWithoutMedia(workflow, {
+    ...snapshotFromWorkflow(workflow, TEST_OUTPUT_CEILING),
+    ...extra,
+  });
 }
 /** The `step_type` label, or null when not counted. */
 function classify(workflow: never, extra: Partial<BlockWorkflowSnapshot> = {}): string | null {
@@ -73,7 +85,7 @@ describe('classifySucceededWithoutMedia', () => {
     const w = wf([
       step({ $type: 'comfy', name: 's1', output: { blobs: [blob('https://cdn/c')] } }),
     ]);
-    expect(snapshotFromWorkflow(w).imageUrls).toEqual(['https://cdn/c']);
+    expect(snapshotFromWorkflow(w, TEST_OUTPUT_CEILING).imageUrls).toEqual(['https://cdn/c']);
     expect(classify(w)).toBeNull();
   });
 
@@ -135,7 +147,7 @@ describe('classifySucceededWithoutMedia', () => {
       step({ $type: 'imageGen', name: 'b', output: { images: [] } }),
     ]);
     // The snapshot is not empty — the comfy image reached it.
-    expect(snapshotFromWorkflow(w).imageUrls).toEqual(['https://cdn/a']);
+    expect(snapshotFromWorkflow(w, TEST_OUTPUT_CEILING).imageUrls).toEqual(['https://cdn/a']);
     expect(classify(w)).toBe('imageGen');
   });
 
@@ -169,7 +181,7 @@ describe('classifySucceededWithoutMedia', () => {
 
     it('NOT counted when the step returned non-blob output (it reached stepOutputs)', () => {
       const w = wf([step({ $type: 'someVendorStep', name: BLOCK_STEP_NAME, output: { n: 1 } })]);
-      expect(snapshotFromWorkflow(w).stepOutputs).toHaveLength(1);
+      expect(snapshotFromWorkflow(w, TEST_OUTPUT_CEILING).stepOutputs).toHaveLength(1);
       expect(classify(w)).toBeNull();
     });
 

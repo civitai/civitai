@@ -166,12 +166,14 @@ describe('POST /api/v1/block-tokens — auth: "oauth" manifests', () => {
     mockHub.syncOauthConsentFromGrant.mockResolvedValue({
       clientId: 'appblk-hello-page',
       scope: TokenScope.UserRead | TokenScope.ModelsRead,
+      impersonatedBy: null,
     });
     mockHub.mintAppToken.mockResolvedValue({
       accessToken: 'civ_oauth_access',
       expiresAt: '2099-01-01T00:15:00Z',
       expiresIn: 900,
       scope: TokenScope.UserRead | TokenScope.ModelsRead,
+      impersonatedBy: null,
     });
   });
 
@@ -207,6 +209,7 @@ describe('POST /api/v1/block-tokens — auth: "oauth" manifests', () => {
       userId: 42,
       clientId: 'appblk-hello-page',
       scope: TokenScope.UserRead | TokenScope.ModelsRead,
+      impersonatedBy: null,
     });
     expect(mockTokenService.sign).not.toHaveBeenCalled();
     expect(res._body).toMatchObject({
@@ -376,7 +379,7 @@ describe('POST /api/v1/block-tokens — auth: "oauth" manifests', () => {
       // bitmask carried `TokenScope.UserRead`.
       expect(res._body.missingScopes).toContain('user:read:self');
       const mintedWithUserRead = mockHub.mintAppToken.mock.calls.filter(
-        ([args]) => ((args as { scope: number }).scope & TokenScope.UserRead) !== 0
+        ([args]) => ((args as { scope: bigint }).scope & TokenScope.UserRead) !== 0n
       );
       expect(mintedWithUserRead).toEqual([]);
       // …and the platform must not have written the consent record it then validates.
@@ -405,7 +408,7 @@ describe('POST /api/v1/block-tokens — auth: "oauth" manifests', () => {
       expect(res._status).toBe(200);
       expect(res._body.missingScopes).toContain('user:read:self');
       const mintedWithUserRead = mockHub.mintAppToken.mock.calls.filter(
-        ([args]) => ((args as { scope: number }).scope & TokenScope.UserRead) !== 0
+        ([args]) => ((args as { scope: bigint }).scope & TokenScope.UserRead) !== 0n
       );
       expect(mintedWithUserRead).toEqual([]);
       expect(mockDbWrite.oauthConsent.upsert).not.toHaveBeenCalled();
@@ -473,6 +476,7 @@ describe('POST /api/v1/block-tokens — auth: "oauth" manifests', () => {
         userId: 42,
         clientId: 'appblk-hello-page',
         scope: TokenScope.UserRead | TokenScope.ModelsRead,
+        impersonatedBy: null,
       });
       expect(mockDbWrite.oauthConsent.upsert.mock.calls[0][0].update.scope).toBe(
         TokenScope.UserRead | TokenScope.ModelsRead

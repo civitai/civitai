@@ -1,3 +1,8 @@
+import { constants } from '~/server/common/constants';
+import {
+  SERVICE_FINAL_VIDEO_NOT_MP4_OR_WEBM,
+  SERVICE_FINAL_VIDEO_TOO_LARGE,
+} from '~/shared/constants/creator-services.constants';
 import { describe, expect, it } from 'vitest';
 import {
   acceptDeliveryBlocked,
@@ -12,6 +17,7 @@ import {
   deliverWait,
   filesPollMs,
   sellerFileStatus,
+  previewAccept,
   sortPicked,
   uploadRefusal,
   uploadSlotsLeft,
@@ -45,14 +51,39 @@ describe('upload checks before sending', () => {
     );
   });
 
+  it('offers and keeps a video preview only on a deal that takes one', () => {
+    expect(previewAccept('Video')).toContain('video/mp4');
+    expect(previewAccept('Image')).not.toContain('video/');
+    const clip = { name: 'a.mp4', type: 'video/mp4', size: MB };
+    expect(sortPicked('Preview', [clip], 1, 'Video').send).toEqual([clip]);
+    expect(sortPicked('Preview', [clip], 1, 'Image').refused).toHaveLength(1);
+  });
+
+  it('takes an MP4 or WebM preview only where the deal takes a video preview, under 64 MB', () => {
+    const clip = { name: 'a.mp4', type: 'video/mp4', size: 30 * MB };
+    expect(uploadRefusal('Preview', clip, 'Video')).toBeNull();
+    expect(uploadRefusal('Preview', { ...clip, type: 'video/webm' }, 'Video')).toBeNull();
+    expect(uploadRefusal('Preview', clip, 'Image')).toMatch(/JPEG, PNG, WebP or GIF/);
+    expect(uploadRefusal('Preview', { ...clip, size: 65 * MB }, 'Video')).toMatch(/max 64 MB/);
+    expect(uploadRefusal('Preview', { ...clip, type: 'video/quicktime' }, 'Video')).toMatch(
+      /MP4 or WebM/
+    );
+  });
+
   it('takes finals by extension, refuses video and unknown types, and caps the size', () => {
     expect(uploadRefusal('Final', { name: 'lora.safetensors', type: '', size: MB })).toBeNull();
     expect(
       uploadRefusal('Final', { name: 'Pack.ZIP', type: 'application/zip', size: MB })
     ).toBeNull();
-    expect(uploadRefusal('Final', { name: 'clip.mp4', type: 'video/mp4', size: MB })).toMatch(
-      /\.mp4 files can't be delivered/
-    );
+    expect(uploadRefusal('Final', { name: 'clip.mp4', type: 'video/mp4', size: MB })).toBeNull();
+    expect(uploadRefusal('Final', { name: 'clip.webm', type: 'video/webm', size: MB })).toBeNull();
+    const videoMax = constants.mediaUpload.maxVideoFileSize;
+    expect(
+      uploadRefusal('Final', { name: 'clip.mp4', type: 'video/mp4', size: videoMax })
+    ).toBeNull();
+    expect(
+      uploadRefusal('Final', { name: 'clip.mp4', type: 'video/mp4', size: videoMax + 1 })
+    ).toBe(SERVICE_FINAL_VIDEO_TOO_LARGE);
     expect(uploadRefusal('Final', { name: 'README', type: '', size: 10 })).toMatch(/\(none\)/);
     expect(
       uploadRefusal('Final', { name: 'big.zip', type: 'application/zip', size: 2 * 1024 * MB })
@@ -61,13 +92,13 @@ describe('upload checks before sending', () => {
 
   it('sets refused picks aside before counting slots, so a bad pick never takes a good one', () => {
     const picked = [
-      { name: 'a.mp4', type: 'video/mp4', size: 1 },
+      { name: 'a.exe', type: 'application/octet-stream', size: 1 },
       { name: 'b.zip', type: 'application/zip', size: 1 },
       { name: 'c.zip', type: 'application/zip', size: 1 },
     ];
     const sorted = sortPicked('Final', picked, 1);
     expect(sorted.send.map((f) => f.name)).toEqual(['b.zip']);
-    expect(sorted.refused.map((f) => f.name)).toEqual(['a.mp4']);
+    expect(sorted.refused.map((f) => f.name)).toEqual(['a.exe']);
     expect(sorted.overflow).toBe(1);
   });
 
@@ -257,5 +288,27 @@ describe('buyer attachments', () => {
     expect(
       uploadRefusal('Attachment', { name: 'set.zip', type: 'application/zip', size: MB })
     ).toBeNull();
+  });
+});
+
+describe('video copy', () => {
+  const MB2 = 1024 * 1024;
+  it.each([
+    ['clip.mov', 'video/quicktime'],
+    ['clip.mkv', 'video/x-matroska'],
+    ['clip.avi', 'video/x-msvideo'],
+    ['clip.bin', 'video/mp4'],
+  ])('never tells a seller to zip a video (%s)', (name, type) => {
+    const refusal = uploadRefusal('Final', { name, type, size: MB2 });
+    expect(refusal).toBe(SERVICE_FINAL_VIDEO_NOT_MP4_OR_WEBM);
+    expect(refusal).not.toMatch(/zip/i);
+  });
+
+  it.each([
+    ['clip.mp4', 'video/mp4'],
+    ['clip.mov', 'video/quicktime'],
+  ])('refuses a video attachment (%s) without suggesting a zip', (name, type) => {
+    const refusal = uploadRefusal('Attachment', { name, type, size: MB2 });
+    expect(refusal).toBe("Videos can't be attached.");
   });
 });

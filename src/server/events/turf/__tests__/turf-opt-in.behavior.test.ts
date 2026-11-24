@@ -62,8 +62,11 @@ const DELETED = 6;
 beforeAll(async () => {
   await pg.exec(`
     CREATE TABLE "User" (
-      id int PRIMARY KEY, settings jsonb, "bannedAt" timestamptz, "deletedAt" timestamptz
+      id int PRIMARY KEY, settings jsonb, "bannedAt" timestamptz, "deletedAt" timestamptz,
+      "createdAt" timestamptz DEFAULT '2020-01-01', meta jsonb, flags int NOT NULL DEFAULT 0
     );
+    -- Read by getTurfStock's too-new check.
+    CREATE TABLE "CreatorMilestone" (key text PRIMARY KEY, threshold numeric);
     CREATE TABLE "EventCosmeticPlacement" (
       id serial PRIMARY KEY, event text NOT NULL, "userId" int NOT NULL, "endedAt" timestamp
     );

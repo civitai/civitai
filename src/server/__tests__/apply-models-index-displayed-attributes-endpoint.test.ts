@@ -66,11 +66,11 @@ vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }))
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/meilisearch/client', () => ({
   searchClient: { index },
-  metricsSearchClient: null,
 }));
 
-const handler = (await import('~/pages/api/admin/temp/apply-models-index-displayed-attributes'))
-  .default;
+const handler = (
+  await import('~/server/api-routes/admin/temp/apply-models-index-displayed-attributes')
+).default;
 
 function call(query: Record<string, string>, token = 'test-token') {
   const req = { method: 'POST', query: { token, ...query }, headers: {} } as never;
@@ -134,7 +134,10 @@ describe('apply-models-index-displayed-attributes', () => {
     // explains why the variable form is wrong — the fourth time in this changeset that a guard
     // matched the text documenting the hazard it greps for. Scope the assertion to the construct.
     const route = readFileSync(
-      join(process.cwd(), 'src/pages/api/admin/temp/apply-models-index-displayed-attributes.ts'),
+      join(
+        process.cwd(),
+        'src/server/api-routes/admin/temp/apply-models-index-displayed-attributes.ts'
+      ),
       'utf8'
     );
     const urlLines = route.split('\n').filter((l) => l.includes('settings/displayed-attributes'));

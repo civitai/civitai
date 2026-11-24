@@ -1,6 +1,6 @@
 import type { InputWrapperProps, MantineSize } from '@mantine/core';
 import { Group, Input, Text } from '@mantine/core';
-import { openModal } from '@mantine/modals';
+import { openContentDialog } from '~/components/Dialog/Common/ContentDialog';
 import type { RichTextEditorProps } from '@mantine/tiptap';
 import { Link, RichTextEditor as RTE } from '@mantine/tiptap';
 import { IconAlertTriangle, IconUnlink } from '@tabler/icons-react';
@@ -32,12 +32,13 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { EmbedNode } from '~/shared/tiptap/embed.node';
-import { SizedImage } from '~/shared/tiptap/sized-image.node';
+import { SizedImageEditNode } from './SizedImageEditNode';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
 import { StickerEditNode } from '~/components/TipTap/StickerNode';
 import { useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { InsertStickerControl } from '~/components/RichTextEditor/InsertStickerControl';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
+import { TextColorControl } from './TextColorControl';
 import { TextAlignControl } from '~/components/RichTextEditor/TextAlignControl';
 import { TextAlignExtension } from '~/shared/tiptap/text-align';
 import { InsertBlurbControl } from '~/components/RichTextEditor/InsertBlurbControl';
@@ -74,7 +75,7 @@ const mapEditorSize: Omit<Record<MantineSize, CSSProperties>, 'xs'> = {
 };
 
 function openLinkWhitelistRequestModal() {
-  return openModal({
+  return openContentDialog({
     title: (
       <Group gap="xs">
         <IconAlertTriangle color="gold" />
@@ -144,7 +145,7 @@ export function RichTextEditor({
   stickyToolbar,
   toolbarOffset = 0,
   inputClasses,
-  toolbarEnd,
+  compactToolbar = false,
   headingLevels = [1, 2, 3],
   ...props
 }: Props) {
@@ -250,8 +251,8 @@ export function RichTextEditor({
       );
     if (addVideo) {
       arr.push(
-        EdgeMediaEditNode.configure({ accepts, inline: true }),
-        SizedImage.configure({ inline: true })
+        EdgeMediaEditNode.configure({ accepts, inline: true, resizable: addImageSize }),
+        SizedImageEditNode.configure({ inline: true, resizable: addImageSize })
       );
     } else if (addImages) {
       arr.push(CustomImage.configure({ inline: true }));
@@ -485,13 +486,15 @@ export function RichTextEditor({
                 <RTE.ControlsGroup>
                   <RTE.Bold />
                   <RTE.Italic />
-                  <RTE.Underline />
-                  <RTE.Strikethrough />
-                  <RTE.ClearFormatting />
-                  {!withoutBlockContainers && <RTE.CodeBlock />}
-                  {addColors && (
-                    <RTE.ColorPicker colors={[...constants.richTextEditor.presetColors]} />
+                  {!compactToolbar && (
+                    <>
+                      <RTE.Underline />
+                      <RTE.Strikethrough />
+                      <RTE.ClearFormatting />
+                      {!withoutBlockContainers && <RTE.CodeBlock />}
+                    </>
                   )}
+                  {addColors && <TextColorControl colors={constants.richTextEditor.presetColors} />}
                 </RTE.ControlsGroup>
               )}
 
@@ -511,7 +514,7 @@ export function RichTextEditor({
               {addLink && (
                 <RTE.ControlsGroup>
                   <RTE.Link />
-                  <RTE.Unlink />
+                  {!compactToolbar && <RTE.Unlink />}
                 </RTE.ControlsGroup>
               )}
 
@@ -553,12 +556,6 @@ export function RichTextEditor({
                 <RTE.ControlsGroup>
                   <InsertBlurbControl />
                 </RTE.ControlsGroup>
-              )}
-              {toolbarEnd && (
-                // Phone: its own row above the controls. Wider: the toolbar's right end.
-                <div className="order-first flex w-full items-center justify-end gap-2 sm:order-none sm:ml-auto sm:w-auto">
-                  {toolbarEnd}
-                </div>
               )}
             </RTE.Toolbar>
           )}
@@ -662,8 +659,11 @@ export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'
     stickyToolbar?: boolean;
     toolbarOffset?: number;
     inputClasses?: string;
-    /** The surface's own actions (save state, delete), at the toolbar's right end. */
-    toolbarEnd?: React.ReactNode;
+    /**
+     * A short toolbar at every width, to fit one row on a phone: bold, italic and the link control only (an empty address in the link
+     * popover removes the link), for a surface that offers little markup.
+     */
+    compactToolbar?: boolean;
     /** The heading levels `heading` offers, for a surface whose stored allowlist omits some. */
     headingLevels?: Array<1 | 2 | 3>;
   };

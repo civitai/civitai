@@ -46,6 +46,7 @@
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import ReviewStatusPanel from '$lib/components/ReviewStatusPanel.svelte';
+  import HelpTip from '$lib/components/HelpTip.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
   import {
@@ -61,14 +62,13 @@
   import { mediaCount } from '$lib/data/trainingModels';
   import { directDatasetUrl, handoffReuse, isPairDataset, toReuseItems } from '$lib/reuse';
   import { extOfAir } from '$lib/media';
-  import { buildDatasetZip, saveBlob } from '$lib/dataset-zip';
+  import { buildDatasetZip, runZipTrigger, saveBlob } from '$lib/dataset-zip';
   import { slugify } from '$lib/slug';
   import { RETENTION_DAYS, type EpochArchive } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
-  import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
+  import { MatureRepriceError } from '$lib/mature-charge';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { buzzMode } from '$lib/buzz-mode.svelte';
-  import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
 
   let {
@@ -321,7 +321,8 @@
           ext: (item.path && extOfAir(item.path)) || airExt(item.air),
           caption: item.caption,
           load: () => fetchDatasetBlob(item.air),
-        }))
+        })),
+        runZipTrigger(d.settings.training)
       );
       if (!blob) {
         downloadError = "Couldn't fetch the dataset images — nothing to download.";
@@ -493,9 +494,7 @@
   );
   const quote = $derived(continueQuoteState.value ?? null);
 
-  // A mature dataset's continuation is charged in Yellow (beyond a member's Blue) only once the user
-  // ticks this; the server refuses the submit without it. Changing the price or epochs un-ticks it.
-  // The submit's own check can find mature images the quote's missed; its refusal sets this.
+  // The submit's own rating can find mature images the quote missed; its refusal raises this.
   let refusedFurther = $state<{ run: string; count: number } | null>(null);
   const furtherMature = $derived(
     Math.max(
@@ -505,23 +504,13 @@
   );
   const furtherSpend = $derived(
     quote?.cost != null
-      ? nonBlueSpend(quote.cost, buzzMode.value, {
-          mature: furtherMature > 0,
-          member: hostConfig().isPaidMember === true,
-        })
+      ? nonBlueSpend(quote.cost, buzzMode.value, { mature: furtherMature > 0 })
       : null
   );
-  // The run id is in the key so a tick never carries over to another run with the same price.
-  const furtherAckKey = $derived.by(() => {
-    const key = matureAckKey(quote?.cost, furtherSpend?.amount, furtherMature);
-    return key && `${workflowIdKey}:${key}`;
-  });
-  let furtherAckedFor = $state<string | null>(null);
-  const furtherAckMissing = $derived(matureAckMissing(furtherAckedFor, furtherAckKey));
 
   async function doTrainFurther() {
     // Never submit without a shown price — the confirm cost the user sees must be the one that gets charged.
-    if (!publishTarget || continuing || quote?.cost == null || furtherAckMissing) return;
+    if (!publishTarget || continuing || quote?.cost == null) return;
     continuing = true;
     continueError = '';
     try {
@@ -530,13 +519,12 @@
         publishTarget.number,
         Number(furtherEpochs) || 5,
         buzzMode.currencies,
-        furtherAckKey !== null
+        furtherMature
       );
       await navigate({ view: 'run', workflowId: id });
     } catch (err) {
       continueError = err instanceof Error ? err.message : 'Could not start training';
-      if (err instanceof MatureAckRequiredError)
-        refusedFurther = { run: workflowIdKey, count: err.matureCount };
+      if (err instanceof MatureRepriceError) refusedFurther = { run: workflowIdKey, count: err.matureCount };
       else confirming = false;
     } finally {
       continuing = false;
@@ -624,7 +612,6 @@
     archiveError = '';
     archiveParts = [];
     showLineage = false;
-    furtherAckedFor = null;
     ownRights = false;
     shareDataset = false;
     shareTouched = false;
@@ -760,14 +747,10 @@
         <div class="flex items-center gap-1.5">
           <dt class="text-dark-2">Expires</dt>
           <dd class="m-0 {expiresSoon ? 'text-buzz' : 'text-dark-0'}">
-            <Tooltip.Provider>
-              <Tooltip.Root>
-                <Tooltip.Trigger class="cursor-default">{expiresLabel}</Tooltip.Trigger>
-                <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
-                  Download or publish anything you want to keep.
-                </Tooltip.Content>
-              </Tooltip.Root>
-            </Tooltip.Provider>
+            <HelpTip class="cursor-default">
+              {expiresLabel}
+              {#snippet content()}Download or publish anything you want to keep.{/snippet}
+            </HelpTip>
           </dd>
         </div>
       {/if}
@@ -1061,20 +1044,17 @@
           <div class="flex items-baseline gap-2">
             <h2 class="m-0 text-lg font-semibold text-white">Epoch {featured.number}</h2>
             {#if featured === recommended}
-              <Tooltip.Provider>
-                <Tooltip.Root>
-                  <Tooltip.Trigger
-                    class="cursor-default rounded bg-buzz/15 px-2 py-0.5 text-xs font-semibold text-buzz"
-                  >
-                    <IconStarFilled size={10} class="mr-0.5 inline" />Recommended
-                  </Tooltip.Trigger>
-                  <Tooltip.Content class="max-w-[280px] text-xs" portalProps={portalProps()}>
-                    This epoch has had the most training time applied to it and, in most cases, is
-                    the best choice. Models made with smaller datasets may overbake at high training
-                    time, so a lower epoch can be better.
-                  </Tooltip.Content>
-                </Tooltip.Root>
-              </Tooltip.Provider>
+              <HelpTip
+                class="cursor-default rounded bg-buzz/15 px-2 py-0.5 text-xs font-semibold text-buzz"
+                contentClass="max-w-[280px] text-xs"
+              >
+                <IconStarFilled size={10} class="mr-0.5 inline" />Recommended
+                {#snippet content()}
+                  This epoch has had the most training time applied to it and, in most cases, is
+                  the best choice. Models made with smaller datasets may overbake at high training
+                  time, so a lower epoch can be better.
+                {/snippet}
+              </HelpTip>
             {/if}
           </div>
           {#if featured.modelUrl}
@@ -1256,7 +1236,7 @@
               {#if confirming}
                 <Button
                   onclick={doTrainFurther}
-                  disabled={continuing || quote?.cost == null || furtherAckMissing}
+                  disabled={continuing || quote?.cost == null}
                 >
                   {#if continuing}Starting…{:else}Confirm{#if quote?.cost != null}
                       <span class="ml-1 inline-flex items-center"
@@ -1291,34 +1271,12 @@
                 pricing…
               {/if}
             </div>
-            {#if furtherAckKey}
-              <div
-                class="flex max-w-sm items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
-              >
-                <Checkbox
-                  id="ack-further-mature"
-                  bind:checked={
-                    () => furtherAckedFor === furtherAckKey,
-                    (v) => (furtherAckedFor = v ? furtherAckKey : null)
-                  }
-                  class="mt-0.5 shrink-0"
-                />
-                <label for="ack-further-mature" class="cursor-pointer">
-                  {furtherMature}
-                  {furtherMature === 1 ? 'image in this dataset is' : 'images in this dataset are'} rated
-                  <strong>mature</strong>.
-                  {#if furtherSpend}
-                    I understand {furtherSpend.uncertain ? 'up to ' : ''}<strong
-                      >{furtherSpend.amount.toLocaleString()} Yellow Buzz</strong
-                    > will be charged.
-                  {:else if buzzMode.blueFirst}
-                    I understand anything beyond my <span class="text-blue-400">Blue</span> Buzz is
-                    charged in <span class="text-yellow-400">Yellow</span> Buzz.
-                  {:else}
-                    I understand it is charged in <span class="text-yellow-400">Yellow</span> Buzz.
-                  {/if}
-                </label>
-              </div>
+            {#if furtherMature > 0 && hostConfig().isPaidMember !== true && buzzMode.blueFirst}
+              <p class="max-w-sm text-xs leading-snug text-dark-2">
+                Without a membership, mature sample images from runs paid with
+                <span class="text-blue-400">Blue</span> Buzz are blurred. Turn off Spend Blue first to
+                pay in <span class="text-yellow-400">Yellow</span> and see them.
+              </p>
             {/if}
           </div>
         </div>

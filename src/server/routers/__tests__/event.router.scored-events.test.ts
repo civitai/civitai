@@ -88,12 +88,16 @@ describe('scored-event route access', () => {
   it('reads getMyHats and getPlaceableContent as the signed-in caller', async () => {
     await callerFor({ id: 7 }).getMyHats({ event: 'birthday2026' });
     await callerFor({ id: 7 }).getPlaceableContent({ event: 'birthday2026' });
+    // On a session, the caller's own hidden covers are shown (event.router.event-viewer.test.ts pins
+    // the narrower credentials).
     expect(service.getMyEventHats).toHaveBeenCalledWith({
       user: { id: 7, isModerator: false },
+      asOwner: true,
       event: 'birthday2026',
     });
     expect(service.getPlaceableEventContent).toHaveBeenCalledWith({
       user: { id: 7, isModerator: false },
+      asOwner: true,
       event: 'birthday2026',
     });
   });

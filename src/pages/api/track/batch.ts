@@ -1,8 +1,11 @@
+import { readSessionToken } from '@civitai/auth';
 import { isDev } from '~/env/other';
 import { Tracker } from '~/server/clickhouse/client';
 import { awardViewPoints, hattedImpressionEntities } from '~/server/events/points/hooks';
-import { trackBatchSchema } from '~/server/schema/track.schema';
+import { parseTrackBatch } from '~/server/schema/track.schema';
+import { feedEventsRecorder } from '~/server/services/feed-events.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Coalesced telemetry beacon — receives a BATCH of `trackSearch` / `addAction`
 // events buffered by the browser (see src/components/TrackView/trackEventBuffer.ts)
@@ -54,18 +57,18 @@ export default PublicEndpoint(
       return res.status(400).send('invalid body');
     }
 
-    // Validates the bounded array + each event's discriminated shape. A single
-    // malformed event rejects the whole batch (the client only ever sends
-    // well-formed, schema-typed events; a 400 here means a tampered/oversized body).
-    const result = trackBatchSchema.safeParse(parsed);
-    if (!result.success) return res.status(400).send('invalid input');
+    // Bounded array, each event parsed on its own: a malformed event is dropped and the rest are
+    // kept. 400 only when the envelope is invalid or nothing survives.
+    const events = parseTrackBatch(parsed);
+    if (!events) return res.status(400).send('invalid input');
 
     // One Tracker for the whole batch → the session/actor (userId/ip/userAgent) is
     // resolved ONCE and reused for every event, identical to how a single tRPC
     // request would have stamped them. Events are dispatched in array order,
     // preserving the client's emit order.
     const tracker = new Tracker(req, res);
-    for (const event of result.data) {
+    let feedViewer: Promise<{ userId: number; memberType: string } | null> | undefined;
+    for (const event of events) {
       if (event.kind === 'search') {
         // Fire-and-forget: dispatches the insert without awaiting the round-trip,
         // exactly as the tRPC resolver (`ctx.track.search(input)`) did.
@@ -74,6 +77,24 @@ export default PublicEndpoint(
         // One event, many rows — the array is expanded into a single batched
         // insert by Tracker.impressions.
         void tracker.impressions(event.data);
+      } else if (event.kind === 'feed') {
+        // The viewer comes from the session, never the payload: resolved once per batch, and only
+        // for a sampled session. A failed lookup drops the event rather than recording it as signed
+        // out; an unreachable hub resolves to no session, so a session cookie without one drops too.
+        const getViewer = () =>
+          (feedViewer ??= tracker
+            .getSession()
+            .then((session) => {
+              if (!tracker.isSessionResolved) return null;
+              if (!session && readSessionToken(req.cookies, { host: req.headers.host }))
+                return null;
+              return {
+                userId: session?.user?.id ?? 0,
+                memberType: session?.user?.tier ?? 'undefined',
+              };
+            })
+            .catch(() => null));
+        void feedEventsRecorder().record(event.data, getViewer);
       } else {
         void tracker.action(event.data);
       }
@@ -82,8 +103,9 @@ export default PublicEndpoint(
     // Event points for views of hatted content. The in-memory hat check is all a batch without
     // hatted content pays; the session is only resolved (and shared with the Tracker) past it, and
     // signed-out viewers earn nothing.
-    const hatted = hattedImpressionEntities(result.data);
-    if (hatted.length) void awardViewPoints(() => tracker.getSession(), hatted);
+    const hatted = hattedImpressionEntities(events);
+    if (hatted.length)
+      void awardViewPoints(() => tracker.getSession({ scope: TokenScope.UserWrite }), hatted);
 
     return res.status(200).end();
   },

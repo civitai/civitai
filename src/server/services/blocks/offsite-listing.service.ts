@@ -71,8 +71,11 @@ import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constant
 import {
   connectScopesSubsetOfCeiling,
   consentableScopes,
+  LEGACY_TOKEN_SCOPE_MASK,
   validateConnectScopeJustifications,
   SENSITIVE_TOKEN_SCOPES,
+  OFFLINE_ACCESS_JUSTIFICATION_KEY,
+  offlineAccessJustification,
   tokenScopeMaskToList,
 } from '~/shared/constants/token-scope.constants';
 import {
@@ -134,6 +137,9 @@ import {
   newUlid,
 } from '~/server/utils/app-block-ids';
 import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
+import { STANDING_LIMIT_RETRY_SECONDS, throwAppRateLimited } from '~/server/utils/app-rate-limit';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
+import { getUsageLimitDef } from '~/shared/constants/usage-limits';
 
 /**
  * App Store Listings (W13) — P3a OFF-SITE submission service (Design B1).
@@ -202,7 +208,8 @@ function slugTakenError(slug: string): TRPCError {
  * `rateLimit` bounds the submit RATE). Mods bypass the router rate-limit but are
  * still subject to this cap.
  */
-export const MAX_PENDING_OFFSITE_SUBMISSIONS = 10;
+/** The code default; the enforced cap is the user's resolved `apps.offsite-pending`. */
+export const MAX_PENDING_OFFSITE_SUBMISSIONS = getUsageLimitDef('apps.offsite-pending').base;
 
 /**
  * The author-written text a submission or patch carries. Tagline and description edits on a
@@ -360,6 +367,7 @@ export async function submitExternalListing(opts: {
   // justifications are validated against the derived set.
   const client = await loadConnectClientForListing(input.connectClientId, userId, isModerator);
   const requestedScopes = client.allowedScopes;
+  const requestedScopesColumn = connectRequestedScopesColumn(requestedScopes);
   assertConnectScopesValid({
     requestedScopes,
     scopeJustifications: input.scopeJustifications,
@@ -368,14 +376,20 @@ export async function submitExternalListing(opts: {
 
   // Per-user pending-submission cap: bound the standing orphan-draft count (drafts
   // only clear on withdraw/reject, no TTL). At/over the cap → TOO_MANY_REQUESTS.
-  const pendingCount = await dbRead.appListingPublishRequest.count({
-    where: { submittedByUserId: userId, kind: 'offsite', status: 'pending' },
-  });
-  if (pendingCount >= MAX_PENDING_OFFSITE_SUBMISSIONS) {
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: `You have ${pendingCount} pending submissions (max ${MAX_PENDING_OFFSITE_SUBMISSIONS}). Withdraw one or wait for review before submitting another.`,
-    });
+  const [pendingCount, maxPending] = await Promise.all([
+    dbRead.appListingPublishRequest.count({
+      where: { submittedByUserId: userId, kind: 'offsite', status: 'pending' },
+    }),
+    resolveUserAppLimit('apps.offsite-pending', userId),
+  ]);
+  if (pendingCount >= maxPending) {
+    // A standing allowance: it frees when a submission is withdrawn or reviewed, at no set time.
+    throwAppRateLimited(
+      'apps.offsite-pending',
+      STANDING_LIMIT_RETRY_SECONDS,
+      `You have ${pendingCount} pending submissions (max ${maxPending}). Withdraw one or wait for review before submitting another.`,
+      { limit: maxPending, used: pendingCount }
+    );
   }
 
   const slug = input.slug;
@@ -442,7 +456,7 @@ export async function submitExternalListing(opts: {
           // REQUIRED OAuth client link + the disclosed (review-only) scope set
           // (SERVER-DERIVED from the client's allowedScopes) + per-scope justifications.
           connectClientId: input.connectClientId,
-          connectRequestedScopes: requestedScopes,
+          connectRequestedScopes: requestedScopesColumn,
           connectScopeJustifications: input.scopeJustifications,
           // A natively-created off-site listing has no backing AppBlock.
           appBlockId: null,
@@ -500,7 +514,7 @@ export async function loadConnectClientForListing(
   connectClientId: string,
   userId: number,
   isModerator = false
-): Promise<{ id: string; allowedScopes: number }> {
+): Promise<{ id: string; allowedScopes: bigint }> {
   // App-block clients are excluded up-front (cheap, no DB) — they are never a
   // hand-authored connect target. This exclusion holds for EVERYONE, mods included.
   if (isAppBlockOauthClientId(connectClientId)) {
@@ -529,6 +543,22 @@ export async function loadConnectClientForListing(
 }
 
 /**
+ * A listing's requested-scope mask as the `connect_requested_scopes` column stores it. The column
+ * is a 32-bit integer, so it holds bits 0..30 only: a mask carrying a higher bit (`AppsRead`,
+ * `AppDataRead`) is refused with a BAD_REQUEST rather than stored without the bits the moderator
+ * would be reviewing, or failing the write with a 500.
+ */
+function connectRequestedScopesColumn(scope: bigint): number {
+  if ((scope & ~LEGACY_TOKEN_SCOPE_MASK) !== 0n) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'App Store listings cannot yet request the Apps scopes this OAuth client allows',
+    });
+  }
+  return Number(scope);
+}
+
+/**
  * Assert a requested-scope mask + its per-scope justifications are valid against the
  * client's `allowedScopes` ceiling: the mask must be a SUBSET of the ceiling
  * ((requested & ~allowed) === 0) and the justifications must satisfy the shared
@@ -538,9 +568,9 @@ export async function loadConnectClientForListing(
  * in depth — these fns are exported + unit-tested directly).
  */
 function assertConnectScopesValid(opts: {
-  requestedScopes: number;
+  requestedScopes: bigint;
   scopeJustifications: Record<string, string>;
-  allowedScopes: number;
+  allowedScopes: bigint;
 }): void {
   const { requestedScopes, scopeJustifications, allowedScopes } = opts;
   if (!connectScopesSubsetOfCeiling(requestedScopes, allowedScopes)) {
@@ -580,7 +610,7 @@ export async function deriveScopePatch(opts: {
   patch: UpdateListingPatch;
   userId: number;
   isModerator?: boolean;
-}): Promise<{ effectivePatch: UpdateListingPatch; connectAllowedScopes: number | null }> {
+}): Promise<{ effectivePatch: UpdateListingPatch; connectAllowedScopes: bigint | null }> {
   const { connectClientId, patch, userId, isModerator = false } = opts;
   const editsScopes =
     patch.requestedScopes !== undefined || patch.scopeJustifications !== undefined;
@@ -973,7 +1003,7 @@ export function buildListingPatchData(
      * passes it in. `null` means the listing has no connect client, so a scope edit
      * is rejected.
      */
-    connectAllowedScopes?: number | null;
+    connectAllowedScopes?: bigint | null;
     /**
      * Whether the MANUAL-APPLY `app_listings.source_repo_url` column actually exists,
      * from the caller's guarded read (`EditableListing.sourceRepoAvailable`).
@@ -1154,7 +1184,7 @@ export function buildListingPatchData(
       scopeJustifications: patch.scopeJustifications ?? {},
       allowedScopes: opts.connectAllowedScopes,
     });
-    data.connectRequestedScopes = patch.requestedScopes;
+    data.connectRequestedScopes = connectRequestedScopesColumn(patch.requestedScopes);
     data.connectScopeJustifications = patch.scopeJustifications ?? {};
   }
   return data;
@@ -1183,6 +1213,7 @@ function materialPatchChanges(
     sourceRepoUrl: string | null;
     issueTrackerUrl: string | null;
     connectRequestedScopes: number | null;
+    connectScopeJustifications: Prisma.JsonValue | null;
   }
 ): string[] {
   const changed: string[] = [];
@@ -1234,11 +1265,30 @@ function materialPatchChanges(
   // updated mask + justifications, re-validated in buildListingPatchData).
   if (
     patch.requestedScopes !== undefined &&
-    patch.requestedScopes !== (live.connectRequestedScopes ?? 0)
+    patch.requestedScopes !== BigInt(live.connectRequestedScopes ?? 0)
   ) {
     changed.push('requestedScopes');
   }
+  // The whole justification map is material: the moderator approved these reasons and
+  // offline_access decides hub offline access.
+  if (
+    patch.scopeJustifications !== undefined &&
+    canonicalJustifications(patch.scopeJustifications) !==
+      canonicalJustifications(live.connectScopeJustifications)
+  ) {
+    changed.push('scopeJustifications');
+  }
   return changed;
+}
+
+/** A justification map as a stable string: trimmed non-blank string values, keys sorted. */
+function canonicalJustifications(raw: unknown): string {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return '[]';
+  const entries = Object.entries(raw as Record<string, unknown>)
+    .map(([k, v]) => [k, typeof v === 'string' ? v.trim() : ''] as const)
+    .filter(([, v]) => v.length > 0)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return JSON.stringify(entries);
 }
 
 /**
@@ -1665,6 +1715,7 @@ export async function updateListing(opts: {
         sourceRepoUrl: listing.sourceRepoUrl,
         issueTrackerUrl: listing.issueTrackerUrl,
         connectRequestedScopes: listing.connectRequestedScopes,
+        connectScopeJustifications: listing.connectScopeJustifications,
       });
       if (material.length > 0) {
         throw new OffsiteRequestError(
@@ -1735,6 +1786,7 @@ export async function updateListing(opts: {
         sourceRepoUrl: listing.sourceRepoUrl,
         issueTrackerUrl: listing.issueTrackerUrl,
         connectRequestedScopes: listing.connectRequestedScopes,
+        connectScopeJustifications: listing.connectScopeJustifications,
       });
       if (!material) {
         // TRIVIAL-only edit → apply to the LIVE row in place (no re-review). Any
@@ -2536,6 +2588,15 @@ async function loadListingEditView(
  * the listing itself. `slug` + `status` + `parentId` always describe the live
  * parent; `shadowId` hints whether the prefill came from a shadow.
  */
+async function findExistingShadow(listingId: string): Promise<{ shadowId: string } | null> {
+  // primary: a shadow minted moments ago by a set-/add- command must not read as absent.
+  const existing = await dbWrite.appListing.findFirst({
+    where: { revisionOfId: listingId },
+    select: { id: true },
+  });
+  return existing ? { shadowId: existing.id } : null;
+}
+
 async function findModeratorUsableShadow(
   listingId: string,
   userId: number
@@ -2553,8 +2614,10 @@ export async function getMyListingForEdit(opts: {
   listingId: string;
   userId: number;
   isModerator?: boolean;
+  /** Never open a shadow: report an existing one, else the live listing (CLI `listing status`). */
+  readOnly?: boolean;
 }): Promise<GetMyListingForEditResult> {
-  const { listingId, userId, isModerator = false } = opts;
+  const { listingId, userId, isModerator = false, readOnly = false } = opts;
   const listing = await loadOwnedEditableListing(listingId, userId, isModerator);
 
   if (listing.revisionOfId != null) {
@@ -2614,6 +2677,8 @@ export async function getMyListingForEdit(opts: {
     const begun =
       listing.callerRole === 'moderator'
         ? await findModeratorUsableShadow(listingId, userId)
+        : readOnly
+        ? await findExistingShadow(listingId)
         : await beginListingRevision({ listingId, userId, isModerator });
     shadowId = begun?.shadowId ?? null;
     effectiveId = shadowId ?? listingId;
@@ -2653,7 +2718,7 @@ export async function getMyListingForEdit(opts: {
       where: { id: listing.connectClientId },
       select: { allowedScopes: true },
     });
-    connectAllowedScopes = client ? consentableScopes(client.allowedScopes) : null;
+    connectAllowedScopes = client ? Number(consentableScopes(client.allowedScopes)) : null;
   }
 
   return {
@@ -3333,11 +3398,13 @@ async function resolveApprovalContentRating(
  * its store art happens to be tame — an under-rating of the runtime, produced by looking at
  * a picture. So the app's declaration is a FLOOR that is raised by mature media and never
  * lowered by tame media: exactly {@link resolveListingRatingFloorInTx}, the same helper
- * `approveRequest`'s draft→approved transition and `republishOwnListing` use, so all three
- * on-site rating sites have ONE spelling.
+ * `approveRequest`'s draft→approved transition, reset restore and subsequent-version
+ * re-sync and `republishOwnListing` use, so the on-site rating sites have ONE spelling.
  *
  * A moderator override may still RAISE above the floor (a mod may always rate up) and is
- * ignored when it would lower.
+ * ignored when it would lower. It is stored only as the listing's `contentRating`; the next
+ * approved version's re-sync (`resolveVersionListingRating`) keeps it by recognising a rating
+ * above what the previous version's declaration gives.
  *
  * 🔴 NOT quite "the same discipline as the off-site clamp above" — that sentence used to
  * live here and it is inaccurate AT EQUAL LEVEL, which is a reachable case rather than a
@@ -3378,7 +3445,8 @@ async function resolveOnsiteApprovalContentRating(
 
 /**
  * Approval gate for OAuth-CONNECT listings (PR3): every SENSITIVE requested scope
- * MUST carry a non-empty per-scope justification before the listing can go live.
+ * MUST carry a non-empty per-scope justification before the listing can go live, and so
+ * must a declared `offline_access` (checked first, whatever the scope set).
  * `SENSITIVE_TOKEN_SCOPES` (money / private / cross-user writes) is the flagged set;
  * a non-sensitive requested scope need not be justified. No-op for an external-link
  * listing (`connectClientId == null`) or a connect listing requesting no sensitive
@@ -3398,14 +3466,23 @@ function assertConnectSensitiveScopesJustified(listing: {
   connectScopeJustifications: Prisma.JsonValue | null;
 }): void {
   if (listing.connectClientId == null) return; // external-link listing — no scopes.
-  const sensitiveRequested = (listing.connectRequestedScopes ?? 0) & SENSITIVE_TOKEN_SCOPES;
-  if (sensitiveRequested === 0) return; // nothing sensitive requested.
   const justifications =
     listing.connectScopeJustifications &&
     typeof listing.connectScopeJustifications === 'object' &&
     !Array.isArray(listing.connectScopeJustifications)
       ? (listing.connectScopeJustifications as Record<string, unknown>)
       : {};
+  // Key present with no accepted reason is a declaration with no reason: refused.
+  if (Object.hasOwn(justifications, OFFLINE_ACCESS_JUSTIFICATION_KEY)) {
+    if (offlineAccessJustification(justifications) == null) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'offline access is declared but has no justification; add one before approval',
+      });
+    }
+  }
+  const sensitiveRequested = BigInt(listing.connectRequestedScopes ?? 0) & SENSITIVE_TOKEN_SCOPES;
+  if (sensitiveRequested === 0n) return; // nothing sensitive requested.
   // Each sensitive requested bit is keyed by its TokenScope enum-key (same mapping
   // the author-side justification map uses).
   const missing = tokenScopeMaskToList(sensitiveRequested)
@@ -3460,6 +3537,10 @@ export async function approveExternalRequest(opts: {
   contentRating?: OffsiteContentRating | null;
   /** The moderator's media-split decision; omitted means `rate-mature`. */
   mediaSplit?: ListingMediaSplitDecision | null;
+  /** Required to approve while the app has open review holds; recorded on each hold. */
+  holdOverrideReason?: string | null;
+  /** The open holds the moderator was shown; an open hold not in this list refuses. */
+  holdOverrideIds?: number[] | null;
 }): Promise<ApproveExternalRequestResult> {
   const { publishRequestId, reviewerUserId } = opts;
   const approvalNotes = opts.approvalNotes ?? null;
@@ -3491,6 +3572,17 @@ export async function approveExternalRequest(opts: {
       `publish request ${publishRequestId} has no draft listing`
     );
   }
+  const { checkHoldsBeforeApprove, resolveHoldsAtApprove } = await import(
+    './publish-request-holds.service'
+  );
+  const holdDecision = {
+    slug: request.slug,
+    overrideReason: opts.holdOverrideReason,
+    shownHoldIds: opts.holdOverrideIds,
+  };
+  await checkHoldsBeforeApprove(dbWrite, holdDecision);
+  const resolveHolds = (tx: Prisma.TransactionClient) =>
+    resolveHoldsAtApprove(tx, { ...holdDecision, actorUserId: reviewerUserId });
   // Narrow once for the tx closures below (findUnique needs a non-null id).
   const appListingId = request.appListingId;
 
@@ -3544,6 +3636,7 @@ export async function approveExternalRequest(opts: {
       approvalNotes,
       contentRating: opts.contentRating,
       mediaSplit: opts.mediaSplit,
+      resolveHolds,
     });
   }
 
@@ -3732,9 +3825,12 @@ export async function approveExternalRequest(opts: {
       // `allowedScopes` SHRANK after submit (the pre-tx subset check happened at
       // submit/edit time). A connect listing always has a `connectClient` row here
       // (FK-backed by the non-null `connectClientId`); treat a null ceiling as 0.
-      const allowedScopes = primaryListing.connectClient?.allowedScopes ?? 0;
+      const allowedScopes = primaryListing.connectClient?.allowedScopes ?? 0n;
       if (
-        !connectScopesSubsetOfCeiling(primaryListing.connectRequestedScopes ?? 0, allowedScopes)
+        !connectScopesSubsetOfCeiling(
+          BigInt(primaryListing.connectRequestedScopes ?? 0),
+          allowedScopes
+        )
       ) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
@@ -3743,6 +3839,7 @@ export async function approveExternalRequest(opts: {
       }
     }
 
+    await resolveHolds(tx);
     const req = await tx.appListingPublishRequest.updateMany({
       where: { id: publishRequestId, status: 'pending' },
       data: {
@@ -3859,6 +3956,9 @@ export async function approveExternalRequest(opts: {
     });
     return { before: primaryListing.contentRating, after: finalRating };
   });
+  // Superseded siblings are decisions too: tear down any agent review still running for them.
+  // After commit and fire-and-forget, so the transaction is unchanged; teardown is idempotent.
+  void teardownWithdrawnSiblingAgentReviews(appListingId, request.kind, publishRequestId);
   await recordListingRatingChangeAfterCommit({
     appListingId,
     slug: listing.slug,
@@ -3923,6 +4023,8 @@ async function applyApprovedRevision(opts: {
   /** Optional mod override of the final content rating (floored at the derived value). */
   contentRating?: OffsiteContentRating | null;
   mediaSplit?: ListingMediaSplitDecision | null;
+  /** The review-hold check that must pass in the same transaction as the request flip. */
+  resolveHolds: (tx: Prisma.TransactionClient) => Promise<unknown>;
 }): Promise<ApproveExternalRequestResult> {
   const { request, shadowId, parentId, reviewerUserId, approvalNotes } = opts;
 
@@ -4081,8 +4183,10 @@ async function applyApprovedRevision(opts: {
     // was edited. Only for OAuth-linked listings (`connectClientId` non-null; a legacy
     // URL-only revision carries no scopes). A null ceiling is treated as 0.
     if (shadow.connectClientId != null) {
-      const allowedScopes = shadow.connectClient?.allowedScopes ?? 0;
-      if (!connectScopesSubsetOfCeiling(shadow.connectRequestedScopes ?? 0, allowedScopes)) {
+      const allowedScopes = shadow.connectClient?.allowedScopes ?? 0n;
+      if (
+        !connectScopesSubsetOfCeiling(BigInt(shadow.connectRequestedScopes ?? 0), allowedScopes)
+      ) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'requested scopes exceed the OAuth client’s allowed scopes',
@@ -4091,6 +4195,7 @@ async function applyApprovedRevision(opts: {
     }
 
     // (2) Flip the request pending→approved AND re-point it at the PARENT.
+    await opts.resolveHolds(tx);
     const req = await tx.appListingPublishRequest.updateMany({
       where: { id: request.id, status: 'pending' },
       data: {
@@ -4331,6 +4436,30 @@ async function applyApprovedRevision(opts: {
  * listing is instead transitioned to `removed` + a `delist` audit event (a rejected
  * re-review = a MOD takedown the owner cannot self-restore); see `closeTerminalListing`.
  */
+/**
+ * Tear down the agent review of every withdrawn request on this listing other than the approved
+ * one: the siblings an approve just superseded, plus any withdrawn earlier (a no-op for those).
+ * Never rejects.
+ */
+async function teardownWithdrawnSiblingAgentReviews(
+  appListingId: string,
+  kind: string,
+  approvedId: string
+): Promise<void> {
+  try {
+    // primary: the supersede that withdrew them committed a moment ago.
+    const siblings = await dbWrite.appListingPublishRequest.findMany({
+      where: { appListingId, kind, status: 'withdrawn', NOT: { id: approvedId } },
+      select: { id: true },
+    });
+    if (siblings.length === 0) return;
+    const { teardownConnectAgentReview } = await import('./connect-agent-review.service');
+    for (const s of siblings) await teardownConnectAgentReview(s.id);
+  } catch {
+    // Best-effort, like every decision-path teardown.
+  }
+}
+
 export async function rejectExternalRequest(opts: {
   publishRequestId: string;
   reviewerUserId: number;
@@ -4709,8 +4838,33 @@ async function withModQueueListingFactsPage<
 >(rows: T[]) {
   const ids = rows.flatMap((r) => (r.appListingId ? [r.appListingId] : []));
   const red = await readListingRedMediaManyForRender(dbRead, ids);
-  return rows.map((r) => withModQueueListingFacts(r, red));
+  return rows.map((r) => withNumberClientScopes(withModQueueListingFacts(r, red)));
 }
+
+/**
+ * A submission row with `appListing.connectClient.allowedScopes` as a number: the queues are tRPC
+ * responses, whose scope fields stay JSON numbers (every bit is below 2^53).
+ */
+function withNumberClientScopes<R extends { appListing: unknown }>(row: R) {
+  type Listing = { connectClient: { allowedScopes: bigint } | null } | null;
+  const listing = row.appListing as Listing;
+  const client = listing?.connectClient;
+  return {
+    ...row,
+    appListing: (listing && {
+      ...listing,
+      connectClient: client && { ...client, allowedScopes: Number(client.allowedScopes) },
+    }) as unknown as NumberClientScopes<R['appListing']>,
+  };
+}
+
+type NumberClientScopes<L> = L extends { connectClient: infer C }
+  ? Omit<L, 'connectClient'> & {
+      connectClient: C extends { allowedScopes: bigint }
+        ? Omit<C, 'allowedScopes'> & { allowedScopes: number }
+        : C;
+    }
+  : L;
 
 export type ListOffsiteRequestsOptions = { limit?: number; cursor?: string };
 
@@ -4879,7 +5033,7 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
     dbRead
   );
   const items = page.map((r) => ({
-    ...r,
+    ...withNumberClientScopes(r),
     hasPendingRevision: r.appListingId != null && parentsWithRevision.has(r.appListingId),
     // Null for a non-removed listing (or one with no events) — the UI only reads it
     // when `appListing.status === 'removed'` to gate the Republish affordance.
@@ -4934,8 +5088,20 @@ export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOption
   // changes the name, icon or cover (a missing result then reads `missing`, never "unchecked").
   // FAIL-SOFT on a failed READ, so the queue itself stays up; that one case shows no badge.
   const { listingEditQueueChecks } = await import('./app-listing-edit-impersonation.service');
-  const checks = await listingEditQueueChecks(page).catch(() => null);
-  const items = page.map((r) => ({ ...r, listingEditCheck: checks?.get(r.id) ?? null }));
+  const { getOpenHoldCountsBySlug } = await import('./publish-request-holds.service');
+  const [checks, holdCounts] = await Promise.all([
+    listingEditQueueChecks(page).catch(() => null),
+    getOpenHoldCountsBySlug(
+      dbRead,
+      page.map((r) => r.slug)
+    ),
+  ]);
+  const items = page.map((r) => ({
+    ...r,
+    listingEditCheck: checks?.get(r.id) ?? null,
+    // null: the holds could not be read (shown as unknown, never as clean).
+    openHoldCount: holdCounts ? holdCounts.get(r.slug) ?? 0 : null,
+  }));
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 

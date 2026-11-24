@@ -93,21 +93,24 @@ export const purgeFeedbackCaptures = createJob(
     if (!isProd || !env.DATABASE_IS_PROD) return { wouldDelete: ids.length, ...kept };
 
     const deleted = ids.length
-      ? (await deleteImages(ids, true, { onlyWhere: feedbackCaptureDeleteGuard(cutoff) })).map(
-          (r) => r.id
-        )
+      ? (
+          await deleteImages(ids, {
+            actor: { system: 'purge-feedback-captures' },
+            onlyWhere: feedbackCaptureDeleteGuard(cutoff),
+          })
+        ).map((r) => r.id)
       : [];
     const deletedSet = new Set(deleted);
     const skipped = ids.filter((id) => !deletedSet.has(id));
     const result = { deleted: deleted.length, skippedByGuard: skipped.length, ...kept };
-    await logToAxiom({
+    logToAxiom({
       type: 'info',
       name: 'purge-feedback-captures',
       message: 'Purged expired feedback page captures',
       ...result,
       deletedIds: deleted,
       skippedIds: skipped,
-    }).catch(() => undefined);
+    });
     return result;
   }
 );

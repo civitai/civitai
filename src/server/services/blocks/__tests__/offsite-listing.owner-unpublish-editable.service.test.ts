@@ -367,9 +367,9 @@ describe('updateListing on an OWNER-UNPUBLISHED listing — MATERIAL fields are 
     // The mask is SERVER-DERIVED from the client's current `allowedScopes`, so the drift
     // that matters is client-ceiling vs stored snapshot, not what the form sent.
     wireListing(listingRow({ connectClientId: 'oc_1', connectRequestedScopes: 1 }));
-    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: OWNER, allowedScopes: 7 });
+    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: OWNER, allowedScopes: 7n });
 
-    await expectRefused({ requestedScopes: 1, scopeJustifications: {} }, 'requestedScopes');
+    await expectRefused({ requestedScopes: 1n, scopeJustifications: {} }, 'requestedScopes');
   });
 
   it('names EVERY offending field, not just the first', async () => {

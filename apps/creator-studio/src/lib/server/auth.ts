@@ -1,4 +1,9 @@
-import { createRevocationCheck, createSpokeGuard, type SessionRegistryRedis } from '@civitai/auth';
+import {
+  createRevocationCheck,
+  createSlotTally,
+  createSpokeGuard,
+  type SessionRegistryRedis,
+} from '@civitai/auth';
 import { safeError } from '@civitai/axiom';
 import { getLogger } from './logger';
 import { getSysRedis } from './redis';
@@ -20,11 +25,21 @@ export const isRevoked = createRevocationCheck({
         subtype: 'read-degraded',
         fn: 'spoke isRevoked',
         verdict,
-      })
-      .catch(() => undefined);
+      });
   },
 });
 
 // The door gate is any authenticated user (plan §1) — member-only capabilities are gated per-action in
 // $lib/server/membership.ts, not here, so non-members can still browse the Studio.
-export const guard = createSpokeGuard({ require: (user) => !!user, isRevoked });
+export const guard = createSpokeGuard({
+  require: (user) => !!user,
+  isRevoked,
+  onSessionSlot: createSlotTally((counts) => {
+    void getLogger().logToAxiom({
+      app: 'creator-studio',
+      name: 'session-cookie-slot',
+      type: 'info',
+      payload: counts,
+    });
+  }),
+});

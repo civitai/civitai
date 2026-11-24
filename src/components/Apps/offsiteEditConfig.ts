@@ -5,7 +5,7 @@ import {
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
 import { SENSITIVE_TOKEN_SCOPES } from '~/shared/constants/token-scope.constants';
-import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
+import type { UpdateListingPatchInput } from '~/server/schema/blocks/offsite-listing.schema';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 
@@ -114,8 +114,8 @@ export type ListingEditContext = {
    *   - `connectScopeJustifications` — the STORED per-scope rationale (prefill).
    */
   connectClientId?: string | null;
-  connectAllowedScopes?: number | null;
-  connectRequestedScopes?: number | null;
+  connectAllowedScopes?: number | bigint | null;
+  connectRequestedScopes?: number | bigint | null;
   connectScopeJustifications?: Record<string, string> | null;
 };
 
@@ -181,6 +181,9 @@ export function materialEditBlockedReason(
   if (!isUnpublishedEdit(ctx)) return null;
   const fields = isOnsiteEdit(ctx)
     ? 'name, source repository, issue tracker and content rating'
+    : ctx.connectClientId != null
+    ? 'name, App URL, source repository, issue tracker, content rating and permission ' +
+      'justifications (including offline access)'
     : 'name, App URL, source repository, issue tracker and content rating';
 
   // 🔴 ROLE-AWARE, AND THE DEFAULT IS THE NEUTRAL ONE — see `ListingEditContext.role`.
@@ -213,7 +216,7 @@ export function materialEditBlockedReason(
   // the copy insisting otherwise. The outcome is honest (the server would refuse too); the
   // sentence was not. Say the true thing instead — nothing here can be saved until the
   // scopes are re-reviewed — rather than describing an edit that cannot land.
-  if (scopeDisclosureLockedForEdit(ctx)) {
+  if (scopesDriftedForEdit(ctx)) {
     const scopeWayOut = isOwnerEdit(ctx)
       ? `republish the app from the Publishing tab`
       : `ask the app's owner to republish it`;
@@ -250,37 +253,36 @@ export function isOwnerEdit(ctx: Pick<ListingEditContext, 'role'>): boolean {
 }
 
 /**
- * Does the OAuth scope disclosure ALSO have to be locked in the repair state? PURE.
+ * Is the OAuth scope disclosure (every justification box, and the offline-access declaration)
+ * locked? PURE.
  *
- * 🔴 A JUSTIFICATION EDIT IS NORMALLY TRIVIAL, SO THIS IS NOT "LOCK IT WHEN UNPUBLISHED".
- * `buildScalarPatch` emits `requestedScopes` when the justifications changed OR when the
- * connect client's CURRENT consentable scopes has DRIFTED from the stored snapshot, and
- * `materialPatchChanges` counts that key as material only when the two masks actually
- * differ. So while they agree, a justification edit is trivial and saves fine here.
- *
- * 🔴 WHEN THEY HAVE DRIFTED, EVERY SAVE IS REFUSED — including a tagline-only one, because
- * the drifted mask rides along on the patch. Leaving the justification boxes live in that
- * state is the same defect as the material inputs, one field further out, so they are
- * disabled and the reason says so. Detectable client-side because both masks are on the
- * edit context; absent values read as `0` exactly as the server's `?? 0` does.
+ * Justification-map edits are material (they decide hub offline access) and an unpublished
+ * listing refuses material changes, so the boxes lock with the other material inputs.
  */
 export function scopeDisclosureLockedForEdit(
+  ctx: Pick<ListingEditContext, 'status' | 'connectClientId'>
+): boolean {
+  return isUnpublishedEdit(ctx) && ctx.connectClientId != null;
+}
+
+/**
+ * Has the connect client's permission set DRIFTED from the stored snapshot on an unpublished
+ * listing? PURE. Then the drifted mask rides along on EVERY save (`buildScalarPatch`), so even a
+ * tagline-only save is refused, and `materialEditBlockedReason` says nothing here can be saved.
+ * Absent masks read as `0` on both sides, exactly as the server's `?? 0` does.
+ *
+ * 🔴 `isUnpublishedEdit`, NOT `materialEditBlockedReason`, which calls this: depending on the
+ * narrower predicate avoids a cycle and states the real precondition.
+ */
+export function scopesDriftedForEdit(
   ctx: Pick<
     ListingEditContext,
     'status' | 'kind' | 'connectClientId' | 'connectAllowedScopes' | 'connectRequestedScopes'
   >
 ): boolean {
-  // 🔴 `isUnpublishedEdit`, NOT `materialEditBlockedReason` — AND THE TWO ARE EQUIVALENT
-  // HERE BY CONSTRUCTION, so this is not a weakening. `materialEditBlockedReason` returns
-  // non-null IFF `isUnpublishedEdit(ctx)` is true; its first line IS that check. This used
-  // to call it and read the result for null, which was fine until
-  // `materialEditBlockedReason` grew a scope-drift arm that calls THIS function — a cycle
-  // (`materialEditBlockedReason` → `scopeDisclosureLockedForEdit` → `materialEditBlocked-
-  // Reason` → …). Depending on the narrower predicate breaks it and states the real
-  // precondition directly: the lock applies in the unpublished state.
   if (!isUnpublishedEdit(ctx)) return false;
   if (ctx.connectClientId == null) return false;
-  return (ctx.connectAllowedScopes ?? 0) !== (ctx.connectRequestedScopes ?? 0);
+  return BigInt(ctx.connectAllowedScopes ?? 0) !== BigInt(ctx.connectRequestedScopes ?? 0);
 }
 
 /**
@@ -328,7 +330,7 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
     // drops any non-sensitive (or no-longer-allowed) key — no dangling rationale.
     scopeJustifications: pruneJustificationsToMask(
       ctx.connectScopeJustifications ?? {},
-      derivedScopes & SENSITIVE_TOKEN_SCOPES
+      BigInt(derivedScopes) & SENSITIVE_TOKEN_SCOPES
     ),
   };
 }
@@ -422,9 +424,9 @@ function shallowEqualStringMap(a: Record<string, string>, b: Record<string, stri
 export function buildScalarPatch(
   ctx: ListingEditContext,
   current: OffsiteSubmitFormValues
-): UpdateListingPatch {
+): UpdateListingPatchInput {
   const original = editContextToForm(ctx);
-  const patch: UpdateListingPatch = {};
+  const patch: UpdateListingPatchInput = {};
 
   const name = current.name.trim();
   if (name !== original.name.trim()) patch.name = name;
@@ -525,9 +527,10 @@ export function buildScalarPatch(
       storedSnapshot
     );
     const currentJust = shapeSensitiveJustifications(current.scopeJustifications, derived);
-    const drifted = derived !== storedSnapshot;
+    const drifted = BigInt(derived) !== BigInt(storedSnapshot);
     if (drifted || !shallowEqualStringMap(currentJust, storedJust)) {
-      patch.requestedScopes = derived;
+      // A JSON number on the wire.
+      patch.requestedScopes = Number(derived);
       patch.scopeJustifications = currentJust;
     }
   }
@@ -536,6 +539,6 @@ export function buildScalarPatch(
 }
 
 /** True when the scalar patch has at least one changed field (a save is needed). */
-export function hasScalarChanges(patch: UpdateListingPatch): boolean {
+export function hasScalarChanges(patch: UpdateListingPatchInput): boolean {
   return Object.keys(patch).length > 0;
 }

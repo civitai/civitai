@@ -3,7 +3,9 @@ package feed
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -61,13 +63,24 @@ func TestParseV1DefaultsAndTransforms(t *testing.T) {
 
 func TestParseV1FallsBackOnShapesNotPorted(t *testing.T) {
 	cases := map[string]string{
-		"ids=1,2":                   "v1-ids",
 		"imageId=5":                 "v1-image-id",
+		"ids=1&imageId=5":           "v1-image-id",
 		"modelId=3":                 "v1-model-only",
+		"ids=1&modelId=3":           "v1-model-only",
 		"tags=5":                    "v1-tags",
 		"baseModels=SDXL%201.0":     "v1-base-models",
-		"withMeta=true":             "v1-with-meta",
 		"withTags=1":                "v1-with-tags",
+		"ids=1,0x10":                "v1-input-ids", // Number() reads hex; Node takes it
+		"ids=1e3":                   "v1-input-ids",
+		"ids=":                      "v1-input-ids",
+		"ids=1,,2":                  "v1-input-ids",
+		"ids=0":                     "v1-input-ids",
+		"ids=-4":                    "v1-input-ids",
+		"ids=2147483648":            "v1-input-ids", // past int4
+		"ids=1&ids=2":               "v1-input-duplicate",
+		"flatMeta=maybe":            "v1-input-bool",
+		"ids=1,2":                   "",
+		"withMeta=true&flatMeta=0":  "",
 		"limit=1.5":                 "v1-input-number",
 		"limit=201":                 "v1-input-number",
 		"limit=":                    "v1-input-number",
@@ -117,10 +130,13 @@ func TestParseSearchIsReqQuery(t *testing.T) {
 }
 
 func TestNextPageURL(t *testing.T) {
-	in, err := ParseV1("limit=50&page=2&modelVersionId=9&utm=x")
+	in, err := ParseV1("limit=50&page=2&modelVersionId=9")
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A key outside the schema falls back in ParseV1 (input-unknown-key), but nextPage's own rule is
+	// to keep every key of req.query in order, so it is exercised with one added after parsing.
+	in.Query = append(in.Query, QueryParam{Key: "utm", Values: []string{"x"}})
 	got, err := nextPageURL(in, "Civitai.Example:443", "/api/v1/images", true, true, "feed:1:2")
 	if err != nil {
 		t.Fatal(err)
@@ -244,6 +260,27 @@ type fakeV1Sources struct {
 	posts     map[int]int
 	versions  map[int]int
 	usernames map[string]int
+	meta      map[int]any
+	// metaAsked is each V1Page call's MetaIDs.
+	metaAsked [][]int
+	// follows answers UserFollows (absent: no follows); followsErr fails it; followsAsked is each
+	// call's user id.
+	follows      map[int][]int
+	followsErr   error
+	followsAsked []int
+	// collections answers CollectionPermission per collection id (absent: no such collection), with
+	// the contributor permissions of contributors[collection][viewer]; collectionsErr fails it;
+	// collectionsAsked is each call's [collection, viewer].
+	collections      map[int]hydrate.CollectionPermission
+	contributors     map[int]map[int][]string
+	collectionsErr   error
+	collectionsAsked [][2]int
+	// showcase answers VersionShowcase (zero: ShowcaseUncurated), with no error, unless
+	// showcaseFrom is set, which then answers it (a real cache read and miss computation);
+	// showcaseAsked is each call's ids.
+	showcase      hydrate.Showcase
+	showcaseFrom  *hydrate.Sources
+	showcaseAsked [][]int
 }
 
 func pickIDs[V any](m map[int]V, ids []int) map[int]V {
@@ -257,10 +294,15 @@ func pickIDs[V any](m map[int]V, ids []int) map[int]V {
 }
 
 func (f *fakeV1Sources) V1Page(_ context.Context, req hydrate.V1PageRequest) (*hydrate.V1Page, error) {
-	return &hydrate.V1Page{
+	f.metaAsked = append(f.metaAsked, req.MetaIDs)
+	p := &hydrate.V1Page{
 		Basic: pickIDs(f.users, req.UserIDs), Thumbs: pickIDs(f.thumbs, req.VideoIDs),
 		Metrics: pickIDs(f.metrics, req.ImageIDs), Resources: pickIDs(f.resources, req.ImageIDs),
-	}, nil
+	}
+	if len(req.MetaIDs) > 0 {
+		p.Meta = pickIDs(f.meta, req.MetaIDs)
+	}
+	return p, nil
 }
 func (f *fakeV1Sources) PostVersions(_ context.Context, ids []int) (map[int]int, error) {
 	return pickIDs(f.posts, ids), nil
@@ -271,6 +313,40 @@ func (f *fakeV1Sources) VersionModels(_ context.Context, ids []int) (map[int]int
 func (f *fakeV1Sources) UserIDByUsername(_ context.Context, u string) (int, bool, error) {
 	id, ok := f.usernames[u]
 	return id, ok, nil
+}
+func (f *fakeV1Sources) UserFollows(_ context.Context, userID int) ([]int, error) {
+	f.followsAsked = append(f.followsAsked, userID)
+	if f.followsErr != nil {
+		return nil, f.followsErr
+	}
+	if v, ok := f.follows[userID]; ok {
+		return v, nil
+	}
+	return []int{}, nil
+}
+func (f *fakeV1Sources) CollectionPermission(_ context.Context, collectionID, viewerID int) (*hydrate.CollectionPermission, error) {
+	f.collectionsAsked = append(f.collectionsAsked, [2]int{collectionID, viewerID})
+	if f.collectionsErr != nil {
+		return nil, f.collectionsErr
+	}
+	c, ok := f.collections[collectionID]
+	if !ok {
+		return nil, nil
+	}
+	c.CollectionID = collectionID
+	c.Contributor = []string{}
+	if viewerID != 0 && f.contributors[collectionID][viewerID] != nil {
+		c.Contributor = f.contributors[collectionID][viewerID]
+	}
+	return &c, nil
+}
+
+func (f *fakeV1Sources) VersionShowcase(ctx context.Context, ids []int) (hydrate.Showcase, error) {
+	f.showcaseAsked = append(f.showcaseAsked, ids)
+	if f.showcaseFrom != nil {
+		return f.showcaseFrom.VersionShowcase(ctx, ids)
+	}
+	return f.showcase, nil
 }
 
 type fakeV1Gallery struct {
@@ -314,7 +390,7 @@ func newV1Fixture(rows []RawImage) *v1Fixture {
 		feed: &v1Feed{ans: feedsvc.Answer{Status: 200, IDs: []int{11, 10}, NextCursor: "1700000000000|10"}},
 		src: &fakeV1Sources{
 			users:   map[int]hydrate.BasicUser{5: {ID: 5, Username: "alice"}},
-			thumbs:  map[int]hydrate.Thumbnail{10: {URL: "thumb-uuid", NsfwLevel: 1, Width: int64(320), Height: int64(180)}},
+			thumbs:  map[int]hydrate.Thumbnail{10: {URL: "thumb-uuid", NsfwLevel: 1, Width: int64(320), Height: int64(180), Servable: true}},
 			metrics: map[int]hydrate.Metrics{10: {"Like": 3}, 11: {"Heart": 2, "commentCount": 1}},
 			resources: map[int][]hydrate.ImageResource{11: {
 				{ModelVersionID: 9, Detected: true, ModelType: "Checkpoint", BaseModel: "SDXL 1.0"},
@@ -329,11 +405,13 @@ func newV1Fixture(rows []RawImage) *v1Fixture {
 		Feed: f.feed, Sources: f.src, Gallery: f.gallery,
 		Rows: func(_ context.Context, q ImagesQuery) ([]RawImage, error) {
 			f.hq = append(f.hq, q)
+			// `i."id" = ANY(ids)`: each row once, in the order the rows are listed (the SQL's).
 			var out []RawImage
 			for _, r := range rows {
 				for _, id := range q.IDs {
 					if r.ID == id {
 						out = append(out, r)
+						break
 					}
 				}
 			}
@@ -351,11 +429,17 @@ func newV1Fixture(rows []RawImage) *v1Fixture {
 
 func serveV1(t *testing.T, f *v1Fixture, query string, viewer *Viewer) (string, error) {
 	t.Helper()
+	return serveV1As(t, f, query, viewer, "")
+}
+
+// serveV1As is serveV1 with the session user's name.
+func serveV1As(t *testing.T, f *v1Fixture, query string, viewer *Viewer, username string) (string, error) {
+	t.Helper()
 	in, err := ParseV1(query)
 	if err != nil {
 		t.Fatalf("parse %q: %v", query, err)
 	}
-	ans, err := ServeV1(context.Background(), f.deps, V1Request{Input: in, Viewer: viewer, Host: "civitai.example", Path: "/api/v1/images"})
+	ans, err := ServeV1(context.Background(), f.deps, V1Request{Input: in, Viewer: viewer, ViewerUsername: username, Host: "civitai.example", Path: "/api/v1/images"})
 	if err != nil {
 		return "", err
 	}
@@ -498,7 +582,7 @@ func TestServeV1ViewerAndCreator(t *testing.T) {
 	f := newV1Fixture([]RawImage{row(11, 101, "image", "b", 1, "")})
 	f.feed.ans = feedsvc.Answer{Status: 200, IDs: []int{11}}
 	f.src.usernames = map[string]int{"alice": 5}
-	if _, err := serveV1(t, f, "username=alice&region=x", &Viewer{ID: 5}); err != nil {
+	if _, err := serveV1(t, f, "username=alice", &Viewer{ID: 5}); err != nil {
 		t.Fatal(err)
 	}
 	// A username is resolved for the feed; the viewer's own `username` does not make it their own feed
@@ -610,6 +694,285 @@ func TestShapeV1BaseModelIsTheCachesHelper(t *testing.T) {
 		b, _ := superjson.Plain(it.wire)
 		if !strings.Contains(string(b), `"baseModel":`+c.want+`,`) {
 			t.Errorf("%s: %s", c.name, b)
+		}
+	}
+}
+
+func TestParseV1IDsAndMeta(t *testing.T) {
+	// Each part trimmed, the request's order and repeats kept (the SQL dedupes and orders).
+	in, err := ParseV1("ids=%203,1%09,3&withMeta=yes&flatMeta=false")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(in.IDs, []int{3, 1, 3}) || !in.WithMeta || in.FlatMeta == nil || *in.FlatMeta {
+		t.Fatalf("parsed = %+v (flatMeta %v)", in, in.FlatMeta)
+	}
+	// flatMeta absent is undefined (the path decides), not false.
+	in, err = ParseV1("withMeta=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.IDs != nil || !in.WithMeta || in.FlatMeta != nil {
+		t.Fatalf("parsed = %+v", in)
+	}
+	// IMAGE_IDS_BATCH_MAX: 100 ids are a batch, 101 a 400.
+	if in, err := ParseV1("ids=" + strings.Repeat("7,", 99) + "8"); err != nil || len(in.IDs) != 100 || in.IDs[99] != 8 {
+		t.Fatalf("100 ids: %v", err)
+	}
+	if _, err := ParseV1("ids=" + strings.Repeat("7,", 100) + "8"); fallback.Reason(err) != "v1-input-ids" {
+		t.Fatalf("101 ids: %v", err)
+	}
+}
+
+// legacyRow is row with the image's own createdAt (not its sortAt, so which one is published shows)
+// and the cursor column the legacy query selects.
+func legacyRow(id, postID, cursor int) RawImage {
+	r := row(id, postID, "image", "u"+strconv.Itoa(id), 1, "")
+	r.CreatedAt = time.Date(2024, 2, 1, 8, 0, 0, 7_000_000, time.UTC)
+	r.CursorID = cursor
+	return r
+}
+
+// `ids` takes the legacy path: no feed call, getAllImages' own page (the rows in the SQL's order,
+// whatever the request's), the look-ahead row's id as a NUMBER nextCursor, the image's own createdAt.
+func TestServeV1LegacyIDsBatch(t *testing.T) {
+	f := newV1Fixture([]RawImage{legacyRow(12, 101, 12), legacyRow(11, 101, 11), legacyRow(10, 100, 10)})
+	f.src.metrics[12] = hydrate.Metrics{"Like": 6}
+	got, err := serveV1(t, f, "ids=10,12,11,10&limit=2", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"items":[` +
+		`{"id":12,"url":"https://img.example/abc/u12/original=true/u12.jpeg","hash":"H","width":512,"height":768,` +
+		`"nsfwLevel":"None","type":"image","nsfw":false,"browsingLevel":1,"createdAt":"2024-02-01T08:00:00.007Z","postId":101,` +
+		`"thumbnail":null,"stats":{"cryCount":0,"laughCount":0,"likeCount":6,"dislikeCount":0,"heartCount":0,"commentCount":0},` +
+		`"meta":null,"username":"alice","baseModel":null,"modelVersionIds":[]},` +
+		`{"id":11,"url":"https://img.example/abc/u11/original=true/u11.jpeg","hash":"H","width":512,"height":768,` +
+		`"nsfwLevel":"None","type":"image","nsfw":false,"browsingLevel":1,"createdAt":"2024-02-01T08:00:00.007Z","postId":101,` +
+		`"thumbnail":null,"stats":{"cryCount":0,"laughCount":0,"likeCount":0,"dislikeCount":0,"heartCount":2,"commentCount":1},` +
+		`"meta":null,"username":"alice","baseModel":"SDXL 1.0","modelVersionIds":[9]}],` +
+		`"metadata":{"nextCursor":10,"nextPage":"https://civitai.example/api/v1/images?ids=10%2C12%2C11%2C10&limit=2&cursor=10"}}`
+	if got != want {
+		t.Fatalf("body:\n got %s\nwant %s", got, want)
+	}
+	if len(f.feed.queries) != 0 {
+		t.Fatalf("the legacy path asked the feed: %v", f.feed.queries)
+	}
+	q := f.hq[0]
+	if !reflect.DeepEqual(q.IDs, []int{10, 12, 11, 10}) || q.Limit != 2 || q.Skip != 0 || q.Cursor != 0 || q.Sort != SortMostReactions ||
+		q.Period != "AllTime" || q.PeriodMode != "published" || q.ThrowOnStatementTimeout || q.IndexOrder || q.BrowsingLevel != browsing.PG ||
+		!reflect.DeepEqual(q.ExcludedTagIDs, []int{5}) || !q.DisablePoi || !q.DisableMinor {
+		t.Fatalf("legacy query = %+v", q)
+	}
+	if !reflect.DeepEqual(f.trivial, []bool{false}) {
+		t.Fatalf("trivial = %v", f.trivial)
+	}
+}
+
+// The request's paging, sort, period, type and scope reach getAllImages as its own inputs.
+func TestServeV1LegacyQueryInputs(t *testing.T) {
+	f := newV1Fixture([]RawImage{legacyRow(10, 100, 10)})
+	last := func() ImagesQuery { return f.hq[len(f.hq)-1] }
+	if _, err := serveV1(t, f, "ids=10,11&cursor=11&sort=Oldest&period=Week&type=video", nil); err != nil {
+		t.Fatal(err)
+	}
+	if q := last(); q.Cursor != 11 || q.Sort != SortOldest || q.Period != "Week" || !reflect.DeepEqual(q.Types, []string{"video"}) || q.Skip != 0 {
+		t.Fatalf("cursor query = %+v", q)
+	}
+	got, err := serveV1(t, f, "ids=10,11&page=3&limit=5", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q := last(); q.Skip != 10 || q.Limit != 5 || q.Cursor != 0 {
+		t.Fatalf("paged query = %+v, want skip (3-1)*5", q)
+	}
+	if !strings.HasSuffix(got, `"metadata":{"currentPage":3,"pageSize":5}}`) {
+		t.Fatalf("paged metadata of %s", got)
+	}
+	if _, err := serveV1(t, f, "ids=10&postId=100", nil); err != nil {
+		t.Fatal(err)
+	}
+	if q := last(); !q.IndexOrder || q.PostID != 100 {
+		t.Fatalf("a post's own media: %+v", q)
+	}
+	if _, err := serveV1(t, f, "ids=10&postId=100&modelId=7&modelVersionId=9", nil); err != nil {
+		t.Fatal(err)
+	}
+	if q := last(); q.IndexOrder || q.ModelID != 7 || q.ModelVersionID != 9 {
+		t.Fatalf("a post under a model is not index-ordered: %+v", q)
+	}
+}
+
+// The look-ahead row's cursor column is the nextCursor as is: a NULL index is null, an index of 0 is
+// 0, and neither writes a nextPage (`!!nextCursor`); any other value does.
+func TestServeV1LegacyNextCursorValues(t *testing.T) {
+	cases := []struct {
+		look RawImage
+		want string
+	}{
+		{func() RawImage { r := legacyRow(11, 100, 0); r.CursorNull = true; return r }(), `"metadata":{"nextCursor":null}}`},
+		{legacyRow(11, 100, 0), `"metadata":{"nextCursor":0}}`},
+		{legacyRow(11, 100, 3), `"metadata":{"nextCursor":3,"nextPage":"https://civitai.example/api/v1/images?ids=10%2C11&postId=100&limit=1&cursor=3"}}`},
+	}
+	for _, c := range cases {
+		f := newV1Fixture([]RawImage{legacyRow(10, 100, 0), c.look})
+		got, err := serveV1(t, f, "ids=10,11&postId=100&limit=1", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(got, c.want) || !strings.Contains(got, `"id":10,`) || strings.Contains(got, `"id":11,`) {
+			t.Errorf("body %s, want one item and %s", got, c.want)
+		}
+	}
+}
+
+// The legacy path's addons read the session username: a `username` naming the viewer is their own
+// feed (no tag exclusions). The feed path's viewer carries none, so there it is not.
+func TestServeV1LegacyOwnScopeByUsername(t *testing.T) {
+	f := newV1Fixture([]RawImage{legacyRow(10, 100, 10)})
+	f.src.usernames = map[string]int{"alice": 5}
+	cases := []struct {
+		viewer   *Viewer
+		username string
+		excluded []int
+	}{
+		{&Viewer{ID: 5}, "ALICE", nil},
+		{&Viewer{ID: 5}, "bob", []int{5}},
+		{nil, "alice", []int{5}}, // a name without a session user (banned) is no one
+	}
+	for _, c := range cases {
+		if _, err := serveV1As(t, f, "ids=10&username=alice", c.viewer, c.username); err != nil {
+			t.Fatal(err)
+		}
+		if q := f.hq[len(f.hq)-1]; !reflect.DeepEqual(q.ExcludedTagIDs, c.excluded) || q.TargetUserID != 5 {
+			t.Errorf("viewer %+v %q: excluded %v target %d, want %v 5", c.viewer, c.username, q.ExcludedTagIDs, q.TargetUserID, c.excluded)
+		}
+	}
+	f.feed.ans = feedsvc.Answer{Status: 200}
+	if _, err := serveV1As(t, f, "username=alice", &Viewer{ID: 5}, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if q := f.feed.queries[0]; !strings.Contains(q, "excludedTags=5&") {
+		t.Fatalf("feed path with the viewer's own username = %s, want the tag exclusions kept", q)
+	}
+}
+
+func TestServeV1LegacyAnswersAndFallbacks(t *testing.T) {
+	unpublished := legacyRow(13, 100, 13)
+	unpublished.PublishedAt = nil
+	f := newV1Fixture([]RawImage{legacyRow(10, 100, 10), unpublished})
+	for _, c := range []string{"abc", "0", "feed%3A1%3A2", "2147483648"} {
+		if _, err := serveV1(t, f, "ids=10&cursor="+c, nil); fallback.Reason(err) != "v1-legacy-cursor" {
+			t.Errorf("cursor %s: %v", c, err)
+		}
+	}
+	if len(f.hq) != 0 {
+		t.Fatalf("a refused cursor queried: %+v", f.hq)
+	}
+	// Only unselectable levels: an empty page without a query.
+	if got, err := serveV1(t, f, "ids=10&browsingLevel=32", nil); err != nil || got != `{"items":[],"metadata":{}}` || len(f.hq) != 0 {
+		t.Fatalf("blocked-only level: %s %v, queries %d", got, err, len(f.hq))
+	}
+	// No row, or only a hidden one: an empty page (no read rescue on this path), and not trivial: its
+	// query ran. The unselectable-level page above ran none, and is.
+	for _, q := range []string{"ids=99", "ids=13"} {
+		if got, err := serveV1(t, f, q, nil); err != nil || got != `{"items":[],"metadata":{}}` {
+			t.Fatalf("%s: %s %v", q, got, err)
+		}
+	}
+	if !reflect.DeepEqual(f.trivial, []bool{true, false, false}) {
+		t.Fatalf("trivial = %v", f.trivial)
+	}
+	// The owner's unpublished image is served to them.
+	if got, err := serveV1(t, f, "ids=13", &Viewer{ID: 5}); err != nil || !strings.Contains(got, `"id":13,`) {
+		t.Fatalf("own unpublished: %s %v", got, err)
+	}
+	// requiringMeta empties a feed page (a shape the feed cannot express); getAllImages ignores it.
+	if got, err := serveV1(t, f, "ids=10&requiringMeta=true", nil); err != nil || !strings.Contains(got, `"id":10,`) {
+		t.Fatalf("requiringMeta on the legacy path: %s %v", got, err)
+	}
+	if _, err := serveV1(t, f, "ids=10&username=bob", nil); fallback.Reason(err) != "v1-username-miss" {
+		t.Fatalf("unknown username: %v", err)
+	}
+	f.deps.Rows = func(context.Context, ImagesQuery) ([]RawImage, error) { return nil, errors.New("replica down") }
+	if _, err := serveV1(t, f, "ids=10", nil); fallback.Reason(err) != "v1-legacy-error" {
+		t.Fatalf("query error: %v", err)
+	}
+}
+
+// withMeta: the meta is read for the page's images only when asked; flat on the feed path and
+// `{ id, meta }` on the legacy path unless flatMeta says otherwise. Each item's `meta` is decoded
+// and compared whole, so a wrapped meta cannot pass for a flat one (or the reverse).
+func TestServeV1WithMeta(t *testing.T) {
+	meta := map[int]any{11: superjson.Object{{Key: "prompt", Val: "p11"}, {Key: "cfg", Val: 7.5}}, 10: nil}
+	feedPage := newV1Fixture([]RawImage{row(10, 100, "image", "a", 1, ""), row(11, 101, "image", "b", 1, "")})
+	legacy := newV1Fixture([]RawImage{legacyRow(11, 101, 11), legacyRow(10, 100, 10)})
+	feedPage.src.meta, legacy.src.meta = meta, meta
+	flat := map[int]string{11: `{"prompt":"p11","cfg":7.5}`, 10: `null`}
+	wrapped := map[int]string{11: `{"id":11,"meta":{"prompt":"p11","cfg":7.5}}`, 10: `{"id":10,"meta":null}`}
+	none := map[int]string{11: `null`, 10: `null`}
+	cases := []struct {
+		f     *v1Fixture
+		query string
+		want  map[int]string // item id -> its `meta`, as written
+	}{
+		{feedPage, "withMeta=true", flat},
+		{feedPage, "withMeta=true&flatMeta=false", wrapped},
+		{legacy, "ids=10,11&withMeta=true", wrapped},
+		{legacy, "ids=10,11&withMeta=true&flatMeta=true", flat},
+		{legacy, "ids=10,11&withMeta=false&flatMeta=true", none},
+	}
+	for _, c := range cases {
+		got, err := serveV1(t, c.f, c.query, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", c.query, err)
+		}
+		var body struct {
+			Items []struct {
+				ID   int             `json:"id"`
+				Meta json.RawMessage `json:"meta"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(got), &body); err != nil {
+			t.Fatalf("%s: %v", c.query, err)
+		}
+		metas := map[int]string{}
+		for _, it := range body.Items {
+			metas[it.ID] = string(it.Meta)
+		}
+		if !reflect.DeepEqual(metas, c.want) {
+			t.Errorf("%s: metas %v, want %v", c.query, metas, c.want)
+		}
+	}
+	// The meta ids asked: the page's images with withMeta, none without.
+	if got := feedPage.src.metaAsked; !reflect.DeepEqual(got, [][]int{{11, 10}, {11, 10}}) {
+		t.Fatalf("feed meta asked %v", got)
+	}
+	if got := legacy.src.metaAsked; !reflect.DeepEqual(got, [][]int{{11, 10}, {11, 10}, nil}) {
+		t.Fatalf("legacy meta asked %v", got)
+	}
+}
+
+// AddonLevel is `onlySelectableLevels(level || public) || public`.
+func TestAddonLevel(t *testing.T) {
+	for in, want := range map[int]int{0: 1, 32: 1, 33: 1, 3: 3, 6: 6, 63: 31} {
+		if got := AddonLevel(in); got != want {
+			t.Errorf("AddonLevel(%d) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+func TestShapeV1CustomThumbnailServable(t *testing.T) {
+	r := row(10, 100, "video", "vid-uuid", 1, `{"width":640,"height":360,"duration":12}`)
+	for _, servable := range []bool{true, false} {
+		it, err := ShapeV1Image(r, V1Hydrated{Thumb: hydrate.Thumbnail{URL: "thumb-uuid", NsfwLevel: 1, Servable: servable}, HasThumb: true}, browsing.PG, loc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		thumb, _ := it.wire.Get("thumbnail")
+		b, _ := superjson.Plain(thumb)
+		if custom := strings.Contains(string(b), "thumb-uuid"); custom != servable {
+			t.Errorf("servable %v: thumbnail %s", servable, b)
 		}
 	}
 }

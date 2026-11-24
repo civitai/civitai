@@ -1,10 +1,4 @@
-const ESCAPES: Record<string, string> = {
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&#39;',
-};
+import { escapeHtml } from '@civitai/shared/html-escape';
 
 /** Browsers post a textarea's line breaks as CRLF; length limits count each as one character. */
 export const normalizeNewlines = (text: string): string => text.replace(/\r\n?/g, '\n');
@@ -20,7 +14,5 @@ export function plainTextToHtml(text: string): string | null {
     .map((p) => p.trim())
     .filter(Boolean);
   if (!paragraphs.length) return null;
-  return paragraphs
-    .map((p) => `<p>${p.replace(/[&<>"']/g, (c) => ESCAPES[c]).replace(/\n/g, '<br>')}</p>`)
-    .join('');
+  return paragraphs.map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`).join('');
 }

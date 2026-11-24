@@ -3,6 +3,7 @@ import {
   type CsamHoldImage,
   type CsamHoldRow,
 } from './csam-holds.queries';
+import type { CsamReportChoice } from '$lib/csam-holds/report-choice';
 import { callModEndpoint } from './user-actions.service';
 
 export {
@@ -46,17 +47,26 @@ export async function decideCsamHold({
   holdId,
   textHash,
   decision,
+  reportChoice,
   note,
 }: {
   holdId: number;
   /** The hold's `textHash` as the moderator saw it; the main app refuses the decision if the text changed since. */
   textHash: string;
   decision: CsamHoldDecision;
+  /** Sent with every decision but `dismiss`, which refuses one. */
+  reportChoice?: CsamReportChoice;
   note?: string;
 }): Promise<CsamHoldDecisionResult> {
   const result = await callModEndpoint(
     'text-scan/csam-hold/resolve',
-    { holdId, textHash, decision, ...(note ? { note } : {}) },
+    {
+      holdId,
+      textHash,
+      decision,
+      ...(reportChoice ? { reportChoice } : {}),
+      ...(note ? { note } : {}),
+    },
     'Decide hold'
   );
   if (!result.ok) {
@@ -145,7 +155,11 @@ async function decideBatch(
   const expected = other === 'dismiss' ? 'Dismissed' : 'Confirmed';
   const response = await callModEndpoint(
     'text-scan/csam-hold/resolve',
-    { holds: batch, decision: other, ...(note ? { note } : {}) },
+    {
+      holds: batch,
+      decision: other,
+      ...(note ? { note } : {}),
+    },
     'Decide holds',
     BATCH_TIMEOUT_MS
   );
@@ -174,3 +188,68 @@ async function decideBatch(
 }
 
 type BatchEntry = { holdId: number; ok: boolean; status?: string; error?: string };
+
+/** The main app records that a confirmed hold's item went into a CSAM report, or takes the mark back. */
+export async function markCsamHoldReported({
+  holdId,
+  included,
+}: {
+  holdId: number;
+  included: boolean;
+}): Promise<CsamHoldDecisionResult> {
+  const result = await callModEndpoint(
+    'text-scan/csam-hold/mark-reported',
+    { holdId, included },
+    included ? 'Mark included in a report' : 'Undo included in a report'
+  );
+  if (!result.ok) {
+    if (!result.requestNeverSent && result.status === undefined)
+      return { ok: false, error: MAY_HAVE_COMPLETED };
+    return { ok: false, error: result.error };
+  }
+  return { ok: true };
+}
+
+/** The main app records the report choice on a confirmed hold decided without one. */
+export async function setCsamHoldReportChoice({
+  holdId,
+  reportChoice,
+}: {
+  holdId: number;
+  reportChoice: CsamReportChoice;
+}): Promise<CsamHoldDecisionResult> {
+  const result = await callModEndpoint(
+    'text-scan/csam-hold/set-report-choice',
+    { holdId, reportChoice },
+    'Set report choice'
+  );
+  if (!result.ok) {
+    if (!result.requestNeverSent && result.status === undefined)
+      return { ok: false, error: MAY_HAVE_COMPLETED };
+    return { ok: false, error: result.error };
+  }
+  return { ok: true };
+}
+
+/** "Not sure": the main app marks the pending hold for the Moderation Lead; nothing is decided. */
+export async function referCsamHold({
+  holdId,
+  textHash,
+  note,
+}: {
+  holdId: number;
+  textHash: string;
+  note?: string;
+}): Promise<CsamHoldDecisionResult> {
+  const result = await callModEndpoint(
+    'text-scan/csam-hold/refer',
+    { holdId, textHash, ...(note ? { note } : {}) },
+    'Send hold to lead'
+  );
+  if (!result.ok) {
+    if (!result.requestNeverSent && result.status === undefined)
+      return { ok: false, error: MAY_HAVE_COMPLETED };
+    return { ok: false, error: result.error };
+  }
+  return { ok: true };
+}

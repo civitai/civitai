@@ -2,7 +2,8 @@ import * as z from 'zod';
 import { HAT_SORTS } from '~/shared/constants/hat-turf-feed.constants';
 import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
-import { constants } from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
+import type { RateLimit } from '~/server/middleware.trpc';
 import {
   baseQuerySchema,
   infiniteQuerySchema,
@@ -434,9 +435,12 @@ export function requiresImageDbPath(input: {
   publishedOnly?: boolean | null;
   userId?: number | null;
   hidden?: boolean | null;
+  requiringMeta?: boolean | null;
 }) {
   return (
     !!input.hidden ||
+    // The feed service has no filter for images blocked until their metadata is verified.
+    (!!input.requiringMeta && !!input.userId) ||
     !!input.postId ||
     !!input.postIds?.length ||
     !!input.collectionId ||
@@ -446,6 +450,54 @@ export function requiresImageDbPath(input: {
     (!!input.modelId && !input.modelVersionId) ||
     (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId)) ||
     (!!input.publishedOnly && !!input.userId)
+  );
+}
+
+/**
+ * Feed inputs whose answer depends on the viewer (signed out, each is ignored or reads as nobody's),
+ * so the answer is not edge-cached.
+ */
+export function isViewerScopedImageFeed(input: {
+  reactions?: unknown[] | null;
+  followed?: boolean | null;
+  hidden?: boolean | null;
+  pending?: boolean | null;
+  notPublished?: boolean | null;
+  scheduled?: boolean | null;
+  poiOnly?: boolean | null;
+  minorOnly?: boolean | null;
+  pendingReviewOnly?: boolean | null;
+}) {
+  return (
+    !!input.reactions?.length ||
+    !!input.followed ||
+    !!input.hidden ||
+    !!input.pending ||
+    !!input.notPublished ||
+    !!input.scheduled ||
+    !!input.poiOnly ||
+    !!input.minorOnly ||
+    !!input.pendingReviewOnly
+  );
+}
+
+/** `isViewerScopedImageFeed` plus the Hat Turf inputs, which only image.getInfinite reads. */
+export function isViewerScopedInfiniteFeed(
+  input: Parameters<typeof isViewerScopedImageFeed>[0] & {
+    hatSort?: unknown;
+    hatTurfMine?: boolean | null;
+    hatTurfExpired?: boolean | null;
+    hideTurfHats?: boolean | null;
+    hideWornHats?: boolean | null;
+  }
+) {
+  return (
+    isViewerScopedImageFeed(input) ||
+    !!input.hatSort ||
+    !!input.hatTurfMine ||
+    !!input.hatTurfExpired ||
+    !!input.hideTurfHats ||
+    !!input.hideWornHats
   );
 }
 
@@ -539,6 +591,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     hatTeams: z.string().max(32).array().max(8).optional(),
     // Only the images the viewer has a live Turf hat on.
     hatTurfMine: z.boolean().optional(),
+    // Only the images where the viewer's Turf hat has expired, so they can place it again.
+    hatTurfExpired: z.boolean().optional(),
     hideTurfHats: z.boolean().optional(),
     hideWornHats: z.boolean().optional(),
     // Client-only on green: opt-in PG-13 on public feeds. Passes through the
@@ -681,6 +735,11 @@ export const updateImageAcceptableMinorSchema = z.object({
   collectionId: z.number(),
   acceptableMinor: z.boolean(),
 });
+
+/** Each change purges shared caches; moderators are not limited. */
+export const updateImageAcceptableMinorRateLimits: RateLimit[] = [
+  { limit: 30, period: CacheTTL.hour },
+];
 
 export type SetTosViolationSchema = z.infer<typeof setTosViolationSchema>;
 export const setTosViolationSchema = z.object({

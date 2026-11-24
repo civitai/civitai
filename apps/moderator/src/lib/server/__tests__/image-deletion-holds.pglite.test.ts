@@ -1,10 +1,11 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
-import type { DB } from '@civitai/db-schema/kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ContentDeletion from '@civitai/db-queries/content-deletion';
 import type * as Axiom from '../axiom';
 import { freshPglite } from '../../../test/pglite';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -12,9 +13,11 @@ import type { ImageKeptReason } from '$lib/image-kept-reasons';
 
 /** A moderator delete refuses any image a CSAM review, block, report or owner hold covers. */
 
-const { dbHandle, deletedKeys } = vi.hoisted(() => ({
+const MODERATOR = { id: 1, isModerator: true };
+const { dbHandle, skipHoldRecheck } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
-  deletedKeys: [] as string[],
+  // Drops the DELETE's own hold re-check, so an image held after the first check gets through.
+  skipHoldRecheck: { current: false },
 }));
 
 vi.mock('../db', () => ({
@@ -27,20 +30,28 @@ vi.mock('../db', () => ({
     return dbHandle.current;
   },
 }));
-vi.mock('../storage', () => ({
-  getStorage: () => ({
-    deleteObject: async ({ key }: { key: string }) => {
-      deletedKeys.push(key);
-    },
-  }),
-}));
+vi.mock('@civitai/db-queries/content-deletion', async (importOriginal) => {
+  const actual = await importOriginal<typeof ContentDeletion>();
+  return {
+    ...actual,
+    deleteImageRows: (...[db, options]: Parameters<typeof actual.deleteImageRows>) =>
+      actual.deleteImageRows(
+        db,
+        skipHoldRecheck.current ? { ...options, where: undefined } : options
+      ),
+  };
+});
 vi.mock('../redis', () => ({
   getRedis: () => ({ del: vi.fn(async () => 0) }),
   getSysRedis: () => ({ packed: { set: vi.fn(async () => undefined) } }),
 }));
 vi.mock('../cache', () => ({ bustCachedObject: vi.fn(async () => undefined) }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn(), syncSearchIndexBulk: vi.fn() }));
-vi.mock('../image-moderation-effects', () => ({ bustPostGalleryCaches: vi.fn() }));
+vi.mock('../image-moderation-effects', () => ({
+  bustPostGalleryCaches: vi.fn(),
+  queueComicsForImages: vi.fn(async () => undefined),
+}));
+vi.mock('../home-blocks', () => ({ evictHomeBlocks: vi.fn(async () => undefined) }));
 vi.mock('../clickhouse', () => ({
   getClickhouse: () => ({ insert: vi.fn(async () => undefined) }),
 }));
@@ -50,12 +61,13 @@ vi.mock('../axiom', async (importOriginal) => ({
   logAxiomError: vi.fn(async () => undefined),
 }));
 
-const { deleteImageRows, finishImageDeletes } = await import('../image-deletion');
+const { deleteImages: deleteModeratorImages } = await import('../image-deletion');
+const { syncSearchIndexBulk } = await import('../search-index');
 const { imageDeleteHoldLegs } = await import('../delete-hold-sql');
-const { moderateArticle } = await import('../article-moderation');
+const { dropBlockedImageDeleteQueue } = await import('../blocked-image-queue');
 
 const SCHEMA = `
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "profilePictureId" INTEGER);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "profilePictureId" INTEGER, "image" TEXT);
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "url" TEXT,
@@ -83,9 +95,13 @@ CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER, "userId" IN
 CREATE TABLE "File" ("entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "CommentTopic" ("entityType" TEXT, "entityId" INTEGER);
-CREATE TABLE "CdnQueued" ("imageId" INTEGER);
-CREATE FUNCTION queue_cdn_access_sync(entity_id integer, entity_type text, payload jsonb)
-  RETURNS void LANGUAGE sql AS $$ INSERT INTO "CdnQueued" VALUES (entity_id) $$;
+CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel', 'ImageDelete', 'BlockedImageDelete');
+CREATE TABLE "JobQueue" (
+  "entityId" INTEGER, "entityType" "EntityType", "type" "JobQueueType", "data" JSONB,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
+  PRIMARY KEY ("entityType", "entityId", "type")
+);
 `;
 
 const OWNER = 10;
@@ -95,9 +111,11 @@ const PLAIN = 1;
 let db: PGlite;
 
 beforeEach(async () => {
-  deletedKeys.length = 0;
+  skipHoldRecheck.current = false;
+  vi.mocked(syncSearchIndexBulk).mockClear();
   db = await freshPglite();
   await db.exec(SCHEMA);
+  await db.exec(imageUseTablesSql);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
 
@@ -139,18 +157,30 @@ const report = (fields: {
 
 const remaining = async () =>
   (await db.query<{ id: number }>(`SELECT id FROM "Image" ORDER BY id`)).rows.map((r) => r.id);
+/** The stored files the delete queued for the main app's `image-storage-deletes` job. */
+const queuedFiles = async () =>
+  (
+    await db.query<{ entityId: number; data: { url: string; allVersions?: boolean } }>(
+      `SELECT "entityId", data FROM "JobQueue" WHERE type = 'ImageStorageDelete' ORDER BY "entityId"`
+    )
+  ).rows;
+const queuedUrls = async () => (await queuedFiles()).map((r) => r.data.url);
+/** The moderator CDN takedowns the DELETE queued for `cdn-access-sync`. */
 const cdnQueued = async () =>
-  (await db.query<{ imageId: number }>(`SELECT "imageId" FROM "CdnQueued"`)).rows.map(
-    (r) => r.imageId
-  );
+  (
+    await db.query<{ entityId: number }>(
+      `SELECT "entityId" FROM "JobQueue" WHERE type = 'CdnAccessSync' AND data->>'moderatorDelete' = 'true' ORDER BY "entityId"`
+    )
+  ).rows.map((r) => r.entityId);
 
-const deleteImages = async (ids: number[]) => {
-  const rows = await (dbHandle.current as Kysely<DB>)
-    .transaction()
-    .execute((trx) => deleteImageRows(trx, ids));
-  await finishImageDeletes(rows);
-  return rows;
-};
+/** A moderator's delete; resolves to the images a hold kept. */
+const deleteImages = (ids: number[]) => deleteModeratorImages(ids, MODERATOR);
+/** The ids sent to search for removal, sorted: the post-commit finish's first act. */
+const deindexed = () =>
+  vi
+    .mocked(syncSearchIndexBulk)
+    .mock.calls.flatMap(([batch]) => (batch.action === 'delete' ? batch.entityIds : []))
+    .sort((a, b) => a - b);
 
 const imageRow = async (id: number) =>
   (await db.query(`SELECT * FROM "Image" WHERE id = $1`, [id])).rows[0];
@@ -166,33 +196,54 @@ const collectionItems = async () =>
 const expectRefused = async (id: number, reason: ImageKeptReason) => {
   await db.query(`INSERT INTO "CollectionItem" VALUES ($1), ($2)`, [PLAIN, id]);
   const before = await imageRow(id);
-  const rows = await deleteImages([PLAIN, id]);
+  const refused = await deleteImages([PLAIN, id]);
   expect(await remaining()).toEqual([id]);
   expect(await imageRow(id)).toEqual(before);
   expect(await collectionItems()).toEqual([id]);
-  expect(deletedKeys).toEqual([`key-${PLAIN}`]);
+  expect(await queuedUrls()).toEqual([`key-${PLAIN}`]);
   expect(await cdnQueued()).toEqual([PLAIN]);
-  expect(rows.deleted.map((d) => d.id)).toEqual([PLAIN]);
-  expect(rows.refused).toEqual([{ id, reason }]);
+  // A refused image keeps its search entry.
+  expect(deindexed()).toEqual([PLAIN]);
+  expect(refused).toEqual([{ id, reason }]);
 };
 
-describe('deleteImageRows', () => {
+describe('deleteImages', () => {
   beforeEach(() => image(PLAIN, { userId: OTHER_OWNER }));
 
-  it('deletes an image no hold covers, with its stored file', async () => {
-    await image(2);
-    const rows = await deleteImages([PLAIN, 2]);
+  it('deletes an image no hold covers, purging every version of its stored file, and takes it out of search', async () => {
+    await image(2, { blockedFor: 'moderated' });
+    const refused = await deleteImages([PLAIN, 2]);
     expect(await remaining()).toEqual([]);
-    expect(deletedKeys.sort()).toEqual(['key-1', 'key-2']);
-    expect(rows.refused).toEqual([]);
+    expect(await queuedFiles()).toEqual([
+      { entityId: PLAIN, data: { url: `key-${PLAIN}`, allVersions: true } },
+      { entityId: 2, data: { url: 'key-2', allVersions: true } },
+    ]);
+    expect(deindexed()).toEqual([PLAIN, 2]);
+    expect(refused).toEqual([]);
+  });
+
+  it('keeps the row, and finishes nothing, when its stored file cannot be queued', async () => {
+    await image(2);
+    await db.exec(`DROP TABLE "JobQueue"`);
+    await expect(deleteImages([2])).rejects.toThrow();
+    // The takedown would have gone in the same statement, to the table that is gone.
+    expect(await remaining()).toEqual([PLAIN, 2]);
+    expect(deindexed()).toEqual([]);
+  });
+
+  it('queues nothing for a held image', async () => {
+    await image(2, { needsReview: 'csam' });
+    await deleteImages([PLAIN, 2]);
+    expect(await remaining()).toEqual([2]);
+    expect(await queuedUrls()).toEqual([`key-${PLAIN}`]);
   });
 
   it('deletes an image whose owner was named only on a report closed over a year ago', async () => {
     await image(2);
     await report({ userId: OWNER, sentDaysAgo: 400, archivedDaysAgo: 390 });
-    const rows = await deleteImages([2]);
+    const refused = await deleteImages([2]);
     expect(await remaining()).toEqual([PLAIN]);
-    expect(rows.refused).toEqual([]);
+    expect(refused).toEqual([]);
   });
 
   describe('(a) the image is under a CSAM review or block', () => {
@@ -264,9 +315,9 @@ describe('deleteImageRows', () => {
     it('refuses an image whose owner has another image flagged for CSAM review', async () => {
       await image(2);
       await image(3, { needsReview: 'csam' });
-      const rows = await deleteImages([PLAIN, 2]);
+      const refused = await deleteImages([PLAIN, 2]);
       expect(await remaining()).toEqual([2, 3]);
-      expect(rows.refused).toEqual([{ id: 2, reason: 'account' }]);
+      expect(refused).toEqual([{ id: 2, reason: 'account' }]);
     });
 
     it('refuses an image owned by the placeholder owner', async () => {
@@ -277,27 +328,54 @@ describe('deleteImageRows', () => {
 
   it('keeps an image a hold covers by the time of the delete, after the check passed it', async () => {
     await image(2);
-    // Flags image 2 between the check and its delete: the trigger fires on the first image's
-    // CollectionItem delete, which runs after the check and before image 2's Image delete.
-    await db.exec(`
-      CREATE FUNCTION flag_late() RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 2; RETURN OLD; END $$;
-      CREATE TRIGGER flag_late BEFORE DELETE ON "CollectionItem"
-        FOR EACH ROW EXECUTE FUNCTION flag_late();
-      INSERT INTO "CollectionItem" VALUES (${PLAIN}), (2);
-    `);
-    const rows = await deleteImages([PLAIN, 2]);
+    await flagImage2Late();
+    const refused = await deleteImages([PLAIN, 2]);
     expect(await remaining()).toEqual([2]);
     expect(await collectionItems()).toEqual([2]);
-    expect(deletedKeys).toEqual([`key-${PLAIN}`]);
-    expect(rows.refused).toEqual([{ id: 2, reason: 'review' }]);
-    expect(rows.notReturned).toEqual([]);
+    expect(await queuedUrls()).toEqual([`key-${PLAIN}`]);
+    expect(refused).toEqual([{ id: 2, reason: 'review' }]);
+    // Untouched, so it stays in search.
+    expect(deindexed()).toEqual([PLAIN]);
+  });
+});
+
+/**
+ * Flags image 2 for CSAM review between the check and its delete: the trigger fires on the first
+ * image's CollectionItem delete, which runs after the check and before image 2's Image delete.
+ */
+const flagImage2Late = () =>
+  db.exec(`
+    CREATE FUNCTION flag_late() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 2; RETURN OLD; END $$;
+    CREATE TRIGGER flag_late BEFORE DELETE ON "CollectionItem"
+      FOR EACH ROW EXECUTE FUNCTION flag_late();
+    INSERT INTO "CollectionItem" VALUES (${PLAIN}), (2);
+  `);
+
+describe('the stored file a deleted image leaves queued', () => {
+  beforeEach(() => image(PLAIN));
+
+  // Flagged after the hold check, with the DELETE's hold re-check skipped: the delete's own
+  // child-safety case check still keeps it, queued for when the case closes, its file untouched.
+  it('keeps an image flagged for CSAM review after the check, as a pending delete', async () => {
+    await image(2);
+    await flagImage2Late();
+    skipHoldRecheck.current = true;
+    const refused = await deleteImages([PLAIN, 2]);
+    expect(await remaining()).toEqual([2]);
+    expect(await queuedFiles()).toEqual([
+      { entityId: PLAIN, data: { url: `key-${PLAIN}`, allVersions: true } },
+    ]);
+    expect(refused).toEqual([{ id: 2, reason: 'review' }]);
+    expect(
+      (await db.query(`SELECT "entityId", data FROM "JobQueue" WHERE type = 'PendingDelete'`)).rows
+    ).toEqual([{ entityId: 2, data: { deletedBy: 'moderator:1', moderatorDelete: true } }]);
   });
 });
 
 // The hold marker's own delete trigger (the real migrations) keeps such an image and blocks it, so
 // the delete goes ahead rather than leaving a held owner's image live.
-describe('deleteImageRows on an owner with a hold marker', () => {
+describe('removeImages on an owner with a hold marker', () => {
   const migration = (name: string) =>
     readFileSync(
       join(
@@ -322,38 +400,49 @@ describe('deleteImageRows on an owner with a hold marker', () => {
     await image(PLAIN, { userId: OTHER_OWNER });
   });
 
-  it.each([
-    ['a clean image', {}],
-    ['an image flagged for CSAM review', { needsReview: 'csam' }],
-  ])('blocks %s instead of leaving it live, and keeps its file', async (_label, state) => {
-    await image(2, state);
+  it('blocks a clean image instead of leaving it live, and keeps its file', async () => {
+    await image(2);
     await db.query(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 2`);
     await db.query(`INSERT INTO "CollectionItem" VALUES ($1), (2)`, [PLAIN]);
-    const rows = await deleteImages([PLAIN, 2]);
+    // A cleanup still queued for it from before: the trigger, not a case, is what keeps it now.
+    await db.query(`INSERT INTO "JobQueue" ("entityId", "entityType", type, data)
+      VALUES (2, 'Image', 'PendingDelete', '{"cleanup": true}')`);
+    const refused = await deleteImages([PLAIN, 2]);
     expect(await remaining()).toEqual([2]);
     expect(await collectionItems()).toEqual([2]);
     expect(await imageRow(2)).toMatchObject({ ingestion: 'Blocked', nsfwLevel: 32 });
-    expect(deletedKeys).toEqual([`key-${PLAIN}`]);
+    expect(await queuedUrls()).toEqual([`key-${PLAIN}`]);
     expect(await cdnQueued()).toEqual([PLAIN]);
-    expect(rows.refused).toEqual([{ id: 2, reason: 'evidence' }]);
-    expect(rows.notReturned).toEqual([2]);
+    expect(refused).toEqual([{ id: 2, reason: 'evidence' }]);
+    // Blocked by the trigger, so it leaves search with the deleted one.
+    expect(deindexed()).toEqual([PLAIN, 2]);
   });
-});
 
-describe('an article delete', () => {
-  it('deletes the article and its unheld images, and reports the held ones', async () => {
-    await image(PLAIN, { userId: OTHER_OWNER });
-    await image(2, { blockedFor: 'CSAM' });
-    await db.exec(`
-      INSERT INTO "Article" VALUES (50, ${PLAIN}, ${OTHER_OWNER});
-      INSERT INTO "ImageConnection" VALUES (2, 50, 'Article');
-    `);
-
-    const result = await moderateArticle({ action: 'delete', articleId: 50, userId: 1 });
-
-    expect(result).toEqual({ ok: true, kept: [{ id: 2, reason: 'review' }] });
-    expect((await db.query(`SELECT 1 FROM "Article"`)).rows).toHaveLength(0);
+  // Its child-safety case keeps it before the trigger is reached.
+  it('keeps an image flagged for CSAM review as a pending delete, blocked and out of search', async () => {
+    await image(2, { needsReview: 'csam' });
+    await db.query(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 2`);
+    await db.query(`INSERT INTO "CollectionItem" VALUES ($1), (2)`, [PLAIN]);
+    const refused = await deleteImages([PLAIN, 2]);
     expect(await remaining()).toEqual([2]);
-    expect(deletedKeys).toEqual([`key-${PLAIN}`]);
+    expect(await collectionItems()).toEqual([2]);
+    expect(await imageRow(2)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+    expect(await queuedUrls()).toEqual([`key-${PLAIN}`]);
+    expect(refused).toEqual([{ id: 2, reason: 'review' }]);
+    expect(deindexed()).toEqual([PLAIN, 2]);
+  });
+
+  // An unblock or an approved appeal reverses the moderator's delete (docs/features/pending-deletes.md).
+  it("drops the moderator's pending delete when the block is lifted", async () => {
+    await image(2, { needsReview: 'csam' });
+    await db.query(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 2`);
+    await deleteImages([2]);
+    const pendingDeletes = async () =>
+      (await db.query(`SELECT "entityId" FROM "JobQueue" WHERE type = 'PendingDelete'`)).rows;
+    expect(await pendingDeletes()).toEqual([{ entityId: 2 }]);
+
+    await dropBlockedImageDeleteQueue(2);
+
+    expect(await pendingDeletes()).toEqual([]);
   });
 });

@@ -63,9 +63,20 @@ beforeEach(() => {
   vi.useRealTimers();
   resetEnv();
   vi.mocked(hSetWithTTL).mockResolvedValue(undefined as never);
+  // An admitting claim-script reply: a fail-closed scope refuses when the script has none.
+  redisMock.redis.eval.mockResolvedValue([1] as never);
 });
 
-const MONEY_SCOPES = ['buzz', 'nowPayments', 'generation', 'orchestrator', 'remixApp', 'training'];
+// imageSearchUpload: the Moderation Lead's ruling on civitai#9445 (its global upload cap bounds paid scans and embeds).
+const MONEY_SCOPES = [
+  'buzz',
+  'nowPayments',
+  'generation',
+  'orchestrator',
+  'remixApp',
+  'training',
+  'imageSearchUpload',
+];
 
 describe('claimRateLimitAttempt, money scopes, store unavailable', () => {
   it.each(MONEY_SCOPES)('%s: a rejecting store refuses the first attempt with a 503', async (s) => {

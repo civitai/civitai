@@ -1,9 +1,10 @@
 import { randomUUID } from 'crypto';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-// Every call is raced against the read deadline, writes included: the part route holds a
-// buffering slot across `recordRelaySessionPart`, and a write parked on a half-open sys socket
-// would hold it for minutes.
-import { withSysReadDeadline } from '~/server/redis/sys-read-deadline';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { boundedClusterCall as bounded } from '~/server/utils/cluster-window-count';
+
+// Every call is bounded, writes included: the part route holds a buffering slot across
+// `recordRelaySessionPart`, and a write parked on a half-open socket would hold it for the cluster
+// client's much longer per-command deadline.
 
 /**
  * Server-side state of one chunked upload-relay session.
@@ -12,6 +13,9 @@ import { withSysReadDeadline } from '~/server/redis/sys-read-deadline';
  * holds an opaque session id, and every step re-reads the record and checks `userId` against the
  * caller's session. A client-supplied key or uploadId would let a caller write parts into, or
  * complete, someone else's upload.
+ *
+ * A session lives an hour at most, and a lost one (a deploy that moved it, an eviction) reads as
+ * unknown, so that upload fails and the client starts it again.
  */
 export type ImageUploadRelaySession = {
   userId: number;
@@ -32,15 +36,15 @@ const PART_FIELD_PREFIX = 'part:';
 const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function sessionKey(sessionId: string) {
-  return `${REDIS_SYS_KEYS.IMAGE_UPLOAD.RELAY_SESSION}:${sessionId}` as const;
+  return `${REDIS_KEYS.IMAGE_UPLOAD.RELAY_SESSION}:${sessionId}` as const;
 }
 
 export async function createRelaySession(
   session: Omit<ImageUploadRelaySession, 'etags'>
 ): Promise<string> {
   const sessionId = randomUUID();
-  await withSysReadDeadline(
-    sysRedis.hSetMultiWithExpire(
+  await bounded('createRelaySession', () =>
+    redis.hSetMultiWithExpire(
       sessionKey(sessionId),
       [
         'userId',
@@ -73,7 +77,7 @@ export async function getOwnedRelaySession(
   userId: number
 ): Promise<ImageUploadRelaySession | null> {
   if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return null;
-  const raw = await withSysReadDeadline(sysRedis.hGetAll(sessionKey(sessionId)));
+  const raw = await bounded('getOwnedRelaySession', () => redis.hGetAll(sessionKey(sessionId)));
   if (!raw || Number(raw.userId) !== userId) return null;
   const size = Number(raw.size);
   const pieceSize = Number(raw.pieceSize);
@@ -95,8 +99,8 @@ export async function getOwnedRelaySession(
 
 /** Record a stored part's ETag; a re-sent part overwrites, as S3 does with the part itself. */
 export async function recordRelaySessionPart(sessionId: string, partNumber: number, etag: string) {
-  await withSysReadDeadline(
-    sysRedis.hSetMultiWithExpire(
+  await bounded('recordRelaySessionPart', () =>
+    redis.hSetMultiWithExpire(
       sessionKey(sessionId),
       [`${PART_FIELD_PREFIX}${partNumber}`, etag],
       RELAY_SESSION_TTL_SECONDS
@@ -105,5 +109,5 @@ export async function recordRelaySessionPart(sessionId: string, partNumber: numb
 }
 
 export async function deleteRelaySession(sessionId: string) {
-  await withSysReadDeadline(sysRedis.del(sessionKey(sessionId)));
+  await bounded('deleteRelaySession', () => redis.del(sessionKey(sessionId)));
 }

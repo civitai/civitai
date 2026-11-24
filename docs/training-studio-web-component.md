@@ -35,10 +35,18 @@ interface TrainingStudioHost {
   /** SignalR access token for live workflow updates. Null => component falls back to polling. */
   getSignalsToken(): Promise<string | null>;
 
-  /** The main app's trigger word check for one run, called before anything is submitted
-   *  (`POST /api/training-studio/check-text`). Resolves { ok: false, error } on a refusal and
-   *  rejects when the check could not run. Without it the component refuses to start training. */
-  checkTrainingText(input: { triggerWord: string }):
+  /** The Studio's own server routes, reached through the host's server as this user: `path` is
+   *  the route's path and query (`/api/train`, `/api/continue-training?…`, `/api/dataset-rating`,
+   *  `/api/edit-image`, `/api/suggest-instruction`, `/api/epoch-archive?…`). Every paid call goes
+   *  here (starting a run or a continuation, generating an edit or a suggestion, building an epoch
+   *  archive), plus pricing a continuation and Review's mature count; the Studio server counts the
+   *  dataset's mature images and runs the trigger word and edit prompt checks. Without it the
+   *  component refuses those calls. On civitai.com: `/api/training-studio/studio/*`. */
+  studioServer?(path: string, init?: RequestInit): Promise<Response>;
+
+  /** Unused: the Studio server checks an edit's prompt when it submits the edit. Still accepted so
+   *  existing hosts keep type-checking. */
+  checkTrainingText?(input: { editPrompt: string; inputImages?: string[] }):
     Promise<{ ok: true } | { ok: false; error: string }>;
 
   /** Spendable balances for the header/pricing UI. The buzz service is internal-only (no
@@ -150,10 +158,9 @@ the same SDK call; in the component it becomes a browser call.
 
 | Operation | SDK / endpoint | Today's route |
 | --- | --- | --- |
-| Submit training (+ whatif price) | `submitWorkflow` | `POST /api/train` |
+| Training price (whatif) | `submitWorkflow` (whatif) | `POST /api/quote` |
 | List my trainings | `queryWorkflows` (tag-filtered) | `GET /api/trainings` |
 | Run detail / dataset | `getWorkflow` | `GET /api/run-dataset` |
-| Train further (quote + submit) | `getWorkflow` + `submitWorkflow` | `/api/continue-training` |
 | Rename a run | `updateWorkflow` | `POST /api/rename` |
 | Import from generations | `queryWorkflows` | `GET /api/generations` |
 | Blob upload URL | `getConsumerBlobUploadUrl` | `GET /api/upload-url` |
@@ -161,14 +168,28 @@ the same SDK call; in the component it becomes a browser call.
 | Dataset blob fetch | consumer blobs GET, `Authorization: Bearer` | `GET /api/dataset-blob` |
 | Live trace tail | streaming-blobs GET (no auth today) | direct in prod already |
 
+Runs on the Studio server, reached through the host's `studioServer`:
+
+- **Submit training** — `POST /api/train`.
+- **Train further (quote + submit)** — `/api/continue-training`.
+- **Review's mature count** — `POST /api/dataset-rating`.
+- **Generate an edit** — `POST /api/edit-image` (its quote and poll stay browser calls).
+- **Suggest an instruction** — `POST /api/suggest-instruction` (its quote and poll stay browser calls).
+- **Epoch archive** — `POST /api/epoch-archive?id=…&kind=weights|samples`.
+
+The main app forwards these with the user's session cookies only, after its own Training Studio
+gates. The Studio serves them to a user outside its closed beta when the main app's
+`GET /api/training-studio/access` allows that user the embed.
+
 Stays host-side (not orchestrator-backed or not user-token-backed):
 
 - **Orchestrator token minting** — `@civitai/db` ApiKey row + redis cache (standalone shell) /
   `getOrchestratorToken` (main app).
 - **Signals token minting** — internal signals endpoint.
 - **Buzz balances** — internal buzz service (`BUZZ_ENDPOINT`), no browser CORS.
-- **Trigger word check** — the main app's `POST /api/training-studio/check-text`; the standalone
-  shell's server calls it with the user's session cookie, the embed through `checkTrainingText`.
+- **Trigger word check** — the main app's `POST /api/training-studio/check-text`, called by the
+  Studio server with the user's session cookie (for the embed too, since its submits run there).
+  The edit prompt check runs the same way, on the Studio server's `POST /api/edit-image`.
 - **Model status** — the main app's `GET /api/training-studio/model-status`; the standalone shell's
   server calls it with the user's session cookie, the embed through `modelLive`.
 

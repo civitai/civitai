@@ -1,13 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { challengeCoverWhere, imageNotRestrictedWhere } from '~/server/common/image-visibility';
 import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge-helpers';
 import type * as DailyChallengeUtils from '~/server/games/daily-challenge/daily-challenge.utils';
 import type * as UserService from '~/server/services/user.service';
 
 // The detail page's winners and cover go through the same site gating as the challenge list.
 
-const { mockGetChallengeById } = vi.hoisted(() => ({ mockGetChallengeById: vi.fn() }));
+const { mockGetChallengeById, mockAmIBlockedByUser } = vi.hoisted(() => ({
+  mockGetChallengeById: vi.fn(),
+  mockAmIBlockedByUser: vi.fn(async (_: { userId: number; targetUserId?: number }) => false),
+}));
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof ChallengeHelpers>()),
@@ -21,6 +25,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
   getProfilePicturesForUsers: vi.fn(async () => ({})),
   getCosmeticsForUsers: vi.fn(async () => ({})),
+  amIBlockedByUser: mockAmIBlockedByUser,
 }));
 
 const { getChallengeDetail, getCompletedChallengesWithWinners } = await import(
@@ -69,6 +74,7 @@ const winnerRow = (imageNsfwLevel: number, image: Record<string, unknown> = {}) 
   imageIngestion: 'Scanned',
   imageBlockedFor: null,
   imageReviewed: true,
+  imageNotRestricted: true,
   ...image,
   place: 1,
   buzzAwarded: 0,
@@ -199,7 +205,7 @@ describe('getChallengeDetail — cover image', () => {
   ) {
     mockGetChallengeById.mockResolvedValue({ ...challenge, coverImageId: 80 });
     dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
-    dbMock.dbRead.image.findUnique.mockResolvedValue({
+    dbMock.dbRead.image.findFirst.mockResolvedValue({
       id: 80,
       url: 'cover-image-url',
       nsfwLevel,
@@ -256,5 +262,61 @@ describe('getChallengeDetail — cover image', () => {
     ['a block reason', NsfwLevel.X, { blockedFor: 'tos' }],
   ])('withholds a cover with %s on the mature site', async (_, nsfwLevel, image) => {
     expect(await cover(nsfwLevel, VIEWER, false, completedSystemChallenge, image)).toBeNull();
+  });
+});
+
+describe('getChallengeDetail — the cover read', () => {
+  it('asks only for a cover every viewer may be shown, as challengeCoverWhere states it', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-06-01T00:00:00Z'));
+    try {
+      mockGetChallengeById.mockResolvedValue({ ...completedSystemChallenge, coverImageId: 80 });
+      dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+      dbMock.dbRead.image.findFirst.mockResolvedValue(null as never);
+      await getChallengeDetail(500, VIEWER, false, false, true);
+      expect(dbMock.dbRead.image.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: 80,
+            AND: [imageNotRestrictedWhere({ viewerId: VIEWER }), challengeCoverWhere()],
+          }),
+        })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('getChallengeDetail — user challenge gates', () => {
+  const OWNER = 111;
+  const userChallenge = { ...completedSystemChallenge, source: 'User', createdById: OWNER };
+
+  beforeEach(() => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+  });
+
+  it('hides a user challenge when the caller omits the userChallenges flag', async () => {
+    mockGetChallengeById.mockResolvedValue(userChallenge);
+    expect(await getChallengeDetail(500, VIEWER, false, false)).toBeNull();
+  });
+
+  it('hides a user challenge from a viewer its creator blocked', async () => {
+    mockGetChallengeById.mockResolvedValue(userChallenge);
+    mockAmIBlockedByUser.mockImplementationOnce(
+      async ({ userId, targetUserId }) => userId === VIEWER && targetUserId === OWNER
+    );
+    expect(await getChallengeDetail(500, VIEWER, false, false, true)).toBeNull();
+  });
+
+  it('hides a user challenge whose cover is unrated, reading only the fields it selects', async () => {
+    mockGetChallengeById.mockResolvedValue({ ...userChallenge, coverImageId: 77 });
+    const row = { poi: false, ingestion: 'Scanned', nsfwLevel: 0 };
+    dbMock.dbRead.image.findUnique.mockImplementation((async ({
+      select,
+    }: {
+      select: Record<string, boolean>;
+    }) => Object.fromEntries(Object.entries(row).filter(([key]) => select[key]))) as never);
+    expect(await getChallengeDetail(500, VIEWER, false, false, true)).toBeNull();
   });
 });

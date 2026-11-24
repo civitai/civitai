@@ -71,6 +71,8 @@ export const actions: Actions = {
         step: 'enter' as const,
         error: refused
           ? 'Devices cannot be approved while impersonating. Exit impersonation first.'
+          : res.status === 503
+          ? 'Try again in a minute.'
           : 'Could not approve that code — it may have expired. Try again.',
         userCode,
       });

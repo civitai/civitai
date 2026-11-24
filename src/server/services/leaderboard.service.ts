@@ -1,3 +1,4 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { Prisma } from '@prisma/client';
 import type { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { DomainColor } from '~/shared/utils/prisma/enums';
@@ -200,7 +201,7 @@ export async function getLeaderboard(input: GetLeaderboardInput) {
       lr.metrics,
       u.username,
       u."deletedAt",
-      u.image,
+      ${Prisma.raw(fallbackUserImageColumn)} AS image,
       (
         SELECT jsonb_build_object(
           'position', lr.position - lro.position,
@@ -290,7 +291,7 @@ export async function getLeaderboardLegends(input: GetLeaderboardInput) {
       s.metrics,
       u.username,
       u."deletedAt",
-      u.image,
+      ${Prisma.raw(fallbackUserImageColumn)} AS image,
       null delta
     FROM scores s
     JOIN "User" u ON u.id = s."userId"

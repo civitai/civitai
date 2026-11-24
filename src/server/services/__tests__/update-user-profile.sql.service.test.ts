@@ -200,7 +200,7 @@ describe('updateUserProfile — the creator-card stats preferences statement', (
 
 describe('updateUserProfile — a new cover image', () => {
   it('creates the cover row from client columns only', async () => {
-    redisMock.sysRedis.mGet.mockResolvedValue([String(USER_ID)] as never);
+    redisMock.redis.mGet.mockResolvedValue([String(USER_ID)] as never);
     await updateUserProfile({
       userId: USER_ID,
       coverImage: {
@@ -265,11 +265,11 @@ describe('updateUserProfile — a new cover image', () => {
     beforeEach(() => {
       mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([]));
     });
-    afterEach(() => redisMock.sysRedis.mGet.mockReset());
+    afterEach(() => redisMock.redis.mGet.mockReset());
 
     for (const slot of ['coverImage', 'sfwCoverImage'] as const) {
       it(`refuses ${slot} before writing`, async () => {
-        redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER)] as never);
+        redisMock.redis.mGet.mockResolvedValue([String(OTHER)] as never);
 
         await expect(
           updateUserProfile({
@@ -284,11 +284,26 @@ describe('updateUserProfile — a new cover image', () => {
       });
 
       it(`writes ${slot} when that user saved it for the profile`, async () => {
-        redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER)] as never);
+        redisMock.redis.mGet.mockResolvedValue([String(OTHER)] as never);
 
         await updateUserProfile({ userId: USER_ID, sessionUserId: OTHER, [slot]: cover });
         expect(tx.userProfile.update).toHaveBeenCalled();
       });
     }
+  });
+});
+
+describe('updateUserProfile — links', () => {
+  it('updates an existing link only on the profile being saved', async () => {
+    await updateUserProfile({
+      userId: USER_ID,
+      socialLinks: [{ id: 990300001, url: 'https://example.invalid/a', type: 'Social' }],
+    } as never);
+
+    expect(tx.userLink.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.userLink.updateMany).toHaveBeenCalledWith({
+      where: { id: 990300001, userId: USER_ID },
+      data: expect.objectContaining({ userId: USER_ID, url: 'https://example.invalid/a' }),
+    });
   });
 });

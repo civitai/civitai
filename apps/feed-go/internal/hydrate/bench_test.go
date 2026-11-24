@@ -25,6 +25,12 @@ func goldenPacked(tb testing.TB) map[string][]byte {
 	}
 	out := map[string][]byte{}
 	for _, f := range files {
+		// The cold-cache and minor-content-rule fixtures add keys of their own: kept out, so the
+		// benchmarks' corpus (and the allocs/op gate's base-vs-head comparison) does not move when one
+		// is added.
+		if name := filepath.Base(f); strings.HasPrefix(name, "cold-") || strings.HasPrefix(name, "minor-mature-") {
+			continue
+		}
 		raw, err := os.ReadFile(f) //nolint:gosec // G304: path is a fixture from the testdata glob
 		if err != nil {
 			tb.Fatal(err)

@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { getServerProfanityFilter } from '~/server/services/profanity-list.service';
+import { auditTrainingTriggerWord } from '~/utils/metadata/training-trigger-word';
 import { CacheTTL } from '~/server/common/constants';
 import { getModelData } from '~/server/controllers/training.controller';
 import { dbKV } from '~/server/db/db-helpers';
@@ -97,6 +99,28 @@ export const trainingRouter = router({
     .input(createTrainingRequestDryRunSchema)
     .use(isFlagProtected('imageTraining'))
     .query(({ input }) => createTrainingRequestDryRun({ ...input })),
+
+  /**
+   * The trainer's trigger-word warning, against the server's profanity list so the browser needs
+   * no copy of it. Advisory only: the submit check (training-trigger-word-check.ts) is what enforces.
+   */
+  auditTriggerWord: protectedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(z.object({ triggerWord: z.string().max(200) }))
+    // Each answer tests a word against the list, so a person typing needs few and a script gets few.
+    .use(
+      rateLimit([
+        { limit: 10, period: 60 },
+        { limit: 100, period: 24 * 60 * 60 },
+      ])
+    )
+    .query(async ({ input, ctx }) => {
+      const profanity = ctx.features.isGreen
+        ? (await getServerProfanityFilter()).filter
+        : undefined;
+      // Severity only: naming the matched words would let one call test many against the list.
+      return { severity: auditTrainingTriggerWord(input.triggerWord, profanity).severity };
+    }),
 
   moveAsset: protectedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })

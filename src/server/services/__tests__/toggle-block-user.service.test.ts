@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { showcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { toggleHiddenSchema } from '~/server/schema/user-preferences.schema';
 import { userFollowsCache } from '~/server/redis/caches';
@@ -541,5 +542,29 @@ describe('toggleHidden kind=blockedUser — hideComments', () => {
 
     expect(queryWithTimeout).not.toHaveBeenCalled();
     expect(result.commentsHidden).toBeUndefined();
+  });
+});
+
+describe('toggleHidden kind=blockedUser — version showcases', () => {
+  it("takes each one's images out of the other's model showcases, and back on an unblock", async () => {
+    vi.spyOn(BlockedUsers, 'refreshCache').mockResolvedValue(undefined);
+    vi.spyOn(BlockedByUsers, 'refreshCache').mockResolvedValue(undefined);
+
+    // Each author's images, on the other's models only.
+    const showcaseReads = () =>
+      showcaseQueries(dbMock.dbWrite.$queryRaw).map((read) => read.values);
+    await block(true);
+    expect(showcaseReads()).toEqual(
+      expect.arrayContaining([
+        [targetUserId, userId],
+        [userId, targetUserId],
+      ])
+    );
+    expect(showcaseReads()).toHaveLength(2);
+
+    dbMock.dbWrite.$queryRaw.mockClear();
+    engagement.findUnique.mockResolvedValue({ type: 'Block' });
+    await block(false);
+    expect(showcaseReads()).toHaveLength(2);
   });
 });

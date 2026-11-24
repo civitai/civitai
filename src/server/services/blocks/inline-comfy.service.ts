@@ -456,7 +456,7 @@ const HAS_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 const FILE_LIKE_RE = /[./\\[\]]/;
 // The worker stages inputs under extensionless names built from blob keys, which the
 // source gate does not resolve. A media input takes only an AIR or a URL.
-const MEDIA_INPUT_NAMES: ReadonlySet<string> = new Set([
+export const MEDIA_INPUT_NAMES: ReadonlySet<string> = new Set([
   'image',
   'audio',
   'video',
@@ -496,9 +496,14 @@ function literalLoaderInputRefusal(name: string, value: unknown): string | null 
 
 type RefusedInlineNode = { nodeId: string; classType: string; reason: string };
 
-/** ComfyUI reads every array input as a link (`[nodeId, slot]`), so this does too. */
+/** A link to another node's output: `[nodeId, slot]`. Any other array is a value, checked as one. */
 function isLinkedInput(value: unknown): boolean {
-  return Array.isArray(value);
+  return (
+    Array.isArray(value) &&
+    value.length === 2 &&
+    (typeof value[0] === 'string' || typeof value[0] === 'number') &&
+    Number.isInteger(value[1])
+  );
 }
 
 function findRefusedInlineNodes(graph: ComfyGraph): RefusedInlineNode[] {
@@ -833,12 +838,10 @@ export async function assertViewerEntitledToInlineResources(opts: {
     }
   }
 
-  // Private / epoch resources require an active subscription. Ported from the
-  // onsite belt; NOT covered by `getResourceData`.
-  const hasPrivateOrEpoch = resources.some(
-    (r) => r.availability === Availability.Private || !!r.epochDetails
-  );
-  if (hasPrivateOrEpoch && !opts.user.isModerator) {
+  // Private resources require an active subscription; epochs need only ownership. Mirrors
+  // the onsite belt; NOT covered by `getResourceData`.
+  const hasPrivate = resources.some((r) => r.availability === Availability.Private);
+  if (hasPrivate && !opts.user.isModerator) {
     const subscription = await getHighestTierSubscription(opts.user.id);
     if (!subscription) {
       throw new TRPCError({

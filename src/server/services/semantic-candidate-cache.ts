@@ -8,6 +8,7 @@ import { withBulkheadSlotOrBusy } from '~/server/utils/request-bulkhead';
 import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
+  guardKey,
   readGuardStatus,
   UNKNOWN_GUARD_STATUS,
   type GuardStatus,
@@ -17,12 +18,13 @@ import {
   type CandidateSource,
   type GuardOutcome,
   type GuardRead,
+  MAX_CANDIDATE_LIMIT,
   type SearchCollection,
 } from '~/server/services/semantic-search-client';
 
-// collectPage asks for at most 100 ids at a time, so a request spans one or two blocks. Blocks are
-// aligned so viewers whose hydration drops different images still share them past page 1.
-export const CANDIDATE_BLOCK = 100;
+// collectPage asks for at most a block of ids at a time, so a request spans one or two blocks. Blocks
+// are aligned so viewers whose hydration drops different images still share them past page 1.
+export const CANDIDATE_BLOCK = MAX_CANDIDATE_LIMIT;
 
 type Block = { ids: number[]; correctedQuery?: string; guard?: GuardRead };
 type Read = { block: Block; hit: boolean };
@@ -46,7 +48,7 @@ const VERDICT_OUTCOMES: ReadonlySet<GuardOutcome> = new Set(['pass', 'flag']);
 function judgedUnder(blockGuard: GuardRead | undefined, key: string | undefined) {
   if (key === undefined || blockGuard?.outcome === 'none') return true;
   if (!blockGuard || !VERDICT_OUTCOMES.has(blockGuard.outcome)) return false;
-  return `${blockGuard.mode}:${blockGuard.version ?? 'none'}` === key;
+  return guardKey(blockGuard.mode, blockGuard.version) === key;
 }
 
 /**

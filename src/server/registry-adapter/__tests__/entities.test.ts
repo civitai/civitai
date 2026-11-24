@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CatalogApp } from '~/server/registry-adapter/entities';
-import { buildEntities } from '~/server/registry-adapter/entities';
+import { buildEntities, parseAppSearchUrl } from '~/server/registry-adapter/entities';
 import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.constants';
 
 // The schema stream: the root, JSON Schema 2020-12's own meta-schema.
@@ -155,6 +155,7 @@ describe('buildEntities', () => {
       name: 'Orbit Notes',
       kind: 'onsite',
       contentRating: 'x',
+      listingContentRating: 'x',
       tagline: 'Notes in orbit',
       category: 'productivity-q',
       iconUrl: 'https://img.example/orbit.png',
@@ -171,6 +172,25 @@ describe('buildEntities', () => {
     expect(Object.hasOwn(body('urn:apps.civitai.com:app/tide-log'), 'contentRating')).toBe(true);
     expect(body('urn:apps.civitai.com:app/tide-log').contentRating).toBeNull();
     expect(body('urn:apps.civitai.com:app/tide-log').externalUrl).toBe('https://tide.example');
+  });
+
+  it("🔴 listingContentRating is the listing's own rating, null (present) when the listing has none, never the block's", () => {
+    const body = (urn: string) =>
+      (sets.get(APP) ?? []).find((e) => e.urn === urn)?.body as Record<string, unknown>;
+    // hush-board: no listing rating, block rated r. contentRating falls back to the block; the
+    // listing's rating, which the store's search filters on, stays null.
+    const hush = body('urn:apps.civitai.com:app/hush-board');
+    expect(hush.contentRating).toBe('r');
+    expect(Object.hasOwn(hush, 'listingContentRating')).toBe(true);
+    expect(hush.listingContentRating).toBeNull();
+    // A listing rating the adapter does not know is sent as it is, while contentRating falls back.
+    const unknown = buildEntities(
+      [{ ...ORBIT, listing: listing({ slug: 'pg-dash', contentRating: 'pg-13' }) }],
+      ON
+    );
+    const pgDash = (unknown.get(APP) ?? [])[0].body as Record<string, unknown>;
+    expect(pgDash.contentRating).toBe('r');
+    expect(pgDash.listingContentRating).toBe('pg-13');
   });
 
   it('🔴 forkOf is the parent app URN when the catalog read named a parent, and absent otherwise', () => {
@@ -247,6 +267,50 @@ describe('buildEntities', () => {
     ]);
   });
 
+  it('🔴 app search is published only with an endpoint: the service set is [runtime, app-search]', () => {
+    const SEARCH = 'https://search.invalid/search';
+    const withSearch = buildEntities([ORBIT, TIDE], { ...ON, appSearchUrl: SEARCH });
+    expect(urns(withSearch, SERVICE)).toEqual([
+      'urn:apps.civitai.com:runtime/iframe@1',
+      'urn:apps.civitai.com:service/app-search@1',
+    ]);
+    const search = (withSearch.get(SERVICE) ?? [])[1];
+    expect(search.schemas).toEqual([SERVICE]);
+    // The whole body: a consumer (and its model) reads this text to decide how to call the endpoint.
+    expect(search.body).toEqual({
+      name: 'App search',
+      kind: 'search',
+      description:
+        'Finds Civitai apps by name, slug, tagline or creator: every word of q must be a prefix of a word of one of them. SFW apps only. Answers JSON: { results: [{ urn, slug, name, tagline, kind, category, rating, iconUrl, creator }] }, best match first.',
+      reads: APP,
+      endpoint: SEARCH,
+      parameters: {
+        q: "Words to look for; each must start a word of the app's name, slug, tagline or creator. Every app, by name, unless given.",
+        kind: 'onsite or offsite. Both unless given.',
+        category: 'Only apps of this category.',
+        limit: 'How many results at most, 1 to 50. 20 unless given.',
+      },
+    });
+    // The endpoint is the one given, not derived from the site's base URL.
+    const other = buildEntities([], { ...ON, appSearchUrl: 'https://elsewhere.invalid/s' });
+    expect((other.get(SERVICE) ?? [])[1].body).toMatchObject({
+      endpoint: 'https://elsewhere.invalid/s',
+    });
+    // rev is the body's: the same across builds (and catalogs), and moves with the endpoint.
+    const again = buildEntities([], { baseUrl: 'https://site.example', appSearchUrl: SEARCH });
+    expect((again.get(SERVICE) ?? [])[1].rev).toBe(search.rev);
+    expect(search.rev).toMatch(/^[0-9a-f]{16}$/);
+    expect((other.get(SERVICE) ?? [])[1].rev).not.toBe(search.rev);
+  });
+
+  it.each([
+    ['absent', {}],
+    ['empty', { appSearchUrl: '' }],
+  ])('🔴 app search %s: no app search entity', (_name, extra) => {
+    const out = buildEntities([ORBIT], { ...ON, ...extra });
+    expect(urns(out, SERVICE)).toEqual(['urn:apps.civitai.com:runtime/iframe@1']);
+  });
+
   it('rev changes with the body and only with it', () => {
     const again = buildEntities([ORBIT, TIDE, SUSPENDED], ON);
     const renamed = buildEntities([{ ...ORBIT, listing: listing({ name: 'Orbit Notes II' }) }], {
@@ -274,5 +338,38 @@ describe('buildEntities', () => {
       'urn:schema:apps.civitai.com:orbit-notes/cards@v2',
     ]);
     expect(urns(out, RELEASE)).toEqual(['urn:apps.civitai.com:app/orbit-notes@1.0.0']);
+  });
+});
+
+describe('parseAppSearchUrl (REGISTRY_ADAPTER_APP_SEARCH_URL)', () => {
+  it.each([undefined, ''])('%o: not published', (raw) => {
+    expect(parseAppSearchUrl(raw)).toBeUndefined();
+  });
+
+  it.each([
+    ['https://search.invalid/search', 'https://search.invalid/search'],
+    ['https://search.invalid:8443/v1/search', 'https://search.invalid:8443/v1/search'],
+    // Normalized: the parser's href, not the raw text.
+    ['  https://search.invalid/search\n', 'https://search.invalid/search'],
+    ['https://SEARCH.invalid/search', 'https://search.invalid/search'],
+    ['https://search.invalid', 'https://search.invalid/'],
+  ])('%j: published as %s', (raw, href) => {
+    expect(parseAppSearchUrl(raw)).toBe(href);
+  });
+
+  it.each([
+    ['http://search.invalid/search', /must be an https: URL, got http:/],
+    ['ftp://search.invalid/search', /must be an https: URL, got ftp:/],
+    ['javascript:alert(1)', /must be an https: URL, got javascript:/],
+    ['search.invalid/search', /is not a URL/],
+    ['/search', /is not a URL/],
+    [' ', /is not a URL/],
+    ['https://user:pw@search.invalid/search', /must not carry credentials/],
+    ['https://search.invalid:8443/v1/search?x=1', /must not carry a query string or fragment/],
+    ['https://search.invalid/search?', /must not carry a query string or fragment/],
+    ['https://search.invalid/search#top', /must not carry a query string or fragment/],
+    ['https://search.invalid/search#', /must not carry a query string or fragment/],
+  ])('%s: refused at startup', (raw, message) => {
+    expect(() => parseAppSearchUrl(raw)).toThrow(message);
   });
 });

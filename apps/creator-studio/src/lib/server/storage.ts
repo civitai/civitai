@@ -90,8 +90,7 @@ export async function requestMediaRollup(userId: number) {
   } catch (e) {
     if (isMissingRelation(e)) return;
     getLogger()
-      .logToAxiom({ name: 'storage-rollup-request-failed', userId, error: String(e) })
-      .catch(() => undefined);
+      .logToAxiom({ name: 'storage-rollup-request-failed', userId, error: String(e) });
   }
 }
 

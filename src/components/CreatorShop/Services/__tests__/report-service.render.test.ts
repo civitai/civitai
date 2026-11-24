@@ -18,6 +18,9 @@ const { reportOptionsFor } = await import('~/components/Modals/ReportModal');
 const { ReportServiceButton } = await import(
   '~/components/CreatorShop/Services/ReportServiceButton'
 );
+const { ReportServiceReviewButton } = await import(
+  '~/components/CreatorShop/Services/ReportServiceReviewButton'
+);
 
 describe('reporting a service', () => {
   it('offers exactly the reasons the moderator queue takes for a service', () => {
@@ -38,6 +41,32 @@ describe('reporting a service', () => {
     expect(mocks.openReportModal).toHaveBeenCalledWith({
       entityType: ReportEntity.ServiceOffering,
       entityId: 42,
+    });
+  });
+});
+
+describe('reporting a buyer review', () => {
+  it('offers the reasons the offering queue takes, mature content included for its images', () => {
+    expect(reportOptionsFor(ReportEntity.ServiceDealReview).map(({ key }) => key)).toEqual([
+      'nsfw-article',
+      'tos',
+      'admin-attention',
+      'spam',
+    ]);
+  });
+
+  it('opens the report modal on that review', () => {
+    // <LoginRedirect><Tooltip><ActionIcon/></Tooltip></LoginRedirect>, LoginRedirect a passthrough.
+    const tree = ReportServiceReviewButton({ reviewId: 7 }) as ReactElement<{
+      children: ReactNode;
+    }>;
+    const tooltip = tree.props.children as ReactElement<{ children: ReactNode }>;
+    const icon = tooltip.props.children;
+    expect(isValidElement(icon)).toBe(true);
+    (icon as ReactElement<{ onClick: () => void }>).props.onClick();
+    expect(mocks.openReportModal).toHaveBeenCalledWith({
+      entityType: ReportEntity.ServiceDealReview,
+      entityId: 7,
     });
   });
 });

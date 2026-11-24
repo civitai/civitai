@@ -8,6 +8,7 @@ import {
   isMediaLikeSegment,
   MEDIA_REF_ERROR,
   resolveBlockWorkflowGraph,
+  TRAINING_MEDIA_REF_ERROR,
   SCANNED_VIDEO_GEN_ENGINES,
   WRITE_TARGET_ERROR,
   WORKFLOW_INPUT_DEPTH_MAX,
@@ -372,6 +373,20 @@ describe('resolveBlockWorkflowGraph — repeat', () => {
     }
   });
 
+  it.each([
+    ['the arguments in another case', '$ARGUMENTS', []],
+    ['a step name in another case', 'Item', [step({ name: 'item' })]],
+  ])('🔴 refuses a repeat variable that recases %s', (_label, as, before) => {
+    const r = graph([...before, repeat({ ...overImages, as }, { $type: 'echo', input: {} })]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errorCode).toBe('workflow_ref_invalid');
+      expect(r.error).toBe(
+        `a repeat "as" name ${JSON.stringify(as)} is also a step name or "$arguments"`
+      );
+    }
+  });
+
   it('🔴 nested repeats MULTIPLY their generations: 3 × 5 = 15', () => {
     const r = graph(
       [
@@ -646,6 +661,52 @@ describe('resolveBlockWorkflowGraph — merge', () => {
     if (!unknown.ok) {
       expect(unknown.error).toContain('workflow step 0: "$ref": "ghost" does not name');
     }
+  });
+});
+
+describe('resolveBlockWorkflowGraph — references into a training step', () => {
+  const train = step({ name: 'train', $type: 'training', input: { engine: 'ai-toolkit' } });
+  const trainingRefused = (steps: BlockWorkflowStepInput[], index: number) => {
+    const r = refusal(steps);
+    expect(r.errorCode).toBe('workflow_ref_invalid');
+    expect(r.error).toBe(`workflow step ${index}: ${TRAINING_MEDIA_REF_ERROR}`);
+  };
+
+  it('CONTROL: a later step may read a training step’s text fields', () => {
+    expect(
+      resolved([
+        train,
+        step({ $type: 'imageGen', input: { prompt: ref('train', 'output.prompt') } }),
+      ])
+    ).toHaveLength(2);
+  });
+
+  it.each([
+    ['imageUpscaler', { image: ref('train', 'output.epochs[0].samples[0].url') }],
+    ['imageGen', { prompt: 'x', images: [ref('train', 'output.epochs[0].samples[0].url')] }],
+    ['imageBackgroundRemoval', { image: ref('train', 'output.epochs[0].samples[0]') }],
+    ['imageUpscaler', { image: ref('train', 'output') }],
+  ])('🔴 %s may not take a training step’s media', ($type, input) => {
+    trainingRefused([train, step({ $type, input })], 1);
+  });
+
+  it('CONTROL: the same media reference from a non-training step still passes', () => {
+    expect(
+      resolved([
+        step({ name: 'gen' }),
+        step({ $type: 'imageUpscaler', input: { image: ref('gen', 'output.images[0].url') } }),
+      ])
+    ).toHaveLength(2);
+  });
+
+  it('🔴 holds for the legacy training type and any casing of it', () => {
+    trainingRefused(
+      [
+        step({ name: 'legacy', $type: 'ImageResourceTraining', input: {} }),
+        step({ $type: 'imageUpscaler', input: { image: ref('legacy', 'output.epochs[0]') } }),
+      ],
+      1
+    );
   });
 });
 

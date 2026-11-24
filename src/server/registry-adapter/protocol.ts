@@ -8,6 +8,7 @@
  * serve anything for: a schema it does not serve, or `urns` none of which is of its namespace.
  */
 import type { Audience } from '~/server/registry-adapter/audience';
+import type { PrincipalToken } from '~/server/registry-adapter/auth';
 
 export type JsonSchema = Record<string, unknown> | boolean;
 
@@ -16,7 +17,26 @@ export interface Entity {
   schemas: string[];
   rev: string;
   body: unknown;
+  /**
+   * A private document's storage key (`private-feed.ts`), beside the body so the body stays the
+   * document its schemas claim. Only the private feed sets it, on a stream that belongs to one
+   * user's token. Sent by the HTTP binding; the gRPC `Entity` message has no field for it.
+   */
+  key?: string;
+  /**
+   * A private document's `seq` (`private-feed.ts`): where its last write sits in its app
+   * namespace's write order, the order a stream's head (`EventMeta`) is compared in. Set, sent and
+   * withheld exactly as `key` is.
+   */
+  seq?: number;
 }
+
+/**
+ * What a `live` or `progress` event tells its consumer beside the cursor (the spec's `Event.meta`:
+ * a JSON object; absent is none). Only the private feed sets one today: its head
+ * (`private-feed.ts`).
+ */
+export type EventMeta = Record<string, unknown>;
 
 /**
  * What an adapter's change feed yields: an upsert or a delete with the cursor after it, or a
@@ -25,13 +45,19 @@ export interface Entity {
 export type Change =
   | { upsert: Entity; cursor: string }
   | { delete: string; cursor: string }
-  | { progress: string };
+  | { progress: string; meta?: EventMeta };
+
+/**
+ * What `Adapter.changes` resolves to: the changes, and the `meta` the `live` event before them
+ * carries, when the adapter has one.
+ */
+export type Changes = AsyncIterable<Change> & { liveMeta?: EventMeta };
 
 export type StreamEvent =
   | { type: 'upsert'; entity: Entity; cursor: string }
   | { type: 'delete'; urn: string; cursor: string }
-  | { type: 'live'; cursor: string }
-  | { type: 'progress'; cursor: string }
+  | { type: 'live'; cursor: string; meta?: EventMeta }
+  | { type: 'progress'; cursor: string; meta?: EventMeta }
   | { type: 'end' };
 
 export interface SubscribeRequest {
@@ -39,7 +65,11 @@ export interface SubscribeRequest {
   cursor?: string;
   urns: string[];
   filter?: JsonSchema;
+  /** What the caller tells the origin (spec rule 10): a JSON object; absent when none. */
+  meta?: RequestMeta;
 }
+
+export type RequestMeta = Record<string, unknown>;
 
 /**
  * The spec's error names, the auth extension's two, and `unavailable` for the spec's "anything
@@ -84,6 +114,11 @@ export interface AdapterContext {
    * `service` stream is the same for every audience.
    */
   audience?: Audience;
+  /**
+   * The subscription's accepted token, with its subject: what an authorized PRIVATE stream's gates
+   * read (`private-feed.ts`). Absent or null is anonymous. No other stream reads it.
+   */
+  reader?: (PrincipalToken & { subject: string }) | null;
 }
 
 export interface Adapter {
@@ -106,19 +141,21 @@ export interface Adapter {
    * feed's later polls, e.g. its app re-created mid-stream) is thrown by the iterable and still
    * arrives after `live` as a `cursor_expired` error, so a consumer must handle both.
    */
-  changes(schema: string, cursor: string, ctx: AdapterContext): Promise<AsyncIterable<Change>>;
+  changes(schema: string, cursor: string, ctx: AdapterContext): Promise<Changes>;
 }
 
 /**
  * A request as either binding received it, validated into a {@link SubscribeRequest}. `filter`
  * is the JSON text (both bindings carry it as a string); empty means none, as an empty `cursor`
- * does.
+ * does. `meta` is JSON text over HTTP and its UTF-8 bytes over gRPC; anything but a JSON object
+ * is none, since the spec gives no error for it and an origin ignores what it does not know.
  */
 export function subscribeRequest(raw: {
   schema: string | null | undefined;
   cursor: string | null | undefined;
   urns: readonly string[];
   filter: string | null | undefined;
+  meta?: string | Uint8Array | null;
 }): SubscribeRequest {
   if (!raw.schema) throw new ProtocolError('bad_request', 'schema is required');
   let filter: JsonSchema | undefined;
@@ -129,5 +166,32 @@ export function subscribeRequest(raw: {
       throw new ProtocolError('bad_request', 'filter is not JSON');
     }
   }
-  return { schema: raw.schema, cursor: raw.cursor || undefined, urns: [...raw.urns], filter };
+  return {
+    schema: raw.schema,
+    cursor: raw.cursor || undefined,
+    urns: [...raw.urns],
+    filter,
+    meta: requestMeta(raw.meta),
+  };
+}
+
+function requestMeta(raw: string | Uint8Array | null | undefined): RequestMeta | undefined {
+  if (!raw || raw.length === 0) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(typeof raw === 'string' ? raw : Buffer.from(raw).toString('utf8'));
+  } catch {
+    return undefined;
+  }
+  return jsonObjectOrUndefined(value);
+}
+
+/**
+ * A parsed JSON value as a `meta` (`RequestMeta`, `EventMeta`) holds it: a JSON object, else
+ * nothing (an array, `null` or a primitive). The one rule both bindings read a `meta` by.
+ */
+export function jsonObjectOrUndefined(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }

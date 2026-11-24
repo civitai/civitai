@@ -1,7 +1,10 @@
 import { decodeProtectedHeader, jwtVerify } from 'jose';
+import { isBrowsingLevelClaim } from '@civitai/auth/browsing-level-claim';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
+import type { BearerCredential } from '~/server/auth/full-user-credential';
 import {
+  blockClaimsAppLabel,
   blockRequestResult,
   ensureRegisterAppBlockRuntimeMetrics,
   recordBlockConsentMarkerUnavailable,
@@ -579,7 +582,8 @@ export interface WithBlockScopeOpts {
    * per-app OauthClient.allowedScopes bit) with no security value. They need a
    * token ONLY for its signed `maxBrowsingLevel` claim — the authoritative
    * maturity ceiling source — NOT for authorization. Token validity + the
-   * clamp (resolveCatalogBrowsingLevel, fail-closed SFW) is the whole authority
+   * clamp (the viewer's level held to the domain cap,
+   * resolveCatalogViewerBrowsingLevel, fail-closed PG) is the whole authority
    * surface; the scope gate would add nothing.
    */
   requiredScope?: string;
@@ -1043,17 +1047,12 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       // unintended (wider) maturity. (Consumers ALSO fail closed on absence;
       // this is the upstream belt that keeps a malformed claim from ever
       // reaching them.) Same for the advisory `domain` string.
-      if (
-        claims.maxBrowsingLevel !== undefined &&
-        // A non-negative integer: an all-bits value like -1 would widen to every level.
-        !(Number.isInteger(claims.maxBrowsingLevel) && claims.maxBrowsingLevel >= 0)
-      ) {
+      if (claims.maxBrowsingLevel !== undefined && !isBrowsingLevelClaim(claims.maxBrowsingLevel)) {
         return null;
       }
       if (
         claims.viewerBrowsingLevel !== undefined &&
-        // A non-negative integer: an all-bits value like -1 would pass AND-ing unchanged.
-        !(Number.isInteger(claims.viewerBrowsingLevel) && claims.viewerBrowsingLevel >= 0)
+        !isBrowsingLevelClaim(claims.viewerBrowsingLevel)
       ) {
         return null;
       }
@@ -1427,8 +1426,9 @@ async function resolveDevTunnelHubClaims(args: {
   userId: number;
   clientId: string;
   apiKeyId: number;
+  credential: BearerCredential & { apiKeyId: number };
 }): Promise<BlockTokenClaims | null> {
-  const { userId, clientId, apiKeyId } = args;
+  const { userId, clientId, apiKeyId, credential } = args;
   const [{ parseDevTunnelClientId, scopesCoveredByConsent }, { getActiveDevTunnel }, { dbRead }] =
     await Promise.all([
       import('~/server/services/blocks/dev-tunnel-oauth.service'),
@@ -1461,11 +1461,17 @@ async function resolveDevTunnelHubClaims(args: {
     parseManifestBuzzBudget,
     resolveDevBuzzBudget,
     FORCED_SFW_CEILING,
+    forcedSfwViewerLevel,
   } = await import('~/server/services/blocks/dev-scoped-mint.service');
   const source = dev
     ? tunnel.grantedScopes ?? []
     : clampTunnelDeclaredScopes(owned!.approvedScopes ?? []);
-  const scopes = scopesCoveredByConsent(source, consent.scope);
+  const { narrowBlockScopesToCredential } = await import('~/server/auth/bearer-scope-tighten');
+  const scopes = await narrowBlockScopesToCredential(
+    'dev-tunnel-hub-token',
+    credential,
+    scopesCoveredByConsent(source, consent.scope)
+  );
   const manifestBudget = owned
     ? parseManifestBuzzBudget((owned.manifest as { page?: unknown } | null)?.page)
     : undefined;
@@ -1488,16 +1494,19 @@ async function resolveDevTunnelHubClaims(args: {
     dev: true,
     ...(buzzBudget !== undefined ? { buzzBudget } : {}),
     maxBrowsingLevel: FORCED_SFW_CEILING,
-    viewerBrowsingLevel: FORCED_SFW_CEILING,
+    viewerBrowsingLevel: await forcedSfwViewerLevel(userId),
   };
 }
 
 const EPHEMERAL_APP_ID_PREFIX = 'ephemeral-';
 
+/** A hub OAuth token of a suspended app block's own client. */
+const HUB_TOKEN_REFUSED = 'refused' as const;
+
 async function resolveHubTokenClaims(
   bearer: string,
   req: NextApiRequest
-): Promise<BlockTokenClaims | null> {
+): Promise<BlockTokenClaims | typeof HUB_TOKEN_REFUSED | null> {
   const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
   const session = await getSessionFromBearerToken(bearer);
   if (!session || session.subject.type !== 'oauth') return null;
@@ -1516,7 +1525,21 @@ async function resolveHubTokenClaims(
     manifest: unknown;
     approvedScopes: string[];
   } | null;
-  if (!block) return resolveDevTunnelHubClaims({ userId, clientId, apiKeyId: session.apiKeyId });
+  if (!block) {
+    const devClaims = await resolveDevTunnelHubClaims({
+      userId,
+      clientId,
+      apiKeyId: session.apiKeyId,
+      credential: session,
+    });
+    if (devClaims) return devClaims;
+    // A suspended app's token is refused here rather than handed on as an ordinary OAuth session.
+    const suspended = await dbRead.appBlock.findFirst({
+      where: { appId: clientId, status: 'suspended' },
+      select: { id: true },
+    });
+    return suspended ? HUB_TOKEN_REFUSED : null;
+  }
 
   const { getGrantedScopes, partitionByConsent } = await import(
     '~/server/services/blocks/scope-grant.service'
@@ -1526,12 +1549,19 @@ async function resolveHubTokenClaims(
     scopes?: unknown;
     page?: { buzzBudgetPerGen?: unknown };
   };
-  // `apps:storage:import` is never carried, and its grant ledger is never read or pruned here: the
-  // storage route refuses an import on any hub token (`import_hub_token`).
-  const declared = effectiveBlockScopes(manifest, block.approvedScopes)
-    .filter(isKnownBlockScope)
-    .filter((s) => s !== 'apps:storage:import');
-  const scopes = partitionByConsent(declared, granted).signable;
+  // `apps:storage:import` is carried exactly when the viewer's scope ledger grants it, like every
+  // consent-gated scope. That is not the import's grant: the storage route still reads the
+  // per-source grant on every import call and refuses without one (`resolveImportAccess`). The
+  // per-source grant ledger is never read or pruned here; there is no prompt to withhold it for.
+  const declared = effectiveBlockScopes(manifest, block.approvedScopes).filter(isKnownBlockScope);
+  // The token's own bits were fixed when it was minted from the viewer's consent; a grant made
+  // since reaches it when the host re-mints (`onConsentGranted`).
+  const { narrowBlockScopesToCredential } = await import('~/server/auth/bearer-scope-tighten');
+  const scopes = await narrowBlockScopesToCredential(
+    'hub-token',
+    session,
+    partitionByConsent(declared, granted).signable
+  );
 
   const { getRequestDomainColor, isHostForColor } = await import('~/server/utils/server-domain');
   const { viewerEffectiveBrowsingLevel } = await import(
@@ -1620,13 +1650,14 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // that point — the approval verdict, the required-scope check, context binding, the
     // handler and the invocation audit row — must see the narrowed set, which is the whole
     // reason the strip happens here rather than at each gate.
-    let claims = isJwt
+    const resolved = isJwt
       ? await verifyBlockToken(bearer)
       : env.APP_BLOCK_OAUTH_TOKENS_ENABLED
       ? await resolveHubTokenClaims(bearer, req)
       : null;
+    let claims = resolved === HUB_TOKEN_REFUSED ? null : resolved;
     if (!claims) {
-      if (!isJwt) return handler(req, res);
+      if (!isJwt && resolved !== HUB_TOKEN_REFUSED) return handler(req, res);
       sendRefusal(req, res, opts, {
         kind: 'invalid_token',
         status: 401,
@@ -1653,7 +1684,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // gated. Bucket ALL dev tokens (real-id or synthetic) to the single stable
     // label 'dev' so that vector is closed while real per-app attribution is
     // preserved for non-dev tokens.
-    const appBlockIdLabel = claims.dev === true ? 'dev' : claims.appBlockId;
+    const appBlockIdLabel = blockClaimsAppLabel(claims);
 
     // ONE resolver for `opts.endpoint`, used by BOTH readers of it below (the RED
     // metric labels and the `not_found` log line). It was open-coded at the metric
@@ -2335,6 +2366,10 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   // `/api/v1/blocks/sub-listings/mine` — the caller's own store items.
   'mine',
   'models',
+  // `/api/v1/blocks/moderation/reports` — the report moderation API
+  // (`doc-store-report-api.ts`). Both segments static: the collection, key and import
+  // source ride the POST body.
+  'moderation',
   'poll',
   // `/api/v1/blocks/resource-intent` — the Jev resource-intent primitive. Static:
   // the prompt and every parameter ride the POST body, so there is no `:seg`
@@ -2348,6 +2383,7 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'query',
   'quota',
   'report',
+  'reports',
   'set',
   'shared-storage',
   // `/api/v1/blocks/storage/…` — the document store, one optional catch-all route. Only

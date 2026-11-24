@@ -26,6 +26,7 @@ const post = (body: unknown) =>
     locals: { user: { id: 1 } },
     request: new Request('http://x/api/dataset-rating', {
       method: 'POST',
+      headers: { cookie: 'session=abc' },
       body: JSON.stringify(body),
     }),
   } as unknown as Parameters<typeof POST>[0]);
@@ -58,7 +59,7 @@ describe('POST /api/dataset-rating', () => {
       matureCount: 1,
       unrated: 2,
     });
-    expect(warmDatasetRating).toHaveBeenCalledWith('token', 1, ['b']);
+    expect(warmDatasetRating).toHaveBeenCalledWith('token', 1, 1, ['b'], 'session=abc');
     expect(countDatasetMature.mock.calls[0]![1]).toEqual(['a', 'b', 'c']);
   });
 
@@ -72,7 +73,7 @@ describe('POST /api/dataset-rating', () => {
       unratedKeys: ['a'],
     });
     expect(await (await post({ blobIds: ['a', 'b'] })).json()).toEqual({ enabled: false });
-    expect(warmDatasetRating).toHaveBeenCalledWith('token', 1, ['a']);
+    expect(warmDatasetRating).toHaveBeenCalledWith('token', 1, 1, ['a'], 'session=abc');
   });
 
   it("past today's allowance: off, and nothing is looked up", async () => {

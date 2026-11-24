@@ -168,6 +168,22 @@ const tosHashOverrideMap: Record<string, string> = {
   // tos.green.md
   '65b5c8f0292d2b967eaf8e02082acb8bb874b8ac5ceebaa6b02506d7e46f9047':
     'c8098f0e2e2364091210a1efdf4a1d170dcc0fda179224df977adf570e0873b6',
+  // 2026-11-17 §8.10 Bria FIBO flow-through terms. Same classification as §8.9: binds existing
+  // users 30 days after posting (§13), no site-wide re-accept.
+  // tos.md (blue/red)
+  '72e2467b1f18e389dc054aea3fb55f6e9703f43afa186f3981458b7c657aeaa2':
+    '0f0267ab412d4f1e050f501406a85367042265223ec38a2b04b2a8e7b61823f0',
+  // tos.green.md
+  d9bb20cbc5f9aa55a20ee251ffb3cc14aa0e4d1c81b2afdd99c7af080661ea87:
+    'c8098f0e2e2364091210a1efdf4a1d170dcc0fda179224df977adf570e0873b6',
+  // 2026-11-19 §11.11 watermark and content-credential tampering clause. Same classification as
+  // §8.9: binds existing users 30 days after posting (§13), no site-wide re-accept.
+  // tos.md (blue/red)
+  d7496f7c1d7aee715bd094eff90b5100d6e10210452fbcdb35a05a130d4f9826:
+    '0f0267ab412d4f1e050f501406a85367042265223ec38a2b04b2a8e7b61823f0',
+  // tos.green.md
+  '8717cd9f90718d1ffc722eb1b561484da43978e0a734428e6ab721832fdcf161':
+    'c8098f0e2e2364091210a1efdf4a1d170dcc0fda179224df977adf570e0873b6',
 };
 
 /**

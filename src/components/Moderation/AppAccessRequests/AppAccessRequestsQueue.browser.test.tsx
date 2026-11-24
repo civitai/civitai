@@ -112,3 +112,38 @@ describe('AppAccessRequestsQueue — a decision refreshes what shows it', () => 
     expect([...mocks.invalidated].sort()).toEqual(['countPending', 'list']);
   });
 });
+
+describe('AppAccessRequestsQueue — auto-approved requests', () => {
+  /** What `submit` writes under `app-access-auto-approve`: approved, a review time, no reviewer. */
+  const autoApproved = (id: number) => ({
+    ...row(id, 'approved'),
+    whatToBuild: '',
+    reviewedById: null,
+    reviewedByUsername: null,
+  });
+
+  test('🔴 an auto-approved row says so, and a moderator approval still names the moderator', async () => {
+    mocks.items = [autoApproved(21), row(12, 'approved')];
+    renderWithProviders(<AppAccessRequestsQueue />);
+    await expect
+      .element(page.getByTestId('app-access-request-reviewer-21'))
+      .toHaveTextContent(/^Approved automatically, /);
+    await expect
+      .element(page.getByTestId('app-access-request-reviewer-12'))
+      .toHaveTextContent(/^queue_reviewer, /);
+  });
+
+  test('🔴 an auto-approved row can be revoked like any approved one', async () => {
+    mocks.items = [autoApproved(21)];
+    renderWithProviders(<AppAccessRequestsQueue />);
+    await page.getByTestId('app-access-request-revoke-21').click();
+    expect(mocks.decided).toEqual([{ id: 21, decision: 'declined' }]);
+  });
+
+  test('an empty answer shows as "No answer given" rather than a blank cell', async () => {
+    mocks.items = [autoApproved(21), row(12, 'approved')];
+    renderWithProviders(<AppAccessRequestsQueue />);
+    await expect.element(inRow(21).getByText('No answer given')).toBeInTheDocument();
+    expect(inRow(12).getByText('No answer given').elements()).toHaveLength(0);
+  });
+});

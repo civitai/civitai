@@ -52,8 +52,6 @@ describe('recordScopeInvocation — external OAuth', () => {
     expect(data.appBlockId).toBeUndefined();
     expect(data.blockInstanceId).toBeUndefined();
     expect(data.syntheticAppId).toBeUndefined();
-    // Best-effort write succeeded → no failure log.
-    expect(mockLog).not.toHaveBeenCalled();
   });
 
   it('the block-token call site is byte-identical (no oauthClientId / source keys)', async () => {

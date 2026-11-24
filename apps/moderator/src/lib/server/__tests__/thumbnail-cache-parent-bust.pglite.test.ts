@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,7 +9,6 @@ import {
   SET_ASIDE_TABLE_SQL,
 } from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
-import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -19,6 +19,7 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
  * that entry is ever stored under.
  */
 
+const MODERATOR = { id: 1, isModerator: true };
 const { dbHandle, del, sysSet, syncSearchIndexBulk } = vi.hoisted(() => ({
   sysSet: vi.fn(async (_key: string, _value: string, _opts?: unknown) => undefined),
   dbHandle: { current: null as unknown },
@@ -55,27 +56,25 @@ vi.mock('../image-moderation-effects', () => ({
   notifyAppealResolved: vi.fn(async () => undefined),
   emailAppealResolution: vi.fn(async () => undefined),
   bustPostGalleryCaches: vi.fn(async () => undefined),
+  queueComicsForImages: vi.fn(async () => undefined),
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
-vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
-vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn(), syncSearchIndexBulk }));
-vi.mock('../kono', () => ({ syncKonoFinalize: vi.fn(async () => undefined) }));
-vi.mock('../storage', () => ({
-  getStorage: () => ({ deleteObject: vi.fn(async () => undefined) }),
+vi.mock('../mod-activity', () => ({
+  insertModActivity: vi.fn(async () => 1),
+  recordModActivity: vi.fn(async () => undefined),
 }));
+vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn(), syncSearchIndexBulk }));
 
 const { invalidateThumbnails } = await import('../thumbnail-cache');
 const { acceptImage, blockImage } = await import('../image-moderation.service');
 const { updateImageNsfwLevel } = await import('../image-nsfw-level');
-const { deleteImageRows, finishImageDeletes } = await import('../image-deletion');
-const deleteImages = async (ids: number[]) =>
-  finishImageDeletes(
-    await (dbHandle.current as Kysely<DB>).transaction().execute((trx) => deleteImageRows(trx, ids))
-  );
+const { deleteImages: deleteModeratorImages } = await import('../image-deletion');
+const deleteImages = (ids: number[]) => deleteModeratorImages(ids, MODERATOR);
 const { bustPostGalleryCaches } = await import('../image-moderation-effects');
 
 const SCHEMA = `
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "profilePictureId" INTEGER);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP(3), "profilePictureId" INTEGER, "image" TEXT);
+CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "url" TEXT,
@@ -102,7 +101,13 @@ CREATE TABLE "CsamReport" (
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "Appeal" ("id" SERIAL, "entityType" TEXT, "entityId" INTEGER, "status" TEXT);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
+CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+CREATE TYPE "JobQueueType" AS ENUM (
+  'PendingDelete', 'BlockedImageDelete', 'ImageScan', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync', 'ImageDelete'
+);
+CREATE TABLE "JobQueue" ("type" "JobQueueType", "entityType" "EntityType", "entityId" INTEGER,
+  "data" JSONB, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
+  PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "Model3D" (
   "id" INTEGER PRIMARY KEY,
   "thumbnailImageId" INTEGER,
@@ -133,6 +138,7 @@ beforeEach(async () => {
   syncSearchIndexBulk.mockClear();
   db = await freshPglite();
   await db.exec(SCHEMA);
+  await db.exec(imageUseTablesSql);
   await db.query(
     `INSERT INTO "Image" ("id", "type", "metadata", "nsfwLevel") VALUES
       ($1, 'video', jsonb_build_object('thumbnailId', $2::int), 1),
@@ -276,7 +282,6 @@ describe('an image delete on an image a hold marker keeps', () => {
       );
       DROP TABLE "EvidenceHeldUser";
       CREATE TABLE "Model" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL);
-      CREATE FUNCTION update_post_nsfw_levels(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
     `);
     await db.exec(HOLD_MIGRATION);
     await db.exec(`
@@ -285,7 +290,7 @@ describe('an image delete on an image a hold marker keeps', () => {
     `);
   });
 
-  it('busts the post the image was taken out of, and the image leaves search', async () => {
+  it('busts and recounts the post the image was taken out of, and the image leaves search', async () => {
     await deleteImages([PLAIN_IMAGE_ID]);
 
     const row = await db.query(
@@ -293,6 +298,10 @@ describe('an image delete on an image a hold marker keeps', () => {
     );
     expect(row.rows).toEqual([{ postId: null, ingestion: 'Blocked' }]);
     expect(vi.mocked(bustPostGalleryCaches)).toHaveBeenCalledWith([POST]);
+    const recounts = await db.query(
+      `SELECT "entityId" FROM "JobQueue" WHERE "entityType" = 'Post' AND type = 'UpdateNsfwLevel'`
+    );
+    expect(recounts.rows).toEqual([{ entityId: POST }]);
     // The existence cache is what takes a blocked image off the site; meta and metadata go with it.
     expect(sysSet.mock.calls.map(([k, v]) => [k, v])).toContainEqual([
       `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:${PLAIN_IMAGE_ID}`,

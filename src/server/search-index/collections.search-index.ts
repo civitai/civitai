@@ -115,9 +115,9 @@ type CollectionForSearchIndex = {
   };
   user: {
     id: number;
-    image: string | null;
     username: string | null;
     deletedAt: Date | null;
+    image: null;
     profilePictureId: number | null;
   };
   cosmetics: {
@@ -163,22 +163,19 @@ export const transformData = async ({
   profilePictures,
   disqualifiedIds,
 }: CollectionPullData) => {
+  const tagIdsOf = (imageId: number) =>
+    tags.filter((t) => t.imageId === imageId).map((t) => t.tagId);
+
   const records = collections
     .map(({ cosmetics, user, image, ...collection }) => {
       const collectionImage = image
-        ? {
-            ...image,
-            tags: tags.filter((t) => t.imageId === image.id).map((t) => ({ id: t.tagId })),
-          }
+        ? { ...image, tags: tagIdsOf(image.id).map((id) => ({ id })) }
         : null;
       const collectionImages = itemImages.filter((i) => i.id === collection.id);
       const images = collectionImages
         .map((i) => i.image)
         .filter(isDefined)
-        .map((i) => ({
-          ...i,
-          tags: tags.filter((t) => t.imageId === i.id).map((t) => ({ id: t.tagId })),
-        }));
+        .map((i) => ({ ...i, tags: tagIdsOf(i.id).map((id) => ({ id })) }));
       const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
 
       return {
@@ -242,7 +239,7 @@ export const pullData = async (
         'id', u.id,
         'username', u.username,
         'deletedAt', u."deletedAt",
-        'image', u.image,
+        'image', NULL,
         'profilePictureId', u."profilePictureId"
       ) user
     FROM "User" u

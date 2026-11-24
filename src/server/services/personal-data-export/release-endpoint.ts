@@ -51,7 +51,7 @@ export async function releaseForModerator(
       name: 'mod-personal-data-export-audit-failed',
       message: (e as Error).message,
       details: { moderatorId: actor.id, exportId },
-    }).catch(() => undefined);
+    });
   }
 
   return {

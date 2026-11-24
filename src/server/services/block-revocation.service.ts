@@ -183,16 +183,21 @@ export class BlockRevocation {
    */
   static async isRevoked(blockInstanceId: string, subject?: string): Promise<boolean> {
     try {
-      // `subject` is the token's own `sub`. TWO production call sites pass it —
-      // `withBlockScope` (`block-scope.middleware.ts`) and `resolveBlockToken`
-      // (`blocks/block-bridge-auth.service.ts`), the one resolver behind
+      // `subject` is the token's own `sub`. Callers: `withBlockScope`
+      // (`block-scope.middleware.ts`), `resolveBlockToken`
+      // (`blocks/block-bridge-auth.service.ts`, the one resolver behind
       // `authorizeBlockBridgeToken`, `resolveStorageContext` (`apps/app-storage.service.ts`)
-      // and `resolveSharedContext` (`routers/apps-shared.router.ts`). Those were four separate
-      // call sites until the three tRPC resolvers were consolidated, and before that two of
-      // the four were passing nothing: they read only the global keys while the ephemeral
-      // marker exists solely under the subject key. Latent, because
-      // both tRPC paths require an `approved` AppBlock row and an ephemeral app has none —
-      // but latent in the direction this work keeps moving (storage for unsubmitted apps).
+      // and `resolveSharedContext` (`routers/apps-shared.router.ts`)), and the registry
+      // private feed (`liveInstanceRevoked` in `registry-adapter/private-feed.live.ts`, which
+      // rebuilds the subject from the token's user with `subjectForUserId`; one read per
+      // stream per poll).
+      //
+      // Those were four separate call sites until the three tRPC resolvers were
+      // consolidated, and before that two of the four were passing nothing: they read only
+      // the global keys while the ephemeral marker exists solely under the subject key.
+      // Latent, because both tRPC paths require an `approved` AppBlock row and an ephemeral
+      // app has none — but latent in the direction this work keeps moving (storage for
+      // unsubmitted apps).
       //
       // Omitting it only NARROWS the check — the scoped keyspace is not consulted — so a
       // caller without a subject degrades to the pre-existing behaviour rather than to a

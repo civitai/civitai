@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
 
 // Unit tests for applyModelFlagSideEffects — the post-update flag fan-out
 // extracted from upsertModel (model tag/search-index refresh, gallery cache
@@ -16,7 +18,9 @@ const {
   mockQueueImageSearchIndexUpdate,
   mockBustMvCache,
   mockPurgeShowcaseEdge,
+  mockQueueImageDocuments,
 } = vi.hoisted(() => ({
+  mockQueueImageDocuments: vi.fn(async () => undefined),
   mockPurgeShowcaseEdge: vi.fn(),
   mockModelTagRefresh: vi.fn(),
   mockModelVotableBust: vi.fn(),
@@ -33,11 +37,12 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
   preventModelVersionLagBatch: vi.fn(),
 }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
+// Showcase busts query on their own; they are covered by version-showcase tests.
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, Tracker: class {} }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(() => false), FLIPT_FEATURE_FLAGS: {} }));
 vi.mock('~/server/metrics', () => ({ modelMetrics: {} }));
 vi.mock('~/server/redis/caches', () => ({
-  dataForModelsCache: {},
+  dataForModelsCache: { refresh: vi.fn() },
   modelTagCache: { refresh: mockModelTagRefresh },
   modelVotableTagsCache: { bust: mockModelVotableBust },
   userBasicCache: {},
@@ -90,6 +95,9 @@ vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersionCache: {},
   queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
 }));
+vi.mock('~/server/services/image-models-reindex.service', () => ({
+  queueDocumentsForImageMinorChanges: mockQueueImageDocuments,
+}));
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
 vi.mock('~/server/services/model-version.service', () => ({
   bustMvCache: mockBustMvCache,
@@ -112,9 +120,15 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
-import { applyModelFlagSideEffects } from '~/server/services/model.service';
+import {
+  applyModelFlagSideEffects,
+  privateModelFromTraining,
+} from '~/server/services/model.service';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { withoutShowcaseQueries } from '~/__tests__/mocks/showcase-queries';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { logToAxiom } from '~/server/logging/client';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -140,10 +154,38 @@ const baseAfter = {
   gallerySettings: { level: 1 },
 };
 
+// The showcase refresh after a flag change reads too; these tests are about the image sync.
+const imageSyncCalls = () => withoutShowcaseQueries(mockDbWrite.$queryRaw);
+
 // $queryRaw is called as a template tag: [strings, ...values].
 function imageUpdateCall() {
-  const [strings, ...values] = mockDbWrite.$queryRaw.mock.calls[0];
-  return { sql: (strings as string[]).join('?'), values };
+  const [strings, ...values] = imageSyncCalls()[0];
+  const query = Prisma.sql(strings as TemplateStringsArray, ...values);
+  return { sql: query.sql, text: query.text, values: query.values };
+}
+
+/** Runs the image UPDATE the call made against real tables holding one image on version 100. */
+async function imageAfterUpdate(image: { minor: boolean; poi: boolean }) {
+  const db = new PGlite();
+  try {
+    await db.exec(`
+      CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
+      CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int, minor boolean, poi boolean);
+      INSERT INTO "Post" VALUES (1, 100);
+    `);
+    await db.query('INSERT INTO "Image" VALUES (900, 1, $1, $2)', [image.minor, image.poi]);
+    const { text, values } = imageUpdateCall();
+    const INT4_OID = 23;
+    await db.query(text, values, {
+      paramTypes: values.map((v) => (Number.isInteger(v) ? INT4_OID : 0)),
+    });
+    const { rows } = await db.query<{ minor: boolean; poi: boolean }>(
+      'SELECT minor, poi FROM "Image" WHERE id = 900'
+    );
+    return rows[0];
+  } finally {
+    await db.close();
+  }
 }
 
 afterEach(() => {
@@ -169,7 +211,7 @@ describe('applyModelFlagSideEffects — image propagation', () => {
       where: { modelId: 42 },
       select: { id: true },
     });
-    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(imageSyncCalls()).toHaveLength(1);
     expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalledWith({
       ids: [900],
       action: SearchIndexUpdateQueueAction.Update,
@@ -185,10 +227,10 @@ describe('applyModelFlagSideEffects — image propagation', () => {
     const { sql, values } = imageUpdateCall();
     expect(sql).toContain('UPDATE "Image"');
     expect(sql).toContain('RETURNING i.id');
-    // minor, poi, the version-id list, then minor/poi again for the value guard — the
-    // image ids are never parameters.
-    expect(values.slice(0, 2)).toEqual([true, true]);
-    expect(values).toHaveLength(5);
+    // whether minor is written, minor, poi, the version-id list, then minor/poi again for the
+    // value guard — the image ids are never parameters.
+    expect(values.slice(1, 3)).toEqual([true, true]);
+    expect(values).toHaveLength(6);
   });
 
   it('skips rows whose flags already match so a re-toggle does not rewrite the gallery', async () => {
@@ -200,7 +242,7 @@ describe('applyModelFlagSideEffects — image propagation', () => {
     const { sql, values } = imageUpdateCall();
     expect(sql).toContain('i.minor IS DISTINCT FROM');
     expect(sql).toContain('i.poi IS DISTINCT FROM');
-    expect(values.slice(3)).toEqual([true, false]);
+    expect(values.slice(4)).toEqual([true, false]);
   });
 
   it('writes minor: false when a model is unflagged', async () => {
@@ -209,7 +251,7 @@ describe('applyModelFlagSideEffects — image propagation', () => {
       after: { ...baseAfter, minor: false, poi: false },
     });
 
-    expect(imageUpdateCall().values.slice(0, 2)).toEqual([false, false]);
+    expect(imageUpdateCall().values.slice(1, 3)).toEqual([false, false]);
   });
 
   it('binds minor and poi to their own values, not each other, when they differ', async () => {
@@ -219,7 +261,7 @@ describe('applyModelFlagSideEffects — image propagation', () => {
     });
 
     const { sql, values } = imageUpdateCall();
-    expect(values.slice(0, 2)).toEqual([true, false]);
+    expect(values.slice(1, 3)).toEqual([true, false]);
     expect(sql).toContain('FROM "Post"');
     expect(sql).toContain('modelVersionId');
   });
@@ -243,6 +285,32 @@ describe('applyModelFlagSideEffects — image propagation', () => {
     expect(mockArticlesReindex).not.toHaveBeenCalled();
   });
 
+  it('🔴 requeues the documents showing the images it flagged minor', async () => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, minor: true } });
+    expect(mockQueueImageDocuments).toHaveBeenCalledWith({ minorImageIds: [900] });
+  });
+
+  it("🔴 a poi change on a non-minor model keeps an image's own minor flag", async () => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, poi: true } });
+    expect(await imageAfterUpdate({ minor: true, poi: false })).toEqual({ minor: true, poi: true });
+  });
+
+  it('a minor model still writes minor onto its images on a poi change (control)', async () => {
+    await applyModelFlagSideEffects({
+      before: { ...baseBefore, minor: true },
+      after: { ...baseAfter, minor: true, poi: true },
+    });
+    expect(await imageAfterUpdate({ minor: false, poi: false })).toEqual({
+      minor: true,
+      poi: true,
+    });
+  });
+
+  it('does not requeue them for a poi-only change (control)', async () => {
+    await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, poi: true } });
+    expect(mockQueueImageDocuments).not.toHaveBeenCalled();
+  });
+
   it('skips image propagation entirely when neither minor nor poi changed', async () => {
     await applyModelFlagSideEffects({
       before: baseBefore,
@@ -250,7 +318,7 @@ describe('applyModelFlagSideEffects — image propagation', () => {
     });
 
     expect(mockDbWrite.modelVersion.findMany).not.toHaveBeenCalled();
-    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(imageSyncCalls()).toHaveLength(0);
     expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
     expect(mockBustMvCache).not.toHaveBeenCalled();
   });
@@ -263,7 +331,7 @@ describe('applyModelFlagSideEffects — image propagation', () => {
       after: { ...baseAfter, poi: true },
     });
 
-    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(imageSyncCalls()).toHaveLength(0);
     expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
     expect(mockBustMvCache).not.toHaveBeenCalled();
   });
@@ -391,7 +459,7 @@ describe('applyModelFlagSideEffects — public API edge cache', () => {
     });
     expect(mockPurgeShowcaseEdge).toHaveBeenCalledWith(42, [100]);
     expect(mockPurgeShowcaseEdge).toHaveBeenCalledTimes(1);
-    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(imageSyncCalls()).toHaveLength(0);
     // The search document carries the showcase, so it is rebuilt at the new level.
     expect(mockModelsQueueUpdate).toHaveBeenCalledTimes(1);
     expect(mockModelsQueueUpdate).toHaveBeenCalledWith([{ id: 42, action: 'Update' }]);
@@ -424,5 +492,84 @@ describe('applyModelFlagSideEffects — public API edge cache', () => {
       applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, minor: true } })
     ).resolves.toBeUndefined();
     expect(mockBustMvCache).toHaveBeenCalled();
+  });
+});
+
+describe('privateModelFromTraining — the sfwOnly it forces on', () => {
+  const MODEL_ID = 42;
+  const row = (sfwOnly: boolean) => ({
+    userId: 5,
+    status: 'Draft',
+    availability: 'Public',
+    mode: null,
+    meta: {},
+    lockedProperties: [],
+    nsfw: false,
+    minor: false,
+    poi: false,
+    sfwOnly,
+    gallerySettings: { level: 1 },
+    name: 'Test Model',
+    description: null,
+  });
+
+  async function makePrivate(sfwOnlyBefore: boolean) {
+    vi.mocked(getHighestTierSubscription).mockResolvedValue({ tier: 'founder' } as never);
+    mockDbRead.model.count.mockResolvedValue(0 as never);
+    mockDbWrite.model.findUnique.mockResolvedValue(row(sfwOnlyBefore) as never);
+    mockDbWrite.model.update.mockResolvedValue({
+      ...baseAfter,
+      id: MODEL_ID,
+      sfwOnly: true,
+      meta: {},
+      modelVersions: [],
+    } as never);
+    await privateModelFromTraining({ id: MODEL_ID, user: { id: 5, isModerator: false } } as never);
+  }
+
+  it('queues the model and collection reindexes when it turns sfwOnly on', async () => {
+    await makePrivate(false);
+    expect(mockModelsQueueUpdate).toHaveBeenCalledTimes(1);
+    expect(mockModelsQueueUpdate).toHaveBeenCalledWith([
+      { id: MODEL_ID, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+    expect(mockCollectionsReindex).toHaveBeenCalledTimes(1);
+    expect(mockCollectionsReindex).toHaveBeenCalledWith([MODEL_ID]);
+  });
+
+  it('queues neither when the model was already sfwOnly', async () => {
+    await makePrivate(true);
+    expect(mockModelsQueueUpdate).not.toHaveBeenCalled();
+    expect(mockCollectionsReindex).not.toHaveBeenCalled();
+  });
+
+  it('logs a side-effect failure and still returns the Private model', async () => {
+    mockModelsQueueUpdate.mockRejectedValueOnce(new Error('queue down'));
+    await makePrivate(false);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'flag side effects failed', modelId: MODEL_ID })
+    );
+    expect(mockDbWrite.model.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'Draft' }) })
+    );
+  });
+});
+
+describe('applyModelFlagSideEffects — sfwOnly alone', () => {
+  it('still re-syncs the images of a held model', async () => {
+    await applyModelFlagSideEffects({
+      before: { ...baseBefore, minor: true },
+      after: { ...baseAfter, minor: true, sfwOnly: true },
+    });
+    expect(imageSyncCalls()).toHaveLength(1);
+  });
+
+  it("leaves each image's own minor and poi flags as they are", async () => {
+    await applyModelFlagSideEffects({
+      before: baseBefore,
+      after: { ...baseAfter, sfwOnly: true },
+    });
+    expect(imageSyncCalls()).toHaveLength(0);
+    expect(mockCollectionsReindex).toHaveBeenCalledWith([42]);
   });
 });

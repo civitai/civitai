@@ -1,37 +1,47 @@
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { NsfwLevel } from '~/server/common/enums';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
+import { dbRead } from '~/server/db/client';
 import { getAllImages } from '~/server/services/image.service';
+import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
+import { isMoreLikeThisRefused } from '~/shared/utils/more-like-this';
 import { ImageSort } from '~/server/common/enums';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   anchorBrowsingLevel,
   beginSemanticAudit,
-  queryVerdictLevel,
-  recordRefusal,
-  refusedTextCandidates,
   isNonModClampOn,
-  resolveSemanticBrowsingLevel,
-  semanticQueryRefusal,
+  makeRefusalOf,
   type QueryRefusal,
-  type QueryStage,
   type QueryTracker,
+  queryVerdictLevel,
+  refusedTextCandidates,
+  resolveSemanticBrowsingLevel,
 } from '~/server/services/semantic-query-guard';
 import { withCandidateCache } from '~/server/services/semantic-candidate-cache';
-import type { RefusedCandidates } from '~/server/services/semantic-search-audit.service';
+import type {
+  RefusedCandidates,
+  RefusedSearchPath,
+} from '~/server/services/semantic-search-audit.service';
 import { semanticSearchStage } from '~/server/metrics/semantic-search.metrics';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { Flags } from '~/shared/utils/flags';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
 import {
   collectPage,
   resolveTagIds,
+  resolveTags,
   resolveUserIds,
   searchServiceSource,
+  withTagMatchesFirst,
   type CandidateFilter,
   type CandidateSource,
   type Hydrate,
@@ -39,36 +49,78 @@ import {
   viewerExcludedUserIds,
 } from '~/server/services/semantic-search-client';
 
-// The search service's collection name for the image vectors.
-const IMAGE_COLLECTION = 'images';
+/** The search service's collections of Image rows: stills and clips are embedded apart. */
+type MediaCollection = 'images' | 'videos';
 
 type HydratedImage = Awaited<ReturnType<typeof getAllImages>>['items'][number];
 
-const searchServiceCandidates = searchServiceSource(IMAGE_COLLECTION, {
-  notFoundMessage: 'Image not found',
-});
+const searchServiceCandidates: Record<MediaCollection, CandidateSource> = {
+  images: searchServiceSource('images', { notFoundMessage: 'Image not found' }),
+  videos: searchServiceSource('videos', { notFoundMessage: 'Video not found' }),
+};
+
+/** `items` without the images the shared held-media rule holds, for every viewer, moderators included. */
+async function withoutHeldImages<T extends { id: number }>(items: T[]) {
+  if (!items.length) return items;
+  const held = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT i.id FROM "Image" i
+    WHERE i.id = ANY(${items.map((item) => item.id)}::int[])
+      AND ${Prisma.raw(semanticImageHeldText('i'))}`;
+  if (!held.length) return items;
+  const heldIds = new Set(held.map((row) => row.id));
+  return items.filter((item) => !heldIds.has(item.id));
+}
 
 const emptyPage = () => ({ items: [], nextCursor: undefined, correctedQuery: undefined });
 
 export async function searchSemanticImages({
   input,
-  user,
+  user: sessionUser,
+  asModerator = false,
+  asOwner = false,
   domain,
   track,
-  candidateSource = searchServiceCandidates,
+  collection = 'images',
+  candidateSource = searchServiceCandidates[collection],
+  refuseNarrowing = false,
+  tagMatchesFirst = false,
+  uploadAnchor,
 }: {
   input: SemanticImageSearchInput;
   // Signed out: the site defaults for hidden tags and browsing add-ons.
   user?: SessionUser;
+  /** The request's views (`credentialViews`): without them the search reads as a plain viewer. */
+  asModerator?: boolean;
+  asOwner?: boolean;
   domain?: DomainColor;
   track?: QueryTracker;
+  /** `videos`: the clip index; hydration then returns videos only. */
+  collection?: MediaCollection;
   candidateSource?: CandidateSource;
+  /** A verdict that would narrow the level refuses instead (the showcase picker's own images). */
+  refuseNarrowing?: boolean;
+  /** A query that names a tag ranks the images carrying it first (the showcase picker). */
+  tagMatchesFirst?: boolean;
+  /**
+   * Search by uploaded image: the upload's scanned level and the URL to embed, from an upload that
+   * passed the scan gate. Replaces `imageId` and `query`.
+   */
+  uploadAnchor?: { nsfwLevel: number; imageUrl: string };
 }) {
+  // Every moderator exemption below reads `user.isModerator`, so the viewer carries the view.
+  const user = sessionUser && {
+    ...sessionUser,
+    isModerator: asModerator && !!sessionUser.isModerator,
+  };
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,
-    await isNonModClampOn()
+    await isNonModClampOn(user)
   );
+  if (collection === 'videos' && !user?.isModerator) {
+    browsingLevel = Flags.removeFlag(browsingLevel, NsfwLevel.Blocked);
+    if (!browsingLevel) return emptyPage();
+  }
 
   const [hidden, addonData, blockedTags, namedUserIds, namedTagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
@@ -98,24 +150,27 @@ export async function searchSemanticImages({
     resolveBrowsingSettingsAddons(addonData, level, { isModerator: user?.isModerator });
   let addons = addonsFor(browsingLevel);
   const audit = beginSemanticAudit({
-    index: IMAGE_COLLECTION,
+    index: collection,
     viewer: user,
     query: input.query,
     firstPage: !input.cursor,
   });
-  const refusalOf = async (text: string, stage: QueryStage) => {
-    const refusal = await semanticQueryRefusal(text, {
-      browsingLevel,
+  const refusalOf = makeRefusalOf({
+    index: `${collection}_semantic`,
+    track,
+    context: () => ({
+      // With refuseNarrowing the verdict is taken at one level, whatever level is asked for.
+      browsingLevel: refuseNarrowing ? allBrowsingLevelsFlag : browsingLevel,
       disablePoi: addons.disablePoi,
       isModerator: user?.isModerator,
-    });
-    recordRefusal(track, refusal, text, 'images_semantic', stage);
-    audit.verdict(refusal);
-    return refusal;
-  };
+    }),
+    audit,
+  });
   const refusal = input.query ? await refusalOf(input.query, 'query') : false;
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
-  const queryRefused = verdictLevel === 'refuse';
+  const queryRefused = verdictLevel === 'refuse' || (refuseNarrowing && !!refusal);
+  const refusedPath: RefusedSearchPath =
+    verdictLevel === 'refuse' ? 'refused_query' : 'refused_own_images';
   if (!queryRefused && verdictLevel !== browsingLevel) {
     browsingLevel = verdictLevel;
     addons = addonsFor(browsingLevel);
@@ -139,25 +194,31 @@ export async function searchSemanticImages({
       excludedTagIds: number[];
       fromPlatform?: boolean;
       withMeta?: boolean;
+      // Users left out of these results only.
+      alsoExcludedUserIds?: number[];
     }
   ) => {
+    const { alsoExcludedUserIds = [], ...feedFilters } = filters;
     const { items } = await getAllImages({
       ...getInfiniteImagesSchema.parse({
         ids,
         limit: ids.length,
         sort: ImageSort.Newest,
         browsingLevel: level,
-        ...filters,
-        excludedUserIds,
+        ...feedFilters,
+        ...(collection === 'videos' && { types: [MediaType.video] }),
+        excludedUserIds: [...excludedUserIds, ...alsoExcludedUserIds],
         disablePoi: addons.disablePoi,
         disableMinor: addons.disableMinor,
         include: ['cosmetics', 'tagIds'],
       }),
       user,
+      asModerator,
+      asOwner,
       domain,
       headers: { src: 'semanticImageSearch' },
     });
-    return items;
+    return withoutHeldImages(items);
   };
 
   // "More like this" from an image the viewer cannot see would reveal what it resembles.
@@ -166,12 +227,25 @@ export async function searchSemanticImages({
     const [anchor] = await fetchVisible([input.imageId], browsingLevel, {
       excludedTagIds: viewerExcludedTagIds,
     });
-    if (!anchor) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+    // Refused the same way as an image the viewer cannot see, whatever their level.
+    if (!anchor || isMoreLikeThisRefused(anchor))
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
     if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
       level = anchorBrowsingLevel(browsingLevel, anchor.nsfwLevel);
   }
+  // An upload is embedded as a still, which is not comparable with clip vectors.
+  if (uploadAnchor && collection === 'videos')
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Search by upload covers images only' });
+  if (uploadAnchor) {
+    // An upload is never served, so no visibility check refuses it: refuse a level the viewer
+    // (already capped to the domain) may not see here.
+    if (!Flags.intersects(browsingLevel, uploadAnchor.nsfwLevel))
+      return audit.done(emptyPage(), browsingLevel, 'refused_upload_level');
+    if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
+      level = anchorBrowsingLevel(browsingLevel, uploadAnchor.nsfwLevel);
+  }
   const timed = <T>(stage: 'candidates' | 'hydrate', work: Promise<T>) => {
-    const end = semanticSearchStage().startTimer({ index: IMAGE_COLLECTION, stage });
+    const end = semanticSearchStage().startTimer({ index: collection, stage });
     return work.finally(() => end());
   };
   // Made On-site and Metadata only are judged from the image's meta, so only hydration applies them.
@@ -183,23 +257,30 @@ export async function searchSemanticImages({
         excludedTagIds,
         fromPlatform: input.fromPlatform,
         withMeta: input.withMeta,
+        // "More like this" without the viewer's own images; the source check above still sees them.
+        alsoExcludedUserIds: input.excludeOwn && user ? [user.id] : undefined,
       })
     );
-  const cachedSource = withCandidateCache(
-    IMAGE_COLLECTION,
-    candidateSource,
-    user?.isModerator ? 'mod' : 'user'
-  );
+  // The candidate cache holds nothing per user, and an upload is one user's.
+  const cachedSource = uploadAnchor
+    ? candidateSource
+    : withCandidateCache(collection, candidateSource, user?.isModerator ? 'mod' : 'user');
 
   // Hidden tags, users and images are left to hydration and `excluded` below: as Qdrant must_nots
   // they cost over a second per search on the on-disk payload, and hydration enforces them anyway.
   const filter: CandidateFilter = {
+    // With refuseNarrowing, candidates are not pre-narrowed to the viewer's level.
     gate: {
       kind: 'level',
-      nsfwLevels: Flags.instanceToArray(level),
+      nsfwLevels: Flags.instanceToArray(refuseNarrowing ? allBrowsingLevelsFlag : level),
     },
     tagIds,
-    anyOf: { baseModels: input.baseModels, type: input.types },
+    // Every point of the video index is a video.
+    anyOf: {
+      baseModels: input.baseModels,
+      type: collection === 'videos' ? undefined : input.types,
+      modelVersionIds: input.modelVersionIds,
+    },
     userIds,
     range: {
       key: 'sortAt',
@@ -213,14 +294,27 @@ export async function searchSemanticImages({
   if (queryRefused)
     return input.query && !input.imageId
       ? audit.refused(
+          refusedPath,
           emptyPage(),
           browsingLevel,
           refusedTextCandidates(cachedSource, { text: input.query, filter, viewer })
         )
-      : audit.done(emptyPage(), browsingLevel);
-  const query: SearchQuery = input.imageId
+      : audit.done(emptyPage(), browsingLevel, refusedPath);
+  const query: SearchQuery = uploadAnchor
+    ? { imageUrl: uploadAnchor.imageUrl }
+    : input.imageId
     ? { similarTo: input.imageId }
+    : input.spellcheck === false
+    ? { text: input.query ?? '', spellcheck: false }
     : { text: input.query ?? '' };
+
+  const queryTag =
+    tagMatchesFirst && 'text' in query && query.text.trim()
+      ? (await resolveTags([query.text.trim()])).find(
+          (t) => !blockedTags.some((b) => b.id === t.id)
+        )
+      : undefined;
+  const ranked = queryTag ? withTagMatchesFirst(cachedSource, queryTag.id) : cachedSource;
 
   let correctedQuery: string | undefined;
   // Every correction is audited, not only the first: rounds of one page can come from cached blocks
@@ -232,7 +326,7 @@ export async function searchSemanticImages({
     candidates: async (offset, limit) => {
       const result = await timed(
         'candidates',
-        cachedSource({ query, filter, offset, limit, viewer, sort: input.sort })
+        ranked({ query, filter, offset, limit, viewer, sort: input.sort })
       );
       audit.candidates(result);
       first ??= result;
@@ -252,6 +346,12 @@ export async function searchSemanticImages({
     limit: input.limit,
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
-  if (correctedRefusal) return audit.refused(emptyPage(), level, async () => first ?? { ids: [] });
+  if (correctedRefusal)
+    return audit.refused(
+      'refused_correction',
+      emptyPage(),
+      level,
+      async () => first ?? { ids: [] }
+    );
   return audit.done({ ...page, correctedQuery }, level);
 }

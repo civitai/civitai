@@ -125,7 +125,7 @@ export async function processDedupePairs(pairs: DedupePair[], concurrency: numbe
             canonicalFileId: pair.canonicalFileId,
           },
           'webhooks'
-        ).catch(() => null);
+        );
       }
     }
   });
@@ -162,7 +162,7 @@ export const dedupeOfficialUploadsJob = createJob(
         logToAxiom(
           { type: 'warning', name: 'dedupe-official-uploads', message: 'hit MAX_ITERATIONS safety guard; backlog may be incomplete' },
           'webhooks'
-        ).catch(() => null);
+        );
       }
     }
 
@@ -180,7 +180,7 @@ export const dedupeOfficialUploadsJob = createJob(
           failed,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
 
     await setLastRun();

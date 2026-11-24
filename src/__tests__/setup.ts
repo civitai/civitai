@@ -112,6 +112,7 @@ function orchestratorClientMock() {
     // Functions
     createCivitaiClient: vi.fn(),
     getWorkflow: vi.fn(),
+    getFreeTier: vi.fn(),
     submitWorkflow: vi.fn(),
     updateWorkflow: vi.fn(),
     getResource: vi.fn(),
@@ -185,6 +186,19 @@ process.env.NOTIFICATION_DB_REPLICA_URL ??= 'postgres://user:pass@localhost:5432
 delete process.env.NOTIFICATIONS_ENDPOINT;
 delete process.env.NOTIFICATIONS_TOKEN;
 delete process.env.NOTIFICATIONS_NOTICES_TOKEN;
+// @civitai/email reads EMAIL_* from process.env, not the ~/env/server mock below, so a shell
+// exporting real SMTP settings would send real mail.
+for (const key of [
+  'EMAIL_HOST',
+  'EMAIL_PORT',
+  'EMAIL_SECURE',
+  'EMAIL_USER',
+  'EMAIL_PASS',
+  'EMAIL_FROM',
+  'EMAIL_TIMEOUTS',
+]) {
+  delete process.env[key];
+}
 vi.mock('~/server/notifications/client', () => ({
   notifications: createNotificationsClientStub(),
 }));
@@ -200,10 +214,15 @@ afterAll(failOnUnmockedNotificationCalls);
 // The test env has no Flipt, and from 2026-11-10 an unanswered `app-blocks-legacy-stores-removed`
 // removes the legacy App Blocks stores (legacy-store-shutdown.ts). Pin it explicitly off so the
 // suites exercising those stores do not all flip on that date; the shutdown's own suites mock or
-// clear this.
+// clear this. An unanswered `app-blocks-workflow-media-serve` restricts every App Block media
+// output (block-media-serving.ts), so it is pinned off too; the serving suites mock it. An
+// unanswered `app-blocks-shared-doc-levels` turns content levels ON (doc-levels.ts fails closed),
+// so it is pinned off as well; the levels suites mock `readFliptBoolean`.
 process.env.FLIPT_LOCAL_OVERRIDES = [
   process.env.FLIPT_LOCAL_OVERRIDES,
   'app-blocks-legacy-stores-removed=off',
+  'app-blocks-workflow-media-serve=off',
+  'app-blocks-shared-doc-levels=off',
 ]
   .filter(Boolean)
   .join(',');

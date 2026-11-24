@@ -19,7 +19,8 @@ import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entitie
 import { hasLaterVerdictUnderLock, readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
 
 const SYSTEM_USER_ID = constants.system.user.id;
-// BATCH_SIZE x the slower pass's wait (up to a minute each) must stay well inside the job's run lock.
+// BATCH_SIZE x the slower pass's wait (DISPUTE_CHECK_WAIT_SECONDS in model-sfw-face.service.ts)
+// must stay well inside the job's run lock.
 const BATCH_SIZE = 4;
 /** Runs without a verdict before the dispute is left to a moderator. */
 const MAX_ATTEMPTS = 3;
@@ -93,7 +94,7 @@ export async function processComFaceIntentDisputes() {
         message: error instanceof Error ? error.message : String(error),
         appealId: row.id,
         modelId: row.modelId,
-      }).catch(() => undefined);
+      });
     }
   }
   return counts;
@@ -171,7 +172,7 @@ async function judgeDispute(row: PendingDispute): Promise<ComFaceIntentDisputeOu
       appealId: row.id,
       modelId: row.modelId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
     return markJudged(row, 'needs-moderator');
   }
   logSample(row, 'overturned', verdict.promptId);
@@ -214,5 +215,5 @@ function logSample(
     firstReason: first?.reason,
     secondPromptId: promptId,
     secondReason: reason,
-  }).catch(() => undefined);
+  });
 }

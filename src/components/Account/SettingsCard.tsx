@@ -358,7 +358,9 @@ export function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }
       (!fliptGatedToggleableKeys.has(feature.key) ||
         (userFeatures && feature.key in userFeatures)) &&
       // A non-member who opted in would get a button that only leads to the supporter pitch.
-      (feature.key !== 'civitaiLinkNav' || flags.civitaiLink)
+      (feature.key !== 'civitaiLinkNav' || flags.civitaiLink) &&
+      // Pinned on while the classic trainer is off, so there is nothing to switch back to.
+      (feature.key !== 'trainingStudioUi' || !flags.classicTrainerOff)
   );
   const toggleFlag = useToggleFeatureFlag();
 

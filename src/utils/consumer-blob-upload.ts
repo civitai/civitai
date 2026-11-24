@@ -261,7 +261,6 @@ export async function uploadConsumerBlob(
       void reportApplicationError(new Error(`consumer blob upload failed: ${e.kind}`), {
         name: 'consumer-blob-upload',
         message: `attempt ${attempt}/${MAX_ATTEMPTS}`,
-        resolveStack: false,
       });
       if (!e.retryable || attempt >= MAX_ATTEMPTS) throw e;
       // An outage failure reaches here only after the presign retries ran out, and any failure

@@ -14,7 +14,8 @@ import (
 )
 
 // Redis is an in-memory redis.UniversalClient for the commands this service sends: GET, HGET,
-// HGETALL, SET and SADD, directly or in a pipeline. Any other command panics (the embedded nil
+// HGETALL, SET, SET NX, SADD and (pipelined) DEL, EXISTS, EXPIRE and EVAL of a registered script,
+// directly or in a pipeline. Any other command panics (the embedded nil
 // interface), so a test never passes on a command the fake silently ignored.
 //
 // Failure modes: Err makes every command fail with it (a transport failure); KeyErr, when it returns
@@ -235,6 +236,22 @@ func (r *Redis) HGet(ctx context.Context, key, field string) *redis.StringCmd {
 	return redis.NewStringResult(r.hget(key, field))
 }
 
+// HGetAll is HGETALL.
+func (r *Redis) HGetAll(ctx context.Context, key string) *redis.MapStringStringCmd {
+	r.count()
+	cmd := redis.NewMapStringStringCmd(ctx, "hgetall", key)
+	if err := r.wait(ctx); err != nil {
+		cmd.SetErr(err)
+		return cmd
+	}
+	if err := r.keyErr(key); err != nil {
+		cmd.SetErr(err)
+		return cmd
+	}
+	cmd.SetVal(r.hgetall(key))
+	return cmd
+}
+
 // Pipelined runs fn against a pipeline whose commands all answer at once, as one round trip. Like
 // go-redis it returns the first command error (redis.Nil included).
 func (r *Redis) Pipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error) {
@@ -348,6 +365,213 @@ func (p *pipe) SAdd(ctx context.Context, key string, members ...any) *redis.IntC
 		cmd.SetVal(p.r.sadd(key, members...))
 	})
 	return cmd
+}
+
+// exists is EXISTS over one key: 1 when it holds a value of any type (an empty hash is no key).
+func (r *Redis) exists(key string) int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.strings[key]; ok {
+		return 1
+	}
+	if len(r.hashes[key]) > 0 || len(r.sets[key]) > 0 {
+		return 1
+	}
+	return 0
+}
+
+// Exists is EXISTS, pipelined. One key per command (a cluster pipeline sends one per slot anyway);
+// several keys panic, so a test never passes on a count the fake did not compute.
+func (p *pipe) Exists(ctx context.Context, keys ...string) *redis.IntCmd {
+	if len(keys) != 1 {
+		panic("testkit.Redis: EXISTS of other than one key")
+	}
+	key := keys[0]
+	cmd := redis.NewIntCmd(ctx, "exists", key)
+	p.cmds = append(p.cmds, cmd)
+	p.ops = append(p.ops, func(failErr error) {
+		if failErr == nil {
+			failErr = p.r.keyErr(key)
+		}
+		if failErr != nil {
+			cmd.SetErr(failErr)
+			return
+		}
+		cmd.SetVal(p.r.exists(key))
+	})
+	return cmd
+}
+
+// setNX is SET NX with an expiry: false (and nothing written) when key holds a value of any type.
+func (r *Redis) setNX(key string, val any, ttl time.Duration) bool {
+	r.mu.Lock()
+	_, s := r.strings[key]
+	_, h := r.hashes[key]
+	_, m := r.sets[key]
+	r.mu.Unlock()
+	if s || h || m {
+		return false
+	}
+	r.set(key, val, ttl)
+	return true
+}
+
+// Has reports whether key holds a value of any type.
+func (r *Redis) Has(key string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, s := r.strings[key]
+	_, h := r.hashes[key]
+	_, m := r.sets[key]
+	return s || h || m
+}
+
+// Hash returns a stored hash (nil when absent).
+func (r *Redis) Hash(key string) map[string]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.hashes[key] == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for k, v := range r.hashes[key] {
+		out[k] = v
+	}
+	return out
+}
+
+func (p *pipe) SetNX(ctx context.Context, key string, val any, ttl time.Duration) *redis.BoolCmd {
+	cmd := redis.NewBoolCmd(ctx, "set", key, "nx")
+	p.cmds = append(p.cmds, cmd)
+	p.ops = append(p.ops, func(failErr error) {
+		if failErr == nil {
+			failErr = p.r.keyErr(key)
+		}
+		if failErr != nil {
+			cmd.SetErr(failErr)
+			return
+		}
+		cmd.SetVal(p.r.setNX(key, val, ttl))
+	})
+	return cmd
+}
+
+// Del is DEL, pipelined: the number of the keys that held a value.
+func (p *pipe) Del(ctx context.Context, keys ...string) *redis.IntCmd {
+	cmd := redis.NewIntCmd(ctx, "del")
+	p.cmds = append(p.cmds, cmd)
+	p.ops = append(p.ops, func(failErr error) {
+		for _, key := range keys {
+			if failErr == nil {
+				failErr = p.r.keyErr(key)
+			}
+		}
+		if failErr != nil {
+			cmd.SetErr(failErr)
+			return
+		}
+		var n int64
+		p.r.mu.Lock()
+		for _, key := range keys {
+			_, s := p.r.strings[key]
+			_, h := p.r.hashes[key]
+			_, m := p.r.sets[key]
+			if s || h || m {
+				n++
+			}
+			delete(p.r.strings, key)
+			delete(p.r.hashes, key)
+			delete(p.r.sets, key)
+			delete(p.r.ttls, key)
+		}
+		p.r.mu.Unlock()
+		cmd.SetVal(n)
+	})
+	return cmd
+}
+
+// Expire is EXPIRE, pipelined: true when key held a value (its expiry is then d).
+func (p *pipe) Expire(ctx context.Context, key string, d time.Duration) *redis.BoolCmd {
+	cmd := redis.NewBoolCmd(ctx, "expire", key)
+	p.cmds = append(p.cmds, cmd)
+	p.ops = append(p.ops, func(failErr error) {
+		if failErr == nil {
+			failErr = p.r.keyErr(key)
+		}
+		if failErr != nil {
+			cmd.SetErr(failErr)
+			return
+		}
+		if !p.r.Has(key) {
+			cmd.SetVal(false)
+			return
+		}
+		p.r.mu.Lock()
+		p.r.ttls[key] = d
+		p.r.mu.Unlock()
+		cmd.SetVal(true)
+	})
+	return cmd
+}
+
+// Scripts maps a Lua script's exact text to the fake's implementation of it, for EVAL. A script
+// not registered panics, so a test never passes on one the fake did not run.
+var Scripts = map[string]func(r *Redis, keys []string, args []any) (any, error){}
+
+// Eval is EVAL, pipelined, of a script registered in Scripts (run atomically under the fake's
+// state).
+func (p *pipe) Eval(ctx context.Context, script string, keys []string, args ...any) *redis.Cmd {
+	fn, ok := Scripts[script]
+	if !ok {
+		panic("testkit.Redis: EVAL of an unregistered script")
+	}
+	cmd := redis.NewCmd(ctx, "eval")
+	p.cmds = append(p.cmds, cmd)
+	p.ops = append(p.ops, func(failErr error) {
+		for _, key := range keys {
+			if failErr == nil {
+				failErr = p.r.keyErr(key)
+			}
+		}
+		if failErr != nil {
+			cmd.SetErr(failErr)
+			return
+		}
+		v, err := fn(p.r, keys, args)
+		cmd.SetVal(v)
+		cmd.SetErr(err)
+	})
+	return cmd
+}
+
+// DelKey deletes key of any type (for a script implementation).
+func (r *Redis) DelKey(key string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.strings, key)
+	delete(r.hashes, key)
+	delete(r.sets, key)
+	delete(r.ttls, key)
+}
+
+// SetStringTTL stores a string value with an expiry (0: none).
+func (r *Redis) SetStringTTL(key string, val []byte, ttl time.Duration) {
+	r.SetString(key, val)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ttl > 0 {
+		r.ttls[key] = ttl
+	}
+}
+
+// SetHashTTL stores a hash with an expiry (for a script implementation).
+func (r *Redis) SetHashTTL(key string, fields map[string]string, ttl time.Duration) {
+	r.SetHash(key, fields)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ttl > 0 {
+		r.ttls[key] = ttl
+	}
 }
 
 // ErrDown is a stand-in transport failure.

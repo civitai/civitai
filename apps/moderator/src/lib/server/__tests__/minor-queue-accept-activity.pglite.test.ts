@@ -30,6 +30,10 @@ vi.mock('../image-moderation-effects', () => ({
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
+// Covered in image-models-reindex.pglite.test.ts; this schema has no Post table.
+vi.mock('../image-models-reindex', () => ({
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
+}));
 
 const { acceptImage } = await import('../image-moderation.service');
 const { getYouToday } = await import('../moderation-board.service');
@@ -37,6 +41,8 @@ const { getYouToday } = await import('../moderation-board.service');
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP(3));
+CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "needsReview" TEXT,
@@ -53,7 +59,8 @@ CREATE TABLE "Image" (
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB,
+  PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,

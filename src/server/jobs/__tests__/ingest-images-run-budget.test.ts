@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // helper directly with the REAL limitConcurrency (only ingestImage is mocked).
 
 const { mockIngestImage, mockDeleteImages } = vi.hoisted(() => ({
-  mockIngestImage: vi.fn(async () => true),
+  mockIngestImage: vi.fn(async (_input: { image: IngestImageInput }) => true),
   mockDeleteImages: vi.fn(async () => undefined),
 }));
 
@@ -22,6 +22,7 @@ vi.mock('~/env/other', () => ({ isProd: true }));
 vi.mock('~/env/server', () => ({
   env: {
     IMAGE_SCANNING_MAX_PER_RUN: 1000,
+    IMAGE_SCANNING_RETRY_MAX_PER_RUN: 200,
     IMAGE_SCANNING_RETRY_DELAY: 5,
     IMAGE_SCANNING_PENDING_TIMEOUT: 60 * 24,
     DATABASE_IS_PROD: true,
@@ -30,7 +31,7 @@ vi.mock('~/env/server', () => ({
 
 // NOTE: concurrency-helpers is intentionally NOT mocked — these tests rely on the real
 // limitConcurrency to observe genuine parallelism and early-exit behavior.
-import { sendImagesForScanBulk } from '~/server/jobs/image-ingestion';
+import { createSendPacer, sendImagesForScanBulk } from '~/server/jobs/image-ingestion';
 import type { JobContext } from '~/server/jobs/job';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -114,5 +115,63 @@ describe('sendImagesForScanBulk run budget + concurrency + cancel', () => {
 
     expect(mockIngestImage.mock.calls.length).toBeLessThan(images.length);
     expect(result.sent.length).toBeLessThan(images.length);
+  });
+});
+
+describe('sendImagesForScanBulk with a pacer', () => {
+  it('stops starting paced submits once the run is canceled, mid-schedule', async () => {
+    const images = makeImages(40); // past the burst: one start every 4.5s
+    const ctx = { status: 'running' as 'running' | 'canceled' };
+    const pacer = createSendPacer(images.length);
+
+    const p = sendImagesForScanBulk(images, { ctx: ctx as unknown as JobContext, pacer });
+    await vi.advanceTimersByTimeAsync(pacer.intervalMs * 3);
+    const startedBeforeCancel = mockIngestImage.mock.calls.length;
+    ctx.status = 'canceled';
+    await vi.runAllTimersAsync();
+    const result = await p;
+
+    expect(startedBeforeCancel).toBe(4); // t = 0, 1, 2, 3 intervals
+    expect(mockIngestImage.mock.calls.length).toBe(startedBeforeCancel);
+    expect(result.sent.length).toBe(startedBeforeCancel);
+  });
+
+  it('does not start a paced submit scheduled at or past the run deadline', async () => {
+    const images = makeImages(40);
+    const pacer = createSendPacer(images.length);
+    // Room for exactly 10 starts (t = 0 .. 9 intervals) before the deadline.
+    const deadline = Date.now() + pacer.intervalMs * 10;
+
+    const p = sendImagesForScanBulk(images, { deadline, pacer });
+    await vi.runAllTimersAsync();
+    const result = await p;
+
+    expect(mockIngestImage.mock.calls.length).toBe(10);
+    expect(result).toEqual({ sent: Array.from({ length: 10 }, (_, i) => i + 1), failed: [] });
+  });
+
+  it('after a slow submit stalls a lane, the next lane keeps the spacing instead of catching up', async () => {
+    const pacer = createSendPacer(40); // one start every 4.5s
+    const starts: number[] = [];
+    mockIngestImage.mockImplementation(async ({ image }: { image: IngestImageInput }) => {
+      starts.push(Date.now());
+      // The first lane's only submit hangs for 45s: ten slots' worth.
+      if (image.id === 1) await new Promise((resolve) => setTimeout(resolve, 45_000));
+      return true;
+    });
+
+    const p = (async () => {
+      await sendImagesForScanBulk(makeImages(1), { pacer });
+      await sendImagesForScanBulk(
+        makeImages(39).map((img) => ({ ...img, id: img.id + 1 })),
+        { pacer }
+      );
+    })();
+    await vi.runAllTimersAsync();
+    await p;
+
+    expect(starts).toHaveLength(40);
+    for (let i = 1; i < starts.length; i++)
+      expect(starts[i] - starts[i - 1]).toBeGreaterThanOrEqual(pacer.intervalMs);
   });
 });

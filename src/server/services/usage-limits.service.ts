@@ -14,8 +14,7 @@ import {
   usageLimitDefs,
   type UsageLimitDef,
 } from '~/shared/constants/usage-limits';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
 
 /** A scoped token reads its limits with either: an app that posts needs them without profile access. */
@@ -35,7 +34,13 @@ const USAGE_LIMIT_AREAS = Object.entries(SHARED_KEY_BY_AREA).map(([area, sharedK
   area,
   sharedKey,
   ids: usageLimitDefs
-    .filter((def) => def.area === area && def.kind === 'product' && isBucketCountable(def.window))
+    .filter(
+      (def) =>
+        def.area === area &&
+        def.kind === 'product' &&
+        isBucketCountable(def.window) &&
+        !('countedBy' in def)
+    )
     .map((def) => def.id),
 }));
 
@@ -80,14 +85,14 @@ export async function getUsageLimits({
   user: SessionUser;
   req: NextApiRequest;
   /** The caller's credential scope; `TokenScope.Full` for a cookie session. */
-  tokenScope: number;
+  tokenScope: bigint;
   ids?: readonly string[];
 }): Promise<{ limits: UsageLimit[] }> {
   // Null rows would tell a token that its user is a moderator, which `/api/v1/me` releases only
   // to a session or a UserRead token. Anyone else sees a moderator's rows as a regular user's.
   const showExemption =
     user.isModerator &&
-    (tokenScope === TokenScope.Full || Flags.hasFlag(tokenScope, TokenScope.UserRead));
+    (tokenScope === TokenScope.Full || hasScope(tokenScope, TokenScope.UserRead));
   const wanted = ids && ids.length > 0 ? new Set(ids) : undefined;
   const byArea = await Promise.all(
     USAGE_LIMIT_AREAS.map(async ({ area, sharedKey, ids: areaIds }): Promise<UsageLimit[]> => {

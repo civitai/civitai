@@ -105,7 +105,7 @@ export const CardMidEdit = () => (
       'storyline.setText': ({ id, content }: { id: number; content: string }) => ({ id, content }),
     }}
   >
-    <StorylineTextCard text={texts[0]} />
+    <StorylineTextCard text={texts[0]} label="Text 1 / 20" />
   </Frame>
 );
 
@@ -124,7 +124,7 @@ export const Held = () => (
       },
     }}
   >
-    <StorylineTextCard text={texts[1]} />
+    <StorylineTextCard text={texts[1]} label="Text 2 / 20" />
   </Frame>
 );
 

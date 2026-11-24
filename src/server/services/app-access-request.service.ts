@@ -1,7 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { refreshSession } from '~/server/auth/session-invalidation';
+import { FLIPT_FEATURE_FLAGS, readFliptBoolean } from '~/server/flipt/client';
+import { notifyAppAccessDecision } from '~/server/services/app-access-request-notify';
+import { buildFliptContext } from '~/server/services/feature-flags.service';
 import { dbWrite } from '~/server/db/client';
+import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import type {
   DecideAppAccessRequestInput,
   ListAppAccessRequestsInput,
@@ -9,6 +13,7 @@ import type {
 } from '~/server/schema/app-access-request.schema';
 import type { AppAccessRequestStatus } from '~/shared/constants/app-access-request.constants';
 import { handleLogError } from '~/server/utils/errorHandling';
+import type { SessionUser } from '~/types/session';
 
 /**
  * "Request access" from the `/apps/build` pitch, and the moderator queue that reviews it.
@@ -16,9 +21,15 @@ import { handleLogError } from '~/server/utils/errorHandling';
  * 🔴 AN `approved` ROW IS THE GRANT. The auth hub's session producer reads "has an approved row"
  * into `SessionUser.appBuilderApproved`, `buildFliptContext` emits it as the `appBuilderApproved`
  * targeting property, and the `app-builder-approved` Flipt segment puts that user on the builder
- * flags (App Assistant included). So `decide` busts the REQUESTER's cached session after it writes:
- * without that, the hub keeps serving the old value for up to its 4h TTL and an approval (or a
- * revoke) changes nothing until then.
+ * flags (App Assistant included). So every write that creates or removes an approved row busts the
+ * REQUESTER's cached session after it commits: without that, the hub keeps serving the old value
+ * for up to its 4h TTL and an approval (or a revoke) changes nothing until then.
+ *
+ * An approved row comes from one of two places: a moderator's `decide`, which records who
+ * approved it, or `submit` itself while `app-access-auto-approve` is on for the requester and their
+ * account passes {@link isEligibleForAutoApproval} — that row has a review time and NO reviewer,
+ * which is how the queue tells the two apart. Either way it is the same grant, and a moderator
+ * revokes it the same way.
  *
  * Raw SQL rather than the Prisma model API because the one-pending-per-user rule lives in a PARTIAL
  * unique index (`AppAccessRequest_userId_pending_key`), and only `ON CONFLICT … WHERE` can target
@@ -47,23 +58,116 @@ export type AppAccessRequestQueueItem = AppAccessRequestView & {
 const VIEW_COLUMNS = Prisma.raw(`"id", "whatToBuild", "status", "createdAt", "reviewedAt"`);
 
 /**
+ * Whether the person holds an approved request — the grant the auth hub reads ("EXISTS an approved
+ * row"). Read from the primary, like everything here.
+ */
+async function hasApprovedAppAccessRequest(userId: number): Promise<boolean> {
+  const [row] = await dbWrite.$queryRaw<{ approved: boolean }[]>(Prisma.sql`
+    SELECT EXISTS (
+      SELECT 1 FROM "AppAccessRequest" WHERE "userId" = ${userId} AND "status" = 'approved'
+    ) AS "approved"
+  `);
+  return !!row?.approved;
+}
+
+/**
+ * Whether `app-access-auto-approve` is on for this requester. Per user (entity = the user id,
+ * context = `buildFliptContext`), so a cohort segment or a percentage rollout can ramp it.
+ * Anything but a definite `true` — off, an unknown key, Flipt unreachable, a throw — is OFF: the
+ * request waits for a moderator, as it did before the flag existed.
+ */
+async function isAutoApproveOn(user: SessionUser): Promise<boolean> {
+  try {
+    return (
+      (await readFliptBoolean(
+        FLIPT_FEATURE_FLAGS.APP_ACCESS_AUTO_APPROVE,
+        String(user.id),
+        buildFliptContext(user)
+      )) === true
+    );
+  } catch (e) {
+    handleLogError(e as Error);
+    return false;
+  }
+}
+
+/**
+ * The basic account checks an instant approval needs: the account exists and is not deleted, is
+ * not banned, is not muted, and does not still owe the site's email check — the same rule the rest
+ * of the site applies, {@link requiresEmailVerification}: only an account stamped at onboarding as
+ * having to prove its email fails it until it does; an older account with no verified email
+ * passes. Every field is read from the PRIMARY at submit time rather than from the session, which
+ * can be hours old: a ban, a mute or a verification since must count. A person who fails any check
+ * still gets a request, pending, for a moderator to decide.
+ */
+async function isEligibleForAutoApproval(userId: number): Promise<boolean> {
+  const [row] = await dbWrite.$queryRaw<
+    { inGoodStanding: boolean; emailVerified: Date | null; meta: unknown }[]
+  >(Prisma.sql`
+    SELECT (
+      "deletedAt" IS NULL
+      AND "bannedAt" IS NULL
+      AND "muted" = FALSE
+    ) AS "inGoodStanding", "emailVerified", "meta"
+    FROM "User" WHERE "id" = ${userId}
+  `);
+  if (!row) return false;
+  return row.inGoodStanding === true && !requiresEmailVerification(row);
+}
+
+/**
  * Creates the viewer's request. One pending request per person (the partial unique index), so a
  * second submit while one is pending is a CONFLICT; after a decline a new request is a new row.
+ * Someone who already holds an approved row is refused with a CONFLICT whichever way it was
+ * approved.
+ *
+ * While `app-access-auto-approve` is on for the requester and their account passes the checks, the
+ * request is written APPROVED instead — the grant, with a review time and no reviewer — and their
+ * session is busted so the next page load has builder access. A pending request they already have
+ * is NOT approved by a submit: it stays for a moderator, and the submit is the same "waiting for
+ * review" CONFLICT as with the flag off. After a revoke a new submit is approved again: a revoke
+ * removes access until the person asks again, not for good. No
+ * "approved" notification is sent for it: the person is looking at the page that shows the
+ * result. Off, unreadable or failing a check: the pending insert below, exactly as before.
  */
 export async function submitAppAccessRequest({
-  userId,
+  user,
   input,
 }: {
-  userId: number;
+  user: SessionUser;
   input: SubmitAppAccessRequestInput;
 }): Promise<AppAccessRequestView> {
-  const approved = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
-    SELECT "id" FROM "AppAccessRequest"
-    WHERE "userId" = ${userId} AND "status" = 'approved'
-    LIMIT 1
-  `);
-  if (approved.length > 0)
+  const userId = user.id;
+  if (await hasApprovedAppAccessRequest(userId))
     throw new TRPCError({ code: 'CONFLICT', message: APP_ACCESS_ALREADY_APPROVED });
+
+  if ((await isAutoApproveOn(user)) && (await isEligibleForAutoApproval(userId))) {
+    // Inserted approved only when the person holds NO pending row and NO approved one. A pending
+    // request keeps waiting for a moderator — the same "waiting for review" CONFLICT as with the
+    // flag off — and a grant that landed since the read above is a CONFLICT, not a second row.
+    // Two submits racing each other can still leave two approved rows, which the revoke sweep in
+    // `decide` covers. `reviewedById` stays NULL — no moderator decided this.
+    const [row] = await dbWrite.$queryRaw<AppAccessRequestView[]>(Prisma.sql`
+      INSERT INTO "AppAccessRequest" ("userId", "whatToBuild", "status", "reviewedAt")
+      SELECT ${userId}::int, ${input.whatToBuild}::text, 'approved', CURRENT_TIMESTAMP
+      WHERE NOT EXISTS (
+        SELECT 1 FROM "AppAccessRequest"
+        WHERE "userId" = ${userId} AND "status" IN ('pending', 'approved')
+      )
+      RETURNING ${VIEW_COLUMNS}
+    `);
+    if (!row) {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: (await hasApprovedAppAccessRequest(userId))
+          ? APP_ACCESS_ALREADY_APPROVED
+          : APP_ACCESS_ALREADY_PENDING,
+      });
+    }
+    // Best-effort, after the commit, as in `decide`: a failed bust is bounded by the session TTL.
+    await refreshSession(userId, { caller: 'profile' }).catch(handleLogError);
+    return row;
+  }
 
   const [row] = await dbWrite.$queryRaw<AppAccessRequestView[]>(Prisma.sql`
     INSERT INTO "AppAccessRequest" ("userId", "whatToBuild")
@@ -136,8 +240,10 @@ const DECIDABLE_FROM: Record<DecideAppAccessRequestInput['decision'], AppAccessR
  * approved → declined (a revoke). Anything else — a second approve, re-deciding a declined row —
  * is a CONFLICT, so two moderators acting on one row get one decision, not a silent overwrite.
  *
- * Then busts the requester's session, because the grant rides on it (see the file comment).
- * Best-effort: the decision has committed, and a failed bust is bounded by the session TTL.
+ * Then busts the requester's session, because the grant rides on it (see the file comment), and
+ * notifies the requester of the outcome. Both run only when THIS call moved the row, after the
+ * UPDATE has committed, and both are best-effort: a failed bust is bounded by the session TTL, and
+ * a failed notification is logged and never fails or undoes the decision.
  */
 export async function decideAppAccessRequest({
   moderatorId,
@@ -155,7 +261,9 @@ export async function decideAppAccessRequest({
   // (Chosen over a partial unique index on approved rows: that would make approving the stray row
   // a unique violation, and the migration is hand-applied with IF NOT EXISTS, so an environment
   // that already ran it would never get the index.)
-  const rows = await dbWrite.$queryRaw<(AppAccessRequestView & { userId: number })[]>(Prisma.sql`
+  const rows = await dbWrite.$queryRaw<
+    (AppAccessRequestView & { userId: number; prev: AppAccessRequestStatus })[]
+  >(Prisma.sql`
     WITH target AS (
       SELECT "id", "userId", "status" AS "prev" FROM "AppAccessRequest"
       WHERE "id" = ${input.id} AND "status" IN (${Prisma.join(from)})
@@ -168,12 +276,34 @@ export async function decideAppAccessRequest({
     FROM target t
     WHERE r."id" = t."id"
        OR (t."prev" = 'approved' AND r."userId" = t."userId" AND r."status" = 'approved')
-    RETURNING r."userId", r."id", r."whatToBuild", r."status", r."createdAt", r."reviewedAt"
+    RETURNING r."userId", r."id", r."whatToBuild", r."status", r."createdAt", r."reviewedAt",
+              t."prev"
   `);
   const row = rows.find((r) => r.id === input.id);
   if (row) {
-    const { userId, ...view } = row;
+    const { userId, prev, ...view } = row;
     await refreshSession(userId, { caller: 'moderation' }).catch(handleLogError);
+    // Once per decision, for the clicked row only — a revoke sweep that also declined a second
+    // approved row is still one decision to the person. try/catch rather than `.catch`: a
+    // synchronous throw must not escape either.
+    try {
+      // Declining a stray PENDING row (the race above) leaves a standing grant in place, so a
+      // "not approved" notice would be false. Read after the commit, so it sees this decision.
+      if (
+        input.decision === 'declined' &&
+        prev === 'pending' &&
+        (await hasApprovedAppAccessRequest(userId))
+      )
+        return view;
+      await notifyAppAccessDecision({
+        userId,
+        requestId: view.id,
+        decision: input.decision,
+        revoked: prev === 'approved',
+      });
+    } catch (e) {
+      handleLogError(e as Error);
+    }
     return view;
   }
 

@@ -7,6 +7,7 @@ import { bustCachesForPosts } from '~/server/services/post.service';
 import {
   flagRestrictedImages,
   getRestrictedModelVersionIds,
+  reindexRestrictedImages,
 } from '~/server/services/restricted-images.service';
 import {
   restrictedImageDriftGauge,
@@ -16,7 +17,6 @@ import {
 import { createJob } from './job';
 
 const VERSIONS_PER_CHUNK = 100;
-
 // Sets `Image."modelRestricted"` for images whose resources point at a base model
 // whose `matureRestricted` includes `images`: the backstop for
 // `flagImagesOnRestrictedVersions`, which applies the same rule when resources are
@@ -67,6 +67,7 @@ export const reconcileRestrictedImages = createJob(
             'webhooks'
           )
         );
+      await reindexRestrictedImages(chunkResult, 'reconcile-restricted-images');
     }
 
     // Reported, never acted on. This is also the recovery query if a model owner
@@ -95,7 +96,7 @@ export const reconcileRestrictedImages = createJob(
     restrictedImageReconcileLastSuccessGauge.set(Math.floor(Date.now() / 1000));
 
     if (flagged > 0) {
-      await logToAxiom(
+      logToAxiom(
         {
           name: 'reconcile-restricted-images',
           type: 'warning',

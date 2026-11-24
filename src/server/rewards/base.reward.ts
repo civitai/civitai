@@ -19,7 +19,7 @@ import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { isClickHouseConnectionError, withRetries } from '../utils/errorHandling';
 
-// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+// Lazy, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
 const buzzService = () => import('~/server/services/buzz.service');
 
 // Retry budget for the batch `process` (cron) path — can afford to block.
@@ -47,7 +47,7 @@ const log = (event: BuzzEventLog, data: MixedObject) => {
     type: 'error',
     event: JSON.stringify(event),
     ...data,
-  }).catch(() => null);
+  });
 };
 
 // Lua script for atomic on-demand reward processing.
@@ -346,7 +346,7 @@ export function createBuzzEvent<T>({
         rewardType: type,
         error: (error as Error)?.message,
         stack: (error as Error)?.stack,
-      }).catch(() => null);
+      });
       rewardFailedCounter?.inc?.();
       return null;
     });
@@ -641,7 +641,9 @@ export function createBuzzEvent<T>({
               event.awardAmount = config.awardAmount;
             }
           }
-          await updateBuzzEvents(chunk);
+          // Only the rows put back to pending: an unqualified row was already written above, and
+          // writing it again raises its version past the one its reward chose for it.
+          await updateBuzzEvents(chunk.filter((event) => event.status === 'pending'));
         }
 
         // Then throw the error
@@ -804,10 +806,12 @@ function toClickhouseBuzzEvents(events: BuzzEventLog[]): BuzzEventLog[] {
       name: 'buzz-rewards',
       type: 'error',
       message: 'Buzz event multiplier fell outside the ClickHouse column range and was coerced',
-      clampedEvents: clamped,
-      batchSize: events.length,
-      clampedTo: BUZZ_EVENTS_MAX_MULTIPLIER,
-    }).catch(() => null);
+      payload: {
+        clampedEvents: clamped,
+        batchSize: events.length,
+        clampedTo: BUZZ_EVENTS_MAX_MULTIPLIER,
+      },
+    });
   }
 
   return rows;

@@ -13,6 +13,7 @@ import {
   APPDATA_TABLES,
   isAccountWipeStatement,
   isAppPurgeStatement,
+  isRaterLookupStatement,
   isReviewMaintenanceStatement,
   scanStatement,
 } from './doc-store.sql-scan';
@@ -42,6 +43,73 @@ export const MIGRATION_SCHEMA_MAJOR_UP = path.resolve(
 export const MIGRATION_SCHEMA_MAJOR_DOWN = path.resolve(
   __dirname,
   '../migrations/20261106130000_appdata_doc_schema_major.down.sql'
+);
+
+/** The content-level columns on doc. Off by default: a suite opts in, as an environment would. */
+export const MIGRATION_DOC_LEVELS_UP = path.resolve(
+  __dirname,
+  '../migrations/20261116120000_appdata_doc_levels.sql'
+);
+export const MIGRATION_DOC_LEVELS_DOWN = path.resolve(
+  __dirname,
+  '../migrations/20261116120000_appdata_doc_levels.down.sql'
+);
+
+/** The rater's rating id and lookup policy. Off by default: a suite opts in. */
+export const MIGRATION_DOC_RATING_ID_UP = path.resolve(
+  __dirname,
+  '../migrations/20261118120000_appdata_doc_rating_id.sql'
+);
+export const MIGRATION_DOC_RATING_ID_DOWN = path.resolve(
+  __dirname,
+  '../migrations/20261118120000_appdata_doc_rating_id.down.sql'
+);
+
+/**
+ * The `doc.record_id` column with its `gen_random_uuid()` default, and its unique index (built
+ * CONCURRENTLY; PGlite accepts the shipped file as is). ON by default, so every PGlite suite runs
+ * the store against a table that has the column, as an environment will once it is applied.
+ */
+export const MIGRATION_RECORD_ID_UP = path.resolve(
+  __dirname,
+  '../migrations/20261119120000_appdata_doc_record_id.sql'
+);
+export const MIGRATION_RECORD_ID_UNIQUE = path.resolve(
+  __dirname,
+  '../migrations/20261119120200_appdata_doc_record_id_unique.sql'
+);
+/**
+ * The mark sequence: the `mark_head` table and the `mark_seq` column of `doc_tally`. ON by
+ * default, so every suite runs the store as an environment will once it is applied; a suite opts
+ * out (`markHead: false`) to run the store as before it is.
+ */
+export const MIGRATION_MARK_HEAD_UP = path.resolve(
+  __dirname,
+  '../migrations/20261122120000_appdata_mark_head.sql'
+);
+export const MIGRATION_MARK_HEAD_DOWN = path.resolve(
+  __dirname,
+  '../migrations/20261122120000_appdata_mark_head.down.sql'
+);
+
+/**
+ * The maintenance-run table (mark migrations and per-collection purges). ON by default, so every
+ * suite runs the store as an environment will once it is applied; a suite opts out
+ * (`maintRun: false`) to run the store as before it is.
+ */
+export const MIGRATION_MAINT_RUN_UP = path.resolve(
+  __dirname,
+  '../migrations/20261123120000_appdata_maint_run.sql'
+);
+export const MIGRATION_MAINT_RUN_DOWN = path.resolve(
+  __dirname,
+  '../migrations/20261123120000_appdata_maint_run.down.sql'
+);
+
+/** The batched backfill of `doc.record_id` (a data script; never applied by the harness). */
+export const MIGRATION_RECORD_ID_BACKFILL = path.resolve(
+  __dirname,
+  '../migrations/20261119120100_appdata_doc_record_id_backfill.sql'
 );
 
 export type Row = Record<string, unknown>;
@@ -81,6 +149,11 @@ const BEGIN_ACCOUNT_WIPE =
 /** The store's app-purge enumeration transaction: no app or namespace bound, one app id. */
 const BEGIN_APP_PURGE =
   /^BEGIN; SELECT set_config\('appdata\.app_id', '', true\), set_config\('appdata\.ns', '', true\), set_config\('appdata\.app_purge_id', '([^']+)', true\), set_config\('lock_timeout', '[0-9]+s', true\)$/;
+/** The store's rater-lookup transaction: no app or namespace bound, one rating id (0 = none). */
+const BEGIN_RATER_LOOKUP =
+  /^BEGIN; SELECT set_config\('appdata\.app_id', '', true\), set_config\('appdata\.ns', '', true\), set_config\('appdata\.rater_lookup_id', '([0-9]+)', true\), set_config\('lock_timeout', '[0-9]+s', true\)$/;
+/** The rater's readiness check: a catalog read, no appdata table. */
+const RATER_POLICY_CHECK = /^SELECT count\(\*\)::int AS n FROM pg_catalog\.pg_policies pp\b/;
 /** The app-purge enumeration's policy check: a catalog read, no appdata table. */
 const APP_PURGE_POLICY_CHECK = /^SELECT count\(\*\)::int AS n FROM pg_catalog\.pg_policies pp\b/;
 
@@ -100,6 +173,8 @@ function recording(inner: DocStoreClient, h: Pick<Harness, 'statements' | 'viola
     wipeUid?: number;
     /** The app id an app-purge enumeration transaction is bound to. */
     purgeApp?: string;
+    /** The rating id a rater-lookup transaction is bound to. */
+    lookupId?: number;
   } | null = null;
   const client: DocStoreClient = {
     async query(sql, params) {
@@ -107,7 +182,9 @@ function recording(inner: DocStoreClient, h: Pick<Harness, 'statements' | 'viola
       const mm = BEGIN_MAINTENANCE.exec(sql);
       const mw = BEGIN_ACCOUNT_WIPE.exec(sql);
       const mp = BEGIN_APP_PURGE.exec(sql);
+      const ml = BEGIN_RATER_LOOKUP.exec(sql);
       if (m) bound = { app: m[1], ns: m[2], maintenance: false };
+      else if (ml) bound = { app: '', ns: '', maintenance: false, lookupId: Number(ml[1]) };
       else if (mp) bound = { app: '', ns: '', maintenance: false, purgeApp: mp[1] };
       else if (mm) bound = { app: mm[1], ns: '', maintenance: true };
       else if (mw) bound = { app: '', ns: '', maintenance: false, wipeUid: Number(mw[1]) };
@@ -115,7 +192,22 @@ function recording(inner: DocStoreClient, h: Pick<Harness, 'statements' | 'viola
       else if (/appdata/i.test(sql)) {
         const p = params ?? [];
         if (!bound) h.violations.push(`statement outside a bound transaction: ${sql}`);
-        else if (isAppPurgeStatement(sql) || bound.purgeApp !== undefined) {
+        else if (isRaterLookupStatement(sql) || bound.lookupId !== undefined) {
+          h.statements.push({ sql, params: p, app: '', ns: '' });
+          // The lookup (and the readiness check) runs only in its own transaction, keyed on the
+          // bound rating id as $1.
+          if (bound.lookupId === undefined) {
+            h.violations.push(`rater-lookup statement outside its transaction: ${sql}`);
+          } else if (RATER_POLICY_CHECK.test(sql)) {
+            // No parameters, no appdata table.
+          } else if (!isRaterLookupStatement(sql)) {
+            h.violations.push(
+              `statement other than the lookup in a rater-lookup transaction: ${sql}`
+            );
+          } else if (p[0] !== bound.lookupId) {
+            h.violations.push(`$1 does not match the bound rating id: ${sql}`);
+          }
+        } else if (isAppPurgeStatement(sql) || bound.purgeApp !== undefined) {
           h.statements.push({ sql, params: p, app: bound.purgeApp ?? '', ns: '' });
           // The enumeration (and its policy check) runs only in its own transaction, keyed on
           // the bound app as $1.
@@ -180,13 +272,33 @@ export async function createPgliteHarness(opts: {
   appPurgePolicy?: boolean;
   /** Apply the `doc.schema_major` migration too (default false). */
   schemaMajor?: boolean;
+  /** Apply the content-level columns migration too (default false). */
+  docLevels?: boolean;
+  /** Apply the rater's rating-id migration too (default false). */
+  docRatingId?: boolean;
+  /** Apply the `doc.record_id` column and its unique index too (default true). */
+  recordId?: boolean;
+  /** Apply the mark-sequence migration too (default true). */
+  markHead?: boolean;
+  /** Apply the maintenance-run migration too (default true). */
+  maintRun?: boolean;
 }): Promise<Harness> {
   const pg = new PGlite();
   await pg.exec(readFileSync(MIGRATION_UP, 'utf8'));
   if (opts.appPurgePolicy !== false) await pg.exec(readFileSync(MIGRATION_APP_PURGE_UP, 'utf8'));
   if (opts.schemaMajor) await pg.exec(readFileSync(MIGRATION_SCHEMA_MAJOR_UP, 'utf8'));
+  if (opts.docLevels) await pg.exec(readFileSync(MIGRATION_DOC_LEVELS_UP, 'utf8'));
+  if (opts.docRatingId) await pg.exec(readFileSync(MIGRATION_DOC_RATING_ID_UP, 'utf8'));
+  if (opts.recordId !== false) {
+    await pg.exec(readFileSync(MIGRATION_RECORD_ID_UP, 'utf8'));
+    await pg.exec(readFileSync(MIGRATION_RECORD_ID_UNIQUE, 'utf8'));
+  }
+  if (opts.markHead !== false) await pg.exec(readFileSync(MIGRATION_MARK_HEAD_UP, 'utf8'));
+  if (opts.maintRun !== false) await pg.exec(readFileSync(MIGRATION_MAINT_RUN_UP, 'utf8'));
   if (!opts.rls) {
     for (const t of APPDATA_TABLES) {
+      if (t === 'mark_head' && opts.markHead === false) continue;
+      if (t === 'maint_run' && opts.maintRun === false) continue;
       await pg.exec(`ALTER TABLE appdata.${t} DISABLE ROW LEVEL SECURITY`);
     }
   }
@@ -267,6 +379,14 @@ export async function createRealPgHarness(): Promise<Harness> {
   await su.connect();
   await su.query(readFileSync(MIGRATION_UP, 'utf8'));
   await su.query(readFileSync(MIGRATION_APP_PURGE_UP, 'utf8'));
+  // The `doc.record_id` column and its default, as on PGlite and in every environment (the
+  // record export reads it). Its unique index is built CONCURRENTLY, which a multi-statement
+  // query cannot run, and no suite here needs it.
+  await su.query(readFileSync(MIGRATION_RECORD_ID_UP, 'utf8'));
+  // The mark sequence, as on PGlite: every mark, unmark and increment takes it.
+  await su.query(readFileSync(MIGRATION_MARK_HEAD_UP, 'utf8'));
+  // The maintenance-run table, as on PGlite: every mark reads its freeze.
+  await su.query(readFileSync(MIGRATION_MAINT_RUN_UP, 'utf8'));
   const open = new Set<Client>();
   // Ends started by release() and not awaited there. close() waits for them before the FORCE drop:
   // a client still closing when its backend is killed gets a FATAL 57P01 with no 'error' listener,

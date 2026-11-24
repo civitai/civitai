@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ignoredWhileSearching,
   imageFeedUrlFromLegacySearch,
+  parseModelVersionIds,
   searchPeriodChange,
   toSemanticImageSearchInput,
 } from '~/components/Image/Infinite/image-feed-search';
@@ -11,6 +12,27 @@ import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 const now = new Date('2026-11-11T15:42:00Z');
 
 describe('toSemanticImageSearchInput', () => {
+  it('narrows to the picked model versions, and sends nothing for none', () => {
+    const base = { query: 'castle', filters: {}, browsingLevel: 1 };
+    expect(
+      toSemanticImageSearchInput({ ...base, modelVersionIds: [11, 12] }).modelVersionIds
+    ).toEqual([11, 12]);
+    expect(
+      toSemanticImageSearchInput({ ...base, modelVersionIds: [] }).modelVersionIds
+    ).toBeUndefined();
+  });
+
+  it('asks to leave out the viewer\'s own images only for "more like this"', () => {
+    const base = { filters: {}, browsingLevel: 1, excludeOwn: true };
+    expect(toSemanticImageSearchInput({ ...base, imageId: 6 }).excludeOwn).toBe(true);
+    expect(
+      toSemanticImageSearchInput({ ...base, imageId: 6, query: 'cat' }).excludeOwn
+    ).toBeUndefined();
+    expect(
+      toSemanticImageSearchInput({ ...base, imageId: 6, excludeOwn: false }).excludeOwn
+    ).toBeUndefined();
+  });
+
   it('sends the filters the index can apply and never the ones it cannot', () => {
     const input = toSemanticImageSearchInput({
       query: 'castle',
@@ -55,6 +77,29 @@ describe('toSemanticImageSearchInput', () => {
       filters: { period: MetricTimeframe.AllTime },
     });
     expect(input.postedAfter).toBeUndefined();
+  });
+
+  it('searches for images like imageId while no query is set, in similarity order', () => {
+    const input = toSemanticImageSearchInput({
+      imageId: 42,
+      browsingLevel: 1,
+      sort: 'newest',
+      filters: { baseModels: ['Pony'] },
+    });
+    expect(input).toMatchObject({ imageId: 42, baseModels: ['Pony'] });
+    expect(input.query).toBeUndefined();
+    expect(input.sort).toBeUndefined();
+  });
+
+  it('lets a query replace imageId', () => {
+    const input = toSemanticImageSearchInput({
+      query: 'castle',
+      imageId: 42,
+      browsingLevel: 1,
+      filters: {},
+    });
+    expect(input).toMatchObject({ query: 'castle' });
+    expect(input.imageId).toBeUndefined();
   });
 });
 
@@ -138,6 +183,19 @@ describe('imageFeedUrlFromLegacySearch', () => {
     expect(url.searchParams.has('sort')).toBe(false);
   });
 
+  it('carries "more like this" to the feed, without a legacy sort', async () => {
+    const url = parse(
+      await imageFeedUrlFromLegacySearch(
+        { similarTo: '42', sortBy: 'images_v6:createdAt:desc' },
+        resolveTags
+      )
+    );
+    expect(url.pathname).toBe('/images');
+    expect(url.searchParams.get('similarTo')).toBe('42');
+    expect(url.searchParams.has('sort')).toBe(false);
+    expect(await imageFeedUrlFromLegacySearch({ similarTo: 'abc' }, resolveTags)).toBe('/images');
+  });
+
   it('looks up at most 20 tag names', async () => {
     resolveTags.mockClear();
     const tags = Array.from({ length: 30 }, (_, i) => `tag${i}`);
@@ -160,5 +218,20 @@ describe('imageFeedUrlFromLegacySearch', () => {
     );
     expect(url.searchParams.get('query')).toBe('red wyvern');
     expect(url.searchParams.getAll('tags')).toEqual(['12']);
+  });
+});
+
+// `?modelVersionIds=` is a link anyone can edit: only positive ids reach the search, each once, and
+// no more than the search input takes.
+describe('parseModelVersionIds', () => {
+  it('reads a comma list or repeated params, keeping distinct positive ids', () => {
+    expect(parseModelVersionIds('3,x,3,-1,4.5,8')).toEqual([3, 8]);
+    expect(parseModelVersionIds(['5', '6'])).toEqual([5, 6]);
+    expect(parseModelVersionIds(undefined)).toEqual([]);
+  });
+
+  it('keeps at most 20', () => {
+    const many = Array.from({ length: 25 }, (_, i) => i + 1).join(',');
+    expect(parseModelVersionIds(many)).toHaveLength(20);
   });
 });

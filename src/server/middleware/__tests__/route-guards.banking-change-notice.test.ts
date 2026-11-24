@@ -47,8 +47,10 @@ describe('banking-change notice send route in production', () => {
   });
 
   it('has its handler under /api/admin and not under /api/testing', () => {
+    // /api/admin is served from src/server/api-routes/admin through its catch-all.
+    const served = path.join(__dirname, '../../api-routes');
     const pages = path.join(__dirname, '../../../pages/api');
-    expect(existsSync(path.join(pages, 'admin/banking-change-notice.ts'))).toBe(true);
+    expect(existsSync(path.join(served, 'admin/banking-change-notice.ts'))).toBe(true);
     expect(existsSync(path.join(pages, 'testing/banking-change-notice.ts'))).toBe(false);
   });
 

@@ -912,6 +912,26 @@ describe('fast lane — agent-clean submissions sort first on the pending queue'
     }
   );
 
+  it('🔴 an open review hold keeps an otherwise clean row out of the fast lane', () => {
+    expect(reviewRowLane({ ...newClean, openHoldCount: 1 })).toEqual({
+      lane: 'flagged',
+      reasons: ['the app has an open review hold'],
+    });
+  });
+
+  it('🔴 unreadable holds keep an otherwise clean row out of the fast lane, never read as none', () => {
+    expect(reviewRowLane({ ...newClean, openHoldCount: null })).toEqual({
+      lane: 'flagged',
+      reasons: ["the app's review holds could not be read"],
+    });
+    // The row mapper carries the unknown through rather than defaulting it to 0.
+    const mapped = onsiteRequestToUnifiedRow(
+      onsite({ id: 'u', openHoldCount: null } as never),
+      vi.fn()
+    );
+    expect(mapped.openHoldCount).toBeNull();
+  });
+
   it('a viewer without the agentic surface (no agentReview field) gets no lane', () => {
     const noSurface = onsiteRequestToUnifiedRow(
       onsite({ id: 'x', previewState: 'preview-live' } as never),

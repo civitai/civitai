@@ -1,21 +1,38 @@
+import { createServer, request as httpRequest, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
+import { apiResolver } from 'next/dist/server/api-utils/node/api-resolver';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
- * `GET /api/v1/model-versions/mini/[id]`, the epoch arm of a Private version, behind the
+ * `GET /api/v1/model-versions/mini/[id]` for a Private model or version, behind the
  * `mini-epoch-caller-gate` variant flag: `log` logs the caller class, `enforce` also answers callers
  * who are not the owner, a moderator, a grantee or the orchestrator as an unknown id.
  */
 
-const h = vi.hoisted(() => ({
-  user: { value: undefined as undefined | Record<string, unknown> },
-  variant: { value: null as string | null },
-  hasEntityAccess: vi.fn(),
-  getFliptVariant: vi.fn(),
-  refreshBlobs: vi.fn(),
+const h = vi.hoisted(() => {
+  // GB is restricted (read by region-blocking when it loads); only the wire tests below send a region.
+  process.env.REGION_RESTRICTION_CONFIG = 'GB:2025-01-01';
+  // The real wrapper hashes a bearer to look it up.
+  process.env.NEXTAUTH_SECRET ??= 'test-nextauth-secret';
+  return {
+    user: { value: undefined as undefined | Record<string, unknown> },
+    notUpToDate: { value: false },
+    variant: { value: null as string | null },
+    hasEntityAccess: vi.fn(),
+    getFliptVariant: vi.fn(),
+    refreshBlobs: vi.fn(),
+  };
+});
+
+// Read on the same `$queryRaw` the route uses; the wire tests turn it on so the wrapper's X-Expires is sent.
+vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  checkNotUpToDate: vi.fn(async () => h.notUpToDate.value),
 }));
 
 vi.mock('~/server/services/orchestrator/refreshBlobs', () => ({
@@ -26,6 +43,9 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
 }));
 
 vi.mock('~/server/services/generation/generation.service', () => ({
+  getGateRuleState: vi.fn(async () => ({ known: true, value: [] })),
+  getGateSubjects: vi.fn(async () => new Map()),
+  gatedVersionIds: vi.fn(() => new Set()),
   resolveCanGenerateForVersions: vi.fn(async () => new Map([[VERSION_ID, { canGenerate: true }]])),
   getShouldChargeForResources: vi.fn(async () => ({ 77: false })),
 }));
@@ -230,14 +250,11 @@ describe('mini/[id] epoch arm, enforce', () => {
     expect(body.downloadUrls).toEqual([]);
   });
 
-  it('answers a refused caller with the same status and body as an unknown id', async () => {
+  it('answers a refused caller with the same status, body and cache header as an unknown id', async () => {
     const refused = await request(anonymous);
     const unknown = await request(anonymous, {}, TRAINING_FILE, []);
     expect(refused.status).toBe(404);
-    expect({ status: refused.status, body: refused.body }).toEqual({
-      status: unknown.status,
-      body: unknown.body,
-    });
+    expect(refused).toEqual(unknown);
   });
 
   it('keeps the refused 404 out of shared caches', async () => {
@@ -324,31 +341,32 @@ describe('mini/[id] epoch arm, log', () => {
     ['a token that resolved to nothing', { authorization: 'Bearer nope' }, true, 'unrecognized'],
     // getServerAuthSession resolves the service token to no session; the arm still names it.
     ['the service token', service, true, 'orchestrator'],
-  ])('logs %s as its kind, with the version id', async (_label, caller, authHeader, resolvedAs) => {
+  ])('logs %s as its kind', async (_label, caller, authHeader, resolvedAs) => {
     await request(caller);
     expect(callerLogs()).toEqual([
-      expect.objectContaining({ modelVersionId: VERSION_ID, authHeader, resolvedAs }),
+      expect.objectContaining({ payload: { isPrivate: true }, authHeader, resolvedAs }),
     ]);
   });
 
-  it('logs no part of the credential', async () => {
+  it('logs no part of the credential, and no version, model or file', async () => {
     await request(service);
     await request({ authorization: 'Bearer some-user-key-value' });
     const logged = JSON.stringify(callerLogs());
     expect(callerLogs()).toHaveLength(2);
-    for (const entry of callerLogs())
+    for (const entry of callerLogs()) {
       expect(Object.keys(entry).sort()).toEqual([
         'authHeader',
         'callerClass',
         'enforced',
         'mode',
-        'modelVersionId',
         'name',
-        'pick',
+        'payload',
         'resolvedAs',
         'type',
         'wouldRefuse',
       ]);
+      expect(entry.payload).toEqual({ isPrivate: true });
+    }
     expect(logged).not.toContain(SERVICE_TOKEN.slice(0, 6));
     expect(logged).not.toContain('some-user');
     expect(logged).not.toMatch(/bearer/i);
@@ -575,4 +593,329 @@ describe('mini/[id] ?epoch= from the query string', () => {
       });
     }
   );
+});
+
+/** Two Private shapes outside the epoch arm (#10174): a Private MODEL whose version is Public, and a Private version whose file has no epochs. */
+describe('mini/[id] a Private parent outside the epoch arm', () => {
+  const PLAIN_FILE = {
+    ...TRAINING_FILE,
+    id: 405,
+    visibility: 'Public',
+    metadata: { format: 'SafeTensor' },
+    name: 'plain.safetensors',
+    hashes: { SHA256: 'E'.repeat(64) },
+  };
+  const shapes = [
+    ['a Private model', { availability: 'Public', modelAvailability: 'Private' }],
+    ['a Private version with no epochs', { availability: 'Private', modelAvailability: 'Public' }],
+  ] as const;
+  const otherBySession: Caller = { user: { id: STRANGER_ID } };
+  const callers = [
+    ['the owner', owner],
+    ['a moderator', moderator],
+    ['a grantee', grantee],
+    ['the service token', service],
+    ['an anonymous caller', anonymous],
+    ['another user by OAuth', stranger],
+    ['another user by session', otherBySession],
+  ] as const;
+  const refusedIn: Record<string, string[]> = {
+    off: [],
+    log: [],
+    enforce: ['an anonymous caller', 'another user by OAuth', 'another user by session'],
+    'enforce-anon': ['an anonymous caller'],
+  };
+  const classOf: Record<string, string> = {
+    'the owner': 'owner',
+    'a moderator': 'moderator',
+    'a grantee': 'grantee',
+    'the service token': 'orchestrator',
+    'an anonymous caller': 'anonymous',
+    'another user by OAuth': 'other',
+    'another user by session': 'other',
+  };
+
+  for (const [shape, row] of shapes)
+    for (const mode of ['off', 'log', 'enforce', 'enforce-anon'])
+      it.each(callers)(`${shape}, ${mode}: %s`, async (label, caller) => {
+        h.variant.value = mode === 'off' ? null : mode;
+        const result = await request(caller, row, PLAIN_FILE);
+        if (refusedIn[mode].includes(label)) {
+          expect(result).toEqual({
+            status: 404,
+            body: { error: 'Model not found' },
+            cacheControl: 'private, no-store',
+          });
+        } else {
+          expect(result.status ?? 200).toBe(200);
+          expect(JSON.stringify(result.body)).toContain(PLAIN_FILE.hashes.SHA256);
+          if (mode !== 'off') expect(result.cacheControl).toBe('private, no-store');
+        }
+        if (mode === 'off') expect(callerLogs()).toEqual([]);
+        else
+          expect(callerLogs()).toEqual([
+            expect.objectContaining({
+              callerClass: classOf[label],
+              payload: { isPrivate: true },
+              wouldRefuse: refusedIn.enforce.includes(label),
+              enforced: refusedIn[mode].includes(label),
+            }),
+          ]);
+      });
+
+  it('answers a refused caller exactly as an unknown id, cache header included', async () => {
+    h.variant.value = 'enforce';
+    const refused = await request(stranger, shapes[0][1], PLAIN_FILE);
+    const unknown = await request(stranger, shapes[0][1], PLAIN_FILE, []);
+    expect(refused.status).toBe(404);
+    expect(refused).toEqual(unknown);
+  });
+
+  it('logs nothing for a Public version of a Public model', async () => {
+    h.variant.value = 'enforce';
+    const { status } = await request(anonymous, { availability: 'Public' }, PLAIN_FILE);
+    expect(status ?? 200).toBe(200);
+    expect(callerLogs()).toEqual([]);
+  });
+});
+
+// The version status rule from #10174: only the owner, a moderator or the service token sees a hidden parent.
+describe('mini/[id] a deleted or unpublished parent, whatever the gate', () => {
+  const PLAIN_FILE = { ...TRAINING_FILE, visibility: 'Public', metadata: { format: 'SafeTensor' } };
+  const rows = [
+    ['a deleted model', { availability: 'Public', modelStatus: 'Deleted' }],
+    ['an unpublished model', { availability: 'Public', modelStatus: 'Unpublished' }],
+    [
+      'a version released in the future',
+      { availability: 'Public', publishedAt: new Date(Date.now() + 86_400_000) },
+    ],
+  ] as const;
+
+  for (const [shape, row] of rows)
+    for (const mode of [null, 'enforce'])
+      describe(`${shape}, gate ${mode ?? 'off'}`, () => {
+        beforeEach(() => {
+          h.variant.value = mode;
+        });
+        it.each([
+          ['an anonymous caller', anonymous],
+          ['another user', stranger],
+        ])('is an unknown id to %s', async (_label, caller) => {
+          expect(await request(caller, row, PLAIN_FILE)).toMatchObject({
+            status: 404,
+            body: { error: 'Model not found' },
+          });
+        });
+        it.each([
+          ['the owner', owner],
+          ['a moderator', moderator],
+          ['the service token', service],
+        ])('is served to %s', async (_label, caller) => {
+          const { status, body } = await request(caller, row, PLAIN_FILE);
+          expect(status ?? 200).toBe(200);
+          expect(body).toHaveProperty('defaultFileId', PLAIN_FILE.id);
+        });
+      });
+
+  it('answers a hidden parent exactly as an unknown id, cache header included', async () => {
+    const hidden = await request(stranger, rows[0][1], PLAIN_FILE);
+    const unknown = await request(stranger, rows[0][1], PLAIN_FILE, []);
+    expect(hidden.status).toBe(404);
+    expect(hidden.cacheControl).toBe('private, no-store');
+    expect(unknown.cacheControl).toBe('private, no-store');
+    expect(hidden).toEqual(unknown);
+  });
+
+  it('control: a published model is served to another user', async () => {
+    const { status, body } = await request(stranger, { availability: 'Public' }, PLAIN_FILE);
+    expect(status ?? 200).toBe(200);
+    expect(body).toHaveProperty('defaultFileId', PLAIN_FILE.id);
+  });
+});
+
+/**
+ * The status rule is not behind the flag, so it must never refuse a caller the route served before:
+ * the owner and the service token on a draft, unpublished or still-training version, epochs included.
+ */
+describe('mini/[id] unreleased versions stay served to the owner and the service token', () => {
+  const PLAIN_FILE = { ...TRAINING_FILE, visibility: 'Public', metadata: { format: 'SafeTensor' } };
+  const rows = [
+    ['a draft version of a draft model', { status: 'Draft', modelStatus: 'Draft' }],
+    ['a version still training', { status: 'Training', modelStatus: 'Training' }],
+    ['a published version of a model still training', { modelStatus: 'Training' }],
+    ['an unpublished version', { status: 'Unpublished', modelStatus: 'Unpublished' }],
+    ['a version released in the future', { publishedAt: new Date(Date.now() + 86_400_000) }],
+  ] as const;
+  const servedCallers = [
+    ['the owner', owner],
+    ['the owner by personal API key', { ...owner, authorization: 'Bearer k', subject: 'apiKey' }],
+    ['the service token', service],
+  ] as const;
+
+  for (const [shape, row] of rows)
+    for (const mode of [null, 'log', 'enforce', 'enforce-anon']) {
+      it.each(servedCallers)(
+        `${shape}, gate ${mode ?? 'off'}: the epoch url to %s`,
+        async (_l, caller) => {
+          h.variant.value = mode;
+          const { status, body } = await request(caller, row);
+          expect(status ?? 200).toBe(200);
+          expect(body.downloadUrls).toEqual([EPOCH_URL]);
+        }
+      );
+      it.each(servedCallers)(
+        `${shape}, gate ${mode ?? 'off'}: a public file to %s`,
+        async (_l, caller) => {
+          h.variant.value = mode;
+          const { status, body } = await request(
+            caller,
+            { ...row, availability: 'Public' },
+            PLAIN_FILE
+          );
+          expect(status ?? 200).toBe(200);
+          expect(body).toHaveProperty('defaultFileId', PLAIN_FILE.id);
+        }
+      );
+    }
+});
+
+/**
+ * On the wire, every 404 is an unknown id: status, body and the whole response header map. The route's handler (the
+ * passthrough above, which supplies the caller) is wrapped in the REAL `MixedAuthEndpoint` with the route's own
+ * options and served by Next's `apiResolver` over a real HTTP socket, so the wrapper's Vary, CORS, Cache-Control and
+ * X-Expires and Next's Content-Type and Content-Length are observed as sent. ETag is sent here; the app's
+ * `generateEtags: false` drops it in production.
+ *
+ * Not observed: the proxy layer (`apiCacheMiddleware`: X-Handled-By, a default Cache-Control), which depends on the path
+ * only, and CDN headers. Date, Connection and Keep-Alive are Node's, per connection and second.
+ */
+describe('mini/[id] every 404 is an unknown id on the wire', () => {
+  let server: Server;
+  let base: string;
+  let region = 'GB';
+
+  beforeAll(async () => {
+    const { MixedAuthEndpoint: realMixedAuthEndpoint } = await vi.importActual<
+      typeof EndpointHelpers
+    >('~/server/utils/endpoint-helpers');
+    const wired = realMixedAuthEndpoint(
+      async (req, res) => {
+        await handler(req, res);
+      },
+      ['GET'],
+      { scope: 'selfGated' }
+    );
+    server = createServer((req, res) => {
+      const url = new URL(req.url ?? '/', 'http://x');
+      void apiResolver(
+        req,
+        res,
+        { id: url.pathname.split('/').at(-1), etag: url.searchParams.get('etag') ?? undefined },
+        { default: wired },
+        {
+          previewModeId: 'test',
+          previewModeEncryptionKey: 'test',
+          previewModeSigningKey: 'test',
+          dev: false,
+        },
+        true
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  beforeEach(() => {
+    // X-Expires is read from the clock; a fixed clock leaves only what the path decides.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-23T12:00:00Z'));
+    h.variant.value = 'enforce';
+    h.notUpToDate.value = true;
+    region = 'GB';
+  });
+  afterAll(() => {
+    vi.useRealTimers();
+    h.notUpToDate.value = false;
+  });
+
+  const PUBLIC_ROW = { ...versionRow, availability: 'Public', modelAvailability: 'Public' };
+  const PLAIN_FILE = { ...TRAINING_FILE, visibility: 'Public', metadata: { format: 'SafeTensor' } };
+
+  /** The caller, from `region`, asks for the version: by bearer when signed in. */
+  async function wire(versionRows: object[], caller: Caller) {
+    h.user.value = caller.user;
+    dbMock.dbWrite.$queryRaw.mockReset();
+    dbMock.dbWrite.$queryRaw
+      .mockResolvedValueOnce(versionRows)
+      .mockResolvedValueOnce([structuredClone(PLAIN_FILE)])
+      .mockResolvedValue([]);
+    const sent = await new Promise<{ status: number; body: string; raw: Record<string, unknown> }>(
+      (resolve, reject) => {
+        const req = httpRequest(
+          `${base}/api/v1/model-versions/mini/${VERSION_ID}?etag=1`,
+          {
+            headers: {
+              ...(caller.authorization ? { authorization: caller.authorization } : {}),
+              'cf-ipcountry': region,
+            },
+          },
+          (res) => {
+            let body = '';
+            res.setEncoding('utf8');
+            res.on('data', (chunk) => (body += chunk));
+            res.on('end', () => resolve({ status: res.statusCode ?? 0, body, raw: res.headers }));
+          }
+        );
+        req.on('error', reject);
+        req.end();
+      }
+    );
+    const headers = Object.fromEntries(
+      Object.entries(sent.raw).filter(
+        ([name]) => !['connection', 'keep-alive', 'date'].includes(name)
+      )
+    );
+    return { status: sent.status, body: sent.body, headers };
+  }
+
+  // The last entry is who IS served the row, so each case proves the row reached the route and the 404 is its own.
+  const cases: [string, object, () => Caller][] = [
+    ['a person-of-interest model', { ...PUBLIC_ROW, poi: true }, () => owner],
+    ['a deleted model', { ...PUBLIC_ROW, modelStatus: 'Deleted' }, () => owner],
+    ['an unpublished version', { ...PUBLIC_ROW, status: 'Unpublished' }, () => owner],
+    [
+      'a Private model the gate withholds',
+      { ...PUBLIC_ROW, modelAvailability: 'Private' },
+      () => owner,
+    ],
+    [
+      'a Private version the gate withholds',
+      { ...PUBLIC_ROW, availability: 'Private' },
+      () => owner,
+    ],
+    [
+      'a level the region is not served',
+      { ...PUBLIC_ROW, nsfwLevel: 16 },
+      () => ((region = 'US'), stranger),
+    ],
+  ];
+  describe.each([
+    ['another signed-in user', stranger],
+    ['an anonymous caller', anonymous],
+  ])('%s', (_label, caller) => {
+    it.each(cases)('%s', async (_shape, row, servedTo) => {
+      const unknown = await wire([], caller);
+      expect(unknown.status).toBe(404);
+      expect(unknown.headers).toHaveProperty('x-expires');
+      expect(await wire([row], caller)).toEqual(unknown);
+
+      expect((await wire([row], servedTo())).status).toBe(200);
+    });
+  });
+
+  it('control: Vary differs by credential, so the two callers above are distinct', async () => {
+    const signedIn = await wire([], stranger);
+    expect(signedIn.headers.vary).not.toBe((await wire([], anonymous)).headers.vary);
+  });
 });

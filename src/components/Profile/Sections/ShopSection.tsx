@@ -5,11 +5,9 @@ import type { ComponentProps } from 'react';
 import { useQueryWishlistedShopItems } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { useQueryCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
+import { ServiceHappyLine } from '~/components/CreatorShop/Services/ServiceHappyLine';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
-import {
-  serviceStorefrontHref,
-  storefrontSectionKeys,
-} from '~/components/CreatorShop/section-meta';
+import { serviceHref, storefrontSectionKeys } from '~/components/CreatorShop/section-meta';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -80,6 +78,7 @@ export const ServicesRow = ({
   sellerId: number;
   sellerUsername: string;
 }) => {
+  const features = useFeatureFlags();
   const [columns, setColumns] = useState(1);
   const gridRef = useResizeObserver<HTMLDivElement>((entry) => {
     setColumns(getShopRowColumns(entry.contentRect.width));
@@ -101,7 +100,11 @@ export const ServicesRow = ({
             sellerId={sellerId}
             sellerUsername={sellerUsername}
             slotsOpen={offering.slotsOpen}
-            href={serviceStorefrontHref(sellerUsername, offering.id)}
+            href={serviceHref({
+              username: sellerUsername,
+              offering,
+              next: features.creatorServicesNext,
+            })}
           />
         </div>
       ))}
@@ -167,6 +170,7 @@ export const ShopSection = ({ user }: ProfileSectionProps) => {
               {shop && hasCosmetics && (
                 <ShopRow featured={shop.featured} cosmetics={shop.cosmetics} />
               )}
+              {showServices && <ServiceHappyLine counts={offerings} />}
               {showServices && (
                 <ServicesRow
                   offerings={offerings}

@@ -326,7 +326,6 @@ function reportImagePrepFailure(
       ]
         .filter(Boolean)
         .join(' '),
-      resolveStack: false,
     }
   );
 }

@@ -1,4 +1,5 @@
 import { filterSensitiveProfanityData, PROFANITY_META_KEYS } from '~/libs/profanity-simple/helpers';
+import { NsfwLevel } from '~/server/common/enums';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { hasOpenTextScanFlag } from '~/server/services/text-scan/flag-snapshot';
 import { REMOVED_WITH_OWNER_META_KEYS } from '~/server/utils/legal-hold';
@@ -76,6 +77,9 @@ const HIDDEN_SERVER_OWNED_META_KEYS = [
   'restrictedNsfwVerdictDormant',
   'comFaceIntent',
   'comFaceIntentRelockSuppressed',
+  'sfwFaceCheckedAt',
+  'comFaceHeldVerdict',
+  'nsfwLockBackfill',
 ] as const satisfies readonly (typeof SERVER_OWNED_META_KEYS)[number][];
 
 const CLIENT_HIDDEN_META_KEYS: readonly string[] = [
@@ -196,6 +200,9 @@ export const SERVER_OWNED_META_KEYS = [
   'comFaceRemoved',
   'comFaceIntent',
   'comFaceIntentRelockSuppressed',
+  'sfwFaceCheckedAt',
+  'comFaceHeldVerdict',
+  'nsfwLockBackfill',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
 /** The text checks whose unlocked mature rating the owner cannot undo alone until a read of the
@@ -212,6 +219,23 @@ export function readSystemNsfwLockAt(meta: unknown): Date | null {
   if (!marker || typeof marker.at !== 'string') return null;
   const at = new Date(marker.at);
   return Number.isNaN(at.getTime()) ? null : at;
+}
+
+/**
+ * The R+ verdict the text scan held back for a clean .com face (`meta.comFaceHeldVerdict`): when it
+ * was held, and at what level. Any value under the key counts as held, so a malformed one still holds
+ * the rating; a level that is not a number reads as R, and a time that cannot be read as none.
+ */
+export function readComFaceHeldVerdict(meta: unknown): { at: Date | null; level: number } | null {
+  if (!meta || typeof meta !== 'object' || !Object.hasOwn(meta, 'comFaceHeldVerdict')) return null;
+  const held = (meta as { comFaceHeldVerdict?: unknown }).comFaceHeldVerdict as {
+    at?: unknown;
+    level?: unknown;
+  } | null;
+  const at = typeof held?.at === 'string' ? new Date(held.at) : null;
+  const level =
+    typeof held?.level === 'number' && Number.isFinite(held.level) ? held.level : NsfwLevel.R;
+  return { at: at && !Number.isNaN(at.getTime()) ? at : null, level };
 }
 
 /** A system rating verdict was recorded after the current nsfw-lock marker was set. */

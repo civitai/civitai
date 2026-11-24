@@ -51,8 +51,9 @@ describe('post.update counts a continuation it submits against the submit quota'
     const [[, condition]] = limitersOf('update').filter(
       ([, , options]) => options?.sharedKey === STORYLINE_SUBMIT_RATE_LIMIT.rateLimitKey
     );
-    expect(condition?.({ id: 1, publishedAt: new Date(), expectedPrice: 0 })).toBe(true);
-    expect(condition?.({ id: 1, publishedAt: new Date() })).toBe(false);
-    expect(condition?.({ id: 1, title: 'edit' })).toBe(false);
+    const ctx = {} as Parameters<NonNullable<typeof condition>>[1];
+    expect(condition?.({ id: 1, publishedAt: new Date(), expectedPrice: 0 }, ctx)).toBe(true);
+    expect(condition?.({ id: 1, publishedAt: new Date() }, ctx)).toBe(false);
+    expect(condition?.({ id: 1, title: 'edit' }, ctx)).toBe(false);
   });
 });

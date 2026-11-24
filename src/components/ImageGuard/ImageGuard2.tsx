@@ -6,9 +6,8 @@ import Router from 'next/router';
 import React, { createContext, useCallback, useContext, useMemo } from 'react';
 import { create } from 'zustand';
 import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
@@ -384,18 +383,15 @@ function toggleShow({
 
   // handle limited toggles for unauthenticated users
   if (!isAuthed && hasHitLimit) {
-    dialogStore.trigger({
+    openConfirm({
+      message: (
+        <Text size="sm" fw={500} style={{ flex: 1 }}>
+          Login now to continue viewing mature content and unblur everything.
+        </Text>
+      ),
+      onConfirm: () => Router.push(`/login?returnUrl=${Router.asPath}&reason=blur-toggle`),
+      labels: { cancel: 'Cancel', confirm: 'Continue' },
       id: 'limited-toggle-modal',
-      component: ConfirmDialog,
-      props: {
-        message: (
-          <Text size="sm" fw={500} style={{ flex: 1 }}>
-            Login now to continue viewing mature content and unblur everything.
-          </Text>
-        ),
-        onConfirm: () => Router.push(`/login?returnUrl=${Router.asPath}&reason=blur-toggle`),
-        labels: { cancel: 'Cancel', confirm: 'Continue' },
-      },
     });
   }
 

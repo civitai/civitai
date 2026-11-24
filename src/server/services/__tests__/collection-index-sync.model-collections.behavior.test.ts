@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
-/** Runs `getCollectionIdsCoveredByModels`' real query against an in-process Postgres. */
+/** Runs the model-to-collections lookups' real queries against an in-process Postgres. */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -13,11 +13,9 @@ vi.mock('~/server/services/collection-media-index', async (importOriginal) => ({
   enqueueCollectionRebuild: mockEnqueue,
 }));
 
-const {
-  getCollectionIdsCoveredByModels,
-  getCollectionIdsWithWithheldLegacyCover,
-  queueModelCollectionsReindex,
-} = await import('~/server/services/collection-index-sync');
+const { getCollectionIdsWithWithheldLegacyCover, queueModelCollectionsReindex } = await import(
+  '~/server/services/collection-index-sync'
+);
 
 beforeAll(async () => {
   const db = new PGlite();
@@ -29,7 +27,7 @@ beforeAll(async () => {
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
     CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
     CREATE TABLE "Image" (
-      id int PRIMARY KEY, "postId" int, ingestion text NOT NULL DEFAULT 'Scanned',
+      id int PRIMARY KEY, minor boolean NOT NULL DEFAULT false, "postId" int, ingestion text NOT NULL DEFAULT 'Scanned',
       "needsReview" text, "blockedFor" text, "tosViolation" boolean NOT NULL DEFAULT false,
       "nsfwLevel" int NOT NULL DEFAULT 1, "modelRestricted" boolean NOT NULL DEFAULT false
     );
@@ -44,7 +42,7 @@ beforeAll(async () => {
     -- Model 1 has version 10, post 100 and image 1000; model 2 has version 20, post 200, image 2000.
     INSERT INTO "ModelVersion" VALUES (10, 1), (20, 2);
     INSERT INTO "Post" VALUES (100, 10), (200, 20), (300, NULL);
-    INSERT INTO "Image" VALUES (1000, 100), (2000, 200), (3000, 300);
+    INSERT INTO "Image" (id, "postId") VALUES (1000, 100), (2000, 200), (3000, 300);
     -- Collections 1-4 reach model 1 by a model, post, image item and a stored cover; 5-6 do not.
     INSERT INTO "Collection" VALUES (4, 1000), (6, 3000);
     INSERT INTO "CollectionItem" ("collectionId", "modelId", "postId", "imageId") VALUES
@@ -77,18 +75,6 @@ beforeAll(async () => {
     (client.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       pgliteRaw(db).queryRaw
     );
-});
-
-describe('getCollectionIdsCoveredByModels', () => {
-  it("finds every collection whose cover may come from the model's posts, and no other", async () => {
-    expect((await getCollectionIdsCoveredByModels([1])).sort()).toEqual([1, 18, 19, 2, 3, 4]);
-  });
-
-  it('asks nothing for no models', async () => {
-    (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockClear();
-    expect(await getCollectionIdsCoveredByModels([])).toEqual([]);
-    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
-  });
 });
 
 describe('queueModelCollectionsReindex', () => {

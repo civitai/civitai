@@ -32,8 +32,15 @@ import { getModelUrl } from '~/utils/string-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function CollectionShowcase({ modelId, loading }: Props) {
-  const { items = [], collection, isLoading, isError, hasNextPage, isRefetching, refetch } =
-    useModelShowcaseCollection({ modelId });
+  const {
+    items = [],
+    collection,
+    isLoading,
+    isError,
+    hasNextPage,
+    isRefetching,
+    refetch,
+  } = useModelShowcaseCollection({ modelId });
 
   return (
     <div className="relative">
@@ -53,7 +60,9 @@ export function CollectionShowcase({ modelId, loading }: Props) {
                 href={`/collections/${collection.id}`}
                 className="flex items-center justify-center gap-1 px-4 py-3 text-sm font-medium text-blue-6 no-underline hover:bg-gray-1 dark:text-blue-4 dark:hover:bg-dark-5"
               >
-                View all {collection.itemCount.toLocaleString()} models
+                View all{' '}
+                {collection.itemCount != null && `${collection.itemCount.toLocaleString()} `}
+                models
                 <IconArrowRight size={14} strokeWidth={2.5} />
               </Link>
             )}

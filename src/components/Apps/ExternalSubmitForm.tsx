@@ -43,6 +43,7 @@ import {
   validateExternalCreateForm,
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
+  setOfflineAccessDeclared,
 } from '~/components/Apps/offsiteSubmitFormConfig';
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { useEligibleOauthClients } from '~/components/Apps/useEligibleOauthClients';
@@ -446,10 +447,7 @@ function ExternalCreateForm() {
 
   return (
     <Stack gap="md" data-testid="apps-offsite-submit-form">
-      {/* An INLINE Mantine Modal rather than `@mantine/modals`' openConfirmModal:
-          this component is rendered in isolation by the browser suite, which has no
-          ModalsProvider, and a confirmation nobody can test is a confirmation nobody
-          can trust. */}
+      {/* Inline Modal, not openConfirm: the browser suite renders this form without a DialogProvider. */}
       <Modal
         opened={confirmDiscard}
         onClose={() => setConfirmDiscard(false)}
@@ -679,6 +677,9 @@ function ExternalCreateForm() {
                   requestedScopes={values.requestedScopes}
                   justifications={values.scopeJustifications}
                   onJustificationChange={handleJustificationChange}
+                  onOfflineAccessDeclaredChange={(declared) =>
+                    setValues((v) => setOfflineAccessDeclared(v, declared))
+                  }
                   disabled={busy}
                   forceShowErrors={showScopeErrors}
                 />

@@ -36,6 +36,9 @@ export const FEED_GO_SHADOW_OUTCOMES = [
   'skipped_no_capture',
   // Building the payload threw.
   'skipped_encode',
+  // Reading the response's headers (res.getHeaders) threw: not sent, since the header comparison
+  // would be lost without a trace.
+  'skipped_headers',
   // Sampled, but the request carried an API credential (REST only): not mirrored, because Node's
   // response can echo it (`metadata.nextPage` keeps `?token=`), and feed-go falls back on any
   // credential anyway. Counted so that share of the traffic is still visible.
@@ -45,7 +48,15 @@ export const FEED_GO_SHADOW_OUTCOMES = [
 export type FeedGoShadowOutcome = (typeof FEED_GO_SHADOW_OUTCOMES)[number];
 
 /** The mirrored routes, as feed-go labels them (`feed_endpoint` on its feed_go_* series too). */
-export const FEED_GO_SHADOW_ENDPOINTS = ['as-posts', 'v1-images'] as const;
+export const FEED_GO_SHADOW_ENDPOINTS = [
+  'as-posts',
+  'v1-images',
+  'infinite',
+  'model-getall',
+  'v1-models',
+  'v1-models-id',
+  'model-associated',
+] as const;
 export type FeedGoShadowEndpoint = (typeof FEED_GO_SHADOW_ENDPOINTS)[number];
 
 const NAME = 'civitai_app_feed_go_shadow_samples_total';
@@ -58,7 +69,11 @@ const feedGoShadowCounter = registerInstrumentationMetric(
       help:
         'Sampled requests mirrored to the feed-go shadow comparator, by outcome and endpoint ' +
         '(as-posts: image.getImagesAsPostsInfinite, flag feed-go-shadow; v1-images: GET ' +
-        '/api/v1/images, flag feed-go-shadow-v1-images). Only sampled requests are counted ' +
+        '/api/v1/images, flag feed-go-shadow-v1-images; infinite: image.getInfinite, flag ' +
+        'feed-go-shadow-infinite; model-getall: model.getAll, flag feed-go-shadow-model-getall; ' +
+        'v1-models / v1-models-id: GET /api/v1/models and /api/v1/models/[id], flag ' +
+        'feed-go-shadow-v1-models; model-associated: model.getAssociatedResourcesCardData, flag ' +
+        'feed-go-shadow-model-associated). Only sampled requests are counted ' +
         '(FEED_GO_SHADOW_URL set, FEED_GO_SHADOW_SAMPLE_RATE > 0).',
       labelNames: ['outcome', 'feed_endpoint'],
       registers: [instrumentationRegistry],
@@ -83,6 +98,65 @@ export function recordFeedGoShadowOutcome(
 ): void {
   try {
     feedGoShadowCounter.inc({ outcome, feed_endpoint: endpoint });
+  } catch {
+    /* never throw from telemetry */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// feed-go Go-first probes (flag `feed-go-gofirst-probe`, see `~/server/trpc/feed-go-shadow.ts`)
+// ---------------------------------------------------------------------------
+//
+// One increment per PROBED request, by what became of the probe POST. feed-go's own
+// `feed_go_gofirst_total` counts what the probe found; this counts what reached it.
+
+export const FEED_GO_PROBE_OUTCOMES = [
+  // POSTed and feed-go answered 2xx.
+  'sent',
+  // POSTed and feed-go answered non-2xx.
+  'rejected',
+  // The POST timed out (FEED_GO_SHADOW_TIMEOUT_MS).
+  'timeout',
+  // The POST failed (connection refused, DNS, reset, ...).
+  'error',
+  // Probed, but FEED_GO_SHADOW_MAX_IN_FLIGHT posts were already in flight: not sent.
+  'dropped_overload',
+] as const;
+
+export type FeedGoProbeOutcome = (typeof FEED_GO_PROBE_OUTCOMES)[number];
+
+const PROBE_NAME = 'civitai_app_feed_go_gofirst_probe_total';
+
+const feedGoProbeCounter = registerInstrumentationMetric(
+  PROBE_NAME,
+  () =>
+    new client.Counter({
+      name: PROBE_NAME,
+      help:
+        'Go-first probes posted to feed-go at the start of a sampled request, by outcome and ' +
+        'endpoint (flag feed-go-gofirst-probe, FEED_GO_GOFIRST_PROBE_SAMPLE_RATE > 0).',
+      labelNames: ['outcome', 'feed_endpoint'],
+      registers: [instrumentationRegistry],
+    })
+);
+
+try {
+  for (const endpoint of ['as-posts', 'infinite', 'model-getall'] as const) {
+    for (const outcome of FEED_GO_PROBE_OUTCOMES) {
+      feedGoProbeCounter.inc({ outcome, feed_endpoint: endpoint }, 0);
+    }
+  }
+} catch {
+  /* never throw from telemetry */
+}
+
+/** Count one probe's outcome. Never throws. */
+export function recordFeedGoProbeOutcome(
+  outcome: FeedGoProbeOutcome,
+  endpoint: FeedGoShadowEndpoint = 'as-posts'
+): void {
+  try {
+    feedGoProbeCounter.inc({ outcome, feed_endpoint: endpoint });
   } catch {
     /* never throw from telemetry */
   }
@@ -120,7 +194,6 @@ const encodeBytesCounter = registerInstrumentationMetric(
     })
 );
 
-// Seed both endpoints at 0.
 try {
   for (const endpoint of FEED_GO_SHADOW_ENDPOINTS) {
     encodeSecondsCounter.inc({ feed_endpoint: endpoint }, 0);
@@ -149,18 +222,18 @@ export function recordFeedGoShadowEncode(
 // ---------------------------------------------------------------------------
 //
 // The share of the route feed-go's port can answer at all: `ported` over the total. A shape it
-// falls back on by construction (the legacy Postgres path, tags, ...), an API-key request, and a
-// non-200 answer each have their own class. Labels: `class` only, from the fixed set below.
+// falls back on by construction (the legacy Postgres path, tags, a query key outside the schema,
+// ...), an API-key request, and a non-200 answer each have their own class. Labels: `class` only,
+// from the fixed set below.
 
 export const FEED_GO_V1_SHAPE_CLASSES = [
   'ported',
-  'unported_ids',
   'unported_imageId',
   'unported_modelId_only',
   'unported_tags',
   'unported_baseModels',
-  'unported_withMeta',
   'unported_withTags',
+  'unported_unknownKey',
   'api_key',
   'non200',
 ] as const;
@@ -176,7 +249,8 @@ const v1ShapeCounter = registerInstrumentationMetric(
       name: SHAPE_NAME,
       help:
         'GET /api/v1/images requests by shape class: ported (a shape feed-go answers), the ' +
-        'unported_* shapes it falls back on by construction, api_key, and non200.',
+        'unported_* shapes it falls back on by construction (unported_unknownKey: a query key ' +
+        'outside the schema, which feed-go falls back on), api_key, and non200.',
       labelNames: ['class'],
       registers: [instrumentationRegistry],
     })

@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 import type * as DbHelpers from '~/server/db/db-helpers';
-import type * as MeilisearchClient from '~/server/meilisearch/client';
 
 const { queryWithTimeoutMock } = vi.hoisted(() => ({ queryWithTimeoutMock: vi.fn() }));
 
@@ -12,10 +11,6 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
 vi.mock('~/server/db/db-helpers', async (importOriginal) => {
   const actual = await importOriginal<typeof DbHelpers>();
   return { ...actual, queryWithTimeout: queryWithTimeoutMock };
-});
-vi.mock('~/server/meilisearch/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof MeilisearchClient>();
-  return { ...actual, metricsSearchClient: {}, getMetricsSearchClient: () => ({}) };
 });
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
@@ -77,5 +72,12 @@ describe.each([
 
   it('without a browsing level', async () => {
     expect(await sqlFor(undefined)).toMatch(REVIEWED);
+  });
+});
+
+// A postless image (a service review's, say) opens only by id, never in the image feed.
+describe('getAllImages', () => {
+  it.each([31, undefined])('leaves out postless images (browsing level %s)', async (level) => {
+    expect(await getAllImagesSql(level)).toMatch(/WHERE i\."postId" IS NOT NULL AND/);
   });
 });

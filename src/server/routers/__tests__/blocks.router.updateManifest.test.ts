@@ -142,7 +142,7 @@ const approvedBlock = {
   status: 'approved',
   version: '1.0.0',
   manifest: { blockId: 'my-app', version: '1.0.0', name: 'My App', scopes: ['models:read:self'] },
-  app: { userId: ownerUser.id, allowedScopes: 1, allowedOrigins: ['https://my-app.civit.ai'] },
+  app: { userId: ownerUser.id, allowedScopes: 1n, allowedOrigins: ['https://my-app.civit.ai'] },
 };
 
 const validPatch = {
@@ -278,7 +278,7 @@ describe('blocks.updateManifest — Phase 1 web manifest editor', () => {
     // allowedScopes bitmask + allowedOrigins), i.e. the subset check actually ran.
     expect(mockValidate).toHaveBeenCalledWith(
       expect.any(Object),
-      expect.objectContaining({ allowedScopes: 1, allowedOrigins: ['https://my-app.civit.ai'] }),
+      expect.objectContaining({ allowedScopes: 1n, allowedOrigins: ['https://my-app.civit.ai'] }),
       // The in-app editor re-validates an EXISTING manifest: `bugs` is lenient there.
       { strictIssueTrackerLink: false }
     );

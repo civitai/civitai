@@ -73,7 +73,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { calledHybridNodes } from '~/__tests__/mocks/hybrid';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { FORKABLE_OFFSITE_MESSAGE } from '~/server/services/blocks/app-fork.service';
 import {
   FORK_BUSY_MESSAGE,
@@ -86,6 +86,7 @@ import {
   FORK_UNAVAILABLE_HERE_MESSAGE,
 } from '~/shared/constants/app-fork.constants';
 import type { SessionUser } from '~/types/session';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 
 const {
   FORK_SESSION_TTL_SECONDS,
@@ -204,7 +205,8 @@ function installRedis() {
     }
   );
   redisMock.sysRedis.del.mockImplementation(async (key: string) => (store.delete(key) ? 1 : 0));
-  redisMock.sysRedis.multi.mockImplementation(() => {
+  // The fork-start windows are on the cache cluster; the fork sessions above stay in system Redis.
+  redisMock.redis.multi.mockImplementation(() => {
     let key = '';
     const chain = {
       set: (k: string) => {
@@ -421,18 +423,49 @@ describe('startAppFork — refusals (exact errors)', () => {
 
   it('rate limit: 5 an hour — the 6th start is refused', async () => {
     for (let i = 0; i < 5; i++) await expect(start()).resolves.toBeTruthy();
-    await expect(start()).rejects.toMatchObject({
+    const refused = await start().catch((err: unknown) => err);
+    expect(refused).toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       message: FORK_RATE_LIMITED_MESSAGE,
     });
+    // A product allowance: the meta names the hourly window and carries its counts.
+    const meta = rateLimitMetaOf(refused);
+    expect(meta).toEqual({
+      retryAfterSeconds: expect.any(Number),
+      retryAt: expect.any(String),
+      id: 'apps.fork-starts-hourly',
+      kind: 'product',
+      limit: 5,
+      used: 6,
+      remaining: 0,
+      windowSeconds: 3600,
+      resetAt: expect.any(String),
+    });
+    expect(meta!.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+    expect(meta!.retryAfterSeconds).toBeLessThanOrEqual(3600);
     expect(m.reconstruct).toHaveBeenCalledTimes(5);
+    // The windows are counted on the cache cluster, not in system Redis.
+    expect([...counters.keys()].sort()).toEqual([
+      `system:blocks:fork-rate-limit:${FORKER_ID}:3600`,
+      `system:blocks:fork-rate-limit:${FORKER_ID}:86400`,
+    ]);
+    expect(redisMock.sysRedis.multi).not.toHaveBeenCalled();
   });
 
   it('rate limit: 20 a day — refused past it even with the hour window fresh', async () => {
-    counters.set(`${REDIS_SYS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${FORKER_ID}:86400`, 20);
-    await expect(start()).rejects.toMatchObject({
+    counters.set(`${REDIS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${FORKER_ID}:86400`, 20);
+    const refused = await start().catch((err: unknown) => err);
+    expect(refused).toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       message: FORK_RATE_LIMITED_MESSAGE,
+    });
+    expect(rateLimitMetaOf(refused)).toMatchObject({
+      id: 'apps.fork-starts-daily',
+      kind: 'product',
+      limit: 20,
+      used: 21,
+      remaining: 0,
+      windowSeconds: 86_400,
     });
     expect(m.reconstruct).not.toHaveBeenCalled();
   });

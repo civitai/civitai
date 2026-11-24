@@ -8,14 +8,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * the runtime signal the WEBHOOK_TOKEN removal is graded on (see the header of
  * `$lib/server/webhook-endpoint`), which makes these behavioural guards, not logging cosmetics:
  *
- *   - EVERY ACCEPTED class emits. A single-class emitter would make a zero unfalsifiable. 🔴 With one
- *     accepted class the two-class version of this is DORMANT — see the DORMANT note in-file; what
- *     remains pinned is that the retired class emits NOTHING, which is what lets its count reach zero.
+ *   - EVERY ACCEPTED class emits. A single-class emitter would make a zero unfalsifiable. Also pinned:
+ *     the retired class emits NOTHING, which is what lets its count reach zero.
  *   - The record carries NOTHING derived from the token's bytes. 🔴 Driven with the ACCEPTED secret:
  *     driven with the retired one it would inspect an EMPTY array and pass vacuously.
- *   - `locals.tokenClient` is still exactly `'webhook'` for the accepted class, and is left UNSET for
- *     a refused one. Three call sites compare that field strictly; widening it would 401 every
- *     token-authenticated request with no type error.
+ *   - `locals.tokenClient` is `'webhook'` for MOD_INBOUND_TOKEN, `'cases'` for MOD_CASES_TOKEN, and
+ *     UNSET for a refused credential. Call sites compare that field strictly, so a wrong value 401s
+ *     token-authenticated requests with no type error.
  *   - A refused credential records nothing.
  *   - A logging fault never becomes a failed request.
  *
@@ -64,6 +63,7 @@ const { handle, CREDENTIAL_ATTRIBUTION_EVENT } = await import('../hooks.server')
  */
 const INBOUND_SECRET = 'sk-inbound-9f31c2';
 const LEGACY_SECRET = 'sk-legacy-4a70de';
+const CASES_SECRET = 'sk-cases-77b0e1';
 const PATH = '/api/mod/abuse-report';
 const METHOD = 'PATCH';
 const USER_AGENT = 'civitai-web/2026.08 (delegated-moderation)';
@@ -98,16 +98,18 @@ async function run(event: ReturnType<typeof eventFor>) {
 
 const emitted = (): Emitted[] => logToAxiom.mock.calls.map((call) => call[0] as Emitted);
 
-function setEnv(vars: { WEBHOOK_TOKEN?: string; MOD_INBOUND_TOKEN?: string }) {
-  delete process.env.WEBHOOK_TOKEN;
-  delete process.env.MOD_INBOUND_TOKEN;
-  if (vars.WEBHOOK_TOKEN !== undefined) process.env.WEBHOOK_TOKEN = vars.WEBHOOK_TOKEN;
-  if (vars.MOD_INBOUND_TOKEN !== undefined) process.env.MOD_INBOUND_TOKEN = vars.MOD_INBOUND_TOKEN;
+type TokenEnv = { WEBHOOK_TOKEN?: string; MOD_INBOUND_TOKEN?: string; MOD_CASES_TOKEN?: string };
+function setEnv(vars: TokenEnv) {
+  for (const k of ['WEBHOOK_TOKEN', 'MOD_INBOUND_TOKEN', 'MOD_CASES_TOKEN'] as const) {
+    delete process.env[k];
+    if (vars[k] !== undefined) process.env[k] = vars[k];
+  }
 }
 
-const saved = {
+const saved: TokenEnv = {
   WEBHOOK_TOKEN: process.env.WEBHOOK_TOKEN,
   MOD_INBOUND_TOKEN: process.env.MOD_INBOUND_TOKEN,
+  MOD_CASES_TOKEN: process.env.MOD_CASES_TOKEN,
 };
 
 /**
@@ -120,7 +122,11 @@ beforeEach(() => {
   logAxiomError.mockReset();
   guardCheck.mockReset();
   guardCheck.mockResolvedValue({ status: 'login', redirect: 'https://auth.example/login' });
-  setEnv({ MOD_INBOUND_TOKEN: INBOUND_SECRET, WEBHOOK_TOKEN: LEGACY_SECRET });
+  setEnv({
+    MOD_INBOUND_TOKEN: INBOUND_SECRET,
+    MOD_CASES_TOKEN: CASES_SECRET,
+    WEBHOOK_TOKEN: LEGACY_SECRET,
+  });
 });
 afterEach(() => setEnv(saved));
 
@@ -152,12 +158,16 @@ describe('inbound credential attribution', () => {
     expect(emitted()).toEqual([]);
   });
 
-  // 🔴 DORMANT: 'BOTH classes emit from one deployment — the zero is only evidence beside a live
-  // control'. It needs two ACCEPTED classes and cannot be written at one. The property it pinned is
-  // the reason the emit covers every accepted class rather than just a retiring one: a non-zero count
-  // for a live class is the in-band positive control proving the emit path was live at the moment a
-  // retiring class's count read zero. Restore it if a second class is added — asserted as a SET of
-  // classes, so it cannot be satisfied by two lines naming the same one.
+  // A non-zero count for a live class is the in-band positive control proving the emit path was live
+  // when a retiring class's count read zero, so EVERY accepted class emits. Asserted as a SET, so two
+  // lines naming the same class cannot satisfy it.
+  it('both accepted classes emit from one deployment', async () => {
+    await run(eventFor({ query: INBOUND_SECRET }));
+    await run(eventFor({ query: CASES_SECRET }));
+    expect(new Set(emitted().map((e) => e.credential))).toEqual(
+      new Set(['MOD_INBOUND_TOKEN', 'MOD_CASES_TOKEN'])
+    );
+  });
 
   it('attributes a Bearer-presented credential the same as a query-presented one', async () => {
     await run(eventFor({ authorization: `Bearer ${INBOUND_SECRET}` }));
@@ -205,7 +215,7 @@ describe('what must NOT be recorded', () => {
     const { response, resolve } = await run(eventFor({ query: LEGACY_SECRET }));
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({
-      message: 'MOD_INBOUND_TOKEN is not configured on this deployment.',
+      message: 'Neither MOD_INBOUND_TOKEN nor MOD_CASES_TOKEN is configured on this deployment.',
     });
     expect(resolve).not.toHaveBeenCalled();
     expect(logToAxiom).not.toHaveBeenCalled();
@@ -234,6 +244,12 @@ describe('locals.tokenClient stays exactly "webhook"', () => {
     expect(event.locals.tokenClient).toBe('webhook');
   });
 
+  it("is 'cases' for MOD_CASES_TOKEN, which the general wrappers refuse", async () => {
+    const event = eventFor({ query: CASES_SECRET });
+    await run(event);
+    expect(event.locals.tokenClient).toBe('cases');
+  });
+
   it('and is NOT set for the retired credential, which never authenticates', async () => {
     // The mirror of the case above. A refused credential must leave `tokenClient` unset, so nothing
     // downstream can treat a retired token as a webhook caller — `WebhookEndpoint` and
@@ -252,33 +268,9 @@ describe('locals.tokenClient stays exactly "webhook"', () => {
 });
 
 describe('attribution never breaks a request', () => {
-  it('ATTACHES a rejection handler to the emit — a logger that REJECTS must not surface anywhere', async () => {
-    // 🔴 The behavioural half of this (request still 204) passes with the `.catch()` DELETED, because
-    // an unhandled rejection inside a vitest worker is reported out-of-band and does not fail the
-    // request. Measured: removing `.catch(() => {})` left this file fully green. In the server it is
-    // not benign — Node's default `--unhandled-rejections=throw` terminates the process, so the
-    // deleted handler turns a logging blip into a pod restart.
-    //
-    // So the assertion is on the handler being attached, observed on the very promise the hook is
-    // handed. That IS the code path, not a word about it.
-    const rejected = Promise.reject(new Error('axiom ingest refused'));
-    const catchSpy = vi.spyOn(rejected, 'catch');
-    logToAxiom.mockReturnValue(rejected);
-
-    const { response, resolve } = await run(eventFor({ query: INBOUND_SECRET }));
-    // Read BEFORE this test attaches its own handler below, or the count stops being about the hook.
-    const attachedByHook = catchSpy.mock.calls.length;
-    rejected.catch(() => {});
-
-    expect(attachedByHook).toBe(1);
-    expect(resolve).toHaveBeenCalledTimes(1);
-    expect(response.status).toBe(204);
-  });
-
-  it('survives a logger that throws SYNCHRONOUSLY, which a bare .catch() would not', async () => {
-    // The half a promise `.catch()` cannot cover: a throw on the way IN never produces a promise to
-    // attach a handler to. Distinct from the rejecting case above, and it fails differently — the
-    // throw propagates out of the hook and the request 500s.
+  it('survives a logger that throws SYNCHRONOUSLY', async () => {
+    // A throw on the way IN never produces a promise at all; without the hook's guard it
+    // propagates out of the hook and the request 500s.
     logToAxiom.mockImplementation(() => {
       throw new Error('logger constructed badly');
     });

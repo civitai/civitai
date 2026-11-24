@@ -23,6 +23,8 @@ import { useDomainColor } from '~/hooks/useDomainColor';
 import useIsClient from '~/hooks/useIsClient';
 import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
 import { BaseModelFilterSelect } from '~/components/SfwOnlyBadge/BaseModelFilterSelect';
+import { FeedTagFilter } from '~/components/Image/Filters/FeedTagFilter';
+import { appliedRouteQuery } from '~/components/Image/Filters/media-filter-url';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import type { GetInfiniteImagesOutput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -39,7 +41,13 @@ const moderatorKeys: MediaFilterKey[] = [
   'disableMinor',
   'notPublished',
 ];
-const hatTurfKeys: MediaFilterKey[] = ['hatTeams', 'hatTurfMine', 'hideTurfHats', 'hideWornHats'];
+const hatTurfKeys: MediaFilterKey[] = [
+  'hatTeams',
+  'hatTurfMine',
+  'hatTurfExpired',
+  'hideTurfHats',
+  'hideWornHats',
+];
 
 // The URL params `useImageFilters` lets outrank the store that this dropdown edits. A store-backed
 // dropdown shows them, and moves them into the store on Apply or Clear so its change takes effect.
@@ -84,6 +92,7 @@ export function MediaFiltersDropdown({
   exclude,
   unavailable,
   jumpToSort,
+  showTags = false,
   style,
   ...buttonProps
 }: Props) {
@@ -162,31 +171,40 @@ export function MediaFiltersDropdown({
     return overrides;
   }, [query, routeParams]);
 
+  // `?tags=` has no store field: it is staged with the other filters and written back to the URL.
   const committedFilters = useMemo(
-    () => query || { ...filters, ...urlOverrides },
-    [query, filters, urlOverrides]
+    () =>
+      query || {
+        ...filters,
+        ...urlOverrides,
+        ...(showTags ? { tags: routeParams.tags } : {}),
+      },
+    [query, filters, urlOverrides, showTags, routeParams.tags]
   );
 
   const setStoreFilters = useCallback(
-    (next: Partial<typeof filters>) => {
-      setFilters(next);
+    (next: Partial<typeof committedFilters>) => {
+      const { tags, ...storeFilters } = next as Partial<typeof filters> & { tags?: number[] };
+      setFilters(storeFilters);
       const overridden = Object.keys(urlOverrides);
       // The raw router query, not the schema-parsed one: parsing drops dynamic route params
       // (`/models/[id]`), and Next throws on a pathname missing them.
-      if (overridden.length)
+      if (overridden.length || showTags)
         router.replace(
           {
             pathname: router.pathname,
-            query: removeEmpty({
-              ...router.query,
-              ...Object.fromEntries(overridden.map((key) => [key, undefined])),
-            }),
+            query: removeEmpty(
+              appliedRouteQuery(router.query, {
+                overridden,
+                tags: showTags ? tags ?? [] : null,
+              })
+            ),
           },
           undefined,
           { shallow: true, scroll: false }
         );
     },
-    [setFilters, urlOverrides, router]
+    [setFilters, urlOverrides, router, showTags]
   );
 
   const handleApply = useCallback(
@@ -228,11 +246,13 @@ export function MediaFiltersDropdown({
       poiOnly: undefined,
       minorOnly: undefined,
       includePG13: undefined,
+      ...(showTags ? { tags: undefined } : {}),
       ...(showJumpTo ? { jumpTo: undefined } : {}),
       ...(showTurf
         ? {
             hatTeams: undefined,
             hatTurfMine: undefined,
+            hatTurfExpired: undefined,
             hideTurfHats: undefined,
             hideWornHats: undefined,
           }
@@ -254,7 +274,7 @@ export function MediaFiltersDropdown({
         types: getDefaultMediaTypes(filterType),
         period: MetricTimeframe.AllTime,
       });
-  }, [onChange, setStoreFilters, filterType, shows, showJumpTo, showTurf]);
+  }, [onChange, setStoreFilters, filterType, shows, showJumpTo, showTurf, showTags]);
 
   const {
     opened,
@@ -276,9 +296,12 @@ export function MediaFiltersDropdown({
   const jumpTo = 'jumpTo' in mergedFilters ? mergedFilters.jumpTo : undefined;
   // A Hat Turf sort ranks over the whole event, so it has no time period.
   const hatSorted = showTurf && !!mergedFilters.hatSort;
-  // The viewer's own live hats, whatever media they are on, so the type chips do not apply.
-  const myHats = showTurf && !!mergedFilters.hatTurfMine;
-  // Both are served by the database hydrate, which has no period or remix filter.
+  // The viewer's own live or expired hats, whatever media they are on, so the type chips do not apply.
+  const myLiveHats = showTurf && !!mergedFilters.hatTurfMine;
+  const myExpiredHats = showTurf && !myLiveHats && !!mergedFilters.hatTurfExpired;
+  const myHats = myLiveHats || myExpiredHats;
+  // Both are served by the database hydrate, which has no period or remix filter. Expired hats have
+  // no rank, so a Hat Turf sort (and its team chips) does not apply to them.
   const turfHydrated = hatSorted || myHats;
 
   // maybe have individual filter length with labels next to them
@@ -303,11 +326,12 @@ export function MediaFiltersDropdown({
     mergedFilters.period !== MetricTimeframe.AllTime
       ? 1
       : 0) +
-    (hatSorted ? mergedFilters.hatTeams?.length ?? 0 : 0) +
+    (hatSorted && !myExpiredHats ? mergedFilters.hatTeams?.length ?? 0 : 0) +
     (myHats ? 1 : 0) +
     (showTurf && mergedFilters.hideTurfHats ? 1 : 0) +
     (showTurf && mergedFilters.hideWornHats ? 1 : 0) +
     (shows('baseModels') ? mergedFilters.baseModels?.length ?? 0 : 0) +
+    (showTags && 'tags' in mergedFilters ? mergedFilters.tags?.length ?? 0 : 0) +
     (!turfHydrated &&
     ((shows('remixesOnly') && !!mergedFilters.remixesOnly) ||
       (shows('nonRemixesOnly') && !!mergedFilters.nonRemixesOnly))
@@ -482,13 +506,29 @@ export function MediaFiltersDropdown({
             <Group gap={8} role="group" aria-label="Only">
               <span className="text-dimmed text-xs">Only</span>
               <FilterChip
-                checked={myHats}
-                onChange={(checked) => handleChange({ hatTurfMine: checked ? true : undefined })}
+                checked={myLiveHats}
+                onChange={(checked) =>
+                  handleChange({
+                    hatTurfMine: checked ? true : undefined,
+                    hatTurfExpired: undefined,
+                  })
+                }
               >
                 <span>My live hats</span>
               </FilterChip>
+              <FilterChip
+                checked={myExpiredHats}
+                onChange={(checked) =>
+                  handleChange({
+                    hatTurfExpired: checked ? true : undefined,
+                    hatTurfMine: undefined,
+                  })
+                }
+              >
+                <span>My expired hats</span>
+              </FilterChip>
             </Group>
-            {hatSorted && (
+            {hatSorted && !myExpiredHats && (
               <Chip.Group
                 value={mergedFilters.hatTeams ?? []}
                 onChange={(hatTeams) => handleChange({ hatTeams })}
@@ -511,7 +551,7 @@ export function MediaFiltersDropdown({
             <Group gap={8} role="group" aria-label="Show">
               <span className="text-dimmed text-xs">Show</span>
               <Tooltip
-                label="Hat Turf sorts and your live hats only list images with Turf hats"
+                label="Hat Turf sorts and your own hats list images by their Turf hats"
                 disabled={!turfHydrated}
               >
                 <span>
@@ -618,10 +658,21 @@ export function MediaFiltersDropdown({
           </>
         )}
 
+        {showTags && 'tags' in mergedFilters && (
+          <>
+            <Divider label="Tags" className="text-sm font-bold" mb={4} />
+            <FeedTagFilter
+              value={mergedFilters.tags ?? []}
+              onChange={(tags) => handleChange({ tags })}
+            />
+          </>
+        )}
+
         {shows('baseModels') && (
           <>
             <Divider label="Base model" className="text-sm font-bold" mb={4} />
             <BaseModelFilterSelect
+              includeHidden
               value={mergedFilters.baseModels ?? []}
               onChange={(baseModels) => handleChange({ baseModels })}
             />
@@ -760,4 +811,6 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   };
   /** Offer the jump-to-month control; it only applies while this is a chronological sort. */
   jumpToSort?: string;
+  /** Offer a tag filter, kept in the URL's `?tags=` (the main image and video feeds). */
+  showTags?: boolean;
 };

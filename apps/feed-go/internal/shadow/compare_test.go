@@ -175,6 +175,60 @@ func TestClassifyOrderVsMembership(t *testing.T) {
 	}
 }
 
+// image.getInfinite's flat page: classified by image id, with the diff categories of the flat shape.
+func TestClassifyFlat(t *testing.T) {
+	base := []byte(`{"json":{"items":[{"id":1,"stats":{"likeCountAllTime":2}},{"id":2,"stats":{"likeCountAllTime":0}}],"nextCursor":"feed:1:2","source":"feed"}}`)
+	cases := []struct {
+		name, node, want string
+		categories       []string
+	}{
+		{"match", string(base), "match", nil},
+		{"order", `{"json":{"items":[{"id":2,"stats":{"likeCountAllTime":0}},{"id":1,"stats":{"likeCountAllTime":2}}],"nextCursor":"feed:1:2","source":"feed"}}`,
+			"order", []string{"items.*.id", "items.*.stats.likeCountAllTime"}},
+		{"membership", `{"json":{"items":[{"id":1,"stats":{"likeCountAllTime":2}},{"id":3,"stats":{"likeCountAllTime":0}}],"nextCursor":"feed:1:2","source":"feed"}}`,
+			"membership", []string{"items.*.id"}},
+		{"fields", `{"json":{"items":[{"id":1,"stats":{"likeCountAllTime":3}},{"id":2,"stats":{"likeCountAllTime":0}}],"nextCursor":"feed:1:3","source":"db"}}`,
+			"fields", []string{"items.*.stats.likeCountAllTime", "nextCursor", "source"}},
+		// A posts envelope has no image ids at the top: every id reads as "" and the two sides agree.
+		{"not a flat page", `{"json":{"items":[{"postId":9},{"postId":8}]}}`, "membership", nil},
+	}
+	for _, c := range cases {
+		r, err := Compare(base, []byte(c.node))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := ClassifyFlat(r, base, []byte(c.node)); got != c.want {
+			t.Errorf("%s: %s, want %s", c.name, got, c.want)
+		}
+		if c.categories == nil {
+			continue
+		}
+		seen := map[string]bool{}
+		var cats []string
+		for _, d := range r.Diffs {
+			if !seen[d.Category] {
+				seen[d.Category] = true
+				cats = append(cats, d.Category)
+			}
+		}
+		if strings.Join(cats, ",") != strings.Join(c.categories, ",") {
+			t.Errorf("%s: categories %v, want %v", c.name, cats, c.categories)
+		}
+	}
+	// An undecodable side is "fields" (the report already says it differs), as for Classify.
+	r := &Report{Diffs: []Diff{{Path: "x"}}}
+	if got := ClassifyFlat(r, []byte(`not json`), base); got != "fields" {
+		t.Fatalf("undecodable = %s, want fields", got)
+	}
+	// The gallery classifier would call two different image pages "fields" (no postId): the flat
+	// one is what tells membership apart.
+	m := []byte(`{"json":{"items":[{"id":1},{"id":3}]}}`)
+	r, _ = Compare(base, m)
+	if got := Classify(r, base, m); got != "fields" {
+		t.Fatalf("control: Classify on a flat page = %s", got)
+	}
+}
+
 func TestSplitPathUnescapes(t *testing.T) {
 	got := splitPath(`a\.b.c\\d.0`)
 	want := []string{"a.b", `c\d`, "0"}

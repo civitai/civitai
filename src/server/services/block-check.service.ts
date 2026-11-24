@@ -160,6 +160,9 @@ export async function getBlockCheckOwnerIds({
     }
     case 'comment':
       return ownersForComment(entityId);
+    // A platform subject: no civitai account owns it, so no owner block applies.
+    case 'featurePage':
+      return [];
     default:
       // Compile-time exhaustiveness: a new comment/reaction entity type fails to
       // build here until it resolves an owner. Runtime still yields "no owner"

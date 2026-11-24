@@ -20,7 +20,11 @@ import { verifier } from '$lib/server/auth/verifier';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { allowedCorsOrigin } from '$lib/server/cors';
 import { isAdminRequest, isHubAdmin } from '$lib/server/auth/admin';
-import { isHubPageRequest, isTrustedSessionCaller } from '$lib/server/auth/same-origin';
+import {
+  isHubPageRequest,
+  isTrustedSessionCaller,
+  refuseFraming,
+} from '$lib/server/auth/same-origin';
 import { authS2sRequestsTotal, unhandledErrorsTotal } from '$lib/server/metrics';
 import { getDeviceId, touchAccount } from '$lib/server/auth/device';
 import { callerShape, readInternalCaller } from '$lib/server/auth/s2s';
@@ -89,7 +93,7 @@ const preflightHeaders = (origin: string) => ({
   vary: 'Origin',
 });
 
-export const handle: Handle = async ({ event, resolve }) => {
+const handleRequest: Handle = async ({ event, resolve }) => {
   // CORS for SAME-SITE spokes calling /api/auth/* directly with the browser client (credentialed). Only an
   // allowlisted Origin gets headers; server-to-server proxy calls (the main app) send no Origin → unaffected.
   const corsOrigin = event.url.pathname.startsWith('/api/auth/')
@@ -120,13 +124,13 @@ export const handle: Handle = async ({ event, resolve }) => {
     : null;
   let token = internal ? internal.token : cookieToken;
   let slot = cookieRead?.slot;
-  const sharedToken = legacyCookieReadEnabled()
+  const sharedToken = legacyCookieReadEnabled(null)
     ? event.cookies.get(sessionCookieNameForSlot('shared'))
     : undefined;
   // Only a browser keeps the host-only cookie it is given; any other caller would be moved again on every request.
   if (
     !internal &&
-    sessionCookieMode() === 'host' &&
+    sessionCookieMode(null) === 'host' &&
     sharedToken &&
     callerShape(event.request, true) === 'browser'
   ) {
@@ -145,10 +149,10 @@ export const handle: Handle = async ({ event, resolve }) => {
       event.locals.impersonatedBy = claims.impersonatedBy;
       if (!internal) event.locals.sessionSlot = slot;
       // The main app writes the shared slot through its own proxy (an account switch), unseen by the hub.
-      if (!internal && slot === 'shared' && sessionCookieMode() === 'shared') {
+      if (!internal && slot === 'shared' && sessionCookieMode(null) === 'shared') {
         dropStaleHostCopy(event.cookies, token);
       }
-      const writeSlot = slot && rollSlot({ slot });
+      const writeSlot = slot && rollSlot({ slot }, sessionCookieMode(null));
       if (!internal && writeSlot && shouldRoll(event.request, claims, event.locals.user)) {
         const fresh = await reissueSession(claims, userId, claims.jti!).catch(() => null);
         if (fresh) setSessionCookie(event.cookies, fresh, writeSlot, { roll: true });
@@ -194,6 +198,9 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
   return response;
 };
+
+// Every response, including the ones this hook answers itself before any route runs.
+export const handle: Handle = async (input) => refuseFraming(await handleRequest(input));
 
 // Count unhandled server errors (any uncaught throw in a load/action/endpoint that reaches SvelteKit),
 // then return a safe, non-leaking message. The counter inc is best-effort and runs before we build the

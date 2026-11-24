@@ -19,6 +19,7 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   scannedAt: true,
   ingestion: true,
   blockedFor: true,
+  modelRestricted: true,
   postId: true,
   type: true,
   metadata: true,
@@ -90,6 +91,13 @@ export type ImageResourceHelperModel = Prisma.ImageResourceHelperGetPayload<
 const reviewedImageWhere = { needsReview: null, tosViolation: false } as const;
 
 const publishedPostWhere = (): Prisma.PostWhereInput => ({ publishedAt: { lte: new Date() } });
+
+/** An ImageConnection whose Image row still exists. The table has no foreign key in production, so a
+ *  deleted image leaves its connections behind, and a read that includes `image` then fails on the
+ *  required relation. `no-unguarded-image-connection-image-read` requires it on such reads. */
+export const connectionImageExists = {
+  image: { id: { gt: 0 } },
+} satisfies Prisma.ImageConnectionWhereInput;
 
 export const publishedImageWhere = (): Prisma.ImageWhereInput => ({
   ...reviewedImageWhere,

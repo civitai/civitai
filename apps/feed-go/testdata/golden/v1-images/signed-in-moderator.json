@@ -157,7 +157,7 @@
       },
       "packed": "3gADp2ltYWdlSWTNH0SpcmVzb3VyY2Vzkd4AC6dpbWFnZUlkzR9Erm1vZGVsVmVyc2lvbklkzRdxqHN0cmVuZ3RowKhkZXRlY3RlZMOnbW9kZWxJZM0Tialtb2RlbE5hbWWxR29sZGVuIG1vZGVsIDUwMDGpbW9kZWxUeXBlqkNoZWNrcG9pbnSrdmVyc2lvbk5hbWWldjYwMDGpYmFzZU1vZGVsqFNEWEwgMS4wo3BvacKlbWlub3LCqGNhY2hlZEF01v9qL+gU"
     },
-    "packed:caches:profile-pictures:v2:1001": {
+    "packed:caches:profile-pictures:v4:1001": {
       "value": {
         "id": 8901,
         "name": null,
@@ -321,6 +321,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -378,6 +379,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -431,6 +433,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -473,6 +476,10 @@
       {
         "id": 6401,
         "modelId": 5005
+      },
+      {
+        "id": 6501,
+        "modelId": 5006
       }
     ],
     "models": [
@@ -511,6 +518,14 @@
       {
         "id": 5005,
         "userId": 1002,
+        "mode": null,
+        "minor": false,
+        "sfwOnly": false,
+        "galleryLevel": null
+      },
+      {
+        "id": 5006,
+        "userId": 1001,
         "mode": null,
         "minor": false,
         "sfwOnly": false,
@@ -614,6 +629,157 @@
         "username": "mod_four",
         "image": null,
         "deletedAt": null
+      },
+      {
+        "id": -1,
+        "username": "golden_system",
+        "image": null,
+        "deletedAt": null
+      }
+    ],
+    "userCosmetics": [
+      {
+        "userId": 1001,
+        "cosmeticId": 301,
+        "data": null,
+        "equippedAt": true,
+        "equippedToId": null,
+        "equippedToType": null
+      },
+      {
+        "userId": 1002,
+        "cosmeticId": 303,
+        "data": null,
+        "equippedAt": true,
+        "equippedToId": null,
+        "equippedToType": null
+      },
+      {
+        "userId": 1002,
+        "cosmeticId": 304,
+        "data": "{\"2\": 1, \"color\": \"gold\", \"sparkle\": {\"at\": 0.5, \"on\": true}}",
+        "equippedAt": true,
+        "equippedToId": null,
+        "equippedToType": null
+      },
+      {
+        "userId": 1002,
+        "cosmeticId": 305,
+        "data": null,
+        "equippedAt": true,
+        "equippedToId": null,
+        "equippedToType": null
+      },
+      {
+        "userId": 1002,
+        "cosmeticId": 302,
+        "data": null,
+        "equippedAt": false,
+        "equippedToId": null,
+        "equippedToType": null
+      },
+      {
+        "userId": 1001,
+        "cosmeticId": 302,
+        "data": null,
+        "equippedAt": true,
+        "equippedToId": 8001,
+        "equippedToType": "Image"
+      },
+      {
+        "userId": 1009,
+        "cosmeticId": 303,
+        "data": "{\"lights\": 2}",
+        "equippedAt": true,
+        "equippedToId": 8007,
+        "equippedToType": "Image"
+      },
+      {
+        "userId": 1002,
+        "cosmeticId": 401,
+        "data": null,
+        "equippedAt": true,
+        "equippedToId": 8003,
+        "equippedToType": "Image"
+      }
+    ],
+    "cosmetics": [
+      {
+        "id": 301,
+        "name": "Golden Badge",
+        "type": "Badge",
+        "source": "Trophy",
+        "data": "{\"url\": \"00000000-0000-4000-8000-000000003011\"}",
+        "flags": 0,
+        "createdById": null
+      },
+      {
+        "id": 302,
+        "name": "Golden Frame",
+        "type": "ContentDecoration",
+        "source": "Purchase",
+        "data": "{\"url\": \"00000000-0000-4000-8000-000000003021\", \"crop\": \"0%\", \"offset\": \"5%\"}",
+        "flags": 0,
+        "createdById": null
+      },
+      {
+        "id": 303,
+        "name": "Pending Badge",
+        "type": "Badge",
+        "source": "Purchase",
+        "data": "{\"url\": \"00000000-0000-4000-8000-000000003031\"}",
+        "flags": 0,
+        "createdById": 1009
+      },
+      {
+        "id": 304,
+        "name": "Creator Plate",
+        "type": "NamePlate",
+        "source": "Purchase",
+        "data": "{\"2\": 1, \"color\": \"gold\"}",
+        "flags": 0,
+        "createdById": 1009
+      },
+      {
+        "id": 305,
+        "name": "Removed Badge",
+        "type": "Badge",
+        "source": "Purchase",
+        "data": "{\"url\": \"00000000-0000-4000-8000-000000003051\"}",
+        "flags": 4,
+        "createdById": 1009
+      },
+      {
+        "id": 401,
+        "name": "Golden Hat",
+        "type": "ContentDecoration",
+        "source": "Claim",
+        "data": "{\"url\": \"00000000-0000-4000-8000-000000004011\", \"event\": \"goldentest2026\", \"offset\": \"10%\"}",
+        "flags": 0,
+        "createdById": null
+      }
+    ],
+    "cosmeticShopItems": [
+      {
+        "cosmeticId": 303,
+        "addedById": 1009,
+        "status": "PendingReview",
+        "meta": "{}",
+        "rejectionReason": null
+      },
+      {
+        "cosmeticId": 304,
+        "addedById": 1009,
+        "status": "Draft",
+        "meta": "{\"history\": [{\"kind\": \"reviewed\", \"action\": \"approve\"}]}",
+        "rejectionReason": null
+      },
+      {
+        "cosmeticId": 304,
+        "addedById": 1010,
+        "status": "Rejected",
+        "meta": "{}",
+        "rejectionReason": "Not theirs"
       }
     ],
     "usernames": []

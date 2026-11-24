@@ -13,7 +13,7 @@ type BasicUser struct {
 	ID        int
 	Username  any // string or nil
 	Image     any // string or nil
-	DeletedAt any // time.Time or nil
+	DeletedAt any // *time.Time (one Date per user, basicUserFrom) or nil
 }
 
 // basicUsersFrom is getBasicDataForUsers over the `basic-users` cache's answer got for (unique) ids
@@ -46,7 +46,10 @@ func (s *Sources) basicUsersFrom(ctx context.Context, ids []int, got map[int]Ent
 func basicUserFrom(id int, m map[string]any) BasicUser {
 	u := BasicUser{ID: id, Username: m["username"], Image: m["image"], DeletedAt: m["deletedAt"]}
 	if t, ok := u.DeletedAt.(time.Time); ok {
-		u.DeletedAt = t
+		// One Date per user: every image's `user` carries `deletedAt: userData?.deletedAt ?? null`, the
+		// same Date from the user's cached entry, so the devalue writer writes it once (a pointer is
+		// that identity; the superjson writer reads through it).
+		u.DeletedAt = &t
 	}
 	return u
 }
@@ -59,11 +62,11 @@ type equippedCosmetic struct {
 
 // userCosmeticsFrom is getCosmeticsForUsers' first half over the user-cosmetics cache's answer got
 // for (unique) ids: each user's equipped list, and the cosmetic ids to join (unordered, possibly
-// repeated). The user-cosmetics miss path (which drops withheld creator cosmetics) is not ported: any
-// miss falls back.
+// repeated). An id got does not answer falls back; with Sources.Compute, fillUserCosmetics has
+// computed every miss (lookupUserCosmetics) into got before this runs.
 func userCosmeticsFrom(ids []int, got map[int]Entry) (map[int][]equippedCosmetic, []int, error) {
 	if miss := Missing(ids, got); len(miss) > 0 {
-		return nil, nil, fallback.Newf("user-cosmetics-miss", "%d ids", len(miss))
+		return nil, nil, fallback.Safef("user-cosmetics-miss", "%d ids", len(miss))
 	}
 	perUser := map[int][]equippedCosmetic{}
 	var cosmeticIDs []int
@@ -71,14 +74,16 @@ func userCosmeticsFrom(ids []int, got map[int]Entry) (map[int][]equippedCosmetic
 		if e.NotFound {
 			continue
 		}
-		list, _ := e.Value["cosmetics"].([]any)
-		for _, item := range list {
-			m, ok := item.(map[string]any)
+		// The ordered record (an ordered cache): each equipped entry's `data` keeps the key order
+		// Node's answer has.
+		for _, item := range asList(ObjectField(e.Ordered(), "cosmetics")) {
+			m, ok := item.(superjson.Object)
 			if !ok {
 				continue
 			}
-			cid, _ := Int(m["cosmeticId"])
-			perUser[id] = append(perUser[id], equippedCosmetic{cosmeticID: cid, data: m["data"]})
+			cid, _ := Int(ObjectField(m, "cosmeticId"))
+			data := ObjectField(m, "data")
+			perUser[id] = append(perUser[id], equippedCosmetic{cosmeticID: cid, data: data})
 			cosmeticIDs = append(cosmeticIDs, cid)
 		}
 	}
@@ -115,7 +120,8 @@ func (s *Sources) cosmeticsFrom(ctx context.Context, ids []int, got map[int]Entr
 	out := make(map[int]superjson.Object, len(ids))
 	for id, e := range got {
 		if !e.NotFound {
-			out[id] = Pick(e.Value, "id", "name", "type", "data", "source", "flags")
+			// The ordered record (an ordered cache): `data` keeps the key order Node's answer has.
+			out[id] = PickOrdered(e.Ordered(), "id", "name", "type", "data", "source", "flags")
 		}
 	}
 	if miss := Missing(ids, got); len(miss) > 0 {
@@ -135,17 +141,18 @@ func (s *Sources) cosmeticsFrom(ctx context.Context, ids []int, got map[int]Entr
 	return out, nil
 }
 
-// profilePictureColumns is the profile-pictures:v2 lookup's select list, in order.
+// profilePictureColumns is the profile-pictures:v4 lookup's select list, in order.
 var profilePictureColumns = []string{"id", "name", "url", "nsfwLevel", "hash", "userId", "ingestion", "type", "width", "height", "metadata"}
 
 // profilePicturesFrom is getProfilePicturesForUsers over the cache's answer got for (unique) ids. The
 // miss path runs the cache's own lookup query on the replica: the user's profile picture, only when it
-// is servable (src/server/services/profile-picture.sql.ts).
+// is servable (servableProfilePictureSql, src/server/services/profile-picture.sql.ts).
 func (s *Sources) profilePicturesFrom(ctx context.Context, ids []int, got map[int]Entry) (map[int]superjson.Object, error) {
 	out := make(map[int]superjson.Object, len(ids))
 	for id, e := range got {
 		if !e.NotFound {
-			out[id] = Pick(e.Value, profilePictureColumns...)
+			// The ordered record (an ordered cache): `metadata` keeps the key order Node's answer has.
+			out[id] = PickOrdered(e.Ordered(), profilePictureColumns...)
 		}
 	}
 	if miss := Missing(ids, got); len(miss) > 0 {
@@ -155,8 +162,11 @@ func (s *Sources) profilePicturesFrom(ctx context.Context, ids []int, got map[in
 			JOIN "Image" i ON i.id = u."profilePictureId"
 			WHERE u.id = ANY($1::int[])
 			  AND i.ingestion <> 'Blocked'
-			  AND i."needsReview" IS DISTINCT FROM 'csam'
-			  AND `+ImageReviewedSQL("i"), miss)
+			  AND i."nsfwLevel" != 0
+			  AND (i."needsReview" IS NULL OR i."needsReview" NOT IN ('csam', 'minor'))
+			  AND `+ImageReviewedSQL("i")+`
+			  AND ((i."nsfwLevel" & 60) = 0 OR NOT i."modelRestricted")
+			  AND NOT `+HasBlockMarkerSQL("i"), miss)
 		if err != nil {
 			return nil, err
 		}
@@ -170,6 +180,13 @@ func (s *Sources) profilePicturesFrom(ctx context.Context, ids []int, got map[in
 		}
 	}
 	return out, nil
+}
+
+// HasBlockMarkerSQL is hasBlockMarkerSql(alias) (src/server/common/image-visibility.ts), with its
+// bound values inlined as literals.
+func HasBlockMarkerSQL(alias string) string {
+	a := `"` + alias + `"`
+	return `(` + a + `."ingestion" = 'Blocked'::"ImageIngestionStatus" OR ` + a + `."nsfwLevel" = 32 OR ` + a + `."blockedFor" IS NOT NULL)`
 }
 
 // ImageReviewedSQL is imageReviewedSql(alias) (src/server/common/image-visibility.ts), with its bound

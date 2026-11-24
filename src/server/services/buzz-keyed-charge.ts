@@ -50,7 +50,7 @@ export function paymentOutcomeUnknown(
     error: describe(errors.error),
     resendError: describe(errors.resendError),
     lookupError: describe(errors.lookupError),
-  }).catch(() => undefined);
+  });
   return new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE });
 }
 
@@ -139,7 +139,7 @@ function keyReused(outcomeContext: {
     type: 'error',
     message: 'a keyed charge was resent with different details',
     ...outcomeContext,
-  }).catch(() => undefined);
+  });
   return new TRPCError({ code: 'BAD_REQUEST', message: PAYMENT_KEY_REUSED_MESSAGE });
 }
 

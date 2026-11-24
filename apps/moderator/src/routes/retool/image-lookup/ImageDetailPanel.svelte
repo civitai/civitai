@@ -3,10 +3,13 @@
   import { enhance } from '$app/forms';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
+  import { RETRACTED_REFUSED } from '$lib/held-media';
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import { entityUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import { reviewReasonText } from '$lib/image-review';
+  import PromptHighlight from '$lib/components/PromptHighlight.svelte';
   import type { PageData } from './$types';
   import {
     FEEDBACK_CAPTURE_ACCOUNT_NOTE,
@@ -37,7 +40,7 @@
     // `Updated` far from `Uploaded` is the tell that something touched it.
     ['Updated', dateTime(image.updatedAt)],
     ['Scanned', dateTime(image.scannedAt)],
-    ['Type', image.type],
+    ['Type', image.type ?? '—'],
     ['Dimensions', image.width && image.height ? `${num(image.width)}×${num(image.height)}` : '—'],
     ['NSFW level', `${image.nsfwLevel}${image.nsfwLevelLocked ? ' (locked)' : ''}`],
     ['Ingestion', image.ingestion],
@@ -47,6 +50,8 @@
     ['pHash', image.pHash ?? '—'],
     ['Meta hidden by uploader', image.hideMeta ? 'yes' : 'no'],
   ]);
+
+  const reviewReason = $derived(image.needsReview ? reviewReasonText(image.needsReview) : null);
 
   const scanJobs = $derived(image.scanJobs ? JSON.stringify(image.scanJobs, null, 2) : null);
 
@@ -82,7 +87,17 @@
     />
   </div>
 
-  {#if canAct}
+  {#if reviewReason}
+    <div class="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm">
+      <div class="text-xs tracking-wide text-amber-200 uppercase">Why it's in review</div>
+      <p class="text-dark-0">{reviewReason}</p>
+      {#if image.needsReview === 'modRule' && image.ruleReason}
+        <p class="text-dark-0">Rule: {image.ruleReason}</p>
+      {/if}
+    </div>
+  {/if}
+
+  {#if canAct && !image.restricted}
     <!-- Retool had Toggle Minor / Toggle Poi here, ON only. Both directions, because a flag set in
          error is otherwise uncorrectable from the screen that shows it. -->
     <form
@@ -145,15 +160,16 @@
 
   <div class="mt-4 flex flex-col gap-4 sm:flex-row">
     <!-- An image lookup that does not show the image makes the moderator open a second tab to answer
-         "what am I even looking at". `url` is the Cloudflare key, which is exactly EdgeMedia's `src`. -->
-    <EdgeMedia
-      src={image.url}
-      name={image.name}
-      type={image.type}
-      width={450}
-      alt="Image {image.id}"
-      class="max-h-64 w-auto shrink-0 rounded-lg border border-dark-4"
-    />
+         "what am I even looking at". -->
+    {#if image.restricted}
+      <div class="max-w-64 shrink-0 p-4 text-center text-xs text-dark-2">{RETRACTED_REFUSED}</div>
+    {:else}
+      <CdnOrRetractedMedia
+        item={{ id: image.id, url: image.url, type: image.type, name: image.name }}
+        alt="Image {image.id}"
+        class="max-h-64 w-auto shrink-0 rounded-lg border border-dark-4"
+      />
+    {/if}
 
     <dl class="grid flex-1 gap-x-8 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
       {#each fields as [label, value] (label)}
@@ -179,6 +195,14 @@
         <div>
           <div class="text-xs tracking-wide text-dark-2 uppercase">Negative prompt</div>
           <p class="wrap-break-word text-dark-2">{image.negativePrompt}</p>
+        </div>
+      {/if}
+      {#if image.promptHighlight?.hasHighlights}
+        <!-- Beside the raw prompt rather than in place of it: the highlighter normalises accents and
+             caps the length, so its text is not the stored prompt. -->
+        <div>
+          <div class="text-xs tracking-wide text-dark-2 uppercase">Flagged prompt terms</div>
+          <PromptHighlight result={image.promptHighlight} />
         </div>
       {/if}
     </div>

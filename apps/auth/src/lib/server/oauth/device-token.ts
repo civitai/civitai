@@ -1,15 +1,21 @@
 import { json } from '@sveltejs/kit';
 import { REDIS_KEYS } from '@civitai/redis';
-import { ALL_SCOPES } from '@civitai/auth/token-scope';
+import { parseTokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getRedis } from '$lib/server/redis';
-import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
+import {
+  checkOAuthRateLimit,
+  oauthRetryAfter,
+  rateLimitedResponse,
+} from '$lib/server/oauth/rate-limit';
 import { getClientIp } from '$lib/server/auth/request';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
-import { createOAuthTokenPair } from '$lib/server/oauth/token-helpers';
+import { createOAuthTokenPair, createPlannedOAuthTokens } from '$lib/server/oauth/token-helpers';
+import { isOfflineGrantOn, planDeviceGrant } from '$lib/server/oauth/offline-grant';
 import { ACCESS_TOKEN_TTL, DEVICE_CODE_GRANT } from '$lib/server/oauth/constants';
-import { isScopeGrantable } from '$lib/server/oauth/scope';
+import { isScopeGrantable, scopeFromColumn } from '$lib/server/oauth/scope';
 import { setWildcardCors } from '$lib/server/oauth/http';
+import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 
 // The device-flow token poll (RFC 8628 §3.4). RFC 8628 has the device poll the token endpoint, so
 // /token hands this grant here; /device-token, where our own clients poll, serves it too.
@@ -34,10 +40,10 @@ export async function deviceTokenGrant(
   // device_code is unvalidated until the redis lookup below, so the per-IP ceiling is charged first and
   // bounds how many device_code buckets one caller can create.
   if (!(await checkOAuthRateLimit('device-token-anon', getClientIp(request)))) {
-    return json({ error: 'rate_limited' }, { status: 429, headers });
+    return rateLimitedResponse(oauthRetryAfter('device-token-anon'), headers, 'Polling too fast');
   }
   if (!(await checkOAuthRateLimit('device-token', device_code))) {
-    return json({ error: 'rate_limited' }, { status: 429, headers });
+    return rateLimitedResponse(oauthRetryAfter('device-token'), headers, 'Polling too fast');
   }
 
   const redis = getRedis();
@@ -78,14 +84,19 @@ export async function deviceTokenGrant(
   // status === 'approved'
   if (!data.userId) return json({ error: 'server_error' }, { status: 400, headers });
 
-  const rawScope = parseInt(data.scope, 10);
-  // Bound against ALL_SCOPES (incl. opt-in AppBlocksSubmit), NOT `Full`; the client allowedScopes gate below
+  // Bound against ALL_SCOPES (incl. the opt-in bits), NOT `Full`; the client allowedScopes gate below
   // is the real authorization.
-  if (isNaN(rawScope) || rawScope < 0 || rawScope > ALL_SCOPES) {
+  const scope = parseTokenScope(data.scope);
+  if (scope === null) {
     return json({ error: 'invalid_scope' }, { status: 400, headers });
   }
-  const scope = rawScope;
 
+  if (isAppBlockOauthClientId(client_id)) {
+    return json(
+      { error: 'invalid_grant', error_description: 'Unknown client' },
+      { status: 400, headers }
+    );
+  }
   const client = await db
     .selectFrom('OauthClient')
     .select(['allowedScopes'])
@@ -99,7 +110,7 @@ export async function deviceTokenGrant(
       { status: 400, headers }
     );
   }
-  if (!isScopeGrantable(client.allowedScopes, scope, 'user')) {
+  if (!isScopeGrantable(scopeFromColumn(client.allowedScopes), scope, 'user')) {
     return json(
       { error: 'invalid_scope', error_description: 'Requested scope exceeds client permissions' },
       { status: 400, headers }
@@ -119,7 +130,10 @@ export async function deviceTokenGrant(
     );
   }
 
-  const pair = await createOAuthTokenPair(data.userId, client_id, scope);
+  // Offline-grant flag on: the same pair, with its mint origin and a refresh family recorded.
+  const pair = (await isOfflineGrantOn())
+    ? await createPlannedOAuthTokens(data.userId, client_id, scope, planDeviceGrant())
+    : await createOAuthTokenPair(data.userId, client_id, scope);
 
   logOAuthEvent({
     type: 'token.issued',

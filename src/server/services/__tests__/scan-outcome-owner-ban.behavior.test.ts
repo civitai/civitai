@@ -72,8 +72,10 @@ beforeAll(async () => {
   await holder.db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3) DEFAULT now());
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       "userId" int NOT NULL REFERENCES "User"(id),
       "updatedAt" timestamp(3),
       "pHash" bigint,
@@ -97,6 +99,10 @@ beforeAll(async () => {
       "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3)
     );
+    CREATE TYPE "EntityType" AS ENUM ('Image');
+    -- Read by a blocking scan's write: a pending appeal keeps its review.
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
   `);
 });
 
@@ -130,7 +136,12 @@ beforeEach(async () => {
       if (holder.holdReadFails) throw new Error('hold read failed');
       return (await runOnPglite(strings, values)).rows;
     }
-    if (text.includes('"User"')) return (await runOnPglite(strings, values)).rows;
+    if (
+      text.includes('FROM "Image" i WHERE i.id') ||
+      text.includes('SELECT ingestion, "blockedFor", "nsfwLevel" FROM "Image"') ||
+      text.includes('SELECT "blockedFor" FROM "Image"')
+    )
+      return (await runOnPglite(strings, values)).rows;
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);
   holder.holdReadFails = false;
@@ -309,15 +320,25 @@ describe("a clean scan landing on a held owner's or a kept blocked image", () =>
 });
 
 describe('a clean scan that should still lift or leave the image visible', () => {
-  it("clears a blocked image's block when its owner is not banned (moderator rescan)", async () => {
+  it('clean scan case 1', async () => {
     // Another owner's banned, blocked image, stored first: the check reads the scanned image.
     await insertImage(10, BANNED, 'Blocked', 'moderated');
-    await insertImage(4, ACTIVE, 'Blocked', 'moderated');
+    await insertImage(4, ACTIVE, 'Blocked', 'AiNotVerified');
 
-    const outcome = await scan(loaded(4, ACTIVE, 'Blocked', 'moderated'));
+    const outcome = await scan(loaded(4, ACTIVE, 'Blocked', 'AiNotVerified'));
 
     expect(outcome.ingestion).toBe('Scanned');
     expect(await imageRow(4)).toEqual({ ingestion: 'Scanned', blockedFor: null, nsfwLevel: 1 });
+  });
+
+  it('clean scan case 2', async () => {
+    await insertImage(10, BANNED, 'Blocked', 'moderated');
+    await insertImage(40, ACTIVE, 'Blocked', 'moderated');
+
+    const outcome = await scan(loaded(40, ACTIVE, 'Blocked', 'moderated'));
+
+    expect(outcome.ingestion).toBe('Blocked');
+    expect(await imageRow(40)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
   });
 
   it("publishes a banned owner's image that the ban left up", async () => {
@@ -338,10 +359,17 @@ describe('a feedback page capture', () => {
     expect((await imageRow(30)).ingestion).toBe('Blocked');
   });
 
-  it('lets a clean scan lift a prior block nothing holds (control)', async () => {
-    await insertImage(31, CAPTURE, 'Blocked', 'moderated');
-    const outcome = await scan(loaded(31, CAPTURE, 'Blocked', 'moderated'));
+  it('capture case 1', async () => {
+    await insertImage(31, CAPTURE, 'Blocked', 'AiNotVerified');
+    const outcome = await scan(loaded(31, CAPTURE, 'Blocked', 'AiNotVerified'));
     expect(outcome.ingestion).toBe('Scanned');
+  });
+
+  it('capture case 2', async () => {
+    await insertImage(41, CAPTURE, 'Blocked', 'moderated');
+    const outcome = await scan(loaded(41, CAPTURE, 'Blocked', 'moderated'));
+    expect(outcome.ingestion).toBe('Blocked');
+    expect((await imageRow(41)).ingestion).toBe('Blocked');
   });
 
   it('gets the content review key an ordinary owner would', async () => {

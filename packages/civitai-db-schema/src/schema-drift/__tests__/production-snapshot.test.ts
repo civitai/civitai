@@ -259,6 +259,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `Collection.archivedAt`: `20260831000000_collection_archived_at`
     //   `ModActivity.host`: `20261205120000_mod_activity_host`
     //   `OauthClient.skipConsent` / `OauthClient.tokenRateLimit`: `20261026173940_oauth_client_trusted_settings`
+    //   the four `NewOrderPlayer.payout*` columns: `20261209120000_knights_new_order_player_and_link_review`
     //   `StorylineCollaborator.acceptedAt`: `20261215120000_storyline_collaborator_accepted`
     //   the four `Crucible` takedown columns: `20261203120000_crucible_takedown`
     //   `Crucible.ownerRemovalCount`: `20261216120000_crucible_owner_removal_count`
@@ -282,7 +283,31 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `Article.systemCategoryId`: `20271112120000_article_system_category`
     //   `Image.nsfwAxes`: `20270105130000_image_nsfw_axes` — no-type, raw SQL in
     //     `image-nsfw-axes.ts`, which degrades while it is unapplied.
+    //   `ApiKey.tokenScopeWide`: `20271117180000_widen_token_scopes_bigint`
+    //   the eight `app_block_publish_requests.actions_run_*` columns:
+    //     `20271117130000_app_block_publish_request_actions_run_source` — no-type, raw SQL in
+    //     `actions-run-source.service.ts`, which degrades while it is unapplied.
+    //   `ServiceDealFile.scannedEtag` / `.scannedVersionId`: `20271119070000_service_deal_file_scanned_etag`
+    //   the three `ServiceOffering.license*` and four `ServiceDeal.license*` columns:
+    //     `20271120030000_service_license_presets`
+    //   `ServiceDeal.reviewEnabledAt` and the four `ServiceOffering` review columns:
+    //     `20271120100100_service_deal_reviews`
     const inFlightColumns = new Set([
+      'ServiceOffering.licensePreset',
+      'ServiceOffering.licenseCustomText',
+      'ServiceOffering.licenseAllowResale',
+      'ServiceDeal.licensePreset',
+      'ServiceDeal.licenseCustomText',
+      'ServiceDeal.licenseAllowResale',
+      'ServiceDeal.licenseAgreedAt',
+      'ServiceDeal.reviewEnabledAt',
+      'ServiceOffering.allowReviewWork',
+      'ServiceOffering.happyCount',
+      'ServiceOffering.reviewCount',
+      'ServiceOffering.happySortKey',
+      'ServiceDealFile.scannedEtag',
+      'ServiceDealFile.scannedVersionId',
+      'ApiKey.tokenScopeWide',
       'BoxOpening.guaranteed',
       'ModActivity.credential',
       'ModActivity.reviewBatchId',
@@ -308,6 +333,13 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ModActivity.host',
       'OauthClient.skipConsent',
       'OauthClient.tokenRateLimit',
+      'NewOrderPlayer.payoutBlockedAt',
+      'NewOrderPlayer.payoutBlockReason',
+      'NewOrderPlayer.payoutBlockedBy',
+      'NewOrderPlayer.payoutReleaseFrom',
+      'NewOrderPlayer.goldPending',
+      'NewOrderPlayer.goldEarned',
+      'NewOrderPlayer.goldConverted',
       'StorylineCollaborator.acceptedAt',
       'Crucible.takenDownAt',
       'Crucible.takenDownById',
@@ -335,6 +367,26 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ServiceOffering.scannedAt',
       'Article.systemCategoryId',
       'Image.nsfwAxes',
+      'app_user_scope_grants.confirm_within_limit_max_job',
+      'app_block_publish_requests.actions_run_repository',
+      'app_block_publish_requests.actions_run_repository_id',
+      'app_block_publish_requests.actions_run_repository_owner_id',
+      'app_block_publish_requests.actions_run_sha',
+      'app_block_publish_requests.actions_run_ref',
+      'app_block_publish_requests.actions_run_workflow_ref',
+      'app_block_publish_requests.actions_run_repository_visibility',
+      'app_block_publish_requests.actions_run_id',
+      'ModelVersion.licensingFeeMarkup',
+      // OAuth offline grant, migration 20271119140000_oauth_offline_grant (manual apply).
+      'ApiKey.mintOrigin',
+      'ApiKey.refreshFamilyId',
+      'OauthConsent.offlineGrantedAt',
+      // Staff licence-fee controls, migrations 20271121130000_licensing_fee_locked and
+      // 20271121140000_licensing_fee_paid_by_invoice (manual apply).
+      'ModelVersion.licensingFeeLocked',
+      'ModelVersion.licensingFeePaidByInvoice',
+      // Restricted licensing roots, migration 20271121150000_licensing_root_restricted (manual apply).
+      'LicensingRoot.restricted',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

@@ -1,0 +1,31 @@
+{
+  "name": "if-modified-since-on-400",
+  "endpoint": "ping",
+  "request": {
+    "method": "POST",
+    "target": "/api/internal/ping",
+    "headers": {
+      "host": "www.example.test",
+      "if-modified-since": "Wed, 21 Oct 2015 07:28:00 GMT",
+      "if-none-match": "*"
+    },
+    "body": ""
+  },
+  "session": null,
+  "trackerEnabled": true,
+  "fallback": "conditional-request",
+  "expect": {
+    "status": 400,
+    "headers": {
+      "vary": "Authorization",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "POST",
+      "cache-control": "public, s-maxage=300, stale-while-revalidate=150",
+      "etag": "\"weftv9g98bf\""
+    },
+    "body": "invalid request",
+    "writes": []
+  },
+  "shadow": "{\"method\":\"POST\",\"target\":\"/api/internal/ping\",\"query\":\"\",\"headers\":{\"host\":\"www.example.test\",\"if-none-match\":\"*\",\"if-modified-since\":\"Wed, 21 Oct 2015 07:28:00 GMT\"},\"body\":\"\",\"bodyIsString\":true,\"node\":{\"status\":400,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization\",\"cache-control\":\"public, s-maxage=300, stale-while-revalidate=150\",\"etag\":\"\\\"weftv9g98bf\\\"\"},\"body\":\"invalid request\",\"writes\":[]}}"
+}

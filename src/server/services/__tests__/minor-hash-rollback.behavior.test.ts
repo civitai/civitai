@@ -57,6 +57,9 @@ vi.mock('~/server/services/creator-gallery-hidden-users.service', () => ({
   getCreatorGalleryHiddenUserIds: vi.fn(),
 }));
 vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate: vi.fn() }));
+vi.mock('~/server/services/image-models-reindex.service', () => ({
+  queueDocumentsForImageMinorChanges: vi.fn(async () => undefined),
+}));
 
 // Inlined as literals: the statements bind JSON keys untyped (`meta ? $1`), which the real driver
 // sends as text but PGlite refuses to infer.
@@ -86,6 +89,9 @@ const { rollbackMinorHashAutoFlags, revertMinorHashAutoFlag, findMinorHashMatche
   '~/server/services/minor-hash.service'
 );
 const { ruleModelTextScanFlag } = await import('~/server/services/text-scan/actions/flag-ruling');
+const { queueDocumentsForImageMinorChanges } = await import(
+  '~/server/services/image-models-reindex.service'
+);
 dbMock.dbWrite.model.findUnique.mockImplementation(
   (async ({ where }: { where: { id: number } }) =>
     (await holder.db.query(`SELECT * FROM "Model" WHERE id = $1`, [where.id])).rows[0] ??
@@ -355,6 +361,21 @@ describe('a rollback on a model that was not minor before the flag', () => {
     await seed({ snapshot });
 
     expect(await unset()).toMatchObject({ minor: false, nsfw: true });
+  });
+
+  it('🔴 requeues the documents showing the images it marks minor again', async () => {
+    await holder.db.query(`INSERT INTO "Image" (id) VALUES (5)`);
+    await seed({ snapshot: { ...mature, prevMinor: false, prevMinorImageIds: [5] } });
+
+    await unset();
+    expect(queueDocumentsForImageMinorChanges).toHaveBeenCalledWith({ minorImageIds: [5] });
+  });
+
+  it('requeues nothing when the snapshot recorded no minor images (control)', async () => {
+    await seed({ snapshot: { ...mature, prevMinor: false } });
+
+    await unset();
+    expect(queueDocumentsForImageMinorChanges).not.toHaveBeenCalled();
   });
 
   // An SFW-only pre-state that the snapshot says was not minor is just an SFW-only model.

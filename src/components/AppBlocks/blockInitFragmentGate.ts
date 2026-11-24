@@ -225,6 +225,28 @@ export const BLOCK_HOST_SITE_NAVIGATION: Record<BlockHostSurface, boolean> = {
 };
 
 /**
+ * May a block on this surface ask for a SHARE_LINK? The link is
+ * `<origin><BLOCK_HOST_DEEP_LINK_BASE[surface]>/<slug>/…`, so it is only worth handing out
+ * where that URL opens the same app for someone else. Total over `BlockHostSurface`, like the
+ * two maps above, so a new surface is a compile error until someone decides.
+ *
+ *  - `dev-tunnel` is `false`: its `slug` prop is the BLOCK ID (`DevTunnelBlockHost` passes
+ *    `slug={blockId}`), and `/apps/run/<blockId>` is not the app's run route, so the link
+ *    would 404.
+ *  - `private-run` is `true`: `/apps/run/<slug>` serves the private run to its own audience
+ *    (the author, testers, moderators), so a link opens for exactly the people who could
+ *    already open the app there.
+ *  - `model-slot` and `review-preview` have no app route (`null` base) and are `false`.
+ */
+export const BLOCK_HOST_SHARE_LINK: Record<BlockHostSurface, boolean> = {
+  'model-slot': false,
+  'page-run': true,
+  'dev-tunnel': false,
+  'review-preview': false,
+  'private-run': true,
+};
+
+/**
  * Does BLOCK_INIT on this surface carry `storageMode: 'local-preview'`?
  *
  * ADVISORY: it tells the SDK to serve the block's document store from a local,
@@ -249,6 +271,36 @@ export const BLOCK_HOST_LOCAL_PREVIEW_STORAGE: Record<BlockHostSurface, boolean>
   'page-run': false,
   'dev-tunnel': true,
   'review-preview': false,
+  'private-run': false,
+};
+
+/**
+ * The BLOCK_INIT `capabilities` entry by which a host says it COLLECTS the frame's non-fatal
+ * errors. A new enough SDK (`REVIEW_CONSOLE_MIN_SDKS`) then forwards uncaught errors, unhandled
+ * rejections and `console.error` as `BLOCK_ERROR { fatal: false, source, stack?, at }`; an older
+ * one ignores it. A wire contract with the SDK: compared there as this exact string.
+ */
+export const BLOCK_ERRORS_CAPABILITY = 'blockErrors:v1';
+
+/**
+ * Does this surface's host COLLECT the block's non-fatal errors, and so advertise
+ * {@link BLOCK_ERRORS_CAPABILITY}? Keyed on the SURFACE, like the storage record below.
+ *
+ *  - `review-preview` is `true`: the review page keeps them in memory for the moderator's own
+ *    session (`ReviewConsole`). Nothing is stored or sent anywhere. The same surface also mounts
+ *    the queue modal's preview and the standalone review preview page, which have no console:
+ *    there a new SDK's reports reach the host and are dropped, as every other surface's are.
+ *  - `dev-tunnel` is `false` although its host collects them (`useDevPreviewErrorReporter`): the
+ *    SDK already sends them there on `storageMode: 'local-preview'`, so listing the capability
+ *    too would be a second signal for the same thing.
+ *  - every other surface is `false`: nothing there would receive them, so a published app must
+ *    not be asked to send them.
+ */
+export const BLOCK_HOST_ERROR_REPORTS: Record<BlockHostSurface, boolean> = {
+  'model-slot': false,
+  'page-run': false,
+  'dev-tunnel': false,
+  'review-preview': true,
   'private-run': false,
 };
 

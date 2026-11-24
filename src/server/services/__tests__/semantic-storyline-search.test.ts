@@ -50,6 +50,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
 }));
 vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
+  includesNsfw: () => false,
   includesInappropriate: h.includesInappropriate,
   includesPoi: () => false,
   includesMinor: () => false,
@@ -72,14 +73,15 @@ const SCHEMA = `
   CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp, "deletedAt" timestamp);
   CREATE TABLE "Storyline" (id int PRIMARY KEY, "userId" int, "tosViolation" boolean DEFAULT false,
     "maxNsfwLevel" int DEFAULT 16, "nsfwLevel" int DEFAULT 0, "moderatorNsfwLevel" int,
-    "minorByScan" boolean DEFAULT false);
+    "minorByScan" boolean DEFAULT false, "coverImageId" int);
   CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int, "tosViolation" boolean DEFAULT false,
     "nsfwLevel" int, "publishedAt" timestamp, availability text DEFAULT 'Public');
   CREATE TABLE "StorylineChapter" (id int PRIMARY KEY, "storylineId" int, "postId" int, depth int,
     "removedAt" timestamp);
   CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, "postId" int, "needsReview" text,
     "blockedFor" text, "nsfwLevel" int DEFAULT 1, minor boolean DEFAULT false,
-    "acceptableMinor" boolean DEFAULT false);
+    "acceptableMinor" boolean DEFAULT false, ingestion text DEFAULT 'Scanned',
+    "tosViolation" boolean DEFAULT false, poi boolean DEFAULT false);
   CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean DEFAULT false);
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');

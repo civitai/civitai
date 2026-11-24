@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as SearchIndex from '~/server/search-index';
+import type * as CollectionItemVisibility from '~/server/services/collection-item-visibility';
 import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
 import type * as ModelService from '~/server/services/model.service';
 import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
@@ -18,6 +19,11 @@ vi.mock('~/server/notifications/client', () => ({
   notifications: { createNotification: vi.fn(async () => undefined) },
 }));
 
+// Whether the item may be added is covered by collection-item-visibility's own tests.
+vi.mock('~/server/services/collection-item-visibility', async (importOriginal) => ({
+  ...(await importOriginal<typeof CollectionItemVisibility>()),
+  assertCollectionItemsVisibleToViewer: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchIndex>()),
   collectionsSearchIndex: { queueUpdate: vi.fn() },
@@ -30,8 +36,8 @@ vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => 
 const { mockBustFeaturedModelsCache } = vi.hoisted(() => ({
   mockBustFeaturedModelsCache: vi.fn(),
 }));
-// collection.service loads model.service at the call site (it would otherwise close the image.service
-// import cycle), so this pins that the lazy call still happens.
+// collection.service loads model.service at the call site, so this pins that the lazy call still
+// happens.
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelService>()),
   bustFeaturedModelsCache: mockBustFeaturedModelsCache,

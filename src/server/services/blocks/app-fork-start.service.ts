@@ -41,7 +41,17 @@ import JSZip from 'jszip';
 import type { NextApiRequest } from 'next';
 import { TRPCError } from '@trpc/server';
 
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import {
+  redis,
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
+import { throwAppRateLimited } from '~/server/utils/app-rate-limit';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
+import { getUsageLimitDef } from '~/shared/constants/usage-limits';
+import { boundedClusterCall, takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
 import { logToAxiom } from '~/server/logging/client';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
@@ -57,10 +67,10 @@ import {
   FORK_NOT_ALLOWED_MESSAGE,
   FORK_NO_APPROVED_VERSION_MESSAGE,
   FORK_PARENT_UNAVAILABLE_MESSAGE,
-  FORK_RATE_LIMITED_MESSAGE,
+  forkRateLimitedMessage,
   FORK_SETTING_DISABLED_MESSAGE,
   FORK_SOURCE_UNREADABLE_MESSAGE,
-  FORK_START_LIMITS,
+  FORK_START_LIMIT_IDS,
   FORK_TOO_LARGE_MESSAGE,
   FORK_UNAVAILABLE_HERE_MESSAGE,
 } from '~/shared/constants/app-fork.constants';
@@ -382,19 +392,26 @@ export async function readForkSession(forkSlug: string): Promise<ForkSession | n
 // ---------------------------------------------------------------------------
 
 /**
- * Count one fork start against each of the user's windows ({@link FORK_START_LIMITS}). Refuses
+ * Count one fork start against each of the user's windows ({@link FORK_START_LIMIT_IDS}). Refuses
  * with TOO_MANY_REQUESTS past any cap, and FAILS CLOSED (SERVICE_UNAVAILABLE) when the counter
  * cannot be read: every start builds and uploads a copy of an app's source.
  */
-async function consumeForkStart(userId: number): Promise<void> {
-  for (const { windowSeconds, max } of FORK_START_LIMITS) {
-    const key = `${REDIS_SYS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${userId}:${windowSeconds}` as const;
+async function consumeForkStart(user: SessionUser): Promise<void> {
+  // The user's limits, from the registry (a KeyValue override, else the code defaults).
+  const limits = await Promise.all(
+    FORK_START_LIMIT_IDS.map(async (id) => {
+      const { window } = getUsageLimitDef(id);
+      if (window.type !== 'rolling') throw new Error(`${id} is not a rolling window`);
+      return { id, windowSeconds: window.seconds, max: await resolveUserAppLimit(id, user) };
+    })
+  );
+  const message = forkRateLimitedMessage(limits[0].max, limits[1].max);
+  const userId = user.id;
+  for (const { id, windowSeconds, max } of limits) {
+    const key = `${REDIS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${userId}:${windowSeconds}` as const;
     let count: number;
     try {
-      const result = await withSysReadDeadline(
-        sysRedis.multi().set(key, '0', { NX: true, EX: windowSeconds }).incr(key).exec()
-      );
-      count = Number((result as unknown[] | null)?.[1]);
+      count = await takeClusterWindowCount('consumeForkStart', key, windowSeconds);
     } catch {
       throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: FORK_BUSY_MESSAGE });
     }
@@ -402,7 +419,16 @@ async function consumeForkStart(userId: number): Promise<void> {
       throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: FORK_BUSY_MESSAGE });
     }
     if (count > max) {
-      throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: FORK_RATE_LIMITED_MESSAGE });
+      // A failed TTL read falls back to the whole window: the wait is at most that.
+      const ttl = await boundedClusterCall('consumeForkStart', () => redis.ttl(key)).catch(
+        () => windowSeconds
+      );
+      throwAppRateLimited(id, ttl > 0 ? ttl : windowSeconds, message, {
+        limit: max,
+        used: count,
+        windowSeconds,
+        resetAt: new Date(Date.now() + (ttl > 0 ? ttl : windowSeconds) * 1000),
+      });
     }
   }
 }
@@ -529,7 +555,7 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: FORK_NO_APPROVED_VERSION_MESSAGE });
   }
 
-  await consumeForkStart(user.id);
+  await consumeForkStart(user);
 
   // Reserve a slug: free in the database, then claimed atomically by the session's SET NX.
   const now = new Date();
@@ -624,7 +650,7 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
       name: 'app-fork-start-failed',
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: FORK_SOURCE_UNREADABLE_MESSAGE });
   }
 }
@@ -700,7 +726,7 @@ export async function applyForkSessionToFirstPublishRequest(args: {
         name: 'app-fork-session-provenance-failed',
         type: 'error',
         message: err instanceof Error ? err.message : String(err),
-      }).catch(() => null);
+      });
     }
     return false;
   }

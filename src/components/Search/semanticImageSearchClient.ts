@@ -1,6 +1,7 @@
 import type { InstantSearchProps } from 'react-instantsearch';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { baseModels } from '~/shared/constants/basemodel.constants';
+import { Flags } from '~/shared/utils/flags';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { trpcVanilla } from '~/utils/trpc';
 
@@ -190,10 +191,29 @@ export function createOffsetPager() {
   };
 }
 
+/**
+ * The image search page's "Search instead for": the query the viewer chose to search as typed, without
+ * the service's spelling correction. In memory, as the page's URL is InstantSearch's to write.
+ */
+let imageSearchAsTyped: string | undefined;
+export const setImageSearchAsTyped = (query: string | undefined) => {
+  imageSearchAsTyped = query;
+};
+
 export function createSemanticImageSearch({
   search = (input: SearchInput) => trpcVanilla.semanticImageSearch.search.query(input),
-}: { search?: (input: SearchInput) => Promise<SearchOutput> } = {}) {
+  asTyped = () => imageSearchAsTyped,
+}: {
+  search?: (input: SearchInput) => Promise<SearchOutput>;
+  asTyped?: () => string | undefined;
+} = {}) {
   const fetchPage = createOffsetPager();
+  // A search for any other query ends the choice, so retyping the query later is corrected again.
+  const searchedAsTyped = (query: string) => {
+    const chosen = asTyped();
+    if (chosen !== undefined && chosen !== query) setImageSearchAsTyped(undefined);
+    return chosen === query;
+  };
 
   return async function searchImages(indexName: string, params: RequestParams) {
     const query = params.query?.trim();
@@ -220,6 +240,8 @@ export function createSemanticImageSearch({
       baseModels: refined.get('baseModel'),
       types: refined.get('type') as MediaType[] | undefined,
       ...readPostedRange(params.numericFilters),
+      // Only for the query it was chosen for: a new search is corrected again.
+      ...(query && searchedAsTyped(query) ? { spellcheck: false as const } : {}),
     };
     const page = await fetchPage({
       query: query ?? '',
@@ -249,10 +271,72 @@ async function searchFacetValues(facetName: string, facetQuery: string) {
   return [];
 }
 
+type MyImagesInput = Parameters<typeof trpcVanilla.image.getMyImages.query>[0];
+type MyImagesOutput = Awaited<ReturnType<typeof trpcVanilla.image.getMyImages.query>>;
+
+export type OwnerImageUser = {
+  id: number;
+  username?: string | null;
+  image?: string | null;
+  profilePicture?: unknown;
+};
+
+/** Cap on the owner's newest images and videos the empty picker lists. */
+export const OWNER_LIST_LIMIT = 100;
+
+/**
+ * The showcase picker's Images, offered with or without image search. A typed query goes to the
+ * semantic search, scoped by the `user.username` facet (without the flag the server serves only the
+ * caller's own name). An empty one lists the caller's recent published images and videos, which the
+ * semantic search cannot, at the viewer's browsing level.
+ */
+export function createOwnerImageSearch({
+  searchImages = createSemanticImageSearch(),
+  getMyImages = (input: MyImagesInput) => trpcVanilla.image.getMyImages.query(input),
+  getUser = () => undefined,
+}: {
+  searchImages?: ReturnType<typeof createSemanticImageSearch>;
+  getMyImages?: (input: MyImagesInput) => Promise<MyImagesOutput>;
+  /** The caller, whose images the empty list is: that query's rows carry no `user`. */
+  getUser?: () => OwnerImageUser | undefined;
+} = {}) {
+  return async function searchOwnerImages(indexName: string, params: RequestParams) {
+    if (params.query?.trim()) return searchImages(indexName, params);
+
+    const empty = emptyResult(indexName, params);
+    const hitsPerPage = params.hitsPerPage ?? 0;
+    // shortcut: the first page only; the picker shows one page.
+    if (!hitsPerPage || params.page) return empty;
+    const browsingLevel = readBrowsingLevel(params.filters);
+    const { items } = await getMyImages({
+      limit: Math.max(hitsPerPage, OWNER_LIST_LIMIT),
+      // The owner's own list, not the semantic search, so videos can be offered here.
+      mediaTypes: [MediaType.image, MediaType.video],
+      publishedOnly: true,
+    });
+    const user = getUser();
+    const hits = items
+      .filter((item) => !browsingLevel || Flags.intersects(browsingLevel, item.nsfwLevel))
+      .map((item) => {
+        // The row's blurred placeholder needs these, which this query keeps in `metadata`.
+        const { hash, width, height } = (item.metadata ?? {}) as {
+          hash?: string;
+          width?: number;
+          height?: number;
+        };
+        return { ...item, hash, width, height, objectID: String(item.id), ...(user && { user }) };
+      });
+    return { ...empty, hits, nbHits: hits.length, nbPages: 1 };
+  };
+}
+
 /** Routes the images index to the semantic search; every other index goes to `client`. */
 export function withSemanticImageSearch(
   client: SearchClient,
-  searchImages = createSemanticImageSearch()
+  searchImages: (
+    indexName: string,
+    params: RequestParams
+  ) => Promise<unknown> = createSemanticImageSearch()
 ): SearchClient {
   return {
     ...client,

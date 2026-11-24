@@ -187,10 +187,11 @@ describe('GET /api/v1/images → feed-go shadow, through the handler', () => {
     const before = await shapeCounts();
     await serve({ modelVersionId: '9' });
     await serve({ ids: '1,2' });
+    await serve({ imageId: '5' });
     await serve({ limit: '999' });
     const after = await shapeCounts();
-    expect((after.ported ?? 0) - (before.ported ?? 0)).toBe(1);
-    expect((after.unported_ids ?? 0) - (before.unported_ids ?? 0)).toBe(1);
+    expect((after.ported ?? 0) - (before.ported ?? 0)).toBe(2);
+    expect((after.unported_imageId ?? 0) - (before.unported_imageId ?? 0)).toBe(1);
     expect((after.non200 ?? 0) - (before.non200 ?? 0)).toBe(1);
   });
 });

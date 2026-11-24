@@ -1,4 +1,5 @@
 import type { SessionUser } from '~/types/session';
+import type { AppUsageLimitId } from '~/shared/constants/app-usage-limits';
 import type { UsageLimitConfig } from '~/shared/constants/usage-limits';
 import {
   defaultUsageLimitConfig,
@@ -92,11 +93,11 @@ const defaults: Required<UserAppCapsDeps> = {
   isOptInEnabled: async (user) =>
     (await import('~/server/services/app-blocks-flag')).isAppLimitsUpgradePromptEnabled({ user }),
   readOptIn: async (userId) => {
-    const [{ sysRedis }, { buzzOptInRedisKey }] = await Promise.all([
+    const [{ redis }, { buzzOptInRedisKey }] = await Promise.all([
       import('~/server/redis/client'),
       import('~/server/services/blocks/block-buzz-cap'),
     ]);
-    return (await sysRedis.get(buzzOptInRedisKey(userId))) === '1';
+    return (await redis.get(buzzOptInRedisKey(userId))) === '1';
   },
 };
 
@@ -221,4 +222,47 @@ export async function docStoreUserLimits(
 ): Promise<{ userBytes: number; userDocs: number }> {
   const { plan } = await resolvePlan(userId, { ...defaults, ...deps });
   return { userBytes: plan.docBytes, userDocs: plan.docCount };
+}
+
+/**
+ * One user's limit for an App Platform registry entry (`app-usage-limits.ts`) that its enforcing
+ * service counts itself: the code default, or the `usage-limits` KeyValue override. The one place
+ * those services read their limit, so what an override sets is what is enforced.
+ *
+ * A limit with no score or tier rule (every code default) is the same for everyone, so it is
+ * resolved without reading the user. With one, `user` is resolved as `SessionUser.tier` and the
+ * Creator Score in its `meta`: pass the session user where the caller has it; given only an id,
+ * the session is read, and a failed read serves the lowest value any tier gets. A DISABLED
+ * product limit is `Infinity` (not enforced); an abuse limit cannot be disabled (the registry
+ * refuses the override). Never throws: a failed config read serves the code defaults.
+ */
+export async function resolveUserAppLimit(
+  id: AppUsageLimitId,
+  user: SessionUser | number | null,
+  deps: Pick<UserAppCapsDeps, 'getConfig' | 'getSessionUser'> = {}
+): Promise<number> {
+  const d = { ...defaults, ...deps };
+  let config: UsageLimitConfig = defaultUsageLimitConfig;
+  try {
+    config = await d.getConfig();
+  } catch {
+    config = defaultUsageLimitConfig;
+  }
+  const values = config.get(id) ?? getUsageLimitDef(id);
+  if (values.disabled) return Number.POSITIVE_INFINITY;
+  if (!values.byTier && !values.byScore?.length) return values.base;
+  let subject: SessionUser | null = null;
+  if (typeof user === 'number') {
+    try {
+      subject = await d.getSessionUser(user);
+    } catch {
+      subject = null;
+    }
+  } else {
+    subject = user;
+  }
+  if (subject) return resolveUsageLimitValues(values, subject).limit;
+  return Math.min(
+    ...usageLimitTiers.map((tier) => resolveUsageLimitValues(values, { tier }).limit)
+  );
 }

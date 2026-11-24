@@ -1,11 +1,15 @@
 import { sql } from '@civitai/db/kysely';
 import { heldImageSql, SERVED_ACTIVITY } from '@civitai/shared/held-media';
+import { canAccess } from './access';
 import { dbRead } from './db';
 import { insertModActivity, recordModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
 
 /** The page whose grant opens held media. */
 export const HELD_MEDIA_PAGE = '/images/csam';
+
+export const holdsCsamReview = (user: App.Locals['user'] | undefined) =>
+  canAccess(user, HELD_MEDIA_PAGE);
 
 export type HeldMedia = { url: string; type: string; mimeType: string | null };
 
@@ -30,7 +34,7 @@ export function recordHeldGridView(moderatorId: number, count: number) {
     entityId: count,
     activity: 'heldMedia:grid',
   });
-  void logToAxiom({ name: 'held-media-grid', type: 'info', moderatorId, count }).catch(() => null);
+  void logToAxiom({ name: 'held-media-grid', type: 'info', moderatorId, count });
 }
 
 /** One image opened from byte 0, with the credential that fetched it. Throws when the row is not
@@ -47,5 +51,5 @@ export function recordHeldView(moderatorId: number, imageId: number, credential:
 
 /** Every response carrying held bytes, mid-file ranges included. */
 export function recordHeldServe(record: Record<string, unknown>) {
-  void logToAxiom(record).catch(() => null);
+  void logToAxiom(record);
 }

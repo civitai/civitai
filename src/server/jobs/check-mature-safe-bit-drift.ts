@@ -12,22 +12,20 @@ export const checkMatureSafeBitDrift = createJob(
     const result = await enqueueMatureSafeBitDrift();
     const { versionCount, modelCount, overCap, enqueuedVersions, enqueuedModels } = result;
     if (overCap) {
-      await logToAxiom({
+      logToAxiom({
         type: 'error',
         name: 'mature-safe-bit-drift',
         message: `${
           versionCount + modelCount
         } drifted rows, over the cap of ${MATURE_SAFE_BIT_DRIFT_CAP}; nothing queued`,
-        versionCount,
-        modelCount,
+        payload: { versionCount, modelCount },
       });
     } else if (versionCount + modelCount > 0) {
-      await logToAxiom({
+      logToAxiom({
         type: 'warning',
         name: 'mature-safe-bit-drift',
         message: `queued ${enqueuedVersions} versions and ${enqueuedModels} models for recompute`,
-        versionCount,
-        modelCount,
+        payload: { versionCount, modelCount },
       });
     }
     return result;

@@ -88,7 +88,7 @@ export async function getChatRedesignRecipients({
         path: 'chat.getChatRedesignRecipients',
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return new Set();
   }
 

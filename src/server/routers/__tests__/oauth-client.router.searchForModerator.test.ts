@@ -18,7 +18,7 @@ const APP_BLOCK_EXCLUDE = { NOT: { id: { startsWith: 'appblk-' } } };
 type Row = {
   id: string;
   name: string;
-  allowedScopes: number;
+  allowedScopes: bigint;
   logoUrl: string | null;
   isConfidential: boolean;
   isVerified: boolean;
@@ -65,7 +65,7 @@ const nonMod = { id: 3, isModerator: false, tier: 'free', username: 'user', onbo
 function row(over: Partial<Row> & { id: string }): Row {
   return {
     name: 'Client',
-    allowedScopes: 1,
+    allowedScopes: 1n,
     logoUrl: null,
     isConfidential: true,
     isVerified: false,

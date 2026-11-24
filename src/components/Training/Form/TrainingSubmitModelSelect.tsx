@@ -1,7 +1,9 @@
 import type { MantineColor } from '@mantine/core';
 import {
+  Alert,
   Anchor,
   Badge,
+  Button,
   Card,
   Group,
   Indicator,
@@ -11,10 +13,11 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { IconAlertCircle, IconExclamationCircle } from '@tabler/icons-react';
-import { openConfirmModal } from '@mantine/modals';
+import { IconAlertCircle, IconCheck, IconExclamationCircle } from '@tabler/icons-react';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { useGenerationLicenseFor } from '~/components/form-graph/generation/useGenerationLicense';
+import { GenerationLicenseTermsText } from '~/components/generation_v2/GenerationLicenseTermsText';
 import { StudioOnlyModelsNotice } from '~/components/Training/TrainingStudioSwitch';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
@@ -57,6 +60,7 @@ import {
   trainingDetailsBaseModelsLtx25,
   trainingDetailsBaseModelsMageFlow,
   trainingDetailsBaseModelsMiniMaxH3,
+  trainingDetailsBaseModelsMiniMaxH3Image,
   trainingDetailsBaseModelsQwen,
   trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
@@ -84,11 +88,13 @@ import {
   isSamplePromptsRequired,
   parseAudioCaption,
   type TrainingBaseModelType,
+  trainingLicenseEcosystem,
   trainingModelInfo,
 } from '~/utils/training';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { useTrainingImageStore } from '~/store/training.store';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export const ModelSelector = ({
   status,
@@ -421,9 +427,9 @@ export const ModelSelect = ({
   const makeDefaultParams = (data: TrainingRunUpdate) => {
     const isChangingBase = !!data.base && data.base !== selectedRun.base;
     if (isChangingBase && isParamsDirty) {
-      openConfirmModal({
+      openConfirm({
         title: 'Change base model?',
-        children: (
+        message: (
           <Text size="sm">
             Changing the base model will reset your training parameters to the defaults for the new
             model. Your current parameter changes will be lost.
@@ -441,6 +447,7 @@ export const ModelSelect = ({
   const formBaseModel = selectedRun.base;
   const selectedDown = modelUnavailability(status, formBaseModel);
   const isCustomModel = !!selectedRun.customModel;
+  const license = useGenerationLicenseFor(trainingLicenseEcosystem(formBaseModel));
 
   const baseModelInfo = !isCustomModel
     ? trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList]
@@ -567,6 +574,11 @@ export const ModelSelect = ({
   const baseModelMageFlow =
     !!formBaseModel &&
     (trainingDetailsBaseModelsMageFlow as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelMiniMaxH3Image =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsMiniMaxH3Image as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
   const baseModelIdeogram4 =
@@ -826,6 +838,18 @@ export const ModelSelect = ({
                       isNew={new Date() < new Date('2026-09-19')}
                     />
                   )}
+                  {features.minimaxh3ImageTraining && (
+                    <ModelSelector
+                      status={status}
+                      selectedRun={selectedRun}
+                      color="violet"
+                      name="MiniMax H3 Image"
+                      value={baseModelMiniMaxH3Image}
+                      baseType="minimaxh3image"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew={new Date() < new Date('2026-12-18')}
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'audio' && (
@@ -998,6 +1022,7 @@ export const ModelSelect = ({
                   selectedRun.baseType === 'ltx23' ||
                   selectedRun.baseType === 'ltx25' ||
                   selectedRun.baseType === 'minimaxh3' ||
+                  selectedRun.baseType === 'minimaxh3image' ||
                   selectedRun.baseType === 'hidream-o1' ||
                   selectedRun.baseType === 'ming' ||
                   selectedRun.baseType === 'qwen21' ||
@@ -1014,6 +1039,22 @@ export const ModelSelect = ({
                     subject to change.
                   </AlertWithIcon>
                 ) : undefined}
+                {license.blocked && license.terms && (
+                  <Alert color="yellow" title={license.terms.title}>
+                    <GenerationLicenseTermsText terms={license.terms} />
+                    <Button
+                      color="yellow"
+                      variant="light"
+                      onClick={license.accept}
+                      loading={license.accepting}
+                      leftSection={<IconCheck />}
+                      mt="sm"
+                      fullWidth
+                    >
+                      I agree to these terms
+                    </Button>
+                  </Alert>
+                )}
               </Stack>
             </Card.Section>
           )}

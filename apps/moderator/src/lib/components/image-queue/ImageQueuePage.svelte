@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AgentBadge from '$lib/components/AgentBadge.svelte';
   import { enhance } from '$app/forms';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { untrack } from 'svelte';
@@ -9,10 +10,12 @@
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
   import AgeBadge from '$lib/components/AgeBadge.svelte';
+  import MatureRestrictedBadge from '$lib/components/MatureRestrictedBadge.svelte';
   import QueueHeader from './QueueHeader.svelte';
   import QueueSelectionBar from './QueueSelectionBar.svelte';
   import ReviewActions from './ReviewActions.svelte';
   import AppealActions from './AppealActions.svelte';
+  import { WITHHELD_REFUSED } from '$lib/held-media';
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
@@ -21,7 +24,7 @@
   import { csamCaptureReportUrl, csamReportUrl, userLookupUrl } from '$lib/entity-url';
   import type { FeedbackCaptureStamp } from '$lib/server/image-review.service';
   import CsamQueueTabs from './CsamQueueTabs.svelte';
-  import { isFlagOnlyRemaining } from '$lib/image-review';
+  import { FLAG_KEPT_THROUGH_BLOCK, isFlagOnlyRemaining } from '$lib/image-review';
   import { ReportEntity, reportDetailEntries, reportedPlacementId } from '$lib/reports';
   import LastWorked from '$lib/components/report-queue/LastWorked.svelte';
   import StickerPlacementRemove from '$lib/components/report-queue/StickerPlacementRemove.svelte';
@@ -43,6 +46,9 @@
       held?: string;
       imageId?: number;
       heldImageIds?: number[];
+      alreadyRemoved?: string;
+      closedReportIds?: number[];
+      notMoved?: string;
     } | null;
   } = $props();
 
@@ -69,6 +75,21 @@
     for (const item of untrack(() => data.items))
       if (held.has(item.id)) acted.set(keyOfItem(item), 'Held for confirmation');
   });
+  // What a verdict does to a removed image, for the card's Removed badge.
+  const removedTitle = (item: { needsReview: string | null; blockedFor: string | null; ruleBlocked: boolean }) =>
+    item.needsReview === FLAG_KEPT_THROUGH_BLOCK
+      ? 'Under CSAM review: that queue decides it, and neither verdict acts on it here.'
+      : item.blockedFor === 'CSAM'
+        ? 'Removed for CSAM: Unaction is refused.'
+        : item.blockedFor === 'moderated' && item.ruleBlocked
+          ? 'Blocked by an automated rule: Unaction restores it, Remove makes it a moderator removal.'
+          : item.blockedFor === 'moderated'
+            ? 'Already removed: Unaction will not restore it, and either verdict closes this report.'
+            : `Removed (${item.blockedFor ?? 'blocked'}): Unaction restores it.`;
+  // A report on an image a moderator already removed is closed, not ruled on: its card says so.
+  $effect(() => {
+    for (const id of form?.closedReportIds ?? []) acted.set(id, 'Closed: already removed');
+  });
   // imageId → appeal resolution message (bound to each appeal card's textarea).
   const messages = new SvelteMap<number, string>();
   const drafts = new SvelteMap<number, RulingDraft<ResolutionVerdict<'appeal'>>>();
@@ -82,10 +103,11 @@
     selected.clear();
   });
 
-  const itemKeys = $derived(data.items.map((i) => ('report' in i ? i.report.id : i.id)));
+  const selectable = $derived(data.items.filter((i) => !('restricted' in i && i.restricted)));
+  const itemKeys = $derived(selectable.map((i) => ('report' in i ? i.report.id : i.id)));
 
   const selectedItems = $derived(
-    data.items.filter((i) => selected.has('report' in i ? i.report.id : i.id))
+    selectable.filter((i) => selected.has('report' in i ? i.report.id : i.id))
   );
   // Deduped: two selected reports on one image are two cards but one image, and the action would
   // otherwise be posted `5,5` and report twice the work it did.
@@ -99,6 +121,15 @@
           .map((i) => i.id)
       ),
     ].join(',')
+  );
+  const verdictFlags = $derived(
+    JSON.stringify(
+      Object.fromEntries(
+        selectedItems
+          .filter((i) => !('ingestion' in i && 'needsReview' in i && isFlagOnlyRemaining(i)))
+          .flatMap((i) => ('needsReview' in i ? [[i.id, i.needsReview ?? null]] : []))
+      )
+    )
   );
   const selectedReportIds = $derived(
     selectedItems
@@ -190,6 +221,15 @@
   </div>
 {/if}
 
+{#if form?.alreadyRemoved || form?.notMoved}
+  <div
+    class="mb-3 rounded-md border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-sm text-sky-200"
+    role="status"
+  >
+    {[form.alreadyRemoved, form.notMoved].filter(Boolean).join(' ')}
+  </div>
+{/if}
+
 {#if form?.error}
   <div
     class="mb-3 rounded-md border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-red-200"
@@ -207,6 +247,7 @@
   tagOptions={data.tagOptions}
   {itemKeys}
   {selected}
+  agentFilter={data.kind === 'reported' ? data.agentFilter : null}
 >
   {#snippet meta()}
     {#if reported}<LastWorked entity={ReportEntity.Image} />{/if}
@@ -250,6 +291,7 @@
   username: string | null;
   profilePicture?: boolean | null;
   capture?: FeedbackCaptureStamp | null;
+  modelRestricted: boolean;
 })}
   {#if item.capture}
     <!-- A capture's owner is a system account and its reporter is not its subject: never a profile. -->
@@ -280,6 +322,7 @@
     {/if}
   </div>
   {/if}
+  <MatureRestrictedBadge restricted={item.modelRestricted} />
 {/snippet}
 
 <!-- Accept / Remove for the review queues, Unaction / Remove for the reported one. A `reportId`
@@ -392,7 +435,16 @@
       {@render userHeader(item)}
       <div class="rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs">
         <div class="flex items-center justify-between gap-2">
-          <span class="font-semibold text-amber-400">{item.report.reason}</span>
+          {#if !item.restricted}<span class="font-semibold text-amber-400">{item.report.reason}</span>{/if}
+          {#if item.removed}
+            <Badge
+              class="bg-muted"
+              title={removedTitle(item)}>Removed</Badge
+            >
+          {/if}
+          {#if item.deleteRequested}
+            <Badge class="shrink-0 bg-red-500/15 text-red-400" title="Its owner deleted it; it is kept until its child-safety review is complete">Deletion requested</Badge>
+          {/if}
           {#if item.report.count > 0}
             <span class="shrink-0 text-muted-foreground">+{item.report.count} others</span>
           {/if}
@@ -405,14 +457,17 @@
           >
             {item.report.username ?? `[deleted] #${item.report.userId}`}
           </a>
+          {#if item.report.agentFiled}<AgentBadge />{/if}
           · {new Date(item.report.createdAt).toLocaleDateString()}
         </div>
-        {#each reportDetailEntries(item.report.details) as [k, v] (k)}
-          <p class="mt-1 text-muted-foreground/90">
-            <span class="font-semibold">{formatEnum(k)}:</span>
-            {v}
-          </p>
-        {/each}
+        {#if !item.restricted}
+          {#each reportDetailEntries(item.report.details) as [k, v] (k)}
+            <p class="mt-1 text-muted-foreground/90">
+              <span class="font-semibold">{formatEnum(k)}:</span>
+              {v}
+            </p>
+          {/each}
+        {/if}
       </div>
       {@const placementId = reportedPlacementId(item.report.details, item.report.reason)}
       {#if canAct}
@@ -439,17 +494,19 @@
       <div class="flex flex-col gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/5 p-2 text-xs">
         <div>
           <span class="font-semibold text-rose-400">Removed:</span>
-          {formatEnum(item.tosReason ?? item.blockedFor ?? 'TOS violation')}
+          {#if !item.restricted}{formatEnum(item.tosReason ?? item.blockedFor ?? 'TOS violation')}{/if}
           {#if item.removedAt}
             <span class="text-muted-foreground">
               · by {item.moderatorUsername ?? 'moderator'} · {fmt(item.removedAt)}
             </span>
           {/if}
         </div>
-        <div>
-          <span class="font-semibold text-sky-400">Appeal:</span>
-          <span class="text-muted-foreground/90">{item.appeal.message}</span>
-        </div>
+        {#if !item.restricted}
+          <div>
+            <span class="font-semibold text-sky-400">Appeal:</span>
+            <span class="text-muted-foreground/90">{item.appeal.message}</span>
+          </div>
+        {/if}
         <div class="text-muted-foreground">
           by
           <a
@@ -478,7 +535,11 @@
           </div>
         {/if}
       </div>
-      <AppealActions {item} verdict={verdictOf(item)} {selected} {messages} {drafts} {submit} />
+      {#if item.restricted}
+        <p class="text-xs text-dark-2">{WITHHELD_REFUSED}</p>
+      {:else}
+        <AppealActions {item} verdict={verdictOf(item)} {selected} {messages} {drafts} {submit} />
+      {/if}
       {@render model3dAffordance(item)}
       {@render appealHistory(item)}
     {/snippet}
@@ -495,7 +556,9 @@
   >
     {#snippet card(item)}
       {@render userHeader(item)}
-      {#if data.view === 'poi'}
+      {#if item.restricted}
+        <!-- Withheld: nothing that says why. -->
+      {:else if data.view === 'poi'}
         <div class="flex flex-wrap gap-1">
           <Badge class="bg-orange-500/15 text-orange-400">POI</Badge>
           {#each item.reviewTags as reviewTag (reviewTag.id)}
@@ -576,6 +639,7 @@
   {selected}
   imageIds={selectedImageIds}
   {verdictImageIds}
+  {verdictFlags}
   reportIds={selectedReportIds}
   submit={bulkSubmit}
   appeal={data.kind === 'appeal'}

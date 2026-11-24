@@ -54,6 +54,16 @@ export const LOCK_REVIEW_UNAVAILABLE = "That setting can't be reviewed this way.
 export const LOCK_REVIEW_HELD =
   "The owner's account is under an evidence hold, so this review can't be approved now.";
 /** Moderators only. */
+/**
+ * Whether a real-person or minor detection on the model aliased `m` still waits for a moderator: a
+ * text-scan flag the scan raised again, or a poi hash match. With `hasPendingMinorHashMatch`, what
+ * stops a lock review's approval; the nsfw lock backfill skips the same models.
+ */
+export const modelDetectionHeldSql = Prisma.sql`COALESCE(
+  m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' ? 'redetected'
+  OR m.meta->${TEXT_SCAN_FLAGS_KEY}->'minor' ? 'redetected'
+  OR m.meta ? ${POI_HASH_MATCH_KEY}, FALSE)`;
+
 export const LOCK_REVIEW_DETECTION_HELD =
   'A real person or minor detection on this model is waiting for a moderator. Rule on it first, or reject this review.';
 /** The re-judging job only: the lock is no longer the intent lock it judged, so a moderator decides. */
@@ -265,7 +275,7 @@ export async function resolveLockReviewAppeal({
       });
       throw throwBadRequestError(LOCK_REVIEW_MATCH_CHECK_FAILED);
     });
-  const { claimed, unlocked, dispute } = await dbWrite.$transaction(async (tx) => {
+  const { claimed, unlocked, dispute, cooldown } = await dbWrite.$transaction(async (tx) => {
     const [row] = await tx.$queryRaw<
       {
         id: number;
@@ -288,9 +298,7 @@ export async function resolveLockReviewAppeal({
           'comFaceIntent', jsonb_build_object('laterVerdict', m.meta->'comFaceIntent'->'laterVerdict')
         ) AS "verdictMeta",
         a."userId" = m."userId" AS "ownerFiled",
-        COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' ? 'redetected'
-          OR m.meta->${TEXT_SCAN_FLAGS_KEY}->'minor' ? 'redetected'
-          OR m.meta ? ${POI_HASH_MATCH_KEY}, FALSE) AS "detectionHeld",
+        ${modelDetectionHeldSql} AS "detectionHeld",
         ${
           approve ? accountHoldSql(Prisma.raw('m."userId"'), markerView) : Prisma.sql`FALSE`
         } AS held
@@ -304,6 +312,11 @@ export async function resolveLockReviewAppeal({
     const asked = parseLockReviewContext(row?.context);
     if (!row || !asked)
       throw throwBadRequestError('This model has no pending locked-setting review');
+    // The moderator UI filters these, but the endpoint is callable directly.
+    const misapplied =
+      resolvedReason &&
+      resolutionReasonError('lockReview', status, resolvedReason, internalNotes, asked.locks);
+    if (misapplied) throw throwBadRequestError(misapplied);
 
     let lift: RequestableLock[] = [];
     if (approve) {
@@ -387,6 +400,9 @@ export async function resolveLockReviewAppeal({
     return {
       claimed,
       unlocked: lift,
+      // As `getLockReviewState` decides it: only a ruling that left every asked setting locked.
+      cooldown:
+        asked.locks.every((key) => (row.lockedProperties ?? []).includes(key)) && !lift.length,
       dispute: asked.dispute === COM_FACE_INTENT_DISPUTE ? row : null,
     };
   });
@@ -405,12 +421,15 @@ export async function resolveLockReviewAppeal({
       autoReview: context?.autoReview ?? null,
       autoReviewAttempts: context?.autoReviewAttempts ?? null,
       firstPromptId: dispute.intentPromptId,
-    }).catch(() => undefined);
+    });
   }
 
   if (unlocked.length) await preventReplicationLag('model', modelId);
   // The ruling is committed: a failed notice must not read as a failed ruling, which cannot be retried.
-  await settleResolvedAppeals(claimed, { status, lockReview: { unlocked } }).catch((error: Error) =>
+  await settleResolvedAppeals(claimed, {
+    status,
+    lockReview: { unlocked, reason: resolvedReason, cooldown },
+  }).catch((error: Error) =>
     logToAxiom({
       type: 'error',
       name: 'lock-review-settle',

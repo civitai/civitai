@@ -2,7 +2,12 @@ import { includesMinor, includesPoi } from '~/utils/metadata/audit';
 import { BlocklistType } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
 import { escalateToServerFault } from '~/server/logging/server-fault-override';
-import { getBlocklistData, throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import {
+  findBlockedUserContent,
+  getBlocklistData,
+  throwOnBlockedUserContent,
+} from '~/server/services/blocklist.service';
+import { containsPrivateMediaUrl } from '~/server/services/apps/shared-private-media-urls';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { isPromptCheckUnavailable } from '~/server/services/orchestrator/prompt-check-unavailable';
 
@@ -58,10 +63,16 @@ export const SHARED_BODY_MAX = 4096;
 export type SharedBlockedCategory = 'minor' | 'poi' | 'link' | 'audit' | 'size' | 'pattern';
 
 /**
+ * Which field a refusal is for: one of the two, or `title and body` when only the two read
+ * together trip the check (or each trips it on its own). Never the term or the text.
+ */
+export type SharedBlockedField = 'title' | 'body' | 'title and body';
+
+/**
  * Thrown by `assertSharedTextSafe` when the text is rejected. Carries the
  * `category` so the caller can decide whether to file a Report (minor/poi/audit)
  * before converting to a user-facing TRPCError. NEVER leak the raw matched word to
- * the client beyond the audit machinery's own message.
+ * the client: every verdict's message is a fixed string (an audit block's included).
  *
  * `unchecked` means a check could not run, not that one found something. Only metrics read it
  * (`moderation_unavailable` vs `moderation_blocked`); it must not change the refusal.
@@ -69,12 +80,79 @@ export type SharedBlockedCategory = 'minor' | 'poi' | 'link' | 'audit' | 'size' 
 export class SharedContentBlockedError extends Error {
   readonly category: SharedBlockedCategory;
   readonly unchecked: boolean;
-  constructor(category: SharedBlockedCategory, message: string, options?: { unchecked?: boolean }) {
+  /** The refused field, when it could be placed (`locateRefusedField`); unset otherwise. */
+  readonly field?: SharedBlockedField;
+  constructor(
+    category: SharedBlockedCategory,
+    message: string,
+    options?: { unchecked?: boolean; field?: SharedBlockedField }
+  ) {
     super(message);
     this.name = 'SharedContentBlockedError';
     this.category = category;
     this.unchecked = options?.unchecked ?? false;
+    if (options?.field) this.field = options.field;
   }
+}
+
+/** `title`, `body` or `title and body` from which of the two trip a check on their own. */
+function fieldFrom(title: boolean, body: boolean): SharedBlockedField {
+  if (title && !body) return 'title';
+  if (body && !title) return 'body';
+  // Both on their own, or neither: only the two together trip it.
+  return 'title and body';
+}
+
+/**
+ * Where a refusal came from, found AFTER the belt refused, by re-checking the two fields one at
+ * a time with the check that refused. Runs only on a refusal, so a clean write costs nothing.
+ * Only the field is kept: never the matched term or the text. Returns undefined when the field
+ * cannot be placed (a re-check that fails, or a list hit that no single field carries), so a
+ * refusal never names a guessed field.
+ */
+async function locateRefusedField(
+  category: SharedBlockedCategory,
+  input: SharedTextSafetyInput
+): Promise<SharedBlockedField | undefined> {
+  const { title, body, isModerator } = input;
+  try {
+    switch (category) {
+      case 'minor':
+        return fieldFrom(!!includesMinor(title), !!includesMinor(body));
+      case 'poi':
+        return fieldFrom(!!includesPoi(title), !!includesPoi(body));
+      case 'link':
+      case 'pattern': {
+        // The lists read each value on its own, so a hit names its value by index.
+        const hits = (
+          await findBlockedUserContent([title, body ?? ''], {
+            exemptFromPatterns: isModerator ?? false,
+          })
+        ).filter((h) => h.kind === category);
+        const t = hits.some((h) => h.index === 0);
+        const b = hits.some((h) => h.index === 1);
+        return t || b ? fieldFrom(t, b) : undefined;
+      }
+      // An audit block is not placed: re-running the platform audit (an external classifier, with
+      // its own metrics) once per field to find out would cost a classifier call per refusal.
+      case 'audit':
+      case 'size':
+        return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+/** `err` with the refused field set, when it can be placed. */
+async function withRefusedField(
+  err: SharedContentBlockedError,
+  input: SharedTextSafetyInput
+): Promise<SharedContentBlockedError> {
+  if (err.unchecked || err.field) return err;
+  const field = await locateRefusedField(err.category, input);
+  if (!field) return err;
+  return new SharedContentBlockedError(err.category, err.message, { field });
 }
 
 export interface SharedTextSafetyInput {
@@ -101,129 +179,147 @@ export interface SharedTextSafetyInput {
 export async function assertSharedTextSafe(
   input: SharedTextSafetyInput
 ): Promise<{ title: string; body?: string }> {
-  const { title, body, userId, isModerator } = input;
-
-  // M3 — belt re-check (the schema is the primary gate).
-  if (title.length > SHARED_TITLE_MAX) {
-    throw new SharedContentBlockedError('size', 'Title exceeds the maximum length');
-  }
-  if (body != null && body.length > SHARED_BODY_MAX) {
-    throw new SharedContentBlockedError('size', 'Body exceeds the maximum length');
-  }
-
-  const combined = body ? `${title}\n${body}` : title;
-
-  // C3 — HARD legal fail FIRST. These signals (minor age / POI / CSAM composites)
-  // must reject + Report regardless of the account's mute state. Kept ahead of the
-  // general audit so a minor/POI hit is unambiguously classified for the caller's
-  // Report filing.
-  if (includesMinor(combined)) {
-    throw new SharedContentBlockedError('minor', 'Content flagged for review');
-  }
-  if (includesPoi(combined)) {
-    throw new SharedContentBlockedError('poi', 'Content flagged for review');
-  }
-
-  // M1 — both blocklists. `onBlocked` reports WHICH list rejected the text, so the category
-  // stays exact without reading the thrown message. The category decides whether the router files
-  // a Report; neither of these two does today, but they are kept distinct so that stays the
-  // router's decision rather than being flattened here.
-  //
-  // Two catches, split by whether caller input can reach the throw. Escalating a failure to a
-  // server fault makes the shared write budget refund it instead of charging a rejection, so the
-  // escalation is an allow-list: only a throw that caller text cannot induce may earn it.
-  //
-  // First, the two lists the guard reads (link domains + message patterns), read here BEFORE the
-  // guard with no caller input involved. A throw here is our outage: the text was never checked,
-  // so it is refused, but escalated with a retry message. Category 'link' because it files no
-  // Report and no alert; the retry message reaches shared-storage callers only (sub-listing
-  // callers substitute their own refusal). These run even when the guard would skip its own
-  // reads (both fields empty) — that costs the two list reads and keeps the escalation
-  // unconditional.
-  const retryMessage = 'Content could not be reviewed right now. Please try again.';
   try {
-    await Promise.all([
-      getBlocklistData(BlocklistType.LinkDomain),
-      getBlocklistData(BlocklistType.MessagePattern),
-    ]);
-  } catch {
-    throw escalateToServerFault(
-      new SharedContentBlockedError('link', retryMessage, { unchecked: true })
-    );
-  }
+    const { title, body, userId, isModerator } = input;
 
-  // Then the guard itself, which scans the caller's text. A block is rethrown as-is. Any OTHER
-  // throw is still refused with the retry message rather than escaping as a raw 500, but it is
-  // NOT escalated, so it is charged. The lists were just proven readable (the guard's Flipt read
-  // swallows its own failures), so three causes remain: a later list read racing an outage (rare,
-  // and bounded by the rejection bucket); list CONTENTS the scan cannot process (a malformed entry
-  // written into the shared cache key, which several apps populate); or a scan bug that a crafted
-  // input could trigger — and that last one must never become a free refund. All three are ours
-  // to see, and a charged BAD_REQUEST is classified as a client fault and never logged on its own,
-  // so the swallowed error is logged here at error severity. Its name and message only: never the
-  // title/body, which is user content.
-  try {
-    // `[title, body]`, NOT `combined`: the guard scans values separately so a pattern cannot match
-    // across the seam between two independent fields. Handing it the joined string reintroduces
-    // exactly the false positive that separation exists to prevent.
-    await throwOnBlockedUserContent([title, body], {
-      isModerator,
-      surface: 'appSharedStorage',
-      onBlocked: (kind) => {
-        throw kind === 'link'
-          ? new SharedContentBlockedError('link', 'Content contains a blocked link')
-          : new SharedContentBlockedError('pattern', 'Content flagged for review');
-      },
-    });
-  } catch (error) {
-    if (error instanceof SharedContentBlockedError) throw error;
-    logToAxiom({
-      name: 'app-shared-content-scan-failed',
-      type: 'error',
-      message: 'Shared-text blocklist scan threw; write refused and charged',
-      details: {
-        surface: 'appSharedStorage',
-        errorName: error instanceof Error ? error.name : typeof error,
-        errorMessage: error instanceof Error ? error.message : String(error),
-      },
-    }).catch(() => undefined);
-    throw new SharedContentBlockedError('link', retryMessage, { unchecked: true });
-  }
+    // M3 — belt re-check (the schema is the primary gate).
+    if (title.length > SHARED_TITLE_MAX) {
+      throw new SharedContentBlockedError('size', 'Title exceeds the maximum length', {
+        field: 'title',
+      });
+    }
+    if (body != null && body.length > SHARED_BODY_MAX) {
+      throw new SharedContentBlockedError('size', 'Body exceeds the maximum length', {
+        field: 'body',
+      });
+    }
 
-  // C3 — full platform audit (regex + external moderation). isGreen:true forces
-  // the SFW + profanity ceiling for community text. `track` omitted (the
-  // block-token path has no request Tracker); auditPromptServer guards on it.
-  //
-  // 🔴 This call REJECTS; it does not count. With isGreen:true a hard block takes
-  // auditPromptServer's green branch, which skips addBlockedPrompt and
-  // reportProhibitedRequest entirely; a soft block calls reportProhibitedRequest
-  // with count 0 and no `track`, so nothing is written and the mute threshold is
-  // never reached. No block on this path contributes to auto-mute today.
-  try {
-    await auditPromptServer({
-      prompt: combined,
-      userId,
-      isGreen: true,
-      isModerator,
-    });
-  } catch (e) {
-    // The audit could not run (its retry-able 503: the external classifier unavailable, or the
-    // audit's own reads failing). That is our outage, not a verdict on the text, so it is refused
-    // exactly like the list-read outage above: category 'link' (no Report row, no content-block
-    // alert), `unchecked` (recorded as moderation_unavailable) and escalated (the write budget
-    // refunds it). PROMPT_CHECK_FAIL_CLOSED=off restores the previous handling: an `audit` block.
-    if (isPromptCheckUnavailable(e)) {
+    const combined = body ? `${title}\n${body}` : title;
+
+    // C3 — HARD legal fail FIRST. These signals (minor age / POI / CSAM composites)
+    // must reject + Report regardless of the account's mute state. Kept ahead of the
+    // general audit so a minor/POI hit is unambiguously classified for the caller's
+    // Report filing.
+    if (includesMinor(combined)) {
+      throw new SharedContentBlockedError('minor', 'Content flagged for review');
+    }
+    if (includesPoi(combined)) {
+      throw new SharedContentBlockedError('poi', 'Content flagged for review');
+    }
+
+    // Orchestrator media links belong to the viewer who made them, not to other viewers.
+    if (containsPrivateMediaUrl(combined)) {
+      throw new SharedContentBlockedError('link', 'Content contains a blocked link');
+    }
+
+    // M1 — both blocklists. `onBlocked` reports WHICH list rejected the text, so the category
+    // stays exact without reading the thrown message. The category decides whether the router files
+    // a Report; neither of these two does today, but they are kept distinct so that stays the
+    // router's decision rather than being flattened here.
+    //
+    // Two catches, split by whether caller input can reach the throw. Escalating a failure to a
+    // server fault makes the shared write budget refund it instead of charging a rejection, so the
+    // escalation is an allow-list: only a throw that caller text cannot induce may earn it.
+    //
+    // First, the two lists the guard reads (link domains + message patterns), read here BEFORE the
+    // guard with no caller input involved. A throw here is our outage: the text was never checked,
+    // so it is refused, but escalated with a retry message. Category 'link' because it files no
+    // Report and no alert; the retry message reaches shared-storage callers only (sub-listing
+    // callers substitute their own refusal). These run even when the guard would skip its own
+    // reads (both fields empty) — that costs the two list reads and keeps the escalation
+    // unconditional.
+    const retryMessage = 'Content could not be reviewed right now. Please try again.';
+    try {
+      await Promise.all([
+        getBlocklistData(BlocklistType.LinkDomain),
+        getBlocklistData(BlocklistType.MessagePattern),
+      ]);
+    } catch {
       throw escalateToServerFault(
         new SharedContentBlockedError('link', retryMessage, { unchecked: true })
       );
     }
-    // Any other throw is an `audit` block.
-    const message = e instanceof Error ? e.message : 'Content was flagged';
-    throw new SharedContentBlockedError('audit', message);
-  }
 
-  // Store RAW (Fix 2 / 2026-07 security review): escape-at-rest was removed — see
-  // the C2 note. Every safety control above ran on the raw text; the returned value
-  // is the un-escaped, store-ready form.
-  return { title, body: body != null ? body : undefined };
+    // Then the guard itself, which scans the caller's text. A block is rethrown as-is. Any OTHER
+    // throw is still refused with the retry message rather than escaping as a raw 500, but it is
+    // NOT escalated, so it is charged. The lists were just proven readable (the guard's Flipt read
+    // swallows its own failures), so three causes remain: a later list read racing an outage (rare,
+    // and bounded by the rejection bucket); list CONTENTS the scan cannot process (a malformed entry
+    // written into the shared cache key, which several apps populate); or a scan bug that a crafted
+    // input could trigger — and that last one must never become a free refund. All three are ours
+    // to see, and a charged BAD_REQUEST is classified as a client fault and never logged on its own,
+    // so the swallowed error is logged here at error severity. Its name and message only: never the
+    // title/body, which is user content.
+    try {
+      // `[title, body]`, NOT `combined`: the guard scans values separately so a pattern cannot match
+      // across the seam between two independent fields. Handing it the joined string reintroduces
+      // exactly the false positive that separation exists to prevent.
+      await throwOnBlockedUserContent([title, body], {
+        isModerator,
+        surface: 'appSharedStorage',
+        onBlocked: (kind) => {
+          throw kind === 'link'
+            ? new SharedContentBlockedError('link', 'Content contains a blocked link')
+            : new SharedContentBlockedError('pattern', 'Content flagged for review');
+        },
+      });
+    } catch (error) {
+      if (error instanceof SharedContentBlockedError) throw error;
+      logToAxiom({
+        name: 'app-shared-content-scan-failed',
+        type: 'error',
+        message: 'Shared-text blocklist scan threw; write refused and charged',
+        details: {
+          surface: 'appSharedStorage',
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        },
+      });
+      throw new SharedContentBlockedError('link', retryMessage, { unchecked: true });
+    }
+
+    // C3 — full platform audit (regex + external moderation). isGreen:true forces
+    // the SFW + profanity ceiling for community text. `track` omitted (the
+    // block-token path has no request Tracker); auditPromptServer guards on it.
+    //
+    // 🔴 This call REJECTS; it does not count. With isGreen:true a hard block takes
+    // auditPromptServer's green branch, which skips addBlockedPrompt and
+    // reportProhibitedRequest entirely; a soft block calls reportProhibitedRequest
+    // with count 0 and no `track`, so nothing is written and the mute threshold is
+    // never reached. No block on this path contributes to auto-mute today.
+    try {
+      await auditPromptServer({
+        prompt: combined,
+        userId,
+        isGreen: true,
+        isModerator,
+      });
+    } catch (e) {
+      // The audit could not run (its retry-able 503: the external classifier unavailable, or the
+      // audit's own reads failing). That is our outage, not a verdict on the text, so it is refused
+      // exactly like the list-read outage above: category 'link' (no Report row, no content-block
+      // alert), `unchecked` (recorded as moderation_unavailable) and escalated (the write budget
+      // refunds it). PROMPT_CHECK_FAIL_CLOSED=off restores the previous handling: an `audit` block.
+      if (isPromptCheckUnavailable(e)) {
+        throw escalateToServerFault(
+          new SharedContentBlockedError('link', retryMessage, { unchecked: true })
+        );
+      }
+      // Any other throw is an `audit` block, refused with a FIXED message: the audit's own
+      // ("Your prompt was flagged: <words>") names what it matched, and a refusal never does.
+      throw new SharedContentBlockedError('audit', 'Content flagged for review');
+    }
+
+    // Store RAW (Fix 2 / 2026-07 security review): escape-at-rest was removed — see
+    // the C2 note. Every safety control above ran on the raw text; the returned value
+    // is the un-escaped, store-ready form.
+    return { title, body: body != null ? body : undefined };
+  } catch (err) {
+    // A verdict names the field it is for (`locateRefusedField`); an outage, or anything that is
+    // not a verdict, is rethrown as it is (an escalated outage keeps its server-fault mark).
+    if (err instanceof SharedContentBlockedError && !err.unchecked) {
+      throw await withRefusedField(err, input);
+    }
+    throw err;
+  }
 }

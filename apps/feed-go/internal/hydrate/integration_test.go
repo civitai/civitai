@@ -279,7 +279,7 @@ func integWantUser(t *testing.T, u BasicUser, id int, username, image any, delet
 		}
 		return
 	}
-	if at, ok := u.DeletedAt.(time.Time); !ok || !at.Equal(*deletedAt) {
+	if at, ok := u.DeletedAt.(*time.Time); !ok || !at.Equal(*deletedAt) {
 		t.Fatalf("user %d deletedAt = %#v, want %v", id, u.DeletedAt, *deletedAt)
 	}
 }
@@ -302,7 +302,9 @@ func TestIntegrationCosmeticsAndUserCosmetics(t *testing.T) {
 	if ids := integKeys(got); !reflect.DeepEqual(ids, []int{1102001, 1102002}) {
 		t.Fatalf("ids = %v, want [1102001 1102002]", ids)
 	}
-	if s, want := integPlain(t, got[1102001]), `{"id":1102001,"name":"integ-cosmetic-hit","type":"Badge","data":{"animated":true,"url":"integ-badge"},"source":"Trophy","flags":3}`; s != want {
+	// The cached record's `data` keeps the order it was written in (Entry.Ordered); the replica row's
+	// json column below is decoded into a map, its keys sorted.
+	if s, want := integPlain(t, got[1102001]), `{"id":1102001,"name":"integ-cosmetic-hit","type":"Badge","data":{"url":"integ-badge","animated":true},"source":"Trophy","flags":3}`; s != want {
 		t.Fatalf("cache hit:\n got %s\nwant %s", s, want)
 	}
 	if s, want := integPlain(t, got[1102002]), `{"id":1102002,"name":"integ-cosmetic-db","type":"ContentDecoration","data":{"glow":2,"url":"integ-frame-db"},"source":"Purchase","flags":5}`; s != want {
@@ -323,7 +325,7 @@ func TestIntegrationCosmeticsAndUserCosmetics(t *testing.T) {
 		t.Fatalf("user ids = %v, want [1102101]", ids)
 	}
 	// The undefined `cosmetic` of the unknown record is omitted by Plain (JSON.stringify).
-	want := `[{"cosmeticId":1102001,"data":{"color":"integ-red"},"cosmetic":{"id":1102001,"name":"integ-cosmetic-hit","type":"Badge","data":{"animated":true,"url":"integ-badge"},"source":"Trophy","flags":3}},` +
+	want := `[{"cosmeticId":1102001,"data":{"color":"integ-red"},"cosmetic":{"id":1102001,"name":"integ-cosmetic-hit","type":"Badge","data":{"url":"integ-badge","animated":true},"source":"Trophy","flags":3}},` +
 		`{"cosmeticId":1102002,"data":null,"cosmetic":{"id":1102002,"name":"integ-cosmetic-db","type":"ContentDecoration","data":{"glow":2,"url":"integ-frame-db"},"source":"Purchase","flags":5}},` +
 		`{"cosmeticId":1102004,"data":null}]`
 	if s := integPlain(t, uc[1102101]); s != want {
@@ -342,21 +344,24 @@ func TestIntegrationProfilePictures(t *testing.T) {
 		  (1103102, 'integ-pp-db', 'integ-pp-url', 1103002, 2, 'integ-pp-hash', 'Scanned', 'image', 96, 97, '{"size": 1234}', NULL),
 		  (1103103, 'integ-pp-blocked', 'integ-pp-blocked-url', 1103003, 1, NULL, 'Blocked', 'image', 10, 11, '{}', NULL),
 		  (1103104, 'integ-pp-pending', 'integ-pp-pending-url', 1103004, 1, NULL, 'Pending', 'image', 10, 11, '{}', NULL),
-		  (1103105, 'integ-pp-csam', 'integ-pp-csam-url', 1103005, 1, NULL, 'Scanned', 'image', 10, 11, '{}', 'csam');
+		  (1103105, 'integ-pp-csam', 'integ-pp-csam-url', 1103005, 1, NULL, 'Scanned', 'image', 10, 11, '{}', 'csam'),
+		  (1103107, 'integ-pp-minor', 'integ-pp-minor-url', 1103007, 1, NULL, 'Scanned', 'image', 10, 11, '{}', 'minor'),
+		  (1103108, 'integ-pp-poi', 'integ-pp-poi-url', 1103008, 1, NULL, 'Scanned', 'image', 10, 11, '{}', 'poi');
 		INSERT INTO "User" (id, username, "profilePictureId") VALUES
 		  (1103002, 'integ-pp-user2', 1103102), (1103003, 'integ-pp-user3', 1103103),
 		  (1103004, 'integ-pp-user4', 1103104), (1103005, 'integ-pp-user5', 1103105),
-		  (1103006, 'integ-pp-user6', NULL);`)
+		  (1103006, 'integ-pp-user6', NULL), (1103007, 'integ-pp-user7', 1103107),
+		  (1103008, 'integ-pp-user8', 1103108);`)
 	e.put(t, KeyProfilePictures, 1103001, integtest.O("id", 1103101, "name", "integ-pp-hit", "url", "integ-pp-hit-url",
 		"nsfwLevel", 1, "hash", nil, "userId", 1103001, "ingestion", "Scanned", "type", "image", "width", 50, "height", 51,
 		"metadata", integtest.O("hash", "integ-blur"), "extra", "dropped"))
 
-	got, err := e.src.ProfilePictures(integtest.Ctx(t), []int{1103001, 1103002, 1103003, 1103004, 1103005, 1103006})
+	got, err := e.src.ProfilePictures(integtest.Ctx(t), []int{1103001, 1103002, 1103003, 1103004, 1103005, 1103006, 1103007, 1103008})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ids := integKeys(got); !reflect.DeepEqual(ids, []int{1103001, 1103002}) {
-		t.Fatalf("ids = %v, want [1103001 1103002] (blocked, unscanned, csam and no-picture users absent)", ids)
+	if ids := integKeys(got); !reflect.DeepEqual(ids, []int{1103001, 1103002, 1103008}) {
+		t.Fatalf("ids = %v, want [1103001 1103002 1103008] (blocked, unscanned, csam, minor and no-picture users absent; another review stays)", ids)
 	}
 	if s, want := integPlain(t, got[1103001]), `{"id":1103101,"name":"integ-pp-hit","url":"integ-pp-hit-url","nsfwLevel":1,"hash":null,"userId":1103001,"ingestion":"Scanned","type":"image","width":50,"height":51,"metadata":{"hash":"integ-blur"}}`; s != want {
 		t.Fatalf("cache hit:\n got %s\nwant %s", s, want)
@@ -601,6 +606,30 @@ func TestIntegrationUserIDByUsername(t *testing.T) {
 	}
 	if id, ok, err := e.src.UserIDByUsername(ctx, "integ_nobody"); err != nil || ok || id != 0 {
 		t.Fatalf("unknown = %d, %v, %v; want 0, false, nil", id, ok, err)
+	}
+}
+
+// TagIDByName is the one tag lookup by name model.getAll and /api/v1/models both read. "Tag".name is
+// citext, so a name in any case finds the tag, as getModelsRaw's findUnique does on the replica.
+func TestIntegrationTagIDByName(t *testing.T) {
+	e := integSetup(t, true)
+	integtest.Exec(t, e.pool, `DELETE FROM "Tag" WHERE id BETWEEN 1190000 AND 1190999;
+		INSERT INTO "Tag" (id, name) VALUES (1190001, 'integ-character'), (1190002, 'Integ Mixed Tag');`)
+	ctx := integtest.Ctx(t)
+	for name, want := range map[string]int{
+		"integ-character": 1190001, "Integ-Character": 1190001, "INTEG-CHARACTER": 1190001,
+		"Integ Mixed Tag": 1190002, "integ mixed tag": 1190002,
+	} {
+		id, found, err := TagIDByName(ctx, e.pool, name)
+		if err != nil || !found || id != want {
+			t.Errorf("%q = %d, %v, %v; want %d, true, nil", name, id, found, err, want)
+		}
+	}
+	// No such tag; and a near miss is no match (citext folds case, nothing else).
+	for _, name := range []string{"integ-nosuch", "integ-character ", "integ_character"} {
+		if id, found, err := TagIDByName(ctx, e.pool, name); err != nil || found || id != 0 {
+			t.Errorf("%q = %d, %v, %v; want 0, false, nil", name, id, found, err)
+		}
 	}
 }
 

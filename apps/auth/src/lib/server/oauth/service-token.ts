@@ -6,7 +6,7 @@ import { authenticatedConfidentialClient, clientIdMismatch } from './client-auth
 import { SERVICE_GRANT } from './constants';
 import { findExchangeResource, isServiceClient } from './exchange-resources';
 import { basicCredentials } from './http';
-import { checkOAuthRateLimit } from './rate-limit';
+import { checkOAuthRateLimit, oauthRetryAfter, rateLimitedResponse } from './rate-limit';
 import { parseScopeRequest } from './scope';
 import { EXCHANGED_TOKEN_MAX_TTL, scopeNames, writeExchangeRecord } from './token-exchange';
 import { getSigner } from './user-exchange';
@@ -25,12 +25,11 @@ type ServiceTokenError =
   | 'server_error'
   | 'temporarily_unavailable';
 
-const STATUS: Record<ServiceTokenError, number> = {
+const STATUS: Record<Exclude<ServiceTokenError, 'rate_limited'>, number> = {
   invalid_request: 400,
   invalid_target: 400,
   unauthorized_client: 400,
   invalid_scope: 400,
-  rate_limited: 429,
   server_error: 500,
   temporarily_unavailable: 503,
 };
@@ -77,9 +76,14 @@ export async function handleServiceToken(input: ServiceTokenInput): Promise<Resp
   const ctx: Record<string, string | undefined> = { client: client.id };
 
   const refuse = (error: ServiceTokenError, reason: string, extra?: Record<string, string>) => {
-    void logToAxiom({ event: 'service_token', result: 'refused', error, reason, ...ctx }).catch(
-      () => undefined
-    );
+    void logToAxiom({ event: 'service_token', result: 'refused', error, reason, ...ctx });
+    if (error === 'rate_limited') {
+      return rateLimitedResponse(
+        oauthRetryAfter('token-service'),
+        { ...NO_STORE, ...extra },
+        DESCRIPTION[error]
+      );
+    }
     return json(
       { error, error_description: DESCRIPTION[error] },
       { status: STATUS[error], headers: { ...NO_STORE, ...extra } }
@@ -88,7 +92,7 @@ export async function handleServiceToken(input: ServiceTokenInput): Promise<Resp
 
   try {
     if (!(await checkOAuthRateLimit('token-service', client.id))) {
-      return refuse('rate_limited', 'client limit', { 'Retry-After': '60' });
+      return refuse('rate_limited', 'client limit');
     }
     if (input.resources.length !== 1 || !input.resources[0]) {
       return refuse('invalid_request', 'exactly one resource is required');
@@ -107,20 +111,18 @@ export async function handleServiceToken(input: ServiceTokenInput): Promise<Resp
     if (body.scope !== undefined) {
       const requested = parseScopeRequest(body.scope);
       if (!requested || requested.openid) return refuse('invalid_scope', 'unparseable scope');
-      if ((requested.scope & ~entry.scopes) !== 0) {
+      if ((requested.scope & ~entry.scopes) !== 0n) {
         return refuse('invalid_scope', 'scope outside entry');
       }
       scope = requested.scope;
     }
-    if (scope === 0) return refuse('invalid_scope', 'empty scope');
+    if (scope === 0n) return refuse('invalid_scope', 'empty scope');
     ctx.scope = scopeNames(scope);
 
     const issuer = env.AUTH_JWT_ISSUER;
     const tokenSigner = getSigner();
     if (!issuer || !tokenSigner) {
-      void logToAxiom({ type: 'error', name: 'service-token-not-configured' }).catch(
-        () => undefined
-      );
+      void logToAxiom({ type: 'error', name: 'service-token-not-configured' });
       return refuse('server_error', 'issuer or signing key not configured');
     }
 
@@ -148,7 +150,7 @@ export async function handleServiceToken(input: ServiceTokenInput): Promise<Resp
         type: 'error',
         name: 'service-token-sign-failed',
         message: String(err),
-      }).catch(() => undefined);
+      });
       return refuse('server_error', 'signing failed');
     }
 
@@ -170,19 +172,17 @@ export async function handleServiceToken(input: ServiceTokenInput): Promise<Resp
         type: 'error',
         name: 'service-token-record-failed',
         message: String(err),
-      }).catch(() => undefined);
+      });
       return refuse('server_error', 'token record not stored');
     }
 
-    void logToAxiom({ event: 'service_token', result: 'ok', ...ctx }).catch(() => undefined);
+    void logToAxiom({ event: 'service_token', result: 'ok', ...ctx });
     return json(
       { access_token: accessToken, token_type: 'Bearer', expires_in: exp - iat, scope: ctx.scope },
       { headers: NO_STORE }
     );
   } catch (err) {
-    void logToAxiom({ type: 'error', name: 'service-token-error', message: String(err) }).catch(
-      () => undefined
-    );
+    void logToAxiom({ type: 'error', name: 'service-token-error', message: String(err) });
     return refuse('temporarily_unavailable', 'lookup failed', { 'Retry-After': '5' });
   }
 }

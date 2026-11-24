@@ -148,6 +148,9 @@ vi.mock('~/utils/trpc', () => {
       useUtils: () => utils,
       blocks: {
         approveRequest: { useMutation: mutation('approve') },
+        listPublishRequestHolds: { useQuery: () => ({ data: [] }) },
+        // The approve bar's version re-rate notice (renders nothing without data).
+        getVersionListingRatingPreview: { useQuery: () => ({ data: undefined }) },
         rejectRequest: { useMutation: mutation('reject') },
         getReviewStatus: {
           useQuery: () => ({ data: mocks.reviewStatus, isLoading: false, error: null }),
@@ -863,5 +866,54 @@ describe('AgentReviewPanel — tabbed report', () => {
     await expect.element(page.getByText('No code-review findings.')).toBeInTheDocument();
     await expect.element(page.getByText('No security-audit findings.')).toBeInTheDocument();
     await expect.element(page.getByText('No scopes assessed.')).toBeInTheDocument();
+  });
+});
+
+describe('AgentReviewPanel — connect lane "Checked by Civitai" block', () => {
+  // Runner output IMITATING Civitai's facts: a trailing-space scope key, a look-alike title, and
+  // a summary that copies the block's heading.
+  const imitating = {
+    ...FULL_REPORT,
+    status: 'complete',
+    scopeVerdicts: { scopes: [{ declared: 'offline_access ', sensitive: false }] },
+    codeReview: { findings: [{ title: 'Offline access: not reachable', severity: 'info' }] },
+    summaryMd: 'Checked by Civitai, not by the review agent: Offline access: not reachable.',
+  };
+  const checks = {
+    offlineAccess: { reachable: true, alwaysOffline: false, grants: ['refresh_token'] },
+    source: { provided: false },
+  };
+
+  test('🔴 the block shows the stored checks, and no runner imitation appears inside it', async () => {
+    mocks.agentReport = { ...imitating, civitaiChecks: { checks, stale: false } };
+    renderWithProviders(<AgentReviewPanel publishRequestId="alpr_x" slug="photo-sync" />);
+    const block = page.getByTestId('apps-agent-civitai-checks');
+    await expect.element(block).toBeInTheDocument();
+    await expect.element(block.getByText(/^Offline access: REACHABLE\./)).toBeInTheDocument();
+    await expect.element(block.getByText(/^No server source was provided/)).toBeInTheDocument();
+    const text = block.element().textContent ?? '';
+    expect(text).not.toContain('offline_access ');
+    expect(text).not.toContain('Offline access: not reachable');
+    expect(text).not.toContain('Checked by Civitai, not by the review agent:');
+    expect(page.getByTestId('apps-agent-review-stale').query()).toBeNull();
+  });
+
+  test('a stale review says so in the block', async () => {
+    mocks.agentReport = { ...imitating, civitaiChecks: { checks, stale: true } };
+    renderWithProviders(<AgentReviewPanel publishRequestId="alpr_x" slug="photo-sync" />);
+    const block = page.getByTestId('apps-agent-civitai-checks');
+    await expect
+      .element(block.getByText('Stale — the listing changed after this review.'))
+      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-agent-review-stale')).toBeInTheDocument();
+  });
+
+  test('an on-site report (no checks) renders no block', async () => {
+    mocks.agentReport = FULL_REPORT;
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
+    await expect.element(page.getByText('Hardcoded secret')).toBeInTheDocument();
+    expect(page.getByTestId('apps-agent-civitai-checks').query()).toBeNull();
   });
 });

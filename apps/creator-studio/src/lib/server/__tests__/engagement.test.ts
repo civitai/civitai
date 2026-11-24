@@ -9,11 +9,21 @@ import {
   type Driver,
   type QueryResult,
 } from 'kysely';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const holder = vi.hoisted(() => ({ db: null as unknown }));
+const holder = vi.hoisted(() => ({
+  db: null as unknown,
+  // ClickHouse fake. The runs read honours its ORDER BY direction and LIMIT 1, so reading the
+  // oldest day (or a day from anywhere else) is caught; the rank read returns `ranks`.
+  ch: {
+    days: [] as string[],
+    ranks: [] as { modelId: number; rank: number }[],
+    fail: false,
+    queries: [] as string[],
+  },
+}));
 
 // Kysely compiled for Postgres and executed on PGlite, so the query's joins and filters run against real rows.
 class PgliteDriver implements Driver {
@@ -44,11 +54,32 @@ vi.mock('$lib/server/db', () => ({
     return holder.db;
   },
 }));
+vi.mock('$lib/server/clickhouse', () => ({
+  getClickhouse: () => ({
+    async $query(sql: string) {
+      holder.ch.queries.push(sql);
+      if (holder.ch.fail) throw new Error('clickhouse down');
+      if (sql.includes('model_hot_rank_runs')) {
+        const days = [...holder.ch.days].sort();
+        if (/ORDER BY day DESC/.test(sql)) days.reverse();
+        return (/LIMIT 1\b/.test(sql) ? days.slice(0, 1) : days).map((day) => ({ day }));
+      }
+      return holder.ch.ranks;
+    },
+  }),
+}));
 vi.mock('$lib/server/cache', () => ({
   createCache: ({ fetch }: { fetch: unknown }) => ({ get: fetch }),
 }));
 
-const { getModelEngagement } = await import('../engagement');
+const { getModelEngagement, getHotRanks, hotRankAsOf } = await import('../engagement');
+
+beforeEach(() => {
+  holder.ch.days = [];
+  holder.ch.ranks = [];
+  holder.ch.fail = false;
+  holder.ch.queries = [];
+});
 
 const ME = 1;
 const OTHER = 2;
@@ -104,5 +135,56 @@ describe('getModelEngagement', () => {
         .map((r) => r.modelId)
         .sort()
     ).toEqual([10, 14]);
+  });
+});
+
+describe('getHotRanks', () => {
+  it("reads the latest complete day's rank for the creator's published models only", async () => {
+    holder.ch.days = ['2026-11-19', '2026-11-20', '2026-11-18'];
+    holder.ch.ranks = [
+      { modelId: 12, rank: 594 },
+      { modelId: 10, rank: 31_000 },
+    ];
+
+    const { day, ranks } = await getHotRanks({ userId: ME });
+
+    expect(day).toBe('2026-11-20');
+    expect(ranks).toEqual({ 10: 31_000, 12: 594 });
+    const rankRead = holder.ch.queries.find((q) => q.includes('model_hot_rank_daily'));
+    expect(rankRead).toContain("toDate('2026-11-20')");
+    // 15 is a draft and 16 is another creator's: neither may be asked for.
+    expect(
+      rankRead
+        ?.match(/IN \(([^)]*)\)/)?.[1]
+        .split(',')
+        .map(Number)
+        .sort()
+    ).toEqual([10, 11, 12, 13, 14]);
+  });
+
+  it('reads no ranks when no snapshot day is complete yet', async () => {
+    expect(await getHotRanks({ userId: ME })).toEqual({ day: null, ranks: {} });
+    expect(holder.ch.queries.some((q) => q.includes('model_hot_rank_daily'))).toBe(false);
+  });
+
+  // The cache stores whatever fetch returns: a failure must throw, or "no rank" is cached for an hour.
+  it('throws when ClickHouse fails, rather than returning no ranks', async () => {
+    holder.ch.fail = true;
+
+    await expect(getHotRanks({ userId: ME })).rejects.toThrow('clickhouse down');
+  });
+});
+
+describe('hotRankAsOf', () => {
+  const at = (iso: string) => new Date(iso);
+
+  it("says last night for today's run, and for yesterday's until today's has had until 06:00 UTC", () => {
+    expect(hotRankAsOf('2026-11-21', at('2026-11-21T23:00Z'))).toBe('as of last night');
+    expect(hotRankAsOf('2026-11-20', at('2026-11-21T05:30Z'))).toBe('as of last night');
+  });
+
+  it('shows the date once a night was missed', () => {
+    expect(hotRankAsOf('2026-11-20', at('2026-11-21T07:00Z'))).toBe('as of 2026-11-20');
+    expect(hotRankAsOf(null, at('2026-11-21T07:00Z'))).toBeNull();
   });
 });

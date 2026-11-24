@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { TokenScope } from '@civitai/auth/token-scope';
 
@@ -10,7 +11,7 @@ import { TokenScope } from '@civitai/auth/token-scope';
 
 const h = vi.hoisted(() => ({
   user: { id: 7 } as { id: number } | null,
-  consent: undefined as { scope: number } | undefined,
+  consent: undefined as { scope: number | bigint } | undefined,
   rateLimitAllowed: true,
   firstParty: false,
   skipConsent: false,
@@ -39,7 +40,8 @@ vi.mock('$lib/server/db/db', () => ({
   },
 }));
 vi.mock('$lib/server/oauth/server', () => ({ oauthServer: { authorize: h.authorize } }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
   checkOAuthRateLimit: async (bucket: string) => {
     h.rateLimitCalls.push(bucket);
     return h.rateLimitAllowed;

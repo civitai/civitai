@@ -116,7 +116,7 @@ async function renderPayload(
         type: 'error',
         message: 'push render endpoint failed',
         data: { status: res.status, notificationType: type },
-      }).catch(() => null);
+      });
       return null;
     }
     const data = (await res.json()) as { results: (PushPayload | null)[] };
@@ -238,7 +238,7 @@ async function sendToSubscription(sub: SubscriptionRow, payload: PushPayload, ty
         type: 'error',
         message: 'push payload too large — payload bug, not a subscription bug',
         data: { bytes: body.length },
-      }).catch(() => null);
+      });
       try {
         await webPush.sendNotification(
           subscription,

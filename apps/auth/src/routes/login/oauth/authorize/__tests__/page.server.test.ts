@@ -1,14 +1,39 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { TokenScope } from '@civitai/auth/token-scope';
 
 /** The consent screen never renders a client_credentials-only scope for a user to approve. */
 
+const consentRow = vi.hoisted(() => ({
+  current: undefined as Record<string, unknown> | undefined,
+}));
+// The client's App Store connect listings (listing-offline.ts reads them); none by default, so the
+// client is unlisted and the offline line behaves as it did before listings counted.
+const listingRows = vi.hoisted(() => ({
+  current: [] as Record<string, unknown>[],
+  fail: false,
+}));
 vi.mock('$lib/server/db/db', () => ({
   db: {
-    selectFrom() {
+    selectFrom(table: string) {
       const qb: Record<string, unknown> = {};
       qb.select = () => qb;
       qb.where = () => qb;
+      if (table === 'OauthConsent') {
+        qb.executeTakeFirst = () => Promise.resolve(consentRow.current);
+        return qb;
+      }
+      // The ever-live markers (listing-offline.ts): none on record in these cases.
+      if (table === 'app_listing_publish_requests' || table === 'app_listing_moderation_events') {
+        qb.executeTakeFirst = () => Promise.resolve(undefined);
+        return qb;
+      }
+      if (table === 'app_listings') {
+        qb.execute = () =>
+          listingRows.fail
+            ? Promise.reject(new Error('db down'))
+            : Promise.resolve(listingRows.current);
+        return qb;
+      }
       qb.executeTakeFirst = () =>
         Promise.resolve({
           id: 'game-frame',
@@ -39,13 +64,17 @@ vi.mock('$lib/server/auth/session-producer', () => ({
 }));
 
 const { getGrantedScope } = vi.hoisted(() => ({
-  getGrantedScope: vi.fn(async (): Promise<number | null> => null),
+  getGrantedScope: vi.fn(async (): Promise<bigint | null> => null),
 }));
 vi.mock('$lib/server/oauth/granted-scope', () => ({ getGrantedScope }));
+const flags = vi.hoisted(() => ({ offlineGrant: false }));
+vi.mock('$lib/server/flipt', () => ({
+  isGlobalFlagOn: async (flag: string) => flag === 'oauth-offline-grant' && flags.offlineGrant,
+}));
 
 import { load } from '../+page.server';
 
-function loadWith(scope: number | string, extra: Record<string, string> = {}) {
+function loadWith(scope: bigint | string, extra: Record<string, string> = {}) {
   const url = new URL('https://auth.civitai.com/login/oauth/authorize');
   url.searchParams.set('client_id', 'game-frame');
   url.searchParams.set('redirect_uri', 'https://games.example.com/cb');
@@ -70,6 +99,19 @@ describe('consent screen load', () => {
       invalid: false,
       scopes: [{ label: 'Read profile, settings & email', isNew: false }],
     });
+  });
+
+  it('lists the Apps permissions (bits 31, 32) and submits them in the Approve form', async () => {
+    const page = await loadWith('AppsRead AppDataRead');
+    expect(page).toMatchObject({
+      invalid: false,
+      scopes: [
+        { label: 'Read profile, settings & email', isNew: false },
+        { label: 'See the Apps available to you', isNew: false },
+        { label: 'See your own data in Apps', isNew: false },
+      ],
+    });
+    expect((page.params as Record<string, string>).scope).toBe('6442450945');
   });
 
   it('forbids framing the consent screen', async () => {
@@ -135,5 +177,129 @@ describe('consent screen — permissions new to this app', () => {
     getGrantedScope.mockClear();
     await loadWith(request);
     expect(getGrantedScope).toHaveBeenCalledWith(7, 'game-frame');
+  });
+});
+
+describe('consent screen load — the offline line', () => {
+  const ask = { offline_buzz_limit: '500', offline_buzz_period: 'week' };
+  beforeEach(() => {
+    consentRow.current = undefined;
+    listingRows.current = [];
+    listingRows.fail = false;
+  });
+
+  const listing = (status: string, justifications: unknown) => ({
+    status,
+    connect_scope_justifications: justifications,
+  });
+
+  it('🔴 a listed connect client whose approved listing does NOT declare offline access gets no line', async () => {
+    flags.offlineGrant = true;
+    listingRows.current = [listing('approved', { ModelsWrite: 'uploads' })];
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline ?? null).toBeNull();
+    // …and the form does not carry offline_access on to /authorize.
+    expect((page.params as Record<string, string>).scope).toBe(String(TokenScope.UserRead));
+  });
+
+  // This fake returns `listingRows` as the query's result, so the rows are what the REAL query
+  // returns: only ever-live listings (approved / removed). The status filter itself is proven end
+  // to end in the token route's offline-grant suite, over a fake that applies `where`.
+  it('🔴 a declaration on a delisted (removed) listing does not count: no line', async () => {
+    flags.offlineGrant = true;
+    listingRows.current = [listing('removed', { offline_access: 'nightly sync' })];
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline ?? null).toBeNull();
+  });
+
+  it('no ever-live listing (the read returns none) → the unlisted rule: the line is shown', async () => {
+    flags.offlineGrant = true;
+    listingRows.current = [];
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline).not.toBeNull();
+  });
+
+  it('a listed client whose APPROVED listing declares offline access gets the line', async () => {
+    flags.offlineGrant = true;
+    listingRows.current = [listing('approved', { offline_access: 'nightly sync' })];
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline).toEqual({
+      cap: { limit: 500, period: 'week' },
+      custom: false,
+      granted: false,
+    });
+  });
+
+  it('🔴 fail-closed: listings that cannot be read → no line', async () => {
+    flags.offlineGrant = true;
+    listingRows.fail = true;
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline ?? null).toBeNull();
+  });
+
+  it('with the offline-grant flag off, is not shown and the Approve form is unchanged', async () => {
+    flags.offlineGrant = false;
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline ?? null).toBeNull();
+    expect((page.params as Record<string, string>).scope).toBe(String(TokenScope.UserRead));
+    expect(page.params).not.toHaveProperty('offline_buzz_limit');
+  });
+
+  it('with the flag on, is shown with the app’s proposed cap, and the form keeps offline_access', async () => {
+    flags.offlineGrant = true;
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline).toEqual({
+      cap: { limit: 500, period: 'week' },
+      custom: false,
+      granted: false,
+    });
+    expect(page.params).toMatchObject({
+      scope: `offline_access ${TokenScope.UserRead}`,
+      offline_buzz_limit: '500',
+      offline_buzz_period: 'week',
+    });
+  });
+
+  it('with the flag on, is not shown when the app did not ask for offline access', async () => {
+    flags.offlineGrant = true;
+    const page = await loadWith(TokenScope.UserRead, ask);
+    expect(page.offline ?? null).toBeNull();
+    expect((page.params as Record<string, string>).scope).toBe(String(TokenScope.UserRead));
+  });
+
+  it('starts ticked when this app already holds the grant, prefilled with its current cap', async () => {
+    flags.offlineGrant = true;
+    consentRow.current = {
+      scope: 1,
+      offlineGrantedAt: new Date('2026-11-01T00:00:00Z'),
+      buzzLimit: [{ type: 'sliding', limit: 800, window: 'day', unit: 30 }],
+    };
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline).toEqual({
+      cap: { limit: 800, period: 'month' },
+      custom: false,
+      granted: true,
+    });
+  });
+
+  it('starts unticked when the consent exists without the grant', async () => {
+    flags.offlineGrant = true;
+    consentRow.current = { scope: 1, offlineGrantedAt: null, buzzLimit: null };
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline).toMatchObject({ granted: false });
+  });
+
+  it('marks a cap the fields cannot show as custom, with blank fields, never the app’s proposal', async () => {
+    flags.offlineGrant = true;
+    consentRow.current = {
+      scope: 1,
+      offlineGrantedAt: null,
+      buzzLimit: [
+        { type: 'sliding', limit: 300, window: 'hour', unit: 1 },
+        { type: 'absolute', limit: 9000 },
+      ],
+    };
+    const page = await loadWith(`offline_access ${TokenScope.UserRead}`, ask);
+    expect(page.offline).toEqual({ cap: null, custom: true, granted: false });
   });
 });

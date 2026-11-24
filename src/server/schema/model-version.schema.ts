@@ -1,3 +1,4 @@
+import { aiToolkitOptionSchema } from '@civitai/shared/training-options';
 import type { ModelVersionTerms, RightsAffirmation } from '@civitai/buzz';
 import type { BaseModelAttestation } from '~/shared/constants/base-model-attestation.constants';
 import { MAX_LICENSING_FEE, maxLicensingFeeCeiling } from '@civitai/buzz';
@@ -83,6 +84,7 @@ export const trainingDetailsBaseModelsLtx2 = ['ltx2'] as const;
 export const trainingDetailsBaseModelsLtx23 = ['ltx23'] as const;
 export const trainingDetailsBaseModelsLtx25 = ['ltx25'] as const;
 export const trainingDetailsBaseModelsMiniMaxH3 = ['minimaxh3'] as const;
+export const trainingDetailsBaseModelsMiniMaxH3Image = ['minimaxh3image'] as const;
 export const trainingDetailsBaseModelsErnie = ['ernie'] as const;
 export const trainingDetailsBaseModelsHiDreamO1 = ['hidream_o1'] as const;
 export const trainingDetailsBaseModelsQwen21 = ['qwen21'] as const;
@@ -122,6 +124,7 @@ const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModelsIdeogram4,
   ...trainingDetailsBaseModelsMossImage,
   ...trainingDetailsBaseModelsFlux3Klein,
+  ...trainingDetailsBaseModelsMiniMaxH3Image,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
@@ -159,6 +162,7 @@ export const baseModelToTraningDetailsBaseModelMap: Partial<
 
 // Kohya-style training parameters (used by frontend and as legacy format)
 export const trainingDetailsParams = z.object({
+  ...aiToolkitOptionSchema.shape,
   unetLR: z.number(),
   textEncoderLR: z.number(),
   optimizerType: z.enum(optimizerTypes),
@@ -196,6 +200,7 @@ export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 
 // AI Toolkit training parameters (alternate format for database storage)
 export const aiToolkitTrainingDetailsParams = z.object({
+  ...aiToolkitOptionSchema.shape,
   engine: z.literal('ai-toolkit'),
   ecosystem: z.string(),
   modelVariant: z.string().optional(),
@@ -633,7 +638,8 @@ export type LicensingSourceRejection =
   | 'not-a-root'
   | 'base-model-mismatch'
   | 'model-not-found'
-  | 'model-type-mismatch';
+  | 'model-type-mismatch'
+  | 'restricted-root';
 
 export type GetLicensingRootsSchema = z.infer<typeof getLicensingRootsSchema>;
 export const getLicensingRootsSchema = z.object({
@@ -760,4 +766,11 @@ export const mergeVersionsSchema = z.object({
     )
     .optional(),
   appendDescriptions: z.boolean().default(false),
+});
+
+export type RevokeUserEarlyAccessInput = z.infer<typeof revokeUserEarlyAccessSchema>;
+export const revokeUserEarlyAccessSchema = z.object({
+  userId: z.number().int().positive(),
+  modelVersionId: z.number().int().positive(),
+  reason: z.string().trim().min(1).max(500),
 });

@@ -97,7 +97,13 @@ const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> 
     // `authorizeBlockBridgeToken`, after the subject is checked against the session user.
     // 16 → 17: `persistGenerationSource` (PERSIST_GENERATION_SOURCE), inline as in
     // `publishGenerationOutputs`, on `parseSubjectUserId(claims.sub)` after the session check.
-    calls: 17,
+    // 17 → 18: `authorizeOutputUnlockRequest`, the shared preamble of `previewOutputUnlock` and
+    // `unlockOutput`. One call site, on `parseSubjectUserId(claims.sub)` from
+    // `authorizeBlockBridgeToken`, after the subject is checked against the session user.
+    // 18 → 19: `persistUploadedGenerationSource` (a picked generation source kept as a scanned
+    // row), inline as in `persistGenerationSource`, on `parseSubjectUserId(claims.sub)` after the
+    // session check.
+    calls: 19,
     selfBinds: 'parseSubjectUserId(claims.sub) on claims from authorizeBlockBridgeToken',
     why: 'The tRPC bridge procs. Block-JWT-authed procedures (`previewPostFromApp`, `createPostFromApp` and `publishGenerationOutputs` additionally require a session matching the subject), so the flag is evaluated against the token subject, never ctx.user. Was 17 until two post-authorization halves moved out to be shared with their REST twins: `getImagesByIds` into block-gated-images-read.service.ts, and `updateUserSettings` into user-settings.service.ts. Neither call disappeared — both MOVED, and the entries below are where they went.',
   },
@@ -118,6 +124,12 @@ const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> 
     selfBinds:
       'parseSubjectUserId(claims.sub) on claims stamped by withBlockScope, passed in by the document-store route handler',
     why: 'The document-store resolver behind /api/v1/blocks/storage: the RUN gate on the viewer whose documents a request reads or writes, the same gate the legacy per-viewer storage path applies. The subject is the one the store keys private documents and authorship on.',
+  },
+  'src/server/services/apps/data-read-grant.ts': {
+    calls: 1,
+    selfBinds:
+      'reader.userId, which the CALLER supplies. doc-store-access.ts passes `via` (its consumer from a token withBlockScope verified) and never reaches this call; a caller without `via` must pass the user of a token it verified itself',
+    why: "The one collection-read predicate (decideCollectionRead): reading an app's stored data needs the reader to be allowed to run apps at all, the same RUN gate the document-store resolver applies. Skipped through `via`, where resolveStorageAccess already applied it to the same viewer.",
   },
   'src/server/services/blocks/block-media-serving.ts': {
     calls: 1,
@@ -211,7 +223,8 @@ describe('assertAppBlocksEnabledForTokenUser — production call-site ledger', (
     // and `user-settings.service.ts` (the extracted viewer-settings write body).
     // 4 → 5: `apps/doc-store-access.ts` (the document-store resolver).
     // 5 → 6: `block-media-serving.ts` (the workflow media read body).
-    expect(consumers.length).toBe(6);
+    // 6 → 7: `apps/data-read-grant.ts` (the collection-read predicate).
+    expect(consumers.length).toBe(7);
     expect(
       importsSharedGate(readFileSync(join(ROOT, 'src/pages/api/v1/blocks/me.ts'), 'utf8'))
     ).toBe(true);

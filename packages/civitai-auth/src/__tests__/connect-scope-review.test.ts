@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ALL_SCOPES,
   TokenScope,
-  tokenScopeLabels,
+  tokenScopeLabel,
   SCOPE_JUSTIFICATION_MAX_LENGTH,
   SENSITIVE_TOKEN_SCOPES,
   isSensitiveTokenScope,
@@ -21,16 +21,18 @@ describe('tokenScopeKeyByBit', () => {
   });
 
   it('returns undefined for an unknown / non-single bit', () => {
-    expect(tokenScopeKeyByBit(0)).toBeUndefined(); // None sentinel
+    expect(tokenScopeKeyByBit(0n)).toBeUndefined(); // None sentinel
     expect(tokenScopeKeyByBit(TokenScope.Full)).toBeUndefined(); // aggregate, not a single bit
-    expect(tokenScopeKeyByBit(2 ** 31)).toBeUndefined(); // undefined bit
+    expect(tokenScopeKeyByBit(2n ** 33n)).toBeUndefined(); // undefined bit
+    expect(tokenScopeKeyByBit(2n ** 31n)).toBe('AppsRead');
+    expect(tokenScopeKeyByBit(2n ** 32n)).toBe('AppDataRead');
     expect(tokenScopeKeyByBit(TokenScope.UserRead | TokenScope.ModelsRead)).toBeUndefined(); // multi-bit
   });
 });
 
 describe('tokenScopeMaskToList', () => {
   it('empty mask (0) yields no scopes', () => {
-    expect(tokenScopeMaskToList(0)).toEqual([]);
+    expect(tokenScopeMaskToList(0n)).toEqual([]);
   });
 
   it('single-bit mask yields that scope with bit/key/label', () => {
@@ -38,8 +40,16 @@ describe('tokenScopeMaskToList', () => {
       {
         bit: TokenScope.ModelsRead,
         key: 'ModelsRead',
-        label: tokenScopeLabels[TokenScope.ModelsRead],
+        label: tokenScopeLabel(TokenScope.ModelsRead),
       },
+    ]);
+  });
+
+  it('decodes bits 31 and 32 (AppsRead, AppDataRead) after the low bits', () => {
+    expect(tokenScopeMaskToList(6442450945n).map((s) => s.key)).toEqual([
+      'UserRead',
+      'AppsRead',
+      'AppDataRead',
     ]);
   });
 
@@ -49,7 +59,7 @@ describe('tokenScopeMaskToList', () => {
     expect(list.map((s) => s.key)).toEqual(['UserRead', 'ModelsRead', 'MediaWrite']);
     for (const s of list) {
       expect(tokenScopeKeyByBit(s.bit)).toBe(s.key);
-      expect(s.label).toBe(tokenScopeLabels[s.bit]);
+      expect(s.label).toBe(tokenScopeLabel(s.bit));
     }
   });
 
@@ -66,7 +76,7 @@ describe('tokenScopeMaskToList', () => {
 describe('connectScopesSubsetOfCeiling', () => {
   it('true when requested is a subset of the ceiling', () => {
     const ceiling = TokenScope.UserRead | TokenScope.ModelsRead | TokenScope.MediaRead;
-    expect(connectScopesSubsetOfCeiling(0, ceiling)).toBe(true);
+    expect(connectScopesSubsetOfCeiling(0n, ceiling)).toBe(true);
     expect(connectScopesSubsetOfCeiling(TokenScope.ModelsRead, ceiling)).toBe(true);
     expect(connectScopesSubsetOfCeiling(ceiling, ceiling)).toBe(true);
   });
@@ -148,9 +158,9 @@ describe('validateConnectScopeJustifications', () => {
 
 describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
   // The auditable expected set — money (BuzzRead/SocialTip + buzz-spending writes),
-  // private-data reads (UserRead PII, NotificationsRead, VaultRead), and every
-  // cross-user/account write+delete. Reads of PUBLIC data and the opt-in App-Block
-  // scopes are NOT sensitive.
+  // private-data reads (UserRead PII, NotificationsRead, VaultRead, AppDataRead), and
+  // every cross-user/account write+delete. Reads of PUBLIC data (the AppsRead catalog
+  // included) and the opt-in App-Block scopes are NOT sensitive.
   const EXPECTED_SENSITIVE =
     TokenScope.UserRead |
     TokenScope.UserWrite |
@@ -170,7 +180,8 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
     TokenScope.NotificationsRead |
     TokenScope.NotificationsWrite |
     TokenScope.VaultRead |
-    TokenScope.VaultWrite;
+    TokenScope.VaultWrite |
+    TokenScope.AppDataRead;
 
   it('is EXACTLY the expected sensitive bitmask', () => {
     expect(SENSITIVE_TOKEN_SCOPES).toBe(EXPECTED_SENSITIVE);
@@ -195,12 +206,13 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
       'NotificationsWrite',
       'VaultRead',
       'VaultWrite',
+      'AppDataRead',
     ]);
   });
 
   it('every set bit is a DEFINED single-bit TokenScope (⊆ ALL_SCOPES, none dangling)', () => {
     // No bit outside the union of every defined scope bit.
-    expect(SENSITIVE_TOKEN_SCOPES & ~ALL_SCOPES).toBe(0);
+    expect(SENSITIVE_TOKEN_SCOPES & ~ALL_SCOPES).toBe(0n);
     // And each individual bit resolves to a real single-bit enum key.
     for (const { bit, key } of tokenScopeMaskToList(SENSITIVE_TOKEN_SCOPES)) {
       expect(tokenScopeKeyByBit(bit)).toBe(key);
@@ -220,8 +232,9 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
       TokenScope.AppBlocksSubmit,
       TokenScope.AppBlocksDevTunnel,
       TokenScope.LinkConnect,
+      TokenScope.AppsRead,
     ]) {
-      expect(SENSITIVE_TOKEN_SCOPES & bit).toBe(0);
+      expect(SENSITIVE_TOKEN_SCOPES & bit).toBe(0n);
     }
   });
 
@@ -238,7 +251,15 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
     expect(isSensitiveTokenScope(TokenScope.MediaRead)).toBe(false);
     expect(isSensitiveTokenScope(TokenScope.AppBlocksSubmit)).toBe(false);
     expect(isSensitiveTokenScope(TokenScope.LinkConnect)).toBe(false);
-    expect(isSensitiveTokenScope(0)).toBe(false);
+    expect(isSensitiveTokenScope(0n)).toBe(false);
+  });
+
+  it('AppDataRead (a private-data read) is sensitive; AppsRead (the public catalog) is not', () => {
+    // Literal bits, not the enum: AppDataRead = 2^32, AppsRead = 2^31.
+    expect(isSensitiveTokenScope(4294967296n)).toBe(true);
+    expect(isSensitiveTokenScope(2147483648n)).toBe(false);
+    expect(SENSITIVE_TOKEN_SCOPES & 4294967296n).toBe(4294967296n);
+    expect(SENSITIVE_TOKEN_SCOPES & 2147483648n).toBe(0n);
   });
 
   it('isSensitiveTokenScope — a mask is sensitive iff it intersects the set', () => {
@@ -246,5 +267,32 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
     expect(isSensitiveTokenScope(TokenScope.ModelsRead | TokenScope.MediaRead)).toBe(false);
     // …but add one sensitive bit and it is.
     expect(isSensitiveTokenScope(TokenScope.ModelsRead | TokenScope.ModelsWrite)).toBe(true);
+  });
+});
+
+describe('validateConnectScopeJustifications — the offline_access declaration', () => {
+  it('accepts offline_access with a reason whatever the mask (it is a grant, not a scope bit)', () => {
+    expect(validateConnectScopeJustifications(0n, { offline_access: 'syncs nightly' })).toEqual([]);
+    expect(
+      validateConnectScopeJustifications(TokenScope.ModelsRead, { offline_access: 'syncs nightly' })
+    ).toEqual([]);
+  });
+
+  it('refuses a blank declaration, like any blank justification', () => {
+    expect(validateConnectScopeJustifications(0n, { offline_access: '  ' })).toEqual([
+      'scopeJustifications["offline_access"] must be a non-empty string',
+    ]);
+  });
+
+  it('bounds its length like any justification', () => {
+    expect(validateConnectScopeJustifications(0n, { offline_access: 'x'.repeat(501) })).toEqual([
+      'scopeJustifications["offline_access"] must be ≤500 chars',
+    ]);
+  });
+
+  it('a near-miss key is still an unknown scope (only the exact reserved key is special)', () => {
+    expect(validateConnectScopeJustifications(0n, { 'offline_access ': 'x' })).toEqual([
+      'scopeJustifications references "offline_access " which is not a valid scope',
+    ]);
   });
 });

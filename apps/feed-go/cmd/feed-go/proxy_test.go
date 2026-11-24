@@ -38,7 +38,7 @@ func TestFallbackProxyForwarding(t *testing.T) {
 	req.Header.Set("Connection", "X-Hop")
 	req.Header.Set("X-Hop", "dropped")
 	w := httptest.NewRecorder()
-	fallbackProxy(target).ServeHTTP(w, req)
+	fallbackProxy(target, fallbackIdleTimeout, nil, nil).ServeHTTP(w, req)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("status %d, want 204", w.Code)
 	}
@@ -84,7 +84,7 @@ func TestFallbackProxyStartsTheForwardedChain(t *testing.T) {
 	}
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://blue.example.test/x", nil)
 	req.RemoteAddr = "198.51.100.9:1234"
-	fallbackProxy(target).ServeHTTP(httptest.NewRecorder(), req)
+	fallbackProxy(target, fallbackIdleTimeout, nil, nil).ServeHTTP(httptest.NewRecorder(), req)
 	got := <-seen
 	if v := got.Header.Get("X-Forwarded-For"); v != "198.51.100.9" {
 		t.Errorf("X-Forwarded-For = %q, want 198.51.100.9", v)
@@ -116,7 +116,7 @@ func TestFallbackProxyDropsForwardingHeadersNamedInConnection(t *testing.T) {
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Header.Set("X-Forwarded-Host", "green.example.test")
 	req.Header.Set("Forwarded", "for=203.0.113.7")
-	fallbackProxy(target).ServeHTTP(httptest.NewRecorder(), req)
+	fallbackProxy(target, fallbackIdleTimeout, nil, nil).ServeHTTP(httptest.NewRecorder(), req)
 	got := <-seen
 	for h, want := range map[string]string{
 		"X-Forwarded-For":   "192.0.2.1",

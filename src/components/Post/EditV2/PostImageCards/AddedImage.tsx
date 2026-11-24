@@ -18,7 +18,6 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import { Menu, Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconArrowBackUp,
@@ -37,9 +36,9 @@ import {
 } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { remove, uniq } from 'lodash-es';
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -55,6 +54,7 @@ import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import { MoveImageToPostModal } from '~/components/Post/EditV2/MoveImageToPostModal';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
+import { usePostResourceReviews } from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
 import { ResourceReviewEditButton } from '~/components/Post/EditV2/PostResourceReviews/ResourceReviewEditButton';
 import { useReviewFocusStore } from '~/components/Post/EditV2/PostResourceReviews/reviewFocus';
 import {
@@ -107,6 +107,7 @@ import {
   pickAddableResources,
 } from '~/utils/manual-image-resources';
 import { showErrorNotification } from '~/utils/notifications';
+import { notifyDeleteNotice } from '~/components/Image/hooks/useDeleteImage';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { ImageReactionCount } from '~/components/Post/EditV2/PostImageCards/ImageReactionCount';
 import { queryClient, trpc } from '~/utils/trpc';
@@ -164,6 +165,8 @@ const useAddedImageContext = () => {
   return context;
 };
 // #endregion
+
+const COLLAPSED_RESOURCE_COUNT = 3;
 
 export const getAllowedResources = (resources: ResourceHelper[], advancedMode: boolean) => {
   // Advanced Mode allows unrestricted mixing of base models; an empty list leaves the picker
@@ -272,21 +275,21 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   };
 
   const deleteImageMutation = trpc.image.delete.useMutation({
-    onSuccess: (_, { id }) => removeFromEditor(id),
+    onSuccess: (result, { id }) => {
+      removeFromEditor(id);
+      notifyDeleteNotice(result);
+    },
     onError: (error) => showErrorNotification({ error: new Error(error.message) }),
   });
 
   const handleDelete = () => {
     if (!isBlocked)
-      dialogStore.trigger({
-        component: ConfirmDialog,
-        props: {
-          title: 'Delete image',
-          message: 'Are you sure you want to delete this image?',
-          labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-          confirmProps: { color: 'red', loading: deleteImageMutation.isPending },
-          onConfirm: async () => await deleteImageMutation.mutateAsync({ id: image.id }),
-        },
+      openConfirm({
+        title: 'Delete image',
+        message: 'Are you sure you want to delete this image?',
+        labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+        confirmProps: { color: 'red', loading: deleteImageMutation.isPending },
+        onConfirm: async () => await deleteImageMutation.mutateAsync({ id: image.id }),
       });
     else deleteImageMutation.mutate({ id: image.id });
   };
@@ -596,10 +599,9 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
 
   const handleRemoveResource = () => {
     if (!canAdd || !modelVersionId) return;
-    openConfirmModal({
-      centered: true,
+    openConfirm({
       title: 'Remove Resource',
-      children: detected
+      message: detected
         ? 'This resource was detected from the image metadata. Remove it if it is not what you used.'
         : 'Are you sure you want to remove this resource from this image?',
       labels: { confirm: 'Yes, remove it', cancel: 'Cancel' },
@@ -613,10 +615,9 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
 
   const handleCopyResource = () => {
     if (!otherAvailableIDs.length || !modelVersionId) return;
-    openConfirmModal({
-      centered: true,
+    openConfirm({
       title: 'Copy to All',
-      children: `Add this resource to all other valid images (${otherAvailableIDs.length})?`,
+      message: `Add this resource to all other valid images (${otherAvailableIDs.length})?`,
       labels: { confirm: 'Yep!', cancel: 'Cancel' },
       confirmProps: { color: 'green' },
       onConfirm: () => {
@@ -749,19 +750,37 @@ function EditDetail() {
 
   const { meta, hideMeta, resourceHelper: resources, blockedFor } = image;
 
-  // "Next unrated" on the review progress card may target a resource hidden behind "Show All".
+  // Unrated resources stay expanded so they can be rated in place; only rated ones collapse.
+  const ownerId = usePostEditStore((state) => state.post?.user.id);
+  const { byModelVersionId } = usePostResourceReviews({
+    postId: postId ?? 0,
+    ownerId: ownerId ?? 0,
+  });
+  const isUnrated = (r: ResourceHelper) => {
+    const review = r.modelVersionId ? byModelVersionId.get(r.modelVersionId) : undefined;
+    return !!review && review.reviewRecommended == null;
+  };
+  const namedResources = sortByModelTypes(resources).filter((x) => !!x.modelName);
+  // A row stays open once it has been seen unrated, so rating it in place doesn't make it vanish.
+  const openVersionIds = useRef(new Set<number>());
+  for (const r of namedResources)
+    if (r.modelVersionId && isUnrated(r)) openVersionIds.current.add(r.modelVersionId);
+  const isKeptOpen = (r: ResourceHelper) =>
+    !!r.modelVersionId && openVersionIds.current.has(r.modelVersionId);
+
+  // The review stepper may target a rated resource hidden behind "Show All"; unrated ones are never hidden.
   const reviewFocus = useReviewFocusStore((state) => state.target);
   useEffect(() => {
     if (reviewFocus?.imageId !== image.id) return;
     const visible = sortByModelTypes(image.resourceHelper).filter((x) => !!x.modelName);
-    if (visible.findIndex((x) => x.modelVersionId === reviewFocus.modelVersionId) >= 3)
+    const targetIndex = visible.findIndex((x) => x.modelVersionId === reviewFocus.modelVersionId);
+    if (targetIndex >= COLLAPSED_RESOURCE_COUNT && !isKeptOpen(visible[targetIndex]))
       setShowMoreResources(true);
     useReviewFocusStore.setState({ target: null });
   }, [reviewFocus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
   const hasSimpleMeta = !!simpleMeta.length;
-  const resourcesSorted = sortByModelTypes(resources);
   const unmatchedResources = useMemo(() => {
     const derived = meta?.unmatchedResources as UnmatchedResource[] | undefined;
     if (derived) return derived;
@@ -969,13 +988,15 @@ function EditDetail() {
             {(!!resources?.length || unmatchedResources.length > 0 || hasLegacyUnmatched) && (
               <CustomCard className="flex flex-col gap-2">
                 <ResourceHeader />
-                {resourcesSorted
-                  .filter((x) => !!x.modelName)
-                  .slice(0, !showMoreResources ? 3 : resources.length)
-                  .map((resource, i) => (
+                {namedResources.map((resource, i) =>
+                  showMoreResources || i < COLLAPSED_RESOURCE_COUNT || isKeptOpen(resource) ? (
                     <ResourceRow key={`${image.id}-${i}`} resource={resource} i={i} />
-                  ))}
-                {resources.length > 3 && (
+                  ) : null
+                )}
+                {(showMoreResources ||
+                  namedResources.some(
+                    (r, i) => i >= COLLAPSED_RESOURCE_COUNT && !isKeptOpen(r)
+                  )) && (
                   <div>
                     <Button
                       variant="light"

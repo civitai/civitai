@@ -193,6 +193,11 @@ re-checks the item's status, its author and, for an off-site parent, its link te
 change after the page was cached hides the card on the next render. A missing table falls back to
 parents only. The public `GET /api/v1/apps` catalog never includes them.
 
+The app index (`app-index-search` flag) holds no sub-listings. A store search the index answers
+lists its apps first, in relevance order, then the sub-listing cards of the same database page
+that match the search text, in the grid's order (`app-index-search.service.ts`). If that database
+read fails, the search is served by the database path instead.
+
 Opening an on-site sub-card records the parent's `App_Open` event with `subListingId` added. An
 off-site card opens its platform in a new tab and records nothing.
 

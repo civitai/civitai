@@ -1,9 +1,11 @@
-import dynamic from 'next/dynamic';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import type { ComponentProps } from 'react';
+import type AddToCollectionModal from '~/components/Collections/AddToCollectionModal';
+import { openDialog } from '~/components/Dialog/openDialog';
 
-const AddToCollectionModal = dynamic(
-  () => import('~/components/Collections/AddToCollectionModal'),
-  { ssr: false }
-);
-
-export const openAddToCollectionModal = createDialogTrigger(AddToCollectionModal);
+export function openAddToCollectionModal({
+  props,
+}: {
+  props: ComponentProps<typeof AddToCollectionModal>;
+}) {
+  openDialog(() => import('~/components/Collections/AddToCollectionModal'), props);
+}

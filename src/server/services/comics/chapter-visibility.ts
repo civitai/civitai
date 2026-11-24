@@ -1,3 +1,4 @@
+import { isImageServable, type RestrictableImage } from '~/server/common/image-visibility';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -25,6 +26,25 @@ export const isPanelTainted = ({ image }: ReaderPanel) =>
   image.tosViolation ||
   !!image.needsReview ||
   image.ingestion !== ImageIngestionStatus.Scanned;
+
+/**
+ * Withholds each panel image `viewerId` may not see. Unlike a tainted panel this keeps the chapter
+ * up: the flag is never cleared (only a re-rating below R lifts it), so holding the chapter back would
+ * not clear.
+ */
+export function withholdRestrictedPanelImages(
+  chapters: { panels: { imageUrl: string | null; image: RestrictableImage | null }[] }[],
+  viewerId?: number
+) {
+  for (const { panels } of chapters) {
+    for (const panel of panels) {
+      if (panel.image && !isImageServable(panel.image, viewerId)) {
+        panel.imageUrl = null;
+        panel.image = null;
+      }
+    }
+  }
+}
 
 type ReaderProject = {
   userId: number;

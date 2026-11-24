@@ -13,6 +13,7 @@ export const loadServiceOfferingSubjects = async (
       sellerId: true,
       title: true,
       description: true,
+      licenseCustomText: true,
       declaredNsfwLevel: true,
       maxNsfwLevel: true,
       status: true,
@@ -28,6 +29,8 @@ export const loadServiceOfferingSubjects = async (
         fields: [
           { heading: 'Title', text: o.title },
           { heading: 'Description', text: o.description },
+          // Shown to buyers on the listing, request dialog and deal, so checked with the rest.
+          ...(o.licenseCustomText ? [{ heading: 'License terms', text: o.licenseCustomText }] : []),
         ],
       },
     ])

@@ -14,6 +14,7 @@ import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
 import {
   SITE_SEARCH_INDEXES,
   SiteSearchError,
+  collectionImageLevelFor,
   hitsNeedShaping,
   shapeModelHit,
   siteFacetSearch,
@@ -23,7 +24,10 @@ import {
 } from '~/server/services/site-search.service';
 import type { SiteSearchViewer } from '~/server/services/site-search.service';
 import { NsfwLevel } from '~/server/common/enums';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 vi.mock('~/env/server', () => ({ env: { NEXT_PUBLIC_SEARCH_HOST: 'http://search.test' } }));
 
@@ -112,6 +116,25 @@ describe('shapeModelHit', () => {
     expect(shaped._formatted?.images).toEqual([{ id: 11, nsfwLevel: NsfwLevel.PG }]);
     expect(shapeModelHit({ id: 3, name: 'M', images }, redViewer).images).toEqual(images);
   });
+
+  it("an uncapped site gets the hit's highlight copy as sent", () => {
+    const copies = [{ id: 10, nsfwLevel: NsfwLevel.X }, { nsfwLevel: NsfwLevel.PG }];
+    const shaped = shapeModelHit(
+      { id: 3, name: 'M', images: [], _formatted: { images: copies } },
+      redViewer
+    );
+    expect(shaped._formatted?.images).toEqual(copies);
+  });
+
+  it('a capped site gets no images when the hit or its copy does not send a list', () => {
+    const notAList = { 0: { id: 10, nsfwLevel: NsfwLevel.X } };
+    const shaped = shapeModelHit(
+      { id: 3, name: 'M', images: notAList, _formatted: { images: notAList } },
+      comViewer
+    );
+    expect(shaped.images).toEqual([]);
+    expect(shaped._formatted?.images).toEqual([]);
+  });
 });
 
 describe('highlight copies follow the hit', () => {
@@ -123,6 +146,8 @@ describe('highlight copies follow the hit', () => {
   // The copy's numbers arrive as strings, and its ratings are not trusted.
   const tampered = images.map((i) => ({ ...i, id: String(i.id), nsfwLevel: '1' }));
   const ids = (list: { id: unknown }[]) => list.map((i) => String(i.id));
+
+  afterEach(() => vi.unstubAllGlobals());
 
   it('a model hit keeps only the copies of the images it kept', () => {
     const shaped = shapeModelHit(
@@ -148,7 +173,6 @@ describe('highlight copies follow the hit', () => {
     const { body } = await siteIndexSearch(BOUNTIES_SEARCH_INDEX, { q: 'x' }, capped);
     const [hit] = (body as { hits: { _formatted: { images: { id: unknown }[] } }[] }).hits;
     expect(ids(hit._formatted.images)).toEqual(['11']);
-    vi.unstubAllGlobals();
   });
 });
 
@@ -368,6 +392,104 @@ describe('collection images', () => {
     expect(result.hits[0]).not.toHaveProperty('srcs');
   });
 
+  describe("a signed-in viewer's own level where the site caps nothing", () => {
+    const atPg = { showSfwFace: false, collectionImageLevel: NsfwLevel.PG };
+
+    it('gets no cover, item image or srcs above that level, highlight included', async () => {
+      const over = { id: 20, nsfwLevel: NsfwLevel.R };
+      respond({
+        hits: [{ id: 1, image: over, images, srcs, _formatted: { image: over, images, srcs } }],
+      });
+      const [hit] = hitsOf(
+        (await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, atPg)).body
+      );
+      expect(hit.image).toBeNull();
+      expect(hit.images).toEqual([pg]);
+      expect(hit).not.toHaveProperty('srcs');
+      expect(hit._formatted.image).toBeNull();
+      expect(hit._formatted).not.toHaveProperty('srcs');
+    });
+
+    it('a hits value that is not a list is dropped, not passed through', async () => {
+      respond({ hits: { 0: { id: 1, image: { id: 20, nsfwLevel: NsfwLevel.R } } } });
+      const { body } = await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, atPg);
+      expect((body as { hits: unknown }).hits).toEqual([]);
+    });
+
+    it.each([
+      ['PG only', NsfwLevel.PG, false],
+      ['PG and PG-13', NsfwLevel.PG | NsfwLevel.PG13, true],
+    ])('a viewer on %s keeps srcs: %s', async (_label, level, kept) => {
+      respond({ hits: [{ id: 1, image: null, images: [], srcs, _formatted: { srcs } }] });
+      const [hit] = hitsOf(
+        (
+          await siteIndexSearch(
+            COLLECTIONS_SEARCH_INDEX,
+            { q: 'x' },
+            { showSfwFace: false, collectionImageLevel: level }
+          )
+        ).body
+      );
+      if (kept) {
+        expect(hit.srcs).toEqual(srcs);
+        expect(hit._formatted.srcs).toEqual(srcs);
+      } else {
+        expect(hit).not.toHaveProperty('srcs');
+        expect(hit._formatted).not.toHaveProperty('srcs');
+      }
+    });
+
+    it('keeps a cover within that level', async () => {
+      respond({ hits: [{ id: 1, image: pg, images: [pg] }] });
+      const [hit] = hitsOf(
+        (await siteIndexSearch(COLLECTIONS_SEARCH_INDEX, { q: 'x' }, atPg)).body
+      );
+      expect(hit.image).toEqual(pg);
+    });
+
+    it('a multi-search shapes the collection query by it, and leaves other indexes alone', async () => {
+      const over = { id: 20, nsfwLevel: NsfwLevel.R };
+      const bountyImages = [{ id: 30, nsfwLevel: NsfwLevel.X }];
+      respond({
+        results: [
+          { indexUid: COLLECTIONS_SEARCH_INDEX, hits: [{ id: 1, image: over, images, srcs }] },
+          { indexUid: BOUNTIES_SEARCH_INDEX, hits: [{ id: 2, images: bountyImages }] },
+        ],
+      });
+      const { body } = await siteMultiSearch(
+        {
+          queries: [
+            { indexUid: COLLECTIONS_SEARCH_INDEX, q: 'x' },
+            { indexUid: BOUNTIES_SEARCH_INDEX, q: 'x' },
+          ],
+        },
+        atPg
+      );
+      const [collections, bounties] = (body as { results: { hits: Record<string, any>[] }[] })
+        .results;
+      expect(collections.hits[0].image).toBeNull();
+      expect(bounties.hits[0].images).toEqual(bountyImages);
+    });
+
+    it('collectionImageLevelFor: only a signed-in non-moderator below every level, with no cap', () => {
+      const base = {
+        browsingLevelCap: undefined,
+        signedIn: true,
+        isModerator: false,
+        viewerBrowsingLevel: NsfwLevel.PG,
+      };
+      expect(collectionImageLevelFor(base)).toBe(NsfwLevel.PG);
+      expect(collectionImageLevelFor({ ...base, viewerBrowsingLevel: allBrowsingLevelsFlag })).toBe(
+        undefined
+      );
+      expect(collectionImageLevelFor({ ...base, isModerator: true })).toBeUndefined();
+      expect(collectionImageLevelFor({ ...base, signedIn: false })).toBeUndefined();
+      expect(
+        collectionImageLevelFor({ ...base, browsingLevelCap: sfwBrowsingLevelsFlag })
+      ).toBeUndefined();
+    });
+  });
+
   it('an uncapped viewer keeps every image, the cover and srcs', async () => {
     const cover = { id: 20, nsfwLevel: NsfwLevel.R };
     respond({ hits: [{ id: 1, image: cover, images, srcs }] });
@@ -394,13 +516,18 @@ describe('passthrough (site-search-passthrough)', () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  it('hitsNeedShaping: models always; comics, bounties and collections only under a cap; others never', () => {
+  it('hitsNeedShaping: models always; comics, bounties, collections, articles and users only under a cap; others never', () => {
     for (const viewer of [capped, uncapped]) {
       expect(hitsNeedShaping(MODELS_SEARCH_INDEX, viewer)).toBe(true);
-      for (const index of [USERS_SEARCH_INDEX, ARTICLES_SEARCH_INDEX, TOOLS_SEARCH_INDEX])
-        expect(hitsNeedShaping(index, viewer), index).toBe(false);
+      expect(hitsNeedShaping(TOOLS_SEARCH_INDEX, viewer)).toBe(false);
     }
-    for (const index of [COMICS_SEARCH_INDEX, BOUNTIES_SEARCH_INDEX, COLLECTIONS_SEARCH_INDEX]) {
+    for (const index of [
+      COMICS_SEARCH_INDEX,
+      BOUNTIES_SEARCH_INDEX,
+      COLLECTIONS_SEARCH_INDEX,
+      ARTICLES_SEARCH_INDEX,
+      USERS_SEARCH_INDEX,
+    ]) {
       expect(hitsNeedShaping(index, capped), index).toBe(true);
       expect(hitsNeedShaping(index, uncapped), index).toBe(false);
     }
@@ -408,7 +535,7 @@ describe('passthrough (site-search-passthrough)', () => {
 
   it('an index whose hits are never shaped is sent as the exact upstream bytes', async () => {
     respondRaw(upstream);
-    const response = await siteIndexSearch(USERS_SEARCH_INDEX, { q: 'x' }, capped, on);
+    const response = await siteIndexSearch(TOOLS_SEARCH_INDEX, { q: 'x' }, capped, on);
     expect(response.status).toBe(200);
     expect(response.body).toBeUndefined();
     expect(response.raw?.toString('utf8')).toBe(upstream);
@@ -416,7 +543,7 @@ describe('passthrough (site-search-passthrough)', () => {
 
   it('with passthrough off, the same response is parsed, as before', async () => {
     respondRaw(upstream);
-    const response = await siteIndexSearch(USERS_SEARCH_INDEX, { q: 'x' }, capped);
+    const response = await siteIndexSearch(TOOLS_SEARCH_INDEX, { q: 'x' }, capped);
     expect(response.raw).toBeUndefined();
     expect(response.body).toEqual({
       hits: [{ id: 1, username: 'caf\u00e9' }],
@@ -456,7 +583,7 @@ describe('passthrough (site-search-passthrough)', () => {
           { indexUid: ARTICLES_SEARCH_INDEX, q: 'x' },
         ],
       },
-      capped,
+      uncapped,
       on
     );
     expect(passed.raw?.toString('utf8')).toBe(multi);
@@ -515,5 +642,269 @@ describe('passthrough (site-search-passthrough)', () => {
     expect(response.status).toBe(400);
     expect(response.raw).toBeUndefined();
     expect(response.body).toEqual(rejection);
+  });
+});
+
+describe('user avatars in hits', () => {
+  const capped = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
+  const uncapped = { showSfwFace: false };
+  const pic = (nsfwLevel: number) => ({ id: 5, url: 'pic-url', nsfwLevel });
+  const image = 'unrated-url';
+  const respond = (body: unknown) => {
+    const raw = JSON.stringify(body);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(raw, { status: 200 }))
+    );
+    return raw;
+  };
+  const hitOf = (body: unknown) => (body as { hits: Record<string, any>[] }).hits[0];
+  const userOf = (index: string, hit: Record<string, any>) =>
+    index === USERS_SEARCH_INDEX ? hit : hit.user;
+  const docFor = (index: string, nsfwLevel: number) => {
+    const user = { id: 2, username: 'u', image, profilePicture: pic(nsfwLevel) };
+    const doc = index === USERS_SEARCH_INDEX ? { ...user } : { id: 1, user };
+    return { ...doc, _formatted: structuredClone(doc) };
+  };
+  const indexes = [
+    MODELS_SEARCH_INDEX,
+    ARTICLES_SEARCH_INDEX,
+    BOUNTIES_SEARCH_INDEX,
+    COLLECTIONS_SEARCH_INDEX,
+    COMICS_SEARCH_INDEX,
+    USERS_SEARCH_INDEX,
+  ];
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each(indexes)(
+    '%s: a capped viewer gets no unrated image and no picture outside the cap, highlight included',
+    async (index) => {
+      for (const level of [NsfwLevel.X, 0, NsfwLevel.PG | NsfwLevel.R]) {
+        respond({ hits: [docFor(index, level)] });
+        const hit = hitOf((await siteIndexSearch(index, { q: 'x' }, capped)).body);
+        for (const user of [userOf(index, hit), userOf(index, hit._formatted)]) {
+          expect(user.image, `${level}`).toBeNull();
+          expect(user.profilePicture, `${level}`).toBeNull();
+          expect(user.username).toBe('u');
+        }
+      }
+    }
+  );
+
+  it.each(indexes)(
+    '%s: a capped viewer keeps a picture inside the cap, but not the unrated image',
+    async (index) => {
+      respond({ hits: [docFor(index, NsfwLevel.PG | NsfwLevel.PG13)] });
+      const hit = hitOf((await siteIndexSearch(index, { q: 'x' }, capped)).body);
+      expect(userOf(index, hit).profilePicture).toEqual(pic(NsfwLevel.PG | NsfwLevel.PG13));
+      expect(userOf(index, hit).image).toBeNull();
+    }
+  );
+
+  // The caller chooses which fields come back and how the highlight copy is written.
+  it.each(indexes)(
+    '%s: a capped viewer gets no avatar whose rating is missing or unreadable, or in-cap only in the copy',
+    async (index) => {
+      const withPicture = (doc: Record<string, any>, raw: unknown, copy: unknown) => {
+        userOf(index, doc).profilePicture = raw;
+        userOf(index, doc._formatted).profilePicture = copy;
+        return doc;
+      };
+      const { nsfwLevel: _, ...unrated } = pic(NsfwLevel.PG);
+      const cases = [
+        withPicture(docFor(index, NsfwLevel.PG), unrated, unrated),
+        withPicture(
+          docFor(index, NsfwLevel.PG),
+          { ...unrated, nsfwLevel: 'pg' },
+          { ...unrated, nsfwLevel: 'pg' }
+        ),
+        withPicture(docFor(index, NsfwLevel.PG), pic(NsfwLevel.X), { ...unrated, nsfwLevel: '1' }),
+      ];
+      for (const [i, doc] of cases.entries()) {
+        respond({ hits: [doc] });
+        const hit = hitOf((await siteIndexSearch(index, { q: 'x' }, capped)).body);
+        for (const user of [userOf(index, hit), userOf(index, hit._formatted)]) {
+          expect(user.image, `case ${i}`).toBeNull();
+          expect(user.profilePicture, `case ${i}`).toBeNull();
+        }
+      }
+    }
+  );
+
+  it.each(indexes)('%s: a capped response whose hits are not a list sends none', async (index) => {
+    respond({ hits: { 0: docFor(index, NsfwLevel.X) } });
+    const body = (await siteIndexSearch(index, { q: 'x' }, capped)).body as { hits: unknown };
+    expect(body.hits).toEqual([]);
+  });
+
+  // Author-less documents (a deleted user) carry no user object.
+  it.each(indexes.filter((index) => index !== USERS_SEARCH_INDEX))(
+    '%s: a capped hit with no user, or a null one, comes back unchanged',
+    async (index) => {
+      const hits = [
+        { id: 1 },
+        { id: 2, user: null },
+        { id: 3, user: null, _formatted: { id: '3' } },
+      ];
+      respond({ hits });
+      const body = (await siteIndexSearch(index, { q: 'x' }, capped)).body as {
+        hits: Record<string, unknown>[];
+      };
+      expect(body.hits.map(({ id, user, _formatted }) => ({ id, user, _formatted }))).toEqual(
+        hits.map(({ id, user, _formatted }: Record<string, unknown>) => ({ id, user, _formatted }))
+      );
+    }
+  );
+
+  it.each(indexes)('%s: an uncapped viewer gets the avatar as indexed', async (index) => {
+    const doc = docFor(index, NsfwLevel.X);
+    respond({ hits: [doc] });
+    const hit = hitOf((await siteIndexSearch(index, { q: 'x' }, uncapped)).body);
+    expect(userOf(index, hit)).toEqual(userOf(index, doc));
+  });
+});
+
+describe('a models query that lists the attributes it wants', () => {
+  const FACED = 1;
+  const UNFACED = 2;
+  const docs: Record<string, unknown>[] = [
+    { id: FACED, name: 'Red Title', sfwName: 'Com Title', type: 'LORA' },
+    { id: UNFACED, name: 'Plain Title', type: 'LORA' },
+  ];
+  type Query = {
+    attributesToRetrieve?: string[];
+    attributesToHighlight?: string[];
+    attributesToCrop?: string[];
+  };
+  const pick = (doc: Record<string, unknown>, attributes: string[] | undefined) =>
+    !attributes || attributes.includes('*')
+      ? { ...doc }
+      : Object.fromEntries(attributes.filter((a) => a in doc).map((a) => [a, doc[a]]));
+  // Meilisearch as measured on v1.11: a hit holds only the retrieved attributes, and `_formatted`
+  // holds the retrieved, highlighted and cropped ones together.
+  const hitsFor = (query: Query) =>
+    docs.map((doc) => {
+      const hit: Record<string, unknown> = pick(doc, query.attributesToRetrieve);
+      const formattedOnly = [
+        ...(query.attributesToHighlight ?? []),
+        ...(query.attributesToCrop ?? []),
+      ];
+      if (formattedOnly.length)
+        hit._formatted = pick(
+          doc,
+          query.attributesToRetrieve?.includes('*') || !query.attributesToRetrieve
+            ? undefined
+            : [...query.attributesToRetrieve, ...formattedOnly]
+        );
+      return hit;
+    });
+  const sent: unknown[] = [];
+  const serve = () =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: { body: string }) => {
+        const body = JSON.parse(init.body);
+        sent.push(body);
+        const response = String(url).endsWith('/multi-search')
+          ? { results: body.queries.map((q: Query) => ({ hits: hitsFor(q) })) }
+          : { hits: hitsFor(body) };
+        return new Response(JSON.stringify(response), { status: 200 });
+      })
+    );
+  const comViewer: SiteSearchViewer = {
+    showSfwFace: true,
+    browsingLevelCap: sfwBrowsingLevelsFlag,
+  };
+  const redViewer: SiteSearchViewer = { showSfwFace: false };
+  const byId = (hits: unknown) =>
+    new Map((hits as Record<string, unknown>[]).map((hit) => [hit.id ?? hit, hit]));
+  const indexHits = async (query: Query, viewer = comViewer) => {
+    const { body } = await siteIndexSearch(MODELS_SEARCH_INDEX, { q: 'Title', ...query }, viewer);
+    return (body as { hits: Record<string, unknown>[] }).hits;
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    sent.length = 0;
+  });
+
+  it('a .com viewer gets the .com title, and an unfaced model keeps its own', async () => {
+    serve();
+    const hits = byId(await indexHits({ attributesToRetrieve: ['id', 'name'] }));
+    expect(hits.get(FACED)).toEqual({ id: FACED, name: 'Com Title' });
+    expect(hits.get(UNFACED)).toEqual({ id: UNFACED, name: 'Plain Title' });
+  });
+
+  it('the same in a multi-search', async () => {
+    serve();
+    const { body } = await siteMultiSearch(
+      {
+        queries: [
+          { indexUid: MODELS_SEARCH_INDEX, q: 'Title', attributesToRetrieve: ['id', 'name'] },
+        ],
+      },
+      comViewer
+    );
+    const hits = byId((body as { results: { hits: unknown }[] }).results[0].hits);
+    expect(hits.get(FACED)).toEqual({ id: FACED, name: 'Com Title' });
+    expect(hits.get(UNFACED)).toEqual({ id: UNFACED, name: 'Plain Title' });
+  });
+
+  it('a title asked for only as a highlight comes back as the .com title', async () => {
+    serve();
+    const hits = byId(
+      await indexHits({ attributesToRetrieve: ['id'], attributesToHighlight: ['name'] })
+    );
+    expect(hits.get(FACED)).toEqual({ id: FACED, _formatted: { id: FACED, name: 'Com Title' } });
+    expect(hits.get(UNFACED)).toEqual({
+      id: UNFACED,
+      _formatted: { id: UNFACED, name: 'Plain Title' },
+    });
+  });
+
+  it('a title asked for only as a crop comes back as the .com title', async () => {
+    serve();
+    const hits = byId(
+      await indexHits({ attributesToRetrieve: ['id'], attributesToCrop: ['name'] })
+    );
+    expect(hits.get(FACED)).toEqual({ id: FACED, _formatted: { id: FACED, name: 'Com Title' } });
+    expect(hits.get(UNFACED)).toEqual({
+      id: UNFACED,
+      _formatted: { id: UNFACED, name: 'Plain Title' },
+    });
+  });
+
+  it('an empty list still gets empty hits', async () => {
+    serve();
+    expect(await indexHits({ attributesToRetrieve: [] })).toEqual([{}, {}]);
+  });
+
+  it('a hit that did not ask for the title is not given one', async () => {
+    serve();
+    const hits = await indexHits({ attributesToRetrieve: ['id', 'type'] });
+    expect(hits).toEqual([
+      { id: FACED, type: 'LORA' },
+      { id: UNFACED, type: 'LORA' },
+    ]);
+  });
+
+  it('a .red viewer keeps the .red title and is not sent the .com one', async () => {
+    serve();
+    const hits = await indexHits({ attributesToRetrieve: ['id', 'name'] }, redViewer);
+    expect(byId(hits).get(FACED)).toEqual({ id: FACED, name: 'Red Title' });
+    expect(JSON.stringify(hits)).not.toContain('Com Title');
+  });
+
+  it('other indexes are queried with the list as sent', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: { body: string }) => {
+        sent.push(JSON.parse(init.body));
+        return new Response(JSON.stringify({ hits: [] }), { status: 200 });
+      })
+    );
+    await siteIndexSearch(TOOLS_SEARCH_INDEX, { q: '', attributesToRetrieve: ['id'] }, comViewer);
+    expect(sent).toEqual([expect.objectContaining({ attributesToRetrieve: ['id'] })]);
   });
 });

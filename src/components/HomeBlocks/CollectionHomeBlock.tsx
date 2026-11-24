@@ -26,7 +26,14 @@ import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyou
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
-import { FlagRaceHeader } from '~/components/HatTurf/FlagRace/FlagCountdown';
+import { FlagRacePanel } from '~/components/HatTurf/FlagRace/FlagRacePanel';
+import flagClasses from '~/components/HatTurf/FlagRace/FlagRacePanel.module.scss';
+import partyClasses from '~/components/HomeBlocks/ScoredEventHomeBlock.module.scss';
+import { FlagEnterButton } from '~/components/HatTurf/FlagRace/FlagEnterButton';
+import { HiddenFlagCard } from '~/components/HatTurf/FlagRace/HiddenFlagCard';
+import { useFlagReveal } from '~/components/HatTurf/FlagRace/useFlagReveal';
+import { useRevealableImages } from '~/components/HiddenPreferences/useRevealableImages';
+import { FlagRaceHomeRow } from '~/components/HatTurf/FlagRace/FlagRaceCollapsedBar';
 import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -34,8 +41,7 @@ import { PostCard } from '~/components/Cards/PostCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { trpc } from '~/utils/trpc';
 import { shuffle } from '~/utils/array-helpers';
-import { FlagRaceContext, type FlagRow } from '~/components/HatTurf/FlagRace/FlagRaceContext';
-import { TurfSummaryProvider } from '~/components/HatTurf/TurfSummaryProvider';
+import { FlagRowProviders, useFlagRow } from '~/components/HatTurf/FlagRace/FlagRowProviders';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
@@ -77,22 +83,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
 
   const features = useFeatureFlags();
   const flagEvent = features.flagRace ? metadata.collection?.flagRace : undefined;
-  // A Flag Race row is one row: the flags that don't fit wait for another visit (they're shuffled).
+  // A Flag Race row is one row that scrolls, holding every one of today's flags.
   const rows = flagEvent ? 1 : metadata.collection?.rows ?? 2;
-  const { data: flagSummary } = trpc.hatTurf.getFlags.useQuery(
-    { event: flagEvent ?? '' },
-    {
-      enabled: !!flagEvent,
-      refetchInterval: 30_000,
-      staleTime: 15_000,
-      // Unbatched, so the edge caches it: every viewer gets the same answer.
-      trpc: { context: { skipBatch: true } },
-    }
-  );
-  const flagRow = useMemo(
-    () => (flagEvent && flagSummary ? { event: flagEvent, summary: flagSummary } : null),
-    [flagEvent, flagSummary]
-  );
+  const flagRow = useFlagRow(flagEvent);
   const shuffled = useMemo(() => {
     if (!collection?.items) return [];
     return shuffle([...collection.items]);
@@ -102,10 +95,29 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
 
   // TODO - find a different way to return collections so that the type isn't set on the individual item
   const type = shuffled[0]?.type ?? 'model';
-  const { loadingPreferences, items: filtered } = useApplyHiddenPreferences({
+  const { loadingPreferences, items: preferred } = useApplyHiddenPreferences({
     type: `${type}s`,
     data: shuffledData,
   });
+
+  const servedFlags = useMemo(
+    () =>
+      (flagRow && !loadingPreferences ? shuffledData : []) as { id: number; nsfwLevel?: number }[],
+    [flagRow, loadingPreferences, shuffledData]
+  );
+  const flagReveal = useFlagReveal(
+    servedFlags,
+    preferred,
+    useRevealableImages(servedFlags, preferred)
+  );
+  const filtered = useMemo(() => {
+    if (!flagReveal.revealed.length) return preferred;
+    const revealedIds = new Set(flagReveal.revealed.map((item) => item.id));
+    const visibleIds = new Set(preferred.map((item) => item.id));
+    return shuffledData.filter(
+      (item) => visibleIds.has(item.id) || revealedIds.has(item.id)
+    ) as typeof preferred;
+  }, [preferred, shuffledData, flagReveal.revealed]);
 
   const maxPerUser = metadata.collection?.maxPerUser;
   // Served from the same shared, viewer-agnostic entry the feed block is, so image items arrive
@@ -122,7 +134,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
     {
       order: dedupeOrder(blockIndex),
       entity: type,
-      rows,
+      rows: flagEvent ? Math.max(1, Math.ceil(filtered.length / ITEMS_PER_ROW)) : rows,
       maxPerUser,
     }
   ) as typeof filtered;
@@ -134,7 +146,53 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
   // A block this viewer may not see answers not-found: render nothing rather than an empty frame.
   if (!isLoading && !homeBlock) return null;
   // A Flag Race row with no flags today (between race days, or before the first) hides, header and all.
-  if (flagEvent && !isLoading && !loadingPreferences && !items.length) return null;
+  // Judged on the day's summary, not on what this viewer may see: a viewer blocked by every flag's
+  // creator still gets the race panel.
+  if (
+    flagEvent &&
+    !isLoading &&
+    !loadingPreferences &&
+    !(flagRow ? flagRow.summary.flags.length : items.length)
+  )
+    return null;
+
+  if (flagRow) {
+    const loading = isLoading || loadingPreferences;
+    return (
+      <FlagRaceHomeRow event={flagRow.event} summary={flagRow.summary}>
+        <div className={flagClasses.flags}>
+          {loading ? (
+            Array.from({ length: flagRow.summary.flags.length }).map((_, index) => (
+              <AspectRatio ratio={7 / 9} key={index}>
+                <Skeleton width="100%" />
+              </AspectRatio>
+            ))
+          ) : (
+            <FlagRowProviders row={flagRow}>
+              <RemixFlyoutLayoutProvider layout="side">
+                <ImagesProvider
+                  hideHatTurf={collectionHidesHatTurf(collection)}
+                  images={type === 'image' ? (items as any) : undefined}
+                >
+                  {items.map((item) =>
+                    type === 'image' ? <ImageCard key={item.id} data={item as any} /> : null
+                  )}
+                </ImagesProvider>
+                {flagReveal.stillHidden.map((item) => (
+                  <HiddenFlagCard
+                    key={item.id}
+                    imageId={item.id}
+                    reason={flagReveal.reasons.get(item.id)}
+                    onShow={() => flagReveal.reveal(item.id)}
+                  />
+                ))}
+              </RemixFlyoutLayoutProvider>
+            </FlagRowProviders>
+          )}
+        </div>
+      </FlagRaceHomeRow>
+    );
+  }
 
   const link = metadata.link || `/collections/${collection?.id ?? metadata.collection?.id}`;
   const itemType = collection?.items?.[0]?.type || 'model';
@@ -149,7 +207,6 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
           <Title className={classes.title} order={1} lineClamp={1}>
             {metadata.title ?? collection?.name ?? 'Collection'}{' '}
           </Title>
-          {flagRow && <FlagRaceHeader summary={flagRow.summary} />}
           {!metadata.descriptionAlwaysVisible && currentUser && hasInfo && (
             <Popover withArrow width={380}>
               <Popover.Target>
@@ -190,18 +247,21 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
             </Popover>
           )}
         </Group>
-        {link && (
-          <Link legacyBehavior href={link} passHref>
-            <Button
-              className={classes.expandButton}
-              component="a"
-              variant="subtle"
-              rightSection={<IconArrowRight size={16} />}
-            >
-              {metadata.linkText ?? 'View All'}
-            </Button>
-          </Link>
-        )}
+        <Group gap="xs" wrap="nowrap">
+          {flagEvent && <FlagEnterButton event={flagEvent} />}
+          {link && (
+            <Link legacyBehavior href={link} passHref>
+              <Button
+                className={classes.expandButton}
+                component="a"
+                variant="subtle"
+                rightSection={<IconArrowRight size={16} />}
+              >
+                {metadata.linkText ?? 'View All'}
+              </Button>
+            </Link>
+          )}
+        </Group>
       </Group>
       {metadata.description && (metadata.descriptionAlwaysVisible || !currentUser) && (
         <div className="text-base">
@@ -338,15 +398,3 @@ type Props = {
   showAds?: boolean;
   blockIndex: number;
 };
-
-/** Around a Flag Race row only: its flags, and the viewer's Hat Turf team and stock for adding hats. */
-function FlagRowProviders({ row, children }: { row: FlagRow | null; children: React.ReactNode }) {
-  if (!row) return <>{children}</>;
-  return (
-    <FlagRaceContext.Provider value={row}>
-      <TurfSummaryProvider imageIds={[]} gate={{ event: row.event }}>
-        {children}
-      </TurfSummaryProvider>
-    </FlagRaceContext.Provider>
-  );
-}

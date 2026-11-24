@@ -10,7 +10,11 @@ import { dbRead } from '~/server/db/client';
 import { getDbWithoutLag, kyselyMatching } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { servableProfilePicture } from '~/server/services/profile-picture.servable';
+import {
+  fallbackUserImage,
+  servableProfilePicture,
+} from '~/server/services/profile-picture.servable';
+import { fallbackPictureOf } from '~/server/services/user-creator.reads';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 
 /**
@@ -36,7 +40,7 @@ function toUserWithCosmetics(row: UserWithCosmeticsRow): UserWithCosmetics {
     id: row.id,
     username: row.username,
     deletedAt: row.deletedAt,
-    image: row.image,
+    image: fallbackUserImage(row.image, fallbackPictureOf(row)),
     // One payload for every viewer, as Prisma's servable-profile-picture extension gives.
     profilePicture: servableProfilePicture(
       row.profilePictureId !== null
@@ -54,7 +58,9 @@ function toUserWithCosmetics(row: UserWithCosmeticsRow): UserWithCosmetics {
             metadata: row.profilePictureMetadata as Prisma.JsonValue,
           }
         : null,
-      row.profilePictureNeedsReview
+      row.profilePictureNeedsReview,
+      row.profilePictureModelRestricted,
+      row.profilePictureBlockedFor
     ),
     cosmetics: row.cosmetics.map((cosmetic) => ({
       data: cosmetic.data as Prisma.JsonValue,

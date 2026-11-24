@@ -233,6 +233,21 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // A link to a view of the app: the page host builds the canonical
+  // `/apps/run/<slug>/<subPath>` URL from its own origin and slug, copies it or opens the
+  // share sheet, and replies with `{ url, copied, method }`. REQUEST-style ⇒ an unhandled
+  // one HANGS the block.
+  SHARE_LINK: {
+    request: true,
+    reply: 'SHARE_LINK_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    // N/A: a model slot has no route of its own (no `subPath`, no deep-link base), so
+    // there is no app URL to build for it.
+    IframeHost: 'model slot has no app route to link to (no deep-link base); page-only',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   TRACK_EVENT: {
     request: false,
     reply: '',
@@ -381,6 +396,18 @@ export const INVENTORY = {
     request: true,
     reply: 'DAILY_LIMIT_RAISE_RESULT',
     replyKeys: ['raised'],
+    errorKeys: ['error'],
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // The app asks the host to unlock ONE restricted workflow output (by workflow and position).
+  // The host's own dialog offers what the server allows; every outcome, a refusal included, is
+  // reported inside `result`, so only the shared dispatcher's NACK carries an `error`.
+  REQUEST_OUTPUT_UNLOCK: {
+    request: true,
+    reply: 'OUTPUT_UNLOCK_RESULT',
+    replyKeys: ['result'],
     errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',
@@ -575,8 +602,9 @@ export const INVENTORY = {
   OPEN_IMAGE_UPLOAD: {
     request: true,
     reply: 'IMAGE_UPLOAD_RESULT',
-    replyKeys: ['selected?'],
-    errorKeys: ['error'],
+    // `shared` is present only on replies to a `share: true` request (see PageBlockHost).
+    replyKeys: ['selected?', 'shared?'],
+    errorKeys: ['error', 'shared?'],
     IframeHost:
       'host-mediated image upload is a page-only affordance today; the model slot has no such surface',
     PageBlockHost: 'required',
@@ -802,7 +830,9 @@ export const INVENTORY = {
   // UNSANDBOXED top frame + triggers the browser download (a sandboxed block has
   // no `allow-downloads`). Three variants: an origin-allowlisted OWN-output `url`,
   // a cross-user `imageId` routed through the gated per-viewer read, or block-made
-  // `bytes` classified by content (image / JSON / text, or a validated .zip). PAGE-ONLY
+  // `bytes` classified by content (image / JSON / text, a .zip validated by
+  // @civitai/app-sdk/save-zip, or a binary glTF / FBX 3D model checked by
+  // @civitai/app-sdk/save-model3d — each the one copy, shared with the SDK's mock host). PAGE-ONLY
   // affordance today (the paid-output apps — gen-matrix / custom-generators /
   // model-benchmarking — are all page apps), so N/A for the model host, mirroring
   // the GET_IMAGES_BY_IDS / PUBLISH_GENERATION_OUTPUTS page-only exemption.

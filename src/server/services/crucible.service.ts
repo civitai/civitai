@@ -1,3 +1,6 @@
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
+import type { DB } from '@civitai/db-schema/kysely';
+import type { Selectable } from 'kysely';
 import { randomUUID } from 'crypto';
 import { chunk } from 'lodash-es';
 import { Prisma } from '@prisma/client';
@@ -79,10 +82,12 @@ import type { CrucibleJudgingStatus, GetJudgingStatusesSchema } from '../schema/
 import {
   clipLengthAllowed,
   CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
+  crucibleHasEnded,
   CRUCIBLE_ENTRY_CUTOFF_PERCENT,
   CRUCIBLE_ENTRY_WARNING_PERCENT,
   CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES,
   CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+  CRUCIBLE_MODERATOR_RUNNING_FIELDS,
   CRUCIBLE_TAKEDOWN_CREATOR_FUNDS,
   crucibleRankingsAreFinal,
   crucibleSupportsVideoSettings,
@@ -117,7 +122,9 @@ import {
 } from '~/server/services/crucible-judge-closure';
 import {
   getAnchorVotesKey,
+  getDismissedPairsKey,
   getJudgesKey,
+  getSysVoteOutcomesKey,
   getVoteOutcomesKey,
   getVotedPairsKey,
 } from '~/server/services/crucible-redis-keys';
@@ -128,10 +135,24 @@ import {
 } from '~/server/services/crucible-judging-session';
 import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
 import { delIfValue } from '~/server/redis/atomic';
-import { redis, sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
+import {
+  redis,
+  sysRedis,
+  REDIS_SYS_KEYS,
+  REDIS_KEYS,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { revokeCrucibleEntry } from '~/server/services/crucible-entry-accepted';
 import { visibleEntryImageSql } from '~/server/services/crucible-entry-sql';
+import {
+  imageNotRestrictedSql,
+  imageNotRestrictedWhere,
+  noBlockMarkerWhere,
+  isImageServable,
+  withServableImage,
+} from '~/server/common/image-visibility';
+import { isRestrictedImage, RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   getEntryElo,
@@ -156,7 +177,7 @@ import {
   afterPostsUnpublish,
 } from '~/server/services/post.service';
 import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
-import { NotificationCategory } from '~/server/common/enums';
+import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { imageResourcesCache, refreshHasReceivedReviews } from '~/server/redis/caches';
 import {
   areCrucibleEntriesClosed,
@@ -874,14 +895,15 @@ type CrucibleVisibilityRow = {
   ingestion: CrucibleIngestionStatus;
   image: {
     ingestion: ImageIngestionStatus;
+    nsfwLevel: number;
     needsReview: string | null;
     tosViolation: boolean;
   } | null;
 };
 
 /**
- * Until its text and cover pass their scans, and while its cover is in review or marked a ToS
- * violation, only its creator and moderators see a crucible. List surfaces apply the same cover
+ * Until its text and cover pass their scans, while its cover is unrated or in review or marked a
+ * ToS violation, only its creator and moderators see a crucible. List surfaces apply the same cover
  * rule (crucibleCoverListedWhere).
  */
 export const isCrucibleHiddenByScan = (
@@ -892,6 +914,8 @@ export const isCrucibleHiddenByScan = (
   crucible.userId !== viewerId &&
   (crucible.ingestion !== CrucibleIngestionStatus.Scanned ||
     crucible.image?.ingestion !== ImageIngestionStatus.Scanned ||
+    crucible.image.nsfwLevel === 0 ||
+    crucible.image.nsfwLevel === NsfwLevel.Blocked ||
     crucible.image.needsReview != null ||
     crucible.image.tosViolation);
 
@@ -946,6 +970,7 @@ const greenSiteSql = (isGreen: boolean) =>
 /** Crucible `c` with cover `i`, as list surfaces may show it to a viewer at `viewerLevel`. */
 const crucibleListedSql = (viewerLevel: number) => Prisma.sql`
   ${crucibleScannedSql}
+  AND ${imageNotRestrictedSql()}
   ${
     viewerLevel > 0 && !Flags.intersects(viewerLevel, nsfwBrowsingLevelsFlag)
       ? Prisma.sql`AND NOT c."textNsfw"`
@@ -1016,10 +1041,69 @@ async function assertRequiredModelsAllowContentLevel(versionIds: number[], nsfwL
 }
 
 const PRESENTATION_FIELDS = ['name', 'description', 'coverImage', 'heroImage'] as const;
+const CRUCIBLE_FIELD_LABELS: Record<string, string> = {
+  nsfwLevel: 'content levels',
+  contentType: 'content type',
+  entryFee: 'entry fee',
+  seededPrizePool: 'seeded prize pool',
+  entryLimit: 'entries per user',
+  freeEntriesPerUser: 'free entries',
+  maxTotalEntries: 'maximum total entries',
+  entryWarningPercent: 'entry warning point',
+  entryCutoffPercent: 'entry cutoff point',
+  prizePositions: 'prize places',
+  allowedResources: 'required models',
+  allowedBaseModels: 'base models',
+  duration: 'duration',
+  startAt: 'start time',
+  minViewSeconds: 'minimum view time',
+  maxClipSeconds: 'maximum clip length',
+};
+const describeFields = (keys: string[]) =>
+  keys.map((key) => CRUCIBLE_FIELD_LABELS[key] ?? key).join(', ');
+
+const widens = <T>(current: T[], next: T[]) =>
+  current.length > 0 && current.every((value) => next.includes(value));
+
+const entryLimitReachedMessage = (entryLimit: number) =>
+  `You have reached the maximum of ${entryLimit} ${
+    entryLimit === 1 ? 'entry' : 'entries'
+  } for this crucible`;
+
+/**
+ * Reads the live entries under the crucible's row lock, which submitEntry's write also takes, so
+ * a lowered cap can't land below an entry saved meanwhile.
+ */
+async function assertEntryCapsHoldLiveEntries(
+  tx: Prisma.TransactionClient,
+  crucibleId: number,
+  { maxTotalEntries, entryLimit }: { maxTotalEntries?: number; entryLimit?: number }
+) {
+  await tx.$queryRaw`SELECT id FROM "Crucible" WHERE id = ${crucibleId} FOR UPDATE`;
+  const [live] = await tx.$queryRaw<{ total: number; perUser: number }[]>`
+    SELECT COALESCE(SUM(n), 0)::int AS total, COALESCE(MAX(n), 0)::int AS "perUser"
+    FROM (
+      SELECT COUNT(*) AS n FROM "CrucibleEntry"
+      WHERE "crucibleId" = ${crucibleId} AND "imageId" IS NOT NULL
+      GROUP BY "userId"
+    ) per_user
+  `;
+  const total = live?.total ?? 0;
+  const perUser = live?.perUser ?? 0;
+  if (maxTotalEntries !== undefined && maxTotalEntries < total)
+    throw throwBadRequestError(
+      `While it's running, this crucible's maximum total entries can't go below the ${total} entries already in.`
+    );
+  if (entryLimit !== undefined && entryLimit < perUser)
+    throw throwBadRequestError(
+      `While it's running, this crucible's entries per user can't go below ${perUser}, the most one entrant already has.`
+    );
+}
 
 /**
  * An upcoming crucible has no entries, so everything can change and any cost difference is
- * settled; once running only the presentation can, so the outcome stays fair.
+ * settled. Once running, the creator can change only the presentation; a moderator (their own
+ * crucible included) can also fix CRUCIBLE_MODERATOR_RUNNING_FIELDS, never anything that moves Buzz.
  */
 export const updateCrucible = async ({
   id,
@@ -1067,27 +1151,38 @@ export const updateCrucible = async ({
   if (!isOwner && !isModerator)
     throw throwAuthorizationError('You can only edit your own crucible');
 
-  const hasEnded =
-    crucible.status === CrucibleStatus.Completed ||
-    crucible.status === CrucibleStatus.Cancelled ||
-    (!!crucible.endAt && crucible.endAt <= new Date());
+  const hasEnded = crucibleHasEnded(crucible);
   if (hasEnded && !isModerator)
     throw throwBadRequestError('This crucible has ended and can no longer be edited');
 
   const hasStarted = hasCrucibleStarted(crucible);
   const canEditSettings = isOwner && !hasStarted;
+  const isModeratorFixingRunning = isModerator && hasStarted && !hasEnded;
   const provided = (Object.keys(changes) as (keyof typeof changes)[]).filter(
     (key) => changes[key] !== undefined
   );
   if (!canEditSettings) {
-    const allowed: readonly string[] =
-      isModerator && !hasStarted ? [...PRESENTATION_FIELDS, 'nsfwLevel'] : PRESENTATION_FIELDS;
+    const allowed: readonly string[] = isModeratorFixingRunning
+      ? [...PRESENTATION_FIELDS, ...CRUCIBLE_MODERATOR_RUNNING_FIELDS]
+      : isModerator && !hasStarted
+      ? [...PRESENTATION_FIELDS, 'nsfwLevel']
+      : PRESENTATION_FIELDS;
     const locked = provided.filter((key) => !allowed.includes(key));
     if (locked.length)
       throw throwBadRequestError(
-        `Once a crucible has started only its name, description and images can change (not ${locked.join(
-          ', '
-        )}).`
+        isModeratorFixingRunning
+          ? `While it's running, a crucible's ${describeFields(
+              locked
+            )} can't change: that would move Buzz or change entries already in.`
+          : hasEnded
+          ? `Once a crucible has ended only its name, description and images can change (not ${describeFields(
+              locked
+            )}).`
+          : hasStarted
+          ? `While it's running, only a crucible's name, description and images can change (not ${describeFields(
+              locked
+            )}).`
+          : `Only the creator can change this crucible's ${describeFields(locked)}.`
       );
   }
 
@@ -1122,6 +1217,24 @@ export const updateCrucible = async ({
   if (provided.includes('nsfwLevel') && isNonSfwForGreen(buzzType, next.nsfwLevel))
     throw throwBadRequestError('A green Buzz crucible can only allow PG and PG-13 content.');
   assertCrucibleSettings(next);
+  const changedSettings = isModeratorFixingRunning
+    ? CRUCIBLE_MODERATOR_RUNNING_FIELDS.filter((key) => provided.includes(key))
+    : [];
+  if (
+    changedSettings.includes('allowedResources') &&
+    !widens(current.allowedResources, next.allowedResources)
+  )
+    throw throwBadRequestError(
+      "While it's running, required models can only be added to the list it already has, so entries already in stay valid."
+    );
+  if (
+    changedSettings.includes('allowedBaseModels') &&
+    next.allowedBaseModels.length > 0 &&
+    !widens(current.allowedBaseModels, next.allowedBaseModels)
+  )
+    throw throwBadRequestError(
+      "While it's running, base models can only be added to the list it already has, or cleared, so entries already in stay valid."
+    );
 
   const nextName = changes.name ?? crucible.name;
   const nextDescription =
@@ -1141,7 +1254,7 @@ export const updateCrucible = async ({
   );
   await assertPublishedModelVersions(addedResources);
   // A content type switch re-checks every pick, since an earlier one can now make the wrong media.
-  if (canEditSettings) {
+  if (canEditSettings || isModeratorFixingRunning) {
     const contentTypeChanged = next.contentType !== current.contentType;
     await assertRequiredModelsMakeContentType(
       contentTypeChanged ? next.allowedResources : addedResources,
@@ -1190,6 +1303,31 @@ export const updateCrucible = async ({
       : undefined,
     nsfwLevel: changes.nsfwLevel,
     ...(textChanged && { ingestion: CrucibleIngestionStatus.Pending, scannedAt: null }),
+  };
+
+  if (changedSettings.length)
+    Object.assign(
+      data,
+      Object.fromEntries(
+        changedSettings.map((key) => [
+          key,
+          key === 'maxTotalEntries'
+            ? next.maxTotalEntries ?? null
+            : key === 'allowedResources'
+            ? next.allowedResources.length
+              ? (next.allowedResources as Prisma.JsonArray)
+              : Prisma.JsonNull
+            : next[key],
+        ])
+      )
+    );
+  // Every cap the moderator sets is checked under the lock, raises included: the cap read above
+  // is a replica's and may predate another edit, so it can't tell a raise from a cut.
+  const entryCaps = {
+    maxTotalEntries: changedSettings.includes('maxTotalEntries')
+      ? next.maxTotalEntries ?? undefined
+      : undefined,
+    entryLimit: changedSettings.includes('entryLimit') ? next.entryLimit : undefined,
   };
 
   let settlement: Awaited<ReturnType<typeof settleCrucibleCostChange>> = null;
@@ -1271,8 +1409,11 @@ export const updateCrucible = async ({
   // On the status read above: a cancel since then has already refunded the creator, and writing
   // the status back would revive a crucible whose seed is gone.
   // The row goes back to the creator, and event tags are moderator data.
-  const write = (where: Pick<Prisma.CrucibleWhereInput, 'ingestion' | 'image'> = {}) =>
-    dbWrite.crucible.update({
+  const write = (
+    where: Pick<Prisma.CrucibleWhereInput, 'ingestion' | 'image'> = {},
+    client: Prisma.TransactionClient = dbWrite
+  ) =>
+    client.crucible.update({
       where: { id, status: crucible.status, ...where },
       data,
       omit: { eventTags: true },
@@ -1292,6 +1433,11 @@ export const updateCrucible = async ({
             data.status = CrucibleStatus.Pending;
             return write();
           })
+        : entryCaps.maxTotalEntries !== undefined || entryCaps.entryLimit !== undefined
+        ? await dbWrite.$transaction(async (tx) => {
+            await assertEntryCapsHoldLiveEntries(tx, id, entryCaps);
+            return write({}, tx);
+          })
         : await write();
   } catch (error) {
     await settlement?.rollback();
@@ -1300,6 +1446,32 @@ export const updateCrucible = async ({
         'This crucible changed while you were editing it. Reload the page and try again.'
       );
     throw error;
+  }
+
+  if (changedSettings.length) {
+    logToAxiom({
+      type: 'info',
+      name: 'crucible-moderator-settings-edit',
+      crucibleId: id,
+      moderatorId: userId,
+      isOwner,
+      changes: Object.fromEntries(
+        changedSettings.map((key) => [key, { from: current[key], to: next[key] }])
+      ),
+    });
+    // The edit is saved, so a failed audit row must not fail it.
+    await trackModActivity(userId, {
+      entityType: 'crucible',
+      activity: 'updateSettings',
+      entityId: id,
+    }).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'crucible-moderator-settings-edit-audit-failed',
+        message: error instanceof Error ? error.message : String(error),
+        crucibleId: id,
+      })
+    );
   }
 
   if (textChanged) await scanCrucible(id);
@@ -1495,6 +1667,13 @@ export type CrucibleDetailEntry = Omit<CrucibleEntryRow, 'score' | 'position'> &
 };
 
 export type CrucibleDetail = CrucibleDetailRow & {
+  /** `isCrucibleHiddenByScan` for this viewer, on the stored cover rather than the one served. */
+  hiddenByScan: boolean;
+  /** The crucible and its cover passed their checks, but the cover is restricted by its base model. Set
+   * for its owner and moderators only. */
+  coverRestricted: boolean;
+  /** A cover is stored, whether or not this viewer is sent it. */
+  hasCover: boolean;
   paidEntryCount: number;
   entrantCount: number;
   /** The caller's own entries; everyone else's are paged through `getCrucibleEntries`. */
@@ -1573,6 +1752,22 @@ export const getCrucibleDetail = async ({
         : { viewerEntries: [], viewerEntriesSoFar: 0 },
     ]
   );
+  // Judged on the stored cover: a restricted one is withheld below, but the page still shows.
+  const hiddenByScan = isCrucibleHiddenByScan(crucible, { viewerId: userId, isModerator });
+  // For the page's notice to its managers: the cover passed its checks but is restricted, so the
+  // crucible is left out of feeds. Never sent to anyone else.
+  const stored = crucible.image;
+  const coverRestricted =
+    (isModerator || userId === crucible.userId) &&
+    crucible.ingestion === CrucibleIngestionStatus.Scanned &&
+    !!stored &&
+    stored.ingestion === ImageIngestionStatus.Scanned &&
+    stored.needsReview == null &&
+    !stored.tosViolation &&
+    isRestrictedImage(stored);
+  const { image, heroImage } = isModerator
+    ? crucible
+    : withServableImage(withServableImage(crucible, 'image', userId), 'heroImage', userId);
 
   // dbWrite: the owner refetches right after a removal, and the replica may not have it yet.
   const ownerRemovalsLeft =
@@ -1610,6 +1805,12 @@ export const getCrucibleDetail = async ({
 
   return {
     ...crucible,
+    imageId: image?.id ?? null,
+    image,
+    hiddenByScan,
+    coverRestricted,
+    hasCover: !!crucible.image,
+    heroImage,
     paidEntryCount,
     entrantCount: entrantCounts.get(id) ?? 0,
     viewerEntries,
@@ -1874,6 +2075,8 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   viewerId,
   isGreen = false,
   eventTag,
+  ids,
+  ownRowsExempt = true,
 }: {
   input: GetCruciblesInfiniteSchema;
   select: TSelect;
@@ -1883,9 +2086,17 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   isGreen?: boolean;
   /** Server-side only: event tags are moderator data, so no public input may filter on them. */
   eventTag?: string;
+  /** Server-only: only these crucibles, e.g. the semantic search's candidates. */
+  ids?: number[];
+  /** False holds the viewer's own crucibles to the same gates, as a narrowed search must. */
+  ownRowsExempt?: boolean;
 }) => {
   const where: Prisma.CrucibleWhereInput = {};
   if (eventTag !== undefined) where.eventTags = { has: eventTag };
+  if (ids) {
+    if (!ids.length) return { items: [], nextCursor: undefined };
+    where.id = { in: ids };
+  }
 
   // As the challenges feed: the crucible's allowed levels and its cover's rating must each intersect
   // the viewer's level, so an under-declared crucible can't leak its cover. Creators always see
@@ -1899,7 +2110,7 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   const visible: Prisma.CrucibleWhereInput[] = [
     {
       ingestion: CrucibleIngestionStatus.Scanned,
-      image: crucibleCoverListedWhere,
+      image: { AND: [crucibleCoverListedWhere, imageNotRestrictedWhere()] },
     },
   ];
   if (effectiveLevel > 0) {
@@ -1908,14 +2119,15 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
     if (!Flags.intersects(effectiveLevel, nsfwBrowsingLevelsFlag))
       visible.push({ textNsfw: false });
   }
-  and.push(viewerId ? { OR: [{ userId: viewerId }, { AND: visible }] } : { AND: visible });
+  const own = viewerId && ownRowsExempt ? viewerId : undefined;
+  and.push(own ? { OR: [{ userId: own }, { AND: visible }] } : { AND: visible });
 
   if (isGreen) {
     const onSite: Prisma.CrucibleWhereInput = {
       nsfwLevel: { in: CRUCIBLE_SFW_LEVELS },
       textNsfw: false,
     };
-    and.push(viewerId ? { OR: [{ userId: viewerId }, onSite] } : onSite);
+    and.push(own ? { OR: [{ userId: own }, onSite] } : onSite);
   }
   where.AND = and;
 
@@ -2113,6 +2325,7 @@ export type CrucibleEntryIneligibleReason =
   | 'missing-required-resource'
   | 'wrong-base-model'
   | 'required-model-level'
+  | 'restricted-model'
   | 'contest-banned'
   | 'not-found';
 
@@ -2126,6 +2339,7 @@ const entryIneligibleMessages: Record<CrucibleEntryIneligibleReason, string> = {
     "This image wasn't made with a checkpoint of one of this crucible's allowed base models.",
   'required-model-level':
     'A model this crucible requires can only be used for PG and PG-13 content, so this entry can only be PG or PG-13.',
+  'restricted-model': `This image can't be entered: ${RESTRICTED_IMAGE_REASON}.`,
   'contest-banned': CONTEST_BANNED_MESSAGE,
   'not-found': 'Image not found',
 };
@@ -2146,7 +2360,7 @@ const getAllowedResources = (crucible: EntryEligibilityCrucible) =>
  */
 const getEntryIneligibleReasons = async (
   crucible: EntryEligibilityCrucible,
-  images: { id: number; createdAt: Date; nsfwLevel: number }[],
+  images: Pick<Selectable<DB['Image']>, 'id' | 'createdAt' | 'nsfwLevel' | 'modelRestricted'>[],
   userId: number
 ) => {
   const contestBanned = images.length > 0 && (await isContestBanned(userId));
@@ -2192,6 +2406,7 @@ const getEntryIneligibleReasons = async (
         }
       }
       if (requiredModelHeldToSfw && isMature(image)) reasons.push('required-model-level');
+      if (isRestrictedImage(image)) reasons.push('restricted-model');
 
       return [image.id, reasons];
     })
@@ -2229,7 +2444,7 @@ export const checkCrucibleEntryEligibility = async ({
 
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds }, userId },
-    select: { id: true, createdAt: true, nsfwLevel: true },
+    select: { id: true, createdAt: true, nsfwLevel: true, modelRestricted: true },
   });
   const reasonsByImage = await getEntryIneligibleReasons(crucible, images, userId);
 
@@ -2452,11 +2667,7 @@ export const submitEntry = async ({
     ]);
 
     if (liveUserEntryCount >= crucible.entryLimit) {
-      return throwBadRequestError(
-        `You have reached the maximum of ${crucible.entryLimit} ${
-          crucible.entryLimit === 1 ? 'entry' : 'entries'
-        } for this crucible`
-      );
+      return throwBadRequestError(entryLimitReachedMessage(crucible.entryLimit));
     }
 
     // Fetch the image to validate requirements
@@ -2467,6 +2678,7 @@ export const submitEntry = async ({
         userId: true,
         type: true,
         nsfwLevel: true,
+        modelRestricted: true,
         metadata: true,
         createdAt: true,
         ingestion: true,
@@ -2697,6 +2909,25 @@ export const submitEntry = async ({
               ? CRUCIBLE_ENTRIES_CLOSED_MESSAGE
               : 'This crucible is not accepting entries'
           );
+        // Under the row lock the UPDATE took, so this reads the caps a moderator may have lowered
+        // since the checks above, and every entry saved before this one.
+        const [full] = await tx.$queryRaw<{ total: boolean; user: boolean; entryLimit: number }[]>`
+          SELECT
+            CASE WHEN c."maxTotalEntries" IS NULL THEN false ELSE (
+              SELECT COUNT(*) FROM "CrucibleEntry" e
+              WHERE e."crucibleId" = c.id AND e."imageId" IS NOT NULL
+            ) >= c."maxTotalEntries" END AS total,
+            (
+              SELECT COUNT(*) FROM "CrucibleEntry" e
+              WHERE e."crucibleId" = c.id AND e."userId" = ${userId} AND e."imageId" IS NOT NULL
+            ) >= c."entryLimit" AS "user",
+            c."entryLimit" AS "entryLimit"
+          FROM "Crucible" c
+          WHERE c.id = ${crucibleId}
+        `;
+        if (full?.total)
+          throw throwBadRequestError('This crucible has reached its maximum number of entries');
+        if (full?.user) throw throwBadRequestError(entryLimitReachedMessage(full.entryLimit));
         if (draftPostId) {
           // Scheduled for the end so the entry stays off the entrant's profile, feeds and search while
           // judging is blind. The UPDATE above refused an ended crucible, so endAt is still ahead.
@@ -2794,19 +3025,86 @@ export const submitEntry = async ({
 };
 
 /**
- * `voted`: pairs this judge voted on. `decided`: voted plus pairs their votes settle, which are not
- * served again. Progress counts `voted` as judged; only serving and "pairs left" use `decided`.
+ * `voted`: pairs this judge voted on. `decided`: voted, pairs their votes settle and pairs they
+ * dismissed, none of which is served again. Progress counts `voted` as judged; only serving and
+ * "pairs left" use `decided`.
  */
 async function getJudgePairKeys(crucibleId: number, userId: number) {
   const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
-  const [voted = [], outcomeCount = 0] = await Promise.all([
+  const [voted = [], clusterOutcomes, dismissed = []] = await Promise.all([
     sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
-    sysRedis.sCard(outcomesKey),
+    loadVoteOutcomes(
+      () => redis.sCard(outcomesKey),
+      () => redis.sMembers(outcomesKey)
+    ).catch((error: unknown) => {
+      warnVoteOutcomes('Failed to read vote outcomes', error, crucibleId, userId);
+      return undefined;
+    }),
+    sysRedis.sMembers(getDismissedPairsKey(crucibleId, userId)),
   ]);
-  // Past the cap the closure is skipped anyway, so the outcomes are not loaded.
-  if (!outcomeCount || outcomeCount > MAX_CLOSURE_VOTES) return { voted, decided: voted };
-  const outcomes = (await sysRedis.sMembers(outcomesKey)) ?? [];
-  return { voted, decided: decidedPairKeys(voted, outcomes) };
+  const outcomes =
+    clusterOutcomes && clusterOutcomes.length < voted.length
+      ? await withSysVoteOutcomes(clusterOutcomes, crucibleId, userId)
+      : clusterOutcomes;
+  const withDismissed = (decided: string[]) =>
+    dismissed.length ? [...new Set([...decided, ...dismissed])] : decided;
+  // A counted vote adds one voted pair and one outcome. Fewer outcomes than voted pairs means some
+  // are missing (a rating update or outcome write that failed, an eviction), and a partial set can
+  // break a cycle and decide a pair the full set leaves open, so it is not used.
+  if (!outcomes || outcomes.length < voted.length) return { voted, decided: withDismissed(voted) };
+  return { voted, decided: withDismissed(decidedPairKeys(voted, outcomes)) };
+}
+
+/**
+ * A judge's outcomes: `[]` when there are none, undefined when there are more than the closure
+ * handles, which skips it anyway, so they are not loaded.
+ */
+async function loadVoteOutcomes(count: () => Promise<number>, members: () => Promise<string[]>) {
+  const outcomeCount = await count();
+  if (outcomeCount > MAX_CLOSURE_VOTES) return undefined;
+  return outcomeCount ? (await members()) ?? [] : [];
+}
+
+/**
+ * Outcomes on sysRedis expire 30 days after a judge's last vote there, which was before the set
+ * moved to the cache cluster, so the fallback finds nothing once the move is 30 days deployed.
+ * This date must stay at least that far past the deploy.
+ * 🔴 Delete after this date: this constant, `withSysVoteOutcomes` and its call in
+ * `getJudgePairKeys`, `getSysVoteOutcomesKey`, and `REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES`.
+ */
+export const VOTE_OUTCOMES_SYS_FALLBACK_UNTIL = new Date('2027-01-01T00:00:00Z');
+
+/**
+ * `outcomes` plus the judge's outcomes still on sysRedis from before the move, deduplicated (an
+ * outcome is its `winner>loser` string, the same on both). Read only before
+ * `VOTE_OUTCOMES_SYS_FALLBACK_UNTIL`, and bounded by the sys read deadline; a read that fails or
+ * times out is logged and adds nothing. Undefined when sysRedis holds more than the closure cap.
+ */
+async function withSysVoteOutcomes(outcomes: string[], crucibleId: number, userId: number) {
+  if (Date.now() >= VOTE_OUTCOMES_SYS_FALLBACK_UNTIL.getTime()) return outcomes;
+  const sysKey = getSysVoteOutcomesKey(crucibleId, userId);
+  const sysOutcomes = await withSysReadDeadline(
+    loadVoteOutcomes(
+      () => sysRedis.sCard(sysKey),
+      () => sysRedis.sMembers(sysKey)
+    )
+  ).catch((error: unknown) => {
+    warnVoteOutcomes('Failed to read vote outcomes from sysRedis', error, crucibleId, userId);
+    return [];
+  });
+  if (!sysOutcomes) return undefined;
+  return sysOutcomes.length ? [...new Set([...outcomes, ...sysOutcomes])] : outcomes;
+}
+
+function warnVoteOutcomes(message: string, error: unknown, crucibleId: number, userId: number) {
+  logToAxiom({
+    type: 'warning',
+    name: 'crucible-vote-outcomes',
+    message: `${message} for crucible ${crucibleId}, user ${userId}`,
+    error: error instanceof Error ? error.message : String(error),
+    crucibleId,
+    userId,
+  });
 }
 
 function getServedPairKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
@@ -2872,6 +3170,63 @@ async function reserveJudgeEntryVotes(
  */
 function createServedPairValue(pairKey: string, anchorEntryId: number | null): string {
   return anchorEntryId === null ? pairKey : `${pairKey}|anchor:${anchorEntryId}`;
+}
+
+/**
+ * Claims the served pair (KEYS[1]) and adds it to the dismissed set (KEYS[2]), only while the judge
+ * is still being served that pair (ARGV[1], with or without its anchor suffix). Returns 1 when
+ * dismissed. Claiming it means the dismissed pair can no longer be voted on.
+ */
+export const DISMISS_SERVED_PAIR_SCRIPT = `
+local served = redis.call('GET', KEYS[1])
+if not served then return 0 end
+if served ~= ARGV[1] and string.sub(served, 1, #ARGV[1] + 1) ~= ARGV[1] .. '|' then return 0 end
+redis.call('DEL', KEYS[1])
+redis.call('SADD', KEYS[2], ARGV[1])
+redis.call('EXPIRE', KEYS[2], ARGV[2])
+return 1`;
+
+/**
+ * "Don't show again": the judge never gets this pair served again in this crucible. Only the pair
+ * on their screen can be dismissed. It is not a vote, so ratings, vote counts and progress's
+ * judged count are untouched.
+ */
+export async function dismissJudgingPair({
+  crucibleId,
+  entryIds: [entryA, entryB],
+  userId,
+}: {
+  crucibleId: number;
+  entryIds: [number, number];
+  userId: number;
+}) {
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id: crucibleId },
+    select: { status: true, endAt: true },
+  });
+  if (!crucible) throw throwNotFoundError('Crucible not found');
+  const now = Date.now();
+  if (
+    crucible.status !== CrucibleStatus.Active ||
+    (crucible.endAt && now > crucible.endAt.getTime())
+  )
+    throw throwBadRequestError('This crucible is not currently active for judging');
+
+  // TTL to endAt: dismissals only matter while judging is open.
+  const ttlSeconds = crucible.endAt
+    ? Math.max(1, Math.ceil((crucible.endAt.getTime() - now) / 1000))
+    : JUDGE_KEY_TTL_SECONDS;
+  const dismissed = Number(
+    await sysRedis.eval(DISMISS_SERVED_PAIR_SCRIPT, {
+      keys: [getServedPairKey(crucibleId, userId), getDismissedPairsKey(crucibleId, userId)],
+      arguments: [createPairKey(entryA, entryB), String(ttlSeconds)],
+    })
+  );
+  if (!dismissed)
+    throw throwBadRequestError(
+      'This pair is no longer available. Please wait for the next pair to load.'
+    );
+  return { dismissed: true };
 }
 
 /**
@@ -3103,7 +3458,7 @@ async function fetchEntrySample(
           u.id as user_id,
           u.username as user_username,
           u."deletedAt" as "user_deletedAt",
-          u.image as user_image
+          ${Prisma.raw(fallbackUserImageColumn)} as user_image
         FROM "CrucibleEntry" ce
         JOIN "Image" i ON i.id = ce."imageId"
         JOIN "User" u ON u.id = ce."userId"
@@ -3129,7 +3484,7 @@ async function fetchEntrySample(
           u.id as user_id,
           u.username as user_username,
           u."deletedAt" as "user_deletedAt",
-          u.image as user_image
+          ${Prisma.raw(fallbackUserImageColumn)} as user_image
         FROM "CrucibleEntry" ce
         JOIN "Image" i ON i.id = ce."imageId"
         JOIN "User" u ON u.id = ce."userId"
@@ -3285,10 +3640,12 @@ export type JudgingPairCount = {
 };
 
 /**
- * Pairs left for one judge across several crucibles: two Redis reads each, then one entries query.
+ * Pairs left for one judge across several crucibles: the judge's Redis pair state for each, then one
+ * entries query.
  * Recomputed on every call rather than kept in sync on vote, because a new entry, a re-scan or the
  * viewer's browsing level all change the count without a vote. `judgedOnly` keeps the entries
- * query off crucibles the judge never voted in, which the feed asks about most.
+ * query off crucibles where the judge has not yet voted on or dismissed a pair, which the feed asks
+ * about most.
  */
 export async function countJudgingPairs({
   crucibleIds,
@@ -3314,7 +3671,7 @@ export async function countJudgingPairs({
       return { id, judgeEntryVotes, voted, decided };
     })
   );
-  const counted = judgedOnly ? judgeState.filter(({ voted }) => voted.length > 0) : judgeState;
+  const counted = judgedOnly ? judgeState.filter(({ decided }) => decided.length > 0) : judgeState;
   if (!counted.length) return counts;
 
   const entries = await dbRead.$queryRaw<{ crucibleId: number; id: number }[]>`
@@ -3844,19 +4201,19 @@ export const submitVote = async ({
   await Promise.all([
     // A lost outcome only means this judge is served a pair they could have skipped.
     (async () => {
-      await sysRedis.sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId));
-      await sysRedis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS);
+      await redis.sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId));
+      await redis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS);
       // At most once per judge and crucible: concurrent votes can both read past 201 and skip it.
-      if ((await sysRedis.sCard(outcomesKey)) === MAX_CLOSURE_VOTES + 1)
+      if ((await redis.sCard(outcomesKey)) === MAX_CLOSURE_VOTES + 1)
         logToAxiom({
           type: 'info',
           name: 'crucible-closure-cap',
           message: `Judge ${userId} passed ${MAX_CLOSURE_VOTES} votes in crucible ${crucibleId}; the judge-side skip is off for them`,
           crucibleId,
           userId,
-        }).catch();
+        });
     })().catch((error: unknown) =>
-      log(`Failed to record vote outcome for crucible ${crucibleId}, user ${userId}: ${error}`)
+      warnVoteOutcomes('Failed to record vote outcome', error, crucibleId, userId)
     ),
     addJudge(crucibleId, userId),
     incrementUserVoteCount(userId),
@@ -3943,7 +4300,7 @@ const getContestBannedEntrantIds = async (
 
 /**
  * An entry by a site-banned or contest-banned entrant, or whose image was blocked, held for review, flagged, unpublished,
- * or re-rated outside the crucible's levels, can't place; its fee stays in the pool and the next
+ * re-rated outside the crucible's levels or restricted by its base model, can't place; its fee stays in the pool and the next
  * entrant moves up. A scan still in progress doesn't disqualify. A ban that lands after the crucible
  * is finalized holds the prize instead (see `prize.service`).
  */
@@ -3958,9 +4315,15 @@ const rankableEntryWhere = (
   // path filter drops those rows.
   userId: { notIn: contestBannedIds },
   image: {
-    ...enteredImageWhere(),
-    ingestion: { not: ImageIngestionStatus.Blocked },
-    nsfwLevel: { in: levelsIntersecting(nsfwLevel) },
+    AND: [
+      {
+        ...enteredImageWhere(),
+        ingestion: { not: ImageIngestionStatus.Blocked },
+        nsfwLevel: { in: levelsIntersecting(nsfwLevel) },
+      },
+      imageNotRestrictedWhere(),
+      noBlockMarkerWhere(),
+    ],
   },
 });
 
@@ -5862,7 +6225,8 @@ export const getUserActiveCrucibles = async ({
           image: {
             select: {
               url: true,
-              nsfwLevel: true,
+              modelRestricted: true,
+              userId: true,
               ...crucibleCoverScanSelect,
             },
           },
@@ -5943,9 +6307,11 @@ export const getUserActiveCrucibles = async ({
         position: newBestPosition,
         // On green the ceiling holds for the host too, as on the crucible's own cards.
         imageUrl:
-          site.isGreen && isImageHiddenFromGreenViewer(entry.crucible.image?.nsfwLevel, userId)
+          !entry.crucible.image ||
+          !isImageServable(entry.crucible.image, userId) ||
+          (site.isGreen && isImageHiddenFromGreenViewer(entry.crucible.image.nsfwLevel, userId))
             ? null
-            : entry.crucible.image?.url ?? null,
+            : entry.crucible.image.url,
       });
     }
   }
@@ -6184,8 +6550,8 @@ export const getJudgingSuggestions = async ({
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     })
   );
-  // countJudgingPairs skips crucibles the judge never voted in (judgedOnly), so estimate those from
-  // the raw entry count: an overestimate, fine for weighting.
+  // countJudgingPairs skips crucibles where the judge has neither voted nor dismissed (judgedOnly),
+  // so estimate those from the raw entry count: an overestimate, fine for weighting.
   return suggestions.map((crucible) => ({
     ...crucible,
     remainingPairs:

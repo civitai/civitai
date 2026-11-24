@@ -78,6 +78,10 @@ func FuzzCompare(f *testing.F) {
 		checkSymmetric(t, ab, ba, errAB, errBA, a, b)
 		if errAB == nil {
 			_ = Classify(ab, a, b)
+			// The flat (image.getInfinite) classifier reads the same envelopes; on a match it agrees.
+			if got := ClassifyFlat(ab, a, b); ab.Match && got != "match" {
+				t.Fatalf("ClassifyFlat of a match = %q\na=%q\nb=%q", got, a, b)
+			}
 		}
 	})
 }

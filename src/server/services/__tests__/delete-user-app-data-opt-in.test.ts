@@ -45,7 +45,7 @@ beforeEach(() => {
 
 describe('deleteUser — app-data opt-in', () => {
   it('records the request in the deletion transaction when the box is ticked, and wipes nothing inline', async () => {
-    await UserService.deleteUser({ id: USER_ID, removeAppData: true });
+    await UserService.deleteUser({ id: USER_ID, removeAppData: true, actorId: USER_ID });
 
     expect(metaWritten()).toMatchObject({ keep: 'x', appDataRemoval: 'requested' });
     // The meta write is an element of the deletion's transaction, so the request commits
@@ -56,7 +56,7 @@ describe('deleteUser — app-data opt-in', () => {
   });
 
   it('records no request when the box is left off (the default)', async () => {
-    await UserService.deleteUser({ id: USER_ID });
+    await UserService.deleteUser({ id: USER_ID, actorId: USER_ID });
 
     expect(metaWritten().appDataRemoval).toBeUndefined();
     expect(wipeAccount).not.toHaveBeenCalled();
@@ -68,7 +68,7 @@ describe('deleteUser — app-data opt-in', () => {
       meta: { keep: 'x', appDataRemoval: 'requested' },
     });
 
-    await UserService.deleteUser({ id: USER_ID, removeAppData: false });
+    await UserService.deleteUser({ id: USER_ID, removeAppData: false, actorId: USER_ID });
 
     expect(metaWritten()).toMatchObject({ keep: 'x' });
     expect(metaWritten().appDataRemoval).toBeUndefined();

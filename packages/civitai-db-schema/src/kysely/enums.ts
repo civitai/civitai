@@ -245,6 +245,7 @@ export type ModelVersionMonetizationType =
   (typeof ModelVersionMonetizationType)[keyof typeof ModelVersionMonetizationType];
 export const LicensingFeeType = {
   PerImageBuzz: 'PerImageBuzz',
+  PercentOfCompute: 'PercentOfCompute',
 } as const;
 export type LicensingFeeType = (typeof LicensingFeeType)[keyof typeof LicensingFeeType];
 export const LicensingFeeSettlementCurrency = {
@@ -453,6 +454,7 @@ export const CommentEntityType = {
   crucible: 'crucible',
   storyline: 'storyline',
   postText: 'postText',
+  featurePage: 'featurePage',
 } as const;
 export type CommentEntityType = (typeof CommentEntityType)[keyof typeof CommentEntityType];
 export const TagEngagementType = {
@@ -772,9 +774,11 @@ export const JobQueueType = {
   ImageScan: 'ImageScan',
   ReplacedImageDelete: 'ReplacedImageDelete',
   ImageStorageDelete: 'ImageStorageDelete',
+  ImageDelete: 'ImageDelete',
   CdnAccessSync: 'CdnAccessSync',
   ImageCdnPersistRetry: 'ImageCdnPersistRetry',
   CsamArchive: 'CsamArchive',
+  PendingDelete: 'PendingDelete',
 } as const;
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
 export const VaultItemStatus = {
@@ -844,6 +848,7 @@ export const NewOrderRankType = {
   Acolyte: 'Acolyte',
   Knight: 'Knight',
   Templar: 'Templar',
+  Paladin: 'Paladin',
 } as const;
 export type NewOrderRankType = (typeof NewOrderRankType)[keyof typeof NewOrderRankType];
 export const ChallengeSource = {
@@ -1083,6 +1088,13 @@ export const ServicePreviewKind = {
   None: 'None',
 } as const;
 export type ServicePreviewKind = (typeof ServicePreviewKind)[keyof typeof ServicePreviewKind];
+export const ServiceLicensePreset = {
+  Personal: 'Personal',
+  CommercialCredit: 'CommercialCredit',
+  CommercialNoCredit: 'CommercialNoCredit',
+  Custom: 'Custom',
+} as const;
+export type ServiceLicensePreset = (typeof ServiceLicensePreset)[keyof typeof ServiceLicensePreset];
 export const ServiceBuzzType = {
   yellow: 'yellow',
   blue: 'blue',
@@ -1120,6 +1132,7 @@ export const ServiceDealEventType = {
   Held: 'Held',
   Released: 'Released',
   Refunded: 'Refunded',
+  ReviewedHappy: 'ReviewedHappy',
 } as const;
 export type ServiceDealEventType = (typeof ServiceDealEventType)[keyof typeof ServiceDealEventType];
 export const ServiceDealFileKind = {
@@ -1157,6 +1170,12 @@ export const ServiceDealLeg = {
   Refund: 'Refund',
 } as const;
 export type ServiceDealLeg = (typeof ServiceDealLeg)[keyof typeof ServiceDealLeg];
+export const ServiceDealReviewVerdict = {
+  Happy: 'Happy',
+  NotQuite: 'NotQuite',
+} as const;
+export type ServiceDealReviewVerdict =
+  (typeof ServiceDealReviewVerdict)[keyof typeof ServiceDealReviewVerdict];
 export const UserHubSourceType = {
   User: 'User',
   Model: 'Model',

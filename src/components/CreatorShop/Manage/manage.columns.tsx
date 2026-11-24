@@ -1,6 +1,6 @@
 import { ActionIcon, Badge, Group, Stack, Text, ThemeIcon } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconPackage } from '@tabler/icons-react';
 import {
   IconArchive,
@@ -114,9 +114,9 @@ function ItemActionsMenu({
     (isArchived && wasLastReviewARejection(((item.meta ?? {}) as CosmeticShopItemMeta).history));
 
   const confirmDelete = () =>
-    openConfirmModal({
+    openConfirm({
       title: 'Delete shop item',
-      children: (
+      message: (
         <Stack gap="xs">
           <Text size="sm">
             Permanently delete <strong>{item.title}</strong>? This can&apos;t be undone — archive it
@@ -133,16 +133,15 @@ function ItemActionsMenu({
       ),
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
-      centered: true,
       onConfirm: () => deleteItem.mutate({ id: item.id }),
     });
 
   // Withdrawing ends other creators' listings and sends the item back to review
   // before it can sell again. Both are worth knowing before the click, not after.
   const confirmWithdrawal = (action: 'Delist' | 'Archive', onConfirm: () => void) => {
-    openConfirmModal({
+    openConfirm({
       title: `${action} ${item.title}`,
-      children: (
+      message: (
         <Stack gap="xs">
           {item.resellerCount > 0 && (
             <Text size="sm">
@@ -157,7 +156,6 @@ function ItemActionsMenu({
         </Stack>
       ),
       labels: { confirm: action, cancel: 'Cancel' },
-      centered: true,
       onConfirm,
     });
   };

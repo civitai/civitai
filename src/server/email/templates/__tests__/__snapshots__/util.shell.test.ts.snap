@@ -1,0 +1,110 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`simpleEmailWithTemplate > renders the shared shell 1`] = `
+"<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html lang="en" dir="ltr" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="supported-color-schemes" content="light dark" />
+  <title>Your app &quot;Pixel Pal&quot; is approved</title>
+  <!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->
+  <style>
+  :root { color-scheme: light dark; supported-color-schemes: light dark; }
+  .em-card a { color: #1971C2; }
+  .em-text p:first-child { margin-top: 0; }
+  .em-text p:last-child { margin-bottom: 0; }
+  @media (prefers-color-scheme: dark) {
+    .em-body, .em-outer { background-color: #101113 !important; }
+    .em-card { background-color: #25262B !important; border-color: #373A40 !important; }
+    .em-text { color: #C1C2C5 !important; }
+    .em-h1 { color: #fefefe !important; }
+    .em-footer, .em-muted { color: #A6A7AB !important; border-color: #373A40 !important; }
+    .em-card a:not(.em-btn) { color: #4DABF7 !important; }
+    .em-eyebrow { color: #4DABF7 !important; }
+    .em-badge, .em-panel { background-color: #2C2E33 !important; border-color: #373A40 !important; }
+    .em-callout { background-color: #2C2E33 !important; }
+    .em-page-footer, .em-page-footer a { color: #A6A7AB !important; }
+  }
+</style>
+  <!--[if mso]><style>
+  table, td, h1, p, a { font-family: Arial, Helvetica, sans-serif !important; }
+  .em-btn-cell { mso-padding-alt: 12px 24px !important; }
+</style><![endif]-->
+</head>
+<body class="em-body" style="margin: 0; padding: 0; width: 100%; background-color: #f8f9fa; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
+  <div class="em-preheader" style="display: none; max-height: 0; max-width: 0; overflow: hidden; mso-hide: all; font-size: 1px; line-height: 1px; opacity: 0; color: #f8f9fa;">Preview line for the inbox&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>
+  <table role="presentation" class="em-outer" width="100%" border="0" cellspacing="0" cellpadding="0" bgcolor="#f8f9fa" style="background-color: #f8f9fa;">
+    <tr>
+      <td align="center" style="padding: 32px 12px 24px 12px;">
+        <!--[if mso]><table role="presentation" align="center" width="600" border="0" cellspacing="0" cellpadding="0"><tr><td><![endif]-->
+        <table role="presentation" class="em-card" width="100%" border="0" cellspacing="0" cellpadding="0" bgcolor="#fefefe" style="max-width: 600px; margin: 0 auto; background-color: #fefefe; border: 1px solid #dee2e6; border-radius: 12px;">
+          <tr>
+            <td class="em-band" align="left" bgcolor="#1A1B1E" style="padding: 22px 32px; background-color: #1A1B1E; background-image: linear-gradient(#1A1B1E, #1A1B1E); border-radius: 12px 12px 0 0;">
+              <img src="https://civitai.com/images/email/logo-dark-band@2x.png" width="142" height="30" alt="Civitai" style="display: block; border: 0; outline: none; text-decoration: none; width: 142px; height: 30px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 22px; line-height: 30px; font-weight: bold; color: #ffffff;" />
+            </td>
+          </tr>
+          <tr>
+            <td class="em-accent" height="4" bgcolor="#228BE6" style="height: 4px; padding: 0; font-size: 4px; line-height: 4px; mso-line-height-rule: exactly; background-color: #228BE6; background-image: linear-gradient(90deg, #15AABF, #228BE6);">&#8203;</td>
+          </tr>
+          <tr>
+            <td align="center" style="padding: 36px 32px 8px 32px; text-align: center;">
+              <h1 class="em-h1" style="margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 26px; line-height: 34px; font-weight: bold; color: #212529; text-align: center;">Your app &quot;Pixel Pal&quot; is approved</h1>
+            </td>
+          </tr>
+          <tr>
+            <td class="em-text" style="padding: 16px 32px 16px 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 16px; line-height: 24px; color: #212529;">
+              <p style="margin: 0;">Body copy</p>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding: 8px 32px 28px 32px;">
+              <table role="presentation" border="0" cellspacing="0" cellpadding="0" style="margin: 0 auto;">
+                <tr>
+                  <td class="em-btn-cell" align="center" bgcolor="#1971C2" style="border-radius: 8px; background-color: #1971C2; mso-padding-alt: 12px 24px;">
+                    <a class="em-btn" href="https://civitai.com/apps/run/pixel-pal" target="_blank" style="display: inline-block; padding: 12px 24px; min-width: 160px; border: 1px solid #1971C2; border-radius: 8px; background-color: #1971C2; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 16px; line-height: 24px; font-weight: bold; color: #ffffff; text-align: center; text-decoration: none;">Open your app</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td class="em-text" style="padding: 0 32px 24px 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 16px; line-height: 24px; color: #212529;">
+              <p style="margin: 0;">After the button</p>
+            </td>
+          </tr>
+          <tr>
+            <td class="em-footer" style="padding: 16px 32px 24px 32px; border-top: 1px solid #dee2e6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 13px; line-height: 20px; color: #5C5F66;">
+              Footer small print
+            </td>
+          </tr>
+        </table>
+        <table role="presentation" class="em-page-footer" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; margin: 0 auto;">
+          <tr>
+            <td class="em-social" align="center" style="padding: 28px 16px 8px 16px;">
+              <table role="presentation" align="center" border="0" cellspacing="0" cellpadding="0" style="margin: 0 auto;">
+                <tr>
+                <td style="padding: 0 6px;"><a href="https://discord.gg/civitai" target="_blank" style="text-decoration: none;"><img src="https://civitai.com/images/email/social-discord@2x.png" width="32" height="32" alt="Discord" style="display: block; border: 0; outline: none; width: 32px; height: 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 10px; line-height: 12px; color: #5C5F66;" /></a></td>
+                <td style="padding: 0 6px;"><a href="https://twitter.com/HelloCivitai" target="_blank" style="text-decoration: none;"><img src="https://civitai.com/images/email/social-x@2x.png" width="32" height="32" alt="X" style="display: block; border: 0; outline: none; width: 32px; height: 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 10px; line-height: 12px; color: #5C5F66;" /></a></td>
+                <td style="padding: 0 6px;"><a href="https://www.instagram.com/hellocivitai/" target="_blank" style="text-decoration: none;"><img src="https://civitai.com/images/email/social-instagram@2x.png" width="32" height="32" alt="Instagram" style="display: block; border: 0; outline: none; width: 32px; height: 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 10px; line-height: 12px; color: #5C5F66;" /></a></td>
+                <td style="padding: 0 6px;"><a href="https://www.youtube.com/@civitai" target="_blank" style="text-decoration: none;"><img src="https://civitai.com/images/email/social-youtube@2x.png" width="32" height="32" alt="YouTube" style="display: block; border: 0; outline: none; width: 32px; height: 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 10px; line-height: 12px; color: #5C5F66;" /></a></td>
+                <td style="padding: 0 6px;"><a href="https://reddit.com/r/civitai" target="_blank" style="text-decoration: none;"><img src="https://civitai.com/images/email/social-reddit@2x.png" width="32" height="32" alt="Reddit" style="display: block; border: 0; outline: none; width: 32px; height: 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 10px; line-height: 12px; color: #5C5F66;" /></a></td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td class="em-page-footer" align="center" style="padding: 8px 16px 8px 16px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'; font-size: 13px; line-height: 20px; color: #5C5F66; text-align: center;">
+              <a href="https://civitai.com/content/tos" target="_blank" style="color: #5C5F66; text-decoration: underline;">Terms of Service</a> &nbsp;&middot;&nbsp; <a href="https://civitai.com/content/privacy" target="_blank" style="color: #5C5F66; text-decoration: underline;">Privacy</a> &nbsp;&middot;&nbsp; <a href="https://civitai.com/support" target="_blank" style="color: #5C5F66; text-decoration: underline;">Support</a>
+            </td>
+          </tr>
+        </table>
+        <!--[if mso]></td></tr></table><![endif]-->
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"
+`;

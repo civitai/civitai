@@ -5,7 +5,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { deleteImages } from '~/server/services/image.service';
-import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import { contentRemovalHeldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { REPLACED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
@@ -61,7 +61,7 @@ async function getStillPresentImageIds(ids: number[]) {
 }
 
 /**
- * The holds the reap re-checks on the DELETE itself: every hold on the owner's account, and the
+ * The holds the reap re-checks on the DELETE itself: every content-removal hold on the owner, and the
  * placeholder owner. Only valid on a statement over an unaliased "Image". `markerView` is what
  * `holdMarkerViewExists` returned.
  */
@@ -70,7 +70,7 @@ export function replacedImageHoldGuard(markerView: boolean) {
   return Prisma.sql`
     -- Read off the row itself, so a flag committed while this DELETE runs still holds the image.
     "Image"."needsReview" IS DISTINCT FROM 'csam'
-    AND NOT (${owner} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(owner, markerView)})
+    AND NOT (${owner} = ${PLACEHOLDER_OWNER_ID} OR ${contentRemovalHeldSql(owner, markerView)})
   `;
 }
 
@@ -113,8 +113,12 @@ export const removeReplacedImages = createJob(
       // call used to do — just late enough that no live cache can still be pointing at it.
       // A held account's images are the exception, and the guard leaves them in place.
       const markerView = await holdMarkerViewExists();
-      const rows = await deleteImages(deletableIds, true, {
+      const rows = await deleteImages(deletableIds, {
+        actor: { system: 'remove-replaced-images' },
         onlyWhere: replacedImageHoldGuard(markerView),
+        // A row its child-safety case keeps stays in this queue, so the re-adoption check above runs
+        // again before it goes; a pending delete would take it unchecked.
+        queueKept: false,
       });
       deleted.push(...rows.map((x) => x.id));
     }
@@ -154,7 +158,7 @@ export const removeReplacedImages = createJob(
       deleted: deleted.length,
       readopted: readopted.size,
       heldAtDelete: held.size,
-    }).catch(() => undefined);
+    });
 
     return { deleted: deleted.length, readopted: readopted.size, heldAtDelete: held.size };
   },

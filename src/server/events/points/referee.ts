@@ -500,7 +500,7 @@ export async function alertOnStaleCut(
     season,
     cutAgeMinutes: Math.round(lagMs / 60_000),
     storedCut: new Date(stored).toISOString(),
-  }).catch(() => undefined);
+  });
 }
 
 // Settles one season of a scored event: recompute the open days from the ledger, write them to the

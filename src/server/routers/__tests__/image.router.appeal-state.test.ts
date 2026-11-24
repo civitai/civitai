@@ -129,3 +129,88 @@ describe('image.getAppealState', () => {
     });
   });
 });
+
+describe('image.rescan', () => {
+  const db2 = { db: null as unknown as PGlite };
+  const sent: number[] = [];
+
+  beforeAll(async () => {
+    db2.db = new PGlite();
+    await db2.db.exec(`
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3) DEFAULT now());
+    CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, ingestion "ImageIngestionStatus", "blockedFor" text,
+      "nsfwLevel" int NOT NULL DEFAULT 0, "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "needsReview" text,
+      minor boolean NOT NULL DEFAULT false, metadata jsonb, "scanJobs" jsonb, url text, type text NOT NULL DEFAULT 'image',
+      width int, height int, meta jsonb, "scanRequestedAt" timestamp(3));
+    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
+    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]', "reportSentAt" timestamp(3), "archivedAt" timestamp(3));
+    CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean NOT NULL DEFAULT false);
+    INSERT INTO "User" (id) VALUES (20), (21), (22);
+    INSERT INTO "EvidenceHeldUser" VALUES (21);`);
+  });
+
+  beforeEach(async () => {
+    await db2.db.exec(`
+    TRUNCATE "Image";
+    INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", minor, url) VALUES
+      (101, 20, 'Blocked', 'moderated', 32, false, 'https://example.invalid/101.jpeg'),
+      (102, 20, 'Blocked', 'moderated', 32, true, 'https://example.invalid/102.jpeg'),
+      (103, 22, 'Blocked', 'CSAM', 32, false, 'https://example.invalid/103.jpeg'),
+      (104, 21, 'Blocked', 'moderated', 32, false, 'https://example.invalid/104.jpeg');`);
+    sent.length = 0;
+    const run = async (strings: TemplateStringsArray, values: unknown[]) => {
+      const flat = Prisma.sql(strings, ...(values as never[]));
+      const at = /WHERE id = \$(\d+)/.exec(flat.text);
+      // The refused submit's own write: recorded, not applied.
+      if (flat.text.includes('"scanRequestedAt" =') && at) {
+        sent.push(flat.values[Number(at[1]) - 1] as number);
+        return { rows: [], affectedRows: 1 };
+      }
+      return db2.db.query(flat.text, flat.values as unknown[]);
+    };
+    dbMock.dbWrite.$queryRaw.mockImplementation(
+      (async (strings: TemplateStringsArray, ...values: unknown[]) =>
+        (await run(strings, values)).rows) as never
+    );
+    dbMock.dbWrite.$executeRaw.mockImplementation(
+      (async (strings: TemplateStringsArray, ...values: unknown[]) =>
+        (await run(strings, values)).affectedRows ?? 0) as never
+    );
+  });
+
+  const ingestion = async (id: number) =>
+    (
+      await db2.db.query<{ ingestion: string; blockedFor: string | null }>(
+        'SELECT ingestion, "blockedFor" FROM "Image" WHERE id = $1',
+        [id]
+      )
+    ).rows[0];
+  const moderator = () => callerFor({ id: 1, isModerator: true } as { id: number });
+
+  it('case 1', async () => {
+    await moderator().rescan({ id: 101 });
+    expect(await ingestion(101)).toEqual({ ingestion: 'Rescan', blockedFor: 'moderated' });
+    expect(sent).toEqual([101]);
+  });
+
+  it.each([
+    ['1', 102],
+    ['2', 103],
+    ['3', 104],
+  ])('case 2.%s', async (_label, id) => {
+    await moderator().rescan({ id });
+    expect((await ingestion(id)).ingestion).toBe('Blocked');
+    expect(sent).toEqual([id]);
+  });
+
+  it('case 3', async () => {
+    await expect(callerFor({ id: 20 }).rescan({ id: 101 })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect((await ingestion(101)).ingestion).toBe('Blocked');
+  });
+});

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { NsfwLevel } from '~/server/common/enums';
 
 /**
  * Task 11: validate the required-resource rule (Challenge.modelVersionIds) BEFORE the
@@ -112,6 +113,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockDbRead.user.findUnique.mockResolvedValue({ id: USER_ID, meta: {} });
   mockDbRead.$queryRaw.mockResolvedValue([]); // alreadyJudged check: nothing already judged
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
   mockDbRead.collection.findMany.mockResolvedValue([]); // no featured collections
   mockChargeEntryFees.mockResolvedValue({ paidImageIds: [IMAGE_ID], unpaidImageIds: [] });
 });
@@ -166,6 +168,52 @@ describe('contest entry resource gate (Task 11)', () => {
       expect.objectContaining({ where: expect.objectContaining({ detected: true }) })
     );
     expect(mockChargeEntryFees).not.toHaveBeenCalled();
+  });
+
+  it('rejects an image whose featured LoRA cannot run on its checkpoint, before charging', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: true, hasFeeChallenge: true });
+    mockImageResourceNewFindMany.mockResolvedValue([{ imageId: IMAGE_ID }]);
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('"ImageResourceNew"')
+        ? [
+            { imageId: IMAGE_ID, baseModel: 'Pony', type: 'LORA', isFeatured: true },
+            { imageId: IMAGE_ID, baseModel: 'Krea 2 Turbo', type: 'Checkpoint', isFeatured: false },
+          ]
+        : []) as never);
+
+    await expect(
+      validateContestCollectionEntry({
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+        canAccessUserChallenges: true,
+        imageIds: [IMAGE_ID],
+        metadata: {},
+      })
+    ).rejects.toThrow(
+      "This image's checkpoint isn't compatible with the challenge's featured resource"
+    );
+    expect(mockChargeEntryFees).not.toHaveBeenCalled();
+  });
+
+  it('lets a featured LoRA through on a compatible checkpoint and reaches the charge step', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: true, hasFeeChallenge: true });
+    mockImageResourceNewFindMany.mockResolvedValue([{ imageId: IMAGE_ID }]);
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('"ImageResourceNew"')
+        ? [
+            { imageId: IMAGE_ID, baseModel: 'Pony', type: 'LORA', isFeatured: true },
+            { imageId: IMAGE_ID, baseModel: 'SDXL 1.0', type: 'Checkpoint', isFeatured: false },
+          ]
+        : []) as never);
+
+    await validateContestCollectionEntry({
+      collectionId: COLLECTION_ID,
+      userId: USER_ID,
+      canAccessUserChallenges: true,
+      imageIds: [IMAGE_ID],
+      metadata: {},
+    });
+    expect(mockChargeEntryFees).toHaveBeenCalledTimes(1);
   });
 
   it('accepts an image that has one of the required versions and reaches the charge step', async () => {
@@ -289,5 +337,47 @@ describe('validateContestCollectionEntry — creator block gate', () => {
         canAccessUserChallenges: true,
       })
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('validateContestCollectionEntry — model-restricted mature images', () => {
+  const mockImageFindMany = mockDbRead.image.findMany;
+
+  beforeEach(() => {
+    mockChallengeFindFirst.mockImplementation(
+      async ({ where }: { where: Record<string, unknown> }) =>
+        Object.keys(where).length === 1 && 'collectionId' in where ? { id: 1 } : null
+    );
+  });
+
+  const enter = (isModerator = false) =>
+    validateContestCollectionEntry({
+      collectionId: COLLECTION_ID,
+      userId: USER_ID,
+      isModerator,
+      imageIds: [IMAGE_ID],
+      metadata: {},
+    });
+
+  it.each([false, true])(
+    'refuses a mature image whose model restricts mature images (moderator: %s)',
+    async (isModerator) => {
+      mockImageFindMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.R, modelRestricted: true }]);
+
+      await expect(enter(isModerator)).rejects.toThrow("doesn't allow mature images");
+      expect(mockChargeEntryFees).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['a SFW image from a restricting model', { nsfwLevel: NsfwLevel.PG, modelRestricted: true }],
+    [
+      'a mature image from an unrestricted model',
+      { nsfwLevel: NsfwLevel.X, modelRestricted: false },
+    ],
+  ])('accepts %s', async (_label, image) => {
+    mockImageFindMany.mockResolvedValue([image]);
+
+    await expect(enter()).resolves.toBeUndefined();
   });
 });

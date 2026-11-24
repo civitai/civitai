@@ -58,6 +58,10 @@ export const config = {
 
 const MAX_BODY_BYTES = 8 * 1024;
 
+/** The recorded reason on a passed review build in a build-only environment (PR previews). */
+export const REVIEW_BUILD_ONLY_PASSED =
+  'review build passed; this environment builds review previews but does not serve them';
+
 async function readRawBody(req: Readable): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let total = 0;
@@ -374,6 +378,8 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       'preview-failed',
       {
         ...baseDetail,
+        // A failure is never a build-only pass, whatever an earlier run of this sha recorded.
+        buildOnly: undefined,
         // A direct build may have published its meta to the shared server before it failed:
         // record that, so a different-sha rebuild and a teardown unpublish it the shared way.
         ...(directPublish ? { sharedServer: true } : {}),
@@ -421,6 +427,42 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     res
       .status(200)
       .json({ ok: true, applied: false, reason: 'duplicate callback (replay-guarded)' });
+    return;
+  }
+
+  // BUILD-ONLY environment (APPS_REVIEW_BUILD_ONLY, PR previews): the build passed and is recorded;
+  // nothing is deployed. No apply Job (it would land in the production apps namespace) and no
+  // `preview-deploying`, which would hold a build slot until it went stale. The row ends
+  // `preview-failed` with `buildOnly: true`, so nothing reads it as a live preview.
+  if (env.APPS_REVIEW_BUILD_ONLY) {
+    await markReviewPreviewState(
+      body.publishRequestId,
+      'preview-failed',
+      // sharedServer: false — nothing was published, so a teardown must not unpublish.
+      { ...baseDetail, sharedServer: false, buildOnly: true, error: REVIEW_BUILD_ONLY_PASSED },
+      { requireActivePreview: true }
+    );
+    // The replay mark guards an apply Job, and there is none here: free it, or a same-sha
+    // rebuild within its TTL would have its own success swallowed as a duplicate and keep its
+    // slot until stale.
+    await clearReviewApplyMark(body.publishRequestId, body.sha);
+    await recordBuildAttempt({
+      mode: 'review',
+      status: 'succeeded',
+      publishRequestId: body.publishRequestId,
+      slug: body.slug,
+      sha: body.sha,
+      runId: signals.runId,
+      failedStep: signals.failedStep,
+    });
+    recordAppBlockBuildOutcome({
+      mode: 'review',
+      outcome: 'succeeded',
+      failedStep: 'none',
+      failureClass: 'none',
+    });
+    reviewBuildSettled(body.publishRequestId, false);
+    res.status(200).json({ ok: true, applied: false, buildOnly: true });
     return;
   }
 

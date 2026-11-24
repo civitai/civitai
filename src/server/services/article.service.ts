@@ -1,13 +1,20 @@
+import { queueImageDeletes } from '@civitai/db-queries/content-deletion';
+import { kyselyOver } from '~/server/db/prisma-kysely';
 import type { EventViewer } from '~/server/events/event-access';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { Prisma } from '@prisma/client';
-import { accountHoldSql } from '~/server/services/legal-hold.service';
-import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
 import { NsfwLevel } from '~/server/common/enums';
-import { hasBlockMarker } from '~/server/common/image-visibility';
+import { TEXT_MODERATION_RETRY_STATUSES } from '~/server/jobs/text-moderation-retry.constants';
+import {
+  hasBlockMarker,
+  minorMatureHidden,
+  noBlockMarkerWhere,
+  withoutMinorFlag,
+} from '~/server/common/image-visibility';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -21,6 +28,7 @@ import {
 import { eventEngine } from '~/server/events';
 import { userArticleCountCache, articleStatCache } from '~/server/redis/caches';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
+import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
@@ -44,12 +52,16 @@ import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
 } from '~/server/selectors/cosmetic.selector';
-import { imageSelect } from '~/server/selectors/image.selector';
+import { connectionImageExists, imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   articleOwnImageIds,
   deriveArticleIngestionState,
+  articleModerationText,
+  articleTextScanFields,
 } from '~/server/services/article-ingestion.helpers';
+import { hashContent } from '~/server/services/entity-moderation.service';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
 import { isSharedArticle, sharedArticleTextHash } from '~/server/services/article-share.helpers';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
@@ -70,11 +82,7 @@ import {
 } from '~/server/services/cosmetic.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { shopArtworkUrls } from '~/server/services/image-url-ownership';
-import {
-  deleteImageById,
-  enqueueImageIngestion,
-  resolveIngestionError,
-} from '~/server/services/image.service';
+import { enqueueImageIngestion, resolveIngestionError } from '~/server/services/image.service';
 import {
   enqueueCollectionRebuild,
   getCollectionIdsForArticle,
@@ -152,6 +160,8 @@ type ArticleRaw = {
   id: number;
   cover?: string | null;
   coverId?: number | null;
+  /** The stored cover id; `coverId` is the card's image, null when its model withholds the cover. */
+  storedCoverId?: number | null;
   title: string;
   publishedAt: Date | null;
   userNsfwLevel: number;
@@ -201,7 +211,7 @@ const getArticleStatsObject = async (data: { id: number }[]) => {
         cause: error.cause,
       },
       'article-stats'
-    ).catch();
+    );
     return {};
   }
 };
@@ -222,6 +232,38 @@ export const articleCardCoverIdSql = Prisma.sql`CASE
     WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL
       AND ${imageAllowedByItsModelSql(Prisma.sql`b.id`)})
 END`;
+
+/**
+ * `?tags=` on an article list. A category id matches the article's assigned category: the system
+ * category when it has one, the author's pick only where it does not. Any other tag id matches the
+ * author's tags. Ids are OR'd, so several ids widen the list.
+ */
+export function articleTagFilterSql(tagIds: number[], categoryIds: number[]) {
+  const categories = tagIds.filter((id) => categoryIds.includes(id));
+  const others = tagIds.filter((id) => !categoryIds.includes(id));
+  const authorTagged = (ids: number[]) =>
+    Prisma.sql`EXISTS (
+      SELECT 1 FROM "TagsOnArticle" toa WHERE toa."articleId" = a.id AND toa."tagId" IN (${Prisma.join(
+        ids
+      )})
+    )`;
+  const parts: Prisma.Sql[] = [];
+  if (categories.length)
+    parts.push(Prisma.sql`(a."systemCategoryId" IN (${Prisma.join(categories)}) OR (
+      a."systemCategoryId" IS NULL AND ${authorTagged(categories)}
+    ))`);
+  if (others.length) parts.push(authorTagged(others));
+  return Prisma.sql`(${Prisma.join(parts, ' OR ')})`;
+}
+
+/** Hidden tags drop an article the author tagged with one, or whose system category is one. */
+export function articleExcludedTagsSql(tagIds: number[]) {
+  return Prisma.sql`NOT EXISTS (
+    SELECT 1 FROM "TagsOnArticle" toa WHERE toa."articleId" = a.id AND toa."tagId" IN (${Prisma.join(
+      tagIds
+    )})
+  ) AND (a."systemCategoryId" IS NULL OR a."systemCategoryId" NOT IN (${Prisma.join(tagIds)}))`;
+}
 
 export const getArticles = async ({
   limit,
@@ -283,14 +325,8 @@ export const getArticles = async ({
       AND.push(Prisma.sql`a."title" ILIKE ${'%' + query + '%'}`);
     }
     if (!!tags?.length) {
-      AND.push(
-        Prisma.sql`EXISTS (
-          SELECT 1 FROM "TagsOnArticle" toa WHERE toa."articleId" = a.id AND toa."tagId" IN (${Prisma.join(
-            tags,
-            ','
-          )})
-        )`
-      );
+      const categoryIds = (await getCategoryTags('article')).map((c) => c.id);
+      AND.push(articleTagFilterSql(tags, categoryIds));
     }
 
     if (!!userIds?.length) {
@@ -376,16 +412,7 @@ export const getArticles = async ({
       if (!!excludedIds?.length) {
         AND.push(Prisma.sql`a.id NOT IN (${Prisma.join(excludedIds, ',')})`);
       }
-      if (!!excludedTagIds?.length) {
-        AND.push(
-          Prisma.sql`NOT EXISTS (
-            SELECT 1 FROM "TagsOnArticle" toa WHERE toa."articleId" = a.id AND toa."tagId" IN (${Prisma.join(
-              excludedTagIds,
-              ','
-            )})
-          )`
-        );
-      }
+      if (!!excludedTagIds?.length) AND.push(articleExcludedTagsSql(excludedTagIds));
     }
 
     if (sessionUser) {
@@ -524,6 +551,7 @@ export const getArticles = async ({
       SELECT
         a.id,
         a.cover,
+        a."coverId" AS "storedCoverId",
         ${articleCardCoverIdSql} AS "coverId",
         a.title,
         a."publishedAt",
@@ -555,7 +583,7 @@ export const getArticles = async ({
           'id', u."id",
           'username', u."username",
           'deletedAt', u."deletedAt",
-          'image', u."image",
+          'image', ${Prisma.raw(fallbackUserImageColumn)},
           'profilePictureId', u."profilePictureId"
         ) as "user",
         (
@@ -598,12 +626,21 @@ export const getArticles = async ({
     );
 
     const coverIds = articles.map((x) => x.coverId).filter(isDefined);
-    const coverImages = coverIds.length
-      ? await dbRead.image.findMany({
-          where: { id: { in: coverIds } },
-          select: imageSelect,
-        })
-      : [];
+    const minorHiddenCoverIds = new Set<number>();
+    const coverImages = (
+      coverIds.length
+        ? await dbRead.image.findMany({
+            where: { id: { in: coverIds } },
+            select: { ...imageSelect, minor: true },
+          })
+        : []
+    )
+      .filter((image) => {
+        const hidden = minorMatureHidden(image, userId, isModerator);
+        if (hidden) minorHiddenCoverIds.add(image.id);
+        return !hidden;
+      })
+      .map(withoutMinorFlag);
 
     const articleCategories = await getCategoryTags('article');
     const [cosmetics, eventDecorations] = includeCosmetics
@@ -625,21 +662,30 @@ export const getArticles = async ({
         // This take prio over mod status just so mods can see the same as users.
         if (hidePrivateArticles && a.availability === Availability.Private) return false;
         // Whatever filter is set, a private article is only listed for its owner and staff.
-        if (a.availability === Availability.Private)
-          return !!sessionUser?.isModerator || a.userId === sessionUser?.id;
-
-        return true;
+        return canViewArticle(a, sessionUser);
       })
-      .map(({ tags, user, userCosmetics, cursorV, ...article }) => {
+      .map(({ tags, user, userCosmetics, cursorV, storedCoverId, ...article }) => {
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
         const cover = coverImages.find((x) => x.id === article.coverId);
-        const isOwnerOrMod = !!sessionUser?.isModerator || article.userId === sessionUser?.id;
-        const coverImage = isArticleImageViewable(cover, isOwnerOrMod) ? cover : undefined;
+        const coverImage = isArticleImageViewable(
+          cover,
+          articleImageViewer(sessionUser, article.userId)
+        )
+          ? cover
+          : undefined;
         const match = articleStats[article.id];
 
         return {
           ...article,
+          // The legacy `cover` is the stored cover's key: it goes when that cover is withheld.
+          ...(((storedCoverId != null && storedCoverId !== article.coverId) ||
+            (article.coverId != null && minorHiddenCoverIds.has(article.coverId)) ||
+            (!!cover &&
+              !coverImage &&
+              (isRestrictedImage(cover) || cover.nsfwLevel === NsfwLevel.Blocked))) && {
+            cover: null,
+          }),
           tags: tags.map(({ tag }) => ({
             ...tag,
             isCategory: articleCategories.some((c) => c.id === tag.id),
@@ -722,6 +768,7 @@ export const getCivitaiNews = async () => {
     WHERE c.name IN ('Newsroom', 'Updates') AND c."userId" = -1 AND a."createdAt" > now() - '1 year'::interval
       AND a."publishedAt" IS NOT NULL AND a.status = 'Published'::"ArticleStatus"
       AND a."ingestion" = 'Scanned'::"ArticleIngestionStatus"
+      AND a.availability != 'Private'
       AND (a."nsfwLevel" & ${publicBrowsingLevelsFlag}) != 0
     ORDER BY a."createdAt" DESC
     LIMIT 10
@@ -733,18 +780,22 @@ export const getCivitaiNews = async () => {
   });
 
   const coverIds = articlesRaw.map((x) => x.coverId).filter(isDefined);
-  const coverImages = coverIds.length
-    ? await dbRead.image.findMany({
-        where: { id: { in: coverIds } },
-        select: imageSelect,
-      })
-    : [];
+  const coverImages = (
+    coverIds.length
+      ? await dbRead.image.findMany({
+          where: { id: { in: coverIds } },
+          select: { ...imageSelect, minor: true },
+        })
+      : []
+  )
+    .filter((image) => !minorMatureHidden(image))
+    .map(withoutMinorFlag);
 
   const articles = articlesRaw.map((article) => {
     const user = users.find((x) => x.id === article.userId);
     const cover = coverImages.find((x) => x.id === article.coverId);
     // A public page with no viewer: no owner exception.
-    const coverImage = isArticleImageViewable(cover, false) ? cover : undefined;
+    const coverImage = isArticleImageViewable(cover, 'other') ? cover : undefined;
     return {
       ...article,
       user: user ?? null,
@@ -811,7 +862,9 @@ export const articleContentImageSelect = {
   height: true,
   needsReview: true,
   tosViolation: true,
+  modelRestricted: true,
 } satisfies Prisma.ImageSelect;
+
 
 /**
  * Whether a cover or banner its model withholds is hidden from this non-moderator viewer: only the
@@ -825,6 +878,15 @@ function modelHidesArticleImage(
   articleUserId: number
 ) {
   return withheld.has(image.id) && !(viewerId === articleUserId && image.userId === articleUserId);
+}
+
+/** The article availability rule for reads. */
+export function canViewArticle(
+  article: { availability: Availability; userId: number | null },
+  viewer: { id?: number; isModerator?: boolean } | undefined
+) {
+  if (article.availability !== Availability.Private) return true;
+  return !!viewer?.isModerator || (viewer?.id !== undefined && article.userId === viewer.id);
 }
 
 export const getArticleById = async ({
@@ -854,15 +916,17 @@ export const getArticleById = async ({
       // field doesn't flow into external webhook / search-index payloads.
       select: {
         ...articleDetailSelect,
+        coverImage: { select: { ...imageSelect, minor: true } },
         // Page-only: kept out of the shared select so the webhook and search payloads are unchanged.
-        bannerImage: { select: imageSelect },
+        bannerImage: { select: { ...imageSelect, minor: true } },
         moderatorNsfwLevel: true,
         scheduledAt: true,
         reactions: viewerReactionsSelect(userId),
       },
     });
 
-    if (!article) throw throwNotFoundError(`No article with id ${id}`);
+    if (!article || !canViewArticle(article, { id: userId, isModerator }))
+      throw throwNotFoundError(`No article with id ${id}`);
     if (userId && !isModerator) {
       const blocked = await amIBlockedByUser({ userId, targetUserId: article.userId });
       if (blocked) throw throwNotFoundError(`No article with id ${id}`);
@@ -870,8 +934,8 @@ export const getArticleById = async ({
 
     // Fetch connected images with ingestion status, and what the body needs to guard each by level.
     const imageConnections = await dbRead.imageConnection.findMany({
-      where: { entityId: id, entityType: ImageConnectionType.Article },
-      include: { image: { select: articleContentImageSelect } },
+      where: { entityId: id, entityType: ImageConnectionType.Article, ...connectionImageExists },
+      include: { image: { select: { ...articleContentImageSelect, minor: true } } },
     });
 
     const articleCategories = await getCategoryTags('article');
@@ -880,7 +944,9 @@ export const getArticleById = async ({
       type: 'Article',
     });
 
-    const isOwnerOrMod = isModerator || userId === article.userId;
+    // On the article's own page and edit form a moderator gets its restricted cover and banner, as its
+    // owner does; card and feed covers still withhold them from moderators.
+    const viewer = isModerator ? 'owner' : articleImageViewer({ id: userId }, article.userId);
     // A cover or banner its model withholds is shown only to moderators, and to the article's
     // owner when they uploaded it. The edit form learns of one it may not see from the
     // `...Withheld` flags, and a save that leaves it out keeps it (upsertArticle).
@@ -893,10 +959,13 @@ export const getArticleById = async ({
       !!image && modelHidesArticleImage(image, withheldByModel, userId, article.userId);
     const coverHidden = hiddenByModel(article.coverImage);
     const bannerHidden = hiddenByModel(article.bannerImage);
-    const coverImage = viewableArticleImage(coverHidden ? null : article.coverImage, isOwnerOrMod);
+    const coverWithheld = coverHidden || minorMatureHidden(article.coverImage, userId, isModerator);
+    const coverImage = viewableArticleImage(coverWithheld ? null : article.coverImage, viewer);
     const bannerImage = viewableArticleImage(
-      bannerHidden ? null : article.bannerImage,
-      isOwnerOrMod
+      bannerHidden || minorMatureHidden(article.bannerImage, userId, isModerator)
+        ? null
+        : article.bannerImage,
+      viewer
     );
     // For the owner's edit form only: anyone else learns nothing about an image they cannot see.
     const isOwner = userId !== undefined && userId === article.userId;
@@ -906,14 +975,15 @@ export const getArticleById = async ({
     // Media nobody but its owner and moderators may get leaves the body, and csam-held media
     // leaves it for the owner too.
     const bodyImages = imageConnections.map((conn) => conn.image);
-    const contentImages = isModerator
+    const keptImages = isModerator
       ? bodyImages
       : bodyImages.filter((image) =>
           userId === article.userId ? !isCsamHeldBodyImage(image) : isServableBodyImage(image)
         );
     const withheld = bodyImages
-      .filter((image) => !contentImages.includes(image))
+      .filter((image) => !keptImages.includes(image))
       .map((image) => image.url);
+    const contentImages = keptImages.map(withoutMinorFlag);
     const nonOwner = !isModerator && userId !== article.userId;
     const content =
       isModerator || !article.content
@@ -934,6 +1004,14 @@ export const getArticleById = async ({
 
     return {
       ...article,
+      // The legacy `cover` is the same image's key.
+      ...((coverWithheld ||
+        (!!article.coverImage &&
+          !coverImage &&
+          (isRestrictedImage(article.coverImage) ||
+            article.coverImage.nsfwLevel === NsfwLevel.Blocked))) && {
+        cover: null,
+      }),
       nsfwLevel: article.nsfwLevel as NsfwLevel,
       attachments,
       tags: article.tags.map(({ tag }) => ({
@@ -957,19 +1035,32 @@ export const getArticleById = async ({
 
 type ArticleImageRow = Prisma.ImageGetPayload<{ select: typeof imageSelect }>;
 
-/** Owners and moderators always; anyone else per `servableArticleImage`. */
-function isArticleImageViewable<T extends Pick<ArticleImageRow, 'ingestion' | 'needsReview'>>(
-  image: T | null | undefined,
-  isOwnerOrMod: boolean
-): image is T {
+type ArticleImageViewer = 'owner' | 'moderator' | 'other';
+
+const articleImageViewer = (
+  viewer: { id?: number; isModerator?: boolean } | undefined,
+  articleUserId: number | null
+): ArticleImageViewer =>
+  viewer?.id === articleUserId ? 'owner' : viewer?.isModerator ? 'moderator' : 'other';
+
+/** On cards and feeds a moderator gets no exception for a restricted image; anyone else per `servableArticleImage`. */
+function isArticleImageViewable<
+  T extends Pick<ArticleImageRow, 'ingestion' | 'needsReview' | 'nsfwLevel' | 'modelRestricted'>
+>(image: T | null | undefined, viewer: ArticleImageViewer): image is T {
   if (!image) return false;
-  return isOwnerOrMod || servableArticleImage(image) !== null;
+  if (viewer === 'owner') return true;
+  if (viewer === 'moderator') return !isRestrictedImage(image);
+  return servableArticleImage(image) !== null;
 }
 
-function viewableArticleImage(image: ArticleImageRow | null | undefined, isOwnerOrMod: boolean) {
-  if (!isArticleImageViewable(image, isOwnerOrMod)) return undefined;
+function viewableArticleImage(
+  image: (ArticleImageRow & { minor?: boolean | null }) | null | undefined,
+  viewer: ArticleImageViewer
+) {
+  if (!isArticleImageViewable(image, viewer)) return undefined;
+  const { minor, ...row } = image;
   return {
-    ...image,
+    ...row,
     nsfwLevel: image.nsfwLevel as NsfwLevel,
     meta: image.meta as ImageMetaProps,
     metadata: image.metadata as ImageMetadata,
@@ -1025,6 +1116,7 @@ export const upsertArticle = async ({
       lockedProperties: string[];
       metadata: Prisma.JsonValue;
       content: string | null;
+      scheduledAt: Date | null;
     } | null = null;
     if (id) {
       article = await dbWrite.article.findUnique({
@@ -1044,6 +1136,7 @@ export const upsertArticle = async ({
           lockedProperties: true,
           metadata: true,
           content: true,
+          scheduledAt: true,
         },
       });
       if (!article) throw throwNotFoundError();
@@ -1292,15 +1385,13 @@ export const upsertArticle = async ({
             cause: error.cause,
             stack: error.stack,
             articleId: result.id,
-          }).catch();
+          });
         }
       }
 
       // Submit for text moderation (non-blocking, fire-and-forget)
       if (result.content && isPublicArticle(result)) {
-        const textForModeration = [data.title, removeTags(result.content)]
-          .filter(Boolean)
-          .join(' ');
+        const textForModeration = articleModerationText(data.title, result.content);
         submitTextModerationOrScan({
           entityType: 'Article',
           entityId: result.id,
@@ -1319,7 +1410,7 @@ export const upsertArticle = async ({
             name: 'article-text-moderation',
             message: (e as Error).message,
             articleId: result.id,
-          }).catch();
+          });
         });
       }
 
@@ -1481,16 +1572,19 @@ export const upsertArticle = async ({
         ));
       if (sharedSave) await resetSharedArticleTextCheck(tx, id as number);
       sharedTextChanged = sharedSave;
-      // A live article leaves Scanned with its new text too, so no failure before the recompute
-      // can leave that text public without its own verdict.
-      const liveSave =
+      // A live or scheduled article leaves Scanned with its new text too, so no failure before the
+      // recompute can leave that text counted on an older verdict.
+      const publicSave =
         textChanged &&
-        ((data.status as ArticleStatus | undefined) ?? article.status) === ArticleStatus.Published;
+        isPublicArticle({
+          status: ((data.status as ArticleStatus | undefined) ?? article.status) as ArticleStatus,
+          scheduledAt: scheduledAtWrite === undefined ? article.scheduledAt : scheduledAtWrite,
+        });
       const updated = await tx.article.update({
         where: updateWhere,
         data: {
           ...data,
-          ...(sharedSave || liveSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
+          ...(sharedSave || publicSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
           // The locked read: a block may have written its own keys since the first read.
           metadata: {
@@ -1582,52 +1676,12 @@ export const upsertArticle = async ({
 
     // The save has committed: a failed cleanup is logged, and must not skip the content change below.
     try {
-      // A replaced or cleared cover or banner, once nothing else shows it: the author's own
-      // unposted upload only, since the hold read below covers only the author's images.
-      const replacedImageIds: number[] = [];
-      if (
-        coverId !== undefined &&
-        article.coverId !== coverId &&
-        article.coverId &&
-        article.coverId !== result.bannerId
-      ) {
-        const isImgOwner =
-          (await isImageOwner({ userId, isModerator, imageId: article.coverId })) &&
-          !!(await dbWrite.image.findFirst({
-            where: { id: article.coverId, userId: result.userId, postId: null },
-            select: { id: true },
-          }));
-        const shownElsewhere =
-          isImgOwner &&
-          // This article too, as it stands now: a save since may have put the cover back.
-          (await dbWrite.article.count({
-            where: { OR: [{ coverId: article.coverId }, { bannerId: article.coverId }] },
-          })) > 0;
-        if (isImgOwner && !shownElsewhere) replacedImageIds.push(article.coverId);
-      }
-      if (bannerId !== undefined && article.bannerId && article.bannerId !== bannerId) {
-        const unused = await dbWrite.image.findFirst({
-          where: { id: article.bannerId, ...unusedAuthorImage(result.userId) },
-          select: { id: true },
-        });
-        if (unused) replacedImageIds.push(unused.id);
-      }
-      // The same holds as article delete: a safety report or legal hold on the owner keeps them all.
-      if (replacedImageIds.length && !(await ownerUnderSafetyReport(dbWrite, result.userId))) {
-        const rows = await dbWrite.image.findMany({
-          where: { id: { in: replacedImageIds } },
-          select: { id: true, url: true },
-        });
-        const deletable = await withoutOfferingCovers(
-          dbWrite,
-          await withoutShopArtwork(dbWrite, rows)
-        );
-        // Per image, so one failed delete does not stop the rest.
-        for (const imageId of deletable)
-          await deleteImageById({ id: imageId }).catch((error) =>
-            handleLogError(error, 'article-replaced-image-cleanup', { articleId: id, imageId })
-          );
-      }
+      // A replaced or cleared cover or banner goes once nothing else uses it.
+      const replaced = [
+        coverId !== undefined && article.coverId !== coverId ? article.coverId : null,
+        bannerId !== undefined && article.bannerId !== bannerId ? article.bannerId : null,
+      ].filter(isDefined);
+      await queueImageDeletes(kyselyOver(dbWrite), replaced, { ownerId: result.userId });
     } catch (error) {
       handleLogError(error as Error, 'article-replaced-image-cleanup', { articleId: id });
     }
@@ -1774,13 +1828,12 @@ export async function applyArticleContentChange({
     // re-materialization is not a user edit: it must not reorder the "Recently Updated"
     // feed or reopen the rating-dispute re-edit window keyed on `updatedAt > resolvedAt`.
     // Under the share-token lock, so a link created meanwhile cannot miss this body: a shared
-    // draft, or a live article, leaves Scanned in the same statement that changes its text.
+    // draft, or a live or scheduled article, leaves Scanned in the same statement that changes its text.
     const affected = await dbWrite.$transaction(async (tx) => {
       await lockAccessTokens(tx, id);
       const shared = await isSharedArticle(id, publication.status, tx);
-      const live = publication.status === ArticleStatus.Published;
       const locked =
-        shared || live
+        shared || isPublicArticle(publication)
           ? await tx.article.findUnique({ where: { id }, select: { content: true } })
           : null;
       const changed = !!locked && locked.content !== content;
@@ -1812,7 +1865,7 @@ export async function applyArticleContentChange({
 
     if (hasContentChanged) {
       try {
-        const { orphanedImageIds } = await linkArticleContentImages({
+        await linkArticleContentImages({
           articleId: id,
           content,
           userId,
@@ -1821,16 +1874,6 @@ export async function applyArticleContentChange({
           bannerId,
           cleanupOnly: !scanContent,
         });
-
-        // Delete truly orphaned images (DB + S3 + cache)
-        for (const imageId of orphanedImageIds) {
-          await deleteImageById({ id: imageId }).catch((error) => {
-            handleLogError(error, 'article-orphaned-image-cleanup', {
-              articleId: id,
-              imageId,
-            });
-          });
-        }
 
         if (scanContent) {
           // Content changed and images need re-scanning — use Rescan to distinguish a
@@ -1857,7 +1900,7 @@ export async function applyArticleContentChange({
           cause: error.cause,
           stack: error.stack,
           articleId: id,
-        }).catch();
+        });
       }
     }
   }
@@ -1916,7 +1959,7 @@ export async function applyArticleContentChange({
           name: 'article-text-moderation',
           message: (e as Error).message,
           articleId: id,
-        }).catch();
+        });
         return null;
       });
       // The orchestrator client sets no timeout, so a hung submit would hold the save open.
@@ -1941,9 +1984,6 @@ export async function applyArticleContentChange({
 }
 
 const ARTICLE_TEXT_SUBMIT_TIMEOUT_MS = 10_000;
-
-const articleModerationText = (title: string, content: string | null) =>
-  [title, removeTags(content ?? '')].filter(Boolean).join(' ');
 
 /**
  * Whether the row now holds this text's scan or its verdict. Neither path throws on every miss: the
@@ -1990,117 +2030,6 @@ async function holdArticleTextVerdict(articleId: number) {
   });
 }
 
-/**
- * An image an article's cleanup may delete: the author's own, in no post, and shown nowhere else.
- * Most of these relations null out on delete, so a missed one silently blanks that surface:
- * a new relation that displays an image belongs here. An image that is reported, awaiting review
- * or blocked is kept too: moderation decides what happens to it, not an article edit.
- */
-export const unusedAuthorImage = (ownerId: number) =>
-  ({
-    userId: ownerId,
-    postId: null,
-    needsReview: null,
-    ingestion: { not: ImageIngestionStatus.Blocked },
-    nsfwLevel: { not: NsfwLevel.Blocked },
-    blockedFor: null,
-    reports: { none: {} },
-    article: { is: null },
-    articleBanner: { is: null },
-    assignedUser: { is: null },
-    connections: { none: {} },
-    collectionItems: { none: {} },
-    collections: { none: {} },
-    UserProfile: { none: {} },
-    userProfileSfwCover: { none: {} },
-    announcementCovers: { none: {} },
-    clubCover: { none: {} },
-    clubHeader: { none: {} },
-    clubAvatar: { none: {} },
-    clubTierCover: { none: {} },
-    clubPostCoverImage: { none: {} },
-    purchasableRewards: { none: {} },
-    CosmeticShopSection: { none: {} },
-    comicPanels: { none: {} },
-    comicReferenceImages: { none: {} },
-    comicProjectCover: { none: {} },
-    comicProjectHero: { none: {} },
-    challengesCover: { none: {} },
-    challengeWins: { none: {} },
-    challengeEventCovers: { none: {} },
-    model3dThumbnails: { none: {} },
-    model3dSources: { none: {} },
-    appListingIcons: { none: {} },
-    appListingCovers: { none: {} },
-    appListingScreenshots: { none: {} },
-    appSubListingImages: { none: {} },
-    appSubListingPendingImages: { none: {} },
-    crucibles: { none: {} },
-    crucibleHeroes: { none: {} },
-    crucibleEntries: { none: {} },
-    serviceOfferingCovers: { none: {} },
-    storylineCovers: { none: {} },
-    storylineHeroes: { none: {} },
-    storylineSparks: { none: {} },
-    storylineCoverUploads: { none: {} },
-  } satisfies Prisma.ImageWhereInput);
-
-/**
- * Deleting an orphaned image deletes its object, so one whose key shop artwork uses stays: an
- * article saved before shop keys were refused can hold one.
- */
-async function withoutShopArtwork(
-  db: Prisma.TransactionClient | typeof dbWrite,
-  images: { id: number; url: string }[]
-) {
-  if (!images.length) return [];
-  const shopUrls = await shopArtworkUrls(
-    images.map((image) => image.url),
-    db
-  );
-  return images.filter((image) => !shopUrls.has(image.url)).map((image) => image.id);
-}
-
-/**
- * Drops images used as a service offering's cover. That column has no Prisma relation, so
- * `unusedAuthorImage` cannot see it; a new plain image-id column needs the same treatment.
- */
-async function withoutOfferingCovers(
-  db: Pick<Prisma.TransactionClient, 'serviceOffering'>,
-  imageIds: number[]
-) {
-  if (!imageIds.length) return imageIds;
-  const covers = await db.serviceOffering.findMany({
-    where: { coverImageId: { in: imageIds } },
-    select: { coverImageId: true },
-  });
-  const used = new Set(covers.map((offering) => offering.coverImageId));
-  return imageIds.filter((id) => !used.has(id));
-}
-
-/**
- * An owner with a safety report on file, or under any legal hold, keeps every image: the review
- * needs them. Held when the hold cannot be read. Read outside any transaction: a failed read would
- * abort it.
- */
-export async function ownerUnderSafetyReport(
-  db: Pick<Prisma.TransactionClient, 'csamReport' | '$queryRaw'>,
-  ownerId: number
-) {
-  try {
-    if ((await db.csamReport.count({ where: { userId: ownerId } })) > 0) return true;
-    const owner = Prisma.sql`${ownerId}::int`;
-    const [row] =
-      (await db.$queryRaw<{ held: unknown }[]>`
-        SELECT (${owner} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(owner, true)}) AS held
-      `) ?? [];
-    return row?.held !== false;
-  } catch (error) {
-    handleLogError(error as Error, 'article-image-cleanup-hold-read', { ownerId });
-    return true;
-  }
-}
-
 export const deleteArticleById = async ({
   id,
   userId,
@@ -2126,63 +2055,47 @@ export const deleteArticleById = async ({
     const collectionsToRebuild = await getCollectionIdsForArticle({ articleId: id });
 
     const deleted = await dbWrite.$transaction(async (tx) => {
-      const article = await tx.article.delete({
+      const shown = await tx.article.findUnique({
         where: { id },
         select: { coverId: true, bannerId: true },
       });
+      // The cover and banner go through the same checks as the content images: either can be
+      // someone else's upload, or still shown elsewhere.
+      const imageIds = [
+        ...new Set([
+          ...(shown ? articleOwnImageIds(shown) : []),
+          ...contentImageConnections.map((conn) => conn.imageId),
+        ]),
+      ];
+      // Locked before anything is deleted: two articles deleted together would each still see the
+      // other's uncommitted connections and both skip a shared image. Images before the article,
+      // the order an image delete takes them (its banner foreign key sets the article's column).
+      if (imageIds.length)
+        await tx.$queryRaw`
+          SELECT id FROM "Image" WHERE id = ANY(${imageIds}::int[]) ORDER BY id FOR NO KEY UPDATE
+        `;
 
+      const deleted = await tx.article.delete({
+        where: { id },
+        select: { coverId: true, bannerId: true },
+      });
       await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
       await tx.imageConnection.deleteMany({
         where: { entityId: id, entityType: ImageConnectionType.Article },
       });
 
-      return article;
+      // A cover or banner saved since the read is checked too, though it was not locked.
+      await queueImageDeletes(kyselyOver(tx), [...imageIds, ...articleOwnImageIds(deleted)], {
+        ownerId: article.userId,
+        // A moderator deleting their own article deletes it as its owner.
+        moderatorDelete: !!isModerator && article.userId !== userId,
+      });
+      return deleted;
     });
 
     // Immediately after the commit: the steps below can reject, and the article row is
     // already gone, so the pre-delete snapshot is the only record left.
     await enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'article-delete' });
-
-    // The cover and banner go through the same checks as the content images: either can be
-    // someone else's upload, or still shown elsewhere.
-    const imageIds = [
-      ...new Set([
-        ...articleOwnImageIds(deleted),
-        ...contentImageConnections.map((conn) => conn.imageId),
-      ]),
-    ];
-
-    // The article is already gone, so a failed cleanup is logged rather than reported as a failed
-    // delete, and it must not skip the articles-index `Delete` below.
-    try {
-      if (imageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, article.userId))) {
-        const trulyOrphanedImages = await dbWrite.image.findMany({
-          where: { id: { in: imageIds }, ...unusedAuthorImage(article.userId) },
-          select: { id: true, url: true },
-        });
-
-        const deletable = await withoutOfferingCovers(
-          dbWrite,
-          await withoutShopArtwork(dbWrite, trulyOrphanedImages)
-        );
-        // Per image, so one failed delete does not stop the rest.
-        for (const imageId of deletable) {
-          await deleteImageById({ id: imageId }).catch((error) => {
-            handleLogError(
-              error,
-              imageId === deleted.coverId
-                ? 'article-cover-image-cleanup'
-                : imageId === deleted.bannerId
-                ? 'article-banner-image-cleanup'
-                : 'article-content-image-cleanup',
-              { articleId: id, imageId }
-            );
-          });
-        }
-      }
-    } catch (error) {
-      handleLogError(error as Error, 'article-image-cleanup', { articleId: id });
-    }
 
     await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }], {
       reason: 'delete',
@@ -2501,7 +2414,7 @@ export async function linkArticleContentImages({
   now?: Date;
   /** How many times this call has re-run over content a later save wrote. */
   relinks?: number;
-}): Promise<{ orphanedImageIds: number[] }> {
+}): Promise<void> {
   const contentImages = getContentMedia(content);
 
   // A url whose key's issuer is unknown or someone else gets no row; the article is held instead.
@@ -2524,142 +2437,130 @@ export async function linkArticleContentImages({
   const held = new Set([...(hold?.deferred ?? []), ...(hold?.refused ?? [])]);
   const holdChanged = !cleanupOnly && !sameContentLinkHold(previousHold, hold);
 
-  const { orphanedImageIds, imagesToIngest, holdWritten } = await dbWrite.$transaction(
-    async (tx) => {
-      const imageUrls = contentImages.map((img) => img.url);
+  const { imagesToIngest, holdWritten } = await dbWrite.$transaction(async (tx) => {
+    const imageUrls = contentImages.map((img) => img.url);
 
-      // Track content image IDs for orphan detection
-      let contentImageIds: number[] = [];
-      let imagesToIngest: { id: number; url: string; ingestion?: ImageIngestionStatus }[] = [];
+    // Track content image IDs for orphan detection
+    let contentImageIds: number[] = [];
+    let imagesToIngest: { id: number; url: string; ingestion?: ImageIngestionStatus }[] = [];
 
-      if (!cleanupOnly) {
-        // Batch query: Get all existing images in one query
-        const existingImages = await tx.image.findMany({
-          where: { url: { in: imageUrls } },
-          select: { id: true, url: true, ingestion: true },
+    if (!cleanupOnly) {
+      // Batch query: Get all existing images in one query
+      const existingImages = await tx.image.findMany({
+        where: { url: { in: imageUrls } },
+        select: { id: true, url: true, ingestion: true },
+      });
+
+      const existingUrlMap = new Map(existingImages.map((img) => [img.url, img]));
+
+      // Batch create: Missing images (upsert with unique constraint handles races)
+      const missingMedia = contentImages.filter(
+        (media) =>
+          !existingUrlMap.has(media.url) &&
+          !held.has(media.url) &&
+          !isUnfinishedUploadUrl(media.url)
+      );
+      const newlyCreatedImages: { id: number; url: string }[] = [];
+
+      if (missingMedia.length > 0) {
+        const newImages = await tx.image.createManyAndReturn({
+          data: missingMedia.map((media) => ({
+            url: media.url,
+            userId,
+            type: media.type,
+            name: media.alt,
+            ingestion: ImageIngestionStatus.Pending,
+            scanRequestedAt: new Date(),
+          })),
+          select: { id: true, url: true },
+          skipDuplicates: true,
         });
 
-        const existingUrlMap = new Map(existingImages.map((img) => [img.url, img]));
+        newImages.forEach((img) => {
+          existingUrlMap.set(img.url, { ...img, ingestion: ImageIngestionStatus.Pending });
+          newlyCreatedImages.push(img);
+        });
+      }
 
-        // Batch create: Missing images (upsert with unique constraint handles races)
-        const missingMedia = contentImages.filter(
-          (media) =>
-            !existingUrlMap.has(media.url) &&
-            !held.has(media.url) &&
-            !isUnfinishedUploadUrl(media.url)
-        );
-        const newlyCreatedImages: { id: number; url: string }[] = [];
+      // Batch upsert: ImageConnections
+      for (const url of imageUrls) {
+        const image = existingUrlMap.get(url);
+        if (!image) continue;
 
-        if (missingMedia.length > 0) {
-          const newImages = await tx.image.createManyAndReturn({
-            data: missingMedia.map((media) => ({
-              url: media.url,
-              userId,
-              type: media.type,
-              name: media.alt,
-              ingestion: ImageIngestionStatus.Pending,
-              scanRequestedAt: new Date(),
-            })),
-            select: { id: true, url: true },
-            skipDuplicates: true,
-          });
-
-          newImages.forEach((img) => {
-            existingUrlMap.set(img.url, { ...img, ingestion: ImageIngestionStatus.Pending });
-            newlyCreatedImages.push(img);
-          });
-        }
-
-        // Batch upsert: ImageConnections
-        for (const url of imageUrls) {
-          const image = existingUrlMap.get(url);
-          if (!image) continue;
-
-          await tx.imageConnection.upsert({
-            where: {
-              imageId_entityType_entityId: {
-                imageId: image.id,
-                entityType: ImageConnectionType.Article,
-                entityId: articleId,
-              },
-            },
-            create: {
+        await tx.imageConnection.upsert({
+          where: {
+            imageId_entityType_entityId: {
               imageId: image.id,
               entityType: ImageConnectionType.Article,
               entityId: articleId,
             },
-            update: {},
-          });
-        }
-
-        contentImageIds = Array.from(existingUrlMap.values()).map((img) => img.id);
-
-        // Queue images for ingestion
-        const pendingExistingImages = existingImages.filter(
-          (img) => img.ingestion === ImageIngestionStatus.Pending
-        );
-        imagesToIngest = [...newlyCreatedImages, ...pendingExistingImages];
-      } else {
-        // In cleanupOnly mode, we still need to know which images are in the current content
-        // so we can detect orphans. Query by URL to get their IDs.
-        const existingImages = await tx.image.findMany({
-          where: { url: { in: imageUrls } },
-          select: { id: true },
+          },
+          create: {
+            imageId: image.id,
+            entityType: ImageConnectionType.Article,
+            entityId: articleId,
+          },
+          update: {},
         });
-        contentImageIds = existingImages.map((img) => img.id);
       }
 
-      // --- Orphan detection (always runs) ---
+      contentImageIds = Array.from(existingUrlMap.values()).map((img) => img.id);
 
-      const excludeImageIds = [
-        ...contentImageIds,
-        ...articleOwnImageIds({ coverId: coverId ?? null, bannerId: bannerId ?? null }),
-      ];
+      // Queue images for ingestion
+      const pendingExistingImages = existingImages.filter(
+        (img) => img.ingestion === ImageIngestionStatus.Pending
+      );
+      imagesToIngest = [...newlyCreatedImages, ...pendingExistingImages];
+    } else {
+      // In cleanupOnly mode, we still need to know which images are in the current content
+      // so we can detect orphans. Query by URL to get their IDs.
+      const existingImages = await tx.image.findMany({
+        where: { url: { in: imageUrls } },
+        select: { id: true },
+      });
+      contentImageIds = existingImages.map((img) => img.id);
+    }
 
-      // Get orphaned connections for this article. A csam-held image is withheld from its owner's
-      // editor, so their save never carries it; its connection stays while the review is open.
-      const orphanedConnections = await tx.imageConnection.findMany({
+    // --- Orphan detection (always runs) ---
+
+    const excludeImageIds = [
+      ...contentImageIds,
+      ...articleOwnImageIds({ coverId: coverId ?? null, bannerId: bannerId ?? null }),
+    ];
+
+    // Get orphaned connections for this article. A csam-held image is withheld from its owner's
+    // editor, so their save never carries it; its connection stays while the review is open.
+    const orphanedConnections = await tx.imageConnection.findMany({
+      where: {
+        entityType: ImageConnectionType.Article,
+        entityId: articleId,
+        imageId: { notIn: excludeImageIds },
+        NOT: { image: { needsReview: CSAM_HELD_REVIEW } },
+      },
+      select: { imageId: true },
+    });
+
+    const orphanedIds = orphanedConnections.map((conn) => conn.imageId);
+
+    // Delete the orphaned connections
+    if (orphanedIds.length > 0) {
+      await tx.imageConnection.deleteMany({
         where: {
           entityType: ImageConnectionType.Article,
           entityId: articleId,
-          imageId: { notIn: excludeImageIds },
-          NOT: { image: { needsReview: CSAM_HELD_REVIEW } },
+          imageId: { in: orphanedIds },
         },
-        select: { imageId: true },
       });
-
-      const orphanedIds = orphanedConnections.map((conn) => conn.imageId);
-
-      // Delete the orphaned connections
-      if (orphanedIds.length > 0) {
-        await tx.imageConnection.deleteMany({
-          where: {
-            entityType: ImageConnectionType.Article,
-            entityId: articleId,
-            imageId: { in: orphanedIds },
-          },
-        });
-      }
-
-      let trulyOrphanedIds: number[] = [];
-      if (orphanedIds.length > 0) {
-        const trulyOrphaned = await tx.image.findMany({
-          where: { id: { in: orphanedIds }, ...unusedAuthorImage(ownerId) },
-          select: { id: true, url: true },
-        });
-        trulyOrphanedIds = await withoutOfferingCovers(
-          tx,
-          await withoutShopArtwork(tx, trulyOrphaned)
-        );
-      }
-
-      // In the same transaction as the rows, so a failed write leaves held urls without rows.
-      const holdWritten =
-        holdChanged && (await writeContentLinkHold(tx, { articleId, content, hold }));
-
-      return { orphanedImageIds: trulyOrphanedIds, imagesToIngest, holdWritten };
     }
-  );
+
+    await queueImageDeletes(kyselyOver(tx), orphanedIds, { ownerId });
+
+    // In the same transaction as the rows, so a failed write leaves held urls without rows.
+    const holdWritten =
+      holdChanged && (await writeContentLinkHold(tx, { articleId, content, hold }));
+
+    return { imagesToIngest, holdWritten };
+  });
 
   // The article's content changed under this run, so its hold was not stored: link what it holds now,
   // whoever wrote it, or a url in it could be left with neither a row nor a hold.
@@ -2688,12 +2589,6 @@ export async function linkArticleContentImages({
     await recomputeArticleIngestion(articleId);
   }
 
-  // After the commit: the hold read must not be able to roll back the edit's image linking.
-  const deletable =
-    orphanedImageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, ownerId))
-      ? orphanedImageIds
-      : [];
-
   if (imagesToIngest.length > 0) {
     // TODO.articleImageScan: remove the lowPriority flag
     enqueueImageIngestion({
@@ -2703,8 +2598,6 @@ export async function linkArticleContentImages({
       lowPriority: true,
     });
   }
-
-  return { orphanedImageIds: deletable };
 }
 
 /**
@@ -2777,6 +2670,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
       where: {
         entityId: id,
         entityType: ImageConnectionType.Article,
+        ...connectionImageExists,
       },
       include: {
         image: {
@@ -2854,9 +2748,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     articleHasText(article.title, article.content);
   const textTerminalStatuses = new Set<EntityModerationStatus>([
     EntityModerationStatus.Succeeded,
-    EntityModerationStatus.Failed,
-    EntityModerationStatus.Expired,
-    EntityModerationStatus.Canceled,
+    ...TEXT_MODERATION_RETRY_STATUSES,
   ]);
   const textDone = !required || (!!moderation && textTerminalStatuses.has(moderation.status));
 
@@ -2994,7 +2886,7 @@ export async function submitSharedArticleText(id: number): Promise<boolean> {
         submitTextModeration({
           entityType: 'Article',
           entityId: id,
-          content: [text.title, removeTags(text.content ?? '')].filter(Boolean).join(' '),
+          content: articleModerationText(text.title, text.content),
           labels: ['nsfw'],
           recordForReview: true,
           forceRescan: true,
@@ -3038,6 +2930,45 @@ export function articleHasText(title: string | null, content: string | null): bo
   const titleText = title?.trim() ?? '';
   const contentText = removeTags(content ?? '').trim();
   return titleText.length > 0 || contentText.length > 0;
+}
+
+/** Text verdicts older than this may not store a hash of the text they judged. */
+export const ARTICLE_TEXT_VERDICT_HASHED_SINCE = new Date('2026-11-11T00:00:00Z');
+
+/**
+ * Whether a stored text verdict covers this title and content. A text-scan verdict carries the
+ * scanned text's `textHash` in its result; an XGuard verdict carries `contentHash`.
+ */
+export function articleTextVerdictMatch(
+  row: { contentHash: string | null; result: Prisma.JsonValue | null; updatedAt: Date },
+  article: { title: string | null; content: string | null }
+): 'current' | 'other' | 'legacy' | 'partial' {
+  const result = row.result as {
+    version?: unknown;
+    textHash?: unknown;
+    meta?: { inputCut?: unknown };
+  } | null;
+  // It did not judge all of the text; a resubmit would judge the same part.
+  const cut = result?.version != null && result.meta?.inputCut === true;
+  const stored =
+    result?.version != null
+      ? typeof result.textHash === 'string'
+        ? result.textHash
+        : null
+      : row.contentHash;
+  if (!stored) {
+    if (row.updatedAt >= ARTICLE_TEXT_VERDICT_HASHED_SINCE) return 'other';
+    return cut ? 'partial' : 'legacy';
+  }
+  const current =
+    result?.version != null
+      ? textScanTextHash({
+          fields: articleTextScanFields(article.title, article.content),
+          declared: {},
+        })
+      : hashContent(articleModerationText(article.title, article.content));
+  if (stored !== current) return 'other';
+  return cut ? 'partial' : 'current';
 }
 
 /**
@@ -3106,7 +3037,11 @@ export async function recomputeArticleIngestionInTx(
   //     Pending automatically on the next recompute, no special-case save
   //     logic required.
   const connections = await tx.imageConnection.findMany({
-    where: { entityId: articleId, entityType: ImageConnectionType.Article },
+    where: {
+      entityId: articleId,
+      entityType: ImageConnectionType.Article,
+      ...connectionImageExists,
+    },
     include: { image: { select: { ingestion: true } } },
   });
 
@@ -3156,7 +3091,7 @@ export async function recomputeArticleIngestionInTx(
   // --- Text moderation side ---
   const textModeration = await tx.entityModeration.findUnique({
     where: { entityType_entityId: { entityType: 'Article', entityId: articleId } },
-    select: { status: true, blocked: true },
+    select: { status: true, blocked: true, contentHash: true, result: true, updatedAt: true },
   });
 
   // Articles with no text to scan (empty/null title AND content) can never
@@ -3164,18 +3099,27 @@ export async function recomputeArticleIngestionInTx(
   // Also guards blocked/error on any stale EntityModeration row whose
   // content has since been emptied.
   const hasText = articleHasText(current.title, current.content);
-  const textErrorStatuses: string[] = [
-    EntityModerationStatus.Failed,
-    EntityModerationStatus.Expired,
-    EntityModerationStatus.Canceled,
-  ];
+  const textErrorStatuses: string[] = TEXT_MODERATION_RETRY_STATUSES;
+  const textSucceeded = hasText && textModeration?.status === EntityModerationStatus.Succeeded;
+  // Only on the way into Scanned: an article already there keeps what it has, so rows from before
+  // verdicts carried a hash do not take it down on its next recompute.
+  const verdictMatch =
+    textSucceeded && textModeration && current.ingestion !== ArticleIngestionStatus.Scanned
+      ? articleTextVerdictMatch(textModeration, current)
+      : 'current';
+  if (verdictMatch === 'legacy') logToAxiom({ type: 'info', name: 'article-verdict-unverifiable' });
+  // A verdict for other text neither clears nor blocks it. One for part of this text blocks on a
+  // hit in the part it judged, but cannot clear the rest.
+  const verdictForThisText = verdictMatch === 'current' || verdictMatch === 'legacy';
   const textBlocked =
-    hasText &&
-    textModeration?.status === EntityModerationStatus.Succeeded &&
-    textModeration.blocked === true;
+    textSucceeded &&
+    (verdictForThisText || verdictMatch === 'partial') &&
+    textModeration?.blocked === true;
+  if (verdictMatch === 'partial' && !textBlocked)
+    logToAxiom({ type: 'warning', name: 'article-verdict-input-cut', articleId });
   const textError =
     hasText && !!textModeration && textErrorStatuses.includes(textModeration.status);
-  const textDone = !hasText || textModeration?.status === EntityModerationStatus.Succeeded;
+  const textDone = !hasText || (textSucceeded && verdictForThisText);
 
   // --- Derive ingestion state (precedence documented on deriveArticleIngestionState) ---
   const hasModeratorOverride = current.moderatorNsfwLevel != null;
@@ -3378,13 +3322,15 @@ const rescanImageSelect = {
   nsfwLevel: true,
   nsfwLevelLocked: true,
   blockedFor: true,
+  needsReview: true,
 } as const;
 
 /**
  * Whether an article rescan may re-queue this image. Skipped: one still in flight; a locked
  * rating, which is a moderator's override; a blocked image, since a clean scan result would lift
- * the block, which only a moderator decides; and an image someone other than the article's author
- * owns, which the author has no say over.
+ * the block, which only a moderator decides; an image awaiting review, whose flag a clean scan
+ * result could clear; and an image someone other than the article's author owns, which the author
+ * has no say over.
  */
 function canRescanArticleImage(
   image: {
@@ -3393,6 +3339,7 @@ function canRescanArticleImage(
     nsfwLevel: number;
     nsfwLevelLocked: boolean;
     blockedFor: string | null;
+    needsReview: string | null;
   },
   articleUserId: number
 ) {
@@ -3400,8 +3347,31 @@ function canRescanArticleImage(
     image.userId === articleUserId &&
     image.ingestion !== ImageIngestionStatus.Pending &&
     !image.nsfwLevelLocked &&
+    image.needsReview === null &&
     !hasBlockMarker(image)
   );
+}
+
+/**
+ * `canRescanArticleImage` as the Rescan write's filter, so a block or review flag that lands after
+ * the row was read is not overwritten: the scan result would then clear it. Change the two together.
+ */
+const rescanArticleImageWhere = (articleUserId: number): Prisma.ImageWhereInput => ({
+  userId: articleUserId,
+  nsfwLevelLocked: false,
+  needsReview: null,
+  AND: [{ ingestion: { not: ImageIngestionStatus.Pending } }, noBlockMarkerWhere()],
+});
+
+/** Flips the images still eligible on the primary to Rescan; returns the ids it flipped. */
+async function markArticleImagesForRescan(imageIds: number[], articleUserId: number) {
+  if (!imageIds.length) return new Set<number>();
+  const flipped = await dbWrite.image.updateManyAndReturn({
+    where: { id: { in: imageIds }, ...rescanArticleImageWhere(articleUserId) },
+    data: { ingestion: ImageIngestionStatus.Rescan },
+    select: { id: true },
+  });
+  return new Set(flipped.map(({ id }) => id));
 }
 
 /**
@@ -3488,7 +3458,7 @@ export async function rescanArticle({
   // --- Re-queue already-processed images for rescan ---
   // The primary, not a replica: a block that landed seconds ago must not read as unblocked here.
   const connections = await dbWrite.imageConnection.findMany({
-    where: { entityId: id, entityType: ImageConnectionType.Article },
+    where: { entityId: id, entityType: ImageConnectionType.Article, ...connectionImageExists },
     include: {
       image: {
         select: rescanImageSelect,
@@ -3510,17 +3480,15 @@ export async function rescanArticle({
   for (const own of ownImages)
     if (!candidates.some((image) => image.id === own.id)) candidates.push(own);
 
-  const imagesToIngest = candidates.filter((image) => canRescanArticleImage(image, article.userId));
-
   // Mark re-queued images non-terminal so the article reads as in-progress
   // (allComplete=false) and the status poll keeps running until they resolve.
-  const imageIdsToIngest = imagesToIngest.map((image) => image.id);
-  if (imageIdsToIngest.length) {
-    await dbWrite.image.updateMany({
-      where: { id: { in: imageIdsToIngest } },
-      data: { ingestion: ImageIngestionStatus.Rescan },
-    });
-  }
+  const flipped = await markArticleImagesForRescan(
+    candidates
+      .filter((image) => canRescanArticleImage(image, article.userId))
+      .map((image) => image.id),
+    article.userId
+  );
+  const imagesToIngest = candidates.filter((image) => flipped.has(image.id));
 
   enqueueImageIngestion({
     images: imagesToIngest,
@@ -3538,9 +3506,7 @@ export async function rescanArticle({
     article.content &&
     (isPublicArticle(article) || (await isSharedArticle(id, article.status)))
   ) {
-    const textForModeration = [article.title, removeTags(article.content)]
-      .filter(Boolean)
-      .join(' ');
+    const textForModeration = articleModerationText(article.title, article.content);
 
     await submitTextModerationOrScan({
       entityType: 'Article',
@@ -3562,7 +3528,7 @@ export async function rescanArticle({
         name: 'article-rescan-text-moderation',
         message: (e as Error).message,
         articleId: id,
-      }).catch();
+      });
     });
   }
 
@@ -3590,7 +3556,7 @@ export async function rescanArticle({
     articleId: id,
     imageCount: connections.length,
     isModerator,
-  }).catch();
+  });
 }
 
 /**
@@ -3652,20 +3618,20 @@ export async function rescanArticleImage({
 
   // An image already scanning needs nothing; any other refusal is the caller's to hear, and costs
   // no attempt.
-  if (!canRescanArticleImage(image, article.userId)) {
-    if (image.ingestion === ImageIngestionStatus.Pending) return;
-    throw throwBadRequestError(
+  const refused = () =>
+    throwBadRequestError(
       'This image cannot be rescanned from the article. Remove it from the article if it is not needed.'
     );
+  if (!canRescanArticleImage(image, article.userId)) {
+    if (image.ingestion === ImageIngestionStatus.Pending) return;
+    throw refused();
   }
 
   // Flip to Rescan so the image is no longer terminal: getArticleScanStatus
   // then reports the article as in-progress (allComplete=false), which resumes
   // the 15s status poll so the eventual result loads without a manual refresh.
-  await dbWrite.image.update({
-    where: { id: image.id },
-    data: { ingestion: ImageIngestionStatus.Rescan },
-  });
+  const flipped = await markArticleImagesForRescan([image.id], article.userId);
+  if (!flipped.has(image.id)) throw refused();
   enqueueImageIngestion({
     images: [image],
     name: 'article-rescan-image',
@@ -3688,7 +3654,7 @@ export async function rescanArticleImage({
     articleId,
     imageId,
     isModerator,
-  }).catch();
+  });
 }
 
 /** The seeded `civitai official` tag, or undefined until the row exists. */

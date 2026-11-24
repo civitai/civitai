@@ -20,6 +20,7 @@ import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as NotificationService from '~/server/services/notification.service';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 import { CrucibleSort, NotificationCategory } from '~/server/common/enums';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
@@ -684,12 +685,22 @@ describe('getCrucibles — browsing level', () => {
     expect(levels.image.nsfwLevel.in).toEqual(levels.nsfwLevel.in);
   });
 
-  it('lists only crucibles whose text and cover passed their scans, the cover out of review and not a ToS violation, level or not', async () => {
+  it('lists only crucibles whose text and cover passed their scans, the cover out of review, not a ToS violation and not restricted by its base model, level or not', async () => {
     for (const browsingLevel of [undefined, 1]) {
       const where = await whereFor({ browsingLevel });
       expect(where.AND[0].AND[0]).toEqual({
         ingestion: CrucibleIngestionStatus.Scanned,
-        image: { ingestion: ImageIngestionStatus.Scanned, needsReview: null, tosViolation: false },
+        image: {
+          AND: [
+            {
+              ingestion: ImageIngestionStatus.Scanned,
+              nsfwLevel: { notIn: [0, 32] },
+              needsReview: null,
+              tosViolation: false,
+            },
+            imageNotRestrictedWhere(),
+          ],
+        },
       });
     }
   });

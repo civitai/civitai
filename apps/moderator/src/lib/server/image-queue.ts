@@ -1,7 +1,16 @@
 import { fail, type Actions } from '@sveltejs/kit';
+import { agentReportFilterOf, agentReportWhere } from '$lib/server/agent-reporters';
 import { FEEDBACK_CAPTURE_OWNER_REFUSAL } from '@civitai/shared/feedback-capture';
 import { z } from 'zod';
 import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
+import { holdsCsamReview } from '$lib/server/held-media';
+import {
+  restrictedImageIds,
+  withheldAccountRefusal,
+  withheldApprovedAppeal,
+  withheldRefusal,
+  withheldRow,
+} from '$lib/server/retracted-media';
 import {
   getCsamQueueByUser,
   getImageReviewQueue,
@@ -17,11 +26,18 @@ import {
   dismissFromCsamQueue,
   dismissUserFromCsamQueue,
   RemovedImageNotRestorableError,
+  ImageChangedError,
+  ModeratorRemovedImageError,
+  CsamReviewImageError,
   AppealRestoreRefusedError,
   APPEAL_RESTORE_REFUSED,
   resolveImageAppeal,
   sendBulkAppealEmails,
 } from '$lib/server/image-moderation.service';
+import {
+  CSAM_BLOCKLIST_RETRY,
+  CsamBlocklistWriteError,
+} from '$lib/server/image-moderation-effects';
 import { setReportStatus } from '$lib/server/reports.service';
 import { getActorMeta } from '$lib/server/request-meta';
 import { dbRead, dbWrite } from '$lib/server/db';
@@ -30,7 +46,11 @@ import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal
 import { heldRemovalMessage, type HeldRemoval } from '$lib/server/removal-hold';
 import { getModel3DsByThumbnailImageIds, unpublishModel3d } from '$lib/server/model3d.service';
 import { ReportStatus } from '$lib/reports';
-import { FLAG_KEPT_THROUGH_BLOCK, type ImageViewSlug } from '$lib/image-review';
+import {
+  FLAG_KEPT_THROUGH_BLOCK,
+  reviewHighlightCategories,
+  type ImageViewSlug,
+} from '$lib/image-review';
 import { violationInputSchema } from '$lib/violations';
 import { parseImageFlagValue } from '$lib/image-flags';
 import { isRatingLevel } from '$lib/nsfw-levels';
@@ -56,6 +76,14 @@ const querySchema = z.object({
 const parseIds = (v: unknown): number[] => parseIdList(String(v ?? ''));
 
 const REMOVED_REASON = 'removed, and a review queue cannot put it back';
+/** A verdict on a report never restores or re-removes an image a moderator already removed: it closes
+ *  the report as actioned and leaves the image as it is. */
+const alreadyRemovedNotice = (imageIds: number[]) =>
+  `Already removed by a moderator, so left as it is: ${imageIds
+    .map((id) => `#${id}`)
+    .join(', ')}. ${
+    imageIds.length === 1 ? 'Its report was' : 'Their reports were'
+  } closed as actioned.`;
 const REMOVED_REMEDY =
   'Dismiss a flagged image from its review queue, or restore the image explicitly. Reload.';
 
@@ -83,11 +111,33 @@ async function withModel3d<T extends { id: number }>(items: T[]) {
   }));
 }
 
+/** Cards withheld from `user` go out as `withheldRow`s, with no prompt, rule, review tags, report
+ *  reason or 3D model parent. */
+async function withheldCards<T extends { id: number }>(items: T[], user?: App.Locals['user']) {
+  const withheld = await restrictedImageIds(
+    items.map((i) => i.id),
+    { csamReview: holdsCsamReview(user) }
+  );
+  return items.map((item) => {
+    if (!withheld.has(item.id)) return { ...item, restricted: false };
+    const { report } = item as { report?: object };
+    return {
+      ...withheldRow(item),
+      model3d: null,
+      promptHighlight: null,
+      ruleDefinition: null,
+      ruleReason: null,
+      reviewTags: [] as never[],
+      ...(report ? { report: { ...report, reason: '', details: null } } : {}),
+    };
+  });
+}
+
 /**
  * One image queue's cards, for `view`. Shared by `/images/[slug]` (the review queues) and
  * `/reports/image` (the reported-image queue, which moved there from `/images/reported`).
  */
-export async function loadImageQueue(view: ImageViewSlug, url: URL) {
+export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.Locals['user']) {
   const { cursor, limit, level, userId, captures } = parseQuery(url, querySchema);
   const capturesOnly = captures ?? false;
   const tagIds = parseIds(url.searchParams.get('tags'));
@@ -106,19 +156,23 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
     // `?report=<id>`: the one report a link names (`reportActionPath`), at any status.
     const reportParam = Number(url.searchParams.get('report'));
     const reportId = Number.isInteger(reportParam) && reportParam > 0 ? reportParam : undefined;
+    const agentFilter = agentReportFilterOf(url);
     const { items, nextCursor } = await getReportedImageQueue({
       browsingLevel: level,
       cursor: reportId ? undefined : cursor,
       limit,
       reportId,
+      agents: reportId ? undefined : agentReportWhere(agentFilter),
     });
     return {
       ...base,
       view,
       kind: 'reported' as const,
-      items: await withModel3d(items),
+      items: await withheldCards(await withModel3d(items), user),
       nextCursor: reportId ? undefined : nextCursor,
       singleReport: reportId ?? null,
+      // `null` hides the control: no agent accounts configured, or a `?report=` view, which runs unfiltered.
+      agentFilter: reportId ? null : agentFilter,
     };
   }
 
@@ -127,8 +181,15 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
       browsingLevel: level,
       cursor,
       limit,
+      csamReview: holdsCsamReview(user),
     });
-    return { ...base, view, kind: 'appeal' as const, items: await withModel3d(items), nextCursor };
+    // model3d would draw a withheld image's media; drop it.
+    const cards = (await withModel3d(items)).map((item) =>
+      item.restricted
+        ? { ...item, model3d: null, approvedAppeal: withheldApprovedAppeal(item.approvedAppeal) }
+        : item
+    );
+    return { ...base, view, kind: 'appeal' as const, items: cards, nextCursor };
   }
 
   if (view === 'minor' || view === 'remixSource') {
@@ -141,20 +202,22 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
       cursor,
       limit,
     });
-    // The minor queue highlights only minor-relevant categories; other queues highlight the whole prompt.
-    const categories = view === 'minor' ? (['minor', 'young', 'age'] as const) : undefined;
+    const categories = reviewHighlightCategories(view);
     return {
       ...base,
       view,
       kind: 'review-highlight' as const,
       tagOptions: await getReviewQueueTags(view),
-      items: await withModel3d(
-        items.map(({ prompt, negativePrompt, ...item }) => ({
-          ...item,
-          promptHighlight: getPromptHighlightSegments(prompt, negativePrompt, {
-            categories: categories ? [...categories] : undefined,
-          }),
-        }))
+      items: await withheldCards(
+        await withModel3d(
+          items.map(({ prompt, negativePrompt, ...item }) => ({
+            ...item,
+            promptHighlight: getPromptHighlightSegments(prompt, negativePrompt, {
+              categories,
+            }),
+          }))
+        ),
+        user
       ),
       nextCursor,
       capturesOnly,
@@ -185,11 +248,14 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
     view,
     kind: 'review' as const,
     tagOptions,
-    items: await withModel3d(
-      stripped.map((item) => ({
-        ...item,
-        ruleDefinition: item.ruleId != null ? rules[item.ruleId] ?? null : null,
-      }))
+    items: await withheldCards(
+      await withModel3d(
+        stripped.map((item) => ({
+          ...item,
+          ruleDefinition: item.ruleId != null ? rules[item.ruleId] ?? null : null,
+        }))
+      ),
+      user
     ),
     nextCursor,
     userId: csamUserId ?? null,
@@ -222,9 +288,56 @@ async function reportIdsByImage(reportIds: number[]): Promise<Map<number, number
   return byImage;
 }
 
+const UNDER_CSAM_REVIEW =
+  'This image is under CSAM review, so its report stays open for that queue. Nothing was changed.';
+const REPORT_NOT_ON_IMAGE = 'That report is not on this image. Nothing was changed. Reload.';
+/** A verdict moves only a report filed on the image it rules on. */
+async function reportIsOnImage(reportId: number, imageId: number) {
+  return !!(await reportIdsByImage([reportId])).get(imageId)?.includes(reportId);
+}
+
+/** The posted reports filed on one of the posted images. A report on any other image is not moved:
+ *  a stale or forged id must not close, or pay out on, a report nobody ruled on. */
+async function boundReportIds(reportIds: number[], imageIds: number[]) {
+  const byImage = await reportIdsByImage(reportIds);
+  const bound = new Set(imageIds.flatMap((id) => byImage.get(id) ?? []));
+  const unbound = reportIds.filter((id) => !bound.has(id));
+  return {
+    reportIds: reportIds.filter((id) => bound.has(id)),
+    notMoved: unbound.length
+      ? `Not on a selected image, so not moved: report ${unbound
+          .map((id) => `#${id}`)
+          .join(', ')}. Reload.`
+      : undefined,
+  };
+}
+
 export function parseResolutionReason(form: FormData, status: ResolutionVerdict<'appeal'>) {
   const input = parseForm(z.object(resolutionReasonFields), form);
   return typeof input === 'string' ? input : checkedResolutionReason('appeal', status, input);
+}
+
+const IMAGE_CHANGED = 'This image changed since this page loaded. Reload and try again.';
+
+/** The review flag a card showed, posted with its accept: '' is no flag; absent, nothing to check. */
+function shownFlag(value: FormDataEntryValue | null): string | null | undefined {
+  return typeof value === 'string' ? value || null : undefined;
+}
+
+/** The review flag each selected card showed, posted as JSON keyed by image id. */
+function shownFlags(value: FormDataEntryValue | null): Map<number, string | null> | undefined {
+  if (typeof value !== 'string' || !value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return new Map(
+      Object.entries(parsed).map(([id, flag]) => [
+        Number(id),
+        typeof flag === 'string' ? flag : null,
+      ])
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 export const imageQueueActions = {
@@ -232,17 +345,45 @@ export const imageQueueActions = {
     const form = await request.formData();
     const imageId = Number(form.get('imageId'));
     if (!imageId) return fail(400, { error: 'Missing image id.' });
+    const withheldAccept = await withheldRefusal(locals.user, [imageId]);
+    if (withheldAccept) return fail(403, { error: withheldAccept, imageId });
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
     const reportId = form.get('reportId') ? Number(form.get('reportId')) : undefined;
+    if (reportId && !(await reportIsOnImage(reportId, imageId)))
+      return fail(400, { error: REPORT_NOT_ON_IMAGE, imageId });
 
     try {
-      await acceptImage({ imageId, removeMinorFlag, userId: locals.user.id });
+      await acceptImage({
+        imageId,
+        removeMinorFlag,
+        userId: locals.user.id,
+        keepModeratorRemoved: !!reportId,
+        shownNeedsReview: shownFlag(form.get('needsReview')),
+      });
     } catch (e) {
+      if (e instanceof ModeratorRemovedImageError && reportId) {
+        // A grace block or a ban removed it, not a ruling that upheld the report.
+        await setReportStatus({
+          id: reportId,
+          status: ReportStatus.Actioned,
+          userId: locals.user.id,
+          noReward: e.unpaid,
+        });
+        return {
+          success: true,
+          imageId,
+          alreadyRemoved: alreadyRemovedNotice([imageId]),
+          closedReportIds: [reportId],
+        };
+      }
+      if (e instanceof CsamReviewImageError)
+        return fail(409, { error: UNDER_CSAM_REVIEW, imageId });
       if (e instanceof RemovedImageNotRestorableError)
         return fail(409, {
           error: `This image was ${REMOVED_REASON}. ${REMOVED_REMEDY}`,
           imageId,
         });
+      if (e instanceof ImageChangedError) return fail(409, { error: IMAGE_CHANGED, imageId });
       throw e;
     }
     if (reportId)
@@ -259,18 +400,29 @@ export const imageQueueActions = {
     const form = await request.formData();
     const imageId = Number(form.get('imageId'));
     if (!imageId) return fail(400, { error: 'Missing image id.' });
+    const withheldBlock = await withheldRefusal(locals.user, [imageId]);
+    if (withheldBlock) return fail(403, { error: withheldBlock, imageId });
     const reportId = form.get('reportId') ? Number(form.get('reportId')) : undefined;
+    if (reportId && !(await reportIsOnImage(reportId, imageId)))
+      return fail(400, { error: REPORT_NOT_ON_IMAGE, imageId });
 
     const violation = parseViolation(form);
     if (typeof violation === 'string') return fail(400, { error: violation });
 
-    const { held, skipped } = await blockImage({
+    // The block commits even when its CSAM blocklist entry fails; that is reported after the report.
+    let csamBlocklistFailed = false;
+    const { held, skipped, alreadyRemoved, unpaid } = await blockImage({
       imageId,
       userId: locals.user.id,
       ...violation,
       ...getActorMeta(event),
       reportIds: reportId ? [reportId] : undefined,
       skipAppealCheck: !!locals.grants['image.removal.confirm'],
+      skipModeratorRemoved: !!reportId,
+    }).catch((e: unknown) => {
+      if (!(e instanceof CsamBlocklistWriteError)) throw e;
+      csamBlocklistFailed = true;
+      return { held: undefined, skipped: e.skipped, alreadyRemoved: undefined, unpaid: undefined };
     });
     // Not removed, so the report stays open; confirming the hold actions it.
     if (held) return { success: true, imageId, held: heldRemovalMessage([held]) };
@@ -279,7 +431,16 @@ export const imageQueueActions = {
         id: reportId,
         status: ReportStatus.Actioned,
         userId: locals.user.id,
+        noReward: !!unpaid,
       });
+    if (csamBlocklistFailed) return fail(502, { error: CSAM_BLOCKLIST_RETRY, imageId });
+    if (alreadyRemoved && reportId)
+      return {
+        success: true,
+        imageId,
+        alreadyRemoved: alreadyRemovedNotice([imageId]),
+        closedReportIds: [reportId],
+      };
     return { success: true, imageId };
   },
 
@@ -292,6 +453,8 @@ export const imageQueueActions = {
     );
     if (typeof input === 'string') return fail(400, { error: input });
     const { imageId } = input;
+    const withheldDismiss = await withheldRefusal(locals.user, [imageId]);
+    if (withheldDismiss) return fail(403, { error: withheldDismiss, imageId });
     const result = await dismissFromCsamQueue({ ...input, userId: locals.user.id });
     if (!result.ok)
       return fail(result.reason === 'unavailable' ? 503 : 409, {
@@ -316,6 +479,8 @@ export const imageQueueActions = {
       await request.formData()
     );
     if (typeof input === 'string') return fail(400, { error: input });
+    const withheldAccount = await withheldAccountRefusal(locals.user, input.userId);
+    if (withheldAccount) return fail(403, { error: withheldAccount });
     const result = await dismissUserFromCsamQueue({ ...input, moderatorId: locals.user.id });
     if (!result.ok)
       return fail({ unavailable: 503, capture: 400, changed: 409 }[result.reason], {
@@ -346,6 +511,8 @@ export const imageQueueActions = {
         .slice(0, 1000) || undefined;
     const reason = parseResolutionReason(form, status);
     if (typeof reason === 'string') return fail(400, { error: reason, imageId });
+    const withheld = await withheldRefusal(locals.user, [imageId]);
+    if (withheld) return fail(403, { error: withheld, imageId });
 
     let closed;
     try {
@@ -377,6 +544,8 @@ export const imageQueueActions = {
     const nsfwLevel = Number(form.get('nsfwLevel'));
     if (!imageIds.length) return fail(400, { error: 'Missing image id.' });
     if (!isRatingLevel(nsfwLevel)) return fail(400, { error: 'Invalid rating level.' });
+    const withheldRating = await withheldRefusal(locals.user, imageIds);
+    if (withheldRating) return fail(403, { error: withheldRating });
 
     // `updateImageNsfwLevel` throws bare Errors (missing image, Redis down). Uncaught, a form action
     // error replaces the queue with an error page, taking the record of what was already actioned
@@ -416,6 +585,8 @@ export const imageQueueActions = {
     const flagValue = parseImageFlagValue(String(form.get('flagValue') ?? ''));
     if (!imageIds.length) return fail(400, { error: 'Missing image id.' });
     if (!flagValue) return fail(400, { error: 'Unknown flag.' });
+    const withheldFlag = await withheldRefusal(locals.user, imageIds);
+    if (withheldFlag) return fail(403, { error: withheldFlag });
 
     const result = await setImageFlag({ ...flagValue, imageIds, moderatorId: locals.user.id });
     if (!result.ok) return fail(400, { error: result.error });
@@ -434,9 +605,17 @@ export const imageQueueActions = {
   bulkAccept: async ({ request, locals }) => {
     const form = await request.formData();
     const imageIds = parseIds(form.get('imageIds'));
-    const reportIds = parseIds(form.get('reportIds'));
+    const withheldBulk = await withheldRefusal(locals.user, imageIds);
+    if (withheldBulk) return fail(403, { error: withheldBulk });
+    const posted = parseIds(form.get('reportIds'));
+    const { reportIds, notMoved } = await boundReportIds(posted, imageIds);
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
+    const shown = shownFlags(form.get('needsReviewByImage'));
     const refused: number[] = [];
+    const changed: number[] = [];
+    const removed: number[] = [];
+    const underCsamReview: number[] = [];
+    const unpaidImages = new Set<number>();
     // Emails only the appeals this request closed, once per appellant instead of per image.
     const closed = await Promise.all(
       imageIds.map((imageId) =>
@@ -445,7 +624,22 @@ export const imageQueueActions = {
           removeMinorFlag,
           userId: locals.user.id,
           deferAppealEmail: true,
+          keepModeratorRemoved: posted.length > 0,
+          shownNeedsReview: shown?.get(imageId),
         }).catch((e) => {
+          if (e instanceof ImageChangedError) {
+            changed.push(imageId);
+            return undefined;
+          }
+          if (e instanceof ModeratorRemovedImageError) {
+            removed.push(imageId);
+            if (e.unpaid) unpaidImages.add(imageId);
+            return undefined;
+          }
+          if (e instanceof CsamReviewImageError) {
+            underCsamReview.push(imageId);
+            return undefined;
+          }
           if (!(e instanceof RemovedImageNotRestorableError)) throw e;
           refused.push(imageId);
           return undefined;
@@ -453,31 +647,70 @@ export const imageQueueActions = {
       )
     );
     await sendBulkAppealEmails(closedAppellants(imageIds, closed), true);
-    // Which report belongs to which image is not posted, so a partial batch moves no report.
-    if (refused.length)
+    const reportsByImage = removed.length ? await reportIdsByImage(reportIds) : new Map();
+    const closedReportIds = removed.flatMap((id) => reportsByImage.get(id) ?? []);
+    const unpaid = new Set([...unpaidImages].flatMap((id) => reportsByImage.get(id) ?? []));
+    await Promise.all(
+      closedReportIds.map((id) =>
+        setReportStatus({
+          id,
+          status: ReportStatus.Actioned,
+          userId: locals.user.id,
+          noReward: unpaid.has(id),
+        })
+      )
+    );
+    const notice = {
+      ...(closedReportIds.length && {
+        alreadyRemoved: alreadyRemovedNotice(removed),
+        closedReportIds,
+      }),
+      ...(notMoved && { notMoved }),
+    };
+    // A partial batch moves no other report: the refused images' reports stay open.
+    if (refused.length || underCsamReview.length || changed.length)
       return fail(409, {
+        ...notice,
         error: [
-          `${imageIds.length - refused.length} of ${imageIds.length} accepted.`,
-          reportIds.length ? 'No report was moved.' : '',
-          `Not accepted (${REMOVED_REASON}): ${refused.join(', ')}.`,
-          REMOVED_REMEDY,
+          `${
+            imageIds.length -
+            refused.length -
+            underCsamReview.length -
+            removed.length -
+            changed.length
+          } of ${imageIds.length} accepted.`,
+          reportIds.length ? `No ${closedReportIds.length ? 'other ' : ''}report was moved.` : '',
+          refused.length ? `Not accepted (${REMOVED_REASON}): ${refused.join(', ')}.` : '',
+          refused.length ? REMOVED_REMEDY : '',
+          underCsamReview.length
+            ? `Not accepted (under CSAM review, left to that queue): ${underCsamReview.join(', ')}.`
+            : '',
+          changed.length
+            ? `Not accepted (changed since this page loaded; reload): ${changed.join(', ')}.`
+            : '',
         ]
           .filter(Boolean)
           .join(' '),
       });
+    const closedSet = new Set(closedReportIds);
     await Promise.all(
-      reportIds.map((id) =>
-        setReportStatus({ id, status: ReportStatus.Unactioned, userId: locals.user.id })
-      )
+      reportIds
+        .filter((id) => !closedSet.has(id))
+        .map((id) =>
+          setReportStatus({ id, status: ReportStatus.Unactioned, userId: locals.user.id })
+        )
     );
-    return { success: true };
+    return { success: true, ...notice };
   },
 
   bulkBlock: async (event) => {
     const { request, locals } = event;
     const form = await request.formData();
     const imageIds = parseIds(form.get('imageIds'));
-    const reportIds = parseIds(form.get('reportIds'));
+    const withheldBulkBlock = await withheldRefusal(locals.user, imageIds);
+    if (withheldBulkBlock) return fail(403, { error: withheldBulkBlock });
+    const posted = parseIds(form.get('reportIds'));
+    const { reportIds, notMoved } = await boundReportIds(posted, imageIds);
     const violation = parseViolation(form);
     if (typeof violation === 'string') return fail(400, { error: violation });
     const actor = {
@@ -486,6 +719,7 @@ export const imageQueueActions = {
       skipAppealCheck: !!locals.grants['image.removal.confirm'],
     };
     const reportsByImage = await reportIdsByImage(reportIds);
+    const csamBlocklistFailed: number[] = [];
     const results = await Promise.all(
       imageIds.map((imageId) =>
         blockImage({
@@ -493,10 +727,19 @@ export const imageQueueActions = {
           userId: locals.user.id,
           ...actor,
           reportIds: reportsByImage.get(imageId),
+          skipModeratorRemoved: posted.length > 0,
+        }).catch((e: unknown): Awaited<ReturnType<typeof blockImage>> => {
+          if (!(e instanceof CsamBlocklistWriteError)) throw e;
+          csamBlocklistFailed.push(imageId);
+          return { skipped: e.skipped };
         })
       )
     );
     const held = results.flatMap((r): HeldRemoval[] => (r.held ? [r.held] : []));
+    // A ban removed these, not a ruling on their reports: those close unpaid.
+    const unpaidReports = new Set(
+      imageIds.flatMap((imageId, i) => (results[i].unpaid ? reportsByImage.get(imageId) ?? [] : []))
+    );
     // A held removal's reports stay open: the image is still up, and confirming the hold actions
     // them. A skipped block's reports stay open too.
     const heldReports = new Set([
@@ -508,10 +751,26 @@ export const imageQueueActions = {
     await Promise.all(
       reportIds
         .filter((id) => !heldReports.has(id))
-        .map((id) => setReportStatus({ id, status: ReportStatus.Actioned, userId: locals.user.id }))
+        .map((id) =>
+          setReportStatus({
+            id,
+            status: ReportStatus.Actioned,
+            userId: locals.user.id,
+            noReward: unpaidReports.has(id),
+          })
+        )
     );
+    if (csamBlocklistFailed.length)
+      return fail(502, { error: CSAM_BLOCKLIST_RETRY, imageIds: csamBlocklistFailed });
+    const removed = imageIds.filter((_, i) => results[i].alreadyRemoved);
+    const closedReportIds = removed.flatMap((id) => reportsByImage.get(id) ?? []);
     return {
       success: true,
+      ...(closedReportIds.length && {
+        alreadyRemoved: alreadyRemovedNotice(removed),
+        closedReportIds,
+      }),
+      ...(notMoved && { notMoved }),
       ...(held.length && {
         held: heldRemovalMessage(held),
         heldImageIds: held.map((h) => h.imageId),
@@ -525,6 +784,8 @@ export const imageQueueActions = {
     const status = form.get('status') === 'Approved' ? 'Approved' : 'Rejected';
     const reason = parseResolutionReason(form, status);
     if (typeof reason === 'string') return fail(400, { error: reason });
+    const withheld = await withheldRefusal(locals.user, imageIds);
+    if (withheld) return fail(403, { error: withheld });
     const refused: number[] = [];
     const closed = await Promise.all(
       imageIds.map((imageId) =>

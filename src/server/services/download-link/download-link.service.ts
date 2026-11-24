@@ -31,7 +31,9 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { logUrlExpiry } from '~/server/utils/url-expiry-log';
 import type { Session } from '~/types/session';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { bearerScopeMode } from '~/server/auth/bearer-scope-tighten';
+import { MODEL_VIEW_SCOPES } from '~/server/auth/route-scopes';
+import { hasScope, readApiKeyScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 
 export const DEFAULT_LINK_TTL_SECONDS = 24 * 60 * 60;
@@ -132,7 +134,7 @@ function logMint(
     error: result.ok ? null : result.error,
     linkId: result.ok ? result.linkId : null,
     reused: result.ok ? result.reused : null,
-  }).catch(() => undefined);
+  });
 }
 
 /**
@@ -323,14 +325,36 @@ async function isCredentialLive(credential: DownloadLinkCredential, now: number)
     if (!Number.isInteger(id)) return false;
     const key = await dbRead.apiKey.findUnique({
       where: { id },
-      select: { expiresAt: true, user: { select: { bannedAt: true, deletedAt: true } } },
+      select: {
+        expiresAt: true,
+        type: true,
+        tokenScope: true,
+        tokenScopeWide: true,
+        user: { select: { bannedAt: true, deletedAt: true } },
+      },
     });
-    return (
+    const live =
       !!key &&
       (!key.expiresAt || key.expiresAt.getTime() > now) &&
       !key.user.bannedAt &&
-      !key.user.deletedAt
+      !key.user.deletedAt;
+    if (!live) return false;
+    // The mint's model-read rule, re-read here so narrowing the key ends its links.
+    // `mintProviderLink` carries no such rule: mini, its only caller, is behind
+    // download-scope-gate.
+    const tokenScope = readApiKeyScope(key);
+    if (MODEL_VIEW_SCOPES.some((bit) => hasScope(tokenScope, bit))) return true;
+    const mode = await bearerScopeMode(
+      'download-link-fetch',
+      {
+        apiKeyId: id,
+        apiKeyType: key.type,
+        subject: { type: 'apiKey', id },
+        tokenScope,
+      },
+      'ModelsRead|AIServicesRead'
     );
+    return mode !== 'enforce';
   }
   const client = await dbRead.oauthClient.findUnique({
     where: { id: credential.id },
@@ -345,16 +369,14 @@ async function isCredentialLive(credential: DownloadLinkCredential, now: number)
     !!client &&
     secretEpoch(client.secret) === credential.epoch &&
     client.grants.includes('client_credentials') &&
-    (client.allowedScopes & TokenScope.DownloadLink) !== 0 &&
+    (client.allowedScopes & TokenScope.DownloadLink) !== 0n &&
     !client.user.bannedAt &&
     !client.user.deletedAt
   );
 }
 
 function logUse(linkId: string, outcome: string, fetch?: number) {
-  logToAxiom({ name: 'download-link', type: 'info', message: 'use', linkId, outcome, fetch }).catch(
-    () => undefined
-  );
+  logToAxiom({ name: 'download-link', type: 'info', message: 'use', linkId, outcome, fetch });
 }
 
 /** Logs why a fetch was refused and answers the refusal. */

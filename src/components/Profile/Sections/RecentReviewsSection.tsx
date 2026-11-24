@@ -106,6 +106,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                                   style={{
                                     color: colorScheme === 'dark' ? 'white' : 'black',
                                   }}
+                                  maskedHtml={review.maskedDetails}
                                   withProfanityFilter
                                 />
                               </ContentClamp>

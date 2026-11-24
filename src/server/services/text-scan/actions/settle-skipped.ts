@@ -1,7 +1,9 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { unansweredTextScanLabels } from '~/server/services/text-scan/profiles';
 import type { ScanEntityResult } from '~/server/services/text-scan/submit';
+import type { TextScanOutput, TextScanProfile } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 export type SkipReason = Extract<ScanEntityResult, { status: 'skipped' }>['reason'];
@@ -11,11 +13,18 @@ type ApplySkippedVerdict = (level: number, opts: { stored: boolean }) => Promise
 
 // For entities hidden until Scanned: every skip must settle them or say why not.
 export async function settleSkippedScan(
-  entityType: 'Challenge' | 'Crucible' | 'ServiceOffering',
+  entityType:
+    | 'Challenge'
+    | 'Crucible'
+    | 'ServiceOffering'
+    | 'ServiceDealReview'
+    | 'ServiceDealReviewReply',
   entityId: number,
   reason: SkipReason,
   apply: ApplySkippedVerdict,
-  logContext: Record<string, unknown>
+  logContext: Record<string, unknown>,
+  /** The caller's own profile, when a stored verdict must answer every label it requires. */
+  profile?: Pick<TextScanProfile, 'labels' | 'requireEveryLabel'>
 ) {
   if (reason === 'missing' || reason === 'in-flight') return;
   if (reason === 'too-short') {
@@ -27,8 +36,12 @@ export async function settleSkippedScan(
       where: { entityType_entityId: { entityType, entityId } },
       select: { status: true, nsfwLevel: true, result: true },
     });
-    const version = (live?.result as { version?: unknown } | null)?.version;
-    if (live?.status === EntityModerationStatus.Succeeded && version != null) {
+    const stored = live?.result as { version?: unknown; labels?: TextScanOutput } | null;
+    if (
+      live?.status === EntityModerationStatus.Succeeded &&
+      stored?.version != null &&
+      !(profile && unansweredTextScanLabels(profile, stored.labels).length)
+    ) {
       await apply(live.nsfwLevel ?? NsfwLevel.PG, { stored: true });
       return;
     }
@@ -39,5 +52,5 @@ export async function settleSkippedScan(
     message: `${entityType.toLowerCase()} scan skipped; ingestion left Pending`,
     ...logContext,
     reason,
-  }).catch(() => null);
+  });
 }

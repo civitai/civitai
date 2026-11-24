@@ -1,5 +1,6 @@
 import { getEdgeUrl } from '~/client-utils/edge-url';
-import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { connectionImageExists } from '~/server/selectors/image.selector';
+import { publicBountyDetails } from '~/server/utils/bounty-details';
 import type { BountyDetailsSchema } from '~/server/schema/bounty.schema';
 import { getBountyDetailsSelect } from '~/server/selectors/bounty.selector';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -28,6 +29,7 @@ export const bountyWebhooks = createWebhookProcessor({
         where: {
           entityType: 'bounty',
           entityId: { in: bounties.map((b) => b.id) },
+          ...connectionImageExists,
         },
         select: { image: { select: { url: true, index: true } }, entityId: true },
       });
@@ -43,8 +45,7 @@ export const bountyWebhooks = createWebhookProcessor({
           return {
             ...bounty,
             details:
-              bounty.details &&
-              filterSensitiveProfanityData(bounty.details as BountyDetailsSchema, false),
+              bounty.details && publicBountyDetails(bounty.details as BountyDetailsSchema, false),
             tags,
             cover: cover ? getEdgeUrl(cover, { width: 450 }) : null,
             creator: {

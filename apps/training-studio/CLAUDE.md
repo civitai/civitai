@@ -7,9 +7,15 @@ for every SvelteKit app here (runes, derive-the-promise, keyed loops, form actio
 The Training Studio is the LoRA training UI — a slicker replacement for the in-app trainer
 (`src/components/Training/**`), built as a **separate app** that can be extracted later. Its training
 **data** comes from the orchestrator, not the repo DB. It follows the moderator app's spoke shape:
-`@civitai/auth` (session gate), `@civitai/brand` (favicon), plus `@civitai/db` + `@civitai/redis` used
-for ONE thing — minting the user's short-lived orchestrator token in-app (a `System` `ApiKey` row +
-a redis get-or-mint cache; see `src/lib/server/{db,redis,orchestrator-token}.ts`). No `@civitai/clickhouse`.
+`@civitai/auth` (session gate), `@civitai/brand` (favicon), plus `@civitai/db` + `@civitai/redis`. The
+redis shim (`src/lib/server/redis.ts`) builds a sys client and a cache client. On the sys client: the
+session revocation check (`auth.ts`), the orchestrator token get-or-mint cache (`orchestrator-token.ts`,
+`GENERATION.TOKENS` and `GENERATION.ORCHESTRATOR_TOKENS`), the from-price cache (`pricing.ts`,
+`TRAINING.STUDIO_FROM_PRICES`) and the dataset-rating sent markers (`dataset-rating.ts`,
+`TRAINING.STUDIO_DATASET_RATING_SENT`). On the cache client (`getCacheRedis`): the dataset-rating cache
+and daily allowances (`REDIS_KEYS.TRAINING.STUDIO_DATASET_RATING*`). The caches on the sys client predate
+the store rule and are not a pattern: new cached data goes on the cache client, never the sys client.
+No `@civitai/clickhouse`.
 
 ## The flow (build to this)
 
@@ -42,12 +48,13 @@ enters the flow.
 - **Per-blob upload, no zip.** Scan on upload (same policy as generation). Auto-label over signals.
 - **Live training over signals** (step/checkpoint; near-real-time possible). Generate/Publish operate
   off the **workflow ID / AIR**, not a `ModelVersion`.
-- **AI Toolkit by default**, with Kohya available for SD 1.5, SDXL, Flux.1 and Chroma behind the `training-studio-kohya` gate (`KOHYA_FLAG_KEY`: moderators only until the Flipt flag exists; the submit, continuation and quote paths refuse Kohya without it, not just the Select toggle). Both use the `training` workflow step; Kohya uses its own generated input contract. Trigger word is **model-dependent** (large/
+- **AI Toolkit by default**, with Kohya available for SD 1.5, SDXL, Flux.1, Chroma and Anima behind the `training-studio-kohya` gate (`KOHYA_FLAG_KEY`: moderators only until the Flipt flag exists; the submit, continuation and quote paths refuse Kohya without it, not just the Select toggle). Both use the `training` workflow step; Kohya uses its own generated input contract. Trigger word is **model-dependent** (large/
   video models can't train it — check per model before enforcing).
 
 - **Every submit calls the main app's trigger word check** (`POST /api/training-studio/check-text`,
-  session cookie, `CIVITAI_URL`); `submitTrainingBatch`/`continueTraining` refuse to run without a
-  `checkText` hook, so outside the dev-login preview a local Studio needs a reachable main app.
+  session cookie, `CIVITAI_URL`), and its licence check for a model with base model licence terms
+  (`@civitai/shared/generation-license`); `submitTrainingBatch`/`continueTraining` refuse to run
+  without a `checkText` hook, so outside the dev-login preview a local Studio needs a reachable main app.
 
 ## Model catalog
 
@@ -56,7 +63,7 @@ enters the flow.
 are present, grouped by family with versions. Re-mirror by hand when the trainer's list changes; if
 `trainingModelInfo` ever moves to a `packages/civitai-*`, import it instead.
 
-A card's `flagKey` (its per-model Flipt gate) and the Kohya gate — together `hostFlagKeys()` — are
+A card's `flagKey` (its per-model Flipt gate), the Kohya gate and the Manage tags find-replace gate — together `hostFlagKeys()` — are
 evaluated by the shell in `/new`'s load, but the main-app embed can't ask Flipt: every key must also be
 in `studioModelFlagFeatures`
 (`src/utils/training.ts`), or the card is hidden on `/training-studio` for everyone. That is pinned by
@@ -87,7 +94,7 @@ training-studio` (port 5176; the hub holds 5173).
 
 - **Auth allows any signed-in user.** Training is a normal user feature, so the spoke guard in
   `src/lib/server/auth.ts` requires only a resolved session (`(user) => !!user`) — NOT `isModerator`.
-  `hooks.server.ts` sends an unauthenticated request to the hub login and a forbidden one to
+  `hooks.server.ts` sends an unauthenticated page load to this app's `/api/auth/authorize` and a forbidden one to
   civitai.com.
 
 - **No form actions.** The flow UI also ships as a web component embedded in the main app, so every

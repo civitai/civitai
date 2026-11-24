@@ -1,6 +1,8 @@
-import { Alert, Anchor, Button, Pill, Text, Title } from '@mantine/core';
+import { Alert, Anchor, Button, Chip, Pill, Text, Title } from '@mantine/core';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { IconCloudOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { Tooltip } from '~/components/MantineOverlays';
 import type { ImagesQueryParamSchema } from '~/components/Image/image-query-params';
 import {
@@ -12,19 +14,34 @@ import useIsClient from '~/hooks/useIsClient';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { SEARCH_AS_TYPED_PARAM } from '~/components/Search/useSearchAsTyped';
+import { CorrectedQueryNote } from '~/components/Search/FeedSearchSummary';
 
 const isEmptyFilter = (value: unknown) =>
   value === undefined || (Array.isArray(value) && value.length === 0);
 
 type Props = {
   query: string;
+  /** "More like this": the image matched while no query is set. */
+  similarTo?: number;
   correctedQuery?: string;
   filters: Parameters<typeof ignoredWhileSearching>[0];
   failed: boolean;
+  /** "More like this" from an image it can't search: told plainly, not as an outage. */
+  unavailable?: boolean;
   onRetry: () => void;
 };
 
-export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed, onRetry }: Props) {
+export function ImageFeedSearchSummary({
+  query,
+  similarTo,
+  correctedQuery,
+  filters,
+  failed,
+  unavailable,
+  onRetry,
+}: Props) {
+  const currentUser = useCurrentUser();
   const router = useRouter();
   // The saved feed filters load in the browser, so the server can't render their chips.
   const isClient = useIsClient();
@@ -36,13 +53,15 @@ export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed,
   // A filter set by the URL is changed there, one from the saved feed filters in the store. Emptying
   // a URL filter would uncover the saved one under it, so that is cleared too.
   const update = (patch: Partial<ImagesQueryParamSchema>) => {
-    const inUrl = Object.keys(patch).filter((key) => key in router.query || key === 'query');
+    const inUrl = Object.keys(patch).filter(
+      (key) => key in router.query || key === 'query' || key === 'similarTo'
+    );
     const uncovered = inUrl.filter(
       (key) =>
         isEmptyFilter(patch[key as keyof typeof patch]) && !isEmptyFilter(storeFilters?.[key])
     );
-    // A change of query is a search, so Back returns to the previous one; a filter tweak is not.
-    const method = 'query' in patch ? 'push' : 'replace';
+    // A new search is a history entry, so Back returns to the previous one; a filter tweak is not.
+    const method = 'query' in patch || 'similarTo' in patch ? 'push' : 'replace';
     if (inUrl.length)
       void router[method](
         {
@@ -50,6 +69,8 @@ export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed,
           query: removeEmpty({
             ...router.query,
             ...Object.fromEntries(inUrl.map((key) => [key, patch[key as keyof typeof patch]])),
+            // A changed or cleared query is corrected again.
+            ...('query' in patch && { [SEARCH_AS_TYPED_PARAM]: undefined }),
           }),
         },
         undefined,
@@ -62,34 +83,75 @@ export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed,
   };
 
   const ignored = ignoredWhileSearching(filters);
-  const shownQuery = correctedQuery && correctedQuery !== query ? correctedQuery : undefined;
 
   return (
     <div className="flex flex-col gap-2 pb-2">
       <Title order={2} size="h3">
-        Images matching &ldquo;{query}&rdquo;
+        {similarTo ? (
+          <>
+            Images like{' '}
+            <Anchor component={NextLink} href={`/images/${similarTo}`} inherit>
+              this image
+            </Anchor>
+          </>
+        ) : (
+          <>Images matching &ldquo;{query}&rdquo;</>
+        )}
       </Title>
-      {shownQuery && (
-        <Text size="sm" c="dimmed">
-          Showing results for <strong>{shownQuery}</strong>
-        </Text>
-      )}
-      {failed && (
-        <Alert color="yellow" icon={<IconCloudOff size={18} />} p="xs">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <Text size="sm">
-              Search isn&rsquo;t answering right now, so this is the feed without your search.
-            </Text>
-            <Button size="compact-sm" variant="light" onClick={onRetry}>
-              Retry search
-            </Button>
-          </div>
+      <CorrectedQueryNote query={query} correctedQuery={correctedQuery} />
+      {unavailable ? (
+        <Alert color="gray" p="xs">
+          <Text size="sm">
+            More like this isn&rsquo;t available for this image, so this is the feed without it.
+          </Text>
         </Alert>
+      ) : (
+        failed && (
+          <Alert color="yellow" icon={<IconCloudOff size={18} />} p="xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Text size="sm">
+                Search isn&rsquo;t answering right now, so this is the feed without your search.
+              </Text>
+              <Button size="compact-sm" variant="light" onClick={onRetry}>
+                Retry search
+              </Button>
+            </div>
+          </Alert>
+        )
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <Pill withRemoveButton onRemove={() => update({ query: undefined })}>
-          &ldquo;{query}&rdquo;
-        </Pill>
+        {similarTo ? (
+          <>
+            <Pill withRemoveButton onRemove={() => update({ similarTo: undefined })}>
+              Similar to this image
+            </Pill>
+            {currentUser && (
+              <Chip
+                size="xs"
+                checked={router.query.excludeOwn === 'true'}
+                onChange={(checked) =>
+                  void router.replace(
+                    {
+                      pathname: router.pathname,
+                      query: removeEmpty({
+                        ...router.query,
+                        excludeOwn: checked ? 'true' : undefined,
+                      }),
+                    },
+                    undefined,
+                    { shallow: true }
+                  )
+                }
+              >
+                Hide my images
+              </Chip>
+            )}
+          </>
+        ) : (
+          <Pill withRemoveButton onRemove={() => update({ query: undefined })}>
+            &ldquo;{query}&rdquo;
+          </Pill>
+        )}
         {isClient && filters.period && filters.period !== MetricTimeframe.AllTime && (
           <Pill withRemoveButton onRemove={() => update({ period: MetricTimeframe.AllTime })}>
             Posted: past {filters.period.toLowerCase()}
@@ -122,7 +184,11 @@ export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed,
             Metadata only
           </Pill>
         )}
-        <Anchor component="button" size="sm" onClick={() => update({ query: undefined })}>
+        <Anchor
+          component="button"
+          size="sm"
+          onClick={() => update({ query: undefined, similarTo: undefined })}
+        >
           Clear search
         </Anchor>
       </div>

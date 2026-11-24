@@ -1,6 +1,6 @@
 import { Button, Tabs, Text } from '@mantine/core';
 import { IconPencil, IconPhoto, IconPlus } from '@tabler/icons-react';
-import React from 'react';
+import React, { useState } from 'react';
 import type { ControlledImage } from '~/components/Post/EditV2/PostEditProvider';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
 import { AddedImage } from '~/components/Post/EditV2/PostImageCards/AddedImage';
@@ -16,8 +16,13 @@ import type { PostEditTextDetail } from '~/server/services/post.service';
 import { mergeEditorItems } from '~/components/Post/EditV2/post-edit-items';
 import { textIndexAfter } from '~/shared/utils/post-items';
 import { STORYLINE_TEXT_MAX_PER_POST } from '~/shared/utils/storyline';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
+
+/**
+ * An "Add text" the author has opened, by the slot it sits in: a card with no row until they type
+ * into it. Once its row exists the card keeps rendering it (so typing is not interrupted, and no
+ * edit inside the autosave window is lost to a remount) and the store's copy is hidden.
+ */
+type TextDraft = { textId?: number };
 
 const NO_TEXTS: PostEditTextDetail[] = [];
 
@@ -26,11 +31,16 @@ export function PostImageCards() {
   // Without the flag the text routes refuse every change, so the editor shows images only; the
   // server keeps each text where it is.
   const textOn = !!useFeatureFlags().storylineText;
-  const texts = textOn ? storeTexts : NO_TEXTS;
+  const allTexts = textOn ? storeTexts : NO_TEXTS;
+  const [drafts, setDrafts] = useState<Record<number, TextDraft>>({});
+  const draftTextIds = new Set(Object.values(drafts).flatMap((d) => (d.textId ? [d.textId] : [])));
+  const texts = allTexts.filter((t) => !draftTextIds.has(t.id));
+  const unsavedDrafts = Object.keys(drafts).length - draftTextIds.size;
   const { maxItems } = useMediaUploadSettingsContext();
   const { showPreview, toggleShowPreview } = usePostPreviewContext();
   const tab = showPreview ? 'preview' : 'edit';
-  const canAddText = useCanAddStorylineText() && texts.length < STORYLINE_TEXT_MAX_PER_POST;
+  const canAddText =
+    useCanAddStorylineText() && allTexts.length + unsavedDrafts < STORYLINE_TEXT_MAX_PER_POST;
 
   if (!images.length) return null;
 
@@ -38,6 +48,26 @@ export function PostImageCards() {
   const addSlots = canAddText && !showPreview;
   let imageNumber = 0;
   let textNumber = 0;
+  const slotAt = (index: number) => {
+    const draft = drafts[index];
+    // A draft is a card the author is writing in, so it outlives the Preview tab and the post
+    // reaching its text limit; only the empty button is gated on `addSlots`.
+    if (!draft)
+      return addSlots ? (
+        <AddTextSlot onAdd={() => setDrafts((all) => ({ ...all, [index]: {} }))} />
+      ) : null;
+    return (
+      <div key={`draft-${index}`} data-text-id={draft.textId}>
+        <StorylineTextCard
+          text={null}
+          label={`Text ${++textNumber} / ${STORYLINE_TEXT_MAX_PER_POST}`}
+          draftIndex={index}
+          onCreated={(created) => setDrafts((all) => ({ ...all, [index]: { textId: created.id } }))}
+          onDismiss={() => setDrafts(({ [index]: _gone, ...rest }) => rest)}
+        />
+      </div>
+    );
+  };
 
   return (
     <>
@@ -60,19 +90,24 @@ export function PostImageCards() {
         </Tabs.List>
       </Tabs>
       <div className="flex flex-col gap-3">
-        {addSlots && <AddTextSlot index={textIndexAfter(undefined, items[0]?.key)} />}
-        {items.map((item) => {
-          const slot = addSlots && <AddTextSlot index={textIndexAfter(item.key, undefined)} />;
+        {slotAt(textIndexAfter(undefined, items[0]?.key))}
+        {items.map((item, i) => {
+          // A text added after an item takes its index and sorts after every text already there,
+          // so a run of items sharing an index has one Add text, after its last item.
+          const next = items[i + 1];
+          const slotIndex = textIndexAfter(item.key, undefined);
+          const slot = () =>
+            next && (next.key.index ?? 0) === (item.key.index ?? 0) ? null : slotAt(slotIndex);
           if (item.type === 'text')
             return (
               <React.Fragment key={`text-${item.text.id}`}>
-                <div data-text-id={item.text.id} className="flex flex-col gap-1">
-                  <Text size="sm" fw={600} c="dimmed">
-                    Text {++textNumber} / {STORYLINE_TEXT_MAX_PER_POST}
-                  </Text>
-                  <StorylineTextCard text={item.text} />
+                <div data-text-id={item.text.id}>
+                  <StorylineTextCard
+                    text={item.text}
+                    label={`Text ${++textNumber} / ${STORYLINE_TEXT_MAX_PER_POST}`}
+                  />
                 </div>
-                {slot}
+                {slot()}
               </React.Fragment>
             );
           const { image } = item;
@@ -88,7 +123,7 @@ export function PostImageCards() {
                 </Text>
                 <PostImageCard image={image} />
               </div>
-              {image.type === 'added' && slot}
+              {image.type === 'added' && slot()}
             </React.Fragment>
           );
         })}
@@ -108,22 +143,14 @@ export function useCanAddStorylineText() {
   return flagOn && !!post && inStoryline && currentUser?.id === post.user.id;
 }
 
-function AddTextSlot({ index }: { index: number }) {
-  const [postId, setTexts] = usePostEditStore((state) => [state.post?.id, state.setTexts]);
-  const { mutate, isPending } = trpc.storyline.addText.useMutation({
-    onSuccess: (text) => setTexts((texts) => [...texts, text]),
-    onError: (error) => showErrorNotification({ title: 'Text not added', error }),
-  });
-  if (!postId) return null;
-
+function AddTextSlot({ onAdd }: { onAdd: () => void }) {
   return (
     <div className="flex justify-center">
       <Button
         variant="subtle"
         size="compact-sm"
         leftSection={<IconPlus size={14} />}
-        loading={isPending}
-        onClick={() => mutate({ postId, index })}
+        onClick={onAdd}
       >
         Add text
       </Button>

@@ -96,7 +96,7 @@ export function runnerAppFeedbackRoute(kind: 'review' | 'user') {
         app: appKey,
         grantId: verified.grantId,
         ...extra,
-      }).catch(() => undefined);
+      });
 
     try {
       // Every gate the runner's token mint checks, then the App Blocks author capability that My

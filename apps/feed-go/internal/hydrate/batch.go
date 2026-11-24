@@ -58,12 +58,14 @@ type PackedRead struct {
 	ids  []int
 	ttl  time.Duration
 	cmds []*redis.StringCmd
+	// ordered is whether key is an ordered cache's (orderedCaches): its entries hold Ordered.
+	ordered bool
 }
 
 // Queue adds the `${key}:${id}` GETs of ids to b, with Get's semantics (see Get). Nothing is queued for
 // no ids or no client: every id is then a miss.
 func (p *PackedReader) Queue(b *Batch, key string, ids []int, ttl time.Duration) *PackedRead {
-	r := &PackedRead{p: p, ids: ids, ttl: ttl}
+	r := &PackedRead{p: p, ids: ids, ttl: ttl, ordered: orderedCaches[key]}
 	if len(ids) == 0 || p.Redis == nil {
 		return r
 	}
@@ -78,31 +80,65 @@ func (p *PackedReader) Queue(b *Batch, key string, ids []int, ttl time.Duration)
 
 // Entries decodes the lookup's answer by id, after the batch's Exec (see Get).
 func (r *PackedRead) Entries() map[int]Entry {
+	out, _ := r.read()
+	return out
+}
+
+// read is Entries plus writable: the ids it does not answer whose entry Node's fetch would write
+// once its lookup computes it (no key, or an undecodable value); a debounce marker or a failed read
+// is not writable. With no client queued, every id is absent. writable is nil when every id is an
+// entry (a hit costs no allocation).
+func (r *PackedRead) read() (map[int]Entry, map[int]bool) {
 	out := make(map[int]Entry, len(r.ids))
+	var writable map[int]bool
 	if len(r.cmds) == 0 {
-		return out
+		writable = make(map[int]bool, len(r.ids))
+		for _, id := range r.ids {
+			writable[id] = true
+		}
+		return out, writable
 	}
 	now := time.Now()
 	if r.p.Now != nil {
 		now = r.p.Now()
 	}
 	for i, cmd := range r.cmds {
-		if e, ok := decodeEntry(cmd, r.ttl, now); ok {
+		e, st := entryState(cmd, r.ttl, now, r.ordered)
+		if st == stateEntry {
 			out[r.ids[i]] = e
+			continue
+		}
+		if st == stateAbsent {
+			if writable == nil {
+				writable = map[int]bool{}
+			}
+			writable[r.ids[i]] = true
+		}
+	}
+	return out, writable
+}
+
+// raw is each id's cached bytes, after the batch's Exec, for the ids whose GET answered a value.
+func (r *PackedRead) raw() map[int][]byte {
+	out := map[int][]byte{}
+	for i, cmd := range r.cmds {
+		if b, err := cmd.Bytes(); err == nil {
+			out[r.ids[i]] = b
 		}
 	}
 	return out
 }
 
 // metricsRead is one queued getImageMetricsObject lookup over the watcher-fed metric hashes: the
-// HGETALL of each id's `metrics:Image:<id>`. An image with no hash at all is a miss and falls back
-// (the Node path populates it from ClickHouse). Every image whose hash exists is KNOWN, a `notFound`
+// HGETALL of each id's `metrics:Image:<id>`. An image with no hash at all is a miss: computed from
+// ClickHouse when this service reads it (imagemetrics.go), else it falls back (the Node path
+// populates it from ClickHouse). Every image whose hash exists is KNOWN, a `notFound`
 // marker included: on the direct read getImageMetricsObjectDirect writes `shapeImageMetrics(id,
 // metrics[id])` for every requested id, so the id MetricService.fetch skips for the marker gets an
 // all-null entry; on the image-metrics-swr read shapeCachedMetricHash shapes the marker hash to nulls.
 // Either way toImageV2Stats sees an entry: zero counts, statsUnknown false. (Node reports statsUnknown
-// only when the ClickHouse read failed or timed out and the cache held no hash; an image with no hash
-// falls back here, so this service never answers statsUnknown true.)
+// only when the ClickHouse read failed or timed out and the cache held no hash; such a read falls
+// back here, so this service never answers statsUnknown true.)
 type metricsRead struct {
 	ids  []int
 	cmds []*redis.MapStringStringCmd
@@ -125,7 +161,10 @@ func (s *Sources) queueMetrics(b *Batch, ids []int) *metricsRead {
 
 // result is the metrics lookup's answer after Exec. The first command error in command order is the read
 // failure (an HGETALL answers an absent key with an empty hash, never redis.Nil, so every error here is real).
-func (r *metricsRead) result() (map[int]Metrics, error) {
+// The ids with no hash are computed from ClickHouse as Node's MetricService populates them
+// (fillMetrics) when s reads ClickHouse; otherwise they fall back (`metrics-miss`, counted like every
+// fallback reason).
+func (r *metricsRead) result(ctx context.Context, s *Sources) (map[int]Metrics, error) {
 	if len(r.ids) == 0 {
 		return map[int]Metrics{}, nil
 	}
@@ -137,5 +176,27 @@ func (r *metricsRead) result() (map[int]Metrics, error) {
 		}
 		hashes[i] = hash
 	}
-	return MetricsFromHashes(r.ids, hashes)
+	if !s.metricsComputed() {
+		return MetricsFromHashes(r.ids, hashes)
+	}
+	out := make(map[int]Metrics, len(r.ids))
+	var miss []int
+	for i, id := range r.ids {
+		if len(hashes[i]) == 0 {
+			miss = append(miss, id)
+			continue
+		}
+		m, ok := ParseMetricHash(hashes[i])
+		if !ok {
+			m = Metrics{} // notFound: known, every count 0 (MetricsFromHashes)
+		}
+		out[id] = m
+	}
+	if len(miss) == 0 {
+		return out, nil
+	}
+	if err := s.fillMetrics(ctx, miss, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

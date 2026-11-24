@@ -1,43 +1,144 @@
 import { Prisma } from '@prisma/client';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
+import { imageBlockedForConditions } from '~/server/common/image-visibility';
+
+export { imageBlockedForConditions };
 import { NsfwLevel } from '~/server/common/enums';
-import { imageReviewedSql } from '~/server/common/image-visibility';
+import {
+  hasBlockMarkerSql,
+  imageNotRestrictedSql,
+  imageReviewedSql,
+  minorMatureImageVisibleSql,
+  notHeldForReviewSql,
+} from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
-import { BlockedByUsers } from '~/server/services/user-preferences.service';
+import {
+  notReviewImageSql,
+  shownReviewImageSql,
+} from '~/server/services/creator-service-review-image-sql';
+import { BlockedByUsers, getBlockedPairIds } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 /**
- * An image with any `blockedFor` reason is visible only to its owner and moderators, as SQL over
- * `"Image" i`. Empty for a moderator.
+ * The reviewed-only part of `getImagesForModelVersion`'s filter (its non-pending branch): not held
+ * or minor-accepted, at a level in `browsingLevel`, and reviewed. Shared with `countableImageSql`
+ * so a public image count and the gallery it counts cannot disagree.
  */
-export function imageBlockedForConditions({
+export const reviewedGalleryImageConditions = (
+  browsingLevel: number = allBrowsingLevelsFlag
+): Prisma.Sql[] => [
+  Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`,
+  Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`,
+  imageReviewedSql(),
+];
+
+/**
+ * What `getImagesForModelVersion` shows a signed-out viewer at some browsing level, over `"Image" i`:
+ * its viewer-dependent terms (blocked-for, minor-mature, restricted base model) with no viewer.
+ */
+export const anonymousGalleryImageConditions = (): Prisma.Sql[] => [
+  ...imageBlockedForConditions({}),
+  ...reviewedGalleryImageConditions(),
+  minorMatureImageVisibleSql({}),
+  imageNotRestrictedSql(),
+];
+
+/**
+ * The images a model's image count counts: the signed-out gallery's, less any ToS violation or
+ * block marker the gallery's own terms do not already exclude.
+ */
+export const countableImageSql = () =>
+  Prisma.sql`(${Prisma.join(
+    [
+      ...anonymousGalleryImageConditions(),
+      Prisma.sql`NOT i."tosViolation"`,
+      Prisma.sql`NOT ${hasBlockMarkerSql()}`,
+    ],
+    ' AND '
+  )})`;
+
+/**
+ * Which images attached to an entity (a bounty, a bounty entry) a viewer is served, as SQL over
+ * `"Image" i`. Held, unscanned, unrated, blocked, ToS-removed, acceptable-minor and
+ * minor-restricted images are the owner's and moderators' alone; base-model restricted images are
+ * the owner's alone.
+ */
+export function entityImageVisibilityConditions({
   userId,
   isModerator,
 }: {
   userId?: number;
   isModerator?: boolean;
 }): Prisma.Sql[] {
-  if (isModerator) return [];
-  return [
-    userId
-      ? Prisma.sql`(i."blockedFor" IS NULL OR i."userId" = ${userId})`
-      : Prisma.sql`(i."blockedFor" IS NULL)`,
-  ];
+  const AND: Prisma.Sql[] = [];
+  if (!isModerator) {
+    AND.push(
+      Prisma.sql`(i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"${
+        userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
+      })`,
+      userId
+        ? Prisma.sql`(i."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) OR i."userId" = ${userId})`
+        : Prisma.sql`i."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked})`,
+      userId
+        ? Prisma.sql`(${Prisma.join(
+            [Prisma.sql`i."needsReview" IS NULL`, Prisma.sql`i."userId" = ${userId}`],
+            ' OR '
+          )})`
+        : Prisma.sql`(${Prisma.join([Prisma.sql`i."needsReview" IS NULL`], ' OR ')})`,
+      userId
+        ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
+        : Prisma.sql`i."acceptableMinor" = FALSE`,
+      userId
+        ? Prisma.sql`(i."tosViolation" IS NOT TRUE OR i."userId" = ${userId})`
+        : Prisma.sql`i."tosViolation" IS NOT TRUE`
+    );
+  }
+  AND.push(...imageBlockedForConditions({ userId, isModerator }));
+  AND.push(imageNotRestrictedSql({ viewerId: userId }));
+  AND.push(minorMatureImageVisibleSql({ userId, isModerator }));
+  return AND;
 }
+
+/**
+ * Not listed on a CsamReport, as SQL over `"Image" i`: the bounty search index's exclusion, for a
+ * viewer without the held-media grant. Its uploader still sees it.
+ */
+export const notReportListedSql = (userId?: number) =>
+  Prisma.sql`((i.id)::text NOT IN (${Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL)})${
+    userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.empty
+  })`;
 
 /**
  * Who may fetch a single image by id, as SQL over `"Image" i` with `"Post" p` LEFT JOINed on
  * `i."postId"`. Moderators see everything. An image with a post needs it published and not
  * Private (or the viewer to own it). A postless image needs the viewer to own it, or to be the
- * cover of a readable article, or an image of a viewable bounty.
+ * cover of a readable article, or an image of a viewable bounty. A service review image opens only
+ * where the caller opts in (`shownReviewImageLevels`).
  */
 export function imageVisibilityConditions({
   userId,
   isModerator,
+  ownerSeesHeld = false,
+  shownReviewImageLevels,
 }: {
   userId?: number;
   isModerator?: boolean;
+  /**
+   * `userId` (the session user) also sees their own items under an owner-hidden review hold. Only
+   * for a read that shows the owner their item; not for one that acts on the image (a remix, say).
+   */
+  ownerSeesHeld?: boolean;
+  /**
+   * Admit a service review image: to anyone while its review shows it at these levels (the
+   * request's, never the client's), and to its uploader. Only the image page's read and the report
+   * check pass it; every other by-id use of an image (collect, react, comment, remix, generation
+   * data) must not.
+   */
+  shownReviewImageLevels?: number;
 }) {
   if (isModerator) return [];
   return [
@@ -67,6 +168,7 @@ export function imageVisibilityConditions({
           AND a.status = 'Published'
           AND a."publishedAt" IS NOT NULL
           AND a.ingestion = 'Scanned'
+          AND (a.availability != 'Private' OR a."userId" = ${userId})
       ))
       OR (i."postId" IS NULL AND (
         EXISTS (
@@ -85,17 +187,30 @@ export function imageVisibilityConditions({
             AND (b.availability != 'Private' OR b."userId" = ${userId})
         )
       ))
+      ${
+        shownReviewImageLevels === undefined
+          ? Prisma.empty
+          : Prisma.sql`OR (i."postId" IS NULL AND ${shownReviewImageSql(shownReviewImageLevels)})`
+      }
     )`,
     Prisma.sql`(i."postId" IS NULL OR p."availability" != 'Private' OR p."userId" = ${userId})`,
     // A Blocked-level rating is a ToS removal (or a pending-Blocked verdict awaiting
     // mod review) — never serve it by direct id to anyone but the owner. Feeds already
     // drop it via the browsingLevel mask; single-image fetch had no equivalent gate.
     Prisma.sql`(i."nsfwLevel" != ${NsfwLevel.Blocked} OR i."userId" = ${userId})`,
+    // An unrated image is its owner's and moderators' alone, as in the image feeds.
+    Prisma.sql`(i."nsfwLevel" != 0 OR i."userId" = ${userId})`,
     // Owner-only, as in the image feeds (`pendingOthersImageConditions`).
     userId
       ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
       : Prisma.sql`(i."acceptableMinor" = FALSE)`,
+    // Not to a collection manager; to the owner only where the caller asks.
+    notHeldForReviewSql(ownerSeesHeld ? userId : undefined),
+    minorMatureImageVisibleSql({ userId }),
     ...imageBlockedForConditions({ userId }),
+    imageNotRestrictedSql({ viewerId: userId }),
+    // Without the opt-in, a review image is closed to its uploader too (moderators aside).
+    ...(shownReviewImageLevels === undefined ? [notReviewImageSql] : []),
   ];
 }
 
@@ -109,10 +224,13 @@ export async function assertImageVisibleToViewer({
   isModerator,
   confirmBlockOnPrimary = false,
   withSignedOutVerdict = false,
+  ownerSeesHeld = false,
 }: {
   id: number;
   userId?: number;
   isModerator?: boolean;
+  /** `imageVisibilityConditions`' `ownerSeesHeld`. */
+  ownerSeesHeld?: boolean;
   /**
    * Only for a caller that WRITES on the strength of this check (the prompt-provenance mint):
    * confirm a cache "not blocked" against the primary. Read callers leave it off.
@@ -146,14 +264,17 @@ export async function assertImageVisibleToViewer({
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE ${Prisma.join(
-      [Prisma.sql`i.id = ${id}`, ...imageVisibilityConditions({ userId, isModerator })],
+      [
+        Prisma.sql`i.id = ${id}`,
+        ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld }),
+      ],
       ' AND '
     )}
   `
   );
   if (!visible) throw throwNotFoundError();
   if (userId && !isModerator) {
-    // Imported here: user.service sits in the image.service import cycle.
+    // Imported here, but not a cycle cut: the cycle guards count dynamic imports (docs/dev/import-cycles.md).
     const { amIBlockedByUser } = await import('~/server/services/user.service');
     const blocked = await amIBlockedByUser({
       userId,
@@ -163,6 +284,76 @@ export async function assertImageVisibleToViewer({
     if (blocked) throw throwNotFoundError();
   }
   return visible;
+}
+
+/** What a report on content that is gone is told; also a review image the reporter may not open. */
+export const REPORTED_CONTENT_GONE = 'The content you are trying to report no longer exists';
+
+/**
+ * NOT_FOUND, with the answer an id that names no image gets, unless `id` is an image and, when it is
+ * a service review image, the reporter may open it (the image page's rule, blocks included). Other
+ * images are reportable whether or not the reporter can open them.
+ */
+export async function assertImageReportable({
+  id,
+  userId,
+  isModerator,
+  shownReviewImageLevels,
+}: {
+  id: number;
+  userId: number;
+  isModerator?: boolean;
+  shownReviewImageLevels?: number;
+}) {
+  if (!isPgInt4(id)) throw throwNotFoundError(REPORTED_CONTENT_GONE);
+  // primary: the image may have been uploaded a moment ago.
+  const [image] = await dbWrite.$queryRaw<
+    { buyerId: number; sellerId: number | null; visible: boolean | null }[]
+  >`
+    SELECT i."userId" AS "buyerId", d."sellerId",
+      -- IS TRUE: a WHERE drops a NULL verdict (a postless image's post terms), a select keeps it.
+      CASE WHEN ri."imageId" IS NULL THEN NULL ELSE (${Prisma.join(
+        [
+          Prisma.sql`TRUE`,
+          ...imageVisibilityConditions({ userId, isModerator, shownReviewImageLevels }),
+        ],
+        ' AND '
+      )}) IS TRUE END AS "visible"
+    FROM "Image" i
+    LEFT JOIN "Post" p ON p.id = i."postId"
+    LEFT JOIN "ServiceDealReviewImage" ri ON ri."imageId" = i.id
+    LEFT JOIN "ServiceDealReview" sr ON sr.id = ri."reviewId"
+    LEFT JOIN "ServiceDeal" d ON d.id = sr."dealId"
+    WHERE i.id = ${id}`;
+  if (!image || image.visible === false) throw throwNotFoundError(REPORTED_CONTENT_GONE);
+  if (image.sellerId === null) return;
+  const blocked = await isReviewImageBlockedForViewer({
+    viewerId: userId,
+    buyerId: image.buyerId,
+    sellerId: image.sellerId,
+    isModerator,
+  });
+  if (blocked) throw throwNotFoundError(REPORTED_CONTENT_GONE);
+}
+
+/**
+ * Whether a block either way between the viewer and a review image's buyer or seller hides it from
+ * the viewer, as on the review. Moderators and the buyer always see it; so does a signed-out viewer.
+ */
+export async function isReviewImageBlockedForViewer({
+  viewerId,
+  buyerId,
+  sellerId,
+  isModerator,
+}: {
+  viewerId?: number;
+  buyerId: number;
+  sellerId: number;
+  isModerator?: boolean;
+}) {
+  if (!viewerId || isModerator || viewerId === buyerId) return false;
+  const blockedPair = await getBlockedPairIds(viewerId);
+  return blockedPair.includes(buyerId) || blockedPair.includes(sellerId);
 }
 
 /**

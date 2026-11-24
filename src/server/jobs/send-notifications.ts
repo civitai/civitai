@@ -88,7 +88,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
                     message: `Missing key for: ${key}`,
                   },
                   'notifications'
-                ).catch();
+                );
                 continue;
               }
               if (!pendingData.hasOwnProperty(r.key)) {
@@ -129,7 +129,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
               cause: error.cause,
             },
             'notifications'
-          ).catch();
+          );
         }
       });
 
@@ -150,6 +150,6 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
         cause: error.cause,
       },
       'notifications'
-    ).catch();
+    );
   }
 });

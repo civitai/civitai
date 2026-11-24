@@ -4,14 +4,18 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { onTopicCommentsRemoved } from '~/server/events/points/hooks';
 import {
+  type CommentGoneCause,
   deleteComments,
   prismaRunner,
   setCommentFlags,
 } from '~/server/services/commentv3/write.service';
 import { logToAxiom } from '~/server/logging/client';
+import { TRPCError } from '@trpc/server';
+import { commentV3CsamHold, hasOpenCommentReport } from '~/server/services/commentv3/review-hold';
+import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
+import { constants } from '~/server/common/constants';
 import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
-
-/** Moderator actions on comments. */
+import { ReportEntity } from '~/shared/utils/report-helpers';
 
 /**
  * Removes comments as ToS violations: the flag takes them off the page, their ToS reports are
@@ -25,7 +29,9 @@ export async function bulkSetCommentV3TosViolation({
   ids: number[];
   actor: { id: number; ip?: string };
 }) {
-  const { flagged, already } = await dbWrite.$transaction(async (tx) => {
+  // Under the rows' lock (setCommentFlags takes it): a clear waits for this commit, so it sees
+  // the reports actioned here.
+  const { flagged, already, reports } = await dbWrite.$transaction(async (tx) => {
     const flagged = await setCommentFlags(prismaRunner(tx), ids, { tosViolation: true });
     const already = ids.length
       ? await tx.$queryRaw<{ id: number; userId: number }[]>`
@@ -33,36 +39,34 @@ export async function bulkSetCommentV3TosViolation({
           WHERE id = ANY(${ids}::int[]) AND "tosViolation" AND "deletedAt" IS NULL
             AND id <> ALL(${flagged.map((f) => f.id)}::int[])`
       : [];
-    return { flagged, already };
+    const removed = [...flagged, ...already].map((c) => c.id);
+    // Through CommentV3Report, which also holds the mirrored links of a comment's older reports.
+    const reports = removed.length
+      ? await tx.$queryRaw<{ id: number; userId: number }[]>`
+          UPDATE "Report" r SET
+            status = ${ReportStatus.Actioned}::"ReportStatus",
+            "statusSetAt" = now(),
+            "statusSetBy" = ${actor.id}
+          FROM "CommentV3Report" c
+          WHERE c."reportId" = r.id
+            AND c."commentId" = ANY(${removed}::int[])
+            AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
+            AND r.status <> ${ReportStatus.Actioned}::"ReportStatus"
+          RETURNING r.id, r."userId"`
+      : [];
+    return { flagged, already, reports };
   });
   if (!flagged.length && !already.length) return { count: 0, notified: 0, rewardedReports: 0 };
   // Loaded on use: both modules import back into the comment services.
   const { reportAcceptedReward } = await import('~/server/rewards');
   const { createNotification } = await import('~/server/services/notification.service');
-  const newlyFlagged = new Set(flagged.map((f) => f.id));
-  let rewardedReports = 0;
+  await Promise.allSettled(
+    reports.map((report) =>
+      reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, { ip: actor.ip })
+    )
+  );
   let notified = 0;
-  for (const { id, userId } of [...flagged, ...already]) {
-    // Through CommentV3Report, which also holds the mirrored links of a comment's older reports.
-    const reports = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-      UPDATE "Report" r SET
-        status = ${ReportStatus.Actioned}::"ReportStatus",
-        "statusSetAt" = now(),
-        "statusSetBy" = ${actor.id}
-      FROM "CommentV3Report" c
-      WHERE c."reportId" = r.id
-        AND c."commentId" = ${id}
-        AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
-        AND r.status <> ${ReportStatus.Actioned}::"ReportStatus"
-      RETURNING r.id, r."userId"
-    `;
-    rewardedReports += reports.length;
-    await Promise.allSettled(
-      reports.map((report) =>
-        reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, { ip: actor.ip })
-      )
-    );
-    if (!newlyFlagged.has(id)) continue;
+  for (const { userId } of flagged) {
     await createNotification({
       userId,
       type: 'tos-violation',
@@ -73,7 +77,32 @@ export async function bulkSetCommentV3TosViolation({
       .then(() => (notified += 1))
       .catch(() => undefined);
   }
-  return { count: flagged.length + already.length, notified, rewardedReports };
+  return { count: flagged.length + already.length, notified, rewardedReports: reports.length };
+}
+
+/** The ToS clear's writes in the caller's transaction: rows locked in id order, then cleared. */
+export async function clearCommentV3TosViolationIn(tx: Prisma.TransactionClient, ids: number[]) {
+  const rows = await tx.$queryRaw<{ id: number; fp: boolean }[]>`
+    SELECT c.id, c."entityType"::text = 'featurePage' AS fp FROM "CommentV3" c
+    WHERE c.id = ANY(${ids}::int[]) AND c."tosViolation" AND c."deletedAt" IS NULL
+    ORDER BY c.id FOR UPDATE`;
+  const candidates = rows.map((r) => r.id);
+  const cleared = await setCommentFlags(prismaRunner(tx), candidates, {
+    tosViolation: false,
+  });
+  // In the clear's transaction, so a clear never lands without its reports reopened.
+  const reopened = cleared.length
+    ? await tx.$queryRaw<{ id: number }[]>`
+        UPDATE "Report" r SET status = ${ReportStatus.Pending}::"ReportStatus"
+        FROM "CommentV3Report" c
+        WHERE c."reportId" = r.id
+          AND c."commentId" = ANY(${cleared.map((c) => c.id)}::int[])
+          AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
+          AND r.status = ${ReportStatus.Actioned}::"ReportStatus"
+        RETURNING r.id`
+    : [];
+  // Feature Pages comments stay removed: setCommentFlags clears none of them.
+  return { cleared, reopenedReports: reopened.length, held: rows.filter((r) => r.fp).length };
 }
 
 /**
@@ -81,48 +110,36 @@ export async function bulkSetCommentV3TosViolation({
  * No reward claw-back and no notification, as for the v2 restore.
  */
 export async function bulkClearCommentV3TosViolation({ ids }: { ids: number[] }) {
-  const none = { count: 0, reopenedReports: 0, failed: 0 };
+  const none = { count: 0, reopenedReports: 0, held: 0, failed: 0 };
   if (!ids.length) return none;
   try {
-    const { cleared, reopenedReports } = await dbWrite.$transaction(async (tx) => {
-      const candidates = (
-        await tx.$queryRaw<{ id: number }[]>`
-          SELECT c.id FROM "CommentV3" c
-          WHERE c.id = ANY(${ids}::int[]) AND c."tosViolation" AND c."deletedAt" IS NULL
-          FOR UPDATE`
-      ).map((r) => r.id);
-      const cleared = await setCommentFlags(prismaRunner(tx), candidates, { tosViolation: false });
-      // In the clear's transaction, so a clear never lands without its reports reopened.
-      const reopened = cleared.length
-        ? await tx.$queryRaw<{ id: number }[]>`
-            UPDATE "Report" r SET status = ${ReportStatus.Pending}::"ReportStatus"
-            FROM "CommentV3Report" c
-            WHERE c."reportId" = r.id
-              AND c."commentId" = ANY(${cleared.map((c) => c.id)}::int[])
-              AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
-              AND r.status = ${ReportStatus.Actioned}::"ReportStatus"
-            RETURNING r.id`
-        : [];
-      return { cleared, reopenedReports: reopened.length };
-    });
-    return { count: cleared.length, reopenedReports, failed: 0 };
+    const { cleared, reopenedReports, held } = await dbWrite.$transaction((tx) =>
+      clearCommentV3TosViolationIn(tx, ids)
+    );
+    return { count: cleared.length, reopenedReports, held, failed: 0 };
   } catch (e) {
     logToAxiom({
       type: 'error',
       name: 'comment-tos-restore',
       message: 'Clearing a ToS flag failed; the comments stay hidden',
       details: { table: 'CommentV3', ids, error: (e as Error)?.message },
-    }).catch(() => undefined);
+    });
     return { ...none, failed: ids.length };
   }
 }
 
-/** Deletes comments in the caller's transaction; one with replies stays as a placeholder for them. */
-export function deleteCommentsV3(tx: Prisma.TransactionClient, ids: number[]) {
-  return deleteComments(prismaRunner(tx), ids);
+/**
+ * Deletes comments in the caller's transaction; one with replies stays as a placeholder for them.
+ * The author's own delete is deleteOwnCommentV3.
+ */
+export function deleteCommentsV3(
+  tx: Prisma.TransactionClient,
+  ids: number[],
+  cause?: Exclude<CommentGoneCause, 'author'>
+) {
+  return deleteComments(prismaRunner(tx), ids, cause);
 }
 
-/** Run after the delete's transaction commits. */
 export function afterCommentsV3Deleted(deleted: Awaited<ReturnType<typeof deleteCommentsV3>>) {
   void onTopicCommentsRemoved(deleted);
 }
@@ -162,4 +179,93 @@ export async function setFlagsInBatches(
     );
   }
   return changed;
+}
+
+type FileReport = (input: {
+  userId: number;
+  isModerator: boolean;
+  id: number;
+  type: ReportEntity;
+  reason: ReportReason;
+  details: Record<string, unknown>;
+  foldIntoPendingOnly: boolean;
+}) => Promise<{ id: number } | null | undefined>;
+
+const FP_AUTO_HIDE_REPORT_COMMENT = 'auto-hidden by scan';
+
+/**
+ * A Feature Pages comment is shown at once and hidden if its scan flags it (scam or csam), with a
+ * system report in the existing queue, filed or folded on every call, a retry included. Any other
+ * comment is left to the site's own rules.
+ */
+export async function hideFlaggedFpComment(
+  commentId: number,
+  deps: {
+    createReport?: FileReport;
+    db?: Pick<typeof dbWrite, '$queryRawUnsafe' | '$transaction'>;
+  } = {}
+) {
+  const client = deps.db ?? dbWrite;
+  // Compared as text: this runs for every flagged comment, before the featurePage label exists too.
+  const { rows } = await prismaRunner(client as never).query<{ entityType: string }>(
+    `SELECT "entityType"::text AS "entityType" FROM "CommentV3" WHERE id = $1`,
+    [commentId]
+  );
+  if (rows[0]?.entityType !== 'featurePage') return false;
+
+  const createReport =
+    deps.createReport ??
+    ((await import('~/server/services/report.service')).createReport as FileReport);
+  // The report commits before the hide, so the author's delete is refused from the moment it is
+  // hidden. A failed report never holds the hide back: hidden, then thrown for the retry to file.
+  let failure: unknown;
+  try {
+    await createReport({
+      userId: constants.system.user.id,
+      isModerator: true,
+      id: commentId,
+      type: ReportEntity.CommentV3,
+      reason: ReportReason.AdminAttention,
+      details: { reason: 'Other', comment: FP_AUTO_HIDE_REPORT_COMMENT },
+      foldIntoPendingOnly: true,
+    });
+  } catch (e) {
+    failure = e;
+  }
+  await client.$transaction((tx) =>
+    setCommentFlags(prismaRunner(tx), [commentId], { hidden: true })
+  );
+  if (failure) throw failure;
+  return true;
+}
+
+const fpDeleteRefused = () =>
+  new TRPCError({ code: 'FORBIDDEN', message: 'This comment is under review.' });
+
+/**
+ * The author's own delete, a moderator's included. A Feature Pages comment that is ToS-removed,
+ * reported or held is kept as evidence and the delete refused. Read under the hold decision's lock,
+ * then the row's, as a hold, a report and a ToS removal each wait on one of them.
+ */
+export async function deleteOwnCommentV3(
+  tx: Prisma.TransactionClient,
+  comment: { id: number; entityType: string }
+) {
+  const db = prismaRunner(tx);
+  if (comment.entityType === 'featurePage') {
+    await lockCsamHold(tx, 'CommentV3', comment.id);
+    const { rows } = await db.query<{ tosViolation: boolean }>(
+      `SELECT "tosViolation" FROM "CommentV3" WHERE id = $1 AND "deletedAt" IS NULL FOR UPDATE`,
+      [comment.id]
+    );
+    if (rows[0]) {
+      if (rows[0].tosViolation || (await hasOpenCommentReport(db, comment.id)))
+        throw fpDeleteRefused();
+      const hold = await commentV3CsamHold(comment.id, tx);
+      if (hold === 'unverified')
+        throw new TRPCError({ code: 'CONFLICT', message: 'This comment is being checked.' });
+      if (hold !== 'clear') throw fpDeleteRefused();
+    }
+  }
+  return deleteComments(db, [comment.id], 'author');
 }

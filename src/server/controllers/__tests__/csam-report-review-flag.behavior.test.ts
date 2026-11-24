@@ -75,6 +75,8 @@ const EXPIRED_HOLD = 65;
 const NEAR_CEILING = 66;
 const INSIDE_MARGIN = 67;
 const PAST_MARGIN = 68;
+const APPEALED = 69;
+const APPEALED_UNLISTED = 70;
 
 let pg: PGlite;
 
@@ -97,6 +99,14 @@ beforeAll(async () => {
       "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
     CREATE TABLE "ImageDeferredBlockEffect" ("imageId" int PRIMARY KEY);
+    CREATE TYPE "EntityType" AS ENUM ('Image');
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" (
+      id serial PRIMARY KEY,
+      "entityType" "EntityType" NOT NULL,
+      "entityId" int NOT NULL,
+      status "AppealStatus" NOT NULL
+    );
   `);
 });
 
@@ -105,12 +115,17 @@ beforeEach(async () => {
   softDeleteUser.mockClear();
   createSupplementalCsamReport.mockClear();
   await pg.exec(`
-    TRUNCATE "Image", "CsamReport", "ImageDeferredBlockEffect";
+    TRUNCATE "Image", "CsamReport", "ImageDeferredBlockEffect", "Appeal";
     INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
       (${OWNED}, ${OWNER}, 'Scanned', 'csam'),
       (${OTHER_OWNERS}, ${OTHER_OWNER}, 'Blocked', 'csam'),
       (${UNBLOCKED_HELD}, ${PRIOR_REPORT_OWNER}, 'Scanned', 'csam'),
-      (${OTHER_FLAG}, ${OWNER}, 'Blocked', 'appeal'),
+      (${OTHER_FLAG}, ${OWNER}, 'Blocked', 'minor'),
+      (${APPEALED}, ${OTHER_OWNER}, 'Blocked', 'appeal'),
+      (${APPEALED_UNLISTED}, ${OTHER_OWNER}, 'Blocked', 'appeal');
+    INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
+      ('Image', ${APPEALED}, 'Pending'), ('Image', ${APPEALED_UNLISTED}, 'Pending');
+    INSERT INTO "Image" (id, "userId", ingestion, "needsReview") VALUES
       (${EXPIRED_HOLD}, ${EXPIRED_HOLD_OWNER}, 'Blocked', 'csam'),
       (${NEAR_CEILING}, ${NEAR_CEILING_OWNER}, 'Blocked', 'csam'),
       (${INSIDE_MARGIN}, ${INSIDE_MARGIN_OWNER}, 'Blocked', 'csam'),
@@ -128,6 +143,17 @@ beforeEach(async () => {
       (${PAST_MARGIN_OWNER}, now() - interval '23 days 1 hour');
   `);
   dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
+  dbMock.dbWrite.appeal.updateMany.mockImplementation((async ({
+    where,
+  }: {
+    where: { entityId: { in: number[] } };
+  }) => {
+    const { affectedRows } = await pg.query(
+      `UPDATE "Appeal" SET status = 'Rejected' WHERE "entityId" = ANY($1) AND status = 'Pending'`,
+      [where.entityId.in]
+    );
+    return { count: affectedRows ?? 0 };
+  }) as never);
   dbMock.dbWrite.$executeRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...v: unknown[]
@@ -234,7 +260,16 @@ describe('fileCsamReport', () => {
   it('leaves any other flag alone', async () => {
     await report(OWNER, [OTHER_FLAG]);
 
-    expect(await flag(OTHER_FLAG)).toBe('appeal');
+    expect(await flag(OTHER_FLAG)).toBe('minor');
+  });
+
+  it('takes the appeal flag off an image whose appeal the report closed', async () => {
+    // A report naming no owner: it blocks nothing, so the image stays where the appeal left it.
+    await report(-1, [APPEALED]);
+
+    expect(await flag(APPEALED)).toBeNull();
+    // Control: an image the report does not list keeps its pending appeal's flag.
+    expect(await flag(APPEALED_UNLISTED)).toBe('appeal');
   });
 
   it('files a supplemental report without removing the account again, and hands its image to the hold', async () => {

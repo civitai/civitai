@@ -51,7 +51,7 @@ export default function IntentAvatar() {
   const [loading, setLoading] = useState(true);
   const [waiting, setWaiting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<React.ReactNode | undefined>(undefined);
-  const [imgToUpload, setImgToUpload] = useState<File>();
+  const [imgToUpload, setImgToUpload] = useState<{ file: File; width: number; height: number }>();
   const currentUser = useCurrentUser();
   const { uploadToCF } = useCFImageUpload();
 
@@ -76,8 +76,19 @@ export default function IntentAvatar() {
     if (!imgToUpload || !currentUser) return;
     setWaiting(true);
     try {
-      const { id } = await uploadToCF(imgToUpload);
-      mutate({ id: currentUser.id, image: id });
+      const { file, width, height } = imgToUpload;
+      const { id } = await uploadToCF(file);
+      // As a profile picture, so the upload gets a scanned Image row (a bare key as `image` is refused).
+      mutate({
+        id: currentUser.id,
+        profilePicture: {
+          url: id,
+          width,
+          height,
+          mimeType: file.type,
+          sizeKB: Math.ceil(file.size / 1024),
+        },
+      });
     } catch (e) {
       setErrorMsg('Failed to save avatar. Please refresh the page to try again.');
       setWaiting(false);
@@ -101,11 +112,11 @@ export default function IntentAvatar() {
         setLoading(false);
       } else {
         createImageElement(blob)
-          .then(() => {
+          .then((img) => {
             const file = new File([blob], url?.split('/').slice(-1)[0] ?? 'avatar-file', {
               type: blob.type,
             });
-            setImgToUpload(file);
+            setImgToUpload({ file, width: img.naturalWidth, height: img.naturalHeight });
           })
           .catch((e) => {
             console.log(e);

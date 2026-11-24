@@ -237,11 +237,9 @@ const TRAINING_STEP_TYPE_LOOKUP: ReadonlySet<string> = new Set(
  *   - `buildMultiStepWorkflowTags` / `multiStepTrainingType` — the same two rules for
  *     every step of a `kind:'workflow'` body.
  *
- * `isTrainingStepType` (exact) is kept ONLY where the `$type` was read off a workflow
- * the orchestrator RETURNED, and as the type guard narrowing to `TrainingStepType`:
- *   - `splitPassThroughStep` (`steps/output.ts`) — splitting a returned step's output;
- *   - `hasBlockTrainingStep` / `projectAppWorkflow` (`workflow.service.ts`) — reading a
- *     returned training step.
+ * A `$type` read off a workflow the orchestrator RETURNED goes through
+ * `canonicalTrainingStepType` (`steps/output.ts`), which also ignores case: the
+ * orchestrator may echo the submitted casing.
  */
 export function isTrainingStepTypeIgnoringCase(stepType: string): boolean {
   return TRAINING_STEP_TYPE_LOOKUP.has(foldStepTypeCase(stepType));

@@ -66,7 +66,7 @@ max 7,802h (325 days). **119 reports (26%) took longer than 7 days to archive.**
       that is still unsent past `CSAM_SEND_BLOCKED_AFTER_HOURS`, whatever held it. A report with no
       readable file logs `send-all-unreadable` on every run and `send-decision-needed` from
       `CSAM_SEND_DECISION_AFTER_HOURS`. A preserved-evidence report the job skips while it waits for
-      approval logs `send-blocked` (with `awaiting: 'evidence-approval'`) once it is older than
+      approval logs `send-blocked` (with `payload.awaiting: 'evidence-approval'`) once it is older than
       `CSAM_EVIDENCE_APPROVAL_OVERDUE_HOURS`. A report whose XML NCMEC would refuse opens no
       CyberTip and logs `send-xml` and `send-decision-needed` on every run.
 - [ ] Route those lines to an alert, and alert when a report is unarchived for >7d (the
@@ -102,7 +102,7 @@ both, but the silent `if (!userId) return` remains in the legacy file, along wit
 
 ## 5. `unblock-images.ts` clears `blockedFor` without touching `ingestion`
 
-`src/pages/api/mod/unblock-images.ts` is a batch backfill that nulls `blockedFor` for images that
+`src/server/api-routes/mod/unblock-images.ts` is a batch backfill that nulls `blockedFor` for images that
 are not actually blocked (`needsReview` null, `nsfwLevel` not Blocked). It now also drops the
 `BlockedImageDelete` queue rows, so it can no longer arm a purge on the very update meant to
 unblock. But it still leaves `ingestion` untouched.

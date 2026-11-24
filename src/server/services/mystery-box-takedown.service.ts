@@ -409,12 +409,12 @@ export async function takedownMysteryBox({
     limit,
     actorId: moderatorId,
   });
-  await logToAxiom({
+  logToAxiom({
     level: result.failed.length ? 'error' : 'info',
     name: 'mystery-box-takedown',
     message: 'Box takedown run finished',
     data: { ...result, moderatorId, reason },
-  }).catch(() => undefined);
+  });
   return result;
 }
 
@@ -558,12 +558,12 @@ export async function continueBoxTakedowns(deadline: number) {
     }
   }
   if (failed.length)
-    await logToAxiom({
+    logToAxiom({
       level: 'error',
       name: 'mystery-box-takedown',
       message: 'Box takedowns left work behind',
       data: { failed },
-    }).catch(() => undefined);
+    });
   return { boxes: boxes.length, refunded, failed };
 }
 

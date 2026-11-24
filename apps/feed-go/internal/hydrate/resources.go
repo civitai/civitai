@@ -2,6 +2,7 @@ package hydrate
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
@@ -42,7 +43,7 @@ type ImageResource struct {
 func imageResourcesFrom(imageIDs []int, got map[int]Entry) (map[int][]ImageResource, error) {
 	out := map[int][]ImageResource{}
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
-		return nil, fallback.Newf("image-resources-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("image-resources-miss", "%d ids", len(miss))
 	}
 	for id, e := range got {
 		if e.NotFound {
@@ -143,4 +144,24 @@ func (s *Sources) UserIDByUsername(ctx context.Context, username string) (int, b
 	}
 	id, ok := Int(maps[0]["id"])
 	return id, ok, nil
+}
+
+// TagIDByName is the tag lookup by name the model feeds share (`dbRead.tag.findUnique({ where: {
+// name } })` in getModelsRaw, for model.getAll and /api/v1/models): one row of "Tag" on the replica.
+// Tag.name is citext, so the match is case-insensitive there, as on Node's replica; the name is
+// passed as the request gave it. found is false when no tag has the name (no filter is added).
+func TagIDByName(ctx context.Context, db Querier, name string) (id int, found bool, err error) {
+	rows, err := db.Query(ctx, `SELECT id FROM "Tag" WHERE name = $1 LIMIT 1`, name)
+	if err != nil {
+		return 0, false, err
+	}
+	maps, err := rowsToMaps(rows)
+	if err != nil || len(maps) == 0 {
+		return 0, false, err
+	}
+	id, ok := Int(maps[0]["id"])
+	if !ok {
+		return 0, false, fmt.Errorf("tag %q: id %v is not an integer", name, maps[0]["id"])
+	}
+	return id, true, nil
 }

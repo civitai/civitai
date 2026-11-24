@@ -67,9 +67,6 @@ describe('/api/v1/images shared cache by region', () => {
     ['a model gallery at XXX only', { modelId: '1', browsingLevel: '16' }],
     ['a model gallery at nsfw=Blocked', { modelId: '1', nsfw: 'Blocked' }],
     ['a model gallery at nsfw=Mature', { modelId: '1', nsfw: 'Mature' }],
-    ['a level wider than 32 bits', { modelId: '1', browsingLevel: String(2 ** 32 + 1) }],
-    ['a fractional level', { modelId: '1', browsingLevel: '1.5' }],
-    ['a negative level', { modelId: '1', browsingLevel: '-1' }],
     ['a feed above SFW', { nsfw: 'true' }],
     ['a post’s images above SFW', { postId: '5', nsfw: 'true' }],
   ])('is never shared-cached for %s, in either region', async (_, query) => {
@@ -77,6 +74,25 @@ describe('/api/v1/images shared cache by region', () => {
       expect(statusCode).toBe(200);
       expect(cacheControl).toBe(NO_STORE);
     }
+  });
+
+  // Refused before the region is read, so both regions get the same answer.
+  it.each([
+    ['a level wider than 32 bits', { modelId: '1', browsingLevel: String(2 ** 32 + 1) }],
+    ['a fractional level', { modelId: '1', browsingLevel: '1.5' }],
+    ['a negative level', { modelId: '1', browsingLevel: '-1' }],
+  ])('answers %s with a 400 in either region, without searching', async (_, query) => {
+    for (const { statusCode } of await bothRegions(query)) expect(statusCode).toBe(400);
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
+  });
+
+  // Outside a restricted region, which would replace the level with the SFW ones first.
+  it('[invariant] serves a held gallery nothing for a Blocked-only level, without searching', async () => {
+    mockHeldLevel.mockResolvedValue(1);
+    const { statusCode } = await call({ modelId: '1', browsingLevel: '32' }, false);
+
+    expect(statusCode).toBe(200);
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
   });
 
   it.each([

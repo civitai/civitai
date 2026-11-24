@@ -43,6 +43,13 @@ export function countQueryVerdict(index: string, verdict: string, stage: string,
   ensureRegisterQueryVerdictCounter(reg).inc({ index, verdict, stage });
 }
 
+export {
+  countSearchUpload,
+  ensureRegisterSearchUploadMetrics,
+  SEARCH_UPLOAD_RESULTS,
+  SEARCH_UPLOADS,
+} from '~/server/metrics/search-upload.metrics';
+
 const RULE_READS = 'semantic_search_query_rule_reads_total';
 
 /** Labels carry the rule type and where it was read from, never a term. */

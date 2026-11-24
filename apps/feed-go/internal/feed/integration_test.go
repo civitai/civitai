@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,7 +84,7 @@ func integRun(t *testing.T, pool *pgxpool.Pool, q ImagesQuery) []RawImage {
 	if err != nil {
 		t.Fatalf("query: %v\n%s", err, b.SQL)
 	}
-	out, err := scanRows(rows)
+	out, err := scanRows(rows, b.Collection)
 	if err != nil {
 		t.Fatalf("scan: %v\n%s", err, b.SQL)
 	}
@@ -241,6 +242,107 @@ func TestIntegrationImagesQueryFilters(t *testing.T) {
 	limited.Limit = 1 // LIMIT limit+1: the look-ahead row
 	if got, want := integIDs(integRun(t, pool, limited)), []int{2101009, 2101008}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("limit 1 = %v, want %v", got, want)
+	}
+}
+
+// The REST endpoint's `ids` batch (the legacy path): the ids' own order whatever the request's, a
+// repeated id once, OFFSET before the look-ahead LIMIT (`page`), and the inclusive id cursor.
+func TestIntegrationLegacyIDsPaging(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedImages(t, pool)
+	q := ImagesQuery{IDs: []int{2101003, 2101009, 2101001, 2101009, 2101005, 2101999}, Limit: 2, IsModerator: true, BrowsingLevel: browsing.AllLevels}
+	if got, want := integIDs(integRun(t, pool, q)), []int{2101009, 2101005, 2101003}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("first page = %v, want %v (by id descending, the look-ahead row last)", got, want)
+	}
+	skipped := q
+	skipped.Skip = 2
+	if b := skipped.Build(); !strings.Contains(b.SQL, "OFFSET 2\n    LIMIT $") {
+		t.Fatalf("OFFSET not before LIMIT:\n%s", b.SQL)
+	}
+	if got, want := integIDs(integRun(t, pool, skipped)), []int{2101003, 2101001}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("page 2 = %v, want %v", got, want)
+	}
+	cursor := q
+	cursor.Cursor = 2101005
+	if got, want := integIDs(integRun(t, pool, cursor)), []int{2101005, 2101003, 2101001}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("from the cursor = %v, want %v", got, want)
+	}
+}
+
+// image.getInfinite's scopes against the real schema: the tag subquery (an enabled tag only) and a
+// post's media in index order, paged on the nullable index (Postgres sorts NULL last ascending).
+func TestIntegrationInfiniteScopes(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedImages(t, pool)
+	mod := ImagesQuery{Limit: 20, IsModerator: true, BrowsingLevel: browsing.AllLevels, Sort: SortNewest}
+
+	tagged := mod
+	tagged.TagIDs = []int{2101801}
+	if got, want := integIDs(integRun(t, pool, tagged)), []int{2101003}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("tag scope = %v, want %v (2101005's tag is disabled)", got, want)
+	}
+	tagged.TagIDs = []int{2101899}
+	if got := integIDs(integRun(t, pool, tagged)); len(got) != 0 {
+		t.Fatalf("an unused tag = %v, want none", got)
+	}
+
+	post := mod
+	post.PostID, post.IndexOrder = 2101501, true
+	rows := integRun(t, pool, post)
+	if got, want := integIDs(rows), []int{2101001, 2101002, 2101003, 2101004, 2101005}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post in index order = %v, want %v", got, want)
+	}
+	if rows[0].CursorNull || rows[0].CursorID != 7 || !rows[1].CursorNull || rows[1].CursorID != 0 {
+		t.Fatalf("cursor columns = (%d, null %v), (%d, null %v); want the index 7, then NULL",
+			rows[0].CursorID, rows[0].CursorNull, rows[1].CursorID, rows[1].CursorNull)
+	}
+	post.Cursor = 7 // inclusive on the index
+	if got, want := integIDs(integRun(t, pool, post)), []int{2101001}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post from index 7 = %v, want %v", got, want)
+	}
+}
+
+// getAllImages' `tools` clause against the real schema: an image holding EVERY listed tool (order
+// and repeats in the list do not matter), never one with no tool row, and the cache policy of the
+// query it joins unchanged. Tool ids live in 2_102_0xx.
+func TestIntegrationToolsFilter(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedImages(t, pool)
+	integtest.Exec(t, pool, `
+		DELETE FROM "ImageTool" WHERE "imageId" BETWEEN 2101000 AND 2101999;
+		INSERT INTO "ImageTool" ("imageId", "toolId") VALUES
+		  (2101001, 2102001), (2101001, 2102002),
+		  (2101002, 2102002),
+		  (2101003, 2102003), (2101003, 2102002), (2101003, 2102001),
+		  (2101009, 2102004);`)
+	mod := ImagesQuery{IDs: integAllIDs, Limit: 20, IsModerator: true, BrowsingLevel: browsing.AllLevels}
+	for _, c := range []struct {
+		name  string
+		tools []int
+		want  []int
+	}{
+		// Positive control: without the filter the moderator sees all nine.
+		{"no tools", nil, []int{2101009, 2101008, 2101007, 2101006, 2101005, 2101004, 2101003, 2101002, 2101001}},
+		{"one tool", []int{2102002}, []int{2101003, 2101002, 2101001}},
+		{"all of two", []int{2102001, 2102002}, []int{2101003, 2101001}},
+		{"all of three, out of order", []int{2102003, 2102001, 2102002}, []int{2101003}},
+		{"a repeated tool", []int{2102002, 2102002}, []int{2101003, 2101002, 2101001}},
+		{"a tool and one nobody holds with it", []int{2102004, 2102001}, []int{}},
+		{"a zero id (bound as sent)", []int{0}, []int{}},
+	} {
+		q := mod
+		q.Tools = c.tools
+		if got := integIDs(integRun(t, pool, q)); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+	// On a version gallery the query stays cached under the version's tag.
+	version := ImagesQuery{ModelVersionID: 2101601, Limit: 20, IsModerator: true, BrowsingLevel: browsing.AllLevels, Tools: []int{2102001}}
+	if b := version.Build(); b.CacheTTL != 10*time.Minute || !reflect.DeepEqual(b.CacheTags, []string{"images-modelVersion:2101601"}) {
+		t.Fatalf("version gallery with tools: CacheTTL %v tags %v, want 10m / [images-modelVersion:2101601]", b.CacheTTL, b.CacheTags)
+	}
+	if got, want := integIDs(integRun(t, pool, version)), []int{2101001}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("version gallery with tools = %v, want %v (2101009 used the version but holds another tool)", got, want)
 	}
 }
 
@@ -596,7 +698,7 @@ func TestIntegrationGalleryPromotions(t *testing.T) {
 		ts(-24*time.Hour), ts(-8*24*time.Hour), live))
 	ctx := integtest.Ctx(t)
 
-	rows, err := g.LiveGalleryPromotions(ctx, 2104001, now.Add(-maxRun))
+	rows, err := g.LiveGalleryPromotions(ctx, 2104001, now.Add(-MaxPromotionRun))
 	if err != nil {
 		t.Fatal(err)
 	}

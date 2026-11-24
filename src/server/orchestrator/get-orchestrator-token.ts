@@ -7,6 +7,7 @@ import { credentialLogFields, getRequestCredential } from '~/server/auth/request
 import { dbWrite } from '~/server/db/client';
 import { observeTokenIdentityMismatch } from '~/server/orchestrator/orchestrator-identity-metrics';
 import { getOrMintCachedToken } from '~/server/orchestrator/orchestrator-token-cache';
+import { offlineCapOrchestratorToken } from '~/server/orchestrator/offline-spend-cap';
 import {
   decodeOwnedToken,
   encodeOwnedToken,
@@ -19,8 +20,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { getAccountStanding } from '~/server/services/account-standing.service';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 
 /** The caller's request, whose credential is checked. Server-side callers with no request in hand
  *  (e.g. the publish → workflow stamp) omit it. */
@@ -76,6 +76,14 @@ export async function getOrchestratorToken(
     throw new TRPCError({ code: 'FORBIDDEN', message: 'This account has been banned' });
   if (!standing || !standing.exists || (standing.muted && !options.allowRestricted))
     throw new TRPCError({ code: 'FORBIDDEN', message: RESTRICTED_ACCOUNT_MESSAGE });
+
+  // The offline Buzz cap (flag `oauth-offline-grant`, offline-spend-cap.ts): a refresh-minted OAuth
+  // token with a cap is sent as itself and never cached under the user. Null otherwise, and nothing
+  // below changes.
+  if (ctx?.req && env.ORCHESTRATOR_MODE !== 'dev') {
+    const capped = await offlineCapOrchestratorToken(userId, ctx.req);
+    if (capped) return capped;
+  }
 
   const redisKey = userId.toString();
   // Fail open on sysRedis: fall through to the getTemporaryUserApiKey
@@ -193,7 +201,7 @@ async function assertCredentialMayUseOrchestrator(userId: number, ctx?: Context)
   const credential = getRequestCredential(ctx.req);
   const { tokenScope, apiKeyId, apiKeyType, subject } = credential;
   const presentedBearer = apiKeyId != null || apiKeyType != null || subject != null;
-  if (!presentedBearer || Flags.hasFlag(tokenScope, TokenScope.AIServicesWrite)) return;
+  if (!presentedBearer || hasScope(tokenScope, TokenScope.AIServicesWrite)) return;
 
   const sessionUser = (ctx.req as { context?: { session?: { user?: RequestSessionUser } | null } })
     .context?.session?.user;

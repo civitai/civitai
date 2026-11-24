@@ -2,6 +2,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import type { DonationCosmeticData, EngagementEvent, TeamScore } from '~/server/events/base.event';
 import type { EventAccess, EventViewer } from '~/server/events/event-access';
 import {
@@ -14,6 +15,8 @@ import { birthday2026 } from '~/server/events/birthday2026.event';
 import { holiday2024 } from '~/server/events/holiday2024.event';
 import { eventPointSeason, eventPointsWindow } from '~/server/events/points/keys';
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
+import { readFlagRaceJson } from '~/server/events/scoring/award-results';
+import { awardEventPrizes } from '~/server/events/scoring/event-prizes';
 import { REFEREE_CLICKHOUSE_BUDGET_S, runEventPointsReferee } from '~/server/events/points/referee';
 import { syncEventHats } from '~/server/events/points/sync';
 import { pointTypesFor } from '~/server/events/points/types';
@@ -188,6 +191,21 @@ export const eventEngine = {
 
         await eventDef.onCleanup?.({ scores, db: dbWrite, winner, winnerCosmeticId });
 
+        if (eventDef.scoring) {
+          const prizes = await readFlagRaceJson(eventDef.name)
+            .then((json) => awardEventPrizes(eventDef, winner, json))
+            .catch((error) => {
+              logToAxiom({
+                type: 'error',
+                name: 'event-prizes',
+                event: eventDef.name,
+                message: (error as Error).message,
+              });
+              return { pending: true };
+            });
+          if (prizes.pending) continue;
+        }
+
         // Mark cleanup as complete, only after every step succeeded so a failure retries tomorrow.
         await redis.set(cleanupKey, `true`, { EX: CLEANUP_MARKER_TTL_S });
       } else {
@@ -241,14 +259,14 @@ export const eventEngine = {
               name: 'event-points-referee',
               event: eventDef.name,
               ...result,
-            }).catch(() => undefined);
+            });
           } catch (error) {
             logToAxiom({
               type: 'error',
               name: 'event-points-referee',
               event: eventDef.name,
               message: (error as Error).message,
-            }).catch(() => undefined);
+            });
           }
         }
         const standings = await refreshStandings(standingsEvent, dbWrite);
@@ -413,6 +431,7 @@ export const eventEngine = {
         JOIN "Image" i ON i.id = ci."imageId"
         JOIN "User" u ON u.id = i."userId"
         WHERE c."userId" = -1 AND c.name = ${eventDef.coverImageCollection}
+          AND ${imageNotRestrictedSql()}
         ORDER BY ci."createdAt" DESC
         LIMIT 1
       `;

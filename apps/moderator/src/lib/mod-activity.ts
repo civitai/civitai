@@ -1,3 +1,6 @@
+import { SERVED_ACTIVITY as HELD_SERVED_ACTIVITY } from '@civitai/shared/held-media';
+import { RETRACTED_SERVED_ACTIVITY } from '@civitai/shared/retracted-media';
+
 /** Written beside a `review` row, never alone, so a count of actions taken skips them. */
 export const COMPANION_ACTIVITIES = ['clearMinor', 'minorQueueAccept'];
 
@@ -15,6 +18,8 @@ export const COMPANION_ACTIVITIES = ['clearMinor', 'minorQueueAccept'];
 export const RATING_ACTIVITIES = [
   // Knights of New Order crowd votes — not a moderator's decision at all, and a busy image carries several.
   'setNsfwLevelKono',
+  // A Paladin consensus on a flagged tag, written back by Knights; the player is the actor.
+  'moderateTagKono',
   'ratingReview',
   'moderateTag',
   'disableTag',
@@ -52,9 +57,11 @@ export type ModActivityCount = { activity: string; entityType: string; count: nu
 /** A purge whose answer was lost: sent, and it may or may not have run. Never a confirmed purge. */
 export const PURGE_UNCONFIRMED_ACTIVITY = 'purgeAllContentUnconfirmed';
 
-/** Activities whose recorded name, read on its own, would claim more than happened. */
+/** Activities whose recorded name would mislead, or read as a bare code, in a list. */
 const ACTIVITY_LABELS: Record<string, string> = {
   [PURGE_UNCONFIRMED_ACTIVITY]: 'Purge sent, not confirmed',
+  [RETRACTED_SERVED_ACTIVITY]: 'Viewed retracted media',
+  [HELD_SERVED_ACTIVITY]: 'Viewed held media',
 };
 
 /** Camel-cased enum values read as identifiers in a list a moderator scans. */

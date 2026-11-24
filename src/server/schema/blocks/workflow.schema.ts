@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import type { ImageRating } from '~/shared/constants/browsingLevel.constants';
 import { REGISTERED_RECIPE_IDS } from '~/server/services/blocks/recipes';
 import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
 import type { BlockStepToolCall } from '~/server/services/blocks/steps';
@@ -888,6 +889,11 @@ export const blockQuoteGrantConsentInputSchema = z.discriminatedUnion('kind', [
     quoteId: z.string().regex(BLOCK_STEP_QUOTE_ID_REGEX),
   }),
 ]);
+/** Input of `blocks.consentQuoteGrantStanding`: step quotes only. */
+export const blockStepQuoteStandingConsentInputSchema = z.object({
+  blockToken: z.string().min(1),
+  quoteId: z.string().regex(BLOCK_STEP_QUOTE_ID_REGEX),
+});
 /** Max sample prompts on a training run. */
 export const BLOCK_TRAINING_SAMPLE_PROMPTS_MAX = 6;
 /** Max characters of one sample prompt. */
@@ -1130,7 +1136,80 @@ export type BlockWorkflowSnapshot = {
      */
     authorFee?: number;
   };
+  /**
+   * The available media, as urls, in production order — with every RESTRICTED output
+   * removed (see {@link outputs}). Kept for back-compat; `outputs` is the full list.
+   * 🔴 NOT FOR INDEXING: an index is a position in `outputs`.
+   */
   imageUrls?: string[];
+  /**
+   * One entry per available output, in the same order `imageUrls` was built in, with
+   * RESTRICTED outputs kept IN POSITION. An entry is either
+   *   - `{ url, nsfwLevel? }` — within the app's ceiling. `nsfwLevel` is the
+   *     orchestrator rating (`pg`, `pg13`, `r`, `x`, `xxx`), absent when there is no
+   *     rating to report and none could restrict it; or
+   *   - `{ restricted: true, reason }` — NO url and NO rating. `'pool'`: the Buzz that
+   *     paid does not allow mature content for this viewer (the workflow's
+   *     `allowMatureContent` was set false at charge time) and the output is above
+   *     PG-13. `'ceiling'`: the output is above this viewer's maturity ceiling (the
+   *     token's domain ceiling cut to the viewer's own browsing level), or above a
+   *     cap the site itself put on the workflow, or a `MatureContent` block.
+   *     `'unrated'`: no rating will ever arrive (an `imageResourceTraining` sample, a
+   *     3D mesh on a finished step with no rating source) and one could restrict it —
+   *     terminal, fail closed. `'unrecognised_url'`: host media serving is on and the
+   *     host could not issue a media url for the output. Treat an unknown reason like
+   *     `'ceiling'`.
+   *   A video from an engine the orchestrator never rates (kling, veo3, vidu, grok,
+   *   gemini-omni) is DELIVERED with its url while unrated, as on the site — its
+   *   provider moderates it; a rating that arrives still meets the ceiling checks.
+   *   While host media serving is on for the viewer, every such video, and every
+   *   output rated `na`, is `{ restricted: true, reason: 'unrated' }` instead.
+   *
+   *   HOST MEDIA SERVING (per viewer, off by default). When on, every `url` here, in
+   *   `imageUrls`, `steps[]`, `model3dOutputs` and `AppWorkflow.images` is a host
+   *   media url valid for about two minutes, and each `{ url }` entry carries a
+   *   `mediaRef` to store instead. When off, entries are exactly as above.
+   * Restricted urls are withheld; an app shows a locked state for such an entry and
+   * must not try to fetch it. Not-yet-available outputs are dropped, as from
+   * `imageUrls`; a BLOCKED one keeps its slot (below).
+   *
+   * 🔴 INDEXES ARE POSITIONS IN THIS LIST. `imageIndexes` on publish and post, and
+   * `imageIndex` on persist, name an output by its position here — a restricted output
+   * keeps its slot, so an index never moves when a rating lands late. Naming a
+   * restricted position is refused (`output N is restricted`, BAD_REQUEST), never
+   * replaced by another output. `imageUrls` / `AppWorkflow.images` /
+   * `steps[].imageUrls` drop restricted outputs and are NOT index spaces.
+   * ⚠️ MIGRATION: an app that built indexes from `images` / `imageUrls` positions
+   * (e.g. `images.map((_, i) => i)`) now names a DIFFERENT output whenever an earlier
+   * one is restricted, pending or blocked — and is refused or publishes the wrong
+   * one. Build indexes from `outputs` positions, or omit `imageIndexes`. Restriction
+   * is decided by `classifyBlockOutput` (`services/blocks/block-output-restriction`).
+   *
+   * Two more entry shapes, each with NO url and NO rating, each keeping its position:
+   *   - `{ pending: true }` — not rated yet, and its rating could still restrict it
+   *     (`ratingCouldRestrict`). The orchestrator marks a workflow succeeded seconds
+   *     before rating its last output, so poll again: see {@link ratingPending}.
+   *   - `{ blocked: true }` — blocked by moderation. A `MatureContent` block reads as
+   *     `{ restricted: true, reason: 'ceiling' }` instead.
+   * Naming a pending, blocked or restricted position on publish / post / persist is
+   * refused (`output N is still being rated, try again shortly`, or the existing
+   * not-available / restricted refusal).
+   *
+   * OMITTED when `outputs` would be empty.
+   * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
+   */
+  outputs?: BlockWorkflowOutput[];
+  /**
+   * `true` while any entry of {@link outputs} is `{ pending: true }`: an output may
+   * still gain a rating, so poll again until this is absent. OMITTED otherwise.
+   * While it is set on a workflow the orchestrator reports `succeeded`, `status` reads
+   * `processing`, so an app that predates this field keeps polling instead of keeping
+   * an empty result. That is bounded: 5 minutes after the workflow finished, the real
+   * status returns with the output still `{ pending: true }` and this flag still set
+   * (`appWorkflowStatus` / `isRatingHoldExpired` in `services/blocks/workflow.service`).
+   * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
+   */
+  ratingPending?: true;
   error?: string;
   /**
    * A stable, machine-readable companion to `error`, for a block to branch on.
@@ -1591,6 +1670,36 @@ export type BlockWorkflowSnapshot = {
   throttled?: true;
 };
 
+/**
+ * The orchestrator content rating of an output the app may load: `'pg' | 'pg13' | 'r' | 'x' |
+ * 'xxx'`, the image rating ladder (`IMAGE_RATING_LADDER`).
+ */
+export type BlockWorkflowOutputRating = ImageRating;
+
+export type BlockWorkflowRestrictedReason = 'pool' | 'ceiling' | 'unrated' | 'unrecognised_url';
+
+/** One entry of `BlockWorkflowSnapshot.outputs` / `AppWorkflow.outputs`. */
+export type BlockWorkflowOutput =
+  | {
+      url: string;
+      nsfwLevel?: BlockWorkflowOutputRating;
+      /**
+       * Present only while host media serving is on for this viewer, and then `url` is a
+       * short-lived host media url. The value an app may store and replay through
+       * `GET_WORKFLOW_MEDIA`; opaque.
+       */
+      mediaRef?: string;
+    }
+  /**
+   * `'unrated'`: no rating will ever arrive, and one could restrict it (fail closed).
+   * `'unrecognised_url'`: the host could not issue a media url for it.
+   */
+  | { restricted: true; reason: BlockWorkflowRestrictedReason }
+  /** Not rated yet, and its rating could still restrict it: no url until it lands. */
+  | { pending: true }
+  /** Blocked by moderation: keeps its position, no url, never available. */
+  | { blocked: true };
+
 export type BlockWorkflowEta = {
   stepName: string;
   queuedAhead: number | null;
@@ -1618,7 +1727,16 @@ export type BlockWorkflowStepSnapshot = {
   name: string;
   $type: string;
   status: BlockWorkflowSnapshot['status'];
+  /** This step's unrestricted media urls — see `BlockWorkflowSnapshot.imageUrls`. Not for indexing. */
   imageUrls?: string[];
+  /**
+   * This step's outputs, restricted ones in position — the same rules as
+   * `BlockWorkflowSnapshot.outputs`, and present exactly when `imageUrls` would be or
+   * an output is restricted. Omitted for a step submitted with `suppressOutput`.
+   */
+  outputs?: BlockWorkflowOutput[];
+  /** `true` while any of this step's `outputs` is pending — see the snapshot field. */
+  ratingPending?: true;
   output?: unknown;
   error?: string;
   /**
@@ -1658,3 +1776,21 @@ export type BlockTrainingQuote = {
 };
 
 export type BlockPublishedModel = { modelId: number; modelVersionId: number; published: boolean };
+
+/**
+ * The host's OUTPUT UNLOCK request (`blocks.previewOutputUnlock` / `blocks.unlockOutput`): one
+ * output, named by its stable position in the snapshot's `outputs`.
+ */
+export const blockOutputUnlockInputSchema = z.object({
+  blockToken: z.string().min(1),
+  workflowId: z.string().min(1).max(64),
+  position: z.number().int().min(0).max(10_000),
+});
+
+/** `blocks.unlockOutput`: the same, plus the total the viewer confirmed in the host's dialog. */
+export const blockOutputUnlockConfirmInputSchema = z.object({
+  blockToken: z.string().min(1),
+  workflowId: z.string().min(1).max(64),
+  position: z.number().int().min(0).max(10_000),
+  expectedTotal: z.number().int().min(0),
+});

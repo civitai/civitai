@@ -1,0 +1,75 @@
+name: Restore the pnpm store cache
+description: >-
+  Restore-only replacement for actions/setup-node's `cache: pnpm`. Restores the pnpm store
+  under the key setup-node used, and NEVER saves. Pair it with ./.github/actions/pnpm-store-save
+  after the install in a job that runs on `main`; that action saves only on `main`.
+
+# ── WHY NOT `cache: pnpm` ────────────────────────────────────────────────────────────────────
+#
+# setup-node's `cache: pnpm` restores in the step and SAVES in a post step on every run that
+# missed, whatever the ref, and it has no input to turn the save off. Actions caches are scoped
+# to a ref: a run reads its own ref's entries and the default branch's, and saves into its own
+# ref. So every run on a pull request or a branch dispatch that misses (the lockfile changed on
+# that branch, or on `main` before `main` saved the new key) writes its own full copy of the
+# store, which nothing but that ref can ever read, against the repo's 10 GB cache budget. At the
+# cap GitHub evicts the least recently used entries, `main`'s included. Guarded by scripts/__tests__/no-pr-scoped-cache-save.test.ts.
+#
+# ── THE KEY IS setup-node's, ON PURPOSE ──────────────────────────────────────────────────────
+#
+# `node-cache-<RUNNER_OS>-<process.arch>-pnpm-<hashFiles(pnpm-lock.yaml)>`, the path the output
+# of `pnpm store path --silent`, exactly as setup-node v7 builds them, so the entries `main`
+# saved before this action existed keep hitting. The PATH matters as much as the key: an Actions
+# cache entry's version is derived from its path list, and a restore with a different path string
+# misses an entry with the right key. `process.arch` (x64), not `runner.arch` (X64): setup-node
+# uses the former, and the key is case-sensitive.
+#
+# Exports, for the save action and for any step that wants them:
+#   PNPM_STORE_CACHE_KEY, PNPM_STORE_CACHE_PATH, PNPM_STORE_CACHE_HIT ('true' on an exact hit).
+# Needs pnpm and node on PATH (after pnpm/action-setup and actions/setup-node), and the
+# checkout's pnpm-lock.yaml.
+
+outputs:
+  cache-hit:
+    description: "'true' when the exact key was restored."
+    value: ${{ steps.restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve pnpm store cache key and path
+      shell: bash
+      env:
+        LOCK_HASH: ${{ hashFiles('pnpm-lock.yaml') }}
+      run: |
+        set -euo pipefail
+        # hashFiles is empty when the file is absent; setup-node fails in that case too, and an
+        # empty hash would key every run to the same wrong entry.
+        if [ -z "$LOCK_HASH" ]; then
+          echo "::error title=pnpm store cache::pnpm-lock.yaml not found in the workspace"
+          exit 1
+        fi
+        # An assignment, not inline in an echo: a failing substitution there does not fail the step.
+        # `tr -d '\r'`: pnpm on Windows may end the line with CRLF; setup-node trims it.
+        store=$(pnpm store path --silent | tr -d '\r')
+        arch=$(node -p process.arch)
+        if [ -z "$store" ] || [ -z "$arch" ]; then
+          echo "::error title=pnpm store cache::could not resolve the pnpm store path or the node arch"
+          exit 1
+        fi
+        key="node-cache-${RUNNER_OS}-${arch}-pnpm-${LOCK_HASH}"
+        printf 'PNPM_STORE_CACHE_KEY=%s\n' "$key" >> "$GITHUB_ENV"
+        printf 'PNPM_STORE_CACHE_PATH=%s\n' "$store" >> "$GITHUB_ENV"
+        echo "pnpm store cache: key $key, path $store"
+
+    - name: Restore pnpm store
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ env.PNPM_STORE_CACHE_PATH }}
+        key: ${{ env.PNPM_STORE_CACHE_KEY }}
+
+    - name: Record the restore result
+      shell: bash
+      env:
+        HIT: ${{ steps.restore.outputs.cache-hit }}
+      run: printf 'PNPM_STORE_CACHE_HIT=%s\n' "${HIT:-false}" >> "$GITHUB_ENV"

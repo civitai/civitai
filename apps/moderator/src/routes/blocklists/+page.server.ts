@@ -4,8 +4,11 @@ import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { BLOCKLIST_TYPES } from '$lib/blocklist';
 import { callModEndpoint } from '$lib/server/user-actions.service';
-import { inertEntries, inertEntriesError, parseRowId } from './form';
+import { whitelistWords } from '@civitai/mod-utils/profanity/lists';
+import { allowedWordsWarning, inertEntries, inertEntriesError, parseRowId } from './form';
 import {
+  BlocklistBelowFloorError,
+  BlocklistNotSeededError,
   BlocklistRowMismatchError,
   getBlocklistDTO,
   upsertBlocklist,
@@ -38,7 +41,32 @@ const dryRunVerdict = z.object({
 const dryRunResponse = z.object({ nonModerator: dryRunVerdict, moderator: dryRunVerdict });
 export type DryRunState = z.infer<typeof dryRunResponse> & { query: string };
 
+const profanityDryRunResponse = z.object({
+  flagged: z.boolean(),
+  listSource: z.enum(['managed', 'stale', 'fallback', 'shipped']),
+});
+export type ProfanityDryRunState = z.infer<typeof profanityDryRunResponse> & { text: string };
+
 export const actions: Actions = {
+  // The main app's server profanity filter; it answers flagged or not, never which entry matched.
+  profanityDryRun: async ({ request }) => {
+    const form = await request.formData();
+    const text = String(form.get('text') ?? '').trim();
+    if (!text) return fail(400, { profanityDryRunError: 'Enter some text to test.' });
+    if (text.length > 500)
+      return fail(400, { profanityDryRunError: 'Keep the text under 500 characters.' });
+
+    const result = await callModEndpoint('profanity-dry-run', { text }, 'Dry run');
+    if (!result.ok)
+      return fail(result.status && result.status >= 400 ? result.status : 502, {
+        profanityDryRunError: result.error,
+      });
+    const parsed = profanityDryRunResponse.safeParse(result.body);
+    if (!parsed.success)
+      return fail(502, { profanityDryRunError: 'The dry run answered in an unexpected shape.' });
+    const profanityDryRun: ProfanityDryRunState = { text, ...parsed.data };
+    return { profanityDryRun };
+  },
   // The main app's query audit, rules included; it answers the verdict only, never what matched.
   dryRun: async ({ request }) => {
     const form = await request.formData();
@@ -71,6 +99,15 @@ export const actions: Actions = {
     const inert = inertEntries(type, items);
     if (inert.length > 0) return fail(400, { error: inertEntriesError(type, inert) });
 
+    // Asked once per submitted text: the page resubmits the same text with `confirmImpact` set.
+    const raw = String(form.get('blocklist') ?? '');
+    if (type === 'ProfanityWord' && form.get('confirmImpact') !== raw) {
+      // The allow list the site applies: the moderators' row, or the shipped one when there is none.
+      const benign = await getBlocklistDTO({ type: 'ProfanityBenignWord' });
+      const warning = allowedWordsWarning(items, benign.id == null ? whitelistWords : benign.data);
+      if (warning) return fail(409, { error: warning, confirmImpact: raw });
+    }
+
     // `type` and `id` arrive as two independent form fields, so the pair is checked in the
     // statement itself rather than here — see `upsertBlocklist`.
     let result;
@@ -80,6 +117,10 @@ export const actions: Actions = {
       if (error instanceof BlocklistRowMismatchError)
         return fail(409, {
           error: 'That list has changed since this page loaded. Reload and try again.',
+        });
+      if (error instanceof BlocklistNotSeededError)
+        return fail(409, {
+          error: 'This list has not been set up yet. Ask an engineer to load the starting list.',
         });
       throw error;
     }
@@ -104,7 +145,16 @@ export const actions: Actions = {
     if (!id) return fail(400, { error: 'Nothing to remove from.' });
     if (items.length === 0) return fail(400, { error: 'No items to remove.' });
 
-    const result = await removeBlocklistItems({ id, type, items, userId: locals.user.id });
+    let result;
+    try {
+      result = await removeBlocklistItems({ id, type, items, userId: locals.user.id });
+    } catch (error) {
+      if (error instanceof BlocklistBelowFloorError)
+        return fail(409, {
+          error: `${error.message} Below that the site ignores this list and uses the built-in one, so add replacements before removing more.`,
+        });
+      throw error;
+    }
     // A submitted-but-unmatched removal is a failure, not a quiet "Removed 0 items." The list is
     // served from a short-lived Redis cache, so the likeliest cause is that this page is stale. An
     // id belonging to another type lands here too.

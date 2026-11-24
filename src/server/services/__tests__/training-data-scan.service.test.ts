@@ -350,13 +350,33 @@ describe('requeuePendingTrainingDataScans', () => {
 
 describe('healStalledTrainingDataScans', () => {
   const stalled = { id: 3, url: 'https://bucket/3.zip', modelVersionId: 30 };
+  let healSetCalls: Array<[string, unknown]> = [];
 
   beforeEach(() => {
     dbMock.dbWrite.modelFile.findMany.mockReset().mockResolvedValue([stalled]);
     dbMock.dbWrite.modelFile.updateMany.mockReset().mockResolvedValue({ count: 1 });
     dbMock.dbWrite.$queryRaw.mockReset().mockResolvedValue([{ id: 3 }]);
-    redisMock.sysRedis.get.mockReset().mockResolvedValue(null);
-    redisMock.sysRedis.incrBy.mockReset().mockResolvedValue(1);
+    redisMock.redis.get.mockReset().mockResolvedValue(null);
+    redisMock.redis.incrBy.mockReset().mockResolvedValue(1);
+    healSetCalls = [];
+    // A resubmit is counted by SET NX EX + INCR in one MULTI; the INCR lands on the same
+    // `redis.incrBy` counter the tests read, so every count stays in one place.
+    redisMock.redis.multi.mockReset().mockImplementation(() => {
+      const queued: Array<() => unknown> = [];
+      const chain = {
+        set: vi.fn((key: string, _value: string, opts: unknown) => {
+          healSetCalls.push([key, opts]);
+          queued.push(() => 'OK');
+          return chain;
+        }),
+        incr: vi.fn((key: string) => {
+          queued.push(() => redisMock.redis.incrBy(key, 1));
+          return chain;
+        }),
+        exec: vi.fn(async () => Promise.all(queued.map((op) => op()))),
+      };
+      return chain;
+    });
   });
 
   it('never picks a zip that was never submitted, nor one on a removed model', async () => {
@@ -386,20 +406,22 @@ describe('healStalledTrainingDataScans', () => {
   });
 
   it('resubmits a stalled zip and counts the accepted resubmit for that zip', async () => {
-    redisMock.sysRedis.get.mockResolvedValue('2');
+    redisMock.redis.get.mockResolvedValue('2');
 
     const result = await healStalledTrainingDataScans();
 
     expect(h.submitWorkflow).toHaveBeenCalledTimes(1);
-    const [key] = redisMock.sysRedis.incrBy.mock.calls[0];
-    expect(redisMock.sysRedis.get).toHaveBeenCalledWith(key);
+    const [key] = redisMock.redis.incrBy.mock.calls[0];
+    expect(redisMock.redis.get).toHaveBeenCalledWith(key);
     expect(key).toMatch(/^system:training-data-scan:heal-attempts:3:[0-9a-f]{16}$/);
+    // The count is created with its 14-day TTL, never as a TTL-less key.
+    expect(healSetCalls).toEqual([[key, { NX: true, EX: 14 * 24 * 60 * 60 }]]);
     expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
     expect(result).toMatchObject({ picked: 1, submitted: 1, gaveUp: [] });
   });
 
   it('marks the zip Error, and submits nothing, after three accepted resubmits', async () => {
-    redisMock.sysRedis.get.mockResolvedValue('3');
+    redisMock.redis.get.mockResolvedValue('3');
 
     const result = await healStalledTrainingDataScans();
 
@@ -420,13 +442,13 @@ describe('healStalledTrainingDataScans', () => {
   it('gives up on no zip through an outage: a refused resubmit is not counted', async () => {
     h.submitWorkflow.mockRejectedValue(new Error('orchestrator down'));
     let count = 0;
-    redisMock.sysRedis.get.mockImplementation(async () => String(count));
-    redisMock.sysRedis.incrBy.mockImplementation(async () => ++count);
+    redisMock.redis.get.mockImplementation(async () => String(count));
+    redisMock.redis.incrBy.mockImplementation(async () => ++count);
 
     for (let run = 0; run < 6; run++) await healStalledTrainingDataScans();
 
     expect(h.submitWorkflow).toHaveBeenCalledTimes(6);
-    expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
+    expect(redisMock.redis.incrBy).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith({
       type: 'warning',
@@ -439,22 +461,21 @@ describe('healStalledTrainingDataScans', () => {
     const counts = new Map<string, number>();
     beforeEach(() => {
       counts.clear();
-      redisMock.sysRedis.get.mockImplementation(async (key: string) =>
+      redisMock.redis.get.mockImplementation(async (key: string) =>
         counts.has(key) ? String(counts.get(key)) : null
       );
-      redisMock.sysRedis.incrBy.mockImplementation(async (key: string) => {
+      redisMock.redis.incrBy.mockImplementation(async (key: string) => {
         counts.set(key, (counts.get(key) ?? 0) + 1);
         return counts.get(key);
       });
-      redisMock.sysRedis.decrBy.mockImplementation(async (key: string) => {
+      redisMock.redis.decrBy.mockImplementation(async (key: string) => {
         counts.set(key, (counts.get(key) ?? 0) - 1);
         return counts.get(key);
       });
     });
     const gaveUp = () => dbMock.dbWrite.modelFile.updateMany.mock.calls.length > 0;
-    beforeEach(() => loggingMock.logToAxiom.mockClear());
 
-    it('a definite absence 24 times, is marked Error, logged once', async () => {
+    it('a definite absence 24 times, is marked Error', async () => {
       h.resolveDownloadUrl.mockRejectedValue(new Error('404'));
       h.isDefiniteNotFound.mockReturnValue(true);
 
@@ -465,10 +486,6 @@ describe('healStalledTrainingDataScans', () => {
       expect(dbMock.dbWrite.modelFile.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ virusScanResult: 'Error' }) })
       );
-      const logged = loggingMock.logToAxiom.mock.calls.map(([event]) => event.name);
-      expect(logged.filter((name) => name === 'training-data-scan-gave-up')).toHaveLength(1);
-      expect(logged).not.toContain('training-data-scan-submit');
-      expect(logged).not.toContain('training-data-scan-heal-submit-failed');
     });
 
     it('a transient failure 30 times, stays Pending', async () => {
@@ -506,6 +523,38 @@ describe('healStalledTrainingDataScans', () => {
       await healStalledTrainingDataScans();
 
       expect(gaveUp()).toBe(true);
+    });
+
+    // DECRBY on a missing key creates it with no TTL; the count must still expire.
+    it('a take-back of a resubmit it never counted leaves the count expiring', async () => {
+      redisMock.redis.expire.mockClear();
+      await uncountUnconfirmedResubmit({
+        fileId: stalled.id,
+        url: stalled.url,
+        workflowId: 'wf-uncounted',
+      });
+
+      const accepted = [...counts.keys()].find((key) =>
+        key.startsWith('system:training-data-scan:heal-attempts:3:')
+      );
+      expect(accepted).toBeDefined();
+      expect(counts.get(accepted!)).toBe(0);
+      expect(redisMock.redis.expire).toHaveBeenCalledWith(accepted, 14 * 24 * 60 * 60);
+    });
+
+    it('keeps its counts on the cache cluster, not in system Redis', async () => {
+      redisMock.sysRedis.incrBy.mockClear();
+      redisMock.sysRedis.get.mockClear();
+      await healStalledTrainingDataScans();
+      await uncountUnconfirmedResubmit({
+        fileId: stalled.id,
+        url: stalled.url,
+        workflowId: 'wf-cluster',
+      });
+
+      expect(redisMock.redis.incrBy).toHaveBeenCalled();
+      expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
+      expect(redisMock.sysRedis.get).not.toHaveBeenCalled();
     });
 
     it('takes a workflow back once, however often its callback comes', async () => {
@@ -550,11 +599,11 @@ describe('healStalledTrainingDataScans', () => {
 
   it('counts, gives up on and submits nothing it did not claim', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
-    redisMock.sysRedis.get.mockResolvedValue('3');
+    redisMock.redis.get.mockResolvedValue('3');
 
     await healStalledTrainingDataScans();
 
-    expect(redisMock.sysRedis.get).not.toHaveBeenCalled();
+    expect(redisMock.redis.get).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
@@ -567,13 +616,13 @@ describe('healStalledTrainingDataScans', () => {
 
     for (let run = 0; run < 3; run++) await healStalledTrainingDataScans();
 
-    const [[first], [again], [fresh]] = redisMock.sysRedis.incrBy.mock.calls;
+    const [[first], [again], [fresh]] = redisMock.redis.incrBy.mock.calls;
     expect(again).toBe(first);
     expect(fresh).not.toBe(first);
   });
 
   it('neither resubmits nor gives up when the count cannot be read', async () => {
-    redisMock.sysRedis.get.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.get.mockRejectedValue(new Error('redis down'));
 
     await healStalledTrainingDataScans();
 

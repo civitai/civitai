@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as OAuthRateLimit from '$lib/server/oauth/rate-limit';
 import { makeSysRedis, type SysRedisFake } from '../test/sys-redis.fake';
 
 // The hub's move from the shared cookie slot to its host-only slot: the copy /authorize makes while the hub still
@@ -60,7 +61,10 @@ vi.mock('$lib/server/auth/pending-authz', () => ({
   resolveAuthorizingUser: async ({ sessionUser }: { sessionUser: unknown }) => sessionUser,
   issuePendingAuthz: async () => false,
 }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: async () => true }));
+vi.mock('$lib/server/oauth/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof OAuthRateLimit>()),
+  checkOAuthRateLimit: async () => true,
+}));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: vi.fn() }));
 vi.mock('$lib/server/oauth/oidc-nonce', () => ({ storeOidcContext: async () => undefined }));
 vi.mock('$lib/server/oauth/access', () => ({ checkClientAccess: async () => ({ allowed: true }) }));

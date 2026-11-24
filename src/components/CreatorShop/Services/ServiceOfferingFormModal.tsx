@@ -1,15 +1,19 @@
 import { Button, Group, Modal, SimpleGrid, Stack } from '@mantine/core';
+import { useWatch } from 'react-hook-form';
 import { useState } from 'react';
 import type * as z from 'zod';
 import { SellerAffirmationCheckbox } from '~/components/CreatorShop/Services/SellerAffirmation';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { useMutateMyServices } from '~/components/CreatorShop/Services/creator-service.util';
 import {
   Form,
+  InputCheckbox,
   InputNumber,
   InputSelect,
   InputSimpleImageUpload,
+  InputSwitch,
   InputText,
   InputTextArea,
   useForm,
@@ -21,6 +25,7 @@ import {
   SERVICE_DESCRIPTION_MAX,
   SERVICE_OPEN_DEALS_MAX,
   SERVICE_OPEN_DEALS_MIN,
+  SERVICE_PREVIEW_KIND_LABELS,
   SERVICE_PRICE_MAX,
   SERVICE_PRICE_MIN,
   SERVICE_REVISIONS_MAX,
@@ -31,7 +36,18 @@ import {
 import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { isMatureServiceLevel } from '~/shared/constants/creator-services.constants';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import { ServiceOfferingStatus, ServicePreviewKind } from '~/shared/utils/prisma/enums';
+import {
+  ServiceLicensePreset,
+  ServiceOfferingStatus,
+  ServicePreviewKind,
+} from '~/shared/utils/prisma/enums';
+import {
+  SERVICE_LICENSE_CUSTOM_TEXT_MAX,
+  SERVICE_LICENSE_PRESET_LABELS,
+  SERVICE_LICENSE_PRESET_TERMS,
+  SERVICE_LICENSE_RESALE_LABEL,
+  serviceLicenseHasResaleToggle,
+} from '~/shared/constants/creator-service-license.constants';
 
 const formSchema = upsertServiceOfferingSchema.omit({
   id: true,
@@ -40,12 +56,15 @@ const formSchema = upsertServiceOfferingSchema.omit({
 });
 type FormValues = z.infer<typeof formSchema>;
 
-const previewKindOptions = [
-  { value: ServicePreviewKind.Image, label: 'Image preview' },
-  { value: ServicePreviewKind.Video, label: 'Video preview' },
-  { value: ServicePreviewKind.SampleOutputs, label: 'Sample outputs' },
-  { value: ServicePreviewKind.None, label: 'No preview' },
-];
+const previewKindOptions = Object.values(ServicePreviewKind).map((value) => ({
+  value,
+  label: SERVICE_PREVIEW_KIND_LABELS[value],
+}));
+
+const licenseOptions = Object.values(ServiceLicensePreset).map((value) => ({
+  value,
+  label: SERVICE_LICENSE_PRESET_LABELS[value],
+}));
 
 const ratingOptions = SERVICE_OFFERING_RATINGS.map((rating) => ({
   value: rating,
@@ -54,20 +73,39 @@ const ratingOptions = SERVICE_OFFERING_RATINGS.map((rating) => ({
     : browsingLevelLabels[rating],
 }));
 
-export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffering }) {
+const COPY_SUFFIX = ' (copy)';
+
+/**
+ * `offering` edits it. `copyOf` starts a NEW offering from another one's wording and terms: not its
+ * cover, rating or affirmation.
+ */
+export function ServiceOfferingFormModal({
+  offering,
+  copyOf,
+}: {
+  offering?: ServiceOffering;
+  copyOf?: ServiceOffering;
+}) {
   const dialog = useDialogContext();
+  const reviewsNext = !!useOptionalFeatureFlags()?.creatorServicesNext;
   const { upsert } = useMutateMyServices();
+  const source = offering ?? copyOf;
+  // Outside the rollout the license is neither shown nor sent, and the server leaves it as it is.
+  const licenseEditor = !!useOptionalFeatureFlags()?.creatorServicesNext;
 
   const form = useForm({
     schema: formSchema,
     defaultValues: {
-      title: offering?.title ?? '',
-      description: offering?.description ?? '',
-      price: offering?.price ?? 1000,
-      deliveryDays: offering?.deliveryDays ?? 5,
-      revisionsIncluded: offering?.revisionsIncluded ?? 2,
-      maxOpenDeals: offering?.maxOpenDeals ?? 3,
-      previewKind: offering?.previewKind ?? ServicePreviewKind.Image,
+      title: copyOf
+        ? copyOf.title.slice(0, SERVICE_TITLE_MAX - COPY_SUFFIX.length) + COPY_SUFFIX
+        : offering?.title ?? '',
+      description: source?.description ?? '',
+      price: source?.price ?? 1000,
+      deliveryDays: source?.deliveryDays ?? 5,
+      revisionsIncluded: source?.revisionsIncluded ?? 2,
+      maxOpenDeals: source?.maxOpenDeals ?? 3,
+      previewKind: source?.previewKind ?? ServicePreviewKind.Image,
+      allowReviewWork: source?.allowReviewWork ?? false,
       declaredNsfwLevel:
         offering?.declaredNsfwLevel ?? offering?.maxNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING,
       coverImage: offering?.coverImage
@@ -76,13 +114,21 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
             metadata: (offering.coverImage.metadata as MixedObject | null) ?? undefined,
           }
         : null,
+      ...(licenseEditor
+        ? {
+            licensePreset: source?.licensePreset ?? null,
+            licenseCustomText: source?.licenseCustomText ?? '',
+            licenseAllowResale: source?.licenseAllowResale ?? false,
+          }
+        : {}),
     },
   });
+  const licensePreset = useWatch({ control: form.control, name: 'licensePreset' });
 
   const isActive = offering?.status === ServiceOfferingStatus.Active;
   const needsAffirmation = !offering?.termsAffirmed;
   const [affirmed, setAffirmed] = useState(false);
-  const canPublish = !needsAffirmation || affirmed;
+  const canPublish = (!needsAffirmation || affirmed) && (!licenseEditor || !!licensePreset);
   const save = (publish: boolean) =>
     form.handleSubmit(async (values: FormValues) => {
       await upsert.mutateAsync({
@@ -95,7 +141,11 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
     });
 
   return (
-    <Modal {...dialog} size="lg" title={offering ? 'Edit service' : 'New service'}>
+    <Modal
+      {...dialog}
+      size="lg"
+      title={offering ? 'Edit service' : copyOf ? 'Duplicate service' : 'New service'}
+    >
       <Form form={form}>
         <Stack gap="md">
           <InputText name="title" label="Title" maxLength={SERVICE_TITLE_MAX} withAsterisk />
@@ -160,6 +210,40 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
             data={ratingOptions}
             withAsterisk
           />
+          {licenseEditor && (
+            <>
+              <InputSelect
+                name="licensePreset"
+                label="License for buyers"
+                description={
+                  (licensePreset && SERVICE_LICENSE_PRESET_TERMS[licensePreset]) ??
+                  'What buyers may do with what you deliver. Required to publish.'
+                }
+                data={licenseOptions}
+                withAsterisk
+              />
+              {licensePreset === ServiceLicensePreset.Custom && (
+                <InputTextArea
+                  name="licenseCustomText"
+                  label="Your license terms"
+                  autosize
+                  minRows={3}
+                  maxLength={SERVICE_LICENSE_CUSTOM_TEXT_MAX}
+                  withAsterisk
+                />
+              )}
+              {serviceLicenseHasResaleToggle(licensePreset ?? null) && (
+                <InputSwitch name="licenseAllowResale" label={SERVICE_LICENSE_RESALE_LABEL} />
+              )}
+            </>
+          )}
+          {reviewsNext && (
+            <InputCheckbox
+              name="allowReviewWork"
+              label="Let buyers show the work you deliver in their review"
+              description="Only still images from deals that were never disputed, once they pass our checks."
+            />
+          )}
           {!isActive && needsAffirmation && (
             <SellerAffirmationCheckbox checked={affirmed} onChange={setAffirmed} />
           )}

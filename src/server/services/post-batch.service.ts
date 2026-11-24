@@ -1,3 +1,5 @@
+import { deletePostRows } from '@civitai/db-queries/content-deletion';
+import { kyselyOver } from '~/server/db/prisma-kysely';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import {
@@ -7,7 +9,6 @@ import {
 } from '@civitai/shared/post-scheduling';
 import { createPostHandler, updatePostHandler } from '~/server/controllers/post.controller';
 import type { ProtectedContext } from '~/server/createContext';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { withPostScheduleLock } from '~/server/services/post-schedule-lock';
 import { logToAxiom } from '~/server/logging/client';
@@ -16,11 +17,7 @@ import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { sysRedis, type RedisKeyTemplateSys } from '~/server/redis/client';
 import { getDailyPostLimit } from '~/server/services/usage-limit-config.service';
 import type { ScheduleBatchInput, ValidateBatchScheduleInput } from '~/server/schema/post.schema';
-import {
-  addImageTechniques,
-  addImageTools,
-  queueImageSearchIndexUpdate,
-} from '~/server/services/image.service';
+import { addImageTechniques, addImageTools, deleteImages } from '~/server/services/image.service';
 import {
   canViewModelVersion,
   MODEL_VERSION_NOT_FOUND,
@@ -114,13 +111,12 @@ async function assertCanUseModelVersion(modelVersionId: number, user: SessionUse
 async function discardFailedPost(postId: number) {
   const unreleasedReviewIds = await unreleasedReviewIdsOfPosts([postId]);
   const images = await dbWrite.image.findMany({ where: { postId }, select: { id: true } });
-  await dbWrite.image.deleteMany({ where: { postId } });
-  if (images.length)
-    await queueImageSearchIndexUpdate({
-      ids: images.map((image) => image.id),
-      action: SearchIndexUpdateQueueAction.Delete,
-    });
-  await dbWrite.post.delete({ where: { id: postId } });
+  const actor = { system: 'post-batch-rollback' };
+  await deleteImages(
+    images.map((image) => image.id),
+    { actor, updatePosts: false, keepStoredFiles: true }
+  );
+  await deletePostRows(kyselyOver(dbWrite), { ids: [postId], actor });
   announceReviewsInBackground({
     reviewIds: unreleasedReviewIds,
     onReviews: (reviews) => refreshHasReceivedReviews(reviews),
@@ -389,9 +385,9 @@ function logSlowBatchSteps(steps: BatchSteps, durationMs: number, userId: number
     addImageMaxMs: round(steps.addImageMaxMs),
     toolsMs: round(steps.toolsMs),
     techniquesMs: round(steps.techniquesMs),
-    resourcesMs: round(steps.resourcesMs),
     publishMs: round(steps.publishMs),
-  }).catch(() => undefined);
+    payload: { resourcesMs: round(steps.resourcesMs) },
+  });
 }
 
 export async function scheduleBatch(args: {

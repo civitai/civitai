@@ -59,6 +59,7 @@ const ctx = { user: USER, features: {}, req: { headers: { host: HOST } } } as ne
 
 const approvedAppRow = {
   name: 'Character Sheet Studio Client',
+  connectListings: [],
   appBlocks: [
     {
       status: 'approved',

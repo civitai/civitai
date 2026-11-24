@@ -1,18 +1,34 @@
+import type { AppReviewAgentReport } from '@prisma/client';
+// Type-only: the client itself is imported lazily inside each function, as before.
+import type { dbRead as dbReadClient } from '~/server/db/client';
+import type { ConnectCivitaiChecks } from '~/shared/constants/connect-agent-review.constants';
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import { AI_MODELS } from '~/server/services/ai/openrouter';
-import { getDp1Target, k8sFetch, unwrap } from '~/server/services/blocks/apps-pipeline.service';
+import {
+  assertAppsNamespaceWritable,
+  getDp1Target,
+  k8sFetch,
+  unwrap,
+} from '~/server/services/blocks/apps-pipeline.service';
 import {
   AGENT_REVIEW_SECTIONS,
   isAgentSectionFailureMarker,
   type AgentReviewSection,
 } from '~/shared/constants/agent-review-section.constants';
+import {
+  agentReviewLaneFor,
+  type AgentReviewLane,
+} from '~/shared/constants/connect-agent-review.constants';
 
 /**
  * AGENTIC MOD CODE-REVIEW (App Blocks P1) — provisioning lane.
  *
  * A moderator reviewing a PENDING publish request can dispatch an EPHEMERAL,
- * sandboxed review agent. This service is the civitai side of that:
+ * sandboxed review agent. Two lanes share this one dispatcher: on-site
+ * (`AppBlockPublishRequest`, the hosted bundle) and OAuth-connect
+ * (`AppListingPublishRequest`, see `connect-agent-review.service`). This service is
+ * the civitai side of that:
  *   - `startAgentReview` gathers the reviewed bundle (presigned for in-cluster
  *     pull), the prior-version report, mints a per-review callback bearer, writes
  *     a `running` report row, and provisions a k8s apply Job that renders the
@@ -23,9 +39,9 @@ import {
  *     selector (best-effort, idempotent, never throws) — called from the shared
  *     `teardownReviewForRequest` decision hook.
  *
- * DARK: `startAgentReview` is only reachable via a tRPC procedure gated on the
- * `app-blocks-agentic-review` Flipt flag, which does not exist yet → the whole
- * feature is inert on merge.
+ * DARK: `startAgentReview` is only reachable via a tRPC procedure gated per lane:
+ * `app-blocks-agentic-review` for on-site, `app-listings-agentic-review` for connect
+ * (`isAgentReviewLaneEnabled`). Either flag absent → that lane is inert.
  *
  * Everything is a thin REST wrapper over the in-pod ServiceAccount k8s API (no
  * kubernetes-client dependency), reusing `k8sFetch`/`getDp1Target` from the
@@ -81,11 +97,12 @@ export type StartAgentReviewResult = {
 };
 
 /**
- * Dispatch an ephemeral review agent for a PENDING on-site publish request.
+ * Dispatch an ephemeral review agent for a PENDING publish request of either lane.
  *
  * Steps (mirroring the review-sandbox lane's shape):
  *   a. Load the AppBlockPublishRequest (slug, bundle pointers, version, app key,
- *      forgejo commit).
+ *      forgejo commit) — or, on the connect lane, the AppListingPublishRequest and its
+ *      listing + OAuth client, staging a review ZIP built from them.
  *   b. Resolve ONE presigned MinIO object the pod pulls: the canonical bundle
  *      (`bundleKey`) if the ZIP was uploaded, else reconstruct-from-Forgejo and
  *      stage it to a per-review key, then presign THAT. Either way the pod pulls
@@ -111,83 +128,17 @@ export async function startAgentReview(
   const targeted = requested.length > 0 && requested.length < AGENT_REVIEW_SECTIONS.length;
   const { dbRead, dbWrite } = await import('~/server/db/client');
 
-  // (a) Load the pending on-site publish request. The whole review lane
-  // (previewRequest / teardownReviewForRequest) targets AppBlockPublishRequest;
-  // this mirrors it. (The connect / AppListingPublishRequest → oauthClientId path
-  // is a separate flow, out of P1 scope — see the service docstring.)
-  const request = await dbRead.appBlockPublishRequest.findUnique({
-    where: { id: publishRequestId },
-    select: {
-      id: true,
-      slug: true,
-      version: true,
-      bundleKey: true,
-      bundleSha256: true,
-      appBlockId: true,
-      forgejoCommitSha: true,
-      status: true,
-    },
-  });
-  if (!request) throw new Error(`publish request ${publishRequestId} not found`);
-  if (request.status !== 'pending') {
-    throw new Error(
-      `publish request ${publishRequestId} is not pending (status=${request.status})`
-    );
-  }
+  // ONE DISPATCHER, TWO LANES. The id says which publish request this is: an on-site
+  // AppBlockPublishRequest (a hosted bundle) or an OAuth-connect AppListingPublishRequest
+  // (scopes, listing claims, linked source). Only steps (a)–(c) differ; the running guard,
+  // carry-forward, report row, bearer, Job and audit below are shared.
+  const lane = agentReviewLaneFor(publishRequestId);
+  const subject =
+    lane === 'connect'
+      ? await prepareConnectSubject(publishRequestId, dbRead)
+      : await prepareOnsiteSubject(publishRequestId, dbRead);
 
-  // Double-provision guard (audit #3): refuse a second dispatch while a review is
-  // already `running` for this request. The partial-unique index
-  // (publish_request_id WHERE status='running') is the DB backstop; this is the
-  // friendly pre-check so the mod gets a clear error instead of a unique-violation.
-  const alreadyRunning = await dbRead.appReviewAgentReport.findFirst({
-    where: { publishRequestId, status: 'running' },
-    select: { id: true },
-  });
-  if (alreadyRunning) {
-    throw new TRPCError({
-      code: 'CONFLICT',
-      message: 'a review is already running for this request',
-    });
-  }
-
-  // Resolve the INFORMATIONAL on-site app key. The report is keyed by the stable
-  // `slug` (present on every request), so this is best-effort: an UPDATE carries
-  // appBlockId, or an AppBlock already exists for the slug; a genuine FIRST
-  // version has neither (the AppBlock is created on approve) → appBlockId stays
-  // null. First-version reviews now persist fine (keyed by slug). External /
-  // connect (oauthClientId) is out of P1 scope — TODO: a later phase keys those
-  // by oauthClientId + kind='external'.
-  let appBlockId = request.appBlockId ?? null;
-  if (!appBlockId) {
-    const existing = await dbRead.appBlock.findFirst({
-      where: { blockId: request.slug },
-      select: { id: true },
-    });
-    appBlockId = existing?.id ?? null;
-  }
-
-  const sha = request.bundleSha256;
-
-  // (b) Resolve the ONE presigned object the pod pulls.
-  let bundleObjectKey: string;
-  if (request.bundleKey) {
-    // ZIP path: the canonical bundle object already exists — presign it directly.
-    bundleObjectKey = request.bundleKey;
-  } else if (request.forgejoCommitSha) {
-    // PUSH path (git-push origin, bundleKey===''): no ZIP was uploaded — the
-    // Forgejo repo at the reviewed sha IS the artifact. Reconstruct the exact
-    // reviewed bytes (deterministic; same helper approve uses) and STAGE them to
-    // a per-review MinIO key so the pod pulls one presigned object (never Forgejo).
-    const { reconstructBundleFromForgejo } = await import('./publish-request.service');
-    const { agentReviewBundleKey, stageBundleObject } = await import('~/utils/bundle-s3');
-    const buf = await reconstructBundleFromForgejo(request.slug, request.forgejoCommitSha);
-    bundleObjectKey = agentReviewBundleKey(publishRequestId, sha);
-    await stageBundleObject(bundleObjectKey, buf);
-  } else {
-    throw new Error(
-      `publish request ${publishRequestId} has neither a bundle nor a forgejo commit to review`
-    );
-  }
+  const bundleObjectKey = subject.bundleObjectKey;
   const { presignBundleGet } = await import('~/utils/bundle-s3');
   const bundlePresignedUrl = await presignBundleGet(
     bundleObjectKey,
@@ -195,9 +146,13 @@ export async function startAgentReview(
   );
 
   // (c) Prior-version report → base64 JSON for the pod (empty string if none).
-  // Keyed by the stable slug so the chain resolves for a first version too.
-  const { getPriorAgentReport } = await import('./app-review-report.service');
-  const prior = await getPriorAgentReport({ slug: request.slug, version: request.version });
+  // Keyed by the stable slug so the chain resolves for a first version too. A connect
+  // listing has no version chain, so it has no prior.
+  let prior: AppReviewAgentReport | null = null;
+  if (subject.lane === 'onsite') {
+    const { getPriorAgentReport } = await import('./app-review-report.service');
+    prior = await getPriorAgentReport({ slug: subject.slug, version: subject.version });
+  }
   const priorReportJsonB64 = prior ? Buffer.from(JSON.stringify(prior)).toString('base64') : '';
 
   // (d') TARGETED RE-RUN — carry forward the sections we are NOT re-running.
@@ -238,31 +193,241 @@ export async function startAgentReview(
     }
   }
 
-  // (d) Insert the running report row. Keyed by `slug` (+ kind='onsite'); the
-  // `appBlockId` column is informational (populated when resolvable, else null —
-  // first versions have none). oauthClientId is left null (external/connect is out
-  // of P1 scope).
+  // (d) Insert the running report row, keyed by `slug`. On-site: kind='onsite', `appBlockId`
+  // informational (null for a first version). Connect: kind='external' with the OAuth client;
+  // what Civitai checked itself goes to its own table just below, never into these sections.
   const { newAppReviewAgentReportId } = await import('~/server/utils/app-block-ids');
   const reportId = newAppReviewAgentReportId();
+  const laneData: Record<string, unknown> =
+    subject.lane === 'connect'
+      ? { kind: 'external', appBlockId: null, oauthClientId: subject.oauthClientId }
+      : { kind: 'onsite', appBlockId: subject.appBlockId };
   await dbWrite.appReviewAgentReport.create({
     data: {
       ...carried,
       id: reportId,
       publishRequestId,
-      slug: request.slug,
-      kind: 'onsite',
-      appBlockId,
-      version: request.version,
-      bundleSha256: sha,
+      slug: subject.slug,
+      ...laneData,
+      version: subject.version,
+      bundleSha256: subject.bundleSha256,
       status: 'running',
       startedAt: new Date(),
       priorReportId: prior?.id ?? null,
     },
   });
 
+  if (subject.lane === 'connect') await finishConnectInsert(subject, reportId, publishRequestId);
+
+  return provisionAndRecordStart({
+    args,
+    lane: subject.lane,
+    slug: subject.slug,
+    reportId,
+    bundlePresignedUrl,
+    priorReportJsonB64,
+    sections: targeted ? requested : undefined,
+  });
+}
+
+type OnsiteSubject = {
+  lane: 'onsite';
+  slug: string;
+  version: string;
+  bundleSha256: string;
+  bundleObjectKey: string;
+  appBlockId: string | null;
+};
+type ConnectSubject = {
+  lane: 'connect';
+  slug: string;
+  version: string;
+  bundleSha256: string;
+  bundleObjectKey: string;
+  oauthClientId: string;
+  checks: ConnectCivitaiChecks;
+  fingerprint: string;
+};
+type DbRead = typeof dbReadClient;
+
+/**
+ * Double-provision guard (audit #3): refuse a second dispatch while a review is already
+ * `running` for this request. The partial-unique index (publish_request_id WHERE
+ * status='running') is the DB backstop; this is the friendly pre-check so the mod gets a clear
+ * error instead of a unique-violation. Runs after the request is validated and BEFORE any
+ * bundle is staged, in both lanes.
+ */
+async function assertNoRunningReview(publishRequestId: string, dbRead: DbRead): Promise<void> {
+  const alreadyRunning = await dbRead.appReviewAgentReport.findFirst({
+    where: { publishRequestId, status: 'running' },
+    select: { id: true },
+  });
+  if (alreadyRunning) {
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: 'a review is already running for this request',
+    });
+  }
+}
+
+/** Connect lane (a)–(b): a pending OAuth-connect listing request; stage its review ZIP. */
+async function prepareConnectSubject(
+  publishRequestId: string,
+  dbRead: DbRead
+): Promise<ConnectSubject> {
+  const { loadConnectReviewSubject, stageConnectReviewBundle } = await import(
+    './connect-agent-review.service'
+  );
+  const loaded = await loadConnectReviewSubject(publishRequestId);
+  await assertNoRunningReview(publishRequestId, dbRead);
+  const staged = await stageConnectReviewBundle(loaded);
+  // The source fetch can take a while: a moderator may have decided the request meanwhile.
+  // Re-checked on the PRIMARY; decided ⇒ delete what was staged and stop before any row exists.
+  await assertConnectStillPending(publishRequestId);
+  return { lane: 'connect', ...staged };
+}
+
+const DECIDED_DURING_START = 'the submission was decided while the review was starting';
+
+async function assertConnectStillPending(publishRequestId: string): Promise<void> {
+  const { isConnectRequestStillPending, abandonDecidedConnectReview } = await import(
+    './connect-agent-review.service'
+  );
+  if (await isConnectRequestStillPending(publishRequestId)) return;
+  await abandonDecidedConnectReview(publishRequestId);
+  throw new Error(DECIDED_DURING_START);
+}
+
+/**
+ * Connect lane, right after the running row exists: store the Civitai checks (failure ⇒ the row is
+ * marked failed and the start refuses), then re-check the request once more. A decision that
+ * landed between the first re-check and the insert found no report to tear down, so it is caught
+ * here instead; one landing after this read finds the row and its teardown takes it down.
+ */
+async function finishConnectInsert(
+  subject: ConnectSubject,
+  reportId: string,
+  publishRequestId: string
+): Promise<void> {
+  const { writeConnectChecks } = await import('./connect-agent-review.service');
+  try {
+    await writeConnectChecks({
+      reportId,
+      publishRequestId,
+      checks: subject.checks,
+      fingerprint: subject.fingerprint,
+    });
+  } catch (err) {
+    const { dbWrite } = await import('~/server/db/client');
+    await dbWrite.appReviewAgentReport
+      .updateMany({
+        where: { id: reportId, status: 'running' },
+        data: {
+          status: 'failed',
+          summaryMd: 'Could not store the Civitai checks for this review.',
+          completedAt: new Date(),
+        },
+      })
+      .catch(() => undefined);
+    throw err;
+  }
+  await assertConnectStillPending(publishRequestId);
+}
+
+/** On-site lane (a)–(b): the pending AppBlockPublishRequest and the ONE object the pod pulls. */
+async function prepareOnsiteSubject(
+  publishRequestId: string,
+  dbRead: DbRead
+): Promise<OnsiteSubject> {
+  // (a) Load the pending on-site publish request. The whole review lane
+  // (previewRequest / teardownReviewForRequest) targets AppBlockPublishRequest;
+  // this mirrors it.
+  const request = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: publishRequestId },
+    select: {
+      id: true,
+      slug: true,
+      version: true,
+      bundleKey: true,
+      bundleSha256: true,
+      appBlockId: true,
+      forgejoCommitSha: true,
+      status: true,
+    },
+  });
+  if (!request) throw new Error(`publish request ${publishRequestId} not found`);
+  if (request.status !== 'pending') {
+    throw new Error(
+      `publish request ${publishRequestId} is not pending (status=${request.status})`
+    );
+  }
+
+  await assertNoRunningReview(publishRequestId, dbRead);
+
+  // Resolve the INFORMATIONAL on-site app key. The report is keyed by the stable
+  // `slug` (present on every request), so this is best-effort: an UPDATE carries
+  // appBlockId, or an AppBlock already exists for the slug; a genuine FIRST
+  // version has neither (the AppBlock is created on approve) → appBlockId stays
+  // null. First-version reviews now persist fine (keyed by slug).
+  let appBlockId = request.appBlockId ?? null;
+  if (!appBlockId) {
+    const existing = await dbRead.appBlock.findFirst({
+      where: { blockId: request.slug },
+      select: { id: true },
+    });
+    appBlockId = existing?.id ?? null;
+  }
+
+  const sha = request.bundleSha256;
+
+  // (b) Resolve the ONE presigned object the pod pulls.
+  let bundleObjectKey: string;
+  if (request.bundleKey) {
+    // ZIP path: the canonical bundle object already exists — presign it directly.
+    bundleObjectKey = request.bundleKey;
+  } else if (request.forgejoCommitSha) {
+    // PUSH path (git-push origin, bundleKey===''): no ZIP was uploaded — the
+    // Forgejo repo at the reviewed sha IS the artifact. Reconstruct the exact
+    // reviewed bytes (deterministic; same helper approve uses) and STAGE them to
+    // a per-review MinIO key so the pod pulls one presigned object (never Forgejo).
+    const { reconstructBundleFromForgejo } = await import('./publish-request.service');
+    const { agentReviewBundleKey, stageBundleObject } = await import('~/utils/bundle-s3');
+    const buf = await reconstructBundleFromForgejo(request.slug, request.forgejoCommitSha);
+    bundleObjectKey = agentReviewBundleKey(publishRequestId, sha);
+    await stageBundleObject(bundleObjectKey, buf);
+  } else {
+    throw new Error(
+      `publish request ${publishRequestId} has neither a bundle nor a forgejo commit to review`
+    );
+  }
+  return {
+    lane: 'onsite',
+    slug: request.slug,
+    version: request.version,
+    bundleSha256: sha,
+    bundleObjectKey,
+    appBlockId,
+  };
+}
+
+/** Steps (e)–(f) plus the audit, shared by both lanes. */
+async function provisionAndRecordStart(opts: {
+  args: StartAgentReviewArgs;
+  lane: AgentReviewLane;
+  slug: string;
+  reportId: string;
+  bundlePresignedUrl: string;
+  priorReportJsonB64: string;
+  sections: readonly AgentReviewSection[] | undefined;
+}): Promise<StartAgentReviewResult> {
+  const { args, reportId, slug } = opts;
+  const { publishRequestId } = args;
+  const { dbWrite } = await import('~/server/db/client');
+
   // (e) Mint the per-review callback bearer bound to this publishRequestId. NOT
   // the fleet-wide BLOCK_BUILD_CALLBACK_SECRET — that must never reach the agent
-  // pod. Short-TTL + review-scoped: a leaked token can only touch THIS report.
+  // pod. Short-TTL + request-scoped: a leaked token can only write a still-`running`
+  // report of THIS publish request (the token binds the request, not one run's row).
   const { signAgentCallbackToken, deriveAgentHooksToken } = await import('./review-session');
   const callbackToken = signAgentCallbackToken({ publishRequestId });
   // Derive the per-review agent GATEWAY secret (no storage / no migration): the
@@ -292,17 +457,19 @@ export async function startAgentReview(
     await provisionAgentReviewJob({
       agentName,
       publishRequestId,
-      slug: request.slug,
-      bundlePresignedUrl,
+      slug,
+      bundlePresignedUrl: opts.bundlePresignedUrl,
       callbackUrl,
       callbackToken,
-      priorReportJsonB64,
+      priorReportJsonB64: opts.priorReportJsonB64,
       costCapUsd: env.AGENT_REVIEW_COST_CAP_USD,
       hooksToken,
       // Only on a targeted re-run, so a full dispatch's Job body is byte-identical to what
       // it was before this contract var existed (and the orchestration test's exact env
       // ledger keeps proving that).
-      sections: targeted ? requested : undefined,
+      sections: opts.sections,
+      // Only on the connect lane, for the same reason: an on-site Job body is unchanged.
+      reviewKind: opts.lane === 'connect' ? 'connect' : undefined,
     });
   } catch (err) {
     await dbWrite.appReviewAgentReport
@@ -331,13 +498,13 @@ export async function startAgentReview(
       type: 'info',
       publishRequestId,
       reportId,
-      slug: request.slug,
+      slug,
       actor: args.modUserId == null ? 'system' : 'moderator',
       modUserId: args.modUserId,
-      sections: targeted ? requested : null,
+      sections: opts.sections ?? null,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 
   return { reportId, agentName };
 }
@@ -367,6 +534,16 @@ type ProvisionAgentReviewJobArgs = {
    * means the mod's surviving sections are safe either way.
    */
   sections?: readonly AgentReviewSection[];
+  /**
+   * `connect` on the connect lane ⇒ `AGENT_REVIEW_KIND=connect`; omitted on-site, so an on-site
+   * Job body is unchanged. The bundle's contents do not choose the review kind: an on-site
+   * author could ship a file of any name, but cannot set this var.
+   *
+   * 🔴 LIKE `AGENT_REVIEW_SECTIONS`, THE POD SIDE SHIPS SEPARATELY. Until the agent template
+   * passes it to the runner and its skill reads it, a connect run is reviewed with the on-site
+   * prompt; the facts Civitai writes itself are on the report either way.
+   */
+  reviewKind?: 'connect';
 };
 
 /**
@@ -383,6 +560,7 @@ type ProvisionAgentReviewJobArgs = {
 export async function provisionAgentReviewJob(
   args: ProvisionAgentReviewJobArgs
 ): Promise<{ name: string }> {
+  assertAppsNamespaceWritable('agent review Job');
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
   const jobName = `${args.agentName}-apply`;
@@ -449,6 +627,7 @@ export async function provisionAgentReviewJob(
                 ...(args.sections && args.sections.length > 0
                   ? [{ name: 'AGENT_REVIEW_SECTIONS', value: args.sections.join(',') }]
                   : []),
+                ...(args.reviewKind ? [{ name: 'AGENT_REVIEW_KIND', value: args.reviewKind }] : []),
               ],
               securityContext: {
                 allowPrivilegeEscalation: false,
@@ -516,7 +695,9 @@ set -euo pipefail
 # envsubst only substitutes EXPORTED env vars; container env vars are already
 # exported into the process env, so AGENT_NAME / PUBLISH_REQUEST_ID / APP_SLUG /
 # BUNDLE_PRESIGNED_URL / CALLBACK_URL / CALLBACK_TOKEN / PRIOR_REPORT_JSON_B64 /
-# COST_CAP_USD / HOOKS_TOKEN all substitute.
+# COST_CAP_USD / HOOKS_TOKEN all substitute. AGENT_REVIEW_KIND and AGENT_REVIEW_SECTIONS
+# are set only on the connect lane / a targeted re-run, so the sed fallback reads them
+# with \${VAR:-}: under set -u a bare \${VAR} would abort the apply on every other run.
 if command -v envsubst >/dev/null 2>&1; then
   envsubst < /templates/review-agent.yaml.tmpl > /tmp/rendered.yaml
 else
@@ -529,6 +710,8 @@ else
       -e "s|\\\${PRIOR_REPORT_JSON_B64}|\${PRIOR_REPORT_JSON_B64}|g" \\
       -e "s|\\\${COST_CAP_USD}|\${COST_CAP_USD}|g" \\
       -e "s|\\\${HOOKS_TOKEN}|\${HOOKS_TOKEN}|g" \\
+      -e "s|\\\${AGENT_REVIEW_KIND}|\${AGENT_REVIEW_KIND:-}|g" \\
+      -e "s|\\\${AGENT_REVIEW_SECTIONS}|\${AGENT_REVIEW_SECTIONS:-}|g" \\
       /templates/review-agent.yaml.tmpl > /tmp/rendered.yaml
 fi
 
@@ -568,6 +751,8 @@ export async function deleteAgentReviewResources(args: {
   slug: string;
   publishRequestId: string;
 }): Promise<void> {
+  // Build-only environments start no agent review Job, so there is nothing to tear down there.
+  if (env.APPS_REVIEW_BUILD_ONLY) return;
   let target: Awaited<ReturnType<typeof getDp1Target>>;
   try {
     target = await getDp1Target();
@@ -743,6 +928,8 @@ function buildAgentReviewChatSystemMessage(report: {
   scopeVerdicts?: unknown;
   codeReview?: unknown;
   securityAudit?: unknown;
+  /** Connect lane: what Civitai checked itself (its own table, not the runner's sections). */
+  civitaiChecks?: unknown;
 }): string {
   const MAX_CTX = 8000;
   const grounding = {
@@ -753,6 +940,7 @@ function buildAgentReviewChatSystemMessage(report: {
     scopeVerdicts: report.scopeVerdicts ?? null,
     codeReview: report.codeReview ?? null,
     securityAudit: report.securityAudit ?? null,
+    ...(report.civitaiChecks ? { checkedByCivitai: report.civitaiChecks } : {}),
   };
   let groundingJson: string;
   try {

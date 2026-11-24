@@ -2,9 +2,8 @@ import type { InfiniteData } from '@tanstack/react-query';
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
-import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useState } from 'react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStorage } from '~/hooks/useStorage';
@@ -32,11 +31,6 @@ import {
   showSuccessNotification,
 } from '~/utils/notifications';
 import { queryClient, trpc } from '~/utils/trpc';
-
-const JudgmentHistoryModal = dynamic(() => import('./NewOrder/JudgmentHistory'));
-const PlayersDirectoryModal = dynamic(() => import('./NewOrder/PlayersDirectoryModal'));
-const RatingGuideModal = dynamic(() => import('./NewOrder/NewOrderRatingGuideModal'));
-const CareerResetModal = dynamic(() => import('./NewOrder/CareerResetModal'));
 
 type PlayerUpdateStatsPayload = {
   action: NewOrderSignalActions.UpdateStats | NewOrderSignalActions.Reset;
@@ -119,12 +113,9 @@ export const useKnightsNewOrderListener = ({
       case NewOrderSignalActions.Reset:
         // Show modal for career reset
         if (data.notification) {
-          dialogStore.trigger({
-            component: CareerResetModal,
-            props: {
-              title: data.notification.title,
-              message: data.notification.message,
-            },
+          openDialog(() => import('./NewOrder/CareerResetModal'), {
+            title: data.notification.title,
+            message: data.notification.message,
           });
         }
 
@@ -389,9 +380,7 @@ export const useVotingCooldown = () => {
     return () => clearInterval(interval);
   }, [cooldownUntil]);
 
-  const secondsRemaining = cooldownUntil
-    ? Math.max(0, Math.ceil((cooldownUntil - now) / 1000))
-    : 0;
+  const secondsRemaining = cooldownUntil ? Math.max(0, Math.ceil((cooldownUntil - now) / 1000)) : 0;
   const isLocked = secondsRemaining > 0;
 
   // Once the timer hits zero, refetch player so any other state churn lands.
@@ -422,14 +411,6 @@ export const ratingPlayBackRates: Record<string, number> = {
   [NsfwLevel.XXX]: 0.7,
   [NsfwLevel.Blocked]: 1,
 };
-
-export const openJudgmentHistoryModal = () =>
-  dialogStore.trigger({ component: JudgmentHistoryModal });
-
-export const openPlayersDirectoryModal = () =>
-  dialogStore.trigger({ component: PlayersDirectoryModal });
-
-export const openRatingGuideModal = () => dialogStore.trigger({ component: RatingGuideModal });
 
 export const useInquisitorTools = () => {
   const queryUtils = trpc.useUtils();

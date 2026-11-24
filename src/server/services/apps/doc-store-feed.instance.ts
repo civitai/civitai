@@ -23,7 +23,7 @@ export function getDocStoreFeed(): DocStoreFeed {
           bypassRls: role.bypassRls,
         },
         'app-blocks'
-      ).catch(() => undefined);
+      );
     },
   }));
 }

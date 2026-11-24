@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
 import type { CatalogApp } from '~/server/registry-adapter/entities';
@@ -64,7 +66,9 @@ const OPTED_IN = { notes: notes(200, { registry: 'public' }), drafts: notes(50) 
 describe('resolveFromCatalog', () => {
   // The live switch ships off; these cases turn it on, and the cases below keep it off.
   const SWITCH_ON = { ...APP_STORAGE_ENABLED_FEATURES, registryExport: true };
-  const resolve = (apps: CatalogApp[]) => resolveFromCatalog(async () => apps, SWITCH_ON);
+  // Content levels have their own cases below; these read the export ungated.
+  const resolve = (apps: CatalogApp[]) =>
+    resolveFromCatalog(async () => apps, SWITCH_ON, { requireDocLevels: false });
 
   it('🔴 with the live switch off, an approved manifest that declares registry:"public" publishes nothing', async () => {
     expect(await resolveFromCatalog(async () => [app(OPTED_IN)])(V('notes', 1))).toBeNull();
@@ -181,5 +185,43 @@ describe('composeAdapter', () => {
   it('routes each stream to its own source', async () => {
     expect((await adapter.snapshot(APPS, ctx)).cursor).toBe('entity-cursor');
     expect((await adapter.snapshot(V('notes', 2), ctx)).cursor).toBe('doc-cursor');
+  });
+});
+
+describe('🔴 registry export needs content levels (app-blocks-shared-doc-levels)', () => {
+  const SWITCH_ON = { ...APP_STORAGE_ENABLED_FEATURES, registryExport: true };
+  const on = new Set<string>();
+  const docLevelsOn = async (appBlockId: string) => on.has(appBlockId);
+  const resolve = () =>
+    resolveFromCatalog(async () => [app(OPTED_IN)], SWITCH_ON, {
+      docLevelsOn,
+      requireDocLevels: true,
+    });
+
+  it('🔴 a caller that says nothing about levels fails closed: nothing is published', async () => {
+    on.add('ab_orbit_31');
+    expect(
+      await resolveFromCatalog(async () => [app(OPTED_IN)], SWITCH_ON)(V('notes', 1))
+    ).toBeNull();
+  });
+
+  it('with the switch on, an app whose levels flag is off publishes nothing', async () => {
+    on.clear();
+    expect(await resolve()(V('notes', 1))).toBeNull();
+  });
+
+  it('with the levels flag on, it is published, its documents gated', async () => {
+    on.add('ab_orbit_31');
+    expect(await resolve()(V('notes', 1))).toMatchObject({
+      appId: 'ab_orbit_31',
+      docLevels: true,
+    });
+  });
+
+  it('the registry process requires it', () => {
+    const main = readFileSync(path.resolve(__dirname, '../main.ts'), 'utf8');
+    expect(main).toMatch(
+      /resolveFromCatalog\(readApps, undefined, \{\s*docLevelsOn: isSharedDocLevelsOn,\s*requireDocLevels: true,?\s*\}\)/
+    );
   });
 });

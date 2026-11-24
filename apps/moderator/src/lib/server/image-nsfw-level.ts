@@ -6,8 +6,9 @@ import { bustAfterWrite } from './bust-after-write';
 import { bustPostGalleryCaches } from './image-moderation-effects';
 import { bustProfilePictures } from './profile-picture-cache';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
-import { syncKonoFinalize } from './kono';
 import { recordModActivity } from './mod-activity';
+import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
+import { ratingRecordedUnderGrace } from '@civitai/shared/account-deletion-grace';
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
@@ -33,9 +34,11 @@ export async function updateImageNsfwLevel({
     .executeTakeFirst();
   if (!image) throw new Error('Image not found');
 
+  const stored = (image.metadata as Record<string, unknown> | null) ?? {};
   const metadata = {
-    ...((image.metadata as Record<string, unknown> | null) ?? {}),
+    ...stored,
     nsfwLevelReason: reason ?? null,
+    ...ratingRecordedUnderGrace(stored, nsfwLevel),
   };
 
   await dbWrite
@@ -92,5 +95,5 @@ export async function updateImageNsfwLevel({
     ])
   );
 
-  void syncKonoFinalize(id, nsfwLevel);
+  if (image.postId != null) await queueDocumentsForImageMinorChanges({ levelImageIds: [id] });
 }

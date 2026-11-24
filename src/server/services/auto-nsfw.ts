@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
-import { createProfanityFilter } from '~/libs/profanity-simple';
+import type { ServerProfanityFilter } from '~/server/services/profanity-list.service';
 import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
 import { Prisma } from '@prisma/client';
 import {
@@ -62,18 +62,21 @@ export function evaluateAutoNsfw({
   description,
   alreadyNsfw,
   lockedProperties,
+  profanity,
 }: {
   name?: string | null;
   description?: string | null;
   alreadyNsfw: boolean;
   lockedProperties: string[];
+  /** `getServerProfanityFilter()`, read by the caller so a save reads the list once. */
+  profanity: ServerProfanityFilter;
 }): AutoNsfwResult | null {
   if (alreadyNsfw) return null;
 
   const text = [name, description].filter(Boolean).join(' ');
   if (!text) return null;
 
-  const filter = createProfanityFilter();
+  const { filter } = profanity;
   const evaluation = filter.evaluateContent(text);
   if (!evaluation.shouldMarkNSFW) return null;
 

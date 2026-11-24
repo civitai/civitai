@@ -1,205 +1,64 @@
 #!/usr/bin/env node
 
 /**
- * Flipt Feature Flag Manager
+ * Flipt flag reader (definitions from git).
  *
- * Usage:
- *   node .claude/skills/flipt/flipt.mjs list
- *   node .claude/skills/flipt/flipt.mjs get <flag-key>
- *   node .claude/skills/flipt/flipt.mjs create <flag-key> -d "description"
- *   node .claude/skills/flipt/flipt.mjs enable <flag-key>
- *   node .claude/skills/flipt/flipt.mjs disable <flag-key>
- *   node .claude/skills/flipt/flipt.mjs create <flag-key> --variant --variants "1.5,2" -d "description"
- *   node .claude/skills/flipt/flipt.mjs add-variant <flag-key> <variant-key>
- *   node .claude/skills/flipt/flipt.mjs remove-variant <flag-key> <variant-key>
- *   node .claude/skills/flipt/flipt.mjs set-rollout <flag-key> <variant-key> [--rollout 100]
+ *   node .claude/skills/flipt/flipt.mjs list [--json] [-q]
+ *   node .claude/skills/flipt/flipt.mjs get <flag-key> [--json]
+ *   node .claude/skills/flipt/flipt.mjs get <flag-key> --live   (needs FLIPT_LIVE_URL + FLIPT_API_TOKEN; otherwise refuses and names the supported path)
  *
- * Options:
- *   --description, -d   Description for new flag
- *   --enabled           Create flag as enabled (default: disabled)
- *   --variant           Create as variant flag (default: boolean)
- *   --variants <keys>   Comma-separated variant keys (first is default)
- *   --default <key>     Set default variant key
- *   --rollout <pct>     Rollout percentage for set-rollout (default: 100)
- *   --segment <key>     Segment key for rules (default: all-users)
- *   --json              Output results as JSON
- *   --quiet, -q         Minimal output
- *   --force, -f         Skip confirmation prompts
+ * Reads the DEFINITION in civitai/flipt-state (civitai-app/default/features.yaml)
+ * via `gh api`, or from a local clone when FLIPT_STATE_DIR is set. It is not the
+ * live server's answer. Writes are refused: change flags with a PR to flipt-state.
  */
 
 import { readFileSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
+import {
+  STATE_REPO,
+  STATE_PATH,
+  LIVE_REFUSAL,
+  detectHtmlOrOAuth,
+  flagsFromYaml,
+  findFlag,
+  formatSegments,
+} from './flipt-lib.mjs';
 
-// Load .env files
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const skillDir = __dirname;
-const projectRoot = resolve(__dirname, '../../..');
+const skillDir = dirname(fileURLToPath(import.meta.url));
 
 function loadEnv() {
-  const envFiles = [
-    resolve(skillDir, '.env'),
-    resolve(projectRoot, '.env'),
-  ];
-
-  for (const envPath of envFiles) {
+  for (const envPath of [resolve(skillDir, '.env'), resolve(skillDir, '../../../.env')]) {
     try {
-      const envContent = readFileSync(envPath, 'utf-8');
-      for (const line of envContent.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) continue;
-        const eqIndex = trimmed.indexOf('=');
-        if (eqIndex === -1) continue;
-        const key = trimmed.slice(0, eqIndex);
-        const value = trimmed.slice(eqIndex + 1);
-        if (!process.env[key]) {
-          process.env[key] = value;
-        }
+      for (const line of readFileSync(envPath, 'utf-8').split('\n')) {
+        const t = line.trim();
+        if (!t || t.startsWith('#')) continue;
+        const i = t.indexOf('=');
+        if (i === -1) continue;
+        const k = t.slice(0, i);
+        if (!process.env[k]) process.env[k] = t.slice(i + 1);
       }
-    } catch (e) {
-      // File not found, continue
-    }
+    } catch {}
   }
 }
-
 loadEnv();
 
-const FLIPT_URL = process.env.FLIPT_URL;
-const FLIPT_API_TOKEN = process.env.FLIPT_API_TOKEN;
-
-if (!FLIPT_URL || !FLIPT_API_TOKEN) {
-  console.error('Error: FLIPT_URL and FLIPT_API_TOKEN must be set');
-  console.error('Copy .env.example to .env and configure your credentials');
-  process.exit(1);
-}
-
-// Parse arguments
 const args = process.argv.slice(2);
-let command = '';
-let flagKey = '';
-let extraArg = '';
-let description = '';
-let enabled = false;
-let isVariant = false;
-let variantKeys = [];
-let defaultVariant = '';
-let rolloutPct = 100;
-let segmentKey = 'all-users';
-let jsonOutput = false;
-let quiet = false;
-let force = false;
+const flags = new Set(args.filter((a) => a.startsWith('-')));
+const positional = args.filter((a) => !a.startsWith('-'));
+const [command = '', flagKey = ''] = positional;
+const jsonOutput = flags.has('--json');
+const quiet = flags.has('--quiet') || flags.has('-q');
+const live = flags.has('--live');
 
-for (let i = 0; i < args.length; i++) {
-  const arg = args[i];
-  if (arg === '--description' || arg === '-d') {
-    description = args[++i] || '';
-  } else if (arg === '--enabled') {
-    enabled = true;
-  } else if (arg === '--variant') {
-    isVariant = true;
-  } else if (arg === '--variants') {
-    isVariant = true;
-    variantKeys = (args[++i] || '').split(',').map(v => v.trim()).filter(Boolean);
-  } else if (arg === '--default') {
-    defaultVariant = args[++i] || '';
-  } else if (arg === '--rollout') {
-    rolloutPct = parseInt(args[++i] || '100', 10);
-  } else if (arg === '--segment') {
-    segmentKey = args[++i] || 'all-users';
-  } else if (arg === '--json') {
-    jsonOutput = true;
-  } else if (arg === '--quiet' || arg === '-q') {
-    quiet = true;
-  } else if (arg === '--force' || arg === '-f') {
-    force = true;
-  } else if (!arg.startsWith('-')) {
-    if (!command) {
-      command = arg;
-    } else if (!flagKey) {
-      flagKey = arg;
-    } else if (!extraArg) {
-      extraArg = arg;
-    }
-  }
-}
-
-// Flipt v2 addresses flags as resources under an environment + namespace, and
-// this instance is GitOps-backed (flags live in civitai/flipt-state). The v1
-// /api/v1/flags endpoints this skill used to call 404 on v2.
-let _context = null;
-
-async function fliptContext() {
-  if (_context) return _context;
-
-  const envKey = process.env.FLIPT_ENVIRONMENT;
-  const nsKey = process.env.FLIPT_NAMESPACE;
-  if (envKey && nsKey) return (_context = { envKey, nsKey });
-
-  // Discovered rather than hardcoded so a second environment can't silently
-  // send every read to the wrong place.
-  const { environments = [] } = await apiRequest('GET', '/api/v2/environments');
-  const env =
-    environments.find((e) => e.key === envKey) ??
-    environments.find((e) => e.default) ??
-    environments[0];
-  if (!env) throw new Error('No Flipt environments available');
-
-  const { items = [] } = await apiRequest(
-    'GET',
-    `/api/v2/environments/${env.key}/namespaces`
-  );
-  const ns = items.find((n) => n.key === nsKey) ?? items.find((n) => n.key === 'default') ?? items[0];
-  if (!ns) throw new Error(`No namespaces in Flipt environment "${env.key}"`);
-
-  return (_context = { envKey: env.key, nsKey: ns.key });
-}
-
-async function flagsPath(key) {
-  const { envKey, nsKey } = await fliptContext();
-  const base = `/api/v2/environments/${envKey}/namespaces/${nsKey}/resources/flipt.core.Flag`;
-  return key ? `${base}/${encodeURIComponent(key)}` : base;
-}
-
-async function apiRequest(method, path, body = null) {
-  const url = `${FLIPT_URL}${path}`;
-  const options = {
-    method,
-    headers: {
-      'Authorization': `Bearer ${FLIPT_API_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-  };
-  if (body) {
-    options.body = JSON.stringify(body);
-  }
-
-  const response = await fetch(url, options);
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.message || `API error: ${response.status}`);
-  }
-
-  return data;
-}
-
-// Every write here previously POSTed to /api/v1/*, which does not exist on v2.
-// They are not repointed at v2 on purpose. Confirmed from the talos-infra
-// manifest: no Flipt auth behind the ingress, a git-backed environment, and an
-// SSH deploy key for civitai/flipt-state mounted into the pod. That a write
-// would commit to that repo follows from v2's git-write model — inferred, not
-// observed. A write path that MIGHT push an unreviewed commit to a file gating
-// production is reason enough to refuse either way.
 function refuseWrite(action, key) {
-  console.error(`Cannot ${action} "${key}" through the API.`);
+  console.error(`Cannot ${action} "${key}" through this skill.`);
   console.error('');
-  console.error('civitai/flipt-state is the source of truth, and this instance is git-backed');
-  console.error('with a deploy key — an API write may push an unreviewed commit there.');
-  console.error('Open a PR instead.');
+  console.error('civitai/flipt-state is the source of truth. Open a PR instead.');
   console.error('');
-  console.error('  gh repo clone civitai/flipt-state /tmp/flipt-state');
-  console.error('  # edit civitai-app/default/features.yaml');
-  console.error('  cd /tmp/flipt-state && git add -A && git commit && git push');
+  console.error('  gh repo clone civitai/flipt-state <scratch-dir>');
+  console.error('  # edit civitai-app/default/features.yaml, then branch, commit, push, PR');
   console.error('');
   console.error('Flag entry format:');
   console.error('  - key: my-flag');
@@ -210,402 +69,193 @@ function refuseWrite(action, key) {
   process.exit(2);
 }
 
-async function listFlags() {
-  const { resources = [], revision } = await apiRequest('GET', await flagsPath());
-  const data = { flags: resources.map((r) => r.payload), revision };
-
-  if (jsonOutput) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
+// Live state: only through an explicit FLIPT_LIVE_URL (for example a gated
+// in-cluster endpoint a DevOps seat hands you). The browser-facing FLIPT_URL is
+// never used: it answers every path with an OAuth login.
+async function liveGet(key) {
+  const base = process.env.FLIPT_LIVE_URL;
+  if (!base || !process.env.FLIPT_API_TOKEN) {
+    console.error(LIVE_REFUSAL);
+    process.exit(3);
   }
-
-  if (!quiet) {
-    console.log(`Found ${data.flags?.length || 0} flags:\n`);
-    console.log('─'.repeat(80));
-  }
-
-  for (const flag of data.flags || []) {
-    const status = flag.enabled ? '✓ ENABLED' : '✗ DISABLED';
-    const statusColor = flag.enabled ? '\x1b[32m' : '\x1b[31m';
-    console.log(`${statusColor}${status}\x1b[0m  ${flag.key}`);
-    if (flag.description && !quiet) {
-      console.log(`         ${flag.description}`);
-    }
-    if (!quiet) console.log('');
-  }
+  const res = await fetch(`${base}/evaluate/v1/boolean`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: {
+      Authorization: `Bearer ${process.env.FLIPT_API_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ flagKey: key, entityId: 'flipt-skill', context: {} }),
+  });
+  const body = await res.text();
+  const bad = detectHtmlOrOAuth({
+    status: res.status,
+    contentType: res.headers.get('content-type') ?? '',
+    location: res.headers.get('location') ?? '',
+    body,
+  });
+  if (bad) throw new Error(bad);
+  console.log(body);
 }
 
-// A rollout matching two segments under AND vs OR reaches completely different
-// audiences, so the operator is only omitted when there is nothing to combine.
-function formatSegments(segments, segmentOperator) {
-  const keys = segments ?? [];
-  if (keys.length === 0) return 'unknown';
-  if (keys.length === 1) return keys[0];
-  const op = segmentOperator === 'AND_SEGMENT_OPERATOR' ? 'AND' : 'OR';
-  return keys.join(` ${op} `);
+async function readDefinitions() {
+  let text;
+  let source;
+  if (process.env.FLIPT_STATE_DIR) {
+    const p = resolve(process.env.FLIPT_STATE_DIR, STATE_PATH);
+    text = readFileSync(p, 'utf-8');
+    source = `local clone ${process.env.FLIPT_STATE_DIR} (as checked out, may be behind)`;
+  } else {
+    try {
+      text = execFileSync(
+        'gh',
+        [
+          'api',
+          `repos/${STATE_REPO}/contents/${STATE_PATH}`,
+          '-H',
+          'Accept: application/vnd.github.raw',
+        ],
+        { encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }
+      );
+      const sha = execFileSync('gh', ['api', `repos/${STATE_REPO}/commits/main`, '--jq', '.sha'], {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      source = `${STATE_REPO}@${sha.slice(0, 10)} (main)`;
+    } catch (e) {
+      throw new Error(
+        `Could not read ${STATE_REPO} with gh (is gh logged in with access to it?): ${(
+          e.stderr || e.message
+        )
+          .toString()
+          .trim()}`
+      );
+    }
+  }
+  const { parse } = await import('yaml');
+  return { flags: flagsFromYaml(text, parse), source };
+}
+
+const NOT_LIVE = 'DEFINITION from git, not live state.';
+
+async function listFlags() {
+  const { flags: all, source } = await readDefinitions();
+  if (jsonOutput) {
+    console.log(JSON.stringify({ source, note: NOT_LIVE, flags: all }, null, 2));
+    return;
+  }
+  if (!quiet) console.log(`${all.length} flags in ${source}\n${NOT_LIVE}\n${'─'.repeat(80)}`);
+  for (const f of all) {
+    console.log(`${f.enabled ? '✓ ENABLED ' : '✗ DISABLED'}  ${f.key}`);
+    if (f.description && !quiet) console.log(`         ${String(f.description).slice(0, 200)}\n`);
+  }
 }
 
 async function getFlag(key) {
-  let data;
-  try {
-    ({ resource: { payload: data } = {} } = await apiRequest('GET', await flagsPath(key)));
-  } catch (err) {
-    throw new Error(`Flag not found: ${key}`);
-  }
-  if (!data) throw new Error(`Flag not found: ${key}`);
-
+  const { flags: all, source } = await readDefinitions();
+  const data = findFlag(all, key);
+  if (!data)
+    throw new Error(
+      `Flag not found in ${source}: ${key}. (Absent from git; a flag created only on the live server would not show here.)`
+    );
   if (jsonOutput) {
-    console.log(JSON.stringify(data, null, 2));
+    console.log(JSON.stringify({ source, note: NOT_LIVE, flag: data }, null, 2));
     return;
   }
-
-  const status = data.enabled ? '✓ ENABLED' : '✗ DISABLED';
-  const statusColor = data.enabled ? '\x1b[32m' : '\x1b[31m';
-
   console.log(`Flag: ${data.key}`);
-  console.log(`Status: ${statusColor}${status}\x1b[0m`);
+  console.log(`Source: ${source} — ${NOT_LIVE}`);
+  console.log(`Status: ${data.enabled ? '✓ ENABLED' : '✗ DISABLED'}`);
   console.log(`Type: ${data.type}`);
-  // `enabled` on a boolean flag is the value returned when NO rollout matches, so
-  // enabled:true beside a segment rollout is public, not scoped to that segment.
   if (data.type === 'BOOLEAN_FLAG_TYPE') {
-    const reach = data.enabled
-      ? '\x1b[33mPUBLIC — everyone no rollout matches gets true\x1b[0m'
-      : 'off for everyone no rollout matches';
-    console.log(`Default: ${data.enabled} — ${reach}`);
+    console.log(
+      `Default: ${data.enabled} — ${
+        data.enabled
+          ? 'PUBLIC unless a rollout overrides: everyone no rollout matches gets true'
+          : 'off for everyone no rollout matches'
+      }`
+    );
   }
-  if (data.description) {
-    console.log(`Description: ${data.description}`);
+  if (data.description) console.log(`Description: ${data.description}`);
+  for (const v of data.variants ?? []) {
+    console.log(
+      `  variant ${v.key}${v.default ? ' (default)' : ''}${
+        v.attachment ? ' → ' + JSON.stringify(v.attachment) : ''
+      }`
+    );
   }
-
-  if (data.variants?.length > 0) {
-    console.log('\nVariants:');
-    for (const v of data.variants) {
-      const def = v.default ? ' (default)' : '';
-      const attach = v.attachment ? ` → ${JSON.stringify(v.attachment)}` : '';
-      console.log(`  - ${v.key}${def}${attach}`);
-    }
+  for (const rule of data.rules ?? []) {
+    const seg = rule.segment ?? rule;
+    console.log(
+      `  rule segment: ${formatSegments(
+        seg.keys ?? seg.segments,
+        seg.operator ?? seg.segmentOperator
+      )}`
+    );
+    for (const d of rule.distributions ?? [])
+      console.log(`    → variant "${d.variant}" at ${d.rollout}%`);
   }
-
-  if (data.rules?.length > 0) {
-    console.log('\nRules:');
-    for (const rule of data.rules) {
-      console.log(`  - Segment: ${formatSegments(rule.segments, rule.segmentOperator)}`);
-      for (const dist of rule.distributions || []) {
-        console.log(`    → variant "${dist.variant}" at ${dist.rollout}%`);
-      }
-    }
-  }
-
-  if (data.rollouts?.length > 0) {
-    console.log('\nRollout Rules:');
-    for (const rollout of data.rollouts) {
-      if (rollout.threshold) {
-        console.log(`  - ${rollout.threshold.percentage}% → ${rollout.threshold.value}`);
-      }
-      if (rollout.segment) {
-        const segs = formatSegments(rollout.segment.segments, rollout.segment.segmentOperator);
-        console.log(`  - Segment: ${segs} → ${rollout.segment.value}`);
-      }
-    }
-  }
-}
-
-async function createFlag(key, desc, isEnabled) {
-  refuseWrite('create', key);
-  const flagType = isVariant ? 'VARIANT_FLAG_TYPE' : 'BOOLEAN_FLAG_TYPE';
-  try {
-    const data = await apiRequest('POST', '/api/v1/flags', {
-      key, name: key, type: flagType, description: desc || '', enabled: isEnabled,
-    });
-
-    if (isVariant && variantKeys.length > 0) {
-      const defKey = defaultVariant || variantKeys[0];
-      for (const vk of variantKeys) {
-        await apiRequest('POST', `/api/v1/flags/${key}/variants`, { key: vk, default: vk === defKey });
-      }
-      if (!quiet) console.log(`  Created ${variantKeys.length} variants (default: ${defKey})`);
-    }
-
-    if (jsonOutput) { console.log(JSON.stringify(data, null, 2)); return; }
-
-    console.log(`✓ Created ${isVariant ? 'variant' : 'boolean'} flag: ${key}`);
-    console.log(`  Status: ${isEnabled ? 'enabled' : 'disabled'}`);
-    console.log('\n⚠️  Note: API changes are temporary. For permanent changes, edit civitai/flipt-state repo.');
-  } catch (err) {
-    if (err.message.includes('Method Not Allowed')) {
-      console.error('Error: API token does not have write permissions.');
-      console.error('\nTo create flags permanently, use the GitOps workflow:');
-      console.error('1. Clone: gh repo clone civitai/flipt-state /tmp/flipt-state');
-      console.error('2. Edit: civitai-app/default/features.yaml');
-      console.error('3. Add your flag to the flags section:');
-      if (isVariant && variantKeys.length > 0) {
-        const defKey = defaultVariant || variantKeys[0];
-        const variantYaml = variantKeys.map(vk => {
-          const def = vk === defKey ? '\n          default: true' : '';
-          return `        - key: "${vk}"${def}`;
-        }).join('\n');
-        console.error(`
-    - key: ${key}
-      name: ${key}
-      type: VARIANT_FLAG_TYPE
-      description: ${desc || 'Your description here'}
-      enabled: ${isEnabled}
-      variants:
-${variantYaml}
-`);
-      } else {
-        console.error(`
-    - key: ${key}
-      name: ${key}
-      type: ${flagType}
-      description: ${desc || 'Your description here'}
-      enabled: ${isEnabled}
-`);
-      }
-      console.error('4. Commit and push the changes');
-      process.exit(1);
-    }
-    throw err;
-  }
-}
-
-async function addVariant(flagKey, variantKey) {
-  refuseWrite('add a variant to', flagKey);
-  const data = await apiRequest('POST', `/api/v1/flags/${flagKey}/variants`, { key: variantKey, default: false });
-  if (jsonOutput) { console.log(JSON.stringify(data, null, 2)); return; }
-  console.log(`✓ Added variant "${variantKey}" to flag: ${flagKey}`);
-  console.log('\n⚠️  Note: API changes are temporary. For permanent changes, edit civitai/flipt-state repo.');
-}
-
-async function removeVariant(flagKey, variantKey) {
-  refuseWrite('remove a variant from', flagKey);
-  const allFlags = await apiRequest('GET', '/api/v1/flags');
-  const flag = allFlags.flags?.find(f => f.key === flagKey);
-  if (!flag) throw new Error(`Flag not found: ${flagKey}`);
-  const variant = flag.variants?.find(v => v.key === variantKey);
-  if (!variant) throw new Error(`Variant "${variantKey}" not found on flag: ${flagKey}`);
-  await apiRequest('DELETE', `/api/v1/flags/${flagKey}/variants/${variant.id}`);
-  if (!jsonOutput) {
-    console.log(`✓ Removed variant "${variantKey}" from flag: ${flagKey}`);
-    console.log('\n⚠️  Note: API changes are temporary. For permanent changes, edit civitai/flipt-state repo.');
-  }
-}
-
-async function setRollout(flagKey, variantKey) {
-  refuseWrite('set a rollout on', flagKey);
-  const allFlags = await apiRequest('GET', '/api/v1/flags');
-  const flag = allFlags.flags?.find(f => f.key === flagKey);
-  if (!flag) throw new Error(`Flag not found: ${flagKey}`);
-  if (flag.type !== 'VARIANT_FLAG_TYPE') throw new Error(`Flag "${flagKey}" is not a variant flag`);
-  const variant = flag.variants?.find(v => v.key === variantKey);
-  if (!variant) throw new Error(`Variant "${variantKey}" not found on flag: ${flagKey}`);
-  const rule = await apiRequest('POST', `/api/v1/flags/${flagKey}/rules`, {
-    segmentKeys: [segmentKey], segmentOperator: 'OR_SEGMENT_OPERATOR',
-  });
-  await apiRequest('POST', `/api/v1/flags/${flagKey}/rules/${rule.id}/distributions`, {
-    variantId: variant.id, rollout: rolloutPct,
-  });
-  if (jsonOutput) { console.log(JSON.stringify({ rule, variant: variantKey, rollout: rolloutPct }, null, 2)); return; }
-  console.log(`✓ Set rollout for "${variantKey}" on flag "${flagKey}": ${rolloutPct}% (segment: ${segmentKey})`);
-  console.log('\n⚠️  Note: API changes are temporary. For permanent changes, edit civitai/flipt-state repo.');
-}
-
-async function updateFlag(key, isEnabled) {
-  refuseWrite('update', key);
-  // First verify the flag exists
-  const allFlags = await apiRequest('GET', '/api/v1/flags');
-  const current = allFlags.flags?.find(f => f.key === key);
-
-  if (!current) {
-    throw new Error(`Flag not found: ${key}`);
-  }
-
-  try {
-    // Try to update via API
-    const data = await apiRequest('PUT', `/api/v1/flags/${key}`, {
-      ...current,
-      enabled: isEnabled,
-    });
-
-    if (jsonOutput) {
-      console.log(JSON.stringify(data, null, 2));
-      return;
-    }
-
-    const action = isEnabled ? 'Enabled' : 'Disabled';
-    console.log(`✓ ${action} flag: ${key}`);
-    console.log('\n⚠️  Note: API changes are temporary. For permanent changes, edit civitai/flipt-state repo.');
-  } catch (err) {
-    if (err.message.includes('Method Not Allowed') || err.message.includes('Not Found')) {
-      console.error('Error: API token does not have write permissions.');
-      console.error('\nTo update flags permanently, use the GitOps workflow:');
-      console.error('1. Clone: gh repo clone civitai/flipt-state /tmp/flipt-state');
-      console.error('2. Edit: civitai-app/default/features.yaml');
-      console.error(`3. Find the flag "${key}" and set enabled: ${isEnabled}`);
-      console.error('4. Commit and push the changes');
-      process.exit(1);
-    }
-    throw err;
-  }
-}
-
-async function deleteFlag(key) {
-  refuseWrite('delete', key);
-  if (!force) {
-    console.error(`Warning: This will delete flag "${key}"`);
-    console.error('Use --force to skip this confirmation');
-    process.exit(1);
-  }
-
-  try {
-    await apiRequest('DELETE', `/api/v1/flags/${key}`);
-    console.log(`✓ Deleted flag: ${key}`);
-    console.log('\n⚠️  Note: API changes are temporary. For permanent changes, edit civitai/flipt-state repo.');
-  } catch (err) {
-    if (err.message.includes('Method Not Allowed')) {
-      console.error('Error: API token does not have write permissions.');
-      console.error('\nTo delete flags permanently, use the GitOps workflow:');
-      console.error('1. Clone: gh repo clone civitai/flipt-state /tmp/flipt-state');
-      console.error('2. Edit: civitai-app/default/features.yaml');
-      console.error(`3. Remove the flag "${key}" from the flags section`);
-      console.error('4. Commit and push the changes');
-      process.exit(1);
-    }
-    throw err;
+  for (const r of data.rollouts ?? []) {
+    if (r.threshold) console.log(`  rollout ${r.threshold.percentage}% → ${r.threshold.value}`);
+    if (r.segment)
+      console.log(
+        `  rollout segment ${formatSegments(
+          r.segment.keys ?? r.segment.segments,
+          r.segment.operator ?? r.segment.segmentOperator
+        )} → ${r.segment.value}`
+      );
   }
 }
 
 function showHelp() {
-  console.log(`Flipt Feature Flag Manager
+  console.log(`Flipt flag reader (definitions from civitai/flipt-state git)
 
-Usage:
-  node .claude/skills/flipt/flipt.mjs <command> [options]
+  list                  List flag definitions
+  get <key>             One flag's definition
+  get <key> --live      Refuses unless FLIPT_LIVE_URL is set; names the supported path
+  create|enable|disable|delete|add-variant|remove-variant|set-rollout
+                        Refuse (exit 2): change flags with a PR to flipt-state
 
-Commands:
-  list                            List all flags
-  get <key>                       Get details for a specific flag
-  create <key>                    Create a new flag (boolean by default)
-  enable <key>                    Enable a flag
-  disable <key>                   Disable a flag
-  delete <key>                    Delete a flag (requires --force)
-  add-variant <flag> <variant>    Add a variant to an existing flag
-  remove-variant <flag> <variant> Remove a variant from a flag
-  set-rollout <flag> <variant>    Set rollout rule for a variant
-
-Options:
-  --description, -d <text>   Description for new flag
-  --enabled                  Create flag as enabled (default: disabled)
-  --variant                  Create as variant flag (default: boolean)
-  --variants <keys>          Comma-separated variant keys (first is default)
-  --default <key>            Set default variant key
-  --rollout <pct>            Rollout percentage (default: 100)
-  --segment <key>            Segment key for rules (default: all-users)
-  --json                     Output results as JSON
-  --quiet, -q                Minimal output
-  --force, -f                Skip confirmation prompts
-
-Examples:
-  node .claude/skills/flipt/flipt.mjs list
-  node .claude/skills/flipt/flipt.mjs get my-feature
-  node .claude/skills/flipt/flipt.mjs create my-feature -d "Enable new feature"
-  node .claude/skills/flipt/flipt.mjs create my-feature --variant --variants "1.5,2" -d "Multiplier"
-  node .claude/skills/flipt/flipt.mjs enable my-feature
-  node .claude/skills/flipt/flipt.mjs set-rollout my-feature 2 --rollout 100
-  node .claude/skills/flipt/flipt.mjs add-variant my-feature 3
-
-Note: this Flipt is v2 and GitOps-backed. Reads (list/get) hit the API; every
-write command refuses and prints the civitai/flipt-state workflow instead.
-Writes are refused by choice, not capability — an API write may push an
-unreviewed commit straight to that repo's main.
-
-Env: FLIPT_URL, FLIPT_API_TOKEN. Optionally FLIPT_ENVIRONMENT / FLIPT_NAMESPACE
-to skip auto-discovery (defaults to the environment marked default, namespace
-"default").`);
+Options: --json, -q, --live
+Env: FLIPT_STATE_DIR (read a local clone instead of gh). FLIPT_LIVE_URL + FLIPT_API_TOKEN only for --live.
+The DEFINITION is not live state.`);
 }
 
 async function main() {
   try {
     switch (command) {
       case 'list':
+        if (live) {
+          console.error(LIVE_REFUSAL);
+          process.exit(3);
+        }
         await listFlags();
         break;
       case 'get':
         if (!flagKey) {
-          console.error('Error: Flag key required');
           console.error('Usage: flipt.mjs get <flag-key>');
           process.exit(1);
         }
-        await getFlag(flagKey);
+        if (live) await liveGet(flagKey);
+        else await getFlag(flagKey);
         break;
       case 'create':
-        if (!flagKey) {
-          console.error('Error: Flag key required');
-          console.error('Usage: flipt.mjs create <flag-key> -d "description"');
-          process.exit(1);
-        }
-        await createFlag(flagKey, description, enabled);
-        break;
       case 'enable':
-        if (!flagKey) {
-          console.error('Error: Flag key required');
-          console.error('Usage: flipt.mjs enable <flag-key>');
-          process.exit(1);
-        }
-        await updateFlag(flagKey, true);
-        break;
       case 'disable':
-        if (!flagKey) {
-          console.error('Error: Flag key required');
-          console.error('Usage: flipt.mjs disable <flag-key>');
-          process.exit(1);
-        }
-        await updateFlag(flagKey, false);
-        break;
       case 'delete':
-        if (!flagKey) {
-          console.error('Error: Flag key required');
-          console.error('Usage: flipt.mjs delete <flag-key> --force');
-          process.exit(1);
-        }
-        await deleteFlag(flagKey);
-        break;
       case 'add-variant':
-        if (!flagKey || !extraArg) {
-          console.error('Error: Flag key and variant key required');
-          console.error('Usage: flipt.mjs add-variant <flag-key> <variant-key>');
-          process.exit(1);
-        }
-        await addVariant(flagKey, extraArg);
-        break;
       case 'remove-variant':
-        if (!flagKey || !extraArg) {
-          console.error('Error: Flag key and variant key required');
-          console.error('Usage: flipt.mjs remove-variant <flag-key> <variant-key>');
-          process.exit(1);
-        }
-        await removeVariant(flagKey, extraArg);
-        break;
       case 'set-rollout':
-        if (!flagKey || !extraArg) {
-          console.error('Error: Flag key and variant key required');
-          console.error('Usage: flipt.mjs set-rollout <flag-key> <variant-key> [--rollout 100] [--segment all-users]');
-          process.exit(1);
-        }
-        await setRollout(flagKey, extraArg);
+        refuseWrite(command, flagKey || '<key>');
         break;
+      case '':
       case 'help':
       case '--help':
       case '-h':
         showHelp();
         break;
       default:
-        if (!command) {
-          showHelp();
-        } else {
-          console.error(`Unknown command: ${command}`);
-          console.error('Run with --help for usage information');
-          process.exit(1);
-        }
+        console.error(`Unknown command: ${command}`);
+        process.exit(1);
     }
   } catch (err) {
     console.error('Error:', err.message);

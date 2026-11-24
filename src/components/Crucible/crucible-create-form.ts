@@ -21,6 +21,7 @@ import {
   CRUCIBLE_MAX_TOTAL_ENTRIES,
   CRUCIBLE_MIN_ENTRY_FEE,
   CRUCIBLE_MIN_TOTAL_ENTRIES,
+  CRUCIBLE_MODERATOR_RUNNING_FIELDS,
   CRUCIBLE_NAME_MAX_LENGTH,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
@@ -393,14 +394,22 @@ export const CRUCIBLE_EDITABLE_WHILE_ACTIVE = [
   'heroImage',
 ] as const satisfies readonly CrucibleEditableField[];
 
+const CRUCIBLE_EDITABLE_BY_MODERATOR_WHILE_RUNNING = [
+  ...CRUCIBLE_EDITABLE_WHILE_ACTIVE,
+  ...CRUCIBLE_MODERATOR_RUNNING_FIELDS,
+] as const satisfies readonly CrucibleEditableField[];
+
 export function getCrucibleEditableFields({
   canEditAll,
   canEditContentLevels,
+  canFixRunning = false,
 }: {
   canEditAll: boolean;
   canEditContentLevels: boolean;
+  canFixRunning?: boolean;
 }): readonly CrucibleEditableField[] {
   if (canEditAll) return CRUCIBLE_EDITABLE_FIELDS;
+  if (canFixRunning) return CRUCIBLE_EDITABLE_BY_MODERATOR_WHILE_RUNNING;
   return canEditContentLevels
     ? [...CRUCIBLE_EDITABLE_WHILE_ACTIVE, 'nsfwLevel']
     : CRUCIBLE_EDITABLE_WHILE_ACTIVE;

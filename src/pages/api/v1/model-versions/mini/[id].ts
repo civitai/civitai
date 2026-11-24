@@ -11,6 +11,9 @@ import { isNonCommercialBaseModel, stopsCreatorEarnings } from '~/server/common/
 import { dbRead, dbWrite } from '~/server/db/client';
 import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import {
+  gatedVersionIds,
+  getGateRuleState,
+  getGateSubjects,
   getShouldChargeForResources,
   resolveCanGenerateForVersions,
 } from '~/server/services/generation/generation.service';
@@ -35,12 +38,13 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type {
   LicensingFeeSettlementCurrency,
-  LicensingFeeType,
   ModelType,
   ModelHashType,
+  ModelStatus,
 } from '~/shared/utils/prisma/enums';
 import {
   Availability,
+  LicensingFeeType,
   ModelFileVisibility,
   type ModelUsageControl,
   type ScanResultCode,
@@ -63,19 +67,21 @@ import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isEvictable } from '~/shared/constants/model-version-flags.constants';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
 import { hashRouteServesEveryone } from '~/server/services/download-by-hash.servable';
 import {
   credentialKind,
   evaluateMiniEpochCaller,
+  type MiniEpochCallerClass,
   getMiniEpochGateMode,
   hasVersionGrant,
 } from '~/server/utils/mini-epoch-caller';
 import { downloadCredentialGate, scopeRefusalMode } from '~/server/utils/download-credential-gate';
 import { miniResponseExpiresAt } from '~/server/utils/mini-expires';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { MODEL_VIEW_SCOPES } from '~/server/auth/route-scopes';
 
 const MINI_ROUTE = '/api/v1/model-versions/mini/[id]';
-const MINI_SCOPES = { anyOfScopes: [TokenScope.ModelsRead, TokenScope.AIServicesRead] };
+const MINI_SCOPES = { anyOfScopes: MODEL_VIEW_SCOPES };
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -128,6 +134,7 @@ type VersionRow = {
   licensingFee: number | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  licensingFeeMarkup: number | null;
   isLicensingRoot: boolean;
   licensingSourceVersionId: number | null;
   sourceLicensingFeeRecipientUserId: number | null;
@@ -136,6 +143,7 @@ type VersionRow = {
   sourceLicensingFee: number | null;
   sourceLicensingFeeType: LicensingFeeType | null;
   sourceLicensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  sourceLicensingFeeMarkup: number | null;
   versionFlags: number;
   userFlags: number;
   ownerDeletedAt: Date | null;
@@ -158,7 +166,9 @@ type FileRow = {
   virusScanResult: ScanResultCode | null;
 };
 
-export default MixedAuthEndpoint(async function handler(
+export default MixedAuthEndpoint(handler, ['GET'], { scope: 'selfGated' });
+
+async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
   sessionUser: Session['user'] | undefined
@@ -224,6 +234,7 @@ export default MixedAuthEndpoint(async function handler(
       mv."licensingFee"::float8 AS "licensingFee",
       mv."licensingFeeType",
       mv."licensingFeeSettlementCurrency",
+      mv."licensingFeeMarkup"::float8 AS "licensingFeeMarkup",
       (lr.id IS NOT NULL) AS "isLicensingRoot",
       mv."licensingSourceVersionId",
       lsm."userId" AS "sourceLicensingFeeRecipientUserId",
@@ -232,6 +243,7 @@ export default MixedAuthEndpoint(async function handler(
       lsv."licensingFee"::float8 AS "sourceLicensingFee",
       lsv."licensingFeeType" AS "sourceLicensingFeeType",
       lsv."licensingFeeSettlementCurrency" AS "sourceLicensingFeeSettlementCurrency",
+      lsv."licensingFeeMarkup"::float8 AS "sourceLicensingFeeMarkup",
       mv."flags" AS "versionFlags",
       u."flags" AS "userFlags",
       u."deletedAt" AS "ownerDeletedAt",
@@ -294,7 +306,43 @@ export default MixedAuthEndpoint(async function handler(
   `;
   // Same answer as an unknown id, so the response does not reveal that the version exists.
   if (!modelVersion || !canViewPoiModel(modelVersion.poi, modelVersion.modelUserId, user))
-    return res.status(404).json({ error: 'Model not found' });
+    return modelNotFound(res);
+  // A deleted, unpublished or not yet released model is shown only to its owner and moderators, as
+  // on the model page. The orchestrator's service token has no user: it reads this to decide what
+  // may generate.
+  if (
+    !orchestrator &&
+    !canViewModelVersionStatus({
+      viewer: user?.id ? { id: user.id, isModerator: user.isModerator } : null,
+      ownerId: modelVersion.modelUserId,
+      modelStatus: modelVersion.modelStatus as ModelStatus,
+      versionStatus: modelVersion.status as ModelStatus,
+      publishedAt: modelVersion.publishedAt,
+    })
+  )
+    return modelNotFound(res);
+
+  let privateCaller: { callerClass: MiniEpochCallerClass } | undefined;
+  if (
+    modelVersion.availability === Availability.Private ||
+    modelVersion.modelAvailability === Availability.Private
+  ) {
+    const mode = await getMiniEpochGateMode();
+    if (mode !== 'off') {
+      // The body now depends on the caller, so no shared cache may hold it.
+      res.setHeader('Cache-Control', 'private, no-store');
+      const caller = await evaluateMiniEpochCaller({
+        req,
+        user,
+        modelVersionId: modelVersion.id,
+        ownerId: modelVersion.modelUserId,
+        mode,
+        scopeRefused: await isScopeRefused(),
+      });
+      if (caller.withhold) return modelNotFound(res);
+      privateCaller = caller;
+    }
+  }
 
   // Above SFW, unrated, or with a civitai.com name, the answer depends on the caller's region, which
   // the shared cache does not key on.
@@ -310,7 +358,7 @@ export default MixedAuthEndpoint(async function handler(
     servedLevel !== allBrowsingLevelsFlag &&
     !Flags.intersects(modelVersion.nsfwLevel, servedLevel)
   )
-    return res.status(404).json({ error: 'Model not found' });
+    return modelNotFound(res);
   const modelName = resolveModelFace(
     { name: modelVersion.modelName, sfwName: modelVersion.sfwName },
     showsSfwFace(servedLevel)
@@ -415,10 +463,6 @@ export default MixedAuthEndpoint(async function handler(
   const requestedFile = modelFileId
     ? files.find((f) => f.id === modelFileId)
     : getPrimaryFile(files);
-  // The primary file the caller may not see is logged as its own reason, so the gate's measurement
-  // counts it separately.
-  const hiddenPrimary = !modelFileId && (!requestedFile || !visibleFiles.includes(requestedFile));
-
   const useEpochUrl =
     modelVersion.availability === Availability.Private && !!requestedFile?.metadata.trainingResults;
 
@@ -426,27 +470,12 @@ export default MixedAuthEndpoint(async function handler(
   // else the gate serves (`log`, or `enforce-anon` with a credential) keeps the stored one.
   let mayResign = false;
   let maySelectEpoch = false;
-  // Decided before the epoch is read, so a refused caller gets the same answer whatever the
-  // version's training results hold.
   if (useEpochUrl) {
-    const mode = await getMiniEpochGateMode();
-    if (mode !== 'off') {
-      // The body now depends on the caller, so no shared cache may hold it.
-      res.setHeader('Cache-Control', 'private, no-store');
-      const caller = await evaluateMiniEpochCaller({
-        req,
-        user,
-        modelVersionId: modelVersion.id,
-        ownerId: modelVersion.modelUserId,
-        mode,
-        scopeRefused: await isScopeRefused(),
-        pick: modelFileId ? 'by-id' : hiddenPrimary ? 'hidden-primary' : 'primary',
-      });
-      // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
-      // 404 to a caller who would be served.
-      if (caller.withhold) return res.status(404).json({ error: 'Model not found' });
-      mayResign = caller.callerClass !== 'anonymous' && caller.callerClass !== 'other';
-      maySelectEpoch = ['owner', 'moderator', 'orchestrator'].includes(caller.callerClass);
+    // `useEpochUrl` implies a Private version, so the gate above has classed the caller unless off.
+    if (privateCaller) {
+      mayResign =
+        privateCaller.callerClass !== 'anonymous' && privateCaller.callerClass !== 'other';
+      maySelectEpoch = ['owner', 'moderator', 'orchestrator'].includes(privateCaller.callerClass);
     } else {
       mayResign =
         orchestrator ||
@@ -584,28 +613,52 @@ export default MixedAuthEndpoint(async function handler(
   }
   const { format } = targetFile.metadata;
 
-  const genStates = await resolveCanGenerateForVersions(
-    [
+  // Gate rules decide per generating user, which only the permission check knows: a gated version
+  // asks for it (checkPermission), and canGenerate leaves the gate out. The same answer for every
+  // caller, so the orchestrator's account can't change what a gate does.
+  const [genStates, gateRuleState, gateSubjects] = await Promise.all([
+    resolveCanGenerateForVersions(
+      [
+        {
+          id: modelVersion.id,
+          status: modelVersion.status,
+          availability: modelVersion.availability,
+          usageControl: modelVersion.usageControl,
+          baseModel: modelVersion.baseModel,
+          covered: modelVersion.covered ?? false,
+          coveredLive: modelVersion.coveredLive ?? false,
+          modelUserId: modelVersion.modelUserId,
+          modelType: modelVersion.type,
+          flags: modelVersion.versionFlags,
+          modelVersionAlias: modelVersion.generationAlias,
+        },
+      ],
+      {
+        user: { id: user?.id, isModerator: user?.isModerator },
+        sfwOnly: false,
+        wildcardsEnabled: false,
+        ignoreGateRules: true,
+      }
+    ),
+    getGateRuleState(),
+    getGateSubjects([
       {
         id: modelVersion.id,
-        status: modelVersion.status,
-        availability: modelVersion.availability,
-        usageControl: modelVersion.usageControl,
         baseModel: modelVersion.baseModel,
-        covered: modelVersion.covered ?? false,
-        coveredLive: modelVersion.coveredLive ?? false,
-        modelUserId: modelVersion.modelUserId,
-        modelType: modelVersion.type,
-        flags: modelVersion.versionFlags,
-        modelVersionAlias: modelVersion.generationAlias,
+        generationAlias: modelVersion.generationAlias,
       },
-    ],
-    {
-      user: { id: user?.id, isModerator: user?.isModerator },
-      sfwOnly: false,
-      wildcardsEnabled: false,
-    }
-  );
+    ]),
+  ]);
+  const gateAsksPermission = gatedVersionIds(gateSubjects, gateRuleState).has(modelVersion.id);
+  // A kill switch (available to nobody) refuses everyone, so it stays a hard refusal here: the
+  // permission check's "no" could otherwise fall through to an early-access free trial.
+  const gateRefusesEveryone =
+    gateRuleState.known &&
+    gatedVersionIds(gateSubjects, gateRuleState, {
+      isModerator: true,
+      isMember: true,
+      hasTestingAccess: true,
+    }).has(modelVersion.id);
   const moderation = getMiniModerationState({
     versionStatus: modelVersion.status,
     versionAvailability: modelVersion.availability,
@@ -619,6 +672,7 @@ export default MixedAuthEndpoint(async function handler(
   });
   const canGenerate =
     !moderationBlocksGeneration(moderation) &&
+    !gateRefusesEveryone &&
     (genStates.get(modelVersion.id)?.canGenerate ?? false);
 
   // Check if should charge
@@ -686,6 +740,7 @@ export default MixedAuthEndpoint(async function handler(
     settlementCurrency: string;
     recipientModelVersionId: number;
     recipientUserId: number;
+    markup?: number;
   }> = [];
   if (isLicensingRoot) {
     fees.push({
@@ -695,6 +750,7 @@ export default MixedAuthEndpoint(async function handler(
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,
       recipientUserId: modelVersion.modelUserId,
+      ...feeMarkup(modelVersion.licensingFeeType, modelVersion.licensingFeeMarkup),
     });
   } else if (hasSourceRule) {
     fees.push({
@@ -704,6 +760,7 @@ export default MixedAuthEndpoint(async function handler(
       settlementCurrency: lowerFirst(modelVersion.sourceLicensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.licensingSourceVersionId!,
       recipientUserId: modelVersion.sourceLicensingFeeRecipientUserId!,
+      ...feeMarkup(modelVersion.sourceLicensingFeeType, modelVersion.sourceLicensingFeeMarkup),
     });
   }
   if (hasOwnFee) {
@@ -714,6 +771,7 @@ export default MixedAuthEndpoint(async function handler(
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,
       recipientUserId: modelVersion.modelUserId,
+      ...feeMarkup(modelVersion.licensingFeeType, modelVersion.licensingFeeMarkup),
     });
   }
 
@@ -771,7 +829,7 @@ export default MixedAuthEndpoint(async function handler(
         modelVersionId: modelVersion.id,
         fileId: targetFile.id,
         blobId,
-      }).catch(() => undefined);
+      });
   }
 
   const downloadLink =
@@ -802,9 +860,12 @@ export default MixedAuthEndpoint(async function handler(
     // Computed, not written to the flag, so the pin lifts by itself when the promotion ends.
     evictable: !modelVersion.isPromoted && isEvictable(modelVersion.versionFlags),
     requireAuth: modelVersion.requireAuth,
-    checkPermission: modelVersion.checkPermission,
+    checkPermission: modelVersion.checkPermission || gateAsksPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
-    freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
+    // Without readable rules a kill switch can't be told apart, so no trial may stand in for the
+    // permission check's refusal.
+    freeTrialLimit:
+      modelVersion.checkPermission && gateRuleState.known ? modelVersion.freeTrialLimit : undefined,
     additionalResourceCharge: shouldChargeResult[modelVersion.modelId],
     minor: modelVersion.minor,
     sfwOnly: modelVersion.sfwOnly,
@@ -817,9 +878,16 @@ export default MixedAuthEndpoint(async function handler(
   logMiniModerationCaller(req, user, modelVersion, includeModeration);
   if (includeModeration || downloadLink) res.setHeader('Cache-Control', 'private, no-store');
   const preset = res.getHeader?.('X-Expires');
+  const presetAt = typeof preset === 'string' ? Date.parse(preset) : undefined;
+  // Built while the gate rules are unreadable (every version marked gated): kept briefly, so
+  // ungated versions don't pay a permission check for the orchestrator's whole refresh interval.
+  const unknownRulesAt = gateRuleState.known ? undefined : Date.now() + 60_000;
   const expiresAt = miniResponseExpiresAt({
     now: Date.now(),
-    alreadySet: typeof preset === 'string' ? Date.parse(preset) : undefined,
+    alreadySet:
+      presetAt !== undefined && unknownRulesAt !== undefined
+        ? Math.min(presetAt, unknownRulesAt)
+        : presetAt ?? unknownRulesAt,
     moderation: includeModeration,
     epochUrl: resignedEpochUrl,
     downloadLinkExpiresAt: downloadLink ? Date.parse(downloadLink.expiresAt) : undefined,
@@ -827,7 +895,20 @@ export default MixedAuthEndpoint(async function handler(
   // Read by the orchestrator as the absolute time its cached copy of this response expires.
   if (expiresAt !== undefined) res.setHeader('X-Expires', new Date(expiresAt).toISOString());
   res.status(200).json(data);
-});
+}
+
+/**
+ * A percent-of-compute fee's markup: charged with the fee, logged apart from it, never paid to the
+ * recipient. A per-image fee carries none, whatever the column holds.
+ */
+function feeMarkup(
+  type: LicensingFeeType | null,
+  markup: number | null
+): { markup: number } | Record<string, never> {
+  return type === LicensingFeeType.PercentOfCompute && markup != null && markup > 0
+    ? { markup }
+    : {};
+}
 
 /**
  * The orchestrator's link to the file this response describes, for an allowlisted ApiKey; undefined
@@ -878,7 +959,7 @@ function logMiniModerationCaller(
     resolvedAs,
     principal,
     moderationIncluded,
-  }).catch(() => undefined);
+  });
 }
 
 const RESIGN_TIMEOUT_MS = 3000;
@@ -915,4 +996,13 @@ async function resignEpochBlob(
     unknown,
     () => controller.abort()
   );
+}
+
+/**
+ * The answer to an unknown id and to a version the caller may not see, headers included, so the two
+ * cannot be told apart. Never in a shared cache: the same id can be visible to another caller.
+ */
+function modelNotFound(res: NextApiResponse) {
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.status(404).json({ error: 'Model not found' });
 }

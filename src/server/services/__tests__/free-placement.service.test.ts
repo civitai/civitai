@@ -580,6 +580,8 @@ describe('the advisory locks have exactly one call site', () => {
   // slug), always in that order, so a resent report cannot be filed twice and mirror writes serialise.
   // support-membership-code takes one per moderator (0x4d430001) for the daily mint cap's
   // count-then-insert, never nested inside another lock.
+  // membership-gift-comp takes one per moderator (0x4d470001) for the daily comp cap's
+  // count-then-insert, never nested inside another lock.
   // creator-score-grant takes one per moderator (0x43530001) for the daily grant cap's
   // count-then-insert, then the target's User row lock; never nested inside another advisory lock.
   // platform-feedback takes one per report fingerprint so two first reports cannot both insert.
@@ -614,6 +616,9 @@ describe('the advisory locks have exactly one call site', () => {
   // text-scan/actions/csam-hold takes one per held entity (two-arg hashtext('csam-hold:<type>') form)
   // around the ruled-text check and the hold write; csam-hold-decision takes the same one, in its own
   // transaction, for a decision's final update. The only lock in either transaction.
+  // post-text-moderation takes that same csam-hold lock (csamHoldLockKey('PostText')) around a
+  // moderator's hold: the pending-hold check, the hold insert and csamHeld. The only lock in its
+  // transaction.
   // text-scan/actions/model-rules-hold takes one per model (two-arg hashtext('model-rules-hold:Model')
   // form) around the open-hold check and the hold write. The only lock in its transaction.
   // access-token takes one per resource (classed two-arg form, 0x41544b) around the active-token
@@ -629,22 +634,34 @@ describe('the advisory locks have exactly one call site', () => {
   // storyline takes one per (user, spark image) (0x53544c31, hashtext of both) as the first
   // statement of createStoryline's spark start, around the unwritten-storyline lookup and the reuse
   // or insert. The only advisory lock in its transaction.
+  // blocks/publish-request-holds takes one per app (0x41525648, hashtext of the slug) around hold
+  // placement and each approve's hold check. Hold placement takes no other lock; an off-site approve
+  // takes it after its own listing row lock, which no holder of it takes; lock_timeout is 5 s.
+  // metrics/model-image-count takes one platform-wide (one-arg hashtext('model-image-count')) as the
+  // first statement of every transaction that reads or writes its watermark or backfill progress:
+  // the hourly count, recount, pause and each backfill step. The only advisory lock in those
+  // transactions; it then takes ModelVersionMetric row locks in ascending id order.
   const ALLOWED = [
+    'metrics/model-image-count.ts',
     'services/access-token.service.ts',
     'services/app-hibernation/hibernation.repo.ts',
     'services/apps/storage-migration-run.service.ts',
     'services/article.service.ts',
+    'services/blocks/publish-request-holds.service.ts',
     'services/blocks/review-autodeploy.service.ts',
     'services/buzz-charge-lock.ts',
     'services/creator-announcement.service.ts',
     'services/creator-gallery-hidden-users.service.ts',
     'services/creator-mystery-pack.service.ts',
     'services/creator-score-grant.service.ts',
+    'services/creator-service-deal-review-publish.ts',
     'services/free-placement.service.ts',
     'services/game-frame-report.service.ts',
     'services/item-holder-lock.ts',
+    'services/membership-gift-comp.service.ts',
     'services/model-version-gift.service.ts',
     'services/platform-feedback.service.ts',
+    'services/post-text-moderation.service.ts',
     'services/scan-label-flag.service.ts',
     'services/storyline-placement.service.ts',
     'services/storyline.service.ts',

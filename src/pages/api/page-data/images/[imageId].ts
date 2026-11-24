@@ -17,6 +17,8 @@ import {
   getFliptGatedEligibility,
 } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { withModeratorRightsFor } from '~/server/auth/full-user-credential';
+import { getRequestCredential } from '~/server/auth/request-credential';
 import {
   bootstrapSession,
   resolveSettingsBootstrapSeeds,
@@ -103,7 +105,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // The same evaluation as both `_app` (which passes the request's own host) and
     // `createServerSideProps`. Decided before the rest of the bootstrap is read.
-    const flags = await getFeatureFlagsAsync({ user: session?.user, req });
+    const flags = await getFeatureFlagsAsync({
+      user: withModeratorRightsFor(session?.user, getRequestCredential(sessionRequest)),
+      req,
+    });
     // The route cookie follows the flag from here too: a viewer the flag went off for stops being
     // considered for the shell, and one it is on for keeps the cookie from expiring.
     if (!flags.shellImages) {
@@ -200,7 +205,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // After the flush the client sees a 200 with no body; this is the only place that says so.
       afterFlush: res.headersSent,
       message: e instanceof Error ? e.message : String(e),
-    }).catch(() => undefined);
+    });
     if (!res.headersSent) send(500, { error: 'Page data unavailable' });
     else if (!res.writableEnded) res.end();
   }

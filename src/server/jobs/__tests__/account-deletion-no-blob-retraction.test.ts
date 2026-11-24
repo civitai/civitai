@@ -166,6 +166,9 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   // remove-blocked-images: users under a legal hold. None in this fixture.
   if (sql.includes('FROM "CsamReport"')) return [];
 
+  // remove-deleted-user-images: the per-account hold re-read. No hold in this fixture.
+  if (sql.includes('AS skip')) return [{ skip: false, accountHeld: false }];
+
   // remove-blocked-images: its two queue reads, each passed as one `Prisma.sql` value.
   if (sql.includes('FROM "JobQueue" j')) {
     const bound = Array.isArray(strings)
@@ -208,7 +211,7 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   }
 
   // remove-deleted-user-images: the hide branch. Bindings, in order: the blocked nsfwLevel, the
-  // blockedFor reason, the metadata key, the id list, userId, userId.
+  // kept CSAM reason, the blockedFor reason, the two metadata keys, the id list, userId, userId.
   //
   // The metadata key is taken from the BINDING, never from the constant imported at the top of
   // this file, so what the grace pass writes is what the restore path is later asserted against.
@@ -218,14 +221,24 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   // job splits on is the positive `ModActivity` lookup routed below. Left in place because the key
   // is still the restore path's own breadcrumb; do not re-read it as the retraction discriminator.
   if (sql.includes('UPDATE "Image"') && sql.includes("SET ingestion = 'Blocked'")) {
-    const [, blockedFor, priorIngestionKey] = values as [number, string, string];
+    const [, kept, blockedFor, priorIngestionKey, priorBlockedForKey] = values as [
+      number,
+      string,
+      string,
+      string,
+      string
+    ];
     const ids = joinedIds(values);
     const touched: { id: number; postId: number | null }[] = [];
     for (const img of store.images) {
       if (!ids.includes(img.id) || img.ingestion === 'Blocked') continue;
-      img.metadata = { ...img.metadata, [priorIngestionKey]: img.ingestion };
+      img.metadata = {
+        ...img.metadata,
+        [priorIngestionKey]: img.ingestion,
+        [priorBlockedForKey]: img.blockedFor,
+      };
       img.ingestion = 'Blocked';
-      img.blockedFor = blockedFor;
+      if (img.blockedFor !== kept) img.blockedFor = blockedFor;
       touched.push({ id: img.id, postId: img.postId });
     }
     return touched;
@@ -252,11 +265,13 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   // remove-deleted-user-images: the two worklists. Fresh is ascending and bounded below by the
   // high-water mark; backlog is descending and bounded above by its cursor and by that mark.
   if (sql.includes('CROSS JOIN LATERAL')) {
+    // The bounds are the statement's dates; the mode and hold arrive as nested fragments.
+    const dates = values.filter((v): v is Date => v instanceof Date);
     if (sql.includes('ORDER BY u."deletedAt" DESC')) {
-      const [cursor, freshMark] = values as [Date, Date];
+      const [cursor, freshMark] = dates;
       return candidates((d) => d <= cursor && d < freshMark, 'desc');
     }
-    const freshMark = values[0] as Date;
+    const freshMark = dates[0];
     return candidates((d) => d >= freshMark, 'asc');
   }
 
@@ -352,7 +367,7 @@ const ctx = {} as Parameters<typeof removeBlockedImages.run>[0];
 function retractionFor(id: number) {
   const call = mockDeleteImages.mock.calls.find((c) => (c[0] as number[]).includes(id));
   if (!call) return undefined;
-  return Boolean((call[2] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs);
+  return Boolean((call[1] as { retractPublicBlobs?: boolean } | undefined)?.retractPublicBlobs);
 }
 
 beforeEach(() => {

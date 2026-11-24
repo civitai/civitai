@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 import * as z from 'zod';
 
@@ -10,6 +11,7 @@ import { resolveWorkflowMediaForBlockClaims } from '~/server/services/blocks/blo
 import { WORKFLOW_MEDIA_MAX_REFS } from '~/shared/constants/block-workflow-media.constants';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
 const bodySchema = z.object({
   refs: z.string().min(1).max(2048).array().min(1).max(WORKFLOW_MEDIA_MAX_REFS),
@@ -40,8 +42,18 @@ export const baseHandler = withAxiom(async function handler(
 
   const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rate.allowed) {
-    res.setHeader('Retry-After', String(rate.retryAfterSeconds));
-    res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
+    recordBlockClaimsRateLimitRefusal({
+      claims,
+      surface: 'rest',
+      bucket: 'catalog',
+      endpoint: 'workflow_media',
+      retryAfterSeconds: rate.retryAfterSeconds,
+    });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.catalog', rate.retryAfterSeconds),
+      'Rate limit exceeded, please retry shortly.'
+    );
     return;
   }
 

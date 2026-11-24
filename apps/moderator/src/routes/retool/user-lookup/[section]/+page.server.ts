@@ -25,6 +25,8 @@ import {
   mintMembershipCode,
   previewMembershipExtension,
   extendMembership,
+  previewCompGift,
+  compGift,
   previewMembershipCancel,
   setMembershipCancel,
   previewMembershipResync,
@@ -50,6 +52,7 @@ import {
   updateUserIdentity,
 } from '$lib/server/user-actions.service';
 import { resolveUsername } from '$lib/server/user-lookup.service';
+import { withheldAccountRefusal } from '$lib/server/retracted-media';
 import {
   boxGrantFields,
   BoxGrantRefused,
@@ -61,6 +64,11 @@ import { sendAsCivitai } from '$lib/server/message-as-civitai';
 import { MESSAGE_AS_CIVITAI_MAX_LENGTH } from '$lib/message-as-civitai';
 import { MEMBERSHIP_CODE_MAX_MONTHS, MEMBERSHIP_CODE_TIERS } from '$lib/membership-code';
 import { MEMBERSHIP_EXTEND_MAX_DAYS, MEMBERSHIP_EXTEND_REASON_MIN } from '$lib/membership-extend';
+import {
+  COMP_GIFT_MAX_MONTHS,
+  COMP_GIFT_REASON_MIN,
+  COMP_GIFT_TIERS,
+} from '$lib/membership-gift-comp';
 import {
   CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT,
   CREATOR_SCORE_GRANT_MAX_AMOUNT,
@@ -106,6 +114,23 @@ const membershipCodeFail = (message: string) =>
   fail(400, { scope: 'membershipCode' as const, error: message });
 const membershipExtendFail = (message: string) =>
   fail(400, { scope: 'membershipExtend' as const, error: message });
+const compGiftFail = (message: string) => fail(400, { scope: 'compGift' as const, error: message });
+const compGiftSchema = userIdSchema.extend({
+  tier: z.enum(COMP_GIFT_TIERS),
+  months: z.coerce.number().int().min(1).max(COMP_GIFT_MAX_MONTHS),
+  reason: z.string().trim().min(COMP_GIFT_REASON_MIN).max(500),
+  message: z
+    .string()
+    .trim()
+    .max(500)
+    .optional()
+    .transform((v) => v || undefined),
+  // An unticked checkbox sends nothing.
+  anonymous: z
+    .string()
+    .optional()
+    .transform((v) => v === 'on'),
+});
 const membershipCancelFail = (message: string) =>
   fail(400, { scope: 'membershipCancel' as const, error: message });
 const membershipResyncFail = (message: string) =>
@@ -640,6 +665,25 @@ export const actions: Actions = {
     return { success: true, extended: result.result };
   }),
 
+  // Bounds are enforced again by the endpoint; these only turn a bad form into a readable refusal.
+  previewCompGift: requiresGrant('user.membership.gift.comp', async ({ request }) => {
+    const input = parseForm(compGiftSchema, await request.formData());
+    if (typeof input === 'string') return compGiftFail(input);
+
+    const result = await previewCompGift(input);
+    if (!result.ok) return compGiftFail(result.error);
+    return { success: true, compPreview: result.preview };
+  }),
+
+  compGift: requiresGrant('user.membership.gift.comp', async ({ request }) => {
+    const input = parseForm(compGiftSchema, await request.formData());
+    if (typeof input === 'string') return compGiftFail(input);
+
+    const result = await compGift(input);
+    if (!result.ok) return compGiftFail(result.error);
+    return { success: true, comped: result.result };
+  }),
+
   previewMembershipCancel: requiresGrant('user.membership.cancel', async ({ request }) => {
     const input = parseForm(
       userIdSchema.extend({ cancelAtPeriodEnd: z.stringbool() }),
@@ -819,6 +863,8 @@ export const actions: Actions = {
     if (!user) return accountFail('User not found.');
     if (input.confirm !== (user.username ?? String(input.userId)))
       return accountFail('Type the username exactly to confirm the purge.');
+    const withheld = await withheldAccountRefusal(locals.user, input.userId);
+    if (withheld) return fail(403, { scope: 'account' as const, error: withheld });
 
     const result = await purgeAllContent({ userId: input.userId, moderatorId: locals.user.id });
     if (!result.ok) return accountFail(result.error);
@@ -826,7 +872,7 @@ export const actions: Actions = {
   }),
 
   // No confirmation check here: the endpoint owns it, and a second copy would drift from it.
-  deleteAccount: requiresGrant('user.deleteAccount', async ({ request }) => {
+  deleteAccount: requiresGrant('user.deleteAccount', async ({ request, locals }) => {
     const input = parseForm(
       userIdSchema.extend({
         username: z.string().optional(),
@@ -840,6 +886,10 @@ export const actions: Actions = {
     const hold = await deleteAccountHold(input.userId);
     if (hold === 'held') return accountFail(LEGAL_HOLD_REFUSAL);
     if (hold !== 'clear') return accountFail(HOLD_UNKNOWN_REFUSAL);
+    if (input.removeImages === 'true') {
+      const withheld = await withheldAccountRefusal(locals.user, input.userId);
+      if (withheld) return fail(403, { scope: 'account' as const, error: withheld });
+    }
 
     const flag = (v: 'true' | 'false' | undefined) => (v === undefined ? undefined : v === 'true');
     const result = await deleteAccount({

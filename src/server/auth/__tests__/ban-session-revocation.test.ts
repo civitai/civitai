@@ -95,7 +95,6 @@ vi.mock('~/server/auth/session-client', () => ({
 vi.mock('~/utils/signal-client', () => ({ signalClient: { send: async () => {} } }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: () => {} }));
 vi.mock('~/utils/logging', () => ({ createLogger: () => () => {} }));
-vi.mock('~/server/common/enums', () => ({ SignalMessages: { SessionRefresh: 'session:refresh' } }));
 // The global unit setup (src/__tests__/setup.ts) mocks session-invalidation to a stub; we need the REAL
 // module here to exercise the actual ban→revoke chain against our in-memory sysRedis.
 vi.unmock('~/server/auth/session-invalidation');

@@ -42,6 +42,7 @@ CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "userId" INTEGER NOT NULL,
   "needsReview" TEXT,
+  "blockedFor" TEXT,
   "ingestion" "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned'
 );
 ${SET_ASIDE_TABLE_SQL}
@@ -57,7 +58,6 @@ CREATE TABLE "ModActivity" (
 `;
 
 const MOD = 9;
-const PATTERN = '\\mzzfixture';
 
 // Every user owns three CSAM-flagged images: two removed, one still live. A held user keeps all three.
 const ban = (reasonCode: string | null, detailsInternal?: string, detailsExternal?: string) =>
@@ -115,8 +115,6 @@ const activityFor = async (ids: number[]) =>
   ).rows;
 
 beforeAll(async () => {
-  // A pattern set in the shell would shift which users hold.
-  process.env.MOD_HOLD_BAN_NOTES_PATTERN = PATTERN;
   db = await freshPglite();
   await db.exec(SCHEMA);
   for (const { id, bannedAt, meta } of Object.values(USERS)) {
@@ -154,7 +152,6 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
   dbHandle.current = null;
   await db.close();
 });
@@ -206,12 +203,19 @@ describe('clearing one user’s CSAM flags', () => {
     });
   });
 
-  it.each(['otherBanPlain', 'harassmentBan'])(
-    'clears a user banned for another reason (%s)',
-    async (key) => {
-      expect(await clear(USERS[key].id)).toMatchObject({ ok: true, cleared: 2 });
-    }
-  );
+  // A ban's notes are not a hold, whatever they name.
+  it.each([
+    'otherBanPlain',
+    'harassmentBan',
+    'otherBanNoted',
+    'otherBanNotedExternally',
+    'notedByPattern',
+    'otherBanUnset',
+    'chargebackBan',
+    'chargebackBanNoNotes',
+  ])('clears a user banned for another reason (%s)', async (key) => {
+    expect(await clear(USERS[key].id)).toMatchObject({ ok: true, cleared: 2 });
+  });
 });
 
 const HELD = [
@@ -221,8 +225,6 @@ const HELD = [
   'minorBan',
   'minorTrainingBan',
   'noReasonBan',
-  'otherBanNoted',
-  'otherBanNotedExternally',
   'reportedImage',
 ];
 
@@ -241,37 +243,6 @@ describe('a held user', () => {
     const kysely = dbHandle.current as Kysely<never>;
     expect(await clearRemovedFlagsUnlessHeld(kysely as never, USERS[key].id, 'none')).toEqual([]);
     expect(await flagged(USERS[key].id)).toHaveLength(3);
-  });
-});
-
-describe('the ban-notes pattern', () => {
-  afterEach(() => {
-    process.env.MOD_HOLD_BAN_NOTES_PATTERN = PATTERN;
-  });
-
-  it.each([undefined, '', ' '])('holds every "Other" ban when it is %j', async (pattern) => {
-    if (pattern === undefined) delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
-    else process.env.MOD_HOLD_BAN_NOTES_PATTERN = pattern;
-    const id = USERS.otherBanUnset.id;
-
-    expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
-    expect(await flagged(id)).toHaveLength(3);
-  });
-
-  it.each(['chargebackBan', 'chargebackBanNoNotes'])(
-    'handles an account banned for a lost payment dispute (%s)',
-    async (key) => {
-      delete process.env.MOD_HOLD_BAN_NOTES_PATTERN;
-      expect(await clear(USERS[key].id)).toMatchObject({ ok: true, cleared: 2 });
-    }
-  );
-
-  it('is read from the deployment', async () => {
-    const id = USERS.notedByPattern.id;
-    expect(await clear(id)).toEqual({ ok: false, reason: 'held' });
-
-    process.env.MOD_HOLD_BAN_NOTES_PATTERN = '\\mzzother';
-    expect(await clear(id)).toMatchObject({ ok: true, cleared: 2 });
   });
 });
 
@@ -382,6 +353,31 @@ describe('clearing a user whose block put effects off', () => {
     ).toEqual([
       { id: A, needsReview: null },
       { id: B, needsReview: 'appeal' },
+    ]);
+  });
+
+  it('never gives an image holding a CSAM block the appeal flag', async () => {
+    const user = 179;
+    const [csam, moderated] = [user * 10 + 1, user * 10 + 2];
+    await db.exec(`
+      INSERT INTO "User" ("id") VALUES (${user});
+      INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion") VALUES
+        (${csam}, ${user}, 'csam', 'CSAM', 'Blocked'), (${moderated}, ${user}, 'csam', 'moderated', 'Blocked');
+      INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
+        ('Image', ${csam}, 'Pending'), ('Image', ${moderated}, 'Pending');
+    `);
+
+    expect(await clear(user)).toMatchObject({ ok: true, cleared: 2 });
+    expect(
+      (
+        await db.query(
+          `SELECT id, "needsReview" FROM "Image" WHERE id IN (${csam}, ${moderated}) ORDER BY id`
+        )
+      ).rows
+    ).toEqual([
+      { id: csam, needsReview: null },
+      // Control: the same clear restores it on an image under another block.
+      { id: moderated, needsReview: 'appeal' },
     ]);
   });
 

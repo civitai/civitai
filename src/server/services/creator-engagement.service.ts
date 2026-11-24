@@ -385,7 +385,7 @@ function reportClickhouseFailure(part: string, error: unknown) {
     name: 'creator-engagement-clickhouse',
     part,
     message: (error as Error)?.message,
-  }).catch(() => undefined);
+  });
 }
 
 async function hydrateImages(

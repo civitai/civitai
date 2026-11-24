@@ -33,7 +33,6 @@ node .claude/skills/meilisearch-admin/query.mjs <command> [options]
 
 | Flag | Description |
 |------|-------------|
-| `--feed` | Use feed/metrics search (METRICS_SEARCH_HOST) instead of main search |
 | `--status <s>` | Filter tasks by status: enqueued, processing, succeeded, failed |
 | `--limit <n>` | Limit results (default: 20) |
 | `--json` | Output raw JSON |
@@ -66,23 +65,19 @@ node .claude/skills/meilisearch-admin/query.mjs indexes
 node .claude/skills/meilisearch-admin/query.mjs index models_v9
 
 # Get filterable attributes for an index
-node .claude/skills/meilisearch-admin/query.mjs index metrics_images_v1 filterable
-
-# Use feed search instead of main
-node .claude/skills/meilisearch-admin/query.mjs --feed stats
-node .claude/skills/meilisearch-admin/query.mjs --feed tasks --status failed
+node .claude/skills/meilisearch-admin/query.mjs index models_v9 filterable
 ```
 
 ## Search Instances
 
-The project has two Meilisearch instances:
+The project has one Meilisearch instance:
 
 | Instance | Env Variables | Purpose |
 |----------|---------------|---------|
 | **Main Search** | `SEARCH_HOST`, `SEARCH_API_KEY` | Primary search (models, users, etc.) |
-| **Feed/Metrics** | `METRICS_SEARCH_HOST`, `METRICS_SEARCH_API_KEY` | Image feed and metrics search |
 
-Use `--feed` flag to target the feed/metrics instance.
+The second (feeds/metrics) instance that served the image feed is retired; the image feed is
+served by the feed service.
 
 ## Common Indexes
 
@@ -90,9 +85,6 @@ Use `--feed` flag to target the feed/metrics instance.
 - `models_v9` - Model search
 - `users_v3` - User search
 - `articles_v3` - Article search
-
-### Feed/Metrics Search
-- `metrics_images_v1` - Image feed with metrics
 
 ## Debugging Tips
 

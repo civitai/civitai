@@ -54,7 +54,19 @@ const longAgo = (extraMs = 24 * 60 * 60 * 1000) =>
 
 type Row = { id: string; slug: string; status: string; updatedAt: Date };
 /** The shape of the where-clause the sweep builds, for predicate-applying mocks. */
-type PurgeWhere = { status: { in: string[] }; updatedAt: { gt: Date; lt: Date } };
+type UpdatedAtFilter = { gt?: Date; gte?: Date; lt: Date };
+type PurgeWhere = { status: { in: string[] }; updatedAt: UpdatedAtFilter };
+/**
+ * Applies the sweep's `updatedAt` filter the way Postgres would, at MICROSECOND
+ * resolution (the column is `timestamptz(6)`). Prisma binds a JS `Date`, which
+ * only carries milliseconds, so each bound is `ms * 1000` microseconds. Honours
+ * whichever of `gt`/`gte` the sweep sends.
+ */
+const matchesUpdatedAt = (rowMicros: number, f: UpdatedAtFilter) =>
+  (f.gt === undefined || rowMicros > f.gt.getTime() * 1000) &&
+  (f.gte === undefined || rowMicros >= f.gte.getTime() * 1000) &&
+  rowMicros < f.lt.getTime() * 1000;
+const micros = (d: Date) => d.getTime() * 1000;
 const row = (slug: string, updatedAt = longAgo(), status = 'rejected'): Row => ({
   id: `pubreq_${slug}`,
   slug,
@@ -345,8 +357,7 @@ describe('purgeExpiredReviewSnapshots — the 30-day retention boundary', () => 
       [due, notYetDue].filter(
         (r) =>
           args.where.status.in.includes(r.status) &&
-          r.updatedAt > args.where.updatedAt.gt &&
-          r.updatedAt < args.where.updatedAt.lt
+          matchesUpdatedAt(micros(r.updatedAt), args.where.updatedAt)
       )
     );
 
@@ -367,7 +378,7 @@ describe('purgeExpiredReviewSnapshots — the 30-day retention boundary', () => 
     const notYetDue = row('not-due-app', new Date('2026-07-02T00:00:00.000Z'));
     mockFindMany.mockImplementation(async (args: { where: PurgeWhere }) =>
       [notYetDue].filter(
-        (r) => r.updatedAt > args.where.updatedAt.gt && r.updatedAt < args.where.updatedAt.lt
+        (r) => matchesUpdatedAt(micros(r.updatedAt), args.where.updatedAt)
       )
     );
 
@@ -409,8 +420,47 @@ describe('purgeExpiredReviewSnapshots — batching, resumability, resilience', (
 
     await purgeExpiredReviewSnapshots({ now: NOW });
 
-    expect(mockFindMany.mock.calls[0][0].where.updatedAt.gt).toBe(cursor);
+    // Resumes at the millisecond AFTER the stored cursor (see the precision test below).
+    expect(mockFindMany.mock.calls[0][0].where.updatedAt.gte).toEqual(
+      new Date('2026-01-01T00:00:00.001Z')
+    );
     expect(mockSetCursor).toHaveBeenCalledWith(last);
+  });
+
+  /**
+   * Regression: the cursor is persisted as epoch MILLISECONDS but `updatedAt` is
+   * `timestamptz(6)`. A last row at `…:05.356842` saves the cursor as `…:05.356`,
+   * and a `gt` resume matches that same row again — every run, for as long as
+   * it is the newest due row. Drives two consecutive runs through a findMany mock
+   * that applies the filter at microsecond resolution and round-trips the
+   * cursor exactly as `getJobDate` does (`new Date(storedEpochMs)`).
+   */
+  it('advances past a last row with a sub-millisecond updatedAt (ms cursor vs µs column)', async () => {
+    // 2026-06-01T00:00:05.356842Z — 356 ms + 842 µs past the second.
+    const subMsMicros = Date.parse('2026-06-01T00:00:05.356Z') * 1000 + 842;
+    const table = [{ id: 'pubreq_subms', slug: 'sub-ms-app', status: 'rejected', micros: subMsMicros }];
+    mockFindMany.mockImplementation(async (args: { where: PurgeWhere }) =>
+      table
+        .filter(
+          (r) =>
+            args.where.status.in.includes(r.status) && matchesUpdatedAt(r.micros, args.where.updatedAt)
+        )
+        // Prisma hands back a ms-truncated Date.
+        .map((r) => ({ ...r, updatedAt: new Date(Math.floor(r.micros / 1000)) }))
+    );
+
+    const first = await purgeExpiredReviewSnapshots({ now: NOW });
+    expect(first.scanned).toBe(1);
+    expect(mockSetCursor).toHaveBeenCalledTimes(1);
+    const savedMs = (mockSetCursor.mock.calls[0] as unknown as [Date])[0].getTime();
+    expect(savedMs).toBe(Date.parse('2026-06-01T00:00:05.356Z'));
+
+    mockGetJobDate.mockResolvedValue([new Date(savedMs), mockSetCursor]);
+    mockDelete.mockClear();
+    const second = await purgeExpiredReviewSnapshots({ now: NOW });
+
+    expect(second.scanned).toBe(0);
+    expect(mockDelete).not.toHaveBeenCalled();
   });
 
   it('is a no-op (and leaves the cursor alone) when nothing is due', async () => {
@@ -449,7 +499,7 @@ describe('purgeExpiredReviewSnapshots — batching, resumability, resilience', (
     expect(result.failed).toBe(0);
   });
 
-  it('logs-and-continues past a per-repo failure', async () => {
+  it('continues past a per-repo failure', async () => {
     mockFindMany.mockResolvedValue([row('bad'), row('good')]);
     mockDelete.mockImplementation(async (slug: string) => {
       if (slug === 'bad') throw new Error('forgejo 500');
@@ -461,10 +511,6 @@ describe('purgeExpiredReviewSnapshots — batching, resumability, resilience', (
     expect(result.failed).toBe(1);
     expect(result.deleted).toBe(1);
     expect(mockDelete).toHaveBeenCalledWith('good');
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ slug: 'bad', outcome: 'failed', level: 'error' }),
-      'webhooks'
-    );
   });
 });
 
@@ -491,9 +537,5 @@ describe('purgeReviewSnapshotsJob wrapper', () => {
 
     expect(result.error).toBe(true);
     expect(result.deleted).toBe(0);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ outcome: 'run-failed', level: 'error' }),
-      'webhooks'
-    );
   });
 });

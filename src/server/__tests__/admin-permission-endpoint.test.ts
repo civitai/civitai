@@ -14,7 +14,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 vi.mock('~/server/services/system-cache', () => ({ addSystemPermission, removeSystemPermission }));
 vi.mock('~/server/auth/session-invalidation', () => ({ refreshSession }));
 
-import handler from '~/pages/api/admin/permission';
+import handler from '~/server/api-routes/admin/permission';
 
 async function grant(key: string) {
   let body: unknown;
@@ -42,6 +42,13 @@ describe('/api/admin/permission', () => {
 
     expect(body.skipped).toEqual([]);
     expect(addSystemPermission).toHaveBeenCalledWith('textScanPromptPublish', [4]);
+  });
+
+  it('grants textScanPromptPublishIntent instead of skipping it', async () => {
+    const body = await grant('textScanPromptPublishIntent');
+
+    expect(body.skipped).toEqual([]);
+    expect(addSystemPermission).toHaveBeenCalledWith('textScanPromptPublishIntent', [4]);
   });
 
   it('skips a key that is not a permission (control)', async () => {

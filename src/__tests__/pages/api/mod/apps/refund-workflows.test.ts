@@ -107,7 +107,7 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksAuthorFeeEnabled: vi.fn(async () => true),
 }));
 
-import handler from '~/pages/api/mod/apps/refund-workflows';
+import handler from '~/server/api-routes/mod/apps/refund-workflows';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -477,7 +477,7 @@ describe('who may call it', () => {
   });
 
   describe('API key path', () => {
-    const keySession = (tokenScope: number) => ({
+    const keySession = (tokenScope: bigint) => ({
       user: { id: MODERATOR, isModerator: true, permissions: [], bannedAt: null },
       apiKeyId: 1,
       apiKeyType: 'User',

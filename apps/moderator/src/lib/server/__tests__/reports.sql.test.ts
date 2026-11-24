@@ -45,6 +45,8 @@ const EXPECTED: [string, string, string][] = [
   ['image', 'ImageReport', 'imageId'],
   ['model', 'ModelReport', 'modelId'],
   ['post', 'PostReport', 'postId'],
+  // Worked in the post queue, keyed by the text's post.
+  ['postText', 'PostTextReport', 'postId'],
   ['article', 'ArticleReport', 'articleId'],
   ['commentV3', 'CommentV3Report', 'commentId'],
   ['bounty', 'BountyReport', 'bountyId'],
@@ -58,6 +60,8 @@ const EXPECTED: [string, string, string][] = [
   ['crucible', 'CrucibleReport', 'crucibleId'],
   ['storyline', 'StorylineReport', 'storylineId'],
   ['serviceOffering', 'ServiceOfferingReport', 'serviceOfferingId'],
+  // Worked in the offering queue, keyed by the review's offering.
+  ['serviceDealReview', 'ServiceDealReviewReport', 'serviceOfferingId'],
   ['challenge', 'ChallengeReport', 'challengeId'],
   ['gameFrameGame', 'GameFrameGameReport', 'gameFrameGameId'],
   ['chat', 'ChatReport', 'chatId'],

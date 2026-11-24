@@ -730,6 +730,18 @@ describe('setHidden / delete: effects through the app reads, and the audit trail
     ]);
   });
 
+  it('the audit total counts report-mark AND report-API reports once each', async () => {
+    await seedQueue();
+    // a1 holds three report-mark reports (R[0..2]). Two report-API reports join it: one from a
+    // viewer who had not reported (a new row, no tally) and one from R[0], who had (no new row).
+    await h.store.report(v(APP_A, VIEWER_2), POSTS, 'a1');
+    await h.store.report(v(APP_A, R[0]), POSTS, 'a1');
+    await caller().setHidden({ ...A1, hidden: true, reason: 'mixed reports' });
+    expect(audit.map((r) => [r.action, r.before.reports, r.before.reportsTotal])).toEqual([
+      ['storage-doc-hide', 4, 4],
+    ]);
+  });
+
   it('a reason is required and bounded', async () => {
     await seedQueue();
     await expect(caller().delete({ ...A1, reason: '  ' })).rejects.toMatchObject({
@@ -835,9 +847,17 @@ describe('the moderation operations are reachable from the moderator service onl
         'list',
         'mark',
         'unmark',
+        // The report API's write: the VIEWER's own report row, which moderators then read.
+        'report',
         'put',
+        // A shared put that would change nothing: the caller's OWN document only.
+        'putIfUnchanged',
         'usage',
         'viewerLimits',
+        // Server-side publish: the viewer's OWN documents only, never a moderator operation.
+        'previewPublish',
+        'publishCopies',
+        'unpublishCopies',
       ].sort()
     );
   });

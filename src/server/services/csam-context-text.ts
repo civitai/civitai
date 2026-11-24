@@ -1,5 +1,5 @@
 import { convert } from 'html-to-text';
-import { kyselyRead, kyselyV3Read } from '~/server/db/kyselyDb';
+import { kyselyRead, kyselyV3Read, kyselyWrite } from '~/server/db/kyselyDb';
 import type {
   CsamContextSources,
   GetCsamContextCandidatesSchema,
@@ -8,13 +8,28 @@ import { xmlSafe } from '~/server/services/ncmec-xml';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
+/** How a held text came to be reviewed: the filing moderator's recorded read, or its hold decided on its own. */
+export const CSAM_REVIEW_ORIGINS = ['filer-read', 'individual-decision'] as const;
+export type CsamReviewOrigin = (typeof CSAM_REVIEW_ORIGINS)[number];
+
+/** A held text's review: a moderator read it before filing, or decided its hold on its own. */
+export type CsamContextReview = {
+  byId: number;
+  at: string;
+  /** Missing on captures stored before it was recorded. */
+  origin?: CsamReviewOrigin;
+};
+
 /** Text posted with a report's images, copied when the report is filed. */
 export type CsamContextText = {
-  source: 'postDescription' | 'comment';
-  /** The post's id for a description, the comment's otherwise. */
+  /** `postText`: a held text item, captured with its post's text but on its own. */
+  source: 'postDescription' | 'comment' | 'postText';
+  /** The post's id for a description, the item's for a text item, the comment's otherwise. */
   id: number;
   postId?: number;
   imageId?: number;
+  /** A text item's place in its post's reading order. */
+  index?: number;
   /** Moderators and Legal only: never sent. */
   authorId: number;
   authorIsReportedUser: boolean;
@@ -22,12 +37,19 @@ export type CsamContextText = {
   text: string;
   capturedAt: string;
   capturedById: number;
+  /** A text item without one is sent marked as not reviewed by Civitai. */
+  reviewed?: CsamContextReview;
 };
 
 export type CsamContextCandidate = Omit<
   CsamContextText,
   'authorIsReportedUser' | 'capturedAt' | 'capturedById'
-> & { deleted?: boolean; hidden?: boolean };
+> & {
+  deleted?: boolean;
+  hidden?: boolean;
+  /** A held text item's hold, or its text when it has none, last changed: a read before it does not count. */
+  heldSince?: string;
+};
 
 export type CsamContextPreview = CsamContextCandidate & {
   authorIsReportedUser: boolean;
@@ -47,6 +69,51 @@ export const htmlToPlainText = (html: string) =>
       { selector: 'img', format: 'skip' },
     ],
   }).trim();
+
+/** The `ModActivity` a moderator's read of a held text item writes. */
+export const CSAM_CONTEXT_TEXT_READ_ACTIVITY = 'csamContextTextRead';
+
+type CsamHoldRow = {
+  entityId: number;
+  status: string;
+  decidedById: number | null;
+  decidedAt: Date | null;
+  meta: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+/** Each item's newest Pending or Confirmed csam hold. */
+async function latestCsamHolds(textIds: number[]) {
+  const latest = new Map<number, CsamHoldRow>();
+  if (!textIds.length) return latest;
+  const rows = await kyselyWrite
+    .selectFrom('TextScanHold')
+    .select(['entityId', 'status', 'decidedById', 'decidedAt', 'meta', 'createdAt', 'updatedAt'])
+    .where('entityType', '=', 'PostText')
+    .where('label', '=', 'csam')
+    .where('status', 'in', ['Pending', 'Confirmed'])
+    .where('entityId', 'in', textIds)
+    .orderBy('id', 'desc')
+    .execute();
+  for (const row of rows) if (!latest.has(row.entityId)) latest.set(row.entityId, row);
+  return latest;
+}
+
+/**
+ * A Confirmed hold counts as a review only when `decideCsamHold` marked it decided on its own:
+ * a batched confirm, or one from before that mark, does not.
+ */
+function decisionReview(hold: CsamHoldRow): CsamContextReview | undefined {
+  const meta = hold.meta as { reviewedDecision?: unknown } | null;
+  if (hold.status !== 'Confirmed' || meta?.reviewedDecision !== true) return;
+  if (!hold.decidedById || !hold.decidedAt) return;
+  return {
+    byId: hold.decidedById,
+    at: new Date(hold.decidedAt).toISOString(),
+    origin: 'individual-decision',
+  };
+}
 
 type Scope = {
   imageIds: number[];
@@ -81,18 +148,40 @@ async function readCandidates({
       .select(['id', 'detail', 'userId', 'createdAt', 'publishedAt'])
       .where('id', 'in', describedPostIds)
       .execute();
-    // A post's storyline text items are part of its text, in reading order.
-    const items = await kyselyRead
+    // A post's storyline text items are part of its text, in reading order. A held item is
+    // captured on its own, so it can go out marked as not reviewed. Read on the primary, so a
+    // hold the replica has not seen yet still splits its item out.
+    const items = await kyselyWrite
       .selectFrom('PostText')
-      .select(['postId', 'content'])
+      .select(['id', 'postId', 'userId', 'index', 'content', 'csamHeld', 'createdAt', 'updatedAt'])
       .where('postId', 'in', describedPostIds)
       .orderBy('index')
       .orderBy('id')
       .execute();
+    const holds = await latestCsamHolds(items.map((i) => i.id));
     const itemTexts = new Map<number, string[]>();
+    const heldPosts = new Set<number>();
+    const heldItems: CsamContextCandidate[] = [];
     for (const item of items) {
       const plain = htmlToPlainText(item.content);
-      if (plain) itemTexts.set(item.postId, [...(itemTexts.get(item.postId) ?? []), plain]);
+      const hold = holds.get(item.id);
+      if (item.csamHeld || hold) {
+        heldPosts.add(item.postId);
+        const reviewed = hold && decisionReview(hold);
+        heldItems.push({
+          source: 'postText',
+          id: item.id,
+          postId: item.postId,
+          index: item.index,
+          authorId: item.userId,
+          postedAt: new Date(item.createdAt).toISOString(),
+          text: plain,
+          heldSince: new Date(
+            hold ? Math.max(+hold.createdAt, +hold.updatedAt) : +item.updatedAt
+          ).toISOString(),
+          ...(reviewed && { reviewed }),
+        });
+      } else if (plain) itemTexts.set(item.postId, [...(itemTexts.get(item.postId) ?? []), plain]);
     }
     for (const post of posts) {
       const text = [
@@ -101,7 +190,8 @@ async function readCandidates({
       ]
         .filter(Boolean)
         .join('\n\n');
-      if (!text) continue;
+      // A post holding only held text is still offered, so ticking it captures that text.
+      if (!text && !heldPosts.has(post.id)) continue;
       candidates.push({
         source: 'postDescription',
         id: post.id,
@@ -111,6 +201,8 @@ async function readCandidates({
         text,
       });
     }
+    const offered = new Set(candidates.map((c) => c.postId));
+    candidates.push(...heldItems.filter((item) => offered.has(item.postId)));
   }
 
   if (commentIds?.length === 0) return { candidates, more: false };
@@ -172,14 +264,19 @@ export async function getCsamContextCandidates({
     imageIds,
     ...(userId > 0 && { ownerId: userId }),
   });
+  const rank = (c: CsamContextCandidate) =>
+    c.source === 'postDescription' ? 2 : c.source === 'postText' ? 1 : 0;
   const previews = candidates
     .sort(
       (a, b) =>
-        Number(b.source === 'postDescription') - Number(a.source === 'postDescription') ||
-        b.postedAt.localeCompare(a.postedAt)
+        rank(b) - rank(a) ||
+        (a.source === 'postText' && b.source === 'postText'
+          ? (a.postId ?? 0) - (b.postId ?? 0) || (a.index ?? 0) - (b.index ?? 0)
+          : b.postedAt.localeCompare(a.postedAt))
     )
-    .map((candidate) => {
-      const chars = Array.from(candidate.text);
+    .map(({ heldSince, ...candidate }) => {
+      // A held item's words are shown only through `readHeldCsamContextText`, which records the read.
+      const chars = candidate.source === 'postText' ? [] : Array.from(candidate.text);
       return {
         ...candidate,
         text: chars.slice(0, CANDIDATE_PREVIEW_CHARS).join(''),
@@ -188,6 +285,80 @@ export async function getCsamContextCandidates({
       };
     });
   return { candidates: previews, more };
+}
+
+/**
+ * A held text item's full words, for a moderator filing a report on these images, recording the
+ * read: only such a read by the filing moderator marks the item reviewed when the report is filed.
+ */
+export async function readHeldCsamContextText({
+  userId,
+  imageIds,
+  postTextId,
+  moderatorId,
+}: GetCsamContextCandidatesSchema & { postTextId: number; moderatorId: number }) {
+  const [text] = await kyselyWrite
+    .selectFrom('PostText')
+    .select('postId')
+    .where('id', '=', postTextId)
+    .execute();
+  const { candidates } = text
+    ? await readCandidates({
+        imageIds,
+        ...(userId > 0 && { ownerId: userId }),
+        postIds: [text.postId],
+        commentIds: [],
+      })
+    : { candidates: [] };
+  const held = candidates.find((c) => c.source === 'postText' && c.id === postTextId);
+  if (!held) throwBadRequestError('This text is not held text on the images in this report');
+
+  const [read] = await kyselyWrite
+    .insertInto('ModActivity')
+    .values({
+      userId: moderatorId,
+      activity: CSAM_CONTEXT_TEXT_READ_ACTIVITY,
+      entityType: 'PostText',
+      entityId: postTextId,
+    })
+    .returning('createdAt')
+    .execute();
+  return { id: postTextId, text: held!.text, readAt: new Date(read.createdAt).toISOString() };
+}
+
+/** Each held item's newest read by this moderator after it was held and by `before`. */
+async function readsBy(
+  moderatorId: number,
+  items: CsamContextCandidate[],
+  before: Date
+): Promise<Map<number, CsamContextReview>> {
+  const reads = new Map<number, CsamContextReview>();
+  if (!items.length) return reads;
+  const rows = await kyselyWrite
+    .selectFrom('ModActivity')
+    .select(['entityId', 'createdAt'])
+    .where('userId', '=', moderatorId)
+    .where('activity', '=', CSAM_CONTEXT_TEXT_READ_ACTIVITY)
+    .where('entityType', '=', 'PostText')
+    .where(
+      'entityId',
+      'in',
+      items.map((i) => i.id)
+    )
+    .where('createdAt', '<=', before)
+    .orderBy('createdAt', 'desc')
+    .execute();
+  for (const row of rows) {
+    const item = items.find((i) => i.id === row.entityId);
+    if (!item || row.entityId === null || reads.has(row.entityId)) continue;
+    if (item.heldSince && new Date(row.createdAt) < new Date(item.heldSince)) continue;
+    reads.set(row.entityId, {
+      byId: moderatorId,
+      at: new Date(row.createdAt).toISOString(),
+      origin: 'filer-read',
+    });
+  }
+  return reads;
 }
 
 /** Copies the chosen text, refusing any source outside the report's images. */
@@ -219,12 +390,23 @@ export async function snapshotCsamContextText({
   if (missing.length)
     throwBadRequestError('Some selected text is not on the images in this report');
 
-  return found.map(({ deleted, hidden, ...candidate }) => ({
-    ...candidate,
-    authorIsReportedUser: reportedUserIds.includes(candidate.authorId),
-    capturedAt: capturedAt.toISOString(),
+  const reads = await readsBy(
     capturedById,
-  }));
+    found.filter((c) => c.source === 'postText' && !c.reviewed),
+    capturedAt
+  );
+  return found
+    .filter((c) => c.source !== 'postDescription' || c.text)
+    .map(({ deleted, hidden, heldSince, ...candidate }) => {
+      const reviewed = candidate.reviewed ?? reads.get(candidate.id);
+      return {
+        ...candidate,
+        authorIsReportedUser: reportedUserIds.includes(candidate.authorId),
+        capturedAt: capturedAt.toISOString(),
+        capturedById,
+        ...(candidate.source === 'postText' && reviewed && { reviewed }),
+      };
+    });
 }
 
 /** The report's user and, when it names one, its secondary user. */
@@ -238,12 +420,53 @@ export function reportedUserIdsOf(userId: number, details: unknown) {
   return ids;
 }
 
-/** Earlier captures are kept: a re-filing never replaces text already captured. */
-export function foldContextText(prior: unknown, added: CsamContextText[] | undefined) {
-  const kept = Array.isArray(prior) ? (prior as CsamContextText[]) : [];
-  const key = (c: CsamContextText) => `${c.source}:${c.id}`;
-  const seen = new Set(kept.map(key));
-  const merged = kept.concat((added ?? []).filter((c) => !seen.has(key(c))));
+/**
+ * Merges a filing's captures into a report's. A capture is added as its own entry unless its text
+ * equals the item's latest capture, so an item edited, or edited and changed back, keeps each text in
+ * order. When it equals the latest capture the report already held, `onIdentical` hears it once per
+ * item. An earlier capture changes only one way: a stored latest capture with no review takes the
+ * review of an identical capture whose review names a known origin (`CSAM_REVIEW_ORIGINS`), with its
+ * text and capture time kept.
+ */
+export function foldContextText(
+  prior: unknown,
+  added: CsamContextText[] | undefined,
+  onIdentical?: (capture: CsamContextText, reviewUpgrade?: CsamContextReview) => void
+) {
+  const merged = Array.isArray(prior) ? [...(prior as CsamContextText[])] : [];
+  const item = (c: CsamContextText) => `${c.source}:${c.id}`;
+  const latest = new Map<string, { capture: CsamContextText; stored: boolean }>();
+  const consider = (c: CsamContextText, stored: boolean) => {
+    const current = latest.get(item(c));
+    if (!current || c.capturedAt >= current.capture.capturedAt)
+      latest.set(item(c), { capture: c, stored });
+  };
+  for (const c of merged) consider(c, true);
+  const heard = new Set<string>();
+  for (const c of added ?? []) {
+    const current = latest.get(item(c));
+    if (current && current.capture.text === c.text) {
+      if (current.stored && !heard.has(item(c))) {
+        heard.add(item(c));
+        const review = c.reviewed;
+        const upgrade =
+          !current.capture.reviewed &&
+          review?.origin &&
+          (CSAM_REVIEW_ORIGINS as readonly string[]).includes(review.origin)
+            ? review
+            : undefined;
+        if (upgrade) {
+          const reviewed = { ...current.capture, reviewed: upgrade };
+          merged[merged.indexOf(current.capture)] = reviewed;
+          latest.set(item(c), { capture: reviewed, stored: true });
+        }
+        onIdentical?.(c, upgrade);
+      }
+      continue;
+    }
+    merged.push(c);
+    consider(c, false);
+  }
   return merged.length ? merged : undefined;
 }
 
@@ -270,13 +493,35 @@ function quotedCapped(text: string) {
 const author = (c: CsamContextText) =>
   c.authorIsReportedUser ? 'the reported account' : 'another account';
 
+/** Sent with a held text item no moderator read or decided on its own (`CsamContextText.reviewed`). */
+export const NOT_REVIEWED = 'Not reviewed by Civitai';
+
 function itemText(c: CsamContextText) {
+  const posted = `posted ${formatUtc(c.postedAt)} by ${author(c)}`;
   const heading =
     c.source === 'postDescription'
-      ? `Post description, posted ${formatUtc(c.postedAt)} by ${author(c)}:`
-      : `Comment ${c.id}, posted ${formatUtc(c.postedAt)} by ${author(c)}:`;
+      ? `Post description, ${posted}:`
+      : c.source === 'postText'
+      ? `Text item ${c.id} of this post, ${posted}${c.reviewed ? '' : `. ${NOT_REVIEWED}`}:`
+      : `Comment ${c.id}, ${posted}:`;
   return `${heading}\n${quotedCapped(c.text)}`;
 }
+
+const SENDABLE_SOURCES: readonly string[] = ['postDescription', 'comment', 'postText'];
+const sendable = (c: CsamContextText) => SENDABLE_SOURCES.includes(c.source);
+
+/**
+ * Stored text of a source this build can't send: a capture from a newer build, read during a rolling
+ * deploy or after a rollback. The send leaves it out and says so; the archive keeps it.
+ */
+export const unsendableContextText = (contextText: CsamContextText[] | undefined) =>
+  (contextText ?? []).filter((c) => !sendable(c));
+
+/** The line a CyberTip carries for the captured items it leaves out: a count, no type, no content. */
+export const contextTextOmittedLine = (count: number) =>
+  count === 1
+    ? 'One captured text item is not included in this submission. Civitai has preserved it with this report.'
+    : `${count} captured text items are not included in this submission. Civitai has preserved them with this report.`;
 
 /** The page incidents as NCMEC reads them once parsed: one per page and capture time. */
 export function contextWebPageIncidents(contextText: CsamContextText[] | undefined) {
@@ -284,6 +529,7 @@ export function contextWebPageIncidents(contextText: CsamContextText[] | undefin
   const base = getBaseUrl('red');
   const groups = new Map<string, { url: string; capturedAt: string; items: CsamContextText[] }>();
   for (const c of contextText) {
+    if (!sendable(c)) continue;
     const url = c.postId ? `${base}/posts/${c.postId}` : `${base}/images/${c.imageId}`;
     const key = `${url} ${c.capturedAt}`;
     const group = groups.get(key) ?? { url, capturedAt: c.capturedAt, items: [] };
@@ -291,9 +537,13 @@ export function contextWebPageIncidents(contextText: CsamContextText[] | undefin
     groups.set(key, group);
   }
   return [...groups.values()].map(({ url, capturedAt, items }) => {
+    // The description, then the post's held text items in reading order, then comments.
+    const rank = (c: CsamContextText) =>
+      c.source === 'postDescription' ? 0 : c.source === 'postText' ? 1 : 2;
     const ordered = [...items].sort(
       (a, b) =>
-        Number(b.source === 'postDescription') - Number(a.source === 'postDescription') ||
+        rank(a) - rank(b) ||
+        (a.index ?? 0) - (b.index ?? 0) ||
         a.postedAt.localeCompare(b.postedAt) ||
         a.id - b.id
     );

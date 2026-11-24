@@ -43,7 +43,7 @@ export default WebhookEndpoint(async (req, res) => {
       imageScanWebhookCounter.inc({ result: 'deleted_skip' });
       return res.status(200).json({ ok: true, skipped: 'deleted' });
     }
-    await logToAxiom({
+    logToAxiom({
       name: log.name,
       type: 'error',
       message: error.message,

@@ -584,7 +584,8 @@ type MyHatRow = {
 export async function getMyEventHats({
   event,
   user,
-}: EventInput & { user: { id: number; isModerator?: boolean } }) {
+  asOwner = false,
+}: EventInput & { user: { id: number; isModerator?: boolean } } & CoverViews) {
   try {
     const scored = await eventEngine.getReadableScoredEvent(event, user);
     const definition = getEventDecorationDefinition(event);
@@ -613,7 +614,7 @@ export async function getMyEventHats({
     }));
     const [scores, entities, live] = await Promise.all([
       getCosmeticScores(scored, keys),
-      getPlaceableEntities(placed, user),
+      getPlaceableEntities(placed, asOwner ? user : undefined),
       liveHatTotals(scored, hats),
     ]);
 
@@ -664,6 +665,8 @@ export async function getMyEventHatPlacementStats({
 }
 
 type PlaceableUser = { id: number; isModerator?: boolean };
+/** Set by the router from the credential; false shows covers as a stranger sees them. */
+type CoverViews = { asOwner?: boolean };
 const PLACEABLE_TYPES: CosmeticEntity[] = [
   CosmeticEntity.Image,
   CosmeticEntity.Model,
@@ -675,7 +678,8 @@ const PLACEABLE_TYPES: CosmeticEntity[] = [
 export async function getPlaceableEventContent({
   event,
   user,
-}: EventInput & { user: PlaceableUser }) {
+  asOwner = false,
+}: EventInput & { user: PlaceableUser } & CoverViews) {
   try {
     await eventEngine.assertReadable(event, user);
     const types = getEventDecorationDefinition(event)?.entityTypes ?? [];
@@ -686,7 +690,7 @@ export async function getPlaceableEventContent({
     );
     return getPlaceableEntities(
       ids.flatMap((x) => x.entities),
-      user
+      asOwner ? user : undefined
     );
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
@@ -699,7 +703,8 @@ export async function getPlaceableEventContentPage({
   entityType,
   cursor,
   user,
-}: PlaceableContentPageInput & { user: PlaceableUser }) {
+  asOwner = false,
+}: PlaceableContentPageInput & { user: PlaceableUser } & CoverViews) {
   try {
     await eventEngine.assertReadable(event, user);
     const types = getEventDecorationDefinition(event)?.entityTypes ?? [];
@@ -711,7 +716,10 @@ export async function getPlaceableEventContentPage({
       cursor,
       PLACEABLE_PER_TYPE
     );
-    return { items: await getPlaceableEntities(entities, user), nextCursor };
+    return {
+      items: await getPlaceableEntities(entities, asOwner ? user : undefined),
+      nextCursor,
+    };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
@@ -801,7 +809,7 @@ async function placeableImageIds(userId: number, cursor: number | undefined, lim
 // scanning, or removed) is kept with a null image, so a worn hat never disappears from the list.
 async function getPlaceableEntities(
   entities: { entityType: CosmeticEntity; entityId: number }[],
-  viewer: PlaceableUser
+  viewer: PlaceableUser | undefined
 ) {
   if (!entities.length) return [];
   const modelIds = entities.filter((e) => e.entityType === 'Model').map((e) => e.entityId);
@@ -889,9 +897,10 @@ const UNSCORED_HAT = {
   remixes: 0,
 };
 
-// The hat of this event worn on one piece of content, who wears it and what it has earned there, for
-// the popover a click on a card's hat opens. Null when no hat of the event is on it, or when the
-// content is not public: the answer is the same for every viewer and is edge-cached as such.
+// The hat of this event worn on one piece of content, who wears it and what the hat has earned
+// everywhere it has been worn (totals are per hatField, with no entity), for the popover a click on
+// a card's hat opens. Null when no hat of the event is on it, or when the content is not public: the
+// answer is the same for every viewer and is edge-cached as such.
 // Hats stay on content after the event, so the hat comes from the content's decoration, not the
 // hat map the event stops keeping.
 export async function getWornEventHat({

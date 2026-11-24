@@ -1,4 +1,4 @@
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { Center, Stack, Text } from '@mantine/core';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { IconAward } from '@tabler/icons-react';
@@ -159,9 +159,9 @@ export const AwardBountyAction = ({
       return;
     }
 
-    openConfirmModal({
+    openConfirm({
       title: 'Award this entry?',
-      children: (
+      message: (
         <Stack>
           {bountyEntry && bountyEntry?.user && (
             <Center>
@@ -195,7 +195,6 @@ export const AwardBountyAction = ({
           )} */}
         </Stack>
       ),
-      centered: true,
       labels: { confirm: 'Award this entry', cancel: 'No, go back' },
       confirmProps: { color: 'yellow.7', rightSection: <IconAward size={20} /> },
       onConfirm: () => {

@@ -99,9 +99,18 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
       await store.put(m1, PREFS, 'k', { who: 1 });
       await store.put(m1, BOARD, 'same', { by: 1 });
       await store.put(m1, POSTS, 'p', { status: 'open' });
-      expect(await store.mark(m1, POSTS, 'p', 'vote')).toEqual({ marked: true, count: 1 });
-      expect(await store.increment(m1, POSTS, 'p', 'views', 5)).toEqual({ value: 5 });
-      expect(await store.increment(m1, TALLIES, 'g', 'plays', 3)).toEqual({ value: 3 });
+      // Each namespace numbers its own writes and marks.
+      expect(await store.mark(m1, POSTS, 'p', 'vote')).toEqual({
+        marked: true,
+        count: 1,
+        markSeq: 1,
+      });
+      expect(await store.increment(m1, POSTS, 'p', 'views', 5)).toEqual({ value: 5, markSeq: 2 });
+      expect(await store.increment(m1, TALLIES, 'g', 'plays', 3)).toEqual({
+        value: 3,
+        markSeq: 3,
+        seq: 4,
+      });
 
       expect(await store.get(m2, PREFS, 'k')).toBeNull();
       expect(await store.get(m2, BOARD, 'same')).toBeNull();
@@ -113,9 +122,17 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
       // no `not_author`, a fresh version, and tallies that start from zero.
       expect((await store.put(m2, BOARD, 'same', { by: 2 })).version).toBe(1);
       await store.put(m2, POSTS, 'p', { status: 'closed' });
-      expect(await store.mark(m2, POSTS, 'p', 'vote')).toEqual({ marked: true, count: 1 });
-      expect(await store.increment(m2, POSTS, 'p', 'views', 2)).toEqual({ value: 2 });
-      expect(await store.increment(m2, TALLIES, 'g', 'plays', 1)).toEqual({ value: 1 });
+      expect(await store.mark(m2, POSTS, 'p', 'vote')).toEqual({
+        marked: true,
+        count: 1,
+        markSeq: 1,
+      });
+      expect(await store.increment(m2, POSTS, 'p', 'views', 2)).toEqual({ value: 2, markSeq: 2 });
+      expect(await store.increment(m2, TALLIES, 'g', 'plays', 1)).toEqual({
+        value: 1,
+        markSeq: 3,
+        seq: 3,
+      });
 
       expect(await store.get(m1, BOARD, 'same')).toMatchObject({ data: { by: 1 }, version: 1 });
       expect(await store.get(m1, POSTS, 'p')).toMatchObject({
@@ -164,6 +181,16 @@ function defineReviewSuite(makeHarness: () => Promise<Harness>) {
       const app = freshApp('REVKEEP');
       for (const uid of [MOD_1, MOD_2]) await seedModerator(store, pr, uid);
       await seedModerator(store, other, MOD_1);
+      // The store records maintenance runs in the production namespace only, so none of the
+      // calls above writes one; one is seeded in each review namespace so the purge's
+      // `maint_run` delete is exercised too.
+      for (const uid of [MOD_1, MOD_2]) {
+        await h.raw(
+          `INSERT INTO appdata.maint_run (app_id, ns, coll, kind, name, status)
+           VALUES ($1, $2, 'posts', 'mark_migration', 'vote', 'frozen')`,
+          [pr, reviewNamespace(pr, uid)]
+        );
+      }
       // prod and dev rows under the request's OWN app id: the purge must not reach them.
       await store.put(ctx(pr, NS_PROD, MOD_1), POSTS, 'p1', { status: 'open' });
       await store.mark(ctx(pr, NS_PROD, MOD_1), POSTS, 'p1', 'vote');

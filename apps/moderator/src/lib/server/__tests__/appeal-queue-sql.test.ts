@@ -27,7 +27,7 @@ const { getAppealImageQueue } = await import('../image-review.service');
 
 const compileQueue = async () => {
   captured.length = 0;
-  await getAppealImageQueue({ browsingLevel: 1, limit: 20 });
+  await getAppealImageQueue({ browsingLevel: 1, limit: 20, csamReview: true });
   const sql = captured.find((s) => s.includes('ModActivity'));
   if (!sql) throw new Error('the appeal queue emitted no query touching ModActivity');
   return sql;

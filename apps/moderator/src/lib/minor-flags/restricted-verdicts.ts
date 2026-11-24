@@ -29,6 +29,8 @@ export type RestrictedVerdictRow = {
   /** Who cleared the flag when it was not the owner's save; such a lead never applies by itself. */
   liftedBy: 'moderator' | 'appeal' | 'hashRevert' | null;
   heldAt: string | null;
+  /** The lead as this row shows it (`restrictedLeadRevision`), sent back with a ruling. */
+  revision: string;
   source: string | null;
   /** The text scan's own verdict row, when the text-scan path raised it. */
   scanLevel: number | null;

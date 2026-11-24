@@ -1,4 +1,22 @@
-import { Box, Group, Text } from '@mantine/core';
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import type { DragEndEvent } from '@dnd-kit/core';
+import {
+  arrayMove,
+  rectSortingStrategy,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { Box, Divider, Group, Paper, Stack, Text } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { IconEyeOff } from '@tabler/icons-react';
 import type { KeyboardEvent } from 'react';
@@ -20,9 +38,88 @@ function groupBadgesByImage(badges: BadgeItem[]) {
   return [...groups.values()];
 }
 
+const TILE_SIZE = 56;
+
+function BadgeImage({ badge }: { badge: BadgeItem }) {
+  const url = badge.data?.url;
+  if (!url) return null;
+  return (
+    <EdgeMedia
+      src={url}
+      width={64}
+      alt={badge.name ?? 'Badge'}
+      className="size-full object-contain"
+      optimized
+    />
+  );
+}
+
+function PinNumber({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: -6,
+        right: -6,
+        width: 18,
+        height: 18,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: '50%',
+        fontSize: 11,
+        fontWeight: 700,
+        color: 'var(--mantine-color-dark-9)',
+        background: 'var(--mantine-color-yellow-5)',
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// One pinned badge in the reorder strip. The id is the pinned cosmetic id.
+function SortablePin({ id, badge, position }: { id: number; badge: BadgeItem; position: number }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    // A button here would collide with the toggle tiles below.
+    attributes: { role: 'listitem' },
+  });
+  const name = badge.name ?? 'Badge';
+  return (
+    <Tooltip label={`${name}: drag to reorder`} withArrow>
+      <Box
+        ref={setNodeRef}
+        aria-label={`Pin ${position}: ${name}`}
+        {...attributes}
+        {...listeners}
+        style={{
+          position: 'relative',
+          width: TILE_SIZE,
+          height: TILE_SIZE,
+          padding: 4,
+          borderRadius: 'var(--mantine-radius-md)',
+          cursor: isDragging ? 'grabbing' : 'grab',
+          border: '2px solid var(--mantine-color-yellow-5)',
+          background: 'var(--mantine-color-yellow-light)',
+          transform: CSS.Transform.toString(transform),
+          transition,
+          opacity: isDragging ? 0.6 : 1,
+          zIndex: isDragging ? 1 : undefined,
+          touchAction: 'manipulation',
+        }}
+      >
+        <BadgeImage badge={badge} />
+        <PinNumber>{position}</PinNumber>
+      </Box>
+    </Tooltip>
+  );
+}
+
 // Owned badges as clickable tiles; clicking toggles a badge into the list.
-// - highlight: click order is the display order; selected tiles show a ring +
-//   the pin position.
+// - highlight: click order is the display order; selected tiles show a ring. With two or
+//   more pins, a strip above the grid shows the pin numbers and reorders them by drag
+//   (or keyboard: space to lift, arrows to move, space to drop).
 // - hide: selected tiles are dimmed with a red ring + eye-off marker (order is
 //   irrelevant).
 // Value is an array of cosmetic ids (ordered for highlight).
@@ -31,12 +128,20 @@ export function HighlightedBadgesInput({
   value,
   onChange,
   variant = 'highlight',
+  hiddenIds,
 }: {
   badges: BadgeItem[];
   value: number[];
   onChange: (ids: number[]) => void;
   variant?: 'highlight' | 'hide';
+  // highlight only: badges the user currently hides. Pinning one shows it again.
+  hiddenIds?: number[];
 }) {
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
   const tiles = groupBadgesByImage(badges);
   const toggle = (groupIds: number[]) =>
     onChange(
@@ -59,75 +164,128 @@ export function HighlightedBadgesInput({
     badges.map((b) => b.id)
   );
 
+  // One entry per pinned tile, in pin order, keyed by the id that holds its slot in `value`.
+  const pins =
+    variant === 'highlight'
+      ? tiles
+          .map(({ badge, ids }) => {
+            const slots = ids.map((id) => value.indexOf(id)).filter((index) => index >= 0);
+            return slots.length ? { id: value[Math.min(...slots)], badge } : null;
+          })
+          .filter((pin) => pin !== null)
+          .sort((a, b) => value.indexOf(a.id) - value.indexOf(b.id))
+      : [];
+
+  // Pins swap slots in `value`; unowned ids and any sibling ids stay where they are.
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    const order = pins.map((pin) => pin.id);
+    const from = order.indexOf(Number(active.id));
+    const to = order.indexOf(Number(over.id));
+    if (from < 0 || to < 0) return;
+    const slots = order.map((id) => value.indexOf(id)).sort((a, b) => a - b);
+    const next = [...value];
+    arrayMove(order, from, to).forEach((id, i) => (next[slots[i]] = id));
+    onChange(next);
+  };
+
   return (
-    <Group gap="xs">
-      {tiles.map(({ badge, ids }) => {
-        const order = Math.min(
-          ...ids.map((id) => shownValue.indexOf(id)).filter((index) => index >= 0)
-        );
-        const selected = Number.isFinite(order);
-        const url = badge.data?.url;
-        return (
-          <Tooltip key={ids[0]} label={badge.name ?? 'Badge'} withArrow>
-            <Box
-              role="button"
-              aria-label={badge.name ?? 'Badge'}
-              tabIndex={0}
-              onClick={() => toggle(ids)}
-              onKeyDown={(e: KeyboardEvent) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  toggle(ids);
-                }
-              }}
-              style={{
-                position: 'relative',
-                width: 56,
-                height: 56,
-                padding: 4,
-                borderRadius: 'var(--mantine-radius-md)',
-                cursor: 'pointer',
-                opacity: selected ? (variant === 'hide' ? 0.45 : 1) : 0.65,
-                border: `2px solid ${
-                  selected ? `var(--mantine-color-${accent}-5)` : 'transparent'
-                }`,
-                background: selected ? `var(--mantine-color-${accent}-light)` : undefined,
-              }}
+    <Stack gap="sm">
+      {pins.length > 1 && (
+        <>
+          <Paper withBorder radius="md" p="sm" className="bg-gray-0 dark:bg-dark-7">
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
             >
-              {url && (
-                <EdgeMedia
-                  src={url}
-                  width={64}
-                  alt={badge.name ?? 'Badge'}
-                  className="h-full w-full object-contain"
-                  optimized
-                />
-              )}
-              {selected && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: -6,
-                    right: -6,
-                    width: 18,
-                    height: 18,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderRadius: '50%',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color: variant === 'hide' ? 'white' : 'var(--mantine-color-dark-9)',
-                    background: `var(--mantine-color-${accent}-5)`,
-                  }}
-                >
-                  {variant === 'hide' ? <IconEyeOff size={12} /> : order + 1}
-                </div>
-              )}
-            </Box>
-          </Tooltip>
-        );
-      })}
-    </Group>
+              <SortableContext items={pins.map((pin) => pin.id)} strategy={rectSortingStrategy}>
+                <Group gap="xs" role="list" aria-label="Pin order">
+                  {pins.map((pin, index) => (
+                    <SortablePin key={pin.id} id={pin.id} badge={pin.badge} position={index + 1} />
+                  ))}
+                </Group>
+              </SortableContext>
+            </DndContext>
+            <Text size="xs" c="dimmed" mt={6}>
+              Drag to reorder
+            </Text>
+          </Paper>
+          <Divider label="All badges" labelPosition="center" />
+        </>
+      )}
+      <Group gap="xs">
+        {tiles.map(({ badge, ids }) => {
+          const order = Math.min(
+            ...ids.map((id) => shownValue.indexOf(id)).filter((index) => index >= 0)
+          );
+          const selected = Number.isFinite(order);
+          const hidden = variant === 'highlight' && !selected && !!hiddenIds?.includes(ids[0]);
+          const name = badge.name ?? 'Badge';
+          return (
+            <Tooltip
+              key={ids[0]}
+              label={hidden ? `${name} (hidden: pinning shows it)` : name}
+              withArrow
+            >
+              <Box
+                role="button"
+                aria-label={name}
+                aria-pressed={selected}
+                tabIndex={0}
+                onClick={() => toggle(ids)}
+                onKeyDown={(e: KeyboardEvent) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggle(ids);
+                  }
+                }}
+                style={{
+                  position: 'relative',
+                  width: 56,
+                  height: 56,
+                  padding: 4,
+                  borderRadius: 'var(--mantine-radius-md)',
+                  cursor: 'pointer',
+                  opacity: hidden ? 0.4 : selected ? (variant === 'hide' ? 0.45 : 1) : 0.65,
+                  border: `2px solid ${
+                    selected ? `var(--mantine-color-${accent}-5)` : 'transparent'
+                  }`,
+                  background: selected ? `var(--mantine-color-${accent}-light)` : undefined,
+                }}
+              >
+                <BadgeImage badge={badge} />
+                {selected && variant === 'hide' && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: -6,
+                      right: -6,
+                      width: 18,
+                      height: 18,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: '50%',
+                      color: 'white',
+                      background: 'var(--mantine-color-red-5)',
+                    }}
+                  >
+                    <IconEyeOff size={12} />
+                  </div>
+                )}
+                {hidden && (
+                  <IconEyeOff
+                    size={14}
+                    aria-hidden
+                    style={{ position: 'absolute', bottom: 2, right: 2 }}
+                  />
+                )}
+              </Box>
+            </Tooltip>
+          );
+        })}
+      </Group>
+    </Stack>
   );
 }

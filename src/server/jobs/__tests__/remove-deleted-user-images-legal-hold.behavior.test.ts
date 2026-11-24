@@ -1,8 +1,11 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
+import { DELETED_ROW_COLUMNS_SQL } from '../../services/__tests__/deleted-row-columns.fixture';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * The deleted-account drain leaves every image and post of a user under a legal hold, including a
@@ -71,8 +74,12 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
-    CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3), meta jsonb);
-    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3), meta jsonb, "bannedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (
+      id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
+    );
+    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp, metadata jsonb);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
@@ -80,7 +87,11 @@ beforeAll(async () => {
       "postId" int,
       ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
       "blockedFor" text,
-      "needsReview" text
+      "needsReview" text,
+      "nsfwLevel" int NOT NULL DEFAULT 1,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
+      metadata jsonb NOT NULL DEFAULT '{}',
+      "updatedAt" timestamp(3)
     );
     CREATE TABLE "Thread" (
       id int PRIMARY KEY, "postId" int UNIQUE REFERENCES "Post"(id) ON DELETE CASCADE,
@@ -100,6 +111,16 @@ beforeAll(async () => {
       images jsonb NOT NULL DEFAULT '[]'
     );
   `);
+  await holder.db.exec(`
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+    CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync', 'BlockedImageDelete');
+    CREATE TABLE "JobQueue" (
+      "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+      data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(),
+      UNIQUE ("entityType", "entityId", type)
+    );
+  `);
+  await holder.db.exec(imageUseTablesSql);
   await holder.db.exec(
     readFileSync(
       path.resolve(
@@ -127,6 +148,7 @@ beforeAll(async () => {
     ALTER TABLE "CsamReport" DISABLE TRIGGER "CsamReport_evidence_hold";
     INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED}, 'manual', 'review');
   `);
+  await holder.db.exec(DELETED_ROW_COLUMNS_SQL);
 });
 
 beforeEach(async () => {
@@ -152,15 +174,13 @@ beforeEach(async () => {
   vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(execute);
 
   // The row DELETE `deleteImages` runs, with `onlyWhere` composed into it the same way.
-  mockDeleteImages.mockImplementation(
-    async (ids: number[], _updatePosts?: boolean, opts?: { onlyWhere?: Prisma.Sql }) => {
-      if (hooks.beforeDelete) await hooks.beforeDelete(ids);
-      const where = opts?.onlyWhere ? Prisma.sql`AND (${opts.onlyWhere})` : Prisma.empty;
-      const sql = Prisma.sql`DELETE FROM "Image" WHERE id = ANY(${ids}::int[]) ${where} RETURNING id`;
-      const { rows } = await holder.db.query<{ id: number }>(sql.text, sql.values as unknown[]);
-      return rows;
-    }
-  );
+  mockDeleteImages.mockImplementation(async (ids: number[], opts?: { onlyWhere?: Prisma.Sql }) => {
+    if (hooks.beforeDelete) await hooks.beforeDelete(ids);
+    const where = opts?.onlyWhere ? Prisma.sql`AND (${opts.onlyWhere})` : Prisma.empty;
+    const sql = Prisma.sql`DELETE FROM "Image" WHERE id = ANY(${ids}::int[]) ${where} RETURNING id`;
+    const { rows } = await holder.db.query<{ id: number }>(sql.text, sql.values as unknown[]);
+    return rows;
+  });
 
   await holder.db.exec(`
     TRUNCATE "User", "Thread", "Post", "Image", "CsamReport" CASCADE;
@@ -176,6 +196,41 @@ beforeEach(async () => {
 });
 
 describe('remove-deleted-user-images under a legal hold', () => {
+  it("records each held image's rating and rating lock before blocking it", async () => {
+    await holder.db.exec(`
+      UPDATE "Image" SET "nsfwLevel" = 4, "nsfwLevelLocked" = true WHERE id = 1;
+      UPDATE "Image" SET "nsfwLevel" = 32, ingestion = 'Error' WHERE id = 2;
+      -- Already blocked for an unverified AI claim: the job re-points it rather than hiding it.
+      UPDATE "Image" SET "nsfwLevel" = 8, ingestion = 'Blocked', "blockedFor" = 'AiNotVerified' WHERE id = 3;
+    `);
+    await holdSecondaryUser(HELD);
+
+    await run();
+
+    const { rows } = await holder.db.query<{
+      id: number;
+      nsfwLevel: number;
+      metadata: Record<string, unknown>;
+    }>(`SELECT id, "nsfwLevel", metadata FROM "Image" WHERE id IN (1, 2, 3) ORDER BY id`);
+    // Control: the grace block ran and replaced the rating; the re-point leaves it.
+    expect(rows.map((row) => row.nsfwLevel)).toEqual([32, 32, 8]);
+    expect(rows.map((row) => row.metadata)).toEqual([
+      expect.objectContaining({
+        accountDeletionPriorNsfwLevel: 4,
+        accountDeletionPriorNsfwLevelLocked: true,
+      }),
+      expect.objectContaining({
+        accountDeletionPriorNsfwLevel: 32,
+        accountDeletionPriorNsfwLevelLocked: false,
+      }),
+      expect.objectContaining({
+        accountDeletionPriorBlockedFor: 'AiNotVerified',
+        accountDeletionPriorNsfwLevel: 8,
+        accountDeletionPriorNsfwLevelLocked: false,
+      }),
+    ]);
+  });
+
   it("leaves a held user's images and posts, and drains everyone else", async () => {
     await holdSecondaryUser(HELD);
 
@@ -412,5 +467,79 @@ describe('remove-deleted-user-images under any account hold', () => {
 
     expect(await imagesOf(-1)).toBe(1);
     expect(await imagesOf(UNHELD)).toBe(0);
+  });
+});
+
+describe('a held account deleted for good', () => {
+  const blockedOf = async (userId: number) =>
+    (
+      await holder.db.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM "Image" WHERE "userId" = $1 AND ingestion = 'Blocked'`,
+        [userId]
+      )
+    ).rows[0].n;
+  const banNote = (userId: number, bannedAgo: string) =>
+    holder.db.query(
+      `UPDATE "User" SET "bannedAt" = now() - $2::interval, meta = $3 WHERE id = $1`,
+      [userId, bannedAgo, JSON.stringify({ banDetails: { detailsInternal: 'NCMEC report filed' } })]
+    );
+
+  it('hides every image of a held account and keeps it, and drains everyone else', async () => {
+    await holdSecondaryUser(HELD);
+
+    await run();
+
+    expect(await blockedOf(HELD)).toBe(MANY);
+    expect(await imagesOf(HELD)).toBe(MANY);
+    expect(await postsOf(HELD)).toBe(1);
+    expect(await imagesOf(UNHELD)).toBe(0);
+  });
+
+  it('drains an account banned with a CSAM/NCMEC note and no hold, as anyone else', async () => {
+    await banNote(HELD, '2 days');
+
+    await run();
+
+    expect(await imagesOf(HELD)).toBe(0);
+    expect(await postsOf(HELD)).toBe(0);
+  });
+
+  it('leaves the images of an account an unarchived report names unblocked, until it is archived', async () => {
+    await holder.db.exec(
+      `INSERT INTO "CsamReport" ("userId", "reportSentAt") VALUES (${HELD}, now() - interval '1 day')`
+    );
+
+    await run();
+
+    expect(await blockedOf(HELD)).toBe(0);
+    expect(await imagesOf(HELD)).toBe(MANY);
+
+    await holder.db.exec(`UPDATE "CsamReport" SET "archivedAt" = now() WHERE "userId" = ${HELD}`);
+    await run();
+
+    expect(await blockedOf(HELD)).toBe(MANY);
+    expect(await imagesOf(HELD)).toBe(MANY);
+  });
+
+  it('stops picking up a held account once every image of it is blocked', async () => {
+    const candidates = () =>
+      vi
+        .mocked(loggingMock.logToAxiom)
+        .mock.calls.map(([entry]) => entry as { name?: string; candidates?: number })
+        .filter(
+          (entry) => entry.name === 'remove-deleted-user-images' && entry.candidates !== undefined
+        )
+        .map((entry) => entry.candidates);
+    await holdSecondaryUser(HELD);
+    vi.mocked(loggingMock.logToAxiom).mockClear();
+    await run();
+    expect(await blockedOf(HELD)).toBe(MANY);
+    // The control: the first run did pick the account up.
+    expect(candidates()[0]).toBeGreaterThan(0);
+
+    vi.mocked(loggingMock.logToAxiom).mockClear();
+    await run();
+
+    expect(candidates()).toEqual([0]);
   });
 });

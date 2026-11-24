@@ -46,6 +46,7 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../image-moderation-effects', () => ({
   applyBlockSideEffects,
+  writeBlockBlocklistEntry: vi.fn(async () => undefined),
   applyAcceptSideEffects: vi.fn(async () => undefined),
   applyVisibilitySideEffects: vi.fn(async () => undefined),
   refundAppealFee: vi.fn(async () => undefined),
@@ -76,6 +77,7 @@ const {
 } = await import('../image-moderation.service');
 
 const SCHEMA = `
+CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
 CREATE TABLE "Image" (
@@ -94,7 +96,8 @@ CREATE TABLE "Image" (
 );
 ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB,
+  PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -109,8 +112,12 @@ CREATE TABLE "Appeal" (
   "buzzTransactionId" TEXT,
   "entityRemovedAt" TIMESTAMP(3)
 );
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
-CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT, "deletedAt" TIMESTAMP(3));
+-- Rates a restored image as its tags would: an untagged one would go back to the scanner.
+CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$
+  UPDATE "Image" SET "nsfwLevel" = 1
+  WHERE id = ANY(ids) AND NOT "nsfwLevelLocked" AND "ingestion" = 'Scanned' AND "blockedFor" IS NULL;
+$$;
 CREATE TYPE "CsamQueueSetAsideOutcome" AS ENUM ('AfterReport', 'Dismissed');
 CREATE TABLE "CsamQueueSetAside" (
   "imageId" INTEGER PRIMARY KEY,
@@ -288,7 +295,9 @@ describe('an image removed with only the review flag left', () => {
     await acceptImage({ imageId: FLAGGED_REMOVED, userId: 2, restoreRemoved: true });
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: null, ingestion: 'Scanned' });
-    expect(trackImageRestore).toHaveBeenCalledWith({ imageId: FLAGGED_REMOVED, actorUserId: 2 });
+    expect(trackImageRestore).toHaveBeenCalledWith(
+      expect.objectContaining({ imageId: FLAGGED_REMOVED, actorUserId: 2 })
+    );
   });
 
   it('is accepted like any other image while it is still live', async () => {
@@ -760,5 +769,34 @@ describe('approving an appeal whose image turns held after the close', () => {
 
     expect(await appealStatus()).toBe('Approved');
     await nothingPaidOrTold();
+  });
+});
+
+describe('an explicit unblock of an image an account deletion blocked', () => {
+  it.each([
+    ['minor', 'minor'],
+    ['appeal', null],
+    ['csam', null],
+  ])('a recorded %s leaves the review flag %s, and the breadcrumbs go', async (review, flag) => {
+    await db.query(
+      `UPDATE "Image" SET "metadata" = jsonb_build_object(
+         'accountDeletionPriorIngestion', 'Scanned',
+         'accountDeletionPriorBlockedFor', NULL,
+         'accountDeletionPriorNeedsReview', $2::text,
+         'keep', 1)
+       WHERE "id" = $1`,
+      [OTHER_FLAG_REMOVED, review]
+    );
+
+    await acceptImage({ imageId: OTHER_FLAG_REMOVED, userId: 2, restoreRemoved: true });
+
+    const { rows } = await db.query<{
+      needsReview: string | null;
+      ingestion: string;
+      metadata: unknown;
+    }>(`SELECT "needsReview", "ingestion", "metadata" FROM "Image" WHERE "id" = $1`, [
+      OTHER_FLAG_REMOVED,
+    ]);
+    expect(rows[0]).toEqual({ needsReview: flag, ingestion: 'Scanned', metadata: { keep: 1 } });
   });
 });

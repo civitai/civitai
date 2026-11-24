@@ -95,6 +95,7 @@ const decide = (decision: 'dismiss' | 'remove' | 'remove_ban', note?: string, te
     holdId: 12,
     textHash,
     decision,
+    reportChoice: decision === 'dismiss' ? undefined : 'none',
     note,
     actor: { id: 7 },
     tracker: tracker as never,
@@ -124,6 +125,7 @@ describe('the csam hold decision record, against the real label store', () => {
       holdId: 12,
       textHash: 'h',
       decision: 'remove_ban_report',
+      reportChoice: 'imagery',
       actor: { id: 7 },
       tracker: tracker as never,
     });
@@ -136,7 +138,9 @@ describe('the csam hold decision record, against the real label store', () => {
     expect(dbMock.dbWrite.serviceOffering.update).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.serviceOffering.delete).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.serviceOffering.deleteMany).not.toHaveBeenCalled();
-    expect(mocks.toggleBan).toHaveBeenCalledWith(expect.objectContaining({ id: 900 }));
+    expect(mocks.toggleBan).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 900, alwaysArchiveProfile: true })
+    );
     expect(await labels()).toEqual([
       {
         value: 'csam',
@@ -254,6 +258,14 @@ describe("a decision applied to the author's other holds", () => {
         { value, reason: decision, subjectType: 'comment_v3_text', subjectId: '55' },
         { value, reason: 'batch_apply', subjectType: 'comment_v3_text', subjectId: '56' },
       ]);
+      // A report counts only the hold decided on its own as reviewed.
+      const reviewed = Object.fromEntries(
+        dbMock.dbWrite.textScanHold.updateMany.mock.calls.map(([args]) => [
+          (args as { where: { id: number } }).where.id,
+          (args as { data: { meta: { reviewedDecision?: boolean } } }).data.meta.reviewedDecision,
+        ])
+      );
+      expect(reviewed).toEqual({ 12: true, 13: false });
     }
   );
 });

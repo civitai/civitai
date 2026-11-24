@@ -6,6 +6,11 @@ import {
   TEXT_MODERATION_RETRY_LIMIT,
 } from '~/server/jobs/text-moderation-retry';
 import {
+  TEXT_MODERATION_EXHAUSTED_RESEND_AFTER_HOURS,
+  TEXT_MODERATION_RETRY_STATUSES,
+  textModerationRetryStatusSql,
+} from '~/server/jobs/text-moderation-retry.constants';
+import {
   blockServiceOffering,
   scanServiceOffering,
   settleOrHoldServiceOffering,
@@ -16,16 +21,8 @@ import { decreaseDate } from '~/utils/date-helpers';
 
 // Gives the callback time to land before the job steps in.
 const STUCK_THRESHOLD_MINUTES = 10;
-// A check that spent its retries is sent again after this, with a fresh retry budget.
-export const EXHAUSTED_RESUBMIT_AFTER_HOURS = 24;
 const FETCH_LIMIT = 200;
 const CONCURRENCY = 5;
-
-const TERMINAL: EntityModerationStatus[] = [
-  EntityModerationStatus.Failed,
-  EntityModerationStatus.Expired,
-  EntityModerationStatus.Canceled,
-];
 
 export type ReconcileAction = 'submit' | 'resubmit-exhausted' | 'settle' | 'block' | 'leave';
 
@@ -59,7 +56,7 @@ export function reconcileAction(
   if (moderation.status === EntityModerationStatus.Pending && moderation.updatedAt < pendingBefore)
     return 'submit';
   if (
-    TERMINAL.includes(moderation.status) &&
+    TEXT_MODERATION_RETRY_STATUSES.includes(moderation.status) &&
     moderation.retryCount >= TEXT_MODERATION_RETRY_LIMIT &&
     moderation.updatedAt < exhaustedBefore
   )
@@ -109,7 +106,7 @@ export async function serviceOfferingReconcileCandidates({
         em."entityId" IS NULL
         OR em.status = 'Succeeded'
         OR (em.status = 'Pending' AND em."updatedAt" < ${pendingBefore})
-        OR (em.status IN ('Failed', 'Expired', 'Canceled')
+        OR (em.status IN ${textModerationRetryStatusSql}
           AND em."retryCount" >= ${TEXT_MODERATION_RETRY_LIMIT}
           AND em."updatedAt" < ${exhaustedBefore})
       )
@@ -134,7 +131,11 @@ export const serviceOfferingIngestionReconcile = createJob(
     const stuckBefore = decreaseDate(now, STUCK_THRESHOLD_MINUTES, 'minutes');
     const pendingBefore = decreaseDate(now, TEXT_MODERATION_PENDING_TIMEOUT_MINUTES, 'minutes');
 
-    const exhaustedBefore = decreaseDate(now, EXHAUSTED_RESUBMIT_AFTER_HOURS, 'hours');
+    const exhaustedBefore = decreaseDate(
+      now,
+      TEXT_MODERATION_EXHAUSTED_RESEND_AFTER_HOURS,
+      'hours'
+    );
 
     const candidates = await serviceOfferingReconcileCandidates({
       stuckBefore,
@@ -167,7 +168,7 @@ export const serviceOfferingIngestionReconcile = createJob(
               message: 'content check spent its retries; resubmitting',
               offeringId: id,
               moderationStatus: moderation?.status,
-            }).catch(() => null);
+            });
           if (action === 'submit' || action === 'resubmit-exhausted')
             await scanServiceOffering(id, { forceRescan: true });
           else if (action === 'settle') {
@@ -191,7 +192,7 @@ export const serviceOfferingIngestionReconcile = createJob(
             message: error instanceof Error ? error.message : String(error),
             offeringId: id,
             action,
-          }).catch(() => null);
+          });
         }
       }),
       CONCURRENCY

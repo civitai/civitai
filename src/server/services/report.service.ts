@@ -2,6 +2,16 @@ import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { MERGE_PERMISSION_REPORT_REASON } from '@civitai/shared/merge-permission';
 import { NO_REPORT_REWARD_KEY, reportersWithoutReward } from '@civitai/shared/report-reward';
+import {
+  liftedBlockedForSql,
+  liftedIngestionSql,
+  liftedMetadataSql,
+  liftedNeedsReviewSql,
+  reviewKeyAfterSql,
+  csamBlockedSql,
+  liftedNsfwLevelSql,
+  liftKeptBlockedSql,
+} from '~/server/common/image-visibility';
 import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
@@ -11,6 +21,7 @@ import {
 } from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { reviewPublic } from '~/server/services/creator-service-deal-review-publish';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -21,7 +32,6 @@ import type {
 } from '~/server/schema/report.schema';
 import { withAdditionalReport } from '~/server/services/report-details';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import { imagesMetricsSearchIndex } from '~/server/search-index';
 import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
@@ -33,6 +43,7 @@ import {
   queueImageSearchIndexUpdate,
   dropBlockedImageDeleteQueue,
   resetBlockedNsfwLevel,
+  restartBlockedImageDeleteClock,
 } from '~/server/services/image.service';
 import {
   queueComicsForPanelImage,
@@ -41,18 +52,20 @@ import {
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
-import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { moderationActionEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import { addTagVotes } from '~/server/services/tag.service';
 import {
+  handleLogError,
   isPrismaUniqueViolation,
-  throwAuthorizationError,
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { getBaseUrl } from '~/server/utils/url-helpers';
+import { getBaseUrl, getColorBaseUrl } from '~/server/utils/url-helpers';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
+import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import {
   AppealStatus,
   BuzzAccountType,
@@ -254,6 +267,7 @@ const validateReportCreation = async ({
   reason,
   details,
   pendingOnly,
+  whilePending,
   tx,
 }: {
   userId: number;
@@ -262,6 +276,8 @@ const validateReportCreation = async ({
   reason: ReportReason;
   details?: MixedObject;
   pendingOnly?: boolean;
+  /** Fold only if the report is still Pending when written, else return null so a new one is filed. */
+  whilePending?: boolean;
   tx?: Prisma.TransactionClient;
 }): Promise<Report | null> => {
   const db = tx ?? dbWrite;
@@ -284,29 +300,20 @@ const validateReportCreation = async ({
 
   // if alsoReportedBy count is greater than previouslyReviewedCount * 2,
   // then set the status to pending and reset the previouslyReviewedCount
-  if (previouslyReviewedCount > 0 && alsoReportedBy.length >= previouslyReviewedCount * 2) {
-    const updatedReport = await db.report.update({
-      where: { id },
-      data: {
-        status: ReportStatus.Pending,
-        previouslyReviewedCount: 0,
-        alsoReportedBy: [...alsoReportedBy, userId],
-        ...(mergedDetails ? { details: mergedDetails } : {}),
-      },
-    });
+  const data: Prisma.ReportUpdateInput = {
+    ...(previouslyReviewedCount > 0 && alsoReportedBy.length >= previouslyReviewedCount * 2
+      ? { status: ReportStatus.Pending, previouslyReviewedCount: 0 }
+      : {}),
+    alsoReportedBy: [...alsoReportedBy, userId],
+    ...(mergedDetails ? { details: mergedDetails } : {}),
+  };
+  if (!whilePending) return db.report.update({ where: { id }, data });
 
-    return updatedReport;
-  }
-
-  const updatedReport = await db.report.update({
-    where: { id },
-    data: {
-      alsoReportedBy: [...alsoReportedBy, userId],
-      ...(mergedDetails ? { details: mergedDetails } : {}),
-    },
+  const { count } = await db.report.updateMany({
+    where: { id, status: ReportStatus.Pending },
+    data: data as Prisma.ReportUpdateManyMutationInput,
   });
-
-  return updatedReport;
+  return count ? db.report.findUnique({ where: { id } }) : null;
 };
 
 const reportTypeNameMap: Record<ReportEntity, string> = {
@@ -330,6 +337,8 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.GameFrameGame]: 'gameFrameGame',
   [ReportEntity.Storyline]: 'storyline',
   [ReportEntity.ServiceOffering]: 'serviceOffering',
+  [ReportEntity.PostText]: 'postText',
+  [ReportEntity.ServiceDealReview]: 'serviceDealReview',
 };
 
 const reportTypeConnectionMap = {
@@ -353,6 +362,8 @@ const reportTypeConnectionMap = {
   [ReportEntity.GameFrameGame]: 'gameFrameGameId',
   [ReportEntity.Storyline]: 'storylineId',
   [ReportEntity.ServiceOffering]: 'serviceOfferingId',
+  [ReportEntity.PostText]: 'postTextId',
+  [ReportEntity.ServiceDealReview]: 'serviceDealReviewId',
 } as const;
 
 const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
@@ -413,6 +424,34 @@ async function assertReportedPlacementIsOnEntity({
     throw throwBadRequestError('report: that sticker is not on the image being reported');
 }
 
+/** A buyer review as its reporter sees it: `shown` is whether it is public now. */
+async function readReportedServiceDealReview(reviewId: number) {
+  // primary: a moderator may have hidden it, or its buyer edited it, a moment ago.
+  const [review] = await dbWrite.$queryRaw<
+    {
+      offeringId: number;
+      dealId: number;
+      buyerId: number;
+      sellerId: number;
+      comment: string | null;
+      sellerReply: string | null;
+      shown: boolean;
+    }[]
+  >`
+    SELECT r."offeringId", r."dealId", r."buyerId", r."sellerId", r."comment", r."sellerReply",
+      (r."publishedAt" IS NOT NULL AND ${reviewPublic}) AS "shown"
+    FROM "ServiceDealReview" r JOIN "ServiceDeal" d ON d."id" = r."dealId"
+    WHERE r."id" = ${reviewId}::int`;
+  return review;
+}
+
+async function isFeaturePageComment(db: Prisma.TransactionClient, commentId: number) {
+  // primary: the fold below is decided by it. Compared as text: the label may not exist yet.
+  const [row] = await db.$queryRaw<{ fp: boolean }[]>`
+    SELECT "entityType"::text = 'featurePage' AS fp FROM "CommentV3" WHERE id = ${commentId}`;
+  return !!row?.fp;
+}
+
 export const createReport = async ({
   userId,
   id,
@@ -426,9 +465,6 @@ export const createReport = async ({
   // Add report type to details for notifications
   if (!data.details) data.details = {};
   (data.details as MixedObject).reportType = reportTypeNameMap[type];
-
-  // only mods can create csam reports
-  if (data.reason === ReportReason.CSAM && !isModerator) throw throwAuthorizationError();
 
   // User-only on purpose: reporting your own content is how a creator contests a
   // rating, so this must not widen to other entity types.
@@ -472,7 +508,38 @@ export const createReport = async ({
     !(await dbRead.serviceOffering.findUnique({ where: { id }, select: { id: true } }))
   )
     throw throwNotFoundError('That service no longer exists.');
+  const reportedReview =
+    type === ReportEntity.ServiceDealReview ? await readReportedServiceDealReview(id) : null;
+  if (type === ReportEntity.ServiceDealReview) {
+    if (!reportedReview?.shown) throw throwNotFoundError('That review is not shown.');
+    if (reportedReview.buyerId === userId || reportedReview.sellerId === userId)
+      throw throwBadRequestError('You cannot report a review of your own deal.');
+  }
+  // Read here for the author guard; the words it also yields are stamped below the dedupe, as the
+  // announcement's are.
+  const readReportedText = () =>
+    // primary: the author guard, and the text may have been written a moment ago.
+    dbWrite.postText.findUnique({
+      where: { id },
+      select: {
+        postId: true,
+        userId: true,
+        index: true,
+        content: true,
+        post: { select: { userId: true } },
+      },
+    });
+  const reportedText = type === ReportEntity.PostText ? await readReportedText() : null;
+  if (type === ReportEntity.PostText) {
+    if (!reportedText) throw throwNotFoundError('That text no longer exists.');
+    if (reportedText.userId === userId || reportedText.post.userId === userId)
+      throw throwBadRequestError('You cannot report your own text.');
+  }
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
+  // A Feature Pages comment's delete, edit and refusal read its open reports under lock, so a
+  // report on one is open or it is a new row, whoever files it.
+  const reportsFeaturePageComment =
+    type === ReportEntity.CommentV3 && (await isFeaturePageComment(callerTx ?? dbWrite, id));
 
   // An image's or a model's mature-content report casts tag votes, unless its reporter may not vote
   // on tags yet. Without them nothing automated acts on it, so, like a crucible's, game's,
@@ -494,12 +561,17 @@ export const createReport = async ({
     type === ReportEntity.GameFrameGame ||
     type === ReportEntity.Storyline ||
     type === ReportEntity.ServiceOffering ||
+    type === ReportEntity.PostText ||
+    type === ReportEntity.ServiceDealReview ||
     castsNoTagVotes;
   // Decides who is paid when the report is actioned, so it is the server's, whatever the client sent.
   // Stamped before the dedupe so a folded-in reporter's `additionalReports` entry carries it too.
   const details = data.details as MixedObject;
   if (castsNoTagVotes) details[NO_REPORT_REWARD_KEY] = true;
   else delete details[NO_REPORT_REWARD_KEY];
+  // The server's snapshot of a reported text (stamped below); never one the reporter sent.
+  delete details.postText;
+  delete details.serviceDealReview;
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
@@ -508,8 +580,17 @@ export const createReport = async ({
           entityReportId: id,
           reason: data.reason,
           details,
-          // Post NSFW reports were filed Actioned: folding into one would never reach the queue.
-          pendingOnly: castsNoTagVotes || reportsStorylineChapter || foldIntoPendingOnly,
+          // Post NSFW reports were filed Actioned: folding into one would never reach the queue. A
+          // text can be edited after a ruling, so a later report on it is filed afresh, with the words
+          // it is about now.
+          pendingOnly:
+            castsNoTagVotes ||
+            reportsStorylineChapter ||
+            type === ReportEntity.PostText ||
+            type === ReportEntity.ServiceDealReview ||
+            reportsFeaturePageComment ||
+            foldIntoPendingOnly,
+          whilePending: reportsFeaturePageComment,
           tx: callerTx,
         })
       : null;
@@ -534,6 +615,22 @@ export const createReport = async ({
     };
   }
 
+  // The words as reported, from the row and never from `details` (the reporter's to write): the
+  // author can still edit or delete the text, and the moderator and a CSAM hold need what was reported.
+  if (reportedText)
+    (data.details as MixedObject).postText = {
+      content: reportedText.content,
+      index: reportedText.index,
+      postId: reportedText.postId,
+    };
+  // As a text's: the buyer can still edit the comment, and the seller their reply.
+  if (reportedReview)
+    (data.details as MixedObject).serviceDealReview = {
+      dealId: reportedReview.dealId,
+      comment: reportedReview.comment,
+      sellerReply: reportedReview.sellerReply,
+    };
+
   let recomputeArticleNsfwLevelId: number | null = null;
 
   const writeReport = async (tx: Prisma.TransactionClient) => {
@@ -556,6 +653,8 @@ export const createReport = async ({
         [type]: {
           create: {
             [reportTypeConnectionMap[type]]: id,
+            ...(reportedText ? { postId: reportedText.postId } : {}),
+            ...(reportedReview ? { serviceOfferingId: reportedReview.offeringId } : {}),
           },
         },
       },
@@ -656,36 +755,6 @@ export const createReport = async ({
           break;
       }
 
-    if (data.reason === ReportReason.CSAM && type === ReportEntity.Image) {
-      // `userId` is a moderator: only moderators can file CSAM. Already-actioned reports are left
-      // alone so their `statusSetAt` (which drives reporter notifications) is not moved.
-      await dbWrite.report.updateMany({
-        where: {
-          reason: { not: ReportReason.CSAM },
-          status: { not: ReportStatus.Actioned },
-          image: { imageId: id },
-        },
-        data: { status: ReportStatus.Actioned, statusSetAt: new Date(), statusSetBy: userId },
-      });
-      await dbWrite.image.update({
-        where: { id },
-        data: {
-          ingestion: 'Blocked',
-          nsfwLevel: NsfwLevel.Blocked,
-          blockedFor: BlockedReason.CSAM,
-        },
-      });
-      // Right after the block, not after the transaction: the block above goes through dbWrite, so
-      // it autocommits and stands even if a search-index queue below throws, and a refresh placed
-      // after the transaction would then never run. The refresh reads the primary, which already
-      // has the Blocked row. Never throws.
-      await refreshProfilePicturesForImagesLazy([id]);
-      // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): search-index delete (Redis) inside the txn on the rare CSAM-block path. Moving out needs hoisting the CSAM guard post-commit; left for a focused change on this sensitive path.
-      await imagesMetricsSearchIndex.queueUpdate([
-        { id, action: SearchIndexUpdateQueueAction.Delete },
-      ]);
-    }
-
     return createdReport;
   };
   const createdReport = callerTx
@@ -727,7 +796,9 @@ export async function bulkSetReportStatus({
   userId,
   ip,
   noRewardFor = () => [],
+  paysNoReporter = () => false,
   rewardRemovedReporters = true,
+  fromStatus,
 }: {
   ids: number[];
   status: ReportStatus;
@@ -735,9 +806,21 @@ export async function bulkSetReportStatus({
   ip?: string;
   /** Reporters of a report who get no reward for it; the report is still actioned. */
   noRewardFor?: (reportId: number) => readonly number[];
+  /** Reports actioned with no reporter rewarded. */
+  paysNoReporter?: (reportId: number) => boolean;
   rewardRemovedReporters?: boolean;
+  /** Moves only the reports in this status; any other is left as it is. */
+  fromStatus?: ReportStatus;
 }) {
-  if (!ids.length) return;
+  if (!ids.length) return [];
+
+  // Banned or deleted reporters, read before the status moves: a failure here leaves every report
+  // where it was, rather than actioned with nobody paid. On the primary: a ban from moments ago may
+  // not have reached a replica.
+  const removedIds =
+    status === ReportStatus.Actioned && !rewardRemovedReporters
+      ? await removedReporterIds(ids)
+      : new Set<number>();
 
   // One guarded statement on the primary, as the moderator app's `setReportStatus` writes it: a
   // report another path has already moved to `status` matches nothing, so it is not rewritten and
@@ -756,6 +839,7 @@ export async function bulkSetReportStatus({
           : Prisma.sql`"previouslyReviewedCount"`
       }
     WHERE id = ANY(${ids}::int[]) AND status != ${status}::"ReportStatus"
+      ${fromStatus ? Prisma.sql`AND status = ${fromStatus}::"ReportStatus"` : Prisma.empty}
     RETURNING id, "userId", "alsoReportedBy", details
   `;
 
@@ -764,19 +848,8 @@ export async function bulkSetReportStatus({
 
   // If we're actioning reports, we need to reward the users who reported them
   if (status === ReportStatus.Actioned) {
-    const reporterIds = [...new Set(reports.flatMap((r) => [r.userId, ...r.alsoReportedBy]))];
-    // The primary: a ban from moments ago may not have reached a replica.
-    const removed = rewardRemovedReporters
-      ? []
-      : await dbWrite.user.findMany({
-          where: {
-            id: { in: reporterIds },
-            OR: [{ bannedAt: { not: null } }, { deletedAt: { not: null } }],
-          },
-          select: { id: true },
-        });
-    const removedIds = new Set(removed.map((user) => user.id));
     const prepReports = reports.map((report) => {
+      if (paysNoReporter(report.id)) return { id: report.id, userIds: [] };
       const excluded = [...noRewardFor(report.id), ...reportersWithoutReward(report)];
       return {
         id: report.id,
@@ -794,6 +867,24 @@ export async function bulkSetReportStatus({
       )
     );
   }
+  return reports.map((r) => r.id);
+}
+
+/** The banned or deleted reporters of these reports, filers and co-reporters. */
+async function removedReporterIds(reportIds: number[]) {
+  const reports = await dbWrite.$queryRaw<{ userId: number; alsoReportedBy: number[] }[]>`
+    SELECT "userId", "alsoReportedBy" FROM "Report" WHERE id = ANY(${reportIds}::int[])
+  `;
+  const reporterIds = [...new Set(reports.flatMap((r) => [r.userId, ...r.alsoReportedBy]))];
+  if (!reporterIds.length) return new Set<number>();
+  const removed = await dbWrite.user.findMany({
+    where: {
+      id: { in: reporterIds },
+      OR: [{ bannedAt: { not: null } }, { deletedAt: { not: null } }],
+    },
+    select: { id: true },
+  });
+  return new Set(removed.map((user) => user.id));
 }
 
 // #region [helpers]
@@ -1006,11 +1097,13 @@ export async function createEntityAppeal({
   const writeAppeal = async (tx: Prisma.TransactionClient, feeTransactionId: string | null) => {
     switch (entityType) {
       case EntityType.Image: {
-        // The handler refuses any flagged image off a replica read. This re-checks only the
-        // moderator-only flag, under the row lock, so one set in between is never overwritten.
+        // The handler refuses any flagged image off a replica read. This re-checks the
+        // moderator-only flag and a CSAM block under the row lock, so one set in between is never
+        // overwritten.
         const updated = await tx.$executeRaw`
           UPDATE "Image" SET "needsReview" = 'appeal', "updatedAt" = now()
           WHERE id = ${entityId} AND "needsReview" IS DISTINCT FROM 'csam'
+            AND (${csamBlockedSql()}) IS NOT TRUE
         `;
         if (!updated) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
         break;
@@ -1161,20 +1254,59 @@ export async function createEntityAppeal({
 // URL fall back to a label-only reference.
 export function appealEntityLink(
   entityType: EntityType,
-  entityId: number
+  entityId: number,
+  color?: ColorDomain
 ): { url?: string; label: string } {
+  const base = getBaseUrl(color);
   switch (entityType) {
     case EntityType.Image:
-      return { url: `${getBaseUrl()}/images/${entityId}`, label: `Image #${entityId}` };
+      return { url: `${base}/images/${entityId}`, label: `Image #${entityId}` };
     case EntityType.Model:
-      return { url: `${getBaseUrl()}/models/${entityId}`, label: `Model #${entityId}` };
+      return { url: `${base}/models/${entityId}`, label: `Model #${entityId}` };
     case EntityType.Bounty:
-      return { url: `${getBaseUrl()}/bounties/${entityId}`, label: `Bounty #${entityId}` };
+      return { url: `${base}/bounties/${entityId}`, label: `Bounty #${entityId}` };
     case EntityType.Storyline:
-      return { url: `${getBaseUrl()}/storylines/${entityId}`, label: `Storyline #${entityId}` };
+      return { url: `${base}/storylines/${entityId}`, label: `Storyline #${entityId}` };
     default:
       return { label: `${entityType} #${entityId}` };
   }
+}
+
+/**
+ * Resolves each appealed item's email-link domain: `.red` unless civitai.com serves its rating.
+ * `.red` serves every level, so a missing row or failed read must also land there, not on the request host.
+ */
+async function appealLinkColors(
+  appeals: { entityType: EntityType; entityId: number }[]
+): Promise<(appeal: { entityType: EntityType; entityId: number }) => ColorDomain | undefined> {
+  const rated = [EntityType.Image, EntityType.Model, EntityType.Bounty] as const;
+  const comServable = new Set<string>();
+  await Promise.all(
+    rated.map(async (entityType) => {
+      const ids = [
+        ...new Set(appeals.filter((a) => a.entityType === entityType).map((a) => a.entityId)),
+      ];
+      if (!ids.length) return;
+      const where = { id: { in: ids } };
+      const select = { id: true, nsfwLevel: true } as const;
+      const read: Promise<{ id: number; nsfwLevel: number; nsfw?: boolean }[]> =
+        entityType === EntityType.Image
+          ? dbRead.image.findMany({ where, select })
+          : entityType === EntityType.Model
+          ? dbRead.model.findMany({ where, select })
+          : // A creator's mature mark sends a bounty off .com whatever its images are rated.
+            dbRead.bounty.findMany({ where, select: { ...select, nsfw: true } });
+      const rows = await read.catch(() => []);
+      for (const row of rows)
+        if (!row.nsfw && isRatingWithinCap(row.nsfwLevel, sfwBrowsingLevelsFlag))
+          comServable.add(`${entityType}:${row.id}`);
+    })
+  );
+  return ({ entityType, entityId }) =>
+    !(rated as readonly EntityType[]).includes(entityType) ||
+    comServable.has(`${entityType}:${entityId}`)
+      ? undefined
+      : 'red';
 }
 
 type AppealFeeRef = {
@@ -1489,7 +1621,7 @@ async function usersWithNoticeWithheld(userIds: number[]): Promise<Set<number>> 
       type: 'error',
       name: 'deferred-notice-withheld-check',
       message: (e as Error).message,
-    }).catch(() => undefined);
+    });
     return new Set(userIds);
   }
 }
@@ -1724,13 +1856,13 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
         type: 'error',
         name: 'deferred-effect-failed',
         imageId: appeal.entityId,
-      }).catch(() => undefined)
+      })
     );
     logToAxiom({
       type: 'warning',
       name: 'deferred-notice-withheld',
       imageId: appeal.entityId,
-    }).catch(() => undefined);
+    });
   }
 
   return {
@@ -1834,8 +1966,9 @@ export async function settleResolvedAppeals(
     refundBuzz,
     lockReview,
   }: Pick<ResolveAppealInput, 'status' | 'resolvedMessage' | 'refundBuzz'> & {
-    /** Set for a model's lock review: its own words, naming the settings the approval unlocked. */
-    lockReview?: { unlocked: RequestableLock[] };
+    /** Set for a model's lock review: the owner's words come from `lockReviewRulingMessage`, not
+     *  `resolvedMessage`. */
+    lockReview?: { unlocked: RequestableLock[]; reason?: string | null; cooldown?: boolean };
   }
 ) {
   const approved = status === AppealStatus.Approved;
@@ -1856,16 +1989,21 @@ export async function settleResolvedAppeals(
         let written = false;
         try {
           // An approval never restores a row removed for CSAM or under the review flag, and a
-          // rejection leaves that flag on.
-          type Written = { postId: number | null; pHash: bigint | null };
+          // rejection leaves that flag on. On a row an account deletion blocked, an approval settles
+          // the appeal but not a review the deletion recorded, which comes back.
+          type Written = { postId: number | null; pHash: bigint | null; keptBlocked?: boolean };
           const [updated] = approved
             ? await dbWrite.$queryRaw<Written[]>`
                 UPDATE "Image"
-                SET "needsReview" = NULL, "blockedFor" = NULL, ingestion = 'Scanned'
+                SET "needsReview" = ${reviewKeyAfterSql('human', liftedNeedsReviewSql)},
+                    "blockedFor" = ${liftedBlockedForSql},
+                    "nsfwLevel" = ${liftedNsfwLevelSql},
+                    ingestion = ${liftedIngestionSql},
+                    "metadata" = ${liftedMetadataSql}
                 WHERE id = ${appeal.entityId}
                   AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM}
                   AND "needsReview" IS DISTINCT FROM 'csam'
-                RETURNING "postId", "pHash"
+                RETURNING "postId", "pHash", ${liftKeptBlockedSql} AS "keptBlocked"
               `
             : await dbWrite.$queryRaw<Written[]>`
                 UPDATE "Image"
@@ -1879,20 +2017,29 @@ export async function settleResolvedAppeals(
             break;
           }
 
-          if (approved) {
+          const restored = approved && !updated.keptBlocked;
+          if (approved && !restored) await restartBlockedImageDeleteClock([appeal.entityId]);
+          if (restored) {
             // Shared restore path: reset+unlock a Blocked-locked row so the recompute isn't a
             // no-op, then recompute. Same helper handleUnblockImages uses. (ClickUp 868kfwdzq)
             await resetBlockedNsfwLevel(appeal.entityId);
             await dropBlockedImageDeleteQueue([appeal.entityId]);
+          }
+          if (approved) {
+            // Even while the owner is deleted: an account restore never revisits the blocklist.
             // An approved appeal means the block was wrong — drop the pHash from the
             // blocked-hash set so re-uploads of the same image aren't auto-blocked (parity
-            // with handleUnblockImages).
-            if (updated.pHash != null) await bulkRemoveBlockedImages([updated.pHash]);
+            // with handleUnblockImages). A hash with a live CSAM entry stays blocked.
+            if (updated.pHash != null)
+              await bulkRemoveBlockedImages([updated.pHash], {
+                step: 'appeal-approve',
+                imageIds: [appeal.entityId],
+              });
           }
 
           await queueImageSearchIndexUpdate({
             ids: [appeal.entityId],
-            action: approved
+            action: restored
               ? SearchIndexUpdateQueueAction.Update
               : SearchIndexUpdateQueueAction.Delete,
           });
@@ -1932,7 +2079,7 @@ export async function settleResolvedAppeals(
         appealId: appeal.id,
         imageId: appeal.entityId,
         ...(failure ? { revertFailed: failure } : {}),
-      }).catch(() => undefined);
+      });
       continue;
     }
 
@@ -1952,8 +2099,27 @@ export async function settleResolvedAppeals(
         });
       }
     }
+  }
 
-    // Notify the user that their appeal has been resolved
+  // Email each affected user once, listing every item they appealed in this
+  // resolution (linked when the entity has a public URL). Deduped by user, so a
+  // user who appealed several items at once gets a single email.
+  const appealsByUser = new Map<number, typeof appeals>();
+  for (const appeal of appeals) {
+    if (reopenedIds.has(appeal.id)) continue;
+    const list = appealsByUser.get(appeal.userId) ?? [];
+    list.push(appeal);
+    appealsByUser.set(appeal.userId, list);
+  }
+
+  const linkColor = appealsByUser.size ? await appealLinkColors(appeals) : () => undefined;
+  for (const appeal of appeals) {
+    if (reopenedIds.has(appeal.id)) continue;
+    const color = linkColor(appeal);
+    const url =
+      color && getColorBaseUrl(color)
+        ? appealEntityLink(appeal.entityType, appeal.entityId, color).url
+        : undefined;
     await createNotification({
       userId: appeal.userId,
       type: 'entity-appeal-resolved',
@@ -1968,20 +2134,17 @@ export async function settleResolvedAppeals(
         entityId: appeal.entityId,
         status,
         resolvedMessage,
-        ...(lockReview && { kind: LOCK_REVIEW_KIND, unlocked: lockReview.unlocked }),
+        // Set only for an item civitai.com does not serve; the bell resolves a relative path on its own host.
+        ...(url && { url }),
+        ...(lockReview && {
+          kind: LOCK_REVIEW_KIND,
+          unlocked: lockReview.unlocked,
+          reason: lockReview.reason ?? null,
+          // No date to promise when the ruling started no cooldown.
+          resolvedAt: lockReview.cooldown ? appeal.resolvedAt : null,
+        }),
       },
     });
-  }
-
-  // Email each affected user once, listing every item they appealed in this
-  // resolution (linked when the entity has a public URL). Deduped by user, so a
-  // user who appealed several items at once gets a single email.
-  const appealsByUser = new Map<number, typeof appeals>();
-  for (const appeal of appeals) {
-    if (reopenedIds.has(appeal.id)) continue;
-    const list = appealsByUser.get(appeal.userId) ?? [];
-    list.push(appeal);
-    appealsByUser.set(appeal.userId, list);
   }
 
   for (const [recipientId, userAppeals] of appealsByUser) {
@@ -1989,7 +2152,7 @@ export async function settleResolvedAppeals(
     if (!recipient?.email) continue;
     try {
       // Intentionally omit `resolvedMessage` from the email — moderator
-      // free-text is shown only in-app (notification above), never emailed,
+      // free-text is shown only in-app (notification), never emailed,
       // to avoid exposing potentially explicit/targeted prose. The TOS link in
       // the email template provides the policy reference for rejected appeals.
       await moderationActionEmail.send({
@@ -2002,8 +2165,13 @@ export async function settleResolvedAppeals(
           : approved
           ? 'appeal-approved'
           : 'appeal-rejected',
-        intro: lockReview && lockReviewRulingMessage(approved, lockReview.unlocked),
-        items: userAppeals.map((a) => appealEntityLink(a.entityType, a.entityId)),
+        intro:
+          lockReview &&
+          lockReviewRulingMessage(approved, lockReview.unlocked, {
+            reason: lockReview.reason,
+            resolvedAt: lockReview.cooldown ? userAppeals[0].resolvedAt : null,
+          }),
+        items: userAppeals.map((a) => appealEntityLink(a.entityType, a.entityId, linkColor(a))),
       });
     } catch (error) {
       logToAxiom({

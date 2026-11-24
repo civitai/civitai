@@ -13,7 +13,7 @@ import {
 const DEDUP_TTL_SECONDS = 600; // 10 minutes
 
 const log = (data: Record<string, unknown>) =>
-  logToAxiom({ name: 'freshdesk-webhook', ...data }, 'webhooks').catch(() => null);
+  logToAxiom({ name: 'freshdesk-webhook', ...data }, 'webhooks');
 
 export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST') {

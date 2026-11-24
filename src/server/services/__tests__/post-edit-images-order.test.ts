@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as Caches from '~/server/redis/caches';
@@ -22,6 +23,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => {
 });
 
 import { getPostEditImages } from '~/server/services/post.service';
+import { thumbnailCache } from '~/server/redis/caches';
 
 const row = (id: number, index: number | null) => ({ id, index, tools: [], techniques: [] });
 
@@ -42,8 +44,34 @@ describe('getPostEditImages order', () => {
       row(5, 2),
     ] as never);
 
-    const images = await getPostEditImages({ id: 1, user: { id: 1 } as SessionUser });
+    const images = await getPostEditImages({
+      id: 1,
+      user: { id: 1 } as SessionUser,
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(images.map((x) => x.id)).toEqual([10, 11, 5, 21, 30]);
+  });
+});
+
+describe('getPostEditImages thumbnails', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it.each([
+    ['1', { id: 1 }],
+    ['2', { id: 2, isModerator: true }],
+  ])('case %s', async (_label, user) => {
+    vi.mocked(dbMock.dbRead.image.findMany).mockResolvedValue([row(7, 0)] as never);
+    vi.mocked(thumbnailCache.fetch).mockResolvedValue({
+      7: { id: 70, url: 'thumb-7', width: 1, height: 1, nsfwLevel: 1, blockMarked: true },
+    } as never);
+
+    const images = await getPostEditImages({
+      id: 1,
+      user: user as SessionUser,
+      servableLevels: allBrowsingLevelsFlag,
+    });
+
+    expect(images.map((x) => x.thumbnailUrl)).toEqual(['thumb-7']);
   });
 });

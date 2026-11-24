@@ -1,13 +1,14 @@
 import { Prisma } from '@prisma/client';
 import { isServableBodyImage, removeBodyMedia } from '~/server/utils/article-body-media';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { isMinorMatureImage, withoutMinorFlag } from '~/server/common/image-visibility';
 import { dbWrite } from '~/server/db/client';
 import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
 import { isDefined } from '~/utils/type-guards';
 import { sysRedis } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata } from '~/server/schema/media.schema';
-import { imageSelect } from '~/server/selectors/image.selector';
+import { connectionImageExists, imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   AccessTokenLimitError,
@@ -39,6 +40,7 @@ import { ImageConnectionType, type NsfwLevel } from '~/server/common/enums';
 import {
   ArticleIngestionStatus,
   ArticleStatus,
+  Availability,
   EntityModerationStatus,
 } from '~/shared/utils/prisma/enums';
 import { getArticleUrl } from '~/utils/string-helpers';
@@ -219,6 +221,7 @@ export async function getArticleByShareToken({
   if (viewerId && (await amIBlockedByUser({ userId: viewerId, targetUserId: article.userId })))
     return UNAVAILABLE;
 
+  if (article.availability === Availability.Private) return UNAVAILABLE;
   if (article.status === ArticleStatus.Published)
     return { status: 'published', url: getArticleUrl(article) };
   if (!isShareableArticleStatus(article.status)) return UNAVAILABLE;
@@ -248,8 +251,12 @@ export async function getArticleByShareToken({
   }
 
   const connections = await dbWrite.imageConnection.findMany({
-    where: { entityId: article.id, entityType: ImageConnectionType.Article },
-    select: { image: { select: articleContentImageSelect } },
+    where: {
+      entityId: article.id,
+      entityType: ImageConnectionType.Article,
+      ...connectionImageExists,
+    },
+    select: { image: { select: { ...articleContentImageSelect, minor: true } } },
   });
   const withheldByModel = await getModelWithheldImageIds(
     [article.coverImage?.id, article.bannerImage?.id].filter(isDefined),
@@ -306,9 +313,10 @@ function readSharedArticleRow(id: number) {
       userId: true,
       status: true,
       ingestion: true,
+      availability: true,
       user: { select: { ...userWithCosmeticsSelect, bannedAt: true, muted: true } },
-      coverImage: { select: imageSelect },
-      bannerImage: { select: imageSelect },
+      coverImage: { select: { ...imageSelect, minor: true } },
+      bannerImage: { select: { ...imageSelect, minor: true } },
     },
   });
 }
@@ -316,8 +324,10 @@ function readSharedArticleRow(id: number) {
 /** Only what the read-only view renders. */
 function toSharedArticle(
   article: NonNullable<Awaited<ReturnType<typeof readSharedArticleRow>>>,
-  contentImages: Prisma.ImageGetPayload<{ select: typeof articleContentImageSelect }>[],
-  /** Cover or banner images their model withholds: no cover, and no banner in its place. */
+  contentImages: (Prisma.ImageGetPayload<{ select: typeof articleContentImageSelect }> & {
+    minor: boolean | null;
+  })[],
+  /** Cover or banner images their model withholds. */
   withheldByModel: Set<number>
 ) {
   const { id, title, nsfwLevel, updatedAt } = article;
@@ -332,13 +342,25 @@ function toSharedArticle(
       withheld,
       keepEdgeMedia: new Set(servable.map((image) => image.url)),
     });
-  // The banner stands in for a missing cover.
-  const coverImage = article.coverImage ?? article.bannerImage;
   const { bannedAt: _bannedAt, muted: _muted, ...user } = article.user;
-  const showCover =
-    !!coverImage &&
-    !withheldByModel.has(coverImage.id) &&
-    servableArticleImage(coverImage) !== null;
+  // A link holder is never exempt from the minor rule.
+  type Row = NonNullable<typeof article.coverImage>;
+  const shown = (image: Row | null) =>
+    image &&
+    !withheldByModel.has(image.id) &&
+    servableArticleImage(image) !== null &&
+    !isMinorMatureImage(image)
+      ? image
+      : undefined;
+  const toShared = (image: Row) => ({
+    ...withoutMinorFlag(image),
+    nsfwLevel: image.nsfwLevel as NsfwLevel,
+    meta: image.meta as ImageMetaProps,
+    metadata: image.metadata as ImageMetadata,
+    tags: image.tags.flatMap((x) => x.tag.id),
+  });
+  const coverImage = shown(article.coverImage);
+  const bannerImage = shown(article.bannerImage);
   return {
     id,
     title,
@@ -352,18 +374,12 @@ function toSharedArticle(
         ingestion: _ingestion,
         needsReview: _needsReview,
         tosViolation: _tosViolation,
+        modelRestricted: _modelRestricted,
+        minor: _minor,
         ...image
       }) => image
     ),
-    coverImage:
-      showCover && coverImage
-        ? {
-            ...coverImage,
-            nsfwLevel: coverImage.nsfwLevel as NsfwLevel,
-            meta: coverImage.meta as ImageMetaProps,
-            metadata: coverImage.metadata as ImageMetadata,
-            tags: coverImage.tags.flatMap((x) => x.tag.id),
-          }
-        : undefined,
+    coverImage: coverImage ? toShared(coverImage) : undefined,
+    bannerImage: bannerImage ? toShared(bannerImage) : undefined,
   };
 }

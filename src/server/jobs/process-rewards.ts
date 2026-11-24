@@ -6,11 +6,19 @@ import type { BuzzEventLog } from '~/server/rewards/base.reward';
 import { clickhouse } from '~/server/clickhouse/client';
 
 const rewards = Object.values(rewardImports);
+
+// An event is processed only once it is this old, so a reward that re-checks its source in
+// `preprocess` (goodContent) sees a removal made shortly after the event.
+export const REWARD_SETTLE_MS = 2 * 60 * 1000;
+
 export const processRewards = createJob('rewards-process', '*/1 * * * *', async () => {
   if (!clickhouse) return;
 
   const [lastUpdate, setLastUpdate] = await getJobDate('process-rewards');
-  const now = new Date();
+  const cutoff = new Date(Date.now() - REWARD_SETTLE_MS);
+  // A lastUpdate past the cutoff (the first runs after the settle window shipped) is left alone:
+  // moving it back would re-read events already processed.
+  if (cutoff <= lastUpdate) return { processed: 0 };
 
   // Get all records that need to be processed, using argMax to deduplicate by version
   // This avoids needing to call OPTIMIZE TABLE which is slow
@@ -40,7 +48,7 @@ export const processRewards = createJob('rewards-process', '*/1 * * * *', async 
         argMax(transactionDetails, version) as transactionDetails
       FROM buzzEvents
       WHERE time >= ${lastUpdate}
-        AND time < ${now}
+        AND time < ${cutoff}
       GROUP BY type, forId, toUserId, byUserId
       HAVING status = 'pending'
     )
@@ -59,7 +67,7 @@ export const processRewards = createJob('rewards-process', '*/1 * * * *', async 
     });
   }
 
-  setLastUpdate(now);
+  setLastUpdate(cutoff);
 
   return { processed: Date.now() - start };
 });

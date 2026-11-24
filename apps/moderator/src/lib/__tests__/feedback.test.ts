@@ -10,6 +10,7 @@ import {
   feedbackAttachmentCount,
   feedbackAttachmentItems,
   handledByLabel,
+  feedbackPathLinksToCivitai,
   reconstructFeedbackUrl,
   splitContext,
 } from '$lib/feedback';
@@ -21,6 +22,13 @@ import {
  */
 
 const HOUR = 60 * 60 * 1000;
+
+describe('feedbackPathLinksToCivitai', () => {
+  it("is false for Knights, whose paths live on its own origin, and true for the site's areas", () => {
+    expect(feedbackPathLinksToCivitai('knights')).toBe(false);
+    expect(feedbackPathLinksToCivitai('site-bug-report')).toBe(true);
+  });
+});
 
 describe('reconstructFeedbackUrl', () => {
   it('omits every value that equals the store default, so the link is the one the reporter had', () => {
@@ -124,6 +132,7 @@ describe('feedbackAreaOptions', () => {
       'apps-marketplace',
       'apps-platform',
       'bitdex-image-feed',
+      'knights',
       'orchestration',
       'semantic-image-search',
       'site-bug-report',
@@ -928,9 +937,16 @@ describe('splitContext — the HQ task link', () => {
     ['a script URL', { ...TASK, url: 'javascript:alert(1)' }],
     ['plain http', { ...TASK, url: 'http://hq.civitai.com/tasks/task_1' }],
     ['an id with markup', { ...TASK, id: '<img src=x>' }],
+    // HQ issues lower-case ids only (the shared HQ_TASK_ID_PATTERN).
+    ['an upper-case id', { ...TASK, id: 'Task_1' }],
   ])('builds no link from %s, and shows the value as text instead', (_, hq) => {
     const ctx = splitContext({ hq });
     expect(ctx.hqTask).toBeNull();
     expect(ctx.other).toEqual({ hq });
+  });
+
+  it('carries an id with underscores and hyphens, the shape HQ issues', () => {
+    const task = { id: 'abc_def-9xyz', url: 'https://hq.civitai.com/t/abc_def-9xyz' };
+    expect(splitContext({ hq: task }).hqTask).toEqual(task);
   });
 });

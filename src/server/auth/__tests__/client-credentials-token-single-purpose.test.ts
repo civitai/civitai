@@ -64,7 +64,7 @@ const ORDINARY_TOKEN = 'civitai_ordinary';
 /** Moderator surfaces take a full-scope personal key, so it is their positive control. */
 const PERSONAL_TOKEN = 'civitai_personal';
 /** Tokens carrying OTHER opt-in bits above `Full`: they are not client-credentials-only. */
-const OPT_IN_TOKENS: Record<string, number> = {
+const OPT_IN_TOKENS: Record<string, bigint> = {
   civitai_cli: TokenScope.UserRead | TokenScope.AppBlocksSubmit | TokenScope.LinkConnect,
   civitai_tunnel: TokenScope.UserRead | TokenScope.AppBlocksDevTunnel,
 };
@@ -231,7 +231,8 @@ describe('tokens with other opt-in scopes above Full', () => {
     async (token, scope) => {
       const session = await getServerAuthSession({ req: req(token), res: res() });
       expect(session?.user?.id).toBe(OWNER);
-      expect((session as { tokenScope?: number } | null)?.tokenScope).toBe(scope);
+      // The session object carries the scope as a JSON number (it can reach page props).
+      expect((session as { tokenScope?: number } | null)?.tokenScope).toBe(Number(scope));
 
       const handler = vi.fn(async () => undefined);
       const r = res();

@@ -1,3 +1,4 @@
+import { BAN_REASONS_ALWAYS_REMOVING_MEDIA } from '@civitai/shared/held-url';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
@@ -594,10 +595,12 @@ export const maxVideoFileSize = 64 * 1024 ** 2; // 64MB
 export const maxVideoDimension = 3840;
 export const maxVideoDurationSeconds = 245;
 
+export const ORCHESTRATOR_HOSTNAME_PATTERN = 'orchestration[a-z0-9-]*\\.civitai\\.com';
+
 export function isOrchestratorUrl(url: string) {
   try {
     const { host } = new URL(url);
-    return /^orchestration[a-z0-9-]*\.civitai\.com$/i.test(host);
+    return new RegExp(`^${ORCHESTRATOR_HOSTNAME_PATTERN}$`, 'i').test(host);
   } catch {
     return false;
   }
@@ -1089,6 +1092,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Seedance: baseLicenses['seedream'],
   'Ideogram 4.0': baseLicenses['ideogram nc'],
   'Ideogram 4.5': baseLicenses['ideogram tos'],
+  'Ideogram 4.6': baseLicenses['ideogram tos'],
   'MiniMax H3': baseLicenses['minimax h3'],
   'MiniMax Music 3': baseLicenses['minimax music 3'],
   'MiniMax H3 Image': baseLicenses['minimax h3 image'],
@@ -1201,6 +1205,7 @@ export function stopsCreatorEarnings(baseModel?: string | null): boolean {
 }
 
 export const NOT_COMMERCIALLY_AVAILABLE_LABEL = 'Not commercially available at the moment';
+export const NOT_AVAILABLE_FOR_DOWNLOAD = 'Not available for download';
 
 export function notCommerciallyAvailableMessage(baseModel: string) {
   return `This model isn't commercially available at the moment. Its base model, ${baseModel}, is licensed for non-commercial use only.`;
@@ -1293,11 +1298,16 @@ export const maxUpscaleSize = 3840;
 export const minDownscaleSize = 320;
 export const minUploadSize = 300;
 
-export const MODELS_SEARCH_INDEX = 'models_v9';
+export { MODELS_SEARCH_INDEX } from '@civitai/shared/search-index-queue';
 export const IMAGES_SEARCH_INDEX = 'images_v6';
 export const ARTICLES_SEARCH_INDEX = 'articles_v5';
 export const USERS_SEARCH_INDEX = 'users_v3';
 export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
+/**
+ * Indexes the browser searches through `/api/search` only, never with its search token: their hits
+ * carry pictures rated above the document's own level, which only the server caps per viewer.
+ */
+export const PROXY_ONLY_SEARCH_INDEXES: readonly string[] = [COLLECTIONS_SEARCH_INDEX];
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
 export const TOOLS_SEARCH_INDEX = 'tools_v2';
 export const COMICS_SEARCH_INDEX = 'comics_v1';
@@ -1378,11 +1388,8 @@ export const orchestratorIntegrationDate = new Date('7-12-2024');
 export const downloadGeneratedImagesByDate = increaseDate(orchestratorIntegrationDate, 30, 'days');
 
 /** Minor-safety bans always remove media: `toggleBan` ignores `removeMedia: false` for these. */
-export const banReasonsAlwaysRemovingMedia: readonly BanReasonCode[] = [
-  BanReasonCode.SexualMinor,
-  BanReasonCode.SexualMinorGenerator,
-  BanReasonCode.SexualMinorTraining,
-];
+export const banReasonsAlwaysRemovingMedia: readonly BanReasonCode[] =
+  BAN_REASONS_ALWAYS_REMOVING_MEDIA.map((code) => BanReasonCode[code]);
 
 export const banReasonDetails: Record<
   BanReasonCode,

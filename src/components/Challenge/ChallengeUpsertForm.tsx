@@ -34,6 +34,7 @@ import {
   InputTextArea,
   useForm,
 } from '~/libs/form';
+import { MatureRestrictedBadge } from '~/components/Image/MatureRestrictedBadge/MatureRestrictedBadge';
 import { withController } from '~/libs/form/hoc/withController';
 import { toDisplayUTC, fromDisplayUTC } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -103,6 +104,7 @@ const schema = upsertChallengeBaseSchema
         {
           id: z.number().optional(),
           url: z.string(),
+          restricted: z.boolean().optional(),
           hash: z.string().nullish(),
           width: z.number().nullish(),
           height: z.number().nullish(),
@@ -141,7 +143,7 @@ type ChallengeForEdit = {
   description: string | null;
   theme: string | null;
   invitation: string | null;
-  coverImage: { id: number; url: string } | null;
+  coverImage: { id: number; url: string; restricted?: boolean } | null;
   modelVersionIds: number[];
   nsfwLevel: number;
   allowedNsfwLevel: number;
@@ -601,6 +603,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
   // User-variant feed-visibility preview (start - 7d). The watched value is in the active schedule
   // tz, so resolve to the real instant for the future check and re-apply the tz for the label.
   const startsAtWatch = form.watch('startsAt');
+  const coverImageWatch = form.watch('coverImage');
   const visibleAtPreview =
     isUser && startsAtWatch ? getUserChallengeVisibleAt(fromScheduleDisplay(startsAtWatch)) : null;
   const visibleAtInFuture = !!visibleAtPreview && visibleAtPreview.getTime() > Date.now();
@@ -702,6 +705,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   withNsfwLevel={false}
                   disabled={isReadOnly}
                 />
+                <MatureRestrictedBadge restricted={coverImageWatch?.restricted} mt="xs" />
               </div>
             </div>
 
@@ -723,7 +727,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
           <InputModelVersionMultiSelect
             name="modelVersionIds"
             label="Eligible Models"
-            description="Specify which models are allowed for this challenge. Entries must use at least one of the selected models (OR condition, not all). Leave empty to allow any model."
+            description="Specify which models are allowed for this challenge. Entries must use at least one of the selected models (OR condition, not all), and the entry's checkpoint must be able to run it. Leave empty to allow any model."
             disabled={isActive || isReadOnly}
           />
         </Paper>

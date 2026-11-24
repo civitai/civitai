@@ -1,4 +1,7 @@
-<script lang="ts" generics="T extends { id: number; url: string; type: MediaType; nsfwLevel?: number }">
+<script
+  lang="ts"
+  generics="T extends { id: number; url: string; type: MediaType | null; nsfwLevel?: number; restricted?: boolean }"
+>
   import { goto } from '$app/navigation';
   import { page as pageState } from '$app/state';
   import type { Snippet } from 'svelte';
@@ -15,9 +18,9 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import HeldMedia from '$lib/components/image-queue/HeldMedia.svelte';
-  import { reportHeldGridView } from '$lib/held-media';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
+  import { reportHeldGridView, RETRACTED_REFUSED } from '$lib/held-media';
   import NumberedPager from '$lib/components/NumberedPager.svelte';
   import { readCursorTrail, writeCursorTrail, clearPaging, IMAGE_PAGE_PARAM } from '$lib/paging';
   import { getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
@@ -92,7 +95,7 @@
   });
 
   const key = (item: T) => keyOf?.(item) ?? item.id;
-  const itemKeys = $derived(items.map(key));
+  const itemKeys = $derived(items.filter((item) => !item.restricted).map(key));
 
   function toggle(item: T, event: MouseEvent) {
     selected?.toggle(key(item), itemKeys, event.shiftKey);
@@ -131,7 +134,7 @@
   {#if heldMedia}
     <HeldMedia {item} class="max-h-full max-w-full object-contain" />
   {:else}
-    <EdgeMedia src={item.url} type={item.type} width={450} class="max-h-full max-w-full object-contain" />
+    <CdnOrRetractedMedia {item} class="max-h-full max-w-full object-contain" />
   {/if}
 {/snippet}
 
@@ -167,7 +170,10 @@
           : ''}"
       >
         <div class="relative flex aspect-[4/5] items-center justify-center overflow-hidden bg-muted">
-          {#if selected}
+          {#if item.restricted}
+            <!-- Served with no media: no tile, no link to the image, no selection. -->
+            <div class="p-4 text-center text-xs text-dark-2">{RETRACTED_REFUSED}</div>
+          {:else if selected}
             <button
               type="button"
               onclick={(e) => toggle(item, e)}
@@ -206,7 +212,7 @@
               {getBrowsingLevelLabel(item.nsfwLevel)}
             </Badge>
           {/if}
-          {#if selected}
+          {#if selected && !item.restricted}
             <SelectionCheckbox
               selection={selected}
               key={key(item)}

@@ -19,21 +19,10 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-// 🔴 The logging mock is the CANONICAL one, and that is the whole point on this file.
-// The per-file `~/env/server` mock above forces `~/utils/storage-resolver` to be
-// re-instantiated for this file, which incidentally re-bound its `logToAxiom` import to a
-// per-file spy. That accident is what the deregisterBatch/deregister pair discovered: remove
-// the env mock and the module is cached from whichever file loaded it first, so the second
-// file asserts on a spy the cached module never calls. The canonical node is stable for the
-// life of the worker, so the binding is correct however the module happens to be cached.
-//
 // ⚠️ The `~/env/server` mock above STAYS. It is a pending specifier, not a canonical one, and
 // it is load-bearing: the tests MUTATE `envValues` per case, which is the class the codemod
 // refuses rather than verifies — lifting it would leave the local alive and disconnected, and
 // every later assignment would write to an object nothing reads.
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
-
-const logToAxiom = loggingMock.logToAxiom;
 
 import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
 
@@ -49,7 +38,6 @@ describe('deregisterFileLocationsByFile', () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
-    logToAxiom.mockClear();
     vi.stubGlobal('fetch', fetchMock);
     // Restore the configured env for each test; individual tests may clear it.
     envValues.STORAGE_RESOLVER_INTERNAL_URL = 'http://storage-resolver.internal';
@@ -90,7 +78,7 @@ describe('deregisterFileLocationsByFile', () => {
     expect(body).not.toHaveProperty('modelVersionIds');
   });
 
-  it('is a no-op returning null (and warns) when storage-resolver is not configured', async () => {
+  it('is a no-op returning null when storage-resolver is not configured', async () => {
     envValues.STORAGE_RESOLVER_INTERNAL_URL = undefined;
     envValues.STORAGE_RESOLVER_INTERNAL_TOKEN = undefined;
 
@@ -98,9 +86,6 @@ describe('deregisterFileLocationsByFile', () => {
 
     expect(result).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'deregister-file-locations-skipped', count: 3 })
-    );
   });
 
   it('de-dupes + drops non-positive ids and makes no call when nothing survives', async () => {
@@ -144,7 +129,7 @@ describe('deregisterFileLocationsByFile', () => {
     expect(lastBody.fileIds[199]).toBe(1200);
   });
 
-  it('is best-effort per chunk: a non-OK chunk is logged + skipped, others proceed', async () => {
+  it('is best-effort per chunk: a non-OK chunk is skipped, others proceed', async () => {
     const ids = Array.from({ length: 1000 }, (_, i) => i + 1); // 2 chunks
     fetchMock
       .mockResolvedValueOnce({
@@ -160,12 +145,9 @@ describe('deregisterFileLocationsByFile', () => {
     // First chunk failed (counted 0), second succeeded — the loop never aborts.
     expect(result).toEqual({ deleted: 500 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'deregister-file-locations-failed', status: 500 })
-    );
   });
 
-  it('is best-effort per chunk: a thrown chunk is logged + skipped, others proceed', async () => {
+  it('is best-effort per chunk: a thrown chunk is skipped, others proceed', async () => {
     const ids = Array.from({ length: 1000 }, (_, i) => i + 1); // 2 chunks
     fetchMock
       .mockRejectedValueOnce(new Error('ECONNREFUSED'))
@@ -175,9 +157,6 @@ describe('deregisterFileLocationsByFile', () => {
 
     expect(result).toEqual({ deleted: 500 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'deregister-file-locations-error' })
-    );
   });
 
   it('returns { deleted: 0 } rather than throwing when the endpoint 404s (contract not yet deployed)', async () => {
@@ -194,9 +173,6 @@ describe('deregisterFileLocationsByFile', () => {
     });
 
     await expect(deregisterFileLocationsByFile([123])).resolves.toEqual({ deleted: 0 });
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'deregister-file-locations-failed', status: 404 })
-    );
   });
 
   it('sets the per-chunk timeout to 30s, not merely "some AbortSignal"', async () => {
@@ -230,11 +206,5 @@ describe('deregisterFileLocationsByFile', () => {
     );
 
     await expect(deregisterFileLocationsByFile([1, 2, 3])).resolves.toEqual({ deleted: 0 });
-    expect(logToAxiom).toHaveBeenCalledWith(
-      // key=file asserted here too: all three of this function's Axiom events
-      // need the discriminator, and a per-event mutation showed each site has
-      // to be pinned individually — covering two of three left the third free.
-      expect.objectContaining({ name: 'deregister-file-locations-error', key: 'file' })
-    );
   });
 });

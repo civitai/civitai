@@ -9,6 +9,8 @@ import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
+import { KNIGHTS_APP_FLIPT_FLAG } from '~/shared/constants/knights.constants';
+import { APP_LISTINGS_AGENTIC_REVIEW_FLAG } from '~/shared/constants/connect-agent-review.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 import { CLASSIC_TRAINER_RETIRES_AT } from '~/shared/constants/training.constants';
@@ -103,6 +105,20 @@ const featureFlags = createFeatureFlags({
   // `/api/trpc/` do not match that path, so enable only once the edge routes it. See
   // `GO_TRANSPORT_URL`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
   feedGoTransport: { availability: [], fliptKey: 'feed-go-transport' },
+  // Sends `model.getAll` (signed in) to `/api/trpc-go`, as `feedGoTransport` does for the gallery
+  // feed; its own flag, so either can be turned on or killed alone. Enable only once the edge routes
+  // `/api/trpc-go/model.getAll`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  feedGoTransportModelGetAll: { availability: [], fliptKey: 'feed-go-transport-model-getall' },
+  // Sends `image.getInfinite` (signed in) to `/api/trpc-go`, as `feedGoTransport` does for the
+  // gallery feed; its own flag, so each can be turned on or killed alone. Enable only once the edge
+  // routes `/api/trpc-go/image.getInfinite`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  feedGoTransportInfinite: { availability: [], fliptKey: 'feed-go-transport-infinite' },
+  // Client shadow compare (`~/utils/faro/shadowCompare`): a signed-in browser sends an allowlisted
+  // feed query to both the `/api/trpc` route and the Go transport path and beacons whether the two
+  // raw responses were byte-identical; the app uses the `/api/trpc` answer. Only for a procedure
+  // whose own Go-transport flag is also on for the user. Every compare is one extra request, so ramp
+  // it slowly. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  clientShadowCompare: { availability: [], fliptKey: 'client-shadow-compare' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
@@ -211,6 +227,31 @@ const featureFlags = createFeatureFlags({
     availability: [],
     fliptKey: 'model-page-design-system-markup',
   },
+  // SSR-CPU trial: for a signed-in viewer's full page load, a route that adopts it
+  // (`~/server/utils/ssr-skip-prefetch`) keeps only the data its 404, access and redirect decisions
+  // need, skips every other prefetch, and server-renders its content as a loading shell that the
+  // client fills after hydration. Anonymous visitors, verified bots and `/_next/data` requests are
+  // never in the trial. `[]`: dark and fails CLOSED when the key is absent or Flipt is down, so the
+  // `ssr-signed-in-skip-prefetch` rollout is the only on-switch. OFF = the full render, unchanged.
+  ssrSignedInSkipPrefetch: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch',
+  },
+  // The same trial for `/images/[imageId]`, `/posts/[postId]` and `/user/[username]`, one flag per
+  // page (`SSR_SKIP_PREFETCH_FLAGS` in `~/server/utils/ssr-skip-prefetch` maps each route to its
+  // flag), so each page is rolled out and rolled back on its own. Dark and fail CLOSED, as above.
+  ssrSignedInSkipPrefetchImages: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch-images',
+  },
+  ssrSignedInSkipPrefetchPosts: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch-posts',
+  },
+  ssrSignedInSkipPrefetchUser: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch-user',
+  },
   // Closed-overlay SSR fast path; behaviour: see ~/components/MantineOverlays. `[]` fails CLOSED when
   // the key is absent or Flipt is down, so the `ssr-closed-overlay-fast-path` rollout is the only
   // on-switch.
@@ -317,6 +358,8 @@ const featureFlags = createFeatureFlags({
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
+  // The public takedown forms (/requests) and the case links they send.
+  takedownRequests: { availability: ['mod'], fliptKey: 'takedown-requests' },
   // Every entity except Article, which keeps `articleRatingDispute`. Flipt-down falls back to off.
   ratingDispute: { availability: [], fliptKey: 'rating-dispute' },
   // The on-site appeal form (`/appeal`) and the appeal box on the banned screen.
@@ -358,6 +401,7 @@ const featureFlags = createFeatureFlags({
   ltx23Training: { availability: ['mod'], fliptKey: 'ltx23-training' },
   ltx25Training: { availability: ['public'], fliptKey: 'ltx25-training' },
   minimaxh3Training: { availability: ['mod'], fliptKey: 'minimaxh3-training' },
+  minimaxh3ImageTraining: { availability: ['mod'], fliptKey: 'minimaxh3-image-training' },
   wan22Training: { availability: ['mod'] },
   ernieTraining: { availability: ['mod'], fliptKey: 'ernie-training' },
   hidreamO1Training: { availability: ['mod'], fliptKey: 'hidream-o1-training' },
@@ -377,6 +421,13 @@ const featureFlags = createFeatureFlags({
   },
   // Training Studio's Kohya engine; `kohyaTraining` gates the old trainer's.
   trainingStudioKohya: { availability: ['mod'], fliptKey: 'training-studio-kohya' },
+  // Training Studio's Civitai Elements redesign (the embed's answer for `training-studio-elements-ui`).
+  trainingStudioElementsUi: { availability: ['mod'], fliptKey: 'training-studio-elements-ui' },
+  // Training Studio's Manage tags find-and-replace row.
+  trainingStudioTagFindReplace: {
+    availability: ['mod'],
+    fliptKey: 'training-studio-tag-find-replace',
+  },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
@@ -397,6 +448,8 @@ const featureFlags = createFeatureFlags({
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
   },
+  // Classic trainer kill switch: dark until the Flipt flag exists.
+  classicTrainerOff: { availability: [], fliptKey: 'classic-trainer-off' },
   trainingAutoLabelOrchestrator: {
     availability: ['public'],
     fliptKey: 'training-auto-label-orchestrator',
@@ -449,25 +502,46 @@ const featureFlags = createFeatureFlags({
   // It answers from the semantic search, never Meilisearch. Mods until the Flipt flag exists; once it
   // does, Flipt decides both ways, so keep mods in its rule.
   imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
+  // Mods until the Flipt flag exists; once it does, Flipt decides both ways, so keep mods in its rule.
+  semanticVideoSearch: { availability: ['mod'], fliptKey: 'semantic-video-search' },
   // Search v3: the header bar filters the feed you are on (?query=) instead of opening /search/*.
   // Images first. It switches between the old and the new search on its own (it opens the semantic
   // search procedure without `imageSearch`), so a Flipt rollout moves people over; off is the old UI.
   // Dark: Flipt is its only switch. Flipt keys signed-out visitors as one entity, so a percentage
   // rollout splits signed-in users only.
   feedSearch: { availability: [], fliptKey: 'search-v3-feed' },
+  // "More like this": the image card button, the image menu item, dropping an image on the search
+  // bar, and the images feed's ?similarTo=. Checked on top of `imageSearch` / `feedSearch`, so its
+  // rollout is its own. Mods until the Flipt flag exists; once it does, keep mods in its rule.
+  moreLikeThis: { availability: ['mod'], fliptKey: 'more-like-this' },
+  // Search by uploaded image: drop or pick a file in image search. Checked on top of `moreLikeThis`
+  // and never wider than it. Dark for everyone, mods included, until Flipt turns it on.
+  imageSearchUpload: { availability: [], fliptKey: 'image-search-upload' },
   // Newest matches in the feed search's sort menu. Dark: Flipt is its only switch.
   imageSearchNewestSort: { availability: [], fliptKey: 'image-search-newest-sort' },
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
   // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
+  // Search v3 for articles: the header bar filters the articles feed (?query=) through the search
+  // service. Dark: Flipt is its only switch.
+  articleFeedSearch: { availability: [], fliptKey: 'search-v3-articles' },
   // Comic search on /search/comics, the same way.
   semanticComicSearch: { availability: [], fliptKey: 'semantic-comic-search' },
   // Semantic search on the challenges feed. Dark: Flipt is its only switch.
   semanticChallengeSearch: { availability: [], fliptKey: 'semantic-challenge-search' },
+  // Search v3 for models: the header bar filters the models feed (?query=) through the search
+  // service. Dark: Flipt is its only switch, and off is today's in-feed Meilisearch search.
+  modelFeedSearch: { availability: [], fliptKey: 'search-v3-models' },
   // The semantic 3D model search endpoint. Dark: Flipt is its only switch.
   semanticModel3DSearch: { availability: [], fliptKey: 'semantic-model3d-search' },
   // The semantic storyline search endpoint. Dark: Flipt is its only switch.
   semanticStorylineSearch: { availability: [], fliptKey: 'semantic-storyline-search' },
+  // The semantic collection and bounty search endpoints. Dark: Flipt is their only switch.
+  semanticCollectionSearch: { availability: [], fliptKey: 'semantic-collection-search' },
+  semanticBountySearch: { availability: [], fliptKey: 'semantic-bounty-search' },
+  // The crucibles feed's search box, answered from the semantic search. Off, the feed has no
+  // search box. Dark: Flipt is its only switch.
+  semanticCrucibleSearch: { availability: [], fliptKey: 'semantic-crucible-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -482,6 +556,13 @@ const featureFlags = createFeatureFlags({
   newsroom: ['public'],
   safety: ['public'],
   csamReports: isDev ? ['mod'] : ['granted'],
+  // Kill switch for the main app's retracted-media route and the UI that loads from it. On for
+  // moderators at deploy: an absent Flipt key falls through to ['mod']. Create
+  // `mod-retracted-media` in Flipt, disabled, to turn it off.
+  modRetractedMedia: { availability: ['mod'], fliptKey: 'mod-retracted-media' },
+  // The retracted-media route's CDN-refusal leg and its tile fallback. DARK, fails CLOSED when the
+  // Flipt key is absent or Flipt is down. Only takes effect within modRetractedMedia.
+  modRetractedMediaCdnLeg: { availability: [], fliptKey: 'mod-retracted-media-cdn-leg' },
   appealReports: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
   chat: {
@@ -509,6 +590,17 @@ const featureFlags = createFeatureFlags({
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
+  creatorServicesNext: { availability: [], fliptKey: 'creator-services-next' },
+  // The header bar filters the /services feed in place (`?query=`).
+  servicesFeedSearch: { availability: ['public'], fliptKey: 'creator-services-feed-search' },
+  // Search v3 on pages that filter their own list (PAGE_SEARCH in search-target.ts): the header bar
+  // writes the page's ?query= and the page filters by it, instead of a search box of its own.
+  pageSearch: { availability: [], fliptKey: 'search-v3-pages' },
+  // Image search by the model versions an image used. Off until the image collection's
+  // modelVersionIds payload is backfilled and indexed: an unindexed filter scans every point.
+  imageSearchResources: { availability: [], fliptKey: 'image-search-resources' },
+  // Only takes effect with `feedSearch` on too.
+  videoFeedSearch: { availability: [], fliptKey: 'video-feed-search' },
   // Whether Creator Services Finals go to the malware scan. Read once per file by the jobs, never per
   // user (see `isFinalsMalwareScanOn`). Off, or missing from Flipt, skips that one step; Flipt
   // unreachable keeps it.
@@ -550,6 +642,7 @@ const featureFlags = createFeatureFlags({
   // Stickers that follow a video's time. Gates sending a track on create, reading tracks
   // (`getStickerTracks`) and the pin control. Without it a track sticker draws at its `data` pose.
   stickerVideoTracks: { availability: ['mod'], fliptKey: 'sticker-video-tracks' },
+  stickerAutoTrack: { availability: ['mod'], fliptKey: 'sticker-auto-track' },
   // The sticker book profile tab. Its own flag rather than riding `stickers`:
   // the tab publishes what a creator owns and what their work has collected on a
   // PUBLIC profile, which is a disclosure decision separate from whether
@@ -573,6 +666,12 @@ const featureFlags = createFeatureFlags({
   creatorJourney: { availability: ['mod'], fliptKey: 'creator-journey' },
   // Creator-built showcase sections on the profile page.
   profileShowcases: { availability: ['mod'], fliptKey: 'profile-showcases' },
+  // Creators curate a model version's showcase per site and feature community images in it.
+  modelVersionShowcase: { availability: ['mod'], fliptKey: 'model-version-showcase' },
+  // Kill switch for serving curated version showcases (the flag above gates curating). Read with no
+  // user, so it is one switch for everyone. `['public']`: ON when the Flipt key is absent or Flipt
+  // is down; creating the flag off turns every showcase back into the creator's own images.
+  modelVersionShowcaseServe: { availability: ['public'], fliptKey: 'model-version-showcase-serve' },
   // Recent written reviews on the model page, between Suggested Resources and Discussion.
   modelPageReviews: { availability: ['mod'], fliptKey: 'model-page-reviews' },
   // Civitai's 4th Birthday (Team Hats). Only the Flipt key is used, by the event engine's access
@@ -703,6 +802,9 @@ const featureFlags = createFeatureFlags({
   // loading models for free.
   resourceLoad: ['mod', 'granted'],
   newOrderGame: ['blue', 'red', 'public'],
+  // Dark and owned by Flipt: the Knights app's own access flag, so the links to it follow who the app
+  // admits (testers before launch, everyone after).
+  knightsApp: { availability: [], fliptKey: KNIGHTS_APP_FLIPT_FLAG },
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
   bugsPage: ['public'],
@@ -744,7 +846,7 @@ const featureFlags = createFeatureFlags({
   // Raw orchestrator-blob AIR resources in the generator (Training Studio
   // "generate with this epoch" handoff) — gates both server acceptance and the
   // /generate?air= form entry (form-graph/generation/ingestion.ts).
-  generationAirResources: { availability: ['mod'] },
+  generationAirResources: { availability: ['user'] },
   wildcards: { availability: ['public'], fliptKey: 'wildcards' },
   // 3D Models — split flags: feed (view/comment/review) vs generator (create).
   // Both mod-only at launch; Flipt key allows broadening without a code change.
@@ -768,7 +870,10 @@ const featureFlags = createFeatureFlags({
   // in sync with the camelCase flag key here.
   retoolUpdateIdentity: ['granted'],
   retoolToggleModerator: ['granted'],
+  // Lets a moderator or script feed the Knights of New Order queue through /api/mod/knights/enqueue.
+  knightsEnqueue: ['granted'],
   textScanPromptPublish: ['granted'],
+  textScanPromptPublishIntent: ['granted'],
   // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.
@@ -815,6 +920,10 @@ const featureFlags = createFeatureFlags({
   appBlocksPages: { availability: ['mod'], fliptKey: 'app-blocks-pages-enabled' },
   // Remix Apps P1: one-tap remix apps from the Remix menu (`remixApp` router).
   remixApps: { availability: ['mod'], fliptKey: 'remix-apps' },
+  // Remix Apps v2-C: apps whose code a user wrote (rows with an `author`). Dark until their runner ships.
+  remixAppsUserCode: { availability: [], fliptKey: 'remix-apps-user-code' },
+  // Who may submit a user app's code.
+  remixAppBuilder: { availability: [], fliptKey: 'remix-app-builder' },
   // App Blocks — "App builders" get-started pitch, now state A of the
   // consolidated `/apps/build` (`/apps/get-started` 301s into it). Scope A soft
   // launch: a single marketing/funnel page that explains the platform to
@@ -858,6 +967,10 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  // The agent review's CONNECT lane: the `AgentReviewPanel` in the off-site review modal, for an
+  // OAuth-connect listing request. `[]` for the `appBlocksAgenticReview` reason; the server half
+  // is `isAppListingsAgenticReviewEnabled`, on the same key.
+  appListingsAgenticReview: { availability: [], fliptKey: APP_LISTINGS_AGENTIC_REVIEW_FLAG },
   appDeveloperRateCard: { availability: [], fliptKey: 'app-developer-rate-card' },
   // App Assistant (on `/apps/build`); read only through `canAccessAppAssistant`. `[]` rather than
   // `['mod']` for the `appBlocksAgenticReview` reason: client and server agree while the flag is absent.
@@ -885,6 +998,10 @@ const featureFlags = createFeatureFlags({
   // `app_sub_listing_parents` row), so items can queue for moderation while the store side is
   // dark.
   appStoreSubListings: { availability: [], fliptKey: 'app-store-sub-listings' },
+  // App index store search — `/apps` store text search through the app index service
+  // (`app-index-search.service.ts`, APP_INDEX_URL) instead of filtering the loaded grid in the
+  // browser. `[]`: dark for everyone, mods included, until the Flipt flag turns it on.
+  appIndexSearch: { availability: [], fliptKey: 'app-index-search' },
   // Membership-tiered app limits, the viewer-facing half: the running app's paused notice at the
   // plan's daily app Buzz cap, with an upgrade prompt and continue-on-own-Buzz. `[]`: dark for
   // everyone, mods included, until the Flipt flag turns it on — the client twin of the server's
@@ -979,7 +1096,21 @@ const featureFlags = createFeatureFlags({
   // Local dev: `FEATURE_FLAG_STORYLINES=public` in `.env`, which bypasses Flipt entirely.
   storylines: { availability: ['mod', 'granted'], fliptKey: 'storylines' },
   // Storylines: text items between a chapter's images (PostText), their slides and threads.
-  storylineText: { availability: ['mod', 'granted'], fliptKey: 'storyline-text' },
+  storylineText: {
+    availability: ['mod', 'granted'],
+    fliptKey: 'storyline-text',
+    fliptKeyRequired: true,
+  },
+  // Keep the Flipt flag's `enabled` false until public launch, so removing the tester rollout
+  // turns the page off rather than on for everyone.
+  featurePages: { availability: [], fliptKey: 'feature-pages', fliptKeyRequired: true },
+  // Feature Pages comments and reports (posting, editing, reading a thread through commentv3). Same
+  // launch rule as featurePages: `enabled` stays false, testers come in through a rollout.
+  featurePagesDiscussion: {
+    availability: [],
+    fliptKey: 'feature-pages-discussion',
+    fliptKeyRequired: true,
+  },
   // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
   // with the phone header change it needs (support pill and Civitai Link move into the account
   // menu). Off = the toast and the old header. `['mod', 'granted']` is the Flipt-down fallback.
@@ -1107,6 +1238,10 @@ type FliptModule = typeof FliptClient;
 let _fliptModule: FliptModule | null = null;
 let _fliptLoading: Promise<FliptModule | null> | null = null;
 
+/** Flipt has a client to answer with. Not live: it is down, or a stub module leaves the accessor out. */
+const fliptIsLive = (mod: FliptModule) =>
+  'getFliptClientSync' in mod && mod.getFliptClientSync() !== null;
+
 function loadFliptModule(): Promise<FliptModule | null> {
   if (_fliptModule) return Promise.resolve(_fliptModule);
   if (typeof window !== 'undefined') return Promise.resolve(null);
@@ -1201,6 +1336,8 @@ const hasFeature = (
       }
       return fliptResult;
     }
+    // A live client that cannot answer has no such key: a flag that requires one is off.
+    if (feature.fliptKeyRequired && fliptIsLive(_fliptModule)) return false;
     // Flipt unavailable — fall through to static evaluation below
   }
 
@@ -1660,9 +1797,11 @@ export async function isFliptDecisive(keys: FeatureFlagKey[], user: SessionUser)
   if (flipt) await flipt.ensureFliptInitialized();
   const context = buildFliptContext(user);
   return keys.every((key) => {
-    const fliptKey = featureFlags[key].fliptKey;
+    const { fliptKey, fliptKeyRequired } = featureFlags[key];
     if (!fliptKey || envOverriddenFlags.has(key)) return true;
-    return !!_fliptModule && _fliptModule.isFliptSync(fliptKey, String(user.id), context) !== null;
+    if (!_fliptModule) return false;
+    if (_fliptModule.isFliptSync(fliptKey, String(user.id), context) !== null) return true;
+    return !!fliptKeyRequired && fliptIsLive(_fliptModule);
   });
 }
 
@@ -1776,6 +1915,10 @@ export function computeUserFeatureFlagsOverlay(
     }
   }
 
+  // A stored opt-back can't reopen a retired classic trainer.
+  if (hostFeatures.classicTrainerOff && 'trainingStudioUi' in result)
+    result.trainingStudioUi = true;
+
   return result;
 }
 
@@ -1797,6 +1940,11 @@ type FeatureFlag = {
   badge?: string;
   regions?: GeoRestrictions; // Optional geo restrictions
   fliptKey?: string; // Optional Flipt flag key for remote toggling
+  /**
+   * The flag is off while Flipt is up and has no `fliptKey` flag. Without it a missing key falls back
+   * to `availability`, as an outage does; an outage still does.
+   */
+  fliptKeyRequired?: boolean;
 };
 
 // Simplified: Support either simple arrays or objects with any FeatureFlag properties

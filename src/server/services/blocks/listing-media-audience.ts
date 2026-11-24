@@ -1,3 +1,5 @@
+import type { DB } from '@civitai/db-schema/kysely';
+import type { Selectable } from 'kysely';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import {
   classifyGatedImageForViewer,
@@ -19,6 +21,7 @@ import {
   nsfwLevelFromContentRating,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
 /**
  * App Store listing media — the PER-IMAGE, PER-REQUEST visibility rule for every PUBLIC surface
@@ -89,25 +92,15 @@ export const listingMediaImageSelect = {
   tosViolation: true,
   acceptableMinor: true,
   blockedFor: true,
+  modelRestricted: true,
 } as const;
 
 /** One listing image as {@link listingMediaImageSelect} reads it. */
-export type ListingMediaImage = {
-  url: string | null;
-  nsfwLevel: number;
-  ingestion: string;
-  needsReview: string | null;
-  poi: boolean;
-  minor: boolean;
-  tosViolation: boolean;
-  acceptableMinor: boolean;
-  blockedFor: string | null;
-};
+export type ListingMediaImage = Pick<Selectable<DB['Image']>, keyof typeof listingMediaImageSelect>;
 
 /**
- * A moderation flag read from an untyped or raw-SQL row counts as SET unless it is literally
- * `false` or absent — fail-closed, so a malformed value can only ever hide an image. The one rule
- * for every reader that builds a {@link ListingMediaImage} from such a row.
+ * A moderation flag from a nullable raw-SQL column (a LEFT JOIN) counts as SET unless it is
+ * literally `false` or absent, so an unexpected value can only ever hide an image.
  */
 export function isModerationFlagSet(value: unknown): boolean {
   return value != null && value !== false;
@@ -185,18 +178,21 @@ export function listingRatingMediaCeiling(contentRating: string | null | undefin
 /** The gate's level comparison, for labels that describe where an image shows. */
 export { isLevelWithinCeiling };
 
-/** The fields `classifyGatedImageForViewer` reads. */
-type GatedFields = Parameters<typeof classifyGatedImageForViewer>[0];
+/** The fields `classifyGatedImageForViewer` reads, plus the restricted base model flag. */
+type GatedFields = Parameters<typeof classifyGatedImageForViewer>[0] &
+  Pick<ListingMediaImage, 'modelRestricted'>;
 
 /**
- * True only when `image` is `visible` under `ceiling`. The single predicate every listing-media
- * surface uses; `pending` (not yet rated) is a refusal, the same as `hidden`.
+ * True only when `image` is `visible` under `ceiling` and not a restricted mature image. The single
+ * predicate every listing-media surface uses; `pending` (not yet rated) is a refusal, the same as
+ * `hidden`.
  */
 export function isListingImageVisible(
   image: GatedFields | null | undefined,
   ceiling: number
 ): boolean {
   if (!image) return false;
+  if (isRestrictedImage(image)) return false;
   if (classifyGatedImageForViewer(image, ceiling).status !== 'visible') return false;
   return true;
 }

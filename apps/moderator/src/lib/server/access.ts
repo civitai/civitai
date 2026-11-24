@@ -12,10 +12,12 @@ import {
   MODEL_FLAGS_PATH,
 } from '$lib/minor-flags/paths';
 import { MODEL_RULE_MATCHES_PATH } from '$lib/model-rule-holds';
+import { MERGE_ANALYSIS_PATH } from '$lib/model-merge-analysis';
 import { TICKET_COUNT_KEYS } from '$lib/tickets/counts';
+import { PRESERVED_VIEW_PAGE } from '$lib/preserved-view';
 import { feedbackAreaLabel } from '$lib/feedback';
 import { needsReviewCountKey, needsReviewSources } from '$lib/minor-flags/needs-review';
-import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
+import { reportCountKey, reportEntityLabels, reportPath, reportQueueEntities } from '$lib/reports';
 import { SITE_APPEAL_QUEUES, siteAppealCountKey, siteAppealQueuePath } from '$lib/site-appeals';
 
 export const APP = 'moderator';
@@ -65,6 +67,8 @@ export type NavLink = {
   // sections. Reached and granted by the page's own entry, and kept out of this section's badge and the
   // dashboard so its count is not summed twice.
   shortcut?: true;
+  // Reached by link only.
+  hidden?: true;
   children?: NavLink[];
 };
 
@@ -89,12 +93,13 @@ export const NAVIGATION: NavLink[] = [
     label: 'Reports',
     path: '/reports',
     sharedAccess: true,
-    children: reportEntities.map((entity) => ({
+    children: reportQueueEntities.map((entity) => ({
       path: reportPath(entity),
       label: reportEntityLabels[entity],
       countKey: reportCountKey(entity),
     })),
   },
+  { path: '/cases', label: 'Takedown Cases' },
   {
     label: 'Images',
     path: '/images',
@@ -161,6 +166,8 @@ export const NAVIGATION: NavLink[] = [
         ],
       },
       { path: MODEL_RULE_MATCHES_PATH, label: 'Model rule matches' },
+      { path: MERGE_ANALYSIS_PATH, label: 'Model merge analysis' },
+      { path: '/models/version-showcases', label: 'Featured community images' },
     ],
   },
   {
@@ -204,6 +211,7 @@ export const NAVIGATION: NavLink[] = [
     ],
   },
   { path: '/creator-services/disputes', label: 'Service Disputes' },
+  { path: '/creator-program/payout-reviews', label: 'Payout Reviews' },
   { path: '/messages', label: 'Civitai Messages', countKey: 'civitaiMessages' },
   {
     label: 'Audit',
@@ -234,6 +242,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/text-scan/shadow-sexual-prompt', label: 'Shadow sexual prompt' },
     ],
   },
+  { path: PRESERVED_VIEW_PAGE, label: 'Preserved-file review', hidden: true },
   {
     label: 'Retool',
     path: '/retool',
@@ -354,6 +363,21 @@ export const NAVIGATION: NavLink[] = [
       countKey: siteAppealCountKey(q.category),
     })),
   },
+  // /knights-of-new-order must keep this path: existing stored grants are keyed on it.
+  {
+    label: 'Knights of New Order',
+    children: [
+      {
+        path: '/knights-of-new-order/inquisitor',
+        label: 'Inquisitor',
+        countKey: 'knightsInquisitor',
+      },
+      { path: '/knights-of-new-order/trials', label: 'Trials' },
+      { path: '/knights-of-new-order/shop', label: 'Shop' },
+      { path: '/knights-of-new-order', label: 'Linked accounts', countKey: 'knightsLinkReviews' },
+      { path: '/knights-of-new-order/config', label: 'Config' },
+    ],
+  },
   { path: '/admin', label: 'Permissions' },
   { path: '/page-visits', label: 'Page Usage' },
 ];
@@ -443,6 +467,7 @@ function withViewerCountKey(link: NavLink, user: RoleUser): NavLink {
 function pruneNav(links: NavLink[], user: RoleUser): NavLink[] {
   const out: NavLink[] = [];
   for (const link of links) {
+    if (link.hidden) continue;
     if (link.shortcut ? !canAccess(user, link.path!) : link.path && !allows(link.path, user))
       continue;
     if (link.sharedAccess) {

@@ -2,12 +2,14 @@ import { Button, Paper, Text } from '@mantine/core';
 import { IconPhoto } from '@tabler/icons-react';
 import type { ComponentProps, ReactNode } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import cardStyles from '~/components/CardTemplates/AspectRatioCard.module.scss';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { serviceTermsLine } from '~/components/CreatorShop/Services/creator-service.util';
+import { ServiceHappyLine } from '~/components/CreatorShop/Services/ServiceHappyLine';
 import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
 import { ServiceOfferingMenu } from '~/components/CreatorShop/Services/ServiceOfferingMenu';
 import { ServiceRequestModal } from '~/components/CreatorShop/Services/deals/ServiceRequestModal';
@@ -29,7 +31,7 @@ type ServiceCoverImage = Pick<
 
 type ServiceCardSeller = ComponentProps<typeof UserAvatar>['user'];
 
-const COVER_ASPECT_RATIO = 4 / 3;
+export const COVER_ASPECT_RATIO = 4 / 3;
 
 /**
  * Whether ImageGuard draws its own level chip on the cover: always while blurred, and on a
@@ -50,7 +52,7 @@ export function coverShowsLevelChip({
 }
 
 /** Cover tile for an offering with no cover image. Filled in by the same overlays as a cover. */
-function NoCover() {
+export function NoCover() {
   return (
     <div className="flex size-full flex-col items-center justify-center gap-1 bg-gray-2 text-gray-6 dark:bg-dark-6 dark:text-dark-2">
       <IconPhoto size={32} stroke={1.5} />
@@ -65,7 +67,7 @@ function NoCover() {
  * The blur caption, sized to the cover: a narrow cover has no room for the sentence, so it
  * keeps only "Rated <level>" and the Show button.
  */
-function BlurCaption({ level }: { level: number }) {
+export function BlurCaption({ level }: { level: number }) {
   return (
     <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center @container">
       <ImageGuard2.BlurToggle>
@@ -109,11 +111,24 @@ export function ServiceOfferingCard({
   href,
   canRequest = true,
   extra,
+  preview = false,
 }: {
   offering: Pick<
     ServiceOffering,
-    'id' | 'title' | 'description' | 'price' | 'deliveryDays' | 'revisionsIncluded' | 'maxNsfwLevel'
-  > & { coverImage?: ServiceCoverImage | null };
+    | 'id'
+    | 'title'
+    | 'description'
+    | 'price'
+    | 'deliveryDays'
+    | 'revisionsIncluded'
+    | 'maxNsfwLevel'
+    | 'licensePreset'
+    | 'licenseCustomText'
+    | 'licenseAllowResale'
+  > &
+    Partial<Pick<ServiceOffering, 'happyCount' | 'reviewCount'>> & {
+      coverImage?: ServiceCoverImage | null;
+    };
   /** The /services feed shows whose offering this is; a seller's own shop and profile do not. */
   seller?: ServiceCardSeller;
   sellerId: number;
@@ -125,21 +140,25 @@ export function ServiceOfferingCard({
   canRequest?: boolean;
   /** Under the primary action; the storefront puts the owner's open-request shortcut here. */
   extra?: ReactNode;
+  /** The owner's "Preview as buyer": the buyer's card, with nothing on it that acts. */
+  preview?: boolean;
 }) {
   const domain = useDomainColor();
   const cover = offering.coverImage;
 
   const currentUser = useCurrentUser();
-  const isOwner = !!currentUser && currentUser.id === sellerId;
+  const isOwner = !preview && !!currentUser && currentUser.id === sellerId;
   const full = slotsOpen === 0;
   const header = (hideRating = false) => (
     <div className="flex w-full items-start justify-between gap-2">
       <div>{!hideRating && <ServiceRatingBadge rating={offering.maxNsfwLevel} />}</div>
-      <ServiceOfferingMenu
-        offering={offering}
-        isOwner={isOwner}
-        isModerator={!!currentUser?.isModerator}
-      />
+      {!preview && (
+        <ServiceOfferingMenu
+          offering={offering}
+          isOwner={isOwner}
+          isModerator={!!currentUser?.isModerator}
+        />
+      )}
     </div>
   );
   const price = (
@@ -206,16 +225,38 @@ export function ServiceOfferingCard({
         <Text size="sm" c="dimmed">
           {serviceTermsLine(offering)}
         </Text>
+        <ServiceHappyLine counts={[offering]} />
         <div className="mt-auto flex flex-col gap-2 pt-1">
           {isOwner ? (
-            <Button
-              component={NextLink}
-              href={`/user/${sellerUsername}/shop/manage?tab=services`}
-              variant="default"
-              fullWidth
-            >
-              Manage
-            </Button>
+            <>
+              <Button
+                component={NextLink}
+                href={`/user/${sellerUsername}/shop/manage?tab=services&edit=${offering.id}`}
+                variant="default"
+                fullWidth
+              >
+                Manage
+              </Button>
+              <Button
+                variant="subtle"
+                color="gray"
+                fullWidth
+                onClick={() =>
+                  openDialog(
+                    () => import('~/components/CreatorShop/Services/ServiceBuyerPreviewModal'),
+                    { offering, seller, sellerId, sellerUsername, slotsOpen, canRequest }
+                  )
+                }
+              >
+                Preview as buyer
+              </Button>
+            </>
+          ) : preview ? (
+            canRequest && (
+              <Button color="yellow" fullWidth disabled>
+                Request
+              </Button>
+            )
           ) : (
             canRequest && (
               <LoginRedirect reason="perform-action">

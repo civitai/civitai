@@ -55,7 +55,10 @@ type V1Deps struct {
 type V1Request struct {
 	Input *V1Input
 	// Viewer is nil when signed out or banned (getApiAuthSession whenBanned 'anonymous').
-	Viewer           *Viewer
+	Viewer *Viewer
+	// ViewerUsername is the session user's name ("" with no Viewer): the legacy path's own-feed check
+	// reads it (the feed path's viewer carries none).
+	ViewerUsername   string
 	RegionRestricted bool
 	// Host and Path are the request's Host header and path (nextPage is built from them).
 	Host string
@@ -71,10 +74,10 @@ func emptyGate() superjson.Object {
 type V1Answer struct {
 	// Body is what Node writes with `res.status(200).json(...)`.
 	Body superjson.Object
-	// Trivial marks an answer computed without loading any image: a withheld or fully held gallery,
-	// `limit=0`, a shape the feed cannot express, or a feed page with no ids. Such answers cost
-	// almost nothing on either side, so they are kept out of the CPU-per-served-call and match series
-	// (outcome `served_empty`, result `match_empty`).
+	// Trivial marks an answer computed without loading any image or running a page query (a legacy
+	// page whose query ran is not trivial, even when empty). Such answers cost almost nothing on
+	// either side, so they are kept out of the CPU-per-served-call and match series (outcome
+	// `served_empty`, result `match_empty`).
 	Trivial bool
 }
 
@@ -124,7 +127,7 @@ func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
 		if withheld {
 			return &V1Answer{Body: emptyGate(), Trivial: true}, nil
 		}
-		levels, err := heldLevels(ctx, d.Gallery, modelIDs)
+		levels, err := heldLevels(ctx, d.Gallery, modelIDs, "v1-held-level-unset")
 		if err != nil {
 			return nil, err
 		}
@@ -140,7 +143,17 @@ func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
 		}
 	}
 
-	page, err := v1Page(ctx, d, in, viewer, level)
+	var page *v1Result
+	var err error
+	if len(in.IDs) > 0 {
+		viewerUsername := ""
+		if req.Viewer != nil {
+			viewerUsername = req.ViewerUsername
+		}
+		page, err = v1LegacyPage(ctx, d, in, viewer, viewerUsername, level, usingPaging)
+	} else {
+		page, err = v1Page(ctx, d, in, viewer, level)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -150,15 +163,16 @@ func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
 	}
 
 	meta := superjson.Object{}
-	if page.next != "" {
+	if page.hasNext {
 		meta = append(meta, superjson.Field{Key: "nextCursor", Val: page.next})
 	}
 	if usingPaging {
 		meta = append(meta, superjson.Field{Key: "currentPage", Val: int64(in.Page)},
 			superjson.Field{Key: "pageSize", Val: int64(in.Limit)})
 	}
-	if page.next != "" {
-		next, err := nextPageURL(in, req.Host, req.Path, d.NodeProduction, usingPaging, page.next)
+	// getNextPage: `!!nextCursor`, so a legacy cursor of 0 or null has no next page.
+	if cursor, ok := nextCursorText(page); ok {
+		next, err := nextPageURL(in, req.Host, req.Path, d.NodeProduction, usingPaging, cursor)
 		if err != nil {
 			return nil, err
 		}
@@ -181,9 +195,36 @@ type v1Item struct {
 
 type v1Result struct {
 	items []v1Item
-	next  string
-	// hydrated: the page's rows were loaded (false = a trivial answer, see V1Answer).
+	// next is the answer's nextCursor when hasNext (else undefined): the feed's `feed:<a>:<b>`, or on
+	// the legacy path the look-ahead row's cursor column, a number (int64) or null (nil, a NULL index).
+	next    any
+	hasNext bool
+	// hydrated: the page's rows were loaded, or on the legacy path its query ran (false = a trivial
+	// answer, see V1Answer).
 	hydrated bool
+}
+
+// feedNext is a feed page's result with its encoded cursor ("" = the end of the feed).
+func feedNext(next string) *v1Result {
+	if next == "" {
+		return &v1Result{}
+	}
+	return &v1Result{next: next, hasNext: true}
+}
+
+// nextCursorText is the cursor getNextPage writes into nextPage, and whether it writes one at all
+// (`!!nextCursor`: not for an empty string, a 0 or a null).
+func nextCursorText(r *v1Result) (string, bool) {
+	if !r.hasNext {
+		return "", false
+	}
+	switch c := r.next.(type) {
+	case string:
+		return c, c != ""
+	case int64:
+		return strconv.FormatInt(c, 10), c != 0
+	}
+	return "", false
 }
 
 // v1Page is runImageSearch's feed-service arm: getImagesFromFeedServiceForRest, then the shaping.
@@ -199,12 +240,8 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 	// viewer there carries no username, so only a `userId` naming the viewer is their own feed (which
 	// keeps its tag exclusions off). disablePoi / disableMinor are always on for this route.
 	var excluded []int
-	addonLevel := browsing.OnlySelectable(orInt(level, browsing.PublicLevels))
-	if addonLevel == 0 {
-		addonLevel = browsing.PublicLevels
-	}
-	ownScoped := viewer.ID != 0 && in.UserID != 0 && viewer.ID == in.UserID
-	if resolved := browsing.ResolveAddons(d.Addons(ctx), addonLevel, viewer.IsModerator, ""); !ownScoped && len(resolved.ExcludedTagIDs) > 0 {
+	ownScoped := ownScope(viewer.ID, "", in.UserID, in.Username)
+	if resolved := browsing.ResolveAddons(d.Addons(ctx), AddonLevel(level), viewer.IsModerator, ""); !ownScoped && len(resolved.ExcludedTagIDs) > 0 {
 		excluded = unionInts(nil, resolved.ExcludedTagIDs)
 	}
 	userID := in.UserID
@@ -253,19 +290,19 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fallback.Newf("feed-unavailable", "%v", err) // Node: a retryable 503
+		return nil, fallback.Wrap("feed-unavailable", err) // Node: a retryable 503
 	}
 	if ans.Status != 200 {
 		// A 5xx is a 503 on Node; a 4xx is an empty page there (a 400 with a feed cursor). A feed that
 		// refused this call but answered Node is not a page to compare, so every one falls back.
-		return nil, fallback.Newf("feed-status", "%d", ans.Status)
+		return nil, fallback.Safef("feed-status", "%d", ans.Status)
 	}
 	var next string
 	if ans.NextCursor != "" {
 		next = feedsvc.EncodeCursor(ans.NextCursor)
 	}
 	if len(ans.IDs) == 0 {
-		return &v1Result{next: next}, nil
+		return feedNext(next), nil
 	}
 
 	// feedHydrateQuery: the request's filters without its paging, period or model scope.
@@ -291,7 +328,7 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fallback.Newf("feed-hydrate-error", "%v", err) // Node: hydrate:error, a 503
+		return nil, fallback.Wrap("feed-hydrate-error", err) // Node: hydrate:error, a 503
 	}
 	if len(rows) > hq.Limit {
 		rows = rows[:hq.Limit]
@@ -316,11 +353,113 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 			ordered = append(ordered, r)
 		}
 	}
-	items, err := shapeV1Page(ctx, d, ordered, level)
+	items, err := shapeV1Page(ctx, d, ordered, level, v1Shaping{withMeta: in.WithMeta, flatMeta: in.FlatMeta})
 	if err != nil {
 		return nil, err
 	}
-	return &v1Result{items: items, next: next, hydrated: true}, nil
+	res := feedNext(next)
+	res.items, res.hydrated = items, true
+	return res, nil
+}
+
+// v1LegacyPage is runImageSearch's legacy arm for an `ids` batch: getAllImages itself. One Postgres
+// page in getAllImages' own order (the id, descending, ascending for Oldest; a post's own media by
+// its index), paged by `skip` or by a keyset cursor on that order, then the same shaping as the feed
+// path. Unlike the feed's hydrate, an empty page is an answer here (getAllImages does no read rescue),
+// and a statement timeout is an empty page, as Node answers it on this path.
+func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, viewerUsername string, level int, usingPaging bool) (*v1Result, error) {
+	cursor := 0
+	if in.Cursor != "" {
+		// getCursor binds a single-field sort's cursor as one integer (parseCursor); a cursor that is
+		// not a positive integer is a 400 there, or a Date bound to an integer column (a 500), and a
+		// "0" is truthy and bound (`<= 0`), an empty page. All of them fall back.
+		n, err := v1Int(in.Cursor)
+		if err != nil || n < 1 {
+			return nil, fallback.New("v1-legacy-cursor")
+		}
+		cursor = n
+	}
+	// getAllImagesUncaptured: a level made only of unselectable bits is an empty page (none is PG).
+	if level != 0 && browsing.OnlySelectable(level) == 0 {
+		return &v1Result{}, nil
+	}
+
+	// enforceBlockedBrowsingTags: the addons at the request's level, for this viewer. Here the viewer
+	// is the session user, username included, so a `username` naming the viewer is their own feed too.
+	var excluded []int
+	ownScoped := ownScope(viewer.ID, viewerUsername, in.UserID, in.Username)
+	if resolved := browsing.ResolveAddons(d.Addons(ctx), AddonLevel(level), viewer.IsModerator, ""); !ownScoped && len(resolved.ExcludedTagIDs) > 0 {
+		excluded = unionInts(nil, resolved.ExcludedTagIDs)
+	}
+	userID := in.UserID
+	if userID == 0 && in.Username != "" {
+		id, err := d.userIDByUsername(ctx, in.Username)
+		if err != nil {
+			return nil, err
+		}
+		userID = id
+	}
+	var types []string
+	if in.Type != "" {
+		types = []string{in.Type}
+	}
+	skip := 0
+	if usingPaging {
+		skip = (in.Page - 1) * in.Limit // getPagination
+	}
+	q := ImagesQuery{
+		IDs:            in.IDs,
+		Limit:          in.Limit,
+		Skip:           skip,
+		Cursor:         cursor,
+		Sort:           in.Sort,
+		Period:         in.Period,
+		PeriodMode:     "published",
+		BrowsingLevel:  level,
+		ModelID:        in.ModelID,
+		ModelVersionID: in.ModelVersionID,
+		Types:          types,
+		DisablePoi:     true,
+		DisableMinor:   true,
+		ExcludedTagIDs: excluded,
+		ViewerID:       viewer.ID,
+		IsModerator:    viewer.IsModerator,
+		PostID:         in.PostID,
+		TargetUserID:   userID,
+		// `postId && !modelId`: a post's own media, in its order.
+		IndexOrder: in.PostID != 0 && in.ModelID == 0,
+	}
+	rows, err := d.Rows(ctx, q)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fallback.Wrap("v1-legacy-error", err) // Node: a 500
+	}
+	res := &v1Result{hydrated: true} // the query ran, whatever it found
+	if len(rows) > q.Limit {
+		// The look-ahead row (LIMIT limit + 1) is popped; its cursor column is the next cursor.
+		look := rows[len(rows)-1]
+		rows = rows[:len(rows)-1]
+		res.hasNext = true
+		if !look.CursorNull {
+			res.next = int64(look.CursorID)
+		}
+	}
+	now := time.Now()
+	if d.Now != nil {
+		now = d.Now()
+	}
+	rows = publishedFor(rows, viewer, now)
+	if len(rows) == 0 {
+		return res, nil
+	}
+	items, err := shapeV1Page(ctx, d, rows, level, v1Shaping{legacy: true, withMeta: in.WithMeta, flatMeta: in.FlatMeta})
+	if err != nil {
+		return nil, err
+	}
+	res.items = items
+	return res, nil
 }
 
 // publishedFor is getAllImages' publish filter: for anyone but a moderator, an image whose post is
@@ -353,8 +492,34 @@ func (d *V1Deps) userIDByUsername(ctx context.Context, username string) (int, er
 	return id, nil
 }
 
+// v1Shaping is what of the request the shaping reads.
+type v1Shaping struct {
+	// legacy: the rows are the legacy Postgres path's (useLegacyMethod).
+	legacy   bool
+	withMeta bool
+	flatMeta *bool
+}
+
+// v1Meta is the shaped `meta` member: null without withMeta; else the cached meta (null when the
+// cache has none), flat when `flatMeta` says so (undefined: on the feed path only), otherwise
+// wrapped as `{ id, meta }`.
+func v1Meta(id int, metas map[int]any, s v1Shaping) any {
+	if !s.withMeta {
+		return nil
+	}
+	m := metas[id]
+	flat := !s.legacy
+	if s.flatMeta != nil {
+		flat = *s.flatMeta
+	}
+	if flat {
+		return m
+	}
+	return superjson.Object{{Key: "id", Val: int64(id)}, {Key: "meta", Val: m}}
+}
+
 // shapeV1Page hydrates what the endpoint publishes and shapes each image (runImageSearch's map).
-func shapeV1Page(ctx context.Context, d *V1Deps, rows []RawImage, level int) ([]v1Item, error) {
+func shapeV1Page(ctx context.Context, d *V1Deps, rows []RawImage, level int, s v1Shaping) ([]v1Item, error) {
 	req := hydrate.V1PageRequest{UserIDs: make([]int, 0, len(rows)), ImageIDs: make([]int, 0, len(rows))}
 	for _, r := range rows {
 		req.ImageIDs = append(req.ImageIDs, r.ID)
@@ -362,6 +527,9 @@ func shapeV1Page(ctx context.Context, d *V1Deps, rows []RawImage, level int) ([]
 		if r.Type == "video" {
 			req.VideoIDs = append(req.VideoIDs, r.ID)
 		}
+	}
+	if s.withMeta {
+		req.MetaIDs = req.ImageIDs // imageMetaCache.fetch(items' ids)
 	}
 	page, err := d.Sources.V1Page(ctx, req)
 	if err != nil {
@@ -377,6 +545,7 @@ func shapeV1Page(ctx context.Context, d *V1Deps, rows []RawImage, level int) ([]
 		it, err := ShapeV1Image(r, V1Hydrated{
 			Thumb: thumb, HasThumb: hasThumb, Metrics: m, HasMetrics: hasMetrics,
 			Resources: res, HasResources: hasRes, User: basic, HasUser: hasBasic,
+			Meta: v1Meta(r.ID, page.Meta, s), OwnCreatedAt: s.legacy,
 		}, level, d.ImageLocation)
 		if err != nil {
 			return nil, err
@@ -396,6 +565,11 @@ type V1Hydrated struct {
 	HasResources bool
 	User         hydrate.BasicUser
 	HasUser      bool
+	// Meta is the image's shaped `meta` member (v1Meta; nil = null).
+	Meta any
+	// OwnCreatedAt: the row is the legacy path's, whose createdAt is the image's own; the feed path
+	// publishes the row's sortAt as createdAt.
+	OwnCreatedAt bool
 }
 
 // nsfwLevelReverseMapDeprecated / getNsfwLevelDeprecatedReverseMapping.
@@ -462,6 +636,10 @@ func ShapeV1Image(r RawImage, h V1Hydrated, level int, location string) (v1Item,
 			}
 		}
 	}
+	createdAt := r.SortAt
+	if h.OwnCreatedAt {
+		createdAt = r.CreatedAt
+	}
 	wire := superjson.Object{
 		{Key: "id", Val: int64(r.ID)},
 		{Key: "url", Val: url},
@@ -472,8 +650,9 @@ func ShapeV1Image(r RawImage, h V1Hydrated, level int, location string) (v1Item,
 		{Key: "type", Val: r.Type},
 		{Key: "nsfw", Val: dep != "None"},
 		{Key: "browsingLevel", Val: int64(nsfwLevel)},
-		// The feed path's createdAt is the row's sortAt (getImagesFromFeedServiceForRest).
-		{Key: "createdAt", Val: r.SortAt},
+		// The feed path's createdAt is the row's sortAt (getImagesFromFeedServiceForRest); the legacy
+		// path's is the image's own.
+		{Key: "createdAt", Val: createdAt},
 		{Key: "postId", Val: int64(r.PostID)},
 		{Key: "thumbnail", Val: thumbnail},
 		{Key: "stats", Val: superjson.Object{
@@ -484,7 +663,7 @@ func ShapeV1Image(r RawImage, h V1Hydrated, level int, location string) (v1Item,
 			{Key: "heartCount", Val: stat("heartCountAllTime")},
 			{Key: "commentCount", Val: stat("commentCountAllTime")},
 		}},
-		{Key: "meta", Val: nil}, // withMeta is a fallback shape
+		{Key: "meta", Val: h.Meta},
 		{Key: "username", Val: username},
 		{Key: "baseModel", Val: baseModel},
 		{Key: "modelVersionIds", Val: modelVersionIDs},
@@ -495,26 +674,48 @@ func ShapeV1Image(r RawImage, h V1Hydrated, level int, location string) (v1Item,
 
 func boolPtr(b bool) *bool { return &b }
 
-// EdgeOptions are the getEdgeUrl options this endpoint passes.
+// EdgeOptions are the getEdgeUrl options the REST ports pass.
 type EdgeOptions struct {
 	Type      string
 	Anim      *bool
 	Transcode bool
+	// Width is the requested width (0 = none), snapped up to the cacher's ladder and capped at 1800.
+	Width     int
 	Original  *bool
 	Optimized *bool
 	Skip      *float64
+	// Name is the file name segment's source (nil = undefined: the src is used).
+	Name *string
+}
+
+// edgeWidthLadder is COMMON_IMAGE_WIDTHS (src/client-utils/edge-url.ts).
+var edgeWidthLadder = []int{96, 320, 450, 512, 800, 1200, 1600, 2200}
+
+// snapEdgeWidth is clampEdgeWidth(snapWidthToCommonSize(width)).
+func snapEdgeWidth(width int) int {
+	for _, size := range edgeWidthLadder {
+		if size >= width {
+			width = size
+			break
+		}
+	}
+	return min(width, 1800)
 }
 
 var edgeExtensions = map[string]string{"image": ".jpeg", "video": ".mp4", "audio": ".mp3"}
 
-// EdgeURL is getEdgeUrl (src/client-utils/edge-url.ts) for options without width, height or name.
+// EdgeURL is getEdgeUrl (src/client-utils/edge-url.ts) for options without a height.
 func EdgeURL(location, src string, o EdgeOptions) string {
 	if src == "" || strings.HasPrefix(src, "http") || strings.HasPrefix(src, "blob") {
 		return src // isEdgeUrlPassthrough
 	}
 	original := o.Original
-	if original == nil {
+	if original == nil && o.Width == 0 {
 		original = boolPtr(true) // no width, no height, original undefined
+	}
+	width := o.Width
+	if original != nil && *original {
+		width = 0
 	}
 	var params []string
 	if o.Anim != nil && !*o.Anim {
@@ -523,7 +724,12 @@ func EdgeURL(location, src string, o EdgeOptions) string {
 	if o.Transcode {
 		params = append(params, "transcode=true")
 	}
-	params = append(params, "original="+strconv.FormatBool(*original))
+	if width > 0 {
+		params = append(params, "width="+strconv.Itoa(snapEdgeWidth(width)))
+	}
+	if original != nil {
+		params = append(params, "original="+strconv.FormatBool(*original))
+	}
 	if o.Optimized != nil {
 		params = append(params, "optimized="+strconv.FormatBool(*o.Optimized))
 	}
@@ -534,7 +740,11 @@ func EdgeURL(location, src string, o EdgeOptions) string {
 	if !ok {
 		ext = edgeExtensions["image"]
 	}
-	name := strings.ReplaceAll(src, "%", "")
+	name := src
+	if o.Name != nil {
+		name = *o.Name
+	}
+	name = strings.ReplaceAll(name, "%", "")
 	if i := strings.LastIndex(name, "."); i >= 0 {
 		name = name[:i] + ext
 	} else {
@@ -561,7 +771,8 @@ func publicVideoThumbnail(r RawImage, h V1Hydrated, level int, location string) 
 		return nil, nil
 	}
 	allowed := level & browsing.AllLevels
-	if h.HasThumb && h.Thumb.NsfwLevel != 0 && h.Thumb.NsfwLevel&allowed != 0 {
+	// servableThumbnails: only a servable custom thumbnail is used.
+	if h.HasThumb && h.Thumb.Servable && h.Thumb.NsfwLevel != 0 && h.Thumb.NsfwLevel&allowed != 0 {
 		src, ok := h.Thumb.URL.(string)
 		if !ok {
 			return nil, fallback.New("v1-thumbnail-url") // Node throws on a non-string url
@@ -657,7 +868,7 @@ func SkipValue(metadata json.RawMessage) *float64 {
 // resolveImageModelIDs is resolveImageModelIds for a model, a version and a post: the named model, the
 // version's model and the post's version's model. ok is false when the named version or post cannot be
 // found (Node: null — withheld, and held at nothing).
-func resolveImageModelIDs(ctx context.Context, s V1Sources, modelID, versionID, postID int) ([]int, bool, error) {
+func resolveImageModelIDs(ctx context.Context, s modelResolver, modelID, versionID, postID int) ([]int, bool, error) {
 	var listed []int
 	if postID != 0 {
 		posts, err := s.PostVersions(ctx, []int{postID})
@@ -700,10 +911,16 @@ func resolveImageModelIDs(ctx context.Context, s V1Sources, modelID, versionID, 
 	return unionInts(nil, modelIDs), true, nil
 }
 
+// modelResolver is what resolveImageModelIDs reads: the post→version and version→model caches.
+type modelResolver interface {
+	PostVersions(ctx context.Context, postIDs []int) (map[int]int, error)
+	VersionModels(ctx context.Context, versionIDs []int) (map[int]int, error)
+}
+
 // heldLevels is getShowcaseHeldLevels for models whose flags the caller did not read: each held
-// model's gallery level. A held model whose settings carry no level falls back (Node's reading of an
-// undefined level differs between its callers).
-func heldLevels(ctx context.Context, g V1Gallery, modelIDs []int) (map[int]int, error) {
+// model's gallery level. A held model whose settings carry no level falls back with unsetReason
+// (Node's reading of an undefined level differs between its callers).
+func heldLevels(ctx context.Context, g V1Gallery, modelIDs []int, unsetReason string) (map[int]int, error) {
 	out := map[int]int{}
 	ids := hydrate.Unique(modelIDs)
 	if len(ids) == 0 {
@@ -719,9 +936,62 @@ func heldLevels(ctx context.Context, g V1Gallery, modelIDs []int) (map[int]int, 
 			continue
 		}
 		if s.Level == nil {
-			return nil, fallback.New("v1-held-level-unset")
+			return nil, fallback.New(unsetReason)
 		}
 		out[id] = *s.Level
+	}
+	return out, nil
+}
+
+// postHold is a post's hold: the minor or SFW-only model its version belongs to, and that model's
+// held gallery level.
+type postHold struct{ modelID, level int }
+
+// heldByPost is getHeldLevelsByPost (src/server/services/model.service.ts) without its owner read: each
+// post (of postIDs) whose version's model is held, with that model's level. The post→version and
+// version→model caches are read only for what the step before found; no version, no hold.
+func heldByPost(ctx context.Context, s modelResolver, g V1Gallery, postIDs []int, unsetReason string) (map[int]postHold, error) {
+	out := map[int]postHold{}
+	postIDs = hydrate.Unique(postIDs)
+	if len(postIDs) == 0 {
+		return out, nil
+	}
+	posts, err := s.PostVersions(ctx, postIDs)
+	if err != nil {
+		return nil, err
+	}
+	var versionIDs []int
+	for _, id := range postIDs {
+		if v := posts[id]; v != 0 {
+			versionIDs = append(versionIDs, v)
+		}
+	}
+	versionIDs = hydrate.Unique(versionIDs)
+	if len(versionIDs) == 0 {
+		return out, nil
+	}
+	versions, err := s.VersionModels(ctx, versionIDs)
+	if err != nil {
+		return nil, err
+	}
+	var modelIDs []int
+	for _, v := range versionIDs {
+		if m, ok := versions[v]; ok {
+			modelIDs = append(modelIDs, m)
+		}
+	}
+	levels, err := heldLevels(ctx, g, modelIDs, unsetReason)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range postIDs {
+		if v := posts[id]; v != 0 {
+			if m, ok := versions[v]; ok {
+				if l, held := levels[m]; held {
+					out[id] = postHold{modelID: m, level: l}
+				}
+			}
+		}
 	}
 	return out, nil
 }
@@ -736,46 +1006,17 @@ func withoutHeldImages(ctx context.Context, d *V1Deps, items []v1Item) ([]v1Item
 	for _, it := range items {
 		postIDs = append(postIDs, it.postID)
 	}
-	postIDs = hydrate.Unique(postIDs)
-	posts, err := d.Sources.PostVersions(ctx, postIDs)
+	holds, err := heldByPost(ctx, d.Sources, d.Gallery, postIDs, "v1-held-level-unset")
 	if err != nil {
 		return nil, err
 	}
-	var versionIDs []int
-	for _, id := range postIDs {
-		if v := posts[id]; v != 0 {
-			versionIDs = append(versionIDs, v)
-		}
-	}
-	versionIDs = hydrate.Unique(versionIDs)
-	if len(versionIDs) == 0 {
-		return items, nil
-	}
-	versions, err := d.Sources.VersionModels(ctx, versionIDs)
-	if err != nil {
-		return nil, err
-	}
-	var modelIDs []int
-	for _, v := range versionIDs {
-		if m, ok := versions[v]; ok {
-			modelIDs = append(modelIDs, m)
-		}
-	}
-	levels, err := heldLevels(ctx, d.Gallery, modelIDs)
-	if err != nil {
-		return nil, err
-	}
-	if len(levels) == 0 {
+	if len(holds) == 0 {
 		return items, nil
 	}
 	out := items[:0:0]
 	for _, it := range items {
-		if v := posts[it.postID]; v != 0 {
-			if m, ok := versions[v]; ok {
-				if l, held := levels[m]; held && l&it.browsingLevel == 0 {
-					continue
-				}
-			}
+		if h, held := holds[it.postID]; held && h.level&it.browsingLevel == 0 {
+			continue
 		}
 		out = append(out, it)
 	}

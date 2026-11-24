@@ -23,19 +23,14 @@ import type * as UserService from '~/server/services/user.service';
  * the database, not about a spy having been called.
  */
 
-const {
-  mockUpdateUserById,
-  mockGetUserById,
-  mockIngestImageById,
-  mockDeleteImageById,
-  mockDeleteImages,
-} = vi.hoisted(() => ({
-  mockUpdateUserById: vi.fn(),
-  mockGetUserById: vi.fn(),
-  mockIngestImageById: vi.fn(),
-  mockDeleteImageById: vi.fn(),
-  mockDeleteImages: vi.fn(),
-}));
+const { mockUpdateUserById, mockGetUserById, mockIngestImageById, mockDeleteImages } = vi.hoisted(
+  () => ({
+    mockUpdateUserById: vi.fn(),
+    mockGetUserById: vi.fn(),
+    mockIngestImageById: vi.fn(),
+    mockDeleteImages: vi.fn(),
+  })
+);
 
 vi.mock('~/server/services/orchestrator/civitai', () => ({
   invalidateCivitaiUser: vi.fn().mockResolvedValue(undefined),
@@ -59,14 +54,12 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ingestImageById: mockIngestImageById,
-  deleteImageById: mockDeleteImageById,
   deleteImages: mockDeleteImages,
 }));
 vi.mock('~/server/search-index', () => ({ usersSearchIndex: { queueUpdate: vi.fn() } }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn(() => ({ catch: vi.fn() })) }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { updateUserHandler } from '~/server/controllers/user.controller';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
@@ -102,7 +95,7 @@ const replacePicture = (pictureId = NEW_PICTURE_ID) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  redisMock.sysRedis.mGet.mockResolvedValue([String(USER_ID)] as never);
+  redisMock.redis.mGet.mockResolvedValue([String(USER_ID)] as never);
   mockGetUserById.mockResolvedValue({
     profilePictureId: OLD_PICTURE_ID,
     profilePicture: { userId: USER_ID },
@@ -117,7 +110,6 @@ describe('profile picture replacement (#4272)', () => {
 
     // The two paths that would take the old picture off the internet. Either one firing here
     // reinstates the 404: the CDN keeps serving its cached redirect to a url that is gone.
-    expect(mockDeleteImageById).not.toHaveBeenCalled();
     expect(mockDeleteImages).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.image.delete).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.image.deleteMany).not.toHaveBeenCalled();
@@ -173,7 +165,6 @@ describe('profile picture replacement (#4272)', () => {
     await replacePicture(NEW_PICTURE_ID);
 
     expect(queueInsert()).toBeUndefined();
-    expect(mockDeleteImageById).not.toHaveBeenCalled();
   });
 
   it('queues nothing when the user had no previous picture', async () => {
@@ -195,9 +186,6 @@ describe('profile picture replacement (#4272)', () => {
     );
 
     await expect(replacePicture()).resolves.toMatchObject({ id: USER_ID });
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'queue-replaced-image-deletion-failed' })
-    );
   });
 });
 
@@ -233,13 +221,16 @@ describe('verifyAvatar shares the ingestion allowlist predicate', () => {
     expect(mockUpdateUserById).not.toHaveBeenCalled();
   });
 
-  it('still accepts a real avatar url and a CF Images UUID', async () => {
+  it('still accepts a real avatar url, and refuses a CF Images UUID as a new image', async () => {
     await setAvatar('https://cdn.discordapp.com/avatars/123/abc.png');
     expect(mockUpdateUserById).toHaveBeenCalled();
 
+    // An upload key reaches `User.image` only through `profilePicture`.
     mockUpdateUserById.mockClear();
-    await setAvatar('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
-    expect(mockUpdateUserById).toHaveBeenCalled();
+    await expect(setAvatar('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee')).rejects.toThrow(
+      'Invalid avatar URL'
+    );
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
   });
 
   it('keeps the current picture when the form re-sends its `user.image` fallback', async () => {

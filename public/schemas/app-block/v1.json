@@ -225,7 +225,7 @@
         },
         "buzzBudgetPerGen": {
           "type": "integer",
-          "description": "Optional per-generation Buzz SAFETY CEILING for `ai:write:budgeted` tokens — the most a SINGLE generation this app requests is allowed to cost. It is a ceiling against a malicious or compromised app draining the viewer's Buzz, NOT a cost forecast: size it WELL ABOVE your worst-case generation (a good rule of thumb is several times your expected cost — e.g. 1000 when a run costs ~100), never at your estimate. Setting it to an estimate is the common mistake. The server re-prices every submit and compares that real price against this budget BEFORE anything runs, so a generation that comes in over budget is REJECTED outright with `insufficient buzz budget` — no workflow is created and no Buzz is spent, but the user gets nothing, and it stays broken for EVERY user until you ship a new manifest version and it is re-approved. So any upward drift in real cost (more steps, a bigger resolution, a pricier model or recipe, a colder cache) turns a budget sized to today's estimate into a hard outage. Positive integer. Omit it and the token is minted with the platform default budget. Server-clamped to the platform per-call cap, so a generous value is safe. The current default and cap are listed in the App Blocks developer docs (https://developer.civitai.com/apps). This bounds ONE generation only — cumulative spend is separately capped per viewer per day and per app, so a high per-gen ceiling does not widen total exposure.",
+          "description": "Optional per-generation Buzz SAFETY CEILING for `ai:write:budgeted` tokens — the most a SINGLE generation this app requests is allowed to cost. It is a ceiling against a malicious or compromised app draining the viewer's Buzz, NOT a cost forecast: size it WELL ABOVE your worst-case generation (a good rule of thumb is several times your expected cost — e.g. 1000 when a run costs ~100), never at your estimate. Setting it to an estimate is the common mistake. The server re-prices every submit and compares that real price against this budget BEFORE anything runs, so a generation that comes in over budget is REJECTED outright with `insufficient buzz budget` — no workflow is created and no Buzz is spent, but the user gets nothing, and it stays broken for EVERY user until you ship a new manifest version and it is re-approved. So any upward drift in real cost (more steps, a bigger resolution, a pricier model or recipe, a colder cache) turns a budget sized to today's estimate into a hard outage. Positive integer. Omit it and the token is minted with the platform default budget. Server-clamped to the platform per-call cap, so a generous value is safe. The current default and cap are listed in the App Blocks developer docs (https://developer.civitai.com/apps/). This bounds ONE generation only — cumulative spend is separately capped per viewer per day and per app, so a high per-gen ceiling does not widen total exposure.",
           "exclusiveMinimum": 0
         }
       }
@@ -536,8 +536,13 @@
                   "maxItems": 32,
                   "items": { "$ref": "#/$defs/storageMigrationOp" }
                 },
+                "keyedBy": {
+                  "type": "string",
+                  "description": "Shared collections with `write` \"own\" only (not kind \"log\"). The server derives each document's key from the signed-in viewer, so each viewer has at most one document (\"viewer\") or at most one per parent key the app names (\"parent+viewer\"), and no viewer can write another's. The app reads and writes it at `/:collection/@me` or `/:collection/@me/:parent`, where a parent is 1 to 96 characters of A-Z, a-z, 0-9, `.`, `_` or `-` (not only dots); a \"parent+viewer\" key is `<parent>:<digest>`, so listing with `keyPrefix=<parent>:` returns one parent's documents. Writing such a collection by key, creating in it, publishing into it and counters or marks on it are refused (it declares none). Cannot be added, removed or changed on a collection any approved version declared: declare a new collection instead.",
+                  "enum": ["viewer", "parent+viewer"]
+                },
                 "hook": {
-                  "description": "RESERVED — civitai.com refuses this field until permission hooks are enabled, so do not declare it yet. Optional. A permission hook: one ES module of the bundle whose default export decides, for every write to this collection, whether the write is allowed. It runs after the collection `schema` check, never instead of it. `file` is the hook's path in the submitted bundle, shipped verbatim — a committed source file, not a build output, so it must not be inside `outputDir` or `node_modules`; one self-contained module with no imports, at most 65536 bytes of UTF-8 text. `sha256` is the SHA-256 of that file's bytes as 64 lowercase hex characters: submit, the git-push path and approve each refuse a version whose file is missing or does not match it. `timeoutMs` is the most time one call may take, from 1 to 500 (omitted means 50). One file used by several collections must be pinned with the same sha256 in each.",
+                  "description": "Optional, in a limited rollout: civitai.com accepts a new or changed hook only from authors the rollout includes, and refuses it otherwise. A permission hook: one ES module of the bundle whose default export decides, for every write to this collection, whether the write is allowed. It runs after the collection `schema` check, never instead of it. `file` is the hook's path in the submitted bundle, shipped verbatim — a committed source file, not a build output, so it must not be inside `outputDir` or `node_modules`; one self-contained module with no imports, at most 65536 bytes of UTF-8 text. `sha256` is the SHA-256 of that file's bytes as 64 lowercase hex characters: submit, the git-push path and approve each refuse a version whose file is missing or does not match it. `timeoutMs` is the most time one call may take, from 1 to 500 (omitted means 50). One file used by several collections must be pinned with the same sha256 in each.",
                   "$ref": "#/$defs/storageCollectionHook"
                 }
               },
@@ -565,7 +570,8 @@
                       "showAuthor": false,
                       "dailyWritesPerAuthor": false,
                       "ownedModelVersions": false,
-                      "registry": false
+                      "registry": false,
+                      "keyedBy": false
                     }
                   }
                 },
@@ -592,6 +598,24 @@
                     "properties": { "write": { "enum": ["anyone", "owner", "none"] } }
                   },
                   "then": { "properties": { "ownedModelVersions": false } }
+                },
+                {
+                  "$comment": "A viewer-keyed collection's viewer is the author of every key they address, so it is declared only under write:\"own\" (private collections are refused above); log entries have server keys.",
+                  "if": {
+                    "anyOf": [
+                      {
+                        "required": ["write"],
+                        "properties": { "write": { "enum": ["anyone", "owner", "none"] } }
+                      },
+                      { "required": ["kind"], "properties": { "kind": { "const": "log" } } }
+                    ]
+                  },
+                  "then": { "properties": { "keyedBy": false } }
+                },
+                {
+                  "$comment": "A viewer-keyed document is itself the viewer's vote or entry, so a viewer-keyed collection declares no counters or marks.",
+                  "if": { "required": ["keyedBy"] },
+                  "then": { "properties": { "counters": false, "marks": false } }
                 },
                 {
                   "$comment": "A write:\"none\" collection is written only through counters and marks, so it must declare at least one.",

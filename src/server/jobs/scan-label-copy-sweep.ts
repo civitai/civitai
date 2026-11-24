@@ -1,6 +1,6 @@
 import { newS3Client } from '~/utils/s3-client-factory';
 import type { S3Client } from '@aws-sdk/client-s3';
-import { DeleteObjectCommand, ListObjectVersionsCommand } from '@aws-sdk/client-s3';
+import { purgeObjectVersions } from '@civitai/storage/s3-purge-versions';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
@@ -34,27 +34,7 @@ export function createScanLabelSweepStore({
 }): ScanLabelSweepStore {
   return {
     async remove(key) {
-      let keyMarker: string | undefined;
-      let versionIdMarker: string | undefined;
-      do {
-        const page = await client.send(
-          new ListObjectVersionsCommand({
-            Bucket: bucket,
-            Prefix: key,
-            KeyMarker: keyMarker,
-            VersionIdMarker: versionIdMarker,
-          })
-        );
-        const versions = [...(page.Versions ?? []), ...(page.DeleteMarkers ?? [])].filter(
-          (v) => v.Key === key && v.VersionId
-        );
-        for (const v of versions)
-          await client.send(
-            new DeleteObjectCommand({ Bucket: bucket, Key: key, VersionId: v.VersionId })
-          );
-        keyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
-        versionIdMarker = page.IsTruncated ? page.NextVersionIdMarker : undefined;
-      } while (keyMarker);
+      await purgeObjectVersions({ client, bucket, key });
     },
   };
 }

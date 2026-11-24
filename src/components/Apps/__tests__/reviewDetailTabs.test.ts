@@ -18,7 +18,7 @@ import {
  */
 
 describe('the tab set', () => {
-  test('🔴 is exactly these six, in this order (fails when it GROWS or SHRINKS)', () => {
+  test('🔴 is exactly these eight, in this order (fails when it GROWS or SHRINKS)', () => {
     // A ledger, not a floor. Every derivation below maps over this list, so a set that
     // silently changed would move the default, the labels and the fallbacks with it.
     expect([...REVIEW_DETAIL_TAB_VALUES]).toEqual([
@@ -28,6 +28,8 @@ describe('the tab set', () => {
       'manifest',
       'agent',
       'preview',
+      'console',
+      'sessions',
     ]);
   });
 
@@ -45,6 +47,8 @@ describe('the tab set', () => {
       manifest: 'Manifest',
       agent: 'AI report',
       preview: 'Preview',
+      console: 'Console',
+      sessions: 'Build sessions',
     });
   });
 

@@ -73,6 +73,7 @@ const { DEFERRED_NOTICE_LOG } = await import('../deferred-block-effects');
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "type" TEXT,
@@ -100,7 +101,10 @@ ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "status" TEXT NOT NULL, "reason" TEXT NOT NULL DEFAULT 'TOSViolation');
 CREATE TABLE "ImageReport" ("imageId" INTEGER, "reportId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB,
+  PRIMARY KEY ("entityType", "entityId", "type"));
+CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "disabled" BOOLEAN);
+ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "scanJobs" JSONB;
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -113,7 +117,7 @@ CREATE TABLE "ModActivity" (
   "entityId" INTEGER, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
 );
 CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}', "images" JSONB NOT NULL DEFAULT '[]', "reportSentAt" TIMESTAMP(3));
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "bannedAt" TIMESTAMP(3), "meta" JSONB);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP(3), "bannedAt" TIMESTAMP(3), "meta" JSONB);
 CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "releaseAt" TIMESTAMP(3));
 CREATE VIEW "EvidenceHeldUser" AS
   SELECT "userId" FROM "EvidenceHold" WHERE "releaseAt" IS NULL OR "releaseAt" > now() GROUP BY "userId";

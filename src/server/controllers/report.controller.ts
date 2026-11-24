@@ -10,7 +10,13 @@ import type {
   GetRecentAppealsInput,
 } from '~/server/schema/report.schema';
 import { getImageById } from '~/server/services/image.service';
+import {
+  assertImageReportable,
+  REPORTED_CONTENT_GONE,
+} from '~/server/services/image-visibility.service';
+import { shownReviewImageLevelsFor } from '~/server/utils/review-image-levels';
 import { assertCommentActionable } from '~/server/controllers/commentv3.controller';
+import { assertPostTextVisible } from '~/server/services/post-viewer-visibility.service';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import {
   assertLockReviewAllowed,
@@ -57,8 +63,43 @@ export async function createReportHandler({
   ctx: ProtectedContext;
 }) {
   try {
-    // Gated like reacting.
     if (input.type === ReportEntity.CommentV3) await assertCommentActionable(input.id, ctx);
+    if (input.type === ReportEntity.PostText) await assertPostTextVisible(input.id, ctx);
+    // Reviews are shown only behind the flag; without it there is nothing the reporter could see.
+    if (input.type === ReportEntity.ServiceDealReview && !ctx.features.creatorServicesNext)
+      throw throwNotFoundError('That review is not shown.');
+    // A review image the reporter cannot open is answered as an id that names no image.
+    if (input.type === ReportEntity.Image)
+      await assertImageReportable({
+        id: input.id,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+        shownReviewImageLevels: shownReviewImageLevelsFor(ctx),
+      });
+  } catch (e) {
+    throw reportError(e);
+  }
+  return fileReport({ input, ctx });
+}
+
+function reportError(e: unknown) {
+  // The reported entity was deleted between the client rendering it and the
+  // report landing, so the entity-report FK has nothing to point at. Search
+  // can legitimately serve a deleted image until its index delete is batched
+  // through, so this is a reachable user path, not a server fault.
+  if (isPrismaForeignKeyViolation(e)) return throwNotFoundError(REPORTED_CONTENT_GONE);
+  return throwDbError(e);
+}
+
+/** Files a report the caller has already checked the reporter may make. */
+export async function fileReport({
+  input,
+  ctx,
+}: {
+  input: CreateReportInput;
+  ctx: ProtectedContext;
+}) {
+  try {
     const result = await createReport({
       ...input,
       userId: ctx.user.id,
@@ -78,13 +119,7 @@ export async function createReportHandler({
 
     return null;
   } catch (e) {
-    // The reported entity was deleted between the client rendering it and the
-    // report landing, so the entity-report FK has nothing to point at. Search
-    // can legitimately serve a deleted image until its index delete is batched
-    // through, so this is a reachable user path, not a server fault.
-    if (isPrismaForeignKeyViolation(e))
-      throw throwNotFoundError('The content you are trying to report no longer exists');
-    throw throwDbError(e);
+    throw reportError(e);
   }
 }
 

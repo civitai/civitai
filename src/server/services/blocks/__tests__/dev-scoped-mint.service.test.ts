@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ViewerBrowsingLevel from '~/server/services/blocks/viewer-browsing-level';
 
 /**
  * Unit coverage for the SHARED dev-scoped block-token mint belt
@@ -31,6 +32,14 @@ vi.mock('~/server/services/block-token.service', () => ({
   BlockTokenService: { sign: mockSign },
 }));
 
+const { ownLevel } = vi.hoisted(() => ({
+  ownLevel: vi.fn<(userId: number) => Promise<number>>(async () => 31),
+}));
+vi.mock('~/server/services/blocks/viewer-browsing-level', async (importOriginal) => ({
+  ...(await importOriginal<typeof ViewerBrowsingLevel>()),
+  userOwnBrowsingLevel: (userId: number) => ownLevel(userId),
+}));
+
 import {
   clampDevScopes,
   clampTunnelDeclaredScopes,
@@ -43,14 +52,16 @@ import {
   REVIEW_MINT_SCOPE_ALLOWLIST,
   REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST,
   signDevScopedPageToken,
+  signPrivateRunPageToken,
   TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
 } from '~/server/services/blocks/dev-scoped-mint.service';
+import { NsfwLevel } from '~/server/common/enums';
 import { BUZZ_BUDGET_CAP, BUZZ_BUDGET_DEFAULT } from '~/shared/constants/block-scope.constants';
 import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 
 // AIServicesWrite OAuth bit — models:read:self carries a DIFFERENT bit, so a
 // ceiling of just this bit strips models:read:self but keeps ai:write:budgeted.
-const AI_WRITE_BIT = 1 << 15;
+const AI_WRITE_BIT = 1n << 15n;
 
 const FULL_SOURCE = [
   'models:read:self',
@@ -627,5 +638,34 @@ describe('signDevScopedPageToken', () => {
     expect(arg.buzzBudget).toBe(50);
     // PAGE ctx (entity=none, no modelId) — can never satisfy a model-bound check.
     expect(arg.ctx).toEqual({ slotId: PAGE_SLOT_ID, entityType: 'none' });
+  });
+});
+
+describe("dev mints narrow the forced-SFW level by the minter's own level", () => {
+  const base = {
+    userId: 42,
+    signBlockId: 'b',
+    signAppId: 'pending-x',
+    signAppBlockId: 'pubreq_x',
+    blockInstanceId: 'page_x',
+    granted: ['user:read:self'],
+    buzzBudget: undefined,
+  };
+  const signedLevel = () =>
+    (mockSign.mock.calls.at(-1)![0] as Record<string, unknown>).viewerBrowsingLevel;
+
+  it.each([
+    ['signDevScopedPageToken', () => signDevScopedPageToken(base)],
+    ['signPrivateRunPageToken', () => signPrivateRunPageToken({ ...base, audience: 'editor' })],
+  ])('🔴 %s: a PG-only minter gets a PG token', async (_, sign) => {
+    ownLevel.mockResolvedValueOnce(NsfwLevel.PG);
+    await sign();
+    expect(ownLevel).toHaveBeenCalledWith(42);
+    expect(signedLevel()).toBe(NsfwLevel.PG);
+  });
+
+  it('CONTROL: a minter at every level still gets no more than the forced-SFW ceiling', async () => {
+    await signDevScopedPageToken(base);
+    expect(signedLevel()).toBe(FORCED_SFW_CEILING);
   });
 });

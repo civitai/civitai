@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -12,6 +13,8 @@ const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 type Raw = ReturnType<typeof pgliteRaw>;
 dbMock.dbWrite.$executeRaw.mockImplementation(((...a: Parameters<Raw['executeRaw']>) =>
   pgliteRaw(holder.db).executeRaw(...a)) as never);
+dbMock.dbWrite.$queryRaw.mockImplementation(((...a: Parameters<Raw['queryRaw']>) =>
+  pgliteRaw(holder.db).queryRaw(...a)) as never);
 
 const job = jobQueueJobs.find((j) => j.name === 'job-queue-clean-if-empty')!;
 const runJob = () => job.run({} as Parameters<typeof job.run>[0]).result;
@@ -19,6 +22,7 @@ const runJob = () => job.run({} as Parameters<typeof job.run>[0]).result;
 const OWNER = 7;
 const HELD = 8; // named on a pending report
 const MARKED = 9; // held by a hold marker
+const BAN_NOTE = 10; // banned with a note naming CSAM, no hold: not held
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -28,7 +32,10 @@ beforeAll(async () => {
     CREATE TABLE "ModelVersion" (
       "id" integer PRIMARY KEY, "modelId" integer NOT NULL, "status" "ModelStatus" NOT NULL
     );
-    CREATE TABLE "Post" ("id" integer PRIMARY KEY, "userId" integer NOT NULL, "modelVersionId" integer);
+    CREATE TABLE "Post" (
+      "id" integer PRIMARY KEY, "userId" integer NOT NULL, "modelVersionId" integer,
+      "nsfwLevel" integer NOT NULL DEFAULT 0, "publishedAt" timestamp, metadata jsonb
+    );
     CREATE TABLE "Image" (
       "id" integer PRIMARY KEY, "postId" integer REFERENCES "Post"(id), "userId" integer,
       "needsReview" text, "blockedFor" text
@@ -49,6 +56,12 @@ beforeAll(async () => {
     );
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb, "bannedAt" timestamp(3));
+    CREATE TABLE "ModActivity" (
+      "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3)
+    );
+    INSERT INTO "User" VALUES
+      (${BAN_NOTE}, '{"banDetails": {"detailsInternal": "csam"}}', now() - interval '1 day');
     CREATE TABLE "StorylineChapter" (
       "id" integer PRIMARY KEY,
       "postId" integer UNIQUE REFERENCES "Post"(id) ON DELETE SET NULL
@@ -57,13 +70,22 @@ beforeAll(async () => {
       "id" integer PRIMARY KEY,
       "postId" integer NOT NULL REFERENCES "Post"(id) ON DELETE CASCADE
     );
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+    CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'ImageStorageDelete', 'UpdateNsfwLevel');
+    CREATE TABLE "JobQueue" (
+      "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+      data jsonb, "createdAt" timestamp(3) NOT NULL DEFAULT now(),
+      UNIQUE ("entityType", "entityId", type)
+    );
   `);
+  await holder.db.exec(imageUseTablesSql);
 });
 
 beforeEach(async () => {
   vi.clearAllMocks();
   await holder.db.exec(
-    `TRUNCATE "StorylineChapter", "PostText", "Image", "Thread", "Post", "ModelVersion", "Model" CASCADE`
+    `TRUNCATE "StorylineChapter", "PostText", "Image", "Thread", "Post", "ModelVersion", "Model",
+      "Report", "PostReport", "JobQueue" CASCADE`
   );
 });
 
@@ -132,6 +154,30 @@ describe('job-queue-clean-if-empty', () => {
 
     // Another user's empty post on the same version is not an anchor.
     expect(await remainingPostIds()).toEqual([1]);
+  });
+
+  it('deletes the empty post of an owner banned with a CSAM note and no hold', async () => {
+    await holder.db.exec(`INSERT INTO "Post" (id, "userId") VALUES (1, ${BAN_NOTE})`);
+    queuePosts(1);
+
+    await runJob();
+
+    expect(await remainingPostIds()).toEqual([]);
+  });
+
+  it('leaves an empty post in a child-safety case unqueued, so refilling it saves it', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Post" (id, "userId") VALUES (1, ${OWNER});
+      INSERT INTO "Report" (id, reason, status) VALUES (70, 'CSAM', 'Pending');
+      INSERT INTO "PostReport" ("postId", "reportId") VALUES (1, 70);
+    `);
+    queuePosts(1);
+
+    await runJob();
+
+    expect(await remainingPostIds()).toEqual([1]);
+    const { rows } = await holder.db.query(`SELECT 1 FROM "JobQueue" WHERE type = 'PendingDelete'`);
+    expect(rows).toEqual([]);
   });
 
   it.each([HELD, MARKED])("leaves a held owner's empty post (owner %i)", async (owner) => {

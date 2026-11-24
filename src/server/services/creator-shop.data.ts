@@ -5,7 +5,12 @@ import type {
 } from '~/server/schema/cosmetic-shop.schema';
 import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
 import { CREATOR_OFFSET_LIMIT } from '~/server/schema/creator-shop.schema';
-import { CosmeticShopItemStatus, CosmeticType, MediaType } from '~/shared/utils/prisma/enums';
+import type { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
+import { CosmeticType, MediaType } from '~/shared/utils/prisma/enums';
+import {
+  DISPLAYED_FIELDS,
+  isListingDisplayable as sharedIsListingDisplayable,
+} from '@civitai/shared/knights-shop';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
 import {
   CREATOR_GRANT_USES_MULTIPLIER,
@@ -139,10 +144,6 @@ export const awaitsRequestedChanges = (history?: CosmeticShopItemHistoryEntry[])
     .some((entry) => entry.kind === 'submitted' || entry.kind === 'edited');
 };
 
-// Allowlist: a newly recorded edit field that changes what holders see must be added here, or
-// editing it after approval leaves the item wearable unreviewed.
-const DISPLAYED_FIELDS = new Set(['name', 'description', 'artwork', 'offsets', 'slug']);
-
 // Edges a creator may not set. A value a moderator pushed past the creator range is left alone
 // when it comes back unchanged, so editing anything else is neither refused nor clamped.
 export const edgesBeyondCreatorRange = (next: CosmeticOffsets, stored?: CosmeticOffsets | null) =>
@@ -156,29 +157,14 @@ export const changesDisplay = (changes?: CosmeticShopItemHistoryChange[]) =>
 /**
  * Whether holders may show this listing's cosmetic: it is live, or a moderator last approved it
  * and nothing anyone sees has changed since. Not status alone: relisting, restoring and a large
- * price edit send an approved, unchanged item back to review.
+ * price edit send an approved, unchanged item back to review. The rule lives in `@civitai/shared`
+ * so the Knights shop sells exactly what can be worn.
  */
-export const isListingDisplayable = ({
-  status,
-  meta,
-  rejectionReason,
-}: {
+export const isListingDisplayable = (listing: {
   status: CosmeticShopItemStatus;
   meta: CosmeticShopItemMeta | null;
   rejectionReason: string | null;
-}) => {
-  if (status === CosmeticShopItemStatus.Published) return true;
-  if (meta?.takedown) return false;
-  if (meta?.displayApproved !== undefined) return meta.displayApproved;
-  const history = meta?.history ?? [];
-  const index = lastReviewIndex(history);
-  const approved =
-    index >= 0
-      ? history[index].action === 'approve'
-      : // Pre-history items: approval left lastApprovedAmount and no reason; every other verdict left a reason.
-        meta?.lastApprovedAmount != null && !rejectionReason;
-  return approved && !history.slice(index + 1).some((entry) => changesDisplay(entry.changes));
-};
+}) => sharedIsListingDisplayable(listing);
 
 /**
  * The display verdict to store on a write that clears `rejectionReason` or adds history. Read from

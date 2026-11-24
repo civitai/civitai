@@ -75,6 +75,9 @@ import { toStepMetadata } from '~/shared/utils/resource.utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationCtx } from '~/shared/generation/context';
 
+/** Every browsing level, so no fixture output is above the ceiling. */
+const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31, serving: false, mint: null };
+
 function fakeWorkflow(over: Record<string, unknown> = {}) {
   return {
     id: 'wf_123',
@@ -109,14 +112,26 @@ describe('snapshotFromWorkflow', () => {
           metadata: {},
           output: {
             images: [
-              { id: 'b1', url: 'https://cdn/img1.png', available: true, type: 'image' },
-              { id: 'b2', url: 'https://cdn/img2.png', available: true, type: 'image' },
+              {
+                id: 'b1',
+                url: 'https://cdn/img1.png',
+                available: true,
+                nsfwLevel: 'pg',
+                type: 'image',
+              },
+              {
+                id: 'b2',
+                url: 'https://cdn/img2.png',
+                available: true,
+                nsfwLevel: 'pg',
+                type: 'image',
+              },
             ],
           },
         },
       ],
     });
-    const snap = snapshotFromWorkflow(wf as never);
+    const snap = snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING);
     expect(snap.workflowId).toBe('wf_123');
     expect(snap.status).toBe('succeeded');
     expect(snap.cost).toEqual({ total: 42 });
@@ -133,16 +148,22 @@ describe('snapshotFromWorkflow', () => {
           metadata: {},
           output: {
             images: [
-              { id: 'b1', url: 'https://cdn/ok.png', available: true, type: 'image' },
+              {
+                id: 'b1',
+                url: 'https://cdn/ok.png',
+                available: true,
+                nsfwLevel: 'pg',
+                type: 'image',
+              },
               { id: 'b2', url: null, available: false, type: 'image' },
               { id: 'b3', url: 'https://cdn/blocked.png', available: false, type: 'image' },
-              { id: 'b4', url: '', available: true, type: 'image' },
+              { id: 'b4', url: '', available: true, nsfwLevel: 'pg', type: 'image' },
             ],
           },
         },
       ],
     });
-    const snap = snapshotFromWorkflow(wf as never);
+    const snap = snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING);
     expect(snap.imageUrls).toEqual(['https://cdn/ok.png']);
   });
 
@@ -164,10 +185,12 @@ describe('snapshotFromWorkflow', () => {
 
     it('CONTROL: a clean video surfaces on the snapshot and the projection', () => {
       const wf = videoWorkflow({ url: 'https://cdn/clean.mp4', nsfwLevel: 'pg' });
-      expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/clean.mp4']);
-      expect(projectAppWorkflow(wf as never).images.map((i) => i.url)).toEqual([
+      expect(snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING).imageUrls).toEqual([
         'https://cdn/clean.mp4',
       ]);
+      expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images.map((i) => i.url)).toEqual(
+        ['https://cdn/clean.mp4']
+      );
     });
 
     it('never surfaces an available blob that carries a block reason', () => {
@@ -176,10 +199,10 @@ describe('snapshotFromWorkflow', () => {
         nsfwLevel: 'na',
         blockedReason: CSAM_RULE,
       });
-      const snap = snapshotFromWorkflow(wf as never);
+      const snap = snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING);
       expect(snap.imageUrls ?? []).toEqual([]);
       expect(JSON.stringify(snap)).not.toContain('blocked.mp4');
-      const projected = projectAppWorkflow(wf as never);
+      const projected = projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING);
       expect(projected.images).toEqual([]);
       expect(JSON.stringify(projected)).not.toContain('blocked.mp4');
     });
@@ -194,7 +217,13 @@ describe('snapshotFromWorkflow', () => {
             metadata: {},
             output: {
               images: [
-                { id: 'b1', url: 'https://cdn/ok.png', available: true, type: 'image' },
+                {
+                  id: 'b1',
+                  url: 'https://cdn/ok.png',
+                  available: true,
+                  nsfwLevel: 'pg',
+                  type: 'image',
+                },
                 {
                   id: 'b2',
                   url: 'https://cdn/blocked.png',
@@ -208,16 +237,20 @@ describe('snapshotFromWorkflow', () => {
           },
         ],
       });
-      expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/ok.png']);
-      expect(projectAppWorkflow(wf as never).images.map((i) => i.url)).toEqual([
+      expect(snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING).imageUrls).toEqual([
         'https://cdn/ok.png',
       ]);
+      expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images.map((i) => i.url)).toEqual(
+        ['https://cdn/ok.png']
+      );
     });
 
     it("reads blockedReason 'none' (any case) as not blocked", () => {
       for (const blockedReason of ['none', 'None', 'NONE']) {
         const wf = videoWorkflow({ url: 'https://cdn/ok.mp4', nsfwLevel: 'pg', blockedReason });
-        expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/ok.mp4']);
+        expect(snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING).imageUrls).toEqual([
+          'https://cdn/ok.mp4',
+        ]);
       }
     });
   });
@@ -237,25 +270,28 @@ describe('snapshotFromWorkflow', () => {
     // the orchestrator's OpenAPI declares `id` optional-and-nullable and its
     // serializer omits nulls, so a regression would silently drop the field
     // rather than error.
-    const snap = snapshotFromWorkflow(fakeWorkflow({ id: undefined }) as never);
+    const snap = snapshotFromWorkflow(
+      fakeWorkflow({ id: undefined }) as never,
+      TEST_OUTPUT_CEILING
+    );
     expect(snap.workflowId).toBe('whatif');
     expect(snap.workflowId.length).toBeGreaterThan(0);
   });
 
   it('maps orchestrator-internal statuses (unassigned/preparing/scheduled) to pending', () => {
     for (const status of ['unassigned', 'preparing', 'scheduled'] as const) {
-      const snap = snapshotFromWorkflow(fakeWorkflow({ status }) as never);
+      const snap = snapshotFromWorkflow(fakeWorkflow({ status }) as never, TEST_OUTPUT_CEILING);
       expect(snap.status).toBe('pending');
     }
   });
 
   it('omits cost when orchestrator returns no total', () => {
-    const snap = snapshotFromWorkflow(fakeWorkflow({ cost: {} }) as never);
+    const snap = snapshotFromWorkflow(fakeWorkflow({ cost: {} }) as never, TEST_OUTPUT_CEILING);
     expect(snap.cost).toBeUndefined();
   });
 
   it('omits imageUrls when there are no available images', () => {
-    const snap = snapshotFromWorkflow(fakeWorkflow({ steps: [] }) as never);
+    const snap = snapshotFromWorkflow(fakeWorkflow({ steps: [] }) as never, TEST_OUTPUT_CEILING);
     expect(snap.imageUrls).toBeUndefined();
   });
 
@@ -267,11 +303,11 @@ describe('snapshotFromWorkflow', () => {
           name: 's1',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'x', url: 'https://leak/', available: true }] },
+          output: { images: [{ id: 'x', url: 'https://leak/', available: true, nsfwLevel: 'pg' }] },
         },
       ],
     });
-    const snap = snapshotFromWorkflow(wf as never);
+    const snap = snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING);
     expect(snap.imageUrls).toBeUndefined();
   });
 
@@ -285,7 +321,7 @@ describe('snapshotFromWorkflow', () => {
   // renders from. The invariant being protected is "a caller billed for model A
   // and given model B must be able to find that out".
   it('surfaces modelSubstitutions passed alongside the workflow', () => {
-    const snap = snapshotFromWorkflow(fakeWorkflow() as never, {
+    const snap = snapshotFromWorkflow(fakeWorkflow() as never, TEST_OUTPUT_CEILING, {
       modelSubstitutions: [{ requested: 2558804, applied: 2552908, reason: 'wrong-workflow' }],
     });
     expect(snap.modelSubstitutions).toEqual([
@@ -298,7 +334,7 @@ describe('snapshotFromWorkflow', () => {
     // (every pre-existing call site), an empty object, and an empty array. None
     // may add a key to the wire payload.
     for (const extra of [undefined, {}, { modelSubstitutions: [] }]) {
-      const snap = snapshotFromWorkflow(fakeWorkflow() as never, extra);
+      const snap = snapshotFromWorkflow(fakeWorkflow() as never, TEST_OUTPUT_CEILING, extra);
       expect('modelSubstitutions' in snap).toBe(false);
     }
   });
@@ -321,7 +357,8 @@ describe('snapshotFromWorkflow', () => {
       const snap = snapshotFromWorkflow(
         fakeWorkflow({
           metadata: { params: { prompt: 'a cat' }, modelSubstitutions: persisted },
-        }) as never
+        }) as never,
+        TEST_OUTPUT_CEILING
       );
       expect(snap.modelSubstitutions).toEqual(persisted);
     });
@@ -340,11 +377,20 @@ describe('snapshotFromWorkflow', () => {
               status: 'succeeded',
               metadata: {},
               output: {
-                images: [{ id: 'b1', url: 'https://cdn/img1.png', available: true, type: 'image' }],
+                images: [
+                  {
+                    id: 'b1',
+                    url: 'https://cdn/img1.png',
+                    available: true,
+                    nsfwLevel: 'pg',
+                    type: 'image',
+                  },
+                ],
               },
             },
           ],
-        }) as never
+        }) as never,
+        TEST_OUTPUT_CEILING
       );
       expect(snap.imageUrls).toEqual(['https://cdn/img1.png']);
       expect(snap.modelSubstitutions).toEqual(persisted);
@@ -354,6 +400,7 @@ describe('snapshotFromWorkflow', () => {
       const fromRequest = [{ requested: 1, applied: 2, reason: 'gated' as const }];
       const snap = snapshotFromWorkflow(
         fakeWorkflow({ metadata: { modelSubstitutions: persisted } }) as never,
+        TEST_OUTPUT_CEILING,
         { modelSubstitutions: fromRequest }
       );
       expect(snap.modelSubstitutions).toEqual(fromRequest);
@@ -367,7 +414,7 @@ describe('snapshotFromWorkflow', () => {
         { modelSubstitutions: null },
         { modelSubstitutions: 'nope' },
       ]) {
-        const snap = snapshotFromWorkflow(fakeWorkflow({ metadata }) as never);
+        const snap = snapshotFromWorkflow(fakeWorkflow({ metadata }) as never, TEST_OUTPUT_CEILING);
         expect('modelSubstitutions' in snap).toBe(false);
       }
     });
@@ -391,7 +438,7 @@ describe('snapshotFromWorkflow', () => {
         { modelSubstitutions: [{ requested: 1, applied: 2, reason: 'because' }] },
       ],
     ])('DROPS %s from the metadata rather than putting it on the wire', (_label, metadata) => {
-      const snap = snapshotFromWorkflow(fakeWorkflow({ metadata }) as never);
+      const snap = snapshotFromWorkflow(fakeWorkflow({ metadata }) as never, TEST_OUTPUT_CEILING);
       expect('modelSubstitutions' in snap).toBe(false);
     });
 
@@ -404,7 +451,8 @@ describe('snapshotFromWorkflow', () => {
               { requested: 3, applied: 4, reason: 'gated' },
             ],
           },
-        }) as never
+        }) as never,
+        TEST_OUTPUT_CEILING
       );
       expect(snap.modelSubstitutions).toEqual([{ requested: 3, applied: 4, reason: 'gated' }]);
     });
@@ -422,11 +470,13 @@ describe('snapshotFromWorkflow', () => {
           name: 's1',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'g1', url: 'https://cdn/gen.png', available: true }] },
+          output: {
+            images: [{ id: 'g1', url: 'https://cdn/gen.png', available: true, nsfwLevel: 'pg' }],
+          },
         },
       ],
     });
-    const snap = snapshotFromWorkflow(wf as never);
+    const snap = snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING);
     expect(snap.imageUrls).toEqual(['https://cdn/gen.png']);
   });
 
@@ -440,12 +490,20 @@ describe('snapshotFromWorkflow', () => {
           status: 'succeeded',
           metadata: {},
           output: {
-            blobs: [{ id: 'c1', type: 'image', url: 'https://cdn/comfy.png', available: true }],
+            blobs: [
+              {
+                id: 'c1',
+                type: 'image',
+                url: 'https://cdn/comfy.png',
+                available: true,
+                nsfwLevel: 'pg',
+              },
+            ],
           },
         },
       ],
     });
-    const snap = snapshotFromWorkflow(wf as never);
+    const snap = snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING);
     expect(snap.imageUrls).toEqual(['https://cdn/comfy.png']);
   });
 
@@ -457,7 +515,9 @@ describe('snapshotFromWorkflow', () => {
           name: 's1',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'a', url: 'https://cdn/a.png', available: true }] },
+          output: {
+            images: [{ id: 'a', url: 'https://cdn/a.png', available: true, nsfwLevel: 'pg' }],
+          },
         },
         {
           // A non-image step interleaved — must be skipped, not break ordering.
@@ -465,7 +525,9 @@ describe('snapshotFromWorkflow', () => {
           name: 's2',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'leak', url: 'https://leak/', available: true }] },
+          output: {
+            images: [{ id: 'leak', url: 'https://leak/', available: true, nsfwLevel: 'pg' }],
+          },
         },
         {
           $type: 'comfy',
@@ -473,12 +535,20 @@ describe('snapshotFromWorkflow', () => {
           status: 'succeeded',
           metadata: {},
           output: {
-            blobs: [{ id: 'b', type: 'image', url: 'https://cdn/b.png', available: true }],
+            blobs: [
+              {
+                id: 'b',
+                type: 'image',
+                url: 'https://cdn/b.png',
+                available: true,
+                nsfwLevel: 'pg',
+              },
+            ],
           },
         },
       ],
     });
-    const snap = snapshotFromWorkflow(wf as never);
+    const snap = snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING);
     expect(snap.imageUrls).toEqual(['https://cdn/a.png', 'https://cdn/b.png']);
   });
 
@@ -486,7 +556,7 @@ describe('snapshotFromWorkflow', () => {
     const wf = fakeWorkflow({
       steps: [{ $type: 'textToImage', name: 's1', status: 'processing', metadata: {} }],
     });
-    const snap = snapshotFromWorkflow(wf as never);
+    const snap = snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING);
     expect(snap.imageUrls).toBeUndefined();
   });
 
@@ -495,12 +565,15 @@ describe('snapshotFromWorkflow', () => {
   // the accountType of the LARGEST realized debit on transactions.list.
   describe('spentAccountType (realized spent account)', () => {
     it('omits spentAccountType when there are no transactions (backward compatible)', () => {
-      const snap = snapshotFromWorkflow(fakeWorkflow() as never);
+      const snap = snapshotFromWorkflow(fakeWorkflow() as never, TEST_OUTPUT_CEILING);
       expect(snap.spentAccountType).toBeUndefined();
     });
 
     it('omits spentAccountType when the transactions list is empty', () => {
-      const snap = snapshotFromWorkflow(fakeWorkflow({ transactions: { list: [] } }) as never);
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({ transactions: { list: [] } }) as never,
+        TEST_OUTPUT_CEILING
+      );
       expect(snap.spentAccountType).toBeUndefined();
     });
 
@@ -513,7 +586,8 @@ describe('snapshotFromWorkflow', () => {
               { type: 'debit', amount: 90, accountType: 'green' },
             ],
           },
-        }) as never
+        }) as never,
+        TEST_OUTPUT_CEILING
       );
       expect(snap.spentAccountType).toBe('green');
     });
@@ -527,7 +601,8 @@ describe('snapshotFromWorkflow', () => {
               { type: 'debit', amount: 5, accountType: 'yellow' },
             ],
           },
-        }) as never
+        }) as never,
+        TEST_OUTPUT_CEILING
       );
       expect(snap.spentAccountType).toBe('blue');
     });
@@ -542,7 +617,8 @@ describe('snapshotFromWorkflow', () => {
               { type: 'credit', amount: 100, accountType: 'green' },
             ],
           },
-        }) as never
+        }) as never,
+        TEST_OUTPUT_CEILING
       );
       expect(snap.spentAccountType).toBe('yellow');
     });
@@ -551,7 +627,8 @@ describe('snapshotFromWorkflow', () => {
       const snap = snapshotFromWorkflow(
         fakeWorkflow({
           transactions: { list: [{ type: 'debit', amount: 50, accountType: 'fakeRed' }] },
-        }) as never
+        }) as never,
+        TEST_OUTPUT_CEILING
       );
       expect(snap.spentAccountType).toBeUndefined();
     });
@@ -569,7 +646,8 @@ describe('snapshotFromWorkflow', () => {
               { type: 'debit', amount: -90, accountType: 'green' },
             ],
           },
-        }) as never
+        }) as never,
+        TEST_OUTPUT_CEILING
       );
       expect(snap.spentAccountType).toBe('green');
     });
@@ -586,7 +664,8 @@ describe('snapshotFromWorkflow', () => {
               { type: 'debit', amount: 50, accountType: 'yellow' },
             ],
           },
-        }) as never
+        }) as never,
+        TEST_OUTPUT_CEILING
       );
       expect(snap.spentAccountType).toBe('green');
     });
@@ -600,7 +679,8 @@ describe('snapshotFromWorkflow', () => {
               { type: 'debit', amount: 5, accountType: 'green' },
             ],
           },
-        }) as never
+        }) as never,
+        TEST_OUTPUT_CEILING
       );
       expect(snap.spentAccountType).toBe('green');
     });
@@ -614,7 +694,8 @@ describe('snapshotFromWorkflow', () => {
               { type: 'credit', amount: 5, accountType: 'yellow' },
             ],
           },
-        }) as never
+        }) as never,
+        TEST_OUTPUT_CEILING
       );
       expect(snap.spentAccountType).toBeUndefined();
     });
@@ -663,12 +744,13 @@ describe('projectAppWorkflow', () => {
         },
       ],
     });
-    expect(projectAppWorkflow(wf as never)).toEqual({
+    expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING)).toEqual({
       workflowId: 'wf_a',
       status: 'succeeded',
       images: [{ url: 'https://cdn/i1.png', width: 1024, height: 768, nsfwLevel: 1 }],
       cost: 30,
       createdAt: '2026-07-15T12:00:00.000Z',
+      outputs: [{ url: 'https://cdn/i1.png', nsfwLevel: 'pg' }],
     });
   });
 
@@ -680,7 +762,6 @@ describe('projectAppWorkflow', () => {
       ['r', 4],
       ['x', 8],
       ['xxx', 16],
-      ['na', null], // genuinely unrated → null
     ];
     for (const [rating, expected] of cases) {
       const wf = fakeWorkflow({
@@ -696,11 +777,54 @@ describe('projectAppWorkflow', () => {
           },
         ],
       });
-      expect(projectAppWorkflow(wf as never).images[0].nsfwLevel).toBe(expected);
+      expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images[0].nsfwLevel).toBe(
+        expected
+      );
     }
   });
 
-  it('nulls width/height/nsfwLevel when the orchestrator omits them', () => {
+  it('an `na` output is restricted in position and never listed as an image', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            images: [{ id: 'b', url: 'https://cdn/x.png', available: true, nsfwLevel: 'na' }],
+          },
+        },
+      ],
+    });
+    const projected = projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING);
+    expect(projected.images).toStrictEqual([]);
+    expect(projected.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+  });
+
+  it('nulls width/height when the orchestrator omits them', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            images: [{ id: 'b', url: 'https://cdn/x.png', available: true, nsfwLevel: 'pg' }],
+          },
+        },
+      ],
+    });
+    expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images[0]).toEqual({
+      url: 'https://cdn/x.png',
+      width: null,
+      height: null,
+      nsfwLevel: 1,
+    });
+  });
+
+  it('an unrated image is held in position and never listed, whatever the ceiling', () => {
     const wf = fakeWorkflow({
       steps: [
         {
@@ -712,12 +836,9 @@ describe('projectAppWorkflow', () => {
         },
       ],
     });
-    expect(projectAppWorkflow(wf as never).images[0]).toEqual({
-      url: 'https://cdn/x.png',
-      width: null,
-      height: null,
-      nsfwLevel: null,
-    });
+    const projected = projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING);
+    expect(projected.images).toStrictEqual([]);
+    expect(projected.outputs).toStrictEqual([{ pending: true }]);
   });
 
   it('drops pending/blocked/urless blobs (no dead links leaked)', () => {
@@ -730,17 +851,23 @@ describe('projectAppWorkflow', () => {
           metadata: {},
           output: {
             images: [
-              { id: 'b1', url: 'https://cdn/ok.png', available: true, type: 'image' },
+              {
+                id: 'b1',
+                url: 'https://cdn/ok.png',
+                available: true,
+                nsfwLevel: 'pg',
+                type: 'image',
+              },
               { id: 'b2', url: null, available: false, type: 'image' },
               { id: 'b3', url: 'https://cdn/blocked.png', available: false, type: 'image' },
-              { id: 'b4', url: '', available: true, type: 'image' },
+              { id: 'b4', url: '', available: true, nsfwLevel: 'pg', type: 'image' },
             ],
           },
         },
       ],
     });
-    expect(projectAppWorkflow(wf as never).images).toEqual([
-      { url: 'https://cdn/ok.png', width: null, height: null, nsfwLevel: null },
+    expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images).toEqual([
+      { url: 'https://cdn/ok.png', width: null, height: null, nsfwLevel: 1 },
     ]);
   });
 
@@ -756,13 +883,15 @@ describe('projectAppWorkflow', () => {
       ['canceled', 'canceled'],
     ];
     for (const [orch, contract] of map) {
-      expect(projectAppWorkflow(fakeWorkflow({ status: orch }) as never).status).toBe(contract);
+      expect(
+        projectAppWorkflow(fakeWorkflow({ status: orch }) as never, TEST_OUTPUT_CEILING).status
+      ).toBe(contract);
     }
   });
 
   it('returns cost:null when the orchestrator omits a total, and an empty images list for a pending workflow', () => {
     const wf = fakeWorkflow({ status: 'preparing', cost: {}, steps: [] });
-    const projected = projectAppWorkflow(wf as never);
+    const projected = projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING);
     expect(projected.cost).toBeNull();
     expect(projected.images).toEqual([]);
     expect(projected.status).toBe('pending');
@@ -776,16 +905,19 @@ describe('projectAppWorkflow', () => {
           name: 's1',
           status: 'succeeded',
           metadata: { params: { prompt: 'secret prompt' } },
-          output: { images: [{ id: 'b', url: 'https://cdn/x.png', available: true }] },
+          output: {
+            images: [{ id: 'b', url: 'https://cdn/x.png', available: true, nsfwLevel: 'pg' }],
+          },
         },
       ],
       tags: ['civitai', 'app-block:app_x'],
       transactions: { list: [{ type: 'debit', amount: 30, accountType: 'yellow' }] },
     });
-    const projected = projectAppWorkflow(wf as never);
+    const projected = projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING);
     expect(Object.keys(projected).sort()).toEqual(
-      ['cost', 'createdAt', 'images', 'status', 'workflowId'].sort()
+      ['cost', 'createdAt', 'images', 'outputs', 'status', 'workflowId'].sort()
     );
+    expect(projected.outputs).toStrictEqual([{ url: 'https://cdn/x.png', nsfwLevel: 'pg' }]);
     expect(JSON.stringify(projected)).not.toContain('secret prompt');
     expect(JSON.stringify(projected)).not.toContain('transactions');
   });
@@ -798,11 +930,11 @@ describe('projectAppWorkflow', () => {
           name: 's1',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'x', url: 'https://leak/', available: true }] },
+          output: { images: [{ id: 'x', url: 'https://leak/', available: true, nsfwLevel: 'pg' }] },
         },
       ],
     });
-    expect(projectAppWorkflow(wf as never).images).toEqual([]);
+    expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images).toEqual([]);
   });
 });
 
@@ -2315,14 +2447,20 @@ describe('snapshotFromWorkflow: customComfy blobs', () => {
           metadata: {},
           output: {
             blobs: [
-              { id: 'p1', type: 'image', url: 'https://cdn/pano.png', available: true },
+              {
+                id: 'p1',
+                type: 'image',
+                url: 'https://cdn/pano.png',
+                available: true,
+                nsfwLevel: 'pg',
+              },
               { id: 'p2', type: 'image', url: 'https://pending/', available: false },
             ],
           },
         },
       ],
     });
-    const snap = snapshotFromWorkflow(wf as never);
+    const snap = snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING);
     expect(snap.imageUrls).toEqual(['https://cdn/pano.png']);
   });
 });
@@ -2355,12 +2493,13 @@ describe('projectAppWorkflow: customComfy blobs', () => {
         },
       ],
     });
-    expect(projectAppWorkflow(wf as never)).toEqual({
+    expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING)).toEqual({
       workflowId: 'wf_cc',
       status: 'succeeded',
       images: [{ url: 'https://cdn/pano.png', width: null, height: null, nsfwLevel: 1 }],
       cost: 47,
       createdAt: '2026-07-17T00:00:00.000Z',
+      outputs: [{ url: 'https://cdn/pano.png', nsfwLevel: 'pg' }],
     });
   });
 
@@ -2380,6 +2519,7 @@ describe('projectAppWorkflow: customComfy blobs', () => {
                 type: 'image',
                 url: 'https://cdn/sized.png',
                 available: true,
+                nsfwLevel: 'pg',
                 width: 2048,
                 height: 1024,
               },
@@ -2388,6 +2528,7 @@ describe('projectAppWorkflow: customComfy blobs', () => {
                 type: 'image',
                 url: 'https://cdn/unsized.png',
                 available: true,
+                nsfwLevel: 'pg',
                 width: '2048',
               },
             ],
@@ -2396,7 +2537,7 @@ describe('projectAppWorkflow: customComfy blobs', () => {
       ],
     });
     expect(
-      projectAppWorkflow(wf as never).images.map(({ url, width, height }) => ({
+      projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images.map(({ url, width, height }) => ({
         url,
         width,
         height,
@@ -2445,14 +2586,14 @@ describe('comfy step blobs (output.blobs, not .images)', () => {
     });
 
   it('snapshotFromWorkflow surfaces every available comfy blob url, in order', () => {
-    expect(snapshotFromWorkflow(comfyWorkflow() as never).imageUrls).toEqual([
+    expect(snapshotFromWorkflow(comfyWorkflow() as never, TEST_OUTPUT_CEILING).imageUrls).toEqual([
       'https://cdn/comfy-1.jpeg',
       'https://cdn/comfy-2.jpeg',
     ]);
   });
 
   it('projectAppWorkflow projects comfy blobs to images with the mapped nsfwLevel', () => {
-    expect(projectAppWorkflow(comfyWorkflow() as never).images).toEqual([
+    expect(projectAppWorkflow(comfyWorkflow() as never, TEST_OUTPUT_CEILING).images).toEqual([
       {
         url: 'https://cdn/comfy-1.jpeg',
         width: null,
@@ -2481,7 +2622,13 @@ describe('comfy step blobs (output.blobs, not .images)', () => {
           metadata: {},
           output: {
             blobs: [
-              { id: 'ok', type: 'image', url: 'https://cdn/ok.jpeg', available: true },
+              {
+                id: 'ok',
+                type: 'image',
+                url: 'https://cdn/ok.jpeg',
+                available: true,
+                nsfwLevel: 'pg',
+              },
               { id: 'pending', type: 'image', url: 'https://cdn/pending.jpeg', available: false },
               {
                 id: 'blocked',
@@ -2490,15 +2637,17 @@ describe('comfy step blobs (output.blobs, not .images)', () => {
                 available: false,
                 blockedReason: 'moderation',
               },
-              { id: 'nourl', type: 'image', url: null, available: true },
-              { id: 'empty', type: 'image', url: '', available: true },
+              { id: 'nourl', type: 'image', url: null, available: true, nsfwLevel: 'pg' },
+              { id: 'empty', type: 'image', url: '', available: true, nsfwLevel: 'pg' },
             ],
           },
         },
       ],
     });
-    expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/ok.jpeg']);
-    expect(projectAppWorkflow(wf as never).images.map((i) => i.url)).toEqual([
+    expect(snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING).imageUrls).toEqual([
+      'https://cdn/ok.jpeg',
+    ]);
+    expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images.map((i) => i.url)).toEqual([
       'https://cdn/ok.jpeg',
     ]);
   });
@@ -2518,8 +2667,8 @@ describe('comfy step blobs (output.blobs, not .images)', () => {
         },
       ],
     });
-    expect(snapshotFromWorkflow(wf as never).imageUrls).toBeUndefined();
-    expect(projectAppWorkflow(wf as never).images).toEqual([]);
+    expect(snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING).imageUrls).toBeUndefined();
+    expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images).toEqual([]);
   });
 
   // INVARIANT GUARD (not regression coverage): every natively extracted `$type`
@@ -2583,10 +2732,13 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
   // Keyed on `postureProducesMedia` because that is what `snapshotFromWorkflow`
   // and `projectAppWorkflow` themselves key on — one rule, one predicate, and
   // the test cannot drift from the code by asking a different question.
-  it('EVERY registered step surfaces its output on snapshotFromWorkflow.imageUrls', () => {
+  it('EVERY registered step surfaces its rated output on snapshotFromWorkflow.imageUrls, and holds an unrated one in position', () => {
     for (const [id, step] of listRegisteredSteps()) {
       for (const variant of step.variants) {
-        const snap = snapshotFromWorkflow(workflowWithRegisteredStep(step, variant) as never);
+        const snap = snapshotFromWorkflow(
+          workflowWithRegisteredStep(step, variant) as never,
+          TEST_OUTPUT_CEILING
+        );
         if (!postureProducesMedia(step.moderationPosture)) {
           expect(
             snap.imageUrls ?? [],
@@ -2595,21 +2747,32 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
           ).toEqual([]);
           continue;
         }
-        const expected = step.extractOutput!(step.canonicalOutputFor(variant)).map((m) => m.url);
-        expect(expected.length, `step '${id}' produced no expected urls`).toBeGreaterThan(0);
+        const media = step.extractOutput!(step.canonicalOutputFor(variant));
+        expect(media.length, `step '${id}' produced no expected urls`).toBeGreaterThan(0);
+        // With serving off nothing judges the blob later, so an output whose step carries no
+        // rating yet (convert-image's captured sample) is held until one lands.
+        const rated = media.filter((m) => m.nsfwLevel).map((m) => m.url);
+        const unrated = media.length - rated.length;
         expect(
-          snap.imageUrls,
+          snap.imageUrls ?? [],
           `step '${id}' variant '${variant}': the caller is CHARGED for this step and its ` +
-            'result is absent from every poll'
-        ).toEqual(expected);
+            'rated result is absent from every poll'
+        ).toEqual(rated);
+        expect(
+          (snap.outputs ?? []).filter((o) => 'pending' in o),
+          `step '${id}' variant '${variant}': an unrated output must be held in position`
+        ).toHaveLength(unrated);
       }
     }
   });
 
-  it('EVERY registered step surfaces its output on projectAppWorkflow.images', () => {
+  it('EVERY registered step surfaces its rated output on projectAppWorkflow.images', () => {
     for (const [id, step] of listRegisteredSteps()) {
       for (const variant of step.variants) {
-        const projected = projectAppWorkflow(workflowWithRegisteredStep(step, variant) as never);
+        const projected = projectAppWorkflow(
+          workflowWithRegisteredStep(step, variant) as never,
+          TEST_OUTPUT_CEILING
+        );
         if (!postureProducesMedia(step.moderationPosture)) {
           expect(
             projected.images,
@@ -2618,7 +2781,9 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
           ).toEqual([]);
           continue;
         }
-        const expected = step.extractOutput!(step.canonicalOutputFor(variant));
+        const expected = step.extractOutput!(step.canonicalOutputFor(variant)).filter(
+          (m) => m.nsfwLevel
+        );
         expect(
           projected.images.map((i) => i.url),
           `step '${id}' variant '${variant}': queryAppWorkflows returns images: [] for a ` +
@@ -2676,10 +2841,10 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
         },
       ],
     });
-    expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual([
+    expect(snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING).imageUrls).toEqual([
       'https://orchestration/blobs/out.webp',
     ]);
-    expect(projectAppWorkflow(wf as never).images).toEqual([
+    expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images).toEqual([
       {
         url: 'https://orchestration/blobs/out.webp',
         width: 797,
@@ -2710,8 +2875,8 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
         },
       ],
     });
-    expect(snapshotFromWorkflow(wf as never).imageUrls).toBeUndefined();
-    expect(projectAppWorkflow(wf as never).images).toEqual([]);
+    expect(snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING).imageUrls).toBeUndefined();
+    expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images).toEqual([]);
   });
 
   // 🔴 NO-REGRESSION. The registry branch is evaluated BEFORE the native `$type`
@@ -2750,8 +2915,10 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
         },
       ],
     });
-    expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/a.png']);
-    expect(projectAppWorkflow(wf as never).images).toEqual([
+    expect(snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING).imageUrls).toEqual([
+      'https://cdn/a.png',
+    ]);
+    expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images).toEqual([
       {
         url: 'https://cdn/a.png',
         width: 8,
@@ -2781,13 +2948,15 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
           name: 'x',
           status: 'succeeded',
           metadata: {},
-          output: { blob: { id: 'b', url: 'https://cdn/nope.png', available: true } },
+          output: {
+            blob: { id: 'b', url: 'https://cdn/nope.png', available: true, nsfwLevel: 'pg' },
+          },
         },
       ],
     });
-    expect(snapshotFromWorkflow(wf as never).imageUrls).toBeUndefined();
-    expect(snapshotFromWorkflow(wf as never).stepOutputs).toBeUndefined();
-    expect(projectAppWorkflow(wf as never).images).toEqual([]);
+    expect(snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING).imageUrls).toBeUndefined();
+    expect(snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING).stepOutputs).toBeUndefined();
+    expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images).toEqual([]);
   });
 
   // The other side of that gate: the SAME `$type` and the SAME output, submitted
@@ -2805,16 +2974,20 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
           name: BLOCK_STEP_NAME,
           status: 'succeeded',
           metadata: {},
-          output: { blob: { id: 'b', url: 'https://cdn/nope.png', available: true } },
+          output: {
+            blob: { id: 'b', url: 'https://cdn/nope.png', available: true, nsfwLevel: 'pg' },
+          },
         },
       ],
     });
-    expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/nope.png']);
-    expect(projectAppWorkflow(wf as never).images).toEqual([
-      { url: 'https://cdn/nope.png', width: null, height: null, nsfwLevel: null },
+    expect(snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING).imageUrls).toEqual([
+      'https://cdn/nope.png',
+    ]);
+    expect(projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING).images).toEqual([
+      { url: 'https://cdn/nope.png', width: null, height: null, nsfwLevel: 1 },
     ]);
     // The blob is lifted OUT of the forwarded output, never duplicated into it.
-    expect(snapshotFromWorkflow(wf as never).stepOutputs).toEqual([
+    expect(snapshotFromWorkflow(wf as never, TEST_OUTPUT_CEILING).stepOutputs).toEqual([
       { $type: 'imageBackgroundRemoval', output: {} },
     ]);
   });
@@ -3141,24 +3314,32 @@ describe('blockPollWaitSecondsInput', () => {
  */
 describe('snapshotFromWorkflow — additionalCostBuzz', () => {
   it('ADDS a positive addend to the reported total', () => {
-    const snap = snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: 7 });
+    const snap = snapshotFromWorkflow(fakeWorkflow() as never, TEST_OUTPUT_CEILING, {
+      additionalCostBuzz: 7,
+    });
     expect(snap.cost).toEqual({ total: 49, authorFee: 7 });
   });
 
   it('🔴 ITEMISES the addend as `cost.authorFee`, and `total - authorFee` is the pre-fee cost', () => {
     // The fixture's total is 42. Two addends, so a hardcoded literal is red on one.
-    const a = snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: 37 });
+    const a = snapshotFromWorkflow(fakeWorkflow() as never, TEST_OUTPUT_CEILING, {
+      additionalCostBuzz: 37,
+    });
     expect(a.cost).toEqual({ total: 79, authorFee: 37 });
     expect(a.cost!.total - a.cost!.authorFee!).toBe(42);
 
-    const b = snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: 113 });
+    const b = snapshotFromWorkflow(fakeWorkflow() as never, TEST_OUTPUT_CEILING, {
+      additionalCostBuzz: 113,
+    });
     expect(b.cost).toEqual({ total: 155, authorFee: 113 });
     expect(b.cost!.total - b.cost!.authorFee!).toBe(42);
   });
 
   it('🔴 reports `authorFee: 0` when a fee was quoted and none applies — NOT absent', () => {
     // `0` = no fee on this request; absent = this total is not itemised.
-    const snap = snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: 0 });
+    const snap = snapshotFromWorkflow(fakeWorkflow() as never, TEST_OUTPUT_CEILING, {
+      additionalCostBuzz: 0,
+    });
     expect(snap.cost).toEqual({ total: 42, authorFee: 0 });
     expect(Object.keys(snap.cost!)).toEqual(['total', 'authorFee']);
   });
@@ -3166,14 +3347,22 @@ describe('snapshotFromWorkflow — additionalCostBuzz', () => {
   it('🔴 OMITS `authorFee` when the caller priced no fee — every submit and poll', () => {
     // Keys, not `toEqual`, which cannot tell an `undefined` value from absence.
     for (const extra of [undefined, {}, { modelSubstitutions: [] }]) {
-      const snap = snapshotFromWorkflow(fakeWorkflow() as never, extra as never);
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow() as never,
+        TEST_OUTPUT_CEILING,
+        extra as never
+      );
       expect(Object.keys(snap.cost!)).toEqual(['total']);
     }
   });
 
   it('is a no-op when omitted — every existing caller is byte-identical', () => {
-    expect(snapshotFromWorkflow(fakeWorkflow() as never).cost).toEqual({ total: 42 });
-    expect(snapshotFromWorkflow(fakeWorkflow() as never, {}).cost).toEqual({ total: 42 });
+    expect(snapshotFromWorkflow(fakeWorkflow() as never, TEST_OUTPUT_CEILING).cost).toEqual({
+      total: 42,
+    });
+    expect(snapshotFromWorkflow(fakeWorkflow() as never, TEST_OUTPUT_CEILING, {}).cost).toEqual({
+      total: 42,
+    });
   });
 
   it('🔴 IGNORES a NEGATIVE addend — it may never shrink the shown price', () => {
@@ -3182,9 +3371,11 @@ describe('snapshotFromWorkflow — additionalCostBuzz', () => {
     // precisely the defect the disclosure exists to remove, so the arithmetic
     // must be one-directional rather than merely "additive".
     // A rejected addend itemises as 0: `authorFee` is what was added.
-    expect(snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: -10 }).cost).toEqual(
-      { total: 42, authorFee: 0 }
-    );
+    expect(
+      snapshotFromWorkflow(fakeWorkflow() as never, TEST_OUTPUT_CEILING, {
+        additionalCostBuzz: -10,
+      }).cost
+    ).toEqual({ total: 42, authorFee: 0 });
   });
 
   it('🔴 IGNORES a non-finite or fractional addend rather than propagating it', () => {
@@ -3205,7 +3396,9 @@ describe('snapshotFromWorkflow — additionalCostBuzz', () => {
     // the guard and is invisible to the two inputs above.
     for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, 2.5]) {
       expect(
-        snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: bad }).cost,
+        snapshotFromWorkflow(fakeWorkflow() as never, TEST_OUTPUT_CEILING, {
+          additionalCostBuzz: bad,
+        }).cost,
         `addend ${bad} reached the reported total`
       ).toEqual({ total: 42, authorFee: 0 });
     }
@@ -3215,16 +3408,20 @@ describe('snapshotFromWorkflow — additionalCostBuzz', () => {
     // Reporting a bare fee as if it were the price is worse than reporting
     // nothing: `cost` is omitted entirely when the workflow carries no total, and
     // a block reading an absent cost falls back to its own handling.
-    const snap = snapshotFromWorkflow(fakeWorkflow({ cost: undefined }) as never, {
-      additionalCostBuzz: 9,
-    });
+    const snap = snapshotFromWorkflow(
+      fakeWorkflow({ cost: undefined }) as never,
+      TEST_OUTPUT_CEILING,
+      {
+        additionalCostBuzz: 9,
+      }
+    );
     expect(snap.cost).toBeUndefined();
   });
 
   it('composes with modelSubstitutions rather than replacing them', () => {
     // Both live on the same `extra` bag; a mutant that read one and dropped the
     // other would be invisible to either field's own test.
-    const snap = snapshotFromWorkflow(fakeWorkflow() as never, {
+    const snap = snapshotFromWorkflow(fakeWorkflow() as never, TEST_OUTPUT_CEILING, {
       additionalCostBuzz: 3,
       modelSubstitutions: [{ requested: 1, served: 2 }] as never,
     });
@@ -3286,7 +3483,8 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
     const snap = snapshotFromWorkflow(
       wf('scheduled', [
         { $type: 'imageGen', name: 'gen', status: 'scheduled', queuePosition: QUEUE },
-      ])
+      ]),
+      TEST_OUTPUT_CEILING
     );
     expect(snap.steps).toEqual([
       {
@@ -3312,7 +3510,7 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
   });
 
   it('(b) a processing image step reports its progress, no queue, and an ETA with no times', () => {
-    const snap = snapshotFromWorkflow(wf('processing', [processing()]));
+    const snap = snapshotFromWorkflow(wf('processing', [processing()]), TEST_OUTPUT_CEILING);
     expect(snap.steps).toEqual([
       {
         name: 'gen',
@@ -3338,7 +3536,8 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
     const snap = snapshotFromWorkflow(
       wf('processing', [
         processing({ $type: 'training', name: 'train', estimatedProgressRate: 0.9 }),
-      ])
+      ]),
+      TEST_OUTPUT_CEILING
     );
     expect(snap.steps).toEqual([
       { name: 'train', $type: 'training', status: 'processing', startedAt: T_STARTED },
@@ -3356,14 +3555,20 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
   // Every image/video generation type on the allowlist reports progress, and the multi-phase or
   // unproven ones do not. Spelled as literals so dropping one entry from the list is caught.
   it.each(['imageGen', 'textToImage', 'videoGen'])('%s reports whole-step progress', ($type) => {
-    const snap = snapshotFromWorkflow(wf('processing', [processing({ $type })]));
+    const snap = snapshotFromWorkflow(
+      wf('processing', [processing({ $type })]),
+      TEST_OUTPUT_CEILING
+    );
     expect(snap.eta?.progress).toBe(0.42);
     expect(snap.steps?.[0].progress).toBe(0.42);
   });
   it.each(['training', 'imageResourceTraining', 'comfy', 'customComfy', 'imageUpscaler'])(
     '%s reports no progress',
     ($type) => {
-      const snap = snapshotFromWorkflow(wf('processing', [processing({ $type })]));
+      const snap = snapshotFromWorkflow(
+        wf('processing', [processing({ $type })]),
+        TEST_OUTPUT_CEILING
+      );
       expect(snap.eta?.progress).toBeNull();
       expect(snap.steps?.[0].progress).toBeUndefined();
     }
@@ -3380,7 +3585,8 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
     [null, null],
   ])('(d) a rate of %s reports progress %s', (rate, expected) => {
     const snap = snapshotFromWorkflow(
-      wf('processing', [processing({ estimatedProgressRate: rate })])
+      wf('processing', [processing({ estimatedProgressRate: rate })]),
+      TEST_OUTPUT_CEILING
     );
     expect(snap.eta?.progress).toBe(expected);
     expect(snap.steps?.[0].progress ?? null).toBe(expected);
@@ -3403,7 +3609,8 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
           status: 'scheduled',
           queuePosition: { ...QUEUE, precedingJobs },
         },
-      ])
+      ]),
+      TEST_OUTPUT_CEILING
     );
     expect(snap.eta?.queuedAhead).toBe(expected);
     expect(snap.steps?.[0].queue?.precedingJobs).toBe(expected);
@@ -3420,7 +3627,8 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
           status: 'scheduled',
           queuePosition: { ...QUEUE, estimatedStartAt: 1731578407000, estimatedCompleteAt: {} },
         },
-      ])
+      ]),
+      TEST_OUTPUT_CEILING
     );
     expect(snap.eta).toEqual({
       stepName: 'gen',
@@ -3448,7 +3656,8 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
           status: 'scheduled',
           queuePosition: { ...QUEUE, precedingJobs: 3 },
         },
-      ])
+      ]),
+      TEST_OUTPUT_CEILING
     );
     expect(snap.steps).toEqual([
       {
@@ -3486,7 +3695,8 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
       wf('processing', [
         processing({ name: 'first' }),
         { $type: 'videoGen', name: 'second', status: 'scheduled', queuePosition: QUEUE },
-      ])
+      ]),
+      TEST_OUTPUT_CEILING
     );
     expect(snap.eta?.stepName).toBe('second');
   });
@@ -3497,7 +3707,8 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
       wf('processing', [
         processing({ name: 'first', estimatedProgressRate: 0.61 }),
         processing({ name: 'second', estimatedProgressRate: 0.13 }),
-      ])
+      ]),
+      TEST_OUTPUT_CEILING
     );
     expect(snap.eta?.stepName).toBe('first');
     expect(snap.eta?.progress).toBe(0.61);
@@ -3508,7 +3719,8 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
       wf('processing', [
         processing({ name: 'done', status: 'succeeded', estimatedProgressRate: 0.8 }),
         processing({ name: 'now', estimatedProgressRate: 0.3 }),
-      ])
+      ]),
+      TEST_OUTPUT_CEILING
     );
     expect(snap.steps?.map((s) => s.progress)).toEqual([undefined, 0.3]);
     expect(snap.eta?.stepName).toBe('now');
@@ -3521,7 +3733,8 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
         wf(status, [
           processing({ name: 'gen', estimatedProgressRate: 0.55 }),
           { $type: 'videoGen', name: 'clip', status: 'scheduled', queuePosition: QUEUE },
-        ])
+        ]),
+        TEST_OUTPUT_CEILING
       );
       expect(snap.eta ?? null).toBeNull();
       expect(snap.steps?.map((s) => s.progress ?? null)).toEqual([null, null]);
@@ -3531,7 +3744,8 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
 
   it('(g) an older orchestrator response without these fields reports none of them', () => {
     const snap = snapshotFromWorkflow(
-      wf('processing', [{ $type: 'imageGen', name: 'gen', status: 'processing' }])
+      wf('processing', [{ $type: 'imageGen', name: 'gen', status: 'processing' }]),
+      TEST_OUTPUT_CEILING
     );
     expect(snap.steps).toEqual([{ name: 'gen', $type: 'imageGen', status: 'processing' }]);
     expect(snap.eta).toEqual({
@@ -3547,7 +3761,8 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
   it('(g) an explicitly null queuePosition, or one that is not an object, is no queue', () => {
     for (const queuePosition of [null, 'available', 7]) {
       const snap = snapshotFromWorkflow(
-        wf('scheduled', [{ $type: 'imageGen', name: 'gen', status: 'scheduled', queuePosition }])
+        wf('scheduled', [{ $type: 'imageGen', name: 'gen', status: 'scheduled', queuePosition }]),
+        TEST_OUTPUT_CEILING
       );
       expect(snap.steps?.[0].queue).toBeUndefined();
       // Nothing queued and nothing processing: no ETA.
@@ -3557,7 +3772,8 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
 
   it('(h) an unknown step $type reports no progress', () => {
     const snap = snapshotFromWorkflow(
-      wf('processing', [processing({ $type: 'someFutureStep', estimatedProgressRate: 0.5 })])
+      wf('processing', [processing({ $type: 'someFutureStep', estimatedProgressRate: 0.5 })]),
+      TEST_OUTPUT_CEILING
     );
     expect(snap.steps?.[0].progress).toBeUndefined();
     expect(snap.eta?.progress).toBeNull();
@@ -3572,7 +3788,8 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
         'scheduled',
         [{ $type: 'imageGen', name: BLOCK_STEP_NAME, status: 'scheduled', queuePosition: QUEUE }],
         false
-      )
+      ),
+      TEST_OUTPUT_CEILING
     );
     expect(snap.steps).toBeUndefined();
     expect(snap.eta).toEqual({
@@ -3597,26 +3814,29 @@ describe('snapshotFromWorkflow — queue/ETA/progress contract fixtures', () => 
   });
 
   it('queued', () => {
-    const snap = snapshotFromWorkflow({
-      id: 'wf_contract_queued',
-      status: 'scheduled',
-      createdAt: '2026-11-14T12:00:00Z',
-      cost: { total: 24 },
-      metadata: recorded(['gen']),
-      steps: [
-        {
-          $type: 'imageGen',
-          name: 'gen',
-          status: 'scheduled',
-          queuePosition: {
-            support: 'available',
-            precedingJobs: 7,
-            estimatedStartAt: '2026-11-14T12:00:07Z',
-            estimatedCompleteAt: '2026-11-14T12:01:13Z',
+    const snap = snapshotFromWorkflow(
+      {
+        id: 'wf_contract_queued',
+        status: 'scheduled',
+        createdAt: '2026-11-14T12:00:00Z',
+        cost: { total: 24 },
+        metadata: recorded(['gen']),
+        steps: [
+          {
+            $type: 'imageGen',
+            name: 'gen',
+            status: 'scheduled',
+            queuePosition: {
+              support: 'available',
+              precedingJobs: 7,
+              estimatedStartAt: '2026-11-14T12:00:07Z',
+              estimatedCompleteAt: '2026-11-14T12:01:13Z',
+            },
           },
-        },
-      ],
-    } as never);
+        ],
+      } as never,
+      TEST_OUTPUT_CEILING
+    );
     expect(snap).toStrictEqual({
       workflowId: 'wf_contract_queued',
       status: 'pending',
@@ -3646,22 +3866,25 @@ describe('snapshotFromWorkflow — queue/ETA/progress contract fixtures', () => 
   });
 
   it('processing', () => {
-    const snap = snapshotFromWorkflow({
-      id: 'wf_contract_processing',
-      status: 'processing',
-      createdAt: '2026-11-14T12:00:00Z',
-      cost: { total: 31 },
-      metadata: recorded(['clip']),
-      steps: [
-        {
-          $type: 'videoGen',
-          name: 'clip',
-          status: 'processing',
-          startedAt: '2026-11-14T12:00:21Z',
-          estimatedProgressRate: 0.42,
-        },
-      ],
-    } as never);
+    const snap = snapshotFromWorkflow(
+      {
+        id: 'wf_contract_processing',
+        status: 'processing',
+        createdAt: '2026-11-14T12:00:00Z',
+        cost: { total: 31 },
+        metadata: recorded(['clip']),
+        steps: [
+          {
+            $type: 'videoGen',
+            name: 'clip',
+            status: 'processing',
+            startedAt: '2026-11-14T12:00:21Z',
+            estimatedProgressRate: 0.42,
+          },
+        ],
+      } as never,
+      TEST_OUTPUT_CEILING
+    );
     expect(snap).toStrictEqual({
       workflowId: 'wf_contract_processing',
       status: 'processing',

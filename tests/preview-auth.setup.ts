@@ -188,8 +188,7 @@ setup('mint preview sessions', async ({ request }) => {
   }
 
   // Best-effort search warm-up (NOT a blocking readiness gate). The image-search
-  // path (getAllImagesIndex -> the in-cluster feeds-proxy via METRICS_SEARCH_HOST)
-  // can be cold/overloaded; fire ONE GET to warm the connection. We deliberately do
+  // path can be cold/overloaded; fire ONE GET to warm the connection. We deliberately do
   // NOT poll-until-ready: the earlier 12x6s gate wasted up to ~72s when search was
   // overloaded for the whole window, and it was never the load-bearing fix anyway —
   // each search-dependent spec (whatIf, image-feed) wraps its query in retryFlaky

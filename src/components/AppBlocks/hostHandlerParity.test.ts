@@ -135,6 +135,7 @@ const NACK_ONLY_ERRORS: Partial<Record<InventoryType, string>> = {
   OPEN_BUZZ_PURCHASE: 'a refused or dismissed purchase replies { purchased: false }',
   OPEN_CHECKPOINT_PICKER: 'a dismiss replies a bare { requestId }',
   REQUEST_DAILY_LIMIT_RAISE: 'a refused, unavailable or dismissed raise replies { raised: false }',
+  REQUEST_OUTPUT_UNLOCK: 'every refusal is an outcome inside { result }',
 };
 
 type ReplyPin = {
@@ -332,7 +333,9 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
       // replies are pinned by PageBlockHostMediaUploadBatch.browser.test.tsx.
       // 23: PERSIST_GENERATION_SOURCE, pinned by PageBlockHostGenerationSource.browser.test.tsx.
       // 24: GET_WORKFLOW_MEDIA, pinned by PageBlockHostWorkflowMedia.browser.test.tsx.
-      expect(unforwarded).toHaveLength(24);
+      // 25: REQUEST_OUTPUT_UNLOCK, pinned by {PageBlock,Iframe}HostOutputUnlock.browser.test.tsx.
+      // 26: SHARE_LINK, pinned by PageBlockHostDeepLinks.browser.test.tsx.
+      expect(unforwarded).toHaveLength(26);
       const pins = pinsFromTestSources();
       expect(pins.length).toBeGreaterThanOrEqual(30);
       expect([...new Set(pins.map((p) => p.type))].sort()).toEqual(unforwarded);

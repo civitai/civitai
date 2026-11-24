@@ -6,19 +6,27 @@
   import { submitNotice } from '$lib/submit-notice.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
+  import SelectStepElements from './SelectStepElements.svelte';
+  import '$lib/civitai-elements';
+  import { useElementsUi } from '$lib/elements-ui';
   import DataStep from './DataStep.svelte';
+  import DataStepElements from './DataStepElements.svelte';
   import EditDataStep from './EditDataStep.svelte';
+  import EditDataStepElements from './EditDataStepElements.svelte';
   import ReviewStep from './ReviewStep.svelte';
+  import ReviewStepElements from './ReviewStepElements.svelte';
   import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
   import {
     buildTrainingRuns,
     stampMature,
     defaultRunParams,
+    isLabeled,
     isTrainable,
     expandedCount,
     repeatsOf,
     selectionTakesRepeats,
-    labelOptions,
+    labelModeForCard,
+    sweepLabelMode,
     labelString,
     runCard,
     runParamsKey,
@@ -31,7 +39,11 @@
     type SamplePrompt,
     type Selection,
   } from './trainingFlow';
-  import type { FromPrices, LabelType } from '$lib/data/trainingModels';
+  import {
+    TAG_FIND_REPLACE_FLAG_KEY,
+    type FromPrices,
+    type LabelType,
+  } from '$lib/data/trainingModels';
   import { isPairDataset, type ReuseItem } from '$lib/reuse';
   import { isPairReady, pairImgs, pairItems, seedEditPrompts, type EditPair } from './editPairs';
   import { JUNK_TAGS } from '$lib/autolabel-exclude';
@@ -44,6 +56,13 @@
     enabledModelFlags = [],
     onExit,
   }: { prices: FromPrices; enabledModelFlags?: string[]; onExit: () => void } = $props();
+
+  const useElements = useElementsUi();
+  const elementsUi = $derived(useElements());
+  const Select = $derived(elementsUi ? SelectStepElements : SelectStep);
+  const Data = $derived(elementsUi ? DataStepElements : DataStep);
+  const Review = $derived(elementsUi ? ReviewStepElements : ReviewStep);
+  const EditData = $derived(elementsUi ? EditDataStepElements : EditDataStep);
 
   const STEPS = [
     { n: 1, label: 'Select' },
@@ -315,7 +334,7 @@
           existing &&
           JSON.stringify(existing) ===
             JSON.stringify(defaultRunParams(run, paramsSeedTrigger, paramsSeedLoraType));
-        return [key, existing && !untouched ? existing : defaultRunParams(run, t, loraType)];
+        return [key, existing && !untouched ? { ...defaultRunParams(run, t, loraType), ...existing } : defaultRunParams(run, t, loraType)];
       })
     );
     paramsSeedTrigger = t;
@@ -336,7 +355,6 @@
     prompts: SamplePrompt[],
     name: string,
     currencies: string[],
-    matureAck: boolean,
     reviewedMature: number
   ) {
     if (!selection) return;
@@ -353,7 +371,7 @@
       labelMode,
       edit
     );
-    const keyed = stampMature(runs, matureAck, reviewedMature).map((run, i) => ({
+    const keyed = stampMature(runs, reviewedMature).map((run, i) => ({
       ...run,
       submitKey: `${submitKey}${i.toString(16).padStart(4, '0')}`,
     }));
@@ -409,33 +427,41 @@
         </div>
       {/each}
     </nav>
-    <Button variant="outline" size="sm" onclick={onExit}>
-      <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Exit
-    </Button>
+    {#if elementsUi}
+      <civitai-button variant="outline" size="sm" onclick={onExit}>
+        <span slot="left"><IconArrowLeft size={15} stroke={2} /></span>Exit
+      </civitai-button>
+    {:else}
+      <Button variant="outline" size="sm" onclick={onExit}>
+        <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Exit
+      </Button>
+    {/if}
   </div>
 
   <ServiceStatusBanner />
 
   {#if step === 1}
-    <SelectStep
+    <Select
       {prices}
       {enabledModelFlags}
       initial={selection}
+      flowLabelMode={labelMode}
+      datasetLabeled={images.some(isLabeled)}
       startInEdit={reusePairItems.length > 0}
       onContinue={(sel) => {
+        const previous = selection ? runCard(selection.runs[0]!) : null;
         if (sel.loraType !== selection?.loraType || sel.media !== selection?.media)
           presetType = sel.loraType;
         selection = sel;
-        // Reset the label mode to the model's default only when the current choice isn't valid for it —
-        // so Back/Continue on the same model keeps a user's tags↔captions choice, but switching to a
-        // single-format model snaps to its format.
-        const card = runCard(sel.runs[0]!);
-        if (!labelOptions(card).includes(labelMode)) labelMode = card.label;
+        const labeled = images.some(isLabeled);
+        labelMode =
+          sweepLabelMode(sel.runs.map(runCard), previous, labelMode, labeled) ??
+          labelModeForCard(previous, runCard(sel.runs[0]!), labelMode, labeled);
         step = 2;
       }}
     />
   {:else if step === 2 && selection && trainsPairs}
-    <EditDataStep
+    <EditData
       bind:pairs
       bind:reuseItems={reusePairItems}
       onContinue={enterReview}
@@ -445,9 +471,10 @@
       }}
     />
   {:else if step === 2 && selection}
-    <DataStep
+    <Data
       {selection}
       {prices}
+      findReplace={enabledModelFlags.includes(TAG_FIND_REPLACE_FLAG_KEY)}
       {reuseItems}
       bind:images
       bind:trigger
@@ -464,7 +491,7 @@
       }}
     />
   {:else if step === 3 && selection}
-    <ReviewStep
+    <Review
       {selection}
       trigger={runTrigger}
       {labelMode}

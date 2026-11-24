@@ -1,5 +1,6 @@
+import { Prisma } from '@prisma/client';
 import JSZip from 'jszip';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
 // Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
@@ -32,8 +33,9 @@ vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOri
  *      scalars — and NEVER a create.
  *   3. `category` comes from `AppBlock.category` (mod curation survives), not
  *      straight from the manifest.
- *   4. Curated / mod-owned columns (assets, featured, contentRating, status,
- *      slug) are NOT in the update payload.
+ *   4. Curated / mod-owned columns (assets, featured, status, slug) are NOT in
+ *      the update payload. `contentRating` is, floored at the media, when the
+ *      primary read finds the listing: listing-media-split.approve-request.test.ts.
  *   5. The re-sync is BEST-EFFORT: a failing write is swallowed and the
  *      approve/deploy still succeeds.
  *
@@ -83,6 +85,15 @@ const { db, s3, holder } = vi.hoisted(() => {
     },
   });
   const db = { read: makeDb(), write: makeDb() };
+  // approveRequest's final step runs in a transaction that writes the request and the block.
+  db.write.$transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+    fn({
+      ...db.write,
+      $queryRaw: async () => [],
+      $executeRaw: async () => 0,
+      $executeRawUnsafe: async () => 0,
+    })
+  );
   const s3 = {
     send: vi.fn(async () => ({
       Body: { transformToByteArray: async () => holder.zipBytes },
@@ -162,6 +173,11 @@ vi.mock('~/server/services/blocks/app-listing-assets.service', () => ({
   resolveListingRatingFloorInTx: vi.fn(
     async (_db: unknown, _id: string, declared: string | null) => declared
   ),
+  // The version re-rate, as identity on the new declaration (the real rule is pinned in
+  // listing-media-split.approve-request.test.ts).
+  resolveVersionListingRating: vi.fn(
+    async (_db: unknown, a: { nextDeclared: string | null }) => a.nextDeclared
+  ),
 }));
 
 const { approveRequest, draftTransitionWhere, resetRestoreWhere } = await import(
@@ -206,7 +222,7 @@ function existingAppBlock() {
     appId: 'app_1',
     repoUrl: 'https://forgejo.example/cool-app',
     trustTier: 'unverified',
-    app: { allowedScopes: 0, allowedOrigins: ['https://cool-app.apps.example'] },
+    app: { allowedScopes: 0n, allowedOrigins: ['https://cool-app.apps.example'] },
   };
 }
 
@@ -243,6 +259,8 @@ beforeEach(() => {
   db.write.appBlock.updateMany.mockResolvedValue({ count: 0 });
   db.write.appBlock.findUnique.mockResolvedValue(appBlockRow());
   db.write.oauthClient.update.mockResolvedValue({});
+  // The ceiling a late hold would put back, read on the primary before step (3).
+  db.write.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0n });
   db.write.appListing.create.mockResolvedValue({ id: 'apl_created' });
   db.write.appListing.updateMany.mockResolvedValue({ count: 0 });
   db.write.appListing.findFirst.mockResolvedValue(null);
@@ -353,7 +371,6 @@ describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-gove
       'coverId',
       'featured',
       'featuredOrder',
-      'contentRating',
       'status',
       'slug',
       'externalUrl',
@@ -558,8 +575,8 @@ describe('approveRequest (3b-transition) — draft-at-submit transitions the pen
     id: string,
     media: { iconId: number | null; coverId: number | null } = { iconId: 11, coverId: 22 }
   ) {
-    return async (args: { where?: Record<string, unknown> }) => {
-      const w = args?.where ?? {};
+    return async (...a: unknown[]) => {
+      const w = (a[0] as { where?: Record<string, unknown> } | undefined)?.where ?? {};
       if (w.status === 'draft' && w.appBlockId === null) return { id, ...media };
       return null;
     };
@@ -747,8 +764,8 @@ describe('approveRequest — its re-rate lookups are the shared where-builders',
 describe('approveRequest — on-site publish floor (icon + cover)', () => {
   /** A findFirst that answers ONE of approve's two go-live lookups with `row`. */
   function answer(which: 'draft' | 'reset', row: Record<string, unknown>) {
-    return async (args: { where?: Record<string, unknown> }) => {
-      const w = args?.where ?? {};
+    return async (...a: unknown[]) => {
+      const w = (a[0] as { where?: Record<string, unknown> } | undefined)?.where ?? {};
       if (which === 'draft' && w.status === 'draft' && w.appBlockId === null) return row;
       if (which === 'reset' && w.status === 'pending' && w.appBlockId === 'apb_1') return row;
       return null;
@@ -837,6 +854,110 @@ describe('approveRequest — on-site publish floor (icon + cover)', () => {
     });
   });
 
+  describe('the re-approve after a late hold on a live app is cleared', () => {
+    /**
+     * One stored on-site listing, in the status the late-hold rollback left it
+     * (publish-request.finaliseOnsiteApprove.test.ts pins which). Lookups and the reset flip
+     * match it on their plain where-fields, as the database would.
+     */
+    function storedListing(status: string) {
+      const row: Record<string, unknown> = {
+        id: 'apl_live',
+        status,
+        kind: 'onsite',
+        appBlockId: 'apb_1',
+        iconId: 53,
+        coverId: 47,
+        contentRating: 'pg',
+      };
+      const matches = (where: Record<string, unknown> = {}) =>
+        Object.entries(where).every(
+          ([k, v]) => (v !== null && typeof v === 'object') || row[k] === v
+        );
+      db.read.appBlock.findFirst.mockResolvedValue({
+        ...existingAppBlock(),
+        currentVersionSha: 'a'.repeat(40),
+      });
+      db.write.appListing.findFirst.mockImplementation(async (...a: unknown[]) =>
+        matches((a[0] as { where?: Record<string, unknown> } | undefined)?.where) ? row : null
+      );
+      db.write.appListing.updateMany.mockImplementation(async (...a: unknown[]) => {
+        const args = a[0] as { where?: Record<string, unknown>; data?: object } | undefined;
+        if (!matches(args?.where)) return { count: 0 };
+        Object.assign(row, args?.data);
+        return { count: 1 };
+      });
+      return row;
+    }
+    const unsuspend = {
+      where: { id: 'apb_1', status: 'suspended' },
+      data: { status: 'approved' },
+    };
+
+    it('🔴 a delisted app stays removed and suspended', async () => {
+      const listing = storedListing('removed');
+      await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+      expect(listing.status).toBe('removed');
+      expect(db.write.appBlock.updateMany).not.toHaveBeenCalledWith(unsuspend);
+    });
+
+    it('an app that was live publishes again and is un-suspended', async () => {
+      const listing = storedListing('pending');
+      await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+      expect(listing.status).toBe('approved');
+      expect(db.write.appBlock.updateMany).toHaveBeenCalledWith(unsuspend);
+    });
+  });
+
+  describe('a first version re-approved after a late hold (its hold since cleared)', () => {
+    /** A first version a late hold left: no current sha, and a late-resuspend on record. */
+    function lateHeldFirstVersion({ late = true, currentVersionSha = null as string | null } = {}) {
+      db.read.appBlock.findFirst.mockResolvedValue({ ...existingAppBlock(), currentVersionSha });
+      db.write.$queryRaw.mockImplementation(async (strings: unknown) =>
+        Array.isArray(strings) && strings.join('').includes('publishRequestHoldLateResuspend')
+          ? [{ late }]
+          : []
+      );
+      db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+    }
+    afterEach(() => {
+      db.write.$queryRaw.mockImplementation(async () => []);
+    });
+
+    it('🔴 re-runs the floor: media now below it refuses, and the app stays suspended', async () => {
+      lateHeldFirstVersion();
+      db.write.appListing.findFirst.mockImplementation(
+        answer('reset', { id: 'apl_held', iconId: 53, coverId: null, contentRating: 'pg' })
+      );
+      await expectRefusedBeforeAnyWrite('cover');
+      expect(db.write.appBlock.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('passes the floor with an icon and a cover, and un-suspends the app', async () => {
+      lateHeldFirstVersion();
+      db.write.appListing.findFirst.mockImplementation(
+        answer('reset', { id: 'apl_held', iconId: 53, coverId: 47, contentRating: 'pg' })
+      );
+      await expect(
+        approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+      ).resolves.toMatchObject({ publishRequestId: 'req_1' });
+      expect(db.write.appBlock.updateMany).toHaveBeenCalledWith({
+        where: { id: 'apb_1', status: 'suspended' },
+        data: { status: 'approved' },
+      });
+    });
+
+    it('a version that already went live stays exempt, late hold or not', async () => {
+      lateHeldFirstVersion({ currentVersionSha: 'a'.repeat(40) });
+      db.write.appListing.findFirst.mockImplementation(
+        answer('reset', { id: 'apl_live', iconId: null, coverId: null, contentRating: 'pg' })
+      );
+      await expect(
+        approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+      ).resolves.toMatchObject({ publishRequestId: 'req_1' });
+    });
+  });
+
   it('a reset re-approve with NO icon and NO cover is exempt too', async () => {
     db.write.appListing.findFirst.mockImplementation(
       answer('reset', { id: 'apl_reset_none', iconId: null, coverId: null, contentRating: 'g' })
@@ -920,5 +1041,169 @@ describe('approveRequest — media removed between the floor check and the trans
       approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
     ).resolves.toMatchObject({ publishRequestId: 'req_1' });
     expect(db.write.appBlockPublishRequest.update).toHaveBeenCalledOnce();
+  });
+});
+
+describe('approveRequest — a remix app row', () => {
+  it.each(['remix', 'remix_disabled'])(
+    '🔴 refuses a request on a slug whose row is a remix app (status %s), writing nothing',
+    async (status) => {
+      db.read.appBlock.findFirst.mockResolvedValue({ ...existingAppBlock(), status });
+      const forgejo = await import('~/server/services/blocks/forgejo.service');
+
+      await expect(
+        approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+      ).rejects.toThrow('Cannot approve: cool-app is a remix app.');
+      expect(db.write.appBlock.update).not.toHaveBeenCalled();
+      expect(db.write.oauthClient.update).not.toHaveBeenCalled();
+      expect(forgejo.commitFiles).not.toHaveBeenCalled();
+    }
+  );
+
+  it('🔴 refuses when the status-guarded write matches nothing (P2025), re-capping and committing nothing', async () => {
+    db.read.appBlock.findFirst.mockResolvedValue({ ...existingAppBlock(), status: 'approved' });
+    // The row became a remix app after the guard read it: only the guarded write misses.
+    db.write.appBlock.update.mockImplementation((async (a: { where?: { status?: unknown } }) => {
+      if (a?.where?.status)
+        throw new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+          code: 'P2025',
+          clientVersion: 'test',
+        });
+      return {};
+    }) as never);
+    const forgejo = await import('~/server/services/blocks/forgejo.service');
+
+    await expect(
+      approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+    ).rejects.toMatchObject({ code: 'P2025' });
+    expect(db.write.oauthClient.update).not.toHaveBeenCalled();
+    expect(forgejo.commitFiles).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: the same request on an approved store app replaces its manifest', async () => {
+    db.read.appBlock.findFirst.mockResolvedValue({ ...existingAppBlock(), status: 'approved' });
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    // The write re-checks the status the guard read: a row that became a remix app is not replaced.
+    expect(db.write.appBlock.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'apb_1', status: { notIn: ['remix', 'remix_disabled'] } },
+        data: expect.objectContaining({ manifest: expect.anything() }),
+      })
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// App Storage `keyedBy` immutability at APPROVE (docs/app-storage-generic-core.md, "Viewer-keyed
+// documents"): a push-originated request never passes `submitVersion`, so approve refuses it too,
+// against EVERY earlier approval. The only approval that declared `votes` is the 51st newest,
+// outside the capped schema-diff history, so only `baseline.approved` at the approve call site
+// can see it. The storage-migration modules are real here.
+// ---------------------------------------------------------------------------
+
+const VK_SLUG = 'vote-board-4c2a';
+const VK_NEW_MANIFEST = {
+  name: 'Vote Board',
+  scopes: ['apps:storage'],
+  storage: { collections: { votes: { visibility: 'shared', write: 'none', counters: ['n'] } } },
+};
+const VK_ENFORCED = {
+  name: 'Vote Board',
+  scopes: ['apps:storage'],
+  storage: { collections: { notes: { visibility: 'private' } } },
+};
+const VK_OLD_VOTES = {
+  name: 'Vote Board',
+  storage: { collections: { votes: { visibility: 'shared', write: 'own', keyedBy: 'viewer' } } },
+};
+
+function vkPendingRow() {
+  return {
+    id: 'req_vk',
+    status: 'pending',
+    slug: VK_SLUG,
+    version: '3.0.0',
+    manifest: VK_NEW_MANIFEST,
+    bundleKey: 'bundles/vote-board.zip',
+    forgejoCommitSha: '',
+    submittedByUserId: 4243,
+    appBlockId: 'apb_vk',
+    deployState: null,
+  };
+}
+
+const vkApprovals = (withOld: boolean) => [
+  ...Array.from({ length: 50 }, (_, i) => ({ id: `pubreq_r${i}`, manifest: VK_ENFORCED })),
+  ...(withOld ? [{ id: 'pubreq_old', manifest: VK_OLD_VOTES }] : []),
+];
+
+describe('approveRequest — keyedBy immutability against every approval', () => {
+  let savedZip = holder.zipBytes;
+  afterEach(() => {
+    holder.zipBytes = savedZip;
+  });
+  beforeEach(async () => {
+    savedZip = holder.zipBytes;
+    const zip = new JSZip();
+    zip.file('block.manifest.json', JSON.stringify(VK_NEW_MANIFEST));
+    zip.file('index.html', '<html></html>');
+    holder.zipBytes = await zip.generateAsync({ type: 'uint8array' });
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValue(vkPendingRow());
+    db.read.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_vk',
+      appId: 'app_vk',
+      repoUrl: 'https://forgejo.example/vote-board',
+      trustTier: 'unverified',
+      app: { allowedScopes: 0n, allowedOrigins: ['https://vote-board.apps.example'] },
+    });
+    // What the store enforces (the baseline): no `votes`.
+    db.write.appBlock.findFirst.mockResolvedValue({ id: 'apb_vk', manifest: VK_ENFORCED });
+    db.write.appBlock.findUnique.mockResolvedValue({
+      id: 'apb_vk',
+      blockId: VK_SLUG,
+      manifest: VK_NEW_MANIFEST,
+      contentRating: 'pg',
+      category: 'utility',
+      featured: false,
+      featuredOrder: null,
+      externalUrl: null,
+      app: { userId: 42 },
+    });
+    db.write.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0n });
+    s3.send.mockImplementation(async () => ({
+      Body: { transformToByteArray: async () => holder.zipBytes },
+    }));
+  });
+
+  it('🔴 refuses dropping keyedBy a 51st-newest approval declared, before the request is approved', async () => {
+    db.write.appBlockPublishRequest.findMany.mockResolvedValue(vkApprovals(true));
+    await expect(approveRequest({ publishRequestId: 'req_vk', reviewerUserId: 9 })).rejects.toThrow(
+      'storage.collections.votes: an approved version declared it with keyedBy "viewer"'
+    );
+    // Nothing approved it: no request write sets status "approved", and no block was written.
+    const approvedWrites = [
+      ...db.write.appBlockPublishRequest.update.mock.calls,
+      ...db.write.appBlockPublishRequest.updateMany.mock.calls,
+    ].filter((c) => (c[0] as { data?: { status?: string } })?.data?.status === 'approved');
+    expect(approvedWrites).toEqual([]);
+    expect(db.write.appBlock.update).not.toHaveBeenCalled();
+    expect(db.write.appBlock.create).not.toHaveBeenCalled();
+    // The baseline read every approval: no cap on the query.
+    const query = db.write.appBlockPublishRequest.findMany.mock.calls.at(-1)?.[0] as {
+      take?: number;
+    };
+    expect(query.take).toBeUndefined();
+  });
+
+  it('positive control: without that approval the storage gate passes', async () => {
+    db.write.appBlockPublishRequest.findMany.mockResolvedValue(vkApprovals(false));
+    const outcome = await approveRequest({ publishRequestId: 'req_vk', reviewerUserId: 9 }).then(
+      () => null,
+      (err: Error) => err.message
+    );
+    // Whatever later step this stubbed harness reaches, it is not the keyedBy refusal.
+    expect(outcome ?? '').not.toContain('keyedBy');
   });
 });

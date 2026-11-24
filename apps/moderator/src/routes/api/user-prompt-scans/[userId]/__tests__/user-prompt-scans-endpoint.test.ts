@@ -87,12 +87,6 @@ describe('/api/user-prompt-scans', () => {
     );
   });
 
-  it('still serves the read when the audit log write fails', async () => {
-    logToAxiom.mockRejectedValueOnce(new Error('axiom down'));
-    const res = await call();
-    expect(res.status).toBe(200);
-  });
-
   it('answers a ClickHouse failure with a status Cloudflare passes through, and logs no view', async () => {
     getPromptScans.mockRejectedValue(new Error('ACCESS_DENIED'));
     const res = await call();

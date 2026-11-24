@@ -59,14 +59,13 @@ import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { Model3DActionsMenu } from '~/components/Model3D/Actions/Model3DActionsMenu';
 import { Model3DThumbsUpButton } from '~/components/Model3D/ThumbsUp/Model3DThumbsUpButton';
 import { Model3DGallery } from '~/components/Model3D/Gallery/Model3DGallery';
-import type { Model3DReviewModalProps } from '~/components/Model3D/Reviews/Model3DReviewModal';
 import type { Model3DViewableVariant } from '~/components/Model3D/Viewer/Model3DVariantViewer';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -92,11 +91,6 @@ const Model3DVariantViewer = dynamic(
       </Center>
     ),
   }
-);
-
-// Lazy-loaded review modal — only imported when the user clicks "Write a review".
-const Model3DReviewModal = dynamic<Model3DReviewModalProps>(
-  () => import('~/components/Model3D/Reviews/Model3DReviewModal')
 );
 
 const querySchema = z.object({
@@ -246,12 +240,9 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const openReviewModal = () => {
     if (!model3d) return;
-    dialogStore.trigger({
-      component: Model3DReviewModal,
-      props: {
-        model3dId: id,
-        model3dName: model3d.name,
-      },
+    openDialog(() => import('~/components/Model3D/Reviews/Model3DReviewModal'), {
+      model3dId: id,
+      model3dName: model3d.name,
     });
   };
 

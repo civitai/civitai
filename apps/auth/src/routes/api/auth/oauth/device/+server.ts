@@ -5,9 +5,13 @@ import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getClientIp } from '$lib/server/auth/request';
 import { getRedis } from '$lib/server/redis';
-import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
+import {
+  checkOAuthRateLimit,
+  oauthRetryAfter,
+  rateLimitedResponse,
+} from '$lib/server/oauth/rate-limit';
 import { DEVICE_CODE_TTL, DEVICE_POLL_INTERVAL } from '$lib/server/oauth/constants';
-import { isScopeGrantable, parseScopeRequest } from '$lib/server/oauth/scope';
+import { isScopeGrantable, parseScopeRequest, scopeFromColumn } from '$lib/server/oauth/scope';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 import { setWildcardCors } from '$lib/server/oauth/http';
 
@@ -60,7 +64,11 @@ export const POST: RequestHandler = async ({ request, url }) => {
   }
 
   if (!(await checkOAuthRateLimit('device', getClientIp(request)))) {
-    return json({ error: 'rate_limited' }, { status: 429, headers });
+    return rateLimitedResponse(
+      oauthRetryAfter('device'),
+      headers,
+      'Too many device authorization requests'
+    );
   }
 
   const client = await db
@@ -89,7 +97,7 @@ export const POST: RequestHandler = async ({ request, url }) => {
   }
   // UserRead baseline, always allowed.
   const requestedScope = parsed.scope | TokenScope.UserRead;
-  if (!isScopeGrantable(client.allowedScopes, requestedScope, 'user')) {
+  if (!isScopeGrantable(scopeFromColumn(client.allowedScopes), requestedScope, 'user')) {
     return json(
       { error: 'invalid_scope', error_description: 'Requested scope exceeds client permissions' },
       { status: 400, headers }

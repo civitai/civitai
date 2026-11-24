@@ -236,6 +236,7 @@ type SubmissionFixture = {
   id: number;
   userId: number;
   nsfwLevel: number;
+  modelRestricted: boolean;
   minor: boolean;
   poi: boolean;
   tosViolation: boolean;
@@ -251,6 +252,7 @@ const goodSubmission: SubmissionFixture = {
   id: REMIX_IMAGE,
   userId: PLACER,
   nsfwLevel: NsfwLevel.PG,
+  modelRestricted: false,
   minor: false,
   poi: false,
   tosViolation: false,
@@ -1047,6 +1049,29 @@ describe('owner actions', () => {
       actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
     ).rejects.toThrow(/no longer fits/i);
     expect(settlePlacement).not.toHaveBeenCalled();
+  });
+
+  it('refuses at approval a mature image whose base model restricts mature images', async () => {
+    placementFindUnique.mockResolvedValue(pending);
+    primeQueries({
+      submission: { ...goodSubmission, nsfwLevel: NsfwLevel.R, modelRestricted: true },
+      hostLevel: NsfwLevel.R,
+    });
+    await expect(
+      actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
+    ).rejects.toThrow(/can no longer be shown/i);
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(rewardApply).not.toHaveBeenCalled();
+  });
+
+  it('approves the same mature image when its base model does not restrict it', async () => {
+    placementFindUnique.mockResolvedValue(pending);
+    primeQueries({
+      submission: { ...goodSubmission, nsfwLevel: NsfwLevel.R, modelRestricted: false },
+      hostLevel: NsfwLevel.R,
+    });
+    await actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
+    expect(lastSettleArgs()).toMatchObject({ placementId: PLACEMENT });
   });
 
   it('throws when the settle claimed nothing, instead of reporting success', async () => {
@@ -2563,7 +2588,7 @@ describe('getPendingRemixGallerySubmissions paging', () => {
     // relisting exactly what the count excludes — badge and list disagree again,
     // which is the bug this shares one fragment to prevent.
     const [, betweenTheTwoTests] = sql.split('EXISTS');
-    expect(sql.match(/EXISTS/g)).toHaveLength(2);
+    expect(sql.match(/EXISTS/g)).toHaveLength(3);
     expect(betweenTheTwoTests).toContain('AND');
     expect(betweenTheTwoTests).not.toContain('OR');
   });
@@ -2989,6 +3014,11 @@ describe('free submissions', () => {
     // is being charged for the refusal.
     resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, settings: { contentRule: 'any' } });
     primeQueries({ submission: { ...verifiedSubmission, tosViolation: true } });
+    await expect(submitFree()).rejects.toThrow(/cannot be submitted/i);
+
+    primeQueries({
+      submission: { ...verifiedSubmission, nsfwLevel: NsfwLevel.R, modelRestricted: true },
+    });
     await expect(submitFree()).rejects.toThrow(/cannot be submitted/i);
 
     resolvePlacementSpaceFor.mockResolvedValue(openSpace);
@@ -3968,5 +3998,34 @@ describe('the reads moved off the Prisma query engine', () => {
     });
     expect(visibility.hasEntries).toBe(false);
     expect(kysely.read.mock.calls.map(flatten).join(' ')).not.toContain('SELECT EXISTS');
+  });
+});
+
+describe('host media rows', () => {
+  it('case 1', async () => {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const { hostIsShowable } = await import('../remix-gallery.service');
+    const db = new PGlite();
+    await db.exec(`
+      CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+      CREATE TABLE "Image" (id int PRIMARY KEY, ingestion "ImageIngestionStatus", "blockedFor" text,
+        "nsfwLevel" int NOT NULL, "nsfwLevelLocked" boolean NOT NULL, "needsReview" text,
+        "tosViolation" boolean NOT NULL DEFAULT false, "modelRestricted" boolean NOT NULL DEFAULT false,
+        "userId" int, metadata jsonb, "scanJobs" jsonb);
+      INSERT INTO "Image" (id, ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked") VALUES
+        (1, 'Scanned', NULL, 1, false),
+        (2, 'Error', NULL, 1, true),
+        (3, 'Error', 'moderated', 1, true);
+    `);
+    const flat = Prisma.sql`SELECT i.id, ${hostIsShowable()} AS showable FROM "Image" i ORDER BY i.id`;
+    const { rows } = await db.query<{ id: number; showable: boolean }>(
+      flat.text,
+      flat.values as unknown[]
+    );
+    expect(rows.map((r) => [r.id, r.showable])).toEqual([
+      [1, true],
+      [2, true],
+      [3, false],
+    ]);
   });
 });

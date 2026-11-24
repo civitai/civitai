@@ -2,6 +2,7 @@ import { CollectionReadConfiguration, Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { NotificationCategory } from '~/server/common/enums';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
@@ -32,6 +33,7 @@ import {
   refundBannedEntrantReviews,
 } from '~/server/games/daily-challenge/challenge-rewards';
 import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
+import { getIncompatibleEntryImageIds } from '~/server/games/daily-challenge/challenge-resource-compat';
 import {
   buildJudgingEngineContext,
   resolveJudgingEngine,
@@ -976,6 +978,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     AND u."bannedAt" IS NULL
     ${reviewedSince}
     AND ${notYetReviewedByJudge}
+    AND ${imageNotRestrictedSql()}
   `;
   log('Recent entries:', recentEntries.length);
 
@@ -1023,6 +1026,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     AND ci."tagId" = ${config.reviewMeTagId}
     AND u."bannedAt" IS NULL
     AND ${notYetReviewedByJudge}
+    AND ${imageNotRestrictedSql()}
   `;
   log('Requested review:', requestReview.length);
   // Owed reviews: a review that failed on an earlier tick, or a moderator re-judge.
@@ -1043,6 +1047,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         AND ci."imageId" = ANY(${pendingIds}::int[])
         AND u."bannedAt" IS NULL
         AND ${notYetReviewedByJudge}
+        AND ${imageNotRestrictedSql()}
       `
     : [];
   log('Pending review:', pendingEntries.length);
@@ -1270,7 +1275,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       bound: placed >= MAX_PLACEMENTS_PER_TICK ? 'count' : 'budget',
       budgetMs: REVIEW_TICK_BUDGET_MS,
       lockSeconds: REVIEW_JOB_LOCK_SECONDS,
-    }).catch(() => undefined);
+    });
     log('Deferred arrival placements', { placed, deferred });
   }
 
@@ -1303,6 +1308,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         ci."collectionId" = ${currentChallenge.collectionId}
         AND ci.status = 'ACCEPTED'
         AND i."userId" IN (${Prisma.join(userIds)})
+        AND ${imageNotRestrictedSql()}
       GROUP BY 1
       HAVING COUNT(*) >= ${currentChallenge.entryPrizeRequirement};
     `;
@@ -1460,7 +1466,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       message: `Entry review failed ${MAX_PENDING_REVIEW_ATTEMPTS} times; no longer retried`,
       challengeId: currentChallenge.challengeId,
       imageIds: pending.dropped,
-    }).catch(() => undefined);
+    });
   }
   if (currentChallenge.challengeId) {
     await saveReviewState({
@@ -1544,7 +1550,7 @@ function logClaimLost(challengeId: number | null, stage: string) {
     message: 'Completion claim was revoked and re-taken while this run was still executing',
     challengeId,
     stage,
-  }).catch(() => undefined);
+  });
 }
 
 /**
@@ -1589,7 +1595,7 @@ export async function pickWinnersForChallenge(
       collectionId: currentChallenge.collectionId,
       reviewMeTagId: config.reviewMeTagId,
     });
-    log('Paid reviews refunded to banned entrants:', refundedReviews.length);
+    log('Unjudgeable paid reviews refunded:', refundedReviews.length);
 
     let winningEntries: Array<{
       userId: number;
@@ -1651,7 +1657,7 @@ export async function pickWinnersForChallenge(
           message: 'Picking winners with entries still owed a review',
           challengeId: currentChallenge.challengeId,
           imageIds: stillOwed,
-        }).catch(() => undefined);
+        });
       }
 
       const eventContext = await resolveEventContext(challengeJudgeRow?.eventId ?? null);
@@ -1895,7 +1901,7 @@ export async function pickWinnersForChallenge(
           }));
 
           if (unmatchedPicks.length) {
-            await logToAxiom({
+            logToAxiom({
               type: 'warning',
               name: 'challenge-winner-unmatched-pick',
               message: `Winner pick named a creatorId matching no judged entry; that placement was not awarded: challenge=${currentChallenge.challengeId}`,
@@ -1907,7 +1913,7 @@ export async function pickWinnersForChallenge(
               // named an unknown id and repeated a creator.
               resolvedPlaces: winningEntries.length,
               pickedPlaces: generated.winners.length,
-            }).catch(() => undefined);
+            });
             recordChallengeWinnerUnmatchedPick({
               source: challengeJudgeRow?.source ?? ChallengeSource.System,
               count: unmatchedPicks.length,
@@ -1926,14 +1932,16 @@ export async function pickWinnersForChallenge(
           dedupeWinnersForPayout(winningEntries);
         if (droppedWinners.length) {
           winningEntries = dedupedWinners;
-          await logToAxiom({
+          logToAxiom({
             type: 'warning',
             name: 'challenge-winner-duplicate-pick',
             message: `Winner pick named the same creator in more than one place; the extra placements were dropped before payout: challenge=${currentChallenge.challengeId}`,
             challengeId: currentChallenge.challengeId,
-            droppedUserIds: droppedWinners.map((entry) => entry.userId),
-            droppedPlaces: droppedWinners.map((entry) => entry.position),
-          }).catch(() => undefined);
+            payload: {
+              droppedUserIds: droppedWinners.map((entry) => entry.userId),
+              droppedPlaces: droppedWinners.map((entry) => entry.position),
+            },
+          });
           recordChallengeWinnerDuplicatePick({
             // Defaulted the same way the judging call at ~:1365 defaults it: the judge row is typed
             // `| undefined`, and letting it fall through to `unknown` would put a caller-side emit
@@ -2011,7 +2019,7 @@ export async function pickWinnersForChallenge(
       const distributedPrizeBuzz = winningEntries.reduce((sum, e) => sum + e.prize, 0);
       const residualBuzz = totalPrizeBuzz - distributedPrizeBuzz;
       if (residualBuzz > 0) {
-        await logToAxiom({
+        logToAxiom({
           type: 'info',
           name: 'challenge-partial-winner-residual',
           message: 'Challenge completed with fewer winners than prize places; buzz not paid out',
@@ -2218,11 +2226,15 @@ const duplicateImageColumns = [
   // copying the source's sortAt would be inert. Do not re-add it.
   'pHash',
 ];
-async function duplicateImage(imageId: number, userId: number) {
+// A lock on no rating (level 0) is not a rating: the copy is left unlocked, so its scan rates it.
+const duplicateImageColumnSql = (col: string) =>
+  col === 'nsfwLevelLocked' ? `(i."nsfwLevelLocked" AND i."nsfwLevel" <> 0)` : `i."${col}"`;
+
+export async function duplicateImage(imageId: number, userId: number) {
   const newImage = await dbWrite.$queryRawUnsafe<{ id: number }[]>(`
     INSERT INTO "Image" (${duplicateImageColumns.map((col) => `"${col}"`).join(', ')}, "userId")
     SELECT
-      ${duplicateImageColumns.map((col) => `i."${col}"`).join(', ')},
+      ${duplicateImageColumns.map(duplicateImageColumnSql).join(', ')},
       ${userId}
     FROM "Image" i
     WHERE i.id = ${imageId}
@@ -2288,12 +2300,14 @@ export async function getJudgedEntries(
   // to drop disqualified entries, so a user whose top entry is gated falls through to their next.
   // A ban leaves the user's entries ACCEPTED in the collection, so banned entrants are dropped
   // here. Read at query time: a ban lifted before completion makes them eligible again.
-  const judgedRows = await dbRead.$queryRaw<JudgedEntry[]>`
+  const judgedRows = await dbRead.$queryRaw<(JudgedEntry & { featuredVersionIds?: number[] })[]>`
     SELECT
       ci."imageId",
       i."userId",
       u."username",
-      ci.note
+      ci.note,
+      (SELECT c."modelVersionIds" FROM "Challenge" c WHERE c."collectionId" = ${collectionId} LIMIT 1)
+        AS "featuredVersionIds"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
@@ -2302,11 +2316,21 @@ export async function getJudgedEntries(
     AND ci.note IS NOT NULL
     AND ci.status = 'ACCEPTED'
     AND u."bannedAt" IS NULL
+    AND ${imageNotRestrictedSql()}
   `;
   // Re-checked on the primary: the refund and participation payout read it there, so a ban the
   // replica has not seen yet must not let the same user be refunded and still place.
   const bannedIds = await getBannedUserIds(judgedRows.map((e) => e.userId));
-  const userBestEntries = judgedRows.filter((e) => !bannedIds.has(e.userId));
+  // An entry accepted before the compatible-base-model rule existed must not place. Primary, like
+  // the ban re-check: the replica can lack image resource rows, and a missing row passes.
+  const incompatible = await getIncompatibleEntryImageIds(
+    judgedRows.map((e) => e.imageId),
+    judgedRows[0]?.featuredVersionIds ?? [],
+    dbWrite
+  );
+  const userBestEntries = judgedRows
+    .filter((e) => !bannedIds.has(e.userId) && !incompatible.has(e.imageId))
+    .map(({ featuredVersionIds: _, ...entry }) => entry);
   log('Users with judged entries:', userBestEntries.length);
   if (!userBestEntries.length) {
     return [];
@@ -2375,10 +2399,22 @@ export async function getJudgedEntries(
   });
 
   const ranked = eligibleEntries
-    .map(({ note, ...entry }) => {
-      const { score, summary } = JSON.parse(note);
-      const weightedRating = calculateWeightedCategoryScore(score, rubric);
-      return { ...entry, summary, score, weightedRating };
+    .flatMap(({ note, ...entry }) => {
+      // One entry whose note isn't a judge's verdict must not stop the whole challenge's ranking.
+      try {
+        const { score, summary } = JSON.parse(note);
+        const weightedRating = calculateWeightedCategoryScore(score, rubric);
+        return [{ ...entry, summary, score, weightedRating }];
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'daily-challenge-judged-note-unreadable',
+          message: error instanceof Error ? error.message : String(error),
+          collectionId,
+          imageId: entry.imageId,
+        });
+        return [];
+      }
     })
     .filter((e): e is typeof e & { weightedRating: number } => e.weightedRating !== null);
 

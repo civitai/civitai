@@ -299,10 +299,15 @@ async function imagesForBook({
   ids,
   browsingLevel,
   user,
+  asOwner = false,
+  asModerator = false,
 }: {
   ids: number[];
   browsingLevel: number;
   user?: SessionUser;
+  /** The request's views (`credentialViews`); the feed reads neither without them. */
+  asOwner?: boolean;
+  asModerator?: boolean;
 }) {
   if (!ids.length) return [];
 
@@ -319,7 +324,7 @@ async function imagesForBook({
   // AUTHOR filter, so passing the viewer there quietly narrows the book to images
   // the viewer uploaded — which leaves "images you stickered" empty, since those
   // are by definition somebody else's.
-  const { items } = await getAllImages({ ...input, user });
+  const { items } = await getAllImages({ ...input, user, asOwner, asModerator });
   const byId = new Map(items.map((image) => [image.id, image]));
 
   // The book's order, not the feed's. An image the feed withheld is simply
@@ -348,12 +353,14 @@ async function imagesForBook({
  * first and `attach` would find nothing for the loser — an empty row, not an
  * error.
  */
-function sectionImages(browsingLevel: number, user?: SessionUser) {
+type BookViews = { asOwner: boolean; asModerator: boolean };
+
+function sectionImages(browsingLevel: number, user: SessionUser | undefined, views: BookViews) {
   let byId = new Map<number, Awaited<ReturnType<typeof imagesForBook>>[number]>();
 
   return {
     resolveVisible: async (ids: number[]) => {
-      const images = await imagesForBook({ ids, browsingLevel, user });
+      const images = await imagesForBook({ ids, browsingLevel, user, ...views });
       byId = new Map(images.map((image) => [image.id, image]));
       return byId;
     },
@@ -376,9 +383,10 @@ function sectionImages(browsingLevel: number, user?: SessionUser) {
 async function withImages<T extends { imageId: number }>(
   rows: T[],
   browsingLevel: number,
-  user?: SessionUser
+  user: SessionUser | undefined,
+  views: BookViews
 ) {
-  const section = sectionImages(browsingLevel, user);
+  const section = sectionImages(browsingLevel, user, views);
   await section.resolveVisible(rows.map((row) => row.imageId));
   return section.attach(rows);
 }
@@ -442,6 +450,7 @@ export async function getStickerBookSection({
   browsingLevel,
   user,
   isModerator = false,
+  asOwner = false,
 }: {
   username: string;
   side: 'placer' | 'owner';
@@ -449,10 +458,16 @@ export async function getStickerBookSection({
   limit?: number;
   browsingLevel: number;
   user?: SessionUser;
+  /** The request's views (`credentialViews`): a scoped key is neither moderator nor owner. */
   isModerator?: boolean;
+  asOwner?: boolean;
 }) {
   const viewerId = user?.id;
-  const { subject, isOwner, access } = await resolveBookAccess({ username, viewerId, isModerator });
+  const { subject, isOwner, access } = await resolveBookAccess({
+    username,
+    viewerId: asOwner ? viewerId : undefined,
+    isModerator,
+  });
 
   // The gate is re-asked here rather than assumed from the tab having rendered.
   // A procedure is a URL, and a hidden book must refuse this one on its own.
@@ -469,7 +484,12 @@ export async function getStickerBookSection({
     blockedIds,
   });
 
-  return { items: await withImages(items, browsingLevel, user), hasMore, isOwner, access };
+  return {
+    items: await withImages(items, browsingLevel, user, { asOwner, asModerator: isModerator }),
+    hasMore,
+    isOwner,
+    access,
+  };
 }
 
 export async function getStickerBook({
@@ -477,16 +497,23 @@ export async function getStickerBook({
   browsingLevel,
   user,
   isModerator = false,
+  asOwner = false,
   limit = STICKER_BOOK_TAB_LIMIT,
 }: {
   username: string;
   browsingLevel: number;
   user?: SessionUser;
+  /** The request's views (`credentialViews`): a scoped key is neither moderator nor owner. */
   isModerator?: boolean;
+  asOwner?: boolean;
   limit?: number;
 }) {
   const viewerId = user?.id;
-  const { subject, isOwner, access } = await resolveBookAccess({ username, viewerId, isModerator });
+  const { subject, isOwner, access } = await resolveBookAccess({
+    username,
+    viewerId: asOwner ? viewerId : undefined,
+    isModerator,
+  });
 
   if (!access.canViewBook) {
     return {
@@ -506,8 +533,9 @@ export async function getStickerBook({
   // One per section, and NOT shared: each holds the map its own overfetch was
   // filtered against, and a shared one would be overwritten by whichever section
   // hydrated last.
-  const placedImages = sectionImages(browsingLevel, user);
-  const receivedImages = sectionImages(browsingLevel, user);
+  const views = { asOwner, asModerator: isModerator };
+  const placedImages = sectionImages(browsingLevel, user, views);
+  const receivedImages = sectionImages(browsingLevel, user, views);
 
   const [holdings, placed, received, earnedBuzz] = await Promise.all([
     // Newest acquisition first — the order the placement tray presents the same

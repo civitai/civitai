@@ -5,6 +5,9 @@
 //   {"$date": "2026-06-15T11:55:00.000Z"}  -> a JS Date (msgpackr: timestamp extension -1)
 //   {"$undefined": true}                   -> undefined (msgpackr: fixext1 type 0)
 // The packed bytes are stored next to the value as base64 (`packed`); the Go harness reads only that.
+// An entry marked `"compressed": true` is packed as a `compress: true` cache stores it: the sentinel
+// byte 0x01, then the brotli stream of the msgpack bytes (packages/civitai-redis/src/
+// packed-compression.ts: quality 6, the window sized to the value).
 //
 //   node apps/feed-go/testdata/golden/pack.mjs <fixture.json>...   re-pack every `value` in place
 //
@@ -14,6 +17,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import zlib from 'node:zlib';
 
 const require = createRequire(import.meta.url);
 
@@ -65,12 +69,27 @@ export function packMarked(value) {
   return Buffer.from(pack(revive(value))).toString('base64');
 }
 
+/** compressPacked (packed-compression.ts): the sentinel byte, then the brotli stream; base64. */
+export function packMarkedCompressed(value) {
+  const packed = Buffer.from(pack(revive(value)));
+  const { BROTLI_MIN_WINDOW_BITS, BROTLI_DEFAULT_WINDOW } = zlib.constants;
+  const lgwin = Math.min(BROTLI_DEFAULT_WINDOW, Math.max(BROTLI_MIN_WINDOW_BITS, Math.ceil(Math.log2(packed.length + 1))));
+  const compressed = zlib.brotliCompressSync(packed, {
+    params: {
+      [zlib.constants.BROTLI_PARAM_QUALITY]: 6,
+      [zlib.constants.BROTLI_PARAM_SIZE_HINT]: packed.length,
+      [zlib.constants.BROTLI_PARAM_LGWIN]: lgwin,
+    },
+  });
+  return Buffer.concat([Buffer.from([0x01]), compressed]).toString('base64');
+}
+
 function repackFile(path) {
   const fixture = JSON.parse(readFileSync(path, 'utf8'));
   let n = 0;
   for (const entry of Object.values(fixture.redis ?? {})) {
     if (entry && 'value' in entry) {
-      entry.packed = packMarked(entry.value);
+      entry.packed = entry.compressed ? packMarkedCompressed(entry.value) : packMarked(entry.value);
       n++;
     }
   }

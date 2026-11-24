@@ -8,8 +8,10 @@
     ".": "./src/index.ts",
     "./client": "./src/client.ts",
     "./token-scope": "./src/token-scope.ts",
+    "./buzz-limit": "./src/buzz-limit.ts",
     "./secret-hash": "./src/secret-hash.ts",
-    "./plain-email": "./src/plain-email.ts"
+    "./plain-email": "./src/plain-email.ts",
+    "./browsing-level-claim": "./src/browsing-level-claim.ts"
   },
   "scripts": {
     "test": "vitest run",

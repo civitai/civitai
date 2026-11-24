@@ -18,7 +18,6 @@ import {
 } from '@mantine/core';
 import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { Dropzone, type FileRejection } from '@mantine/dropzone';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconBan,
@@ -51,7 +50,7 @@ import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatKBytes, formatSeconds } from '~/utils/number-helpers';
 import { getFileExtension } from '~/utils/string-helpers';
-import { sanitizeOverrideName } from '~/utils/model-file-naming';
+import { editorFileName, sanitizeOverrideName } from '~/utils/model-file-naming';
 import { trpc } from '~/utils/trpc';
 import { getModelFileTypeOptions, UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import classes from './Files.module.scss';
@@ -62,6 +61,7 @@ import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-s
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-icons';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 // Small inline dropzone for adding files within a section
 function InlineDropzone({
@@ -697,7 +697,7 @@ function FileCard({
   };
 
   const handleRenameOpen = () => {
-    setRenameValue(versionFile.overrideName ?? versionFile.name);
+    setRenameValue(editorFileName(versionFile));
     setRenameOpen(true);
   };
 
@@ -707,7 +707,7 @@ function FileCard({
     renameFileMutation.mutate({ id: versionFile.id, overrideName: next });
   };
 
-  const displayName = versionFile.overrideName ?? versionFile.name;
+  const displayName = editorFileName(versionFile);
   const { ref: nameRef, overflown: nameOverflown } = useIsOverflown<HTMLParagraphElement>([
     displayName,
   ]);
@@ -1234,14 +1234,14 @@ export function UploadStepActions({ onBackClick, onNextClick }: ActionProps) {
     const hasUploadingOrUploaded = files.some((file) => file.isUploading || !!file.id);
 
     if (!isExternalGeneration && !hasUploadingOrUploaded) {
-      return openConfirmModal({
+      return openConfirm({
         title: (
           <Group gap="xs">
             <IconAlertTriangle color="gold" />
             <Text size="lg">No files uploaded</Text>
           </Group>
         ),
-        children:
+        message:
           "You haven't uploaded any files yet. You can continue and set up your post now, but you won't be able to publish this version until at least one file has uploaded.",
         labels: { cancel: 'Cancel', confirm: 'Continue' },
         onConfirm: onNextClick,

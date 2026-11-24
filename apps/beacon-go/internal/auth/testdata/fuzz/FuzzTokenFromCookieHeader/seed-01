@@ -1,0 +1,4 @@
+go test fuzz v1
+string("civ-token=%E2%82%AC%zz")
+string("civ-token")
+string("\xe2\x82\xac")

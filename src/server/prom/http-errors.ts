@@ -2,6 +2,8 @@ import client from 'prom-client';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { routeSegments } from '~/server/utils/route-segments';
+import { ROUTE_BUDGET } from '~/server/route-label-budget';
 
 // ---------------------------------------------------------------------------
 // Unsampled per-route APP-EMITTED 5xx attribution counter
@@ -58,13 +60,9 @@ type Kind = 'api' | 'trpc';
 // Bounded distinct-route tracking (hard cardinality cap, grow-only, per kind)
 // ---------------------------------------------------------------------------
 //
-// Sized to cover the real route surface so legit routes are NEVER lost to
-// <overflow> — ~203 wrapped Pages-API route files and ~870 tRPC procedures. With
-// route params normalized and query-string keys excluded (see reconstructApiRoute),
-// nothing user-controlled can inflate this; only genuinely novel real routes
-// beyond the budget collapse. Per-kind so a tRPC error storm can't starve the API
-// budget (or vice-versa).
-const ROUTE_BUDGET: Record<Kind, number> = { api: 400, trpc: 1000 };
+// Budget per kind (route-label-budget.ts): a tRPC error storm cannot starve the API budget.
+// Params are normalized and query keys excluded (see reconstructApiRoute), so only novel real
+// routes collapse.
 const seenByKind: Record<Kind, Set<string>> = { api: new Set(), trpc: new Set() };
 
 function bounded(route: string, kind: Kind): string {
@@ -114,39 +112,13 @@ function collapseSegment(seg: string): string {
  */
 export function reconstructApiRoute(req: NextApiRequest): string {
   const method = (req.method ?? 'GET').toUpperCase();
-  let pathname: string;
-  let queryStringKeys: Set<string>;
-  try {
-    const url = new URL(req.url ?? '/', 'http://x');
-    pathname = url.pathname;
-    queryStringKeys = new Set(url.searchParams.keys());
-  } catch {
-    return `${method} <bad-url>`;
-  }
-  if (!pathname.startsWith('/api/')) return `${method} <non-api>`;
-
-  // Next merges the dynamic ROUTE params and the query string into a single
-  // req.query. The route params are exactly the keys NOT present in the URL's
-  // query string. We must only value-match against route params: matching against
-  // query-string values is attacker-controllable — appending `?j=v1` would rewrite
-  // the static `/v1` segment, splitting/poisoning route labels and exhausting the
-  // cardinality budget. Build an exact value→[key] map from route params only.
-  const query = req.query ?? {};
-  const valueToParam = new Map<string, string>();
-  for (const key of Object.keys(query)) {
-    if (queryStringKeys.has(key)) continue; // query-string param — not a route param
-    const val = query[key];
-    const values = Array.isArray(val) ? val : [val];
-    for (const v of values) {
-      if (typeof v === 'string' && v.length >= 1) valueToParam.set(v, `[${key}]`);
-    }
-  }
-
-  // Replace by EXACT whole-segment equality (no substring `includes/split`).
-  const segments = pathname
-    .split('/')
-    .filter(Boolean)
-    .map((seg) => valueToParam.get(seg) ?? collapseSegment(seg))
+  // Route params are matched by `routeSegments`, which excludes query-string keys: appending
+  // `?j=v1` must not rewrite the static `/v1` segment and exhaust the cardinality budget.
+  const route = routeSegments(req.url, req.query);
+  if (!route) return `${method} <bad-url>`;
+  if (!route.pathname.startsWith('/api/')) return `${method} <non-api>`;
+  const segments = route.segments
+    .map(({ value, param }) => (param ? `[${param.name}]` : collapseSegment(value)))
     .slice(0, 6);
   return `${method} /${segments.join('/')}`;
 }

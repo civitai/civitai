@@ -5,7 +5,11 @@ import {
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
-import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';
+import {
+  domainBrowsingCeiling,
+  effectiveBrowsingCeiling,
+} from '~/shared/constants/browsingLevel.constants';
+import { userOwnBrowsingLevel } from '~/server/services/blocks/viewer-browsing-level';
 import { isPageSlot, PAGE_FORBIDDEN_SCOPES, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { BlockTokenService } from '~/server/services/block-token.service';
 import type { PrivateRunAudience } from '~/shared/constants/block-scope.constants';
@@ -82,6 +86,14 @@ export const DEV_BUZZ_BUDGET_DEFAULT = BUZZ_BUDGET_DEFAULT;
 export const FORCED_SFW_CEILING = domainBrowsingCeiling(null);
 
 /**
+ * Forced SFW caps the domain half only: the minter's own level still narrows it, so an author
+ * with NSFW off dogfoods at PG as on the public run page.
+ */
+export async function forcedSfwViewerLevel(userId: number): Promise<number> {
+  return effectiveBrowsingCeiling(FORCED_SFW_CEILING, await userOwnBrowsingLevel(userId));
+}
+
+/**
  * The BEARER dev-token allowlist (scope doc §4.1): read/catalog scopes + the page
  * spend scope + per-app storage. Used by `/api/v1/blocks/dev-token` only.
  * DELIBERATELY EXCLUDES `social:tip:self` (real money OUT). A requested /
@@ -104,8 +116,8 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   // publishes under is the developer's own, into their own namespace.
   'apps:storage',
   'apps:storage:publish',
-  // `apps:storage:import` is excluded: the storage route refuses `?from=` on any dev or hub
-  // token (`resolveImportAccess`), so carrying it here would only be refused there.
+  // `apps:storage:import` is excluded: the storage route refuses `?from=` on any dev token
+  // (`resolveImportAccess`), so carrying it here would only be refused there.
   // collections:* — INCLUDED in the dev allowlists (both this bearer path and the
   // tunnel path below). Unlike apps:storage:shared:* (deliberately withheld pre-
   // approval because a pre-approval app's storage NAMESPACE is synthetic and could
@@ -412,7 +424,7 @@ export const REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new
  */
 export function clampDevScopes(opts: {
   scopeSource: string[];
-  oauthAllowed: number | null;
+  oauthAllowed: bigint | null;
   requestedScopes?: string[];
   /** MAY this context spend? (credential bit, or a runtime gate.) Required. */
   spendEntitled: boolean;
@@ -833,8 +845,7 @@ export async function signDevScopedPageToken(opts: {
     buzzBudget: opts.buzzBudget,
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
-    // The minter's own view is not consulted on a forced-SFW token: the ceiling is the level.
-    viewerBrowsingLevel: FORCED_SFW_CEILING,
+    viewerBrowsingLevel: await forcedSfwViewerLevel(opts.userId),
     dev: true,
     ...(opts.reviewRunForReal === true ? { reviewRunForReal: true } : {}),
   });
@@ -904,8 +915,7 @@ export async function signPrivateRunPageToken(opts: {
     buzzBudget: opts.buzzBudget,
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
-    // The minter's own view is not consulted on a forced-SFW token: the ceiling is the level.
-    viewerBrowsingLevel: FORCED_SFW_CEILING,
+    viewerBrowsingLevel: await forcedSfwViewerLevel(opts.userId),
     // 🔴 NO `dev: true`. See divergence 1 above. This is not an omission.
     privateRun: true,
     privateRunAudience: opts.audience,

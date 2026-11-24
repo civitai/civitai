@@ -8,7 +8,7 @@ import { useIsMutating } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
 import { useMemo, useRef, useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
@@ -126,12 +126,15 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // directly would just restore the stashed date (via the CASE in
   // updatePost) without making the post visible, which is confusing.
   const isUnpublishedByParent = post.wasPublished && !post.publishedAt;
+  // Kept for now by a delete still queued: its owner cannot publish it, and is not told why.
+  const isUnavailable = !!post.unavailable && !post.publishedAt;
+  const publishBlocked = isUnpublishedByParent || isUnavailable;
   const eventCard = postEditEventCard({
     ownerId: post.user.id,
     viewerId: currentUser?.id,
     collectionId,
     publishedAt: post.publishedAt,
-    unpublishedByParent: !!isUnpublishedByParent,
+    unpublishedByParent: publishBlocked,
     addedImages,
     ownModelId: post.ownModelId,
   });
@@ -237,26 +240,25 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     const reviewCount = imagesInReview.length;
     const isPlural = reviewCount > 1;
     const hasReview = reviewCount > 0;
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: hasReview ? 'Images pending review' : params.confirmTitle,
-        message: hasReview ? (
-          <>
-            <Text>
-              {reviewCount} image{isPlural ? 's' : ''} in this post {isPlural ? 'are' : 'is'}{' '}
-              currently flagged for moderation review and will remain hidden from other users until
-              approved.
-            </Text>
-            {params.confirmMessage && <Text mt="sm">{params.confirmMessage}</Text>}
-            <Text mt="sm">Do you want to publish anyway?</Text>
-          </>
-        ) : (
-          params.confirmMessage ?? 'Are you sure you want to publish this post?'
-        ),
-        labels: hasReview ? { confirm: 'Publish anyway', cancel: 'Cancel' } : undefined,
-        onConfirm: () => publish(date),
-      },
+    openConfirm({
+      title: hasReview ? 'Images pending review' : params.confirmTitle,
+      message: hasReview ? (
+        <>
+          <Text>
+            {reviewCount} image{isPlural ? 's' : ''} in this post {isPlural ? 'are' : 'is'}{' '}
+            currently flagged for moderation review and will remain hidden from other users until
+            approved.
+          </Text>
+          {params.confirmMessage && <Text mt="sm">{params.confirmMessage}</Text>}
+          <Text mt="sm">Do you want to publish anyway?</Text>
+        </>
+      ) : (
+        params.confirmMessage ?? 'Are you sure you want to publish this post?'
+      ),
+      labels: hasReview
+        ? { confirm: 'Publish anyway', cancel: 'Cancel' }
+        : { confirm: 'Yes', cancel: 'No' },
+      onConfirm: () => publish(date),
     });
   };
 
@@ -266,10 +268,10 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   };
 
   const handleScheduleClick = () => {
-    // Defensive: the Schedule controls aren't rendered when
-    // `isUnpublishedByParent`, but guard the entry point in case a future
-    // call site (keyboard shortcut, programmatic trigger) bypasses the UI.
-    if (isUnpublishedByParent) return;
+    // Defensive: the Schedule controls aren't rendered when publishing is
+    // blocked, but guard the entry point in case a future call site
+    // (keyboard shortcut, programmatic trigger) bypasses the UI.
+    if (publishBlocked) return;
     dialogStore.trigger({
       component: SchedulePostModal,
       props: {
@@ -320,10 +322,10 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   };
 
   useCatchNavigation({
-    // When the post is unpublished because the parent model/version is
-    // unpublished, the user can't republish from this page anyway —
-    // showing the "you haven't published this post" warning is misleading.
-    unsavedChanges: !post.publishedAt && !deleted && !isUnpublishedByParent,
+    // When publishing is blocked (a parent unpublish, or a delete still
+    // queued), the user can't publish from this page anyway — showing the
+    // "you haven't published this post" warning is misleading.
+    unsavedChanges: !post.publishedAt && !deleted && !publishBlocked,
     // Every edit is autosaved and the provider flushes anything still pending on the way out,
     // so nothing is lost here — what the user needs warning about is that a draft is invisible
     // until they publish it, which is the mistake this prompt was added to prevent.
@@ -374,7 +376,9 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         </div>
 
         <Text size="xs" component="div">
-          {isUnpublishedByParent ? (
+          {isUnavailable ? (
+            <>This {postLabel} isn&apos;t available right now.</>
+          ) : isUnpublishedByParent ? (
             <>Your {postLabel} is currently hidden because its parent resource was unpublished.</>
           ) : !post.publishedAt ? (
             <>
@@ -430,7 +434,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         </Alert>
       )}
 
-      {isUnpublishedByParent ? null : !post.publishedAt ? (
+      {publishBlocked ? null : !post.publishedAt ? (
         <Tooltip
           disabled={canPublish}
           label={
@@ -506,7 +510,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         </Button.Group>
       )}
 
-      {!post.publishedAt && !isUnpublishedByParent && storylinePublish.caption && (
+      {!post.publishedAt && !publishBlocked && storylinePublish.caption && (
         <Text size="xs" c="dimmed" data-testid="storyline-publish-caption">
           {storylinePublish.caption}
         </Text>
@@ -516,7 +520,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
 
       {eventCard && <PostEditEventCard {...eventCard} />}
 
-      {!post.publishedAt && !isUnpublishedByParent && !deleted && (
+      {!post.publishedAt && !publishBlocked && !deleted && (
         <Button
           variant="default"
           onClick={handleSaveAsDraft}

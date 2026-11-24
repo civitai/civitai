@@ -7,8 +7,9 @@ export const COMIC_TOPICS = ['postgres.ComicProject', 'postgres.ComicChapter'];
 
 /**
  * The comic a CDC message touches. ComicChapter's key includes projectId, so a chapter delete
- * names its comic. Panel scans and owner bans change neither table: panel scans reach the domain
- * through the site's search.update Outbox rows; a ban, only when the comic next changes.
+ * names its comic. Panel scans, cover flags, owner bans and holds change neither table: panel scans
+ * also reach the domain through the site's search.update Outbox rows, and the refresh walk re-syncs
+ * every comic for the rest.
  */
 export function comicRefFromEvent(topic: string, value: unknown): DomainRef | null {
   const event = value as {
@@ -23,6 +24,8 @@ export function comicRefFromEvent(topic: string, value: unknown): DomainRef | nu
   return typeof id === 'number' && id > 0 ? { id } : null;
 }
 
+export const COMIC_REFRESH = { everyMs: 15 * 60_000, batch: 500 };
+
 export const comicDomain: Domain<ComicPayload> = {
   name: 'comic',
   table: 'ComicProject',
@@ -32,5 +35,6 @@ export const comicDomain: Domain<ComicPayload> = {
   cdcTables: ['public.ComicProject', 'public.ComicChapter'],
   outboxEntity: 'Comic',
   store: comicVectorStore,
+  refresh: COMIC_REFRESH,
   alias: () => config.vectorSync.comicAlias,
 };

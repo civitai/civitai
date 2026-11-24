@@ -89,12 +89,11 @@
     key === 'Approved' && flagged
       ? 'Flagged as a real person or a minor since the request; its locks stay.'
       : null;
-  const reasonsFor = (key: Verdict) => resolutionReasonsFor('lockReview', key);
+  const reasonsFor = (key: Verdict) => resolutionReasonsFor('lockReview', key, asked);
 
   const reasonOptions = $derived(
     decisionReasonOptions(RULINGS.map((r) => ({ label: r.label, reasons: reasonsFor(r.verdict) })))
   );
-  // Rejecting takes one key: it has a single specific reason.
   const reason = $derived(draft.reason || suggestedReason(reasonsFor('Rejected')));
   $effect(() => () => resetReasonPicker());
   $effect(() => closeReasonPickerBeyond(RULINGS.length));
@@ -109,7 +108,7 @@
     const refusal = !ruling
       ? 'Pick a decision.'
       : (unavailable ??
-        decisionReasonProblem('lockReview', ruling.verdict, ruling.label, reason, draft.note));
+        decisionReasonProblem('lockReview', ruling.verdict, ruling.label, reason, draft.note, asked));
     if (!ruling || refusal) {
       input.cancel();
       problem = refusal;

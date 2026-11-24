@@ -145,7 +145,7 @@ describe('upsertCollection authorization', () => {
       rows: { id: number; url: string; userId: number }[],
       issuedTo: number = OWNER_ID
     ) => {
-      redisMock.sysRedis.mGet.mockResolvedValue([String(issuedTo)] as never);
+      redisMock.redis.mGet.mockResolvedValue([String(issuedTo)] as never);
       txQueryRaw.mockImplementation(imageUrlOwnersFake(rows));
       txImageFindUnique.mockImplementation(
         (async ({ where }: { where: { id: number } }) =>
@@ -179,8 +179,8 @@ describe('upsertCollection authorization', () => {
 
       await saveCover({ image: { url: KEY, type: 'image' } });
 
-      expect(redisMock.sysRedis.mGet).toHaveBeenCalledTimes(1);
-      expect(redisMock.sysRedis.mGet.mock.invocationCallOrder[0]).toBeLessThan(
+      expect(redisMock.redis.mGet).toHaveBeenCalledTimes(1);
+      expect(redisMock.redis.mGet.mock.invocationCallOrder[0]).toBeLessThan(
         mockDbWrite.$transaction.mock.invocationCallOrder[0]
       );
       expect(imageWrite()).toEqual({
@@ -219,7 +219,7 @@ describe('upsertCollection authorization', () => {
       await expect(
         saveCover({ image: { id: 404, url: KEY, type: 'image' } })
       ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-      expect(redisMock.sysRedis.mGet).toHaveBeenCalledTimes(1);
+      expect(redisMock.redis.mGet).toHaveBeenCalledTimes(1);
       expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
     });
 
@@ -801,7 +801,7 @@ describe('upsertCollection cover image', () => {
 
   it('creates a new cover from client columns only', async () => {
     arrange({ actorId: MANAGER_ID });
-    redisMock.sysRedis.mGet.mockResolvedValue([String(MANAGER_ID)] as never);
+    redisMock.redis.mGet.mockResolvedValue([String(MANAGER_ID)] as never);
 
     await save({ url: COVER_KEY, type: 'image', width: 10, postId: 9_001, index: 2 });
 

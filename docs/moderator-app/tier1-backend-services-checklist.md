@@ -293,7 +293,7 @@ Establish the service-porting rhythm on the cheapest pages (Postgres, plus alrea
 ## Shared / cross-cutting services
 
 ### `user.service.ts` (subset)  ·  used by: cosmetics/grant, generation-restrictions, csam  *(SHARED)*
-- [x] `getUsers` / user search — ported as reusable `searchUsers` in `apps/moderator/src/lib/server/users.service.ts` (prefix username match); main-app `user.getAll` kept (shared, user-facing).
+- [x] `getUsers` / user search — ported as reusable `searchUsers` in `apps/moderator/src/lib/server/users.service.ts` (prefix username match, plus the account whose id is the term, listed first; the term goes through `normalizeUserSearchTerm`, which User Lookup's `resolveUserId` also uses); main-app `user.getAll` kept (shared, user-facing).
 - [ ] `getUserById` — csam/[userId]
 - [ ] `updateUserById` — generation-restrictions resolve
 

@@ -219,6 +219,45 @@ describe('the Models section', () => {
   });
 });
 
+describe('the Knights of New Order section', () => {
+  const KNIGHTS = '/knights-of-new-order';
+  const group = () => NAVIGATION.find((l) => l.label === 'Knights of New Order');
+
+  it('holds Inquisitor, Trials, Shop, Linked accounts and Config under a group with no grant of its own', () => {
+    expect(group()?.path).toBeUndefined();
+    expect(group()?.children?.map((c) => [c.path, c.label])).toEqual([
+      [`${KNIGHTS}/inquisitor`, 'Inquisitor'],
+      [`${KNIGHTS}/trials`, 'Trials'],
+      [`${KNIGHTS}/shop`, 'Shop'],
+      [KNIGHTS, 'Linked accounts'],
+      [`${KNIGHTS}/config`, 'Config'],
+    ]);
+  });
+
+  it('badges Inquisitor and Linked accounts', () => {
+    const countKeys = group()?.children?.map((c) => [c.path, c.countKey]);
+    expect(countKeys).toEqual([
+      [`${KNIGHTS}/inquisitor`, 'knightsInquisitor'],
+      [`${KNIGHTS}/trials`, undefined],
+      [`${KNIGHTS}/shop`, undefined],
+      [KNIGHTS, 'knightsLinkReviews'],
+      [`${KNIGHTS}/config`, undefined],
+    ]);
+  });
+
+  it('is hidden from whoever holds none of the pages', () => {
+    applyGrants({ '/users': ['moderator:reviewer'] });
+    expect(labelsUnder('Knights of New Order')).toBeUndefined();
+  });
+
+  it('shows only the pages held, each grant independent of the others', () => {
+    applyGrants({ [`${KNIGHTS}/trials`]: ['moderator:reviewer'] });
+    expect(labelsUnder('Knights of New Order')).toEqual([[`${KNIGHTS}/trials`, 'Trials']]);
+    expect(canAccess(reviewer, `${KNIGHTS}/inquisitor`)).toBe(false);
+    expect(canAccess(reviewer, KNIGHTS)).toBe(false);
+  });
+});
+
 describe('CSAM text holds', () => {
   it('sits under Text Scan with its own grant and badge, apart from the image CSAM queue', () => {
     applyGrants({ '/csam/text-holds': ['moderator:reviewer'] });
@@ -282,12 +321,25 @@ describe('/admin grantable pages', () => {
     );
   });
 
+  it('lists every Knights of New Order page as grantable', () => {
+    expect(tree.map((n) => n.key)).toEqual(
+      expect.arrayContaining([
+        '/knights-of-new-order/inquisitor',
+        '/knights-of-new-order/trials',
+        '/knights-of-new-order',
+        '/knights-of-new-order/config',
+      ])
+    );
+  });
+
   it('lists every Models page as grantable', () => {
     expect(keys(tree.find((n) => n.key === '/models'))).toEqual([
       '/models/flags/appeals',
       '/models/flags/auto',
       '/models/flags/needs-review',
       '/models/rule-matches',
+      '/models/merge-analysis',
+      '/models/version-showcases',
     ]);
     expect(isGrantable('/models/flags')).toBe(false);
     expect(isGrantable('/models/flags/needs-review')).toBe(true);
@@ -485,5 +537,20 @@ describe('pageAccessState for the editor', () => {
     expect(outside).toEqual({
       [KEY]: { kept: ['system:dispute-agent'], retired: ['moderator:retired', 'moderator:admin'] },
     });
+  });
+});
+
+describe('a hidden page', () => {
+  const paths = (links: { path?: string; children?: unknown[] }[]): (string | undefined)[] =>
+    links.flatMap((l) => [l.path, ...paths((l.children ?? []) as typeof links)]);
+
+  it('is reachable and grantable once granted, but never listed', () => {
+    applyGrants({ '/csam/preserved-view': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/csam/preserved-view')).toBe(true);
+    expect(paths(navForUser(reviewer))).not.toContain('/csam/preserved-view');
+    const admin = { roles: ['moderator:admin'] };
+    expect(paths(navForUser(admin))).toContain('/csam/text-holds');
+    expect(paths(navForUser(admin))).not.toContain('/csam/preserved-view');
+    expect(pageAccessState().granted['/csam/preserved-view']).toEqual(['moderator:reviewer']);
   });
 });
