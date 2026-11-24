@@ -1813,6 +1813,12 @@ describe('a restore puts back the rating the grace block replaced', () => {
       ingestion: 'Scanned',
       level: 4,
       locked: false,
+    })}),
+        -- Locked before the deletion and re-rated to X during the window without a new record.
+        (133, ${OWNER}, 'Blocked', 'moderated', 8, true, ${graced({
+      ingestion: 'Scanned',
+      level: 4,
+      locked: true,
     })});
     `);
 
@@ -1827,6 +1833,11 @@ describe('a restore puts back the rating the grace block replaced', () => {
       ingestion: 'Scanned',
       nsfwLevel: 4,
       nsfwLevelLocked: false,
+    });
+    expect(await rating(133)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 8,
+      nsfwLevelLocked: true,
     });
     expect(resetIds()).toEqual(expect.arrayContaining([121, 122, 129]));
     expect(vi.mocked(refreshImageLevelCaches).mock.calls.flat(2)).not.toContain(121);
