@@ -9,7 +9,8 @@ export type MoreLikeThisAnchor = {
 
 /**
  * Images "more like this" can't search from, for every viewer and browsing level. Stricter than
- * Remix's `getEngineRefusal`, which routes an unscanned image to its safe tier: here it is refused.
+ * Remix's `getEngineRefusal`, which refuses an unscanned image only in the mature tier: here every
+ * unscanned image is refused.
  */
 export function isMoreLikeThisRefused(image: MoreLikeThisAnchor) {
   if (image.ingestion === ImageIngestionStatus.Blocked || image.blockedFor) return true;

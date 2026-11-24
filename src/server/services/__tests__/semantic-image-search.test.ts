@@ -814,16 +814,24 @@ describe('"more like this" refuses a minor- or POI-flagged anchor at every level
     return { result, calls };
   };
   const MOD = { id: 501, isModerator: true } as SessionUser;
+  const ALL_LEVELS = 1 | 2 | 4 | 8 | 16;
 
   it.each([
-    ['a minor-flagged anchor for a PG viewer', { minor: true }, VIEWER],
-    ['a POI-flagged anchor for a PG viewer', { poi: true }, VIEWER],
-    ['a minor-flagged anchor for a moderator', { minor: true }, MOD],
-    ['a blocked anchor for a PG viewer', { blockedFor: 'Moderated' }, VIEWER],
-    ['an anchor still pending its scan for a PG viewer', { ingestion: 'Pending' }, VIEWER],
-    ['an anchor whose ingestion is blocked for a PG viewer', { ingestion: 'Blocked' }, VIEWER],
-  ])('refuses %s, before any search', async (_name, anchor, user) => {
-    const { result, calls } = run(anchor, user);
+    ['a minor-flagged anchor for a PG viewer', { minor: true }, VIEWER, PG],
+    ['a POI-flagged anchor for a PG viewer', { poi: true }, VIEWER, PG],
+    ['a minor-flagged anchor for a moderator', { minor: true }, MOD, PG],
+    [
+      'a minor-flagged anchor for a viewer browsing every level',
+      { minor: true },
+      VIEWER,
+      ALL_LEVELS,
+    ],
+    ['a POI-flagged anchor for a moderator browsing every level', { poi: true }, MOD, ALL_LEVELS],
+    ['a blocked anchor for a PG viewer', { blockedFor: 'Moderated' }, VIEWER, PG],
+    ['an anchor still pending its scan for a PG viewer', { ingestion: 'Pending' }, VIEWER, PG],
+    ['an anchor whose ingestion is blocked for a PG viewer', { ingestion: 'Blocked' }, VIEWER, PG],
+  ])('refuses %s, before any search', async (_name, anchor, user, browsingLevel) => {
+    const { result, calls } = run(anchor, user, browsingLevel);
     await expect(result).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(calls).toHaveLength(0);
   });
