@@ -59,6 +59,7 @@ import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-itera
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
 import { TRPCError } from '@trpc/server';
+import type { Prisma } from '@prisma/client';
 import {
   assertUnlockAllowed,
   assertUnlockReleasesOutput,
@@ -728,7 +729,9 @@ async function getReferenceImages(referenceId: number) {
   };
 }
 
-/** Under the claim's 10-minute expiry, so no charge still in flight is overlapped by a takeover. */
+/** An unlock claim older than this is free to take over (or to delete its panel under). */
+const UNLOCK_CLAIM_EXPIRY = '10 minutes';
+/** Under the claim's expiry, so no charge still in flight is overlapped by a takeover. */
 const UNLOCK_CHARGE_TIMEOUT_MS = 150_000;
 
 /**
@@ -758,7 +761,7 @@ async function claimPanelUnlock(panelId: number) {
       || jsonb_build_object('unlockClaim', jsonb_build_object('token', ${token}::text, 'at', now()))
     WHERE id = ${panelId}
       AND (metadata->'unlockClaim' IS NULL
-        OR (metadata->'unlockClaim'->>'at')::timestamptz < now() - interval '10 minutes')
+        OR (metadata->'unlockClaim'->>'at')::timestamptz < now() - ${UNLOCK_CLAIM_EXPIRY}::interval)
     RETURNING id
   `;
   return rows.length > 0 ? token : null;
@@ -798,6 +801,43 @@ async function releasePanelUnlock(panelId: number, token: string) {
     UPDATE "ComicPanel" SET metadata = metadata - 'unlockClaim'
     WHERE id = ${panelId} AND metadata->'unlockClaim'->>'token' = ${token}
   `;
+}
+
+/**
+ * Refuses a delete while a panel in its scope holds a live unlock claim: the claim may cover a
+ * charge still landing, and with the panel gone the queue's unlock would no longer defer to it.
+ */
+async function assertNoLiveUnlockClaim({
+  projectId,
+  chapterPosition = null,
+  panelId = null,
+}: {
+  projectId: number;
+  chapterPosition?: number | null;
+  panelId?: number | null;
+}) {
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "ComicPanel"
+    WHERE "projectId" = ${projectId}
+      AND (${chapterPosition}::int IS NULL OR "chapterPosition" = ${chapterPosition}::int)
+      AND (${panelId}::int IS NULL OR id = ${panelId}::int)
+      AND jsonb_typeof(metadata->'unlockClaim') = 'object'
+      AND (metadata->'unlockClaim'->>'at')::timestamptz >= now() - ${UNLOCK_CLAIM_EXPIRY}::interval
+    LIMIT 1
+  `;
+  if (rows.length)
+    throw throwBadRequestError(
+      'An unlock on this panel is still finishing. Try again in a few minutes.'
+    );
+}
+
+/** A copied panel's metadata: the source's unlock claim is not the copy's. */
+function withoutUnlockClaim(metadata: Prisma.JsonValue | null) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
+    return metadata ?? undefined;
+  const copy = { ...metadata };
+  delete copy.unlockClaim;
+  return copy;
 }
 
 // Shared helper: create a single panel record and submit generation
@@ -1679,6 +1719,7 @@ export const comicsRouter = router({
       if (!project || project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      await assertNoLiveUnlockClaim({ projectId: input.id });
 
       await dbWrite.comicProject.update({
         where: { id: input.id },
@@ -1868,6 +1909,10 @@ export const comicsRouter = router({
       if (!chapter || chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      await assertNoLiveUnlockClaim({
+        projectId: input.projectId,
+        chapterPosition: input.chapterPosition,
+      });
 
       await dbWrite.$transaction(async (tx) => {
         await tx.comicChapter.delete({
@@ -1969,7 +2014,7 @@ export const comicsRouter = router({
             imageId: panel.imageId,
             position: panel.position + 1,
             status: panel.imageUrl ? ComicPanelStatus.Ready : ComicPanelStatus.Pending,
-            metadata: panel.metadata ?? undefined,
+            metadata: withoutUnlockClaim(panel.metadata),
           },
         });
 
@@ -2085,7 +2130,7 @@ export const comicsRouter = router({
               imageId: panel.imageId,
               position: panel.position,
               status: panel.imageUrl ? ComicPanelStatus.Ready : ComicPanelStatus.Pending,
-              metadata: panel.metadata ?? undefined,
+              metadata: withoutUnlockClaim(panel.metadata),
             },
           });
 
@@ -2646,6 +2691,7 @@ export const comicsRouter = router({
       if (!panel || panel.chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      await assertNoLiveUnlockClaim({ projectId: panel.projectId, panelId: panel.id });
 
       await dbWrite.comicPanel.delete({
         where: { id: input.panelId },
@@ -3334,8 +3380,8 @@ export const comicsRouter = router({
       // panel Ready, so the status cannot tell the two apart.
       const isSinglePanelBlocked = candidates.length === 0;
 
-      // 1) Lift the mature restriction at the orchestrator. It charges yellow Buzz even when the
-      //    workflow's cap leaves nothing to release, so the cap check runs before the write.
+      // Lift the mature restriction at the orchestrator. It charges yellow Buzz even when the
+      // workflow's cap leaves nothing to release, so the cap check runs before the write.
       let token: string;
       try {
         token = await getOrchestratorToken(ctx.user!.id, ctx);
@@ -3381,11 +3427,7 @@ export const comicsRouter = router({
           }
         }
 
-        // 2) Re-fetch the workflow and run it through the same `BlobData`
-        //    pipeline `pollPanelStatus` uses, so the derived `blockedReason`
-        //    reflects the post-unlock state. We do this inline rather than
-        //    waiting for a poll tick — clicking Unlock should produce the
-        //    final result in one round-trip, not after a 25-second sleep.
+        // Same BlobData pipeline as pollPanelStatus, inline so Unlock returns the final state in one round-trip.
         const fresh = await getWorkflow({ token, path: { workflowId: panel.workflowId } });
         const [normalized] = await formatGenerationResponse2([fresh as any], ctx.user);
         const domainFlags: Record<ColorDomain, boolean> = colorDomainNames.reduce(
@@ -3401,7 +3443,7 @@ export const comicsRouter = router({
         const firstStep = wfData.steps[0];
         const outputs = firstStep?.output ?? [];
 
-        // 3a) Single-image: download the now-clean URL into S3 and mark Ready.
+        // Single-image: download the now-clean URL into S3 and mark Ready.
         if (isSinglePanelBlocked) {
           const clean = outputs.find((o) => !o.blockedReason && o.url);
           if (!clean?.url) {
@@ -3503,9 +3545,8 @@ export const comicsRouter = router({
           };
         }
 
-        // 3b) Multi-image: replace each `requiresUnlock` slot with a freshly
-        //     downloaded S3 key, in stable orchestrator order. Already-clean
-        //     slots keep their existing key (no re-upload).
+        // Multi-image: replace each `requiresUnlock` slot with a freshly downloaded S3 key, in
+        // stable orchestrator order. Already-clean slots keep their existing key (no re-upload).
         const previousByIndex = candidates;
         const newCandidates: Array<
           | { key: string; nsfwLevel?: number }

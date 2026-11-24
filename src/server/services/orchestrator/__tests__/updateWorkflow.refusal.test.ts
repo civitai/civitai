@@ -66,7 +66,7 @@ describe('workflows.updateWorkflow refusal', () => {
         throwOnError: true,
         signal,
       })
-    ).rejects.toThrow();
+    ).rejects.toThrow('bad-request: The cap blocks every mature output.');
 
     expect(vi.mocked(clientUpdateWorkflow).mock.calls[0]?.[0]).toHaveProperty('signal', signal);
   });

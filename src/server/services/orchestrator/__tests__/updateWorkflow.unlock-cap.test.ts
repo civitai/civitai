@@ -125,6 +125,12 @@ describe('updateWorkflow unlock', () => {
     await refuses(/Unlock this from the comic editor/);
   });
 
+  it("answers another user's panel workflow as the owner-token read does, like any foreign id", async () => {
+    givenPanelFor('5-1');
+    getWorkflow.mockRejectedValue(new Error('Workflow not found'));
+    await refuses(/Workflow not found/);
+  });
+
   it('CONTROL: charges a comics workflow with no panel, such as an iteration', async () => {
     givenPanelFor('other-workflow');
     getWorkflow.mockResolvedValue({ ...locked(undefined, video('x')), tags: ['gen', 'comics'] });

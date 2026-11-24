@@ -59,6 +59,7 @@ vi.mock('~/utils/signal-client', async (importOriginal) => ({
   signalClient: { send: vi.fn(async () => undefined) },
 }));
 
+import { TRPCError } from '@trpc/server';
 import { comicsRouter } from '../comics.router';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -433,7 +434,8 @@ beforeAll(async () => {
   await pg.exec(`
     CREATE DOMAIN "ComicPanelStatus" AS text;
     CREATE TABLE "ComicPanel" (
-      id int PRIMARY KEY, metadata jsonb, status text, "errorMessage" text, "updatedAt" timestamptz
+      id int PRIMARY KEY, metadata jsonb, status text, "errorMessage" text, "updatedAt" timestamptz,
+      "projectId" int, "chapterPosition" int
     )`);
 });
 /** The claim held in the stored row now, or undefined. */
@@ -452,13 +454,13 @@ const seedClaim = (token: string, age: string) =>
   );
 
 /** The charge write's failure as the real client maps an orchestrator answer of `status`. */
-const orchestratorFailure = async (status: number, detail: string) => {
+const orchestratorFailure = async (status: number | undefined, detail: string) => {
   const { throwOrchestratorFailure } = await vi.importActual<typeof Workflows>(
     '~/server/services/orchestrator/workflows'
   );
   return throwOrchestratorFailure({
     error: { detail },
-    response: new Response(null, { status }),
+    response: status === undefined ? undefined : new Response(null, { status }),
     message: detail,
   });
 };
@@ -478,7 +480,7 @@ const bothRated = [output('b1', { nsfwLevel: 'pg' }), output('b2', { nsfwLevel: 
 describe('comics.unlockPanelGeneration - a multi-image panel with a selection', () => {
   beforeEach(async () => {
     await pg.exec(
-      `DELETE FROM "ComicPanel"; INSERT INTO "ComicPanel" (id, metadata) VALUES (${PANEL_ID}, '{}')`
+      `DELETE FROM "ComicPanel"; INSERT INTO "ComicPanel" (id, metadata, "projectId", "chapterPosition") VALUES (${PANEL_ID}, '{}', 11, 0)`
     );
     const raw = pgliteRaw(pg);
     dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
@@ -710,6 +712,126 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
     );
 
     expect(await storedClaim()).toMatchObject({ token: expect.any(String) });
+  });
+
+  it.each([
+    ['no response', () => orchestratorFailure(undefined, 'fetch failed')],
+    [
+      'an unmapped answer',
+      async () => {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' });
+      },
+    ],
+    [
+      'a failure the client did not map',
+      async () => {
+        throw new Error('socket hang up');
+      },
+    ],
+  ])('a charge write with %s keeps the claim until it expires', async (_, failure) => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+    mocks.updateWorkflow.mockImplementationOnce(failure);
+
+    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(
+      /not confirmed yet/
+    );
+
+    expect(await storedClaim()).toMatchObject({ token: expect.any(String) });
+  });
+
+  describe('a delete while an unlock is still finishing', () => {
+    const deletes = {
+      panel: {
+        run: () => caller().deletePanel({ panelId: PANEL_ID }),
+        write: () => dbMock.dbWrite.comicPanel.delete,
+      },
+      chapter: {
+        run: () => caller().deleteChapter({ projectId: 11, chapterPosition: 0 }),
+        write: () => dbMock.dbWrite.comicChapter.delete,
+      },
+      project: {
+        run: () => caller().deleteProject({ id: 11 }),
+        write: () => dbMock.dbWrite.comicProject.update,
+      },
+    };
+    beforeEach(() => {
+      givenPanel();
+      dbMock.dbRead.comicChapter.findUnique.mockResolvedValue({
+        project: { userId: USER_ID },
+      } as never);
+      dbMock.dbRead.comicProject.findUnique.mockResolvedValue({ userId: USER_ID } as never);
+    });
+
+    it.each(Object.keys(deletes) as Array<keyof typeof deletes>)(
+      'refuses the %s delete while a panel claim is live',
+      async (scope) => {
+        await seedClaim('live', '1 minute');
+
+        await expect(deletes[scope].run()).rejects.toThrow(/still finishing/);
+
+        expect(deletes[scope].write()).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(Object.keys(deletes) as Array<keyof typeof deletes>)(
+      'CONTROL: deletes the %s once the claim has expired',
+      async (scope) => {
+        await seedClaim('crashed', '11 minutes');
+
+        await deletes[scope].run().catch(() => undefined);
+
+        expect(deletes[scope].write()).toHaveBeenCalled();
+      }
+    );
+  });
+
+  describe('a copied panel does not carry the unlock claim', () => {
+    const source = {
+      id: PANEL_ID,
+      projectId: 11,
+      chapterPosition: 0,
+      position: 0,
+      prompt: 'a panel',
+      status: 'Ready',
+      imageUrl: 'picked',
+      metadata: { quantity: 1, unlockClaim: { token: 'live', at: new Date().toISOString() } },
+      references: [],
+      chapter: { project: { userId: USER_ID } },
+    };
+    const copiedMetadata = () =>
+      dbMock.dbWrite.comicPanel.create.mock.calls.map(
+        (c: Array<{ data: { metadata?: Record<string, unknown> } }>) => c[0].data.metadata
+      );
+    beforeEach(() => {
+      dbMock.dbWrite.comicPanel.create.mockResolvedValue({ id: 99, status: 'Ready' } as never);
+    });
+
+    it('by duplicatePanel', async () => {
+      dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(source as never);
+
+      await caller()
+        .duplicatePanel({ panelId: PANEL_ID })
+        .catch(() => undefined);
+
+      expect(copiedMetadata()).toEqual([{ quantity: 1 }]);
+    });
+
+    it('by duplicateChapter', async () => {
+      dbMock.dbRead.comicChapter.findUnique.mockResolvedValue({
+        name: 'one',
+        project: { userId: USER_ID },
+        panels: [source],
+      } as never);
+      dbMock.dbWrite.comicChapter.findMany.mockResolvedValue([] as never);
+      dbMock.dbWrite.comicChapter.create.mockResolvedValue({ position: 1 } as never);
+
+      await caller()
+        .duplicateChapter({ projectId: 11, chapterPosition: 0 })
+        .catch(() => undefined);
+
+      expect(copiedMetadata()).toEqual([{ quantity: 1 }]);
+    });
   });
 
   it('CONTROL: a refused charge releases the claim, so the next unlock can pay', async () => {
