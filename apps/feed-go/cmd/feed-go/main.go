@@ -573,12 +573,25 @@ func run(log *slog.Logger) error {
 			srv.NoteProxyError(r, reason, err)
 		}, prop)
 	}
+	// The public /api/v1/images route's own upstream (FEED_GO_V1_IMAGES_FALLBACK_URL), where the Node
+	// pool that answers it is not FEED_GO_V1_FALLBACK_URL's; unset, the route uses that one.
+	if mc.ImagesFallbackURL != "" {
+		target, err := url.Parse(mc.ImagesFallbackURL)
+		if err != nil {
+			return err
+		}
+		srv.V1ImagesFallback = fallbackProxy(target, fallbackIdleTimeout, func(r *http.Request, reason string, err error) {
+			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
+			srv.NoteProxyError(r, reason, err)
+		}, prop)
+	}
 
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll)
 	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
 	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil)
-	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages, "mounted", srv.V1Fallback != nil)
+	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,
+		"mounted", srv.V1ImagesFallback != nil || srv.V1Fallback != nil, "own_upstream", srv.V1ImagesFallback != nil)
 	log.Info("public tRPC answers' write format", "TRPC_WRITE_DEVALUE", cfg.WriteDevalue)
 	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
 	// OpenMetrics on request only with tracing on: the exemplars ride in that format alone.
@@ -592,7 +605,7 @@ func run(log *slog.Logger) error {
 	servers := []*http.Server{server.InternalHTTPServer(cfg.InternalAddr, internal)}
 	// Without a fallback the public route could only answer the ported shapes: shadow-only deployments
 	// do not listen publicly at all.
-	if srv.Fallback != nil || srv.V1Fallback != nil {
+	if srv.Fallback != nil || srv.V1Fallback != nil || srv.V1ImagesFallback != nil {
 		servers = append(servers, server.PublicHTTPServer(cfg.Addr, public, cfg.RequestBudget))
 	}
 	errs := make(chan error, len(servers))

@@ -10,9 +10,10 @@ import (
 // app (ServeModelGetAllHTTP) — and `image.getInfinite`, the same behind ServeInfinite
 // (FEED_GO_SERVE_INFINITE; ServeInfiniteHTTP). With V1Fallback set (FEED_GO_V1_FALLBACK_URL), also
 // `GET /api/v1/models` and everything under `/api/v1/models/`, computed only with ServeV1Models
-// (FEED_GO_SERVE_V1_MODELS), else proxied to V1Fallback, and `GET /api/v1/images` (that path only),
-// computed only with ServeV1Images (FEED_GO_SERVE_V1_IMAGES), else proxied to V1Fallback; without it
-// those paths are not routed here. Nothing else. It never carries a debug route, whatever the pprof toggle says.
+// (FEED_GO_SERVE_V1_MODELS), else proxied to V1Fallback; without it those paths are not routed here.
+// With V1ImagesFallback or V1Fallback set, `GET /api/v1/images` (that path only), computed only with
+// ServeV1Images (FEED_GO_SERVE_V1_IMAGES), else proxied to the first of the two that is set. Nothing
+// else. It never carries a debug route, whatever the pprof toggle says.
 func PublicMux(s *Server) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/api/trpc/"+Procedure, s)
@@ -22,6 +23,8 @@ func PublicMux(s *Server) *http.ServeMux {
 		mux.HandleFunc(V1ModelsPath, s.ServeV1ModelsHTTP)
 		// The subtree: `{id}`, and any deeper path, which the compute falls back on (`v1-models-path`).
 		mux.HandleFunc(V1ModelsPath+"/", s.ServeV1ModelsIDHTTP)
+	}
+	if s.v1ImagesUpstream() != nil {
 		// The exact path: nothing under /api/v1/images/ is this route (Node's are other pages).
 		mux.HandleFunc(V1ImagesPath, s.ServeV1ImagesHTTP)
 	}

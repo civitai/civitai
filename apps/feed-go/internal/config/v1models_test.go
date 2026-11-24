@@ -87,20 +87,31 @@ func TestLoadV1ImagesServeDefaultsOff(t *testing.T) {
 	}
 }
 
-// Serving the images route without the /api/v1 upstream is refused at startup too.
+// Serving the images route with neither upstream is refused at startup; its own upstream alone, or
+// the /api/v1 one alone, starts. The models switch still needs the /api/v1 one.
 func TestV1ImagesValidate(t *testing.T) {
 	for _, c := range []struct {
-		serve bool
-		url   string
-		ok    bool
+		serve, serveModels bool
+		url, imagesURL     string
+		ok                 bool
 	}{
-		{false, "", true},
-		{true, "http://u.example", true},
-		{true, "", false},
+		{false, false, "", "", true},
+		{true, false, "http://u.example", "", true},
+		{true, false, "", "http://heavy.example", true},
+		{true, false, "", "", false},
+		{true, true, "", "http://heavy.example", false},
 	} {
-		err := V1Models{ServeImages: c.serve, FallbackURL: c.url}.Validate()
+		err := V1Models{ServeImages: c.serve, Serve: c.serveModels, FallbackURL: c.url, ImagesFallbackURL: c.imagesURL}.Validate()
 		if (err == nil) != c.ok {
-			t.Errorf("serve images=%v url=%q: %v, want ok %v", c.serve, c.url, err, c.ok)
+			t.Errorf("serve images=%v models=%v url=%q images url=%q: %v, want ok %v", c.serve, c.serveModels, c.url, c.imagesURL, err, c.ok)
 		}
+	}
+	t.Setenv("FEED_GO_V1_IMAGES_FALLBACK_URL", " http://heavy.example.test:3000 ")
+	if got := LoadV1Models().ImagesFallbackURL; got != "http://heavy.example.test:3000" {
+		t.Errorf("ImagesFallbackURL = %q", got)
+	}
+	t.Setenv("FEED_GO_V1_IMAGES_FALLBACK_URL", "")
+	if got := LoadV1Models().ImagesFallbackURL; got != "" {
+		t.Errorf("ImagesFallbackURL unset = %q, want empty", got)
 	}
 }

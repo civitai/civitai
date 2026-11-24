@@ -18,7 +18,8 @@ import (
 // budget, and the compute the shadow runs (v1ImagesCompute). An answer is the shadow-compared body
 // and the headers PublicEndpoint and the handler set, plus X-Feed-Go-Served: go, or, to a conditional
 // request the answer's ETag satisfies, Next's 304 (writeV1Models); every fallback is proxied to
-// V1Fallback, the Node app that serves `/api/v1`. No origin check: PublicEndpoint answers any origin
+// v1ImagesUpstream: V1ImagesFallback (FEED_GO_V1_IMAGES_FALLBACK_URL) when set, else V1Fallback, the
+// Node app that serves `/api/v1`. No origin check: PublicEndpoint answers any origin
 // (CORS `*`, no credentials), and the route has no block-scope middleware.
 //
 // Signed-out callers only: a request presenting any credential (an Authorization header, a `?token=`,
@@ -62,7 +63,16 @@ func (s *Server) ServeV1ImagesHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set(ServedByHeader, ServedByNode)
-	s.proxyVia(s.V1Fallback, w, r, endpoint)
+	s.proxyVia(s.v1ImagesUpstream(), w, r, endpoint)
+}
+
+// v1ImagesUpstream is the Node app every images-route fallback is proxied to: V1ImagesFallback when
+// set, else V1Fallback; nil when neither is (the route is then not mounted).
+func (s *Server) v1ImagesUpstream() http.Handler {
+	if s.V1ImagesFallback != nil {
+		return s.V1ImagesFallback
+	}
+	return s.V1Fallback
 }
 
 // v1ImagesCompute is the compute of the images route, the shadow's and the public route's alike

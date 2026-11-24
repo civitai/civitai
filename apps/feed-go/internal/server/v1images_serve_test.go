@@ -561,6 +561,42 @@ func TestPublicMuxMountsTheImagesRoute(t *testing.T) {
 	}
 }
 
+// With its own upstream (FEED_GO_V1_IMAGES_FALLBACK_URL) the images route is mounted and proxies
+// every fallback there, never to the /api/v1 upstream, which the model routes keep; with only its own
+// upstream the model routes are not mounted.
+func TestServeV1ImagesOwnUpstream(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	s, v1, computes := serveV1ImagesServer(t, reg, false)
+	own := &v1Upstream{}
+	s.V1ImagesFallback = own
+	mux := PublicMux(s)
+	mux.ServeHTTP(httptest.NewRecorder(), v1Request("/api/v1/images?limit=2", nil))
+	if own.count() != 1 || v1.count() != 0 || *computes != 0 {
+		t.Fatalf("off: images upstream %d, /api/v1 upstream %d, computes %d; want 1, 0, 0", own.count(), v1.count(), *computes)
+	}
+	s.ServeV1Images = true
+	mux.ServeHTTP(httptest.NewRecorder(), v1Request("/api/v1/images?limit=2", map[string]string{"Authorization": "Bearer k"}))
+	if own.count() != 2 || v1.count() != 0 {
+		t.Fatalf("a fallback: images upstream %d, /api/v1 upstream %d; want 2, 0", own.count(), v1.count())
+	}
+	mux.ServeHTTP(httptest.NewRecorder(), v1Request("/api/v1/models?limit=2", nil))
+	if v1.count() != 1 || own.count() != 2 {
+		t.Fatalf("the models route: /api/v1 upstream %d, images upstream %d; want 1, 2", v1.count(), own.count())
+	}
+	s.V1Fallback = nil
+	mux = PublicMux(s)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, v1Request("/api/v1/models?limit=2", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("models without the /api/v1 upstream: %d, want 404", w.Code)
+	}
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, v1Request("/api/v1/images?limit=2", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("images with only its own upstream: %d, want 200 (served)", w.Code)
+	}
+}
+
 // goldenV1NoStore are the served signed-out v1-images golden fixtures whose requested level is not
 // within SFW (their queries: browsingLevel 7 or 31, nsfw=X, nsfw=true), so Node's handler answers
 // `private, no-store`; every other served fixture carries the public Cache-Control.

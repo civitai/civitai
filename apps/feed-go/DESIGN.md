@@ -1803,13 +1803,15 @@ the per-route CPU attribution over the same window.
 
 ### 13.8 Serving (`FEED_GO_SERVE_V1_IMAGES`, default off) and the response headers
 
-**Route and switch.** With `FEED_GO_V1_FALLBACK_URL` set, the public listener routes exactly
+**Route and switch.** With an images upstream set, the public listener routes exactly
 `GET /api/v1/images` (no subtree: Node's pages under it are other routes) to `ServeV1ImagesHTTP`
-(`internal/server/v1images_serve.go`); unset, the path is not mounted. With `FEED_GO_SERVE_V1_IMAGES`
-off (the default) every request there is the `v1-images-off` fallback: nothing is computed, no serve
-slot is taken, and the request is proxied as it came to `FEED_GO_V1_FALLBACK_URL`, the upstream the
-model routes use (§16.8). The switch on without that URL fails startup. Every answer carries
-`X-Feed-Go-Served`.
+(`internal/server/v1images_serve.go`); with none, the path is not mounted. The upstream is
+`FEED_GO_V1_IMAGES_FALLBACK_URL` when set (a deployment that isolates this, its heaviest REST route,
+on its own Node pool points it there, so a fallback lands where Node answers the route today), else
+`FEED_GO_V1_FALLBACK_URL`, the model routes' (§16.8), with the same proxy. With
+`FEED_GO_SERVE_V1_IMAGES` off (the default) every request there is the `v1-images-off` fallback:
+nothing is computed, no serve slot is taken, and the request is proxied as it came. The switch on
+with neither URL fails startup. Every answer carries `X-Feed-Go-Served`.
 
 **The gates, in order** (the model routes', §16.8):
 
