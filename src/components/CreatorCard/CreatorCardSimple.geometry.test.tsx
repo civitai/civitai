@@ -13,7 +13,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { cleanup } from 'vitest-browser-react';
-import type * as CfImagesUtils from '~/client-utils/cf-images-utils';
 import type * as BrowserSettings from '~/providers/BrowserSettingsProvider';
 import type * as FeatureFlags from '~/providers/FeatureFlagsProvider';
 import type * as Trpc from '~/utils/trpc';
@@ -22,19 +21,6 @@ import { box, renderAtViewport } from '../../../test/geometry-setup';
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
   return { ...(await importOriginal<typeof Trpc>()), trpc: makeTrpcProxy({}) };
-});
-
-vi.mock('~/client-utils/cf-images-utils', async (importOriginal) => {
-  const clip = (await import('../../utils/metadata/__tests__/fixtures/video/core.webm?url'))
-    .default;
-  const orig = await importOriginal<typeof CfImagesUtils>();
-  return {
-    ...orig,
-    useEdgeUrl: (...a: Parameters<typeof orig.useEdgeUrl>) => ({
-      ...orig.useEdgeUrl(...a),
-      url: clip,
-    }),
-  };
 });
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
@@ -52,6 +38,10 @@ const { IntersectionObserverProvider } = await import(
   '~/components/IntersectionObserver/IntersectionObserverProvider'
 );
 const { CreatorCardSimple } = await import('~/components/CreatorCard/CreatorCardSimple');
+
+// An absolute URL passes through getEdgeUrl untouched, so the real clip loads with no mock.
+const clip = new URL('../../utils/metadata/__tests__/fixtures/video/core.webm', import.meta.url)
+  .href;
 
 const CARD_WIDTH = 320;
 const NAME = 'AVeryLongCreatorNameThatFillsAnyRoom';
@@ -113,7 +103,7 @@ async function renderVideoBackgroundCard() {
               id: 1,
               type: 'ProfileBackground',
               name: 'video bg',
-              data: { url: 'b2a1b3c4-0000-4000-8000-000000000000', type: 'video' },
+              data: { url: clip, type: 'video' },
             } as never,
           ]}
         />
