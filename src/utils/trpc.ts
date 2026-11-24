@@ -261,6 +261,8 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'event.getTeamScores',
   'event.getWornHat',
   'generation.checkResourcesCoverage',
+  'hatTurf.getComebackPace',
+  'hatTurf.getEventMedia',
   'hatTurf.getFlagRaceForCollection',
   'hatTurf.getFlagRaceTotals',
   'hatTurf.getFlags',

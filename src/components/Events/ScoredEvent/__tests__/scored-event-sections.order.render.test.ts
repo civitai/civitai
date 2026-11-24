@@ -43,6 +43,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       }),
     },
     'event.getMyHats': { useQuery: () => ({ data: hats, dataUpdatedAt: 1 }) },
+    'hatTurf.getComebackPace': {
+      useQuery: () => ({
+        data: {
+          teams: [{ team: 'Pink', pct: 12 }],
+          week: { from: '2026-11-24T00:00:00.000Z', to: '2026-12-01T00:00:00.000Z' },
+          badge: null,
+        },
+      }),
+    },
   }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 9 }) }));
@@ -151,6 +160,7 @@ function sections({
   const page = host.querySelector('.mantine-Stack-root')!;
   return [...page.children].map((el) => {
     if (el.hasAttribute('data-section')) return el.getAttribute('data-section');
+    if (el.getAttribute('data-testid') === 'comeback-cup-section') return 'comeback';
     const inner = el.querySelectorAll('[data-section]');
     return inner.length === 1 ? inner[0].getAttribute('data-section') : el.outerHTML;
   });
@@ -164,6 +174,7 @@ describe('ScoredEventSections order', () => {
       'catalog',
       'turf',
       'flagRace',
+      'comeback',
       'standings',
       'topHats',
       'turfPlayers',
@@ -176,6 +187,7 @@ describe('ScoredEventSections order', () => {
       'hats',
       'turf',
       'flagRace',
+      'comeback',
       'standings',
       'shop',
       'topHats',
@@ -190,6 +202,7 @@ describe('ScoredEventSections order', () => {
       'standings',
       'turf',
       'flagRace',
+      'comeback',
       'topHats',
       'hats',
     ]);

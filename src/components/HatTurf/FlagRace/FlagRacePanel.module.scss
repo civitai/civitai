@@ -67,6 +67,25 @@
   }
 }
 
+// Over the art: its top right corner when stacked, the middle of its band side by side.
+.play {
+  position: absolute;
+  right: 4px;
+  top: -2px;
+  width: 130px;
+  height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  @container (min-width: 1200px) {
+    right: 0;
+    left: 0;
+    width: auto;
+    height: 104px;
+  }
+}
+
 .artSpace {
   @container (min-width: 1200px) {
     height: 104px;
