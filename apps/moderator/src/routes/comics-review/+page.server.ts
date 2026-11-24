@@ -6,6 +6,7 @@ import { getComicReviewQueue } from '$lib/server/comic-review.service';
 import { acceptImage, blockImage } from '$lib/server/image-moderation.service';
 import { getActorMeta } from '$lib/server/request-meta';
 import { heldRemovalMessage } from '$lib/server/removal-hold';
+import { withheldRefusal } from '$lib/server/retracted-media';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
 import type { RequestEvent } from './$types';
 
@@ -60,6 +61,8 @@ async function moderatePanel(
   const form = await event.request.formData();
   const imageId = Number(form.get('imageId'));
   if (!imageId) return fail(400, { error: 'Missing image id.' });
+  const withheld = await withheldRefusal(event.locals.user, [imageId]);
+  if (withheld) return fail(403, { error: withheld, imageId });
 
   // acceptImage ignores ip/userAgent; blockImage uses them for the DeleteTOS analytics row.
   // Refused rather than thrown: an uncaught throw here renders a 500 page, which tells the moderator

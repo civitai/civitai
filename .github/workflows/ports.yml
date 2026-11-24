@@ -7,11 +7,20 @@ name: Node→Go ports
 # are filtered to their own app. The path filter is that wide because it is everything a port can
 # depend on: the Node deps reach src/ and packages/ (and the event-engine-common pin), the Go deps
 # the Go apps that hold ports, and a change to any of them can change which ports a PR touches.
+#
+# ── `manifest` RUNS IN THE 2-HOUR MAIN BATCH, NOT ON PULL REQUESTS OR PUSHES ─────────────────
+#
+# Across 39 recent runs on PRs and `main` it caught nothing, so it runs only on a dispatch: the
+# 2-hour main batch (lint.yml's `batch-suites` job dispatches this workflow with `batch: true` when
+# a path below changed since the last green batch; a red run turns the `Batch suites (main batch)`
+# commit status red, which opens a CI-watch item naming the commit range, and nothing bisects it
+# automatically), or a hand dispatch (`gh workflow run ports.yml -R civitai/civitai --ref <branch>`).
+# `touched` is a report on the PR, so it stays there; the push trigger went with `manifest`.
 on:
   pull_request:
     branches: [main, release]
     types: [opened, synchronize, reopened, ready_for_review]
-    paths: &ports-inputs
+    paths:
       - '.github/workflows/ports.yml'
       - 'ports/**'
       - 'scripts/ports/**'
@@ -26,22 +35,27 @@ on:
       - '.gitmodules'
       - 'package.json'
       - 'pnpm-lock.yaml'
-  push:
-    branches: [main]
-    paths: *ports-inputs
+  workflow_dispatch:
+    inputs:
+      # Set by the main batch (lint.yml, `batch-suites`), which keys the concurrency group on it.
+      batch:
+        description: Set by the main batch. Leave unset.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ports-${{ github.ref }}
+  group: ports-${{ github.event_name == 'workflow_dispatch' && inputs.batch && format('batch-{0}', github.run_id) || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   manifest:
     name: Ports manifest and markers
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    # Dispatch only: the 2-hour main batch (see the header), a hand dispatch, or the `full-ci` dispatcher.
+    if: github.event_name == 'workflow_dispatch'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -51,19 +65,20 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       # One toolchain for every module: their go.mod files name the same Go version.
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: |
-            apps/feed-go/go.sum
-            apps/beacon-go/go.sum
-            apps/content-policy-go/go.sum
+          # No Go cache: setup-go's saves on every ref, and this key's entry is too small to be worth a step that can fail the job.
+          cache: false
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/pnpm-store-save
 
       # Counted: vitest given a file it does not match runs the rest and still exits 0.
       - name: Generator tests
@@ -103,15 +118,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: |
-            apps/feed-go/go.sum
-            apps/beacon-go/go.sum
-            apps/content-policy-go/go.sum
+          # No Go cache: setup-go's saves on every ref, and this key's entry is too small to be worth a step that can fail the job.
+          cache: false
 
       # For `typescript`, which the Node dependency walk parses with.
       - name: Install

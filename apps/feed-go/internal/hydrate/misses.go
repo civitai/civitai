@@ -34,6 +34,10 @@ const (
 	MissOfficialModels   = "official-models"   // getOfficialModelIds' fetchThroughCache entry (model.getAll)
 	MissImageTags        = "image-tags"        // imageTagsCache (image.getInfinite with include 'tags'; never written)
 	MissUserFollows      = "user-follows"      // userFollowsCache (image.getInfinite with followed; never written nor kept)
+	// MissVersionShowcase is getVersionShowcaseCache (the v1 models routes' and image.getInfinite's
+	// curated-showcase guard, ShowcaseState): only the curated-or-not decision is computed, never
+	// an entry, so nothing is written or kept.
+	MissVersionShowcase = "version-showcase"
 )
 
 // MissCaches lists every MissXxx label, for seeding the counter. A label that is also a page cache
@@ -41,7 +45,7 @@ const (
 // this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
 var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames,
 	MissModelDecorations, MissVersionImages, MissModelData, MissModelTags, MissOfficialModels, MissMetrics, MissImageTags,
-	MissUserFollows}
+	MissUserFollows, MissVersionShowcase}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
@@ -267,9 +271,10 @@ func (c *MissCompute) flightLookup(ctx context.Context, cache string, ids []int,
 // The tag ids, model frames, model decorations and version showcases are kept: none depends on the
 // viewer (the showcase lookup reads no user, and the per-viewer image filter runs on every read), Node
 // keeps tag ids in a per-pod L1 far longer than recentTTL, and a model frame or decoration is the same
-// lookup the image ones keep.
+// lookup the image ones keep. The version-showcase decision (MissVersionShowcase, ShowcaseState) does
+// not go through lookupShared and keeps nothing, so it is false for it too.
 func (c *MissCompute) memoized(cache string) bool {
-	return !c.writes(cache) && cache != MissImageMeta && cache != MissUserFollows
+	return !c.writes(cache) && cache != MissImageMeta && cache != MissUserFollows && cache != MissVersionShowcase
 }
 
 // fromRecent adds the kept, unexpired answers of ids to out and returns the ids it could not answer.

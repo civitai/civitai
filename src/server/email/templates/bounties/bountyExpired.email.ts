@@ -1,6 +1,7 @@
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { createEmail } from '~/server/email/templates/base.email';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { renderEmailSummary, simpleEmailWithTemplate } from '~/server/email/templates/util';
 
 type BountyExpiredData = {
   bounty: {
@@ -22,13 +23,22 @@ export const bountyExpiredEmail = createEmail({
   }),
   html({ user, bounty }: BountyExpiredData) {
     return simpleEmailWithTemplate({
-      header: `It looks like your bounty <strong>${bounty.name}</strong> just expired!`,
+      icon: '⏰',
+      accent: 'buzz',
+      eyebrow: 'Bounty expired',
+      header: `It looks like your bounty <strong>${escapeHtml(bounty.name)}</strong> just expired!`,
       body: `
-        <p>
-        It looks like your bounty received about ${bounty.entryCount} entries. Be sure to check them out and award the one that you like the most!              
+        <p style="margin: 0;">
+          It looks like your bounty received about ${
+            bounty.entryCount
+          } entries. Be sure to check them out and award the one that you like the most!
         </p>
-        <p>
-          You have 48 hours to award an entry.              
+        ${renderEmailSummary([
+          { label: 'Entries', value: `About ${bounty.entryCount}` },
+          { label: 'Time to award', value: '48 hours' },
+        ])}
+        <p style="margin: 0;">
+          You have 48 hours to award an entry.
         </p>
       `,
       btnLabel: 'Check out all entries!',

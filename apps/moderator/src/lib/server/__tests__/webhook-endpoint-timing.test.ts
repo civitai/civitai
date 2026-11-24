@@ -12,16 +12,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * the real `node:crypto` binding the module under test imports, not from a re-implementation: a model
  * of the loop written in the test file would go on passing after a `break` was added to production.
  *
- * Two classes are accepted (MOD_INBOUND_TOKEN and the scoped MOD_CASES_TOKEN), so the property is
- * observable: a loop that stopped at the first match would compare once when the FIRST class matches and
- * twice otherwise. The 'no early exit' block below is the case that tells the two loops apart; its two
- * controls only mean something beside it.
+ * Two classes are accepted everywhere (MOD_INBOUND_TOKEN and the scoped MOD_CASES_TOKEN), so the
+ * property is observable: a loop that stopped at the first match would compare once when the FIRST class
+ * matches and twice otherwise. The 'no early exit' block below is the case that tells the two loops apart;
+ * its two controls only mean something beside it. On the tag write-back path KNIGHTS_TAG_REVIEW_TOKEN is a
+ * third candidate (and is none elsewhere), which the scoped-path block pins the same way.
  *
  * 🔴 EVERY FIXTURE SECRET BELOW IS THE SAME LENGTH. The loop checks length before calling
  * timingSafeEqual (that function throws on a length mismatch), so a shorter second secret would be
  * skipped by the length check and never counted — a count would then read low and blame a `break`
  * that is not there. Equal lengths are what make the count a measurement of the loop rather than of
- * the fixture. Keep that true of any secret added when this file is re-armed.
+ * the fixture. Keep that true of any secret added here.
  *
  * This file mocks a module at load, so it is deliberately separate from `webhook-endpoint.test.ts`
  * rather than being a `describe` block with a local reset: a module mock is file-scoped, and reaching
@@ -46,9 +47,11 @@ const { authenticateWebhookToken } = await import('$lib/server/webhook-endpoint'
 const INBOUND_SECRET = 'inbound-secret-value-aaaa';
 const LEGACY_SECRET = 'legacy--secret-value-bbbb';
 const CASES_SECRET = 'cases---secret-value-dddd';
+const KNIGHTS_SECRET = 'knights-secret-value-eeee';
+const SCOPED_PATH = '/api/mod/image-tag-moderate';
 
-function requestPresenting(token: string) {
-  const url = new URL('https://moderator.civitai.com/api/mod/abuse-report');
+function requestPresenting(token: string, path = '/api/mod/abuse-report') {
+  const url = new URL(`https://moderator.civitai.com${path}`);
   url.searchParams.set('token', token);
   return { url, request: new Request(url, { method: 'POST' }) };
 }
@@ -57,8 +60,14 @@ function setEnv(vars: {
   WEBHOOK_TOKEN?: string;
   MOD_INBOUND_TOKEN?: string;
   MOD_CASES_TOKEN?: string;
+  KNIGHTS_TAG_REVIEW_TOKEN?: string;
 }) {
-  for (const k of ['WEBHOOK_TOKEN', 'MOD_INBOUND_TOKEN', 'MOD_CASES_TOKEN'] as const) {
+  for (const k of [
+    'WEBHOOK_TOKEN',
+    'MOD_INBOUND_TOKEN',
+    'MOD_CASES_TOKEN',
+    'KNIGHTS_TAG_REVIEW_TOKEN',
+  ] as const) {
     delete process.env[k];
     if (vars[k] !== undefined) process.env[k] = vars[k];
   }
@@ -68,6 +77,7 @@ const saved = {
   WEBHOOK_TOKEN: process.env.WEBHOOK_TOKEN,
   MOD_INBOUND_TOKEN: process.env.MOD_INBOUND_TOKEN,
   MOD_CASES_TOKEN: process.env.MOD_CASES_TOKEN,
+  KNIGHTS_TAG_REVIEW_TOKEN: process.env.KNIGHTS_TAG_REVIEW_TOKEN,
 };
 
 /**
@@ -79,7 +89,11 @@ const saved = {
  */
 beforeEach(() => {
   timingSafeEqualSpy.mockClear();
-  setEnv({ MOD_INBOUND_TOKEN: INBOUND_SECRET, WEBHOOK_TOKEN: LEGACY_SECRET });
+  setEnv({
+    MOD_INBOUND_TOKEN: INBOUND_SECRET,
+    WEBHOOK_TOKEN: LEGACY_SECRET,
+    KNIGHTS_TAG_REVIEW_TOKEN: KNIGHTS_SECRET,
+  });
 });
 afterEach(() => setEnv(saved));
 
@@ -153,5 +167,41 @@ describe('no early exit, with both classes configured', () => {
     setEnv({ MOD_INBOUND_TOKEN: INBOUND_SECRET, MOD_CASES_TOKEN: INBOUND_SECRET });
     const result = authenticateWebhookToken(requestPresenting(INBOUND_SECRET));
     expect(result).toEqual({ kind: 'authenticated', credential: 'MOD_CASES_TOKEN' });
+  });
+});
+
+describe('the token comparison loop on the tag write-back path (three candidates)', () => {
+  beforeEach(() =>
+    setEnv({
+      MOD_INBOUND_TOKEN: INBOUND_SECRET,
+      MOD_CASES_TOKEN: CASES_SECRET,
+      KNIGHTS_TAG_REVIEW_TOKEN: KNIGHTS_SECRET,
+    })
+  );
+
+  it('a match on the FIRST candidate STILL compares the other two', () => {
+    const result = authenticateWebhookToken(requestPresenting(INBOUND_SECRET, SCOPED_PATH));
+    expect(result).toEqual({ kind: 'authenticated', credential: 'MOD_INBOUND_TOKEN' });
+    expect(timingSafeEqualSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it('CONTROL: a match on the LAST candidate compares all three', () => {
+    const result = authenticateWebhookToken(requestPresenting(KNIGHTS_SECRET, SCOPED_PATH));
+    expect(result).toEqual({ kind: 'authenticated', credential: 'KNIGHTS_TAG_REVIEW_TOKEN' });
+    expect(timingSafeEqualSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it('CONTROL: no match compares all three', () => {
+    const result = authenticateWebhookToken(
+      requestPresenting('wrong-secret-value-cccccc', SCOPED_PATH)
+    );
+    expect(result.kind).toBe('refused');
+    expect(timingSafeEqualSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it('off the scoped path the scoped secret is not a candidate', () => {
+    const result = authenticateWebhookToken(requestPresenting(KNIGHTS_SECRET));
+    expect(result.kind).toBe('refused');
+    expect(timingSafeEqualSpy).toHaveBeenCalledTimes(2);
   });
 });

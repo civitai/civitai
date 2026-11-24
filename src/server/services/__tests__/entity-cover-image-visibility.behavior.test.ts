@@ -44,6 +44,7 @@ beforeAll(async () => {
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text, "nsfwLevel" int DEFAULT 1, width int, height int,
       hash text, "hideMeta" boolean DEFAULT false, meta jsonb, "createdAt" timestamp DEFAULT now(),
@@ -60,7 +61,8 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "userId" int DEFAULT ${OWNER}, status text,
-      "publishedAt" timestamp, ingestion text DEFAULT 'Scanned', "bannerId" int
+      "publishedAt" timestamp, ingestion text DEFAULT 'Scanned', "bannerId" int,
+      availability "Availability" DEFAULT 'Public'
     );
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int DEFAULT ${OWNER}, status text,
@@ -77,6 +79,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "CollectionItem" (
       id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "addedById" int,
@@ -106,6 +109,11 @@ beforeAll(async () => {
     INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES
       (301, 311, 'Published', now()), (302, 312, 'Draft', null), (303, null, 'Draft', null);
     INSERT INTO "ImageConnection" VALUES (313, 303, 'Article');
+    -- 308 and 309 follow the article availability rule: one by its cover, one by a content image.
+    INSERT INTO "Image" (id) VALUES (318), (319);
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt", availability) VALUES
+      (308, 318, 'Published', now(), 'Private'), (309, null, 'Published', now(), 'Private');
+    INSERT INTO "ImageConnection" VALUES (319, 309, 'Article');
 
     -- Models: 401 public, 402 Private, 403 draft. One version and owner post each.
     INSERT INTO "Model" (id, status, availability) VALUES
@@ -362,6 +370,8 @@ const hidden: [string, string, number, number][] = [
   ['a Private post', 'Post', 204, 214],
   ['a draft article', 'Article', 302, 312],
   ['a draft article with content images only', 'Article', 303, 313],
+  ['an article following the availability rule, by its cover', 'Article', 308, 318],
+  ['an article following the availability rule, by a content image', 'Article', 309, 319],
   ['a Private model', 'Model', 402, 432],
   ['a draft model', 'Model', 403, 433],
   ['a version of a Private model', 'ModelVersion', 412, 432],
@@ -728,5 +738,49 @@ describe('a cover at the Blocked level with no block recorded', () => {
 
   it.each(['anonymous', 'stranger', 'owner'] as const)('is no cover for the %s', async (who) => {
     expect(await coverOf('Article', 3032, viewers[who])).toBeNull();
+  });
+});
+
+describe("a bounty's image listed on a report", () => {
+  // Bounty 3101's images: 3111 listed (as an object entry) and owned by OWNER, 3112 unlisted.
+  // Entry 3102's only image 3113 is listed too; entries are out of this rule's scope.
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "Bounty" VALUES (3101, ${OWNER}, 'Public');
+      INSERT INTO "BountyEntry" VALUES (3102, 3101, 50);
+      INSERT INTO "Image" (id) VALUES (3111), (3112), (3113);
+      INSERT INTO "ImageConnection" VALUES
+        (3111, 3101, 'Bounty'), (3112, 3101, 'Bounty'), (3113, 3102, 'BountyEntry');
+      INSERT INTO "CsamReport" ("userId", images) VALUES (${OWNER}, '[{"id": 3111}, "3113"]');
+    `);
+  });
+
+  const coverFor = async (viewer: Viewer, seesReportListed?: boolean) => {
+    const covers = await getEntityCoverImage({
+      entities: [{ entityType: 'Bounty', entityId: 3101 }],
+      viewer,
+      seesReportListed,
+    });
+    return covers[0]?.id ?? null;
+  };
+
+  // The bounty search index drops these images; a moderator needs the held-media grant too.
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
+    'is passed over for the %s',
+    async (who) => {
+      expect(await coverFor(viewers[who])).toBe(3112);
+    }
+  );
+
+  it('is kept for its uploader', async () => {
+    expect(await coverFor(viewers.owner)).toBe(3111);
+  });
+
+  it('is kept for a viewer who sees report-listed images', async () => {
+    expect(await coverFor(viewers.moderator, true)).toBe(3111);
+  });
+
+  it("still serves an entry's listed image", async () => {
+    expect(await coverOf('BountyEntry', 3102, viewers.anonymous)).toBe(3113);
   });
 });

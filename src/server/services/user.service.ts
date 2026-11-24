@@ -169,6 +169,7 @@ import { bustModelSaleCacheForModels } from '~/server/services/paid-access.servi
 import {
   countPendingAccountDeletionImageRestores,
   disarmAccountDeletionImagePurge,
+  releaseAccountDeletionPendingDeletes,
   recordPendingImageRestore,
 } from '~/server/services/account-deletion-images';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
@@ -338,7 +339,7 @@ export async function getUsersWithSearch({
       searchClient!.index(USERS_SEARCH_INDEX).search<UserSearchResult>(query, {
         limit: Math.round(limit * 1.5),
         filter: filters.join(' AND '),
-        attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture', 'image'],
+        attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture'],
       })
     );
   } catch (err) {
@@ -369,15 +370,17 @@ export async function getUsersWithSearch({
     throw err;
   }
 
-  return results.hits
-    .filter((x) => !x.deletedAt)
-    .map(({ deletedAt, profilePicture, image, ...user }) => ({
-      ...user,
-      avatarUrl: profilePicture?.url ?? image,
-      avatarNsfw: profilePicture?.nsfwLevel ?? 0,
-      meta: null,
-    }))
-    .slice(0, limit);
+  return (
+    results.hits
+      .filter((x) => !x.deletedAt)
+      .map(({ deletedAt, profilePicture, image: _legacyImage, ...user }) => ({
+        ...user,
+        avatarUrl: profilePicture?.url,
+        avatarNsfw: profilePicture?.nsfwLevel ?? 0,
+        meta: null,
+      }))
+      .slice(0, limit)
+  );
 }
 
 type GetUsersRow = {
@@ -1564,6 +1567,49 @@ export const deleteUser = async ({
     }
     await deleteSleepingAppsOfDeletedAccount(user.id);
   });
+  // App Assistant's chat ↔ app links go with the account (the FK cascade never fires on this soft
+  // delete). Held, like the sleeping apps, while content removal is held.
+  await runStep('delete-app-assistant-links', async () => {
+    if ((await isContentRemovalHeld(user.id)) !== false) {
+      logToAxiom({
+        name: 'delete-app-assistant-links',
+        type: 'info',
+        source: 'deleteUser',
+        userId: user.id,
+        message: 'App Assistant links kept: content removal held',
+      });
+      return;
+    }
+    const [{ deleteSessionLinksOfAccount }, { isMissingTableError }] = await Promise.all([
+      import('~/server/services/app-assistant/session-tracing.service'),
+      import('~/server/services/blocks/app-access.service'),
+    ]);
+    await deleteSessionLinksOfAccount(user.id, {
+      db: dbWrite,
+      isMissingTable: isMissingTableError,
+    });
+  });
+  // App Assistant session traces (frozen chat transcripts, then trace rows) go with the account, on
+  // their own: the link rows above never wait on this. Held while content removal is held; what this
+  // cannot finish, the hourly `sweep-app-assistant-traces` job retries.
+  await runStep('delete-app-assistant-traces', async () => {
+    if ((await isContentRemovalHeld(user.id)) !== false) {
+      logToAxiom({
+        name: 'delete-app-assistant-traces',
+        type: 'info',
+        source: 'deleteUser',
+        userId: user.id,
+        message: 'App Assistant traces kept: content removal held',
+      });
+      return;
+    }
+    const [{ deleteAssistantTracesOfAccount, liveTraceDeletionDeps }, { isMissingTableError }] =
+      await Promise.all([
+        import('~/server/services/app-assistant/submission-trace.service'),
+        import('~/server/services/blocks/app-access.service'),
+      ]);
+    await deleteAssistantTracesOfAccount(user.id, await liveTraceDeletionDeps(isMissingTableError));
+  });
   await runStep('refresh-profile-picture', () => refreshProfilePicturesForUsers([user.id]));
   await runStep('close-pending-restrictions', () =>
     closeGenerationRestrictionsOfDeletedAccount(user.id)
@@ -1761,13 +1807,14 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
         ),
       ]
     : [];
-  const [, , reclaimed] = await dbWrite
+  const [, , , reclaimed] = await dbWrite
     .$transaction([
       dbWrite.user.update({
         where: { id, deletedAt: user.deletedAt, bannedAt: null },
         data: { deletedAt: null, username, email, meta },
       }),
       disarmAccountDeletionImagePurge(id),
+      releaseAccountDeletionPendingDeletes(id),
       ...reclaim,
     ])
     .catch(refuseIfBannedMeanwhile);
@@ -3348,6 +3395,10 @@ export const toggleBan = async ({
   void (bannedAt ? onStorySparkPostsRestored : onStorySparkPostsHidden)({ authorId: id });
   const { afterAccountBanChanged } = await import('~/server/services/account-standing.service');
   await afterAccountBanChanged(id);
+  const { bustVersionShowcasesForUser } = await import(
+    '~/server/services/version-showcase.service'
+  );
+  await bustVersionShowcasesForUser(id).catch(() => null);
   // The creator card carries the links, which public reads drop for a banned user.
   await bustUserCreator(id, { usernames: user.username ? [user.username] : [] }).catch(
     handleLogError
@@ -3734,6 +3785,10 @@ export const toggleBookmarkedArticle = async ({
 // TODO(model3d-workstream-E): wire CollectionType.Model3D through bookmark + metrics flow
 //   once model3dMetrics exists. For now Model3D bookmarks short-circuit before reaching
 //   these maps (see toggleBookmarked below).
+const likedModelsCollection = {
+  name: 'Liked Models',
+  description: 'Your liked models will appear in this collection.',
+};
 const collectionEntityProps: Partial<Record<CollectionType, string>> = {
   [CollectionType.Article]: 'articleId',
   [CollectionType.Model]: 'modelId',
@@ -3782,8 +3837,12 @@ export const toggleBookmarked = async ({
             userId,
             type,
             mode: CollectionMode.Bookmark,
-            name: `Bookmarked ${type}`,
-            description: `Your bookmarked ${type.toLowerCase()} will appear in this collection.`,
+            ...(type === CollectionType.Model
+              ? likedModelsCollection
+              : {
+                  name: `Bookmarked ${type}`,
+                  description: `Your bookmarked ${type.toLowerCase()} will appear in this collection.`,
+                }),
           },
         })
         .catch((e) => {
@@ -4256,8 +4315,7 @@ export const getUserBookmarkCollections = async ({ userId }: { userId: number })
         userId,
         type: CollectionType.Model,
         mode: CollectionMode.Bookmark,
-        name: 'Liked Models',
-        description: 'Your liked models will appear in this collection.',
+        ...likedModelsCollection,
       },
     });
 

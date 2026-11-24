@@ -1,7 +1,7 @@
 import { sql, type Kysely, type SqlBool } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
-import { servableImage } from '@civitai/db/knights';
+import { readWithoutJit, servableImage } from '@civitai/db/knights';
 import {
   answerImageId,
   answerImageJoin,
@@ -36,7 +36,8 @@ export type Judgment = {
   /** A vote's item id or a practice answer's id; unique only together with `kind`. */
   itemId: number;
   kind: 'vote' | 'practice';
-  imageId: number;
+  /** Null, like `imageKey`, when the image is no longer one the public feeds would show. */
+  imageId: number | null;
   /** Null when the image is no longer one the public feeds would show. */
   imageKey: string | null;
   prompt: string;
@@ -90,7 +91,16 @@ function filterClause(filter: Exclude<JudgmentFilter, 'all'>) {
   }
 }
 
+/** `listJudgmentsIn`, with JIT off: its rows read `servableImage`. */
 export async function listJudgments(
+  db: Kysely<DB>,
+  userId: number,
+  options: Parameters<typeof listJudgmentsIn>[2]
+) {
+  return readWithoutJit(db, (trx) => listJudgmentsIn(trx, userId, options));
+}
+
+async function listJudgmentsIn(
   db: Kysely<DB>,
   userId: number,
   {
@@ -194,7 +204,7 @@ export async function listJudgments(
       return {
         itemId: r.itemId,
         kind: r.kind as Judgment['kind'],
-        imageId: r.imageId,
+        imageId: r.servable ? r.imageId : null,
         imageKey: r.servable && r.imageKey ? r.imageKey : null,
         // A yes/no question carries its own words; the question row only holds the generic ones.
         prompt: r.itemPrompt ?? r.prompt,

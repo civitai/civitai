@@ -17,7 +17,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { useMutateStripe, useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
 import { IconCreditCard, IconTrash } from '@tabler/icons-react';
 import { CardOrSection } from '~/components/Account/SettingsLayout';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { StripePaymentMethodSetup } from '~/components/Stripe/StripePaymentMethodSetup';
 import type { UserPaymentMethod } from '~/types/router';
 import { booleanString } from '~/utils/zod-helpers';
@@ -128,9 +128,9 @@ const StripePaymentMethods = ({ flat }: { flat?: boolean }) => {
   const result = querySchema.safeParse(router.query);
 
   const handleDeletePaymentMethod = (paymentMethodId: string) => {
-    openConfirmModal({
+    openConfirm({
       title: 'Delete payment method',
-      children: (
+      message: (
         <Stack>
           <Text>
             Are you sure you want to delete this payment method? This action is destructive.
@@ -141,7 +141,6 @@ const StripePaymentMethods = ({ flat }: { flat?: boolean }) => {
           </Text>
         </Stack>
       ),
-      centered: true,
       labels: { confirm: 'Yes, delete', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       onConfirm: () => {

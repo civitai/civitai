@@ -1,9 +1,10 @@
-import dynamic from 'next/dynamic';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-
-const BankingChangeNoticeModal = dynamic(
-  () => import('~/components/Buzz/CreatorProgramV2/BankingChangeNoticeModal')
-);
+import { openDialog } from '~/components/Dialog/openDialog';
 
 export const openBankingChangeNotice = () =>
-  dialogStore.trigger({ component: BankingChangeNoticeModal, id: 'banking-change-notice' });
+  openDialog(
+    () => import('~/components/Buzz/CreatorProgramV2/BankingChangeNoticeModal'),
+    undefined,
+    {
+      id: 'banking-change-notice',
+    }
+  );

@@ -57,7 +57,7 @@ describe('search-index-update', () => {
       .filter(([strings]) =>
         (strings as TemplateStringsArray)
           .join('?')
-          .includes('SELECT DISTINCT p."modelVersionId", mv."modelId"')
+          .includes('SELECT p."modelVersionId", mv."modelId"')
       )
       .map(([, ...values]) => values);
 
@@ -71,7 +71,12 @@ describe('search-index-update', () => {
   it('queues the documents showing an image the moderator app removed', async () => {
     const res = await call({ entityType: 'image', entityIds: [42, 43], action: 'delete' });
     expect(res.statusCode).toBe(200);
-    expect(documentLookups()).toEqual([[[42, 43]]]);
+    expect(documentLookups()).toEqual([
+      [
+        [42, 43],
+        [42, 43],
+      ],
+    ]);
   });
 
   // The moderator app's block reads the response; a failed requeue must not turn it into an error.
@@ -89,7 +94,10 @@ describe('search-index-update', () => {
       const res = await pending;
       expect(res.statusCode).toBe(200);
       expect(res.body).toMatchObject({ ok: true });
-      expect(documentLookups()).toEqual([[[42]], [[42]]]);
+      expect(documentLookups()).toEqual([
+        [[42], [42]],
+        [[42], [42]],
+      ]);
     } finally {
       vi.useRealTimers();
     }

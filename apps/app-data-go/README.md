@@ -24,6 +24,30 @@ With `X-App-Data-Registry-Only: 1` a read the registry cannot answer is not read
 answers `{"source":"none","reason":<why>,"items":[]}`. The site's shadow read of App Storage lists
 sends it, since the REST fallback is the site's own route (DESIGN.md, "P4: the site's shadow read").
 
+**Writes (dark, `APP_DATA_WRITES`, default off: every write route is `404`).** The write routes and
+`info` of [WRITES-DESIGN.md](WRITES-DESIGN.md) are checked for shape here (and a block token verified
+locally), then forwarded once, never retried, with the user's own token and an HMAC signature
+(`internal/sign`), to the site's internal storage route. A lost answer is `504 {outcome: "unknown"}`;
+`503 not_forwarded` (refused here before anything was sent, or the site's refusal of the forward
+itself: its signature check, or its internal route off) is the only answer safe to resend. A named
+`major` is forwarded and judged by the site, whose `409 stale_major` is relayed. The edge's region
+headers (`cf-ipcountry`, `cf-region-code`, `x-isuk`) are copied onto the forward and signed.
+
+**Read-your-writes for private collections (dark, the same flag).** Each create, put and delete the
+store acknowledged is shown over the writing token's stream (an overlay at the write's `seq`, beside
+the stream's own records, never merged into them) until the stream shows it, its head passes it, the
+stream deletes its URN, or one adapter poll plus 30 s (`APP_DATA_WRITES_ADAPTER_POLL_SECONDS`, which
+must be kept at or above the adapter's `REGISTRY_ADAPTER_POLL_SECONDS`). A read
+may name a floor, `?minSeq=S`: met by the stream's head, or for a block token by an acknowledgement
+this replica still holds for it; otherwise the stream is reopened once per poll, and a floor still not
+met is `503 floor_not_met`, never a REST read; a stream that names no head answers it unfloored, and
+one that also holds nothing still answers empty (so the list reads REST) whatever is overlaid. The
+keyed get,
+`GET /v1/apps/{slug}/collections/{collection}/records/{key}`, answers from the stream only. A head
+that went back (the adapter's `cursor_expired`) reopens the stream with no cooldown. With the flag
+off none of this runs: no seq or head is read, and `cursor_expired` is a stream error, as before. Shared
+collections, marks and the mark floor are not served yet (WRITES-DESIGN.md, "Read-your-writes").
+
 ## Layout
 
 | Package             | What                                                                                      |
@@ -35,6 +59,8 @@ sends it, since the REST fallback is the site's own route (DESIGN.md, "P4: the s
 | `internal/registry` | the registry HTTP binding consumer, a byte-identical copy of app-index-go's (CI compares) |
 | `internal/rest`     | the document-store REST read                                                              |
 | `internal/urn`      | the collection schema URN, pinned to the adapter's by golden vectors                      |
+| `internal/writes`   | the write routes and `info`: shape checks, the signed forward to the site                 |
+| `internal/sign`     | the forward's signature, pinned to the site's by a golden vector                          |
 | `internal/config`   | the environment ([.env.example](.env.example)), validated at start                        |
 | `internal/metrics`  | Prometheus series, `app_data_*`; no label holds a token, user, app or collection          |
 

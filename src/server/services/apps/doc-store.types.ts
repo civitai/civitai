@@ -102,6 +102,27 @@ export type DocRecord = {
   rating?: DocRating;
 };
 
+/**
+ * What a document write (`create`, `put`, `putIfUnchanged`) answers: the record, plus where the
+ * write sits in the app namespace's write order and which row it is. Internal to the store's API:
+ * the public storage route presents a {@link DocRecord}'s fields only (`presentDocs`), never these.
+ */
+export type WrittenDocRecord = DocRecord & {
+  /** The document's `seq` (`usage_app.last_seq` when it was written): the namespace's write order. */
+  seq: number;
+  /**
+   * The row's `record_id` (the id in a private record's URN, `app-record.ts`). Null only for a row
+   * written before the column's default existed and not yet backfilled.
+   */
+  recordId: string | null;
+};
+
+/**
+ * What `delete` answers. `seq` is the tombstone's: the namespace's write order of the delete. A
+ * delete that removed nothing wrote no tombstone and has none.
+ */
+export type DocDeleteResult = { deleted: true; seq: number } | { deleted: false };
+
 export type DocListQuery = {
   /** Equality on ONE declared index. */
   where?: Record<string, string | number | boolean>;
@@ -171,6 +192,19 @@ export const DOC_STORE_BOUNDS = {
 
 export const REPORT_MARK = 'report';
 
+/**
+ * A viewer-keyed collection's PARENT key (`docs/app-storage-generic-core.md`, "Key derivation"):
+ * the store's key grammar without `:`, at most 96 characters, not only dots. `:` is excluded so
+ * `keyPrefix=<parent>:` lists exactly one parent's documents. The one definition: the `@me`
+ * routes (`doc-store-viewer-keyed.ts`) and the mark migration's key check both apply it.
+ */
+export const VIEWER_KEY_PARENT_RE = /^[A-Za-z0-9._-]{1,96}$/;
+
+/** Whether `parent` is a valid viewer-keyed parent key ({@link VIEWER_KEY_PARENT_RE}). */
+export function isViewerKeyParent(parent: string): boolean {
+  return VIEWER_KEY_PARENT_RE.test(parent) && !/^\.+$/.test(parent);
+}
+
 /** Stable codes from the storage proposal's error table. The HTTP mapping belongs to the route layer. */
 export type DocStoreErrorCode =
   | 'invalid_request'
@@ -194,6 +228,12 @@ export type DocStoreErrorCode =
   | 'version_conflict'
   | 'index_building'
   | 'cursor_expired'
+  /**
+   * The operation no longer exists here (410). Today: a `$mark` / `$unmark` of a mark whose rows
+   * were moved to a viewer-keyed collection (`details.reason: 'mark_migrated'`, with the target
+   * collection), refused from the moment the migration froze it (`migrateMarksToDocs`).
+   */
+  | 'removed'
   | 'too_large'
   | 'quota_exceeded'
   | 'content_rejected'
@@ -249,6 +289,11 @@ export type AccountWipeNamespaceResult = {
   marks: number;
   /** Rows deleted in `namespace` mode, across every table (index rows not counted). */
   namespaceRows: number;
+  /**
+   * Maintenance runs (purge dumps and their results, mark-migration results) that named the
+   * account and lost it (`user` mode; in `namespace` mode they are deleted with the rest).
+   */
+  maintRunsScrubbed: number;
 };
 
 export type AccountWipeResult = {

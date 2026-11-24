@@ -364,3 +364,12 @@ CREATE TABLE "CollectionContributor" (
   permissions    "CollectionContributorPermission"[] NOT NULL,
   PRIMARY KEY ("userId", "collectionId")
 );
+
+-- model.getAll's community-cover guard (communityCoverGuard, internal/modelfeed/serve.go): the
+-- featured rows getShowcaseCommunityCovers starts from. source is TEXT with a CHECK in the app.
+CREATE TABLE "ModelVersionShowcaseItem" (
+  "modelVersionId" integer NOT NULL,
+  "imageId"        integer NOT NULL,
+  source           text NOT NULL,
+  removed          boolean NOT NULL DEFAULT false
+);

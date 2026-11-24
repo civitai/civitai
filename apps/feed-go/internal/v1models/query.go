@@ -2,6 +2,7 @@ package v1models
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -53,6 +54,23 @@ var unported = map[string]bool{
 	"allowNoCredit": true, "allowCommercialUse": true, "allowDerivatives": true, "allowDifferentLicense": true,
 	"browsingLevel": true, "excludedModelIds": true, "excludedUserIds": true, "excludedTagIds": true,
 	"excludedImageIds": true,
+}
+
+// authedOnly are the unported keys a signed-out caller is refused on (authedOnlyOptions: a 401),
+// checked before unported: their own `v1-models-<key>` reason is never reached.
+var authedOnly = map[string]bool{"favorites": true, "hidden": true}
+
+// UnportedFallbackKeys are the keys whose `v1-models-<key>` fallback ParseList can reach: the unported
+// keys less authedOnly, sorted.
+func UnportedFallbackKeys() []string {
+	out := make([]string, 0, len(unported))
+	for k := range unported {
+		if !authedOnly[k] {
+			out = append(out, k)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 var digits = regexp.MustCompile(`^[0-9]{1,10}$`)
@@ -129,7 +147,7 @@ func ParseList(raw string) (*ListInput, error) {
 	in := &ListInput{Limit: 100, Sort: SortHighestRated, Period: "AllTime", PeriodMode: "published", Query: params}
 	for _, p := range params {
 		switch {
-		case p.Key == "favorites" || p.Key == "hidden":
+		case authedOnly[p.Key]:
 			// authedOnlyOptions: a signed-out caller naming either is a 401.
 			return nil, fallback.New("v1-models-authed-only")
 		case p.Key == "query" && !textQueryAbsent(p.Values):

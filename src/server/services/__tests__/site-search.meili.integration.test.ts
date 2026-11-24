@@ -284,6 +284,41 @@ describe.skipIf(!HOST || !MASTER_KEY)('site search on a real Meilisearch', () =>
     expect(JSON.stringify(hit)).not.toContain(shown === 'Com Title' ? 'Red Title' : 'Com Title');
   });
 
+  it.each([
+    ['retrieved', { attributesToRetrieve: ['id', 'name'] }],
+    ['highlighted', { attributesToRetrieve: ['id'], attributesToHighlight: ['name'] }],
+    ['cropped', { attributesToRetrieve: ['id'], attributesToCrop: ['name'] }],
+  ])('a title asked for as %s by a .com viewer is the face title', async (_how, query) => {
+    const { body } = await siteIndexSearch(
+      MODELS_SEARCH_INDEX,
+      { q: 'Title', ...query },
+      signedInOnCom
+    );
+    const hits = hitsOf(body);
+    const faced = hits.find((h) => Number(h.id) === FACED);
+    const titleOf = (hit?: Record<string, unknown>) =>
+      hit?.name ?? (hit?._formatted as Record<string, unknown> | undefined)?.name;
+    expect(String(titleOf(faced)).replace(/<\/?em>/g, '')).toBe('Com Title');
+    expect(JSON.stringify(hits)).not.toContain('Red');
+    expect(JSON.stringify(hits)).not.toContain('sfwName');
+    // The unfaced control keeps its own title.
+    const control = await siteIndexSearch(
+      MODELS_SEARCH_INDEX,
+      { q: 'Control', ...query },
+      signedInOnCom
+    );
+    expect(titleOf(hitsOf(control.body).find((h) => Number(h.id) === CONTROL))).toMatch(/Control/);
+  });
+
+  it('a hit whose caller did not ask for the title is given none', async () => {
+    const { body } = await siteIndexSearch(
+      MODELS_SEARCH_INDEX,
+      { q: 'Title', attributesToRetrieve: ['id'] },
+      signedInOnCom
+    );
+    expect(hitsOf(body)).toEqual([{ id: FACED }]);
+  });
+
   it('a .red viewer with mature content on keeps the .red title', async () => {
     const { body } = await siteIndexSearch(MODELS_SEARCH_INDEX, { q: 'Title' }, signedInOnRed);
     const [hit] = hitsOf(body);

@@ -18,7 +18,12 @@ import { isReactionAllowedForEntity } from '~/server/schema/reaction.schema';
 import { getContestsFromEntity } from '~/server/services/collection.service';
 import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
 import { createNotification } from '~/server/services/notification.service';
-import { handleLogError, throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
+import {
+  handleLogError,
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import {
   getNsfwLevelDeprecatedReverseMapping,
@@ -233,7 +238,11 @@ export const toggleReactionHandler = async ({
       );
     }
 
-    if (input.entityType === 'comment') await assertCommentActionable(input.entityId, ctx);
+    if (input.entityType === 'comment') {
+      const comment = await assertCommentActionable(input.entityId, ctx);
+      // Feature Pages comments take no reactions.
+      if (comment?.entityType === 'featurePage') throw throwNotFoundError('Comment not found');
+    }
 
     if (input.entityType === 'image') {
       // A reaction the user already holds stays removable on an image hidden from them since.

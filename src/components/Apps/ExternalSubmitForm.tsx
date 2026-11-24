@@ -447,10 +447,7 @@ function ExternalCreateForm() {
 
   return (
     <Stack gap="md" data-testid="apps-offsite-submit-form">
-      {/* An INLINE Mantine Modal rather than `@mantine/modals`' openConfirmModal:
-          this component is rendered in isolation by the browser suite, which has no
-          ModalsProvider, and a confirmation nobody can test is a confirmation nobody
-          can trust. */}
+      {/* Inline Modal, not openConfirm: the browser suite renders this form without a DialogProvider. */}
       <Modal
         opened={confirmDiscard}
         onClose={() => setConfirmDiscard(false)}

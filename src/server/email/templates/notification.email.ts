@@ -41,6 +41,9 @@ export const notificationEmail = createEmail({
       emailTheme.link
     };">unsubscribe from this one</a>.`;
     return simpleEmailWithTemplate({
+      icon: '🔔',
+      accent: 'blue',
+      eyebrow: 'Notification',
       header: escapeHtml(subjectFor(typeName)),
       preheader: escapeHtml(message),
       body: `<p style="margin: 0;">${escapeHtml(message)}</p>`,

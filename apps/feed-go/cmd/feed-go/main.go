@@ -201,6 +201,24 @@ func attachMetricsSwitch(ctx context.Context, cfg *config.Config, c *hydrate.Mis
 	return sw, nil
 }
 
+// personalHotLeadTimeout bounds one personal-hot-lead read on the request path: past it the page
+// falls back (model-getall-personal-hot-lead-unknown), which Node answers correctly anyway.
+const personalHotLeadTimeout = 250 * time.Millisecond
+
+// personalHotLeadReader reads server.PersonalHotLeadFlag per viewer from FLIPT_URL (nil without it:
+// every page that flag could lead falls back). Answers are cached per viewer (flipt.UserFlag).
+func personalHotLeadReader(cfg *config.Config) (server.UserFlagReader, error) {
+	if cfg.FliptURL == "" {
+		return nil, nil
+	}
+	fc, err := flipt.New(flipt.Config{URL: cfg.FliptURL, ClientToken: cfg.FliptClientToken, Environment: cfg.FliptEnvironment,
+		Timeout: personalHotLeadTimeout})
+	if err != nil {
+		return nil, err
+	}
+	return flipt.NewUserFlag(fc, server.PersonalHotLeadFlag), nil
+}
+
 // opensPrimary is whether run() opens the primary pool (DATABASE_URL): only with the miss computation
 // on and a written-back cache whose lookup reads the primary (hydrate.PrimaryCaches). A replica-only
 // allowlist (e.g. metrics,tag-ids) never opens it.
@@ -452,17 +470,27 @@ func run(log *slog.Logger) error {
 			},
 		},
 		Users: sources,
+		Rules: &v1models.TrainingDataRules{Redis: cache, Prefix: cfg.CacheKeyPrefix},
 	}
+	// nil (no FLIPT_URL, or a bad one): every page the flag could lead falls back.
+	personalHotLead, err := personalHotLeadReader(cfg)
+	if err != nil {
+		log.Error("flag not read; every page it could lead falls back", "flag", server.PersonalHotLeadFlag, "err", err)
+	}
+	log.Info("model.getAll personal hot lead", "flag", server.PersonalHotLeadFlag, "flag_read", personalHotLead != nil)
 	srv := &server.Server{
 		Resolver:         resolver,
 		Deps:             deps,
 		Models:           models,
 		ServeModelGetAll: cfg.ServeModelGetAll,
-		ServeInfinite:    cfg.ServeInfinite,
-		WriteDevalue:     cfg.WriteDevalue,
-		Hosts:            cfg.Hosts,
-		HostPrimaries:    cfg.HostPrimaries,
-		RegionRules:      cfg.RegionRules,
+		PersonalHotLead:  personalHotLead,
+		// FLIPT_DEPLOYMENT_ID, the targeting property Node's buildFliptContext adds.
+		FliptDeploymentID: cfg.FliptDeploymentID,
+		ServeInfinite:     cfg.ServeInfinite,
+		WriteDevalue:      cfg.WriteDevalue,
+		Hosts:             cfg.Hosts,
+		HostPrimaries:     cfg.HostPrimaries,
+		RegionRules:       cfg.RegionRules,
 		// REGION_BLOCK_CONFIG, else the app's default list (apipolicy.json).
 		RegionBlockRules: cfg.RegionBlockRules,
 		Metrics:          metrics,

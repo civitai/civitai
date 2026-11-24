@@ -3,7 +3,12 @@ import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { getLevelProgression } from '../progression/levels';
 import { grantAcolyteLevelGold } from './level-gold';
 import type { DB } from '@civitai/db-schema/kysely';
-import { REFERENCE_POOL, REFERENCE_SOURCE, servableImage } from '@civitai/db/knights';
+import {
+  readWithoutJit,
+  REFERENCE_POOL,
+  REFERENCE_SOURCE,
+  servableImage,
+} from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import { metrics } from '../metrics';
 import { grantRankBadges } from '../progression/badges';
@@ -189,20 +194,22 @@ async function nextRating(
   position: number,
   core: boolean
 ): Promise<NextItem | null> {
-  const row = await servableReferences(db, REFERENCE_POOL.trials)
-    .where('r.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
-    .where('r.source', core ? '=' : '<>', REFERENCE_SOURCE.core)
-    .where(
-      seenBy(playerId, 'referenceId', {
-        id: 'r.id',
-        imageId: 'r.imageId',
-        questionKey: 'r.questionKey',
-      })
-    )
-    .select(['r.id', 'r.imageId', 'r.answer', 'img.url as imageKey', 'img.width', 'img.height'])
-    .orderBy(shuffled(playerId, position, 'r.id'))
-    .limit(1)
-    .executeTakeFirst();
+  const row = await readWithoutJit(db, (trx) =>
+    servableReferences(trx, REFERENCE_POOL.trials)
+      .where('r.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
+      .where('r.source', core ? '=' : '<>', REFERENCE_SOURCE.core)
+      .where(
+        seenBy(playerId, 'referenceId', {
+          id: 'r.id',
+          imageId: 'r.imageId',
+          questionKey: 'r.questionKey',
+        })
+      )
+      .select(['r.id', 'r.imageId', 'r.answer', 'img.url as imageKey', 'img.width', 'img.height'])
+      .orderBy(shuffled(playerId, position, 'r.id'))
+      .limit(1)
+      .executeTakeFirst()
+  );
   if (!row) return null;
   return {
     kind: 'rating',
@@ -223,36 +230,38 @@ async function nextYesNo(
   playerId: number,
   position: number
 ): Promise<NextItem | null> {
-  const row = await db
-    .selectFrom('KnightsYesNoReference as y')
-    .innerJoin('KnightsQuestion as q', 'q.key', 'y.questionKey')
-    .innerJoin('Image as img', 'img.id', 'y.imageId')
-    .innerJoin('Post as p', 'p.id', 'img.postId')
-    .where('y.active', '=', true)
-    .where('q.active', '=', true)
-    .where('q.kind', '=', 'bool')
-    .where(servableImage)
-    .where(
-      seenBy(playerId, 'yesNoReferenceId', {
-        id: 'y.id',
-        imageId: 'y.imageId',
-        questionKey: 'y.questionKey',
-      })
-    )
-    .select([
-      'y.id',
-      'y.imageId',
-      'y.answer',
-      'y.questionKey',
-      pairPrompt.as('prompt'),
-      sql<string>`y."updatedAt"::text`.as('version'),
-      'img.url as imageKey',
-      'img.width',
-      'img.height',
-    ])
-    .orderBy(shuffled(playerId, position, 'y.id'))
-    .limit(1)
-    .executeTakeFirst();
+  const row = await readWithoutJit(db, (trx) =>
+    trx
+      .selectFrom('KnightsYesNoReference as y')
+      .innerJoin('KnightsQuestion as q', 'q.key', 'y.questionKey')
+      .innerJoin('Image as img', 'img.id', 'y.imageId')
+      .innerJoin('Post as p', 'p.id', 'img.postId')
+      .where('y.active', '=', true)
+      .where('q.active', '=', true)
+      .where('q.kind', '=', 'bool')
+      .where(servableImage)
+      .where(
+        seenBy(playerId, 'yesNoReferenceId', {
+          id: 'y.id',
+          imageId: 'y.imageId',
+          questionKey: 'y.questionKey',
+        })
+      )
+      .select([
+        'y.id',
+        'y.imageId',
+        'y.answer',
+        'y.questionKey',
+        pairPrompt.as('prompt'),
+        sql<string>`y."updatedAt"::text`.as('version'),
+        'img.url as imageKey',
+        'img.width',
+        'img.height',
+      ])
+      .orderBy(shuffled(playerId, position, 'y.id'))
+      .limit(1)
+      .executeTakeFirst()
+  );
   if (!row) return null;
   return {
     kind: 'yesno',
@@ -310,26 +319,28 @@ async function buildCheckpoint(
   playerId: number,
   progress: ApprenticeProgress
 ): Promise<Checkpoint> {
-  const rows = await answersOf(db, playerId)
-    .leftJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
-    .leftJoin('KnightsYesNoReference as y', 'y.id', 'a.yesNoReferenceId')
-    .leftJoin('Image as img', (join) => join.on(answerImageJoin))
-    .leftJoin('Post as p', 'p.id', 'img.postId')
-    .select((eb) => [
-      'a.id',
-      answerQuestionKey.as('questionKey'),
-      'a.answer',
-      'a.correctAnswer',
-      'a.correct',
-      sql<string | null>`COALESCE(r."explanation", y."explanation")`.as('explanation'),
-      'img.url as imageKey',
-      'img.width',
-      'img.height',
-      servableImage(eb).as('servable'),
-    ])
-    .orderBy('a.id', 'desc')
-    .limit(APPRENTICE.checkpointEvery)
-    .execute();
+  const rows = await readWithoutJit(db, (trx) =>
+    answersOf(trx, playerId)
+      .leftJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
+      .leftJoin('KnightsYesNoReference as y', 'y.id', 'a.yesNoReferenceId')
+      .leftJoin('Image as img', (join) => join.on(answerImageJoin))
+      .leftJoin('Post as p', 'p.id', 'img.postId')
+      .select((eb) => [
+        'a.id',
+        answerQuestionKey.as('questionKey'),
+        'a.answer',
+        'a.correctAnswer',
+        'a.correct',
+        sql<string | null>`COALESCE(r."explanation", y."explanation")`.as('explanation'),
+        'img.url as imageKey',
+        'img.width',
+        'img.height',
+        servableImage(eb).as('servable'),
+      ])
+      .orderBy('a.id', 'desc')
+      .limit(APPRENTICE.checkpointEvery)
+      .execute()
+  );
   const { options } = await ratingOptions(db);
   const missed = rows
     .filter((row) => !row.correct)

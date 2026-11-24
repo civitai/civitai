@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
-import { dispatchArgs } from '../ci/unit-batched.mjs';
+import { BATCH_WORKFLOWS, SUITES, dispatchArgs } from '../ci/unit-batched.mjs';
 
 // Guards that a COMMIT ON `main` gets a CI verdict.
 //
@@ -33,7 +33,8 @@ import { dispatchArgs } from '../ci/unit-batched.mjs';
 //
 // The unit suite is verified in batches, not per push (lint.yml header). The guard below asserts
 // that path (a schedule within MAX_BATCH_HOURS, a dispatch that runs the suite, a job that posts
-// commit statuses) instead of a push-reachable job.
+// commit statuses) instead of a push-reachable job. The component + geometry suites and the app
+// suites are batched in the same run, and the same chain is asserted for them.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.resolve(HERE, '../../.github/workflows');
@@ -154,14 +155,12 @@ describe('CI coverage for commits on main', () => {
   // different, narrower thing and would satisfy a looser match while the
   // whole-repo typecheck was gone.
   //
-  // The app suites and the app typecheck are here because pull requests reach them through a
-  // `paths:` filter (apps.yml): a PR that touches nothing they read never runs them, so the push
-  // runs are the backstop for a filter entry that is missing (see the next test).
+  // The app typecheck is here because pull requests reach it through a `paths:` filter
+  // (apps.yml): a PR that touches nothing it reads never runs it, so the push runs are the
+  // backstop for a filter entry that is missing (see the next test). The app SUITES moved to the
+  // batch, like the unit suite; their chain is asserted under "the batched suites" below.
   it.each([
     ['the whole-repo typecheck', 'pnpm run typecheck'],
-    // apps.yml runs vitest itself with the `Scope app suites` step's selection, which is
-    // always `app:*` on a push (scripts/ci/app-suite-scope.mjs).
-    ['the app suites', 'vitest run $VITEST_PROJECT_ARGS'],
     ['the app typecheck', 'scripts/ci/typecheck-apps.mjs'],
   ])('runs %s on a push to main', (_label, needle) => {
     const hit = pushReachable()
@@ -247,6 +246,59 @@ describe('CI coverage for commits on main', () => {
       expect(runners).not.toHaveLength(0);
     });
 
+    // The other two batched suites, in the same batch run: each link of the same chain.
+    describe.each([
+      [
+        'component + geometry',
+        'lint.yml',
+        'component',
+        'pnpm exec vitest run --project component --shard',
+        "(inputs.only == 'unit' && github.actor == 'github-actions[bot]')",
+      ],
+      ['app', 'apps.yml', 'apps', 'vitest run $VITEST_PROJECT_ARGS', null],
+    ])('the %s suites, batched like unit', (_label, file, suite, needle, only) => {
+      const doc = workflows.find((w) => w.file === file)?.doc;
+      const ctx = SUITES[suite as keyof typeof SUITES].context;
+
+      // The component suites ride the gate's own dispatch (lint.yml `only: unit`, the next
+      // test checks a job runs them on it); apps.yml is dispatched by that run's `batch-suites`
+      // job from BATCH_WORKFLOWS, with its own verdict context.
+      it('the batch dispatches the workflow that runs them', () => {
+        if (only) expect(dispatchArgs('main', 'o/r')).toContain('only=unit');
+        else expect(BATCH_WORKFLOWS).toContainEqual({ workflow: file, ownContext: ctx });
+      });
+
+      it('a job reachable on that dispatch runs the suite', () => {
+        expect((doc?.on as Record<string, unknown>)?.workflow_dispatch).not.toBeUndefined();
+        const runners = Object.values(doc?.jobs ?? {}).filter(
+          (j) =>
+            runScripts(j).includes(needle) &&
+            !(j.if ?? '').includes("github.event_name == 'pull_request' &&") &&
+            (only === null || (j.if ?? '').includes(only))
+        );
+        expect(runners).not.toHaveLength(0);
+      });
+
+      it('a job posts its verdict as a commit status, and `error` when it crashes', () => {
+        const posters = Object.values(doc?.jobs ?? {}).filter(
+          (j) =>
+            runScripts(j).includes('unit-batched.mjs verify') &&
+            runScripts(j).includes(` ${suite}`) &&
+            (j.permissions as Record<string, string> | undefined)?.statuses === 'write' &&
+            !unconditionallyTrue(j['continue-on-error'])
+        );
+        expect(posters).toHaveLength(1);
+        const crash = (posters[0].steps ?? []).filter(
+          (st) =>
+            String(st.if ?? '').includes('failure()') &&
+            String(st.if ?? '').includes('cancelled()') &&
+            String(st.run ?? '').includes('state=error') &&
+            String(st.run ?? '').includes(`context=${ctx}`)
+        );
+        expect(crash).toHaveLength(1);
+      });
+    });
+
     it('a job after that dispatch posts the verdict as a commit status', () => {
       const lint = workflows.find((w) => w.file === 'lint.yml')?.doc;
       const posters = Object.values(lint?.jobs ?? {}).filter(
@@ -275,33 +327,31 @@ describe('CI coverage for commits on main', () => {
   // red on a break a missing entry let through; the red lands on that later commit. A push
   // filter NARROWER than the PR's, or one on a workflow whose PRs are unfiltered, would leave a
   // change no run ever reaches, so either fails here.
-  it.each([
-    // apps.yml runs vitest itself with the `Scope app suites` step's selection, which is
-    // always `app:*` on a push (scripts/ci/app-suite-scope.mjs).
-    ['the app suites', 'vitest run $VITEST_PROJECT_ARGS'],
-    ['the app typecheck', 'scripts/ci/typecheck-apps.mjs'],
-  ])('runs %s on a push to main behind no filter but the PR one', (_label, needle) => {
-    const hit = pushReachable()
-      .filter((j) => j.script.includes(needle))
-      .filter((j) => {
-        const on = j.doc.on as Record<string, unknown> | undefined;
-        const push = on?.push as Record<string, unknown> | null | undefined;
-        const pr = on?.pull_request as Record<string, unknown> | null | undefined;
-        if (!push || 'paths-ignore' in push) return !push;
-        if (!('paths' in push)) return true;
-        return (
-          Array.isArray(push.paths) &&
-          !!pr &&
-          !('paths-ignore' in pr) &&
-          JSON.stringify(push.paths) === JSON.stringify(pr.paths)
-        );
-      })
-      .map((j) => j.where);
-    expect(
-      hit,
-      `\`${needle}\` runs on a push to main only behind a filter the pull_request trigger does not share. Give push: the PR's exact paths list, or none.`
-    ).not.toHaveLength(0);
-  });
+  it.each([['the app typecheck', 'scripts/ci/typecheck-apps.mjs']])(
+    'runs %s on a push to main behind no filter but the PR one',
+    (_label, needle) => {
+      const hit = pushReachable()
+        .filter((j) => j.script.includes(needle))
+        .filter((j) => {
+          const on = j.doc.on as Record<string, unknown> | undefined;
+          const push = on?.push as Record<string, unknown> | null | undefined;
+          const pr = on?.pull_request as Record<string, unknown> | null | undefined;
+          if (!push || 'paths-ignore' in push) return !push;
+          if (!('paths' in push)) return true;
+          return (
+            Array.isArray(push.paths) &&
+            !!pr &&
+            !('paths-ignore' in pr) &&
+            JSON.stringify(push.paths) === JSON.stringify(pr.paths)
+          );
+        })
+        .map((j) => j.where);
+      expect(
+        hit,
+        `\`${needle}\` runs on a push to main only behind a filter the pull_request trigger does not share. Give push: the PR's exact paths list, or none.`
+      ).not.toHaveLength(0);
+    }
+  );
 
   // A green that has to be disbelieved is worse than no run. `continue-on-error`
   // makes the RUN report `success` while the step underneath is `failure`, which

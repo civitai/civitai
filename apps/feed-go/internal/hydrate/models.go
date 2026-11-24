@@ -412,7 +412,8 @@ func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int]
 		}
 		// The appendFn drops the images the minor content rule restricts before it reads their tags,
 		// on every read, for every viewer (an entry cached before the lookup left them out holds them).
-		list = WithoutMinorMatureImages(list, ObjectField)
+		// The same read drops the images at no selectable level.
+		list = WithSelectableLevel(WithoutMinorMatureImages(list, ObjectField), ObjectField)
 		for _, m := range list {
 			if iid, ok := Int(ObjectField(m, "id")); ok {
 				imageIDs = append(imageIDs, iid)

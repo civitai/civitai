@@ -971,3 +971,69 @@ describe('checkStorageMigrations — default values', () => {
     expect(() => assertStorageMigrationsCover(check)).not.toThrow();
   });
 });
+
+// docs/app-storage-generic-core.md, "Viewer-keyed documents": `keyedBy` is immutable once approved.
+describe('checkStorageMigrations — keyedBy is immutable against every approved version', () => {
+  const votes = (keyedBy?: string) => ({
+    storage: {
+      collections: {
+        votes: { visibility: 'shared', write: 'own', ...(keyedBy ? { keyedBy } : {}) },
+        notes: { visibility: 'private' },
+      },
+    },
+  });
+  const only = (decl: Record<string, unknown>) => ({ storage: { collections: { other: decl } } });
+  const refusal = (was: string) =>
+    `storage.collections.votes: an approved version declared it with ${was}, and keyedBy cannot be added, removed or changed on a collection once approved (it changes what every stored key means) — declare a new collection instead`;
+
+  it('unchanged keyedBy, and a collection no approved version declared, are accepted', () => {
+    expect(checkStorageMigrations(votes('parent+viewer'), votes('parent+viewer')).errors).toEqual(
+      []
+    );
+    expect(checkStorageMigrations(only({ visibility: 'private' }), votes('viewer')).errors).toEqual(
+      []
+    );
+  });
+
+  it('🔴 adding keyedBy to a collection the baseline declares without it is refused', () => {
+    const check = checkStorageMigrations(votes(), votes('parent+viewer'));
+    expect(check.errors).toEqual([refusal('no keyedBy')]);
+    expect(() => assertStorageMigrationsCover(check)).toThrow(StorageMigrationRefusal);
+  });
+
+  it('🔴 removing or changing it is refused', () => {
+    expect(checkStorageMigrations(votes('viewer'), votes()).errors).toEqual([
+      refusal('keyedBy "viewer"'),
+    ]);
+    expect(checkStorageMigrations(votes('viewer'), votes('parent+viewer')).errors).toEqual([
+      refusal('keyedBy "viewer"'),
+    ]);
+  });
+
+  it('🔴 a collection dropped and declared again is checked against the version that declared it, however old', () => {
+    // The baseline and the 50 newest approvals never declared `votes`; the 51st did, without it.
+    const recent = Array.from({ length: 50 }, () => only({ visibility: 'private' }));
+    const everApproved = [...recent, votes()];
+    const check = checkStorageMigrations(
+      only({ visibility: 'private' }),
+      votes('viewer'),
+      recent,
+      everApproved
+    );
+    expect(check.errors).toEqual([refusal('no keyedBy')]);
+    // Positive control: the same history capped at 50 does not see it.
+    expect(
+      checkStorageMigrations(only({ visibility: 'private' }), votes('viewer'), recent, recent)
+        .errors
+    ).toEqual([]);
+  });
+
+  it('🔴 an approved manifest that no longer parses still counts: its raw declaration is read', () => {
+    const unparseable = {
+      storage: { collections: { votes: { visibility: 'shared', write: 'own', bogus: 1 } } },
+    };
+    expect(
+      checkStorageMigrations(null, votes('viewer'), [unparseable], [unparseable]).errors
+    ).toEqual([refusal('no keyedBy')]);
+  });
+});

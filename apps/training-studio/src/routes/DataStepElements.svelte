@@ -83,14 +83,14 @@
     type TagFilter,
   } from './trainingFlow';
   import { groupTags } from './tagReplace';
-  import LabelEditorModal from './LabelEditorModal.svelte';
+  import LabelEditorModal from './LabelEditorModalElements.svelte';
   import TagEditor from './TagEditor.svelte';
-  import GenerationPickerModal from './GenerationPickerModal.svelte';
+  import GenerationPickerModal from './GenerationPickerModalElements.svelte';
   import { fileDrop, isZip, pickedFiles } from './fileDrop';
   import { inFlight, uploadedFields, uploadTile } from './tileUpload';
   import { datasetEpoch, planRemoval } from './datasetRemoval';
-  import ReuseDatasetModal from './ReuseDatasetModal.svelte';
-  import ManageTagsModal from './ManageTagsModal.svelte';
+  import ReuseDatasetModal from './ReuseDatasetModalElements.svelte';
+  import ManageTagsModal from './ManageTagsModalElements.svelte';
   import RepeatsStepper from './RepeatsStepper.svelte';
   import type { GenerationItem } from '$lib/data/trainingRows';
 
@@ -1104,8 +1104,8 @@
     {/if}
   </div>
 
-  <div class="flex flex-wrap gap-2.5">
-    <civitai-button variant="outline" onclick={() => fileInput.click()}>
+  <div class="flex flex-wrap items-center gap-2.5">
+    <civitai-button onclick={() => fileInput.click()}>
       <span slot="left"><IconUpload size={15} stroke={2} /></span>Upload files
     </civitai-button>
     <civitai-button variant="outline" onclick={() => (genPickerOpen = true)}>
@@ -1114,16 +1114,17 @@
     <civitai-button variant="outline" onclick={() => zipInput.click()} disabled={importing}>
       <span slot="left"><IconArchive size={15} stroke={2} /></span>{importing ? 'Importing…' : 'Import .zip'}
     </civitai-button>
+    <civitai-button variant="outline" onclick={() => (reuseOpen = true)}>
+      <span slot="left"><IconRepeat size={15} stroke={2} /></span>Reuse a dataset
+    </civitai-button>
     <civitai-button
-      variant="outline"
+      class="ml-auto"
+      variant="subtle"
       onclick={exportZip}
       disabled={exporting || images.every((i) => i.status === 'blocked')}
       title="Download your {media} files with their {noun} as same-named .txt files"
     >
       <span slot="left"><IconDownload size={15} stroke={2} /></span>{exporting ? 'Zipping…' : 'Download .zip'}
-    </civitai-button>
-    <civitai-button variant="outline" onclick={() => (reuseOpen = true)}>
-      <span slot="left"><IconRepeat size={15} stroke={2} /></span>Reuse a dataset
     </civitai-button>
   </div>
 

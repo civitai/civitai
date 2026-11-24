@@ -46,7 +46,9 @@ function makePermissive(overrides: Record<string, unknown> = {}): any {
       return Promise.resolve([]);
     },
   };
-  return new Proxy(function () {}, handler);
+  return new Proxy(function () {
+    // Never runs: the apply trap answers every call.
+  }, handler);
 }
 
 // dbRead/dbWrite come from the canonical mock (src/__tests__/setup.ts). It vivifies on property
@@ -458,6 +460,41 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
     expect(capturedExecUnsafe.some((sql) => sql.includes('update_nsfw_levels_new'))).toBe(true);
   });
 
+  it('clears the appeal review on the approved image, which a scan would keep', async () => {
+    const pg = new PGlite();
+    await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Rescan', 'Error', 'Blocked');
+      CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp);
+      CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, "postId" int, "pHash" bigint,
+      "nsfwLevel" int NOT NULL, "needsReview" text, "blockedFor" text, metadata jsonb,
+      ingestion "ImageIngestionStatus");
+      INSERT INTO "User" VALUES (1, NULL);
+      INSERT INTO "Image" VALUES (128489949, 1, NULL, 999, 32, 'appeal', 'moderated', '{}'::jsonb, 'Blocked');`);
+    const raw = pgliteRaw(pg);
+    const capture = dbWrite.$queryRaw.getMockImplementation();
+    dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      /RETURNING "postId", "pHash"/.test(strings.join(''))
+        ? raw.queryRaw(strings, ...values)
+        : capture!(strings, ...values)) as never);
+
+    try {
+      await resolveEntityAppeal({
+        ids: [128489949],
+        entityType: ENTITY_IMAGE,
+        status: APPEAL_APPROVED,
+        userId: 2023372,
+      } as any);
+      const { rows } = await pg.query<{ needsReview: string | null; ingestion: string }>(
+        `SELECT "needsReview", ingestion FROM "Image"`
+      );
+      // Control: the approval's write landed, so the review below is its doing.
+      expect(rows[0].ingestion).toBe('Scanned');
+      expect(rows[0].needsReview).toBeNull();
+    } finally {
+      if (capture) dbWrite.$queryRaw.mockImplementation(capture);
+      await pg.close();
+    }
+  });
+
   it('removes the approved image pHash from the blocked-hash set', async () => {
     await resolveEntityAppeal({
       ids: [128489949],
@@ -679,10 +716,12 @@ describe('handleUnblockImages — minor queue Accept truth table', () => {
         moderatorId: undefined,
         removeMinorFlag: false,
       } as any);
-      const { rows } = await pg.query<{ nsfwLevel: number; minor: boolean }>(
-        `SELECT "nsfwLevel", minor FROM "Image" ORDER BY id`
+      const { rows } = await pg.query<{ nsfwLevel: number; minor: boolean; needsReview: string }>(
+        `SELECT "nsfwLevel", minor, "needsReview" FROM "Image" ORDER BY id`
       );
       expect(rows.map((row) => [row.nsfwLevel, row.minor])).toEqual(levels);
+      // A moderator's decision clears the review a scan could only add to.
+      expect(rows.map((row) => row.needsReview)).toEqual(levels.map(() => null));
     } finally {
       if (capture) dbWrite.$queryRaw.mockImplementation(capture);
       await pg.close();
@@ -700,6 +739,7 @@ describe('handleUnblockImages while the owner is deleted', () => {
       CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
       CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
       CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, "postId" int, "nsfwLevel" int NOT NULL,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       minor boolean NOT NULL DEFAULT false, "needsReview" text, "blockedFor" text, metadata jsonb,
       "scannedAt" timestamp, ingestion "ImageIngestionStatus", "scanJobs" jsonb);
       CREATE TABLE "TagsOnImageDetails" ("imageId" int, disabled boolean);
@@ -710,7 +750,9 @@ describe('handleUnblockImages while the owner is deleted', () => {
       INSERT INTO "JobQueue" VALUES (1, 'Image', 'BlockedImageDelete', '2026-01-01');
       INSERT INTO "User" VALUES (1, now()), (2, NULL);
       INSERT INTO "Image" (id, "userId", "nsfwLevel", "blockedFor", metadata, ingestion) VALUES
-        (1, 1, 4, 'moderated', '{"ruleId": 3, "keep": 1}', 'Blocked'),
+        -- The grace block's recorded rating, a moderator's lock: it outlives the lift, so a restore
+        -- puts the lock back.
+        (1, 1, 4, 'moderated', '{"ruleId": 3, "keep": 1, "accountDeletionPriorNsfwLevel": 4, "accountDeletionPriorNsfwLevelLocked": true}', 'Blocked'),
         (2, 2, 32, 'moderated', '{"ruleId": 3, "keep": 1}', 'Blocked');`);
     const raw = pgliteRaw(pg);
     const capture = dbWrite.$queryRaw.getMockImplementation();
@@ -760,6 +802,8 @@ describe('handleUnblockImages while the owner is deleted', () => {
             accountDeletionPriorIngestion: 'Scanned',
             accountDeletionPriorBlockedFor: null,
             accountDeletionPriorNeedsReview: null,
+            accountDeletionPriorNsfwLevel: 4,
+            accountDeletionPriorNsfwLevelLocked: true,
           },
         },
         { id: 2, ingestion: 'Scanned', blockedFor: null, metadata: { keep: 1 } },

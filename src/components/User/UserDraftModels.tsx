@@ -11,7 +11,6 @@ import {
   Table,
   Text,
 } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
 import { IconAlertCircle, IconExternalLink, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -25,6 +24,7 @@ import { trpc } from '~/utils/trpc';
 import styles from './UserModelsTable.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 export function UserDraftModels() {
   const queryUtils = trpc.useUtils();
@@ -47,11 +47,10 @@ export function UserDraftModels() {
     },
   });
   const handleDeleteModel = (model: (typeof items)[number]) => {
-    openConfirmModal({
+    openConfirm({
       title: 'Delete model',
-      children:
+      message:
         'Are you sure you want to delete this model? This action is destructive and you will have to contact support to restore your data.',
-      centered: true,
       labels: { confirm: 'Delete Model', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       onConfirm: () => {
@@ -96,8 +95,7 @@ export function UserDraftModels() {
                 const hasPosts = model.modelVersions.some((version) => version._count.posts > 0);
                 const pendingVersions = model.modelVersions.filter(
                   (version) =>
-                    version.status === ModelStatus.Scheduled ||
-                    version.status === ModelStatus.Draft
+                    version.status === ModelStatus.Scheduled || version.status === ModelStatus.Draft
                 );
                 // The whole-model delete below destroys every version, so hide it
                 // whenever any version is already Published — version status is

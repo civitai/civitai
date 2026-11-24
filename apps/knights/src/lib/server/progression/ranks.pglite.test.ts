@@ -40,6 +40,15 @@ async function seedDays(userId: number, days: number, votes = 1) {
   );
 }
 
+/** `days` distinct UTC days played in the original game, from `from` on. */
+async function seedLegacyDays(userId: number, from: string, days: number) {
+  await pg.query(
+    `INSERT INTO "KnightsLegacyPlayerDay" ("playerId","day")
+     SELECT $1, $2::date + g FROM generate_series(0, $3::int - 1) g`,
+    [userId, from, days]
+  );
+}
+
 async function player(
   userId: number,
   rank: string,
@@ -96,7 +105,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","KnightsPlayerDay","Image","Post" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","KnightsPlayerDay","KnightsLegacyPlayerDay","Image","Post" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -161,6 +170,28 @@ describe('rank-up when votes settle', () => {
     await pg.query(
       `INSERT INTO "KnightsPlayerDay" ("playerId","day","votes") VALUES (1,'2026-11-01',0)`
     );
+    await settleCorrect(1);
+    expect(await rankOf(1)).toBe('Templar');
+  });
+
+  it('counts days played in the original game toward Paladin', async () => {
+    await player(1, 'Templar', { level: 90, correct: 100, days: 30 });
+    await seedLegacyDays(1, '2025-06-01', 29);
+    await settleCorrect(1);
+    expect(await rankOf(1)).toBe('Paladin');
+  });
+
+  it('counts a day played in both games once', async () => {
+    await player(1, 'Templar', { level: 90, correct: 100, days: 58 });
+    await seedLegacyDays(1, '2026-01-01', 58);
+    await settleCorrect(1);
+    expect(await rankOf(1)).toBe('Templar');
+  });
+
+  it('does not count original-game days from before the career restarted', async () => {
+    await player(1, 'Templar', { level: 90, correct: 100, days: 30 });
+    await seedLegacyDays(1, '2025-06-01', 29);
+    await pg.query(`UPDATE "NewOrderPlayer" SET "startAt"='2025-12-01' WHERE "userId"=1`);
     await settleCorrect(1);
     expect(await rankOf(1)).toBe('Templar');
   });

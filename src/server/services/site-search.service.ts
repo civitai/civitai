@@ -194,12 +194,14 @@ export function shapeModelHit(
 ) {
   const { sfwName, ...rest } = hit;
   const useFace = viewer.showSfwFace && typeof sfwName === 'string' && sfwName.length > 0;
-  if (useFace) rest.name = sfwName;
+  // Only where the caller asked for the title: `sfwName` is fetched for every models query, so
+  // its presence says nothing about whether `name` was wanted.
+  if (useFace && 'name' in rest) rest.name = sfwName;
   if ('images' in rest) rest.images = capImages(rest.images, viewer.browsingLevelCap);
 
   if (rest._formatted) {
     const { sfwName: formattedSfwName, ...formatted } = rest._formatted;
-    if (useFace) formatted.name = formattedSfwName ?? sfwName;
+    if (useFace && 'name' in formatted) formatted.name = formattedSfwName ?? sfwName;
     if ('images' in formatted && viewer.browsingLevelCap !== undefined)
       formatted.images = keepCopiesOf(formatted.images, rest.images);
     rest._formatted = formatted;
@@ -386,15 +388,30 @@ function assertSiteSearchIndex(indexUid: string) {
     );
 }
 
-function withViewer<T extends { filter?: Filter }>(
+/**
+ * The attributes a hit is fetched with. A model hit can only be shown under its civitai.com face if
+ * it arrives with `sfwName`, and the caller chooses what a hit carries, so a models query that lists
+ * its attributes always gets `sfwName` added. `shapeModelHit` removes it again, so the caller's
+ * response holds exactly the attributes it listed.
+ */
+function attributesToFetch(indexUid: string, attributes: string[] | undefined) {
+  if (indexUid !== MODELS_SEARCH_INDEX || attributes === undefined) return attributes;
+  if (attributes.includes('sfwName') || attributes.includes('*')) return attributes;
+  return [...attributes, 'sfwName'];
+}
+
+function withViewer<T extends { filter?: Filter; attributesToRetrieve?: string[] }>(
   indexUid: string,
   params: T,
   viewer: SiteSearchViewer
 ): T {
-  return {
+  const shaped: T = {
     ...params,
     filter: withViewerClauses(params.filter, viewerSearchClauses(indexUid, viewer)),
   };
+  if (params.attributesToRetrieve !== undefined)
+    shaped.attributesToRetrieve = attributesToFetch(indexUid, params.attributesToRetrieve);
+  return shaped;
 }
 
 const searchUnavailable = () =>

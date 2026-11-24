@@ -161,6 +161,7 @@ const { EVIDENCE_VERIFIED_KEY, CSAM_HOLD_POST_UNPUBLISH_REASON } = await import(
 const { MODERATOR_TAKEDOWN_ACTIVITIES } = await import(
   '~/server/common/moderator-takedown-activities'
 );
+const { POST_PENDING_DELETE_REASON } = await import('@civitai/db-queries/content-deletion');
 
 const sql = (strings: TemplateStringsArray, ...values: unknown[]) => {
   const q = Prisma.sql(strings, ...(values as never[]));
@@ -214,6 +215,8 @@ beforeAll(async () => {
       "blockedFor" text,
       "needsReview" text,
       minor boolean NOT NULL DEFAULT false,
+      "nsfwLevel" int NOT NULL DEFAULT 0,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       name text,
       type text NOT NULL DEFAULT 'image'
     );
@@ -568,6 +571,26 @@ describe('image takedowns', () => {
     expect(calls.map(kind)).toEqual(['deny']);
   });
 
+  it('access case 1', async () => {
+    await image(1);
+    await scannerBlock(1);
+    await syncCdnAccess();
+    await sql`UPDATE "Image" SET ingestion = 'Error' WHERE id = 1`;
+    expect((await queued()).n).toBe(1);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(await stateOf(u(1))).toBe('Denied');
+  });
+
+  it('access case 2', async () => {
+    await sql`INSERT INTO "Image" (id, "userId", url, ingestion, "blockedFor")
+              VALUES (1, ${OWNER}, ${u(1)}, 'Error', 'moderated')`;
+    await sql`SELECT queue_cdn_access_sync(1, 'Image', NULL)`;
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(await stateOf(u(1))).toBe('Denied');
+  });
+
   it('an AiNotVerified block makes no call', async () => {
     await image(1);
     await sql`UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'AiNotVerified' WHERE id = 1`;
@@ -626,6 +649,40 @@ describe('post takedowns', () => {
     expect(callsFor(u(1))).toEqual(['retract', 'allow']);
     expect(callsFor(u(2))).toEqual(['retract', 'allow']);
   });
+
+  // The stamp content-deletion's kept-post delete writes (-1: a system actor such as the account
+  // deletion drain). Kept for an open case, nothing is decided yet: deny, reversible, never retract.
+  const pendingDeleteStamp = (postId: number, by: number) =>
+    sql`UPDATE "Post"
+      SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+            'unpublishedAt', now()::text, 'unpublishedBy', ${by}::int,
+            'unpublishedReason', ${POST_PENDING_DELETE_REASON}::text, 'prevPublishedAt', "publishedAt"),
+          "publishedAt" = NULL
+      WHERE id = ${postId}`;
+
+  it.each([
+    ['a system', -1],
+    ["a moderator's own", MOD],
+    ["the owner's", OWNER],
+  ])('%s delete a case keeps denies its post without retracting', async (_, by) => {
+    await pendingDeleteStamp(5, by);
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(callsFor(u(2))).toEqual(['deny']);
+  });
+
+  it.each([
+    ['a system', -1],
+    ["the owner's", OWNER],
+  ])(
+    "a kept post's stamp from %s delete does not soften a moderator's violation takedown of its version",
+    async (_, by) => {
+      await sql`UPDATE "ModelVersion" SET status = 'UnpublishedViolation' WHERE id = 1`;
+      await pendingDeleteStamp(5, by);
+      await syncCdnAccess();
+      expect(callsFor(u(1))).toEqual(['retract']);
+    }
+  );
 
   it('a moderator post unpublish retracts', async () => {
     await moderatorPostUnpublish(5);

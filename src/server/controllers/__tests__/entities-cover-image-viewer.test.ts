@@ -74,6 +74,39 @@ describe('getEntitiesCoverImageHandler', () => {
     });
     expect(covers).toHaveBeenLastCalledWith(expect.objectContaining({ viewer }));
   });
+
+  it.each([
+    ['a moderator with the grant on a session', moderator, { csamReports: true }, {}, true],
+    [
+      'a moderator with the grant on a full-access key',
+      moderator,
+      { csamReports: true },
+      fullKey,
+      true,
+    ],
+    [
+      'a moderator with the grant on a scoped key',
+      moderator,
+      { csamReports: true },
+      scopedKey,
+      false,
+    ],
+    [
+      'a moderator with the grant on an app token',
+      moderator,
+      { csamReports: true },
+      oauthToken,
+      false,
+    ],
+    ['a moderator without the grant', moderator, { csamReports: false }, {}, false],
+    ['a non-moderator with the grant', { id: 6 }, { csamReports: true }, {}, false],
+  ])('decides report-listed covers for %s', async (_label, user, features, credential, sees) => {
+    await getEntitiesCoverImageHandler({
+      input: { entities: [{ entityType: 'Bounty', entityId: 1 }] },
+      ctx: { user, features, ...credential } as never,
+    });
+    expect(covers).toHaveBeenLastCalledWith(expect.objectContaining({ seesReportListed: sees }));
+  });
 });
 
 describe('getEntitiesCoverImageHandler on a capped site', () => {

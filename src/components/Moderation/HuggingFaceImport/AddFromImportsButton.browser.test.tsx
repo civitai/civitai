@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as FilesProviderModule from '~/components/Resource/FilesProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { renderWithProviders } from '../../../../test/component-setup';
 
 const { mockOpen, mockAdoptFiles, user } = vi.hoisted(() => ({
@@ -9,10 +10,6 @@ const { mockOpen, mockAdoptFiles, user } = vi.hoisted(() => ({
   user: { current: { isModerator: true } as { isModerator: boolean } | null },
 }));
 
-// Pins the dialog-store route; the reason is on AddFromImportsButton.
-vi.mock('~/components/Dialog/triggers/add-from-hugging-face-imports', () => ({
-  openAddFromImportsModal: mockOpen,
-}));
 vi.mock('~/components/Resource/FilesProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FilesProviderModule>()),
   useFilesContext: () => ({ adoptFiles: mockAdoptFiles, modelType: 'Checkpoint' }),
@@ -20,6 +17,9 @@ vi.mock('~/components/Resource/FilesProvider', async (importOriginal) => ({
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => user.current }));
 
 import { AddFromImportsButton } from '~/components/Moderation/HuggingFaceImport/AddFromImportsButton';
+
+// Pins the dialog-store route; the reason is on AddFromImportsButton.
+vi.spyOn(dialogStore, 'trigger').mockImplementation(({ props }) => mockOpen(props));
 
 describe('AddFromImportsButton', () => {
   test('opens the picker through the dialog store, with the provider handles', async () => {

@@ -1,7 +1,7 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Stack, Switch, Text } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { IconUserCancel, IconUserCheck } from '@tabler/icons-react';
 import { useState } from 'react';
 import type { MouseEventHandler } from 'react';
@@ -45,9 +45,9 @@ export function BlockUserButton({
         });
     } else {
       const options = { hideComments: false };
-      openConfirmModal({
+      openConfirm({
         title: 'Block User',
-        children: (
+        message: (
           <BlockUserModalBody onHideCommentsChange={(value) => (options.hideComments = value)} />
         ),
         labels: { confirm: 'Yes, block the user', cancel: 'Cancel' },

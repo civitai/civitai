@@ -33,8 +33,9 @@ vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOri
  *      scalars — and NEVER a create.
  *   3. `category` comes from `AppBlock.category` (mod curation survives), not
  *      straight from the manifest.
- *   4. Curated / mod-owned columns (assets, featured, contentRating, status,
- *      slug) are NOT in the update payload.
+ *   4. Curated / mod-owned columns (assets, featured, status, slug) are NOT in
+ *      the update payload. `contentRating` is, floored at the media, when the
+ *      primary read finds the listing: listing-media-split.approve-request.test.ts.
  *   5. The re-sync is BEST-EFFORT: a failing write is swallowed and the
  *      approve/deploy still succeeds.
  *
@@ -171,6 +172,11 @@ vi.mock('~/server/services/blocks/app-listing-assets.service', () => ({
   assertListingAssetsScanCleanInTx: vi.fn(async () => undefined),
   resolveListingRatingFloorInTx: vi.fn(
     async (_db: unknown, _id: string, declared: string | null) => declared
+  ),
+  // The version re-rate, as identity on the new declaration (the real rule is pinned in
+  // listing-media-split.approve-request.test.ts).
+  resolveVersionListingRating: vi.fn(
+    async (_db: unknown, a: { nextDeclared: string | null }) => a.nextDeclared
   ),
 }));
 
@@ -365,7 +371,6 @@ describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-gove
       'coverId',
       'featured',
       'featuredOrder',
-      'contentRating',
       'status',
       'slug',
       'externalUrl',
@@ -1087,5 +1092,118 @@ describe('approveRequest — a remix app row', () => {
         data: expect.objectContaining({ manifest: expect.anything() }),
       })
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// App Storage `keyedBy` immutability at APPROVE (docs/app-storage-generic-core.md, "Viewer-keyed
+// documents"): a push-originated request never passes `submitVersion`, so approve refuses it too,
+// against EVERY earlier approval. The only approval that declared `votes` is the 51st newest,
+// outside the capped schema-diff history, so only `baseline.approved` at the approve call site
+// can see it. The storage-migration modules are real here.
+// ---------------------------------------------------------------------------
+
+const VK_SLUG = 'vote-board-4c2a';
+const VK_NEW_MANIFEST = {
+  name: 'Vote Board',
+  scopes: ['apps:storage'],
+  storage: { collections: { votes: { visibility: 'shared', write: 'none', counters: ['n'] } } },
+};
+const VK_ENFORCED = {
+  name: 'Vote Board',
+  scopes: ['apps:storage'],
+  storage: { collections: { notes: { visibility: 'private' } } },
+};
+const VK_OLD_VOTES = {
+  name: 'Vote Board',
+  storage: { collections: { votes: { visibility: 'shared', write: 'own', keyedBy: 'viewer' } } },
+};
+
+function vkPendingRow() {
+  return {
+    id: 'req_vk',
+    status: 'pending',
+    slug: VK_SLUG,
+    version: '3.0.0',
+    manifest: VK_NEW_MANIFEST,
+    bundleKey: 'bundles/vote-board.zip',
+    forgejoCommitSha: '',
+    submittedByUserId: 4243,
+    appBlockId: 'apb_vk',
+    deployState: null,
+  };
+}
+
+const vkApprovals = (withOld: boolean) => [
+  ...Array.from({ length: 50 }, (_, i) => ({ id: `pubreq_r${i}`, manifest: VK_ENFORCED })),
+  ...(withOld ? [{ id: 'pubreq_old', manifest: VK_OLD_VOTES }] : []),
+];
+
+describe('approveRequest — keyedBy immutability against every approval', () => {
+  let savedZip = holder.zipBytes;
+  afterEach(() => {
+    holder.zipBytes = savedZip;
+  });
+  beforeEach(async () => {
+    savedZip = holder.zipBytes;
+    const zip = new JSZip();
+    zip.file('block.manifest.json', JSON.stringify(VK_NEW_MANIFEST));
+    zip.file('index.html', '<html></html>');
+    holder.zipBytes = await zip.generateAsync({ type: 'uint8array' });
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValue(vkPendingRow());
+    db.read.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_vk',
+      appId: 'app_vk',
+      repoUrl: 'https://forgejo.example/vote-board',
+      trustTier: 'unverified',
+      app: { allowedScopes: 0n, allowedOrigins: ['https://vote-board.apps.example'] },
+    });
+    // What the store enforces (the baseline): no `votes`.
+    db.write.appBlock.findFirst.mockResolvedValue({ id: 'apb_vk', manifest: VK_ENFORCED });
+    db.write.appBlock.findUnique.mockResolvedValue({
+      id: 'apb_vk',
+      blockId: VK_SLUG,
+      manifest: VK_NEW_MANIFEST,
+      contentRating: 'pg',
+      category: 'utility',
+      featured: false,
+      featuredOrder: null,
+      externalUrl: null,
+      app: { userId: 42 },
+    });
+    db.write.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0n });
+    s3.send.mockImplementation(async () => ({
+      Body: { transformToByteArray: async () => holder.zipBytes },
+    }));
+  });
+
+  it('🔴 refuses dropping keyedBy a 51st-newest approval declared, before the request is approved', async () => {
+    db.write.appBlockPublishRequest.findMany.mockResolvedValue(vkApprovals(true));
+    await expect(approveRequest({ publishRequestId: 'req_vk', reviewerUserId: 9 })).rejects.toThrow(
+      'storage.collections.votes: an approved version declared it with keyedBy "viewer"'
+    );
+    // Nothing approved it: no request write sets status "approved", and no block was written.
+    const approvedWrites = [
+      ...db.write.appBlockPublishRequest.update.mock.calls,
+      ...db.write.appBlockPublishRequest.updateMany.mock.calls,
+    ].filter((c) => (c[0] as { data?: { status?: string } })?.data?.status === 'approved');
+    expect(approvedWrites).toEqual([]);
+    expect(db.write.appBlock.update).not.toHaveBeenCalled();
+    expect(db.write.appBlock.create).not.toHaveBeenCalled();
+    // The baseline read every approval: no cap on the query.
+    const query = db.write.appBlockPublishRequest.findMany.mock.calls.at(-1)?.[0] as {
+      take?: number;
+    };
+    expect(query.take).toBeUndefined();
+  });
+
+  it('positive control: without that approval the storage gate passes', async () => {
+    db.write.appBlockPublishRequest.findMany.mockResolvedValue(vkApprovals(false));
+    const outcome = await approveRequest({ publishRequestId: 'req_vk', reviewerUserId: 9 }).then(
+      () => null,
+      (err: Error) => err.message
+    );
+    // Whatever later step this stubbed harness reaches, it is not the keyedBy refusal.
+    expect(outcome ?? '').not.toContain('keyedBy');
   });
 });

@@ -16,12 +16,15 @@
 //   ['_get', c]                      POST   get many  { keys }
 //   [c, key]                         GET    get     PUT put     DELETE delete
 //                                    PATCH  one update operator: $inc, $mark or $unmark
+//   [c, '@me']                       GET    getMine PUT putMine DELETE deleteMine  (keyedBy viewer)
+//   [c, '@me', parent]               the same, for keyedBy parent+viewer (`viewerKeyedRoute`)
 //   [c, key, 'counters', name]       POST   increment         (deprecated: PATCH $inc)
 //   [c, key, 'marks', name]          PUT    mark    DELETE unmark  (deprecated: PATCH $mark/$unmark)
 //   ['_publish', to]                 POST   publish   { from, keys, prune? }
 //   ['_unpublish', to]               POST   unpublish { keys }
 // `_publish` / `_unpublish` exist only while the per-app Flipt flag `app-blocks-storage-publish`
 // is on; off, they answer exactly as an unknown route (see PUBLISH below).
+// `@me` sits at the KEY position and is outside the key grammar (`@`), so it is never a key.
 // `_get` is a POST with a body (not a GET query) because 100 keys of 128 characters do not
 // fit in a URL every proxy accepts.
 //
@@ -56,10 +59,12 @@ import type {
 import {
   blockClaimsAppLabel,
   markBlockRequestReadMiss,
+  recordAppStorageRequest,
   recordDocStoreError,
   recordDocStoreUnchangedWrite,
   recordStorageTallyOp,
   type AppBlockRefusalBucket,
+  type AppStorageVia,
   type DocStoreEndpoint,
   type StorageTallyOp,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -79,6 +84,7 @@ import {
   assertShareWritable,
   PUBLISHED_NS,
   refuseReportWithdrawal,
+  refuseViewerKeyed,
   type DocStore,
 } from '~/server/services/apps/doc-store';
 import {
@@ -103,8 +109,14 @@ import type {
   DocRatingStatus,
   DocRecord,
   DocStoreErrorCode,
+  WrittenDocRecord,
 } from '~/server/services/apps/doc-store.types';
 import { withDocLevelGate } from '~/server/services/apps/doc-levels';
+import {
+  isViewerKeyedWritable,
+  VIEWER_KEYED_SEGMENT,
+  viewerKeyedDocKey,
+} from '~/server/services/apps/doc-store-viewer-keyed';
 import {
   DOC_STORE_BOUNDS,
   DOC_STORE_PUBLISH_BOUNDS,
@@ -133,7 +145,7 @@ import {
 } from '~/server/services/apps/shared-private-media-urls';
 import { syncStoreItem } from '~/server/services/blocks/app-sub-listing-sync';
 import { resolveClientIp } from '~/server/utils/client-ip';
-import { rateLimitMetaFor } from '~/server/utils/rate-limit-error';
+import { appRateLimitMeta, retryAfterSecondsOf } from '~/server/utils/app-rate-limit';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 import {
@@ -170,6 +182,7 @@ export const STORAGE_RESERVED_SEGMENTS = [
   { segment: UNPUBLISH_SEGMENT, position: 0 },
   { segment: COUNTERS_SEGMENT, position: 2 },
   { segment: MARKS_SEGMENT, position: 2 },
+  { segment: VIEWER_KEYED_SEGMENT, position: 1 },
 ] as const;
 
 export type StorageRoute =
@@ -179,6 +192,9 @@ export type StorageRoute =
   // Server-side publish and unpublish into the shared collection `collection` (PUBLISH below).
   | { op: 'publish' | 'unpublish'; collection: string }
   | { op: 'get' | 'put' | 'delete'; collection: string; key: string }
+  // The viewer's own document in a viewer-keyed collection; run as get / put / delete at the
+  // derived key (`viewerKeyedRoute`). `parent` is the raw path segment, checked there.
+  | { op: 'getMine' | 'putMine' | 'deleteMine'; collection: string; parent: string | null }
   | { op: 'increment'; collection: string; key: string; name: string }
   | { op: 'mark' | 'unmark'; collection: string; key: string; name: string }
   // An update operator on one document; translated by `parseTallyPatch` before it runs.
@@ -198,6 +214,12 @@ export function matchStorageRoute(method: string, segments: readonly string[]): 
   const [a, b, c, d] = segments;
   const pick = (table: Record<string, StorageRoute>): Match =>
     table[method] ? { route: table[method] } : { methods: Object.keys(table) };
+  const pickMine = (collection: string, parent: string | null): Match =>
+    pick({
+      GET: { op: 'getMine', collection, parent },
+      PUT: { op: 'putMine', collection, parent },
+      DELETE: { op: 'deleteMine', collection, parent },
+    });
   switch (segments.length) {
     case 0:
       return pick({ GET: { op: 'info' } });
@@ -209,12 +231,16 @@ export function matchStorageRoute(method: string, segments: readonly string[]): 
       if (a === PUBLISH_SEGMENT) return pick({ POST: { op: 'publish', collection: b } });
       if (a === UNPUBLISH_SEGMENT) return pick({ POST: { op: 'unpublish', collection: b } });
       if (a.startsWith('_')) return null;
+      if (b === VIEWER_KEYED_SEGMENT) return pickMine(a, null);
       return pick({
         GET: { op: 'get', collection: a, key: b },
         PUT: { op: 'put', collection: a, key: b },
         DELETE: { op: 'delete', collection: a, key: b },
         PATCH: { op: 'patch', collection: a, key: b },
       });
+    case 3:
+      if (a.startsWith('_') || b !== VIEWER_KEYED_SEGMENT) return null;
+      return pickMine(a, c);
     case 4:
       if (a.startsWith('_')) return null;
       if (c === COUNTERS_SEGMENT) {
@@ -237,8 +263,9 @@ export function storageEndpointLabel(req: NextApiRequest): DocStoreEndpoint {
   const m = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
   const op = m && 'route' in m ? m.route.op : 'info';
   if (op === 'info') return 'storage_info';
-  if (op === 'list' || op === 'get' || op === 'getMany') return 'storage_read';
+  if (op === 'list' || op === 'get' || op === 'getMany' || op === 'getMine') return 'storage_read';
   if (op === 'create' || op === 'put' || op === 'delete') return 'storage_write';
+  if (op === 'putMine' || op === 'deleteMine') return 'storage_write';
   if (op === 'publish' || op === 'unpublish') return 'storage_write';
   // increment, mark, unmark, and `patch` (whose only operators are tallies).
   return 'storage_tally';
@@ -254,7 +281,14 @@ function pathSegments(req: NextApiRequest): string[] {
 // The error envelope — the ONE place a code becomes a status
 // ---------------------------------------------------------------------------
 
-export type StorageApiCode = DocStoreErrorCode | 'internal_error' | 'method_not_allowed';
+export type StorageApiCode =
+  | DocStoreErrorCode
+  | 'internal_error'
+  | 'method_not_allowed'
+  /** The signed internal route refuses an import (`from` naming another app), before any write. */
+  | 'not_supported_here'
+  /** The signed internal route: the request named a schema `major` that is not the current one. */
+  | 'stale_major';
 
 export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   invalid_request: 400,
@@ -276,6 +310,7 @@ export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   version_conflict: 409,
   index_building: 409,
   cursor_expired: 410,
+  removed: 410,
   too_large: 413,
   quota_exceeded: 413,
   content_rejected: 422,
@@ -287,6 +322,8 @@ export const STORAGE_ERROR_STATUS: Record<StorageApiCode, number> = {
   service_unavailable: 503,
   internal_error: 500,
   method_not_allowed: 405,
+  not_supported_here: 501,
+  stale_major: 409,
 };
 
 export type StorageErrorBody = {
@@ -309,7 +346,7 @@ const CLIENT_MESSAGE: Partial<Record<StorageApiCode, string>> = {
   service_unavailable: 'storage is temporarily unavailable',
 };
 
-function envelope(code: StorageApiCode, message: string, details?: Record<string, unknown>) {
+export function envelope(code: StorageApiCode, message: string, details?: Record<string, unknown>) {
   const body: StorageErrorBody = { code, message, error: message };
   if (details) body.details = details;
   return body;
@@ -319,13 +356,14 @@ function envelope(code: StorageApiCode, message: string, details?: Record<string
  * Every error envelope this route sends leaves through here or `storageRefusalBody`, and both
  * count it in `civitai_app_block_doc_store_errors_total` under the envelope's own code.
  */
-function sendEnvelope(
+export function sendEnvelope(
   req: NextApiRequest,
   res: NextApiResponse,
   status: number,
-  body: StorageErrorBody
+  body: StorageErrorBody,
+  endpoint: DocStoreEndpoint = storageEndpointLabel(req)
 ): void {
-  recordDocStoreError(storageEndpointLabel(req), body.code);
+  recordDocStoreError(endpoint, body.code);
   res.status(status).json(body);
 }
 
@@ -334,7 +372,13 @@ export function isDocumentReadMiss(req: NextApiRequest, code: StorageApiCode): b
   return code === 'not_found' && storageEndpointLabel(req) === 'storage_read';
 }
 
-function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): void {
+/** `endpoint`: the metrics label, for a route other than the storage catch-all (the report API). */
+export function sendError(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  err: unknown,
+  endpoint: DocStoreEndpoint = storageEndpointLabel(req)
+): void {
   if (!(err instanceof DocStoreError)) {
     logToAxiom(
       {
@@ -345,7 +389,7 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
       },
       'app-blocks'
     );
-    sendEnvelope(req, res, 500, envelope('internal_error', GENERIC_SERVER_ERROR_MESSAGE));
+    sendEnvelope(req, res, 500, envelope('internal_error', GENERIC_SERVER_ERROR_MESSAGE), endpoint);
     return;
   }
   const body = envelope(err.code, CLIENT_MESSAGE[err.code] ?? err.message, err.details);
@@ -362,13 +406,16 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
   // query answers "what is this app being refused"). Every document-store refusal leaves through
   // here, so this is the one place.
   if (err.code === 'rate_limited' || err.code === 'version_conflict') {
-    recordRefusal(req, err, retryAfter);
+    recordRefusal(req, err, retryAfter, endpoint);
   }
-  if (typeof retryAfter === 'number') {
+  if (err.code === 'rate_limited') {
+    // Every 429 carries the meta, a lock-timeout refusal with no delay of its own included.
+    body.rateLimit = appRateLimitMeta('apps.doc-store', retryAfterSecondsOf(retryAfter, 1));
+    res.setHeader('Retry-After', String(body.rateLimit.retryAfterSeconds));
+  } else if (typeof retryAfter === 'number') {
     res.setHeader('Retry-After', String(retryAfter));
-    if (err.code === 'rate_limited') body.rateLimit = rateLimitMetaFor(retryAfter);
   }
-  sendEnvelope(req, res, STORAGE_ERROR_STATUS[err.code], body);
+  sendEnvelope(req, res, STORAGE_ERROR_STATUS[err.code], body, endpoint);
 }
 
 /**
@@ -419,13 +466,18 @@ function refusalBucket(err: DocStoreError): AppBlockRefusalBucket {
   return err.details?.reason === 'contention' ? 'contention' : 'unattributed';
 }
 
-function recordRefusal(req: NextApiRequest, err: DocStoreError, retryAfter: unknown): void {
+function recordRefusal(
+  req: NextApiRequest,
+  err: DocStoreError,
+  retryAfter: unknown,
+  endpoint: DocStoreEndpoint
+): void {
   const claims = (req as BlockScopedNextApiRequest).blockClaims;
   recordAppBlockRateLimitRefusal({
     appBlockId: requestAppLabel(req),
     surface: 'doc_store',
     bucket: refusalBucket(err),
-    endpoint: storageEndpointLabel(req),
+    endpoint,
     retryAfterSeconds: typeof retryAfter === 'number' ? retryAfter : undefined,
     userId: claims ? blockSubjectUserId(claims.sub) : null,
     status: STORAGE_ERROR_STATUS[err.code],
@@ -451,11 +503,12 @@ const MIDDLEWARE_REFUSAL: Record<BlockScopeRefusalKind, { code: StorageApiCode; 
 
 export function storageRefusalBody(
   refusal: BlockScopeRefusal,
-  req: NextApiRequest
+  req: NextApiRequest,
+  endpoint: DocStoreEndpoint = storageEndpointLabel(req)
 ): StorageErrorBody {
   const { code, reason } = MIDDLEWARE_REFUSAL[refusal.kind];
   // The middleware sends this body; it is counted here, the one place it is built.
-  recordDocStoreError(storageEndpointLabel(req), code);
+  recordDocStoreError(endpoint, code);
   return envelope(code, refusal.error, reason ? { reason } : undefined);
 }
 
@@ -516,7 +569,7 @@ async function readJsonBody(req: NextApiRequest): Promise<unknown> {
   }
 }
 
-function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
+export function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   const value = body === undefined ? {} : body;
   const parsed = schema.safeParse(value);
   if (!parsed.success) {
@@ -787,7 +840,8 @@ async function presentDoc(doc: DocRecord, decl: DeclaredStorageCollection) {
   return (await presentDocs([doc], decl))[0] as PresentedDoc;
 }
 
-function presentDeclaration(decl: DeclaredStorageCollection) {
+/** `open`: whether a viewer-keyed collection takes `@me` writes (`isViewerKeyedWritable`). */
+function presentDeclaration(decl: DeclaredStorageCollection, open: boolean) {
   return {
     kind: decl.kind,
     visibility: decl.visibility,
@@ -796,6 +850,7 @@ function presentDeclaration(decl: DeclaredStorageCollection) {
     marks: [...decl.marks],
     indexes: Object.fromEntries(decl.indexes),
     showAuthor: decl.showAuthor,
+    ...(decl.keyedBy ? { keyedBy: decl.keyedBy, open } : {}),
   };
 }
 
@@ -803,7 +858,7 @@ function presentDeclaration(decl: DeclaredStorageCollection) {
 // Gates
 // ---------------------------------------------------------------------------
 
-function collectionOf(access: StorageAccess, name: string): DocCollection {
+export function collectionOf(access: StorageAccess, name: string): DocCollection {
   const decl = APP_STORAGE_COLLECTION_NAME_RE.test(name) ? access.collections.get(name) : undefined;
   if (!decl) {
     throw new DocStoreError('collection_not_declared', `collection ${name} is not declared`, {
@@ -832,7 +887,7 @@ async function withSchemaMajor(access: StorageAccess, coll: DocCollection): Prom
   return { ...coll, schemaMajor };
 }
 
-function requireViewer(access: StorageAccess): number {
+export function requireViewer(access: StorageAccess): number {
   if (access.ctx.viewerUid === null) {
     throw new DocStoreError('sign_in_required', 'sign in required');
   }
@@ -891,7 +946,26 @@ async function assertTrusted(uid: number): Promise<SessionUser> {
   return user as SessionUser;
 }
 
-async function charge(
+/**
+ * THE REPORT GATE, shared by the `report` mark and the report API (`doc-store-report-api.ts`), in
+ * this order: a signed-in viewer; through an import, the viewer's publish consent in the source; the
+ * `report` bucket (one daily budget for both paths, same key); then, on a shared collection, the
+ * trust gate. The mark path has already passed the first two and spent its tally token; re-running
+ * them here is pure. Returns the viewer.
+ */
+export async function assertReportGate(
+  access: StorageAccess,
+  req: NextApiRequest,
+  shared: boolean
+): Promise<number> {
+  const uid = requireViewer(access);
+  assertImportTallyPublishScope(access, shared);
+  await charge('report', access, req);
+  if (shared) await assertTrusted(uid);
+  return uid;
+}
+
+export async function charge(
   bucket: DocStoreRateBucket,
   access: StorageAccess,
   req: NextApiRequest
@@ -1137,26 +1211,73 @@ async function withSharedWriteBudget<T>(
 
 type Reply = { status: number; body: unknown };
 
+type ViewerKeyedOp = Extract<StorageRoute, { op: 'getMine' | 'putMine' | 'deleteMine' }>;
+/** A route `run`'s switch executes: a `@me` route is translated into a document route first. */
+type DocRoute = Exclude<OperationRoute, { op: 'info' } | ViewerKeyedOp>;
+
+const isViewerKeyedOp = (route: StorageRoute): route is ViewerKeyedOp =>
+  route.op === 'getMine' || route.op === 'putMine' || route.op === 'deleteMine';
+
+const VIEWER_KEYED_DOC_OP = { getMine: 'get', putMine: 'put', deleteMine: 'delete' } as const;
+
+/**
+ * VIEWER-KEYED DOCUMENTS (`doc-store-viewer-keyed.ts`). A `@me` route becomes exactly the get, put
+ * or delete of the viewer's own document at the derived key, so every gate below applies to it as
+ * to any document write; `keyed.parent` is what a write's content scan and hook see in place of
+ * the derived key. A create, or a write by key, to a viewer-keyed collection is refused.
+ */
+async function viewerKeyedRoute(
+  route: Exclude<OperationRoute, { op: 'info' }>,
+  access: StorageAccess,
+  coll: DocCollection
+): Promise<{ route: DocRoute; keyed: { parent: string | null } | null }> {
+  if (!isViewerKeyedOp(route)) {
+    if (route.op === 'create' || route.op === 'put' || route.op === 'delete') {
+      refuseViewerKeyed(coll, 'writing by key');
+    }
+    return { route, keyed: null };
+  }
+  const op = VIEWER_KEYED_DOC_OP[route.op];
+  const key = await viewerKeyedDocKey({
+    ctx: access.ctx,
+    coll,
+    parent: route.parent,
+    write: op !== 'get',
+  });
+  return { route: { op, collection: route.collection, key }, keyed: { parent: route.parent } };
+}
+
 async function run(
   req: NextApiRequest,
   body: unknown,
-  route: OperationRoute,
+  requested: OperationRoute,
   access: StorageAccess,
-  store: DocStore
+  store: DocStore,
+  via: AppStorageVia
 ): Promise<Reply> {
   const { ctx } = access;
   const ok = (body: unknown, status = 200): Reply => ({ status, body });
+  // The internal route's answers add where each write sits in the app namespace's write order
+  // (WRITES-DESIGN.md, "Its answer adds what the overlay needs"); the public route's are unchanged.
+  const service = via === 'service';
   // Info is signed-in only: its body carries the app-wide usage (documents, bytes) — the app's
   // SHARED documents, which is what `appBytes`/`appDocs` bound; private documents count toward
   // the viewer's own usage and `viewerBytes`/`viewerDocs` only (`DocStoreUsage`).
   // Every read is charged first, so a read of an undeclared collection is limited too.
   // Writes are charged below, once the collection says which bucket they spend.
-  if (route.op === 'info') requireViewer(access);
-  if (route.op === 'info' || route.op === 'list' || route.op === 'get' || route.op === 'getMany') {
+  // Every `@me` op, reads included, is the signed-in viewer's own: anonymous is refused first.
+  if (requested.op === 'info' || isViewerKeyedOp(requested)) requireViewer(access);
+  if (
+    requested.op === 'info' ||
+    requested.op === 'list' ||
+    requested.op === 'get' ||
+    requested.op === 'getMany' ||
+    requested.op === 'getMine'
+  ) {
     await charge('read', access, req);
   }
 
-  if (route.op === 'info') {
+  if (requested.op === 'info') {
     // The per-viewer figures are the ceiling the store charges this viewer's writes against
     // (`store.viewerLimits`: in production their membership tier's); the app ceilings are fixed.
     const [usage, viewerLimits] = await Promise.all([
@@ -1164,10 +1285,17 @@ async function run(
       store.viewerLimits(requireViewer(access)),
     ]);
     const L = store.limits;
+    const collections = await Promise.all(
+      [...access.collections].map(
+        async ([name, decl]) =>
+          [
+            name,
+            presentDeclaration(decl, decl.keyedBy ? await isViewerKeyedWritable(ctx, name) : false),
+          ] as const
+      )
+    );
     return ok({
-      collections: Object.fromEntries(
-        [...access.collections].map(([name, decl]) => [name, presentDeclaration(decl)])
-      ),
+      collections: Object.fromEntries(collections),
       limits: {
         docBytes: DOC_STORE_BOUNDS.docBytes,
         appBytes: L.appBytes,
@@ -1192,9 +1320,14 @@ async function run(
     });
   }
 
-  const coll = collectionOf(access, route.collection);
+  const coll = collectionOf(access, requested.collection);
   const decl = coll.config;
   const shared = decl.visibility === 'shared';
+  const { route, keyed } = await viewerKeyedRoute(requested, access, coll);
+  const written = async (doc: WrittenDocRecord) => {
+    const presented = await presentDoc(doc, decl);
+    return service ? { ...presented, seq: doc.seq, recordId: doc.recordId } : presented;
+  };
 
   switch (route.op) {
     case 'list': {
@@ -1249,6 +1382,7 @@ async function run(
           key: writeKey,
           after: newData,
           ifVersion: putIn?.ifVersion ?? deleteVersion,
+          ...(keyed ? { parent: keyed.parent } : {}),
         });
       const write = async (user: SessionUser | null, landed: () => void): Promise<Reply> => {
         const grant = await decide();
@@ -1262,12 +1396,14 @@ async function run(
           });
           landed();
           afterCommit(doc.key);
-          return ok(await presentDoc(doc, decl), 201);
+          return ok(await written(doc), 201);
         }
         if (putIn && route.op === 'put') {
           const { data, ifVersion } = putIn;
+          // A viewer-keyed document's key is a digest, not client text: only its parent is scanned.
+          const scannedKey = keyed ? keyed.parent ?? undefined : route.key;
           const afterCommit = user
-            ? await moderate(access, user, 'update', route.key, { data, key: route.key })
+            ? await moderate(access, user, 'update', route.key, { data, key: scannedKey })
             : nothingAfterCommit;
           const doc = await store.put(ctx, await withSchemaMajor(access, coll), route.key, data, {
             ifVersion,
@@ -1275,7 +1411,7 @@ async function run(
           });
           landed();
           afterCommit();
-          return ok(await presentDoc(doc, decl));
+          return ok(await written(doc));
         }
         if (route.op !== 'delete') throw new Error('doc-store-api: unreachable write op');
         const result = await store.delete(ctx, coll, route.key, {
@@ -1292,7 +1428,9 @@ async function run(
             authorUserId: uid,
           });
         }
-        return ok(result);
+        // `{ deleted }` only on the public route: the tombstone's `seq` is the internal route's.
+        if (service && result.deleted) return ok({ deleted: true, seq: result.seq });
+        return ok({ deleted: result.deleted });
       };
       if (!shared || route.op === 'delete') {
         await charge('write', access, req);
@@ -1316,7 +1454,7 @@ async function run(
         });
         if (stored) {
           recordDocStoreUnchangedWrite(requestAppLabel(req));
-          return ok(await presentDoc(stored, decl));
+          return ok(await written(stored));
         }
       }
       return withSharedWriteBudget(access, uid, (landed) => write(user, landed));
@@ -1351,7 +1489,16 @@ async function run(
         hookPass: grant?.pass,
       });
       afterCommit();
-      return ok(counted);
+      // `{ value }` only on the public route: the mark sequence (and a creating increment's `seq`)
+      // are the internal route's.
+      if (service) {
+        return ok({
+          value: counted.value,
+          ...(counted.markSeq !== undefined ? { markSeq: counted.markSeq } : {}),
+          ...(counted.seq !== undefined ? { seq: counted.seq } : {}),
+        });
+      }
+      return ok({ value: counted.value });
     }
     case 'mark':
     case 'unmark': {
@@ -1361,8 +1508,11 @@ async function run(
       assertImportTallyPublishScope(access, shared);
       if (route.op === 'mark') parseBody(markBody, body);
       await charge('tally', access, req);
-      if (route.op === 'mark' && route.name === REPORT_MARK) await charge('report', access, req);
-      if (shared) await assertTrusted(uid);
+      if (route.op === 'mark' && route.name === REPORT_MARK) {
+        await assertReportGate(access, req, shared);
+      } else if (shared) {
+        await assertTrusted(uid);
+      }
       // The permission hook. A `report` is exempt (`gateHook` returns null for it, and the store
       // asks no pass for it): a hook must never be able to silence moderation reports.
       const grant = await gateHook({
@@ -1378,11 +1528,12 @@ async function run(
         route.op === 'mark'
           ? await store.mark(ctx, coll, route.key, route.name, opts)
           : await store.unmark(ctx, coll, route.key, route.name, opts);
-      // A report count is never exposed.
+      // A report count is never exposed. The mark sequence is the internal route's only.
+      const markSeq = service && result.markSeq !== undefined ? { markSeq: result.markSeq } : {};
       return ok(
         route.name === REPORT_MARK
-          ? { marked: result.marked }
-          : { marked: result.marked, count: result.count }
+          ? { marked: result.marked, ...markSeq }
+          : { marked: result.marked, count: result.count, ...markSeq }
       );
     }
     case 'publish':
@@ -1550,6 +1701,8 @@ async function runUnpublish(
   assertShareWritable(to);
   // A hooked collection's documents are deleted one at a time, each decided by its hook.
   assertNotHooked(to, 'unpublish');
+  // Before the `write` bucket is spent; the store refuses it again itself.
+  refuseViewerKeyed(to, 'unpublish');
   // Like a delete: `apps:storage` only, no trust gate, the `write` bucket once per call.
   await charge('write', access, req);
   const result = await store.unpublishCopies(access.ctx, to, keys);
@@ -1586,6 +1739,18 @@ function deleteIfVersion(req: NextApiRequest): number | undefined {
 }
 
 const FROM_PARAM = 'from';
+/** The schema major a write names, on the internal route only (WRITES-DESIGN.md, D2). */
+const MAJOR_PARAM = 'major';
+
+/** The named `major`, or null when none is named. */
+function namedMajorOf(req: NextApiRequest): number | null {
+  const raw = req.query[MAJOR_PARAM];
+  if (raw === undefined) return null;
+  if (Array.isArray(raw) || !/^[1-9][0-9]{0,5}$/.test(raw)) {
+    throw invalid(`${MAJOR_PARAM} must be a positive integer, given once`);
+  }
+  return Number(raw);
+}
 
 const noSuchRoute = () => new DocStoreError('not_found', 'no such storage route');
 
@@ -1606,7 +1771,10 @@ function importSourceOf(req: NextApiRequest): string | null {
  * that always names its source (the shared app-data service's REST fallback) then reads the app it
  * names, whichever app the token is.
  */
-function otherAppSource(from: string | null, own: Pick<StorageAccess, 'blockId'>): string | null {
+export function otherAppSource(
+  from: string | null,
+  own: Pick<StorageAccess, 'blockId'>
+): string | null {
   return from !== null && from === own.blockId ? null : from;
 }
 
@@ -1616,20 +1784,35 @@ function otherAppSource(from: string | null, own: Pick<StorageAccess, 'blockId'>
  * Every one but a read is refused through a read-only import.
  */
 function importOpOf(route: Exclude<StorageRoute, { op: 'info' }>): ImportOp {
-  if (route.op === 'list' || route.op === 'get' || route.op === 'getMany') return 'read';
+  if (
+    route.op === 'list' ||
+    route.op === 'get' ||
+    route.op === 'getMany' ||
+    route.op === 'getMine'
+  ) {
+    return 'read';
+  }
   // `patch` carries only tally operators, each an authoring write like the routes it replaces.
   // (`publish` / `unpublish` never reach an import: `assertNoStrayQuery` refuses their `from`.)
-  return route.op === 'delete' || route.op === 'unpublish' ? 'delete' : 'author';
+  return route.op === 'delete' || route.op === 'deleteMine' || route.op === 'unpublish'
+    ? 'delete'
+    : 'author';
 }
 
-/** Query parameters other than the route's own are refused everywhere except a list. */
-function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute): void {
+/**
+ * Query parameters other than the route's own are refused everywhere except a list. On the
+ * internal route `info` also takes `from`: app-data-go names the app on every call, and the
+ * handler refuses it unless it is the token's own (`otherAppSource`).
+ */
+function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute, via: AppStorageVia): void {
   if (route.op === 'list') return;
-  const own = route.op === 'delete' ? ['path', 'ifVersion'] : ['path'];
+  const own = route.op === 'delete' || route.op === 'deleteMine' ? ['path', 'ifVersion'] : ['path'];
   // A publish names its source in the BODY and runs in this app only: no `?from=` import.
   const allowed =
-    route.op === 'info' || route.op === 'publish' || route.op === 'unpublish'
+    (route.op === 'info' && via === 'direct') || route.op === 'publish' || route.op === 'unpublish'
       ? own
+      : via === 'service' && route.op !== 'info'
+      ? [...own, FROM_PARAM, MAJOR_PARAM]
       : [...own, FROM_PARAM];
   const stray = Object.keys(req.query).find((k) => !allowed.includes(k));
   if (stray) throw invalid(`unknown query parameter ${stray}`);
@@ -1640,14 +1823,50 @@ function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute): void {
 // ---------------------------------------------------------------------------
 
 export type StorageApiDeps = {
-  store: () => DocStore;
+  /** The store (default: the process store, `getDocStore`). */
+  store?: () => DocStore;
   /**
    * Handed every list the route answered 200, after the response is sent (`app-data-shadow.service.ts`,
    * the shared app-data service's shadow read). Unset: the process shadow. It decides on its own
    * whether to read anything; whatever it does or throws, the response is already the store's.
    */
   shadow?: (input: AppDataShadowInput) => void;
+  /**
+   * The route this handler serves (`app_storage_requests_total{via}`). `direct`, the default: the
+   * public route. `service`: the signed internal route app-data-go forwards to
+   * (`doc-store-internal-route.ts`), which serves only `SERVICE_OPS`, refuses every import
+   * `501 not_supported_here`, and answers each write's `seq` / `recordId` / `markSeq`.
+   */
+  via?: AppStorageVia;
 };
+
+/**
+ * What the internal route serves: the writes, the tallies and `info` (WRITES-DESIGN.md, "the write
+ * verbs and info only"). Reads stay on the streams. Publish and unpublish wait for the store to
+ * answer each copied key's `seq`; until then they are not routes there.
+ */
+const SERVICE_OPS: ReadonlySet<StorageRoute['op']> = new Set<StorageRoute['op']>([
+  'info',
+  'create',
+  'put',
+  'delete',
+  'patch',
+  'increment',
+  'mark',
+  'unmark',
+]);
+
+/** A route match as the internal route sees it: any op it does not serve is no route at all. */
+function servedMatch(req: NextApiRequest, match: Match, via: AppStorageVia): Match {
+  if (via === 'direct' || !match) return match;
+  if ('route' in match) return SERVICE_OPS.has(match.route.op) ? match : null;
+  const segments = pathSegments(req);
+  const methods = match.methods.filter((m) => {
+    const other = matchStorageRoute(m, segments);
+    return other !== null && 'route' in other && SERVICE_OPS.has(other.route.op);
+  });
+  return methods.length > 0 ? { methods } : null;
+}
 
 /**
  * The shadow's view of one list the route answered (`AppDataShadowInput`). `access` is the access
@@ -1681,9 +1900,15 @@ function appDataShadowInput(
 
 export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore }) {
   const shadow = deps.shadow ?? shadowAppDataList;
+  const via = deps.via ?? 'direct';
+  const getStore = deps.store ?? getDocStore;
   return async function storageHandler(req: NextApiRequest, res: NextApiResponse) {
     try {
-      const match = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
+      const match = servedMatch(
+        req,
+        matchStorageRoute(req.method ?? 'GET', pathSegments(req)),
+        via
+      );
       if (!match) throw noSuchRoute();
       // Off for this app, publish and unpublish are not routes at all: the same refusal as any
       // unknown path, before any other gate (a wrong method's 405 included).
@@ -1707,12 +1932,58 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       }
       const claims = (req as BlockScopedNextApiRequest).blockClaims;
       if (!claims) throw new DocStoreError('unauthenticated', 'a block token is required');
-      assertNoStrayQuery(req, match.route);
+      assertNoStrayQuery(req, match.route, via);
       const own = await resolveStorageAccess(claims, {
         consentUnavailable: (req as BlockScopedNextApiRequest).blockConsentUnavailable === true,
       });
       const route = match.route;
-      const from = route.op === 'info' ? null : otherAppSource(importSourceOf(req), own);
+      recordAppStorageRequest({
+        app: blockClaimsAppLabel(claims),
+        op: route.op,
+        via,
+        viewer: own.ctx.viewerUid === null ? 'signed_out' : 'signed_in',
+        tokenKind: own.tokenKind,
+      });
+      const from =
+        route.op === 'info' && via === 'direct' ? null : otherAppSource(importSourceOf(req), own);
+      if (from !== null && via === 'service') {
+        // Imports are not served through app-data-go yet (WRITES-DESIGN.md, "imports refused"):
+        // only the site knows which app the token was issued for, so the site refuses them, before
+        // anything is charged, read or written. Lifting this is a later turn-on with its own closing.
+        sendEnvelope(
+          req,
+          res,
+          STORAGE_ERROR_STATUS.not_supported_here,
+          envelope('not_supported_here', 'imports are not served on this route')
+        );
+        return;
+      }
+      if (via === 'service' && route.op !== 'info') {
+        // A write naming a schema major must name the collection's current one, the major the
+        // store stamps (`withSchemaMajor`); none named means current. A collection with no
+        // resolved major is at major 1 (apps/app-data-go/DESIGN.md), so a resolution failure can
+        // only refuse a named major, never stamp a wrong one.
+        const named = namedMajorOf(req);
+        if (named !== null && own.ctx.ns === PUBLISHED_NS) {
+          const current =
+            (await resolveSchemaMajor({
+              appBlockId: own.ctx.appId,
+              head: own.enforcedManifest,
+              collection: route.collection,
+            })) ?? 1;
+          if (current !== named) {
+            sendEnvelope(
+              req,
+              res,
+              STORAGE_ERROR_STATUS.stale_major,
+              envelope('stale_major', 'the named schema major is not the current one', {
+                currentMajor: current,
+              })
+            );
+            return;
+          }
+        }
+      }
       if (from !== null) await charge('read', own, req);
       const access =
         from === null || route.op === 'info'
@@ -1732,7 +2003,7 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       // Content levels (`doc-levels.ts`): with the flag on for the app whose documents this
       // reaches, the store gates every shared read on the token's viewer level.
       const gated = await withDocLevelGate(access, claims);
-      const reply = await run(req, body, op, gated, deps.store());
+      const reply = await run(req, body, op, gated, getStore(), via);
       res.status(reply.status).json(reply.body);
       if (op.op === 'list' && reply.status === 200) {
         // After the response: the shadow only compares, and nothing it does reaches the caller.

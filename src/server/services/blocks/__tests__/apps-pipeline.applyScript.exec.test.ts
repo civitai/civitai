@@ -42,10 +42,17 @@ esac
 exit 0
 `;
 
+// The root probe asks curl for headers in a file (-D) and `<status> <content-type>` on stdout
+// (-w); the stub answers both the way curl does for a 200 text/html page.
 const CURL_STUB = `#!/usr/bin/env bash
 case " $* " in
   *"/healthz"*) printf '200' ;;
-  *) printf 'HTTP/1.1 200 OK\\r\\nContent-Type: text/html\\r\\n\\r\\n<html></html>\\n' ;;
+  *)
+    while [ $# -gt 0 ]; do
+      if [ "$1" = "-D" ]; then printf 'HTTP/1.1 200 OK\\r\\nContent-Type: text/html\\r\\n\\r\\n' > "$2"; fi
+      shift
+    done
+    printf '200 text/html' ;;
 esac
 `;
 

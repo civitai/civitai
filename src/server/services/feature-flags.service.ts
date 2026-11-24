@@ -666,6 +666,12 @@ const featureFlags = createFeatureFlags({
   creatorJourney: { availability: ['mod'], fliptKey: 'creator-journey' },
   // Creator-built showcase sections on the profile page.
   profileShowcases: { availability: ['mod'], fliptKey: 'profile-showcases' },
+  // Creators curate a model version's showcase per site and feature community images in it.
+  modelVersionShowcase: { availability: ['mod'], fliptKey: 'model-version-showcase' },
+  // Kill switch for serving curated version showcases (the flag above gates curating). Read with no
+  // user, so it is one switch for everyone. `['public']`: ON when the Flipt key is absent or Flipt
+  // is down; creating the flag off turns every showcase back into the creator's own images.
+  modelVersionShowcaseServe: { availability: ['public'], fliptKey: 'model-version-showcase-serve' },
   // Recent written reviews on the model page, between Suggested Resources and Discussion.
   modelPageReviews: { availability: ['mod'], fliptKey: 'model-page-reviews' },
   // Civitai's 4th Birthday (Team Hats). Only the Flipt key is used, by the event engine's access
@@ -1098,6 +1104,13 @@ const featureFlags = createFeatureFlags({
   // Keep the Flipt flag's `enabled` false until public launch, so removing the tester rollout
   // turns the page off rather than on for everyone.
   featurePages: { availability: [], fliptKey: 'feature-pages', fliptKeyRequired: true },
+  // Feature Pages comments and reports (posting, editing, reading a thread through commentv3). Same
+  // launch rule as featurePages: `enabled` stays false, testers come in through a rollout.
+  featurePagesDiscussion: {
+    availability: [],
+    fliptKey: 'feature-pages-discussion',
+    fliptKeyRequired: true,
+  },
   // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
   // with the phone header change it needs (support pill and Civitai Link move into the account
   // menu). Off = the toast and the old header. `['mod', 'granted']` is the Flipt-down fallback.

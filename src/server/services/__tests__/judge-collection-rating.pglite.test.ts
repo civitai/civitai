@@ -40,6 +40,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM
       ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Post" (id int PRIMARY KEY, "collectionId" int);
+    CREATE TABLE "ModActivity" (id serial PRIMARY KEY, "entityType" text, "entityId" int, activity text, "createdAt" timestamp(3) DEFAULT now());
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       "postId" int REFERENCES "Post"(id),
@@ -66,6 +67,9 @@ beforeAll(async () => {
       "collectionId" int NOT NULL,
       "imageId" int REFERENCES "Image"(id)
     );
+    -- Read by a blocking scan's write: a pending appeal keeps its review.
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
   `);
   raw = pgliteRaw(db);
 });

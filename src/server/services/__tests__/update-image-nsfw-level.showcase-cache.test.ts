@@ -86,6 +86,49 @@ beforeEach(() => {
   }) as never);
 });
 
+describe('a moderator re-rate of an image under an account-deletion grace block', () => {
+  it('records their rating, locked, for the account restore to put back', async () => {
+    const graced = { accountDeletionPriorIngestion: 'Scanned', accountDeletionPriorNsfwLevel: 1 };
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({
+      metadata: graced,
+      postId: POST,
+      nsfwLevel: NsfwLevel.Blocked,
+    } as never);
+
+    await updateImageNsfwLevel({
+      id: IMAGE,
+      nsfwLevel: NsfwLevel.Blocked,
+      userId: 9001,
+      isModerator: true,
+    } as never);
+
+    expect(dbMock.dbWrite.image.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          metadata: expect.objectContaining({
+            accountDeletionPriorNsfwLevel: NsfwLevel.Blocked,
+            accountDeletionPriorNsfwLevelLocked: true,
+          }),
+        }),
+      })
+    );
+  });
+
+  it('records nothing on an image with no grace block', async () => {
+    await updateImageNsfwLevel({
+      id: IMAGE,
+      nsfwLevel: NsfwLevel.X,
+      userId: 9001,
+      isModerator: true,
+    } as never);
+
+    const { metadata } = vi.mocked(dbMock.dbWrite.image.update).mock.calls[0][0].data as {
+      metadata: Record<string, unknown>;
+    };
+    expect(metadata).not.toHaveProperty('accountDeletionPriorNsfwLevel');
+  });
+});
+
 describe('a moderator re-rate and the cached version showcase', () => {
   it('replaces the cached image at its old level with the new one', async () => {
     expect((await imagesForModelVersionsCache.fetch([VERSION]))[VERSION].images[0].nsfwLevel).toBe(

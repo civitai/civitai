@@ -178,7 +178,7 @@ describe('doc-store.ts SQL', () => {
   it('finds the statements (positive control: the extractor sees the module SQL)', () => {
     const refs = literals.flatMap((l) => [
       ...l.text.matchAll(
-        /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|usage_app|usage_user)\b/g
+        /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|mark_head|maint_run|usage_app|usage_user)\b/g
       ),
     ]);
     expect(literals.length).toBeGreaterThanOrEqual(25);
@@ -227,14 +227,16 @@ describe('review maintenance and account-wipe enumeration are confined to their 
       ? n.head.text + n.templateSpans.map((sp) => sp.literal.text).join('')
       : null;
 
-  it('every maintenance-shaped statement is one of the eight in SQL_REVIEW_PURGE / SQL_REVIEW_APP_IDS', () => {
+  it('every maintenance-shaped statement is one of the nine in SQL_REVIEW_PURGE / SQL_REVIEW_APP_IDS', () => {
     const maint = collect((n) => {
       const t = literalText(n);
       return t !== null && /appdata\./.test(t) && isReviewMaintenanceStatement(t);
     });
     expect(maint.map((n) => owner(n, 'variable')).sort()).toEqual([
       'SQL_REVIEW_APP_IDS',
-      ...Array(7).fill('SQL_REVIEW_PURGE'),
+      // One delete per appdata table (the mark sequence's `mark_head` and the maintenance runs'
+      // `maint_run` included).
+      ...Array(9).fill('SQL_REVIEW_PURGE'),
     ]);
   });
 
@@ -277,6 +279,10 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     expect(found.filter((f) => !f.includes('/__tests__/')).sort()).toEqual([
       'server/services/apps/doc-store.ts',
       'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
+      // The mark sequence's table gets the same review-maintenance read and delete policies.
+      'server/services/apps/migrations/20261122120000_appdata_mark_head.sql',
+      // So does the maintenance-run table.
+      'server/services/apps/migrations/20261123120000_appdata_maint_run.sql',
     ]);
   });
 
@@ -287,6 +293,8 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     });
     expect(wipe.map((n) => owner(n, 'variable'))).toEqual([
       'SQL_ACCOUNT_NAMESPACES',
+      // The maintenance runs that name the user (a report-only user's purged report).
+      'SQL_ACCOUNT_DUMP_NAMESPACES',
       'SQL_VIEWER_PROD_USAGE',
     ]);
   });
@@ -307,7 +315,12 @@ describe('review maintenance and account-wipe enumeration are confined to their 
         ts.isIdentifier(n.expression) &&
         n.expression.text === 'accountWipeTx'
     );
-    expect(calls.map(nearestFn)).toEqual(['listAccountNamespaces', 'listViewerUsage']);
+    // The enumeration opens two: the documents and marks, then the maintenance runs.
+    expect(calls.map(nearestFn)).toEqual([
+      'listAccountNamespaces',
+      'listAccountNamespaces',
+      'listViewerUsage',
+    ]);
   });
 
   it('every app-purge-shaped statement is SQL_APP_NAMESPACES', () => {
@@ -407,6 +420,8 @@ describe('review maintenance and account-wipe enumeration are confined to their 
     expect(found.filter((f) => !f.includes('/__tests__/')).sort()).toEqual([
       'server/services/apps/doc-store.ts',
       'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
+      // The maintenance runs' wipe read: the runs that name the user.
+      'server/services/apps/migrations/20261123120000_appdata_maint_run.sql',
     ]);
   });
 });
@@ -421,6 +436,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/routers/__tests__/app-listings.router.doc-store-usage.test.ts',
     // The user-storage router suite resets the tables and reads back what an empty removed.
     'server/routers/__tests__/app-storage.router.test.ts',
+    // The maintenance router suite reads back the copies a mark migration wrote.
+    'server/routers/__tests__/apps-mod-doc-store-maintenance.router.test.ts',
     // The moderator router suite resets the tables and pins report times between cases.
     'server/routers/__tests__/apps-mod-doc-store.router.test.ts',
     // The account-wipe seam: reads the wiped account's and a bystander's rows back.
@@ -439,6 +456,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-store-api.unchanged-writes.test.ts',
     // Seeds report times and counts the rows a moderator delete must remove.
     'server/services/apps/__tests__/doc-store-moderation.pglite.test.ts',
+    // The report API suite reads back the report rows a report wrote and the tallies it must not.
+    'server/services/apps/__tests__/doc-store-report-api.test.ts',
     // Reads every column that can hold a user id, to prove an account wipe left none.
     'server/services/apps/__tests__/doc-store.account-wipe.test.ts',
     // Counts an app's rows in every table, to prove an app purge left none and touched no other app.
@@ -446,6 +465,12 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-store.functional.ts',
     // Sets documents' rating columns directly (no rater yet) and reads back what a write stored.
     'server/services/apps/__tests__/doc-store.levels.pglite.test.ts',
+    // Seeds mark times, reads back the copies, usage, tombstones and run records a mark migration
+    // and a purge wrote, and removes or adds a copy to make the verify see a mismatch.
+    'server/services/apps/__tests__/doc-store.mark-migration.pglite.test.ts',
+    // Reads back the mark sequence each mark, unmark and increment stamped, and the order of the
+    // statements that took it.
+    'server/services/apps/__tests__/doc-store.mark-seq.pglite.test.ts',
     'server/services/apps/__tests__/doc-store.pg.test.ts',
     'server/services/apps/__tests__/doc-store.pglite.test.ts',
     // Reads back the rating columns a publish under content levels left on each copy.
@@ -462,6 +487,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     // Reads back the schema major each write stamped, and probes the catalog for the column.
     'server/services/apps/__tests__/doc-store.schema-major.pglite.test.ts',
     'server/services/apps/__tests__/doc-store.sql-isolation.test.ts',
+    // Reads back the seq and record id each write stored, and the tombstone a delete wrote.
+    'server/services/apps/__tests__/doc-store.write-seq.pglite.test.ts',
     'server/services/apps/doc-store.ts',
     'server/services/apps/migrations/20261013120000_appdata_document_store.down.sql',
     'server/services/apps/migrations/20261013120000_appdata_document_store.sql',
@@ -488,11 +515,18 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/migrations/20261119120000_appdata_doc_record_id.sql',
     'server/services/apps/migrations/20261119120100_appdata_doc_record_id_backfill.sql',
     'server/services/apps/migrations/20261119120200_appdata_doc_record_id_unique.sql',
+    // The mark sequence's table and its column on doc_tally, and their rollback
+    // (DDL and policies only).
+    'server/services/apps/migrations/20261122120000_appdata_mark_head.down.sql',
+    'server/services/apps/migrations/20261122120000_appdata_mark_head.sql',
+    // The maintenance-run table and its rollback (DDL and policies only).
+    'server/services/apps/migrations/20261123120000_appdata_maint_run.down.sql',
+    'server/services/apps/migrations/20261123120000_appdata_maint_run.sql',
     // Sets an item's rating columns directly (no rater yet) for the card-path cases.
     'server/services/blocks/__tests__/shared-item-doc-store.pglite.test.ts',
   ];
   const PATTERN =
-    /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|usage_app|usage_user)\b|SCHEMA (IF (NOT )?EXISTS )?appdata\b/;
+    /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|mark_head|maint_run|usage_app|usage_user)\b|SCHEMA (IF (NOT )?EXISTS )?appdata\b/;
 
   function walk(dir: string, out: string[]) {
     for (const name of readdirSync(dir)) {

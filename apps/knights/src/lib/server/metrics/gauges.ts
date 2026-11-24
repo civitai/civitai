@@ -5,12 +5,19 @@ import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_STAGE_RANKS } from '@civitai/shared/new-order';
 import { votePartitionName } from '../queue/vote-partition';
+import { MOD_TAG_REVIEW_SOURCE } from '@civitai/db/knights';
 import { YESNO_SOURCE } from '../yesno/keys';
 
 /** Yes/no questions are served apart from the stage feed, so they are their own stage here. */
 export const QUEUE_STAGES = [...KNIGHTS_STAGE_RANKS, 'yesno'] as const;
 /** The producers named in `CLAUDE.md` "Sources"; anything else counts as `other`. */
-export const QUEUE_SOURCES = ['scan-sample', 'owner-rating', YESNO_SOURCE, 'other'] as const;
+export const QUEUE_SOURCES = [
+  'scan-sample',
+  'owner-rating',
+  YESNO_SOURCE,
+  MOD_TAG_REVIEW_SOURCE,
+  'other',
+] as const;
 export const REFERENCE_POOLS = Object.values(REFERENCE_POOL);
 
 const STUCK_AFTER_MS = 15 * 60_000;

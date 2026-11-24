@@ -312,7 +312,7 @@ async function audited<T extends Record<string, unknown>>(
         authorUserId: before.authorUid,
         // Open reports (after any dismissal) and every report ever filed.
         reports: before.reports,
-        reportsTotal: before.marks.report ?? 0,
+        reportsTotal: before.reportsTotal,
         hiddenAt: before.hiddenAt?.toISOString() ?? null,
         hiddenBy: before.hiddenBy,
         version: before.version,

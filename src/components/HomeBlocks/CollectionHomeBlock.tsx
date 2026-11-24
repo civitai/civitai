@@ -31,6 +31,8 @@ import flagClasses from '~/components/HatTurf/FlagRace/FlagRacePanel.module.scss
 import partyClasses from '~/components/HomeBlocks/ScoredEventHomeBlock.module.scss';
 import { FlagEnterButton } from '~/components/HatTurf/FlagRace/FlagEnterButton';
 import { HiddenFlagCard } from '~/components/HatTurf/FlagRace/HiddenFlagCard';
+import { useFlagReveal } from '~/components/HatTurf/FlagRace/useFlagReveal';
+import { useRevealableImages } from '~/components/HiddenPreferences/useRevealableImages';
 import { FlagRaceHomeRow } from '~/components/HatTurf/FlagRace/FlagRaceCollapsedBar';
 import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
@@ -93,10 +95,29 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
 
   // TODO - find a different way to return collections so that the type isn't set on the individual item
   const type = shuffled[0]?.type ?? 'model';
-  const { loadingPreferences, items: filtered } = useApplyHiddenPreferences({
+  const { loadingPreferences, items: preferred } = useApplyHiddenPreferences({
     type: `${type}s`,
     data: shuffledData,
   });
+
+  const servedFlags = useMemo(
+    () =>
+      (flagRow && !loadingPreferences ? shuffledData : []) as { id: number; nsfwLevel?: number }[],
+    [flagRow, loadingPreferences, shuffledData]
+  );
+  const flagReveal = useFlagReveal(
+    servedFlags,
+    preferred,
+    useRevealableImages(servedFlags, preferred)
+  );
+  const filtered = useMemo(() => {
+    if (!flagReveal.revealed.length) return preferred;
+    const revealedIds = new Set(flagReveal.revealed.map((item) => item.id));
+    const visibleIds = new Set(preferred.map((item) => item.id));
+    return shuffledData.filter(
+      (item) => visibleIds.has(item.id) || revealedIds.has(item.id)
+    ) as typeof preferred;
+  }, [preferred, shuffledData, flagReveal.revealed]);
 
   const maxPerUser = metadata.collection?.maxPerUser;
   // Served from the same shared, viewer-agnostic entry the feed block is, so image items arrive
@@ -137,8 +158,6 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
 
   if (flagRow) {
     const loading = isLoading || loadingPreferences;
-    const visibleIds = new Set(filtered.map((item) => item.id));
-    const hiddenFlags = shuffledData.filter((item) => !visibleIds.has(item.id));
     return (
       <FlagRaceHomeRow event={flagRow.event} summary={flagRow.summary}>
         <div className={flagClasses.flags}>
@@ -159,8 +178,13 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
                     type === 'image' ? <ImageCard key={item.id} data={item as any} /> : null
                   )}
                 </ImagesProvider>
-                {hiddenFlags.map((item) => (
-                  <HiddenFlagCard key={item.id} imageId={item.id} />
+                {flagReveal.stillHidden.map((item) => (
+                  <HiddenFlagCard
+                    key={item.id}
+                    imageId={item.id}
+                    reason={flagReveal.reasons.get(item.id)}
+                    onShow={() => flagReveal.reveal(item.id)}
+                  />
                 ))}
               </RemixFlyoutLayoutProvider>
             </FlagRowProviders>

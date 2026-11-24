@@ -103,6 +103,37 @@ name: Lint
 # within about one cadence interval plus the run, instead of within minutes; that is the trade.
 # scripts/__tests__/main-branch-ci-coverage.test.ts pins this path instead of a push-reachable one.
 #
+# The same batch dispatch also runs the `batch-suites` job, which dispatches the suites that left
+# pull requests and pushes (Go fuzz / govulncheck / go.mod tidy / benchmarks, moderator boot, ports
+# manifest, both image builds, Windows dev-env) on `main` when their paths changed, and posts their
+# verdict as the `Batch suites (main batch)` commit status. See that job.
+#
+# 🔴 THE COMPONENT AND GEOMETRY SUITES ARE BATCHED THE SAME WAY, IN THE SAME RUN: a push runs
+# neither. On the bot's `only: unit` batch dispatch the `component` shards and `component-ledger`
+# run beside the unit shards, and `component-verify` posts a `Component tests (main batch)` commit
+# status by the unit rules (re-run, bisect, first bad commit). The app suites (apps.yml) are
+# batched as `App tests (main batch)`; see the contract below.
+#
+# ── THE `(main batch)` STATUS CONTRACT (what a CI-watch reader can rely on) ──────────────────
+#
+# One batch = one lint.yml run: event workflow_dispatch, actor github-actions[bot], branch `main`,
+# `only: unit`. Every verdict of that batch is a commit status on THAT RUN'S head_sha whose
+# target_url is THAT RUN (`<server>/<repo>/actions/runs/<run id>`), so one rule reads all of them:
+#   Unit tests (main batch)       poster: `unit-verify`, this run.
+#   Component tests (main batch)  poster: `component-verify`, this run.
+#   Batch suites (main batch)     poster: `batch-suites`, this run.
+#   App tests (main batch)        poster: apps.yml's `apps-verify`, in the apps.yml run the
+#                                 `batch-suites` job dispatched at the same commit (target_url that
+#                                 apps.yml run), then RE-POSTED by `batch-suites` with the same state
+#                                 and description and target_url this run. Read the re-post. It is
+#                                 absent when apps.yml's paths did not change since the last green
+#                                 batch (not dispatched), which is "no verdict here", not green.
+# States: success = green (a description starting `Passed on re-run; flaky:` is a flake, still
+# green); failure = red; error = no verdict (crash, unfinished, re-verified next batch). A bisected
+# red (unit, component, apps) is ALSO posted on the first bad commit, and its HEAD description
+# starts `Failing since first bad commit <10 hex>:`. All posts happen before this run completes:
+# `batch-suites` waits for the apps status, and the verify jobs are jobs of this run.
+#
 # The push path deliberately does NOT run every job here. `eslint` is diff-vs-
 # base by construction and is skipped; so are the sibling workflows schema-drift
 # and submodule-pin-guard, which are base-relative gates with nothing to compare
@@ -140,11 +171,23 @@ name: Lint
 # of these jobs ever becomes a required check, a docs-only PR would hang on it
 # and this filter must go (or the check must be made path-aware).
 #
+# ── THE PER-PR TIER ─────────────────────────────────────────────────────────
+#
+# A ready (non-draft) PR runs: ESLint + Prettier with its blocking smoke steps (`eslint`),
+# `Typecheck test files`, `Package unit tests` and `Related unit tests + smoke (PR)`
+# (`related-tests`); the whole-repo typecheck is the `tekton / typecheck` status, and the app
+# typecheck is apps.yml's. The unit, component and geometry suites (and apps.yml's app suites) do
+# NOT run on a PR: they are verified in batches on `main` (above), and on a PR only with the
+# `full-ci` label, which runs the batch on the branch (below). A unit, component or app regression
+# the related selection misses is found by the next batch run, on `main`, and lands as a red
+# status on the commit that caused it.
+#
 # ── DRAFT PRs RUN ESLINT ONLY ────────────────────────────────────────────────
 #
 # Every job but `eslint` carries `github.event_name != 'pull_request' ||
 # !github.event.pull_request.draft || <the PR has the full-ci label>` in its `if`
-# (`unit` has a stricter gate that implies it), so on a draft they skip and start
+# (`unit`, `component` and `component-ledger` have a stricter gate that implies it, and
+# `related-tests` skips drafts outright), so on a draft they skip and start
 # when the PR is marked ready, or when it gets the `full-ci` label (below). Measured over 24h (2026-10): 92 of 308 PR
 # Lint runs (30%), about 31% of PR job-minutes, ran while the PR was a draft,
 # mostly agents iterating, on the same concurrent-job limit as everything else.
@@ -156,13 +199,15 @@ name: Lint
 #
 # WANT A VERDICT ON A DRAFT? Dispatch the job on your branch:
 #   gh workflow run lint.yml -R civitai/civitai --ref <branch> -f only=<job>
-# (`only` choices below; `all` runs everything but ESLint). The app suites live
+# (`only` choices below; `all` runs everything but ESLint and the whole-repo
+# typecheck, which a dispatch runs only as `only=typecheck`). The app suites live
 # in apps.yml: `gh workflow run apps.yml -R civitai/civitai --ref <branch>`.
 #
 # ── THE `full-ci` LABEL RUNS THE FULL SUITE ON A PR ─────────────────────────
 #
 # With the `full-ci` label on a PR (draft or not), a PR run here includes the
-# six `Unit tests` shards and the draft ESLint-only gate is lifted: the `if`s read
+# six `Unit tests` shards and the component + geometry shards (the batch's suites, on the
+# branch), and the draft ESLint-only gate is lifted: the `if`s read
 # `github.event.pull_request.labels`, the label set in that run's event payload.
 # apps.yml honours the same label, behind its own `paths:` filter. The label stays
 # on until the full unit suite has passed once on the PR (on some commit, not
@@ -208,9 +253,10 @@ on:
     inputs:
       only:
         description: >-
-          Run only this suite. all = every suite (default). typecheck,
+          Run only this suite. all = every suite but typecheck (default). typecheck,
           typecheck-tests (test files only), unit (all 6 shards), unit-1 .. unit-6
-          (one shard), packages, geometry, component.
+          (one shard), packages, geometry, component, related (the PR tier's
+          related + smoke tests, for the branch head's last commit).
           App suites: dispatch apps.yml.
         type: choice
         default: all
@@ -228,6 +274,7 @@ on:
           - packages
           - geometry
           - component
+          - related
       # dc sends this run's civitai-dc jobs to civitai-dc even while the CIVITAI_DC_OFF kill
       # switch is on: one run to check the runners without turning them back on for everyone.
       # Only a dispatch can set it, and only someone with write access can dispatch.
@@ -375,14 +422,17 @@ jobs:
       # pnpm/action-setup installs the version `packageManager` in package.json pins.
       - uses: pnpm/action-setup@v6
 
-      # `cache: pnpm` (the pnpm store, keyed on the lockfile) is the ONLY dependency cache in
-      # every workflow here. setup-node's automatic caching (`package-manager-cache`, v5+)
-      # applies only when `packageManager` names npm, and pnpm/action-setup's own `cache` input
-      # defaults to false, so neither adds a second one.
+      # The pnpm store (keyed on the lockfile) is the ONLY dependency cache in every workflow
+      # here: restored by ./.github/actions/pnpm-store-restore, saved only on `main` by
+      # pnpm-store-save, never by setup-node's `cache:` (which saves on PRs too; see the restore
+      # action's header). setup-node's automatic caching (`package-manager-cache`, v5+) applies
+      # only when `packageManager` names npm, and pnpm/action-setup's own `cache` input defaults
+      # to false, so neither adds a second one.
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       - name: Install
         run: pnpm install --frozen-lockfile
@@ -590,32 +640,44 @@ jobs:
     # The honest way to retire this job entirely is to widen Tekton's coverage
     # first and prove it on a real PR of each shape.
     #
-    # ⚠️ `github.event.pull_request` is null on a push event, so BOTH PR
-    # disjuncts evaluate to `null != <string>` — which is TRUE. The push arm is
-    # therefore already implied and the explicit `github.event_name == 'push'`
-    # below is redundant *today*. It is written anyway because the redundancy is
-    # an accident of null-comparison semantics rather than a decision, and the
-    # next person to tighten these disjuncts (e.g. by pinning
-    # `github.event_name == 'pull_request' && ...`) would silently drop main
-    # coverage with no test naming it. The guard test asserts the push arm.
+    # ⚠️ `github.event.pull_request` is null on a push event, so an UNPINNED PR
+    # disjunct evaluates to `null != <string>`, which is TRUE. The PR disjuncts
+    # below are now pinned away from dispatches (see the dispatch note), and the
+    # explicit `github.event_name == 'push'` arm is what keeps this job on a push
+    # to `main`. scripts/__tests__/lint-typecheck-gate.test.ts evaluates this `if`
+    # for push, PR and dispatch events and asserts each arm.
     #
     # The name changed with the gate so the checks list explains its own absence.
     # Safe: neither `main` nor `release` has any required_status_checks (verified
     # 2026-08-07 via the branch-protection API, re-verified 2026-08-21), so no
     # merge gate keys on the old name.
     #
-    # The `only` clause is the workflow_dispatch selector (see `on:`); it is true
-    # on every other event, so the three disjuncts above are unchanged. The next
-    # clause skips draft PRs unless they carry the `full-ci` label (see the header);
-    # it is true on push and dispatch. It does not widen the three disjuncts:
-    # `full-ci` does not make an internal PR into `main` run this job on the PR
-    # run. (The full-ci.yml DISPATCH does run it: on workflow_dispatch the PR
-    # disjuncts compare null, which is true, as the note below explains.)
+    # The last clause skips draft PRs unless they carry the `full-ci` label (see the
+    # header); it is true on push and dispatch. It does not widen the three
+    # disjuncts: `full-ci` does not make an internal PR into `main` run this job on
+    # the PR run.
+    #
+    # ── ON A DISPATCH, ONLY WHEN ASKED FOR BY NAME (`only: typecheck`) ──
+    #
+    # Unpinned, the two PR disjuncts compared null with a string on a
+    # workflow_dispatch too, which is TRUE (the note above), so every `only: all`
+    # dispatch ran this job: every full-ci.yml dispatch and every hand dispatch, on
+    # branches whose PR the Tekton `tekton / typecheck` status already covers. A
+    # second full-repo typecheck of the same tree, and over 30 days of merged PRs it
+    # caught nothing `tekton / typecheck` did not. So the PR disjuncts now apply to
+    # every event but a dispatch, and a dispatch runs this job only with
+    # `only: typecheck`, which is how to ask for one on a branch Tekton does not
+    # watch. (Written `!= 'workflow_dispatch'` rather than `== 'pull_request'`:
+    # main-branch-ci-coverage.test.ts reads an `if` containing
+    # `github.event_name == 'pull_request'` as unreachable on a push, and this job
+    # is the push path's typecheck. The events here are push, pull_request and
+    # workflow_dispatch only, so the two spellings select the same runs.)
     if: >-
       (github.event_name == 'push'
-      || github.event.pull_request.head.repo.full_name != github.repository
-      || github.event.pull_request.base.ref != 'main')
-      && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck')
+      || (github.event_name != 'workflow_dispatch'
+          && (github.event.pull_request.head.repo.full_name != github.repository
+              || github.event.pull_request.base.ref != 'main'))
+      || (github.event_name == 'workflow_dispatch' && inputs.only == 'typecheck'))
       && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     # event-engine-common is public and fetched over HTTPS, so this needs no
     # secret — which is why the ssh-agent step is gone rather than merely unused.
@@ -635,10 +697,13 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/pnpm-store-save
 
       # Must stay `pnpm run typecheck`, not a bare `tsc --noEmit`. The script is
       # a wrapper (scripts/typecheck.mjs) that sets the V8 heap cap AND
@@ -676,7 +741,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       - name: Install
         run: pnpm install --frozen-lockfile
@@ -684,6 +750,9 @@ jobs:
       # The gate runs TypeScript 7 from tools/ts7, which a root install does not fetch.
       - name: Install TypeScript 7
         run: pnpm -C tools/ts7 install --ignore-workspace --frozen-lockfile
+
+      # After both installs, so tools/ts7's packages are in the saved store too.
+      - uses: ./.github/actions/pnpm-store-save
 
       - name: Typecheck test files
         run: pnpm run typecheck:tests
@@ -732,12 +801,14 @@ jobs:
     #   gh workflow run lint.yml --ref <branch> -f only=unit
     # Or run `pnpm run test:unit:run` locally, which the root CLAUDE.md already asks for.
     #
-    # REJECTED ALTERNATIVE, so nobody rebuilds it blind: run only the tests related
-    # to the PR's changed files (#7199, closed). Built and measured on 20 sampled
-    # PRs: 7 still selected the full suite (a change to a widely imported module
-    # reaches most of it), the rest a median 557 of ~3,930 files, for a modelled
-    # ~38% saving at the price of two new scripts. Not running on PRs saves all of
-    # the PR share with no new code, and a PR verdict was never enforced anyway.
+    # RELATED TESTS ON A PR, AS A SIGNAL, NOT AS THIS JOB. Running only the tests related to
+    # the PR's changed files INSTEAD of this job was built and rejected (#7199, closed):
+    # on 20 sampled PRs, 7 still selected the full suite (a change to a widely imported
+    # module reaches most of it), the rest a median 557 of ~3,930 files. What runs on a PR
+    # now is the `related-tests` job: the same selection, but with a cap (past it, and on
+    # any change the import graph cannot follow, it runs the smoke set alone and says
+    # "Deferred to batch"), next to the smoke set (repo-scan names and the listed tree-scanning tests). It is a fast signal on the
+    # PR; this job, in the batch, is still the verdict for every unit file.
     #
     # NO `continue-on-error`, deliberately. It used to be
     # `${{ github.event_name == 'pull_request' }}` — report-only on PRs, the real
@@ -872,15 +943,18 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - uses: ./.github/actions/pnpm-store-save
+
       # ── VITE PRE-BUNDLE CACHE ───────────────────────────────────────────
       #
-      # A DIFFERENT cache from the one `setup-node` keeps. `cache: pnpm` above
-      # caches the pnpm STORE — the downloaded packages. This caches what Vite's
+      # A DIFFERENT cache from the pnpm store one. pnpm-store-restore above
+      # restores the pnpm STORE — the downloaded packages. This caches what Vite's
       # dependency optimizer BUILDS out of them.
       #
       # What is in there, measured 2026-08-25 on a warm local checkout rather
@@ -1056,12 +1130,264 @@ jobs:
       #     be creating this cache". That must not red a commit on `main`, where
       #     a red on this job has to mean the code.
       - name: Save Vite pre-bundle cache
-        if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.vite-cache.outputs.cache-hit != 'true' }}
+        if: ${{ !cancelled() && contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main' && steps.vite-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@v6
         with:
           path: node_modules/.vite
           key: vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+  # ── THE PER-PR UNIT TIER: RELATED TESTS + THE SMOKE SET ─────────────────────────────────────
+  #
+  # What a pull request gets instead of the unit suite (which runs in the main batch, see the
+  # `unit` job): the unit tests related to the files the PR changes (vitest's own import-graph
+  # selection, the one `vitest related` runs), plus the SMOKE SET: every unit test whose name is a
+  # repo-scan name (`no-*`, `*.ledger`, `*.seam`, `*parity*`, `*.schema-drift`, any case) or that
+  # is listed in scripts/ci/smoke-scanners.txt (tests that read repo source as text or walk a
+  # source tree; its header says what qualifies), since such a test sees a change no import graph
+  # does. A listed path that is gone or not a unit test fails the job naming it, and so does an
+  # empty smoke set.
+  #
+  # THE FALLBACK. When the PR changes something the import graph cannot follow or that alters how
+  # every test runs (vitest/vite config, the unit setup files and every module they import, read
+  # from the config at run time, test/, fixtures, any tsconfig, package manifests and
+  # the lockfile, the Prisma schema, the generated db-schema package, the test-cache scripts, CI
+  # workflows, a removed source file, any non-source file a test may read at runtime), or the
+  # related selection is over the cap (RELATED_UNIT_CAP, 250 files), this runs the smoke set alone
+  # and says "Deferred to batch" in the step summary. scripts/ci/related-tests.mjs owns that rule;
+  # its tests are scripts/__tests__/related-tests.test.ts.
+  #
+  # A FAST SIGNAL, NOT THE VERDICT: it never replaces the batch, which runs every unit file on
+  # `main` after the merge. Not on a PR carrying `full-ci` (the `unit` job runs the whole suite
+  # there), not on a draft. The selection diffs HEAD against its first parent: on a PR that is the merge
+  # commit against the base. A dispatch with `only: related` runs it on a branch for the branch
+  # head's last commit alone (`HEAD^1..HEAD`), to see what the PR tier would run for one change.
+  #
+  # Hosted, with the `unit` job's services and env: a related or smoke file may be one of the
+  # Postgres- or Redis-backed suites, several of which fail rather than skip without their URL.
+  # ── SPLIT 2 WAYS: TWO SHARDS THAT EACH PLAN, ONE LEDGER ──
+  #
+  # Each `related-tests` shard computes the same plan itself (the selection, from the same commit
+  # with the same code) and runs its half, so no shard waits on a plan job; `related-ledger` keeps
+  # the job's original check name, checks the shards agreed and is its verdict.
+  #
+  # ── THE INSTALLED TREE IS CACHED, KEYED ON WHAT AN INSTALL READS ──
+  #
+  # The pnpm store cache (.github/actions/pnpm-store-restore) holds the STORE only, so every job still links ~2,300 packages
+  # and runs the root postinstall (`db:generate`: the slim schema and five Prisma generators).
+  # Measured on a shard: store restore ~14 s, then `pnpm install` 41.6 s (link ~13 s, workspace
+  # prepare scripts ~5 s, postinstall ~23 s). These jobs restore the installed tree instead:
+  # every `node_modules` plus the gitignored slim schema the postinstall writes, keyed on the
+  # runner image, the lockfile, the workspace file, the workspace members' manifests WITHOUT their
+  # `version` (scripts/ci/related-install-key.mjs: most commits to `main` are release bumps, and
+  # hashing raw manifests made each one a new entry), `.nvmrc`, `patches/` and the postinstall's
+  # inputs (the full schema and its generator scripts), so a key can only ever hold what an
+  # install of those inputs produces. The cached paths follow pnpm-workspace.yaml's includes;
+  # scripts/__tests__/related-install-key.test.ts fails when they drift apart. An exact hit skips the store restore and the install
+  # and runs only the apps' `prepare` (it writes from the checkout); a miss installs as before.
+  #
+  # 🔴 SAVED ONLY ON `main`, by `related-cache` on the batch dispatch, the rule the `unit` job's
+  # Vite cache states: an entry saved by a PR is scoped to that PR's ref, readable by nothing else,
+  # and spends the repo's 10 GB cache budget. One entry per key; a PR with its own lockfile
+  # misses and installs.
+  related-tests:
+    name: Related unit tests + smoke (PR) (${{ matrix.shard }}/${{ strategy.job-total }})
+    runs-on: ubuntu-latest
+    if: ${{ (github.event_name == 'pull_request' && !github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'full-ci')) || (github.event_name == 'workflow_dispatch' && inputs.only == 'related') }}
+    timeout-minutes: 30
+    # `fail-fast: false`: a red shard must not cancel the other, or its files go unreported and
+    # the ledger can only say "missing".
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
+    env: *unit-env
+    steps:
+      # Depth 2: the plan diffs the PR's merge commit against its first parent (the base).
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          submodules: true
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      # The key's inputs that are not plain files: the workspace members' manifests with `version`
+      # stripped (scripts/ci/related-install-key.mjs: a release bump changes no install), and the
+      # runner image (`ImageOS`, e.g. ubuntu24, which the expression `env` context does not see),
+      # so a new Ubuntu release never restores a tree built against another one's libraries.
+      - &related-nm-key-step
+        name: Cache key inputs
+        id: key
+        run: |
+          node scripts/ci/related-install-key.mjs .related-install-manifests.txt
+          echo "image=${ImageOS:?}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the installed tree
+        id: nm
+        uses: actions/cache/restore@v6
+        with:
+          path: &related-nm-paths |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+            packages/civitai-db-schema/prisma/schema.prisma
+          key: &related-nm-key related-nm-${{ runner.os }}-${{ steps.key.outputs.image }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', '.related-install-manifests.txt', '.nvmrc', '.npmrc', 'patches/**', 'packages/civitai-db-schema/prisma/schema.full.prisma', 'scripts/generate-slim-schema.js', 'scripts/prisma-*-generator.mjs') }}
+
+      # The store cache only matters to an install, which an exact hit skips.
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - uses: ./.github/actions/pnpm-store-restore
+        if: steps.nm.outputs.cache-hit != 'true'
+
+      - name: Install
+        if: steps.nm.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      # What an install writes OUTSIDE the cached tree, from the checkout rather than the
+      # lockfile: each app's `prepare` (`svelte-kit sync`, which writes `apps/*/.svelte-kit` from
+      # that app's routes and config, so it cannot be cached on the install key). Measured: without
+      # it the app-reading unit tests fail on a missing `.svelte-kit/tsconfig.json`. `--if-present`
+      # so an app with no `prepare` is skipped, and a new app's is run.
+      - name: App prepare scripts (cache hit)
+        if: steps.nm.outputs.cache-hit == 'true'
+        run: pnpm -r --filter './apps/*' --if-present run prepare
+
+      - name: Plan, then run this shard
+        env:
+          SHARD: ${{ matrix.shard }}
+          TOTAL: ${{ strategy.job-total }}
+        run: node scripts/ci/related-tests.mjs shard HEAD^1 "$SHARD" "$TOTAL" "$RUNNER_TEMP/related-report"
+
+      # For `related-ledger`: the report and the two lists. `!cancelled()` so a RED shard still
+      # hands them over.
+      - name: Upload the shard report and plan
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: related-report-${{ matrix.shard }}
+          path: ${{ runner.temp }}/related-report
+          if-no-files-found: warn
+          retention-days: 3
+          overwrite: true
+
+  # The whole tier's verdict, under the check name the unsplit job had. Red when a shard did not
+  # succeed; when the shards planned different files, or their lists overlap or leave a planned
+  # file out (related-tests.mjs `ledger`); when a shard report is missing, holds a file another
+  # shard also ran, or comes from a shard index outside the matrix
+  # (merge-component-shard-reports.mjs); or when the union misses a file the plan listed.
+  related-ledger:
+    name: Related unit tests + smoke (PR)
+    needs: related-tests
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() && ((github.event_name == 'pull_request' && !github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'full-ci')) || (github.event_name == 'workflow_dispatch' && inputs.only == 'related')) }}
+    timeout-minutes: 10
+    steps:
+      # scripts/ci only: no install.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Download the shard reports and plans
+        uses: actions/download-artifact@v7
+        with:
+          pattern: related-report-*
+          path: ${{ runner.temp }}/related-reports
+
+      # All three checks always run, so every problem is named. 2: the `related-tests` matrix,
+      # which this job cannot read; both scripts also fail on any shard outside 1..2.
+      - name: The shards agreed, and every planned file ran exactly once
+        run: |
+          rc=0
+          node scripts/ci/related-tests.mjs ledger "$RUNNER_TEMP/related-reports" 2 || rc=1
+          node scripts/ci/merge-component-shard-reports.mjs "$RUNNER_TEMP/related-reports" 2 "$RUNNER_TEMP/related-merged.json" related-report || rc=1
+          node scripts/ci/related-tests.mjs assert "$RUNNER_TEMP/related-reports/files.txt" "$RUNNER_TEMP/related-merged.json" || rc=1
+          exit $rc
+
+      - name: Every shard succeeded
+        if: ${{ !cancelled() }}
+        env:
+          SHARDS: ${{ needs.related-tests.result }}
+        run: |
+          if [ "$SHARDS" != success ]; then
+            echo "::error title=Related tests did not succeed::the shards concluded '$SHARDS'. Open the red shard for the cause."
+            exit 1
+          fi
+
+  # Saves the related jobs' installed tree (see `related-tests`), on `main` only: the bot's batch
+  # dispatch, about every two hours. A no-op when that key is already saved.
+  related-cache:
+    name: Related tests install cache (main batch)
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' && github.ref == 'refs/heads/main' }}
+    # Best-effort infrastructure: a failed install or save must never paint the batch run red,
+    # where a red means a suite. An expression, not a literal `true`: this job runs only on that
+    # dispatch, so it reads true wherever it runs, and the push-path guard in
+    # main-branch-ci-coverage.test.ts (no unconditional report-only job) keeps its meaning.
+    continue-on-error: ${{ github.event_name == 'workflow_dispatch' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      - *related-nm-key-step
+
+      - name: Is it saved already?
+        id: nm
+        uses: actions/cache/restore@v6
+        with:
+          path: *related-nm-paths
+          key: *related-nm-key
+          lookup-only: true
+
+      - uses: actions/setup-node@v7
+        if: steps.nm.outputs.cache-hit != 'true'
+        with:
+          node-version-file: .nvmrc
+
+      - uses: ./.github/actions/pnpm-store-restore
+        if: steps.nm.outputs.cache-hit != 'true'
+
+      - name: Install
+        if: steps.nm.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      # Saves only on `main` (this job's own gate, and the action's).
+      - uses: ./.github/actions/pnpm-store-save
+        if: steps.nm.outputs.cache-hit != 'true'
+
+      # Best-effort infrastructure, like the Vite cache save: a failed save must not red `main`.
+      - name: Save the installed tree
+        if: steps.nm.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: *related-nm-paths
+          key: *related-nm-key
 
   packages:
     name: Package unit tests
@@ -1113,11 +1439,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       - name: Install
         id: install
         run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/pnpm-store-save
 
       # Not a package suite, and deliberately parked in this job anyway: it needs a completed
       # `pnpm install` and a job that FAILS the build, and this is the cheapest one that is
@@ -1209,12 +1538,21 @@ jobs:
     name: Component + geometry tests (${{ matrix.shard }}/3)
     # Pinned: Playwright 1.57 cannot install chromium deps on ubuntu-latest (26.04) yet.
     runs-on: ubuntu-24.04
-    # The second clause skips draft PRs unless they carry the `full-ci` label (see the header).
+    # ── NOT RUN ON PULL REQUESTS UNLESS ASKED, NOT RUN ON PUSH; VERIFIED IN BATCHES ON `main` ──
+    #
+    # The same gate as the `unit` job (`github.event_name != 'push'` and the label clause): skipped
+    # on a push to `main` and on a pull request without the `full-ci` label (draft or not). It runs
+    # on a dispatch, including the bot's `only: unit` batch dispatch (the first clause's last
+    # alternative), after which `component-verify` posts the verdict as a `Component tests (main
+    # batch)` commit status, on the first bad commit when red (scripts/ci/unit-batched.mjs). A
+    # person's `only: unit` dispatch runs the unit shards alone, as before. The per-PR tier has no
+    # browser suite; a PR gets the `related-tests` job instead (header, "THE PER-PR TIER").
+    #
     # On a full-ci dispatch whose PR run passed the component suite (`passed`), only shard 1
     # runs, with geometry alone, exactly as `only: geometry` does. On `only: component` that
     # leaves nothing to run, so the job skips.
     needs: passed
-    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (inputs.only != 'component' || needs.passed.outputs.component != 'true') }}
+    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry' || (inputs.only == 'unit' && github.actor == 'github-actions[bot]')) && github.event_name != 'push' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (inputs.only != 'component' || needs.passed.outputs.component != 'true') }}
     # ── `component` SHARDED ACROSS 3 RUNNERS; GEOMETRY ON SHARD 1 ──
     #
     # Only the component tests step shards; setup (checkout, install, Chromium) is paid again by
@@ -1260,9 +1598,9 @@ jobs:
     # a reason to keep this job Chromium-free") and points at vitest.config.mts's dedupe +
     # optimizeDeps pre-bundling as the canonical fix for it.
     #
-    # Blocking on PRs for `component` itself: `main` was green when it was added, so a red here
-    # is the PR's. (`main` has no required checks; this cannot block a merge, only
-    # show red on it.) There is no job-level `continue-on-error`: report-only is per step.
+    # Blocking for `component` itself wherever it runs (a labelled PR, a dispatch, the batch).
+    # (`main` has no required checks; this cannot block a merge, only show red on it.) There is no
+    # job-level `continue-on-error`: report-only is per step.
     #
     # Per shard. 25, not 35/3: setup does not shard. If a shard nears the limit, raise the
     # shard count rather than this.
@@ -1270,8 +1608,8 @@ jobs:
     # Per-suite selectors, evaluated once so each step's `if` reads a name rather than
     # repeating the `only` expression. They render as the strings 'true' / 'false'.
     env:
-      SUITE_COMPONENT: ${{ needs.passed.outputs.component != 'true' && (!inputs.only || inputs.only == 'all' || inputs.only == 'component') }}
-      SUITE_GEOMETRY: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'geometry' }}
+      SUITE_COMPONENT: ${{ needs.passed.outputs.component != 'true' && (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || (inputs.only == 'unit' && github.actor == 'github-actions[bot]')) }}
+      SUITE_GEOMETRY: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'geometry' || (inputs.only == 'unit' && github.actor == 'github-actions[bot]') }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1282,10 +1620,13 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+
+      - uses: ./.github/actions/pnpm-store-restore
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/pnpm-store-save
 
       # 🔴 THE WORKSPACE-LOCAL PLAYWRIGHT, NOT A PINNED VERSION WRITTEN HERE.
       # `pnpm exec` resolves this repo's own `playwright` (^1.57.0), which knows
@@ -1307,7 +1648,7 @@ jobs:
       # honoured by vitest.config.mts. Do NOT move the repo's playwright pin to
       # match a laptop — see docs/dev/worktrees.md, "Browser/component tests on NixOS".
       #
-      # ── BROWSER CACHE: RESTORE ALWAYS, SAVE ONLY ON A PUSH TO `main` ──────
+      # ── BROWSER CACHE: RESTORE ALWAYS, SAVE ONLY ON `main` ──────
       #
       # `~/.cache/ms-playwright` is cached so a run does not download Chromium
       # again. The key is the version of the INSTALLED `playwright` package, read
@@ -1316,12 +1657,13 @@ jobs:
       # lockfile hash, which changes on every dependency bump and would miss for
       # reasons unrelated to the browser.
       #
-      # Save is main-push only, for the reason the `unit` job's Vite cache gives:
-      # an entry saved on a PR or a dispatch is scoped to that ref, readable by
+      # Save is `main`-only, for the reason the `unit` job's Vite cache gives:
+      # an entry saved on a PR or a branch dispatch is scoped to that ref, readable by
       # nothing else, and spends the repo's 10 GB cache budget. One entry per
-      # Playwright version, refreshed when the version moves. So a PR or a
-      # dispatch restores `main`'s entry, and MISSES until a push to `main` with
-      # that Playwright version has saved one.
+      # Playwright version, refreshed when the version moves. This job no longer runs
+      # on a push, so on `main` the saver is the batch dispatch. A PR or a branch
+      # dispatch restores `main`'s entry, and MISSES until a batch run with that
+      # Playwright version has saved one.
       #
       # The cache holds browser files only, not the system libraries. On a hit,
       # `install-deps` puts those back, and `install chromium` then finds the
@@ -1365,7 +1707,7 @@ jobs:
       # Keyed by ISO week (with a prefix restore-key) so the entry is
       # re-saved once a week as Ubuntu's -updates move on, instead of freezing
       # on the first save and downloading every newer package forever. Saved
-      # on a push to `main` only, like the browser cache, for the same reason.
+      # on `main` only (the batch dispatch), like the browser cache, for the same reason.
       # `ImageOS` is the runner's machine env (ubuntu24), which the `env` expression context
       # does not see, so it is read here.
       - name: Resolve system-package cache key
@@ -1421,7 +1763,7 @@ jobs:
           echo "system-package cache: $(find "$HOME/playwright-apt-debs" -name '*.deb' 2>/dev/null | wc -l) .deb file(s) after install"
 
       - name: Save Playwright system packages
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.apt-cache.outputs.cache-hit != 'true' }}
+        if: ${{ contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main' && steps.apt-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@v6
         with:
@@ -1431,7 +1773,7 @@ jobs:
       # Right after the install, so a red suite later still leaves the entry saved.
       # `continue-on-error`: best-effort infrastructure, like the Vite cache save.
       - name: Save Playwright browsers
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.playwright-cache.outputs.cache-hit != 'true' }}
+        if: ${{ contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main' && steps.playwright-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@v6
         with:
@@ -1475,9 +1817,11 @@ jobs:
       # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
       - name: Upload test timings
         if: ${{ !cancelled() && env.SUITE_COMPONENT == 'true' }}
-        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
-        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
-        continue-on-error: ${{ github.event_name != 'push' }}
+        # Telemetry: never turns a PR or a branch dispatch red. This job no longer runs on a push;
+        # on `main` it runs as the bot's `only: unit` batch, and there a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (the rule main-branch-ci-coverage.test.ts
+        # holds the push path to).
+        continue-on-error: ${{ !(github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' && github.ref == 'refs/heads/main') }}
         uses: actions/upload-artifact@v7
         with:
           name: test-times-component-${{ matrix.shard }}-a${{ github.run_attempt }}
@@ -1623,12 +1967,27 @@ jobs:
           }
           JS
 
+      # For `component-verify`, which reads which files failed: geometry is half of the batch's
+      # `Component tests (main batch)` verdict. Its own name, so `component-ledger`'s
+      # `component-report-*` download never counts it. Kept briefly.
+      - name: Upload geometry report
+        if: ${{ !cancelled() && steps.geometry.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: geometry-report
+          path: geometry-report.json
+          if-no-files-found: warn
+          retention-days: 3
+          overwrite: true
+
       # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
       - name: Upload test timings
         if: ${{ !cancelled() && steps.geometry.outcome != 'skipped' }}
-        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
-        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
-        continue-on-error: ${{ github.event_name != 'push' }}
+        # Telemetry: never turns a PR or a branch dispatch red. This job no longer runs on a push;
+        # on `main` it runs as the bot's `only: unit` batch, and there a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (the rule main-branch-ci-coverage.test.ts
+        # holds the push path to).
+        continue-on-error: ${{ !(github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' && github.ref == 'refs/heads/main') }}
         uses: actions/upload-artifact@v7
         with:
           name: test-times-geometry-a${{ github.run_attempt }}
@@ -1668,7 +2027,7 @@ jobs:
     name: Component + geometry tests
     needs: [passed, component]
     runs-on: ubuntu-latest
-    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'component') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && needs.passed.outputs.component != 'true' }}
+    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || (inputs.only == 'unit' && github.actor == 'github-actions[bot]')) && github.event_name != 'push' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && needs.passed.outputs.component != 'true' }}
     timeout-minutes: 10
     steps:
       # The ledger walks `src/` for `*.browser.test.tsx` and imports scripts/ci only, so no
@@ -1703,6 +2062,106 @@ jobs:
             echo "::error title=Component shard did not succeed::the component shard jobs concluded '$SHARDS'. Open the red 'Component + geometry tests (n/3)' job for the cause."
             exit 1
           fi
+
+  # ── THE BATCHED COMPONENT + GEOMETRY VERDICT, AS A COMMIT STATUS ────────────────────────────
+  #
+  # `unit-verify`'s rules for the browser suites (scripts/ci/unit-batched.mjs `verify ... component`),
+  # only on the batch dispatch on `main`: lint.yml `only: unit` as github-actions[bot], the same run
+  # as `unit-verify`. A full-ci dispatch is also the bot, on a PR branch, so the ref is checked.
+  # Green: a success `Component tests (main batch)` status on HEAD. Red: the failed component and
+  # geometry files are re-run at HEAD (a pass = flaky: success naming them), else
+  # `git bisect run --first-parent` from the last commit whose `Component tests (main batch)`
+  # status this job posted green, and a failure status on the first bad commit (and on HEAD), or
+  # on HEAD alone when the bisect cannot isolate one. 4 reports: the three component shards and
+  # geometry. A crash posts `error` on HEAD. Status contract: the lint.yml header.
+  component-verify:
+    name: Component verified (main batch)
+    needs: [component, component-ledger]
+    # Chromium's system libraries: the same image as the `component` job.
+    runs-on: ubuntu-24.04
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' && github.ref == 'refs/heads/main' }}
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+      statuses: write
+    env:
+      # Red when a shard is red, or when every shard passed and the ledger is not green (a file
+      # missing from the merged reports is a red no single report shows).
+      SUITE_RESULT: ${{ needs.component.result != 'success' && needs.component.result || needs.component-ledger.result }}
+    steps:
+      - id: checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: ${{ env.SUITE_RESULT == 'failure' && '0' || '1' }}
+          submodules: ${{ env.SUITE_RESULT == 'failure' }}
+
+      - id: pnpm
+        uses: pnpm/action-setup@v6
+        if: env.SUITE_RESULT == 'failure'
+
+      - id: node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install
+        id: install
+        if: env.SUITE_RESULT == 'failure'
+        run: pnpm install --frozen-lockfile
+
+      # System libraries once; the bisect step fetches the Chromium revision each commit wants.
+      - name: Install Chromium for Playwright
+        id: chromium
+        if: env.SUITE_RESULT == 'failure'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Download component reports
+        id: download
+        if: env.SUITE_RESULT == 'failure'
+        uses: actions/download-artifact@v7
+        with:
+          pattern: component-report-*
+          path: ${{ runner.temp }}/reports
+
+      - name: Download geometry report
+        id: download-geometry
+        if: env.SUITE_RESULT == 'failure'
+        uses: actions/download-artifact@v7
+        with:
+          name: geometry-report
+          path: ${{ runner.temp }}/reports/geometry-report
+
+      - name: Post the verdict (bisect on red)
+        id: verdict
+        timeout-minutes: 50
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/unit-batched.mjs verify "$SUITE_RESULT" "$RUNNER_TEMP/reports" 4 component
+
+      - name: Post error on HEAD if this job crashed
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOMES: >-
+            checkout=${{ steps.checkout.outcome }}
+            setup-pnpm=${{ steps.pnpm.outcome }}
+            setup-node=${{ steps.node.outcome }}
+            install=${{ steps.install.outcome }}
+            chromium=${{ steps.chromium.outcome }}
+            download-reports=${{ steps.download.outcome }}
+            download-geometry=${{ steps.download-geometry.outcome }}
+            post-verdict=${{ steps.verdict.outcome }}
+        run: |
+          step=unknown
+          for pair in $OUTCOMES; do
+            if [ "${pair#*=}" = failure ]; then step=${pair%%=*}; break; fi
+          done
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=error -f "context=Component tests (main batch)" \
+            -f "description=Batch verification crashed at step: $step. The next batch run re-verifies." \
+            -f "target_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          echo "::error title=Component batch verification crashed::step $step failed; posted error on ${GITHUB_SHA:0:10}"
 
   # ── THE BATCHED UNIT VERDICT, AS A COMMIT STATUS ─────────────────────────────────────────────
   #
@@ -1852,3 +2311,79 @@ jobs:
             say "**Could not remove the \`full-ci\` label** from #$PR (${out//[$'\r\n']/ }); remove it by hand, or later pushes keep running the unit shards."
           fi
           say "To run the full suite again, re-add it: \`gh pr edit $PR --add-label full-ci\`"
+
+  # ── THE MAIN BATCH'S OTHER SUITES, AS ONE COMMIT STATUS ──────────────────────────────────────
+  #
+  # Only on the batch dispatch on `main` (unit-batched.yml dispatches this workflow as
+  # github-actions[bot] with `only: unit`); a person's dispatch, full-ci.yml's `only: all` dispatch
+  # and any other branch never reach it. It needs nothing from `unit`, so it runs beside it.
+  #
+  # The suites that do not run on pull requests or pushes any more (Go fuzz / govulncheck /
+  # go.mod tidy / benchmarks, moderator boot, ports manifest, both image builds, Windows dev-env;
+  # the list is BATCH_WORKFLOWS in scripts/ci/unit-batched.mjs): it dispatches each one whose
+  # paths changed since the last green batch on `main` with `batch: true`, waits for their runs at
+  # this commit, and posts `Batch suites (main batch)` on it (scripts/ci/batch-suites.mjs):
+  # success, failure naming the red suites, or error when a run was not found or did not finish.
+  # A red opens a CI-watch item naming the commit range; nothing bisects it automatically.
+  # A BATCH_WORKFLOWS entry with an `ownContext` (apps.yml) is dispatched and waited for, but left out
+  # of that verdict: it posts its own status, which this job then re-posts with this run as its
+  # target_url (the status contract in the header).
+  # If a step here fails, the last step posts `error` naming it, so a crash is not read as green.
+  batch-suites:
+    name: Batch suites verified (main batch)
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' && github.ref == 'refs/heads/main' }}
+    # The slowest suite (Windows) takes minutes; the rest is queueing behind other jobs.
+    timeout-minutes: 90
+    permissions:
+      # Dispatching a workflow needs actions: write; reading the runs, actions: read.
+      actions: write
+      contents: read
+      statuses: write
+    steps:
+      # The script, its imports, and the workflow files whose paths it reads. No credentials kept.
+      - id: checkout
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/ci/batch-suites.mjs
+            scripts/ci/full-ci-paths.mjs
+            scripts/ci/unit-batched.mjs
+            .github/workflows/
+            .nvmrc
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - id: node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Dispatch the batch suites, wait, post the verdict
+        id: verdict
+        # Under the job's 90: a step timeout FAILS the step, so the crash step below still runs.
+        timeout-minutes: 85
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BATCH_WAIT_MINUTES: '75'
+        run: node scripts/ci/batch-suites.mjs run
+
+      - name: Post error on HEAD if this job crashed
+        # cancelled() too: a job-level timeout cancels the job, and failure() is then false.
+        if: failure() || cancelled()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOMES: >-
+            checkout=${{ steps.checkout.outcome }}
+            setup-node=${{ steps.node.outcome }}
+            post-verdict=${{ steps.verdict.outcome }}
+        run: |
+          step=unknown
+          for pair in $OUTCOMES; do
+            if [ "${pair#*=}" = failure ]; then step=${pair%%=*}; break; fi
+          done
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=error -f "context=Batch suites (main batch)" \
+            -f "description=Batch suites verification crashed at step: $step. No verdict at this commit." \
+            -f "target_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          echo "::error title=Batch suites verification crashed::step $step failed; posted error on ${GITHUB_SHA:0:10}"

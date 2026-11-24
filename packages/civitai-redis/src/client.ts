@@ -3410,6 +3410,7 @@ const REDIS_KEYS_UNPREFIXED = {
     COSMETICS: 'packed:caches:cosmetics2',
     PROFILE_PICTURES: 'packed:caches:profile-pictures:v4',
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
+    VERSION_SHOWCASE: 'packed:caches:version-showcase',
     EDGE_CACHED: 'packed:caches:edge-cache',
     TAGGED_CACHE: 'packed:caches:tagged-cache',
     DATA_FOR_MODEL: 'packed:caches:data-for-model-2',
@@ -3746,6 +3747,16 @@ const REDIS_KEYS_UNPREFIXED = {
       key = `${CANDIDATES}:${collection}:${sha256({ query, qdrantFilter, sort, start, viewerClass })}`, TTL 10m.
      */
     CANDIDATES: 'semantic-search:candidates',
+  },
+  FEED_GO: {
+    /*
+      Use: the Training Data listing rule sets (trainingDataListingRulesId) of the Node builds now
+      answering the public model API, read by feed-go before it serves a body listing a Training
+      Data file (src/server/services/feed-go-training-data-rules.ts).
+      Structure: hash, field = rule set id, value '1'; each field expires
+      FEED_GO_TRAINING_DATA_RULES_TTL_MS after its last write (HPEXPIRE), so the hash holds only the builds still answering.
+     */
+    TRAINING_DATA_RULES_LIVE: 'feed-go:training-data-rules-live',
   },
 } as const;
 

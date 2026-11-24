@@ -1,6 +1,6 @@
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { commentTrackTypes } from '~/server/clickhouse/tracker';
-import type { CommentEntityType } from '~/shared/utils/prisma/enums';
+import { Availability, type CommentEntityType } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { kyselyV3Read } from '~/server/db/kyselyDb';
@@ -26,6 +26,7 @@ import {
   afterCommentsV3Deleted,
   bulkSetCommentV3TosViolation,
   deleteCommentsV3,
+  deleteOwnCommentV3,
 } from '~/server/services/commentv3/moderation.service';
 import {
   getStoredComment,
@@ -359,6 +360,22 @@ export async function updateCommentV3Handler({
   return { id: comment.id, content: row.content, updatedAt: row.updatedAt };
 }
 
+/** The comment a delete acts on. */
+async function deletableComment(ctx: ProtectedContext, id: number) {
+  const comment = await getV3WriteComment(prismaRunner(dbWrite), id);
+  if (!comment) throw throwNotFoundError('Comment not found');
+  if (comment.entityType === 'article' && comment.userId === ctx.user.id) {
+    // primary: guards the delete below
+    const article = await dbWrite.article.findUnique({
+      where: { id: comment.entityId },
+      select: { availability: true },
+    });
+    if (article?.availability === Availability.Private) return comment;
+  }
+  await assertSectionVisible(comment, ctx);
+  return comment;
+}
+
 /** Deletes a comment; one with replies stays as a placeholder for them (D6). */
 export async function deleteCommentV3Handler({
   ctx,
@@ -367,10 +384,16 @@ export async function deleteCommentV3Handler({
   ctx: ProtectedContext;
   input: CommentV3IdInput;
 }) {
-  const comment = await writableComment(ctx, input.id);
+  const comment = await deletableComment(ctx, input.id);
   assertAuthorOrModerator(ctx, comment);
   assertNotRemovedForMember(ctx, comment);
-  afterCommentsV3Deleted(await dbWrite.$transaction((tx) => deleteCommentsV3(tx, [comment.id])));
+  afterCommentsV3Deleted(
+    await dbWrite.$transaction((tx) =>
+      comment.userId === ctx.user.id
+        ? deleteOwnCommentV3(tx, comment)
+        : deleteCommentsV3(tx, [comment.id])
+    )
+  );
   ctx.track.commentEvent({ type: 'Delete', commentId: comment.id }).catch(handleLogError);
   return { id: comment.id };
 }
@@ -385,10 +408,17 @@ export async function toggleHideCommentV3Handler({
   const comment = await writableComment(ctx, input.id);
   assertNotRemovedForMember(ctx, comment);
   await assertSectionOwnerOrModerator(ctx, comment);
-  await dbWrite.$transaction((tx) =>
-    setCommentFlags(prismaRunner(tx), [comment.id], { hidden: !comment.hidden })
-  );
-  return { id: comment.id, hidden: !comment.hidden };
+  // Toggled from the row read under its lock: the read above may predate a hide since.
+  const { hidden, refused } = await dbWrite.$transaction(async (tx) => {
+    const row = await getStoredComment(prismaRunner(tx), comment.id, 'FOR UPDATE');
+    if (!row || row.deletedAt) throw throwNotFoundError('Comment not found');
+    const next = !row.hidden;
+    const changed = await setCommentFlags(prismaRunner(tx), [comment.id], { hidden: next });
+    // setCommentFlags never unhides a Feature Pages comment.
+    return { hidden: next, refused: !next && !changed.length && row.entityType === 'featurePage' };
+  });
+  if (refused) throw throwBadRequestError('This comment cannot be unhidden.');
+  return { id: comment.id, hidden };
 }
 
 export async function togglePinCommentV3Handler({

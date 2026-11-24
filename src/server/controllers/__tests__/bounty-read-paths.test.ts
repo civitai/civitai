@@ -572,6 +572,7 @@ describe('an nsfw-flagged bounty in the feed', () => {
         hiddenLoading: false,
         moderatedTags: [],
         systemHiddenTags: new Map(),
+        moderatedHiddenImages: new Map(),
       },
       browsingLevel,
       currentUser: { id: 6 } as never,
@@ -693,13 +694,350 @@ describe('an nsfw-flagged bounty page', () => {
     expect((await page(NsfwLevel.R, [])).levels).toEqual([NsfwLevel.R, NsfwLevel.X]);
   });
 
-  it('leaves the images of a flag with no recorded rating at their own level, as before', async () => {
-    expect((await page(null, [])).levels).toEqual([NsfwLevel.PG, NsfwLevel.X]);
+  // An unrated nsfw flag fails closed to XXX on the page as on the feed (#10178).
+  it('shows the images of a flag with no recorded rating at XXX', async () => {
+    const { levels, bounty } = await page(null, []);
+    expect(levels).toEqual([NsfwLevel.XXX, NsfwLevel.XXX]);
+    expect(bounty.nsfwLevel).toBe(NsfwLevel.XXX);
   });
 
   it('never sends the moderator rating field to the client', async () => {
     expect((await page(NsfwLevel.R, [])).bounty).not.toHaveProperty('moderatorNsfwLevel');
   });
+});
+
+describe('a minor-flagged image a bounty flag raises into the mature range', () => {
+  beforeEach(() => dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([]));
+  const MINOR = 10;
+  const CONTROL = 11;
+  const viewers = {
+    stranger,
+    owner: { user: { id: 5 }, ...uncapped } as never,
+    moderator: { user: { id: 7, isModerator: true }, ...uncapped } as never,
+  };
+  const listed = async (ctx: never) => {
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([
+      {
+        id: 1,
+        name: 'B',
+        nsfw: true,
+        nsfwLevel: 60,
+        moderatorNsfwLevel: null,
+        tags: [],
+        user: { id: 5 },
+      },
+    ]);
+    mockImagesForBounties.mockResolvedValue({
+      1: [
+        {
+          id: MINOR,
+          userId: 5,
+          minor: true,
+          nsfwLevel: NsfwLevel.PG,
+          nsfwLefel: NsfwLevel.PG,
+          tags: [],
+        },
+        {
+          id: CONTROL,
+          userId: 5,
+          minor: false,
+          nsfwLevel: NsfwLevel.PG,
+          nsfwLefel: NsfwLevel.PG,
+          tags: [],
+        },
+      ],
+    });
+    const { items } = await getInfiniteBountiesHandler({
+      input: { limit: 10, period: 'AllTime', sort: 'Newest' } as never,
+      ctx,
+    });
+    return (items[0]?.images ?? []).map((i: { id: number }) => i.id);
+  };
+  const pagedAt = (moderatorNsfwLevel: number | null) => async (ctx: never) => {
+    mockAssert.mockResolvedValue(undefined);
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      id: 9,
+      name: 'B',
+      availability: 'Public',
+      poi: false,
+      nsfw: true,
+      nsfwLevel: 60,
+      moderatorNsfwLevel,
+      user: { id: 5 },
+      details: null,
+      tags: [],
+      meta: {},
+    });
+    mockBountyImages.mockResolvedValue([
+      { id: MINOR, userId: 5, minor: true, nsfwLevel: NsfwLevel.PG, tags: [] },
+      { id: CONTROL, userId: 5, minor: false, nsfwLevel: NsfwLevel.PG, tags: [] },
+    ]);
+    const bounty = await getBountyHandler({ input: { id: 9 }, ctx });
+    return bounty.images.map((i) => i.id);
+  };
+
+  const paged = pagedAt(NsfwLevel.R);
+  const pagedUnrated = pagedAt(null);
+
+  it.each([
+    ['feed', listed],
+    ['page', paged],
+    ['page of an unrated flag', pagedUnrated],
+  ] as const)('is withheld from a stranger on the %s, beside a served control', async (_, read) => {
+    expect(await read(viewers.stranger)).toEqual([CONTROL]);
+  });
+
+  it('is withheld from a signed-out viewer on the page of an unrated flag, as on the feed', async () => {
+    const signedOut = uncapped as never;
+    const page = await pagedUnrated(signedOut);
+    expect(page).not.toContain(MINOR);
+    expect(page).toEqual(await listed(signedOut));
+  });
+
+  it.each([
+    ['feed', 'owner', listed],
+    ['feed', 'moderator', listed],
+    ['page', 'owner', paged],
+    ['page', 'moderator', paged],
+    ['page of an unrated flag', 'owner', pagedUnrated],
+    ['page of an unrated flag', 'moderator', pagedUnrated],
+  ] as const)('is served on the %s to its %s', async (_, who, read) => {
+    expect(await read(viewers[who])).toEqual([MINOR, CONTROL]);
+  });
+});
+
+describe('the bounty page shows images by the same rule as the bounty feed (#10178)', () => {
+  beforeEach(() => {
+    dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([]);
+    mockAssert.mockResolvedValue(undefined);
+  });
+  // A rated flag reads no text rating, so its queued answer would reach the next describe.
+  afterEach(() => dbMock.dbRead.$queryRaw.mockReset());
+  const OWNER = 5;
+  const images = [
+    { id: 10, userId: OWNER, minor: false, nsfwLevel: NsfwLevel.PG, tags: [] },
+    { id: 11, userId: OWNER, minor: false, nsfwLevel: NsfwLevel.R, tags: [] },
+  ];
+  const bounty = (moderatorNsfwLevel: number | null, nsfw = true) => ({
+    id: 9,
+    name: 'B',
+    nsfw,
+    nsfwLevel: 60,
+    moderatorNsfwLevel,
+    tags: [],
+    user: { id: OWNER },
+  });
+  const textRatedR = [
+    {
+      id: 9,
+      byScan: true,
+      scanCurrent: true,
+      scanLevel: NsfwLevel.R,
+      scanVersion: '1',
+      content: NsfwLevel.PG,
+    },
+  ];
+  const shown = (list: { id: number; nsfwLevel: number }[]) =>
+    list.map(({ id, nsfwLevel }) => ({ id, nsfwLevel }));
+  const fromFeed = async (
+    moderatorNsfwLevel: number | null,
+    rows: object[],
+    ctx: object,
+    nsfw = true
+  ) => {
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([bounty(moderatorNsfwLevel, nsfw)]);
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce(rows);
+    mockImagesForBounties.mockResolvedValue({
+      9: images.map((image) => ({ ...image, nsfwLefel: image.nsfwLevel })),
+    });
+    const { items } = await getInfiniteBountiesHandler({
+      input: { limit: 10, period: 'AllTime', sort: 'Newest' } as never,
+      ctx: ctx as never,
+    });
+    return { images: shown(items[0]?.images ?? []), nsfwLevel: items[0]?.nsfwLevel };
+  };
+  const fromPage = async (
+    moderatorNsfwLevel: number | null,
+    rows: object[],
+    ctx: object,
+    nsfw = true
+  ) => {
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      ...bounty(moderatorNsfwLevel, nsfw),
+      availability: 'Public',
+      poi: false,
+      details: null,
+      meta: {},
+    });
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce(rows);
+    mockBountyImages.mockResolvedValue(images);
+    const page = await getBountyHandler({ input: { id: 9 }, ctx: ctx as never });
+    return { images: shown(page.images), nsfwLevel: page.nsfwLevel };
+  };
+  const viewers = {
+    'a signed-in viewer on a capped site': { user: { id: 6 }, features: { canViewNsfw: false } },
+    'a signed-out viewer on a capped site': { features: { canViewNsfw: false } },
+    'a signed-in viewer on an uncapped site': stranger,
+  };
+  type Viewer = keyof typeof viewers;
+  // [moderator rating, text-rating rows, nsfw flag, bounty level, images the feed shows per viewer]
+  const flags: Record<string, [number | null, object[], boolean, number, Record<Viewer, number>]> =
+    {
+      'no flag': [
+        null,
+        [],
+        false,
+        60,
+        {
+          'a signed-in viewer on a capped site': 1,
+          'a signed-out viewer on a capped site': 1,
+          'a signed-in viewer on an uncapped site': 2,
+        },
+      ],
+      'a flag with no recorded rating': [
+        null,
+        [],
+        true,
+        NsfwLevel.XXX,
+        {
+          'a signed-in viewer on a capped site': 0,
+          'a signed-out viewer on a capped site': 0,
+          'a signed-in viewer on an uncapped site': 2,
+        },
+      ],
+      'a flag with a text rating of R': [
+        null,
+        textRatedR,
+        true,
+        NsfwLevel.R,
+        {
+          'a signed-in viewer on a capped site': 0,
+          'a signed-out viewer on a capped site': 0,
+          'a signed-in viewer on an uncapped site': 2,
+        },
+      ],
+      'a flag with a moderator rating of R': [
+        NsfwLevel.R,
+        [],
+        true,
+        NsfwLevel.R,
+        {
+          'a signed-in viewer on a capped site': 0,
+          'a signed-out viewer on a capped site': 0,
+          'a signed-in viewer on an uncapped site': 2,
+        },
+      ],
+    };
+
+  it.each(
+    Object.keys(flags).flatMap((flag) => Object.keys(viewers).map((viewer) => [flag, viewer]))
+  )('%s, for %s', async (flag, viewer) => {
+    const [level, rows, nsfw, bountyLevel, visible] = flags[flag];
+    const ctx = viewers[viewer as Viewer];
+    const feed = await fromFeed(level, [...rows], ctx, nsfw);
+    const page = await fromPage(level, [...rows], ctx, nsfw);
+    expect(feed.images).toHaveLength(visible[viewer as Viewer]);
+    expect(page.images).toEqual(feed.images);
+    expect(page.nsfwLevel).toBe(bountyLevel);
+    // The feed drops a bounty left with no image, so only a listed one has a level to compare.
+    expect(feed.nsfwLevel).toBe(visible[viewer as Viewer] ? bountyLevel : undefined);
+  });
+});
+
+describe('bounty images keep their moderation state for their uploader and moderators only (#10178)', () => {
+  beforeEach(() => {
+    dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([]);
+    mockAssert.mockResolvedValue(undefined);
+  });
+  const UPLOADER = 5;
+  const moderation = {
+    minor: false,
+    poi: false,
+    needsReview: 'poi',
+    blockedFor: null,
+    ingestion: 'Scanned',
+  };
+  const fields = Object.keys(moderation);
+  const blocked = {
+    id: 12,
+    userId: UPLOADER,
+    nsfwLevel: NsfwLevel.Blocked,
+    tags: [],
+    ...moderation,
+  };
+  const safe = { id: 10, userId: UPLOADER, nsfwLevel: NsfwLevel.PG, tags: [], ...moderation };
+  const unratedBounty = {
+    id: 9,
+    name: 'B',
+    nsfw: true,
+    nsfwLevel: 60,
+    moderatorNsfwLevel: null,
+    tags: [],
+    user: { id: UPLOADER },
+  };
+  const fromPage = async (ctx: object, images: object[]) => {
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      ...unratedBounty,
+      availability: 'Public',
+      poi: false,
+      details: null,
+      meta: {},
+    });
+    mockBountyImages.mockResolvedValue(images);
+    return (await getBountyHandler({ input: { id: 9 }, ctx: ctx as never })).images as Record<
+      string,
+      unknown
+    >[];
+  };
+  const fromFeed = async (ctx: object, images: { nsfwLevel: number }[]) => {
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([unratedBounty]);
+    mockImagesForBounties.mockResolvedValue({
+      9: images.map((image) => ({ ...image, nsfwLefel: image.nsfwLevel })),
+    });
+    const { items } = await getInfiniteBountiesHandler({
+      input: { limit: 10, period: 'AllTime', sort: 'Newest' } as never,
+      ctx: ctx as never,
+    });
+    return (items[0]?.images ?? []) as Record<string, unknown>[];
+  };
+  const viewers = {
+    uploader: { user: { id: UPLOADER }, ...uncapped },
+    moderator: { user: { id: 7, isModerator: true }, ...uncapped },
+  };
+  const reads = { page: fromPage, feed: fromFeed } as const;
+
+  it.each(['page', 'feed'] as const)('the %s sends a stranger none of them', async (read) => {
+    const [image] = await reads[read](stranger, [safe]);
+    expect(image.id).toBe(safe.id);
+    for (const field of fields) expect(image).not.toHaveProperty(field);
+  });
+
+  it.each([
+    ['page', 'uploader'],
+    ['page', 'moderator'],
+    ['feed', 'uploader'],
+    ['feed', 'moderator'],
+  ] as const)('the %s sends them to its %s', async (read, who) => {
+    const [image] = await reads[read](viewers[who], [safe]);
+    expect(image).toMatchObject(moderation);
+  });
+
+  // An unrated flag raises images to XXX and never lowers one (#10178).
+  it.each([
+    ['page', 'uploader'],
+    ['page', 'moderator'],
+    ['feed', 'uploader'],
+    ['feed', 'moderator'],
+  ] as const)(
+    'the %s keeps a Blocked image Blocked for its %s under an unrated flag',
+    async (read, who) => {
+      const images = await reads[read](viewers[who], [safe, blocked]);
+      expect(images.map((i) => [i.id, i.nsfwLevel])).toEqual([
+        [safe.id, NsfwLevel.XXX],
+        [blocked.id, NsfwLevel.Blocked],
+      ]);
+    }
+  );
 });
 
 describe('entry detail image count', () => {
@@ -908,7 +1246,8 @@ describe("bounty entry images and the owner's view, against the real image query
         "needsReview" text, "blockedFor" text, "userId" int DEFAULT ${OWNER}, index int DEFAULT 0,
         poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
         "modelRestricted" boolean NOT NULL DEFAULT false,
-        "acceptableMinor" boolean NOT NULL DEFAULT false
+        "acceptableMinor" boolean NOT NULL DEFAULT false,
+        "tosViolation" boolean NOT NULL DEFAULT false
       );
       CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
       INSERT INTO "Image" (id, "needsReview", index) VALUES (${CLEAN}, NULL, 0), (${HELD}, 'csam', 1);
@@ -959,5 +1298,77 @@ describe("bounty entry images and the owner's view, against the real image query
     it('keeps it from another signed-in user', async () => {
       expect(await imageIds(otherUser)).toEqual([CLEAN]);
     });
+  });
+});
+
+// The held-media viewer rule (src/pages/api/mod/held-media): a moderator holding the csamReports grant.
+describe('who the bounty reads treat as a held-media viewer', () => {
+  beforeEach(() => {
+    mockAssert.mockResolvedValue(undefined);
+    dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([]);
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      id: 9,
+      name: 'B',
+      availability: 'Public',
+      poi: false,
+      nsfw: false,
+      nsfwLevel: 1,
+      moderatorNsfwLevel: null,
+      user: { id: 5 },
+      details: null,
+      tags: [],
+      meta: {},
+    });
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([]);
+  });
+  afterEach(() => dbMock.dbRead.$queryRaw.mockReset());
+  const viewers = {
+    'a moderator with the grant': [{ id: 7, isModerator: true }, { csamReports: true }, true],
+    'a moderator without it': [{ id: 7, isModerator: true }, { csamReports: false }, false],
+    'a grant without moderator': [{ id: 6 }, { csamReports: true }, false],
+    'a signed-out visitor': [undefined, { csamReports: false }, false],
+    'a moderator with the grant on a MediaRead-scoped key': [
+      { id: 7, isModerator: true },
+      { csamReports: true },
+      false,
+      {
+        apiKeyId: 7,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 7 },
+        tokenScope: TokenScope.MediaRead,
+      },
+    ],
+  } as const;
+
+  it.each(Object.keys(viewers))('%s', async (who) => {
+    const [user, flags, sees, credential] = viewers[who as keyof typeof viewers] as readonly [
+      unknown,
+      object,
+      boolean,
+      object?
+    ];
+    const ctx = { user, features: { canViewNsfw: true, ...flags }, ...credential } as never;
+    await getBountyHandler({ input: { id: 9 }, ctx });
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([
+      {
+        id: 9,
+        name: 'B',
+        nsfw: false,
+        nsfwLevel: 1,
+        moderatorNsfwLevel: null,
+        tags: [],
+        user: { id: 5 },
+      },
+    ]);
+    await getInfiniteBountiesHandler({
+      input: { limit: 10, period: 'AllTime', sort: 'Newest' } as never,
+      ctx,
+    });
+    expect(mockBountyImages).toHaveBeenLastCalledWith(
+      expect.objectContaining({ seesReportListed: sees, ownerSeesReportListed: !credential })
+    );
+    expect(mockImagesForBounties).toHaveBeenLastCalledWith(
+      expect.objectContaining({ seesReportListed: sees, ownerSeesReportListed: !credential })
+    );
   });
 });

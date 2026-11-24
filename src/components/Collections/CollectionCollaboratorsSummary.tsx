@@ -1,16 +1,11 @@
 import { Anchor, Avatar, Badge, Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
 import clsx from 'clsx';
-import dynamic from 'next/dynamic';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import type { Collaborator } from '~/server/services/collection-collaborator.service';
 import { CollectionCollaboratorRole } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
-
-const CollectionCollaboratorsModal = dynamic(
-  () => import('~/components/Collections/CollectionCollaborators/CollectionCollaboratorsModal')
-);
 
 const MAX_AVATARS = 4;
 const POPOVER_LIMIT = 5;
@@ -127,10 +122,13 @@ export function CollectionCollaboratorsSummary({
               type="button"
               size="sm"
               onClick={() =>
-                dialogStore.trigger({
-                  component: CollectionCollaboratorsModal,
-                  props: { collectionId },
-                })
+                openDialog(
+                  () =>
+                    import(
+                      '~/components/Collections/CollectionCollaborators/CollectionCollaboratorsModal'
+                    ),
+                  { collectionId }
+                )
               }
             >
               {canManage ? 'Manage' : 'View all'}

@@ -161,6 +161,7 @@ describe('/api/og?type=article', () => {
     status: 'Published',
     tosViolation: false,
     ingestion: 'Scanned',
+    availability: 'Public',
     ...over,
   });
 
@@ -172,6 +173,13 @@ describe('/api/og?type=article', () => {
   it('hides an unpublished article that still carries its publish date', async () => {
     dbMock.dbRead.article.findFirst.mockImplementation(
       fakeFindFirst(article({ status: 'Unpublished' }), card)
+    );
+    expect(await render('article')).toBe(FALLBACK_CACHE);
+  });
+
+  it('follows the article availability rule for the cover card', async () => {
+    dbMock.dbRead.article.findFirst.mockImplementation(
+      fakeFindFirst(article({ availability: 'Private' }), card)
     );
     expect(await render('article')).toBe(FALLBACK_CACHE);
   });

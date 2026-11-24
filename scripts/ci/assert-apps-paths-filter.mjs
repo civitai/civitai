@@ -202,7 +202,12 @@ if (isMain) {
   ];
   if (problems.length > 0) {
     for (const p of problems) console.error(`::error file=${WORKFLOW}::${p}`);
-    console.error(`${problems.length} problem(s). Edit on.pull_request.paths in ${WORKFLOW}.`);
+    console.error(
+      `${problems.length} problem(s) in the paths filter, not in the app suites: edit ` +
+        `on.pull_request.paths in ${WORKFLOW} (push: reuses it). That list decides which PRs run ` +
+        'the app typecheck and when the main batch dispatches the app suites (any change since ' +
+        'its last green app verdict), so a missing entry lets a change to that file skip both.'
+    );
     process.exit(1);
   }
   console.log(`${WORKFLOW}: paths filter covers all ${requiredInputs(root).size} derived inputs`);

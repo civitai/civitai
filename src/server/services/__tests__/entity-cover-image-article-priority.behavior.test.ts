@@ -35,6 +35,7 @@ beforeAll(async () => {
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
+    CREATE TABLE "ServiceDealReviewImage" ("reviewId" int NOT NULL, "imageId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text, "nsfwLevel" int DEFAULT 1, width int, height int,
       hash text, "hideMeta" boolean DEFAULT false, meta jsonb, "createdAt" timestamp DEFAULT now(),
@@ -47,9 +48,10 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "publishedAt" timestamp, "userId" int DEFAULT 1,
-      status text DEFAULT 'Published', ingestion text DEFAULT 'Scanned', "bannerId" int
+      status text DEFAULT 'Published', ingestion text DEFAULT 'Scanned', "bannerId" int, availability "Availability" DEFAULT 'Public'
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int, status text, availability "Availability" DEFAULT 'Public',
       mode "ModelModifier", minor boolean NOT NULL DEFAULT false,

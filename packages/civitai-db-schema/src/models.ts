@@ -108,7 +108,7 @@ export type PartnerPricingModel = "Duration" | "PerImage";
 
 export type ApiKeyType = "System" | "User" | "Access" | "Refresh" | "Worker";
 
-export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline" | "postText";
+export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline" | "postText" | "featurePage";
 
 export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
@@ -738,6 +738,7 @@ export interface User {
   blockGoodPurchasesAsAppOwner?: BlockGoodPurchase[];
   blockGoodEntitlements?: BlockGoodEntitlement[];
   publishRequestsSubmitted?: AppBlockPublishRequest[];
+  appAssistantSessionLinks?: AppAssistantSessionLink[];
   publishRequestsReviewed?: AppBlockPublishRequest[];
   blockScopeInvocations?: BlockScopeInvocation[];
   appUserScopeGrants?: AppUserScopeGrant[];
@@ -1128,6 +1129,7 @@ export interface ModelVersionShowcaseItem {
   source: string;
   position: number | null;
   excluded: boolean;
+  removed: boolean;
   addedById: number;
   createdAt: Date;
 }
@@ -2450,6 +2452,7 @@ export interface AppBlockPublishRequest {
   deployUpdatedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  assistantTrace?: AppPublishRequestTrace | null;
 }
 
 export interface AppBlockBuildAttempt {
@@ -2463,6 +2466,34 @@ export interface AppBlockBuildAttempt {
   failedStep: string | null;
   failedReason: string | null;
   failureClass: string | null;
+  createdAt: Date;
+}
+
+export interface AppAssistantSessionLink {
+  id: number;
+  userId: number;
+  user?: User;
+  conversationId: string;
+  appSlug: string;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  turnCount: number;
+  lastModel: string | null;
+  buzzTotal: number;
+  lastRunId: string | null;
+}
+
+export interface AppPublishRequestTrace {
+  id: number;
+  publishRequestId: string;
+  publishRequest?: AppBlockPublishRequest;
+  slug: string;
+  userId: number;
+  conversationIds: string[];
+  snapshots: JsonValue;
+  signals: JsonValue;
+  signalsVersion: number;
+  snapshotError: string | null;
   createdAt: Date;
 }
 
@@ -3167,6 +3198,41 @@ export interface AnswerMetric {
   commentCount: number;
 }
 
+export interface FeaturePageTopic {
+  id: number;
+  urn: string;
+  kind: string;
+  createdAt: Date;
+}
+
+export interface FeaturePageCommentMirror {
+  commentId: number;
+  userId: number;
+  requestId: string;
+  urn: string | null;
+  goneCause: string | null;
+  version: number;
+  pushedState: string | null;
+  pushedDigest: string | null;
+  platformDigest: string | null;
+  pendingDigest: string | null;
+  pushAttempts: number;
+  scanAttempts: number;
+  scanHash: string | null;
+  editRequestIds: string[];
+  postAttemptedAt: Date | null;
+  postSeq: number;
+  goneAt: Date | null;
+  subjectMissingAt: Date | null;
+  contentAt: Date;
+  removeWantedAt: Date | null;
+  restrictedAt: Date | null;
+  nextPushAt: Date | null;
+  leaseUntil: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface CommentTopic {
   entityType: CommentEntityType;
   entityId: number;
@@ -3196,6 +3262,7 @@ export interface CommentV3 {
   deletedAt: Date | null;
   tosViolation: boolean;
   hidden: boolean;
+  hiddenAt: Date | null;
   locked: boolean;
   pinnedAt: Date | null;
   reactionCount: number;
@@ -5314,6 +5381,11 @@ export interface KnightsPlayer {
   recapDismissedFor: Date | null;
   startAtSeen: Date | null;
   recapPopupOptOut: boolean;
+}
+
+export interface KnightsLegacyPlayerDay {
+  playerId: number;
+  day: Date;
 }
 
 export interface KnightsPlayerDay {

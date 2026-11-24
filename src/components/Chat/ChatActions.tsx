@@ -1,6 +1,6 @@
 import { Group, Text } from '@mantine/core';
 import { Menu, Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 import { ChatMemberStatus, ChatNotifyLevel } from '~/shared/utils/prisma/enums';
 import {
   IconArchive,
@@ -137,25 +137,23 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
 
   // TODO probably don't close modal until left
   const leaveModal = () =>
-    openConfirmModal({
+    openConfirm({
       title: 'Really leave this chat?',
-      children: <Text size="sm">You can rejoin at any time from the Archived tab.</Text>,
-      centered: true,
+      message: <Text size="sm">You can rejoin at any time from the Archived tab.</Text>,
       labels: { confirm: 'Confirm', cancel: 'Cancel' },
       onConfirm: () => adjustChat(ChatMemberStatus.Left),
     });
 
   const deleteModal = () => {
     if (!chatObj) return;
-    openConfirmModal({
+    openConfirm({
       title: 'Delete this conversation?',
-      children: (
+      message: (
         <Text size="sm">
           It disappears from your messages and a new conversation with this person starts empty.
           Only your side is cleared — they keep their copy.
         </Text>
       ),
-      centered: true,
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => clearChat({ chatId: chatObj.id }),

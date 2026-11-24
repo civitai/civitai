@@ -4,7 +4,8 @@
  * page and the Creator Studio dashboard, each with its own markup.
  */
 
-export type UsageLimitWindow = 'rolling' | 'utc-day' | 'utc-month';
+/** `fixed`: starts at first use and resets all at once (the orchestrator's free tier). */
+export type UsageLimitWindow = 'rolling' | 'utc-day' | 'utc-month' | 'fixed';
 
 /** One row of `GET /api/v1/me/limits` / `user.getUsageLimits`. */
 export type UsageLimitRow = {
@@ -87,6 +88,16 @@ export function describeUsageLimit(
   const at = (iso: string) => formatWhen(Date.parse(iso), nowMs, timeZone);
   const window = row.window ?? 'rolling';
 
+  if (window === 'fixed') {
+    return {
+      percent,
+      tone,
+      usedText,
+      when: row.resetAt ? `resets ${at(row.resetAt)}` : null,
+      whenDetail: null,
+    };
+  }
+
   if (window !== 'rolling') {
     return {
       percent,
@@ -128,6 +139,7 @@ export function windowCaption(rows: UsageLimitRow[]): string | null {
   const [window] = windows;
   if (window === 'utc-day') return 'UTC day';
   if (window === 'utc-month') return 'UTC month';
+  if (window === 'fixed') return 'free allowance';
   const seconds = new Set(rows.map((row) => row.windowSeconds).filter((s) => s !== null));
   if (seconds.size !== 1) return 'rolling';
   const [s] = seconds as Set<number>;

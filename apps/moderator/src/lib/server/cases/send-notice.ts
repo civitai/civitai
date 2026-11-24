@@ -5,6 +5,7 @@ import {
   withThrottleRetry,
   type Sleep,
 } from '@civitai/email';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { sql, type Kysely } from 'kysely';
 import { env } from '$env/dynamic/private';
 import { pauseSends, readBrake } from './brake';
@@ -82,9 +83,6 @@ export function defaultSendDeps(): Omit<SendDeps, 'holdsLock'> {
     hourlyCeiling: Number(env.CASES_SEND_HOURLY_CEILING) || DEFAULT_HOURLY_CEILING,
   };
 }
-
-const escapeHtml = (s: string) =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /** A verbatim plain-text body, shown as written. */
 const plainToHtml = (text: string) =>

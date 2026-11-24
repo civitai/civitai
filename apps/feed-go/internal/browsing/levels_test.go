@@ -145,3 +145,18 @@ func TestBoardColorOf(t *testing.T) {
 		t.Fatal("hasHost must match as ColorOf does")
 	}
 }
+
+func TestForViewer(t *testing.T) {
+	for _, c := range []struct {
+		level int
+		mod   bool
+		want  int
+	}{{1 | 32, false, 1}, {32, false, 0}, {64 | 2, false, 2}, {31, false, 31}, {1 | 32, true, 1 | 32}} {
+		if got := ForViewer(c.level, c.mod); got != c.want {
+			t.Errorf("ForViewer(%d, %v) = %d, want %d", c.level, c.mod, got, c.want)
+		}
+	}
+	if got := OnlySelectable(64 | 32 | 4); got != 4 {
+		t.Errorf("OnlySelectable(100) = %d, want 4", got)
+	}
+}

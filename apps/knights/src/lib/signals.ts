@@ -1,6 +1,7 @@
 import { browser } from '$app/environment';
 import { env } from '$env/dynamic/public';
 import { HubConnectionBuilder, HttpTransportType, type HubConnection } from '@microsoft/signalr';
+import type { PressSignals } from '$lib/press';
 
 // One SignalR connection per tab, opened by /play and kept for the life of the tab. Best effort: /play works the same without
 // it, so every failure here is silent.
@@ -10,6 +11,11 @@ type Handler = (payload: unknown) => void;
 const handlers = new Map<string, Set<Handler>>();
 const bound = new Set<string>();
 const topics = new Map<string, number>();
+// Topics the hub has confirmed on the current connection; `topics` is only what was asked for.
+const confirmed = new Set<string>();
+// Bumped when the hub may have dropped its subscriptions (reconnecting, close). SignalR keeps the same HubConnection across
+// an automatic reconnect, so a subscribe still pending from before it is told apart by its epoch, not its connection.
+let epoch = 0;
 let connection: HubConnection | null = null;
 
 function bind(conn: HubConnection, event: string) {
@@ -30,7 +36,14 @@ async function fetchToken(): Promise<string> {
 
 const invoke = (method: 'subscribe' | 'unsubscribe', topic: string) => {
   if (connection?.state !== 'Connected') return;
-  connection.invoke(method, topic).catch(() => {});
+  const asked = epoch;
+  connection.invoke(method, topic).then(
+    () => {
+      // A confirmation that lands after the topic was left, or after a reconnect or close since it was asked, does not count.
+      if (method === 'subscribe' && topics.has(topic) && asked === epoch) confirmed.add(topic);
+    },
+    () => {}
+  );
 };
 
 /** Opens the connection once; a no-op on the server or without `PUBLIC_SIGNALS_ENDPOINT`. */
@@ -55,12 +68,18 @@ export function connectSignals() {
   const resubscribe = () => {
     for (const topic of topics.keys()) invoke('subscribe', topic);
   };
+  const dropSubscriptions = () => {
+    epoch += 1;
+    confirmed.clear();
+  };
+  conn.onreconnecting(dropSubscriptions);
   conn.onreconnected(resubscribe);
   // A connection that failed to open, or gave up reconnecting, is forgotten so the next /play visit tries again.
   const forget = () => {
     if (connection === conn) {
       connection = null;
       bound.clear();
+      dropSubscriptions();
     }
   };
   conn.onclose(forget);
@@ -91,6 +110,15 @@ export function joinTopic(topic: string): () => void {
     const remaining = (topics.get(topic) ?? 1) - 1;
     if (remaining > 0) return void topics.set(topic, remaining);
     topics.delete(topic);
+    confirmed.delete(topic);
     invoke('unsubscribe', topic);
   };
+}
+
+/** The connection right now: open, and every one of `wanted` confirmed by the hub (never true for no topics). */
+export function signalsAt(wanted: readonly string[]): PressSignals {
+  const connected = connection?.state === 'Connected';
+  const subscribed =
+    connected && wanted.length > 0 && wanted.every((topic) => confirmed.has(topic));
+  return { connected, subscribed };
 }

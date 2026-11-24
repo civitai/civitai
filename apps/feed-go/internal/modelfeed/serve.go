@@ -171,8 +171,9 @@ type pageScope struct {
 }
 
 // resolveLevel is resolveRequestBrowsingLevels after applyDomainFeature: a signed-in caller with no
-// level gets their saved one (not read here: falls back), then the domain cap clamps it (an absent
-// or disjoint level becomes the cap). Uncapped and absent is a verified crawler's request.
+// level gets their saved one (not read here: falls back); a sent level is held to the viewer
+// (stripBlockedForNonModerator), then the domain cap clamps it (an absent or disjoint level becomes
+// the cap). Uncapped and absent is a verified crawler's request.
 func resolveLevel(in *Input, req Request) (int, error) {
 	if in.BrowsingLevel == nil {
 		if req.Viewer != nil || req.Cap == 0 {
@@ -180,10 +181,11 @@ func resolveLevel(in *Input, req Request) (int, error) {
 		}
 		return req.Cap, nil
 	}
+	level := browsing.ForViewer(*in.BrowsingLevel, req.Viewer != nil && req.Viewer.IsModerator)
 	if req.Cap != 0 {
-		return browsing.ClampToCap(*in.BrowsingLevel, req.Cap), nil
+		return browsing.ClampToCap(level, req.Cap), nil
 	}
-	return *in.BrowsingLevel, nil
+	return level, nil
 }
 
 type page struct {
@@ -701,7 +703,8 @@ func finishItems(ctx context.Context, d *Deps, in *Input, level int, raw rawInpu
 			images = holdForViewer(images, items, levels, viewerID)
 		}
 	}
-	covers, err := coverImages(ctx, d, items, images, len(in.BaseModels) > 0)
+	// sameVersionOnly: `!!input.baseModels?.length || !!input.hidePaid`.
+	covers, err := coverImages(ctx, d, items, images, len(in.BaseModels) > 0 || in.HidePaid)
 	if err != nil {
 		return nil, err
 	}
@@ -884,16 +887,88 @@ func holdCovers(covers map[int]superjson.Object, items []*feedItem, levels map[i
 }
 
 // coverImages is getCoverImages: each model's chosen cover, found among its shown version's (held)
-// images, else — unless a base-model filter pins the card to that version — located on the replica
-// (the model owner's image on one of the model's versions) and read from that version's cached
-// images. A dangling or foreign id is absent.
+// images, else — unless a base-model filter or Hide Paid pins the card to that version — located on
+// the replica (the model owner's image on one of the model's versions) and read from that version's
+// cached images. A dangling or foreign id is absent, unless Node's withCommunityCovers could find it
+// (communityCoverGuard).
 func coverImages(ctx context.Context, d *Deps, items []*feedItem, byVersion map[int][]superjson.Object, sameVersionOnly bool) (map[int]superjson.Object, error) {
-	found := map[int]superjson.Object{}
-	type want struct {
-		it      *feedItem
-		coverID int
+	found, pending, err := ownerCovers(ctx, d, items, byVersion, sameVersionOnly)
+	if err != nil {
+		return nil, err
 	}
-	var pending []want
+	if err := communityCoverGuard(ctx, d.DB, found, pending); err != nil {
+		return nil, err
+	}
+	return found, nil
+}
+
+// coverWant is one model's chosen cover id that is not on its shown version's images.
+type coverWant struct {
+	it      *feedItem
+	coverID int
+}
+
+// communityCoverGuard stands in for withCommunityCovers (src/server/services/model-cover.service.ts),
+// which getCoverImages runs over every chosen cover its owner lookup did not find: such a cover can
+// be a COMMUNITY image the creator featured in one of the model's version showcases
+// (getShowcaseCommunityCovers, version-showcase.service.ts), which Node then serves as the cover.
+// That is not ported, so the request falls back (`model-community-cover`) when a cover the owner
+// lookup did not find has a row in the query getShowcaseCommunityCovers starts from. With no such
+// row Node finds nothing either; with one, whatever else Node checks, a fallback is only a lost
+// answer.
+func communityCoverGuard(ctx context.Context, db Querier, found map[int]superjson.Object, pending []coverWant) error {
+	var missing []coverWant
+	for _, p := range pending {
+		if _, ok := found[p.it.row.ID]; !ok {
+			missing = append(missing, p)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	imageIDs := make([]int, len(missing))
+	modelIDs := make([]int, len(missing))
+	wanted := make(map[[2]int]bool, len(missing))
+	for i, p := range missing {
+		imageIDs[i], modelIDs[i] = p.coverID, p.it.row.ID
+		wanted[[2]int{p.it.row.ID, p.coverID}] = true
+	}
+	rows, err := db.Query(ctx, `SELECT DISTINCT mv."modelId", s."imageId"
+		FROM "ModelVersionShowcaseItem" s
+		JOIN "ModelVersion" mv ON mv.id = s."modelVersionId"
+		JOIN "Image" i ON i.id = s."imageId"
+		WHERE s."imageId" = ANY($1::int[])
+		  AND mv."modelId" = ANY($2::int[])
+		  AND s.source = 'Community'
+		  AND NOT s."removed"`, imageIDs, modelIDs)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	featured := false
+	for rows.Next() {
+		var modelID, imageID int
+		if err := rows.Scan(&modelID, &imageID); err != nil {
+			return err
+		}
+		if wanted[[2]int{modelID, imageID}] {
+			featured = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if featured {
+		return fallback.New("model-community-cover")
+	}
+	return nil
+}
+
+// ownerCovers is getCoverImages up to withCommunityCovers: the covers found on the shown version or
+// as the owner's image on another version, and every chosen cover not on the shown version.
+func ownerCovers(ctx context.Context, d *Deps, items []*feedItem, byVersion map[int][]superjson.Object, sameVersionOnly bool) (map[int]superjson.Object, []coverWant, error) {
+	found := map[int]superjson.Object{}
+	var pending []coverWant
 	for _, it := range items {
 		id := pickCoverImageID(it)
 		if id == 0 {
@@ -909,11 +984,11 @@ func coverImages(ctx context.Context, d *Deps, items []*feedItem, byVersion map[
 		if hit != nil {
 			found[it.row.ID] = hit
 		} else {
-			pending = append(pending, want{it, id})
+			pending = append(pending, coverWant{it, id})
 		}
 	}
 	if len(pending) == 0 || sameVersionOnly {
-		return found, nil
+		return found, pending, nil
 	}
 	ids := make([]int, len(pending))
 	for i, p := range pending {
@@ -925,7 +1000,7 @@ func coverImages(ctx context.Context, d *Deps, items []*feedItem, byVersion map[
 		LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
 		WHERE i.id = ANY($1::int[])`, ids)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	type located struct{ userID, versionID, modelID *int }
 	where := map[int]located{}
@@ -934,13 +1009,13 @@ func coverImages(ctx context.Context, d *Deps, items []*feedItem, byVersion map[
 		var l located
 		if err := rows.Scan(&id, &l.userID, &l.versionID, &l.modelID); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		where[id] = l
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	type coverHit struct {
 		it        *feedItem
@@ -960,11 +1035,11 @@ func coverImages(ctx context.Context, d *Deps, items []*feedItem, byVersion map[
 		}
 	}
 	if len(hits) == 0 {
-		return found, nil
+		return found, pending, nil
 	}
 	others, err := d.Sources.VersionImages(ctx, versionIDs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, h := range hits {
 		for _, img := range others[h.versionID] {
@@ -974,7 +1049,7 @@ func coverImages(ctx context.Context, d *Deps, items []*feedItem, byVersion map[
 			}
 		}
 	}
-	return found, nil
+	return found, pending, nil
 }
 
 // pickCoverImageID is pickCoverImageId: the .com cover with a complete face for a .com viewer,
@@ -1024,6 +1099,7 @@ func imagesForFace(images []superjson.Object, nsfw, hasSfwFace, showSfwFace bool
 
 // filterImagesForViewer is filterImagesForViewer (src/server/utils/model-getall-images.ts).
 func filterImagesForViewer[T imageRecord](images []T, level int, modelNsfw, disablePoi, disableMinor bool, viewer *Viewer) []T {
+	level = browsing.OnlySelectable(level)
 	maxLevel := 0
 	for bit := 1; bit <= level && bit > 0; bit <<= 1 {
 		if level&bit != 0 {

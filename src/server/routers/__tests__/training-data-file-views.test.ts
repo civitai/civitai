@@ -5,6 +5,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ModelController from '~/server/controllers/model.controller';
 import type * as ModelVersionController from '~/server/controllers/model-version.controller';
 import type * as ServerDomain from '~/server/utils/server-domain';
+import type * as FliptClient from '~/server/flipt/client';
 
 /**
  * A shared training dataset as each file surface shows it: `modelFile.getByVersionId`,
@@ -39,6 +40,11 @@ vi.mock('~/server/controllers/model-version.controller', async (importOriginal) 
   ...(await importOriginal<typeof ModelVersionController>()),
   getModelVersionHandler,
   getModelVersionForEditHandler,
+}));
+const { isFlipt } = vi.hoisted(() => ({ isFlipt: vi.fn() }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt,
 }));
 vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
   ...(await importOriginal<typeof ServerDomain>()),
@@ -79,17 +85,27 @@ const dataset = (overrides: Partial<File> = {}): File => ({
 });
 
 /** The listing query's answer for the dataset row. */
-function listingRow(row: { nsfwLevel?: number; fullyRated?: boolean; restricted: boolean }) {
+function listingRow(row: {
+  nsfwLevel?: number;
+  fullyRated?: boolean;
+  restricted: boolean;
+  virusScanResult?: string;
+}) {
   dbMock.dbRead.$queryRaw.mockResolvedValue([
     {
       id: 2,
       nsfwLevel: row.nsfwLevel ?? 1,
       fullyRated: row.fullyRated ?? true,
       restricted: row.restricted,
-      virusScanResult: 'Success',
+      virusScanResult: row.virusScanResult ?? 'Success',
     },
   ]);
 }
+
+/** The `offDomainTrainingData` of the version the last read returned. */
+let lastStub: unknown;
+/** The model's status and mode as each surface reads them. */
+let modelState: { status: string; mode: string | null } = { status: 'Published', mode: null };
 
 type Viewer = { id: number; isModerator: boolean } | undefined;
 
@@ -116,6 +132,7 @@ const SURFACES: [string, (files: File[], user: Viewer, host?: string) => Promise
       const res = await modelFileRouter
         .createCaller(ctx(user, host))
         .getByVersionId({ id: VERSION });
+      lastStub = (res as { offDomainTrainingData?: unknown }).offDomainTrainingData;
       return res!.files as File[];
     },
   ],
@@ -124,12 +141,13 @@ const SURFACES: [string, (files: File[], user: Viewer, host?: string) => Promise
     async (files, user, host) => {
       getModelVersionHandler.mockResolvedValue({
         id: VERSION,
-        model: { user: { id: OWNER } },
+        model: { user: { id: OWNER }, ...modelState },
         files,
       });
       const res = await modelVersionRouter
         .createCaller(ctx(user, host))
         .getById({ id: VERSION, withFiles: true });
+      lastStub = (res as { offDomainTrainingData?: unknown }).offDomainTrainingData;
       return res.files as unknown as File[];
     },
   ],
@@ -139,9 +157,12 @@ const SURFACES: [string, (files: File[], user: Viewer, host?: string) => Promise
       getModelHandler.mockResolvedValue({
         id: 1,
         user: { id: OWNER },
+        ...modelState,
         modelVersions: [{ id: VERSION, files }],
       });
       const res = await modelRouter.createCaller(ctx(user, host)).getById({ id: 1 });
+      lastStub = (res.modelVersions[0] as { offDomainTrainingData?: unknown })
+        .offDomainTrainingData;
       return res.modelVersions[0].files as unknown as File[];
     },
   ],
@@ -149,7 +170,10 @@ const SURFACES: [string, (files: File[], user: Viewer, host?: string) => Promise
 
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbRead.modelVersion.findUnique.mockResolvedValue({ model: { userId: OWNER } });
+  modelState = { status: 'Published', mode: null };
+  isFlipt.mockResolvedValue(true);
+  dbMock.dbRead.modelVersion.findUnique.mockImplementation((() =>
+    Promise.resolve({ model: { userId: OWNER, ...modelState } })) as never);
   listingRow({ restricted: false });
 });
 
@@ -187,6 +211,77 @@ describe.each(SURFACES)('%s and a shared training dataset', (_, read) => {
     expect((await read([WEIGHTS, dataset()], undefined, 'civitai.red')).map((f) => f.id)).toEqual([
       1, 2,
     ]);
+  });
+
+  // The civitai.red pointer and its limits (sole refusal, exact keys, withheld models, the flag): #10207.
+  it('points others on civitai.com to civitai.red for a dataset refused only for its rating', async () => {
+    listingRow({ nsfwLevel: 4, restricted: false });
+    const files = await read([WEIGHTS, dataset()], undefined);
+    expect(files.map((f) => f.id)).toEqual([1]);
+    expect(lastStub).toEqual({
+      id: 2,
+      type: 'Training Data',
+      visibility: 'Public',
+      offDomain: true,
+    });
+    // Exactly these keys: a field added to the stub later fails here.
+    expect(Object.keys(lastStub as object).sort()).toEqual([
+      'id',
+      'offDomain',
+      'type',
+      'visibility',
+    ]);
+  });
+
+  it('gives no pointer with the training-data-red-pointer flag off, as before the pointer', async () => {
+    listingRow({ nsfwLevel: 4, restricted: false });
+    isFlipt.mockResolvedValue(false);
+    const files = await read([WEIGHTS, dataset()], undefined);
+    expect(files.map((f) => f.id)).toEqual([1]);
+    expect(lastStub ?? null).toBeNull();
+    expect(isFlipt).toHaveBeenCalledWith('training-data-red-pointer');
+  });
+
+  it('gives no pointer where the dataset is listed', async () => {
+    listingRow({ nsfwLevel: 4, restricted: false });
+    await read([WEIGHTS, dataset()], undefined, 'civitai.red');
+    expect(lastStub ?? null).toBeNull();
+    listingRow({ nsfwLevel: 1, restricted: false });
+    await read([WEIGHTS, dataset()], undefined);
+    expect(lastStub ?? null).toBeNull();
+  });
+
+  it.each([
+    ['restricted (owner or content)', { restricted: true }],
+    ['not yet scanned', { restricted: false, virusScanResult: 'Pending' }],
+  ])('gives no pointer on civitai.com to a mature dataset that is also %s', async (__, row) => {
+    listingRow({ nsfwLevel: 4, ...row });
+    const files = await read([WEIGHTS, dataset()], undefined);
+    expect(files.map((f) => f.id)).toEqual([1]);
+    expect(lastStub ?? null).toBeNull();
+  });
+
+  it('gives no pointer on civitai.com to a mature dataset that is not Public', async () => {
+    listingRow({ nsfwLevel: 4, restricted: false });
+    await read([WEIGHTS, dataset({ visibility: 'Private' })], undefined);
+    expect(lastStub ?? null).toBeNull();
+  });
+
+  it.each([
+    ['taken down', { status: 'Published', mode: 'TakenDown' }],
+    ['deleted', { status: 'Deleted', mode: null }],
+  ])('gives no pointer on civitai.com to a mature dataset whose model is %s', async (__, state) => {
+    listingRow({ nsfwLevel: 4, restricted: false });
+    modelState = state;
+    await read([WEIGHTS, dataset()], undefined);
+    expect(lastStub ?? null).toBeNull();
+  });
+
+  it('gives no pointer when the listing check cannot be read', async () => {
+    dbMock.dbRead.$queryRaw.mockRejectedValue(new Error('down'));
+    const files = await read([WEIGHTS, dataset()], undefined);
+    expect(files.map((f) => f.id)).toEqual([1]);
+    expect(lastStub ?? null).toBeNull();
   });
 
   it.each([

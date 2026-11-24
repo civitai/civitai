@@ -10,7 +10,7 @@ import { IconEye, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { openWildcardPreview } from '~/components/Dialog/triggers/wildcard-preview';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { editPromptAttentionRange } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import type { SnippetReference, SnippetsNodeValue } from '~/shared/generation/values';
 import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
@@ -174,7 +174,7 @@ function SnippetsAwareEditor(props: GenerationTextEditorProps) {
       // signal). Targets with at least one `#category` make the cut.
       .filter((t) => parsePromptSnippetReferences(t.text).length > 0);
     if (targets.length === 0) return;
-    openWildcardPreview({
+    openDialog(() => import('~/components/Generate/Input/WildcardPreviewModal'), {
       wildcardSetIds: snippets.wildcardSetIds,
       targets,
       // Reopening the modal after a previous OK should show the same

@@ -18,6 +18,7 @@ import type { SessionUser } from '~/types/session';
 export function livePrivateDocSource(): PrivateDocSource {
   const feed = getDocStorePrivateFeed();
   return {
+    head: (appId) => feed.privateHead(appId),
     versions: (appId, coll, userId, afterKey, limit) =>
       feed.privateVersions(appId, coll, userId, afterKey, limit),
     documents: (appId, coll, userId, afterKey, limit) =>

@@ -1,6 +1,6 @@
 import { escape as escapeHtml } from 'he';
 import { createEmail } from '~/server/email/templates/base.email';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { renderEmailCallout, simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { lockReviewRulingMessage } from '@civitai/shared/lock-review';
 
@@ -117,7 +117,11 @@ export const moderationActionEmail = createEmail({
     // Positive outcomes (reinstated / overturned / approved) are good news and
     // never carry a reason — suppress the block even if a caller passes one.
     const reasonBlock =
-      !positive && reason ? `<p><strong>Reason:</strong><br/>${escapeHtml(reason)}</p>` : '';
+      !positive && reason
+        ? renderEmailCallout(`<strong>Reason:</strong><br/>${escapeHtml(reason)}`, {
+            accent: 'red',
+          })
+        : '';
     // Negative outcomes link to the Terms of Service for a non-explicit policy
     // reference (positive outcomes are good news and get no policy link).
     const tosBlock = !positive
@@ -149,6 +153,9 @@ export const moderationActionEmail = createEmail({
     `;
 
     return simpleEmailWithTemplate({
+      icon: positive ? '✅' : '🛡️',
+      accent: positive ? 'green' : 'red',
+      eyebrow: 'Moderation',
       header: heading,
       body,
       ...(positive

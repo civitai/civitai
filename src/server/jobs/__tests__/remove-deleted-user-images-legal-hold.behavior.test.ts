@@ -1,3 +1,4 @@
+import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { DELETED_ROW_COLUMNS_SQL } from '../../services/__tests__/deleted-row-columns.fixture';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
@@ -78,8 +79,7 @@ beforeAll(async () => {
       id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
       "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
-    CREATE TABLE "JobQueue" (type text, "entityType" text, "entityId" int, "createdAt" timestamp(3) DEFAULT now(), UNIQUE (type, "entityType", "entityId"));
-    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp, metadata jsonb);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
@@ -89,6 +89,7 @@ beforeAll(async () => {
       "blockedFor" text,
       "needsReview" text,
       "nsfwLevel" int NOT NULL DEFAULT 1,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       metadata jsonb NOT NULL DEFAULT '{}',
       "updatedAt" timestamp(3)
     );
@@ -110,6 +111,16 @@ beforeAll(async () => {
       images jsonb NOT NULL DEFAULT '[]'
     );
   `);
+  await holder.db.exec(`
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+    CREATE TYPE "JobQueueType" AS ENUM ('PendingDelete', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync', 'BlockedImageDelete');
+    CREATE TABLE "JobQueue" (
+      "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
+      data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(),
+      UNIQUE ("entityType", "entityId", type)
+    );
+  `);
+  await holder.db.exec(imageUseTablesSql);
   await holder.db.exec(
     readFileSync(
       path.resolve(
@@ -185,6 +196,41 @@ beforeEach(async () => {
 });
 
 describe('remove-deleted-user-images under a legal hold', () => {
+  it("records each held image's rating and rating lock before blocking it", async () => {
+    await holder.db.exec(`
+      UPDATE "Image" SET "nsfwLevel" = 4, "nsfwLevelLocked" = true WHERE id = 1;
+      UPDATE "Image" SET "nsfwLevel" = 32, ingestion = 'Error' WHERE id = 2;
+      -- Already blocked for an unverified AI claim: the job re-points it rather than hiding it.
+      UPDATE "Image" SET "nsfwLevel" = 8, ingestion = 'Blocked', "blockedFor" = 'AiNotVerified' WHERE id = 3;
+    `);
+    await holdSecondaryUser(HELD);
+
+    await run();
+
+    const { rows } = await holder.db.query<{
+      id: number;
+      nsfwLevel: number;
+      metadata: Record<string, unknown>;
+    }>(`SELECT id, "nsfwLevel", metadata FROM "Image" WHERE id IN (1, 2, 3) ORDER BY id`);
+    // Control: the grace block ran and replaced the rating; the re-point leaves it.
+    expect(rows.map((row) => row.nsfwLevel)).toEqual([32, 32, 8]);
+    expect(rows.map((row) => row.metadata)).toEqual([
+      expect.objectContaining({
+        accountDeletionPriorNsfwLevel: 4,
+        accountDeletionPriorNsfwLevelLocked: true,
+      }),
+      expect.objectContaining({
+        accountDeletionPriorNsfwLevel: 32,
+        accountDeletionPriorNsfwLevelLocked: false,
+      }),
+      expect.objectContaining({
+        accountDeletionPriorBlockedFor: 'AiNotVerified',
+        accountDeletionPriorNsfwLevel: 8,
+        accountDeletionPriorNsfwLevelLocked: false,
+      }),
+    ]);
+  });
+
   it("leaves a held user's images and posts, and drains everyone else", async () => {
     await holdSecondaryUser(HELD);
 

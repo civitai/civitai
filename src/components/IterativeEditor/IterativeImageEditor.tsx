@@ -10,7 +10,6 @@ import {
   Text,
 } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconBolt,
   IconCheck,
@@ -36,7 +35,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { DrawingElement } from '~/components/Generation/Input/DrawingEditor/drawing.types';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { SignalMessages } from '~/server/common/enums';
 import { showErrorNotification } from '~/utils/notifications';
@@ -63,14 +62,7 @@ import type {
   SidebarSlotProps,
 } from './iterative-editor.types';
 import styles from './IterativeImageEditor.module.scss';
-
-const DrawingEditorModal = dynamic(
-  () =>
-    import('~/components/Generation/Input/DrawingEditor/DrawingEditorModal').then(
-      (mod) => mod.DrawingEditorModal
-    ),
-  { ssr: false }
-);
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
   ssr: false,
@@ -756,9 +748,10 @@ export function IterativeImageEditor({
       // Fall back to stored dimensions
     }
 
-    dialogStore.trigger({
-      component: DrawingEditorModal,
-      props: {
+    openDialog(
+      () => import('~/components/Generation/Input/DrawingEditor/DrawingEditorModal'),
+      'DrawingEditorModal',
+      {
         sourceImage: {
           url: sourceUrl,
           width: imgWidth,
@@ -802,8 +795,8 @@ export function IterativeImageEditor({
             });
           }
         },
-      },
-    });
+      }
+    );
   };
 
   // ── Revert: use a previous iteration as source ──
@@ -972,9 +965,9 @@ export function IterativeImageEditor({
   // ── Close with confirmation ──
   const handleClose = useCallback(() => {
     if (iterations.length > 0) {
-      openConfirmModal({
+      openConfirm({
         title: 'Discard changes?',
-        children: <Text size="sm">You have uncommitted changes. Close without committing?</Text>,
+        message: <Text size="sm">You have uncommitted changes. Close without committing?</Text>,
         labels: { confirm: 'Discard', cancel: 'Keep editing' },
         confirmProps: { color: 'red' },
         onConfirm: () => onClose?.(),

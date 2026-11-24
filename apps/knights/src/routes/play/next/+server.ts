@@ -4,7 +4,7 @@ import { db } from '$lib/server/db';
 import { openItem, type ItemRef } from '$lib/server/feed-token';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { queueDeps } from '$lib/server/queue/runtime';
-import { lockoutFor } from '$lib/server/vote-limits/runtime';
+import { pauseFor } from '$lib/server/vote-limits/runtime';
 import { feedSecret } from '$lib/server/smites/runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { skippedFor } from '$lib/server/skips';
@@ -37,7 +37,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
   if (!(await consented(userId))) return NOTHING();
 
   const now = queueDeps.now();
-  if (!locals.user.isModerator && (await lockoutFor(db, userId, now))) return NOTHING();
+  if (!locals.user.isModerator && (await pauseFor(db, userId, now))) return NOTHING();
 
   const secret = feedSecret();
   const named = url.searchParams

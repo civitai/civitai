@@ -1,8 +1,8 @@
 import { Alert, Button, Group, Text } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
 import { IconRosetteDiscountCheck } from '@tabler/icons-react';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
 
 /** The invitee's answer to the owner's invitation to collaborate. */
 export function StorylineInviteAlert({
@@ -77,9 +77,9 @@ export function StorylineLeaveCollaboration({ storylineId }: { storylineId: numb
         variant="default"
         loading={leave.isPending}
         onClick={() =>
-          openConfirmModal({
+          openConfirm({
             title: 'Leave as collaborator',
-            children: (
+            message: (
               <Text size="sm">
                 Your chapters stay in the story; new continuations go to the creator&apos;s review.
               </Text>

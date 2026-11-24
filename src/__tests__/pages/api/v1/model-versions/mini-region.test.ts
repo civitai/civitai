@@ -70,6 +70,8 @@ function versionRow(nsfwLevel: number, sfwName: string | null = null) {
     sfwOnly: false,
     usageControl: 'Download',
     modelUserId: 4242,
+    modelStatus: 'Published',
+    modelAvailability: 'Public',
     poi: false,
     licensingFee: null,
     licensingFeeType: null,

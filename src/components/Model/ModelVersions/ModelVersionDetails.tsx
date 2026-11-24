@@ -84,7 +84,11 @@ import { useModelShowcaseCollection } from '~/components/Model/model.utils';
 import { ModelAvailabilityUpdate } from '~/components/Model/ModelAvailabilityUpdate/ModelAvailabilityUpdate';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
+import { OffDomainTrainingDataNotice } from '~/components/Model/ModelVersions/OffDomainTrainingDataNotice';
+import { useRedHref } from '~/hooks/useRedHref';
+import type { OffDomainTrainingData } from '~/server/services/training-data-restricted.service';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
+import { DetailsAccordion } from '~/components/DetailsAccordion/DetailsAccordion';
 import {
   ModelBadge,
   PageGroup,
@@ -294,6 +298,7 @@ function ModelVersionDetailsContent({
   );
   const filesVisibleCount = filesVisible.length;
   const hasVisibleFiles = filesVisibleCount > 0;
+  const redHref = useRedHref();
 
   // Group files by variant for the download dropdown
   const groupedFiles = useMemo(
@@ -1200,27 +1205,16 @@ function ModelVersionDetailsContent({
             baseModel={version.baseModel}
             usageControl={version.usageControl}
           />
+          <OffDomainTrainingDataNotice
+            stub={
+              (version as { offDomainTrainingData?: OffDomainTrainingData | null })
+                .offDomainTrainingData
+            }
+            href={redHref()}
+          />
           <BaseModelWarningAlert baseModel={version.baseModel} />
 
-          <Accordion
-            variant="separated"
-            multiple
-            onChange={setDetailAccordions}
-            value={detailAccordions}
-            styles={(theme) => ({
-              content: { padding: 0 },
-              label: { padding: 0 },
-              item: {
-                overflow: 'hidden',
-                borderColor: colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
-                boxShadow: theme.shadows.sm,
-              },
-              control: {
-                padding: theme.spacing.sm,
-                gap: theme.spacing.md,
-              },
-            })}
-          >
+          <DetailsAccordion multiple onChange={setDetailAccordions} value={detailAccordions}>
             {model.meta?.showcaseCollectionId && collection && (
               <Accordion.Item value="collection-showcase" className="group">
                 {/* The follow/edit action sits BESIDE the control, not inside it: the control is a
@@ -1836,7 +1830,7 @@ function ModelVersionDetailsContent({
                 </Accordion.Panel>
               </Accordion.Item>
             )}
-          </Accordion>
+          </DetailsAccordion>
 
           {/* Resource Review - shown after model details for users who downloaded */}
           {!model.locked && alreadyDownloaded && (

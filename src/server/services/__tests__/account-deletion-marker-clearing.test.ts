@@ -68,10 +68,8 @@ describe('the moderator app strips the same account-deletion breadcrumbs the mai
    * The two patterns cannot satisfy each other: in the remixSource arm the character after
    * `"metadata"` is a comma, so the bare-subject pattern below cannot match it.
    */
-  const STRIP_KEYS =
-    String.raw`\s*-\s*\$\{GRACE_PRIOR_INGESTION_KEY\}::text` +
-    String.raw`\s*-\s*\$\{GRACE_PRIOR_BLOCKED_FOR_KEY\}::text` +
-    String.raw`\s*-\s*\$\{GRACE_PRIOR_NEEDS_REVIEW_KEY\}::text`;
+  // The shared list of every key, so a key added to it is stripped here too.
+  const STRIP_KEYS = String.raw`\s*-\s*\$\{MINUS_GRACE_KEYS\}`;
   const BRANCHES = [
     ['remixSource', String.raw`COALESCE\("metadata",\s*'\{\}'::jsonb\)`],
     ['every other', String.raw`"metadata"`],

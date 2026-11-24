@@ -44,7 +44,10 @@ The domain framework, as for the other content indexes:
 - **Refresh walk**: re-syncs every video id and visits the collection's points in the same id
   range, so a point whose row is gone or no longer qualifies is deleted. It reads `Image`
   filtered to videos; the partial index `Image_video_id_idx` keeps that cheap. Its interval is
-  `VECTOR_VIDEO_REFRESH_MINUTES`.
+  `VECTOR_VIDEO_REFRESH_MINUTES`. With `VECTOR_VIDEO_REFRESH_POINTS_ONLY=true` and video embedding
+  off, it walks only the collection's points, looking each batch up in `Image` by primary key: a
+  removal-only lane cannot add a point, so rows without one need no visit. Ignored while embedding
+  is on.
 - **Backfill**: `node dist/vector-sync/content/backfill.js --domain video --to <id> --confirm`,
   newest id first. Use `--limit` as a cap on a slice and `--max-rate <writes/s>` to pace it; the
   embed workers also carry the live image sync, so watch its lag and pause if it climbs. The

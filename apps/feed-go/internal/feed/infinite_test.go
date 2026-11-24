@@ -51,6 +51,7 @@ func TestParseInfiniteFallsBack(t *testing.T) {
 		{"the hidden worn hats", map[string]any{"hideWornHats": true}, "infinite-hat-turf"},
 		{"the hidden turf hats", map[string]any{"hideTurfHats": true}, "infinite-hat-turf"},
 		{"the viewer's own hats", map[string]any{"hatTurfMine": true}, "infinite-hat-turf"},
+		{"the viewer's expired hats", map[string]any{"hatTurfExpired": true}, "infinite-hat-turf"},
 		{"userId 0", map[string]any{"userId": num("0")}, "infinite-user-zero"},
 		{"a negative userId", map[string]any{"userId": num("-1")}, "input-invalid"},
 		{"a username outside the schema", map[string]any{"username": "a-b"}, "input-invalid"},
@@ -511,6 +512,8 @@ func TestServeInfiniteEmptyAnswers(t *testing.T) {
 		want     string // json|meta.values
 		trivial  bool
 		uncapped bool
+		viewer   *Viewer
+		noQuery  bool
 	}{
 		{
 			name:  "a withheld version",
@@ -543,6 +546,28 @@ func TestServeInfiniteEmptyAnswers(t *testing.T) {
 			want:  `{"items":[],"source":"db"}|{"nextCursor":["undefined"]}`, trivial: true,
 		},
 		{
+			name: "a moderator's level of unselectable bits only (Postgres path)",
+			m:    map[string]any{"postId": num("701"), "browsingLevel": num("32")},
+			want: `{"items":[],"source":"db"}|{"nextCursor":["undefined"]}`, trivial: true,
+			uncapped: true, viewer: &Viewer{ID: 7, IsModerator: true}, noQuery: true,
+		},
+		{
+			name: "a signed-in level asks the feed at its selectable part",
+			m:    map[string]any{"limit": num("2"), "browsingLevel": num("33")},
+			setup: func(f *infFixture) {
+				f.feed.answers["levels=1&excludedTags=9901&excludePoi=1&viewerId=7&sort=reactions&limit=2"] = feedsvc.Answer{Status: 200, NextCursor: "9|9"}
+			},
+			want: `{"items":[],"nextCursor":"feed:9:9","source":"feed"}|null`, trivial: true,
+			uncapped: true, viewer: &Viewer{ID: 7},
+		},
+		{
+			name:     "a signed-in level of unselectable bits only",
+			m:        map[string]any{"limit": num("2"), "browsingLevel": num("32")},
+			want:     `{"items":[],"source":"feed"}|{"nextCursor":["undefined"]}`,
+			trivial:  true,
+			uncapped: true, viewer: &Viewer{ID: 7},
+		},
+		{
 			name: "a shape the feed cannot express",
 			m:    map[string]any{"generation": []any{"txt2img"}},
 			want: `{"items":[],"source":"feed"}|{"nextCursor":["undefined"]}`, trivial: true,
@@ -565,6 +590,7 @@ func TestServeInfiniteEmptyAnswers(t *testing.T) {
 		if c.uncapped {
 			req.Cap = 0
 		}
+		req.Viewer = c.viewer
 		j, ann, ans, err := serveInf(t, f, c.m, req)
 		if err != nil {
 			t.Errorf("%s: %v", c.name, err)
@@ -572,6 +598,9 @@ func TestServeInfiniteEmptyAnswers(t *testing.T) {
 		}
 		jb, _ := json.Marshal(j)
 		ab, _ := json.Marshal(ann)
+		if c.noQuery && len(f.sql) != 0 {
+			t.Errorf("%s: page queries %d, want none", c.name, len(f.sql))
+		}
 		if got := string(jb) + "|" + string(ab); got != c.want || ans.Trivial != c.trivial {
 			t.Errorf("%s: %s trivial=%v, want %s trivial=%v", c.name, got, ans.Trivial, c.want, c.trivial)
 		}

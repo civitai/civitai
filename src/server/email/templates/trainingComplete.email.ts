@@ -1,6 +1,6 @@
 import { escape as escapeHtml } from 'he';
 import { createEmail } from '~/server/email/templates/base.email';
-import { simpleEmailWithTemplate } from '~/server/email/templates/util';
+import { renderEmailSummary, simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
 type TrainingCompleteEmailData = {
@@ -23,10 +23,19 @@ export const trainingCompleteEmail = createEmail({
     subject: `Your model "${model.name} - ${mName}" is ready for review`,
     to: user.email,
   }),
-  html({ model }: TrainingCompleteEmailData) {
+  html({ model, mName }: TrainingCompleteEmailData) {
     return simpleEmailWithTemplate({
-      header: 'Your model is ready for review! 🎉',
-      body: `<p style="margin: 0;">The wait is over! Click the button below to review some sample images and prepare your model for publishing, if you choose to share it. Your training files and job results will be retained on our side for 30 days &mdash; make sure you've published or downloaded what you want to keep before then.</p>`,
+      icon: '🎉',
+      accent: 'green',
+      eyebrow: 'Training complete',
+      header: 'Your model is ready for review!',
+      body: `<p style="margin: 0;">The wait is over! Click the button below to review some sample images and prepare your model for publishing, if you choose to share it.</p>
+        ${renderEmailSummary([
+          { label: 'Model', value: escapeHtml(model.name) },
+          { label: 'Version', value: escapeHtml(mName) },
+          { label: 'Files kept for', value: '30 days' },
+        ])}
+        <p style="margin: 0;">Your training files and job results will be retained on our side for 30 days &mdash; make sure you've published or downloaded what you want to keep before then.</p>`,
       btnUrl: escapeHtml(reviewUrl(model)),
       btnLabel: 'Review Model',
     });

@@ -1,4 +1,5 @@
 import { json } from '@sveltejs/kit';
+import { escapeHtml } from '@civitai/shared/html-escape';
 import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 
 // OAuth endpoint rate limits, ported from the main app's src/server/oauth/rate-limit.ts RATE_LIMITS.
@@ -94,24 +95,34 @@ export function oauthRetryAfter(bucket: OAuthRateLimitBucket): number {
   return OAUTH_RATE_LIMITS[bucket].windowSeconds;
 }
 
+/**
+ * The refusing limit a 429 names in its `rateLimit` meta: `oauth.<bucket>`, and `abuse` (these are anti-flood
+ * limits; their numbers are never sent). The meta is the main app's `RateLimitMeta`
+ * (`src/shared/utils/rate-limit-meta.ts`), so a client reads an auth refusal as it reads the site's.
+ */
+export type OAuthRateLimitRef = { id: `oauth.${OAuthRateLimitBucket}`; kind: 'abuse' };
+
+export function oauthRateLimitRef(bucket: OAuthRateLimitBucket): OAuthRateLimitRef {
+  return { id: `oauth.${bucket}`, kind: 'abuse' };
+}
+
 const waitText = (seconds: number) => {
   if (seconds < 60) return seconds === 1 ? '1 second' : `${seconds} seconds`;
   const minutes = Math.ceil(seconds / 60);
   return minutes === 1 ? '1 minute' : `${minutes} minutes`;
 };
 
-const escapeHtml = (text: string) =>
-  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
 /**
- * A 429 with `Retry-After` and `retry_after` (whole seconds, at least 1). Pass `request` on a route a
- * browser navigates to: a request that accepts text/html gets a readable page instead of JSON.
+ * A 429 with `Retry-After` and `retry_after` (whole seconds, at least 1), and in JSON the house `rateLimit`
+ * meta (`retryAfterSeconds`, `retryAt`, plus `options.limit`'s `id` and `kind` when the caller names the
+ * limit). Pass `request` on a route a browser navigates to: a request that accepts text/html gets a readable
+ * page instead of JSON.
  */
 export function rateLimitedResponse(
   retryAfter: number,
   headers?: HeadersInit,
   description = 'Too many requests',
-  options: { request?: Request } = {}
+  options: { request?: Request; limit?: OAuthRateLimitRef } = {}
 ): Response {
   const seconds = Math.max(1, Math.ceil(retryAfter));
   const out = new Headers(headers);
@@ -124,8 +135,13 @@ export function rateLimitedResponse(
       { status: RATE_LIMITED_STATUS, headers: out }
     );
   }
+  const rateLimit = {
+    retryAfterSeconds: seconds,
+    retryAt: new Date(Date.now() + seconds * 1000).toISOString(),
+    ...options.limit,
+  };
   return json(
-    { error: 'rate_limited', error_description: description, retry_after: seconds },
+    { error: 'rate_limited', error_description: description, retry_after: seconds, rateLimit },
     { status: RATE_LIMITED_STATUS, headers: out }
   );
 }

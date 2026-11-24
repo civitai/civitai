@@ -42,6 +42,10 @@ const ALLOWLIST: Record<string, { procedures: string[]; why: string }> = {
     procedures: ['create', 'getStatus'],
     why: 'Developer-platform feedback sent with an API token, same posture as feedback.create: reporting a broken tool, and reading that report back, must not depend on a verified email.',
   },
+  'feature-pages.router.ts': {
+    procedures: ['report'],
+    why: 'Reporting a Feature Pages comment is reporting abuse, as report.create.',
+  },
   'user.router.ts': {
     procedures: ['updateBrowsingMode'],
     why: 'A browsing preference, not a content action.',
@@ -56,6 +60,7 @@ const ALLOWLIST: Record<string, { procedures: string[]; why: string }> = {
 const MUST_STAY_GUARDED: Record<string, string[]> = {
   'post.router.ts': ['create', 'createWithImages', 'addImage'],
   'commentv3.router.ts': ['create', 'update'],
+  'feature-pages.router.ts': ['vote', 'comment', 'edit'],
   'model.router.ts': ['upsert'],
   'article.router.ts': ['upsert'],
   'orchestrator.router.ts': ['iterateGenerate'],

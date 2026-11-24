@@ -11,6 +11,10 @@ import {
   SERVICE_DEAL_REVIEW_IMAGE_MAX,
   SERVICE_PREVIEW_MIME_TYPES,
 } from '~/shared/constants/creator-services.constants';
+import {
+  reviewImageLevelSql,
+  reviewImageVisibleSql,
+} from '~/server/services/creator-service-review-image-sql';
 
 /** Still images only: a review's video waits on the streamed video scan copy. */
 const IMAGE_MIMES = Prisma.join(
@@ -119,22 +123,6 @@ export async function attachFinalToReview({
   return attached;
 }
 
-/**
- * True in SQL when a review image may be shown at `levels` (the viewer's levels, already limited to
- * what the domain serves), with `i` the image, `r` its review and `d` the deal. It is rated at the
- * deal's level, so an X deal's image that scanned PG is still X.
- */
-export const reviewImageVisibleSql = (
-  levels: number,
-  { includeHidden = false } = {}
-) => Prisma.sql`(
-  (${includeHidden} OR r."hiddenAt" IS NULL) AND i."ingestion" = 'Scanned'::"ImageIngestionStatus" AND NOT i."tosViolation"
-  AND i."needsReview" IS NULL AND NOT i."poi" AND NOT i."minor"
-  AND i."nsfwLevel" BETWEEN 1 AND d."maxNsfwLevel"
-  AND (GREATEST(i."nsfwLevel", d."maxNsfwLevel") & ${levels}::int) <> 0
-  AND EXISTS (SELECT 1 FROM "ServiceOffering" o WHERE o."id" = d."offeringId" AND o."allowReviewWork")
-)`;
-
 /** The shown images of a review, in attach order; `includeHidden` for a moderator. */
 export async function getReviewImages({
   reviewId,
@@ -146,7 +134,7 @@ export async function getReviewImages({
   includeHidden?: boolean;
 }) {
   return dbWrite.$queryRaw<{ id: number; url: string; nsfwLevel: number }[]>`
-    SELECT i."id", i."url", GREATEST(i."nsfwLevel", d."maxNsfwLevel") AS "nsfwLevel"
+    SELECT i."id", i."url", ${reviewImageLevelSql} AS "nsfwLevel"
     FROM "ServiceDealReviewImage" ri
     JOIN "Image" i ON i."id" = ri."imageId"
     JOIN "ServiceDealReview" r ON r."id" = ri."reviewId"

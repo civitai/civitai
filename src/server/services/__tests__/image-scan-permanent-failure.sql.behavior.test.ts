@@ -57,11 +57,14 @@ beforeAll(async () => {
       id int PRIMARY KEY, url text, type text DEFAULT 'image', width int, height int, meta jsonb,
       "scanRequestedAt" timestamp(3), "createdAt" timestamp(3) NOT NULL,
       ingestion "ImageIngestionStatus" NOT NULL, "scanJobs" jsonb, "userId" int,
-      "nsfwLevelLocked" boolean NOT NULL DEFAULT TRUE, metadata jsonb
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT TRUE, metadata jsonb, "blockedFor" text
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityType" text, "entityId" int);
     CREATE TABLE "Article" (id int PRIMARY KEY, status "ArticleStatus");
     CREATE TABLE "JobQueue" (type "JobQueueType", "entityType" "EntityType", "entityId" int);
+    -- Read by a blocking scan's write: a pending appeal keeps its review.
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
+    CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
   `);
   const raw = pgliteRaw(pg);
   dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);

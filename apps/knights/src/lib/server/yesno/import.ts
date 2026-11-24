@@ -1,11 +1,12 @@
 import { sql, type Kysely, type SqlBool } from 'kysely';
-import { closeOpenYesNoItem } from './close';
+import { closeOpenYesNoItem, type RetireReason } from './close';
 import { parseCsv } from './csv';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   isModeratedSql,
   MODERATION_META_KEY,
   MODERATOR_RETIRED,
+  readWithoutJit,
   REWORD_OF_META_KEY,
   servableImage,
   YESNO_QUESTION_MAX,
@@ -29,7 +30,7 @@ export type YesNoRow = {
   prompt: string;
   yesEffect: string | null;
   noEffect: string | null;
-  meta: Record<string, string>;
+  meta: Record<string, string | number>;
 };
 
 export type Skipped = Partial<
@@ -169,12 +170,14 @@ export async function dropUnservableImages(
   spares: YesNoRow[] = []
 ): Promise<YesNoRow[]> {
   if (rows.length === 0) return rows;
-  const found = await db
-    .selectFrom('Image as img')
-    .leftJoin('Post as p', 'p.id', 'img.postId')
-    .select((eb) => ['img.id', servableImage(eb).as('servable')])
-    .where('img.id', 'in', [...new Set([...rows, ...spares].map((r) => r.imageId))])
-    .execute();
+  const found = await readWithoutJit(db, (trx) =>
+    trx
+      .selectFrom('Image as img')
+      .leftJoin('Post as p', 'p.id', 'img.postId')
+      .select((eb) => ['img.id', servableImage(eb).as('servable')])
+      .where('img.id', 'in', [...new Set([...rows, ...spares].map((r) => r.imageId))])
+      .execute()
+  );
   const servable = new Map(found.map((f) => [f.id, f.servable === true]));
   const kept: YesNoRow[] = [];
   for (const row of rows) {
@@ -225,7 +228,23 @@ export async function importYesNo(
     batchSize = 1000,
     retire = [],
     now = new Date(),
-  }: { batchSize?: number; retire?: string[]; now?: Date } = {}
+    source = YESNO_SOURCE,
+    minRank = 'Knight',
+    retireReason = 'retired',
+    retireMeta,
+  }: {
+    batchSize?: number;
+    retire?: string[];
+    now?: Date;
+    /** The producer the items are recorded under; the CSV import's by default. */
+    source?: string;
+    /** The stage new items start at, and the axis question's rank. */
+    minRank?: string;
+    /** Why the `retire` questions close: `retired` (the producer withdrew them) is reopened when they are listed again. */
+    retireReason?: Extract<RetireReason, 'retired' | 'moderator-ruled'>;
+    /** Merged into the `meta` of each question `retire` closes. */
+    retireMeta?: Record<string, unknown>;
+  } = {}
 ): Promise<ImportResult> {
   const axes = [...new Set(rows.map((r) => r.axis))];
   for (const axis of axes) {
@@ -236,7 +255,7 @@ export async function importYesNo(
         kind: 'bool',
         prompt: axisPrompt(axis),
         options: JSON.stringify(YESNO_ANSWERS),
-        minRank: 'Knight',
+        minRank,
         votesToResolve: YESNO_CONSENSUS_VOTES,
         maxVotes: YESNO_MAX_VOTES,
         threshold: 0.5,
@@ -264,8 +283,8 @@ export async function importYesNo(
           externalId: r.externalId,
           questionKey: axisKey(r.axis),
           imageId: r.imageId,
-          source: YESNO_SOURCE,
-          minRank: 'Knight',
+          source,
+          minRank,
           votesNeeded: YESNO_CONSENSUS_VOTES,
           priority: 2,
           expiresAt: null,
@@ -325,12 +344,12 @@ export async function importYesNo(
       result.revived += await reviveReworded(db, left);
     }
   }
-  await retireWithdrawn(db, retire, result, now, batchSize);
+  await retireWithdrawn(db, retire, result, now, batchSize, retireReason, retireMeta);
   return result;
 }
 
 /** The file never carries the moderation record a moderator's action merges into `meta`, so it is left out of the comparison. */
-const sameMeta = (a: unknown, b: Record<string, string>) => {
+const sameMeta = (a: unknown, b: Record<string, string | number>) => {
   const { [MODERATION_META_KEY]: _moderation, ...stored } = (a ?? {}) as Record<string, unknown>;
   return JSON.stringify(Object.entries(stored).sort()) === JSON.stringify(Object.entries(b).sort());
 };
@@ -382,24 +401,26 @@ async function reviveReworded(db: Kysely<DB>, skipped: YesNoRow[]): Promise<numb
       .filter((c) => c.reason === 'retired' && c.voteCount === 0)
       .sort((a, b) => number(b) - number(a))[0];
     if (!latest) continue;
-    const reopened = await db
-      .updateTable('KnightsQueueItem')
-      .set({ status: 'Open', reason: null, resolvedAt: null, updatedAt: utcNow })
-      .where('id', '=', latest.id)
-      .where('status', '=', 'Closed')
-      .where('reason', '=', 'retired')
-      .where('voteCount', '=', 0)
-      .where((eb) =>
-        eb.exists(
-          eb
-            .selectFrom('Image as img')
-            .innerJoin('Post as p', 'p.id', 'img.postId')
-            .select('img.id')
-            .whereRef('img.id', '=', 'KnightsQueueItem.imageId')
-            .where(servableImage)
+    const reopened = await readWithoutJit(db, (trx) =>
+      trx
+        .updateTable('KnightsQueueItem')
+        .set({ status: 'Open', reason: null, resolvedAt: null, updatedAt: utcNow })
+        .where('id', '=', latest.id)
+        .where('status', '=', 'Closed')
+        .where('reason', '=', 'retired')
+        .where('voteCount', '=', 0)
+        .where((eb) =>
+          eb.exists(
+            eb
+              .selectFrom('Image as img')
+              .innerJoin('Post as p', 'p.id', 'img.postId')
+              .select('img.id')
+              .whereRef('img.id', '=', 'KnightsQueueItem.imageId')
+              .where(servableImage)
+          )
         )
-      )
-      .executeTakeFirst();
+        .executeTakeFirst()
+    );
     revived += Number(reopened.numUpdatedRows);
   }
   return revived;
@@ -450,7 +471,9 @@ async function retireWithdrawn(
   ids: string[],
   result: ImportResult,
   now: Date,
-  batchSize: number
+  batchSize: number,
+  reason: Extract<RetireReason, 'retired' | 'moderator-ruled'>,
+  meta?: Record<string, unknown>
 ) {
   for (let at = 0; at < ids.length; at += batchSize) {
     const open = await db
@@ -467,7 +490,7 @@ async function retireWithdrawn(
       })
       .execute();
     for (const { id } of open) {
-      if (await closeOpenYesNoItem(db, id, 'retired', now)) result.retired++;
+      if (await closeOpenYesNoItem(db, id, reason, now, meta)) result.retired++;
     }
   }
 }

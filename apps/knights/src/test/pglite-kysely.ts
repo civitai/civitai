@@ -1,3 +1,4 @@
+import { afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
@@ -13,11 +14,13 @@ import {
   type QueryResult,
 } from 'kysely';
 import { parseTimestampAsUtc } from '@civitai/db/kysely';
+import { SERVABLE_IMAGE_CONTENT_MARKER } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 
 const MIGRATIONS = [
   '20261209120000_knights_new_order_player_and_link_review',
   '20261210120000_knights_v2_tables',
+  '20271125120000_knights_legacy_player_days',
 ].map((name) =>
   fileURLToPath(
     new URL(
@@ -48,13 +51,29 @@ CREATE TABLE "Image" (
   "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
   "poi" BOOLEAN NOT NULL DEFAULT false,
   "minor" BOOLEAN NOT NULL DEFAULT false,
+  "tosViolation" BOOLEAN NOT NULL DEFAULT false,
   "postId" INTEGER
 );
 CREATE TABLE "Post" (
   "id" INTEGER PRIMARY KEY,
   "publishedAt" TIMESTAMP(3),
+  "availability" TEXT NOT NULL DEFAULT 'Public',
+  "modelVersionId" INTEGER
+);
+CREATE TABLE "Model" (
+  "id" INTEGER PRIMARY KEY,
+  "status" TEXT NOT NULL DEFAULT 'Published',
+  "availability" TEXT NOT NULL DEFAULT 'Public',
+  "deletedAt" TIMESTAMP(3)
+);
+CREATE TABLE "ModelVersion" (
+  "id" INTEGER PRIMARY KEY,
+  "modelId" INTEGER NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'Published',
   "availability" TEXT NOT NULL DEFAULT 'Public'
 );
+CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]', "details" jsonb);
+CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
 CREATE TABLE "NewOrderPlayer" (
   "userId" INTEGER PRIMARY KEY,
   "rankType" TEXT NOT NULL,
@@ -88,6 +107,14 @@ CREATE TABLE "User" (
   "bannedAt" TIMESTAMP(3),
   "deletedAt" TIMESTAMP(3),
   "muted" BOOLEAN NOT NULL DEFAULT false
+);
+CREATE TYPE "UserEngagementType" AS ENUM ('Follow', 'Hide', 'Block');
+CREATE TABLE "UserEngagement" (
+  "userId" INTEGER NOT NULL,
+  "targetUserId" INTEGER NOT NULL,
+  "type" "UserEngagementType" NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY ("userId", "targetUserId")
 );
 CREATE TABLE "Product" (
   "id" TEXT PRIMARY KEY,
@@ -138,7 +165,7 @@ const LABEL_STORE_MIGRATION = fileURLToPath(
 
 /** The site tables the label store's migration hooks into; `Image` is already a stand-in above. */
 const LABEL_STORE_SOURCES = `
-CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
+CREATE TABLE IF NOT EXISTS "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]', "details" jsonb);
 CREATE TABLE "Appeal" ("id" serial PRIMARY KEY, "userId" integer NOT NULL);
 CREATE TABLE "ScanLabelItem" (
   "id" serial PRIMARY KEY,
@@ -197,6 +224,44 @@ export async function bootLabelStore(pg: PGlite) {
   await pg.exec(readFileSync(LABEL_STORE_MIGRATION, 'utf8'));
 }
 
+/**
+ * The real tag-row table, functions and view, and the real rating recompute `update_nsfw_levels_new`, which
+ * `removalLowersLevel` (`@civitai/db/knights`) is pinned to. A later migration that redefines `update_nsfw_levels_new`
+ * must be added to this list.
+ */
+const TAG_REVIEW_MIGRATIONS = [
+  '20250303170613_tags_on_image_new',
+  '20270105120000_update_nsfw_levels_new_judge_rating_floor',
+].map((name) =>
+  fileURLToPath(
+    new URL(
+      `../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`,
+      import.meta.url
+    )
+  )
+);
+
+/** The site tables the moderator tag review source reads: tags, and what makes an image staff-only. */
+const TAG_REVIEW_SOURCES = `
+CREATE TYPE "TagSource" AS ENUM ('User', 'Rekognition', 'WD14', 'Computed', 'ImageHash', 'MinorDetection');
+CREATE TABLE "Tag" (
+  "id" INTEGER PRIMARY KEY,
+  "name" TEXT NOT NULL,
+  "type" TEXT NOT NULL DEFAULT 'Moderation',
+  "nsfwLevel" INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]', "details" jsonb);
+CREATE TABLE IF NOT EXISTS "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
+CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "status" TEXT NOT NULL);
+CREATE TABLE "ImageReport" ("imageId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
+`;
+
+/** Installs what the moderator tag review source reads, for the tests that create, serve or vote on its items. */
+export async function bootTagReview(pg: PGlite) {
+  await pg.exec(TAG_REVIEW_SOURCES);
+  for (const migration of TAG_REVIEW_MIGRATIONS) await pg.exec(readFileSync(migration, 'utf8'));
+}
+
 const pad = (n: number, width = 2) => String(n).padStart(width, '0');
 
 // node-postgres sends a Date as local time with the host's UTC offset, and a `timestamp without time
@@ -214,9 +279,40 @@ function asNodePgParameter(value: unknown): unknown {
   );
 }
 
+/**
+ * Reads that broke the JIT rule below. Recorded as well as thrown, since a caller that catches the error (a sweep counting
+ * failures, a read that falls back) would otherwise hide it: every test using this harness fails if any were recorded.
+ * Known limit: it checks that some transaction is open with JIT off, not that it is this statement's own, so an
+ * interleaved pool read could pass here; prod callers pass their trx to `readWithoutJit` explicitly.
+ */
+const jitViolations: string[] = [];
+afterEach(() => {
+  const found = jitViolations.splice(0);
+  if (found.length)
+    throw new Error(`servableImageContent read ran with JIT on:\n${found.join('\n')}`);
+});
+
 function dialect(pg: PGlite, transactions: { open: number }, serialize: boolean): Dialect {
+  // A read carrying the CSAM subplans (`servableImageContent`) must run with JIT off in its transaction
+  // (`readWithoutJit`): its inflated estimate would make a server with JIT on compile it for longer than it runs.
+  let jitOff = false;
   const connection: DatabaseConnection = {
     async executeQuery<R>(compiled: CompiledQuery): Promise<QueryResult<R>> {
+      const text = compiled.sql.trim().toLowerCase();
+      if (text === 'begin' || text === 'commit' || text === 'rollback') jitOff = false;
+      else if (text === 'set local jit = off') jitOff = transactions.open > 0;
+      else if (
+        compiled.sql.includes(SERVABLE_IMAGE_CONTENT_MARKER) &&
+        !(jitOff && transactions.open > 0)
+      ) {
+        jitViolations.push(compiled.sql.slice(0, 160));
+        throw new Error(
+          `A servableImageContent read ran with JIT on (wrap it in readWithoutJit): ${compiled.sql.slice(
+            0,
+            120
+          )}`
+        );
+      }
       const result = await pg.query(compiled.sql, compiled.parameters.map(asNodePgParameter));
       return { rows: result.rows as R[], numAffectedRows: BigInt(result.affectedRows ?? 0) };
     },
