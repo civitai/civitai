@@ -1,5 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { heldUserSql } from '@civitai/shared/held-media';
+import { createExternalCsamReportSchema } from '~/server/schema/csam.schema';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as eventEngine from '../../../../apps/event-engine/src/vector-sync/held';
 
@@ -26,6 +27,8 @@ const BOTH = 3;
 const NEITHER = 4;
 const HOLD_ONLY = 6;
 const NONCANONICAL = 7;
+// Stored as a JSON number, the form the app writes.
+const JSON_NUMBER = 8;
 // Ids a malformed secondaryUserId could be misread as.
 const NEGATIVE = -5;
 // The 21-digit value's first 18 digits; past 2^53, so kept as text.
@@ -37,7 +40,7 @@ beforeAll(async () => {
   await pg.exec(`
     CREATE TABLE "Viewer" (id bigint);
     INSERT INTO "Viewer" VALUES (${SUBJECT}), (${SECONDARY}), (${BOTH}), (${NEITHER}),
-      (${HOLD_ONLY}), (${NONCANONICAL}), (${NEGATIVE}), (${OVERFLOW_PREFIX}), (NULL);
+      (${HOLD_ONLY}), (${NONCANONICAL}), (${JSON_NUMBER}), (${NEGATIVE}), (${OVERFLOW_PREFIX}), (NULL);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}');
     INSERT INTO "CsamReport" ("userId", details) VALUES
       (${SUBJECT}, '{}'),
@@ -48,7 +51,8 @@ beforeAll(async () => {
       (NULL, '{"secondaryUserId": ""}'),
       (NULL, '{"secondaryUserId": "${NEGATIVE}"}'),
       (NULL, '{"secondaryUserId": null}'),
-      (NULL, '{"secondaryUserId": "00${NONCANONICAL}"}');
+      (NULL, '{"secondaryUserId": "00${NONCANONICAL}"}'),
+      (NULL, '{"secondaryUserId": ${JSON_NUMBER}}');
     CREATE TABLE "EvidenceHeldUser" ("userId" int);
     INSERT INTO "EvidenceHeldUser" VALUES (${HOLD_ONLY});
   `);
@@ -79,9 +83,16 @@ describe('heldUserSql', () => {
       [String(NEITHER), false],
       [String(HOLD_ONLY), true],
       [String(NONCANONICAL), true],
+      [String(JSON_NUMBER), true],
       [OVERFLOW_PREFIX, false],
       [null, false],
     ]);
+  });
+
+  it('rests on the report form storing the secondary user as a number, never text', () => {
+    const secondary = createExternalCsamReportSchema.shape.secondaryUserId;
+    expect(secondary.safeParse(JSON_NUMBER).success).toBe(true);
+    expect(secondary.safeParse(String(JSON_NUMBER)).success).toBe(false);
   });
 
   it("is the event-engine copy's result too", async () => {

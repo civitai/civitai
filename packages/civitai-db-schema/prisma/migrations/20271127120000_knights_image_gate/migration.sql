@@ -40,9 +40,9 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
       AND img."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = img."userId")
       -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
-      -- index probe per row for a few rows or one hashed read per statement for many. The app
-      -- writes the id as a JSON number, whose text is canonical; a hand-written "007" matches no one,
-      -- and the pattern keeps a negative id matching no one, as before.
+      -- index probe per row for a few rows or one hashed read per statement for many.
+      -- secondaryUserId is stored as a JSON number; a writer that stores text must normalize it.
+      -- A hand-written "007" matches no one; the pattern keeps a negative id matching no one.
       OR EXISTS (
         SELECT 1 FROM "CsamReport" hs
         WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
@@ -64,9 +64,9 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
       AND img."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = img."userId")
       -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
-      -- index probe per row for a few rows or one hashed read per statement for many. The app
-      -- writes the id as a JSON number, whose text is canonical; a hand-written "007" matches no one,
-      -- and the pattern keeps a negative id matching no one, as before.
+      -- index probe per row for a few rows or one hashed read per statement for many.
+      -- secondaryUserId is stored as a JSON number; a writer that stores text must normalize it.
+      -- A hand-written "007" matches no one; the pattern keeps a negative id matching no one.
       OR EXISTS (
         SELECT 1 FROM "CsamReport" hs
         WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
@@ -88,9 +88,9 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
       AND img."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = img."userId")
       -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
-      -- index probe per row for a few rows or one hashed read per statement for many. The app
-      -- writes the id as a JSON number, whose text is canonical; a hand-written "007" matches no one,
-      -- and the pattern keeps a negative id matching no one, as before.
+      -- index probe per row for a few rows or one hashed read per statement for many.
+      -- secondaryUserId is stored as a JSON number; a writer that stores text must normalize it.
+      -- A hand-written "007" matches no one; the pattern keeps a negative id matching no one.
       OR EXISTS (
         SELECT 1 FROM "CsamReport" hs
         WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
@@ -112,9 +112,9 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
       AND img."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = img."userId")
       -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
-      -- index probe per row for a few rows or one hashed read per statement for many. The app
-      -- writes the id as a JSON number, whose text is canonical; a hand-written "007" matches no one,
-      -- and the pattern keeps a negative id matching no one, as before.
+      -- index probe per row for a few rows or one hashed read per statement for many.
+      -- secondaryUserId is stored as a JSON number; a writer that stores text must normalize it.
+      -- A hand-written "007" matches no one; the pattern keeps a negative id matching no one.
       OR EXISTS (
         SELECT 1 FROM "CsamReport" hs
         WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
@@ -193,9 +193,9 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
       AND img."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = img."userId")
       -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
-      -- index probe per row for a few rows or one hashed read per statement for many. The app
-      -- writes the id as a JSON number, whose text is canonical; a hand-written "007" matches no one,
-      -- and the pattern keeps a negative id matching no one, as before.
+      -- index probe per row for a few rows or one hashed read per statement for many.
+      -- secondaryUserId is stored as a JSON number; a writer that stores text must normalize it.
+      -- A hand-written "007" matches no one; the pattern keeps a negative id matching no one.
       OR EXISTS (
         SELECT 1 FROM "CsamReport" hs
         WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
@@ -217,9 +217,9 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
       AND img."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = img."userId")
       -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
-      -- index probe per row for a few rows or one hashed read per statement for many. The app
-      -- writes the id as a JSON number, whose text is canonical; a hand-written "007" matches no one,
-      -- and the pattern keeps a negative id matching no one, as before.
+      -- index probe per row for a few rows or one hashed read per statement for many.
+      -- secondaryUserId is stored as a JSON number; a writer that stores text must normalize it.
+      -- A hand-written "007" matches no one; the pattern keeps a negative id matching no one.
       OR EXISTS (
         SELECT 1 FROM "CsamReport" hs
         WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text

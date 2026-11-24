@@ -88,7 +88,7 @@ export const SKILL_CHECK_EXCLUSIONS: {
     name: 'csam-signal',
     clause: () => sql<SqlBool>`NOT COALESCE(${sql.raw(csamSignalImageSql('img'))}, false)`,
   },
-  // csam-signal does not catch a child-tagged image that is unrated or R and above, or a scan or vote pointing at a minor; this does.
+  // The minor-signal legs (minorSignalLevel and minorSignalScan above).
   {
     name: 'minor-signal',
     clause: (eb, options) => eb.and([minorSignalLevel(eb, options), minorSignalScan(eb)]),
