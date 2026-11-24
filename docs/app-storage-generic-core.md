@@ -367,6 +367,27 @@ Every step is per app, runs in one (app, namespace) at a time through the store'
 manual-apply SQL file under `src/server/services/apps/migrations/`, applied by hand to each environment
 with its rollback file beside it; nothing applies one automatically.
 
+**Tooling (built, moderator-only).** `apps.mod.docStore.maintenance.*` (`storage-mark-migration.service.ts`):
+`migrateMarks` (a dry run by default: the key check and the counts; otherwise key check, freeze, copy and
+verify in one call, idempotent), `rollbackMarks`, `purgeCollection`, `purgeDump` and `status`. Each run is
+recorded in `appdata.maint_run` (manual migration `20261123120000_appdata_maint_run.sql`), which is also
+where a mark's freeze lives and where a purge's dump is written, in the transaction that deletes. Each op
+that writes is audited first as an `AppListingModerationEvent` (`storage-mark-migration`,
+`storage-collection-purge`; their CHECK widen is a manual main-database migration).
+
+A purge (and so a rollback) is **batched and resumable**: one call deletes at most 1,000 documents
+(fewer when their dump would pass 16 MiB), dumps them in their own row and transaction, and advances the
+purge's run; the moderator calls again until it answers `done`, and a rollback lifts the freeze only with
+its last batch, so a target of any size can be rolled back. The normal purge deletes counter documents
+only (`author_kind = 'counter'`) and refuses anything else, a viewer-keyed collection included whether or
+not the manifest still declares it. The rollback refuses unless every document left in the target is
+exactly a copy (version 1, at a derived key, by its mark's voter, created when that mark was), because the
+switch fails closed and "closed" therefore does not prove nobody wrote; it also refuses once the source
+collection was purged. Dumps are deleted 30 days after their purge finished, or 30 days after an
+unfinished purge started (it is then `abandoned`), by a daily job. An account deletion finds every
+namespace whose runs name the account, a user who only reported a purged document included, and
+removes the account from every dump and run result; the main-database audit rows hold counts only.
+
 ### `doc_mark` votes to viewer-keyed documents
 
 For each (source collection `c`, mark name `m`) the inventory lists, the app ships a manifest version

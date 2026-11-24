@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { backfillDomain } from '@/vector-sync/domain/backfill';
 import { nextRefreshIds } from '@/vector-sync/domain/refresh';
 import { syncIds, type RejectedMemo } from '@/vector-sync/domain/sync';
@@ -427,5 +427,24 @@ describe('video collection stamp', () => {
     expect(await new VectorStore(client(stamp), 'v', VIDEO_COLLECTION).isStamped()).toBe(true);
     // The image collection still waits for its image profile.
     expect(await new VectorStore(client(stamp), 'i').isStamped()).toBe(false);
+  });
+});
+
+describe('the points-only walk', () => {
+  test.each([
+    ['embedding off', 'false', true],
+    ['embedding on', 'true', false],
+  ])('is %s: points-only %s', async (_, embed, pointsOnly) => {
+    vi.resetModules();
+    vi.stubEnv('VECTOR_VIDEO_REFRESH_POINTS_ONLY', 'true');
+    vi.stubEnv('VECTOR_SYNC_EMBED_ENABLED', 'true');
+    vi.stubEnv('VECTOR_VIDEO_EMBED_ENABLED', embed);
+    try {
+      const { videoDomain: fresh } = await import('@/vector-sync/videos/domain');
+      expect(fresh.refresh?.pointsOnly).toBe(pointsOnly);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
 });

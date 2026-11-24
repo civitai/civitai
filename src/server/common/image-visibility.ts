@@ -32,6 +32,9 @@ import {
   PRIOR_BLOCKED_FOR_KEY,
   PRIOR_INGESTION_KEY,
   PRIOR_NEEDS_REVIEW_KEY,
+  PRIOR_NSFW_LEVEL_KEY,
+  PRIOR_NSFW_LOCKED_KEY,
+  minusPriorKeysSql,
 } from '~/server/utils/image-removal-mode';
 
 export { KNIGHTS_VOTE_NSFW_LEVEL_REASON, isHeldForReview, hasBlockMarker };
@@ -462,6 +465,13 @@ END)`;
 export const csamBlockedSql = (alias?: 'i') =>
   Prisma.raw(`${alias ? `"${alias}".` : ''}"blockedFor" = '${BlockedReason.CSAM}'`);
 
+/** An appeal on the image whose id is `imageId` is still Pending. */
+export const pendingImageAppealSql = (imageId: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "Appeal" a
+  WHERE a."entityType" = 'Image'::"EntityType"
+    AND a."entityId" = ${imageId}
+    AND a.status = 'Pending'::"AppealStatus")`;
+
 /**
  * Reviews only a moderator clears, so a scan never replaces one whatever it ranks. Known gaps, both
  * leaving a review a moderator then clears: an appeal approved while a scan is in flight gets
@@ -473,9 +483,10 @@ const REVIEWS_ONLY_A_MODERATOR_CLEARS = ['csam', 'appeal'] as const;
 /**
  * `needsReview` after a write that sets `key`, by who writes it: 'human' (an unblock, an approved
  * appeal) writes `key`; 'block' (a scan that leaves the row blocked) settles every review but
- * 'csam', keeping 'appeal' while an appeal is pending unless the row holds a CSAM block; 'verdict'
- * (any other scan) never clears or lowers a review, and replaces a stored key only by one ranked
- * higher, except that a pending appeal's 'appeal' takes any key but 'csam'. Its SQL reads
+ * 'csam', keeping 'appeal' when it is stored, being set, or an appeal is pending, unless the row
+ * holds a CSAM block; 'verdict' (any other scan) never clears or lowers a review, and replaces a
+ * stored key only by one ranked higher, except that a pending appeal's 'appeal' takes any key but
+ * 'csam'. Its SQL reads
  * "Image".id, so it is only for an UPDATE of "Image". `csamBlock` is whether the row holds a CSAM
  * block once the write lands; it defaults to the stored one.
  */
@@ -492,12 +503,9 @@ export function reviewKeyAfterSql(
     // scan ran keeps its flag.
     return Prisma.sql`(CASE WHEN "needsReview" = 'csam' THEN "needsReview"
       WHEN ${csamBlock} THEN NULL
-      WHEN ${next} = 'appeal' OR "needsReview" = 'appeal' OR EXISTS (
-        SELECT 1 FROM "Appeal" a
-        WHERE a."entityType" = 'Image'::"EntityType"
-          AND a."entityId" = "Image".id
-          AND a.status = 'Pending'::"AppealStatus"
-      ) THEN 'appeal' END)`;
+      WHEN ${next} = 'appeal' OR "needsReview" = 'appeal' OR ${pendingImageAppealSql(
+      Prisma.sql`"Image".id`
+    )} THEN 'appeal' END)`;
   return Prisma.sql`(CASE
     WHEN "needsReview" = 'csam' THEN "needsReview"
     WHEN ${next} = 'appeal' THEN ${next}
@@ -512,7 +520,7 @@ export function reviewKeyAfterSql(
 /** `metadata` without the grace-block breadcrumbs. A non-object value is left as it is. */
 export const withoutGraceMarkersSql = (metadata: Prisma.Sql = Prisma.sql`"metadata"`) =>
   Prisma.sql`(CASE WHEN jsonb_typeof(${metadata}) = 'object'
-    THEN (${metadata}) - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text
+    THEN (${metadata})${minusPriorKeysSql}
     ELSE ${metadata} END)`;
 
 /** The image's owner has deleted their account (in its grace period, or not yet purged). */
@@ -534,12 +542,20 @@ export const liftedNsfwLevelSql = Prisma.sql`(CASE WHEN ${ownerDeletedSql} THEN 
 /** For RETURNING: the lifted row stayed blocked because its owner is deleted. */
 export const liftKeptBlockedSql = Prisma.sql`(ingestion = ${KEPT.ingestion}::"ImageIngestionStatus")`;
 
+/** A recorded rating other than Blocked outlives a lift, so a restore still puts back a moderator's lock. */
+const ratingKeptWhenLiftedSql = Prisma.sql`(CASE
+  WHEN jsonb_typeof("metadata"->${PRIOR_NSFW_LEVEL_KEY}::text) = 'number'
+    AND "metadata"->>${PRIOR_NSFW_LEVEL_KEY}::text <> ${String(KEPT.nsfwLevel)}
+  THEN jsonb_build_object(${PRIOR_NSFW_LEVEL_KEY}::text, "metadata"->${PRIOR_NSFW_LEVEL_KEY}::text,
+    ${PRIOR_NSFW_LOCKED_KEY}::text, "metadata"->${PRIOR_NSFW_LOCKED_KEY}::text)
+  ELSE '{}'::jsonb END)`;
+
 /** `metadata` for a lifted row: the breadcrumbs off, or while the owner is deleted, recording the lift. */
 export function liftedUnderGraceSql(stripped: Prisma.Sql) {
   return Prisma.sql`(CASE WHEN ${ownerDeletedSql}
   THEN COALESCE(${stripped}, '{}'::jsonb) || jsonb_build_object(
     ${PRIOR_INGESTION_KEY}::text, ${RECORDED.ingestion}::text, ${PRIOR_BLOCKED_FOR_KEY}::text, ${RECORDED.blockedFor}::text,
-    ${PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLiftedSql})
+    ${PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLiftedSql}) || ${ratingKeptWhenLiftedSql}
   ELSE ${stripped} END)`;
 }
 
@@ -548,7 +564,7 @@ export const liftedMetadataSql = liftedUnderGraceSql(withoutGraceMarkersSql());
 
 /** `metadata` for an unblock: also drops the rule keys; while the owner is deleted, `liftedUnderGraceSql` records the lift for the account restore. */
 export const unblockedMetadataSql = liftedUnderGraceSql(
-  Prisma.sql`"metadata" - 'ruleId' - 'ruleReason' - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text`
+  Prisma.sql`"metadata" - 'ruleId' - 'ruleReason'${minusPriorKeysSql}`
 );
 
 /** The `ingestion` a scan error writes. Reads the row before the error's retry count is added. */

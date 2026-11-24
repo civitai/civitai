@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'fs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('~/server/jobs/job', () => ({ createJob: (_n: string, _c: string, fn: unknown) => fn }));
@@ -161,5 +162,46 @@ describe('process-scheduled-publishing on a version with a file that failed its 
     );
     expect(rows).toEqual([{ id: 300, userId: OWNER }]);
     expect(await ids(scheduledVersionsGoLiveSql([20, 30, 40], NOW))).toEqual([30]);
+  });
+});
+
+describe('process-scheduled-publishing on a post its delete keeps', () => {
+  beforeAll(async () => {
+    await db.exec(
+      `CREATE TABLE "JobQueue" (type text, "entityType" text, "entityId" int, data jsonb)`
+    );
+    await db.exec(
+      readFileSync(
+        `${__dirname}/../../../../packages/civitai-db-schema/prisma/migrations/20271126120000_post_pending_delete_publish_guard/migration.sql`,
+        'utf8'
+      )
+    );
+  });
+  afterAll(() => db.exec(`DROP TRIGGER trg_post_pending_delete_keep_unpublished ON "Post"`));
+
+  it('neither returns nor publishes a post the publish guard keeps, and publishes the other', async () => {
+    await db.exec(`
+      INSERT INTO "Post" (id, "userId", "modelVersionId", metadata) VALUES
+        (201, ${OWNER}, 20, '{"unpublishedReason": "pending-delete"}');
+      INSERT INTO "JobQueue" VALUES ('PendingDelete', 'Post', 201, '{}');
+    `);
+    const { rows } = await run(
+      scheduledPostsGoLiveSql(
+        [
+          { postId: 200, versionId: 20 },
+          { postId: 201, versionId: 20 },
+        ],
+        NOW
+      )
+    );
+    expect(rows).toEqual([{ id: 200, userId: OWNER }]);
+    const posts = await db.query<{ id: number; live: boolean; reason: string | null }>(
+      `SELECT id, "publishedAt" IS NOT NULL AS live, metadata ->> 'unpublishedReason' AS reason
+       FROM "Post" WHERE id IN (200, 201) ORDER BY id`
+    );
+    expect(posts.rows).toEqual([
+      { id: 200, live: true, reason: null },
+      { id: 201, live: false, reason: 'pending-delete' },
+    ]);
   });
 });

@@ -2,6 +2,7 @@ import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { dbRead } from './db';
+import { restrictedImageIds, withheldRow } from './retracted-media';
 import { issueStrike, removeImages, setImageFlag } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
 import { isReviewImageSql } from './review-image';
@@ -90,6 +91,29 @@ export type BulkBatch = {
   truncated: boolean;
   offset: number;
 };
+
+/** A batch image as a moderator is sent it: `restricted` when withheld (`restrictedImageIds`), and
+ *  then with no media and nothing that says why. */
+export type ServedBulkImage = Omit<BulkImage, 'type'> & {
+  type: BulkImage['type'] | null;
+  restricted: boolean;
+};
+
+export async function withholdBatchMedia<B extends { items: BulkImage[] }>(
+  batch: B,
+  { csamReview }: { csamReview: boolean }
+): Promise<Omit<B, 'items'> & { items: ServedBulkImage[] }> {
+  const withheld = await restrictedImageIds(
+    batch.items.map((i) => i.id),
+    { csamReview }
+  );
+  return {
+    ...batch,
+    items: batch.items.map((i) =>
+      withheld.has(i.id) ? withheldRow(i) : { ...i, restricted: false }
+    ),
+  };
+}
 
 const imageBase = () => dbRead.selectFrom('Image as i');
 type ImageBase = ReturnType<typeof imageBase>;

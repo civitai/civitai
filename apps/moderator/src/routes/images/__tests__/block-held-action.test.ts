@@ -39,7 +39,7 @@ const event = (fields: Record<string, string>, grants: Record<string, boolean> =
       },
       headers: new Headers(),
     },
-    locals: { user: { id: 7 }, grants },
+    locals: { user: { id: 7, roles: ['moderator:admin'] }, grants },
     params: { slug: 'reported' },
     getClientAddress: () => '1.2.3.4',
   } as never);

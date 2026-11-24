@@ -289,7 +289,7 @@ describe('resolveScanOutcome with a collection judge rating', () => {
     }
   });
 
-  // Decision (scan verdicts never clear or lower a review): the floor's minor signal raises the
+  // Decision (civitai/civitai#10152, scan verdicts never clear or lower a review): the floor's minor signal raises the
   // stored review by IMAGE_REVIEW_PRECEDENCE and is ORed into "minor"; it never replaces 'appeal' or
   // 'csam'. If you are about to make the floor write 'minor' over every key, it is not a bug.
   describe('the review the floor leaves on a minor-flagged image', () => {

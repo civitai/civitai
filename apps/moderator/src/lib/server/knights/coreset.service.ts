@@ -2,6 +2,7 @@ import type { Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { sql, utc } from '@civitai/db/kysely';
 import {
+  readWithoutJit,
   REFERENCE_POOL,
   REFERENCE_SOURCE,
   REFERENCE_STATUS,
@@ -93,12 +94,20 @@ export async function getCoreItems(
   const base = forImage(references().where('r.source', '=', REFERENCE_SOURCE.core), query);
   const total = await countRows(base);
   const { page, offset, limit } = pageWindow(query.page, total, config.pageSize);
-  const items = await listItems(base, config)
-    .orderBy(sql`("r"."status" = ${REFERENCE_STATUS.active})`, 'desc')
-    .orderBy('r.id', 'asc')
-    .limit(limit)
-    .offset(offset)
-    .execute();
+  const items = await readWithoutJit(
+    dbWrite,
+    async (trx) =>
+      (
+        await trx.executeQuery(
+          listItems(base, config)
+            .orderBy(sql`("r"."status" = ${REFERENCE_STATUS.active})`, 'desc')
+            .orderBy('r.id', 'asc')
+            .limit(limit)
+            .offset(offset)
+            .compile()
+        )
+      ).rows
+  );
   return { items, total, page };
 }
 
@@ -116,13 +125,21 @@ export async function getFreshItems(
   );
   const total = await countRows(base);
   const { page, offset, limit } = pageWindow(query.page, total, config.pageSize);
-  const items = await listItems(base, config)
-    .orderBy(flaggedSql(config), 'desc')
-    .orderBy('r.harvestedAt', 'desc')
-    .orderBy('r.id', 'desc')
-    .limit(limit)
-    .offset(offset)
-    .execute();
+  const items = await readWithoutJit(
+    dbWrite,
+    async (trx) =>
+      (
+        await trx.executeQuery(
+          listItems(base, config)
+            .orderBy(flaggedSql(config), 'desc')
+            .orderBy('r.harvestedAt', 'desc')
+            .orderBy('r.id', 'desc')
+            .limit(limit)
+            .offset(offset)
+            .compile()
+        )
+      ).rows
+  );
   return { items, total, page };
 }
 
@@ -187,13 +204,15 @@ export async function unservableReason(
   imageId: number,
   db: typeof dbWrite | Transaction<DB> = dbWrite
 ): Promise<string | null> {
-  const servable = await db
-    .selectFrom('Image as img')
-    .innerJoin('Post as p', 'p.id', 'img.postId')
-    .select('img.id')
-    .where('img.id', '=', imageId)
-    .where(servableImage)
-    .executeTakeFirst();
+  const servable = await readWithoutJit(db, (trx) =>
+    trx
+      .selectFrom('Image as img')
+      .innerJoin('Post as p', 'p.id', 'img.postId')
+      .select('img.id')
+      .where('img.id', '=', imageId)
+      .where(servableImage)
+      .executeTakeFirst()
+  );
   if (servable) return null;
 
   const image = await db

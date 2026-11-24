@@ -2,7 +2,13 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getModActivityFor, type ModActivityRow } from './mod-activity';
 import { usersByIds } from './users.service';
-import { getImagesForPost, type BulkBatch } from './bulk-image.service';
+import { getImagesForPost, withholdBatchMedia, type ServedBulkImage } from './bulk-image.service';
+import {
+  restrictedImageIds,
+  withheldApprovedAppeal,
+  withheldMedia,
+  withheldRow,
+} from './retracted-media';
 import { getReactions, type ImageReactionRow, type ReactionPage } from './image-reactions.service';
 import type { MediaType } from '../media/edge-url';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
@@ -30,7 +36,10 @@ export type ImageDetail = {
   username: string | null;
   userBannedAt: Date | null;
   postId: number | null;
-  type: MediaType;
+  type: MediaType | null;
+  /** Withheld from this moderator (`restrictedImageIds`): served without anything the bytes could
+   *  be found by. */
+  restricted: boolean;
   width: number | null;
   height: number | null;
   nsfwLevel: number;
@@ -162,9 +171,36 @@ export async function resolveImageId(term: string): Promise<number | null> {
   return row?.id ?? null;
 }
 
-export async function getImageLookup(imageId: number): Promise<ImageLookupResult | null> {
-  const image = await getImage(imageId);
-  if (!image) return null;
+export async function getImageLookup(
+  imageId: number,
+  { csamReview }: { csamReview: boolean }
+): Promise<ImageLookupResult | null> {
+  const found = await getImage(imageId);
+  if (!found) return null;
+  if ((await restrictedImageIds([imageId], { csamReview })).has(imageId)) {
+    const [reactions, appeals] = await Promise.all([
+      getReactions(imageId),
+      getLatestApprovedImageAppeals(dbRead, [imageId]),
+    ]);
+    return {
+      image: {
+        ...found,
+        ...withheldMedia(),
+        hash: null,
+        pHash: null,
+        meta: null,
+        promptHighlight: null,
+        scanJobs: null,
+        ruleReason: null,
+      },
+      tags: [],
+      shadowTags: [],
+      reactions,
+      reports: [],
+      modActivity: { rows: [], truncated: false },
+      approvedAppeal: withheldApprovedAppeal(approvedAppealOf(appeals.get(imageId))),
+    };
+  }
 
   const [tags, shadowTags, reactions, reports, modActivity, appeals] = await Promise.all([
     getTags(imageId),
@@ -175,7 +211,7 @@ export async function getImageLookup(imageId: number): Promise<ImageLookupResult
     getLatestApprovedImageAppeals(dbRead, [imageId]),
   ]);
   const approvedAppeal = approvedAppealOf(appeals.get(imageId));
-  return { image, tags, shadowTags, reactions, reports, modActivity, approvedAppeal };
+  return { image: found, tags, shadowTags, reactions, reports, modActivity, approvedAppeal };
 }
 
 // Post detail for Image Lookup's `?post=` view. There was no Retool "Post Lookup" app: its "Lookup Post"
@@ -203,12 +239,15 @@ export type PostDetail = {
 
 export type PostLookupResult = {
   post: PostDetail;
-  images: BulkBatch['items'];
+  images: ServedBulkImage[];
   truncated: boolean;
   total: number;
 };
 
-export async function getPostLookup(postId: number, limit = 200): Promise<PostLookupResult | null> {
+export async function getPostLookup(
+  postId: number,
+  { csamReview, limit = 200 }: { csamReview: boolean; limit?: number }
+): Promise<PostLookupResult | null> {
   const post = await dbRead
     .selectFrom('Post as p')
     .leftJoin('User as u', 'u.id', 'p.userId')
@@ -237,7 +276,9 @@ export async function getPostLookup(postId: number, limit = 200): Promise<PostLo
   // The SAME query Bulk Image Manager runs for a post — that page is where this one's images get
   // actioned, and two builders answering "the images in post N" is how they came to show different
   // flags and different orders for the same image.
-  const batch = await getImagesForPost(postId, { limit }, 'index');
+  const batch = await withholdBatchMedia(await getImagesForPost(postId, { limit }, 'index'), {
+    csamReview,
+  });
 
   return {
     post: { ...post, availability: String(post.availability) },
@@ -247,10 +288,14 @@ export async function getPostLookup(postId: number, limit = 200): Promise<PostLo
   };
 }
 
-/** An account's newest images outside one post. Not `getImagesForUser`: its count walks every image
- *  the account has. */
-export async function getRecentImagesOutsidePost(userId: number, postId: number, limit = 12) {
-  return dbRead
+/** An account's newest images outside one post, each withheld (`restrictedImageIds`) as in the post
+ *  view. Not `getImagesForUser`: its count walks every image the account has. */
+export async function getRecentImagesOutsidePost(
+  userId: number,
+  postId: number,
+  { csamReview, limit = 12 }: { csamReview: boolean; limit?: number }
+) {
+  const rows = await dbRead
     .selectFrom('Image as i')
     .where('i.userId', '=', userId)
     .where((eb) => eb.or([eb('i.postId', 'is', null), eb('i.postId', '!=', postId)]))
@@ -258,6 +303,11 @@ export async function getRecentImagesOutsidePost(userId: number, postId: number,
     .orderBy('i.id', 'desc')
     .limit(limit)
     .execute();
+  const withheld = await restrictedImageIds(
+    rows.map((r) => r.id),
+    { csamReview }
+  );
+  return rows.map((r) => (withheld.has(r.id) ? withheldRow(r) : { ...r, restricted: false }));
 }
 
 export type PostSummary = {
@@ -361,6 +411,7 @@ async function getImage(imageId: number): Promise<ImageDetail | null> {
   return {
     ...row,
     type: row.type as MediaType,
+    restricted: false,
     ingestion: String(row.ingestion),
     promptHighlight,
   };

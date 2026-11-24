@@ -92,6 +92,20 @@ export const MIGRATION_MARK_HEAD_DOWN = path.resolve(
   '../migrations/20261122120000_appdata_mark_head.down.sql'
 );
 
+/**
+ * The maintenance-run table (mark migrations and per-collection purges). ON by default, so every
+ * suite runs the store as an environment will once it is applied; a suite opts out
+ * (`maintRun: false`) to run the store as before it is.
+ */
+export const MIGRATION_MAINT_RUN_UP = path.resolve(
+  __dirname,
+  '../migrations/20261123120000_appdata_maint_run.sql'
+);
+export const MIGRATION_MAINT_RUN_DOWN = path.resolve(
+  __dirname,
+  '../migrations/20261123120000_appdata_maint_run.down.sql'
+);
+
 /** The batched backfill of `doc.record_id` (a data script; never applied by the harness). */
 export const MIGRATION_RECORD_ID_BACKFILL = path.resolve(
   __dirname,
@@ -266,6 +280,8 @@ export async function createPgliteHarness(opts: {
   recordId?: boolean;
   /** Apply the mark-sequence migration too (default true). */
   markHead?: boolean;
+  /** Apply the maintenance-run migration too (default true). */
+  maintRun?: boolean;
 }): Promise<Harness> {
   const pg = new PGlite();
   await pg.exec(readFileSync(MIGRATION_UP, 'utf8'));
@@ -278,9 +294,11 @@ export async function createPgliteHarness(opts: {
     await pg.exec(readFileSync(MIGRATION_RECORD_ID_UNIQUE, 'utf8'));
   }
   if (opts.markHead !== false) await pg.exec(readFileSync(MIGRATION_MARK_HEAD_UP, 'utf8'));
+  if (opts.maintRun !== false) await pg.exec(readFileSync(MIGRATION_MAINT_RUN_UP, 'utf8'));
   if (!opts.rls) {
     for (const t of APPDATA_TABLES) {
       if (t === 'mark_head' && opts.markHead === false) continue;
+      if (t === 'maint_run' && opts.maintRun === false) continue;
       await pg.exec(`ALTER TABLE appdata.${t} DISABLE ROW LEVEL SECURITY`);
     }
   }
@@ -367,6 +385,8 @@ export async function createRealPgHarness(): Promise<Harness> {
   await su.query(readFileSync(MIGRATION_RECORD_ID_UP, 'utf8'));
   // The mark sequence, as on PGlite: every mark, unmark and increment takes it.
   await su.query(readFileSync(MIGRATION_MARK_HEAD_UP, 'utf8'));
+  // The maintenance-run table, as on PGlite: every mark reads its freeze.
+  await su.query(readFileSync(MIGRATION_MAINT_RUN_UP, 'utf8'));
   const open = new Set<Client>();
   // Ends started by release() and not awaited there. close() waits for them before the FORCE drop:
   // a client still closing when its backend is killed gets a FATAL 57P01 with no 'error' listener,

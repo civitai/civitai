@@ -136,6 +136,10 @@ export const STATE_NEUTRAL_MODERATION_ACTIONS = [
   'storage-doc-unhide',
   'storage-doc-delete',
   'storage-doc-dismiss',
+  // Document-store data migration of a whole collection (a mark migration, a per-collection
+  // purge): rows in the app's document store, nothing in `app_listings`.
+  'storage-mark-migration',
+  'storage-collection-purge',
   // Edits content only; must not displace the event that explains a removal.
   'moderator-edit',
   // Writes `is_official` only — a label, never a status — so it must not displace the event

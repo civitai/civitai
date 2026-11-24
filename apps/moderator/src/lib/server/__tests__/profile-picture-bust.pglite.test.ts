@@ -225,6 +225,28 @@ describe('moderator writes to an image that is a profile picture', () => {
     expect(bustedKeys()).toContain(avatarKey);
   });
 
+  it('records the new rating on an image under an account-deletion grace block', async () => {
+    await db.query(
+      `UPDATE "Image" SET "metadata" = '{"accountDeletionPriorIngestion": "Scanned", "accountDeletionPriorNsfwLevel": 1, "accountDeletionPriorNsfwLevelLocked": false}' WHERE "id" = $1`,
+      [OTHER_IMAGE_ID]
+    );
+
+    await updateImageNsfwLevel({ id: OTHER_IMAGE_ID, nsfwLevel: 32, userId: 1 });
+    await updateImageNsfwLevel({ id: AVATAR_ID, nsfwLevel: 16, userId: 1 });
+
+    const { rows } = await db.query<{ id: number; metadata: Record<string, unknown> | null }>(
+      `SELECT "id", "metadata" FROM "Image" WHERE "id" IN ($1, $2)`,
+      [OTHER_IMAGE_ID, AVATAR_ID]
+    );
+    const byId = new Map(rows.map((row) => [row.id, row.metadata ?? {}]));
+    expect(byId.get(OTHER_IMAGE_ID)).toMatchObject({
+      accountDeletionPriorNsfwLevel: 32,
+      accountDeletionPriorNsfwLevelLocked: true,
+    });
+    // Control: an image with no grace block gets no recorded rating.
+    expect(byId.get(AVATAR_ID)).not.toHaveProperty('accountDeletionPriorNsfwLevel');
+  });
+
   it("evicts nothing for an image that is nobody's avatar", async () => {
     await updateImageNsfwLevel({ id: OTHER_IMAGE_ID, nsfwLevel: 16, userId: 1 });
 

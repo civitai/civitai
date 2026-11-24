@@ -1,108 +1,118 @@
 import {
   CSAM_REPORT_LISTED_IMAGE_IDS_SQL,
   csamSignalImageSql,
+  heldImageKnownSql,
   heldImageSql,
-  heldUserSql,
+  heldItemImageSql,
   unreadableImageSql,
 } from './held-media';
-import {
-  CSAM_HOLD_POST_UNPUBLISH_REASON,
-  csamQueueHeldText,
-  evidenceHeldUrlSql,
-  heldUrlSql,
-  liveCsamTextHoldText,
-  postTextCsamHeldText,
-  reportListedUrlSql,
-} from './held-url';
+import { evidenceHeldUrlSql, heldUrlSql, reportListedUrlSql } from './held-url';
 import { blockedForSignal, type BlockedForPatterns, type ScannerVerdict } from './media-signals';
 
 /** Whether the retracted-media routes may serve the "Image" row aliased `image` at all, to anyone:
- *  it is blocked (or, with `cdnLeg`, scanned with its url refused by the CDN, as for a post or model
- *  a moderator removed or an owner's ban, and not held, where a `mature-underage` removal alone does not
- *  hold), and not held media (`heldImageSql`, which the held-media route serves). With `cdnLeg`,
- *  the url must also be the row's alone. Who among moderators may see it, an image under an evidence
- *  hold included, is `csamRestrictedSql`'s call. */
+ *  it is blocked, or scanned with its url refused by the CDN, that url the row's alone and its file
+ *  not held (`heldUrlSql` with `owners: false`). Without `cdnLeg`, the refusal must come from someone
+ *  other than the owner unpublishing its post, not by a delete a case keeps, and the row must carry no
+ *  CSAM mark of its own. Held media (`heldImageSql`) is excluded: the held-media route and the
+ *  moderator app's held leg serve it. Who among moderators may see it is `csamRestrictedSql`'s call. */
 export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): string {
+  return `(
+    ${retractedEligibleSql(image, cdnLeg)}
+    AND NOT ${heldImageKnownSql(image)}
+  )`;
+}
+
+/** `retractedImageWhereSql` with held media let through unless it is held for itself
+ *  (`heldItemImageSql`): a held account's image the routes would serve if it were not held. */
+export function retractedOrOwnerHeldWhereSql(image: string, { cdnLeg = false } = {}): string {
+  return `(
+    ${retractedEligibleSql(image, cdnLeg)}
+    AND NOT COALESCE(${heldItemImageSql(image)}, false)
+  )`;
+}
+
+function retractedEligibleSql(image: string, cdnLeg: boolean): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
-  const eligible = cdnLeg
-    ? `(${image}.ingestion = 'Blocked' OR (
+  const refused = scannedRefusedSql(image);
+  if (cdnLeg) return `(${image}.ingestion = 'Blocked' OR ${refused})`;
+  // Without the leg, only a refusal a moderator's pull of its post explains, and no CSAM mark of
+  // the row's own.
+  return `(${image}.ingestion = 'Blocked' OR (
+    ${refused}
+    AND ${postPulledSql(image)}
+    AND NOT COALESCE(${heldItemImageSql(image)}, false)
+    AND NOT COALESCE(${csamSignalImageSql(image)}, false)
+  ))`;
+}
+
+/** A scanned row whose url the CDN refuses, with no held file and nothing but this row behind it. */
+function scannedRefusedSql(image: string): string {
+  return `(
       ${image}.ingestion = 'Scanned'
       AND EXISTS (
         SELECT 1 FROM "ImageCdnAccess" ca
         WHERE ca.url = ${image}."url" AND ca.state IN ('Denied', 'Retracted')
       )
-      AND NOT ${heldUrlSql(`${image}."url"`, { matureUnderage: false })}
+      AND NOT ${heldUrlSql(`${image}."url"`, { owners: false })}
       -- Bytes are per url, the checks per row: another row's signal would not reach this one, so the
       -- url must be this row's alone, with no deleted or taken-down copy behind it either.
       AND NOT EXISTS (SELECT 1 FROM "Image" so WHERE so.url = ${image}."url" AND so.id <> ${image}.id)
       AND NOT EXISTS (SELECT 1 FROM "ImageCdnModeratorDelete" sd WHERE sd.url = ${image}."url")
       AND NOT EXISTS (SELECT 1 FROM "ImageCdnShopTakedown" st WHERE st.url = ${image}."url")
-    ))`
-    : `${image}.ingestion = 'Blocked'`;
-  return `(
-    ${eligible}
-    -- NULL for an image with no review flag or block reason, so COALESCE before the NOT.
-    AND NOT COALESCE(${heldImageSql(image)}, false)
-  )`;
+    )`;
+}
+
+// `POST_PENDING_DELETE_REASON` in @civitai/db-queries, which imports this package.
+const PENDING_DELETE_REASON = 'pending-delete';
+
+/** Its post was unpublished by someone other than its owner, and not by a delete a case keeps: what
+ *  makes cdn-access refuse a scanned image's url (`desiredPostAccess` in the main app's cdn-access
+ *  service), less the kept delete, which stays refused. */
+function postPulledSql(image: string): string {
+  return `EXISTS (
+      SELECT 1 FROM "Post" pp
+      WHERE pp.id = ${image}."postId" AND pp."publishedAt" IS NULL
+        AND pp.metadata ? 'unpublishedAt'
+        AND pp.metadata ->> 'unpublishedBy' IS DISTINCT FROM pp."userId"::text
+        AND pp.metadata ->> 'unpublishedBy' IS NOT NULL
+        AND pp.metadata ->> 'unpublishedReason' IS DISTINCT FROM '${PENDING_DELETE_REASON}'
+    )`;
+}
+
+/**
+ * The rows a retracted-media read answers this moderator from. Any moderator gets what the routes
+ * would serve were no owner held (`retractedOrOwnerHeldWhereSql`), so a held owner cannot be told
+ * apart. On a route with a held leg (`heldLeg`), a moderator with the CSAM grant also gets all held
+ * media, and any other moderator media held for itself, drawn as restricted.
+ */
+export function moderatorMediaWhereSql(
+  image: string,
+  {
+    cdnLeg = false,
+    csamReview,
+    heldLeg,
+  }: { cdnLeg?: boolean; csamReview: boolean; heldLeg: boolean }
+): string {
+  const openable = retractedOrOwnerHeldWhereSql(image, { cdnLeg });
+  if (csamReview)
+    return heldLeg
+      ? `(${retractedImageWhereSql(image, { cdnLeg })} OR ${heldImageKnownSql(image)})`
+      : openable;
+  return heldLeg ? `(${openable} OR COALESCE(${heldItemImageSql(image)}, false))` : openable;
 }
 
 /** At most this many other rows on a url are read; a url with more is refused (`siblingsServable`). */
 export const URL_SIBLING_CAP = 50;
 
 /**
- * The CSAM signals read off one "Image" row aliased `image`: marked as CSAM (`heldImageSql`, in the
- * CSAM queue or blocked as CSAM; `csamSignalImageSql`, a CSAM hash, scan flag, hold or vote), blocked
- * with no reason, its owner reported or held, its post removed by a CSAM hold, or a CSAM text hold
- * that is not dismissed on its post, its post's text, its model, an article it is in, or a service
- * offering or profile it is the cover of. A minor signal alone, a minor-safety ban of the owner
- * included, is not here.
+ * The CSAM signals read off one "Image" row aliased `image` itself: in the CSAM queue or blocked as
+ * CSAM (`heldItemImageSql`), or a CSAM hash, scan flag, hold or vote (`csamSignalImageSql`). Nothing
+ * about its owner, post, model or the entities it appears on, and no minor signal, is here.
  */
 function csamRowSql(image: string): string {
-  const id = `${image}.id`;
   return `(
-    COALESCE(${heldImageSql(image)}, false)
+    COALESCE(${heldItemImageSql(image)}, false)
     OR ${csamSignalImageSql(image)}
-    OR (${image}."blockedFor" IS NULL AND ${image}.ingestion = 'Blocked')
-    OR ${heldUserSql(`${image}."userId"`)}
-    OR EXISTS (
-      SELECT 1 FROM "Post" cp
-      WHERE cp.id = ${image}."postId" AND cp.metadata ->> 'unpublishedReason' = '${CSAM_HOLD_POST_UNPUBLISH_REASON}'
-    )
-    OR EXISTS (
-      SELECT 1 FROM "TextScanHold" cph
-      WHERE cph."entityType" = 'Post' AND cph."entityId" = ${image}."postId" AND ${liveCsamTextHoldText(
-    'cph'
-  )}
-    )
-    OR EXISTS (
-      SELECT 1 FROM "PostText" cpt
-      WHERE cpt."postId" = ${image}."postId" AND ${postTextCsamHeldText('cpt')}
-    )
-    OR EXISTS (
-      SELECT 1 FROM "Post" cmp
-      JOIN "ModelVersion" cmv ON cmv.id = cmp."modelVersionId"
-      JOIN "TextScanHold" cth ON cth."entityType" = 'Model' AND cth."entityId" = cmv."modelId"
-      WHERE cmp.id = ${image}."postId" AND ${liveCsamTextHoldText('cth')}
-    )
-    OR EXISTS (
-      SELECT 1 FROM "TextScanHold" cah
-      WHERE cah."entityType" = 'Article' AND ${liveCsamTextHoldText('cah')} AND cah."entityId" IN (
-        SELECT ca.id FROM "Article" ca WHERE ca."coverId" = ${id} OR ca."bannerId" = ${id}
-        UNION ALL
-        SELECT cic."entityId" FROM "ImageConnection" cic
-        WHERE cic."imageId" = ${id} AND cic."entityType" = 'Article'
-      )
-    )
-    OR EXISTS (
-      SELECT 1 FROM "ServiceOffering" cso
-      WHERE cso."coverImageId" = ${id} AND ${csamQueueHeldText('ServiceOffering', 'cso."id"')}
-    )
-    OR EXISTS (
-      SELECT 1 FROM "TextScanHold" cuph
-      JOIN "UserProfile" cup ON cup."userId" = cuph."entityId"
-      WHERE cuph."entityType" = 'UserProfile' AND ${liveCsamTextHoldText('cuph')}
-        AND (cup."coverImageId" = ${id} OR cup."sfwCoverImageId" = ${id})
-    )
   )`;
 }
 
@@ -126,8 +136,8 @@ export function upgradedRetractionSql(image: string): string {
  * Whether the "Image" row aliased `image` is kept to moderators cleared for CSAM review: it, or
  * one of the first `URL_SIBLING_CAP` other rows on its url, carries a CSAM signal in Postgres
  * (`csamRowSql`); it is listed on a CSAM report; its bytes (by url or pHash copy) are reported, held
- * or under an evidence hold; or another row on its url is held (`heldUrlSql`, without its
- * `mature-underage` leg). A minor signal alone is not here: any moderator may see it. `blockedFor`
+ * or under an evidence hold; or the file is held (`heldUrlSql` with `owners: false`). Nothing about
+ * an owner, post or model is here, and neither is a minor signal alone: any moderator may see those. `blockedFor`
  * text and the scanner's labels, of this row and of `urlSiblingsSql`'s rows, are read by the caller.
  */
 export function csamRestrictedSql(image: string): string {
@@ -151,7 +161,7 @@ function buildCsamRestrictedSql(image: string): string {
     OR (${id})::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})
     OR ${reportListedUrlSql(url)}
     OR ${evidenceHeldUrlSql(url)}
-    OR ${heldUrlSql(url, { exceptImageId: `${image}."id"`, matureUnderage: false })}
+    OR ${heldUrlSql(url, { exceptImageId: `${image}."id"`, owners: false })}
   ), true)`;
 }
 
@@ -183,6 +193,17 @@ export function urlSiblingsSql(image: string): string {
   ), '[]'::json)`;
 }
 
+/** `siblingsServable` without its scanner read. */
+export function siblingsClearInPostgres(
+  siblings: UrlSibling[],
+  isSignal: (blockedFor: string | null) => boolean
+): boolean {
+  return (
+    siblings.length < URL_SIBLING_CAP &&
+    !siblings.some((s) => s.unreadable !== false || isSignal(s.blockedFor))
+  );
+}
+
 /**
  * Whether no row in `siblings` (`urlSiblingsSql`) keeps the shared url from a moderator without the
  * CSAM grant: the list is under `URL_SIBLING_CAP`, every row has finished its scan, `isSignal`
@@ -193,8 +214,7 @@ export async function siblingsServable(
   isSignal: (blockedFor: string | null) => boolean,
   readVerdicts: (imageIds: number[]) => Promise<Map<number, ScannerVerdict> | null>
 ): Promise<boolean> {
-  if (siblings.length >= URL_SIBLING_CAP) return false;
-  if (siblings.some((s) => s.unreadable !== false || isSignal(s.blockedFor))) return false;
+  if (!siblingsClearInPostgres(siblings, isSignal)) return false;
   if (!siblings.length) return true;
   const verdicts = await readVerdicts(siblings.map((s) => s.id));
   if (!verdicts) return false;

@@ -30,6 +30,7 @@ export const APPDATA_TABLES = [
   'doc_mark',
   'doc_tomb',
   'mark_head',
+  'maint_run',
   'usage_app',
   'usage_user',
 ] as const;
@@ -145,6 +146,19 @@ export function scanStatement(sql: string): string[] {
       }
       continue;
     }
+    if (
+      new RegExp(
+        `\\(\\s*${a}\\.app_id\\s*,\\s*${a}\\.ns\\s*\\)\\s*>\\s*\\(\\$2::text\\s*,\\s*\\$3::text\\)`
+      ).test(sql) &&
+      table === 'maint_run'
+    ) {
+      // Account-wipe enumeration of the maintenance runs: read only, keyed on the user by the
+      // runs' content (`maintRunNamesUser`), which the wipe policy on `maint_run` admits.
+      if (!/^\s*SELECT\b/i.test(sql)) {
+        violations.push(`account-wipe statement on appdata.${table} is not a SELECT`);
+      }
+      continue;
+    }
     if (new RegExp(`\\b${a}\\.user_id\\s*=\\s*\\$1::int\\b`).test(sql)) {
       // Account-wipe enumeration: read only, and only the two per-user tables.
       if (!/^\s*SELECT\b/i.test(sql)) {
@@ -194,9 +208,17 @@ export function isReviewMaintenanceStatement(sql: string): boolean {
   return /\.ns\s+LIKE\s+'rev:%'/.test(sql);
 }
 
-/** A statement written in the account-wipe enumeration shape (`user_id = $1::int`). */
+/**
+ * A statement written in the account-wipe enumeration shape: `user_id = $1::int`, or the
+ * maintenance runs' `(app_id, ns) > ($2::text, $3::text)` keyset over `maint_run`.
+ */
 export function isAccountWipeStatement(sql: string): boolean {
-  return /\.user_id\s*=\s*\$1::int\b/.test(sql);
+  return (
+    /\.user_id\s*=\s*\$1::int\b/.test(sql) ||
+    /FROM\s+appdata\.maint_run\s+\w+[\s\S]*\(\s*\w+\.app_id\s*,\s*\w+\.ns\s*\)\s*>\s*\(\$2::text\s*,\s*\$3::text\)/.test(
+      sql
+    )
+  );
 }
 
 /** A statement written in the app-purge enumeration shape (`ns > $2::text`). */

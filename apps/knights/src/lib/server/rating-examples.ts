@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { imageUrl } from './image-url';
+import { readWithoutJit } from '@civitai/db/knights';
 import { servableImage } from './servable-image';
 
 /** The moderator-curated collection the original game's rating guide drew its examples from. */
@@ -64,18 +65,20 @@ export async function ratingExamples(db: Kysely<DB>, now = Date.now()): Promise<
   if (held && now - held.at < TTL_MS) return held.examples;
   if (failedAt !== undefined && now - failedAt < FAILURE_BACKOFF_MS) return held?.examples ?? {};
   try {
-    const rows = await db
-      .withTables<RatingGuideView>()
-      .selectFrom('KnightsRatingGuideItem as ci')
-      .innerJoin('Image as img', 'img.id', 'ci.imageId')
-      .innerJoin('Post as p', 'p.id', 'img.postId')
-      .select(['img.id', 'img.url', 'img.nsfwLevel', 'img.width', 'img.height'])
-      .where('ci.collectionId', '=', RATING_GUIDE_COLLECTION_ID)
-      .where('ci.status', '=', 'ACCEPTED')
-      .where(servableImage)
-      .orderBy('ci.createdAt')
-      .orderBy('ci.id')
-      .execute();
+    const rows = await readWithoutJit(db, (trx) =>
+      trx
+        .withTables<RatingGuideView>()
+        .selectFrom('KnightsRatingGuideItem as ci')
+        .innerJoin('Image as img', 'img.id', 'ci.imageId')
+        .innerJoin('Post as p', 'p.id', 'img.postId')
+        .select(['img.id', 'img.url', 'img.nsfwLevel', 'img.width', 'img.height'])
+        .where('ci.collectionId', '=', RATING_GUIDE_COLLECTION_ID)
+        .where('ci.status', '=', 'ACCEPTED')
+        .where(servableImage)
+        .orderBy('ci.createdAt')
+        .orderBy('ci.id')
+        .execute()
+    );
     const examples = groupExamples(rows);
     held = { at: now, examples };
     failedAt = undefined;

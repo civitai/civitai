@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'node:fs';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Audit from '~/utils/metadata/audit';
@@ -28,6 +29,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getImagesModRules: vi.fn(async () => []),
   resetBlockedNsfwLevel: vi.fn(async () => undefined),
+  refreshImageLevelCaches: vi.fn(async () => undefined),
   dropBlockedImageDeleteQueue: vi.fn(async () => undefined),
   queueImageSearchIndexUpdate: vi.fn(async () => undefined),
 }));
@@ -56,7 +58,14 @@ import {
 import { rescanImageById } from '../image-rescan.service';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
-import { scanKeepsRowSql } from '~/server/common/image-visibility';
+import {
+  liftedBlockedForSql,
+  liftedIngestionSql,
+  liftedNeedsReviewSql,
+  liftedNsfwLevelSql,
+  scanKeepsRowSql,
+  unblockedMetadataSql,
+} from '~/server/common/image-visibility';
 import { blockImageFromRating } from '../image-scan-result.service';
 import { unblockAccountDeletionImages } from '../account-deletion-images';
 import { blockBannedUserImages } from '~/server/services/user.service';
@@ -68,7 +77,9 @@ import {
   feedThumbnailFields,
   feedViewer,
   ingestImageById,
+  refreshImageLevelCaches,
   requeueUnverifiedImages,
+  resetBlockedNsfwLevel,
 } from '~/server/services/image.service';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
@@ -1600,5 +1611,518 @@ describe('feed thumbnail fields', () => {
       nsfwLevel: 16,
       thumbnailUrl: 't',
     });
+  });
+});
+
+/**
+ * Decision (account-restore parity, #10248): the grace block records the rating and rating lock it
+ * replaces with Blocked. A restore puts the recorded rating back only when it was locked or was
+ * itself Blocked: a moderator's lock comes back locked, and a row kept by a block marker (a
+ * takedown, `minor`, a lock at Blocked) comes back with its marker. Every other row is re-rated
+ * from its current tags, so a tag enabled during the window, and the 'minor' review the re-rate
+ * assigns, are not lost. A row with nothing recorded is re-rated as before.
+ */
+describe('a restore puts back the rating the grace block replaced', () => {
+  const graced = (prior: {
+    ingestion: string;
+    blockedFor?: string | null;
+    level?: number;
+    locked?: boolean;
+  }) =>
+    `'${JSON.stringify({
+      accountDeletionPriorIngestion: prior.ingestion,
+      accountDeletionPriorBlockedFor: prior.blockedFor ?? null,
+      accountDeletionPriorNeedsReview: null,
+      ...(prior.level === undefined
+        ? {}
+        : {
+            accountDeletionPriorNsfwLevel: prior.level,
+            accountDeletionPriorNsfwLevelLocked: !!prior.locked,
+          }),
+    })}'`;
+  const rating = async (id: number) =>
+    (
+      await holder.db.query<{ ingestion: string; nsfwLevel: number; nsfwLevelLocked: boolean }>(
+        `SELECT ingestion, "nsfwLevel", "nsfwLevelLocked" FROM "Image" WHERE id = $1`,
+        [id]
+      )
+    ).rows[0];
+  const keptByScan = async (id: number) => {
+    const flat = scanKeepsRowSql('i');
+    const { rows } = await holder.db.query<{ kept: boolean }>(
+      `SELECT ${flat.text} AS kept FROM "Image" i WHERE i.id = $${flat.values.length + 1}`,
+      [...(flat.values as unknown[]), id]
+    );
+    return rows[0].kept;
+  };
+  /** The reset's own first statement, so a row it is handed loses its level and lock as in prod. */
+  const resetLikeProd = () =>
+    vi.mocked(resetBlockedNsfwLevel).mockImplementation(async (ids, options) => {
+      await holder.db.query(
+        `UPDATE "Image" SET "nsfwLevel" = 0, "nsfwLevelLocked" = false
+         WHERE id = ANY($1) AND "nsfwLevel" = 32 AND ($2 OR NOT "nsfwLevelLocked")`,
+        [Array.isArray(ids) ? ids : [ids], !options?.unlockedOnly]
+      );
+    });
+  const resetIds = () => vi.mocked(resetBlockedNsfwLevel).mock.calls.flatMap(([ids]) => ids);
+
+  it.each([
+    [
+      'a moderator takedown',
+      111,
+      false,
+      `INSERT INTO "ModActivity" ("entityType", "entityId", activity) VALUES ('image', 111, 'bulkRemove');`,
+    ],
+    ['the minor flag', 112, false, `UPDATE "Image" SET minor = true WHERE id = 112;`],
+    ['a rating lock at Blocked', 113, true, ''],
+  ])('an Error row kept at Blocked by %s comes back kept', async (_, id, locked, arm) => {
+    resetLikeProd();
+    await holder.db.exec(`
+        INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
+          (${id}, ${OWNER}, 'Blocked', 'moderated', 32, ${locked}, ${graced({
+      ingestion: 'Error',
+      level: 32,
+      locked,
+    })});
+        ${arm}
+      `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    expect(await rating(id)).toEqual({
+      ingestion: 'Error',
+      nsfwLevel: 32,
+      nsfwLevelLocked: locked,
+    });
+    expect(await keptByScan(id), 'the restored row lost the marker a scan keeps it by').toBe(true);
+    expect(resetIds()).not.toContain(id);
+  });
+
+  it("brings a moderator's rating lock back locked at its level; an unlocked rating is re-rated with it as a floor", async () => {
+    resetLikeProd();
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
+        (114, ${OWNER}, 'Blocked', 'moderated', 32, true, ${graced({
+      ingestion: 'Scanned',
+      level: 4,
+      locked: true,
+    })}),
+        (115, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 8,
+      locked: false,
+    })});
+    `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    expect(await rating(114)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 4,
+      nsfwLevelLocked: true,
+    });
+    // Unlocked and not Blocked: handed to the re-rate (its level after it is pinned with real tags in
+    // 're-rates an unlocked rating from the tags as they are now').
+    expect(resetIds()).not.toContain(114);
+    expect(resetIds()).toContain(115);
+    // Not re-rated, so the caches that read the level are refreshed for it here.
+    expect(vi.mocked(refreshImageLevelCaches).mock.calls.flat(2)).toContain(114);
+    const { rows } = await holder.db.query<{ metadata: Record<string, unknown> }>(
+      `SELECT metadata FROM "Image" WHERE id IN (114, 115)`
+    );
+    expect(rows.map((row) => row.metadata)).toEqual([{}, {}]);
+  });
+
+  it('re-rates an unlocked rating from the tags as they are now, never below it, with the minor review', async () => {
+    const recompute = readFileSync(
+      new URL(
+        '../../../../packages/civitai-db-schema/prisma/programmability/update_nsfw_level.sql',
+        import.meta.url
+      ),
+      'utf8'
+    )
+      .split('---')
+      .find((part) => part.includes('FUNCTION update_nsfw_levels_new('));
+    expect(recompute, 'update_nsfw_levels_new not found in its programmability file').toBeTruthy();
+    // resetBlockedNsfwLevel's own statements: the reset, then the recompute it runs.
+    vi.mocked(resetBlockedNsfwLevel).mockImplementation(async (ids) => {
+      const list = Array.isArray(ids) ? ids : [ids];
+      await holder.db.query(
+        `UPDATE "Image" SET "nsfwLevel" = 0, "nsfwLevelLocked" = false WHERE id = ANY($1) AND "nsfwLevel" = 32`,
+        [list]
+      );
+      await holder.db.query(`SELECT update_nsfw_levels_new($1::int[])`, [list]);
+    });
+    await holder.db.exec(`
+      CREATE TABLE IF NOT EXISTS "Tag" (id int PRIMARY KEY, "nsfwLevel" int NOT NULL);
+      CREATE TABLE IF NOT EXISTS "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean NOT NULL DEFAULT false);
+      TRUNCATE "Tag", "TagsOnImageDetails";
+      ${recompute};
+      INSERT INTO "Tag" (id, "nsfwLevel") VALUES (1, 1), (2, 8), (3, 4);
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata, "scanJobs") VALUES
+        -- PG before the deletion; a moderator enabled an X tag during the window.
+        (131, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 1,
+      locked: false,
+    })}, NULL),
+        -- PG-13, and its scan saw a minor: the re-rate gives it the 'minor' review.
+        (132, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 4,
+      locked: false,
+    })}, '{"hasMinor": true}'),
+        -- Its owner raised it to X over PG tags (unlocked, by design).
+        (134, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 8,
+      locked: false,
+    })}, NULL),
+        -- PG before the deletion; an R tag was added during the window.
+        (135, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 1,
+      locked: false,
+    })}, NULL),
+        -- Owner-raised to X over PG tags, and its scan saw a minor.
+        (136, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 8,
+      locked: false,
+    })}, '{"hasMinor": true}');
+      INSERT INTO "TagsOnImageDetails" ("imageId", "tagId") VALUES
+        (131, 1), (131, 2), (132, 3), (134, 1), (135, 1), (135, 3), (136, 1);
+    `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    const { rows } = await holder.db.query<{
+      id: number;
+      nsfwLevel: number;
+      nsfwLevelLocked: boolean;
+      needsReview: string | null;
+    }>(
+      `SELECT id, "nsfwLevel", "nsfwLevelLocked", "needsReview" FROM "Image" WHERE id IN (131, 132, 134, 135, 136) ORDER BY id`
+    );
+    expect(rows).toEqual([
+      { id: 131, nsfwLevel: 8, nsfwLevelLocked: false, needsReview: null },
+      { id: 132, nsfwLevel: 4, nsfwLevelLocked: false, needsReview: 'minor' },
+      { id: 134, nsfwLevel: 8, nsfwLevelLocked: false, needsReview: null },
+      { id: 135, nsfwLevel: 4, nsfwLevelLocked: false, needsReview: null },
+      { id: 136, nsfwLevel: 8, nsfwLevelLocked: false, needsReview: 'minor' },
+    ]);
+    // The caches that read the level are refreshed for exactly the rows the floor raised.
+    expect(
+      vi
+        .mocked(refreshImageLevelCaches)
+        .mock.calls.flatMap(([ids]) => ids)
+        .sort()
+    ).toEqual([134, 136]);
+  });
+
+  it('re-rates a row whose rating changed during the window, keeping a moderator lock', async () => {
+    resetLikeProd();
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
+        -- A moderator rated it X and locked it after the grace block.
+        (121, ${OWNER}, 'Blocked', 'moderated', 8, true, ${graced({
+      ingestion: 'Scanned',
+      level: 1,
+      locked: false,
+    })}),
+        -- Re-rated to R during the window, lock unchanged.
+        (129, ${OWNER}, 'Blocked', 'moderated', 4, false, ${graced({
+      ingestion: 'Scanned',
+      level: 1,
+      locked: false,
+    })}),
+        -- A moderator locked it at Blocked after the grace block.
+        (122, ${OWNER}, 'Blocked', 'moderated', 32, true, ${graced({
+      ingestion: 'Scanned',
+      level: 4,
+      locked: false,
+    })}),
+        -- Locked before the deletion and re-rated to X during the window without a new record.
+        (133, ${OWNER}, 'Blocked', 'moderated', 8, true, ${graced({
+      ingestion: 'Scanned',
+      level: 4,
+      locked: true,
+    })});
+    `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    expect(await rating(121)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 8,
+      nsfwLevelLocked: true,
+    });
+    expect(await rating(129)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 4,
+      nsfwLevelLocked: false,
+    });
+    expect(await rating(133)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 8,
+      nsfwLevelLocked: true,
+    });
+    expect(resetIds()).toEqual(expect.arrayContaining([121, 122, 129]));
+    expect(vi.mocked(refreshImageLevelCaches).mock.calls.flat(2)).not.toContain(121);
+  });
+
+  it('re-rates a row whose recorded rating is not a whole level, or has no lock beside it', async () => {
+    resetLikeProd();
+    const crumbs = (level: unknown, locked?: boolean) =>
+      `'${JSON.stringify({
+        accountDeletionPriorIngestion: 'Scanned',
+        accountDeletionPriorBlockedFor: null,
+        accountDeletionPriorNeedsReview: null,
+        accountDeletionPriorNsfwLevel: level,
+        ...(locked === undefined ? {} : { accountDeletionPriorNsfwLevelLocked: locked }),
+      })}'`;
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
+        (123, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs('4', false)}),
+        (124, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(4.5, false)}),
+        (125, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(123456789012, false)}),
+        (126, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(4)}),
+        (127, ${OWNER}, 'Blocked', 'moderated', 32, true, ${crumbs(4, true)}),
+        -- Unrated before the deletion: re-rated, so the rescan of an unrated image still runs.
+        (130, ${OWNER}, 'Blocked', 'moderated', 32, false, ${crumbs(0, false)});
+    `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    expect(resetIds()).toEqual(expect.arrayContaining([123, 124, 125, 126, 130]));
+    // Control: a whole level with its lock is put back, not re-rated.
+    expect(resetIds()).not.toContain(127);
+    expect(await rating(127)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 4,
+      nsfwLevelLocked: true,
+    });
+  });
+
+  it('keeps a Blocked rating a moderator lands between the restore and its reset', async () => {
+    vi.mocked(resetBlockedNsfwLevel).mockImplementation(async (ids, options) => {
+      const list = Array.isArray(ids) ? ids : [ids];
+      // The moderator's rating, committed after the restore statement and before the reset.
+      await holder.db.query(
+        `UPDATE "Image" SET "nsfwLevel" = 32, "nsfwLevelLocked" = true WHERE id = ANY($1)`,
+        [list]
+      );
+      // The reset's own first statement.
+      await holder.db.query(
+        `UPDATE "Image" SET "nsfwLevel" = 0, "nsfwLevelLocked" = false
+         WHERE id = ANY($1) AND "nsfwLevel" = 32 AND ($2 OR NOT "nsfwLevelLocked")`,
+        [list, !options?.unlockedOnly]
+      );
+    });
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
+        (137, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 1,
+      locked: false,
+    })});
+    `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    expect(await rating(137)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 32,
+      nsfwLevelLocked: true,
+    });
+  });
+
+  it("puts back a moderator's lock when the image was unblocked during the window", async () => {
+    resetLikeProd();
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
+        (138, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 1,
+      locked: false,
+    })});
+      -- A moderator rates it R and locks it during the window (updateImageNsfwLevel).
+      UPDATE "Image" SET "nsfwLevel" = 4, "nsfwLevelLocked" = true, metadata = metadata ||
+        '{"accountDeletionPriorNsfwLevel": 4, "accountDeletionPriorNsfwLevelLocked": true}'
+        WHERE id = 138;
+      -- Control: one whose recorded rating is Blocked, which the lift drops.
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
+        (139, ${OWNER}, 'Blocked', 'moderated', 32, true, ${graced({
+      ingestion: 'Scanned',
+      level: 32,
+      locked: true,
+    })});
+      UPDATE "User" SET "deletedAt" = now() WHERE id = ${OWNER};
+    `);
+    // Then unblocks it while the owner is still deleted: the lift's own statement.
+    const lift = Prisma.sql`UPDATE "Image" SET ingestion = ${liftedIngestionSql},
+      "blockedFor" = ${liftedBlockedForSql}, "nsfwLevel" = ${liftedNsfwLevelSql},
+      "needsReview" = ${liftedNeedsReviewSql}, metadata = ${unblockedMetadataSql}
+      WHERE id IN (138, 139)`;
+    await holder.db.query(lift.text, lift.values as unknown[]);
+    const { rows: lifted } = await holder.db.query<{ metadata: Record<string, unknown> }>(
+      `SELECT metadata FROM "Image" WHERE id = 139`
+    );
+    expect(lifted[0].metadata).not.toHaveProperty('accountDeletionPriorNsfwLevel');
+    expect(lifted[0].metadata).toMatchObject({ accountDeletionPriorIngestion: 'Scanned' });
+    expect(await rating(138), 'the lift kept the row blocked').toEqual({
+      ingestion: 'Blocked',
+      nsfwLevel: 32,
+      nsfwLevelLocked: true,
+    });
+    await holder.db.exec(`UPDATE "User" SET "deletedAt" = NULL WHERE id = ${OWNER}`);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    expect(await rating(138)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 4,
+      nsfwLevelLocked: true,
+    });
+  });
+
+  it('keeps a locked recorded rating off a row with a CSAM block, current or recorded', async () => {
+    resetLikeProd();
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
+        (140, ${OWNER}, 'Blocked', 'CSAM', 32, true, ${graced({
+      ingestion: 'Scanned',
+      level: 4,
+      locked: true,
+    })}),
+        (141, ${OWNER}, 'Blocked', 'moderated', 32, true, ${graced({
+      ingestion: 'Scanned',
+      blockedFor: 'CSAM',
+      level: 4,
+      locked: true,
+    })});
+    `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    for (const id of [140, 141])
+      expect(await rating(id), `row ${id}`).toEqual({
+        ingestion: 'Blocked',
+        nsfwLevel: 32,
+        nsfwLevelLocked: true,
+      });
+  });
+
+  it('keeps a lift-kept rating off a row CSAM-blocked after the lift', async () => {
+    resetLikeProd();
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
+        (142, ${OWNER}, 'Blocked', 'moderated', 32, true, ${graced({
+      ingestion: 'Scanned',
+      level: 4,
+      locked: true,
+    })});
+      UPDATE "User" SET "deletedAt" = now() WHERE id = ${OWNER};
+    `);
+    const lift = Prisma.sql`UPDATE "Image" SET ingestion = ${liftedIngestionSql},
+      "blockedFor" = ${liftedBlockedForSql}, "nsfwLevel" = ${liftedNsfwLevelSql},
+      "needsReview" = ${liftedNeedsReviewSql}, metadata = ${unblockedMetadataSql}
+      WHERE id = 142`;
+    await holder.db.query(lift.text, lift.values as unknown[]);
+    // Control: the lift kept the rating.
+    const { rows } = await holder.db.query<{ metadata: Record<string, unknown> }>(
+      `SELECT metadata FROM "Image" WHERE id = 142`
+    );
+    expect(rows[0].metadata).toMatchObject({ accountDeletionPriorNsfwLevel: 4 });
+    await holder.db.exec(`
+      UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = 142;
+      UPDATE "User" SET "deletedAt" = NULL WHERE id = ${OWNER};
+    `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    expect(await rating(142)).toEqual({
+      ingestion: 'Blocked',
+      nsfwLevel: 32,
+      nsfwLevelLocked: true,
+    });
+  });
+
+  it('re-rates a row with no rating recorded, as before', async () => {
+    resetLikeProd();
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
+        (116, ${OWNER}, 'Blocked', 'moderated', 32, true, ${graced({ ingestion: 'Scanned' })});
+    `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    expect(resetIds()).toContain(116);
+    expect(await rating(116)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 0,
+      nsfwLevelLocked: false,
+    });
+  });
+
+  it('leaves a CSAM row Blocked at Blocked, whatever it recorded', async () => {
+    resetLikeProd();
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
+        (117, ${OWNER}, 'Blocked', 'CSAM', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 4,
+      locked: false,
+    })}),
+        -- A CSAM reason only in the record: the restore puts it back, and the row stays Blocked.
+        (128, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      blockedFor: 'CSAM',
+      level: 4,
+      locked: false,
+    })});
+    `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    expect(await rating(128)).toEqual({
+      ingestion: 'Blocked',
+      nsfwLevel: 32,
+      nsfwLevelLocked: false,
+    });
+    expect(await rating(117)).toEqual({
+      ingestion: 'Blocked',
+      nsfwLevel: 32,
+      nsfwLevelLocked: false,
+    });
+  });
+
+  it('never writes a recorded appeal review onto a row that keeps a CSAM block', async () => {
+    const withAppeal = (ingestion: string, blockedFor: string | null) =>
+      `'${JSON.stringify({
+        accountDeletionPriorIngestion: ingestion,
+        accountDeletionPriorBlockedFor: blockedFor,
+        accountDeletionPriorNeedsReview: 'appeal',
+      })}'`;
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", metadata) VALUES
+        (118, ${OWNER}, 'Blocked', 'CSAM', 32, ${withAppeal('Error', 'CSAM')}),
+        (119, ${OWNER}, 'Blocked', 'moderated', 32, ${withAppeal('Error', 'CSAM')}),
+        (120, ${OWNER}, 'Blocked', 'moderated', 32, ${withAppeal('Scanned', null)});
+      INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
+        ('Image', 118, 'Pending'), ('Image', 119, 'Pending'), ('Image', 120, 'Pending');
+    `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    const { rows } = await holder.db.query<{ id: number; needsReview: string | null }>(
+      `SELECT id, "needsReview" FROM "Image" WHERE id IN (118, 119, 120) ORDER BY id`
+    );
+    expect(rows).toEqual([
+      { id: 118, needsReview: null },
+      { id: 119, needsReview: null },
+      // Control: a row without a CSAM block gets its pending appeal's review back.
+      { id: 120, needsReview: 'appeal' },
+    ]);
   });
 });
