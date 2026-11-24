@@ -177,45 +177,90 @@ function loads(
   return false;
 }
 
-/** Imported value names, read with a regex: a superset is fine, a missed name is not. */
-function importedNames(source: string): string[] {
-  const names: string[] = [];
-  const re = /(?:^|[\n;])\s*import\s+(?!type\s)([\s\S]*?)\s+from\s*['"]([^'"]+)['"]/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(source))) {
-    // `vi` and friends are bound before any factory runs.
-    if (isVitest(m[2]!)) continue;
-    const clause = m[1]!;
-    for (const part of clause.replace(/[{}]/g, ',').split(',')) {
-      const words = part.trim().split(/\s+/);
-      const name = words[words.length - 1];
-      if (name && /^[A-Za-z_$][\w$]*$/.test(name) && name !== 'type') names.push(name);
-    }
+/**
+ * The index just past a string, template literal or comment opening at `i`, or `i` itself.
+ * Template `${}` nesting is not tracked; a mistake there only lengthens or shortens a text the
+ * callers treat as a superset or reparse.
+ */
+function skipLiteral(source: string, i: number): number {
+  const c = source[i];
+  if (c === '/' && source[i + 1] === '/') {
+    const nl = source.indexOf('\n', i);
+    return nl === -1 ? source.length : nl;
   }
-  return names;
+  if (c === '/' && source[i + 1] === '*') {
+    const close = source.indexOf('*/', i + 2);
+    return close === -1 ? source.length : close + 2;
+  }
+  if (c === "'" || c === '"' || c === '`') {
+    let j = i + 1;
+    for (; j < source.length && source[j] !== c; j++) if (source[j] === '\\') j++;
+    return j + 1;
+  }
+  return i;
 }
 
 /**
- * The text of each `vi.mock(...)` call, found by matching brackets past strings, template
- * literals and comments. A regex literal holding a bracket can misplace an end; the scan errs long
- * (to the end of the file) when brackets never balance.
+ * The bindings text of each `import` statement: from the keyword to the next `;`, with strings and
+ * comments dropped, so a module path or a comment cannot match a name. Vitest's own imports are left
+ * out: `vi` and friends are bound before any factory runs. A superset is fine; a missed name is not.
  */
-function mockCallTexts(source: string): string[] {
+function importTexts(source: string): string[] {
   const out: string[] = [];
-  let at = source.indexOf('vi.mock(');
-  while (at !== -1) {
+  // Jumps between quotes, comment openers and the keyword: a per-character walk of every file is
+  // most of the scan's time.
+  const token = /['"`]|\/[/*]|(?<![\w$.])import(?![\w$])/g;
+  for (let m = token.exec(source); m; m = token.exec(source)) {
+    if (m[0] !== 'import') {
+      token.lastIndex = Math.max(skipLiteral(source, m.index), m.index + 1);
+      continue;
+    }
+    if (/^\s*[(.]/.test(source.slice(m.index + 6, m.index + 40))) continue;
+    let text = '';
+    let vitest = false;
+    let j = m.index;
+    while (j < source.length && source[j] !== ';') {
+      const next = skipLiteral(source, j);
+      if (next === j) {
+        text += source[j];
+        j++;
+      } else {
+        if (/^['"](?:vitest|@vitest\/)/.test(source.slice(j, next))) vitest = true;
+        text += ' ';
+        j = next;
+      }
+    }
+    if (!vitest) out.push(text);
+    token.lastIndex = j;
+  }
+  return out;
+}
+
+const mockStart = /\bvi\s*(?:\?\.|\.)\s*(?:\/\*[\s\S]*?\*\/\s*)?mock\b/g;
+
+/**
+ * The text of each `vi.mock(...)` call, found by matching brackets past strings, template literals
+ * and comments, or null for a generic `vi.mock<…>(` call. A regex literal holding a bracket
+ * can end a call early or late; the caller parses the text and falls back on any doubt.
+ */
+function mockCallTexts(source: string): string[] | null {
+  const out: string[] = [];
+  for (const match of source.matchAll(mockStart)) {
+    let i = match.index + match[0].length;
+    while (/\s/.test(source[i] ?? '')) i++;
+    // A generic call is rare enough to send to the whole-file parse; no bracket at all is prose.
+    if (source[i] === '<') return null;
+    if (source[i] !== '(') continue;
     let depth = 0;
-    let i = at + 'vi.mock'.length;
     let end = source.length;
     for (; i < source.length; i++) {
       const c = source[i]!;
-      if (c === '/' && source[i + 1] === '/')
-        i = source.indexOf('\n', i) === -1 ? source.length : source.indexOf('\n', i);
-      else if (c === '/' && source[i + 1] === '*')
-        i = source.indexOf('*/', i + 2) === -1 ? source.length : source.indexOf('*/', i + 2) + 1;
-      else if (c === "'" || c === '"' || c === '`') {
-        for (i++; i < source.length && source[i] !== c; i++) if (source[i] === '\\') i++;
-      } else if (c === '(' || c === '{' || c === '[') depth++;
+      const next = skipLiteral(source, i);
+      if (next !== i) {
+        i = next - 1;
+        continue;
+      }
+      if (c === '(' || c === '{' || c === '[') depth++;
       else if (c === ')' || c === '}' || c === ']') {
         if (--depth === 0) {
           end = i + 1;
@@ -223,22 +268,24 @@ function mockCallTexts(source: string): string[] {
         }
       }
     }
-    out.push(source.slice(at, end));
-    at = source.indexOf('vi.mock(', at + 1);
+    out.push(source.slice(match.index, end));
   }
   return out;
 }
 
+const escapeName = (n: string) => n.replace(/\$/g, '\\$');
+
 /**
  * Whether a factory might read an import: worth parsing the whole file. Parses only the text of each
- * `vi.mock` call, and answers true whenever that text does not parse as one whole call, so a
- * misplaced end costs speed, never a finding.
+ * `vi.mock` call, and answers true on any doubt (an odd spelling, or a call text that is not one
+ * whole call), so a prefilter mistake costs time, never a finding.
  */
 function mayReadImport(source: string): boolean {
   const calls = mockCallTexts(source);
+  if (calls === null) return true;
   if (!calls.length) return false;
-  const names = new Set(importedNames(source));
-  if (!names.size) return false;
+  const imports = importTexts(source);
+  if (!imports.length) return false;
   return calls.some((text) => {
     const sf = ts.createSourceFile(
       'call.ts',
@@ -263,7 +310,11 @@ function mayReadImport(source: string): boolean {
     const factory = call.arguments[1];
     if (!factory || !(ts.isArrowFunction(factory) || ts.isFunctionExpression(factory)))
       return false;
-    return [...eagerReads(factory)].some((n) => names.has(n));
+    return [...eagerReads(factory)].some((n) => {
+      if (!n) return false;
+      const word = new RegExp(String.raw`(^|[^\w$])${escapeName(n)}([^\w$]|$)`, 'u');
+      return imports.some((text) => word.test(text));
+    });
   });
 }
 
@@ -434,6 +485,8 @@ const PRE_FIX = [
   '  return { ...actual, trpc: makeTrpcProxy({}) };',
   '});',
 ].join('\n');
+// Split so the own-module mock ratchet does not count the fixtures below as mocks of this file.
+const V = 'vi';
 const REPORT_TEST = 'src/components/Feedback/ReportProblemButton.browser.test.tsx';
 
 describe('vi.mock factories read no import that is still unbound', () => {
@@ -499,10 +552,38 @@ describe('vi.mock factories read no import that is still unbound', () => {
     expect(check(REPORT_TEST, replacedFirst)).toEqual([]);
   });
 
+  // Each is a spelling the prefilter's text checks could miss; the whole-file parse flags every one.
+  it.each([
+    ['a space before the call', V + ".mock ('./y', () => ({ w: a }));"],
+    ['a line break in the call', V + "\n  .mock('./y', () => ({ w: a }));"],
+    ['a generic call', V + ".mock<typeof import('./y')>('./y', () => ({ w: a }));"],
+    ['a regex holding a bracket', V + ".mock('./y', () => ({ r: /\\)/, w: a }));"],
+  ])('parses a file with %s', (_, call) => {
+    const source = "import { vi } from 'vitest';\nimport { a } from './x';\n" + call;
+    expect(mayReadImport(source)).toBe(true);
+  });
+  it.each([
+    ['a comment holding from', "import { z, /* from 'q'; */ a } from './x';", 'a'],
+    ['no spaces', "import{a}from'./x';", 'a'],
+    ['a comment first', "/* c */ import a from './x';", 'a'],
+    ['a binding named type', "import { type } from './x';", 'type'],
+    ['a non-ASCII name', "import { é } from './x';", 'é'],
+  ])('parses a file importing with %s', (_, line, name) => {
+    const source =
+      "import { vi } from 'vitest';\n" +
+      line +
+      '\n' +
+      'vi' +
+      ".mock('./y', () => ({ w: " +
+      name +
+      ' }));';
+    expect(mayReadImport(source)).toBe(true);
+  });
+
   // A parser that stopped seeing factories, or a graph with no edges, would pass everything.
   it('reads the factories in the tree, over a graph with edges', () => {
     const { graph, factoriesReadingImports } = tree();
-    expect(factoriesReadingImports).toBeGreaterThan(150);
+    expect(factoriesReadingImports).toBeGreaterThan(200);
     expect(graph.get('src/components/Feedback/ReportProblemButton.tsx')).toContain(
       'src/utils/trpc.ts'
     );
