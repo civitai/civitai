@@ -27,7 +27,8 @@ vi.mock('~/server/db/kyselyDb', async () => {
   });
   return { kyselyWrite: kysely, kyselyRead: kysely };
 });
-// A model leaving Private applies any held scan verdict in the same transaction; none is held here.
+// A model leaving Private applies any held scan verdict in the same transaction; none is held here. That step belongs
+// to entityAvailabilityUpdate, not to the Knights offer under test, so it is stubbed rather than driven.
 vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   applyHeldVerdictLeavingPrivate: vi.fn(async () => false),
@@ -121,10 +122,12 @@ describe('updateEntityAvailabilityHandler on a Model or ModelVersion', () => {
       await setModel(entityType, Availability.Public);
 
       await vi.waitFor(() => expect(postsOfVersionsReads().length).toBeGreaterThan(0));
-      for (const read of postsOfVersionsReads()) {
-        expect(read.values.filter((v) => typeof v === 'number')).toEqual(versionIds);
-        expect(read.writesBefore).toBe(1);
-      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      // One offer, for every version at once.
+      expect(postsOfVersionsReads()).toHaveLength(1);
+      const [read] = postsOfVersionsReads();
+      expect(read.values.filter((v) => typeof v === 'number')).toEqual(versionIds);
+      expect(read.writesBefore).toBe(1);
     }
   );
 

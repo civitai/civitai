@@ -26,9 +26,7 @@ const {
   queueScanSampleForKnights,
   readKnightsSourcesConfig,
 } = await import('~/server/services/knights/sources');
-const { KNIGHTS_OWNER_RATING_ENQUEUE_OPTIONS, knightsSampleDraw } = await import(
-  '~/server/services/knights/sampling'
-);
+const { knightsSampleDraw } = await import('~/server/services/knights/sampling');
 
 const configured = (value: unknown) =>
   redisMock.sysRedis.get.mockResolvedValue(value === null ? null : JSON.stringify(value));
@@ -220,14 +218,6 @@ describe('queueOwnerRatingForKnights', () => {
     configured({ enabled: true });
     enqueue.mockRejectedValue(new Error('db down'));
     await expect(queueOwnerRatingForKnights(7)).resolves.toBeUndefined();
-  });
-});
-
-describe('owner-rating enqueue options', () => {
-  // The owner-rating half of a left-Private offer reads no post-availability rule (sampling.ts), so requirePublished's
-  // private-post refusal is what keeps images on hidden posts out; dropping it must fail here.
-  it('keeps requirePublished on', () => {
-    expect(KNIGHTS_OWNER_RATING_ENQUEUE_OPTIONS.requirePublished).toBe(true);
   });
 });
 

@@ -56,9 +56,7 @@ export const updateEntityAvailabilityHandler = async ({
   input: AvailabilityInput;
 }) => {
   try {
-    // A post, model or version leaving Private is offered to the Knights, as moveImagesToPost and publishPrivateModel
-    // do. Read before the write, which overwrites the old availability; from the primary so a lagging replica cannot
-    // hide Private.
+    // Read before the write, which overwrites the old availability; from the primary so a lagging replica cannot hide Private.
     const leavesPrivate =
       availability !== Availability.Private &&
       (await priorAvailability(entityType, entityId)) === Availability.Private;
