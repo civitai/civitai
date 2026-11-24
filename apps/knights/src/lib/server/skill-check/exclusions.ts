@@ -16,8 +16,8 @@ const none = (eb: Builder, query: Expression<unknown>) => eb.not(eb.exists(query
 export type ClauseOptions = { level?: number };
 
 /**
- * The level half of 'minor-signal': the level the image has, or would have (`level`), is not under R, or no
- * child-browsing tag is on it. It takes a level and reads only the image and its tags, so it stays out of
+ * The level half of 'minor-signal': it passes when the level the image has, or would have (`level`), is rated and
+ * under R, or when no child-browsing tag is on it. It takes a level and reads only the image and its tags, so it stays out of
  * "KnightsImageGate" and every caller ANDs it in.
  */
 export const minorSignalLevel = (eb: Builder, options?: ClauseOptions) =>

@@ -149,10 +149,10 @@ Knights keeps reading the old view.
 
 ## Database role
 
-The app's database role reads none of the moderation tables (CSAM reports, evidence holds, scan labels, reports,
-models). Whether an image may be shown or used as a check comes from the "KnightsImageGate" view
-(`src/lib/server/image-gate.ts`), and a month's "KnightsVote" partition from the owner's
-`knights_ensure_vote_partition`. The PGlite harness runs every app statement as that role with production's grants
+Image eligibility (whether an image may be shown or used as a check) comes from the "KnightsImageGate" view
+(`src/lib/server/image-gate.ts`); the open-report check on a single image still reads ImageReport and Report directly.
+A month's "KnightsVote" partition comes from the owner's `knights_ensure_vote_partition`. The PGlite harness runs every
+app statement as the app's database role with production's grants
 (`src/test/knights-app-grants.ts`), so a query needing a table the role cannot read fails in tests. A new table read
 needs a production grant first, then a line in that file. The view's SQL is generated from the TypeScript predicates
 (`imageGateViewSql`); a change to them ships as a new migration carrying the regenerated SQL, with `IMAGE_GATE_MIGRATION`

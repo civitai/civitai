@@ -30,7 +30,7 @@ $$;
 
 SET LOCAL search_path = pg_catalog, public;
 
-CREATE OR REPLACE VIEW public."KnightsImageGate" WITH (security_barrier) AS
+CREATE OR REPLACE VIEW public."KnightsImageGate" AS
 -- generated: imageGateViewSql
 select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."nsfwLevel" not in (0, 32) and "img"."ingestion" != 'Blocked' and "img"."blockedFor" is null and "img"."needsReview" is null and "img"."acceptableMinor" = false and "img"."poi" = false and "img"."minor" = false and "img"."tosViolation" = false and /* servable-image-content */ true and NOT COALESCE((
     img."needsReview" = 'csam'

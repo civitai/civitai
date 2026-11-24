@@ -420,6 +420,25 @@ describe('getFeed', () => {
     expect(await jit(db)).toBe('on');
   });
 
+  // Its estimate would start parallel workers that take longer to start than the small read takes to run.
+  it('turns parallel workers off for the read, only until its transaction ends', async () => {
+    const workers = async (executor: Kysely<DB>) =>
+      (
+        await sql<{
+          max_parallel_workers_per_gather: string;
+        }>`SHOW max_parallel_workers_per_gather`.execute(executor)
+      ).rows[0].max_parallel_workers_per_gather;
+    await sql`SET max_parallel_workers_per_gather = 2`.execute(db);
+    const before = await workers(db);
+    expect(before).toBe('2');
+    expect(await readWithoutJit(db, (trx) => workers(trx))).toBe('0');
+    expect(await workers(db)).toBe(before);
+    await db.transaction().execute(async (trx) => {
+      expect(await readWithoutJit(trx, (inner) => workers(inner))).toBe('0');
+    });
+    expect(await workers(db)).toBe(before);
+  });
+
   it('reads each level bucket by the same rule as itemBucket', async () => {
     // Raw JSON text, so jsonb keeps what a producer could write (a 4.0 keeps its scale).
     const predictions = [

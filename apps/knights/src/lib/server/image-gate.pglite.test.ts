@@ -190,16 +190,24 @@ describe('"KnightsImageGate"', () => {
 });
 
 describe('what the Knights role may do', () => {
-  const refused = (statement: string) =>
-    expect(sql.raw(statement).execute(db)).rejects.toThrow(/permission denied|cannot/);
+  const refused = (statement: string, message = /permission denied for (table|view)/) =>
+    expect(sql.raw(statement).execute(db)).rejects.toThrow(message);
 
   it('reads the gate, and cannot write through it', async () => {
     await seedImage(pg, 1);
     await expect(
       sql.raw('SELECT count(*) FROM "KnightsImageGate"').execute(db)
     ).resolves.toBeTruthy();
-    await refused('UPDATE "KnightsImageGate" SET servable = true');
-    await refused('DELETE FROM "KnightsImageGate"');
+    await refused(
+      'UPDATE "KnightsImageGate" SET servable = true',
+      /cannot update view "KnightsImageGate"/
+    );
+    await refused('DELETE FROM "KnightsImageGate"', /cannot delete from view "KnightsImageGate"/);
+    // Not only a view Postgres cannot write through: the role holds no write privilege on it either.
+    const writes = await pg.query<{ any: boolean }>(
+      `SELECT has_table_privilege('${KNIGHTS_APP_ROLE}', '"KnightsImageGate"', 'INSERT,UPDATE,DELETE,TRUNCATE') AS any`
+    );
+    expect(writes.rows[0].any).toBe(false);
   });
 
   it('cannot read the tables behind it', async () => {
@@ -215,7 +223,8 @@ describe('what the Knights role may do', () => {
 
   it("cannot add a vote partition itself, only through the owner's function", async () => {
     await refused(
-      `CREATE TABLE "KnightsVote_2099_01" PARTITION OF "KnightsVote" FOR VALUES FROM ('2099-01-01') TO ('2099-02-01')`
+      `CREATE TABLE "KnightsVote_2099_01" PARTITION OF "KnightsVote" FOR VALUES FROM ('2099-01-01') TO ('2099-02-01')`,
+      /permission denied for schema public/
     );
   });
 

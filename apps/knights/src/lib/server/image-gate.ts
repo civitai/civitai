@@ -1,14 +1,4 @@
-import {
-  DummyDriver,
-  Kysely,
-  PostgresAdapter,
-  PostgresIntrospector,
-  PostgresQueryCompiler,
-  sql,
-  type Expression,
-  type ExpressionBuilder,
-  type SqlBool,
-} from 'kysely';
+import { sql, type Expression, type ExpressionBuilder, type SqlBool } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   noOpenImageReport,
@@ -16,15 +6,16 @@ import {
   servableImage as servableImageFromTables,
   servableImageContent as servableImageContentFromTables,
 } from '@civitai/db/knights';
+import { inlineSql, offlineDb } from './offline-sql';
 import { gateExclusions } from './skill-check/exclusions';
 
 type Joined = DB & { img: DB['Image']; p: DB['Post'] };
 type Builder = ExpressionBuilder<Joined, 'img' | 'p'>;
 
 /**
- * The columns of "KnightsImageGate", one row per image on a post. The Knights role reads that view and none of the tables
- * behind it (CSAM reports, evidence holds, scan labels, reports, models), so each column is one combined answer and none
- * says why an image is out. Every column but `sweepServable` implies `servable`.
+ * The columns of "KnightsImageGate", one row per image on a post: image eligibility for the Knights role, each column
+ * one combined answer, none saying why an image is out. The open-report check on a single image still reads ImageReport
+ * and Report directly. Every column but `sweepServable` implies `servable`.
  */
 export const IMAGE_GATE_COLUMNS = [
   'servable',
@@ -47,35 +38,20 @@ export const imageGateColumns: Record<ImageGateColumn, (eb: Builder) => Expressi
     eb.and([servableImageFromTables(eb), ...gateExclusions(true).map((clause) => clause(eb))]),
 };
 
-const compiler = new Kysely<DB>({
-  dialect: {
-    createAdapter: () => new PostgresAdapter(),
-    createDriver: () => new DummyDriver(),
-    createIntrospector: (db) => new PostgresIntrospector(db),
-    createQueryCompiler: () => new PostgresQueryCompiler(),
-  },
-});
-
-function literal(value: unknown): string {
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  if (typeof value === 'boolean') return String(value);
-  if (typeof value === 'string') return `'${value.replace(/'/g, "''")}'`;
-  throw new Error(`No SQL literal for ${String(value)}`);
-}
-
 /** The SELECT behind "KnightsImageGate", its parameters written in. A NULL answer reads as false. */
 export function imageGateViewSql(): string {
-  const { sql: text, parameters } = compiler
-    .selectFrom('Image as img')
-    .innerJoin('Post as p', 'p.id', 'img.postId')
-    .select((eb) => [
-      'img.id as imageId',
-      ...IMAGE_GATE_COLUMNS.map((column) =>
-        sql<boolean>`COALESCE(${imageGateColumns[column](eb)}, false)`.as(column)
-      ),
-    ])
-    .compile();
-  return text.replace(/\$(\d+)/g, (_, n: string) => literal(parameters[Number(n) - 1]));
+  return inlineSql(
+    offlineDb()
+      .selectFrom('Image as img')
+      .innerJoin('Post as p', 'p.id', 'img.postId')
+      .select((eb) => [
+        'img.id as imageId',
+        ...IMAGE_GATE_COLUMNS.map((column) =>
+          sql<boolean>`COALESCE(${imageGateColumns[column](eb)}, false)`.as(column)
+        ),
+      ])
+      .compile()
+  );
 }
 
 /** `column` of "KnightsImageGate" for `img`. Carries the JIT marker: the view still runs the CSAM subplans. */
