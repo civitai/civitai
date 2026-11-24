@@ -36,9 +36,9 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
  *   query string, the path and the JSON body the handler passed to `res.json`, captured by the
  *   handler itself. A request carrying an API credential is not mirrored (`skipped_credential`):
  *   the body can echo it. The exception, off unless `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS=true`:
- *   a model route's request whose credential is an Authorization header (never a `?token=`) is
- *   mirrored with a description of it in place of the key (`feed-go-shadow-credential.ts`: the
- *   key's `generateSecretHash`, never the key) and, on the list, the viewer the search ran as.
+ *   an `/api/v1/models/[id]` request whose credential is an Authorization header (never a
+ *   `?token=`) is mirrored with a description of it in place of the key
+ *   (`feed-go-shadow-credential.ts`: the key's `generateSecretHash`, never the key). The list never.
  *
  * Off unless ALL of these hold: `FEED_GO_SHADOW_URL` is set; `FEED_GO_SHADOW_SAMPLE_RATE` is > 0;
  * the route's Flipt flag is on (unknown or uninitialized reads as off). Every route shares the
@@ -216,7 +216,7 @@ export type FeedGoShadowConfig = {
   /** The fraction of sampled requests that are also probed (0 = none, 1 = every one). */
   probeRate: number;
   /**
-   * `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS` (`true` or `1`; default off): mirror a model route's
+   * `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS` (`true` or `1`; default off): mirror an `[id]`
    * request with an Authorization credential, described rather than forwarded (see the module doc).
    */
   v1ModelsCredentials?: boolean;
@@ -347,22 +347,15 @@ function isRestEndpoint(endpoint: FeedGoShadowEndpoint): endpoint is RestEndpoin
 }
 
 /**
- * The headers a credentialed model sample carries in place of its key (feed-go's
- * SampleCredentialHeader / SampleViewerHeader): the credential's description
- * (`feed-go-shadow-credential.ts`) and, on the list, the viewer the search ran as (`user` or
- * `anonymous`).
+ * The header a credentialed `/api/v1/models/[id]` sample carries in place of its key (feed-go's
+ * SampleCredentialHeader): the credential's description (`feed-go-shadow-credential.ts`).
  */
 export const FEED_GO_SAMPLE_CREDENTIAL_HEADER = 'x-feed-go-credential';
-export const FEED_GO_SAMPLE_VIEWER_HEADER = 'x-feed-go-viewer';
 
-/** What a model route tells `beginRest` about the request's credential. */
+/** What `[id]` tells `beginRest` about the request's credential. */
 export type RestSampleOptions = {
-  /** The session came from an API key (`req.context` holds a key subject). */
-  keySession?: boolean;
   /** Describes the request's Authorization credential (feed-go-shadow-credential.ts). */
   credential?: () => string | undefined;
-  /** The list: whether the search ran as the key's user or as signed out. */
-  viewer?: 'user' | 'anonymous';
 };
 
 export type FeedGoShadowSample = {
@@ -567,17 +560,14 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     opts: RestSampleOptions = {}
   ): FeedGoShadowSample | undefined {
     try {
-      // A session an API key resolved: mirrored only with the credential sampling on, and otherwise
-      // not begun at all (as before that switch existed: such a request was never offered).
-      if (opts.keySession && !config.v1ModelsCredentials) return undefined;
       const route = restRoutes[endpoint];
       if (!route.url || config.rate <= 0) return undefined;
       if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
       if (!route.enabled()) return undefined;
       if (random() >= config.rate) return undefined;
       // Node's body can echo the credential (`metadata.nextPage` keeps `?token=`): never mirrored,
-      // only counted, unless it is a model route's Authorization credential with the credential
-      // sampling on, which is described instead (credentialHeaders).
+      // only counted, unless it is `[id]`'s Authorization credential with the credential sampling on,
+      // which is described instead (credentialHeaders).
       let described: Record<string, string> | undefined;
       if (hasApiCredential(req)) {
         described = credentialHeaders(endpoint, req, opts);
@@ -613,16 +603,16 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   }
 
   /**
-   * The headers describing a model route's credential (FEED_GO_SAMPLE_CREDENTIAL_HEADER, and on the
-   * list FEED_GO_SAMPLE_VIEWER_HEADER), or undefined when the request is not mirrored: another route,
-   * the credential sampling off, a `?token=` (the query string itself carries it), or no description.
+   * The header describing `[id]`'s credential (FEED_GO_SAMPLE_CREDENTIAL_HEADER), or undefined when
+   * the request is not mirrored: another route (the list included), the credential sampling off, a
+   * `?token=` (the query string itself carries it), or no description.
    */
   function credentialHeaders(
     endpoint: RestEndpoint,
     req: ShadowRequestLike,
     opts: RestSampleOptions
   ): Record<string, string> | undefined {
-    if (endpoint === 'v1-images' || !config.v1ModelsCredentials) return undefined;
+    if (endpoint !== 'v1-models-id' || !config.v1ModelsCredentials) return undefined;
     if (req.query.token !== undefined || !opts.credential) return undefined;
     let credential: string | undefined;
     try {
@@ -631,9 +621,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       return undefined;
     }
     if (!credential) return undefined;
-    const out: Record<string, string> = { [FEED_GO_SAMPLE_CREDENTIAL_HEADER]: credential };
-    if (opts.viewer) out[FEED_GO_SAMPLE_VIEWER_HEADER] = opts.viewer;
-    return out;
+    return { [FEED_GO_SAMPLE_CREDENTIAL_HEADER]: credential };
   }
 
   /** `beginRest` for `GET /api/v1/images`. */

@@ -598,10 +598,10 @@ principal-cache fill (the app fills it on its next read), no `lastUsedAt`, no cl
   scoped key (rule 19).
 - `?token=` (the webhook token), several `Authorization` header lines (Node keeps the first, a proxy in
   between may not), and a key with a byte outside printable ASCII.
-- `/api/v1/images` keeps every API credential a `bearer-token` fallback (it applies
-  `REST_SCOPE_ENFORCE`, not ported). The model routes do too unless `FEED_GO_V1_BEARER_AUTH` is on
-  (default off): then they decide a credential as their own Node wrappers do (§16.10), with this
-  resolver.
+- `/api/v1/images` and `/api/v1/models` keep every API credential a `bearer-token` fallback
+  (`REST_SCOPE_ENFORCE` and the signed-in list are not ported). `/api/v1/models/[id]` does too unless
+  `FEED_GO_V1_BEARER_AUTH` is on (default off): then it decides a credential as its Node wrappers do
+  (§16.10), with this resolver's principal-cache read.
 - Shadow and probe samples: the sampler forwards `authorization: present`, never the key, so a sample's
   API credential stays `bearer-token` (`auth.WithRedactedCredentials`).
 
@@ -2330,7 +2330,7 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 | Area | Ported | Falls back (reason) |
 |---|---|---|
 | Query | every key above except those on the right; an empty `query` (falsy: the database path); `tag` (ASCII); unknown keys ignored and kept for `nextPage` | a truthy or repeated `query` (`v1-models-query`: Meilisearch), a non-ASCII `tag` or a blocked list holding a non-ASCII name (`v1-models-tag`: Go's lowercasing of such text is not always JS's `toLowerCase`), no cached blocked list (`blocked-tags-*`), every other schema key (`v1-models-<key>`: `tagname`, `supportsGeneration`, `checkpointType`, …), a signed-out `favorites`/`hidden` (`v1-models-authed-only`), `limit=0` or over 100 (`v1-models-limit`), the 429 (`v1-models-page-limit`), a Recently Added or unknown sort (`v1-models-sort`), a value `Number()` or zod reads otherwise (`v1-models-input-*`), a cursor Node answers with a 400 or reads through JS's Date parser (`v1-models-cursor`) |
-| Viewer | the list signed out; `[id]` always (it reads no session); with `FEED_GO_V1_BEARER_AUTH`, an API credential Node answers with the signed-out body (§16.10) | a list session (`v1-models-session`); API credentials (`bearer-token`) unless `FEED_GO_V1_BEARER_AUTH`, and with it the cases of §16.10 |
+| Viewer | the list signed out; `[id]` always (it reads no session), and with `FEED_GO_V1_BEARER_AUTH` an API credential on `[id]` that Node answers with the same body (§16.10) | a list session (`v1-models-session`); API credentials (`bearer-token`; on `[id]` with `FEED_GO_V1_BEARER_AUTH`, the cases of §16.10) |
 | Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, `tag` (the blocked-name empty page, the Tag lookup, its `EXISTS`), ids, earlyAccess, archived, the addons' POI/minor/tag clauses | a username the replica does not hold (`v1-models-username-miss`) |
 | Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads); a tag-name miss with `FEED_GO_COMPUTE_MISSES` (tagCache's lookup, §16.7); the showcase images and their tag ids read exactly as model.getAll reads them (`hydrate.Sources.VersionImages`, §16.7) | a model-data, model-tags, files or membership miss (`v1-models-*-miss`), a tag-name miss with `FEED_GO_COMPUTE_MISSES` off, a showcase-images or image-tag-ids miss with it off (`model-images-miss`, `tag-ids-miss`; a failed lookup is `<reason>-failed`), a stale files or tag-name entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level |
 | Curated showcases | an uncurated version (§16.9) | a curated version or a failed showcase read (`v1-models-curated-showcase`), a showcase entry the cache does not hold without the miss computation (`v1-models-showcase-miss`; with it, a replica lookup: a row is curated, a failed read `v1-models-showcase-miss-failed`), an uncurated entry past the cache's hour (`v1-models-showcase-stale`) |
@@ -2354,7 +2354,8 @@ One flag for both routes, sampled through the REST sampler of §13.4 (`beginFeed
 `captureFeedGoShadowRest`), with its own per-second bucket per route and the shared rate and
 in-flight cap. A request with an API credential is counted (`skipped_credential`) and never sent,
 unless the Node app runs with `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS=true` (default off): then an
-Authorization credential is sent described, never forwarded (§16.10).
+`[id]` request's Authorization credential is sent described, never forwarded (§16.10). The list
+never samples one.
 The list route does not sample a text `query` or a signed-in caller: feed-go answers every one of
 them with a fallback (`v1-models-query`, `v1-models-session`). An empty `query` is falsy to the
 sampler's `query || user` test as to the handler, so it is sampled, and answered here. Both routes finish every sampled
@@ -2496,9 +2497,9 @@ deployment config. Every answer carries `X-Feed-Go-Served` (`go` or `node`), as 
    request budget (`deadline`), as every public route; `feed_go_serve_in_flight` and the `bulkhead`
    series are seeded per model endpoint. A client that leaves is `canceled` and not proxied.
 3. The checks no Node read can answer, before the port runs: not a GET (`method`) and, with
-   `FEED_GO_V1_BEARER_AUTH` off, any API credential, an Authorization header of any value or a
-   `?token=` (`bearer-token`), in the shadow too (`v1ModelsPreflight`; on, the credential is decided
-   after the checks below, §16.10); then, on the public route only (`v1ModelsServeOnly`), a conditional request (`If-None-Match` or
+   `FEED_GO_V1_BEARER_AUTH` off (and on the list always), any API credential, an Authorization
+   header of any value or a `?token=` (`bearer-token`), in the shadow too (`v1ModelsPreflight`; on
+   `[id]` with it on, the credential is decided after the checks below, §16.10); then, on the public route only (`v1ModelsServeOnly`), a conditional request (`If-None-Match` or
    `If-Modified-Since`) whose `If-None-Match`, `If-Modified-Since` or `Cache-Control` is sent on
    more than one line or holds a byte outside ASCII (`v1-models-conditional`: Node joins repeated
    lines, and JS reads non-ASCII text by rules not ported; every other conditional request is
@@ -2701,73 +2702,73 @@ filter or Hide Paid (`sameVersionOnly`) the owner lookup is the shown version al
 still runs, as `withCommunityCovers` does. `model.getAssociatedResourcesCardData` (§17) reads no cover
 (`associatedCardImages` serves the versions' own images), so it has no such path to guard.
 
-### 16.10 API credentials (`FEED_GO_V1_BEARER_AUTH`, default off)
+### 16.10 API credentials on `[id]` (`FEED_GO_V1_BEARER_AUTH`, default off)
 
 Off, every API credential on either route is the `bearer-token` fallback (§16.8 gate 3), as before
-the switch existed. On (it needs `FEED_GO_BEARER_AUTH`: startup refuses it otherwise), each route
-decides a credential as its Node wrapper does, with §4.2's resolver (the principal cache, the shared
-session cache, the clock margin), after §16.8's gates 1-3 and, on the list, after the query is parsed
-(its fallbacks name the query and read nothing). A request Node answers with the signed-out body is
-computed exactly as a signed-out one, with the headers its credential's presence selects (below);
-every other case falls back. Nothing is written: no principal-cache fill, no `lastUsedAt`, no claim.
+the switch existed. On (it needs `FEED_GO_BEARER_AUTH`: startup refuses it otherwise), `[id]` decides
+a credential as its Node wrappers do, after §16.8's gates 1-3, with §4.2's principal-cache read; the
+list is unchanged (every API credential is still `bearer-token`: its signed-in search is a separate,
+later port). A request Node answers with the body any caller gets is computed exactly as one without
+a credential, with the headers its credential's presence selects; every other case falls back.
+Nothing is written: no principal-cache fill, no `lastUsedAt`, no claim.
 
-**What an authenticated viewer changes on the Node side** (read from `src/pages/api/v1/models/`,
-`src/server/utils/endpoint-helpers.ts`, `src/server/auth/`, `block-scope.middleware.ts`):
+**What a credential changes on Node's `[id]`** (`src/pages/api/v1/models/[id].ts`,
+`src/server/utils/endpoint-helpers.ts`, `src/server/middleware/block-scope.middleware.ts`):
 
 | # | Where | What the credential changes | Here |
 |---|---|---|---|
-| 1 | both wrappers (`requestCarriesCallerCredentials`) | an Authorization header of any value, a session cookie or any `?token=` value selects `Vary: Authorization, Cookie` and (list) `Cache-Control: max-age=0, private, no-cache`; `[id]`'s handler writes `private, no-store` either way | the same, from the request's headers (`v1models.ResponseHeaders`, unchanged) |
-| 2 | list: `getApiAuthSession` | a token from `readRequestBearerToken` (header split, else the first `?token=` unless it is the webhook token) decides the session; the cookies are then not read | the same split (§4.2); a `?token=` of any value falls back (`bearer-query-token`: the webhook token is not known here, and `nextPage` would echo the key) |
-| 3 | list: `getSessionFromBearerToken` | the principal cache or the PRIMARY database; the hourly `lastUsedAt` write; a client-credentials key, a banned user, the moderation account, a provider or service token: no session | §4.2 rules 4-17: the no-session cases answered signed out; a cache miss, a due write, a system account's write key fall back with their §4.2 reasons |
-| 4 | list: `applySessionScope(MODEL_VIEW_SCOPE)` | a key with neither ModelsRead nor AIServicesRead: under `REST_SCOPE_ENFORCE=enforce` no session, and the refusal is logged under `report`/`enforce` | `v1-models-bearer-scope` (the answer and the log depend on a setting not read here) |
-| 5 | list: `searchViewer` | a session or a full-scope personal key searches as its user: own drafts and other own-content carve-outs, hidden-preference and browsing-setting reads, the user's file preference for the primary file, the metric privacy | `v1-models-bearer-session` (the signed-in list is not ported, as `v1-models-session` for a cookie) |
-| 6 | list: `searchViewer` / `withModeratorRightsFor` | any other key searches as signed out, except a moderator's: the system account keeps its rights by id on its own keys, any other moderator has them withheld (and logged) | the signed-out body; a moderator on such a key falls back (`v1-models-bearer-moderator`) |
-| 7 | list: own lists | `favorites` / `hidden` are a 401 without a session or without CollectionsRead (when enforced); `favorites` reads the user's bookmark collection; `hidden`, `followed` search as the user | already fallbacks of the query parser (`v1-models-authed-only`, `v1-models-followed`), before any credential read; `availability` likewise (`v1-models-availability`) |
-| 8 | list: `etag` query, a session cookie | unchanged by a key: MixedAuthEndpoint's X-Expires check; the session cookie | the same serve-only fallbacks (`v1-models-etag`, `v1-models-session-cookie`), even with a key (a cookie under a key is not read by Node, but is kept a fallback) |
-| 9 | `[id]`: `PublicEndpoint` | reads no session: the body is the signed-out body for any credential | computed |
-| 10 | `[id]`: `withBlockScope` | only an `Authorization` value starting `bearer ` (any case) is read, as `slice(7).trim()`. A block JWT is verified (the origin cache is skipped, and an invalid one is a 401); any other bearer, while the hub-token path is on, goes through `getSessionFromBearerToken` (the `lastUsedAt` write, the primary on a miss) and, for a personal or system key, on to `PublicEndpoint` | a bearer holding `.` falls back (`v1-models-block-token`); any other bearer is answered only when its principal-cache entry is read with no write due (else its §4.2 reason); a provider or service token, an empty bearer, another scheme and a `?token=` are answered without a read |
-| 11 | both: several Authorization lines | Node keeps the first | `bearer-multiple-headers` |
-| 12 | both: rate limits | none keyed on the credential on these routes (the proxy middleware runs no credential-keyed limit on `/api/v1`) | nothing to do |
+| 1 | `PublicEndpoint` (`requestCarriesCallerCredentials`) | an Authorization header of any value, a session cookie or any `?token=` value selects `Vary: Authorization, Cookie`; the handler writes `Cache-Control: private, no-store` either way | the same, from the request's headers (`v1models.ResponseHeaders`, unchanged) |
+| 2 | `PublicEndpoint` | reads no session: the body is the same for any caller, cookie, key or none | computed |
+| 3 | `withBlockScope` | only an `Authorization` value starting `bearer ` (any case) is read, as `slice(7).trim()`; any other value, an empty bearer and a `?token=` are left to `PublicEndpoint` | the same reading (`auth.blockBearer`); those are computed without a read |
+| 4 | `withBlockScope`, a block JWT | verified: the origin cache is skipped, the response is the block-scoped one, an invalid token is a 401 | any bearer holding `.` falls back (`v1-models-block-token`) |
+| 5 | `withBlockScope`, any other bearer (the hub-token path) | `getSessionFromBearerToken`: the principal cache or the primary, the hourly `lastUsedAt` write; a hub OAuth token (a row with a clientId) of an app block becomes block claims, a suspended app's a 401; anything else goes on to `PublicEndpoint` | answered only when the principal-cache entry is read with no write due (§4.2 rules 7-13); a miss, a due write, a revoked, expired or uncacheable entry falls back with its §4.2 reason. A provider or service token is answered without a read (no lookup in Node either) |
+| 6 | several Authorization lines | Node keeps the first | `bearer-multiple-headers` |
+| 7 | an `Origin` | `withBlockScope`'s CORS for the block-app allow-list | unchanged: `v1-models-origin`, before any credential read |
+| 8 | rate limits | none on this route depend on the credential | nothing to do |
 
-Not reproduced, and not observable to the caller: Node's principal-cache hit counter, the session
-cache fill a `getBearerTokenUser` miss triggers on `[id]` (its answer is discarded there), and the
-scope-decision log lines of rows 4 and 6, which are why those rows fall back.
+**Hub OAuth tokens never reach the port.** Row 5's OAuth branch is the one way a bearer changes the
+answer. Node gives such a token an `oauth` subject exactly when its ApiKey row has a clientId, and the
+principal cache never holds one (`isCacheableApiKey`); `readPrincipal` independently answers only an
+entry whose `clientId` is present and null and whose type is User or System. So an OAuth token is a
+miss, or `bearer-key-uncacheable` for an entry that somehow held one (`TestDetailCredentialRefusesOAuthTokens`).
 
-**Fallback reasons this adds** (all reached only with the switch on): `v1-models-bearer-session`,
-`v1-models-bearer-scope`, `v1-models-bearer-moderator`, `v1-models-block-token`,
-`v1-models-bearer-viewer-mismatch` (shadow only, below), `bearer-sample-credential` (shadow only: a
-description this service does not read), and on these routes §4.2's `bearer-query-token`,
-`bearer-multiple-headers`, `bearer-malformed`, `bearer-unconfigured`, `bearer-key-*`,
-`bearer-last-used`, `bearer-user-shape`, `bearer-system-account`, `session-cache-*`. They are not
-seeded at 0 (§10): the request-determined ones among them stay lazy because they cannot fire while
-the switch is off.
+Not reproduced, and not observable to the caller: Node's principal-cache hit counter and the session
+cache fill `getBearerTokenUser` may trigger (its answer is discarded on this route).
+
+**Fallback reasons this adds** (reached only with the switch on, on `[id]`): `v1-models-block-token`,
+`bearer-sample-credential` (shadow only: a description this service does not read), and on this route
+§4.2's `bearer-multiple-headers`, `bearer-malformed`, `bearer-unconfigured`, `bearer-key-*` and
+`bearer-last-used`. They are not seeded at 0 (§10): they cannot fire while the switch is off.
 
 **The shadow.** A sample never carries a key. With `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS=true` on the
-Node app (default off), a model request whose credential is an Authorization header (a `?token=` is
-still `skipped_credential`: the query string itself carries it) is sampled with `authorization:
-present` and two headers in place of the key (`src/server/trpc/feed-go-shadow-credential.ts`):
-`x-feed-go-credential`, the credential as the route's own reader takes it, described as `none` (no
-token), `provider` / `service` (no session, no lookup), `dotted` (`[id]`: a possible block JWT) or
-`key:<generateSecretHash of the token>` (the principal cache key, never the key), and, on the list,
-`x-feed-go-viewer`, the viewer Node searched as (`user` or `anonymous`). The list now also samples a
-session a key resolved (still not a cookie session). `SyntheticV1ModelsRequest` moves both onto the
-sample's context (a public request's headers of these names are never read), and the decision above
-runs from the description on: the principal read by hash, then the same rules. A sample Node searched
-as the user that this decides signed out is the `v1-models-bearer-viewer-mismatch` fallback: that
-count must stay 0, and is the go/no-go signal for serving. Computed samples are also counted under
-`feed_go_shadow_compare_viewer_total{viewer="api-key"}`, so the authed match rate reads apart. Two
-known optimisms: Node's own read has just filled the principal cache and claimed a due `lastUsedAt`,
-so a sample hits the cache more often, and falls back on `bearer-last-used` less often, than a public
-request would (coverage, not correctness); and the header parsing itself (rows 2, 10, 11) is held to
-Node by the unit tests, not the shadow, since the sample carries the description, not the header.
+Node app (default off), an `[id]` request whose credential is an Authorization header (a `?token=` is
+still `skipped_credential`: the query string carries it) is sampled with `authorization: present` and
+`x-feed-go-credential` in place of the key (`src/server/trpc/feed-go-shadow-credential.ts`): the bearer
+as `withBlockScope` reads it, described as `none`, `provider` / `service`, `dotted` or
+`key:<generateSecretHash of the bearer>` (the principal cache key, never the key). The list samples
+none. `SyntheticV1ModelsRequest` moves the description onto the rebuilt request's context and off its
+headers (a public request's header of that name is never read), and the decision above runs from the
+principal read by hash. No log line carries it: the fallback line logs the reason and an error class
+only, the diff line paths only (`TestV1ModelsShadowNeverLogsTheSampleCredential`). Computed samples
+are also counted under `feed_go_shadow_compare_viewer_total{viewer="api-key"}`. Known optimism:
+Node's own read has just filled the principal cache and claimed a due `lastUsedAt`, so a sample hits
+the cache more often, and falls back on `bearer-last-used` less often, than a public request would
+(coverage, not correctness); and the header reading itself (rows 3 and 6) is held to Node by the unit
+tests, not by the shadow.
 
-**Tests.** `internal/auth/rest_test.go` (every credential form of rows 2-3 and 10-11, the sample
-descriptions), `internal/server/v1models_bearer_test.go` (the switch off keeps every form the
-`bearer-token` fallback and answers an uncredentialed request with the same bytes either way; on,
-each row's served or fallback answer with the credentialed headers; the shadow's description,
-viewer mismatch and viewer class), `internal/config/v1models_test.go` (the switch and its startup
-check), and on the Node side `src/server/trpc/__tests__/feed-go-shadow-credential.test.ts` and the
-credential cases of `src/server/trpc/__tests__/feed-go-shadow.test.ts`.
+**Serving it.** Credentialed requests reach this service only through the deployment's routing: a
+bypass that sends credentialed model requests to the Node app is narrowed to the list path (not
+removed) once the `[id]` shadow is clean, so credentialed `[id]` requests come here and credentialed
+list requests keep going to Node.
+
+**Tests.** `internal/auth/rest_test.go` (every credential form of rows 3-6, the sample descriptions,
+the OAuth refusal), `internal/server/v1models_bearer_test.go` (the switch off keeps every form on both
+routes the `bearer-token` fallback, the list keeps it with the switch on, an uncredentialed request is
+answered with the same bytes either way; on, each `[id]` case's served or fallback answer with the
+credentialed headers; the shadow's description, viewer class and logs), `internal/config/v1models_test.go`
+(the switch and its startup check), and on the Node side
+`src/server/trpc/__tests__/feed-go-shadow-credential.test.ts` and the credential cases of
+`src/server/trpc/__tests__/feed-go-shadow.test.ts`.
 
 ## 17. `model.getAssociatedResourcesCardData` (tRPC, shadow only)
 

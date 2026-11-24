@@ -78,40 +78,22 @@ func ClassifyV1ModelID(r *shadow.Report, goBody, _ []byte) string {
 	return "fields"
 }
 
-// The sample headers a credentialed model sample carries in place of its key (the Node sampler's
-// FEED_GO_SHADOW_V1_MODELS_CREDENTIALS, src/server/trpc/feed-go-shadow-credential.ts): the
-// credential's description (auth.SampleCredential*) and, on the list, the viewer Node searched as.
-// Read off a sample only (SyntheticV1ModelsRequest moves them onto its context), never off a public
-// request's headers.
-const (
-	SampleCredentialHeader = "x-feed-go-credential" //nolint:gosec // G101: a header name, not a credential
-	SampleViewerHeader     = "x-feed-go-viewer"
-)
-
-// NodeViewerUser is the list sample's SampleViewerHeader when Node searched as the key's user (the
-// signed-in list), not as signed out.
-const NodeViewerUser = "user"
-
-type nodeViewerKey struct{}
-
-// nodeViewer is the list sample's SampleViewerHeader, off the rebuilt request's context.
-func nodeViewer(r *http.Request) string {
-	v, _ := r.Context().Value(nodeViewerKey{}).(string)
-	return v
-}
+// SampleCredentialHeader is the header a credentialed `[id]` sample carries in place of its key (the
+// Node sampler's FEED_GO_SHADOW_V1_MODELS_CREDENTIALS, src/server/trpc/feed-go-shadow-credential.ts):
+// the credential's description (auth.SampleCredential*). Read off a sample only
+// (SyntheticV1ModelsRequest moves it onto the rebuilt request's context and off its headers), never
+// off a public request's headers.
+const SampleCredentialHeader = "x-feed-go-credential" //nolint:gosec // G101: a header name, not a credential
 
 // SyntheticV1ModelsRequest rebuilds the REST request a v1-models sample describes: its path and raw
 // query string as Node received them, and the forwarded headers. It is marked as a sample
 // (withSampled): its verified-crawler header is the app's own decision, and `[id]` reads the origin
-// cache as a sample does (v1models.NodeBuiltWindow). A credential description and Node's viewer
-// (SampleCredentialHeader, SampleViewerHeader) go on its context, not its headers.
+// cache as a sample does (v1models.NodeBuiltWindow). A credential description (SampleCredentialHeader)
+// goes on its context, not its headers.
 func SyntheticV1ModelsRequest(ctx context.Context, req ShadowRequest) (*http.Request, error) {
 	ctx = withSampled(auth.WithRedactedCredentials(ctx))
 	if v, ok := req.Headers[SampleCredentialHeader]; ok {
 		ctx = auth.WithSampleCredential(ctx, v)
-	}
-	if v, ok := req.Headers[SampleViewerHeader]; ok {
-		ctx = context.WithValue(ctx, nodeViewerKey{}, v)
 	}
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, V1ModelsPath, nil)
 	if err != nil {
@@ -124,7 +106,7 @@ func SyntheticV1ModelsRequest(ctx context.Context, req ShadowRequest) (*http.Req
 	r.URL = &url.URL{Path: path, RawQuery: req.Input}
 	r.RequestURI = ""
 	for k, v := range req.Headers {
-		if k == SampleCredentialHeader || k == SampleViewerHeader {
+		if k == SampleCredentialHeader {
 			continue
 		}
 		r.Header.Set(k, v)
@@ -179,8 +161,7 @@ func (s *Server) regionRestricted(r *http.Request) bool {
 }
 
 // computeV1Models answers a REST `/api/v1/models` request (the MixedAuthEndpoint handler) for a
-// signed-out caller; a session falls back, and so does an API credential unless v1Credential already
-// decided the search runs as signed out (V1BearerAuth).
+// signed-out caller; a session or an API credential falls back, whatever V1BearerAuth says.
 func (s *Server) computeV1Models(ctx context.Context, r *http.Request) (*computed, error) {
 	if s.V1Models == nil || s.V1Models.Deps == nil {
 		return nil, fallback.New("v1-models-unconfigured")
@@ -192,21 +173,18 @@ func (s *Server) computeV1Models(ctx context.Context, r *http.Request) (*compute
 	if _, err := v1models.ParseList(r.URL.RawQuery); err != nil {
 		return nil, err
 	}
-	// With V1BearerAuth the credential was decided before this (v1ListViewer: signed out, or a key
-	// whose search runs as signed out). Without it, an API credential falls back (DESIGN.md §4.2).
-	if !credentialDecided(ctx) {
-		if auth.HasAPICredential(r) {
-			return nil, fallback.New("bearer-token")
-		}
-		user, err := s.Resolver.Resolve(ctx, r)
-		if err != nil {
-			return nil, err
-		}
-		if user != nil {
-			// The viewer reaches the query (own-content carve-outs), the file preference and the metric
-			// privacy: not ported.
-			return nil, fallback.New("v1-models-session")
-		}
+	// An API credential falls back (the route's block-scope middleware decides it; DESIGN.md §4.2).
+	if auth.HasAPICredential(r) {
+		return nil, fallback.New("bearer-token")
+	}
+	user, err := s.Resolver.Resolve(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	if user != nil {
+		// The viewer reaches the query (own-content carve-outs), the file preference and the metric
+		// privacy: not ported.
+		return nil, fallback.New("v1-models-session")
 	}
 	host, err := v1ModelsHost(r)
 	if err != nil {
@@ -225,7 +203,7 @@ func (s *Server) computeV1Models(ctx context.Context, r *http.Request) (*compute
 
 // computeV1ModelsID answers a REST `/api/v1/models/[id]` request (the PublicEndpoint handler: no
 // session is read, so a cookie changes nothing). An Authorization header falls back (the block-scope
-// middleware reads it) unless v1Credential already decided it (V1BearerAuth).
+// middleware reads it) unless v1DetailCredential already decided it (V1BearerAuth).
 func (s *Server) computeV1ModelsID(ctx context.Context, r *http.Request) (*computed, error) {
 	if s.V1Models == nil || s.V1Models.Deps == nil {
 		return nil, fallback.New("v1-models-unconfigured")
@@ -256,24 +234,25 @@ func (s *Server) computeV1ModelsID(ctx context.Context, r *http.Request) (*compu
 	return v1ModelsAnswer(ans)
 }
 
-// V1ViewerAPIKey is the viewer class (feed_go_shadow_compare_viewer_total) of a model sample that
+// V1ViewerAPIKey is the viewer class (feed_go_shadow_compare_viewer_total) of an `[id]` sample that
 // carried an API credential and was computed (V1BearerAuth).
 const V1ViewerAPIKey = "api-key"
 
 type credentialDecidedKey struct{}
 
-// credentialDecided reports whether v1Credential already decided the request's credential: the port
-// then answers it as signed out without reading the session again.
+// credentialDecided reports whether v1DetailCredential already decided the `[id]` request's
+// credential: the port then answers it as for any caller.
 func credentialDecided(ctx context.Context) bool {
 	v, _ := ctx.Value(credentialDecidedKey{}).(bool)
 	return v
 }
 
-// v1Credential decides a model request's credential as the Node route does (V1BearerAuth): nil when
-// Node answers it with the body it gives a signed-out caller, else the fallback. The returned context
-// marks the decision for the port; apiKey reports whether the request carried an API credential (an
-// Authorization header of any value, or a `?token=`), for the viewer class.
-func (s *Server) v1Credential(ctx context.Context, r *http.Request, detail bool) (context.Context, bool, error) {
+// v1DetailCredential decides an `[id]` request's credential as the Node route does (V1BearerAuth;
+// auth.Resolver.DetailCredential): nil when Node answers it with the body it gives any caller, else
+// the fallback. The returned context marks the decision for the port; apiKey reports whether the
+// request carried an API credential (an Authorization header of any value, or a `?token=`), for the
+// viewer class. The list never comes here: its API credentials stay the `bearer-token` fallback.
+func (s *Server) v1DetailCredential(ctx context.Context, r *http.Request) (context.Context, bool, error) {
 	apiKey := len(r.Header.Values("Authorization")) > 0 || auth.AnyQueryToken(r.URL.RawQuery)
 	if s.Resolver == nil {
 		if apiKey {
@@ -281,63 +260,8 @@ func (s *Server) v1Credential(ctx context.Context, r *http.Request, detail bool)
 		}
 		return ctx, apiKey, fallback.New("v1-models-unconfigured")
 	}
-	var err error
-	if detail {
-		err = s.Resolver.DetailCredential(ctx, r)
-	} else {
-		err = s.v1ListViewer(ctx, r)
-	}
-	if err != nil {
+	if err := s.Resolver.DetailCredential(ctx, r); err != nil {
 		return ctx, apiKey, err
 	}
 	return context.WithValue(ctx, credentialDecidedKey{}, true), apiKey, nil
-}
-
-// v1ListViewer is the list's viewer decision (MixedAuthEndpoint's getApiAuthSession with
-// MODEL_VIEW_SCOPE, then the handler's searchViewer, src/pages/api/v1/models/index.ts): nil when the
-// search runs as signed out, so the body is the signed-out body; every case where it runs as a user,
-// or where Node's answer or its logged scope decision depends on a setting this service does not read,
-// falls back. The query is parsed first, as the port parses it before the session (its fallbacks name
-// the query, and an own-list key — favorites, hidden, followed — or availability falls back there).
-//
-//   - a `?token=` (any value, auth.AnyQueryToken): `bearer-query-token`. Node reads it unless it is the
-//     webhook token (not known here), and the body's nextPage echoes it;
-//   - a session cookie decided the session: `v1-models-session` (the signed-in list is not ported);
-//   - an API key decided it: no session (a provider or service token, a client-credentials key, a
-//     banned user, the moderation account) is signed out; a full-scope personal key searches as its
-//     user (isSessionOrFullUserKey): `v1-models-bearer-session`; a key without ModelsRead or
-//     AIServicesRead is refused by REST_SCOPE_ENFORCE=enforce (signed out, the refusal logged) and kept
-//     otherwise: `v1-models-bearer-scope`; a moderator on any other key keeps their rights only as the
-//     system account and has the withholding logged otherwise: `v1-models-bearer-moderator`; any other
-//     key searches as signed out (searchViewer: not an own list);
-//   - on a shadow sample, Node's own viewer (SampleViewerHeader) is the user while this decided signed
-//     out: `v1-models-bearer-viewer-mismatch`, which must never be counted.
-func (s *Server) v1ListViewer(ctx context.Context, r *http.Request) error {
-	if _, err := v1models.ParseList(r.URL.RawQuery); err != nil {
-		return err
-	}
-	if auth.AnyQueryToken(r.URL.RawQuery) {
-		return fallback.New("bearer-query-token")
-	}
-	sess, err := s.Resolver.ResolveREST(ctx, r)
-	if err != nil {
-		return err
-	}
-	if sess.Bearer == nil && sess.User != nil {
-		return fallback.New("v1-models-session")
-	}
-	if b := sess.Bearer; b != nil && b.User != nil {
-		switch {
-		case b.FullUserKey():
-			return fallback.New("v1-models-bearer-session")
-		case b.Scope&(auth.ScopeModelsRead|auth.ScopeAIServicesRead) == 0:
-			return fallback.New("v1-models-bearer-scope")
-		case b.User.IsModerator:
-			return fallback.New("v1-models-bearer-moderator")
-		}
-	}
-	if nodeViewer(r) == NodeViewerUser {
-		return fallback.New("v1-models-bearer-viewer-mismatch")
-	}
-	return nil
 }

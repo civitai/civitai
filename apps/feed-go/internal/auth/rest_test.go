@@ -12,8 +12,8 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 )
 
-// restFixture is a bearer fixture holding the key shapes the REST model routes tell apart, each for
-// its own user, and a counter of principal-cache reads:
+// restFixture is a bearer fixture holding the key shapes `[id]` tells apart, each for its own user,
+// and a counter of principal-cache reads:
 //
 //	k-full      full-scope personal key, user 51 (searches as its user)
 //	k-read      ReadOnly personal key, user 52 (searches as signed out)
@@ -44,6 +44,10 @@ func restFixture(t *testing.T) (*resolveFixture, *atomic.Int32) {
 	f.principal(t, "k-full", f.apiKeyRow(51, nil))
 	f.principal(t, "k-read", f.apiKeyRow(52, scope(ScopeReadOnly)))
 	f.principal(t, "k-images", f.apiKeyRow(53, scope(1<<5)))
+	// Hub OAuth tokens as they would read if a principal-cache entry ever held one.
+	f.principal(t, "k-oauth", f.apiKeyRow(51, func(row map[string]any) { row["clientId"] = "app_block_client" }))
+	f.principal(t, "k-oauth-access", f.apiKeyRow(51, func(row map[string]any) { row["type"] = "Access" }))
+	f.principal(t, "k-oauth-noclient", f.apiKeyRow(51, func(row map[string]any) { delete(row, "clientId") }))
 	f.principal(t, "k-mod", f.apiKeyRow(54, scope(ScopeReadOnly)))
 	f.principal(t, "k-system", f.apiKeyRow(55, func(row map[string]any) { row["type"] = "System" }))
 	f.principal(t, "k-banned", f.apiKeyRow(56, nil))
@@ -61,130 +65,6 @@ func restRequest(target string, headers ...[2]string) *http.Request {
 }
 
 func authz(v string) [2]string { return [2]string{"Authorization", v} }
-
-type restWant struct {
-	user   int    // the session's user id; 0 = signed out
-	bearer bool   // an API key decided the session
-	scope  int64  // the key's scope, when it resolved to a user
-	full   bool   // FullUserKey
-	reason string // a fallback reason; "" = none
-	reads  int32  // principal-cache reads
-}
-
-func checkREST(t *testing.T, f *resolveFixture, reads *atomic.Int32, ctx context.Context, r *http.Request, want restWant) {
-	t.Helper()
-	reads.Store(0)
-	got, err := f.r.ResolveREST(ctx, r)
-	reason := fallback.Reason(err)
-	if err != nil && reason == "" {
-		t.Fatalf("non-fallback error %v", err)
-	}
-	if reason != want.reason {
-		t.Fatalf("fallback %q, want %q", reason, want.reason)
-	}
-	if n := reads.Load(); n != want.reads {
-		t.Fatalf("principal reads = %d, want %d", n, want.reads)
-	}
-	if err != nil {
-		return
-	}
-	id := 0
-	if got.User != nil {
-		id = got.User.ID
-	}
-	if id != want.user || (got.Bearer != nil) != want.bearer {
-		t.Fatalf("user %d bearer %v, want %d %v", id, got.Bearer != nil, want.user, want.bearer)
-	}
-	if got.Bearer != nil {
-		if got.Bearer.User != got.User {
-			t.Fatal("Bearer.User is not the session's user")
-		}
-		if got.Bearer.User != nil && (got.Bearer.Scope != want.scope || got.Bearer.FullUserKey() != want.full) {
-			t.Fatalf("scope %d full %v, want %d %v", got.Bearer.Scope, got.Bearer.FullUserKey(), want.scope, want.full)
-		}
-	}
-}
-
-// ResolveREST is getServerAuthSession's resolveSession for each credential form the list route can
-// see: readRequestBearerToken's token (header split, else `?token=`) decides the session and the
-// cookies are not read; no token, the cookies decide. Each row is the app's session for the request,
-// or the fallback where the app reads what this service does not.
-func TestResolveRESTCredentialForms(t *testing.T) {
-	f, reads := restFixture(t)
-	cookie := [2]string{"Cookie", "__Secure-civ-token=" + f.token(t, func(c map[string]any) { c["sub"] = "52" })}
-	cases := []struct {
-		name    string
-		target  string
-		headers [][2]string
-		want    restWant
-	}{
-		{"no credential", "/api/v1/models", nil, restWant{}},
-		{"a cookie session", "/api/v1/models", [][2]string{cookie}, restWant{user: 52}},
-		{"full-scope personal key", "/api/v1/models", [][2]string{authz("Bearer k-full")}, restWant{user: 51, bearer: true, scope: ScopeFull, full: true, reads: 1}},
-		{"any scheme: the second part is the token", "/api/v1/models", [][2]string{authz("Token k-full")}, restWant{user: 51, bearer: true, scope: ScopeFull, full: true, reads: 1}},
-		{"a key wins over a cookie (cookies unread)", "/api/v1/models", [][2]string{authz("Bearer k-read"), cookie}, restWant{user: 52, bearer: true, scope: ScopeReadOnly, reads: 1}},
-		{"read-only key", "/api/v1/models", [][2]string{authz("Bearer k-read")}, restWant{user: 52, bearer: true, scope: ScopeReadOnly, reads: 1}},
-		{"system key", "/api/v1/models", [][2]string{authz("Bearer k-system")}, restWant{user: 55, bearer: true, scope: ScopeFull, reads: 1}},
-		{"banned user's key: no session", "/api/v1/models", [][2]string{authz("Bearer k-banned")}, restWant{bearer: true, reads: 1}},
-		{"client-credentials key: no session", "/api/v1/models", [][2]string{authz("Bearer k-cc")}, restWant{bearer: true, reads: 1}},
-		{"provider download token: no session, no lookup", "/api/v1/models", [][2]string{authz("Bearer github:secret")}, restWant{bearer: true}},
-		{"orchestrator token: no session, no lookup", "/api/v1/models", [][2]string{authz("Bearer orch-service-token")}, restWant{bearer: true}},
-		{"scheme only: the cookies decide", "/api/v1/models", [][2]string{authz("Bearer"), cookie}, restWant{user: 52}},
-		{"scheme then empty part: the cookies decide", "/api/v1/models", [][2]string{authz("Bearer  k-full")}, restWant{}},
-		{"unknown key", "/api/v1/models", [][2]string{authz("Bearer k-unknown")}, restWant{reason: "bearer-key-cache-miss", reads: 1}},
-		{"lastUsedAt write due", "/api/v1/models", [][2]string{authz("Bearer k-due")}, restWant{reason: "bearer-last-used", reads: 1}},
-		{"two Authorization lines", "/api/v1/models", [][2]string{authz("Bearer k-full"), authz("Bearer k-read")}, restWant{reason: "bearer-multiple-headers"}},
-		{"a query token", "/api/v1/models?token=k-full", nil, restWant{reason: "bearer-query-token"}},
-		{"a byte outside printable ASCII", "/api/v1/models", [][2]string{authz("Bearer k-f\xe9ll")}, restWant{reason: "bearer-malformed"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			r := restRequest(tc.target, tc.headers...)
-			checkREST(t, f, reads, r.Context(), r, tc.want)
-		})
-	}
-	// Keys off: any API credential is the old fallback, and the cookies still resolve.
-	off, offReads := restFixture(t)
-	off.r.APIKeys = nil
-	r := restRequest("/api/v1/models", authz("Bearer k-full"))
-	checkREST(t, off, offReads, r.Context(), r, restWant{reason: "bearer-token"})
-	r = restRequest("/api/v1/models?token=k-full")
-	checkREST(t, off, offReads, r.Context(), r, restWant{reason: "bearer-token"})
-}
-
-// A sample carries the sampler's description, never the key: the description is resolved from the
-// principal step on (the key's hash), and a redacted sample without one keeps the old fallback.
-func TestResolveRESTFromSample(t *testing.T) {
-	f, reads := restFixture(t)
-	redacted := WithRedactedCredentials(context.Background())
-	present := restRequest("/api/v1/models", authz("present"))
-	cases := []struct {
-		name string
-		desc string // "" = none on the context
-		want restWant
-	}{
-		{"no description: the placeholder falls back", "", restWant{reason: "bearer-token"}},
-		{"none: the cookies decide (none here)", SampleCredentialNone, restWant{}},
-		{"provider token", SampleCredentialProvider, restWant{bearer: true}},
-		{"service token", SampleCredentialService, restWant{bearer: true}},
-		{"full-scope key by hash", "key:" + nodeHash("k-full"), restWant{user: 51, bearer: true, scope: ScopeFull, full: true, reads: 1}},
-		{"read-only key by hash", "key:" + nodeHash("k-read"), restWant{user: 52, bearer: true, scope: ScopeReadOnly, reads: 1}},
-		{"unknown hash", "key:" + nodeHash("k-unknown"), restWant{reason: "bearer-key-cache-miss", reads: 1}},
-		{"uppercase hex is not generateSecretHash's", "key:" + strings.ToUpper(nodeHash("k-full")), restWant{reason: "bearer-sample-credential"}},
-		{"a short hash", "key:abc", restWant{reason: "bearer-sample-credential"}},
-		{"the key itself is never read", "k-full", restWant{reason: "bearer-sample-credential"}},
-		{"dotted is not a list description", SampleCredentialDotted, restWant{reason: "bearer-sample-credential"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := redacted
-			if tc.desc != "" {
-				ctx = WithSampleCredential(ctx, tc.desc)
-			}
-			checkREST(t, f, reads, ctx, present.WithContext(ctx), tc.want)
-		})
-	}
-}
 
 // DetailCredential is withBlockScope's reading of the Authorization header on `[id]`, then
 // PublicEndpoint's (which reads no session): every case answers nil (the anonymous body) except a
@@ -261,9 +141,32 @@ func TestDetailCredential(t *testing.T) {
 	}
 }
 
-// The new scope bits are the app's values (packages/civitai-auth/src/token-scope.ts).
-func TestModelViewScopeBits(t *testing.T) {
-	if ScopeModelsRead != 4 || ScopeAIServicesRead != 16384 {
-		t.Fatalf("ModelsRead %d AIServicesRead %d, want 4 16384", ScopeModelsRead, ScopeAIServicesRead)
+// withBlockScope turns a hub OAuth token (an ApiKey row with a clientId: getSessionFromBearerToken's
+// `oauth` subject) into block claims, whose answer differs from PublicEndpoint's. Such a token is never
+// served on `[id]`: an entry with a clientId, of a type other than User or System, or with no clientId
+// key at all falls back, whether presented as a header or described by a sample; and an uncached one
+// (the usual case: the app never caches OAuth rows) is a miss. Positive control: the same user's
+// personal key is served.
+func TestDetailCredentialRefusesOAuthTokens(t *testing.T) {
+	f, _ := restFixture(t)
+	if err := f.r.DetailCredential(context.Background(), restRequest("/api/v1/models/1", authz("Bearer k-full"))); err != nil {
+		t.Fatalf("positive control: a personal key = %v, want served", err)
+	}
+	ctx := WithRedactedCredentials(context.Background())
+	for key, want := range map[string]string{
+		"k-oauth":          "bearer-key-uncacheable",
+		"k-oauth-access":   "bearer-key-uncacheable",
+		"k-oauth-noclient": "bearer-key-uncacheable",
+		"k-oauth-uncached": "bearer-key-cache-miss",
+	} {
+		r := restRequest("/api/v1/models/1", authz("Bearer "+key))
+		if got := fallback.Reason(f.r.DetailCredential(r.Context(), r)); got != want {
+			t.Errorf("header %s: %q, want %q", key, got, want)
+		}
+		c := WithSampleCredential(ctx, "key:"+nodeHash(key))
+		present := restRequest("/api/v1/models/1", authz("present")).WithContext(c)
+		if got := fallback.Reason(f.r.DetailCredential(c, present)); got != want {
+			t.Errorf("sample %s: %q, want %q", key, got, want)
+		}
 	}
 }

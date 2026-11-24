@@ -101,12 +101,6 @@ func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser
 			return r.resolveBearer(ctx, key)
 		}
 	}
-	return r.resolveCookie(ctx, req)
-}
-
-// resolveCookie is Resolve's cookie half: the session the request's session cookies name, read as
-// getHubSession reads them. Only for a request whose API credential (if any) gave no token.
-func (r *Resolver) resolveCookie(ctx context.Context, req *http.Request) (*SessionUser, error) {
 	// Several Cookie header lines are joined with "; ", as Node's http server joins them (and Next's
 	// cookie parser joins an array), so a cookie on a later line is seen.
 	cookie := strings.Join(req.Header.Values("Cookie"), "; ")

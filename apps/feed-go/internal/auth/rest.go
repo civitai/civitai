@@ -1,10 +1,10 @@
 package auth
 
-// API credentials on the public REST model routes (FEED_GO_V1_BEARER_AUTH; DESIGN.md §16.10):
-// `GET /api/v1/models`, a MixedAuthEndpoint (src/server/utils/endpoint-helpers.ts) that resolves the
-// session as getServerAuthSession does, and `GET /api/v1/models/[id]`, a PublicEndpoint (which reads no
-// session) behind withBlockScope (src/server/middleware/block-scope.middleware.ts), which reads an
-// `Authorization: Bearer` value of its own.
+// API credentials on the public REST route `GET /api/v1/models/[id]` (FEED_GO_V1_BEARER_AUTH; DESIGN.md
+// §16.10): a PublicEndpoint (src/server/utils/endpoint-helpers.ts, which reads no session) behind
+// withBlockScope (src/server/middleware/block-scope.middleware.ts), which reads an `Authorization:
+// Bearer` value of its own. The list route (`GET /api/v1/models`) does not use this: every API
+// credential there stays the `bearer-token` fallback.
 
 import (
 	"context"
@@ -14,27 +14,18 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 )
 
-// RESTSession is the session MixedAuthEndpoint resolves for a request: User is the session's user (nil
-// signed out); Bearer is non-nil when an API key decided it (then Bearer.User is User, and the cookies
-// were not read).
-type RESTSession struct {
-	User   *SessionUser
-	Bearer *BearerSession
-}
-
 // Sample credentials: what the Node sampler sends in place of a key (src/server/trpc/
 // feed-go-shadow-credential.ts), so a shadow sample can be resolved here without the key ever leaving
 // the Node app. It is read only off a sample's context (WithSampleCredential), never off a header of a
 // public request.
 const (
-	// SampleCredentialNone: the credential gave no token (an Authorization header with no second
-	// part; on `[id]`, no `Bearer ` value): the cookies decide, or nothing does.
+	// SampleCredentialNone: the credential gave no bearer (no `Bearer ` value, or an empty one).
 	SampleCredentialNone = "none"
 	// SampleCredentialProvider: a token holding `:` (a provider download token): no session.
 	SampleCredentialProvider = "provider"
 	// SampleCredentialService: the orchestrator service token: no session.
 	SampleCredentialService = "service"
-	// SampleCredentialDotted: on `[id]`, a bearer holding `.` (a block JWT, or what may be one).
+	// SampleCredentialDotted: a bearer holding `.` (a block JWT, or what may be one).
 	SampleCredentialDotted = "dotted"
 	// SampleCredentialKeyPrefix precedes generateSecretHash of an ordinary key: the principal cache key.
 	SampleCredentialKeyPrefix = "key:"
@@ -43,8 +34,7 @@ const (
 type sampleCredentialKey struct{}
 
 // WithSampleCredential records the sampler's description of a sample's credential on its context: the
-// context of the request rebuilt from the sample, which is where ResolveREST and DetailCredential read
-// it (the compute's own context is the comparison's, not the request's).
+// context of the request rebuilt from the sample, which is where DetailCredential reads it (the compute's own context is the comparison's, not the request's).
 func WithSampleCredential(ctx context.Context, desc string) context.Context {
 	return context.WithValue(ctx, sampleCredentialKey{}, desc)
 }
@@ -70,55 +60,6 @@ func sampleKeyHash(desc string) (string, bool) {
 	return h, true
 }
 
-// ResolveREST is getApiAuthSession's session resolve (resolveSession) for a REST route: a token from
-// readRequestBearerToken decides the session (bearerSession; the cookies are then never read), else
-// the session cookies do (resolveCookie). With API keys off, or on a sample without a description, any
-// API credential is the `bearer-token` fallback. The route's own view rules are the caller's.
-func (r *Resolver) ResolveREST(ctx context.Context, req *http.Request) (RESTSession, error) {
-	if desc, ok := sampleCredentialOf(req); ok && r.APIKeys != nil {
-		return r.restFromSample(ctx, req, desc)
-	}
-	if r.APIKeys == nil || credentialsRedacted(ctx) {
-		if HasAPICredential(req) {
-			return RESTSession{}, fallback.New("bearer-token")
-		}
-		u, err := r.resolveCookie(ctx, req)
-		return RESTSession{User: u}, err
-	}
-	key, present, err := bearerToken(req)
-	if err != nil {
-		return RESTSession{}, err
-	}
-	if present {
-		b, err := r.bearerSession(ctx, key)
-		if err != nil {
-			return RESTSession{}, err
-		}
-		return RESTSession{User: b.User, Bearer: b}, nil
-	}
-	u, err := r.resolveCookie(ctx, req)
-	return RESTSession{User: u}, err
-}
-
-func (r *Resolver) restFromSample(ctx context.Context, req *http.Request, desc string) (RESTSession, error) {
-	switch desc {
-	case SampleCredentialNone:
-		u, err := r.resolveCookie(ctx, req)
-		return RESTSession{User: u}, err
-	case SampleCredentialProvider, SampleCredentialService:
-		return RESTSession{Bearer: &BearerSession{}}, nil
-	}
-	hash, ok := sampleKeyHash(desc)
-	if !ok {
-		return RESTSession{}, fallback.New("bearer-sample-credential")
-	}
-	b, err := r.principalSession(ctx, hash)
-	if err != nil {
-		return RESTSession{}, err
-	}
-	return RESTSession{User: b.User, Bearer: b}, nil
-}
-
 // DetailCredential decides an `[id]` request's Authorization header as withBlockScope does. nil means
 // Node answers the request as PublicEndpoint does for any caller (the anonymous body; the headers
 // follow requestCarriesCallerCredentials) with no side effect this service skips; otherwise the
@@ -132,6 +73,12 @@ func (r *Resolver) restFromSample(ctx context.Context, req *http.Request, desc s
 // key the principal cache does not hold) and then, for a personal or system key, hands the request to
 // PublicEndpoint whatever the user. So such a bearer is answered only when its principal-cache entry
 // is read here as getSessionFromBearerToken would read it with no write due (readPrincipal).
+//
+// A hub OAuth token (an app block's own client) is the one bearer withBlockScope turns into block
+// claims: getSessionFromBearerToken gives it an `oauth` subject only when its ApiKey row has a
+// clientId. readPrincipal answers only an entry whose `clientId` is null and whose type is User or
+// System (isCacheableApiKey), so every such token, cached or not, falls back
+// (`bearer-key-uncacheable`, or the miss); TestDetailCredentialRefusesOAuthTokens holds it.
 func (r *Resolver) DetailCredential(ctx context.Context, req *http.Request) error {
 	if desc, ok := sampleCredentialOf(req); ok && r.APIKeys != nil {
 		switch desc {

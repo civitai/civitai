@@ -1,9 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha512"
 	"encoding/hex"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -76,7 +79,7 @@ func v1BearerResolver(t *testing.T) (*auth.Resolver, *atomic.Int32) {
 }
 
 // The credential forms both routes are held to, with today's answer: every one is the `bearer-token`
-// fallback with V1BearerAuth off.
+// fallback with V1BearerAuth off, and every list one with it on as well.
 var v1CredentialForms = []struct {
 	name    string
 	target  string
@@ -88,6 +91,8 @@ var v1CredentialForms = []struct {
 	{"list, other scheme", "/api/v1/models?limit=2", map[string]string{"Authorization": "Token k-read"}},
 	{"list, ?token=", "/api/v1/models?limit=2&token=k-read", nil},
 	{"list, malformed key", "/api/v1/models?limit=2", map[string]string{"Authorization": "Bearer k-r\xe9ad"}},
+	{"list, empty then a ?token=", "/api/v1/models?limit=2&token=&token=k-read", nil},
+	{"list, provider token", "/api/v1/models?limit=2", map[string]string{"Authorization": "Bearer github:x"}},
 	{"[id], Bearer key", "/api/v1/models/42", map[string]string{"Authorization": "Bearer k-read"}},
 	{"[id], block JWT shape", "/api/v1/models/42", map[string]string{"Authorization": "Bearer a.b.c"}},
 	{"[id], other scheme", "/api/v1/models/42", map[string]string{"Authorization": "Basic eDp5"}},
@@ -96,34 +101,41 @@ var v1CredentialForms = []struct {
 
 // FEED_GO_V1_BEARER_AUTH off (the default), with the key resolver configured: every credential form
 // is handed to the Node app exactly as before the switch existed (`bearer-token`, the request as it
-// came, nothing computed, the principal cache never read), and a request without a credential is
-// answered with the same bytes and headers whichever way the switch is set.
+// came, nothing computed, the principal cache never read). The list is held to the same with the
+// switch ON: only `[id]` decides credentials. A request without a credential is answered with the
+// same bytes and headers whichever way the switch is set.
 func TestV1BearerAuthOffKeepsTodaysBehaviour(t *testing.T) {
 	if (&Server{}).V1BearerAuth {
 		t.Fatal("V1BearerAuth is on in a zero Server")
 	}
-	for _, tc := range v1CredentialForms {
-		t.Run(tc.name, func(t *testing.T) {
-			reg := prometheus.NewRegistry()
-			s, up, computes := serveV1Server(t, reg, true)
-			resolver, reads := v1BearerResolver(t)
-			s.Resolver = resolver
-			w := httptest.NewRecorder()
-			req := v1Request(tc.target, nil)
-			for k, v := range tc.headers {
-				req.Header[k] = []string{v}
+	for _, on := range []bool{false, true} {
+		for _, tc := range v1CredentialForms {
+			if on && v1Endpoint(tc.target) == EndpointV1ModelsID {
+				continue // `[id]` with the switch on: TestServeV1ModelsBearerAuthOn
 			}
-			v1Handler(s, tc.target)(w, req)
-			if w.Code != http.StatusTeapot || up.count() != 1 || *computes != 0 || up.paths[0] != tc.target {
-				t.Fatalf("code=%d proxied=%d computes=%d path=%v, want 418, 1, 0, the request as it came", w.Code, up.count(), *computes, up.paths)
-			}
-			if n := v1Count(t, reg, v1Endpoint(tc.target), "feed_go_fallback_total", map[string]string{"reason": "bearer-token"}); n != 1 {
-				t.Fatalf("bearer-token = %v, want 1", n)
-			}
-			if n := reads.Load(); n != 0 {
-				t.Fatalf("principal reads = %d, want 0 (off resolves nothing)", n)
-			}
-		})
+			t.Run(fmt.Sprintf("switch %v, %s", on, tc.name), func(t *testing.T) {
+				reg := prometheus.NewRegistry()
+				s, up, computes := serveV1Server(t, reg, true)
+				resolver, reads := v1BearerResolver(t)
+				s.Resolver = resolver
+				s.V1BearerAuth = on
+				w := httptest.NewRecorder()
+				req := v1Request(tc.target, nil)
+				for k, v := range tc.headers {
+					req.Header[k] = []string{v}
+				}
+				v1Handler(s, tc.target)(w, req)
+				if w.Code != http.StatusTeapot || up.count() != 1 || *computes != 0 || up.paths[0] != tc.target {
+					t.Fatalf("code=%d proxied=%d computes=%d path=%v, want 418, 1, 0, the request as it came", w.Code, up.count(), *computes, up.paths)
+				}
+				if n := v1Count(t, reg, v1Endpoint(tc.target), "feed_go_fallback_total", map[string]string{"reason": "bearer-token"}); n != 1 {
+					t.Fatalf("bearer-token = %v, want 1", n)
+				}
+				if n := reads.Load(); n != 0 {
+					t.Fatalf("principal reads = %d, want 0 (nothing resolved)", n)
+				}
+			})
+		}
 	}
 	for _, target := range []string{"/api/v1/models?limit=2", "/api/v1/models/42"} {
 		var answers [2]*httptest.ResponseRecorder
@@ -162,11 +174,10 @@ func headersEqual(a, b http.Header) bool {
 	return true
 }
 
-// FEED_GO_V1_BEARER_AUTH on, the public routes: each credential form is answered as the Node route
-// answers it. Served means the signed-out body with the credentialed headers (Vary: Authorization,
-// Cookie and the private Cache-Control, as MixedAuthEndpoint / PublicEndpoint key them on the
-// credential's presence); every case Node answers as a user, or with a write or a read this service
-// does not make, falls back with its reason.
+// FEED_GO_V1_BEARER_AUTH on, the public `[id]` route (withBlockScope over PublicEndpoint, which reads
+// no session): a credential is answered with the body any caller gets and the credentialed headers
+// (Vary: Authorization, Cookie; Cache-Control: private, no-store), except a possible block token and a
+// bearer whose Node read would write lastUsedAt or read the primary, which fall back with their reason.
 func TestServeV1ModelsBearerAuthOn(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -175,31 +186,18 @@ func TestServeV1ModelsBearerAuthOn(t *testing.T) {
 		reason  string // "" = served
 		reads   int32
 	}{
-		// The list (MixedAuthEndpoint, then searchViewer).
-		{"list, read-only key: signed-out search", "/api/v1/models?limit=2", [][2]string{{"Authorization", "Bearer k-read"}}, "", 1},
-		{"list, banned user's key: no session", "/api/v1/models?limit=2", [][2]string{{"Authorization", "Bearer k-banned"}}, "", 1},
-		{"list, provider token: no session, no lookup", "/api/v1/models?limit=2", [][2]string{{"Authorization", "Bearer github:x"}}, "", 0},
-		{"list, scheme only: cookies (none)", "/api/v1/models?limit=2", [][2]string{{"Authorization", "Bearer"}}, "", 0},
-		{"list, full-scope key: the signed-in list", "/api/v1/models?limit=2", [][2]string{{"Authorization", "Bearer k-full"}}, "v1-models-bearer-session", 1},
-		{"list, no model-view scope", "/api/v1/models?limit=2", [][2]string{{"Authorization", "Bearer k-images"}}, "v1-models-bearer-scope", 1},
-		{"list, a moderator's scoped key", "/api/v1/models?limit=2", [][2]string{{"Authorization", "Bearer k-mod"}}, "v1-models-bearer-moderator", 1},
-		{"list, lastUsedAt write due", "/api/v1/models?limit=2", [][2]string{{"Authorization", "Bearer k-due"}}, "bearer-last-used", 1},
-		{"list, unknown key", "/api/v1/models?limit=2", [][2]string{{"Authorization", "Bearer k-unknown"}}, "bearer-key-cache-miss", 1},
-		{"list, ?token=", "/api/v1/models?limit=2&token=k-read", nil, "bearer-query-token", 0},
-		{"list, empty then a ?token=", "/api/v1/models?limit=2&token=&token=k-read", nil, "bearer-query-token", 0},
-		{"list, two Authorization lines", "/api/v1/models?limit=2", [][2]string{{"Authorization", "Bearer k-read"}, {"Authorization", "Bearer k-read"}}, "bearer-multiple-headers", 0},
-		{"list, malformed key", "/api/v1/models?limit=2", [][2]string{{"Authorization", "Bearer k-r\xe9ad"}}, "bearer-malformed", 0},
-		{"list, own list: parsed before the key", "/api/v1/models?favorites=true", [][2]string{{"Authorization", "Bearer k-read"}}, "v1-models-authed-only", 0},
-		{"list, followed: parsed before the key", "/api/v1/models?followed=true", [][2]string{{"Authorization", "Bearer k-read"}}, "v1-models-followed", 0},
-		{"list, key and a session cookie", "/api/v1/models?limit=2", [][2]string{{"Authorization", "Bearer k-read"}, {"Cookie", "__Secure-civ-token=x"}}, "v1-models-session-cookie", 0},
-		// `[id]` (withBlockScope, then PublicEndpoint: no session is read).
-		{"[id], full-scope key: PublicEndpoint reads no session", "/api/v1/models/42", [][2]string{{"Authorization", "Bearer k-full"}}, "", 1},
-		{"[id], other scheme: no bearer, no lookup", "/api/v1/models/42", [][2]string{{"Authorization", "Basic eDp5"}}, "", 0},
-		{"[id], ?token=: no lookup", "/api/v1/models/42?token=k-unknown", nil, "", 0},
-		{"[id], block JWT shape", "/api/v1/models/42", [][2]string{{"Authorization", "Bearer a.b.c"}}, "v1-models-block-token", 0},
-		{"[id], lastUsedAt write due", "/api/v1/models/42", [][2]string{{"Authorization", "Bearer k-due"}}, "bearer-last-used", 1},
-		{"[id], unknown key", "/api/v1/models/42", [][2]string{{"Authorization", "Bearer k-unknown"}}, "bearer-key-cache-miss", 1},
-		{"[id], two Authorization lines", "/api/v1/models/42", [][2]string{{"Authorization", "Bearer k-read"}, {"Authorization", "Basic x"}}, "bearer-multiple-headers", 0},
+		{"full-scope key: PublicEndpoint reads no session", "/api/v1/models/42", [][2]string{{"Authorization", "Bearer k-full"}}, "", 1},
+		{"read-only key", "/api/v1/models/42", [][2]string{{"Authorization", "Bearer k-read"}}, "", 1},
+		{"banned user's key", "/api/v1/models/42", [][2]string{{"Authorization", "Bearer k-banned"}}, "", 1},
+		{"provider token: no lookup", "/api/v1/models/42", [][2]string{{"Authorization", "Bearer github:x"}}, "", 0},
+		{"other scheme: no bearer, no lookup", "/api/v1/models/42", [][2]string{{"Authorization", "Basic eDp5"}}, "", 0},
+		{"?token=: no lookup", "/api/v1/models/42?token=k-unknown", nil, "", 0},
+		{"block JWT shape", "/api/v1/models/42", [][2]string{{"Authorization", "Bearer a.b.c"}}, "v1-models-block-token", 0},
+		{"lastUsedAt write due", "/api/v1/models/42", [][2]string{{"Authorization", "Bearer k-due"}}, "bearer-last-used", 1},
+		{"unknown key", "/api/v1/models/42", [][2]string{{"Authorization", "Bearer k-unknown"}}, "bearer-key-cache-miss", 1},
+		{"two Authorization lines", "/api/v1/models/42", [][2]string{{"Authorization", "Bearer k-read"}, {"Authorization", "Basic x"}}, "bearer-multiple-headers", 0},
+		{"malformed bearer", "/api/v1/models/42", [][2]string{{"Authorization", "Bearer k-r\xe9ad"}}, "bearer-malformed", 0},
+		{"an Origin: still the serve-only fallback first", "/api/v1/models/42", [][2]string{{"Authorization", "Bearer k-read"}, {"Origin", "https://app.example"}}, "v1-models-origin", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -220,7 +218,6 @@ func TestServeV1ModelsBearerAuthOn(t *testing.T) {
 			}
 			w := httptest.NewRecorder()
 			v1Handler(s, tc.target)(w, req)
-			endpoint := v1Endpoint(tc.target)
 			if n := reads.Load(); n != tc.reads {
 				t.Fatalf("principal reads = %d, want %d", n, tc.reads)
 			}
@@ -228,7 +225,7 @@ func TestServeV1ModelsBearerAuthOn(t *testing.T) {
 				if w.Code != http.StatusTeapot || up.count() != 1 || *computes != 0 {
 					t.Fatalf("code=%d proxied=%d computes=%d, want 418, 1, 0", w.Code, up.count(), *computes)
 				}
-				if n := v1Count(t, reg, endpoint, "feed_go_fallback_total", map[string]string{"reason": tc.reason}); n != 1 {
+				if n := v1Count(t, reg, EndpointV1ModelsID, "feed_go_fallback_total", map[string]string{"reason": tc.reason}); n != 1 {
 					t.Fatalf("%s = %v, want 1", tc.reason, n)
 				}
 				return
@@ -242,19 +239,15 @@ func TestServeV1ModelsBearerAuthOn(t *testing.T) {
 			if got := w.Header().Get("Vary"); got != "Authorization, Cookie" {
 				t.Fatalf("Vary = %q, want the credentialed arm", got)
 			}
-			wantCC := "max-age=0, private, no-cache"
-			if endpoint == EndpointV1ModelsID {
-				wantCC = "private, no-store"
-			}
-			if got := w.Header().Get("Cache-Control"); got != wantCC {
-				t.Fatalf("Cache-Control = %q, want %q", got, wantCC)
+			if got := w.Header().Get("Cache-Control"); got != "private, no-store" {
+				t.Fatalf("Cache-Control = %q, want private, no-store", got)
 			}
 		})
 	}
 }
 
-// The port answers a request whose credential was decided as signed out (the decision on its
-// context), and keeps today's `bearer-token` without one: the gate the switch opens is that marker.
+// `[id]` answers a request whose credential was decided (the marker on its context) and keeps today's
+// `bearer-token` without one; the list ignores the marker: its API credentials always fall back.
 func TestComputeV1ModelsHonoursTheDecidedCredential(t *testing.T) {
 	configured := &Server{
 		Resolver: &auth.Resolver{},
@@ -268,7 +261,7 @@ func TestComputeV1ModelsHonoursTheDecidedCredential(t *testing.T) {
 		reason string
 	}{
 		{"list, undecided", context.Background(), false, "bearer-token"},
-		{"list, decided: reaches the port", decided, false, "v1-models-unconfigured-urls"},
+		{"list, marked: still bearer-token", decided, false, "bearer-token"},
 		{"[id], undecided", context.Background(), true, "bearer-token"},
 		{"[id], decided: reaches the port", decided, true, "v1-models-unconfigured-urls"},
 	} {
@@ -290,34 +283,35 @@ func TestComputeV1ModelsHonoursTheDecidedCredential(t *testing.T) {
 	}
 }
 
-// The shadow: a credentialed sample carries the sampler's description and Node's viewer, never the
-// key. SyntheticV1ModelsRequest moves both onto the context (a public request's headers of the same
-// names are never read), the decision runs on them, a sample Node searched as a user that this decides
-// signed out is the viewer-mismatch fallback, and a computed one is counted under the api-key viewer.
+func sampleKey(key string) string {
+	sum := sha512.Sum512([]byte(key + bearerTestSecret))
+	return "key:" + hex.EncodeToString(sum[:])
+}
+
+// The shadow: a credentialed `[id]` sample carries the sampler's description, never the key.
+// SyntheticV1ModelsRequest moves it onto the rebuilt request's context and off its headers, the
+// decision runs on it, and a computed one is counted under the api-key viewer. A list sample with a
+// description is still the placeholder's `bearer-token`.
 func TestV1ModelsShadowResolvesTheSampleCredential(t *testing.T) {
-	hash := func(key string) string {
-		sum := sha512.Sum512([]byte(key + bearerTestSecret))
-		return "key:" + hex.EncodeToString(sum[:])
-	}
 	r, err := SyntheticV1ModelsRequest(context.Background(), ShadowRequest{
-		Input: "limit=2", Headers: map[string]string{"host": "h.example", "authorization": "present",
-			SampleCredentialHeader: hash("k-read"), SampleViewerHeader: "anonymous"},
+		Path: V1ModelsPath + "/42", Headers: map[string]string{"host": "h.example", "authorization": "present",
+			SampleCredentialHeader: sampleKey("k-read")},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Header.Get(SampleCredentialHeader) != "" || r.Header.Get(SampleViewerHeader) != "" || r.Header.Get("Authorization") != "present" {
+	if r.Header.Get(SampleCredentialHeader) != "" || r.Header.Get("Authorization") != "present" {
 		t.Fatalf("sample headers on the rebuilt request: %v", r.Header)
 	}
 	cases := []struct {
-		name, endpoint, input, cred, viewer, reason string
+		name, endpoint, cred, reason string
 	}{
-		{"list, read-only key, Node signed out: computed", EndpointV1Models, "limit=2", hash("k-read"), "anonymous", ""},
-		{"list, read-only key, Node searched as the user", EndpointV1Models, "limit=2", hash("k-read"), NodeViewerUser, "v1-models-bearer-viewer-mismatch"},
-		{"list, full key", EndpointV1Models, "limit=2", hash("k-full"), NodeViewerUser, "v1-models-bearer-session"},
-		{"list, no description: the placeholder", EndpointV1Models, "limit=2", "", "", "bearer-token"},
-		{"[id], dotted", EndpointV1ModelsID, "", auth.SampleCredentialDotted, "", "v1-models-block-token"},
-		{"[id], full key: computed", EndpointV1ModelsID, "", hash("k-full"), "", ""},
+		{"[id], full key: computed", EndpointV1ModelsID, sampleKey("k-full"), ""},
+		{"[id], provider: computed", EndpointV1ModelsID, auth.SampleCredentialProvider, ""},
+		{"[id], dotted", EndpointV1ModelsID, auth.SampleCredentialDotted, "v1-models-block-token"},
+		{"[id], due write", EndpointV1ModelsID, sampleKey("k-due"), "bearer-last-used"},
+		{"[id], no description: the placeholder", EndpointV1ModelsID, "", "bearer-token"},
+		{"list, with a description: unchanged", EndpointV1Models, sampleKey("k-read"), "bearer-token"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -325,30 +319,16 @@ func TestV1ModelsShadowResolvesTheSampleCredential(t *testing.T) {
 			s, _, computes := serveV1Server(t, reg, true)
 			s.Resolver, _ = v1BearerResolver(t)
 			s.V1BearerAuth = true
-			path := V1ModelsPath
+			path, body := V1ModelsPath, v1ListBody
 			if tc.endpoint == EndpointV1ModelsID {
-				path += "/42"
+				path, body = V1ModelsPath+"/42", v1DetailBody
 			}
 			headers := map[string]string{"host": "h.example", "authorization": "present"}
 			if tc.cred != "" {
 				headers[SampleCredentialHeader] = tc.cred
 			}
-			if tc.viewer != "" {
-				headers[SampleViewerHeader] = tc.viewer
-			}
-			body := v1ListBody
-			if tc.endpoint == EndpointV1ModelsID {
-				body = v1DetailBody
-			}
-			sample := ShadowRequest{Input: tc.input, Path: path, Headers: headers, Node: []byte(body)}
-			if tc.endpoint == EndpointV1Models {
-				// Node's headers for a credentialed request: the credentialed Vary and Cache-Control.
-				sample.ResponseHeaders = v1ModelsResponse("max-age=0, private, no-cache")
-				sample.ResponseHeaders["vary"] = "Authorization, Cookie"
-				sample.ResponseHeaderSet = ResponseHeaderSetREST
-			}
-			s.compare(context.Background(), tc.endpoint, sample)
-			shadow := func(name string, labels map[string]string) float64 {
+			s.compare(context.Background(), tc.endpoint, ShadowRequest{Input: "limit=2", Path: path, Headers: headers, Node: []byte(body)})
+			metric := func(name string, labels map[string]string) float64 {
 				l := map[string]string{"feed_endpoint": tc.endpoint}
 				for k, v := range labels {
 					l[k] = v
@@ -357,22 +337,47 @@ func TestV1ModelsShadowResolvesTheSampleCredential(t *testing.T) {
 				return v
 			}
 			if tc.reason != "" {
-				if *computes != 0 || shadow("feed_go_fallback_total", map[string]string{"mode": "shadow", "reason": tc.reason}) != 1 {
-					t.Fatalf("computes=%d %s=%v, want 0, 1", *computes, tc.reason, shadow("feed_go_fallback_total", map[string]string{"mode": "shadow", "reason": tc.reason}))
+				if n := metric("feed_go_fallback_total", map[string]string{"mode": "shadow", "reason": tc.reason}); *computes != 0 || n != 1 {
+					t.Fatalf("computes=%d %s=%v, want 0, 1", *computes, tc.reason, n)
 				}
 				return
 			}
-			if *computes != 1 || shadow("feed_go_shadow_compare_total", map[string]string{"result": "match"}) != 1 {
-				t.Fatalf("computes=%d match=%v, want 1, 1", *computes, shadow("feed_go_shadow_compare_total", map[string]string{"result": "match"}))
+			if n := metric("feed_go_shadow_compare_total", map[string]string{"result": "match"}); *computes != 1 || n != 1 {
+				t.Fatalf("computes=%d match=%v, want 1, 1", *computes, n)
 			}
-			if n := shadow("feed_go_shadow_compare_viewer_total", map[string]string{"viewer": V1ViewerAPIKey, "result": "match"}); n != 1 {
+			if n := metric("feed_go_shadow_compare_viewer_total", map[string]string{"viewer": V1ViewerAPIKey, "result": "match"}); n != 1 {
 				t.Fatalf("api-key viewer match = %v, want 1", n)
 			}
-			if tc.endpoint == EndpointV1Models {
-				if n := shadow("feed_go_shadow_response_total", map[string]string{"result": "match"}); n != 1 {
-					t.Fatalf("response headers match = %v, want 1 (the credentialed arm on both sides)", n)
-				}
-			}
 		})
+	}
+}
+
+// No log line feed-go writes for a credentialed sample carries the sampler's description (the key's
+// hash) or its header name: not the fallback line, not the shadow diff line. Positive controls: both
+// lines are written (so the logger saw these samples), and the hash appears in the sample itself.
+func TestV1ModelsShadowNeverLogsTheSampleCredential(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	s, _, _ := serveV1Server(t, prometheus.NewRegistry(), true)
+	s.Log = log
+	s.Events = &EventLog{Log: log, FallbackPerMinute: 1000, ErrorPerMinute: 1000}
+	s.Resolver, _ = v1BearerResolver(t)
+	s.V1BearerAuth = true
+	hit, miss := sampleKey("k-read"), sampleKey("k-unknown")
+	sample := func(cred, node string) ShadowRequest {
+		return ShadowRequest{Path: V1ModelsPath + "/42", Node: []byte(node),
+			Headers: map[string]string{"host": "h.example", "authorization": "present", SampleCredentialHeader: cred}}
+	}
+	// A fallback (the cache misses that hash), and a computed sample whose body differs (a diff line).
+	s.compare(context.Background(), EndpointV1ModelsID, sample(miss, v1DetailBody))
+	s.compare(context.Background(), EndpointV1ModelsID, sample(hit, `{"id":42,"name":"b"}`))
+	out := buf.String()
+	if !strings.Contains(out, "bearer-key-cache-miss") || !strings.Contains(out, "shadow diff") {
+		t.Fatalf("positive control: the fallback and diff lines were not logged:\n%s", out)
+	}
+	for _, secret := range []string{hit, miss, hit[len("key:"):], miss[len("key:"):], SampleCredentialHeader} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("a log line carries %q:\n%s", secret, out)
+		}
 	}
 }

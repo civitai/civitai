@@ -25,9 +25,10 @@ type V1Models struct {
 	// upstream from FEED_GO_FALLBACK_URL (which answers the tRPC routes). Every fallback of the two
 	// public model routes is proxied to it; unset, the routes are not mounted.
 	FallbackURL string
-	// BearerAuth is FEED_GO_V1_BEARER_AUTH (default off): the model routes decide an API credential as
-	// the Node routes do (DESIGN.md §16.10) instead of falling back on every one (`bearer-token`). It
-	// resolves keys with the tRPC routes' resolver, so it needs FEED_GO_BEARER_AUTH (Validate).
+	// BearerAuth is FEED_GO_V1_BEARER_AUTH (default off): `GET /api/v1/models/{id}` decides an API
+	// credential as the Node route does (DESIGN.md §16.10) instead of falling back on every one
+	// (`bearer-token`); the list is unaffected. It reads keys with the tRPC routes' key resolver, so it
+	// needs FEED_GO_BEARER_AUTH (Validate).
 	BearerAuth bool
 }
 
@@ -54,7 +55,7 @@ func (c V1Models) Validate(bearerAuth bool) error {
 		return errors.New("FEED_GO_SERVE_V1_MODELS is on without FEED_GO_V1_FALLBACK_URL: the public model routes need the Node app that serves /api/v1 for their fallbacks")
 	}
 	if c.BearerAuth && !bearerAuth {
-		return errors.New("FEED_GO_V1_BEARER_AUTH is on without FEED_GO_BEARER_AUTH: the model routes resolve API keys with the key resolver that switch turns on")
+		return errors.New("FEED_GO_V1_BEARER_AUTH is on without FEED_GO_BEARER_AUTH: GET /api/v1/models/{id} reads API keys with the key resolver that switch turns on")
 	}
 	return nil
 }

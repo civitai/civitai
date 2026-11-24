@@ -1086,7 +1086,7 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
 
   describe('an API credential, with FEED_GO_SHADOW_V1_MODELS_CREDENTIALS', () => {
     const KEY = 'k-live-secret-0123';
-    const described = (endpoint: string) => `described:${endpoint}`;
+    const DESCRIBED = 'key:described';
     const keyed = (url: string, headers: Record<string, string> = {}) =>
       modelsRequest(url, {
         headers: { host: 'civitai.com', authorization: `Bearer ${KEY}`, ...headers },
@@ -1096,9 +1096,8 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
       'off (the default): %s is counted skipped_credential and never sent, as before',
       async (endpoint) => {
         const h = harness();
-        const req = keyed('/api/v1/models');
         expect(
-          serveModels(h, endpoint, req, {}, { credential: () => described(endpoint) })
+          serveModels(h, endpoint, keyed('/api/v1/models/1'), {}, { credential: () => DESCRIBED })
         ).toBeUndefined();
         await h.flush();
         expect(h.fetchMock).not.toHaveBeenCalled();
@@ -1106,52 +1105,39 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
       }
     );
 
-    it('off: a session a key resolved is not begun at all (no outcome), as before', async () => {
-      const h = harness();
-      expect(
-        serveModels(
-          h,
-          'v1-models',
-          keyed('/api/v1/models'),
-          {},
-          { keySession: true, credential: () => 'x' }
-        )
-      ).toBeUndefined();
+    it('on: [id] is sent with the description in place of the key', async () => {
+      const h = harness({ config: { v1ModelsCredentials: true } });
+      const sample = serveModels(
+        h,
+        'v1-models-id',
+        keyed('/api/v1/models/1'),
+        { body: { id: 1 } },
+        { credential: () => DESCRIBED }
+      );
+      expect(sample).toBeDefined();
       await h.flush();
-      expect(h.outcomes).toEqual([]);
+      expect(h.outcomes).toEqual(['sent']);
+      const [url, init] = h.fetchMock.mock.calls[0];
+      expect(url).toBe(V1_MODEL_ID_URL);
+      const body = init.body as string;
+      expect(JSON.parse(body).headers).toEqual({
+        host: 'civitai.com',
+        authorization: 'present',
+        'x-feed-go-credential': DESCRIBED,
+      });
+      expect(body).not.toContain(KEY);
     });
-
-    it.each(['v1-models', 'v1-models-id'] as const)(
-      'on: %s is sent with the description and the viewer in place of the key',
-      async (endpoint) => {
-        const h = harness({ config: { v1ModelsCredentials: true } });
-        const sample = serveModels(
-          h,
-          endpoint,
-          keyed('/api/v1/models?limit=1'),
-          {},
-          { keySession: true, credential: () => described(endpoint), viewer: 'anonymous' }
-        );
-        expect(sample).toBeDefined();
-        await h.flush();
-        expect(h.outcomes).toEqual(['sent']);
-        const [, init] = h.fetchMock.mock.calls[0];
-        const body = init.body as string;
-        expect(JSON.parse(body).headers).toEqual({
-          host: 'civitai.com',
-          authorization: 'present',
-          'x-feed-go-credential': described(endpoint),
-          'x-feed-go-viewer': 'anonymous',
-        });
-        expect(body).not.toContain(KEY);
-      }
-    );
 
     it.each([
       [
-        'a ?token= (the query string carries it)',
+        'the list (its credentials always fall back in feed-go)',
         'v1-models',
-        modelsRequest('/api/v1/models?token=KEY', { query: { token: 'KEY' } }),
+        keyed('/api/v1/models'),
+      ],
+      [
+        'a ?token= on [id] (the query string carries it)',
+        'v1-models-id',
+        modelsRequest('/api/v1/models/1?token=KEY', { query: { token: 'KEY' } }),
       ],
       ['GET /api/v1/images', 'v1-images', keyed('/api/v1/images')],
     ] as const)('on: %s is still skipped_credential', async (_name, endpoint, req) => {
@@ -1159,9 +1145,10 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
       const sample =
         endpoint === 'v1-images'
           ? h.shadow.beginV1Images(req)
-          : h.shadow.beginRest(endpoint, req, { credential: () => 'x' });
+          : h.shadow.beginRest(endpoint, req, { credential: () => DESCRIBED });
       expect(sample).toBeUndefined();
       await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
       expect(h.outcomes).toEqual(['skipped_credential']);
     });
 
@@ -1175,7 +1162,7 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
         },
       ]) {
         expect(
-          h.shadow.beginRest('v1-models', keyed('/api/v1/models'), { credential })
+          h.shadow.beginRest('v1-models-id', keyed('/api/v1/models/1'), { credential })
         ).toBeUndefined();
       }
       await h.flush();
@@ -1190,10 +1177,10 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
       const h = harness({ config: { v1ModelsCredentials: true } });
       serveModels(
         h,
-        'v1-models',
-        modelsRequest('/api/v1/models', { headers: { host: 'civitai.com' } }),
-        {},
-        { credential: () => 'x', viewer: 'anonymous' }
+        'v1-models-id',
+        modelsRequest('/api/v1/models/1', { headers: { host: 'civitai.com' } }),
+        { body: { id: 1 } },
+        { credential: () => DESCRIBED }
       );
       await h.flush();
       const [, init] = h.fetchMock.mock.calls[0];
