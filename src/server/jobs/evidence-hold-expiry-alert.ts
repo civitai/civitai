@@ -57,6 +57,7 @@ async function alertEndingEvidenceHolds() {
     subject: `Evidence holds ending soon: ${owners}`,
     html: `<p>${summary}</p><p>Review: <a href="${link}">${link}</a></p>`,
     text: `${summary}\n\nReview: ${link}`,
+    tags: { template: 'evidenceHoldExpiryAlert', mailClass: 'transactional' },
   });
   return { owners, sent: true };
 }

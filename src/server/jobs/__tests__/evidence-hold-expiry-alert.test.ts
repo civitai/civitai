@@ -76,6 +76,7 @@ describe('evidence-hold-expiry-alert', () => {
       subject: 'Evidence holds ending soon: 3',
       html: `<p>${SUMMARY}</p><p>Review: <a href="${LINK}">${LINK}</a></p>`,
       text: `${SUMMARY}\n\nReview: ${LINK}`,
+      tags: { template: 'evidenceHoldExpiryAlert', mailClass: 'transactional' },
     });
   });
 

@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -244,6 +244,36 @@ describe('awardEventPrizes', () => {
     await award('Pink');
     expect(await cupRows()).toHaveLength(1);
     expect(await holders(CUP_BADGE)).toEqual([BLUE_WEEK]);
+  });
+
+  describe('with an exclusion start (meta.eventPointsExcludedFrom)', () => {
+    const blueWeek = async () => {
+      setPrizes({ comeback: comeback('live') });
+      await award('Pink');
+      const [row] = await cupRows();
+      return (row.inputs as unknown as { teams: { team: string; week: number }[] }).teams.find(
+        (t) => t.team === 'Blue'
+      )?.week;
+    };
+    const excludeFrom = (value: string | null) =>
+      pg.db.query(`UPDATE "User" SET meta = $1::jsonb WHERE id = ${BLUE_EXCLUDED}`, [
+        value === null ? null : JSON.stringify({ eventPointsExcludedFrom: value }),
+      ]);
+    afterEach(() => excludeFrom(null));
+
+    it('counts the play points a user scored before it', async () => {
+      await excludeFrom('2026-11-29T00:00:00.000Z');
+      expect(await blueWeek()).toBe(700 + 300 + 50);
+    });
+
+    it('drops the play points from its day on', async () => {
+      await excludeFrom('2026-11-28T00:00:00.000Z');
+      expect(await blueWeek()).toBe(700 + 300);
+    });
+
+    it('without it, drops the whole season', async () => {
+      expect(await blueWeek()).toBe(700 + 300);
+    });
   });
 
   it('leaves the standings, their winner and the team awards byte-identical', async () => {

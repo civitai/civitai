@@ -435,14 +435,17 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
             MISSED_DIGEST_EMAIL_TYPE
           )}&c=${cycleStartedAt.getTime()}`;
           await withThrottleRetry(() =>
-            missedNotificationsDigestEmail.send({
-              to,
-              items: links.items,
-              allUrl: links.allUrl,
-              total: Math.max(missed.total, items.length),
-              totalIsFloor: missed.floor,
-              unsubscribeUrl,
-            })
+            missedNotificationsDigestEmail.send(
+              {
+                to,
+                items: links.items,
+                allUrl: links.allUrl,
+                total: Math.max(missed.total, items.length),
+                totalIsFloor: missed.floor,
+                unsubscribeUrl,
+              },
+              { userId: user.id, campaign: cycleStartedAt.toISOString() }
+            )
           );
           result.emailed++;
           sends.push({

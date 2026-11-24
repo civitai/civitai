@@ -86,6 +86,9 @@ export interface StudioElementHost {
     supportUrl?: string;
     /** The host's dataset storage policy, linked beside the dataset-sharing choice. */
     dataPolicyUrl?: string;
+    /** The signed-in user's id. Keys the New training flow's browser-local autosave; omit and
+     *  nothing is autosaved. */
+    userId?: number;
     /** The per-model catalog gates (`ModelCard.flagKey`) this user may see, plus `KOHYA_FLAG_KEY`
      *  when they may train with Kohya — the embed's stand-in for the shell's server-side
      *  `allowedModelFlags`. Omitted => every gated model, and Kohya, stays hidden. */
