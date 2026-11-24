@@ -8,6 +8,7 @@ import {
   CloseButton,
   Collapse,
   ColorInput,
+  ColorSwatch,
   Slider,
   Divider,
   Group,
@@ -898,7 +899,7 @@ export default function UserProfileEditModal() {
           withLinkValidation
         />
       )}
-      {redesign && <PageCustomizationFields cover={user?.profile?.defaultCoverImage ?? null} />}
+      {redesign && <PageCustomizationFields />}
     </>
   );
   const civitaiComGroup = (
@@ -1197,17 +1198,25 @@ export function ProfilePreview({
 }
 
 /** Members-only page background, card colour and opacity (profile redesign). */
-function PageCustomizationFields({ cover }: { cover: { hash?: string | null } | null }) {
+type HashedImage = { hash?: string | null } | null | undefined;
+
+function PageCustomizationFields() {
   const currentUser = useCurrentUser();
   const form = useFormContext<FormDataSchema>();
-  const [background, cardColor, cardOpacity] = form.watch([
+  const [cover, background, cardColor, cardOpacity] = form.watch([
+    'coverImage',
     'backgroundImage',
     'cardColor',
     'cardOpacity',
   ]);
-  const suggestion = suggestedCardColor(
-    (background as { hash?: string | null } | null | undefined)?.hash ?? cover?.hash
-  );
+  // A colour from either image, so the member can pick whichever suits; a new upload has no
+  // hash until it is scanned, so it suggests nothing yet.
+  const suggestions = [
+    { label: 'From your banner', color: suggestedCardColor((cover as HashedImage)?.hash) },
+    { label: 'From your background', color: suggestedCardColor((background as HashedImage)?.hash) },
+  ].filter((suggestion): suggestion is { label: string; color: string } => !!suggestion.color);
+  const setCardColor = (value: string) =>
+    form.setValue('cardColor', value || null, { shouldDirty: true });
 
   if (!currentUser?.isPaidMember)
     return (
@@ -1233,19 +1242,39 @@ function PageCustomizationFields({ cover }: { cover: { hash?: string | null } | 
         description="Shown behind your whole profile page."
         previewWidth={constants.profile.coverImageWidth}
       />
-      <ColorInput
-        label="Card colour"
-        format="hex"
-        value={cardColor ?? ''}
-        onChange={(value) => form.setValue('cardColor', value || null, { shouldDirty: true })}
-        swatches={suggestion ? [suggestion] : undefined}
-        description={
-          suggestion && suggestion !== cardColor
-            ? 'The swatch is a colour taken from your background or cover.'
-            : undefined
-        }
-        error={form.formState.errors.cardColor?.message}
-      />
+      <Stack gap={6}>
+        <ColorInput
+          label="Card colour"
+          description="Pick any colour, or use one taken from your banner or background."
+          placeholder="Your theme's colour"
+          format="hex"
+          value={cardColor ?? ''}
+          onChange={setCardColor}
+          swatches={suggestions.map((suggestion) => suggestion.color)}
+          swatchesPerRow={suggestions.length || undefined}
+          error={form.formState.errors.cardColor?.message}
+        />
+        {(suggestions.length > 0 || !!cardColor) && (
+          <Group gap="xs">
+            {suggestions.map((suggestion) => (
+              <Button
+                key={suggestion.label}
+                variant={cardColor === suggestion.color ? 'light' : 'default'}
+                size="compact-sm"
+                leftSection={<ColorSwatch color={suggestion.color} size={14} />}
+                onClick={() => setCardColor(suggestion.color)}
+              >
+                {suggestion.label}
+              </Button>
+            ))}
+            {!!cardColor && (
+              <Button variant="subtle" size="compact-sm" onClick={() => setCardColor('')}>
+                Use the theme&apos;s colour
+              </Button>
+            )}
+          </Group>
+        )}
+      </Stack>
       <Input.Wrapper label="Card opacity">
         <Slider
           min={60}
