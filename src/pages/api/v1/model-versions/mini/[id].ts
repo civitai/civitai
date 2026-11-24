@@ -855,7 +855,7 @@ async function handler(
     publishedAt: modelVersion.publishedAt,
     size: targetFile.sizeKB, // nullable
     fileType: targetFile.type,
-    // The name the download route serves and files[].name on /api/v1/model-versions/[id] lists.
+    // Same name the download route serves, not the stored targetFile.name.
     fileName: safeDecodeURIComponent(
       getDownloadFilename({
         model: { name: modelVersion.modelName, type: modelVersion.type },

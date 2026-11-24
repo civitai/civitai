@@ -1687,6 +1687,22 @@ describe('GET /api/v1/model-versions/mini/[id] — fileName is the download name
     expect(body.fileName).toBe('my-model.safetensors');
   });
 
+  it('a file sharing its name with a sibling gets the name the download route gives it', async () => {
+    // Same uploaded name on both: the download route names each against every file on the version.
+    const first = { ...SAFETENSOR, name: 'shared.safetensors' };
+    const second = { ...GGUF, name: 'shared.safetensors' };
+    const { body } = await run([first, second], { modelFileId: String(second.id) });
+    const expected = getDownloadFilename({
+      model: { name: versionRow.modelName, type: 'Checkpoint' },
+      modelVersion: { name: versionRow.versionName },
+      file: second,
+      versionFiles: [first, second],
+    });
+    // Positive control: the sibling really moved it off the shared name.
+    expect(expected).not.toBe(second.name);
+    expect(body.fileName).toBe(expected);
+  });
+
   // The orchestrator reads only the extension of `fileName`, to infer the format when `format` is
   // null. Every branch that renames must keep the stored file's extension, or such a file loses it.
   const extOf = (name: string) => name.slice(name.lastIndexOf('.'));
