@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import type * as LegalHold from '~/server/services/legal-hold.service';
 import type * as Revocation from '~/server/services/user-token-revocation.service';
 
 // A banned or deleted author's stories stop showing, so their story sparks are forfeited; an
@@ -18,10 +17,6 @@ vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
 vi.mock('~/server/services/user-token-revocation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Revocation>()),
   revokeUserTokens: vi.fn(async () => true),
-}));
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof LegalHold>()),
-  assertAccountNotUnderLegalHold: vi.fn(async () => ({ legs: [], markerView: false })),
 }));
 
 // event-engine-common is a git submodule and is not checked out by default; user.service's graph

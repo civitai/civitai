@@ -32,6 +32,15 @@ import {
 import type { ErrorCode } from '~/server/registry-adapter/protocol';
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
 
+/**
+ * An OAuth client-id allowlist from deploy configuration: ids separated by commas or whitespace.
+ * Unset or empty is the empty set. Every allowlist this source reads (service clients, private
+ * relays, shared-level clients) is parsed here, so their formats cannot diverge.
+ */
+export function parseClientIdList(raw: string | undefined): ReadonlySet<string> {
+  return new Set((raw ?? '').split(/[\s,]+/).filter(Boolean));
+}
+
 type VerifiedTokenBase = {
   /** Stable for the token's user (or service) and client, across token refreshes. */
   subject: string;

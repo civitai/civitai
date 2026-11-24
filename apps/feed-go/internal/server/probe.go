@@ -298,6 +298,14 @@ func (s *Server) probeHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	withProfileLabels(r.Context(), spec.endpoint, "probe", func(ctx context.Context) {
+		s.probeHandlerLabelled(w, r.WithContext(ctx), spec) //nolint:contextcheck // the background work runs on the server's background context after the 202 is written: it must outlive the request
+	})
+}
+
+// probeHandlerLabelled is probeHandler under the probe's profile labels (withProfileLabels); its
+// background goroutine runs the probe under them too.
+func (s *Server) probeHandlerLabelled(w http.ResponseWriter, r *http.Request, spec probeSpec) {
 	// The probe's span (as the shadow sample's): ends with the probe, or here when it is not run.
 	_, span := s.startSpan(r.Context(), r.Header, "probe", spec.endpoint)
 	spanHandedOff := false
@@ -360,7 +368,7 @@ func (s *Server) probeHandler(w http.ResponseWriter, r *http.Request) {
 		if s.Tracer != nil {
 			ctx = trace.ContextWithSpan(ctx, span)
 		}
-		s.probe(ctx, spec, req)
+		withProfileLabels(ctx, spec.endpoint, "probe", func(ctx context.Context) { s.probe(ctx, spec, req) })
 	}()
 }
 

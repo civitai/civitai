@@ -17,6 +17,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/safe"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
+	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
 )
 
 // imagesPerModelSlim is GET_ALL_IMAGES_PER_MODEL_SLIM (src/server/utils/model-getall-images.ts):
@@ -369,7 +370,10 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(safe.Go(func() (err error) {
-		hy, err = d.Sources.ModelPage(gctx, hydrate.ModelPageRequest{
+		pctx, phase := tracing.StartPhase(gctx, tracing.PhaseHydrate)
+		defer phase.End()
+		phase.SetInt(tracing.AttrItems, len(modelIDs))
+		hy, err = d.Sources.ModelPage(pctx, hydrate.ModelPageRequest{
 			OwnerIDs: ownerIDs, ModelIDs: modelIDs, VisibleEvents: d.Config.VisibleDecorationEvents,
 			ComputeUserCosmetics: d.Config.ServeUserCosmeticsMiss,
 		})
@@ -389,13 +393,18 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 	showSfwFace := level != 0 && level&table.Levels.NSFW == 0
 	// `!ids && !username && !user && !followed && !collectionId` (ids and followed fall back).
 	hidePrivateModels := in.Username == "" && in.User == "" && in.CollectionID == 0
+	// The build phase: the per-row transform and finishItems (whose version-image and membership
+	// reads are their own child spans).
+	bctx, phase := tracing.StartPhase(ctx, tracing.PhaseBuild)
+	phase.SetInt(tracing.AttrItems, len(rows))
 	items := make([]*feedItem, 0, len(rows))
 	for i := range rows {
 		if it := buildFeedItem(&rows[i], in, raw, hy, gates, showSfwFace, hidePrivateModels); it != nil {
 			items = append(items, it)
 		}
 	}
-	out.items, err = finishItems(ctx, d, in, level, raw, items, hy, viewer, showSfwFace)
+	out.items, err = finishItems(bctx, d, in, level, raw, items, hy, viewer, showSfwFace)
+	phase.End()
 	if err != nil {
 		return nil, err
 	}

@@ -43,6 +43,7 @@ import { getProfilePictureOfUser } from '~/server/services/profile-picture.sql';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
+import { publicMemorial } from '~/server/services/memorial.service';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
 import {
@@ -230,6 +231,7 @@ export const getUserWithProfile = async ({
         claimKey: sameUser ? c.claimKey : null,
       })),
       meta: undefined,
+      memorial: publicMemorial(userMeta),
       // Never leak the private settings blob; expose only whether the shop is public.
       settings: undefined,
       creatorShopEnabled,

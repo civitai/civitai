@@ -220,7 +220,6 @@ const BASELINE: Counts = {
   'src/server/services/model-file-scan.service.ts': 7,
   'src/server/services/model-file.service.ts': 6,
   'src/server/services/model-moderation.adapter.ts': 1,
-  'src/server/services/model-removed-with-owner.service.ts': 1,
   'src/server/services/model-version-gift.service.ts': 1,
   'src/server/services/model-version.service.ts': 31,
   'src/server/services/model.service.ts': 34,

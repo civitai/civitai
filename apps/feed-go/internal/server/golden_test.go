@@ -1334,7 +1334,7 @@ func (f *goldenFeed) check(t *testing.T, requireAll bool) {
 
 // --- sessions: ES256 tokens against an httptest JWKS ---------------------------------------------
 
-func goldenJWKS(t *testing.T) (*httptest.Server, *ecdsa.PrivateKey) {
+func goldenJWKS(t testing.TB) (*httptest.Server, *ecdsa.PrivateKey) {
 	t.Helper()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -1357,7 +1357,7 @@ func goldenJWKS(t *testing.T) (*httptest.Server, *ecdsa.PrivateKey) {
 	return srv, priv
 }
 
-func goldenToken(t *testing.T, priv *ecdsa.PrivateKey, userID int, now time.Time) string {
+func goldenToken(t testing.TB, priv *ecdsa.PrivateKey, userID int, now time.Time) string {
 	t.Helper()
 	h, _ := json.Marshal(map[string]string{"alg": "ES256", "kid": "golden", "typ": "JWT"})
 	p, _ := json.Marshal(map[string]any{
@@ -1388,7 +1388,7 @@ type goldenEnv struct {
 	now        func() time.Time
 }
 
-func goldenRedis(t *testing.T, entries map[string]goldenRedisEntry) *testkit.Redis {
+func goldenRedis(t testing.TB, entries map[string]goldenRedisEntry) *testkit.Redis {
 	t.Helper()
 	r := testkit.NewRedis()
 	for key, e := range entries {
@@ -1434,7 +1434,7 @@ func seedUncuratedShowcase(r *testkit.Redis, fx *goldenFixture) {
 	r.SetString(key, jspack.Pack(jspack.O("modelVersionId", in.JSON.ModelVersionID, "rows", []any{}, "community", []any{})))
 }
 
-func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
+func goldenSetup(t testing.TB, fx *goldenFixture) *goldenEnv {
 	t.Helper()
 	return goldenSetupMode(t, fx, false)
 }
@@ -1449,7 +1449,7 @@ func goldenWrites(writeBack bool) hydrate.WriteSet {
 
 // goldenSetupMode builds the server as main does: misses computed (hydrate.MissCompute), written
 // back only with writeBack.
-func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv {
+func goldenSetupMode(t testing.TB, fx *goldenFixture, writeBack bool) *goldenEnv {
 	t.Helper()
 	now := fx.Now
 	nowFn := func() time.Time { return now }
@@ -1536,7 +1536,7 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 // --- loading and running --------------------------------------------------------------------------
 
 // goldenFiles lists a fixture directory, and fails when it holds fewer fixtures than gen.mjs writes.
-func goldenFiles(t *testing.T, sub string, min int) []string {
+func goldenFiles(t testing.TB, sub string, min int) []string {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join(goldenDir, sub, "*.json"))
 	if err != nil {
@@ -1549,7 +1549,7 @@ func goldenFiles(t *testing.T, sub string, min int) []string {
 	return files
 }
 
-func goldenLoad(t *testing.T, path string) *goldenFixture {
+func goldenLoad(t testing.TB, path string) *goldenFixture {
 	t.Helper()
 	raw, err := os.ReadFile(path) //nolint:gosec // G304: path is a fixture from the testdata glob
 	if err != nil {
@@ -1786,7 +1786,7 @@ type goldenModelPG struct {
 	collectionReads int
 }
 
-func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
+func newGoldenModelPG(t testing.TB, fx *goldenFixture) *goldenModelPG {
 	db := &fx.DB
 	g := &goldenModelPG{}
 	g.DB = &testkit.DB{Routes: []testkit.Route{
@@ -2131,14 +2131,14 @@ func goldenComputeModelsMode(t *testing.T, fx *goldenFixture, writeBack bool) (*
 
 // goldenSetupModels is goldenSetup with the model.getAll deps over the fixture's model tables
 // (write-back off).
-func goldenSetupModels(t *testing.T, fx *goldenFixture) *goldenEnv {
+func goldenSetupModels(t testing.TB, fx *goldenFixture) *goldenEnv {
 	t.Helper()
 	return goldenSetupModelsMode(t, fx, false)
 }
 
 // goldenSetupModelsMode is goldenSetupModels with write-back on or off: on, the miss computation
 // writes what it computes, and the one fixture database stands in for the primary.
-func goldenSetupModelsMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv {
+func goldenSetupModelsMode(t testing.TB, fx *goldenFixture, writeBack bool) *goldenEnv {
 	t.Helper()
 	env := goldenSetup(t, fx)
 	db := newGoldenModelPG(t, fx)

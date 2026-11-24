@@ -1102,7 +1102,7 @@ const SQL_FEED_WITNESS_TOMB = `SELECT tb.seq FROM appdata.doc_tomb tb
 //   - NONE: every visible document (content levels OFF for the app: the adapter serves it only
 //     then).
 // Neither carries a counter document (`author_kind = 'counter'`): the predicate admits one at every
-// level, so it would sit on all five bit streams, and counter documents are being removed.
+// level, so it would sit on all five bit streams.
 // Hidden documents are never on a stream. The seq read flags each row `on_stream`, so a write
 // that moved a document off the stream reads as leaving it.
 const LEVEL_STREAM_COLUMNS = `d.key, d.data, d.version, d.seq, d.created_at, d.updated_at`;

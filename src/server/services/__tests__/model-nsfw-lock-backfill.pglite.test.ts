@@ -6,8 +6,7 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 /**
  * The backfill's own selector, UPDATEs and dry-run gate against PGlite: which scan-locked models it may
- * unlock, what the unlock writes, and what a revert puts back. The holds are the real legal-hold SQL
- * over stand-ins for the tables it reads. Ids are invented. The policy they pin (lock only for sexual
+ * unlock, what the unlock writes, and what a revert puts back, over stand-ins for the tables it reads. Ids are invented. The policy they pin (lock only for sexual
  * intent; lift the text scan's locks, keep the rating) is described on civitai/civitai#10228.
  */
 
@@ -57,8 +56,6 @@ beforeAll(async () => {
       images jsonb NOT NULL DEFAULT '[]', "reportSentAt" timestamp(3), "archivedAt" timestamp(3)
     );
     CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "needsReview" text, "blockedFor" text);
-    CREATE TABLE "EvidenceHeldUser" ("userId" int NOT NULL);
-    CREATE TABLE "EvidenceHold" (id serial PRIMARY KEY, "userId" int NOT NULL, "releasedAt" timestamp(3));
     CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb);
   `);
   const raw = pgliteRaw(db);
@@ -118,19 +115,9 @@ const ownerHolds: [string, string, string][] = [
       VALUES (999, '{"secondaryUserId": "$ID"}', '2024-01-01', '2024-01-02')`,
   ],
   [
-    'had an evidence hold, even a released one',
-    'ownerEvidenceHold',
-    `INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES ($ID, '2026-01-01')`,
-  ],
-  [
     'has a SexualMinor ban',
     'ownerSexualMinorBan',
     `UPDATE "User" SET meta = '{"banDetails": {"reasonCode": "SexualMinorGenerator"}}' WHERE id = $ID`,
-  ],
-  [
-    'is under an account hold',
-    'ownerAccountHold',
-    `INSERT INTO "Image" (id, "userId", "needsReview") VALUES ($ID, $ID, 'csam')`,
   ],
 ];
 
@@ -241,7 +228,7 @@ const outside: [string, number, ModelFields][] = [
 
 beforeEach(async () => {
   await db.exec(
-    'DELETE FROM "Model"; DELETE FROM "ModelVersion"; DELETE FROM "ModelFile"; DELETE FROM "ModelFileHash"; DELETE FROM "ModelOwnership"; DELETE FROM "ModActivity"; DELETE FROM "Appeal"; DELETE FROM "CsamReport"; DELETE FROM "EvidenceHold"; DELETE FROM "User"; DELETE FROM "Image"; DELETE FROM "EvidenceHeldUser";'
+    'DELETE FROM "Model"; DELETE FROM "ModelVersion"; DELETE FROM "ModelFile"; DELETE FROM "ModelFileHash"; DELETE FROM "ModelOwnership"; DELETE FROM "ModActivity"; DELETE FROM "Appeal"; DELETE FROM "CsamReport"; DELETE FROM "User"; DELETE FROM "Image";'
   );
   await db.query(`INSERT INTO "User" (id, meta) VALUES ($1, '{}')`, [NEW_OWNER]);
   await model(ELIGIBLE);
@@ -316,9 +303,7 @@ describe('model nsfw lock backfill: scan locks', () => {
       pendingDetection: 4,
       reverted: 1,
       ownerCsamReport: 4,
-      ownerEvidenceHold: 2,
       ownerSexualMinorBan: 2,
-      ownerAccountHold: 2,
     });
     expect(counts.scanLocked).toBe(ALL_ELIGIBLE.length + excluded.length);
   });

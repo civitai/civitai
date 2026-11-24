@@ -34,8 +34,11 @@ export const BUYER_DISCLOSURE_INTRO = 'Before you request:';
  */
 export const BUYER_DISCLOSURE_VERSION = 'buyer-disclosure-2026-11-23';
 
+/** What a disclosure line is about; a stable key for it, which the stored text never includes. */
+export type BuyerDisclosureItemId = 'hold' | 'delivery' | 'accept' | 'cancel' | 'dispute' | 'party';
+
 /** One disclosure line: a bold lead sentence, then the rest. */
-export type BuyerDisclosureItem = { lead: string; text: string };
+export type BuyerDisclosureItem = { id: BuyerDisclosureItemId; lead: string; text: string };
 
 /**
  * What a buyer agrees to before the hold. `reviewEnabled` is the value that sets the deal's
@@ -58,10 +61,12 @@ export function buyerDisclosureItems({
   const dispute = hours(SERVICE_DEAL_DISPUTE_WINDOW_MS);
   return [
     {
+      id: 'hold',
       lead: `${price.toLocaleString('en-US')} Buzz is held now.`,
       text: `Refunded if the seller declines, doesn't accept within ${accept} hours, or you withdraw before they accept.`,
     },
     {
+      id: 'delivery',
       lead: `Delivery within ${pluralize(deliveryDays, 'day')} of acceptance.`,
       text:
         revisionsIncluded === 0
@@ -69,20 +74,24 @@ export function buyerDisclosureItems({
           : `${pluralize(revisionsIncluded, 'revision')} included.`,
     },
     {
+      id: 'accept',
       lead: 'Accept or request an included revision.',
       text: `You can't reject a delivery, but you can ask to cancel. If you do nothing, it completes ${auto} hours after the latest delivery.`,
     },
     {
+      id: 'cancel',
       lead: 'Either side can ask to cancel before completion.',
       text: `You're refunded if the other side agrees or doesn't answer within ${cancelResponse} hours. If they decline, a Civitai moderator decides.`,
     },
     {
+      id: 'dispute',
       lead: `You have ${dispute} hours after completion to dispute.`,
       text: reviewEnabled
         ? 'Then the seller is paid. If you review the work as Happy, the seller is paid right away and you can no longer dispute. Moderator decisions on disputes and cancellations are final on Civitai.'
         : 'Then the seller is paid. Moderator decisions on disputes and cancellations are final on Civitai.',
     },
     {
+      id: 'party',
       lead: "Civitai isn't a party to this deal.",
       text: "Don't pay or share payment details outside Civitai.",
     },

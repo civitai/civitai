@@ -465,10 +465,6 @@ export type ModelMeta = Partial<{
   archivedBy: number;
   takenDownAt: string;
   takenDownBy: number;
-  /** Written by a content wipe on a model it kept and hid; see model-removed-with-owner.service. */
-  removedWithOwner: boolean;
-  statusBeforeRemoval: string;
-  versionsUnpublishedByRemoval: { id: number; status: string }[];
   bountyId: number;
   unpublishedBy: number;
   declinedReason: string;

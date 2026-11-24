@@ -1,0 +1,83 @@
+{
+  "$comment": "Node's answer to a request from a blocked region (cf-ipcountry GB, on the default REGION_BLOCK_CONFIG) on every route feed-go answers, in a production build. Captured from the real routes by src/server/__tests__/feed-go-region-blocked-451.test.ts (the tRPC route over a socket, the /api/v1 proxy middleware chain, plus the next.config.mjs headers the router sets before either), which fails when Node's answer differs from this file. internal/server/region_blocked_test.go asserts feed-go's own answer (FEED_GO_ANSWER_REGION_BLOCKED on) is the same status, headers and body. headers: every response header, lowercased, except transport (date, connection, keep-alive, content-length, transfer-encoding) and feed-go's own x-feed-go-served.",
+  "routes": [
+    {
+      "endpoint": "as-posts",
+      "path": "/api/trpc/image.getImagesAsPostsInfinite?input=%7B%22json%22%3A%7B%7D%7D",
+      "requestHeaders": {
+        "cf-ipcountry": "GB"
+      },
+      "status": 451,
+      "headers": {
+        "content-type": "application/json",
+        "x-frame-options": "DENY"
+      },
+      "body": "{\"error\":\"Access to this service is not available in your region due to legal restrictions.\",\"code\":\"REGION_BLOCKED\"}"
+    },
+    {
+      "endpoint": "infinite",
+      "path": "/api/trpc/image.getInfinite?input=%7B%22json%22%3A%7B%7D%7D",
+      "requestHeaders": {
+        "cf-ipcountry": "GB"
+      },
+      "status": 451,
+      "headers": {
+        "content-type": "application/json",
+        "x-frame-options": "DENY"
+      },
+      "body": "{\"error\":\"Access to this service is not available in your region due to legal restrictions.\",\"code\":\"REGION_BLOCKED\"}"
+    },
+    {
+      "endpoint": "model-getall",
+      "path": "/api/trpc/model.getAll?input=%7B%22json%22%3A%7B%7D%7D",
+      "requestHeaders": {
+        "cf-ipcountry": "GB"
+      },
+      "status": 451,
+      "headers": {
+        "content-type": "application/json",
+        "x-frame-options": "DENY"
+      },
+      "body": "{\"error\":\"Access to this service is not available in your region due to legal restrictions.\",\"code\":\"REGION_BLOCKED\"}"
+    },
+    {
+      "endpoint": "v1-models",
+      "path": "/api/v1/models?limit=2",
+      "requestHeaders": {
+        "cf-ipcountry": "GB"
+      },
+      "status": 451,
+      "headers": {
+        "content-type": "application/json",
+        "x-frame-options": "DENY"
+      },
+      "body": "{\"error\":\"Access to this service is not available in your region due to legal restrictions.\",\"code\":\"REGION_BLOCKED\"}"
+    },
+    {
+      "endpoint": "v1-models-id",
+      "path": "/api/v1/models/123",
+      "requestHeaders": {
+        "cf-ipcountry": "GB"
+      },
+      "status": 451,
+      "headers": {
+        "content-type": "application/json",
+        "x-frame-options": "DENY"
+      },
+      "body": "{\"error\":\"Access to this service is not available in your region due to legal restrictions.\",\"code\":\"REGION_BLOCKED\"}"
+    },
+    {
+      "endpoint": "v1-images",
+      "path": "/api/v1/images?limit=2",
+      "requestHeaders": {
+        "cf-ipcountry": "GB"
+      },
+      "status": 451,
+      "headers": {
+        "content-type": "application/json",
+        "x-frame-options": "DENY"
+      },
+      "body": "{\"error\":\"Access to this service is not available in your region due to legal restrictions.\",\"code\":\"REGION_BLOCKED\"}"
+    }
+  ]
+}

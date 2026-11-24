@@ -48,7 +48,7 @@ import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import { newValidator } from '~/server/registry-adapter/json-schema';
 import type { AdapterContext, Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
-import { sortedKeyJson, sha256Hex } from '~/server/registry-adapter/release';
+import { compareCodeUnits, sortedKeyJson, sha256Hex } from '~/server/registry-adapter/release';
 import { registryUrn } from '~/server/registry-adapter/urn';
 
 export type FeedDocument = {
@@ -402,7 +402,7 @@ export function createDocFeed(opts: DocFeedOptions) {
         witness,
         served: [...served]
           .map(([urn, s]) => [urn, s.rev, s.seq] as [string, string, number])
-          .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
+          .sort((a, b) => compareCodeUnits(a[0], b[0])),
         ...(level !== undefined ? { levels: true as const } : {}),
       },
       entities,
@@ -442,9 +442,7 @@ export function createDocFeed(opts: DocFeedOptions) {
       }
       const was = new Map(before.served.map(([urn, rev]) => [urn, rev]));
       const still = new Set(next.served.map(([urn]) => urn));
-      const deletes = [...was.keys()]
-        .filter((urn) => !still.has(urn))
-        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      const deletes = [...was.keys()].filter((urn) => !still.has(urn)).sort(compareCodeUnits);
       const upserts = next.served
         .filter(([urn, rev]) => was.get(urn) !== rev)
         .map(([urn]) => entities.get(urn))

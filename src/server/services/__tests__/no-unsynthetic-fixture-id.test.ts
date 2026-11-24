@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from 'fs';
 import path from 'path';
 
 /**
- * 🔴 Fails when a moderation, report, appeal, legal-hold or CSAM test or fixture, or any test or
+ * 🔴 Fails when a moderation, report, appeal or CSAM test or fixture, or any test or
  * fixture that pairs a user id with a report id, holds an id-sized number outside the synthetic range. Ids in these fixtures come from `SYNTHETIC_MIN`..`SYNTHETIC_MAX`,
  * so a fixture never carries the id of a real account or record. Small ids (under 10 000), round
  * numbers (durations, sizes), values past int4 and UUID segments pass; a genuine non-id constant
@@ -115,7 +115,7 @@ const isTestOrFixture = (repoPath: string) =>
   /\/__tests__\/[^/]+\.[cm]?[jt]sx?$/.test(repoPath) ||
   /\/_{0,2}fixtures?_{0,2}\//.test(repoPath);
 
-const MODERATION_PATH = /^apps\/moderator\/|csam|report|appeal|moderat|legal-hold|held-/i;
+const MODERATION_PATH = /^apps\/moderator\/|csam|report|appeal|moderat|held-/i;
 const idKey = (name: string) => new RegExp(`${name}_?id['"\`]?\\s*[:=]`, 'i');
 const pairsUserAndReport = (source: string) =>
   idKey('report').test(source) && idKey('user').test(source);

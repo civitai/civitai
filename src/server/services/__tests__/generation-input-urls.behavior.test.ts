@@ -114,8 +114,6 @@ beforeAll(async () => {
       ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "needsReview" text,
       "tosViolation" boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
       poi boolean NOT NULL DEFAULT false);
-    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY, "userId" int NOT NULL);
-    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
     CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
     CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
@@ -124,7 +122,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await holder.db.exec(`
-    TRUNCATE "Post", "Image", "EvidenceHoldImage", "EvidenceHeldUser", "CsamReport", "Report", "UserReport";
+    TRUNCATE "Post", "Image", "CsamReport", "Report", "UserReport";
     INSERT INTO "Post" (id, "publishedAt") VALUES (1, now() - interval '1 day');
   `);
   redis.clear();
@@ -218,8 +216,6 @@ describe('assertGenerationInputUrlsUsable', () => {
   ])('decides on the image alone, not on records about %s', async (_, owner) => {
     await givenImage({ userId: owner });
     await holder.db.exec(`
-      INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (100, ${owner});
-      INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${owner});
       INSERT INTO "CsamReport" (id, "userId", images) VALUES (1, ${owner}, '[100]');
     `);
     expect(await outcome()).toBe('accepted');

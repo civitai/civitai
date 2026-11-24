@@ -180,9 +180,9 @@ export const postDeleteBlocked = (data: RawBuilder<unknown>) =>
     ELSE ${ownPostDeleteBlocked(sql`(${data}->>'ownerId')::int`)} END`;
 
 /**
- * What keeps a parent's cleanup of an image for now, read against "Image": its child-safety case, a
- * held owner (`heldOwner`, the caller's), and for an owner's cleanup any moderation still open,
- * which decides those images first.
+ * What keeps a parent's cleanup of an image for now, read against "Image": its child-safety case, an
+ * owner named on a CSAM report (`heldOwner`, the caller's), and for an owner's cleanup any
+ * moderation still open, which decides those images first.
  */
 export const cleanupBlocked = (moderatorDelete: boolean, heldOwner: RawBuilder<boolean>) =>
   sql<boolean>`(${childSafetyImageCase()} OR ${heldOwner}${
