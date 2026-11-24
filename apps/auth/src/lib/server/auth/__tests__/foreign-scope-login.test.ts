@@ -24,11 +24,12 @@ const h = vi.hoisted(() => ({
   getOrCreateDeviceId: vi.fn(() => 'device-xyz'),
   issuePendingAuthz: vi.fn(async () => true),
   isFirstPartyOrigin: vi.fn(async () => true),
+  userRows: [] as Record<string, unknown>[],
 }));
 
-// No user rows: the account checks at each mint pass, as for an ordinary account.
+// The "User" rows the account checks read; none, for an ordinary account.
 vi.mock('$lib/server/db/db', async () => ({
-  db: (await import('../../../../test/kysely-fake')).createKyselyFake({}),
+  db: (await import('../../../../test/kysely-fake')).createKyselyFake({ User: h.userRows }),
 }));
 vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
@@ -81,6 +82,7 @@ const GREEN = spokeLanding('https://civitai.com');
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.userRows.length = 0;
   h.issuePendingAuthz.mockResolvedValue(true);
   h.isFirstPartyOrigin.mockResolvedValue(true);
 });
@@ -249,6 +251,35 @@ describe('the hand-off fires ONLY for a genuine account switch', () => {
     await establishSession(cookies, user(200), { returnUrl: RED });
 
     expect(h.issuePendingAuthz).toHaveBeenCalledWith(expect.anything(), 200, 'civitai.red');
+    expect(cookies._store.get('civ-token')).toBe('green-session-for-100');
+  });
+});
+
+// The hand-off mints nothing, so the sign-in check must come before it.
+describe('a cross-scope login to a memorialized account', () => {
+  const crossScopeLogin = async (flags: number) => {
+    h.userRows.push({ id: 200, username: 'u200', flags });
+    h.verifyToken.mockResolvedValue({ sub: '100', jti: 'j' });
+    const cookies = makeCookies({ 'civ-token': 'green-session-for-100' });
+    const outcome = await establishSession(cookies, user(200), { returnUrl: RED }).then(
+      () => 'signed-in',
+      (e: { status?: number }) => e.status
+    );
+    return { outcome, cookies };
+  };
+
+  it('hands off for an ordinary account (positive control)', async () => {
+    const { outcome } = await crossScopeLogin(0);
+    expect(outcome).toBe('signed-in');
+    expect(h.issuePendingAuthz).toHaveBeenCalledWith(expect.anything(), 200, 'civitai.red');
+    expect(h.mintSessionToken).not.toHaveBeenCalled();
+  });
+
+  it('is refused with a 403 and issues no hand-off', async () => {
+    const { outcome, cookies } = await crossScopeLogin(4);
+    expect(outcome).toBe(403);
+    expect(h.issuePendingAuthz).not.toHaveBeenCalled();
+    expect(h.linkAccount).not.toHaveBeenCalled();
     expect(cookies._store.get('civ-token')).toBe('green-session-for-100');
   });
 });
