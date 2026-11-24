@@ -63,6 +63,13 @@ import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 const mockFindFirst = dbMock.dbWrite.model.findFirst;
+/** The run-destination lookup's drafts linked on their model. */
+const mockFindDrafts = dbMock.dbWrite.model.findMany;
+/** The run-destination lookup's versions that name the run; every other version read gets `others`. */
+const versionsNamingRun = (rows: unknown[], others: unknown[] = []) =>
+  dbMock.dbWrite.modelVersion.findMany.mockImplementation((async (args: {
+    where: { meta?: unknown };
+  }) => (args.where.meta ? rows : others)) as never);
 
 const USER = { id: 5 } as SessionUser;
 
@@ -101,6 +108,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockWithheld.mockResolvedValue([]);
   mockFindFirst.mockResolvedValue(null);
+  mockFindDrafts.mockResolvedValue([]);
   mockUpsertModel.mockResolvedValue({ id: 100 });
   mockUpsertModelVersion.mockResolvedValue({ id: 200 });
   mockCreateFile.mockResolvedValue({ id: 300 });
@@ -294,7 +302,7 @@ describe('createDraftModelFromWorkflow', () => {
     ['no draft yet', null],
   ])('refuses a run the main app withholds, with %s', async (_label, existing) => {
     mockWithheld.mockResolvedValue(['wf-studio-1']);
-    mockFindFirst.mockResolvedValue(existing as never);
+    mockFindDrafts.mockResolvedValue((existing ? [existing] : []) as never);
     await expect(
       createDraftModelFromWorkflow({
         user: USER,
@@ -308,7 +316,7 @@ describe('createDraftModelFromWorkflow', () => {
 
   it('lets a moderator through without asking', async () => {
     mockWithheld.mockResolvedValue(['wf-studio-1']);
-    mockFindFirst.mockResolvedValue({ id: 77, modelVersions: [{ id: 88 }] } as never);
+    mockFindDrafts.mockResolvedValue([{ id: 77, modelVersions: [{ id: 88 }] }] as never);
     const result = await createDraftModelFromWorkflow({
       user: { ...USER, isModerator: true } as SessionUser,
       workflow: studioWorkflow(),
@@ -333,14 +341,14 @@ describe('createDraftModelFromWorkflow', () => {
       workflow: studioWorkflow(),
       selectedEpochNumber: 3,
     });
-    expect(mockFindFirst).toHaveBeenCalledTimes(1);
-    const where = mockFindFirst.mock.calls[0][0].where;
+    expect(mockFindDrafts).toHaveBeenCalledTimes(1);
+    const where = mockFindDrafts.mock.calls[0][0].where;
     expect(where.userId).toBe(USER.id);
     expect(where.meta).toEqual({ path: ['trainingStudioWorkflowId'], equals: 'wf-studio-1' });
   });
 
   it('returns the existing draft ids without creating anything', async () => {
-    mockFindFirst.mockResolvedValue({ id: 77, modelVersions: [{ id: 88 }] });
+    mockFindDrafts.mockResolvedValue([{ id: 77, modelVersions: [{ id: 88 }] }] as never);
     const result = await createDraftModelFromWorkflow({
       user: USER,
       workflow: studioWorkflow(),
@@ -362,12 +370,12 @@ describe('createDraftModelFromWorkflow', () => {
 
   // Decision: the owner deleting the draft and pressing Publish again must start over, not reopen
   // the deleted model; a moderator's delete (or one with no recorded actor) must not be routed
-  // around that way. Don't drop the filter or the orderBy to make "returns the existing draft"
-  // simpler.
+  // around that way. Don't drop the filter or the newest-first pick to make "returns the existing
+  // draft" simpler.
   describe('drafts for the run that were deleted or restored', () => {
     type Row = { id: number; status: ModelStatus; deletedBy: number | null };
     type Clause = { status?: { not: ModelStatus }; deletedBy?: { not: number } | null };
-    type Args = { where: { OR?: Clause[] }; orderBy?: { id: 'asc' | 'desc' } };
+    type Args = { where: { OR?: Clause[] } };
     // SQL's rules, not JS's: `deletedBy <> x` is not true for a NULL deletedBy.
     const passes = (r: Row, c: Clause) =>
       c.status
@@ -376,12 +384,10 @@ describe('createDraftModelFromWorkflow', () => {
         ? r.deletedBy === null
         : r.deletedBy !== null && r.deletedBy !== c.deletedBy?.not;
     const draftsAre = (rows: Row[]) =>
-      mockFindFirst.mockImplementation((async ({ where, orderBy }: Args) => {
-        const kept = rows.filter((r) => !where.OR || where.OR.some((c) => passes(r, c)));
-        if (orderBy?.id === 'desc') kept.sort((a, b) => b.id - a.id);
-        const row = kept[0];
-        return row ? { id: row.id, modelVersions: [{ id: row.id + 1 }] } : null;
-      }) as never);
+      mockFindDrafts.mockImplementation((async ({ where }: Args) =>
+        rows
+          .filter((r) => !where.OR || where.OR.some((c) => passes(r, c)))
+          .map((r) => ({ id: r.id, modelVersions: [{ id: r.id + 1 }] }))) as never);
     const publish = () =>
       createDraftModelFromWorkflow({
         user: USER,
@@ -414,7 +420,7 @@ describe('createDraftModelFromWorkflow', () => {
   });
 
   it('re-entry on an existing draft whose blobs expired resolves the ids with a null epoch instead of throwing', async () => {
-    mockFindFirst.mockResolvedValue({ id: 77, modelVersions: [{ id: 88 }] });
+    mockFindDrafts.mockResolvedValue([{ id: 77, modelVersions: [{ id: 88 }] }] as never);
     const wf = studioWorkflow({
       steps: [
         {
@@ -702,7 +708,7 @@ describe('training moderation gate — createDraftModelFromWorkflow', () => {
             selectedEpochNumber: 1,
           })
         ).rejects.toThrow(NOT_APPROVED);
-        expect(mockFindFirst).not.toHaveBeenCalled();
+        expect(mockFindDrafts).not.toHaveBeenCalled();
         expect(mockUpsertModel).not.toHaveBeenCalled();
         expect(mockUpsertModelVersion).not.toHaveBeenCalled();
         expect(mockCreateFile).not.toHaveBeenCalled();
@@ -732,7 +738,7 @@ describe('training moderation gate — createDraftModelFromWorkflow', () => {
   it.each(REFUSED_STATUSES)(
     're-entry on an already-materialized draft is refused too when the status is %s',
     async (status) => {
-      mockFindFirst.mockResolvedValue({ id: 77, modelVersions: [{ id: 88 }] });
+      mockFindDrafts.mockResolvedValue([{ id: 77, modelVersions: [{ id: 88 }] }] as never);
       await expect(
         createDraftModelFromWorkflow({
           user: USER,
@@ -877,11 +883,9 @@ function expiredRun(moderationStatus: string | undefined): Workflow {
 
 describe('approval stamp on re-entry', () => {
   it('stamps an approved re-entry on a draft that has no stamp yet', async () => {
-    mockFindFirst.mockResolvedValue({
-      id: 77,
-      meta: { trainingStudioWorkflowId: 'wf-studio-1' },
-      modelVersions: [{ id: 88 }],
-    });
+    mockFindDrafts.mockResolvedValue([
+      { id: 77, meta: { trainingStudioWorkflowId: 'wf-studio-1' }, modelVersions: [{ id: 88 }] },
+    ] as never);
     await createDraftModelFromWorkflow({
       user: USER,
       workflow: studioWorkflow(),
@@ -899,7 +903,9 @@ describe('approval stamp on re-entry', () => {
   });
 
   it('still returns the draft when the stamp write fails', async () => {
-    mockFindFirst.mockResolvedValue({ id: 77, meta: null, modelVersions: [{ id: 88 }] });
+    mockFindDrafts.mockResolvedValue([
+      { id: 77, meta: null, modelVersions: [{ id: 88 }] },
+    ] as never);
     dbMock.dbWrite.$executeRaw.mockRejectedValueOnce(new Error('db down'));
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await expect(
@@ -913,11 +919,13 @@ describe('approval stamp on re-entry', () => {
   });
 
   it('does not write when the draft already carries the stamp', async () => {
-    mockFindFirst.mockResolvedValue({
-      id: 77,
-      meta: { trainingStudioWorkflowId: 'wf-studio-1', trainingStudioModerationApproved: true },
-      modelVersions: [{ id: 88 }],
-    });
+    mockFindDrafts.mockResolvedValue([
+      {
+        id: 77,
+        meta: { trainingStudioWorkflowId: 'wf-studio-1', trainingStudioModerationApproved: true },
+        modelVersions: [{ id: 88 }],
+      },
+    ] as never);
     await createDraftModelFromWorkflow({
       user: USER,
       workflow: studioWorkflow(),
@@ -927,7 +935,9 @@ describe('approval stamp on re-entry', () => {
   });
 
   it('does not stamp a re-entry the gate refuses', async () => {
-    mockFindFirst.mockResolvedValue({ id: 77, meta: null, modelVersions: [{ id: 88 }] });
+    mockFindDrafts.mockResolvedValue([
+      { id: 77, meta: null, modelVersions: [{ id: 88 }] },
+    ] as never);
     await expect(
       createDraftModelFromWorkflow({
         user: USER,
@@ -941,7 +951,7 @@ describe('approval stamp on re-entry', () => {
 
 describe('training moderation gate — runs whose blobs have expired', () => {
   it('re-entry on an existing draft of an approved expired run resolves with a null epoch', async () => {
-    mockFindFirst.mockResolvedValue({ id: 77, modelVersions: [{ id: 88 }] });
+    mockFindDrafts.mockResolvedValue([{ id: 77, modelVersions: [{ id: 88 }] }] as never);
     await expect(
       createDraftModelFromWorkflow({
         user: USER,
@@ -970,7 +980,7 @@ describe('training moderation gate — runs whose blobs have expired', () => {
   it.each(['rejected', undefined])(
     'an expired run reporting %s is refused by the gate, on re-entry too',
     async (status) => {
-      mockFindFirst.mockResolvedValue({ id: 77, modelVersions: [{ id: 88 }] });
+      mockFindDrafts.mockResolvedValue([{ id: 77, modelVersions: [{ id: 88 }] }] as never);
       await expect(
         createDraftModelFromWorkflow({
           user: USER,
@@ -1193,11 +1203,13 @@ describe('the run named on each version', () => {
 
   it("never resolves a run to another run's version on its model", async () => {
     // The run's own v1 was deleted; the model it named still holds a version added from another run.
-    mockFindFirst.mockResolvedValue({
-      id: 77,
-      meta: { trainingStudioWorkflowId: 'wf-studio-1', trainingStudioModerationApproved: true },
-      modelVersions: [{ id: 89, meta: { trainingStudioWorkflowId: 'wf-other' } }],
-    } as never);
+    mockFindDrafts.mockResolvedValue([
+      {
+        id: 77,
+        meta: { trainingStudioWorkflowId: 'wf-studio-1', trainingStudioModerationApproved: true },
+        modelVersions: [{ id: 89, meta: { trainingStudioWorkflowId: 'wf-other' } }],
+      },
+    ] as never);
     const result = await createDraftModelFromWorkflow({
       user: USER,
       workflow: studioWorkflow(),
@@ -1208,11 +1220,13 @@ describe('the run named on each version', () => {
   });
 
   it('resumes a run that was added to an existing model as that version, not a new model', async () => {
-    dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue({
-      id: 61,
-      meta: { trainingStudioWorkflowId: 'wf-studio-1', trainingStudioModerationApproved: true },
-      model: { id: 60, meta: null },
-    } as never);
+    versionsNamingRun([
+      {
+        id: 61,
+        meta: { trainingStudioWorkflowId: 'wf-studio-1', trainingStudioModerationApproved: true },
+        model: { id: 60, meta: null },
+      },
+    ]);
     const result = await createDraftModelFromWorkflow({
       user: USER,
       workflow: studioWorkflow(),
@@ -1233,18 +1247,13 @@ describe('createDraftVersionFromWorkflow', () => {
       selectedEpochNumber: 1,
       modelId,
     });
-  // The run-destination lookup finds no model naming the run; the target lookup finds `target`.
   const withTarget = (target: { id: number; meta: unknown } | null) =>
-    mockFindFirst.mockImplementation((async (args: { where: { id?: number } }) =>
-      args.where.id === undefined ? null : target) as never);
+    mockFindFirst.mockResolvedValue(target as never);
+  // The target's version names; no version names the run yet.
+  const NAMES = [{ name: 'v1' }, { name: 'v3' }, { name: 'Final' }];
 
   beforeEach(() => {
-    dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue(null as never);
-    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
-      { name: 'v1' },
-      { name: 'v3' },
-      { name: 'Final' },
-    ] as never);
+    versionsNamingRun([], NAMES);
     withTarget({ id: TARGET_ID, meta: null });
   });
 
@@ -1301,11 +1310,16 @@ describe('createDraftVersionFromWorkflow', () => {
   });
 
   it('resumes the version the run was already added as on the same model', async () => {
-    dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue({
-      id: 61,
-      meta: { trainingStudioWorkflowId: 'wf-studio-1', trainingStudioModerationApproved: true },
-      model: { id: TARGET_ID, meta: null },
-    } as never);
+    versionsNamingRun(
+      [
+        {
+          id: 61,
+          meta: { trainingStudioWorkflowId: 'wf-studio-1', trainingStudioModerationApproved: true },
+          model: { id: TARGET_ID, meta: null },
+        },
+      ],
+      NAMES
+    );
     await expect(addVersion()).resolves.toMatchObject({
       modelId: TARGET_ID,
       modelVersionId: 61,
@@ -1315,7 +1329,9 @@ describe('createDraftVersionFromWorkflow', () => {
   });
 
   it('refuses a run whose draft is on another model', async () => {
-    mockFindFirst.mockResolvedValue({ id: 77, meta: null, modelVersions: [{ id: 88 }] } as never);
+    mockFindDrafts.mockResolvedValue([
+      { id: 77, meta: null, modelVersions: [{ id: 88 }] },
+    ] as never);
     const error = await addVersion().catch((e) => e);
     expect(getPublishRefusalReason(error)).toBe('already-published-elsewhere');
     expect(mockUpsertModelVersion).not.toHaveBeenCalled();
@@ -1333,6 +1349,7 @@ describe('createDraftVersionFromWorkflow', () => {
         modelId: TARGET_ID,
       })
     ).rejects.toSatisfy(isTrainingNotApprovedRefusal);
+    expect(mockFindDrafts).not.toHaveBeenCalled();
     expect(mockFindFirst).not.toHaveBeenCalled();
   });
 });

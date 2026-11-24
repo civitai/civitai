@@ -392,6 +392,9 @@ async function stampTrainingModerationApproved(
 
 type RunDestination = { modelId: number; modelVersionId: number; target: PublishTarget };
 
+const newest = <T extends { id: number }>(rows: T[]): T | undefined =>
+  rows.reduce<T | undefined>((top, row) => (!top || row.id > top.id ? row : top), undefined);
+
 /**
  * The model or version a run was already turned into, draft or published, if its owner still has it: a version that names the run in
  * its own meta, else (a draft made before versions carried the link) a model that names it. A run has
@@ -404,16 +407,19 @@ async function findRunDestination(
   workflowId: string
 ): Promise<RunDestination | null> {
   const linked = { path: ['trainingStudioWorkflowId'], equals: workflowId };
+  // Both lookups match a handful of rows at most, so the newest is picked here: with `ORDER BY id
+  // DESC LIMIT 1` Postgres walks the primary key backwards past every other row on a large account
+  // instead of going through the user's models.
   // primary: decides whether this publish entry writes a second draft for the run.
-  const version = await dbWrite.modelVersion.findFirst({
+  const versions = await dbWrite.modelVersion.findMany({
     where: {
       uploadType: ModelUploadType.Trained,
       meta: linked,
       model: { userId, ...studioModelNotOwnerDeleted(userId) },
     },
-    orderBy: { id: 'desc' },
     select: { id: true, meta: true, model: { select: { id: true, meta: true } } },
   });
+  const version = newest(versions);
   if (version) {
     if ((version.meta as TrainingStudioLink | null)?.trainingStudioModerationApproved !== true)
       await stampTrainingModerationApproved({ modelVersionId: version.id });
@@ -426,7 +432,7 @@ async function findRunDestination(
   }
 
   // primary: decides whether this publish entry writes a second draft for the run.
-  const model = await dbWrite.model.findFirst({
+  const models = await dbWrite.model.findMany({
     where: {
       userId,
       uploadType: ModelUploadType.Trained,
@@ -434,8 +440,6 @@ async function findRunDestination(
       // A fresh draft made past the owner's delete is re-stamped onto the run by from-orchestrator.
       ...studioModelNotOwnerDeleted(userId),
     },
-    // A restored draft and its replacement can both match; the run follows the newest.
-    orderBy: { id: 'desc' },
     select: {
       id: true,
       meta: true,
@@ -444,6 +448,8 @@ async function findRunDestination(
       modelVersions: { select: { id: true, meta: true }, orderBy: { index: 'desc' } },
     },
   });
+  // A restored draft and its replacement can both match; the run follows the newest.
+  const model = newest(models);
   const ownVersion = model && runVersionOnItsModel(model.modelVersions, workflowId);
   if (!model || !ownVersion) return null;
   // A draft materialized before the approval stamp existed gets it here. Best-effort: a failed write

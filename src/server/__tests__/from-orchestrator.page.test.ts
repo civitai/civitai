@@ -136,7 +136,7 @@ describe('from-orchestrator SSR — adding the run as a new version', () => {
 
   beforeEach(() => {
     mockGetWorkflow.mockResolvedValue(run('approved'));
-    dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue(null as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([] as never);
   });
 
   it("lists the owner's eligible models, those on the run's base model first", async () => {
@@ -167,11 +167,13 @@ describe('from-orchestrator SSR — adding the run as a new version', () => {
   });
 
   it('sends a run that already has a draft back to it instead of offering a second one', async () => {
-    dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue({
-      id: 61,
-      meta: { trainingStudioWorkflowId: 'wf-1', trainingStudioModerationApproved: true },
-      model: { id: 60, meta: null },
-    } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      {
+        id: 61,
+        meta: { trainingStudioWorkflowId: 'wf-1', trainingStudioModerationApproved: true },
+        model: { id: 60, meta: null },
+      },
+    ] as never);
     await expect(asVersion()).resolves.toEqual({
       redirect: {
         destination:
@@ -204,11 +206,13 @@ describe('from-orchestrator SSR — adding the run as a new version', () => {
 
   it('lands a resumed added version in the VERSION wizard, not the model wizard', async () => {
     mockGetWorkflow.mockResolvedValue(run('approved', { epochs: false }));
-    dbMock.dbWrite.modelVersion.findFirst.mockResolvedValue({
-      id: 61,
-      meta: { trainingStudioWorkflowId: 'wf-1', trainingStudioModerationApproved: true },
-      model: { id: 60, meta: null },
-    } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      {
+        id: 61,
+        meta: { trainingStudioWorkflowId: 'wf-1', trainingStudioModerationApproved: true },
+        model: { id: 60, meta: null },
+      },
+    ] as never);
     dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({
       name: 'v2',
       baseModel: 'SDXL 1.0',
