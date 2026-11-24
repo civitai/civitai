@@ -22,6 +22,7 @@
   import {
     createPlayIntent,
     isSeek,
+    playingLyricIndex,
     playSongAt,
     songLoading,
     songPlayer,
@@ -129,7 +130,45 @@
   const isSection = (text: string) => /^\s*\[[^\]]+\]\s*$/.test(text);
 </script>
 
+{#snippet clock(song: SongCard | null)}
+  {formatPlaybackTime(time)} / {formatPlaybackTime(lengthOf(song))}
+{/snippet}
+
+{#snippet playButton(look: string)}
+  <Button
+    size="icon-lg"
+    class={cn('shrink-0 rounded-full', look)}
+    aria-label={loading ? 'Loading' : paused ? 'Play' : 'Pause'}
+    aria-busy={loading}
+    disabled={mode === 'failed'}
+    onclick={toggle}
+  >
+    {#if loading}
+      <IconLoader2 size={16} class="animate-spin" />
+    {:else if paused}
+      <IconPlayerPlayFilled size={16} />
+    {:else}
+      <IconPlayerPauseFilled size={16} />
+    {/if}
+  </Button>
+{/snippet}
+
+{#snippet volumeControl()}
+  <IconVolume size={14} class="shrink-0 text-dark-2" aria-hidden="true" />
+  <Slider
+    type="single"
+    min={0}
+    max={1}
+    step={0.05}
+    aria-label="Volume"
+    class="h-6 max-w-24"
+    trackClass="bg-dark-4"
+    bind:value={() => volume, setVolume}
+  />
+{/snippet}
+
 {#snippet lyrics(lines: SongCard['lines'])}
+  {@const playing = detail ? playingLyricIndex(lines, time) : -1}
   {#each lines as line, i (i)}
     {#if isSection(line.text)}
       <p class="mt-1 text-xs font-semibold uppercase tracking-wide text-dark-2">{line.text}</p>
@@ -137,9 +176,11 @@
       {@const at = line.t / 1000}
       <button
         type="button"
+        aria-current={i === playing ? 'true' : undefined}
         class={cn(
           'flex w-full items-baseline text-left hover:bg-dark-5',
-          detail ? 'gap-2 rounded-md px-2 py-1.5' : 'min-h-6 gap-2 rounded px-1 py-0.5'
+          detail ? 'gap-2 rounded-md px-2 py-1.5' : 'min-h-6 gap-2 rounded px-1 py-0.5',
+          i === playing && 'bg-blue-500/10 font-medium text-white'
         )}
         title="Play from {formatPlaybackTime(at)}"
         onclick={() => {
@@ -149,7 +190,8 @@
       >
         <span
           class={cn(
-            'shrink-0 tabular-nums text-dark-2',
+            'shrink-0 tabular-nums',
+            i === playing ? 'text-blue-300' : 'text-dark-2',
             detail && 'w-[34px] text-xs font-semibold'
           )}>{formatPlaybackTime(at)}</span
         >
@@ -192,30 +234,13 @@
               {song?.title || 'Untitled song'}
             {/if}
           </p>
-            {#if mode === 'failed'}
+          {#if mode === 'failed'}
             <p class="text-xs text-dark-2">{reason}</p>
-          {:else}
-            <p class="text-xs tabular-nums text-dark-2">
-              {formatPlaybackTime(time)} / {formatPlaybackTime(lengthOf(song))}
-            </p>
+          {:else if !detail}
+            <p class="text-xs tabular-nums text-dark-2">{@render clock(song)}</p>
           {/if}
         </div>
-        <Button
-          size="icon-lg"
-          class="shrink-0 rounded-full"
-          aria-label={loading ? 'Loading' : paused ? 'Play' : 'Pause'}
-          aria-busy={loading}
-          disabled={mode === 'failed'}
-          onclick={toggle}
-        >
-          {#if loading}
-            <IconLoader2 size={16} class="animate-spin" />
-          {:else if paused}
-            <IconPlayerPlayFilled size={16} />
-          {:else}
-            <IconPlayerPauseFilled size={16} />
-          {/if}
-        </Button>
+        {#if !detail}{@render playButton('')}{/if}
       </div>
 
       <Slider
@@ -229,19 +254,16 @@
         disabled={mode === 'failed'}
         bind:value={() => time, seek}
       />
-      <div class="flex items-center gap-2">
-        <IconVolume size={14} class="shrink-0 text-dark-2" aria-hidden="true" />
-        <Slider
-          type="single"
-          min={0}
-          max={1}
-          step={0.05}
-          aria-label="Volume"
-          class="h-6 max-w-24"
-          trackClass="bg-dark-4"
-          bind:value={() => volume, setVolume}
-        />
-      </div>
+      {#if detail}
+        <!-- The design's controls row: play, the time beside it, the volume at the far end. -->
+        <div class="flex items-center gap-3">
+          {@render playButton('size-9 bg-blue-600 text-white hover:bg-blue-700')}
+          <span class="text-[13px] font-medium tabular-nums text-white">{@render clock(song)}</span>
+          <div class="ml-auto flex w-32 items-center gap-2">{@render volumeControl()}</div>
+        </div>
+      {:else}
+        <div class="flex items-center gap-2">{@render volumeControl()}</div>
+      {/if}
     </div>
 
     {#if song?.lines.length}

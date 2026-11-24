@@ -152,3 +152,18 @@ export const songPlayer = createSongPlayer(localVolume);
  */
 export const playSongAt = (imageId: number, seconds: number, cardKey?: SongCardKey) =>
   songPlayer.playAt(imageId, seconds, cardKey);
+
+/** The lyric line playing at `timeSec`: the last timed line that has started (`t` in ms), or -1. A
+ *  line without a time is never the playing one. */
+export function playingLyricIndex<L extends { t: number | null }>(
+  lines: readonly L[],
+  timeSec: number
+): number {
+  const ms = timeSec * 1000;
+  let playing = -1;
+  lines.forEach((line, i) => {
+    if (line.t != null && line.t <= ms && (playing === -1 || line.t >= lines[playing].t!))
+      playing = i;
+  });
+  return playing;
+}

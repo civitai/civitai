@@ -37,6 +37,16 @@ export const dateTime = (value: Date | string | null) => {
   return `${local} (${utc} UTC)`;
 };
 
+/** A day, as "Nov 3, 2026": for a date whose time of day says nothing (when something was posted). */
+export const shortDate = (value: Date | string | null) =>
+  value
+    ? new Date(value).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      })
+    : '—';
+
 export const num = (value: number) => value.toLocaleString();
 
 export const ordinal = (n: number): string => {

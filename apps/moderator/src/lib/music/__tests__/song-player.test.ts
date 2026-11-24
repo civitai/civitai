@@ -4,6 +4,7 @@ import {
   createSongPlayer,
   songLoading,
   isSeek,
+  playingLyricIndex,
   uniqueCardKey,
   type SongMedia,
 } from '../song-player';
@@ -176,5 +177,27 @@ describe('songLoading', () => {
   it('stops loading on a pause or an error, so a refused file leaves no spinner', () => {
     expect(songLoading(true, 'pause')).toBe(false);
     expect(songLoading(true, 'error')).toBe(false);
+  });
+});
+
+describe('the playing lyric line', () => {
+  const lines = [
+    { t: null, text: '[Verse]' },
+    { t: 5000, text: 'one' },
+    { t: null, text: 'untimed' },
+    { t: 10000, text: 'two' },
+    { t: 15000, text: 'three' },
+  ];
+
+  it('is the last timed line that has started, an untimed one never', () => {
+    expect(playingLyricIndex(lines, 0)).toBe(-1);
+    expect(playingLyricIndex(lines, 5)).toBe(1);
+    expect(playingLyricIndex(lines, 9.9)).toBe(1);
+    expect(playingLyricIndex(lines, 12)).toBe(3);
+    expect(playingLyricIndex(lines, 300)).toBe(4);
+  });
+
+  it('is none for lyrics with no times', () => {
+    expect(playingLyricIndex([{ t: null, text: 'a' }], 30)).toBe(-1);
   });
 });

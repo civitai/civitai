@@ -3,7 +3,7 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { tick } from 'svelte';
-  import { IconExternalLink, IconMusic, IconUser } from '@tabler/icons-svelte';
+  import { IconCheck, IconExternalLink, IconFlag, IconSearch, IconUser } from '@tabler/icons-svelte';
   import { formatPlaybackTime, getBrowsingLevelLabel } from '@civitai/shared';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -30,7 +30,7 @@
   } from '$lib/audio-review';
   import { entityUrl, userUrl } from '$lib/entity-url';
   import { fetchJson } from '$lib/fetch-json';
-  import { dateTime, LINK_BUTTON, LINK_CLASS, plural, shortAge } from '$lib/format';
+  import { dateTime, LINK_BUTTON, LINK_CLASS, plural, shortAge, shortDate } from '$lib/format';
   import { optimisticEnhancer } from '$lib/form-action';
   import { SSR_PENDING } from '$lib/ssr-pending';
   import type { Outcome } from '$lib/triage/queue';
@@ -104,6 +104,18 @@
     failed: { label: 'failed', class: 'bg-dark-5 text-dark-0' },
   };
 
+  // The design's fact rows: a fixed label column, values left-aligned beside it.
+  const FACT_ROW = 'grid grid-cols-[104px_1fr] gap-3 py-0.5';
+  const SONG_FACT_ROW = 'grid grid-cols-[92px_1fr] gap-3 py-0.5';
+
+  const COVER_STATE: Record<CheckState, string> = {
+    passed: 'Scanned',
+    blocked: 'Blocked',
+    held: 'Held for review',
+    pending: 'Scan not finished',
+    failed: 'Scan failed',
+  };
+
   const accountAge = (createdAt: Date | string | null) =>
     createdAt ? shortAge(createdAt) : 'unknown';
 </script>
@@ -112,10 +124,10 @@
   <span class="rounded px-1.5 py-px text-[11px] font-medium {tone}">{text}</span>
 {/snippet}
 
-{#snippet fact(label: string, value: string | null | undefined)}
-  <div class="flex justify-between gap-3 py-0.5">
-    <span class="shrink-0 text-dark-2">{label}</span>
-    <span class="min-w-0 text-right wrap-anywhere text-dark-0">{value || '—'}</span>
+{#snippet fact(label: string, value: string | null | undefined, row = FACT_ROW)}
+  <div class={row}>
+    <span class="text-dark-2">{label}</span>
+    <span class="min-w-0 wrap-anywhere text-white">{value || '—'}</span>
   </div>
 {/snippet}
 
@@ -146,7 +158,7 @@
     {problem}
     hint={ratingOpen
       ? 'Rating: 1 to 5 picks the level · Esc cancels. A rating leaves the reports open.'
-      : `J / K next and previous · 1 to 4 decide. Remove song asks for a violation type. ${dismiss.label} closes ${plural(row.reports.length, 'report')}.`}
+      : `J/K to move · 1 to 4 decide. Remove song asks for a violation type. ${dismiss.label} closes ${plural(row.reports.length, 'report')}.`}
   >
     {#snippet buttons()}
       <!-- Dimmed while the rating picker owns the digits. -->
@@ -194,10 +206,10 @@
         action={actionHref('setRating')}
         data-rating-form
         use:enhance={rate}
-        class="flex flex-wrap items-center gap-1.5 {ratingOpen ? '' : 'opacity-80'}"
+        class="flex flex-nowrap items-center gap-1.5 {ratingOpen ? '' : 'opacity-80'}"
       >
         <input type="hidden" name="imageId" value={row.id} />
-        <span class="col-span-2 text-xs text-dark-2">Rating</span>
+        <span class="mr-0.5 text-xs text-dark-2">Rating</span>
         {#each SONG_RATING_LEVELS as option, i (option)}
           <TriageKeyButton
             type="submit"
@@ -206,10 +218,10 @@
             value={option}
             selected={level === option}
             disabled={!enabled[3] || level === option}
-            class="h-7 px-2.5"
+            title={level === option ? 'Its current rating' : undefined}
+            class="h-[23px] gap-1.5 px-2 text-xs"
           >
             {songRatingLabel(option)}
-            {#if level === option}<span class="text-[11px] font-normal text-dark-2">current</span>{/if}
           </TriageKeyButton>
         {/each}
       </form>
@@ -219,7 +231,7 @@
         <Select.Trigger
           bind:ref={violationSelect}
           aria-label="Violation type"
-          class="h-[30px] w-auto min-w-0 flex-1 basis-0 justify-between border-dark-4 bg-dark-7 text-[13px] text-dark-0 dark:bg-dark-7"
+          class="h-[30px] w-[140px] flex-none justify-between border-dark-4 bg-dark-7 text-[13px] text-dark-0 dark:bg-dark-7"
         >
           <span class="truncate">
             {violationType
@@ -253,9 +265,13 @@
     >
       {#snippet chips()}
         <SongBadge class="h-[17px] px-1.5 text-[11px]" />
-        {@render chip('Reported', 'bg-red-500/15 text-red-300')}
+        {@render chip('Reported', 'bg-amber-500/15 text-amber-300')}
         {#if level !== null}{@render chip(getBrowsingLevelLabel(level))}{/if}
-        {@render chip(plural(row.reportCount, 'report'))}
+        <span
+          class="inline-flex items-center gap-1 rounded bg-red-500/20 px-1.5 py-px text-[11px] font-medium text-red-300"
+        >
+          <IconFlag size={11} aria-hidden="true" />{plural(row.reportCount, 'report')}
+        </span>
         {#if row.removed}
           <span title={songRemovedTitle(row)}>{@render chip('Removed')}</span>
         {/if}
@@ -293,7 +309,7 @@
               target="_blank"
               rel="noreferrer"
             >
-              <IconMusic aria-hidden="true" /> Owner's songs
+              <IconSearch aria-hidden="true" /> Owner's songs
             </Button>
           {/if}
         {/if}
@@ -321,11 +337,11 @@
           <p class="m-0 text-sm text-dark-2">Loading the song's details…</p>
         {:then d}
           <TriageCard title="Song" dense>
-            {@render fact('Genre', d.facts.genre)}
-            <div class="flex justify-between gap-3 py-0.5">
+            {@render fact('Genre', d.facts.genre, SONG_FACT_ROW)}
+            <div class={SONG_FACT_ROW}>
               <span class="text-dark-2">Posted</span>
-              <span class="text-dark-0">
-                {d.facts.postedAt ? new Date(d.facts.postedAt).toLocaleDateString() : 'Not posted'}
+              <span class="text-white">
+                {d.facts.postedAt ? shortDate(d.facts.postedAt) : 'Not posted'}
                 {#if d.facts.postId}
                   · <a
                     href={entityUrl(civitaiUrl, 'post', d.facts.postId)}
@@ -336,7 +352,7 @@
                 {/if}
               </span>
             </div>
-            {@render fact('Remix', d.facts.allowRemix ? 'Allowed' : 'Not allowed')}
+            {@render fact('Remix', d.facts.allowRemix ? 'Allowed' : 'Not allowed', SONG_FACT_ROW)}
           </TriageCard>
         {:catch}
           <p class="m-0 text-sm text-dark-2">
@@ -372,8 +388,10 @@
     </TriageCard>
 
     {#if !row.withheld}
-      <!-- Pending and failed reads are reported once, in the middle column. -->
-      {#await details then d}
+      <!-- A failed read is reported once, in the middle column. -->
+      {#await details}
+        <p class="m-0 text-sm text-dark-2">Loading the cover, checks and owner…</p>
+      {:then d}
         <TriageCard title="Cover" dense>
           {#if d.cover}
             <div class="flex items-center gap-3">
@@ -387,7 +405,14 @@
                 <div class="flex flex-wrap gap-1">
                   {@render chip(d.cover.nsfwLevel ? getBrowsingLevelLabel(d.cover.nsfwLevel) : 'Not rated')}
                   {#if d.checks.cover}
-                    {@render chip(CHECK_LOOK[d.checks.cover].label, CHECK_LOOK[d.checks.cover].class)}
+                    <span
+                      class="inline-flex items-center gap-1 rounded px-1.5 py-px text-[11px] font-medium {CHECK_LOOK[
+                        d.checks.cover
+                      ].class}"
+                    >
+                      {#if d.checks.cover === 'passed'}<IconCheck size={11} aria-hidden="true" />{/if}
+                      {COVER_STATE[d.checks.cover]}
+                    </span>
                   {/if}
                   {#if !d.cover.shown}{@render chip('Placeholder shown')}{/if}
                 </div>
@@ -421,7 +446,7 @@
         {#if d.owner}
           <TriageCard title="Owner" dense>
             {#if d.owner.username}
-              <div class="flex justify-between gap-3 py-0.5">
+              <div class={FACT_ROW}>
                 <span class="text-dark-2">Username</span>
                 <a
                   href={userUrl(civitaiUrl, d.owner.username)}
@@ -435,8 +460,8 @@
             {/if}
             {@render fact('Account age', accountAge(d.owner.createdAt))}
             {@render fact('Removed songs', String(d.owner.removedSongs))}
-            {@render fact('Active strikes', String(d.owner.strikes))}
-            {@render fact('Other reported songs', String(d.owner.otherReported))}
+            {@render fact('Strikes', String(d.owner.strikes))}
+            {@render fact('Other reported', plural(d.owner.otherReported, 'song'))}
           </TriageCard>
         {/if}
       {:catch}

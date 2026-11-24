@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { IconMusic, IconZoomCancel } from '@tabler/icons-svelte';
+  import { IconMusic, IconPlayerPlay, IconZoomCancel } from '@tabler/icons-svelte';
+  import { formatPlaybackTime } from '@civitai/shared';
   import { SvelteMap } from 'svelte/reactivity';
   import { page } from '$app/state';
   import TriageFilterChips, {
@@ -89,6 +90,11 @@
   } satisfies ChipGroup);
 
   const clearSearchHref = $derived(urlWith(page.url, { q: null, page: null, [SELECTION]: null }));
+  // Amber once a song has waited a day, as the other triage queues mark someone waiting.
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const waitedLong = (row: ReportedSongRow) =>
+    Date.now() - new Date(row.waitingSince).getTime() >= DAY_MS;
+  const firstTime = (row: ReportedSongRow) => row.reports.find((r) => r.timeSec != null)?.timeSec;
   const rowTitle = (row: ReportedSongRow) =>
     row.withheld ? `Withheld song #${row.id}` : row.title || `Untitled song #${row.id}`;
 
@@ -163,7 +169,7 @@
 <div class="flex flex-col lg:h-svh">
   <TriagePageHeader
     title="Audio review"
-    subtitle="Songs and their covers: reports, appeals, holds and rating disputes. Listen before you decide."
+    subtitle="Songs and their covers: reports, appeals and holds. Decide on the song, its cover and its rating together."
     placeholder="Song, owner or ID"
     searchLabel="Search reported songs"
   />
@@ -201,8 +207,8 @@
           href={state.href}
           selected={state.selected}
           title={rowTitle(row)}
-          meta="waiting {shortAge(row.waitingSince)}"
-          metaClass="text-amber-300"
+          meta={waitedLong(row) ? `waiting ${shortAge(row.waitingSince)}` : shortAge(row.waitingSince)}
+          metaClass={waitedLong(row) ? 'text-amber-300' : 'text-dark-2'}
           coverUrl={row.coverUrl ?? undefined}
           verdict={state.verdict}
           error={state.error}
@@ -218,6 +224,14 @@
             <span class="rounded bg-dark-5 px-1.5 py-px text-[11px] font-medium text-dark-0">
               {plural(row.reportCount, 'report')}
             </span>
+            {#if firstTime(row) != null}
+              {@const at = firstTime(row) ?? 0}
+              <span
+                class="inline-flex items-center gap-0.5 rounded bg-blue-500/15 px-1.5 py-px text-[11px] font-medium text-blue-300"
+              >
+                <IconPlayerPlay size={11} aria-hidden="true" />{formatPlaybackTime(at)}
+              </span>
+            {/if}
             {#if row.removed}
               <span class="text-[11px] text-dark-2 italic" title={songRemovedTitle(row)}>Removed</span>
             {/if}
