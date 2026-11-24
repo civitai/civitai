@@ -46,6 +46,7 @@ import { approvedAppealOf } from '$lib/server/removal-hold';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
 import { heldRemovalMessage, type HeldRemoval } from '$lib/server/removal-hold';
 import { getModel3DsByThumbnailImageIds, unpublishModel3d } from '$lib/server/model3d.service';
+import { getSongLinks, NO_SONG_LINKS } from '$lib/server/song-links.service';
 import { ReportStatus } from '$lib/reports';
 import {
   FLAG_KEPT_THROUGH_BLOCK,
@@ -97,18 +98,20 @@ function parseViolation(
   return parseForm(violationInputSchema, form);
 }
 
-/** Each card's Model3D parent, and the image's latest approved appeal, so a moderator sees it before
- *  removing the image again. */
+/** Each card's Model3D parent, the image's latest approved appeal, so a moderator sees it before
+ *  removing the image again, and its song links (a song's cover to remove, a cover's song). */
 async function withModel3d<T extends { id: number }>(items: T[]) {
   const ids = items.map((i) => i.id);
-  const [model3ds, appeals] = await Promise.all([
+  const [model3ds, appeals, songLinks] = await Promise.all([
     getModel3DsByThumbnailImageIds(ids),
     getLatestApprovedImageAppeals(dbRead, ids),
+    getSongLinks(ids),
   ]);
   return items.map((i) => ({
     ...i,
     model3d: model3ds[i.id] ?? null,
     approvedAppeal: approvedAppealOf(appeals.get(i.id)),
+    ...(songLinks.get(i.id) ?? NO_SONG_LINKS),
   }));
 }
 
@@ -125,6 +128,7 @@ async function withheldCards<T extends { id: number }>(items: T[], user?: App.Lo
     return {
       ...withheldRow(item),
       model3d: null,
+      ...NO_SONG_LINKS,
       promptHighlight: null,
       ruleDefinition: null,
       ruleReason: null,
@@ -184,10 +188,15 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL, user?: App.L
       limit,
       csamReview: holdsCsamReview(user),
     });
-    // model3d would draw a withheld image's media; drop it.
+    // model3d would draw a withheld image's media, and a song link would name it; drop both.
     const cards = (await withModel3d(items)).map((item) =>
       item.restricted
-        ? { ...item, model3d: null, approvedAppeal: withheldApprovedAppeal(item.approvedAppeal) }
+        ? {
+            ...item,
+            model3d: null,
+            ...NO_SONG_LINKS,
+            approvedAppeal: withheldApprovedAppeal(item.approvedAppeal),
+          }
         : item
     );
     return { ...base, view, kind: 'appeal' as const, items: cards, nextCursor };

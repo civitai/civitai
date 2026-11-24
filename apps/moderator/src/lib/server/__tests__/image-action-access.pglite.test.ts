@@ -1061,6 +1061,7 @@ describe('the reported and review queues, without the grant', () => {
       CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
       CREATE TABLE IF NOT EXISTS "JobQueue" ("type" TEXT, "entityType" "EntityType", "entityId" INTEGER, "data" JSONB);
       CREATE TABLE IF NOT EXISTS "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
+      CREATE TABLE IF NOT EXISTS "Track" ("imageId" INTEGER PRIMARY KEY, "coverImageId" INTEGER UNIQUE);
       INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId", "needsReview") VALUES
         (${KEPT}, 'queue-key', 'Scanned', NULL, 9, 'minor'),
         (990000081, 'queue-key', 'Blocked', 'unrecognised-reason', 8, NULL),

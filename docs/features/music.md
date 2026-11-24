@@ -170,7 +170,8 @@ feed card, the song row, the post page and the song detail view, and offers:
 
 The image menu's Add to Showcase, art frame and event decorations, More like this, storylines, the
 minor and POI flags, View Post and Edit Post are not offered on a song. The moderator design's "ToS
-cover image" and "Remove from feed" have no action yet.
+cover image" and "Remove from feed" have no action yet: a cover is removed from the moderator app's
+song card (see Moderating songs).
 
 ## Moderating songs
 
@@ -232,6 +233,19 @@ until Audio review's Held tab takes them.
   as the song's review (#10162); a removed song is refused with "This song was removed, so it can't
   be rated." A rated song is locked, and `imageReviewedSql` counts a lock as a review, so nothing may
   return a rated song to Pending, Error or Rescan without clearing its lock.
+- **Removing a song or its cover** are two actions, each with the usual violation type and notes: a
+  song card's "Remove song" and, while the song has a cover to remove, "Remove cover" (`cardRemovals`
+  in `$lib/music/song-tos.ts`). Both are `blockImage` on their own row. Removing the cover leaves the
+  song public, and the player shows the placeholder (a blocked cover fails `isPlayerSongCover`);
+  removing the song leaves the cover alone (decided by the moderation lead). On Image reports "Remove
+  song" actions the song's report and "Remove cover" leaves it open. Each removal records its own
+  violation type, notifies the owner ("Your song "<title>" has been removed …", "The cover of your
+  song "<title>" has been removed …", both linking to the song: `songNoticeSubject`, and the
+  `tos-violation` template's `song` / `song cover` wording), and is appealed on its own, as any image
+  is (the owner's removed-images list and the image appeal flow are per image row).
+- **A cover in an image queue** carries "Cover of song <title>", linking to the song in Image lookup.
+  Song and cover are linked only through the song's own cover (`songsOwnCoverText`), read by
+  `getSongLinks` (`song-links.service.ts`) for every queue card.
 - **Removed-appeals** shows the song card for an appeal on a song still on file, unless the song is
   withheld from the moderator (`withheldImageIds`), which shows the refusal line instead; other rows
   stay text only. An appeal whose song row is gone has nothing to play.

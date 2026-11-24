@@ -7,6 +7,7 @@
   import TosDeleteButton from './TosDeleteButton.svelte';
   import VerdictBadge from './VerdictBadge.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { cardRemovals } from '$lib/music/song-tos';
 
   let {
     item,
@@ -28,6 +29,9 @@
       type?: string | null;
       version?: string;
       needsReview?: string | null;
+      type?: string | null;
+      /** A song's cover, while there is one to remove: "Remove cover" beside "Remove song". */
+      songCoverId?: number | null;
     };
     /** Couples the report's status to the verdict: accept → Unactioned, block → Actioned. It is also
      *  the card's selection key on the reported queue, where cards key by report rather than image. */
@@ -49,6 +53,20 @@
   const button = 'rounded border px-2 py-0.5 text-xs font-semibold transition';
 
   const acceptLabel = $derived(reported ? 'Unaction' : 'Accept');
+
+  const removals = $derived(cardRemovals(item, reportId));
+
+  // "Remove cover" marks this card, not the card the page's `submit` would key by the cover's id
+  // (on Image reports that is a report id, which could be another card's). A held removal is not a
+  // removal: the page shows the hold, and the button stays.
+  let coverRemoved = $state(false);
+  const coverSubmit: SubmitFunction = () => {
+    coverRemoved = true;
+    return async ({ result, update }) => {
+      coverRemoved = result.type === 'success' && !result.data?.held;
+      await update({ invalidateAll: false });
+    };
+  };
 </script>
 
 {#if verdict}
@@ -103,11 +121,20 @@
           </button>
         </form>
       {/if}
-      <TosDeleteButton
-        action="?/block"
-        {submit}
-        hidden={reportId ? { imageId: item.id, reportId } : { imageId: item.id }}
-      />
+      {#each removals as removal (removal.kind)}
+        {#if removal.kind !== 'cover'}
+          <TosDeleteButton action="?/block" {submit} hidden={removal.hidden} label={removal.label} />
+        {:else if coverRemoved}
+          <span class="self-center text-xs text-dark-2">Cover removed</span>
+        {:else}
+          <TosDeleteButton
+            action="?/block"
+            submit={coverSubmit}
+            hidden={removal.hidden}
+            label={removal.label}
+          />
+        {/if}
+      {/each}
     </div>
   {/if}
 {/if}
