@@ -21,5 +21,10 @@
       "ignoreCase": true
     }
   ],
-  "privateCacheControl": "max-age=0, private, no-cache"
+  "privateCacheControl": "max-age=0, private, no-cache",
+  "regionBlockResponse": {
+    "status": 451,
+    "contentType": "application/json",
+    "body": "{\"error\":\"Access to this service is not available in your region due to legal restrictions.\",\"code\":\"REGION_BLOCKED\"}"
+  }
 }

@@ -8,9 +8,9 @@ import {
   MODERATOR_RETIRED,
   readWithoutJit,
   REWORD_OF_META_KEY,
-  servableImage,
   YESNO_QUESTION_MAX,
 } from '@civitai/db/knights';
+import { servableImage } from '../image-gate';
 import {
   axisKey,
   axisPrompt,

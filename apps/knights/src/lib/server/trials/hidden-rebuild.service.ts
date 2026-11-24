@@ -1,12 +1,4 @@
-import {
-  DummyDriver,
-  Kysely,
-  PostgresAdapter,
-  PostgresIntrospector,
-  PostgresQueryCompiler,
-  sql,
-  type CompiledQuery,
-} from 'kysely';
+import { Kysely, sql } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { REFERENCE_POOL, REFERENCE_SOURCE, REFERENCE_STATUS } from '@civitai/db/knights';
@@ -165,30 +157,9 @@ export async function retireUnagreedHiddenChecks(db: Executor, input: RebuildInp
   });
 }
 
-/** A query builder that compiles Postgres SQL and never connects. */
-export const offlineDb = () =>
-  new Kysely<DB>({
-    dialect: {
-      createAdapter: () => new PostgresAdapter(),
-      createDriver: () => new DummyDriver(),
-      createIntrospector: (db) => new PostgresIntrospector(db),
-      createQueryCompiler: () => new PostgresQueryCompiler(),
-    },
-  });
+import { inlineSql, offlineDb } from '../offline-sql';
 
-/** A compiled statement with its parameters written in, for a reviewed run by hand. */
-export function inlineSql({ sql: text, parameters }: CompiledQuery): string {
-  const literal = (value: unknown) => {
-    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-    if (typeof value === 'string') return `'${value.replaceAll("'", "''")}'`;
-    throw new Error(`Cannot inline a parameter of type ${typeof value}.`);
-  };
-  return text.replace(/\$(\d+)/g, (_, n: string) => {
-    const index = Number(n) - 1;
-    if (index >= parameters.length) throw new Error(`No parameter for $${n}.`);
-    return literal(parameters[index]);
-  });
-}
+export { inlineSql, offlineDb };
 
 export type RebuildArgs = {
   apply: boolean;

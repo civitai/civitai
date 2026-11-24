@@ -38,6 +38,26 @@ const NOW = new Date('2026-12-15T12:00:00Z');
 
 let pg: PGlite;
 let db: Kysely<DB>;
+/** For `countOpenServableKnightItems`, which only the main app runs, as its role reads. */
+let mainAppDb: Kysely<DB>;
+
+/** Noon on the 10th, `n` months from the real month: inside the window the partition function accepts. */
+const monthsFromNow = (n: number) => {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + n, 10, 12));
+};
+
+/** Drops the vote partition holding `at` when it has no votes, so a test can watch it be created. Returns its name. */
+async function dropEmptyPartition(at: Date) {
+  const name = `KnightsVote_${at.getUTCFullYear()}_${String(at.getUTCMonth() + 1).padStart(
+    2,
+    '0'
+  )}`;
+  await pg.exec(`DO $$ BEGIN
+    IF to_regclass('"${name}"') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "${name}") THEN DROP TABLE "${name}"; END IF;
+  END $$;`);
+  return name;
+}
 let transactions: { open: () => number };
 const APPLIED = { outcome: 'applied' } as const;
 const applyConsensus = vi.fn<QueueDeps['applyConsensus']>(async () => APPLIED);
@@ -162,7 +182,7 @@ const verdicts = async (id: number) =>
   ).rows;
 
 beforeAll(async () => {
-  ({ pg, db, transactions } = await createQueueDb());
+  ({ pg, db, mainAppDb, transactions } = await createQueueDb());
   await ensureVotePartitions(db, { now: NOW, monthsAhead: 1 });
   await pg.exec(`INSERT INTO "KnightsQuestion" ("key","kind","prompt","options")
     VALUES ('knights.test.bool','bool','Is there a hat?','[{"value":"yes","label":"Yes"},{"value":"no","label":"No"}]')`);
@@ -398,6 +418,25 @@ describe('getFeed', () => {
       expect(await readWithoutJit(trx, (inner) => jit(inner))).toBe('off');
     });
     expect(await jit(db)).toBe('on');
+  });
+
+  // Its estimate would start parallel workers that take longer to start than the small read takes to run.
+  it('turns parallel workers off for the read, only until its transaction ends', async () => {
+    const workers = async (executor: Kysely<DB>) =>
+      (
+        await sql<{
+          max_parallel_workers_per_gather: string;
+        }>`SHOW max_parallel_workers_per_gather`.execute(executor)
+      ).rows[0].max_parallel_workers_per_gather;
+    await sql`SET max_parallel_workers_per_gather = 2`.execute(db);
+    const before = await workers(db);
+    expect(before).toBe('2');
+    expect(await readWithoutJit(db, (trx) => workers(trx))).toBe('0');
+    expect(await workers(db)).toBe(before);
+    await db.transaction().execute(async (trx) => {
+      expect(await readWithoutJit(trx, (inner) => workers(inner))).toBe('0');
+    });
+    expect(await workers(db)).toBe(before);
   });
 
   it('reads each level bucket by the same rule as itemBucket', async () => {
@@ -2246,7 +2285,7 @@ describe('closeUnservableItems', () => {
     await pg.query(`UPDATE "Image" SET ingestion='Scanned', "nsfwLevel"=4 WHERE id=95`);
     expect((await sweep()).imageUnservable).toBe(0);
     expect(await statusOf([ownerRating])).toEqual([['Open', null]]);
-    expect(await countOpenServableKnightItems(db, 10)).toBe(1);
+    expect(await countOpenServableKnightItems(mainAppDb, 10)).toBe(1);
   });
 
   it('leaves open an item on a Private post: it is only hidden', async () => {
@@ -2260,7 +2299,7 @@ describe('closeUnservableItems', () => {
       imageUnservable: 0,
     });
     expect(await statusOf([id])).toEqual([['Open', null]]);
-    expect(await countOpenServableKnightItems(db, 10)).toBe(0);
+    expect(await countOpenServableKnightItems(mainAppDb, 10)).toBe(0);
   });
 
   it('closes an Inquisitor item whose image is gone, votes set aside, and leaves blocked images, held evidence and rulings in progress', async () => {
@@ -2364,17 +2403,24 @@ describe('closeWithoutOutcome', () => {
 
 describe('vote partitions', () => {
   it('creates the month partition on demand when the job has not', async () => {
+    // The owner's function creates a month near the real one only, so the vote is cast in one.
+    const at = monthsFromNow(3);
+    const name = await dropEmptyPartition(at);
+    const before = await pg.query<{ found: boolean }>(
+      `SELECT to_regclass('"${name}"') IS NOT NULL AS found`
+    );
+    expect(before.rows[0].found).toBe(false);
     await player(1, 'Knight');
     await image(10);
     const id = await item(10);
     const res = await castVote(
       db,
       { userId: 1, itemId: id, answer: '4' },
-      { applyConsensus, now: () => new Date('2033-07-09T10:00:00Z') }
+      { applyConsensus, now: () => at }
     );
     expect(res.status).toBe('recorded');
     const found = await pg.query<{ found: boolean }>(
-      `SELECT to_regclass('"KnightsVote_2033_07"') IS NOT NULL AS found`
+      `SELECT to_regclass('"${name}"') IS NOT NULL AS found`
     );
     expect(found.rows[0].found).toBe(true);
   });
@@ -2388,10 +2434,19 @@ describe('ensureVotePartitions', () => {
           `SELECT count(*)::int AS n FROM pg_inherits WHERE inhparent = '"KnightsVote"'::regclass`
         )
       ).rows[0].n;
+    const from = monthsFromNow(1);
+    const names = await Promise.all([1, 2, 3].map((n) => dropEmptyPartition(monthsFromNow(n))));
+    const missing = (
+      await pg.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM unnest($1::text[]) AS t(name) WHERE to_regclass(format('%I', name)) IS NULL`,
+        [names]
+      )
+    ).rows[0].n;
+    expect(missing).toBeGreaterThan(0);
     const before = await count();
-    await ensureVotePartitions(db, { now: new Date('2030-03-10T00:00:00Z'), monthsAhead: 2 });
-    await ensureVotePartitions(db, { now: new Date('2030-03-10T00:00:00Z'), monthsAhead: 2 });
-    expect(await count()).toBe(before + 3);
+    await ensureVotePartitions(db, { now: from, monthsAhead: 2 });
+    await ensureVotePartitions(db, { now: from, monthsAhead: 2 });
+    expect(await count()).toBe(before + missing);
 
     await player(1, 'Knight');
     await image(10);
@@ -2399,7 +2454,7 @@ describe('ensureVotePartitions', () => {
     const res = await castVote(
       db,
       { userId: 1, itemId: id, answer: '4' },
-      { applyConsensus, now: () => new Date('2030-04-02T00:00:00Z') }
+      { applyConsensus, now: () => monthsFromNow(2) }
     );
     expect(res.status).toBe('recorded');
   });
@@ -2893,8 +2948,8 @@ describe('countOpenServableKnightItems', () => {
     await pg.query(`UPDATE "Image" SET "needsReview"='minor' WHERE id=24`);
     await pg.query(`UPDATE "KnightsQueueItem" SET "minRank"='Templar' WHERE "imageId"=25`);
 
-    expect(await countOpenServableKnightItems(db, 100)).toBe(2);
-    expect(await countOpenServableKnightItems(db, 1)).toBe(1);
+    expect(await countOpenServableKnightItems(mainAppDb, 100)).toBe(2);
+    expect(await countOpenServableKnightItems(mainAppDb, 1)).toBe(1);
   });
 });
 

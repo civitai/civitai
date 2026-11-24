@@ -2,7 +2,11 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
-import { createQueueDb } from '../../../test/pglite-kysely';
+import {
+  createQueueDb,
+  SKILL_CHECK_GATE_READABLE,
+  SKILL_CHECK_GATE_UNREADABLE,
+} from '../../../test/pglite-kysely';
 import { seedImage } from '../../../test/seed';
 import { SKILL_CHECK_EXCLUSIONS } from './eligible';
 import {
@@ -235,11 +239,11 @@ describe('addSkillCheck', () => {
 
     it('fails closed: a check that cannot be read keeps the image out, without failing the caller', async () => {
       await seedImage(pg, 1);
-      await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
+      await pg.exec(SKILL_CHECK_GATE_UNREADABLE);
       try {
         expect(await add(1)).toBe('unreadable');
       } finally {
-        await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
+        await pg.exec(SKILL_CHECK_GATE_READABLE);
       }
       expect(await rows()).toEqual([]);
     });

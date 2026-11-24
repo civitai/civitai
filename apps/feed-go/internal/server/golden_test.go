@@ -51,7 +51,7 @@ const (
 	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
 	goldenMinInfinite = 87
-	goldenMinModels   = 34
+	goldenMinModels   = 46
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
@@ -107,6 +107,13 @@ type goldenFixture struct {
 		// ComputeMissesOff runs the model harness with FEED_GO_COMPUTE_MISSES off (a fixture of a
 		// fallback only that state still has).
 		ComputeMissesOff bool `json:"computeMissesOff"`
+		// ServeInputIDs / ServeInputFollowed are the model.getAll input ports' switches
+		// (FEED_GO_GETALL_SERVE_INPUT_IDS / _FOLLOWED; absent: off, the fixture's shape falls back).
+		ServeInputIDs      bool `json:"serveInputIds"`
+		ServeInputFollowed bool `json:"serveInputFollowed"`
+		// ServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (model-getall/; absent:
+		// off, an owner's user-cosmetics miss falls back).
+		ServeUserCosmeticsMiss bool `json:"serveUserCosmeticsMiss"`
 	} `json:"config"`
 	Request struct {
 		Input   string            `json:"input"`
@@ -328,7 +335,20 @@ type goldenDB struct {
 		// (absent: none), `mm."modelId" IN (…)` and `NOT IN (…)`.
 		OnlyModelIDs    []int `json:"onlyModelIds"`
 		ExcludeModelIDs []int `json:"excludeModelIds"`
+		// IDs is a non-empty `ids` list Node binds into the page (`mm."modelId" IN (…)`; absent: none).
+		IDs []int `json:"ids"`
+		// FollowedUserIDs is the follow list Node binds for a signed-in `followed`
+		// (`mm."userId" IN (…)`; absent: none), FollowedNone its `1 = 0` for a viewer who follows no one.
+		FollowedUserIDs []int `json:"followedUserIds"`
+		FollowedNone    bool  `json:"followedNone"`
 	} `json:"modelPages"`
+	// UserFollows are the Follow rows of UserEngagement (userId, targetUserId) a model-getall fixture's
+	// `followed` read, and FollowsRead how many times Node read them (once per getModelsRaw call).
+	UserFollows []struct {
+		UserID       int `json:"userId"`
+		TargetUserID int `json:"targetUserId"`
+	} `json:"userFollows"`
+	FollowsRead int `json:"followsRead"`
 	// ModelDataVersions, ModelHashes and TagsOnModels are what dataForModelsCache's and modelTagCache's
 	// lookups read for a fixture's cold keys (the version rows with their modelId, the SHA256 model
 	// hashes, the TagsOnModels rows), in the order the queries returned them.
@@ -1779,8 +1799,9 @@ type goldenModelPG struct {
 	*testkit.DB
 	mu    sync.Mutex
 	pages int
-	// collectionReads counts the collection permission reads.
+	// collectionReads counts the collection permission reads; followReads the follow-list reads.
 	collectionReads int
+	followReads     int
 }
 
 func newGoldenModelPG(t testing.TB, fx *goldenFixture) *goldenModelPG {
@@ -1815,6 +1836,15 @@ func newGoldenModelPG(t testing.TB, fx *goldenFixture) *goldenModelPG {
 			}
 			if err := goldenCheckIDFilter("excludeModelIds", goldenReExcludeIDs, page.ExcludeModelIDs, sql, args); err != nil {
 				return nil, fmt.Errorf("golden: page %d: %w", g.pages, err)
+			}
+			if err := goldenCheckIDFilter("ids", goldenReInputIDs, page.IDs, sql, args); err != nil {
+				return nil, fmt.Errorf("golden: page %d: %w", g.pages, err)
+			}
+			if err := goldenCheckIDFilter("followedUserIds", goldenReModelFollowed, page.FollowedUserIDs, sql, args); err != nil {
+				return nil, fmt.Errorf("golden: page %d: %w", g.pages, err)
+			}
+			if none := strings.Contains(sql, "1 = 0"); none != page.FollowedNone {
+				return nil, fmt.Errorf("golden: page %d: node's followed-nobody clause (1 = 0) %v, feed-go's %v", g.pages, page.FollowedNone, none)
 			}
 			rows := make([][]any, len(page.Rows))
 			for i, r := range page.Rows {
@@ -1884,6 +1914,37 @@ func newGoldenModelPG(t testing.TB, fx *goldenFixture) *goldenModelPG {
 		// withCommunityCovers found none either.
 		{Match: `FROM "ModelVersionShowcaseItem" s`, Rows: func(_ []any) (*testkit.Rows, error) {
 			return testkit.NewRows([]string{"modelId", "imageId"}), nil
+		}},
+		// userCosmeticCache's lookup (a cold-user-cosmetics fixture): the owners' equipped cosmetics not
+		// equipped to an entity, then the creator-made check of withheldCosmeticIDs (the fixtures'
+		// cosmetics have no creator, so its rows are none).
+		{Match: `FROM "UserCosmetic" WHERE "userId" = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, r := range db.UserCosmetics {
+				if goldenHas(goldenInts(args[0]), r.UserID) && r.Equipped && r.EquippedToID == nil {
+					rows = append(rows, []any{r.UserID, r.CosmeticID, goldenPtr(r.Data)})
+				}
+			}
+			return testkit.NewRows([]string{"userId", "cosmeticId", "data"}, rows...), nil
+		}},
+		{Match: `FROM "CosmeticShopItem" si`, Rows: func(_ []any) (*testkit.Rows, error) {
+			return testkit.NewRows([]string{"cosmeticId", "addedById", "status", "meta", "rejectionReason", "createdById"}), nil
+		}},
+		{Match: `SELECT id, flags FROM "Cosmetic"`, Rows: func(_ []any) (*testkit.Rows, error) {
+			return testkit.NewRows([]string{"id", "flags"}), nil
+		}},
+		// `followed`'s read of the viewer's Follow rows (hydrate.Sources.FollowedUserIDs).
+		{Match: `FROM "UserEngagement"`, Rows: func(args []any) (*testkit.Rows, error) {
+			g.mu.Lock()
+			g.followReads++
+			g.mu.Unlock()
+			var rows [][]any
+			for _, f := range db.UserFollows {
+				if goldenHas(goldenInts(args[0]), f.UserID) {
+					rows = append(rows, []any{int64(f.UserID), int64(f.TargetUserID)})
+				}
+			}
+			return testkit.NewRows([]string{"userId", "targetUserId"}, rows...), nil
 		}},
 		// The collection permission read: the fixture's Collection row and the viewer's contributor
 		// row (none: no permissions); a collection the fixture does not hold is no row.
@@ -1957,6 +2018,10 @@ func newGoldenModelPG(t testing.TB, fx *goldenFixture) *goldenModelPG {
 			if want := max(len(db.ModelPages), 1); g.collectionReads != want {
 				t.Errorf("feed-go read the collection permission %d time(s); Node read it %d", g.collectionReads, want)
 			}
+		}
+		// Node reads a signed-in viewer's follows on every getModelsRaw call, and never otherwise.
+		if !t.Failed() && fx.Expect.Fallback == "" && g.followReads != db.FollowsRead {
+			t.Errorf("feed-go read the viewer's follows %d time(s); Node read them %d", g.followReads, db.FollowsRead)
 		}
 	})
 	return g
@@ -2057,6 +2122,9 @@ func goldenCheckCollectionFilter(want *goldenCollectionFilter, sql string, args 
 var (
 	goldenReOnlyIDs    = regexp.MustCompile(`mm\."modelId" = ANY\(\$(\d+)::int\[\]\)`)
 	goldenReExcludeIDs = regexp.MustCompile(`mm\."modelId" != ALL\(\$(\d+)::int\[\]\)`)
+	// goldenReInputIDs finds the `ids` filter, goldenReModelFollowed a signed-in `followed`'s follow list.
+	goldenReInputIDs      = regexp.MustCompile(`mm\."modelId" = ANY\(\$(\d+)::integer\[\]\)`)
+	goldenReModelFollowed = regexp.MustCompile(`mm\."userId" = ANY\(\$(\d+)::int\[\]\)`)
 )
 
 // goldenCheckIDFilter checks a page's id filter against what Node bound: none in Node, none in
@@ -2148,6 +2216,8 @@ func goldenSetupModelsMode(t testing.TB, fx *goldenFixture, writeBack bool) *gol
 			BaseModelMetrics: fx.Config.BaseModelMetrics, ImagesSlim: fx.Config.ModelImagesSlim,
 			CoverageNext: fx.Config.CoverageNext, LoadingOpenToAll: fx.Config.LoadingOpenToAll,
 			VisibleDecorationEvents: events,
+			Ports:                   modelfeed.Ports{IDs: fx.Config.ServeInputIDs, Followed: fx.Config.ServeInputFollowed},
+			ServeUserCosmeticsMiss:  fx.Config.ServeUserCosmeticsMiss,
 		},
 		Now: env.now,
 	}
