@@ -47,7 +47,10 @@ CREATE TABLE "Appeal" (
   "buzzTransactionId" TEXT,
   "entityRemovedAt" TIMESTAMP(3)
 );
-CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "blockedFor" TEXT);
+CREATE TABLE "Image" (
+  "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "blockedFor" TEXT,
+  "type" TEXT NOT NULL DEFAULT 'image', "url" TEXT NOT NULL DEFAULT 'key'
+);
 CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "reason" TEXT NOT NULL);
 CREATE TABLE "UserReport" ("userId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
 CREATE TABLE "CsamReport" ("id" INTEGER PRIMARY KEY, "userId" INTEGER, "images" JSONB NOT NULL DEFAULT '[]');
@@ -173,6 +176,27 @@ describe('getRemovedAppeals', () => {
     expect(await countRemovedAppeals()).toBe(4);
   });
 
+  // Music T10 (docs/features/music.md "Moderating songs"): the page plays a song still on file.
+  it('carries the song of an appeal on a song still on file, and no media for anything else', async () => {
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "blockedFor", "type", "url") VALUES
+        (601, 31, 'moderated', 'audio', 'song-key'), (602, 32, 'moderated', 'image', 'picture-key');
+      INSERT INTO "Appeal" ("id", "userId", "entityType", "entityId", "entityRemovedAt") VALUES
+        (31, 31, 'Image', 601, '2026-09-21'), (32, 32, 'Image', 602, '2026-09-21'),
+        (33, 31, 'Model', 601, '2026-09-21');
+    `);
+
+    const { items } = await getRemovedAppeals({ limit: 20 });
+
+    expect(items.map((i) => [i.id, i.song])).toEqual([
+      [12, null],
+      [11, null],
+      [31, { id: 601, url: 'song-key' }],
+      [32, null],
+      [33, null],
+    ]);
+  });
+
   it("leaves out an appeal on a restricted image itself, and serves no row's media", async () => {
     await db.exec(`
       INSERT INTO "Image" ("id", "userId", "blockedFor") VALUES (910, 29, 'CSAM');
@@ -183,8 +207,10 @@ describe('getRemovedAppeals', () => {
     const { items } = await getRemovedAppeals({ limit: 20 });
 
     expect(items.map((i) => i.id)).toEqual([12, 11]);
-    // The page draws text only: no field a tile or a link could load the image from.
-    for (const item of items)
+    // The page draws text, and a player for a song only: no field a tile or a link could load an
+    // image from.
+    for (const item of items) {
+      expect(item.song).toBeNull();
       expect(Object.keys(item).sort()).toEqual(
         [
           'appealMessage',
@@ -195,10 +221,12 @@ describe('getRemovedAppeals', () => {
           'hasFee',
           'history',
           'id',
+          'song',
           'userId',
           'username',
         ].sort()
       );
+    }
   });
 });
 

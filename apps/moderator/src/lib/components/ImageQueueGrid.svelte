@@ -20,6 +20,8 @@
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import HeldMedia from '$lib/components/image-queue/HeldMedia.svelte';
   import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
+  import SongCard from '$lib/components/SongCard.svelte';
+  import { isSong } from '$lib/music/song-card';
   import { reportHeldGridView, RETRACTED_REFUSED } from '$lib/held-media';
   import NumberedPager from '$lib/components/NumberedPager.svelte';
   import { readCursorTrail, writeCursorTrail, clearPaging, IMAGE_PAGE_PARAM } from '$lib/paging';
@@ -164,6 +166,9 @@
   <div class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax({minColumn}px, 1fr))">
     {#each items as item (key(item))}
       {@const isSelected = selected?.has(key(item)) ?? false}
+      <!-- A song is a player, so it is never inside the select button or the link: its controls
+           would select the card or open the site. The held-media grid keeps its own rendering. -->
+      {@const song = !heldMedia && isSong(item)}
       <Card
         class="gap-0 overflow-hidden p-0 transition-opacity {itemClass?.(item) ?? ''} {isSelected
           ? 'ring-2 ring-primary ring-offset-1'
@@ -173,6 +178,20 @@
           {#if item.restricted}
             <!-- Served with no media: no tile, no link to the image, no selection. -->
             <div class="p-4 text-center text-xs text-dark-2">{RETRACTED_REFUSED}</div>
+          {:else if song}
+            <SongCard {item} cardKey={key(item)} class="pt-9" />
+            <a
+              href={fullHref(item)}
+              target="_blank"
+              rel="noreferrer"
+              title={fullLabel}
+              aria-label={fullLabel}
+              class="absolute top-2 z-10 rounded bg-black/70 p-1.5 text-white hover:bg-black/90 {selected
+                ? 'right-10'
+                : 'right-2'}"
+            >
+              <IconExternalLink size={16} />
+            </a>
           {:else if selected}
             <button
               type="button"
@@ -204,7 +223,16 @@
               {@render media(item)}
             </a>
           {/if}
-          {#if item.nsfwLevel != null}
+          {#if song}
+            <div class="absolute left-2 top-2 flex gap-1">
+              <Badge class="border-transparent bg-sky-600 text-white">Song</Badge>
+              {#if item.nsfwLevel != null}
+                <Badge class="border-transparent {RATING_BADGE[item.nsfwLevel] ?? 'bg-black/70 text-white'}">
+                  {getBrowsingLevelLabel(item.nsfwLevel)}
+                </Badge>
+              {/if}
+            </div>
+          {:else if item.nsfwLevel != null}
             <Badge
               class="absolute left-2 top-2 border-transparent {RATING_BADGE[item.nsfwLevel] ??
                 'bg-black/70 text-white'}"

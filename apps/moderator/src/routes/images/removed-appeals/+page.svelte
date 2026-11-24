@@ -7,6 +7,7 @@
   import { cn } from '@civitai/ui/utils.js';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import SongCard from '$lib/components/SongCard.svelte';
   import RulingForm, { emptyRulingDraft, type RulingDraft } from '$lib/components/RulingForm.svelte';
   import { optimisticEnhancer } from '$lib/form-action';
   import { LINK_CLASS, dateTime } from '$lib/format';
@@ -86,82 +87,95 @@
           verdict && 'opacity-50'
         )}
       >
-        <div class="flex flex-wrap items-baseline gap-x-2">
-          <span class="font-medium">{row.entityType} #{row.entityId}</span>
-          <code class="text-xs text-dark-2">appeal #{row.id}</code>
-          {#if row.hasFee}
-            <Badge variant="secondary">fee paid</Badge>
+        <div class="flex flex-col gap-4 sm:flex-row">
+          {#if row.song}
+            <!-- The appealed song, still on file: a moderator hears what they are ruling on. -->
+            <div class="h-72 w-full shrink-0 overflow-hidden rounded-md border border-dark-4 sm:w-64">
+              <SongCard item={row.song} />
+            </div>
           {/if}
-          {#if row.username}
-            <a href={userLookupUrl(row.userId)} class="text-xs {LINK_CLASS}">{row.username}</a>
-          {/if}
-          <span class="text-xs text-dark-2">
-            appealed {dateTime(row.createdAt)}
-            {#if row.entityRemovedAt}· removed by {dateTime(row.entityRemovedAt)}{/if}
-          </span>
-        </div>
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-baseline gap-x-2">
+              <span class="font-medium">{row.entityType} #{row.entityId}</span>
+              {#if row.song}
+                <Badge class="border-transparent bg-sky-600 text-white">Song</Badge>
+              {/if}
+              <code class="text-xs text-dark-2">appeal #{row.id}</code>
+              {#if row.hasFee}
+                <Badge variant="secondary">fee paid</Badge>
+              {/if}
+              {#if row.username}
+                <a href={userLookupUrl(row.userId)} class="text-xs {LINK_CLASS}">{row.username}</a>
+              {/if}
+              <span class="text-xs text-dark-2">
+                appealed {dateTime(row.createdAt)}
+                {#if row.entityRemovedAt}· removed by {dateTime(row.entityRemovedAt)}{/if}
+              </span>
+            </div>
 
-        <p class="mt-2 rounded-md bg-dark-7 p-2 text-sm text-dark-0">{row.appealMessage}</p>
+            <p class="mt-2 rounded-md bg-dark-7 p-2 text-sm text-dark-0">{row.appealMessage}</p>
 
-        {#if row.history.length}
-          <ul class="mt-2 space-y-0.5 text-xs text-dark-2">
-            {#each row.history as h, i (i)}
-              <li>
-                {h.activity} · {dateTime(h.at)}
-                {#if h.moderatorId}
-                  · <a href={userLookupUrl(h.moderatorId)} class={LINK_CLASS}>moderator</a>
-                {/if}
-              </li>
-            {/each}
-          </ul>
-        {:else}
-          <p class="mt-2 text-xs text-dark-2">No moderation record for this {row.entityType}.</p>
-        {/if}
+            {#if row.history.length}
+              <ul class="mt-2 space-y-0.5 text-xs text-dark-2">
+                {#each row.history as h, i (i)}
+                  <li>
+                    {h.activity} · {dateTime(h.at)}
+                    {#if h.moderatorId}
+                      · <a href={userLookupUrl(h.moderatorId)} class={LINK_CLASS}>moderator</a>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="mt-2 text-xs text-dark-2">No moderation record for this {row.entityType}.</p>
+            {/if}
 
-        {#if rowError?.appealId === row.id}
-          <ErrorAlert class="mt-2" message={rowError.error} />
-        {/if}
+            {#if rowError?.appealId === row.id}
+              <ErrorAlert class="mt-2" message={rowError.error} />
+            {/if}
 
-        <div class="mt-3 flex flex-col gap-1.5">
-          {#if verdict}
-            <span class="text-sm text-dark-2">{verdict}</span>
-          {:else}
-            <Textarea
-              placeholder="Message to the user (optional)"
-              value={messages.get(row.id) ?? ''}
-              oninput={(e) => messages.set(row.id, e.currentTarget.value)}
-              rows={2}
-              maxlength={1000}
-              class="resize-none text-xs"
-            />
-            <RulingForm
-              subject="appeal"
-              choices={CHOICES}
-              action="?/resolve"
-              enhancer={submit(row.id, () =>
-                drafts.get(row.id)?.verdict === 'Approved' ? 'Appeal approved' : 'Appeal rejected'
-              )}
-              idPrefix="removed-appeal-{row.id}"
-              size="xs"
-              bind:draft={() => drafts.get(row.id) ?? emptyRulingDraft<Verdict>(),
-                (d: RulingDraft<Verdict>) => drafts.set(row.id, d)}
-            >
-              {#snippet hidden()}
-                <input type="hidden" name="appealId" value={row.id} />
-                <input type="hidden" name="resolvedMessage" value={messages.get(row.id) ?? ''} />
-              {/snippet}
-            </RulingForm>
-            <form
-              method="POST"
-              action="?/ownerDeleted"
-              use:enhance={submit(row.id, 'Closed: deleted by owner')}
-            >
-              <input type="hidden" name="appealId" value={row.id} />
-              <Button type="submit" size="xs" variant="outline">
-                Close: the user deleted it
-              </Button>
-            </form>
-          {/if}
+            <div class="mt-3 flex flex-col gap-1.5">
+              {#if verdict}
+                <span class="text-sm text-dark-2">{verdict}</span>
+              {:else}
+                <Textarea
+                  placeholder="Message to the user (optional)"
+                  value={messages.get(row.id) ?? ''}
+                  oninput={(e) => messages.set(row.id, e.currentTarget.value)}
+                  rows={2}
+                  maxlength={1000}
+                  class="resize-none text-xs"
+                />
+                <RulingForm
+                  subject="appeal"
+                  choices={CHOICES}
+                  action="?/resolve"
+                  enhancer={submit(row.id, () =>
+                    drafts.get(row.id)?.verdict === 'Approved' ? 'Appeal approved' : 'Appeal rejected'
+                  )}
+                  idPrefix="removed-appeal-{row.id}"
+                  size="xs"
+                  bind:draft={() => drafts.get(row.id) ?? emptyRulingDraft<Verdict>(),
+                    (d: RulingDraft<Verdict>) => drafts.set(row.id, d)}
+                >
+                  {#snippet hidden()}
+                    <input type="hidden" name="appealId" value={row.id} />
+                    <input type="hidden" name="resolvedMessage" value={messages.get(row.id) ?? ''} />
+                  {/snippet}
+                </RulingForm>
+                <form
+                  method="POST"
+                  action="?/ownerDeleted"
+                  use:enhance={submit(row.id, 'Closed: deleted by owner')}
+                >
+                  <input type="hidden" name="appealId" value={row.id} />
+                  <Button type="submit" size="xs" variant="outline">
+                    Close: the user deleted it
+                  </Button>
+                </form>
+              {/if}
+            </div>
+          </div>
         </div>
       </li>
     {/each}

@@ -80,7 +80,16 @@ export async function countRemovedAppeals(): Promise<number> {
 export async function getRemovedAppeals({ limit }: { limit: number }) {
   const rows = await pendingRemoved()
     .leftJoin('User as u', 'u.id', 'a.userId')
+    // A song still on file, which the page plays. Any other row stays text only.
+    .leftJoin('Image as song', (join) =>
+      join
+        .onRef('song.id', '=', 'a.entityId')
+        .on('a.entityType', '=', 'Image')
+        .on('song.type', '=', 'audio')
+    )
     .select([
+      'song.id as songId',
+      'song.url as songUrl',
       'a.id',
       'a.userId',
       'u.username',
@@ -109,8 +118,9 @@ export async function getRemovedAppeals({ limit }: { limit: number }) {
 
   return {
     hasMore: rows.length > limit,
-    items: page.map(({ buzzTransactionId, ...row }) => ({
+    items: page.map(({ buzzTransactionId, songId, songUrl, ...row }) => ({
       ...row,
+      song: songId != null && songUrl ? { id: songId, url: songUrl } : null,
       hasFee: buzzTransactionId != null,
       history: history
         .filter((h) => h.entityId === row.entityId && h.entityType === row.entityType.toLowerCase())

@@ -4,6 +4,8 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
+  import SongCard from '$lib/components/SongCard.svelte';
+  import { isSong } from '$lib/music/song-card';
   import { RETRACTED_REFUSED } from '$lib/held-media';
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import { entityUrl, userLookupUrl } from '$lib/entity-url';
@@ -163,6 +165,10 @@
          "what am I even looking at". -->
     {#if image.restricted}
       <div class="max-w-64 shrink-0 p-4 text-center text-xs text-dark-2">{RETRACTED_REFUSED}</div>
+    {:else if isSong(image)}
+      <div class="h-80 w-72 shrink-0 overflow-hidden rounded-lg border border-dark-4">
+        <SongCard item={image} />
+      </div>
     {:else}
       <CdnOrRetractedMedia
         item={{ id: image.id, url: image.url, type: image.type, name: image.name }}
