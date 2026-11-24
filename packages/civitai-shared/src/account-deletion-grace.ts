@@ -16,8 +16,8 @@ export const GRACE_PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview';
  * The image's nsfwLevel and rating lock before the grace block, which forces the level to Blocked. A
  * restore reads them only while the row is still as the block left it: a locked or Blocked rating is
  * put back, an unlocked one comes back at the higher of it and a re-rate from current tags. Any other
- * row, and one without them (blocked before they were recorded, or lifted while the owner was
- * deleted), is re-rated from its current tags.
+ * row, and one without them (blocked before they were recorded, or a recorded Blocked rating lifted
+ * while the owner was deleted), is re-rated from its current tags.
  */
 export const GRACE_PRIOR_NSFW_LEVEL_KEY = 'accountDeletionPriorNsfwLevel';
 export const GRACE_PRIOR_NSFW_LOCKED_KEY = 'accountDeletionPriorNsfwLevelLocked';

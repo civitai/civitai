@@ -26,6 +26,12 @@ const DDL = `
   CREATE TABLE "Appeal" (id serial PRIMARY KEY, "entityType" "EntityType" NOT NULL,
     "entityId" int NOT NULL, status "AppealStatus" NOT NULL DEFAULT 'Pending');`;
 
+describe.runIf(!!process.env.CI)('CI provides a real Postgres for the restore race', () => {
+  it('APPDATA_TEST_DATABASE_URL is set', () => {
+    expect(TEST_DATABASE_URL, 'the unit job must set APPDATA_TEST_DATABASE_URL').toBeTruthy();
+  });
+});
+
 describe.skipIf(!TEST_DATABASE_URL)('a moderator rating that races an account restore', () => {
   const schema = `restore_race_${process.pid}`;
   let pool: Pool;
