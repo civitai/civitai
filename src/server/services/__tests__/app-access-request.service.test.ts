@@ -329,7 +329,9 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
       [mira]
     );
     await expect(submit(mira, MIRA_IDEA)).resolves.toMatchObject({ status: 'pending' });
-    await decide((await rowsFor(mira))[0].id, 'declined');
+    // Cleared by deleting the row, not declining it: a declined request now sends the next submit
+    // to the queue, which would hide whether the email read came from the primary.
+    await pg.query(`DELETE FROM "AppAccessRequest" WHERE "userId" = $1`, [mira]);
 
     // The same session (nothing about it changed) once the address is proven.
     await pg.query(`UPDATE "User" SET "emailVerified" = CURRENT_TIMESTAMP WHERE "id" = $1`, [mira]);
