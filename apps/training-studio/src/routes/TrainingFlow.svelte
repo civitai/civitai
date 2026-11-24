@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { IconCheck, IconArrowLeft } from '@tabler/icons-svelte';
-  import { backend, navigate } from '$lib/host';
+  import { IconCheck, IconArrowLeft, IconHistory } from '@tabler/icons-svelte';
+  import { backend, hostConfig, navigate } from '$lib/host';
   import { isMatureNsfwLevel } from '$lib/buzz-balance.svelte';
   import { submitNotice } from '$lib/submit-notice.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -28,6 +28,7 @@
     labelModeForCard,
     sweepLabelMode,
     labelString,
+    nextImgId,
     runCard,
     runParamsKey,
     runTrainsPairs,
@@ -50,6 +51,12 @@
   import type { TrainingRunPayload } from '$lib/backend';
   import { newSubmitKey } from '$lib/submit-key';
   import { watchReadiness, type ReadinessView } from './uploadReadiness';
+  import {
+    draftEntries,
+    flowDraftStore,
+    type FlowDraft,
+    type FlowDraftState,
+  } from './flowDraft';
 
   let {
     prices,
@@ -121,7 +128,100 @@
     } catch {
       // Malformed hand-off — ignore and start empty.
     }
+    // A hand-off is the dataset the user just asked for; the draft waits for a later visit.
+    if (draftStore && !reuseItems.length && !reusePairItems.length)
+      void draftStore.load(nextImgId).then((draft) => {
+        if (draft && images.length === 0) draftOffer = draft;
+        else if (draft) for (const img of draft.images) URL.revokeObjectURL(img.previewUrl);
+      });
   });
+
+  // The autosave (./flowDraft): a reload or remount used to lose the whole dataset and its labels.
+  // Kept while the dataset has an uploaded file, offered back on the next visit, cleared once Start
+  // lands. Edit-pair datasets aren't kept.
+  const draftUserId = hostConfig().userId;
+  const draftStore = draftUserId != null ? flowDraftStore(draftUserId) : null;
+  let draftOffer = $state<FlowDraft | null>(null);
+  // Whether this visit saved a draft — only then does an emptied dataset clear it, so the offer of
+  // an earlier one survives until the user answers it or builds a new dataset.
+  let draftSaved = false;
+  let submitted = false;
+  const DRAFT_SAVE_DELAY_MS = 500;
+  $effect(() => {
+    if (!draftStore || !selection || trainsPairs || submitted) return;
+    const entries = draftEntries(images);
+    if (entries.length === 0) {
+      if (draftSaved) {
+        draftSaved = false;
+        void draftStore.clear();
+      }
+      return;
+    }
+    // Serialised now: the save runs later and must not read the live proxies (IndexedDB can't clone them).
+    const state: FlowDraftState = JSON.parse(
+      JSON.stringify({
+        selection,
+        labelMode,
+        trigger,
+        autoLabel,
+        excludeTags,
+        excludeCharacter,
+        excludeSource,
+        reviewName,
+        samplePrompts,
+        runParams,
+        presetType,
+      })
+    );
+    const timer = setTimeout(() => {
+      if (submitted) return;
+      draftSaved = true;
+      if (draftOffer) for (const img of draftOffer.images) URL.revokeObjectURL(img.previewUrl);
+      draftOffer = null;
+      void draftStore.save(
+        {
+          ...state,
+          reviewNameSeed,
+          promptsSeed,
+          paramsSeedTrigger,
+          paramsSeedLoraType,
+        },
+        entries
+      );
+    }, DRAFT_SAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+  });
+
+  function resumeDraft() {
+    const draft = draftOffer;
+    if (!draft) return;
+    draftOffer = null;
+    const s = draft.state;
+    selection = s.selection;
+    labelMode = s.labelMode;
+    trigger = s.trigger;
+    autoLabel = s.autoLabel;
+    excludeTags = s.excludeTags;
+    excludeCharacter = s.excludeCharacter;
+    excludeSource = s.excludeSource;
+    reviewName = s.reviewName;
+    reviewNameSeed = s.reviewNameSeed;
+    samplePrompts = s.samplePrompts;
+    promptsSeed = s.promptsSeed;
+    runParams = s.runParams;
+    paramsSeedTrigger = s.paramsSeedTrigger;
+    paramsSeedLoraType = s.paramsSeedLoraType;
+    presetType = s.presetType;
+    images = draft.images;
+    step = 2;
+  }
+
+  function discardDraft() {
+    if (!draftOffer) return;
+    for (const img of draftOffer.images) URL.revokeObjectURL(img.previewUrl);
+    draftOffer = null;
+    void draftStore?.clear();
+  }
   const trainsPairs = $derived(!!selection && runTrainsPairs(selection.runs[0]!));
   const readyPairs = $derived(pairs.filter(isPairReady));
   // The plain Data step's trigger word, unless this is an edit run: that step never shows one, so a word
@@ -377,6 +477,11 @@
     }));
     const { workflowIds: ids, failure } = await backend().submitTraining(keyed);
     submitKey = newSubmitKey();
+    // Any run that landed ends the draft: resuming it would resubmit (and charge) that run again.
+    if (ids.length > 0 && draftStore) {
+      submitted = true;
+      await draftStore.clear();
+    }
     if (failure)
       submitNotice.set(
         `Started ${ids.length} of ${runs.length} runs. The rest may not have started (${failure}); check your runs list before starting them again.`
@@ -439,6 +544,27 @@
   </div>
 
   <ServiceStatusBanner />
+
+  {#if draftOffer && step === 1}
+    {@const draft = draftOffer}
+    <div
+      class="flex flex-wrap items-center gap-3 rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-dark-0"
+      role="status"
+    >
+      <IconHistory size={18} stroke={2} class="shrink-0 text-primary" />
+      <p class="min-w-0 flex-1 leading-snug">
+        <span class="font-semibold">You have an unfinished training.</span>
+        {draft.images.length}
+        {draft.images.length === 1 ? 'file' : 'files'} with their labels for
+        {runCard(draft.state.selection.runs[0]!).name}, saved
+        {new Date(draft.savedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}.
+      </p>
+      <div class="flex shrink-0 gap-2">
+        <Button size="sm" variant="outline" onclick={discardDraft}>Discard</Button>
+        <Button size="sm" onclick={resumeDraft}>Resume</Button>
+      </div>
+    </div>
+  {/if}
 
   {#if step === 1}
     <Select
