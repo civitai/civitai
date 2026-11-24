@@ -247,7 +247,7 @@ export async function readWithoutJit<T>(
   db: Kysely<DB>,
   read: (trx: Kysely<DB>) => Promise<T>
 ): Promise<T> {
-  // Already in a transaction: turn JIT off in it rather than nest one, which Kysely refuses.
+  // Already in a transaction: turn JIT and parallel workers off in it rather than nest one, which Kysely refuses.
   if (db.isTransaction) {
     await sql`SET LOCAL jit = off`.execute(db);
     await sql`SET LOCAL max_parallel_workers_per_gather = 0`.execute(db);
