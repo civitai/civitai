@@ -15,7 +15,7 @@ type Template = {
   optOutType?: unknown;
   oneTimeTokenLinks?: unknown;
   trackedLinksFrom?: number;
-  getHtml: (data: unknown) => string;
+  getHtml: (data: unknown, ctx?: { unsubscribeUrl?: string }) => string;
   getText: (data: unknown) => string;
   render: (
     data: unknown,
@@ -294,7 +294,11 @@ const { isEmailOptOutType } = await import('~/server/notifications/utils.notific
 
 const sends = [...fromFiles.entries()].sort().map(([name, template]) => {
   const data = testData.get(name);
-  return { name, template, plain: template.getHtml(data), sent: template.render(data, SEND) };
+  const sent = template.render(data, SEND);
+  // The untracked render of the same send: a lifecycle mail's unsubscribe link carries its send id.
+  const unsubscribeUrl = sent.headers['List-Unsubscribe']?.slice(1, -1);
+  const plain = template.getHtml(data, unsubscribeUrl ? { unsubscribeUrl } : undefined);
+  return { name, template, plain, sent };
 });
 
 describe('every email template tracks its links', () => {

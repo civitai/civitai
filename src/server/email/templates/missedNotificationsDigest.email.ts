@@ -52,6 +52,9 @@ export const missedNotificationsDigestEmail = createEmail({
     type: MISSED_DIGEST_EMAIL_TYPE,
     url: (data: MissedNotificationsDigestData) => data.unsubscribeUrl,
   },
+  // Positions 0 to 100 are the digest's own (its button and items, through digest-click); the
+  // settings and footer links the rewriter tracks count from 101.
+  trackedLinksFrom: DIGEST_REWRITTEN_LINKS_FROM,
   header: (data: MissedNotificationsDigestData) => ({
     subject: subjectFor(data),
     to: data.to,
