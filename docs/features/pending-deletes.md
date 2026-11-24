@@ -51,7 +51,9 @@ unpublish follow-ups. The `trg_post_pending_delete_keep_unpublished` trigger (mi
 `20271126120000_post_pending_delete_publish_guard`) keeps such a post unpublished, its stamp intact,
 whatever path tries to publish it, while its `PendingDelete` row exists. A kept draft is stamped too; a
 post a moderator already unpublished keeps its own reason. Once that row is gone without
-the post (an account restore releases it), a publish goes through and drops the stamp.
+the post, a publish goes through and drops the stamp. An account restore
+(`releaseAccountDeletionPendingDeletes`) leaves the drain's delete of an image or post whose case is
+still open, so it cannot make that content publishable.
 `deletePost` runs the unpublish follow-ups (`afterPostsUnpublish`) for a post it kept; the other
 `deletePostRows` callers do not yet. A publish the trigger refuses makes `updatePost` answer that the
 post can't be published right now.

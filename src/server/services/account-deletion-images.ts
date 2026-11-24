@@ -1,4 +1,6 @@
+import { childSafetyImageCase, childSafetyPostCase } from '@civitai/db-queries/child-safety-case';
 import { uniq } from 'lodash-es';
+import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { BlockedReason, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
@@ -51,7 +53,7 @@ export function disarmAccountDeletionImagePurge(userId: number) {
 /**
  * Takes the drain's ask off this account's pending deletes, which `pending-deletes` carries out
  * without looking at the account: a row only it asked for goes, and one someone else also asked for
- * keeps theirs. A `PrismaPromise`, for the same transaction as the `deletedAt` clear.
+ * keeps theirs. One whose case is still open stays, so the restore cannot make it publishable. A `PrismaPromise`, for the same transaction as the `deletedAt` clear.
  */
 export function releaseAccountDeletionPendingDeletes(userId: number) {
   return dbWrite.$executeRaw`
@@ -60,8 +62,16 @@ export function releaseAccountDeletionPendingDeletes(userId: number) {
       FROM "JobQueue" q
       WHERE q.type = 'PendingDelete'::"JobQueueType" AND q.data->>'deletedBy' = ${ACCOUNT_DELETION_DRAIN}
         AND (
-          (q."entityType" = 'Image' AND q."entityId" IN (SELECT id FROM "Image" WHERE "userId" = ${userId}))
-          OR (q."entityType" = 'Post' AND q."entityId" IN (SELECT id FROM "Post" WHERE "userId" = ${userId}))
+          (q."entityType" = 'Image' AND q."entityId" IN (
+            SELECT id FROM "Image" WHERE "userId" = ${userId} AND NOT ${toPrismaSql(
+    childSafetyImageCase()
+  )}
+          ))
+          OR (q."entityType" = 'Post' AND q."entityId" IN (
+            SELECT id FROM "Post" WHERE "userId" = ${userId} AND NOT ${toPrismaSql(
+    childSafetyPostCase()
+  )}
+          ))
         )
     ),
     stripped AS (

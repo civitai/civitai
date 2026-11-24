@@ -1463,6 +1463,16 @@ export const deletePost = async ({
     kept: keptPost,
     hidden: hiddenPost,
   } = await deletePostRows(kyselyOver(dbWrite), { ids: [id], actor });
+  // A post kept for its case was unpublished in the delete itself.
+  await afterPostsUnpublish(hiddenPost.map(({ id: postId, userId }) => ({ postId, userId }))).catch(
+    (e: unknown) =>
+      logToAxiom({
+        type: 'error',
+        name: 'post-delete-unpublish-follow-ups-failed',
+        postId: id,
+        error: safeError(e),
+      })
+  );
   // Only a moderator hears that a delete in the post was kept; a member's reply never says so.
   const deleteAfterReview = !!viewerIsModerator && (keptPost.length > 0 || keptImages.length > 0);
 
@@ -1492,16 +1502,6 @@ export const deletePost = async ({
 
   await bustCachesForPosts(id);
   await userImageVideoCountCaches.bust(imageOwnerIds);
-  // A post kept for its case was unpublished in the delete itself.
-  await afterPostsUnpublish(hiddenPost.map(({ id: postId, userId }) => ({ postId, userId }))).catch(
-    (e: unknown) =>
-      logToAxiom({
-        type: 'error',
-        name: 'post-delete-unpublish-follow-ups-failed',
-        postId: id,
-        error: safeError(e),
-      })
-  );
 
   if (post) return { ...post, deletedImageIds, deleteAfterReview };
   return deleteAfterReview ? { deleteAfterReview } : undefined;

@@ -923,6 +923,21 @@ describe('deletePostRows keeps a post under a child-safety report', () => {
       });
     });
 
+    it("refuses the owner's publish of a post a moderator unpublished, kept with its delete queued", async () => {
+      await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt", metadata)
+          VALUES (53, ${OWNER}, NULL, '{"unpublishedReason": "tos"}');
+        INSERT INTO "PostReport" VALUES (53, 1)`);
+      await deletePostRows(db, { ids: [53], actor: owner });
+
+      await pg.exec(`UPDATE "Post" SET "publishedAt" = now() WHERE id = 53`);
+
+      expect((await posts()).find((p) => p.id === 53)).toEqual({
+        id: 53,
+        published: false,
+        reason: 'tos',
+      });
+    });
+
     it('still publishes the other posts of a bulk publish', async () => {
       await pg.exec(`UPDATE "Post" SET "publishedAt" = now() WHERE id IN (${KEPT}, ${OTHER})`);
 

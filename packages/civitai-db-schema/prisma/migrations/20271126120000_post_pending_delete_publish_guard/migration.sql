@@ -2,7 +2,7 @@
 -- (deleteStatement in packages/civitai-db-queries/src/content-deletion.db.ts). Several paths can
 -- publish a post (the owner's edit, scheduled publishing, a model publish sweeping its posts), so the
 -- table refuses it while the post's delete is still queued: such a post stays unpublished, its stamp
--- intact. Silent rather than an error, so a bulk publish still publishes the other posts. Once the
+-- (or the reason a moderator unpublished it for) intact. Silent rather than an error, so a bulk publish still publishes the other posts. Once the
 -- queued delete is gone without the post (an account restore releases it), a publish goes through
 -- and drops the stamp.
 --
@@ -10,7 +10,8 @@
 
 CREATE OR REPLACE FUNCTION post_pending_delete_keep_unpublished() RETURNS trigger AS $$
 BEGIN
-  IF NEW."publishedAt" IS NULL OR OLD."metadata" ->> 'unpublishedReason' IS DISTINCT FROM 'pending-delete' THEN
+  -- Only a post unpublished for a reason (this delete's, or a moderator's before it) is checked.
+  IF NEW."publishedAt" IS NULL OR OLD."metadata" ->> 'unpublishedReason' IS NULL THEN
     RETURN NEW;
   END IF;
   IF EXISTS (
