@@ -32,6 +32,8 @@ export function getKlein9bNoticeHtml({
 }
 
 export const klein9bNoticeEmail = createEmail({
+  template: 'klein9bNotice',
+  mailClass: 'transactional',
   header: ({ to, variant }: Klein9bNoticeData) => ({
     subject: KLEIN9B_NOTICE[variant].subject,
     to,

@@ -19,6 +19,8 @@ const reviewUrl = (username: TrainingCompleteEmailData['user']['username']) =>
   getBaseUrl() + `/user/${username}/models?section=training`;
 
 export const trainingFailEmail = createEmail({
+  template: 'trainingFail',
+  mailClass: 'transactional',
   header: ({ user, mName, model }: TrainingCompleteEmailData) => ({
     subject: `Your model "${model.name} - ${mName}" failed to train`,
     to: user.email,

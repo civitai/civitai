@@ -104,6 +104,7 @@ describe('sendEmail over SMTP', () => {
       to: ['a@test.dev', 'b@test.dev'],
       subject: 'Hello',
       html: '<p>Body</p>',
+      tags: { template: 'test', mailClass: 'transactional' },
     });
 
     expect(sink.received).toHaveLength(1);
