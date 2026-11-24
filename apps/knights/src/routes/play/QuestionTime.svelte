@@ -1,16 +1,29 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { fade } from 'svelte/transition';
   import { reducedMotion } from '$lib/motion';
   import { QUESTION_TIME_MS } from './question-run';
 
   /** Shown over the stage before a run of yes/no questions; it ends by itself, or at once on a click, tap or Space. */
-  let { category, onstart }: { category: string | null; onstart: () => void } = $props();
+  let {
+    category,
+    paused = false,
+    onstart,
+  }: {
+    category: string | null;
+    /** A dialog is up over the page: the countdown waits, then starts over, so the card is never missed. */
+    paused?: boolean;
+    onstart: () => void;
+  } = $props();
 
   let start = $state<HTMLButtonElement>();
+  let countdown = $state(0);
 
-  onMount(() => {
-    start?.focus({ preventScroll: true });
+  onMount(() => start?.focus({ preventScroll: true }));
+
+  $effect(() => {
+    if (paused) return;
+    untrack(() => (countdown += 1));
     const timer = setTimeout(onstart, QUESTION_TIME_MS);
     return () => clearTimeout(timer);
   });
@@ -31,7 +44,9 @@
       The next few images ask a yes or no question. Your answers help build Civitai's new moderation
       model.
     </p>
-    <span class="bar" aria-hidden="true"><span class="fill"></span></span>
+    {#key countdown}
+      <span class="bar" class:paused aria-hidden="true"><span class="fill"></span></span>
+    {/key}
     <span class="reduced" aria-hidden="true">Starting in {QUESTION_TIME_MS / 1000} s</span>
     <button type="button" class="start" bind:this={start} onclick={onstart}>
       Start now<kbd aria-hidden="true">Space</kbd>
@@ -48,7 +63,7 @@
     place-items: center;
     padding: 16px;
     border-radius: 8px;
-    background: rgb(14 12 9 / 0.7);
+    background: color-mix(in srgb, var(--io-matte) 70%, transparent);
     cursor: pointer;
     animation: fade-in var(--motion-base) var(--ease-out-quart) both;
   }
@@ -114,6 +129,10 @@
     background: var(--io-gold);
     transform-origin: left;
     animation: countdown calc(var(--question-time) - var(--motion-base)) linear var(--motion-base) both;
+  }
+
+  .bar.paused .fill {
+    animation-play-state: paused;
   }
 
   .start {

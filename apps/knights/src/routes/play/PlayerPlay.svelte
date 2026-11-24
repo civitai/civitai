@@ -956,21 +956,21 @@
     {@const shown = screen.view}
     <div class="column">
       <div class="qrow" class:locked={questionTimeShowing}>
-      <p class="question" title={shown.question.prompt}>
-        <span class="eyebrow" class:glow={questionsDoneShowing}>
-          Question
-          {#if shown.category}
-            <!-- Re-keyed (and glows once) only when the category changes; the text is part of the question for screen readers. -->
-            {#key shown.category.heading}
-              <span class="category" class:glow={shown.banner !== null}>
-                <span aria-hidden="true">·</span><span class="vh">Category: </span>{shown.category.heading}
-              </span>
-            {/key}
-          {/if}
-        </span>
-        <span class="text">{shown.question.prompt}</span>
-      </p>
-      {@render questionTools()}
+        <p class="question" title={shown.question.prompt}>
+          <span class="eyebrow" class:glow={questionsDoneShowing}>
+            Question
+            {#if shown.category}
+              <!-- Re-keyed (and glows once) only when the category changes; the text is part of the question for screen readers. -->
+              {#key shown.category.heading}
+                <span class="category" class:glow={shown.banner !== null}>
+                  <span aria-hidden="true">·</span><span class="vh">Category: </span>{shown.category.heading}
+                </span>
+              {/key}
+            {/if}
+          </span>
+          <span class="text">{shown.question.prompt}</span>
+        </p>
+        {@render questionTools()}
       </div>
       <span class="vh" role="status" aria-live="polite"
         >{shown.banner
@@ -992,7 +992,7 @@
           />
         {/key}
         {#if questionTimeShowing}
-          <QuestionTime category={shown.category?.heading ?? null} onstart={startQuestions} />
+          <QuestionTime category={shown.category?.heading ?? null} paused={dialogOpen} onstart={startQuestions} />
         {:else if questionsDoneShowing}
           <p class="questions-done" aria-hidden="true">
             <Icon name="check" size={14} /><b>Questions done</b><span aria-hidden="true">·</span>back to rating
@@ -1025,9 +1025,15 @@
           <button type="submit" name="settled" value="1" hidden tabindex="-1" aria-label="Continue" bind:this={settledSubmit}></button>
           {#if yesNo}
             <!-- Same action as Skip (no pay, no smite), named for what it means on a question; Space still sends it. -->
-            <button type="submit" class="unsure" disabled={submitting || settledOnScreen || questionTimeShowing} title="Not sure (Space)">
-              <Icon name="circle-help" size={16} /><span>Not sure</span><kbd class="key" aria-hidden="true">Space</kbd>
-            </button>
+            <AnswerPill
+              option={{ value: 'unsure', label: 'Not sure' }}
+              index={0}
+              yesNo
+              icon="circle-help"
+              keyHint="Space"
+              hint="Not sure (Space)"
+              disabled={submitting || settledOnScreen || questionTimeShowing}
+            />
           {:else}
             <button type="submit" class="quiet" disabled={submitting || settledOnScreen} aria-label="Skip" title="Skip (Space)">
               <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
@@ -1281,8 +1287,7 @@
   }
   /* Question time is up: the question and every answer sit back evenly, and nothing reads as loading. */
   .qrow.locked,
-  .controls.locked :global(.pill:disabled),
-  .controls.locked .unsure:disabled {
+  .controls.locked :global(.pill:disabled) {
     opacity: 0.35;
     cursor: default;
   }
@@ -1307,33 +1312,11 @@
     align-items: center;
     gap: 6px;
   }
-  /* "Not sure" is an answer a player gives, so it reads as one: an answer pill after Yes and No. */
-  .unsure {
-    display: inline-flex;
+  /* "Not sure" is an answer a player gives, so it reads as one: an answer pill after Yes and No, narrower than they are. */
+  .controls.yesno .skip {
+    display: flex;
     flex: none;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
     width: 180px;
-    height: 40px;
-    padding: 0 16px;
-    border: 1px solid var(--io-gold-muted);
-    border-radius: 6px;
-    background: var(--io-bg);
-    color: var(--io-parchment);
-    font: 700 14px/1 var(--io-font-ui);
-    transition: border-color var(--motion-fast) var(--ease-out-quart);
-  }
-  .unsure:hover:not(:disabled) {
-    border-color: var(--io-gold);
-    background: var(--io-bg);
-  }
-  .unsure .key {
-    color: var(--io-parchment-muted);
-    font: 700 12px/1 var(--io-font-ui);
-  }
-  .unsure:disabled {
-    opacity: 0.4;
   }
   .questions-done {
     position: absolute;
@@ -1348,7 +1331,7 @@
     padding: 0 14px;
     border: 1px solid var(--io-gold-muted);
     border-radius: 999px;
-    background: rgb(20 17 13 / 0.9);
+    background: color-mix(in srgb, var(--io-bg) 90%, transparent);
     box-shadow: 0 4px 16px rgb(0 0 0 / 0.5);
     color: var(--io-parchment-muted);
     font: 13px/1.2 var(--io-font-ui);
@@ -1486,15 +1469,12 @@
     .controls.yesno .answers,
     .controls.yesno .skip {
       flex: 1 1 100%;
+      width: auto;
     }
     .controls.yesno :global(.pill) {
       height: 44px;
     }
-    .unsure {
-      width: 100%;
-      height: 44px;
-    }
-    .unsure .key {
+    .controls.yesno .skip :global(.key) {
       display: none;
     }
     .space {
