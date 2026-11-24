@@ -18,6 +18,7 @@ import {
   q,
   resetFpState,
   runMirror,
+  scanClean,
   SIGNER,
   SUBJECT,
   UNKNOWN,
@@ -65,25 +66,46 @@ const ctxFor = (id: number, isModerator = false) =>
     track: {},
   } as never);
 let seq = 0;
-const post = (text: string, over: { userId?: number; subject?: string; parent?: string } = {}) =>
-  comments.postFeaturePageComment(ctxFor(over.userId ?? AUTHOR), {
+/** The comment's scan finishes clean and the mirror takes it up: what the platform then holds. */
+const scannedAndPushed = async <T extends { comment: { sourceId: number; urn: string | null } }>(
+  reply: T
+) => {
+  await scanClean(reply.comment.sourceId);
+  await mirror.pushNewFpComment(reply.comment.sourceId);
+  return {
+    ...reply,
+    comment: {
+      ...reply.comment,
+      urn: (await mirrorRow(reply.comment.sourceId)).urn as string | null,
+    },
+  };
+};
+/** A post; unless `unscanned`, its scan then finishes clean and the mirror pushes it. */
+const post = async (
+  text: string,
+  over: { userId?: number; subject?: string; parent?: string; unscanned?: boolean } = {}
+) => {
+  const reply = await comments.postFeaturePageComment(ctxFor(over.userId ?? AUTHOR), {
     requestId: `r${++seq}`,
     subject: over.subject ?? SUBJECT,
     parent: over.parent,
     text,
   });
+  return over.unscanned ? reply : scannedAndPushed(reply);
+};
 
 describe('posting', () => {
-  it('writes one comment and one mirror row, and posts it once under a mirror key, not the client requestId', async () => {
-    const { comment } = await comments.postFeaturePageComment(ctxFor(AUTHOR), {
+  it('writes one comment and one mirror row, and once its scan is clean posts it once under a mirror key, not the client requestId', async () => {
+    const reply = await comments.postFeaturePageComment(ctxFor(AUTHOR), {
       requestId: 'req-1',
       subject: SUBJECT,
       text: 'Dark mode <please> & thanks',
     });
-    expect(comment).toMatchObject({
-      urn: urnOf(comment.sourceId),
-      text: 'Dark mode <please> & thanks',
-    });
+    // Answered before any scan: nothing sent yet.
+    expect(reply.comment).toMatchObject({ urn: null, text: 'Dark mode <please> & thanks' });
+    expect(posts()).toEqual([]);
+    const { comment } = await scannedAndPushed(reply);
+    expect(comment.urn).toBe(urnOf(comment.sourceId));
     expect(
       await q(`SELECT id FROM "CommentV3" WHERE "entityType"::text = 'featurePage'`)
     ).toHaveLength(1);
@@ -120,6 +142,8 @@ describe('posting', () => {
       await q(`SELECT id FROM "CommentV3" WHERE "entityType"::text = 'featurePage'`)
     ).toHaveLength(1);
     expect(queued).toHaveBeenCalledTimes(1);
+    expect(posts()).toEqual([]);
+    await scannedAndPushed(a);
     expect(posts()).toHaveLength(1);
     // A later resend answers the same, writing nothing.
     const again = await comments.postFeaturePageComment(ctxFor(AUTHOR), input);
@@ -178,9 +202,12 @@ describe('posting', () => {
     });
   });
 
-  it('refuses a subject the platform does not know, keeping the not yet scanned comment hidden', async () => {
+  it('a subject the platform does not know: nothing is sent before a clean scan, then it is refused', async () => {
     dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue(null as never);
-    await expect(post('hello', { subject: UNKNOWN })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const { comment } = await post('hello', { subject: UNKNOWN, unscanned: true });
+    expect(comment.urn).toBeNull();
+    expect(fetchFake.mock.calls.filter(([u]) => String(u).startsWith(SIGNER))).toEqual([]);
+    await scannedAndPushed({ comment });
     expect(
       await q(`SELECT hidden FROM "CommentV3" WHERE "entityType"::text = 'featurePage'`)
     ).toEqual([{ hidden: true }]);
@@ -260,8 +287,18 @@ describe('posting', () => {
 });
 
 describe('edits', () => {
-  const edit = (urn: string, text: string, userId = AUTHOR) =>
-    comments.editFeaturePageComment(ctxFor(userId), { requestId: `e${++seq}`, comment: urn, text });
+  /** An edit; its rescan then finishes clean and the mirror pushes it. */
+  const edit = async (urn: string, text: string, userId = AUTHOR) => {
+    const reply = await comments.editFeaturePageComment(ctxFor(userId), {
+      requestId: `e${++seq}`,
+      comment: urn,
+      text,
+    });
+    const id = reply.comment.sourceId;
+    await scanClean(id);
+    await mirror.pushNewFpComment(id);
+    return reply;
+  };
   beforeEach(() => {
     // csamHoldState reads the verdict through Prisma: clear unless a test says otherwise.
     dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({
@@ -387,7 +424,12 @@ describe('edits', () => {
 
   it('an edit whose rescan flags it sends no text and is hidden, never shown', async () => {
     const { comment } = await post('clean at first');
-    await edit(comment.urn!, 'now a scam');
+    await comments.editFeaturePageComment(ctxFor(AUTHOR), {
+      requestId: `e${++seq}`,
+      comment: comment.urn!,
+      text: 'now a scam',
+    });
+    await runMirror(mirror);
     // The rescan flags it: the same hide a scan callback applies.
     await moderation.hideFlaggedFpComment(comment.sourceId, {
       createReport: async () =>

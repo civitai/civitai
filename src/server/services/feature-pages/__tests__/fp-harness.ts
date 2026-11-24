@@ -501,14 +501,32 @@ export const runMirror = async (mirror: typeof MirrorService) => {
 };
 
 let seeded = 0;
+/** A finished scan of the comment's current text that found nothing. */
+export async function scanClean(id: number) {
+  const { currentScanContentHashes } = await import('~/server/services/text-scan/submit');
+  const hash = (await currentScanContentHashes('CommentV3', [id])).get(id) ?? null;
+  await q(
+    `INSERT INTO "EntityModeration"("entityType", "entityId", status, "contentHash")
+     VALUES ('CommentV3', $1, 'Succeeded', $2)
+     ON CONFLICT ("entityType", "entityId") DO UPDATE
+       SET status = 'Succeeded', "contentHash" = EXCLUDED."contentHash", "triggeredLabels" = '{}'`,
+    [id, hash]
+  );
+}
+
 /**
  * A Feature Pages comment as the post path leaves it: topic, comment and mirror row, then the one
- * inline push. For the mirror's own tests, which must not depend on the post path.
+ * inline push. A clean scan of its text is recorded first unless `scanned: false`. For the
+ * mirror's own tests, which must not depend on the post path.
  */
 export async function seedFpComment(
   mirror: typeof MirrorService,
   text: string,
-  { userId = AUTHOR, subject = SUBJECT }: { userId?: number; subject?: string } = {}
+  {
+    userId = AUTHOR,
+    subject = SUBJECT,
+    scanned = true,
+  }: { userId?: number; subject?: string; scanned?: boolean } = {}
 ) {
   const [{ id: topicId }] = await q<{ id: number }>(
     `INSERT INTO "FeaturePageTopic" (urn, kind) VALUES ($1, 'request')
@@ -530,6 +548,7 @@ export async function seedFpComment(
      VALUES ($1, $2, $3, now() + interval '60 seconds')`,
     [id, userId, requestId]
   );
+  if (scanned) await scanClean(id);
   await mirror.pushNewFpComment(id);
   return { comment: { sourceId: id, urn: (await mirrorRow(id)).urn as string | null } };
 }
