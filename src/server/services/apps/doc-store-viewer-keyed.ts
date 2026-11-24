@@ -13,8 +13,9 @@
 // hashing every id. What the secret protects is unlinkability only: authorization never depends
 // on it (the viewer comes from the verified token, and raw-key writes here are refused).
 //
-// Served once APP_STORAGE_VIEWER_KEY_SECRET is set (`viewerKeyedDocs` is on, so submit accepts
-// `keyedBy`); each collection's Flipt switch is default-on except migration targets.
+// Keys need APP_STORAGE_VIEWER_KEY_SECRET: while it is unset, an `@me` op answers 503 once its
+// other checks pass. In production, writes also need the collection's Flipt switch, which fails
+// closed (`isViewerKeyedOpen`).
 import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
