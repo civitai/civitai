@@ -17,9 +17,6 @@ const h = vi.hoisted(() => ({
   fetchStickers: vi.fn(async (_input: { imageIds: number[] }, _opts?: unknown) => ({})),
   // When every chunk's page read answered: long enough ago that counts and stickers are stale.
   stamp: 0,
-  // Whether each page read says it marked its images (a joined viewer's read with `watch`).
-  readsWatched: false,
-  summaryInputs: [] as Record<string, unknown>[],
   utils: undefined as unknown,
 }));
 h.utils = {
@@ -63,16 +60,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
                 new Proxy({}, { get: (_b, proc: string) => (input: unknown) => ({ proc, input }) }),
             }
           );
-          return build(t).map(({ proc, input }: { proc: string; input?: unknown }) => {
-            if (proc === 'getSummaries') h.summaryInputs.push(input as Record<string, unknown>);
-            return {
-              dataUpdatedAt: h.stamp,
-              data:
-                proc === 'getSummaries'
-                  ? { team: 'blue', images: {}, open: {}, hidden: {}, watched: h.readsWatched }
-                  : {},
-            };
-          });
+          return build(t).map(({ proc }) => ({
+            dataUpdatedAt: h.stamp,
+            data: proc === 'getSummaries' ? { team: 'blue', images: {}, open: {}, hidden: {} } : {},
+          }));
         },
         useUtils: () => h.utils,
       }
@@ -125,7 +116,6 @@ const currentHub = (event: string) => {
     minGapMs: 2_000,
     retryMs: 5_000,
     retryJitterMs: 1_000,
-    markLifetimeMs: 90_000,
     onVisible: () => () => undefined,
   });
   held.release();
@@ -157,8 +147,6 @@ beforeEach(() => {
   h.hubMark.mockImplementation(async () => 0);
   h.fetchSummaries.mockClear();
   h.fetchStickers.mockClear();
-  h.readsWatched = false;
-  h.summaryInputs = [];
   vi.useFakeTimers();
   // Two minutes old: past both catch-up thresholds (30s counts, 90s stickers).
   h.stamp = Date.now() - 120_000;
@@ -186,29 +174,6 @@ describe('TurfSummaryProvider watch marks', () => {
       [2, 3],
     ]);
     expect(h.hubMark).not.toHaveBeenCalled();
-    // Off, the page reads never ask to watch: each provider marks its own cards as before.
-    expect(h.summaryInputs.length).toBeGreaterThan(0);
-    expect(h.summaryInputs.filter((input) => 'watch' in input)).toEqual([]);
-    stops.forEach((stop) => stop());
-  });
-
-  test('flag on: page reads ask to watch, and cards a read marked are left to the interval', async () => {
-    h.flags = { hatTurfBatchedCalls: true };
-    h.readsWatched = true;
-    // Read just now, so its marks outlive the hub's next two ticks.
-    h.stamp = Date.now();
-    await mountPage([1, 2], [3]);
-    expect(h.summaryInputs).toContainEqual({
-      event: 'birthday2026',
-      imageIds: [1, 2],
-      watch: true,
-    });
-    const stops = [probes.a!.watch(1), probes.a!.watch(2), probes.b!.watch(3)];
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(h.hubMark).not.toHaveBeenCalled();
-    // The interval (40s from mount) renews them with the rest of the set.
-    await vi.advanceTimersByTimeAsync(40_000);
-    expect(calls(h.hubMark)).toEqual([[1, 2, 3]]);
     stops.forEach((stop) => stop());
   });
 

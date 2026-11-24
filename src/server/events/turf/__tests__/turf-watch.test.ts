@@ -56,19 +56,6 @@ describe('markTurfWatched', () => {
     expect(z.get('1')).toBeGreaterThan(NOW + 10);
   });
 
-  it('marks 50 ids a call by default, and a summaries page of 100 when the caller says so', async () => {
-    const ids = Array.from({ length: 100 }, (_, i) => i + 1);
-    const byDefault = fakeZset();
-    expect(await markTurfWatched(EVENT, ids, { redis: byDefault.redis as never, now: NOW })).toBe(
-      50
-    );
-    const page = fakeZset();
-    expect(
-      await markTurfWatched(EVENT, ids, { redis: page.redis as never, now: NOW, limit: 100 })
-    ).toBe(100);
-    expect(page.z.get('100')).toBe(NOW + 90_000);
-  });
-
   it('marks nothing once the event is over', async () => {
     const { z, redis } = fakeZset();
     expect(await markTurfWatched(EVENT, [5], { redis: redis as never, now: NOW + 120_000 })).toBe(

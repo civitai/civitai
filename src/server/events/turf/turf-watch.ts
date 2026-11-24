@@ -6,7 +6,7 @@ import type { FeedSticker } from '~/server/events/turf/turf.service';
 import { logToAxiom } from '~/server/logging/client';
 import { redis as clusterRedis } from '~/server/redis/client';
 import { boundedClusterCall } from '~/server/utils/cluster-window-count';
-import { MAX_TURF_IMAGES_PER_MARK, TURF_WATCH_TTL_MS } from '~/server/schema/turf.schema';
+import { MAX_TURF_IMAGES_PER_MARK } from '~/server/schema/turf.schema';
 import { signalClient } from '~/utils/signal-client';
 
 // Live turf counts on feed cards and image pages: a client marks the images it has on screen, and
@@ -15,7 +15,7 @@ import { signalClient } from '~/utils/signal-client';
 //
 // Its own interest set, apart from the points one (events/points/watch.ts), so a full page of turf
 // images can never crowd out hat and team totals.
-export { TURF_WATCH_TTL_MS };
+export const TURF_WATCH_TTL_MS = 90_000;
 export const MAX_TURF_WATCHED = 20_000;
 const PUSH_CONCURRENCY = 20;
 
@@ -27,22 +27,17 @@ export type TurfWatchRedis = Pick<
 /**
  * Marks images as on screen for the next TURF_WATCH_TTL_MS. Any image id may be marked, so a card
  * hears the first sticker on an image that has none yet; the cap bounds the set. Returns how many.
- * `limit`: the most ids one call marks; a summaries read marks its own, larger, page.
  */
 export async function markTurfWatched(
   event: { name: string; endsAt: Date },
   imageIds: number[],
-  {
-    redis = clusterRedis as TurfWatchRedis,
-    now = Date.now(),
-    limit = MAX_TURF_IMAGES_PER_MARK,
-  } = {}
+  { redis = clusterRedis as TurfWatchRedis, now = Date.now() } = {}
 ) {
   if (!(await isEventPointsEnabled().catch(() => false))) return 0;
   if (now > event.endsAt.getTime()) return 0;
   const ids = [...new Set(imageIds)]
     .filter((id) => Number.isInteger(id) && id > 0)
-    .slice(0, limit)
+    .slice(0, MAX_TURF_IMAGES_PER_MARK)
     .map(String);
   if (!ids.length) return 0;
   const key = turfKeys(event.name).watch;

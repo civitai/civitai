@@ -1,8 +1,8 @@
 /**
  * Shared by every TurfSummaryProvider on the page for one event (hatTurfBatchedCalls), so several
  * blocks send one mark set instead of one call each and share one scroll-burst spacing. A failed
- * mark is retried once. A hidden page sends no re-marks; becoming visible re-marks everything once
- * the marks may have lapsed, because a lapsed mark misses pushes that nothing re-reads.
+ * mark is retried once. A hidden page sends no interval re-marks, and a page becoming visible
+ * re-marks everything, because a lapsed mark misses pushes that nothing re-reads.
  */
 import { MAX_TURF_IMAGES_PER_MARK } from '~/server/schema/turf.schema';
 import { chunkIds } from '~/utils/array-helpers';
@@ -29,8 +29,6 @@ export type TurfWatchHubOptions = {
   /** A failed mark is sent again once, this long after (plus jitter). */
   retryMs: number;
   retryJitterMs: number;
-  /** How long the server keeps one mark (TURF_WATCH_TTL_MS), for marks made by another call. */
-  markLifetimeMs: number;
   now?: () => number;
   /** Calls back when the page becomes visible; returns the way to stop. Defaults to `document`. */
   onVisible?: (callback: () => void) => () => void;
@@ -53,8 +51,6 @@ const documentHidden = () =>
 export class TurfWatchHub {
   readonly event: string;
   private readonly options: Required<Omit<TurfWatchHubOptions, 'event' | 'onVisible'>>;
-  /** Until when another call (a summaries read) has marked an id, so the hub need not yet. */
-  private readonly markedElsewhere = new Map<number, number>();
   private readonly counts = new Map<number, number>();
   private marked = new Set<number>();
   private readonly everMarked = new Set<number>();
@@ -64,9 +60,6 @@ export class TurfWatchHub {
   private readonly retryTimers = new Set<ReturnType<typeof setTimeout>>();
   private readonly stopVisible: () => void;
   private lastFlushSent = -Infinity;
-  /** When the whole set was last sent (an interval tick or a resume). */
-  private lastAllSent = -Infinity;
-  private nextTickAt: number;
   private disposed = false;
 
   constructor({
@@ -78,11 +71,7 @@ export class TurfWatchHub {
   }: TurfWatchHubOptions) {
     this.event = event;
     this.options = { ...rest, now, isHidden };
-    this.nextTickAt = now() + rest.refreshMs;
-    this.refreshTimer = setInterval(() => {
-      this.nextTickAt = now() + rest.refreshMs;
-      this.markAll();
-    }, rest.refreshMs);
+    this.refreshTimer = setInterval(() => this.markAll(), rest.refreshMs);
     this.stopVisible = onVisible(() => this.resume());
   }
 
@@ -102,7 +91,7 @@ export class TurfWatchHub {
 
   /**
    * Hears ids to catch up: those marked again after a gap (watched, then not, then again), and every
-   * watched id when the page becomes visible again after its marks may have lapsed (resume).
+   * watched id when the page becomes visible again.
    */
   subscribe(listener: (imageIds: number[]) => void) {
     this.listeners.add(listener);
@@ -114,32 +103,10 @@ export class TurfWatchHub {
     return [...this.counts.keys()];
   }
 
-  /**
-   * Another call has just marked these ids (a joined viewer's summaries read, at `at`): an id coming
-   * on screen while that mark outlives the next two interval ticks needs no mark of its own, the same
-   * margin of one missed re-mark the hub keeps for its own marks.
-   */
-  noteMarked(imageIds: number[], at: number) {
-    const now = this.options.now();
-    this.markedElsewhere.forEach((until, id) => {
-      if (until <= now) this.markedElsewhere.delete(id);
-    });
-    const until = at + this.options.markLifetimeMs;
-    if (until <= now) return;
-    for (const id of imageIds)
-      if ((this.markedElsewhere.get(id) ?? 0) < until) this.markedElsewhere.set(id, until);
-  }
-
-  /**
-   * Back on screen: if an interval re-mark may have been missed meanwhile (skipped while hidden, or
-   * the page's timers frozen), re-mark the whole set now and have every provider catch up what it
-   * shows. Shown again sooner, the marks are still live and the next tick renews them.
-   */
+  /** Back on screen: re-mark the whole set now, and have every provider catch up what it shows. */
   resume() {
     const all = this.watched();
     if (!all.length) return;
-    if (this.options.now() - this.lastAllSent < this.options.refreshMs) return;
-    this.lastAllSent = this.options.now();
     this.send(all);
     this.notify(all);
   }
@@ -156,12 +123,10 @@ export class TurfWatchHub {
   }
 
   private markAll() {
-    // A hidden page re-marks nothing: becoming visible re-marks what has lapsed (resume).
+    // A hidden page re-marks nothing; becoming visible re-marks the whole set (resume).
     if (this.options.isHidden()) return;
     const all = this.watched();
-    if (!all.length) return;
-    this.lastAllSent = this.options.now();
-    this.send(all);
+    if (all.length) this.send(all);
   }
 
   private notify(ids: number[]) {
@@ -194,7 +159,7 @@ export class TurfWatchHub {
 
   private schedule() {
     if (this.flushTimer) return;
-    const { coalesceMs, minGapMs, now, refreshMs } = this.options;
+    const { coalesceMs, minGapMs, now } = this.options;
     const wait = Math.max(coalesceMs, this.lastFlushSent + minGapMs - now());
     this.flushTimer = setTimeout(() => {
       this.flushTimer = undefined;
@@ -202,13 +167,8 @@ export class TurfWatchHub {
       const added = current.filter((id) => !this.marked.has(id));
       this.marked = new Set(current);
       if (!added.length) return;
-      // Marked elsewhere for long enough that two interval ticks renew it before it lapses.
-      const covered = this.nextTickAt + refreshMs;
-      const unmarked = added.filter((id) => (this.markedElsewhere.get(id) ?? 0) <= covered);
-      if (unmarked.length) {
-        this.lastFlushSent = now();
-        this.send(unmarked);
-      }
+      this.lastFlushSent = now();
+      this.send(added);
       const again = added.filter((id) => this.everMarked.has(id));
       added.forEach((id) => this.everMarked.add(id));
       if (again.length) this.notify(again);

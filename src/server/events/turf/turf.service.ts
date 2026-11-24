@@ -1485,8 +1485,7 @@ export async function reconcileAllTurf(now = new Date()) {
  * team. `open`: for every image asked about, whether it can take a new sticker now (visible; the
  * owner need not be in Hat Turf); owners may sticker their own. `mine`: whether the viewer has a
  * live or removed sticker on it, so cannot place again (an expired one is placed again). `hidden`: contest
- * entries, which show no Hat Turf at all (no counts, closed). `joined`: the viewer is in Hat Turf
- * (the stock read's `optedIn`), read in the same statement, so the read can stand in for a watch mark.
+ * entries, which show no Hat Turf at all (no counts, closed).
  */
 export async function getTurfSummaries(
   eventName: string,
@@ -1499,7 +1498,7 @@ export async function getTurfSummaries(
   const imageIds = askedIds.filter(isPgInt4);
   const event = await getTurfEvent(eventName, now);
   if (!event || event.turf.mode === 'off' || !imageIds.length)
-    return { team: null, images: {}, open: {}, mine: {}, hidden: {}, joined: false };
+    return { team: null, images: {}, open: {}, mine: {}, hidden: {} };
   const keys = imageIds.map((id) => `Image:${id}`);
   const liveAfter = stickerLiveAfter(event.turf, now);
   const mineStillBlocks = liveAfter
@@ -1513,13 +1512,7 @@ export async function getTurfSummaries(
     // the same predicate the separate reads applied, and through Kysely rather than Prisma's
     // `$queryRaw` (see queryPrismaSql). `mine` counts removed stickers too, since placing again
     // refuses them, but not expired ones, which placing renews.
-    queryPrismaSql<{
-      id: number;
-      open: boolean;
-      mine: boolean;
-      contest: boolean;
-      joined: boolean | null;
-    }>(
+    queryPrismaSql<{ id: number; open: boolean; mine: boolean; contest: boolean }>(
       kyselyRead,
       Prisma.sql`
       SELECT x.id,
@@ -1537,12 +1530,7 @@ export async function getTurfSummaries(
         )`
             : Prisma.sql`false`
         } AS mine,
-        ${contestEntry(Prisma.sql`x.id`, event.name)} AS contest,
-        ${
-          viewerId
-            ? Prisma.sql`(SELECT ${inTurf('u', event.name)} FROM "User" u WHERE u.id = ${viewerId})`
-            : Prisma.sql`false`
-        } AS joined
+        ${contestEntry(Prisma.sql`x.id`, event.name)} AS contest
       FROM unnest(${imageIds}::int[]) AS x(id)
     `
     ),
@@ -1565,8 +1553,7 @@ export async function getTurfSummaries(
       };
   });
   const team = viewerId ? await event.getUserTeam(viewerId).catch(() => null) : null;
-  const joined = flags.some((r) => r.joined === true);
-  return { team: team ?? null, images, open, mine, hidden, joined };
+  return { team: team ?? null, images, open, mine, hidden };
 }
 
 type DrawnSticker = {
@@ -1716,15 +1703,11 @@ export async function getTurfStickersForImages(
 }
 
 /** Marks images as on a viewer's screen, so changes to their counts are pushed (turf-watch.ts). */
-export async function watchTurfImages(
-  eventName: string,
-  imageIds: number[],
-  { limit }: { limit?: number } = {}
-) {
+export async function watchTurfImages(eventName: string, imageIds: number[]) {
   const event = await getTurfEvent(eventName);
   if (!event || event.turf.mode === 'off') return 0;
   const endsAt = new Date(event.endDate.getTime() + (event.scoring?.finalizeAfterMs ?? 0));
-  return markTurfWatched({ name: event.name, endsAt }, imageIds, { limit });
+  return markTurfWatched({ name: event.name, endsAt }, imageIds);
 }
 
 /**

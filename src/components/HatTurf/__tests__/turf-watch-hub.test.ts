@@ -4,7 +4,7 @@ import {
   TurfWatchHub,
   retainTurfWatchHub,
 } from '~/components/HatTurf/turf-watch-hub';
-import { TURF_WATCH_TTL_MS } from '~/server/schema/turf.schema';
+import { TURF_WATCH_TTL_MS } from '~/server/events/turf/turf-watch';
 
 type Sent = { event: string; imageIds: number[] };
 
@@ -16,7 +16,6 @@ const options = (sent: Sent[], event = 'birthday2026') => ({
   minGapMs: 2_000,
   retryMs: 5_000,
   retryJitterMs: 1_000,
-  markLifetimeMs: 90_000,
   // No page here: visibility is driven by hand where a test needs it.
   onVisible: () => () => undefined,
   isHidden: () => false,
@@ -224,7 +223,7 @@ describe('TurfWatchHub in a hidden page', () => {
     vi.advanceTimersByTime(250);
     sent.length = 0;
     tab.hide();
-    // Three ticks (40s, 80s, 120s) pass hidden: the marks lapse, and nothing is sent.
+    // Three ticks (40s, 80s, 120s) pass hidden: nothing is sent.
     vi.advanceTimersByTime(130_000);
     expect(sent).toEqual([]);
     tab.show();
@@ -236,70 +235,24 @@ describe('TurfWatchHub in a hidden page', () => {
     hub.dispose();
   });
 
-  test('shown again before a tick was missed: the marks are live, so nothing is sent', () => {
+  // A short suspension (a phone locked, a page restored from the back-forward cache) can stop
+  // the page's timers and its signal connection without a hidden tick; the catch-up is what
+  // recovers pushes missed meanwhile, so every return to visible re-marks and catches up.
+  test('shown again moments after a tick: still re-marks the set and every id catches up', () => {
     const sent: Sent[] = [];
     const heard: number[][] = [];
     const tab = page();
     const hub = new TurfWatchHub({ ...options(sent), ...tab.options });
     hub.subscribe((ids) => heard.push(ids));
     hub.retain(71);
-    // The tick at 40s re-marks the set; hidden at 45s, shown at 70s, before the next tick.
+    // The tick at 40s re-marks the set; hidden at 45s, shown at 50s.
     vi.advanceTimersByTime(45_000);
     sent.length = 0;
     tab.hide();
-    vi.advanceTimersByTime(25_000);
+    vi.advanceTimersByTime(5_000);
     tab.show();
-    expect(sent).toEqual([]);
-    expect(heard).toEqual([]);
-    // The tick at 80s still renews the mark (50s after the last, inside its 90s).
-    vi.advanceTimersByTime(10_000);
     expect(sent).toEqual([{ event: 'birthday2026', imageIds: [71] }]);
-    hub.dispose();
-  });
-});
-
-describe('TurfWatchHub with marks made by a summaries read', () => {
-  test('an id a read marked just now is not marked again on screen, only by the interval', () => {
-    const sent: Sent[] = [];
-    const hub = new TurfWatchHub(options(sent));
-    hub.retain(80);
-    vi.advanceTimersByTime(250);
-    sent.length = 0;
-    // A read marks 81 and 82 at 1s; both come on screen at 3s.
-    vi.advanceTimersByTime(750);
-    hub.noteMarked([81, 82], Date.now());
-    vi.advanceTimersByTime(2_000);
-    hub.retain(81);
-    hub.retain(82);
-    vi.advanceTimersByTime(2_000);
-    expect(sent).toEqual([]);
-    // The tick at 40s renews them with the rest of the set.
-    vi.advanceTimersByTime(36_000);
-    expect(sent).toEqual([{ event: 'birthday2026', imageIds: [80, 81, 82] }]);
-    hub.dispose();
-  });
-
-  test('a read mark that would lapse before the tick after next is not trusted: marked as usual', () => {
-    const sent: Sent[] = [];
-    const hub = new TurfWatchHub(options(sent));
-    // Read at 0s, so its mark lives until 90s. Shown at 41s, just after a tick, the next ticks are
-    // 80s and 120s: one missed tick would leave the mark lapsed, so it is marked itself.
-    hub.noteMarked([91], Date.now());
-    vi.advanceTimersByTime(41_000);
-    hub.retain(91);
-    vi.advanceTimersByTime(250);
-    expect(sent).toEqual([{ event: 'birthday2026', imageIds: [91] }]);
-    hub.dispose();
-  });
-
-  test('ids a read did not mark still go out on screen', () => {
-    const sent: Sent[] = [];
-    const hub = new TurfWatchHub(options(sent));
-    hub.noteMarked([101], Date.now());
-    hub.retain(101);
-    hub.retain(102);
-    vi.advanceTimersByTime(250);
-    expect(sent).toEqual([{ event: 'birthday2026', imageIds: [102] }]);
+    expect(heard).toEqual([[71]]);
     hub.dispose();
   });
 });

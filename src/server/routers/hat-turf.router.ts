@@ -18,9 +18,7 @@ import {
   watchTurfImages,
 } from '~/server/events/turf/turf.service';
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
-import type { Context } from '~/server/createContext';
 import { CacheTTL } from '~/server/common/constants';
-import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
 import {
   placeFlagHatsSchema,
   placeTurfStickerSchema,
@@ -44,36 +42,6 @@ import {
 } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-const WATCH_RATE_LIMIT = { limit: 60, period: 60 };
-
-/**
- * A summaries read standing in for a `hatTurf.watch` call: the same marks, drawn from the same
- * per-caller bucket, so folding the marks into the read never lets a caller mark more often. Never
- * fails the read: a refusal or a store error marks nothing and answers false, and the page then
- * sends its own mark. True only when every asked image was marked (none refused at the set's cap),
- * since the page skips its own mark only for those.
- */
-async function markReadWatched(
-  ctx: Pick<Context, 'user' | 'req'>,
-  input: { event: string; imageIds: number[] }
-) {
-  try {
-    const record = await claimRateLimitAttempt({
-      rules: [WATCH_RATE_LIMIT],
-      keyName: 'hatTurf:watch',
-      scope: 'hatTurf.getSummaries',
-      user: ctx.user,
-      req: ctx.req,
-    });
-    const asked = new Set(input.imageIds).size;
-    const marked = await watchTurfImages(input.event, input.imageIds, { limit: asked });
-    await record();
-    return asked > 0 && marked === asked;
-  } catch {
-    return false;
-  }
-}
-
 // Hat Turf: team hat stickers on other people's images (events/turf).
 export const hatTurfRouter = router({
   // The viewer's sticker supply: available now and the rate and cap in force (future steps stay unpublished).
@@ -81,18 +49,11 @@ export const hatTurfRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(turfEventSchema)
     .query(({ ctx, input }) => getTurfStock(input.event, ctx.user.id)),
-  // Per-image team counts and leader for a page of feed cards, plus the viewer's team. With `watch`,
-  // a joined viewer's read also marks the images watched (markReadWatched); only a joined viewer
-  // hears the pushes, so nobody else's read fills the interest set.
+  // Per-image team counts and leader for a page of feed cards, plus the viewer's team.
   getSummaries: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(turfSummariesSchema)
-    .query(async ({ ctx, input }) => {
-      const summaries = await getTurfSummaries(input.event, input.imageIds, ctx.user?.id);
-      const watched =
-        !!input.watch && !!ctx.user && summaries.joined ? await markReadWatched(ctx, input) : false;
-      return { ...summaries, watched };
-    }),
+    .query(({ ctx, input }) => getTurfSummaries(input.event, input.imageIds, ctx.user?.id)),
   // One image's stickers to draw, a page at a time, plus the viewer's own.
   getImageStickers: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
@@ -112,7 +73,7 @@ export const hatTurfRouter = router({
   watch: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(watchTurfImagesSchema)
-    .use(rateLimit(WATCH_RATE_LIMIT))
+    .use(rateLimit({ limit: 60, period: 60 }))
     .mutation(({ input }) => watchTurfImages(input.event, input.imageIds)),
   // The player's event hats to use as sticker art, with last-used and use counts.
   getMyStickerHats: protectedProcedure

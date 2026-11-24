@@ -239,7 +239,6 @@ describe('an image id past int4 in the batch', () => {
       open: {},
       mine: {},
       hidden: {},
-      joined: false,
     });
     expect(kysely.read).not.toHaveBeenCalled();
   });

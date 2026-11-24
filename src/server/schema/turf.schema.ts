@@ -48,15 +48,9 @@ export const turfReactionEarnsSchema = z.object({
   imageId: z.number().int().positive(),
 });
 
-/** Images per `hatTurf.getSummaries` read. */
-export const MAX_TURF_SUMMARY_IMAGES = 100;
-
 export const turfSummariesSchema = z.object({
   event: eventName,
-  imageIds: z.array(z.number().int().positive()).max(MAX_TURF_SUMMARY_IMAGES),
-  // A joined viewer's read also marks these images as watched, as `hatTurf.watch` would, so the
-  // page need not send a separate mark for them. The answer's `watched` says whether it did.
-  watch: z.boolean().optional(),
+  imageIds: z.array(z.number().int().positive()).max(100),
 });
 
 export const turfImageSchema = z.object({
@@ -91,9 +85,6 @@ export const turfStickersForImagesSchema = z.object({
  * accepts.
  */
 export const MAX_TURF_IMAGES_PER_MARK = 50;
-
-/** How long one mark keeps an image watched (turf-watch.ts); clients re-mark well inside it. */
-export const TURF_WATCH_TTL_MS = 90_000;
 
 export const watchTurfImagesSchema = z.object({
   event: eventName,
