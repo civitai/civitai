@@ -133,7 +133,7 @@ var infiniteAbsentKeys = func() map[string]bool {
 // pages from the turf rank or drops images by turfHiddenIds; none of that is read here, so a request
 // carrying one falls back whatever the flags say. `hatTeams` only narrows a hat sort, so it is
 // ignored alone.
-var hatKeys = []string{"hatSort", "hatTurfMine", "hideTurfHats", "hideWornHats"}
+var hatKeys = []string{"hatSort", "hatTurfMine", "hatTurfExpired", "hideTurfHats", "hideWornHats"}
 
 // ParseInfinite validates image.getInfinite's decoded input. A shape outside the supported subset is
 // a fallback, and so is a value the schema rejects (Node answers it with its own BAD_REQUEST).

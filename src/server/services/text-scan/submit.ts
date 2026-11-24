@@ -344,6 +344,65 @@ export async function textScanCanAskEveryLabel(
   ).length;
 }
 
+const passContentHash = (
+  composed: ReturnType<typeof composeTextScanMessages>,
+  config: Awaited<ReturnType<typeof getTextScanConfig>>,
+  variant?: TextScanVariant
+) =>
+  textScanContentHash({
+    user: composed.text,
+    promptIds: composed.promptIds,
+    model: config.model,
+    thinking: config.thinking,
+    variant,
+    segmentBudget: config,
+  });
+
+/**
+ * The contentHash an active main-pass scan of each entity would record now, from the same labels,
+ * prompts and config `scanEntity` uses. A stored verdict is about the current text only when its
+ * contentHash equals this, so an edit or a scan config change makes the old verdict stale. Entities
+ * with no active main pass, or nothing to scan, are left out.
+ */
+export async function currentScanContentHashes(
+  entityType: TextScanEntityType,
+  entityIds: number[]
+): Promise<Map<number, string>> {
+  const hashes = new Map<number, string>();
+  const profile = getTextScanProfile(entityType);
+  if (!profile || !entityIds.length) return hashes;
+  const [subjects, config, prompts] = await Promise.all([
+    profile.load(entityIds),
+    getTextScanConfig(),
+    getActiveTextScanPrompts(),
+  ]);
+  for (const [entityId, subject] of subjects) {
+    if (subject.notPublic || subjectTextLength(subject) < (profile.minChars ?? 1)) continue;
+    const mode = await getTextScanMode(entityType, entityId);
+    if (mode !== 'active') continue;
+    const labels = withoutPromptlessLabels(
+      await resolveTextScanProfileLabels(profile, subject),
+      prompts
+    );
+    const searchMode = await getTextScanWebSearchMode(entityType, entityId, mode);
+    const [main] = labels.length ? planTextScanPasses(labels, mode, searchMode) : [];
+    if (!main || main.variant) continue;
+    try {
+      const composed = composeTextScanMessages({
+        prompts,
+        labels: main.labels,
+        subject,
+        maxInputChars: config.maxInputChars,
+        maxSegments: config.maxSegments,
+      });
+      if (composed.text.trim()) hashes.set(entityId, passContentHash(composed, config));
+    } catch (e) {
+      if (!(e instanceof MissingTextScanPromptError)) throw e;
+    }
+  }
+  return hashes;
+}
+
 export async function scanEntity({
   entityType,
   entityId,
@@ -514,14 +573,7 @@ async function submitTextScanPass({
     return { status: 'skipped', reason: 'too-short' };
   }
 
-  const contentHash = textScanContentHash({
-    user: composed.text,
-    promptIds: composed.promptIds,
-    model: config.model,
-    thinking: config.thinking,
-    variant,
-    segmentBudget: config,
-  });
+  const contentHash = passContentHash(composed, config, variant);
 
   const emEntityType = textScanEmEntityType(entityType, mode, variant);
   // Primary, not replica: the retry cron bumps retryCount on dbWrite, and a lagging read

@@ -331,8 +331,8 @@ export async function acceptImage({
     return;
   }
   const nr = img.needsReview;
-  // A report verdict is already refused for a removed image (`keepModeratorRemoved`), and its page shows
-  // one image on several cards, so a second verdict there must not fail on the first one's flag change.
+  // Not for a report verdict: its page shows one image on several cards and does not reload between
+  // verdicts, so a second verdict must not fail on the first one's flag change.
   const checksShown = shownNeedsReview !== undefined && !keepModeratorRemoved;
 
   // remixSource: stamp remixSourceReviewed so the audit job doesn't re-flag it. COALESCE guards the usual
@@ -373,9 +373,7 @@ export async function acceptImage({
         .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
         .where(sql<boolean>`NOT ${CONFIRMED_SONG_HOLD}`)
         .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
-        // A queue's accept rules on the flag its page showed. One that changed since (a moderator's
-        // removal clears it) is refused, rather than lifting the image and releasing a delete its
-        // child-safety case keeps.
+        // A stale accept would lift an image whose child-safety case keeps a moderator's pending delete.
         .$if(checksShown, (qb) =>
           qb.where('needsReview', 'is not distinct from', shownNeedsReview ?? null)
         )

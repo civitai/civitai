@@ -45,7 +45,9 @@ const {
   mockIsAppBlocksAuthorEnabled: vi.fn<(opts: { user: unknown }) => Promise<boolean>>(
     async () => true
   ),
-  mockTakeSubmitSlot: vi.fn<(subject: string) => Promise<unknown>>(async () => ({ ok: true })),
+  mockTakeSubmitSlot: vi.fn<(subject: string, user: unknown) => Promise<unknown>>(async () => ({
+    ok: true,
+  })),
   mockSubmitVersion: vi.fn<(...args: any[]) => Promise<any>>(),
 }));
 
@@ -62,10 +64,17 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
   isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
 }));
-vi.mock('~/server/services/blocks/submit-rate-limit', () => ({
-  SUBMIT_RATE_LIMIT: { max: 10, windowSeconds: 60 },
-  takeSubmitSlot: mockTakeSubmitSlot,
-}));
+vi.mock('~/server/services/blocks/submit-rate-limit', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('~/server/services/blocks/submit-rate-limit')
+  >();
+  return {
+    SUBMIT_RATE_LIMIT: actual.SUBMIT_RATE_LIMIT,
+    takeSubmitSlot: mockTakeSubmitSlot,
+    // The real 429 writer: what this file pins is the body it sends.
+    sendSubmitRateLimited: actual.sendSubmitRateLimited,
+  };
+});
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   submitVersion: mockSubmitVersion,
 }));
@@ -230,12 +239,28 @@ describe('POST /api/blocks/submit-version', () => {
   });
 
   it('counts the submit against the user, and 429s past the limit without submitting', async () => {
-    mockTakeSubmitSlot.mockResolvedValue({ ok: false, reason: 'limited', retryAfterSeconds: 37 });
+    mockTakeSubmitSlot.mockResolvedValue({
+      ok: false,
+      reason: 'limited',
+      retryAfterSeconds: 37,
+      used: 11,
+      limit: 10,
+    });
     const res = makeRes();
     await invoke(makeReq({ body: { bundleBase64 } }), res);
-    expect(mockTakeSubmitSlot).toHaveBeenCalledWith('user:42');
+    expect(mockTakeSubmitSlot).toHaveBeenCalledWith('user:42', expect.objectContaining({ id: 42 }));
     expect(res._status).toBe(429);
     expect(res.setHeader).toHaveBeenCalledWith('Retry-After', '37');
+    // A product allowance: the window's count against its 10 a minute.
+    expect(res._body.rateLimit).toMatchObject({
+      retryAfterSeconds: 37,
+      id: 'apps.version-submits',
+      kind: 'product',
+      limit: 10,
+      used: 11,
+      remaining: 0,
+      windowSeconds: 60,
+    });
     expect(mockSubmitVersion).not.toHaveBeenCalled();
   });
 

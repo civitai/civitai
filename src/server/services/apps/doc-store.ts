@@ -323,6 +323,21 @@ export function assertShareWritable(
 }
 
 /**
+ * VIEWER-KEYED collections (`keyedBy`, `doc-store-viewer-keyed.ts`): a viewer writes exactly one
+ * document per (parent) key, at a key the server derives, so every path that names keys itself or
+ * writes beside the document is refused (`invalid_request`, `reason: 'viewer_keyed'`): a create or
+ * a write by key (the route), publish and unpublish, counters and declared marks (here, in the
+ * store, for every caller). The only writes are the route's `@me` ones. Exported for the route.
+ */
+export function refuseViewerKeyed(coll: DocCollection, what: string): void {
+  if (coll.config.keyedBy === undefined) return;
+  throw invalid(
+    `${what} is not available on viewer-keyed collection ${coll.name}: write the viewer's own document at /${coll.name}/@me`,
+    { reason: 'viewer_keyed', collection: coll.name }
+  );
+}
+
+/**
  * A report cannot be withdrawn. Withdrawing and re-filing would otherwise make a fresh report
  * after a moderator dismissed the document's reports, so one viewer could re-open it
  * indefinitely (see DISMISSED REPORTS in the moderation section). Exported so the route refuses
@@ -371,6 +386,7 @@ function requireShared(coll: DocCollection, what: string): void {
  */
 export function assertIncrementRequest(coll: DocCollection, counter: string, by: number): void {
   requireShared(coll, 'counters');
+  refuseViewerKeyed(coll, 'counters');
   if (!TALLY_NAME_SHAPE.test(counter) || !(coll.config.counters ?? []).includes(counter)) {
     throw invalid(`counter ${counter} is not declared`, { counter });
   }
@@ -385,7 +401,9 @@ export function assertIncrementRequest(coll: DocCollection, counter: string, by:
  */
 export function assertMarkRequest(coll: DocCollection, name: string): void {
   requireShared(coll, 'marks');
+  // A report stays possible on every shared document, a viewer-keyed one included.
   if (name === REPORT_MARK) return;
+  refuseViewerKeyed(coll, 'marks');
   if (!TALLY_NAME_SHAPE.test(name) || !(coll.config.marks ?? []).includes(name)) {
     throw invalid(`mark ${name} is not declared`, { mark: name });
   }
@@ -478,6 +496,7 @@ export function assertPublishPair(from: DocCollection, to: DocCollection): void 
   }
   assertShareWritable(to);
   assertNotHooked(to, 'publish');
+  refuseViewerKeyed(to, 'publish');
 }
 
 /**
@@ -2797,6 +2816,34 @@ function buildDocStore(deps: DocStoreDeps) {
   }
 
   /**
+   * The report API's write: the `report` mark's `doc_mark` row, but no `doc_tally` row and no mark
+   * sequence. No HookPass is asked for: a hook must never be able to silence a report.
+   */
+  async function report(
+    ctx: DocStoreContext,
+    coll: DocCollection,
+    key: string
+  ): Promise<{ added: boolean }> {
+    assertCollection(coll);
+    assertKey(key);
+    requireShared(coll, 'reports');
+    const viewer = requireViewer(ctx);
+    return withTx(ctx, async (c) => {
+      const doc = await c.query(SQL_SHARE_LOCK_DOC, [ctx.appId, ctx.ns, coll.name, key]);
+      if (doc.rows.length === 0) throw new DocStoreError('not_found', 'document not found');
+      const ins = await c.query(SQL_INSERT_MARK, [
+        ctx.appId,
+        ctx.ns,
+        coll.name,
+        key,
+        REPORT_MARK,
+        viewer,
+      ]);
+      return { added: ins.rows.length > 0 };
+    });
+  }
+
+  /**
    * List one collection. Filters combine with AND: one declared-index equality,
    * `author=me`, `markedBy=me&mark=…` and `keyPrefix`. Order is the sort field
    * with the key as tiebreaker (both in the requested direction), paged by keyset
@@ -3860,6 +3907,7 @@ function buildDocStore(deps: DocStoreDeps) {
     requireShared(to, 'unpublish targets');
     assertShareWritable(to);
     assertNotHooked(to, 'unpublish');
+    refuseViewerKeyed(to, 'unpublish');
     const viewer = requireViewer(ctx);
     const sorted = assertPublishKeys(keys).sort();
     return retryOnDeadlock(() =>
@@ -3913,6 +3961,7 @@ function buildDocStore(deps: DocStoreDeps) {
     increment,
     mark,
     unmark,
+    report,
     usage,
     limits,
     viewerLimits,
@@ -4312,6 +4361,8 @@ export type ReportedDocRow = {
 export type ModeratedDoc = ReportedDocRow & {
   /** When a moderator last dismissed this document's reports; earlier reports are closed. */
   reportsDismissedAt: Date | null;
+  /** Every report ever filed on it, dismissed ones included (its `report` rows). */
+  reportsTotal: number;
   data: Record<string, unknown>;
   /** md5 of the stored jsonb text — what an audit row records instead of the content. */
   dataMd5: string;
@@ -4368,12 +4419,18 @@ ORDER BY q.reports DESC, q.updated_at DESC, q.coll DESC, q.key DESC
 LIMIT $4::int`;
 
 // One shared document as a moderator sees it, hidden or not. $1 app, $2 ns, $3 coll, $4 key
-// $5 the report mark name.
+// $5 the report mark name. Reports are counted from their `doc_mark` rows only, never from the
+// `report` tally: the report API (`report` above) writes the row and no tally, the `report` mark
+// writes both, so the rows are the one count that holds every report exactly once.
 const SQL_MOD_GET = `SELECT d.coll, d.key, d.data, md5(d.data::text) AS data_md5, d.version, d.seq, d.size_bytes,
     d.author_uid, d.author_kind, d.created_at, d.updated_at, d.hidden_at, d.hidden_by,
     d.reports_dismissed_at,
     (SELECT jsonb_object_agg(t.kind || ':' || t.name, t.count) FROM appdata.doc_tally t
-      WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = d.coll AND t.key = d.key) AS tallies,
+      WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = d.coll AND t.key = d.key
+        AND NOT (t.kind = 'mark' AND t.name = $5)) AS tallies,
+    (SELECT count(*) FROM appdata.doc_mark am
+      WHERE am.app_id = $1 AND am.ns = $2 AND am.coll = d.coll AND am.key = d.key
+        AND am.name = $5) AS reports_total,
     (SELECT count(*) FROM appdata.doc_mark rm
       WHERE rm.app_id = $1 AND rm.ns = $2 AND rm.coll = d.coll AND rm.key = d.key AND rm.name = $5
         AND (d.reports_dismissed_at IS NULL OR rm.created_at > d.reports_dismissed_at)) AS open_reports
@@ -4587,7 +4644,10 @@ function createModeration({ withTx, charge }: ModerationDeps) {
     }));
   }
 
-  /** One shared document, hidden or not, with every tally (the report count included). */
+  /**
+   * One shared document, hidden or not, with every tally but the `report` one; its reports are
+   * `reports` (open) and `reportsTotal` (all time), both counted from the report rows.
+   */
   async function get(
     appId: string,
     ns: string,
@@ -4611,8 +4671,9 @@ function createModeration({ withTx, charge }: ModerationDeps) {
       key: row.key as string,
       data: row.data as Record<string, unknown>,
       dataMd5: row.data_md5 as string,
-      // Open reports only; `marks.report` keeps the all-time count.
+      // Open reports only; `reportsTotal` is the all-time count.
       reports: Number(row.open_reports),
+      reportsTotal: Number(row.reports_total),
       reportsDismissedAt: row.reports_dismissed_at
         ? new Date(row.reports_dismissed_at as string | Date)
         : null,

@@ -74,8 +74,8 @@ name: Windows dev-env smoke
 # That still leaked while setup-node did the caching: its post step saves on ANY
 # run that misses, and a branch dispatch misses whenever its lockfile differs from
 # the last one `main` saved (a branch that changed it, or every branch between a
-# lockfile change landing and the next batch). Measured 2026-11-23: three branch
-# dispatches had each saved their own ~526 MB copy of one new key. So the store is
+# lockfile change landing and the next batch), and each such dispatch saved its own
+# full copy of the store under the same new key. So the store is
 # now restored by ./.github/actions/pnpm-store-restore and saved by
 # ./.github/actions/pnpm-store-save, which saves only on `main`; a branch run that
 # misses installs from the registry and saves nothing.

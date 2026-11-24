@@ -165,6 +165,22 @@ describe('openDialog and openConfirm', () => {
     await expect.element(page.getByText('Report it?')).not.toBeInTheDocument();
   });
 
+  // The fading copy stays in the DOM: without `inert` a role query finds both and the click can land
+  // on the closing one, which ignores it.
+  test('a confirm reopened while the cancelled one fades out is the only one found and clicked', async () => {
+    renderWithProviders(<DialogProvider />);
+    const onConfirm = vi.fn();
+    const ask = () => openConfirm({ id: 'delete-oldest', message: 'Delete it?', onConfirm });
+    ask();
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    ask();
+    // Both copies in the DOM (the cancelled one fading out), and only the new one to a role query.
+    await vi.waitFor(() => expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(2));
+    expect(page.getByRole('button', { name: 'Confirm' }).elements()).toHaveLength(1);
+    await page.getByRole('button', { name: 'Confirm' }).click();
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
   test('a confirm closing after its answer ignores both buttons through its exit', async () => {
     renderWithProviders(<DialogProvider />);
     const onConfirm = vi.fn();

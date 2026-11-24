@@ -1,6 +1,7 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Card, Center, Divider, Group, Select, Stack, Text, Title } from '@mantine/core';
-import { IconChevronDown, IconGift } from '@tabler/icons-react';
+import { IconChevronDown, IconGauge, IconGift } from '@tabler/icons-react';
+import { planLimitText } from '~/components/Account/usage/usage-limit-tiers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { SpotlightGlow, SpotlightSurface } from '~/components/SpotlightCard/SpotlightBorderCard';
@@ -11,7 +12,7 @@ import {
 } from '~/components/Stripe/MembershipChangePrevention';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
-import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
+import { benefitIconSize, PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
@@ -101,7 +102,23 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     buzzPrice: meta.buzzPrice,
   });
   const planDetails = getPlanDetails(product, features, price.interval === 'year') ?? {};
-  const { benefits, image } = planDetails;
+  const limitTiers = trpc.user.getUsageLimitTiers.useQuery(undefined, { staleTime: 5 * 60_000 });
+  const benefits = [
+    ...(planDetails.benefits ?? []),
+    ...(limitTiers.data ?? []).flatMap((entry) => {
+      const text = planLimitText(entry, meta.tier);
+      return text
+        ? [
+            {
+              key: entry.id,
+              icon: <IconGauge size={benefitIconSize} />,
+              content: <Text>{text}</Text>,
+            },
+          ]
+        : [];
+    }),
+  ];
+  const { image } = planDetails;
   const isSameInterval = _isActivePlan && subscription?.price.interval === price.interval;
   const isUpgrade =
     hasActiveSubscription &&

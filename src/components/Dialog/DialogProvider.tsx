@@ -22,6 +22,14 @@ type DialogState = {
   closeOnEscape?: boolean;
   /** Mantine's `Modal`/`Drawer` call this when their exit transition ends; the spread passes it on. */
   onExitTransitionEnd?: () => void;
+  /**
+   * Both set while the dialog plays its exit transition; the spread puts them on the Modal's root.
+   * `inert` stops clicks and focus (a string, as React 18 needs for the attribute); `aria-hidden`
+   * takes it out of the accessibility tree, which role queries (Playwright's included) read, as
+   * `inert` alone does not for them. A reopened copy is then the only one anyone finds.
+   */
+  inert?: '';
+  'aria-hidden'?: true;
 };
 
 /** Dialogs stack from here, one level per open dialog. */
@@ -96,6 +104,8 @@ const DialogProviderInner = memo(function DialogProviderInner({
         target: dialog.target,
         closeOnEscape: isTopDialog,
         onExitTransitionEnd,
+        inert: closing ? '' : undefined,
+        'aria-hidden': closing ? true : undefined,
       }}
     >
       <DialogIdContext.Provider value={dialog.id}>

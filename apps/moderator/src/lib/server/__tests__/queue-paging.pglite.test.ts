@@ -26,7 +26,8 @@ const { getImageTagReviewQueue } = await import('../image-tags.service');
 const { getImageRatingRequests } = await import('../image-rating-review.service');
 
 const SCHEMA = `
-CREATE TABLE "JobQueue" ("entityId" INTEGER, "entityType" TEXT, "type" TEXT, data JSONB);
+CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+CREATE TABLE "JobQueue" ("entityId" INTEGER, "entityType" "EntityType", "type" TEXT, data JSONB);
 CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'PendingManualAssignment');
 CREATE TABLE "User" (
   "id" INTEGER PRIMARY KEY, "username" TEXT, "image" TEXT,

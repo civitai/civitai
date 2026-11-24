@@ -25,6 +25,7 @@ import {
   APP_DEVELOPER_TERMS_ACCEPT_PATH,
   AppDeveloperTermsNotAcceptedError,
 } from '~/shared/constants/app-developer-terms.constants';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
 /**
  * POST /api/internal/blocks/git-push
@@ -495,7 +496,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // Every recorded push supersedes the slug's pending request and can start a review build, so
   // bound how many a slug records per window. Past it the commit is told why and nothing is
   // recorded; the next push after the window is recorded as usual.
-  const pushSlot = await takePushReviewSlot(`slug:${slug}`);
+  const pushSlot = await takePushReviewSlot(`slug:${slug}`, null);
   if (!pushSlot.ok) {
     await setCommitStatusSafe({
       slug,
@@ -507,8 +508,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
         1
       )} min`,
     });
-    res.setHeader('Retry-After', String(Math.max(pushSlot.retryAfterSeconds, 1)));
-    res.status(429).json({ error: 'Too many pushes recorded for review' });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.push-review', pushSlot.retryAfterSeconds),
+      'Too many pushes recorded for review'
+    );
     return;
   }
 

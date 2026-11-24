@@ -18,6 +18,7 @@ import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
+  notReportListedSql,
 } from '~/server/services/image-visibility.service';
 import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import type { MediaType } from '~/shared/utils/prisma/enums';
@@ -585,6 +586,7 @@ async function fetchBountyData(id: number): Promise<EntityData | null> {
       JOIN "Image" i ON i.id = ic."imageId"
       WHERE ic."entityType" = 'Bounty' AND ic."entityId" = ${id}
         AND ${Prisma.join(entityImageVisibilityConditions({}), ' AND ')}
+        AND ${notReportListedSql()}
       LIMIT 1
     `,
   ]);

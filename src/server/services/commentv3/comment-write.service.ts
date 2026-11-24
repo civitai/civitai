@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import {
   getBlockCheckOwnerIds,
@@ -9,6 +10,7 @@ import {
   insertComment,
   isCommentWriteLocked,
   prismaRunner,
+  type SqlRunner,
   type StoredCommentV3,
   updateCommentContent,
 } from '~/server/services/commentv3/write.service';
@@ -21,7 +23,9 @@ type Track = Parameters<typeof recordStickerUsage>[0]['track'];
 
 /**
  * Writes a new comment, charging its stickers in the same transaction. The caller has already
- * decided the writer may: this is the write, not its checks.
+ * decided the writer may: this is the write, not its checks. `section` may be resolved inside the
+ * transaction, and `afterInsert` writes the caller's own rows in it, so they commit with the comment
+ * or not at all.
  */
 export async function writeNewComment({
   userId,
@@ -30,27 +34,32 @@ export async function writeNewComment({
   content,
   metadata,
   track,
+  afterInsert,
 }: {
   userId: number;
-  section: Section;
+  section: Section | ((db: SqlRunner) => Promise<Section>);
   parent?: StoredCommentV3;
   content: string;
   /** Server-built; never a client's object. */
   metadata?: Record<string, unknown>;
   track?: Track;
+  afterInsert?: (db: SqlRunner, row: StoredCommentV3) => Promise<void>;
 }) {
   const saved = await dbWrite.$transaction(async (tx) => {
+    const db = prismaRunner(tx);
     // The parent before the stickers, the lock order an edit takes, so the two cannot deadlock.
-    if (parent) await getStoredComment(prismaRunner(tx), parent.id, 'FOR KEY SHARE');
+    if (parent) await getStoredComment(db, parent.id, 'FOR KEY SHARE');
     const charged = await spendStickerUses({ userId, surface: 'comment', content, tx });
-    const row = await insertComment(prismaRunner(tx), {
+    const { entityType, entityId } = typeof section === 'function' ? await section(db) : section;
+    const row = await insertComment(db, {
       userId,
-      entityType: section.entityType,
-      entityId: section.entityId,
+      entityType,
+      entityId,
       parentId: parent?.id,
       content,
       metadata,
     });
+    await afterInsert?.(db, row);
     return { row, charged };
   });
   recordStickerUsage({
@@ -70,11 +79,21 @@ export async function writeCommentEdit({
   comment,
   content,
   track,
+  beforeLock,
+  beforeUpdate,
 }: {
   userId: number;
   comment: StoredCommentV3;
   content: string;
   track?: Track;
+  /** Runs before the comment's row lock is taken, for a lock that must come first. */
+  beforeLock?: (tx: Prisma.TransactionClient) => Promise<unknown>;
+  /** Runs with the comment locked FOR UPDATE, before the write: throw to refuse the edit. */
+  beforeUpdate?: (
+    db: SqlRunner,
+    current: StoredCommentV3,
+    tx: Prisma.TransactionClient
+  ) => Promise<void>;
 }) {
   const saved = await dbWrite.$transaction(async (tx) => {
     const db = prismaRunner(tx);
@@ -83,8 +102,10 @@ export async function writeCommentEdit({
       throw throwBadRequestError('comment thread locked');
     // Charged against the content as locked here, so two concurrent edits are not both charged
     // for the same new sticker.
+    await beforeLock?.(tx);
     const current = await getStoredComment(db, comment.id, 'FOR UPDATE');
     if (!current || current.deletedAt) throw throwNotFoundError('Comment not found');
+    await beforeUpdate?.(db, current, tx);
     const charged = await spendStickerUses({
       userId,
       surface: 'comment',

@@ -110,6 +110,7 @@ const imageFilterSchema = z.object({
   hatSort: z.enum(HAT_SORTS).optional(),
   hatTeams: z.string().array().optional(),
   hatTurfMine: z.boolean().optional(),
+  hatTurfExpired: z.boolean().optional(),
   hideTurfHats: z.boolean().optional(),
   hideWornHats: z.boolean().optional(),
 });

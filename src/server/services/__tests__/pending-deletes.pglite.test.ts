@@ -442,6 +442,23 @@ describe('deleteImageRows keeps a row in a child-safety case', () => {
     expect(rows).toEqual([{ needsReview: 'appeal' }]);
   });
 
+  it('gives a CSAM-blocked image no appeal flag, so it stays out of the appeals queue', async () => {
+    await addImage({ blockedFor: 'CSAM', ingestion: 'Blocked' });
+    await pg.exec(
+      `INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Image', ${IMAGE}, 'Pending')`
+    );
+
+    const { hidden } = await deleteImageRows(db, {
+      ids: [IMAGE],
+      actor: { system: 'mod-delete-user-images' },
+      replay: { moderatorDelete: true },
+    });
+
+    expect(hidden).toEqual([{ id: IMAGE, userId: OWNER, postId: null }]);
+    const { rows } = await pg.query(`SELECT "needsReview" FROM "Image" WHERE id = ${IMAGE}`);
+    expect(rows).toEqual([{ needsReview: null }]);
+  });
+
   it('blocks nothing for a moderator purge that does not queue what it keeps', async () => {
     await addImage({ needsReview: 'csam', blockedFor: 'tos', ingestion: 'Blocked' });
 

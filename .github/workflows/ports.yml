@@ -72,10 +72,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: |
-            apps/feed-go/go.sum
-            apps/beacon-go/go.sum
-            apps/content-policy-go/go.sum
+          # No Go cache: setup-go's saves on every ref, and this key's entry is too small to be worth a step that can fail the job.
+          cache: false
 
       - name: Install
         run: pnpm install --frozen-lockfile
@@ -126,10 +124,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: |
-            apps/feed-go/go.sum
-            apps/beacon-go/go.sum
-            apps/content-policy-go/go.sum
+          # No Go cache: setup-go's saves on every ref, and this key's entry is too small to be worth a step that can fail the job.
+          cache: false
 
       # For `typescript`, which the Node dependency walk parses with.
       - name: Install

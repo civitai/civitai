@@ -37,7 +37,7 @@ export function postTextCsamHeldText(text: string): string {
  * too.
  */
 export function csamQueueHeldText(entityType: string, entity: string): string {
-  if (!/^[A-Za-z]+$/.test(entityType)) throw new Error(`Bad entity type: ${entityType}`);
+  if (!/^[A-Za-z][A-Za-z0-9]*$/.test(entityType)) throw new Error(`Bad entity type: ${entityType}`);
   const e = /^\d{1,18}$/.test(entity) ? entity : sqlRef(entity);
   if (/^"?(qh|qm|qd)"?\./.test(e)) throw new Error(`Alias taken inside csamQueueHeldText: ${e}`);
   return `(

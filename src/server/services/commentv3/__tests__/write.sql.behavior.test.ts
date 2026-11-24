@@ -3,6 +3,7 @@ import { ltree } from '@electric-sql/pglite/contrib/ltree';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { SqlRunner } from '~/server/services/commentv3/write.service';
 import { FIXTURE, migration } from '~/server/services/__tests__/comment-v3-fixture';
+import { liveV3Since } from '~/server/notifications/comment.notifications';
 import {
   deleteComments,
   getStoredComment,
@@ -480,5 +481,27 @@ describe('20270102120000_comment_v3_teardown', () => {
     expect(
       (await old.query<{ lock_timeout: string }>('SHOW lock_timeout')).rows[0].lock_timeout
     ).toBe('0');
+  });
+});
+
+describe('before the featurePage label exists', () => {
+  it('deletes a comment of another type without touching the Feature Pages mirror table', async () => {
+    // This database has neither the label nor the mirror table, as production before the migration.
+    await expect(
+      db.query(`SELECT 1 FROM "CommentV3" WHERE "entityType" = 'featurePage'`)
+    ).rejects.toThrow();
+    const row = await post(3, 1);
+    expect(await deleteComments(db, [row.id], 'author')).toEqual([
+      expect.objectContaining({ id: row.id }),
+    ]);
+  });
+
+  it('runs a cross-type read that leaves Feature Pages out by comparing as text', async () => {
+    const row = await post(3, 2);
+    const { rows } = await db.query<{ id: number }>(
+      `SELECT id FROM "CommentV3" c WHERE ${liveV3Since('2000-01-01')} AND c.id = $1`,
+      [row.id]
+    );
+    expect(rows).toEqual([{ id: row.id }]);
   });
 });

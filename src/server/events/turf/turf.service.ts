@@ -134,23 +134,27 @@ const contestEntry = (imageId: Prisma.Sql, event: string) => Prisma.sql`(EXISTS 
 /**
  * FROM and WHERE for the stickers the feed draws, narrowed by `and`: live, placed by an active user,
  * on an image anyone may see whose owner allows turf, not a contest entry. Aliases s, u, i and p.
+ * `expired` keeps the other conditions and takes the stickers past their lifetime instead of the live
+ * ones: those the feed would draw had they not expired.
  */
-function drawnStickers(event: TurfEvent, now: Date, and: Prisma.Sql) {
+function drawnStickers(event: TurfEvent, now: Date, and: Prisma.Sql, expired = false) {
   return Prisma.sql`FROM "EventTurfSticker" s
     JOIN "User" u ON u.id = s."userId"
     JOIN "Image" i ON i.id = s."imageId"
     JOIN "Post" p ON p.id = i."postId"
     WHERE s.event = ${event.name} AND ${and}
-      AND s."removedAt" IS NULL ${unexpired(event, now)} AND ${imageVisible}
+      AND s."removedAt" IS NULL ${
+        expired ? expiredOnly(event, now) : unexpired(event, now)
+      } AND ${imageVisible}
       AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
       AND NOT ${contestEntry(Prisma.sql`s."imageId"`, event.name)} AND ${ownerAllowsTurf(
     event.name
   )}`;
 }
 
-/** FROM and WHERE for `userId`'s own stickers the feed draws (drawnStickers). */
-export function ownDrawnStickers(event: TurfEvent, userId: number, now: Date) {
-  return drawnStickers(event, now, Prisma.sql`s."userId" = ${userId}`);
+/** FROM and WHERE for `userId`'s own stickers the feed draws, or with `expired` would have (drawnStickers). */
+export function ownDrawnStickers(event: TurfEvent, userId: number, now: Date, expired = false) {
+  return drawnStickers(event, now, Prisma.sql`s."userId" = ${userId}`, expired);
 }
 
 /**
@@ -160,6 +164,12 @@ export function ownDrawnStickers(event: TurfEvent, userId: number, now: Date) {
 function unexpired(event: TurfEvent, now: Date) {
   const after = stickerLiveAfter(event.turf, now);
   return after ? Prisma.sql`AND s."createdAt" > ${after}` : Prisma.empty;
+}
+
+/** Only expired stickers; `AND false` while none can have expired. */
+function expiredOnly(event: TurfEvent, now: Date) {
+  const after = stickerLiveAfter(event.turf, now);
+  return after ? Prisma.sql`AND s."createdAt" <= ${after}` : Prisma.sql`AND false`;
 }
 
 const configCache = new Map<string, { at: number; config: EventTurfConfig }>();

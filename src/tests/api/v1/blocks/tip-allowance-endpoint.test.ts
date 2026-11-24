@@ -143,7 +143,7 @@ describe('GET /api/v1/blocks/tip-allowance', () => {
     expect(res._status()).toBe(200);
     expect(res._json()).toEqual({ cap: 25_000, spent: 4_000, remaining: 21_000 });
     // Self-bound: the read is for the TOKEN subject (42), never a client-supplied id.
-    expect(mockReadAllowance).toHaveBeenCalledWith(42);
+    expect(mockReadAllowance).toHaveBeenCalledWith(42, 25_000);
   });
 
   it('503 (fail-closed) when the allowance read throws (redis error)', async () => {

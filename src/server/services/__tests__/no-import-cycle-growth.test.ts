@@ -12,8 +12,8 @@ import { cycleContaining, importCycles, importGraph, REPO_ROOT, rel } from './im
  *
  * Dynamic `import()` counts: the bundler still builds its target, so `await import()` is not a cut.
  */
-const MAX_MODULES_IN_CYCLES = 290;
-const MAX_CYCLE_WEIGHT = 43744;
+const MAX_MODULES_IN_CYCLES = 245;
+const MAX_CYCLE_WEIGHT = 25249;
 
 function sources(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

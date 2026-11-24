@@ -180,7 +180,6 @@ async function finishImageDeletes({
   });
   await bustKeptImages(notReturned, affectedPostIds);
   if (hidden.length) {
-    // A blocked image drops out of the comics and home blocks showing it, as after a moderator's block.
     const hiddenIds = hidden.map((image) => image.id);
     await Promise.all([queueComicsForImages(hiddenIds), evictHomeBlocks(hiddenIds)]).catch((err) =>
       logImageDeletionError(err, 'hidden image effects', hiddenIds)

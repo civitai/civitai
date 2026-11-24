@@ -129,9 +129,9 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
       UPDATE "Image" SET ingestion = 'Blocked', "nsfwLevel" = ${NSFW_LEVEL_BLOCKED},
         "blockedFor" = CASE WHEN "blockedFor" = 'CSAM' THEN "blockedFor" ELSE 'moderated' END,
         -- Out of every review queue but the CSAM one, so no queue's accept lifts the block; a pending
-        -- appeal keeps its flag (as clearReviewFlagsOnBlock then keepPendingAppealFlags leave it).
+        -- appeal keeps its flag unless the image is CSAM-blocked (as keepPendingAppealFlags does).
         "needsReview" = CASE WHEN "needsReview" = 'csam' THEN "needsReview"
-          WHEN EXISTS (SELECT 1 FROM "Appeal" a WHERE a."entityType" = 'Image'
+          WHEN "blockedFor" IS DISTINCT FROM 'CSAM' AND EXISTS (SELECT 1 FROM "Appeal" a WHERE a."entityType" = 'Image'
             AND a."entityId" = "Image".id AND a.status = 'Pending') THEN 'appeal' END,
         metadata = CASE WHEN jsonb_typeof(metadata) = 'object'
           THEN metadata - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text

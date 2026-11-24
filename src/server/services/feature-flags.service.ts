@@ -1105,6 +1105,13 @@ const featureFlags = createFeatureFlags({
   // Keep the Flipt flag's `enabled` false until public launch, so removing the tester rollout
   // turns the page off rather than on for everyone.
   featurePages: { availability: [], fliptKey: 'feature-pages', fliptKeyRequired: true },
+  // Feature Pages comments and reports (posting, editing, reading a thread through commentv3). Same
+  // launch rule as featurePages: `enabled` stays false, testers come in through a rollout.
+  featurePagesDiscussion: {
+    availability: [],
+    fliptKey: 'feature-pages-discussion',
+    fliptKeyRequired: true,
+  },
   // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
   // with the phone header change it needs (support pill and Civitai Link move into the account
   // menu). Off = the toast and the old header. `['mod', 'granted']` is the Flipt-down fallback.

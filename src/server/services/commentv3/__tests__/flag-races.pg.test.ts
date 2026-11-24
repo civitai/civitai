@@ -63,7 +63,7 @@ describe.skipIf(!TEST_DATABASE_URL)('comment hides on two connections', () => {
       type: 'scam',
       triggers: [{ cleanup: record }],
     } as never);
-    expect(await restoreScamCase(1)).toEqual({ restored: 1 });
+    expect(await restoreScamCase(1)).toEqual({ restored: 1, skipped: 0 });
     expect(await db.q(`SELECT id, hidden FROM "CommentV3" ORDER BY id`)).toEqual([
       { id: 4, hidden: false },
       { id: 5, hidden: true },
@@ -79,7 +79,7 @@ describe.skipIf(!TEST_DATABASE_URL)('comment hides on two connections', () => {
       triggers: [{ cleanup: record }],
     } as never);
     // Hold the restore after it has locked its rows.
-    const held = holdAt(/^UPDATE "CommentV3" SET hidden/);
+    const held = holdAt(/UPDATE "CommentV3" SET hidden/);
     const restore = restoreScamCase(1);
     await held.reachedAt;
     const hide = dbMock.dbWrite.$transaction((tx: never) =>

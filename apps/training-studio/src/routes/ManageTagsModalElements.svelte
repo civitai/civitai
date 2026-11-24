@@ -266,7 +266,7 @@
               <span class="shrink-0 font-mono text-xs text-dark-2">
                 {count} / {trainableWithTags}
               </span>
-              <civitai-action-button
+              <studio-icon-button
                 label="Show everything tagged {tag}"
                 onclick={() => {
                   onShowTag(tag);
@@ -274,28 +274,29 @@
                   resetDrafts();
                 }}
               >
-                <span slot="icon"><IconFilter size={13} stroke={2} /></span>
-              </civitai-action-button>
+                <IconFilter size={15} stroke={2} />
+              </studio-icon-button>
               {#if variants.length > 1}
-                <civitai-action-button
+                <studio-icon-button
                   label="Merge {variants.join(', ')} into {tag}"
                   onclick={() => renameEverywhere(tag, [tag], 'Merged casings of')}
                 >
-                  <span slot="icon"><IconArrowMerge size={13} stroke={2} /></span>
-                </civitai-action-button>
+                  <IconArrowMerge size={15} stroke={2} />
+                </studio-icon-button>
               {/if}
-              <civitai-action-button
+              <studio-icon-button
                 label="Rename {tag} everywhere"
                 onclick={() => startTagRename(tag)}
               >
-                <span slot="icon"><IconPencil size={13} stroke={2} /></span>
-              </civitai-action-button>
-              <civitai-action-button
+                <IconPencil size={15} stroke={2} />
+              </studio-icon-button>
+              <studio-icon-button
+                color="error"
                 label="Remove {tag} from every image"
                 onclick={() => removeTagEverywhere(tag)}
               >
-                <span slot="icon"><IconX size={13} stroke={2} /></span>
-              </civitai-action-button>
+                <IconX size={15} stroke={2} />
+              </studio-icon-button>
             {/if}
           </li>
         {/each}

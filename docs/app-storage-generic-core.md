@@ -166,6 +166,11 @@ write answers; `markSeq` goes with the tally ops.
   viewer's documents unlinkable across parents and apps unless the collection declares `showAuthor`.
 - The digest is keyed (HMAC), not a plain hash: user ids are small integers, so an unkeyed hash of one
   is reversed by hashing every id.
+- **The derivation key is one value everywhere.** It is read from `APP_STORAGE_VIEWER_KEY_SECRET`, and
+  it must be byte-identical in every deployment that writes the same database and namespace.
+  Otherwise one viewer derives two different keys and gets two documents for one (parent) key. While it
+  is unset, every `@me` op answers `503` (`details.reason: "viewer_keys_unconfigured"`), and `GET /`
+  reports every viewer-keyed collection `"open": false`.
 - What the derivation key protects is that unlinkability only. Authorization never depends on it:
   every `@me` op resolves the viewer from the verified token, and raw-key writes to a viewer-keyed
   collection are refused, so knowing the key grants no write.
@@ -224,8 +229,11 @@ write answers; `markSeq` goes with the tally ops.
 `StorageErrorCode`, which reports it as "this operation no longer exists" rather than retrying.
 Otherwise no new code. New `details.reason` values on `400 invalid_request`: `viewer_keyed`
 (a raw-key write, or a create), `parent_required` (`/@me` on a `parent+viewer` collection),
-`parent_not_allowed` (`/@me/:parent` on a `viewer` collection), `invalid_parent`; and
-`401 sign_in_required` for an anonymous `@me`. Every other refusal is today's error table
+`parent_not_allowed` (`/@me/:parent` on a `viewer` collection), `invalid_parent`, `not_viewer_keyed`
+(`/@me` on a collection without `keyedBy`); `403 write_policy` with `details.reason:
+"viewer_keyed_closed"` for a `@me` write while the collection's switch is closed; `503
+service_unavailable` with `details.reason: "viewer_keys_unconfigured"` while the derivation key is
+unset; and `401 sign_in_required` for an anonymous `@me`. Every other refusal is today's error table
 (`STORAGE_ERROR_STATUS`).
 
 ## What is removed, and what replaces it
@@ -367,9 +375,15 @@ model-benchmarking: `votes`, from `records` / `vote`). One target per name becau
 viewer on one document (`dataset-commons`' `up` and `down`) would derive the same key in one
 collection; the app may later fold them into one document of its own shape.
 
-**The per-target switch.** Each target `t` has its own switch, off until step 6 below, so
-`dataset-commons`' two targets each open only after their own copy and verify. While it is off, `@me`
-writes to `t` answer `403 write_policy`, and `GET /` reports the collection with `"open": false`. The
+**The per-target switch.** One Flipt flag, `app-blocks-storage-viewer-keyed-open`, is evaluated per
+(app, collection): the entity is the app block id (the source app's through an import) and the context
+is `{ collection }`. It is created **default on**, so a new viewer-keyed collection with nothing to
+migrate just works once approved. Each **migration target** `t` is listed in a closed segment by app
+and collection, and stays closed until step 6 below, so `dataset-commons`' two targets each open only
+after their own copy and verify. The code fails closed: an absent flag or an unreachable Flipt reads as
+closed. It applies in the production namespace only; development and review namespaces hold no
+migrated data and are always open. While `t` is closed, `@me` writes to it answer `403 write_policy`
+(`details.reason: "viewer_keyed_closed"`), and `GET /` reports the collection with `"open": false`. The
 new app version branches on that one field: closed, it reads the old marks on `c` (still presented
 during the compatibility window) and shows voting as unavailable; open, it reads and writes `t`. So
 reads and writes move together, in one flip, with no second app release. Then, per target, in this
@@ -407,7 +421,9 @@ keyMap? })`, beside `migrateDocuments` (the schema-migration runner). For each `
 **Rollback.** Valid only before step 6. Unfreeze, revert the app to its previous approved version, and
 delete `t`'s copied documents with the per-collection purge (a new maintenance op, built in rollout
 step 2: `doc-store-purge.ts` has only a viewer and an app purge today) that deletes every document of
-one collection in one namespace with tombstones and refunds, as a moderator delete does. `doc_mark` and
+one collection in one namespace through the moderator delete path (`deleteLockedSharedDocs`, which
+writes tombstones and refunds each document's author, not the caller as the author `remove` does).
+`doc_mark` and
 `doc_tally` were never written, so nothing needs restoring. After step 6 a rollback would lose every
 vote made through `@me`, which were never written to `doc_mark`, so past that point the only way back
 is forward: fix the new version.
@@ -421,8 +437,33 @@ built from them. The only counter data in production is `playable-collections`' 
 
 ### Counter documents (`write: "none"`, `author_kind = 'counter'`)
 
-Their `data` is always empty and their only content is their counters (above). Each is deleted with
-its collection's counters, refunding the usage charged to the viewer whose increment created it.
+Their `data` is always empty and their only content is their counters (above). Production holds 37,
+all in `playable-collections`' `popular_plays`. They are deleted by the **per-collection purge**, the
+maintenance op built in rollout step 2 for the vote rollback, run on the counter collection in rollout
+step 4, per app, after that app's migration. The purge deletes every document of the collection in
+one namespace through the moderator delete path (`deleteLockedSharedDocs`), not the author `remove`,
+which refuses a `write: "none"` collection and refunds the caller. That path deletes each document's
+tally rows and **every** `doc_mark` row on it, `report` rows included, writes tombstones, and refunds
+the usage charged to `usage_app` and to the `usage_user` of the viewer whose increment created the
+document (`author_uid`; nothing per user when an account wipe already cleared it). The rows it
+deletes are dumped first, as the final cleanup's are, and the dump includes any (dismissed) report
+rows deleted with their document. It runs only when all of these hold:
+
+- **No increment can re-create a document.** The app's new approved version no longer declares the
+  collection's counters, so the store refuses `$inc` on it (`400 invalid_request`, counter no longer
+  declared), because the first increment of a counter creates its document (`SQL_INSERT_COUNTER_DOC`).
+- **Every mark on the collection has been migrated.** Each of its marks' targets has passed verify
+  and has its switch open (steps 3 to 6 above), because deleting a document deletes its marks, and a
+  closed target's app still reads them.
+- **No report on the collection's documents is open.** An open report is a `report` row newer than
+  its document's `reports_dismissed_at`; a moderator resolves every open one first, so the purge
+  never deletes a report nobody has looked at.
+
+`playable-collections` is migrated as open question 10 specifies: its `played` marks are copied into
+the viewer-keyed `plays` target, and only after that target's switch is open is `popular_plays`
+purged. Its play figures restart from the per-user marks migrated there, not from the 64 counted
+plays. The final cleanup's CHECK narrowing depends on this purge having left no row with
+`author_kind = 'counter'` (below).
 
 ### Publish
 
@@ -437,8 +478,11 @@ Nothing to migrate: report rows stay in `doc_mark`, and production has none.
 
 After usage is zero (rollout step 5): one manual SQL file that deletes every `doc_mark` row whose
 `name` is not `report`, drops `appdata.doc_tally` and `appdata.mark_head`, and narrows
-`doc_author_kind`, preceded by a dump of what it deletes, kept for a stated retention. `doc_mark` and
-its policies stay, as the report store. Its rollback re-creates the dropped tables empty; it cannot
+`doc_author_kind`, preceded by a dump of what it deletes, kept for a stated retention. The narrowing
+comes last, and only after the file has checked that no `appdata.doc` row has
+`author_kind = 'counter'` (it aborts otherwise): such a row means an app's counter documents were not
+purged in rollout step 4, and the purge, not this file, deletes them. `doc_mark` and its policies
+stay, as the report store. Its rollback re-creates the dropped tables empty; it cannot
 restore rows without that dump, which is why it runs last.
 
 ## Manifest, schema majors and the SDK
@@ -470,15 +514,18 @@ Each step names what ends it.
    copy.
 2. **Ship the replacement, dark.** Viewer-keyed collections (parser, store, routes, SDK minor, contract
    cases, the per-target switch), the report API (writing `doc_mark` as today) behind a per-app flag,
-   `migrateMarksToDocs`, and the per-collection purge the rollback depends on. Ends when the contract
-   suite and the store's PGlite suite are green on `main` with the switches on.
+   `migrateMarksToDocs`, and the per-collection purge the rollback and the counter-document deletion
+   depend on. Ends when the contract suite and the store's PGlite suite are green on `main` with the switches on.
 3. **Deprecate.** Submit refuses new tally and publish declarations; `Deprecation` headers on every
    removed route; developer docs updated. Ends when it is deployed.
 4. **Migrate the apps with data:** `playable-collections`, `model-benchmarking`, `custom-generators`
    and `dataset-commons` ("Inventory (2026-11-23)"): each one's new manifest version, then per target:
-   key check, freeze, copy, verify, rate, open the switch. The other apps that declare tallies hold
-   none and only change their manifests. Ends per target when its switch is open and its old calls
-   stop.
+   key check, freeze, copy, verify, rate, open the switch; then, for an app with counter documents
+   (`playable-collections`), the per-collection purge of its counter collection ("Counter
+   documents"), once a moderator has resolved every open report on that collection's documents. The
+   other apps that declare tallies hold none and only change their manifests. Ends
+   per target when its switch is open and its old calls stop, and per app when none of its
+   documents has `author_kind = 'counter'`, removed by a purge that ran with no open report on them.
 5. **Remove when usage is zero for 7 days.** Zero means: `civitai_app_block_doc_store_tally_ops_total`
    flat (it has no app label), `app_storage_requests_total{op}` flat for `increment`, `mark`, `unmark`,
    `patch`, `publish` and `unpublish` (its `app` label names the app; `recordAppStorageRequest`), and no
@@ -488,7 +535,7 @@ Each step names what ends it.
    `410` (code `removed`, linking the guide) for one release and leave the route table after it; the code, types,
    SDK surface (major release) and Flipt flag go; the final cleanup SQL runs. Seven days and no longer
    because the inventory shows four apps with data and about 56 marks and 37 counter documents, all
-   migrated by step 4, so the window only has to cover clients still on an old app version.
+   migrated or purged by step 4, so the window only has to cover clients still on an old app version.
 
 ## Registry and app-data-go impact
 
@@ -538,9 +585,12 @@ Disposition of the work already done:
   so others' counts trail. The migration avoids a cliff by rating before the switch; steady state lags
   by the job's cadence.
 - **Counting by listing costs.** An app counts an item's votes by listing the collection with
-  `keyPrefix=<parent>:`, at most 100 per page. Sort by count is not available. That is cheap at today's
-  volume (the busiest item set in production holds 43 marks) but not for a board of thousands of
-  items, which needs a later decision on a generic aggregate.
+  `keyPrefix=<parent>:`, at most 100 per page, so a board costs one list request per item shown, plus
+  one extra page for every further 100 votes on an item. Sort by count is not available. That is
+  cheap at today's volume (the busiest item set in production holds 43 marks). The practical limit is
+  a board page of about 50 items (about 50 list requests per page view), or any item with more than
+  100 votes (one more page per further 100). **Trigger:** before migrating any app whose boards exceed that limit,
+  revisit the aggregate decision for it. Until then the decision stands: no server-side aggregates.
 - **Orphans.** Deleting a record leaves its votes, still charged to their voters (open question 2).
 - **History replay.** Removing `marks` / `counters` from the parser outright would make old approved
   manifests fail to parse and shift every later major; they must stay parseable (see "Manifest
@@ -557,9 +607,9 @@ Disposition of the work already done:
 **Settled since the first draft** (no longer open):
 
 - **No server-side aggregates.** No count read, no sum, no sort by count: apps count by listing the
-  collection with `keyPrefix=<parent>:`. A generic aggregate is a separate, later decision, which a
-  board of thousands of items would need. The count read and the WRITES-DESIGN exception it implied
-  are dropped.
+  collection with `keyPrefix=<parent>:`. A generic aggregate is a separate, later decision, revisited
+  only at the limit and trigger in Risks ("Counting by listing costs"). The count read and the
+  WRITES-DESIGN exception it implied are dropped.
 - **The key digest is keyed (HMAC)** per (collection, parent), not a stable per-app handle and not an
   unkeyed hash.
 - **Report rows stay in `doc_mark`** (`name = 'report'`); no new table.
@@ -598,9 +648,9 @@ needs it.
     figure and its play total (the sum of `count`) are both computed by the app from a listing of
     `keyPrefix=<item>:`; there is no server-side count or sum. The 64-play counter total cannot be
     split by viewer, so it is dropped: the app's figures restart from the migrated players (43
-    `played` marks), not from the 64 counted plays, which the app owner accepts or not before its
-    migration. The alternative, one document per play, is unbounded and spends a viewer's document
-    ceiling per play.
+    `played` marks), not from the 64 counted plays, and `popular_plays`' counter documents are then
+    purged ("Counter documents"). The alternative, one document per play, is unbounded and spends a
+    viewer's document ceiling per play.
 11. **Quota during the vote copy.** Proposed: charged but never refused; users left over their ceiling
     are reported, not trimmed.
 12. **Vote documents' body in the copy.** Proposed: `{}`, with an app able to name another constant
@@ -645,10 +695,7 @@ imports (`app-storage-demo-fork`, `custom-generators-fork`), and both hold no da
 
 Every other declared mark and counter holds 0 rows.
 
-**Publish.** The `app-blocks-storage-publish` flag is on for `live-characters` only, since 2026-11-16.
-There is no evidence `_publish` or `_unpublish` was ever called: 0 route hits in 7 days of edge logs,
-with a positive control present. The 19 matching shared documents in that app were written before the
-flag went on, by ordinary client writes.
+**Publish.** Publish was never observed in use.
 
 **Calls.** Over the tally metric's life so far (about 7 to 14 days): `inc` 21, `mark` 21, `unmark` 0,
 all on the deprecated per-tally routes, none on `PATCH`.
@@ -659,7 +706,7 @@ all on the deprecated per-tally routes, none on `PATCH`.
   rows) across four apps. No per-user quota question arises at this size.
 - **`report` has no existing rows to migrate,** and with report rows staying in `doc_mark` there is
   nothing to copy.
-- **Publish has no users to migrate;** removing it touches one flag on one app.
+- **Publish has no users to migrate;** removing it touches no app's data.
 - **`playable-collections` is the binding case:** the only clearly live user, and the only app using
   marks, counters and `write: "none"` counter documents together, on one collection whose keys are
   not documents anyone authored. Its replacement shape is open question 10.
