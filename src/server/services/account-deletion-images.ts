@@ -111,13 +111,13 @@ export function releaseAccountDeletionPendingDeletes(userId: number) {
 export const ACCOUNT_DELETION_DRAIN = 'remove-deleted-user-images';
 
 /**
- * The rating the grace block recorded, when a restore puts it back instead of re-rating: the row is
- * still as the block left it (Blocked, same rating lock, no CSAM block, now or recorded), the
- * recorded level is a whole level, and it was locked or was itself Blocked. Any other row is
- * re-rated from its current tags, which a tag change during the window may have moved. NULL when
- * not restored.
+ * The rating the grace block recorded, while the row is still as the block left it (Blocked, same
+ * rating lock, no CSAM block, now or recorded) and the level is a whole level. `restore`: one that
+ * was locked or was itself Blocked, which a restore puts back. `floor`: any other, which the row is
+ * re-rated from its current tags and then raised to, so a tag added during the window counts and an
+ * unlocked rating that never came from tags (an owner's raise) is not lowered. NULL otherwise.
  */
-const restorableRecordedLevelSql = (alias?: 'i') => {
+const recordedLevelSql = (kind: 'restore' | 'floor', alias?: 'i') => {
   const col = (name: string) => Prisma.raw(`${alias ? `"${alias}"` : '"Image"'}."${name}"`);
   const meta = col('metadata');
   return Prisma.sql`CASE
@@ -128,15 +128,47 @@ const restorableRecordedLevelSql = (alias?: 'i') => {
       AND jsonb_typeof(${meta}->${PRIOR_NSFW_LEVEL_KEY}::text) = 'number'
       AND ${meta}->>${PRIOR_NSFW_LEVEL_KEY}::text ~ '^[1-9][0-9]{0,1}$'
       AND (${meta}->${PRIOR_NSFW_LOCKED_KEY}::text = 'true'::jsonb
-        OR ${meta}->>${PRIOR_NSFW_LEVEL_KEY}::text = ${String(NsfwLevel.Blocked)})
+        OR ${meta}->>${PRIOR_NSFW_LEVEL_KEY}::text = ${String(NsfwLevel.Blocked)}) = ${
+    kind === 'restore'
+  }
     THEN (${meta}->>${PRIOR_NSFW_LEVEL_KEY}::text)::int
   END`;
 };
 
 /**
+ * Raises a re-rated row to the level the grace block recorded when the re-rate left it lower, with
+ * the 'minor' review `update_nsfw_levels_new` gives a rated row whose scan saw a minor. Only an
+ * unlocked, Scanned, unblocked row, as that recompute rates.
+ */
+async function raiseToRecordedFloor(rows: { id: number; floorLevel: number | null }[]) {
+  const floors = rows.filter((x): x is { id: number; floorLevel: number } => x.floorLevel != null);
+  if (!floors.length) return;
+  const raised = await dbWrite.$queryRaw<{ id: number }[]>`
+    UPDATE "Image" i
+    SET "nsfwLevel" = f.level,
+      "needsReview" = CASE
+        WHEN i."needsReview" IN ('csam', 'appeal') THEN i."needsReview"
+        WHEN (i."scanJobs"->'hasMinor')::boolean AND f.level > 1 AND f.level < ${NsfwLevel.Blocked}
+        THEN 'minor'
+        ELSE i."needsReview"
+      END
+    FROM unnest(${floors.map((x) => x.id)}::int[], ${floors.map(
+    (x) => x.floorLevel
+  )}::int[]) AS f(id, level)
+    WHERE i.id = f.id
+      AND i."nsfwLevel" < f.level
+      AND NOT i."nsfwLevelLocked"
+      AND i.ingestion = 'Scanned'::"ImageIngestionStatus"
+      AND i."blockedFor" IS NULL
+    RETURNING i.id
+  `;
+  if (raised.length) await refreshImageLevelCaches(raised.map((x) => x.id));
+}
+
+/**
  * One restore pass: claims up to RESTORE_BATCH_SIZE of the account's grace-blocked rows, puts back
  * what the grace block recorded, and strips the breadcrumbs. `recordedLevel` is set on a row whose
- * recorded rating was put back; the caller re-rates the others.
+ * recorded rating was put back; the caller re-rates the others, then raises each to its `floorLevel`.
  */
 export function restoreAccountDeletionImageBatch(userId: number) {
   return dbWrite.$queryRaw<
@@ -149,6 +181,8 @@ export function restoreAccountDeletionImageBatch(userId: number) {
       currentReview: string | null;
       recordedReview: string | null;
       recordedLevel: number | null;
+      floorLevel: number | null;
+      nsfwLevelLocked: boolean;
     }[]
   >`
     UPDATE "Image"
@@ -178,7 +212,7 @@ export function restoreAccountDeletionImageBatch(userId: number) {
           ELSE c."recordedReview"
         END,
         -- Read from the updated row itself, not from the claim's columns.
-        "nsfwLevel" = COALESCE(${restorableRecordedLevelSql()}, "nsfwLevel"),
+        "nsfwLevel" = COALESCE(${recordedLevelSql('restore')}, "nsfwLevel"),
         "metadata" = "metadata"${minusPriorKeysSql}
     FROM (
       SELECT i.id, i."needsReview" AS "currentReview",
@@ -192,7 +226,8 @@ export function restoreAccountDeletionImageBatch(userId: number) {
           ) THEN NULL
           ELSE i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
         END AS "recordedReview",
-        ${restorableRecordedLevelSql('i')} AS "recordedLevel"
+        ${recordedLevelSql('restore', 'i')} AS "recordedLevel",
+      ${recordedLevelSql('floor', 'i')} AS "floorLevel"
       FROM "Image" i
       WHERE i."userId" = ${userId}
         AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
@@ -200,13 +235,12 @@ export function restoreAccountDeletionImageBatch(userId: number) {
         AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IN (SELECT unnest(enum_range(NULL::"ImageIngestionStatus"))::text)
         AND (SELECT COALESCE(u."deletedAt", u."bannedAt") IS NULL FROM "User" u WHERE u.id = ${userId})
       LIMIT ${RESTORE_BATCH_SIZE}
-      -- Locks the claimed rows, so a rating written after this statement began is read here (on
-      -- its newest version) rather than from the statement's snapshot. Without it a moderator's
-      -- rating landing mid-restore could be routed to the caller's re-rate, which unlocks it.
+      -- FOR UPDATE re-reads the newest row version, so a moderator rating committed mid-restore is
+      -- not routed to the caller's re-rate, which would unlock it.
       FOR UPDATE OF i
     ) c
     WHERE "Image".id = c.id
-    RETURNING "Image".id, "postId", ingestion, "blockedFor", "needsReview", c."currentReview", c."recordedReview", c."recordedLevel"
+    RETURNING "Image".id, "postId", ingestion, "blockedFor", "needsReview", "nsfwLevelLocked", c."currentReview", c."recordedReview", c."recordedLevel", c."floorLevel"
   `;
 }
 
@@ -273,14 +307,23 @@ export async function unblockAccountDeletionImages(userId: number) {
     stillBlocked += restored.length - ids.length;
 
     // A row whose recorded rating was put back above; re-rating it would drop a moderator's lock.
-    const rerate = visible.filter((x) => x.recordedLevel == null).map((x) => x.id);
+    const rerate = visible.filter((x) => x.recordedLevel == null);
     const rated = visible.filter((x) => x.recordedLevel != null).map((x) => x.id);
+    // One the restore left unlocked and found locked by the reset was rated by a moderator in
+    // between: the reset passes it by.
+    const rerateUnlocked = rerate.filter((x) => !x.nsfwLevelLocked).map((x) => x.id);
+    const rerateLocked = rerate.filter((x) => x.nsfwLevelLocked).map((x) => x.id);
     if (ids.length)
       await limitConcurrency(
         [
           // Blocking force-set `nsfwLevel` to Blocked and left the rating lock on, which the
           // recompute skips; resetBlockedNsfwLevel is the shared undo for that.
-          () => resetBlockedNsfwLevel(rerate),
+          async () => {
+            if (rerateUnlocked.length)
+              await resetBlockedNsfwLevel(rerateUnlocked, { unlockedOnly: true });
+            if (rerateLocked.length) await resetBlockedNsfwLevel(rerateLocked);
+            await raiseToRecordedFloor(rerate);
+          },
           () => refreshImageLevelCaches(rated),
           // The grace block queued these for purge; leaving the row behind means a later
           // re-delete inherits the first block's clock and skips retention entirely.

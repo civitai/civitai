@@ -750,7 +750,8 @@ describe('handleUnblockImages while the owner is deleted', () => {
       INSERT INTO "JobQueue" VALUES (1, 'Image', 'BlockedImageDelete', '2026-01-01');
       INSERT INTO "User" VALUES (1, now()), (2, NULL);
       INSERT INTO "Image" (id, "userId", "nsfwLevel", "blockedFor", metadata, ingestion) VALUES
-        -- The grace block's recorded rating: a lift records none, so the restore re-rates the row.
+        -- The grace block's recorded rating, a moderator's lock: it outlives the lift, so a restore
+        -- puts the lock back.
         (1, 1, 4, 'moderated', '{"ruleId": 3, "keep": 1, "accountDeletionPriorNsfwLevel": 4, "accountDeletionPriorNsfwLevelLocked": true}', 'Blocked'),
         (2, 2, 32, 'moderated', '{"ruleId": 3, "keep": 1}', 'Blocked');`);
     const raw = pgliteRaw(pg);
@@ -801,6 +802,8 @@ describe('handleUnblockImages while the owner is deleted', () => {
             accountDeletionPriorIngestion: 'Scanned',
             accountDeletionPriorBlockedFor: null,
             accountDeletionPriorNeedsReview: null,
+            accountDeletionPriorNsfwLevel: 4,
+            accountDeletionPriorNsfwLevelLocked: true,
           },
         },
         { id: 2, ingestion: 'Scanned', blockedFor: null, metadata: { keep: 1 } },

@@ -58,7 +58,14 @@ import {
 import { rescanImageById } from '../image-rescan.service';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
-import { scanKeepsRowSql } from '~/server/common/image-visibility';
+import {
+  liftedBlockedForSql,
+  liftedIngestionSql,
+  liftedNeedsReviewSql,
+  liftedNsfwLevelSql,
+  scanKeepsRowSql,
+  unblockedMetadataSql,
+} from '~/server/common/image-visibility';
 import { blockImageFromRating } from '../image-scan-result.service';
 import { unblockAccountDeletionImages } from '../account-deletion-images';
 import { blockBannedUserImages } from '~/server/services/user.service';
@@ -1690,7 +1697,7 @@ describe('a restore puts back the rating the grace block replaced', () => {
     expect(resetIds()).not.toContain(id);
   });
 
-  it("brings a moderator's rating lock back locked at its level; an unlocked rating is re-rated", async () => {
+  it("brings a moderator's rating lock back locked at its level; an unlocked rating is re-rated with it as a floor", async () => {
     resetLikeProd();
     await holder.db.exec(`
       INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
@@ -1713,28 +1720,29 @@ describe('a restore puts back the rating the grace block replaced', () => {
       nsfwLevel: 4,
       nsfwLevelLocked: true,
     });
-    // Unlocked and not Blocked: handed to the re-rate, which resets it before recomputing.
+    // Unlocked and not Blocked: re-rated (reset, here with no tags to recompute from), then raised
+    // back to the recorded level.
     expect(await rating(115)).toEqual({
       ingestion: 'Scanned',
-      nsfwLevel: 0,
+      nsfwLevel: 8,
       nsfwLevelLocked: false,
     });
     expect(resetIds()).not.toContain(114);
     expect(resetIds()).toContain(115);
-    // Not re-rated, so the caches that read the level are refreshed for exactly this row.
+    // The caches that read the level: the restored row, and the one raised to its floor.
     expect(
       vi
         .mocked(refreshImageLevelCaches)
         .mock.calls.flatMap(([ids]) => ids)
         .sort()
-    ).toEqual([114]);
+    ).toEqual([114, 115]);
     const { rows } = await holder.db.query<{ metadata: Record<string, unknown> }>(
       `SELECT metadata FROM "Image" WHERE id IN (114, 115)`
     );
     expect(rows.map((row) => row.metadata)).toEqual([{}, {}]);
   });
 
-  it('re-rates an unlocked rating from the tags as they are now, with the minor review', async () => {
+  it('re-rates an unlocked rating from the tags as they are now, never below it, with the minor review', async () => {
     const recompute = readFileSync(
       new URL(
         '../../../../packages/civitai-db-schema/prisma/programmability/update_nsfw_level.sql',
@@ -1772,8 +1780,27 @@ describe('a restore puts back the rating the grace block replaced', () => {
       ingestion: 'Scanned',
       level: 4,
       locked: false,
+    })}, '{"hasMinor": true}'),
+        -- Its owner raised it to X over PG tags (unlocked, by design).
+        (134, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 8,
+      locked: false,
+    })}, NULL),
+        -- PG before the deletion; an R tag was added during the window.
+        (135, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 1,
+      locked: false,
+    })}, NULL),
+        -- Owner-raised to X over PG tags, and its scan saw a minor.
+        (136, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 8,
+      locked: false,
     })}, '{"hasMinor": true}');
-      INSERT INTO "TagsOnImageDetails" ("imageId", "tagId") VALUES (131, 1), (131, 2), (132, 3);
+      INSERT INTO "TagsOnImageDetails" ("imageId", "tagId") VALUES
+        (131, 1), (131, 2), (132, 3), (134, 1), (135, 1), (135, 3), (136, 1);
     `);
 
     await unblockAccountDeletionImages(OWNER);
@@ -1784,11 +1811,14 @@ describe('a restore puts back the rating the grace block replaced', () => {
       nsfwLevelLocked: boolean;
       needsReview: string | null;
     }>(
-      `SELECT id, "nsfwLevel", "nsfwLevelLocked", "needsReview" FROM "Image" WHERE id IN (131, 132) ORDER BY id`
+      `SELECT id, "nsfwLevel", "nsfwLevelLocked", "needsReview" FROM "Image" WHERE id IN (131, 132, 134, 135, 136) ORDER BY id`
     );
     expect(rows).toEqual([
       { id: 131, nsfwLevel: 8, nsfwLevelLocked: false, needsReview: null },
       { id: 132, nsfwLevel: 4, nsfwLevelLocked: false, needsReview: 'minor' },
+      { id: 134, nsfwLevel: 8, nsfwLevelLocked: false, needsReview: null },
+      { id: 135, nsfwLevel: 4, nsfwLevelLocked: false, needsReview: null },
+      { id: 136, nsfwLevel: 8, nsfwLevelLocked: false, needsReview: 'minor' },
     ]);
   });
 
@@ -1870,6 +1900,76 @@ describe('a restore puts back the rating the grace block replaced', () => {
     // Control: a whole level with its lock is put back, not re-rated.
     expect(resetIds()).not.toContain(127);
     expect(await rating(127)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 4,
+      nsfwLevelLocked: true,
+    });
+  });
+
+  it('keeps a Blocked rating a moderator lands between the restore and its reset', async () => {
+    vi.mocked(resetBlockedNsfwLevel).mockImplementation(async (ids, options) => {
+      const list = Array.isArray(ids) ? ids : [ids];
+      // The moderator's rating, committed after the restore statement and before the reset.
+      await holder.db.query(
+        `UPDATE "Image" SET "nsfwLevel" = 32, "nsfwLevelLocked" = true WHERE id = ANY($1)`,
+        [list]
+      );
+      // The reset's own first statement.
+      await holder.db.query(
+        `UPDATE "Image" SET "nsfwLevel" = 0, "nsfwLevelLocked" = false
+         WHERE id = ANY($1) AND "nsfwLevel" = 32 AND ($2 OR NOT "nsfwLevelLocked")`,
+        [list, !options?.unlockedOnly]
+      );
+    });
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
+        (137, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 1,
+      locked: false,
+    })});
+    `);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    expect(await rating(137)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 32,
+      nsfwLevelLocked: true,
+    });
+  });
+
+  it("puts back a moderator's lock when the image was unblocked during the window", async () => {
+    resetLikeProd();
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked", metadata) VALUES
+        (138, ${OWNER}, 'Blocked', 'moderated', 32, false, ${graced({
+      ingestion: 'Scanned',
+      level: 1,
+      locked: false,
+    })});
+      -- A moderator rates it R and locks it during the window (updateImageNsfwLevel).
+      UPDATE "Image" SET "nsfwLevel" = 4, "nsfwLevelLocked" = true, metadata = metadata ||
+        '{"accountDeletionPriorNsfwLevel": 4, "accountDeletionPriorNsfwLevelLocked": true}'
+        WHERE id = 138;
+      UPDATE "User" SET "deletedAt" = now() WHERE id = ${OWNER};
+    `);
+    // Then unblocks it while the owner is still deleted: the lift's own statement.
+    const lift = Prisma.sql`UPDATE "Image" SET ingestion = ${liftedIngestionSql},
+      "blockedFor" = ${liftedBlockedForSql}, "nsfwLevel" = ${liftedNsfwLevelSql},
+      "needsReview" = ${liftedNeedsReviewSql}, metadata = ${unblockedMetadataSql}
+      WHERE id = 138`;
+    await holder.db.query(lift.text, lift.values as unknown[]);
+    expect(await rating(138), 'the lift kept the row blocked').toEqual({
+      ingestion: 'Blocked',
+      nsfwLevel: 32,
+      nsfwLevelLocked: true,
+    });
+    await holder.db.exec(`UPDATE "User" SET "deletedAt" = NULL WHERE id = ${OWNER}`);
+
+    await unblockAccountDeletionImages(OWNER);
+
+    expect(await rating(138)).toEqual({
       ingestion: 'Scanned',
       nsfwLevel: 4,
       nsfwLevelLocked: true,

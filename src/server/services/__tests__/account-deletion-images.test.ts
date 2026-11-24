@@ -390,7 +390,7 @@ describe('unblockAccountDeletionImages', () => {
     expect(images[0]).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM', metadata: {} });
     // Control: the other image is restored and goes through the unhide follow-ups.
     expect(images[1]).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
-    expect(mockResetNsfwLevel.mock.calls).toEqual([[[2]]]);
+    expect(mockResetNsfwLevel.mock.calls).toEqual([[[2], { unlockedOnly: true }]]);
     expect(result).toMatchObject({ unblocked: 1, stillBlocked: 1 });
   });
 
@@ -444,7 +444,7 @@ describe('unblockAccountDeletionImages', () => {
 
     // A still-blocked row has to keep its Blocked rating; only the rows the block hid get the
     // reset-and-recompute that undoes the forced level and the rating lock.
-    expect(mockResetNsfwLevel).toHaveBeenCalledWith([1]);
+    expect(mockResetNsfwLevel).toHaveBeenCalledWith([1], { unlockedOnly: true });
     expect(mockQueueSearchIndex).toHaveBeenCalledWith({
       ids: [1],
       action: SearchIndexUpdateQueueAction.Update,
@@ -564,7 +564,7 @@ describe('unblockAccountDeletionImages', () => {
       metadata: { [PRIOR_INGESTION_KEY]: 'Scannned' },
     });
     expect(result).toEqual({ unblocked: 2, stillBlocked: 0, skipped: 1, drained: true });
-    expect(mockResetNsfwLevel).toHaveBeenCalledWith([1, 3]);
+    expect(mockResetNsfwLevel).toHaveBeenCalledWith([1, 3], { unlockedOnly: true });
   });
 
   it('stops instead of spinning when a claimed row comes back unchanged', async () => {

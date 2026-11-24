@@ -32,6 +32,8 @@ import {
   PRIOR_BLOCKED_FOR_KEY,
   PRIOR_INGESTION_KEY,
   PRIOR_NEEDS_REVIEW_KEY,
+  PRIOR_NSFW_LEVEL_KEY,
+  PRIOR_NSFW_LOCKED_KEY,
   minusPriorKeysSql,
 } from '~/server/utils/image-removal-mode';
 
@@ -540,12 +542,20 @@ export const liftedNsfwLevelSql = Prisma.sql`(CASE WHEN ${ownerDeletedSql} THEN 
 /** For RETURNING: the lifted row stayed blocked because its owner is deleted. */
 export const liftKeptBlockedSql = Prisma.sql`(ingestion = ${KEPT.ingestion}::"ImageIngestionStatus")`;
 
+/** A recorded rating other than Blocked outlives a lift, so a restore still puts back a moderator's lock. */
+const ratingKeptWhenLiftedSql = Prisma.sql`(CASE
+  WHEN jsonb_typeof("metadata"->${PRIOR_NSFW_LEVEL_KEY}::text) = 'number'
+    AND "metadata"->>${PRIOR_NSFW_LEVEL_KEY}::text <> ${String(KEPT.nsfwLevel)}
+  THEN jsonb_build_object(${PRIOR_NSFW_LEVEL_KEY}::text, "metadata"->${PRIOR_NSFW_LEVEL_KEY}::text,
+    ${PRIOR_NSFW_LOCKED_KEY}::text, "metadata"->${PRIOR_NSFW_LOCKED_KEY}::text)
+  ELSE '{}'::jsonb END)`;
+
 /** `metadata` for a lifted row: the breadcrumbs off, or while the owner is deleted, recording the lift. */
 export function liftedUnderGraceSql(stripped: Prisma.Sql) {
   return Prisma.sql`(CASE WHEN ${ownerDeletedSql}
   THEN COALESCE(${stripped}, '{}'::jsonb) || jsonb_build_object(
     ${PRIOR_INGESTION_KEY}::text, ${RECORDED.ingestion}::text, ${PRIOR_BLOCKED_FOR_KEY}::text, ${RECORDED.blockedFor}::text,
-    ${PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLiftedSql})
+    ${PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLiftedSql}) || ${ratingKeptWhenLiftedSql}
   ELSE ${stripped} END)`;
 }
 

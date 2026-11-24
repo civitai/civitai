@@ -6,6 +6,8 @@ import {
   GRACE_PRIOR_INGESTION_KEY,
   GRACE_PRIOR_KEYS,
   GRACE_PRIOR_NEEDS_REVIEW_KEY,
+  GRACE_PRIOR_NSFW_LEVEL_KEY,
+  GRACE_PRIOR_NSFW_LOCKED_KEY,
   LIFT_KEPT_ACTIVITY,
   LIFT_WHILE_OWNER_DELETED,
 } from '@civitai/shared/account-deletion-grace';
@@ -134,11 +136,18 @@ const LIFTED_INGESTION = sql<
 >`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.ingestion} ELSE ${RECORDED.ingestion} END)::"ImageIngestionStatus"`;
 const LIFTED_NSFW_LEVEL = sql<number>`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.nsfwLevel}::int ELSE "nsfwLevel" END)`;
 const LIFT_KEPT_BLOCKED = sql<boolean>`(ingestion = ${KEPT.ingestion}::"ImageIngestionStatus")`;
+/** A recorded rating other than Blocked outlives a lift, so a restore still puts back a moderator's lock. */
+const RATING_KEPT_WHEN_LIFTED = sql`(CASE
+  WHEN jsonb_typeof("metadata"->${GRACE_PRIOR_NSFW_LEVEL_KEY}::text) = 'number'
+    AND "metadata"->>${GRACE_PRIOR_NSFW_LEVEL_KEY}::text <> ${String(KEPT.nsfwLevel)}
+  THEN jsonb_build_object(${GRACE_PRIOR_NSFW_LEVEL_KEY}::text, "metadata"->${GRACE_PRIOR_NSFW_LEVEL_KEY}::text,
+    ${GRACE_PRIOR_NSFW_LOCKED_KEY}::text, "metadata"->${GRACE_PRIOR_NSFW_LOCKED_KEY}::text)
+  ELSE '{}'::jsonb END)`;
 /** `metadata` for a lifted row: `stripped`, or while the owner is deleted, that recording the lift. */
 const liftedMetadata = (stripped: RawBuilder<unknown>) => sql`(CASE WHEN ${OWNER_DELETED}
   THEN COALESCE(${stripped}, '{}'::jsonb) || jsonb_build_object(
     ${GRACE_PRIOR_INGESTION_KEY}::text, ${RECORDED.ingestion}::text, ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text, ${RECORDED.blockedFor}::text,
-    ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLifted})
+    ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLifted}) || ${RATING_KEPT_WHEN_LIFTED}
   ELSE ${stripped} END)`;
 
 const recompute = async (imageId: number) => {
