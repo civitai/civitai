@@ -3,7 +3,7 @@ import {
   hideNotification,
   notificationsStore,
   showNotification,
-  type NotificationPosition,
+  type NotificationData,
 } from '@mantine/notifications';
 import { IconAlertTriangle, IconClock } from '@tabler/icons-react';
 import Router from 'next/router';
@@ -43,7 +43,8 @@ import {
  */
 
 /** Where every review-decision toast goes. Per notification, so other pages keep theirs. */
-export const REVIEW_TOAST_POSITION: NotificationPosition = 'top-center';
+// The package index does not export `NotificationPosition`; the per-notification field is its type.
+export const REVIEW_TOAST_POSITION: NonNullable<NotificationData['position']> = 'top-center';
 export const REVIEW_DECISIONS_TOAST_ID = 'review-decisions';
 /** How long the decisions toast stays once nothing is pending any more. */
 export const REVIEW_DECISIONS_LINGER_MS = 4000;
