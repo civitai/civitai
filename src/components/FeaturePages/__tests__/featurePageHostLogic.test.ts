@@ -12,6 +12,7 @@ function setup(
     /** Leave the frame without its fp-init, as before the host first sends it. */
     uninitialised?: boolean;
     discussion?: boolean;
+    viewerAuthor?: string | null;
   } = {}
 ) {
   const frame = { postMessage: vi.fn() };
@@ -26,6 +27,7 @@ function setup(
     mine: vi.fn(overrides.mine ?? (async () => ({ votes: { [REQUEST]: 1 as const } }))),
     maskProfanity: true,
     discussion: overrides.discussion ?? true,
+    viewerAuthor: overrides.viewerAuthor ?? null,
     comment: vi.fn(async () => ({ comment: { urn: 'urn:data.civitai.com:c1', text: 'hi' } })),
     editComment: vi.fn(async () => ({ comment: { urn: 'urn:data.civitai.com:c1', text: 'hi!' } })),
     retractComment: vi.fn(async () => ({ comment: 'urn:data.civitai.com:c1' })),
@@ -163,6 +165,13 @@ describe('feature page host messages', () => {
       );
     }
   );
+
+  it('names the viewer by their platform handle when there is one', () => {
+    const author = `h1:${'a'.repeat(64)}`;
+    const { frame, send } = setup({ viewerAuthor: author });
+    send({ type: 'fp-ready' });
+    expect(frame.postMessage.mock.calls[0][0].payload.viewer).toEqual({ author });
+  });
 });
 
 describe('feature page comments', () => {
