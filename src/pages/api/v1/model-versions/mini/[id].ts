@@ -35,6 +35,8 @@ import { getConsumerBlobId, shouldRefreshBlobUrl } from '~/shared/orchestrator/b
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { getGenerationFile } from '~/server/utils/resource-air';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { getDownloadFilename } from '~/server/services/file.service';
+import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type {
   LicensingFeeSettlementCurrency,
@@ -108,6 +110,7 @@ const epochSchema = z.coerce.number().int();
 type VersionRow = {
   id: number;
   versionName: string;
+  trainedWords: string[];
   availability: Availability;
   publishedAt: Date | null;
   modelId: number;
@@ -160,6 +163,7 @@ type FileRow = {
   metadata: FileMetadata;
   sizeKB: number;
   name: string;
+  overrideName: string | null;
   hashes: Record<ModelHashType, string>;
   replacedAt: Date | null;
   pickleScanResult: ScanResultCode | null;
@@ -211,6 +215,7 @@ async function handler(
     SELECT
       mv.id,
       mv.name as "versionName",
+      mv."trainedWords",
       mv."modelId",
       m.name as "modelName",
       mv."baseModel",
@@ -373,6 +378,7 @@ async function handler(
       mf.metadata, 
       mf."sizeKB", 
       mf.name,
+      mf."overrideName",
       mf."replacedAt",
       mf."pickleScanResult",
       mf."virusScanResult",
@@ -383,7 +389,7 @@ async function handler(
     FROM "ModelFile" mf
     LEFT JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id
     WHERE mf."modelVersionId" = ${id}
-    GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name, mf."replacedAt",
+    GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name, mf."overrideName", mf."replacedAt",
       mf."pickleScanResult", mf."virusScanResult"
     -- requestedFile below calls the bare getPrimaryFile, which settles a full tie by input order,
     -- and that choice decides the epoch branch. (getGenerationFile does its own id sort.)
@@ -849,7 +855,15 @@ async function handler(
     publishedAt: modelVersion.publishedAt,
     size: targetFile.sizeKB, // nullable
     fileType: targetFile.type,
-    fileName: targetFile.name,
+    // The name the download route serves and files[].name on /api/v1/model-versions/[id] lists.
+    fileName: safeDecodeURIComponent(
+      getDownloadFilename({
+        model: { name: modelVersion.modelName, type: modelVersion.type },
+        modelVersion: { name: modelVersion.versionName, trainedWords: modelVersion.trainedWords },
+        file: targetFile,
+        versionFiles: files,
+      })
+    ),
     // nullable - hashes (all available hash types)
     hashes: targetFile.hashes,
     downloadUrls: withholdEpochUrl ? [] : downloadUrls, // nullable

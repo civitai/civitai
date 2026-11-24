@@ -105,6 +105,7 @@ import { Air } from '@civitai/orchestration-client';
 import handler from '~/pages/api/v1/model-versions/mini/[id]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getDownloadFilename } from '~/server/services/file.service';
 import { modelVersionToAir } from '~/server/utils/resource-air';
 import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 
@@ -1210,7 +1211,7 @@ describe('GET /api/v1/model-versions/mini/[id] — a mature training dataset', (
   it('is offered on a red-capable host', async () => {
     const { status, body } = await fetchDataset('civitai.red');
     expect(status).toBe(200);
-    expect(body.fileName).toBe(DATASET.name);
+    expect(body.fileType).toBe(DATASET.type);
   });
 
   it.each([
@@ -1220,7 +1221,7 @@ describe('GET /api/v1/model-versions/mini/[id] — a mature training dataset', (
     currentUser.value = user;
     const { status, body } = await fetchDataset('civitai.com');
     expect(status).toBe(200);
-    expect(body.fileName).toBe(DATASET.name);
+    expect(body.fileType).toBe(DATASET.type);
   });
 });
 
@@ -1652,5 +1653,36 @@ describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is si
 
     expect(body.downloadUrls).toEqual([EPOCH_URL]);
     expect(mockRefreshBlobs).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — fileName is the download name', () => {
+  // A Textual Inversion downloads under its first trained word, not the uploaded name
+  // (civitai/civitai#10113), and files[].name on /api/v1/model-versions/[id] says so.
+  const TI_FILE = {
+    ...SAFETENSOR,
+    name: 'easynegative_upload.safetensors',
+    overrideName: null,
+  };
+  const tiVersion = { type: 'TextualInversion', trainedWords: ['easynegative'] };
+
+  it('a Textual Inversion is named by its trained word, as the download route names it', async () => {
+    const { status, body } = await run([TI_FILE], {}, tiVersion as Partial<typeof versionRow>);
+    expect(status).toBe(200);
+    expect(body.fileName).toBe('easynegative.safetensors');
+    expect(body.fileName).toBe(
+      getDownloadFilename({
+        model: { name: versionRow.modelName, type: 'TextualInversion' },
+        modelVersion: { name: versionRow.versionName, trainedWords: ['easynegative'] },
+        file: TI_FILE,
+        versionFiles: [TI_FILE],
+      })
+    );
+  });
+
+  it("a creator's rename wins, as it does on the download route", async () => {
+    const renamed = { ...SAFETENSOR, overrideName: 'my-model.safetensors' };
+    const { body } = await run([renamed, GGUF]);
+    expect(body.fileName).toBe('my-model.safetensors');
   });
 });
