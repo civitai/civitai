@@ -147,7 +147,7 @@ describe('caseIntake', () => {
     expect(mail.replyTo).toBe('dmca@civitai.com');
     expect((mail as { from?: string }).from).toBe('Civitai DMCA <notices@civitai.com>');
     expect(mail.subject).toBe(`We received your request (${out.publicRef})`);
-    expect(mail.text).toContain('DMCA copyright notice on 20 November 2026, 16:05 UTC');
+    expect(mail.text).toContain('DMCA copyright notice on November 20, 2026, 4:05 PM UTC');
     const link = mail.text.match(/Continue: (\S+)/)![1];
     expect(link.startsWith(`https://civitai.example/requests/case/${out.publicRef}#t=`)).toBe(true);
     const token = link.split('#t=')[1];

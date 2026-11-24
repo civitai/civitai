@@ -13,18 +13,17 @@ export const renderNotice = (text: string, slots: NoticeSlots) =>
       : whole
   );
 
-/** A UTC time as people read it in a notice: "20 November 2026, 16:05 UTC". */
+/** A UTC time as people read it in a notice, US style: "November 20, 2026, 4:05 PM UTC". */
 export function noticeTime(d: Date) {
-  const date = d.toLocaleDateString('en-GB', {
-    day: 'numeric',
+  const date = d.toLocaleDateString('en-US', {
     month: 'long',
+    day: 'numeric',
     year: 'numeric',
     timeZone: 'UTC',
   });
-  const time = d.toLocaleTimeString('en-GB', {
-    hour: '2-digit',
+  const time = d.toLocaleTimeString('en-US', {
+    hour: 'numeric',
     minute: '2-digit',
-    hour12: false,
     timeZone: 'UTC',
   });
   return `${date}, ${time} UTC`;
