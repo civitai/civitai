@@ -531,6 +531,18 @@ describe('an owner deleting their own content in a child-safety case', () => {
     expect(await queuedFiles()).toEqual([]);
   });
 
+  // Its second statement drops the purge's queue row, so both run in one transaction.
+  it.each<[string, { id: number; isModerator: boolean } | { system: string }, number]>([
+    ['a system', { system: 'remove-deleted-user-images' }, 1],
+    ["a moderator's", { id: MODERATOR, isModerator: true }, 0],
+  ])('runs %s delete in a transaction only when no moderator decided', async (_, actor, txs) => {
+    vi.mocked(dbMock.dbWrite.$transaction).mockClear();
+
+    await deleteImages([imageOf(PLAIN)], { actor });
+
+    expect(vi.mocked(dbMock.dbWrite.$transaction)).toHaveBeenCalledTimes(txs);
+  });
+
   // A case-kept delete hides the image whoever deletes it.
   it.each<[string, { id: number; isModerator: boolean } | { system: string }]>([
     ["the owner's", { id: PLAIN, isModerator: false }],

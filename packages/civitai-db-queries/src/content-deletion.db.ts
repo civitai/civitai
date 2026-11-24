@@ -147,6 +147,21 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
         ${skipBlocked ? sql`AND ingestion IS DISTINCT FROM 'Blocked'` : sql``}
       RETURNING id, "userId", "postId"
     )`);
+  // A post its delete keeps leaves the site as a moderator's unpublish takes it off
+  // (`unpublishPostAsModerator`), with its own reason, so it stays visible to its owner and moderators.
+  if (table === 'Post')
+    ctes.push(sql`hidden AS (
+      UPDATE "Post" SET
+        metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+          'unpublishedAt', ${new Date().toISOString()}::text,
+          'unpublishedBy', ${'id' in actor ? actor.id : -1}::int,
+          'unpublishedReason', ${POST_PENDING_DELETE_REASON}::text,
+          'prevPublishedAt', "publishedAt"
+        ),
+        "publishedAt" = NULL
+      WHERE id IN (SELECT id FROM doomed WHERE blocked) AND "publishedAt" IS NOT NULL
+      RETURNING id, "userId"
+    )`);
   return {
     ctes,
     remove: sql`DELETE FROM ${t} WHERE id IN (SELECT id FROM doomed WHERE NOT blocked) ${on}`,
@@ -160,6 +175,9 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
     hides,
   };
 }
+
+/** Why a post its delete keeps is unpublished; publishing it again is refused while it is set. */
+export const POST_PENDING_DELETE_REASON = 'pending-delete';
 
 /** A kept image a moderator's delete blocked, and the post it is still in. */
 export type HiddenImage = { id: number; userId: number; postId: number | null };
@@ -308,7 +326,9 @@ export async function deletePostRows(
     gone_rows AS (${remove} RETURNING id, "userId", "nsfwLevel")
     SELECT id, "userId", "nsfwLevel", NULL AS outcome FROM gone_rows
     UNION ALL
-    ${others(sql.raw('NULL, NULL'))}`.execute(db);
+    ${others(sql.raw('NULL, NULL'))}
+    UNION ALL
+    SELECT id, "userId", NULL, 'hidden' FROM hidden`.execute(db);
   return splitOutcome(rows);
 }
 

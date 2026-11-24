@@ -1046,7 +1046,7 @@ const withDeleteTransaction = <T>(
   run: (db: ReturnType<typeof kyselyOver>) => Promise<T>
 ) =>
   needed
-    ? dbWrite.$transaction((tx) => run(kyselyOver(tx)), { maxWait: 10_000, timeout: 30_000 })
+    ? dbWrite.$transaction((tx) => run(kyselyOver(tx)), { maxWait: 10_000, timeout: 120_000 })
     : run(kyselyOver(dbWrite));
 
 /** `deleteImages`, with the images it left for their child-safety case. */

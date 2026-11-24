@@ -49,7 +49,8 @@ beforeAll(async () => {
   // Returned by the deletes.
   await pg.exec(`ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS metadata jsonb`);
   await pg.exec(
-    `CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 0)`
+    `CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 0,
+      "publishedAt" timestamp, metadata jsonb)`
   );
 });
 afterAll(() => pg.close());
@@ -707,13 +708,24 @@ describe('a delete that blocks an image no moderator decided on', () => {
     expect(await blockQueue()).toEqual([IMAGE]);
   });
 
-  it('keeps the queue row of an image blocked before the delete', async () => {
-    await addImage({ needsReview: 'csam', ingestion: 'Blocked', blockedFor: 'tos' });
-    expect(await blockQueue()).toEqual([IMAGE]);
+  it('drops only the queue row of the image it hid, not that of one blocked before', async () => {
+    const BLOCKED_BEFORE = 3;
+    await addImage({ needsReview: 'csam' });
+    await addImage({
+      id: BLOCKED_BEFORE,
+      needsReview: 'csam',
+      ingestion: 'Blocked',
+      blockedFor: 'tos',
+    });
+    expect(await blockQueue()).toEqual([BLOCKED_BEFORE]);
 
-    await deleteImageRows(db, { ids: [IMAGE], actor: { system: 'remove-deleted-user-images' } });
+    const { hidden } = await deleteImageRows(db, {
+      ids: [IMAGE, BLOCKED_BEFORE],
+      actor: { system: 'remove-deleted-user-images' },
+    });
 
-    expect(await blockQueue()).toEqual([IMAGE]);
+    expect(hidden.map((row) => row.id)).toEqual([IMAGE]);
+    expect(await blockQueue()).toEqual([BLOCKED_BEFORE]);
   });
 });
 
@@ -746,6 +758,105 @@ describe('deletePostRows keeps a post under a child-safety report', () => {
     expect(await pending()).toEqual([
       { entityId: 50, entityType: 'Post', data: { deletedBy: 'remove-deleted-user-images' } },
     ]);
+  });
+
+  it('unpublishes a published post it keeps, as a moderator unpublish does, and queues it', async () => {
+    await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES
+      (50, ${OWNER}, '2026-11-01'), (51, ${OWNER}, '2026-11-01')`);
+    await report(1);
+    await pg.exec(`INSERT INTO "PostReport" VALUES (50, 1)`);
+
+    const { kept, hidden } = await deletePostRows(db, { ids: [50], actor: owner });
+
+    expect(kept).toEqual([50]);
+    expect(hidden.map(({ id, userId }) => ({ id, userId }))).toEqual([{ id: 50, userId: OWNER }]);
+    const { rows } = await pg.query<{
+      publishedAt: Date | null;
+      metadata: Record<string, unknown>;
+    }>(`SELECT "publishedAt", metadata FROM "Post" WHERE id = 50`);
+    expect(rows[0].publishedAt).toBeNull();
+    expect(rows[0].metadata).toMatchObject({
+      unpublishedReason: 'pending-delete',
+      unpublishedBy: OWNER,
+      prevPublishedAt: expect.stringContaining('2026-11-01'),
+    });
+    // Out of what a public read lists (`p."publishedAt" <= NOW()`).
+    const visible = await pg.query(
+      `SELECT id FROM "Post" WHERE "publishedAt" <= now() ORDER BY id`
+    );
+    expect(visible.rows).toEqual([{ id: 51 }]);
+    expect(await pending()).toEqual([
+      { entityId: 50, entityType: 'Post', data: { ownerId: OWNER } },
+    ]);
+  });
+
+  it('deletes the unpublished post once its case closes', async () => {
+    await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES (50, ${OWNER}, now())`);
+    await report(1);
+    await pg.exec(`INSERT INTO "PostReport" VALUES (50, 1)`);
+    await deletePostRows(db, { ids: [50], actor: owner });
+
+    await pg.exec(`UPDATE "Report" SET status = 'Actioned' WHERE id = 1`);
+    const { deleted } = await deletePostRows(db, { ids: [50], actor: owner });
+
+    expect(deleted.map((row) => row.id)).toEqual([50]);
+  });
+
+  describe('publishing a post its delete keeps', () => {
+    beforeAll(async () => {
+      await pg.exec(
+        readFileSync(
+          `${__dirname}/../../../../packages/civitai-db-schema/prisma/migrations/20271126120000_post_pending_delete_publish_guard/migration.sql`,
+          'utf8'
+        )
+      );
+    });
+    afterAll(() => pg.exec(`DROP TRIGGER trg_post_pending_delete_keep_unpublished ON "Post"`));
+
+    const KEPT = 50;
+    const OTHER = 51;
+    beforeEach(async () => {
+      await pg.exec(`INSERT INTO "Post" (id, "userId", "publishedAt") VALUES
+        (${KEPT}, ${OWNER}, '2026-11-01'), (${OTHER}, ${OWNER}, NULL)`);
+      await report(1);
+      await pg.exec(`INSERT INTO "PostReport" VALUES (${KEPT}, 1)`);
+      await deletePostRows(db, { ids: [KEPT], actor: owner });
+    });
+    const posts = async () =>
+      (
+        await pg.query<{ id: number; published: boolean; reason: string | null }>(
+          `SELECT id, "publishedAt" IS NOT NULL AS published, metadata->>'unpublishedReason' AS reason
+           FROM "Post" ORDER BY id`
+        )
+      ).rows;
+
+    it.each([
+      ["the owner's publish", `UPDATE "Post" SET "publishedAt" = now() WHERE id = ${KEPT}`],
+      [
+        'scheduled publishing, which strips the unpublish stamps',
+        `UPDATE "Post" p SET
+           "publishedAt" = CASE WHEN p.metadata->>'prevPublishedAt' IS NOT NULL
+             THEN (p.metadata->>'prevPublishedAt')::timestamptz ELSE now() END,
+           metadata = p.metadata - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
+         WHERE p.id = ${KEPT}`,
+      ],
+    ])('leaves it unpublished with its stamp after %s', async (_, publish) => {
+      await pg.exec(publish);
+
+      expect(await posts()).toEqual([
+        { id: KEPT, published: false, reason: 'pending-delete' },
+        { id: OTHER, published: false, reason: null },
+      ]);
+    });
+
+    it('still publishes the other posts of a bulk publish', async () => {
+      await pg.exec(`UPDATE "Post" SET "publishedAt" = now() WHERE id IN (${KEPT}, ${OTHER})`);
+
+      expect(await posts()).toEqual([
+        { id: KEPT, published: false, reason: 'pending-delete' },
+        { id: OTHER, published: true, reason: null },
+      ]);
+    });
   });
 });
 

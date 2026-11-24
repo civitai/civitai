@@ -1457,7 +1457,9 @@ export const deletePost = async ({
   const {
     deleted: [post],
     kept: keptPost,
+    hidden: hiddenPost,
   } = await deletePostRows(kyselyOver(dbWrite), { ids: [id], actor });
+  await afterPostsUnpublish(hiddenPost.map(({ id: postId, userId }) => ({ postId, userId })));
   // Only a moderator hears that a delete in the post was kept; a member's reply never says so.
   const deleteAfterReview = !!viewerIsModerator && (keptPost.length > 0 || keptImages.length > 0);
 

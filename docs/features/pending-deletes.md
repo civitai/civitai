@@ -44,8 +44,13 @@ passes, runs one statement that:
    blocked (with their owner and post), and the listed ids that were already gone.
 
 Each app takes a blocked image out of search and busts its caches, as for one a hold marker's
-trigger blocked, and drops it from the comics and home blocks showing it. A kept post is left as it is; `deletePost` deletes its images first, so those a case
-keeps are blocked. An owner's image blocked this way is no longer a plain owner delete when the
+trigger blocked, and drops it from the comics and home blocks showing it. A kept post is unpublished as a moderator's unpublish does (`publishedAt` cleared, the
+`unpublishedAt`/`unpublishedBy`/`prevPublishedAt` stamps written, `unpublishedReason = 'pending-delete'`),
+so it leaves public reads and stays visible to its owner and moderators; `deletePost` then runs the
+unpublish follow-ups. The `trg_post_pending_delete_keep_unpublished` trigger (migration
+`20271126120000_post_pending_delete_publish_guard`) keeps such a post unpublished, its stamp intact,
+whatever path tries to publish it, until its queued delete removes it or a moderator clears the stamp.
+`deletePost` deletes a post's images first, so those a case keeps are blocked. An owner's image blocked this way is no longer a plain owner delete when the
 queued delete runs, so it does not keep an object shop artwork uses.
 
 Lifting a block (a moderator's unblock, an approved appeal, an account restore's lift of a grace

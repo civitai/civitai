@@ -79,7 +79,7 @@ beforeAll(async () => {
       id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
       "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
-    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp, metadata jsonb);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
