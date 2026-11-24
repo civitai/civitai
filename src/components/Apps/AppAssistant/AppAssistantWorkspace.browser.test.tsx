@@ -4086,8 +4086,11 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     await page.getByRole('button', { name: 'Keep it' }).click();
     expect(hib.deleteMine).not.toHaveBeenCalled();
     // An answered confirm stays on screen through its exit transition, and ignores its buttons
-    // there (#10184): wait for it to go before opening the next one.
+    // there (#10184): wait for it to go before opening the next one. Answering it also closes the
+    // switcher (a click outside the popover), as the Delete app test above shows: reopen it.
     await expect.element(page.getByRole('button', { name: 'Keep it' })).not.toBeInTheDocument();
+    await expect.element(dialog()).not.toBeInTheDocument();
+    await switcher().click();
     await offer.click();
     await page.getByRole('button', { name: 'Delete old-quiz', exact: true }).click();
     await vi.waitFor(() =>
