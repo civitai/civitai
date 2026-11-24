@@ -3,6 +3,7 @@ import type * as Trpc from '~/utils/trpc';
 import type * as IntersectionObserverModule from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import type * as TurfSummaryModule from '~/components/HatTurf/TurfSummaryProvider';
 import type * as EdgeMediaModule from '~/components/EdgeMedia/EdgeMedia';
+import type * as TrackImpressionModule from '~/components/TrackView/useTrackImpression';
 
 // Feedback: hats placed on an image did not show on it in a profile's Showcase.
 
@@ -76,7 +77,8 @@ vi.mock('~/components/ImageGuard/ImageGuard2', () => {
 vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
   ImageContextMenu: () => null,
 }));
-vi.mock('~/components/TrackView/useTrackImpression', () => ({
+vi.mock('~/components/TrackView/useTrackImpression', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrackImpressionModule>()),
   useTrackImpression: () => undefined,
 }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as TrpcUtils from '~/utils/trpc';
 import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
+import type * as TrackImpressionModule from '~/components/TrackView/useTrackImpression';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 
@@ -123,7 +124,8 @@ vi.mock('~/components/Cards/components/HoverActionButton', () => ({ default: () 
 vi.mock('~/components/RemixGallery/RemixedCardFlyout', () => ({ RemixedCardFlyout: () => null }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({ UserAvatar: () => <div>poster</div> }));
 vi.mock('~/components/TrackView/ImpressionSentinel', () => ({ ImpressionSentinel: () => null }));
-vi.mock('~/components/TrackView/useTrackImpression', () => ({
+vi.mock('~/components/TrackView/useTrackImpression', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrackImpressionModule>()),
   useTrackImpression: () => () => undefined,
 }));
 vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
