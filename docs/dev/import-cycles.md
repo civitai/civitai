@@ -63,6 +63,14 @@ the piece into a new module that imports neither A nor B, and point both at it. 
 for what the piece does, not for the service it came out of. A type-only import (`import type`) is
 not an edge and needs no move.
 
+Example: `rewards/base.reward` imported `buzz.service` for three functions. Those three, with the
+multiplier helpers beside them, moved to `buzz-payout`, and the Buzz client they wrap to
+`buzz-client`; `buzz.service` re-exports both, so its other callers are unchanged. Only
+`base.reward` and the tests that stubbed Buzz for its payouts point at the new module: a
+`buzz.service` mock no longer stands in for what `base.reward` calls. Move the pieces into one
+module per caller, so each of those tests replaces its one mock with one mock and the own-module
+mock ratchet does not grow.
+
 The same move works the other way round: a widely imported service holding one function with a
 heavy import. Example: `notification.service`, which most notification senders import, held
 `getUserNotifications`, the one function that needs the notification detail fetchers. It moved to
