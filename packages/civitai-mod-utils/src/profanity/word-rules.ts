@@ -61,14 +61,14 @@ export function isUsableBlockedEntry(entry: string): boolean {
 }
 
 /**
- * The fewest usable entries a managed profanity block list may hold. Below it the server enforces
+ * The fewest distinct usable entries a managed profanity block list may hold. Below it the server enforces
  * the shipped list instead, and the moderator app refuses a removal that would cross it, so a wiped
  * or mangled row cannot shrink what the filter enforces below this count.
  */
 export const MIN_MANAGED_PROFANITY_ENTRIES = 192;
 
 /**
- * The usable entries of a managed profanity block list, and whether there are enough of them for
+ * The usable entries of a managed profanity block list, and whether enough distinct ones remain for
  * the list to be enforced. The server filter and the moderator app's removal guard both decide
  * through this, so a change to the rule reaches each of them.
  *
