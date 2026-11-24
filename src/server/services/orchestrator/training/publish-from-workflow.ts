@@ -443,18 +443,28 @@ async function findRunDestination(
       modelVersions: { select: { id: true, meta: true }, orderBy: { index: 'desc' } },
     },
   });
-  // A version that names another run is that run's, never this one's: with this run's own version
-  // deleted, the model may hold only versions added from other runs.
-  const ownVersion = model?.modelVersions.find((version) => {
-    const versionRun = (version.meta as TrainingStudioLink | null)?.trainingStudioWorkflowId;
-    return !versionRun || versionRun === workflowId;
-  });
+  const ownVersion = model && runVersionOnItsModel(model.modelVersions, workflowId);
   if (!model || !ownVersion) return null;
   // A draft materialized before the approval stamp existed gets it here. Best-effort: a failed write
   // leaves the draft unstamped, which only matters once its workflow is gone.
   if ((model.meta as ModelMeta | null)?.trainingStudioModerationApproved !== true)
     await stampTrainingModerationApproved({ modelId: model.id });
   return { modelId: model.id, modelVersionId: ownVersion.id, target: 'new-model' };
+}
+
+/**
+ * The version of a model linked to a run on the model only (a draft made before versions carried the
+ * link): the oldest, given oldest-first, that names no other run. A version naming another run is that
+ * run's: with this run's own version deleted, the model may hold only versions added from other runs.
+ */
+function runVersionOnItsModel<T extends { meta: unknown }>(
+  oldestFirst: T[],
+  workflowId: string
+): T | undefined {
+  return oldestFirst.find((version) => {
+    const versionRun = (version.meta as TrainingStudioLink | null)?.trainingStudioWorkflowId;
+    return !versionRun || versionRun === workflowId;
+  });
 }
 
 type SelectedEpoch = TrainingResultsV2['epochs'][number];
@@ -992,7 +1002,7 @@ export async function assertTrainingSourcePublishable({
 /**
  * Back-link every run this publish made public onto its workflow (`stampWorkflowPublished`), once per
  * run: each published version names its own run, and the model names the run of a draft made before
- * versions carried the link, which back-links to `fallbackVersionId`.
+ * versions carried the link, which back-links to that run's own version (`runVersionOnItsModel`).
  */
 export async function stampPublishedTrainingRuns({
   ownerId,
@@ -1000,14 +1010,12 @@ export async function stampPublishedTrainingRuns({
   modelId,
   modelMeta,
   versions,
-  fallbackVersionId,
 }: {
   ownerId: number;
   callerId: number;
   modelId: number;
   modelMeta: ModelMeta | null | undefined;
   versions: { id: number; meta: unknown }[];
-  fallbackVersionId?: number;
 }): Promise<void> {
   const runs = new Map<string, number | undefined>();
   for (const version of versions) {
@@ -1015,7 +1023,15 @@ export async function stampPublishedTrainingRuns({
     if (workflowId && !runs.has(workflowId)) runs.set(workflowId, version.id);
   }
   const modelRun = modelMeta?.trainingStudioWorkflowId;
-  if (modelRun && !runs.has(modelRun)) runs.set(modelRun, fallbackVersionId);
+  if (modelRun && !runs.has(modelRun)) {
+    // primary: the publish just wrote these versions.
+    const oldestFirst = await dbWrite.modelVersion.findMany({
+      where: { modelId },
+      select: { id: true, meta: true },
+      orderBy: { index: 'desc' },
+    });
+    runs.set(modelRun, runVersionOnItsModel(oldestFirst, modelRun)?.id);
+  }
   for (const [workflowId, modelVersionId] of runs)
     await stampWorkflowPublished({ ownerId, callerId, workflowId, modelId, modelVersionId });
 }

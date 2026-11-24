@@ -1073,7 +1073,6 @@ export const publishModelHandler = async ({
         modelId: updatedModel.id,
         modelMeta,
         versions: publishingVersions,
-        fallbackVersionId: updatedModel.modelVersions[0]?.id,
       });
     }
 

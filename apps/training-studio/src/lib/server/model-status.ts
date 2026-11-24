@@ -8,11 +8,15 @@ export function mainAppModelLive(
   cookie: string
 ): (modelId: number, modelVersionId?: number) => Promise<boolean> {
   return async (modelId, modelVersionId) => {
-    const versionParam = modelVersionId ? `&versionId=${modelVersionId}` : '';
-    const res = await fetch(
-      `${mainAppSessionOrigin()}/api/training-studio/model-status?id=${modelId}${versionParam}`,
-      { headers: { cookie }, redirect: 'error', signal: AbortSignal.timeout(CHECK_TIMEOUT_MS) }
-    );
+    const query = new URLSearchParams({
+      id: String(modelId),
+      ...(modelVersionId && { versionId: String(modelVersionId) }),
+    });
+    const res = await fetch(`${mainAppSessionOrigin()}/api/training-studio/model-status?${query}`, {
+      headers: { cookie },
+      redirect: 'error',
+      signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
+    });
     if (!res.ok) throw new Error(`model-status ${res.status}`);
     const data = (await res.json()) as { live?: unknown };
     if (typeof data.live !== 'boolean') throw new Error('model-status: no answer');

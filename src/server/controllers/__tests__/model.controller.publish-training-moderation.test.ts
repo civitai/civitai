@@ -194,9 +194,9 @@ describe('publishModelHandler — training moderation gate', () => {
 });
 
 describe('publishModelHandler — versions that name their own run', () => {
-  const publishVersion = () =>
+  const publishVersion = (versionIds = [43]) =>
     publishModelHandler({
-      input: { id: MODEL_ID, versionIds: [43] },
+      input: { id: MODEL_ID, versionIds },
       ctx: {
         user: { id: OWNER_ID, isModerator: false },
         track: { modelEvent: vi.fn().mockResolvedValue(undefined) },
@@ -246,6 +246,38 @@ describe('publishModelHandler — versions that name their own run', () => {
           modelVersionId: 43,
         }),
       })
+    );
+  });
+
+  it("back-links a run named on its model only to that run's own version, not another run's", async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: 'Draft',
+      meta: { trainingStudioWorkflowId: 'wf-1', trainingStudioModerationApproved: true },
+      nsfw: false,
+      userId: OWNER_ID,
+    } as never);
+    // The model's versions, oldest first: v1 (44, the model's own run) and one added from wf-added.
+    const versions = [
+      { id: 44, meta: null },
+      { id: 45, meta: { trainingStudioWorkflowId: 'wf-added' } },
+    ];
+    dbMock.dbWrite.modelVersion.findMany.mockImplementation((async (args: {
+      where: { id?: { in: number[] } };
+    }) =>
+      args.where.id
+        ? versions.filter((v) => args.where.id!.in.includes(v.id))
+        : versions) as never);
+    mockGetWorkflow.mockResolvedValue(trainingRun('approved'));
+    await expect(publishVersion([45])).resolves.toMatchObject({ id: MODEL_ID });
+    const stamped = mockUpdateWorkflow.mock.calls.map(([args]) => [
+      args.workflowId,
+      args.metadata.modelVersionId,
+    ]);
+    expect(stamped).toEqual(
+      expect.arrayContaining([
+        ['wf-added', 45],
+        ['wf-1', 44],
+      ])
     );
   });
 
