@@ -18,7 +18,10 @@ other content indexes apply (`held.ts`). Leaving that state deletes the point.
 
 The payload is the image payload (`nsfwLevel`, `tagIds`, `baseModels`, `modelVersionIds`,
 `userId`, `postId`, `sortAt`, `type`), so searches filter videos exactly as they filter images,
-plus the stored key `url`. `docHash` is a hash of the key: a replaced file is re-embedded.
+plus the stored key `url` and `duration` (seconds, as recorded on the Image; absent when none is),
+which the length filter ranges over. `docHash` is a hash of the key: a replaced file is re-embedded.
+A new payload index (such as `duration`'s) is created by hand on the live collection before the
+deploy, because the consumer builds any missing index at startup, before it subscribes.
 
 Inputs are the original clip. The worker refuses clips over 60 s, 100 MiB or 4096 px per side;
 those get no document, so they are never sent and never retried (counted as
