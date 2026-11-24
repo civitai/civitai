@@ -130,9 +130,3 @@ export const songPlayer = createSongPlayer(localVolume);
  */
 export const playSongAt = (imageId: number, seconds: number, cardKey?: SongCardKey) =>
   songPlayer.playAt(imageId, seconds, cardKey);
-
-/** `m:ss`, and 0:00 for a time not known yet. */
-export function formatSongTime(seconds: number): string {
-  const whole = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0;
-  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
-}

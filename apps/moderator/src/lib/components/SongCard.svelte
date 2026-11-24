@@ -7,7 +7,9 @@
     IconPlayerPlayFilled,
     IconVolume,
   } from '@tabler/icons-svelte';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Slider } from '@civitai/ui/components/ui/slider/index.js';
+  import { formatPlaybackTime } from '@civitai/shared';
   import { cn } from '@civitai/ui/utils.js';
   import EdgeImage from '$lib/components/EdgeImage.svelte';
   import { getEdgeUrl } from '$lib/media/edge-url';
@@ -17,7 +19,6 @@
   import { songCardUrl, type SongCard } from '$lib/music/song-card';
   import {
     createPlayIntent,
-    formatSongTime,
     playSongAt,
     songPlayer,
     uniqueCardKey,
@@ -28,6 +29,9 @@
   // Nothing plays until the moderator clicks; `song-player.ts` keeps one song playing at a time, at
   // the last volume. Like `CdnOrRetractedMedia`, the public CDN first, then storage through
   // `/api/retracted-media` for a song the CDN will not serve (a removed one).
+  //
+  // One instance plays one song: its time, length and play state are the instance's, so a caller that
+  // swaps `item` on the same instance (Image lookup) wraps the card in `{#key item.id}`.
   let {
     item,
     cardKey,
@@ -104,13 +108,15 @@
     if (audio) audio.volume = value;
   }
 
-  const length = $derived((knownLength: number | null) =>
-    Number.isFinite(duration) && duration > 0 ? duration : (knownLength ?? 0)
-  );
+  /** The file's own length once it has loaded, else the upload's. */
+  function lengthOf(song: SongCard | null) {
+    return Number.isFinite(duration) && duration > 0 ? duration : (song?.durationSec ?? 0);
+  }
   const isSection = (text: string) => /^\s*\[[^\]]+\]\s*$/.test(text);
 </script>
 
-{#snippet player(song: SongCard | null, detailsFailed = false)}
+<!-- `phase`: the card's details are loading, came back, or could not be read (the song still plays). -->
+{#snippet player(song: SongCard | null, phase: 'loading' | 'loaded' | 'failed')}
   <div class={cn('flex h-full w-full flex-col gap-2 p-2 text-left', className)}>
     <div class="flex items-center gap-2">
       <div class="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-md bg-dark-6">
@@ -121,32 +127,38 @@
         {/if}
       </div>
       <div class="min-w-0 flex-1">
-        <p class="truncate text-sm font-semibold" title={song?.title ?? undefined}>
-          {song?.title || 'Untitled song'}
+        <p class="truncate text-sm font-semibold text-dark-0" title={song?.title ?? undefined}>
+          {#if phase === 'loading'}
+            Loading song…
+          {:else if phase === 'failed'}
+            Song #{item.id}
+          {:else}
+            {song?.title || 'Untitled song'}
+          {/if}
         </p>
         {#if mode === 'failed'}
           <p class="text-xs text-dark-2">{reason}</p>
         {:else}
           <p class="text-xs tabular-nums text-dark-2">
-            {formatSongTime(time)} / {formatSongTime(length(song?.durationSec ?? null))}
+            {formatPlaybackTime(time)} / {formatPlaybackTime(lengthOf(song))}
           </p>
         {/if}
       </div>
-      <button
-        type="button"
-        class="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-50"
+      <Button
+        size="icon-lg"
+        class="shrink-0 rounded-full"
         aria-label={paused ? 'Play' : 'Pause'}
         disabled={mode === 'failed'}
         onclick={toggle}
       >
         {#if paused}<IconPlayerPlayFilled size={16} />{:else}<IconPlayerPauseFilled size={16} />{/if}
-      </button>
+      </Button>
     </div>
 
     <Slider
       type="single"
       min={0}
-      max={length(song?.durationSec ?? null) || 1}
+      max={lengthOf(song) || 1}
       step={0.1}
       aria-label="Seek"
       disabled={mode === 'failed'}
@@ -169,13 +181,13 @@
       <div class="min-h-0 flex-1 overflow-y-auto rounded-md bg-dark-7 p-2 text-xs leading-relaxed">
         {#each song.lines as line, i (i)}
           {#if isSection(line.text)}
-            <p class="mt-1 text-[10px] font-semibold uppercase tracking-wide text-dark-2">{line.text}</p>
+            <p class="mt-1 text-xs font-semibold uppercase tracking-wide text-dark-2">{line.text}</p>
           {:else if line.t != null}
             {@const at = line.t / 1000}
             <button
               type="button"
               class="block w-full rounded px-1 text-left hover:bg-dark-5"
-              title="Play from {formatSongTime(at)}"
+              title="Play from {formatPlaybackTime(at)}"
               onclick={() => {
                 intent.requested();
                 playSongAt(item.id, at, ownKey);
@@ -190,7 +202,7 @@
       </div>
     {:else if song}
       <p class="text-xs text-dark-2">No lyrics.</p>
-    {:else if detailsFailed}
+    {:else if phase === 'failed'}
       <!-- The song still plays; only its title, cover and lyrics are missing. -->
       <p class="text-xs text-dark-2">Couldn't load this song's cover and lyrics.</p>
     {/if}
@@ -224,9 +236,9 @@
 {/if}
 
 {#await card}
-  {@render player(null)}
+  {@render player(null, 'loading')}
 {:then song}
-  {@render player(song)}
+  {@render player(song, 'loaded')}
 {:catch}
-  {@render player(null, true)}
+  {@render player(null, 'failed')}
 {/await}
