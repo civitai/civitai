@@ -181,11 +181,17 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   reports as Unactioned (Image reports' Unaction); 2 Remove song is Image reports' removal and asks for a
   violation type, closing the reports as Actioned; 4 Set rating opens PG to XXX (the next digit picks)
   and is a correction that leaves the reports open. 3 Remove cover is shown but not offered yet. A
-  removed song takes only Dismiss.
+  removed song is ruled on as Image reports rules on a removed image: one blocked by an automated
+  rule gets "Restore and dismiss" (it comes back up) and can be made a moderator removal; one a
+  moderator removed only has its reports closed ("Close reports"); one removed for CSAM, or under
+  CSAM review, takes nothing here.
 - **A withheld song** (`withheldImageIds`) shows as "Withheld song #id", with no title, audio, lyrics,
-  cover, owner or report text, and no decisions; it links to CSAM holds.
+  cover, owner, rating or report text, and no decisions; it links to CSAM holds. Search finds it only
+  by its exact id, and it counts for no "Has a time" chip. A cover's file is sent only when the
+  public player would show it and it is not withheld.
 - **Image reports** lists images and videos only, and its badge leaves songs out.
-- **Minor and POI** are not offered on a song anywhere in the image queues, and `setFlag` refuses them.
+- **Minor and POI** are not offered on a song in the image queues, and `setImageFlag` refuses to set
+  either on a song, whichever page asks; clearing one still works.
 
 The song card (`SongCard.svelte`) also renders in the image review queues, Image lookup and
 Removed-appeals, marked "Song": its cover, a play/pause button, a seek bar with the time, a volume
