@@ -14,8 +14,8 @@ const inGoodStandingSql = (u: Prisma.Sql) =>
 // nor earns event points; what they earned before it stands. Set as an ISO date ('2026-11-25') or a
 // UTC midnight timestamp ('2026-11-25T00:00:00.000Z'). A flagged user without it, or with any
 // other value, is excluded for the whole season. Only the settled points read it (referee, standings,
-// the Cup, crucible awards); live earning, crucible accepts, prizes and badges read the flag as it is
-// now, so set the flag on or after the start day, not before it.
+// crucible awards); live earning, crucible accepts, the Comeback Cup, prizes and badges read the flag
+// as it is now, so set the flag on or after the start day, not before it.
 const EXCLUDED_FROM_FORMAT =
   '^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])(T00:00(:00(\\.0+)?)?Z)?$';
 
