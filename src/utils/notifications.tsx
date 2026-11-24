@@ -2,7 +2,8 @@ import { Button, Group, Stack, Text, ThemeIcon } from '@mantine/core';
 import { randomId } from '@mantine/hooks';
 import type { NotificationData } from '@mantine/notifications';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { lazy, Suspense } from 'react';
+import type { ComponentType } from 'react';
+import { Suspense } from 'react';
 import {
   IconAlertTriangle,
   IconBolt,
@@ -11,17 +12,27 @@ import {
   IconInfoCircle,
   IconX,
 } from '@tabler/icons-react';
-import type { ReportProblem } from '~/components/Feedback/ReportProblemButton';
+import type {
+  ReportProblem,
+  ReportProblemButton as ReportProblemButtonComponent,
+} from '~/components/Feedback/ReportProblemButton';
 import { parseErrorRef } from '~/utils/feedback/errorRef';
 import { getRateLimit, withRetryText } from '~/utils/rate-limit';
 
-// Lazy: this module is imported almost everywhere, including by `~/utils/trpc`, which the button
-// needs. A static import would make that a cycle and load the tRPC client into every importer.
-const ReportProblemButton = lazy(() =>
-  import('~/components/Feedback/ReportProblemButton').then((m) => ({
-    default: m.ReportProblemButton,
-  }))
-);
+let ReportProblemButton:
+  | ComponentType<React.ComponentProps<typeof ReportProblemButtonComponent>>
+  | undefined;
+
+/**
+ * The app shell hands over the "Report this" button. This module is imported almost everywhere,
+ * including by `~/utils/trpc`, which the button needs, so it cannot import the button itself.
+ * Until one is registered, toasts offer no "Report this".
+ */
+export function registerReportProblemButton(
+  component: ComponentType<React.ComponentProps<typeof ReportProblemButtonComponent>>
+) {
+  ReportProblemButton = component;
+}
 
 /** A toast with a "Report this" action stays up long enough to reach it. */
 const REPORTABLE_AUTO_CLOSE = 10_000;
@@ -43,6 +54,7 @@ export function withReportAction({
   errorRef?: string;
   report: ReportProblem;
 }) {
+  if (!ReportProblemButton) return message;
   return (
     <Stack gap={0} align="flex-start">
       <div>{message}</div>
@@ -94,7 +106,7 @@ export function showErrorNotification({
     ? reason
     : error.message;
   const errorRef = Array.isArray(error) ? undefined : parseErrorRef(error.message);
-  const reportable = !!report || !!errorRef;
+  const reportable = (!!report || !!errorRef) && !!ReportProblemButton;
   const id = randomId();
 
   showNotification({
