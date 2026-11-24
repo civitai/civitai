@@ -244,6 +244,7 @@ describe('new-app-listing-comment — SQL: who it notifies, and who it must not'
       WHERE c."entityType" = 'appListing'
       AND c."parentId" IS NULL
       AND c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '2026-01-01T00:00:00.000Z'
+      AND c."entityType"::text <> 'featurePage'
       AND CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END > 0
       AND c."userId" != CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END
       AND al."status" = 'approved' AND al."revision_of_id" IS NULL AND c."createdAt" > '2026-08-19' AND c."createdAt" > NOW() - INTERVAL '7 days'

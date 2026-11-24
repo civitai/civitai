@@ -58,13 +58,36 @@ export async function createReportHandler({
   ctx: ProtectedContext;
 }) {
   try {
-    // Gated like reacting.
     if (input.type === ReportEntity.CommentV3) await assertCommentActionable(input.id, ctx);
-    // Only a text the reporter is shown can be reported: the flag, its post's gate and its rating.
     if (input.type === ReportEntity.PostText) await assertPostTextVisible(input.id, ctx);
     // Reviews are shown only behind the flag; without it there is nothing the reporter could see.
     if (input.type === ReportEntity.ServiceDealReview && !ctx.features.creatorServicesNext)
       throw throwNotFoundError('That review is not shown.');
+  } catch (e) {
+    throw reportError(e);
+  }
+  return fileReport({ input, ctx });
+}
+
+function reportError(e: unknown) {
+  // The reported entity was deleted between the client rendering it and the
+  // report landing, so the entity-report FK has nothing to point at. Search
+  // can legitimately serve a deleted image until its index delete is batched
+  // through, so this is a reachable user path, not a server fault.
+  if (isPrismaForeignKeyViolation(e))
+    return throwNotFoundError('The content you are trying to report no longer exists');
+  return throwDbError(e);
+}
+
+/** Files a report the caller has already checked the reporter may make. */
+export async function fileReport({
+  input,
+  ctx,
+}: {
+  input: CreateReportInput;
+  ctx: ProtectedContext;
+}) {
+  try {
     const result = await createReport({
       ...input,
       userId: ctx.user.id,
@@ -84,13 +107,7 @@ export async function createReportHandler({
 
     return null;
   } catch (e) {
-    // The reported entity was deleted between the client rendering it and the
-    // report landing, so the entity-report FK has nothing to point at. Search
-    // can legitimately serve a deleted image until its index delete is batched
-    // through, so this is a reachable user path, not a server fault.
-    if (isPrismaForeignKeyViolation(e))
-      throw throwNotFoundError('The content you are trying to report no longer exists');
-    throw throwDbError(e);
+    throw reportError(e);
   }
 }
 

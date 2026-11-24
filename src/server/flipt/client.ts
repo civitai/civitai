@@ -244,6 +244,10 @@ export enum FLIPT_FEATURE_FLAGS {
   IMAGE_INDEX_FEED = 'image-index-feed',
   // Takedown CDN sync: the `cdn-access-sync` and `cdn-access-reconcile` jobs. Ships dark.
   CDN_ACCESS_SYNC = 'cdn-access-sync',
+  // Every push of a Feature Pages comment or its moderation state to the data.civitai.com platform,
+  // inline at post time and from the mirror jobs. Read with no user everywhere, so a segment rollout
+  // never matches: on is `enabled` true, the brake is `enabled` false.
+  FEATURE_PAGES_MIRROR = 'feature-pages-mirror',
   // The weekly missed-notification digest email (`missed-notification-digest` job), evaluated per user.
   MISSED_NOTIFICATION_DIGEST = 'missed-notification-digest',
   // The "see it on civitai.red" pointer for a training dataset .com refuses for its rating

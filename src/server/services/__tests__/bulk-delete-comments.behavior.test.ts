@@ -218,6 +218,7 @@ describe('restoring comments from a ToS flag', () => {
       await expect(bulkClearCommentV3TosViolation({ ids: [81, 82] })).resolves.toEqual({
         count: 0,
         reopenedReports: 0,
+        held: 0,
         failed: 2,
       });
       expect(await hidden()).toMatchObject({ 81: true, 82: true });
@@ -236,6 +237,7 @@ describe('restoring comments from a ToS flag', () => {
     await expect(bulkClearCommentV3TosViolation({ ids: [81, 84, 999] })).resolves.toEqual({
       count: 0,
       reopenedReports: 0,
+      held: 0,
       failed: 0,
     });
     expect(await reports()).toMatchObject({ 81: 'Actioned', 84: 'Actioned' });
