@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { WorkflowData } from '~/shared/orchestrator/workflow-data';
+import { PRIVATE_GEN, WorkflowData } from '~/shared/orchestrator/workflow-data';
 
 /**
  * Private generation is limited to PG/PG-13, decided by the flag written at submit — not by the
@@ -19,14 +19,21 @@ const build = (
   {
     workflowMetadata = {},
     stepMetadata = {},
-  }: { workflowMetadata?: Record<string, unknown>; stepMetadata?: Record<string, unknown> } = {}
+    nsfwCap = null,
+    allowMatureContent = true,
+  }: {
+    workflowMetadata?: Record<string, unknown>;
+    stepMetadata?: Record<string, unknown>;
+    nsfwCap?: string | null;
+    allowMatureContent?: boolean;
+  } = {}
 ) =>
   new WorkflowData(
     {
       id: 'wf-1',
       status: 'succeeded',
-      allowMatureContent: true,
-      nsfwCap: null,
+      allowMatureContent,
+      nsfwCap,
       metadata: workflowMetadata,
       steps: [
         { $type: 'imageGen', name: '$0', status: 'succeeded', metadata: stepMetadata, output },
@@ -43,6 +50,16 @@ describe('WorkflowData private generation', () => {
 
     expect(wf.steps[0].output[0].blockedReason).toBe('privateGen');
     expect(wf.displayOutput).toEqual([]);
+  });
+
+  it('names the private cause over the PG-13 cap it was submitted with', () => {
+    const wf = build([image({ nsfwLevel: 'r' })], {
+      workflowMetadata: { isPrivateGeneration: true },
+      nsfwCap: 'pg13',
+      allowMatureContent: false,
+    });
+
+    expect(wf.steps[0].output[0].blockedReason).toBe(PRIVATE_GEN);
   });
 
   it('honours the flag on step metadata from older workflows', () => {

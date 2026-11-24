@@ -25,7 +25,6 @@ const { dbHandle, writes } = vi.hoisted(() => ({
     removeAllImagesForUser: vi.fn(async (_input: unknown) => ({ ok: true as const, count: 1 })),
     purgeAllContent: vi.fn(async (_input: unknown) => ({ ok: true as const })),
     deleteAccount: vi.fn(async (_input: unknown) => ({ ok: true as const })),
-    deleteAccountHold: vi.fn(async (_userId: number) => 'clear' as const),
   },
 }));
 
@@ -267,6 +266,39 @@ describe('Bulk Image Manager', () => {
       url: 'shared-key',
       restricted: false,
     });
+  });
+
+  it('withholds the whole batch, rather than failing to load, when one chunk of the read fails', async () => {
+    // One image past a chunk, so the read takes two transactions.
+    const filler = Array.from({ length: 50 }, (_, k) => 990000400 + k);
+    await db.exec(`INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
+      ${filler.map((id) => `(${id}, 'filler-${id}', 'Scanned', NULL, 9)`).join(', ')}`);
+    const loadAll = async () =>
+      (
+        (await bulkPage.load({
+          url: new URL(
+            `https://mod.test/retool/bulk-image-manager?source=imageIds&q=${[
+              CONTROL,
+              ...filler,
+            ].join(',')}`
+          ),
+          locals: { user: WITHOUT_GRANT, grants: GRANTS },
+        } as never)) as { batch: { items: { id: number; restricted: boolean }[] } }
+      ).batch.items;
+    expect((await loadAll()).filter((i) => i.restricted)).toEqual([]);
+
+    const client = dbHandle.current as { transaction: () => unknown };
+    const transaction = client.transaction.bind(client);
+    let calls = 0;
+    vi.spyOn(client, 'transaction').mockImplementation(() => {
+      calls += 1;
+      if (calls === 2) throw new Error('canceling statement due to statement timeout');
+      return transaction();
+    });
+    const items = await loadAll();
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(items).toHaveLength(51);
+    expect(items.every((i) => i.restricted)).toBe(true);
   });
 
   it.each([
@@ -1081,6 +1113,50 @@ describe('the reported and review queues, without the grant', () => {
     });
   });
 
+  // An automated review flag alone does not withhold a card.
+  it.each([
+    ['minor review', minor],
+    ['reported', reported],
+  ] as const)(
+    '%s draws a card with only an automated review flag with its media',
+    async (_, read) => {
+      await db.exec(`INSERT INTO "ScanLabelItem" (id, "imageId") VALUES (990000090, ${CLEAN});
+      INSERT INTO "ScanLabelFlag" ("itemId", snapshot) VALUES (990000090, '{"csam": "true"}')`);
+      expect((await read(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({
+        url: 'queue-clean-key',
+        restricted: false,
+      });
+    }
+  );
+
+  // Such a row still gets the scanner read a refused url gets.
+  it.each([
+    ['minor review', minor],
+    ['reported', reported],
+  ] as const)(
+    '%s withholds a flagged card on a pulled post and refused url while the scanner cannot answer',
+    async (_, read) => {
+      await db.exec(`INSERT INTO "Post" (id, "userId", "publishedAt", metadata)
+          VALUES (990000092, 9, NULL, '{"unpublishedAt": "2026-11-24T00:00:00Z", "unpublishedBy": "2"}');
+        UPDATE "Image" SET "postId" = 990000092 WHERE id = ${CLEAN};
+        INSERT INTO "ImageCdnAccess" (url, state) VALUES ('queue-clean-key', 'Denied');
+        INSERT INTO "ScanLabelItem" (id, "imageId") VALUES (990000093, ${CLEAN});
+        INSERT INTO "ScanLabelFlag" ("itemId", snapshot) VALUES (990000093, '{"csam": "true"}')`);
+      scanner.down = true;
+      expect((await read(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({ url: '', restricted: true });
+    }
+  );
+
+  it.each([
+    ['minor review', minor],
+    ['reported', reported],
+  ] as const)('%s still withholds a card whose label item is on a csam hold', async (_, read) => {
+    await db.exec(
+      `INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (990000091, ${CLEAN}, 'csam-hold')`
+    );
+    expect((await read(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({ url: '', restricted: true });
+  });
+
   it('sends no report reason or details on a withheld reported card, and both to a grant holder', async () => {
     expect((await reported(WITHOUT_GRANT)).get(KEPT)).toMatchObject({
       report: { reason: '', details: null },
@@ -1088,6 +1164,12 @@ describe('the reported and review queues, without the grant', () => {
     expect((await reported(WITH_GRANT)).get(KEPT)).toMatchObject({
       report: { reason: 'TOSViolation', details: {} },
     });
+  });
+
+  it('withholds every card, rather than failing to load, when the read fails', async () => {
+    await db.exec(`DROP TABLE "CsamReport"`);
+    const cards = await minor(WITHOUT_GRANT);
+    expect([...cards.values()].map((c) => c.restricted)).toEqual([true, true]);
   });
 
   // The grid leaves a restricted card out of the selection, so a bulk accept posts the rest.

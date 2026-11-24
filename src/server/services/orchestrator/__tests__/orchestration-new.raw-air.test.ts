@@ -332,6 +332,52 @@ describe('raw-AIR resource ownership validation', () => {
     expect(result.workflowMetadata).toMatchObject({ isPrivateGeneration: true });
   });
 
+  it.each([
+    ['an unpublished Draft LoRA', true, { isPrivateGeneration: true }],
+    ['a published public LoRA', false, { isPrivateGeneration: false }],
+  ])('flags %s per its isPrivate, with no subscription', async (_, isPrivate, expected) => {
+    mockGetHighestTierSubscription.mockResolvedValue(null);
+
+    vi.mocked(getResourceData).mockResolvedValueOnce([
+      {
+        id: 100,
+        name: 'base',
+        canGenerate: true,
+        availability: 'Public',
+        baseModel: 'SDXL 1.0',
+        air: 'urn:air:sdxl:checkpoint:civitai:10@100',
+        model: { id: 10, type: 'Checkpoint', poi: false },
+      },
+      {
+        id: 200,
+        name: 'epoch 3',
+        canGenerate: true,
+        availability: 'Public',
+        isPrivate,
+        baseModel: 'SDXL 1.0',
+        air: 'urn:air:sdxl:lora:civitai:20@200',
+        model: { id: 20, type: 'LORA', poi: false },
+      },
+    ] as never);
+    const result = await createWorkflowStepsFromGraph({
+      data: {
+        workflow: 'txt2img',
+        prompt: 'test',
+        ecosystem: 'SDXL',
+        aspectRatio: '1:1',
+        quantity: 1,
+        model: { id: 100, model: { type: 'Checkpoint' } },
+        resources: [{ id: 200, model: { type: 'LORA' }, strength: 1 }],
+      } as never,
+      user: { id: USER_ID, isModerator: false },
+      orchestratorToken: TOKEN,
+    });
+
+    expect(mockGetHighestTierSubscription).not.toHaveBeenCalled();
+    expect(result.workflowMetadata).toMatchObject(expected);
+    expect(result.capOutput).toBe(isPrivate);
+  });
+
   it("refuses a user with no subscription another user's raw-AIR epoch", async () => {
     mockGetHighestTierSubscription.mockResolvedValue(null);
 

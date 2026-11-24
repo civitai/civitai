@@ -1,7 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { isAgentReporter, type AgentReportWhere } from './agent-reporters';
 import { dbRead } from './db';
-import { restrictedImageIds, withheldRow } from './retracted-media';
+import { listWithheldIds, withheldRow } from './retracted-media';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
 import { getFlagClearHolds, type FlagClearHoldLeg } from './csam-flag-clear';
@@ -689,7 +689,7 @@ export async function getAppealImageQueue({
   const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.appealId);
 
   const ids = rows.map((r) => r.id);
-  const restricted = await restrictedImageIds(ids, { csamReview });
+  const restricted = await listWithheldIds(ids, { csamReview }, 'appeals');
   const tosByImage = new Map<number, string>();
   const reportsByImage = new Map<number, AppealReportRow[]>();
   if (ids.length) {

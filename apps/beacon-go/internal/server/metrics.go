@@ -29,6 +29,9 @@ type Metrics struct {
 	ShadowDiffs *prometheus.CounterVec
 	// TrackerWrites counts rows sent to the tracker by table and result (tracker.Results).
 	TrackerWrites *prometheus.CounterVec
+	// TrackerSendSeconds is, per sent row, the time from a worker taking it to its result (every
+	// attempt and the waits between them), by table. It is what the worker pool is sized against.
+	TrackerSendSeconds *prometheus.HistogramVec
 	// Panics counts recovered panics by where they happened: serve | shadow.
 	Panics               *prometheus.CounterVec
 	RevocationReadErrors prometheus.Counter
@@ -62,6 +65,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "beacon_go_tracker_writes_total",
 			Help: "Rows sent to the ClickHouse tracker (serve mode only), by table and result (ok | rejected | failed | dropped).",
 		}, []string{"table", "result"}),
+		TrackerSendSeconds: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "beacon_go_tracker_send_seconds",
+			Help:    "Per row sent to the ClickHouse tracker (serve mode only): seconds from a worker taking it to its result, every attempt and retry wait included, by table.",
+			Buckets: TrackerSendBuckets,
+		}, []string{"table"}),
 		Panics: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "beacon_go_panics_total",
 			Help: "Recovered panics, by where (serve | shadow).",
@@ -83,7 +91,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Sessions resolved from a session cookie, by the cookie slot they were read from (host | shared).",
 		}, []string{"slot"}),
 	}
-	reg.MustRegister(m.Requests, m.Fallbacks, m.ShadowCompare, m.ShadowDiffs, m.TrackerWrites, m.Panics,
+	reg.MustRegister(m.Requests, m.Fallbacks, m.ShadowCompare, m.ShadowDiffs, m.TrackerWrites, m.TrackerSendSeconds, m.Panics,
 		m.RevocationReadErrors, m.JWKSRefresh, m.JWKSStale, m.SessionCookieSlot)
 	for _, s := range []string{"host", "shared"} {
 		m.SessionCookieSlot.WithLabelValues(s)
@@ -100,6 +108,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		for _, r := range tracker.Results {
 			m.TrackerWrites.WithLabelValues(t, r)
 		}
+		m.TrackerSendSeconds.WithLabelValues(t)
 	}
 	for _, w := range []string{"serve", "shadow"} {
 		m.Panics.WithLabelValues(w)
@@ -108,6 +117,19 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.JWKSRefresh.WithLabelValues(r)
 	}
 	return m
+}
+
+// TrackerSendBuckets span one fast POST (milliseconds) to three attempts that each hit the per-attempt
+// timeout (tracker.AttemptTimeout) plus the retry waits.
+var TrackerSendBuckets = []float64{0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 35}
+
+// TrackerQueueDepth is the beacon_go_tracker_queue_depth gauge (serve mode only): the rows waiting in
+// the tracker queue, read from depth at each scrape.
+func TrackerQueueDepth(depth func() int) prometheus.GaugeFunc {
+	return prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "beacon_go_tracker_queue_depth",
+		Help: "Rows waiting in the tracker queue (serve mode only); a full queue drops the row (beacon_go_tracker_writes_total{result=\"dropped\"}).",
+	}, func() float64 { return float64(depth()) })
 }
 
 // diffFields is the fixed set a diff is counted under; anything else is `other`.

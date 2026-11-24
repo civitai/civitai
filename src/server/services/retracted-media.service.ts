@@ -37,7 +37,7 @@ export async function getRetractedMedia(
   { csamReview, cdnLeg = false }: { csamReview: boolean; cdnLeg?: boolean },
   db = dbWrite
 ): Promise<RetractedMedia | null> {
-  const access = retractedAccessColumnsSql('i', { csamReview });
+  const access = retractedAccessColumnsSql('i', { csamReview, scanFlag: false });
   const [row] = await db.$transaction(async (tx) => {
     await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`);
     return tx.$queryRaw<
