@@ -1,8 +1,8 @@
 /**
  * Shared by every TurfSummaryProvider on the page for one event (hatTurfBatchedCalls), so several
  * blocks send one mark set instead of one call each and share one scroll-burst spacing. A failed
- * mark is retried once, and a page becoming visible re-marks everything, because a lapsed mark
- * misses pushes that nothing re-reads.
+ * mark is retried once. A hidden page sends no interval re-marks, and a page becoming visible
+ * re-marks everything, because a lapsed mark misses pushes that nothing re-reads.
  */
 import { MAX_TURF_IMAGES_PER_MARK } from '~/server/schema/turf.schema';
 import { chunkIds } from '~/utils/array-helpers';
@@ -32,6 +32,8 @@ export type TurfWatchHubOptions = {
   now?: () => number;
   /** Calls back when the page becomes visible; returns the way to stop. Defaults to `document`. */
   onVisible?: (callback: () => void) => () => void;
+  /** Whether the page is hidden now, so the interval sends nothing. Defaults to `document`. */
+  isHidden?: () => boolean;
 };
 
 const documentVisible = (callback: () => void) => {
@@ -42,6 +44,9 @@ const documentVisible = (callback: () => void) => {
   document.addEventListener('visibilitychange', listener);
   return () => document.removeEventListener('visibilitychange', listener);
 };
+
+const documentHidden = () =>
+  typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
 export class TurfWatchHub {
   readonly event: string;
@@ -61,10 +66,11 @@ export class TurfWatchHub {
     event,
     now = () => Date.now(),
     onVisible = documentVisible,
+    isHidden = documentHidden,
     ...rest
   }: TurfWatchHubOptions) {
     this.event = event;
-    this.options = { ...rest, now };
+    this.options = { ...rest, now, isHidden };
     this.refreshTimer = setInterval(() => this.markAll(), rest.refreshMs);
     this.stopVisible = onVisible(() => this.resume());
   }
@@ -117,6 +123,8 @@ export class TurfWatchHub {
   }
 
   private markAll() {
+    // A hidden page re-marks nothing; becoming visible re-marks the whole set (resume).
+    if (this.options.isHidden()) return;
     const all = this.watched();
     if (all.length) this.send(all);
   }
