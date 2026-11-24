@@ -1112,7 +1112,7 @@ export async function applyPendingResolutions(
  * it, so it gets one more window at the same stage, until two stage windows after it entered the stage. After that it closes as
  * `expired`: unvoted overflow must not become moderator work. At a stage nobody serves there is no extension; such an item is handed up
  * when a later stage is served, and expires when the hand-up would reach the Inquisitors.
- * An item whose post is Private goes to the Inquisitors as `blocked` instead when the plurality of the latest stage with counted
+ * An item whose post's availability Knights does not show goes to the Inquisitors as `blocked` instead when the plurality of the latest stage with counted
  * votes, the current one if it has any, is Blocked.
  */
 export async function escalateExpired(
@@ -1141,7 +1141,7 @@ export async function escalateExpired(
     const counts = { escalated: 0, toInquisitor: 0, extended: 0, expired: 0, rerated: 0 };
     if (due.length === 0) return counts;
 
-    const onPrivatePost = new Set(
+    const onHiddenPost = new Set(
       (
         await trx
           .selectFrom('Image as img')
@@ -1179,15 +1179,15 @@ export async function escalateExpired(
 
     // Kept apart from `counted`, which `extend` and `expire` read as votes at the current stage.
     const latestStageVotes = new Map<number, WeightedAnswer[]>();
-    const unvotedPrivate = due
-      .filter((item) => onPrivatePost.has(item.imageId) && !counted.has(item.id))
+    const unvotedHidden = due
+      .filter((item) => onHiddenPost.has(item.imageId) && !counted.has(item.id))
       .map((item) => item.id);
-    if (unvotedPrivate.length > 0) {
+    if (unvotedHidden.length > 0) {
       const earlier = await trx
         .selectFrom('KnightsVote')
         .select(['itemId', 'stage', 'answer', 'weight'])
         .where('weight', '>', 0)
-        .where('itemId', 'in', unvotedPrivate)
+        .where('itemId', 'in', unvotedHidden)
         .execute();
       const latestStage = new Map<number, string>();
       for (const { itemId, stage } of earlier) {
@@ -1201,9 +1201,9 @@ export async function escalateExpired(
       }
     }
 
-    // A Private post's Blocked plurality, from the latest stage with counted votes, goes to the Inquisitors.
+    // A hidden post's Blocked plurality, from the latest stage with counted votes, goes to the Inquisitors.
     const routed = due.filter((item) => {
-      if (!onPrivatePost.has(item.imageId)) return false;
+      if (!onHiddenPost.has(item.imageId)) return false;
       const votes = counted.get(item.id) ?? latestStageVotes.get(item.id) ?? [];
       return votes.length > 0 && isBlockedLevel(Number(mostVotedLevel(votes)));
     });

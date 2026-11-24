@@ -61,7 +61,8 @@ let failedAt: number | undefined;
 
 /**
  * Example images for each rating level. Held in this process for ten minutes and never throws: on a failed read the guide
- * shows the last examples read for up to 30 minutes after that read (none after), and the read is not retried for a minute.
+ * shows the last examples read while they are fresher than STALE_AFTER_MS (none after), and the read is not retried for
+ * FAILURE_BACKOFF_MS.
  */
 export async function ratingExamples(db: Kysely<DB>, now = Date.now()): Promise<RatingExamples> {
   if (held && now - held.at < TTL_MS) return held.examples;
