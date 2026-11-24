@@ -292,7 +292,7 @@ export const REPORTED_CONTENT_GONE = 'The content you are trying to report no lo
 /**
  * NOT_FOUND, with the answer an id that names no image gets, unless `id` is an image and, when it is
  * a service review image, the reporter may open it (the image page's rule, blocks included). Other
- * images are reportable whether or not the reporter can open them, as before.
+ * images are reportable whether or not the reporter can open them.
  */
 export async function assertImageReportable({
   id,

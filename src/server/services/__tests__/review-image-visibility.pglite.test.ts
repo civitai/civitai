@@ -170,6 +170,7 @@ const OFFERING_NOT_VIEWABLE: Array<[string, string]> = [
   ['the seller shop setting is unset', `UPDATE "User" SET settings = '{}' WHERE id = ${SELLER}`],
 ];
 
+// The visibility decision is recorded on civitai/civitai#10252.
 describe('the image page opt-in', () => {
   it('opens a shown review image to anyone at a level the deal fits', async () => {
     expect(await opens(ANON, allBrowsingLevelsFlag)).toBe(true);
@@ -267,9 +268,11 @@ describe('the levels a request opts in at', () => {
     expect(await opens(STRANGER, levels)).toBe(false);
   });
 
-  it('holds a signed-out viewer to public levels', () => {
+  it('holds a signed-out viewer to public levels, so an R deal stays shut', async () => {
     const levels = shownReviewImageLevelsFor(ctx({ signedIn: false }));
+    expect(levels).toBeGreaterThan(0);
     expect(levels & R).toBe(0);
+    expect(await opens(ANON, levels)).toBe(false);
   });
 });
 

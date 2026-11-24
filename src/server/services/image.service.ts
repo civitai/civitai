@@ -4457,7 +4457,6 @@ export async function filterPinnedImagesToVersion<T extends { id: number }>(
 
 type GetImageRaw = GetAllImagesRaw & {
   reactions?: ReviewReactions[];
-  // The service review the image was attached to, if any (`reviewOfImageSql`).
   reviewId: number | null;
   dealId: number | null;
   sellerId: number | null;
@@ -4625,7 +4624,6 @@ export const getImage = async ({
     stats: toImageV2Stats(match),
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
     // The image's maker on a service review: the seller, credited although the buyer uploaded it.
-    // Null seller: banned or deleted, so no credit.
     reviewWork:
       reviewId && dealId
         ? {

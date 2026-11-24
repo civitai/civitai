@@ -7,8 +7,8 @@ import {
 
 /**
  * `imageVisibilityConditions`' `shownReviewImageLevels` for this request: the viewer's own levels,
- * held to what the domain serves. None where service reviews are not shown (their flags): a review
- * image then opens to its uploader alone.
+ * held to what the domain serves. 0 where service reviews are not shown (their flags): the opt-in
+ * stays on, so a review image opens to its uploader alone.
  */
 export function shownReviewImageLevelsFor(ctx: Pick<Context, 'features' | 'user' | 'req'>) {
   const { features } = ctx;
