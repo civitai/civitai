@@ -37,16 +37,7 @@ const fields = {
 } as const;
 
 // A few tried colours beside the ones taken from the member's own images.
-const presets = [
-  '#1b2a4a',
-  '#2b3a2e',
-  '#4a2333',
-  '#3d2c5c',
-  '#f3ead7',
-  '#d9e8f5',
-  '#e8f3e4',
-  '#f6dfe5',
-];
+const presets = ['#1b2a4a', '#2b3a2e', '#3d2c5c', '#f3ead7', '#d9e8f5', '#f6dfe5'];
 
 /** The theme surface a card sits on, for the preview. */
 const surface: Record<Mode, string> = { dark: '#1a1b1e', light: '#f1f3f5' };
@@ -90,7 +81,8 @@ export function CardColorPicker({
   const isCustom = !!ownColor && !swatches.some((swatch) => swatch.color === ownColor);
 
   const setColor = (value: string | null) => onChange(field.color, value);
-  const ink = profileCardInk(color, opacity, mode) ?? mode;
+  // Without a colour the preview is the theme's own card, with the theme's own text.
+  const ink = profileCardInk(color, opacity, mode) ?? (mode === 'dark' ? 'light' : 'dark');
 
   return (
     <Input.Wrapper
@@ -206,6 +198,11 @@ export function CardColorPicker({
                 </Popover.Dropdown>
               </Popover>
             </Group>
+            {inherits && values.cardColor && (
+              <Text size="xs" c="dimmed">
+                Light mode uses your dark-mode colour until you pick one here.
+              </Text>
+            )}
             {suggestions.length > 0 && (
               <Text size="xs" c="dimmed">
                 The first {suggestions.length === 1 ? 'swatch is' : 'swatches are'} taken from your{' '}
