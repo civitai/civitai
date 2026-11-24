@@ -2,6 +2,8 @@ import { fail, json } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, RequestEvent } from '@sveltejs/kit';
 import { parseForm, parseQuery } from '$lib/server/query';
+import { holdsCsamReview } from '$lib/server/held-media';
+import { listWithheldIds } from '$lib/server/retracted-media';
 import {
   checkedResolutionReason,
   resolutionReasonFields,
@@ -32,6 +34,7 @@ import {
   getModelFlagState,
   getNeedsReviewCount,
   getNeedsReviewModels,
+  type AppealCoverImage,
   type MinorSearch,
 } from '$lib/server/minor-hash.service';
 import {
@@ -208,7 +211,26 @@ export async function loadNeedsReviewQueue(url: URL, grants: PermissionSet) {
 
 export type NeedsReviewQueueData = Awaited<ReturnType<typeof loadNeedsReviewQueue>>;
 
-export async function loadAppealQueue(url: URL) {
+/** Each row's cover images, those withheld from `user` with no key and nothing that says why, as the
+ *  image queues send a withheld card. */
+export async function withheldCoverImages<T extends { coverImages: AppealCoverImage[] }>(
+  rows: T[],
+  user: App.Locals['user'] | undefined,
+  list: string
+): Promise<T[]> {
+  const ids = rows.flatMap((row) => row.coverImages.map((image) => image.id));
+  const withheld = await listWithheldIds(ids, { csamReview: holdsCsamReview(user) }, list);
+  return rows.map((row) => ({
+    ...row,
+    coverImages: row.coverImages.map((image) =>
+      withheld.has(image.id)
+        ? { id: image.id, url: '', nsfwLevel: image.nsfwLevel, restricted: true }
+        : image
+    ),
+  }));
+}
+
+export async function loadAppealQueue(url: URL, user: App.Locals['user'] | undefined) {
   const { limit, page, q, offset, search } = parsePaging(url);
   const appealFilters: AppealFilters = parseQuery(url, appealFilterSchema);
 
@@ -222,7 +244,8 @@ export async function loadAppealQueue(url: URL) {
   ]);
 
   const facets = groups ? appealFacets(groups, appealFilters) : null;
-  return { limit, page, offset, q, appealFilters, facets, ...queue, fullBleed: true };
+  const items = await withheldCoverImages(queue.items, user, 'model-flag-appeals');
+  return { limit, page, offset, q, appealFilters, facets, ...queue, items, fullBleed: true };
 }
 
 export type AppealQueueData = Awaited<ReturnType<typeof loadAppealQueue>>;

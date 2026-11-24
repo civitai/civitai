@@ -1178,3 +1178,29 @@ describe('the reported and review queues, without the grant', () => {
     expect(acceptImage).toHaveBeenCalledOnce();
   });
 });
+
+describe("the model flag appeals queue's cover images", () => {
+  const rows = () => [
+    {
+      modelId: 1,
+      coverImages: [
+        { id: WITHHELD, url: 'shared-key', nsfwLevel: 4, type: 'image', minor: true },
+        { id: CONTROL, url: 'control-key', nsfwLevel: 4, type: 'image' },
+      ],
+    },
+  ];
+
+  it('sends a withheld cover with no key or flag, and the rest as they are, without the grant', async () => {
+    const { withheldCoverImages } = await import('../minor-flag-queue');
+    const [row] = await withheldCoverImages(rows(), WITHOUT_GRANT as never, 'test');
+    expect(row.coverImages).toEqual([
+      { id: WITHHELD, url: '', nsfwLevel: 4, restricted: true },
+      { id: CONTROL, url: 'control-key', nsfwLevel: 4, type: 'image' },
+    ]);
+  });
+
+  it('sends every cover to a grant holder', async () => {
+    const { withheldCoverImages } = await import('../minor-flag-queue');
+    expect(await withheldCoverImages(rows(), WITH_GRANT as never, 'test')).toEqual(rows());
+  });
+});
