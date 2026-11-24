@@ -88,7 +88,9 @@ export const BLOCK_TIP_MAX_PER_TIP = 5_000;
 // Per-USER daily aggregate across ALL of a user's installed blocks (the key omits
 // appBlockId, mirroring the per-user daily gen cap, so a publisher can't multiply the
 // ceiling by spinning up N blocks). Keep it BELOW every tier's gen daily cap
-// (`resolveUserAppCaps`) because tips are irreversible transfers to third parties.
+// (`resolveUserAppCaps`) because tips are irreversible transfers to third parties. Both are
+// registry entries now (`apps.tip-daily`, `apps.buzz-daily`), and nothing enforces that ordering
+// between their overrides: keep it when overriding either.
 // The CODE DEFAULT, the registry's `apps.tip-daily`: the cap enforced is resolved per user
 // (`resolveUserAppLimit`), which a `usage-limits` KeyValue override can change.
 export const BLOCK_TIP_CAP_PER_DAY = getUsageLimitDef('apps.tip-daily').base;

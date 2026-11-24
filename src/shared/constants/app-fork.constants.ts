@@ -57,9 +57,17 @@ export const FORK_START_LIMIT_IDS = ['apps.fork-starts-hourly', 'apps.fork-start
 export const FORK_PARENT_UNAVAILABLE_MESSAGE = 'This app isn’t available to fork.';
 export const FORK_NOT_ALLOWED_MESSAGE = 'The author of this app hasn’t allowed forks.';
 export const FORK_NO_APPROVED_VERSION_MESSAGE = 'This app has no reviewed version to fork yet.';
-/** The fork-start refusal, naming the user's resolved hourly and daily limits. */
-export const forkRateLimitedMessage = (hourly: number, daily: number) =>
-  `You can start up to ${hourly} forks an hour and ${daily} a day. Try again later.`;
+/**
+ * The fork-start refusal, naming the user's resolved hourly and daily limits. A disabled window
+ * (an override, `Infinity`) is left out rather than named.
+ */
+export function forkRateLimitedMessage(hourly: number, daily: number): string {
+  const limits = [
+    Number.isFinite(hourly) ? `${hourly} forks an hour` : null,
+    Number.isFinite(daily) ? `${daily} ${Number.isFinite(hourly) ? '' : 'forks '}a day` : null,
+  ].filter((part): part is string => part !== null);
+  return `You can start up to ${limits.join(' and ')}. Try again later.`;
+}
 /** The refusal at the code-default limits. */
 export const FORK_RATE_LIMITED_MESSAGE = forkRateLimitedMessage(5, 20);
 export const FORK_UNAVAILABLE_HERE_MESSAGE = 'Forking isn’t available on this site yet.';

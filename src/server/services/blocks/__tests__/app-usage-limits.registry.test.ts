@@ -11,6 +11,10 @@ import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.serv
 import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 import { rateLimitMetaForRefusal, type RuleUsage } from '~/server/utils/rate-limit-window';
 import { BLOCK_SUBMIT_RATE_LIMIT_MAX } from '~/server/utils/block-catalog-rate-limit';
+import {
+  FORK_RATE_LIMITED_MESSAGE,
+  forkRateLimitedMessage,
+} from '~/shared/constants/app-fork.constants';
 import type { SessionUser } from '~/types/session';
 
 /**
@@ -123,6 +127,47 @@ describe('the App Platform registry entries serve the limits enforced before the
         ])
     );
     expect(served).toEqual(DEFAULTS);
+  });
+
+  it('the owner-counted caps, and only these, cannot be counted by rateLimit()', () => {
+    const owner = usageLimitDefs
+      .filter((def) => 'countedBy' in def && def.countedBy === 'owner')
+      .map((def) => def.id)
+      .sort();
+    expect(owner).toEqual(
+      [
+        'apps.dev-token',
+        'apps.dev-tunnel-starts',
+        'apps.fork-starts-daily',
+        'apps.fork-starts-hourly',
+        'apps.generation-source',
+        'apps.goods-daily',
+        'apps.listing-submissions',
+        'apps.listing-withdrawals',
+        'apps.media-upload-daily-bytes',
+        'apps.media-upload-daily-items',
+        'apps.offsite-pending',
+        'apps.push-review',
+        'apps.submit-user',
+        'apps.tip-daily',
+        'apps.version-submits',
+      ].sort()
+    );
+    expect(() => usageLimits('apps.fork-starts-hourly')).toThrow(/enforcing service counts it/);
+    expect(() => usageLimits('apps.marketplace-reads')).not.toThrow();
+  });
+
+  it('the fork refusal names the resolved limits, leaving out a disabled window', () => {
+    expect(forkRateLimitedMessage(5, 20)).toBe(
+      'You can start up to 5 forks an hour and 20 a day. Try again later.'
+    );
+    expect(FORK_RATE_LIMITED_MESSAGE).toBe(forkRateLimitedMessage(5, 20));
+    expect(forkRateLimitedMessage(Number.POSITIVE_INFINITY, 20)).toBe(
+      'You can start up to 20 forks a day. Try again later.'
+    );
+    expect(forkRateLimitedMessage(5, Number.POSITIVE_INFINITY)).toBe(
+      'You can start up to 5 forks an hour. Try again later.'
+    );
   });
 
   it('the per-user submit cap stays twice the per-install ceiling', () => {

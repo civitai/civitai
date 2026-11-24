@@ -69,7 +69,7 @@ vi.mock('~/server/services/blocks/submit-rate-limit', async (importOriginal) => 
     typeof import('~/server/services/blocks/submit-rate-limit')
   >();
   return {
-    SUBMIT_RATE_LIMIT: { max: 10, windowSeconds: 60 },
+    SUBMIT_RATE_LIMIT: actual.SUBMIT_RATE_LIMIT,
     takeSubmitSlot: mockTakeSubmitSlot,
     // The real 429 writer: what this file pins is the body it sends.
     sendSubmitRateLimited: actual.sendSubmitRateLimited,

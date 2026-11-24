@@ -67,6 +67,12 @@ export type UsageLimitDef = UsageLimitValues & {
    * stay impossible to switch off. Read through `usageLimitReportsCounts`.
    */
   reportsCounts?: true;
+  /**
+   * Code-only: the enforcing service keeps its own counter (a fixed window or a calendar day) and
+   * reads only the limit from here. `rateLimit()` cannot count it (`usageLimits` refuses it), and
+   * `/api/v1/me/limits` does not list it from a bucket.
+   */
+  countedBy?: 'owner';
   message?: string | ((resolution: UsageLimitResolution) => string | undefined);
 };
 
@@ -486,8 +492,11 @@ export function isBucketCountable(window: UsageLimitWindow) {
 /** Registry entries for `rateLimit()`; throws for a window the bucket cannot count. */
 export function usageLimits(...ids: UsageLimitId[]): UsageLimitRef {
   for (const id of ids) {
-    if (!isBucketCountable(getUsageLimitDef(id).window))
+    const def = getUsageLimitDef(id);
+    if (!isBucketCountable(def.window))
       throw new Error(`rateLimit() cannot count ${id}: its window is not a rolling day or less`);
+    if (def.countedBy === 'owner')
+      throw new Error(`rateLimit() cannot count ${id}: its enforcing service counts it`);
   }
   return { usageLimitIds: ids };
 }

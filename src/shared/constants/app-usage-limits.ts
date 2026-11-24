@@ -15,9 +15,10 @@ import type { UsageLimitDef, UsageLimitWindow } from '~/shared/constants/usage-l
  *   - `rateLimit(usageLimits(id))`: a tRPC procedure's own rolling window, counted in the caller's
  *     bucket (keyed on the procedure, so several procedures can share one entry and each keeps
  *     its own count).
- *   - an OWNER-COUNTED cap: the enforcing service keeps its own counter (a fixed window or a
- *     UTC day) and reads only the limit from here (`resolveUserAppLimit`). Its `window` describes
- *     that counter; `rateLimit()` never counts it.
+ *   - an OWNER-COUNTED cap (`countedBy: 'owner'`): the enforcing service keeps its own counter (a
+ *     fixed window or a UTC day) and reads only the limit from here (`resolveUserAppLimit`). Its
+ *     `window` gives that counter's length (a `rolling` one is a fixed window of that many
+ *     seconds); `rateLimit()` never counts it.
  *
  * `kind` (`product` / `abuse`) is the operator's split: a product limit is an allowance a user
  * plans around, and may be disabled by an override; an abuse limit is anti-flood or guards money
@@ -38,6 +39,7 @@ export const appUsageLimitDefs = [
     // Buzz tipped from apps per UTC day, across every app. Counted by the tip endpoint.
     id: 'apps.tip-daily',
     area: 'apps',
+    countedBy: 'owner',
     kind: 'abuse',
     reportsCounts: true,
     label: 'Daily Buzz tipped through apps',
@@ -48,6 +50,7 @@ export const appUsageLimitDefs = [
     // Buzz spent on app goods per UTC day, across every app. Counted by the purchase endpoint.
     id: 'apps.goods-daily',
     area: 'apps',
+    countedBy: 'owner',
     kind: 'abuse',
     reportsCounts: true,
     label: 'Daily Buzz spent on app goods',
@@ -58,6 +61,7 @@ export const appUsageLimitDefs = [
   {
     id: 'apps.fork-starts-hourly',
     area: 'apps',
+    countedBy: 'owner',
     kind: 'product',
     label: 'App forks started per hour',
     window: rolling(HOUR),
@@ -66,6 +70,7 @@ export const appUsageLimitDefs = [
   {
     id: 'apps.fork-starts-daily',
     area: 'apps',
+    countedBy: 'owner',
     kind: 'product',
     label: 'App forks started per day',
     window: rolling(DAY),
@@ -75,6 +80,7 @@ export const appUsageLimitDefs = [
     // App bundles submitted per minute, per user and per API key, on both submit routes.
     id: 'apps.version-submits',
     area: 'apps',
+    countedBy: 'owner',
     kind: 'product',
     label: 'App versions submitted per minute',
     window: rolling(60),
@@ -83,6 +89,7 @@ export const appUsageLimitDefs = [
   {
     id: 'apps.media-upload-daily-items',
     area: 'apps',
+    countedBy: 'owner',
     kind: 'product',
     label: 'Files uploaded through app batches per day',
     window: { type: 'utc-day' },
@@ -91,6 +98,7 @@ export const appUsageLimitDefs = [
   {
     id: 'apps.media-upload-daily-bytes',
     area: 'apps',
+    countedBy: 'owner',
     kind: 'product',
     label: 'Bytes uploaded through app batches per day',
     window: { type: 'utc-day' },
@@ -100,6 +108,7 @@ export const appUsageLimitDefs = [
     // Off-site listing submissions awaiting review at once. Frees when one is withdrawn or reviewed.
     id: 'apps.offsite-pending',
     area: 'apps',
+    countedBy: 'owner',
     kind: 'product',
     label: 'Off-site listing submissions pending review',
     window: { type: 'standing' },
@@ -109,6 +118,7 @@ export const appUsageLimitDefs = [
   {
     id: 'apps.dev-tunnel-starts',
     area: 'apps',
+    countedBy: 'owner',
     kind: 'abuse',
     label: 'Dev tunnel starts for unsubmitted apps per hour',
     window: rolling(HOUR),
@@ -117,6 +127,7 @@ export const appUsageLimitDefs = [
   {
     id: 'apps.dev-token',
     area: 'apps',
+    countedBy: 'owner',
     kind: 'abuse',
     label: 'Dev tokens minted per minute',
     window: rolling(60),
@@ -126,6 +137,7 @@ export const appUsageLimitDefs = [
     // Pushes recorded for review: per user on the manifest editor, per app on the git push.
     id: 'apps.push-review',
     area: 'apps',
+    countedBy: 'owner',
     kind: 'abuse',
     label: 'Pushes recorded for review per hour',
     window: rolling(HOUR),
@@ -134,6 +146,7 @@ export const appUsageLimitDefs = [
   {
     id: 'apps.listing-submissions',
     area: 'apps',
+    countedBy: 'owner',
     kind: 'abuse',
     label: 'Listing submission reads per minute',
     window: rolling(60),
@@ -142,6 +155,7 @@ export const appUsageLimitDefs = [
   {
     id: 'apps.listing-withdrawals',
     area: 'apps',
+    countedBy: 'owner',
     kind: 'abuse',
     label: 'Listing withdrawals per minute',
     window: rolling(60),
@@ -151,6 +165,7 @@ export const appUsageLimitDefs = [
     // The per-viewer generation-source bucket, shared by both save procedures' own counters.
     id: 'apps.generation-source',
     area: 'apps',
+    countedBy: 'owner',
     kind: 'abuse',
     label: 'Generation sources saved per hour',
     window: rolling(HOUR),
@@ -160,6 +175,7 @@ export const appUsageLimitDefs = [
     // Workflows a viewer submits through apps, across every install.
     id: 'apps.submit-user',
     area: 'apps',
+    countedBy: 'owner',
     kind: 'abuse',
     label: 'App workflow submissions per 10 seconds',
     window: rolling(10),

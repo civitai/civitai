@@ -115,6 +115,7 @@ import {
   claimBlockStandingSubmitSlot,
 } from '~/server/utils/block-catalog-rate-limit';
 import { withInFlightLimit } from '~/server/utils/in-flight-limit';
+import { usageLimits } from '~/shared/constants/usage-limits';
 import {
   appRateLimitMeta,
   BRIDGE_BUCKET_RATE_LIMIT_ID,
@@ -396,7 +397,6 @@ import {
 // terminal poll/cancel hook. Static import (both are light) — the heavy
 // refundAppSpend it may call is itself dynamic-imported inside the service.
 import {
-import { usageLimits } from '~/shared/constants/usage-limits';
   persistCustomComfySettle,
   settleCustomComfySpend,
 } from '~/server/services/blocks/custom-comfy-settle.service';
@@ -5126,9 +5126,7 @@ export const blocksRouter = router({
    */
   listAvailable: publicProcedure
     .use(enforceAppBlocksFlag)
-    .use(
-      rateLimit(usageLimits('apps.marketplace-reads'))
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(listAvailableSchema)
     .query(async ({ ctx, input }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
@@ -5180,9 +5178,7 @@ export const blocksRouter = router({
    */
   getAppDetail: publicProcedure
     .use(enforceAppBlocksFlag)
-    .use(
-      rateLimit(usageLimits('apps.marketplace-reads'))
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(getAppDetailSchema)
     .query(async ({ ctx, input }) => {
       // Dark-flag fail-closed: while the appBlocks flag is off the middleware
@@ -5242,9 +5238,7 @@ export const blocksRouter = router({
    */
   getFeaturedBlocks: publicProcedure
     .use(enforceAppBlocksFlag)
-    .use(
-      rateLimit(usageLimits('apps.marketplace-reads'))
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(getFeaturedBlocksSchema)
     .query(async ({ ctx, input }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
@@ -6641,9 +6635,7 @@ export const blocksRouter = router({
    */
   persistAppUploadImage: protectedProcedure
     .meta({ blockApiKeys: true })
-    .use(
-      rateLimit(usageLimits('apps.image-uploads'))
-    )
+    .use(rateLimit(usageLimits('apps.image-uploads')))
     .input(
       persistBlockUploadImageSchema
         .pick({ url: true, name: true })
@@ -6714,9 +6706,7 @@ export const blocksRouter = router({
    */
   persistGenerationSource: protectedProcedure
     .meta({ blockApiKeys: true })
-    .use(
-      rateLimit(usageLimits('apps.generation-source-saves'))
-    )
+    .use(rateLimit(usageLimits('apps.generation-source-saves')))
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -6777,9 +6767,7 @@ export const blocksRouter = router({
    */
   persistUploadedGenerationSource: protectedProcedure
     .meta({ blockApiKeys: true })
-    .use(
-      rateLimit(usageLimits('apps.generation-source-saves'))
-    )
+    .use(rateLimit(usageLimits('apps.generation-source-saves')))
     .input(
       z.object({
         blockToken: z.string().min(1),
