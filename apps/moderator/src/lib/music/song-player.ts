@@ -23,6 +23,31 @@ export type SongCardKey = string | number;
 
 type Entry = { media: SongMedia; cardKey?: SongCardKey };
 
+let keySeq = 0;
+/** A key of its own for a card no caller named, so its controls drive that card and no other
+ *  showing the same song. */
+export const uniqueCardKey = (): SongCardKey => `song-card-${++keySeq}`;
+
+/**
+ * Whether a card's song goes on playing when its source is swapped (the CDN refused it, storage is
+ * next): only when the moderator asked for play and has not paused it since.
+ */
+export function createPlayIntent() {
+  let wanted = false;
+  return {
+    /** The play button or a lyric line. */
+    requested() {
+      wanted = true;
+    },
+    /** The element's `pause` event, which `ended` fires too. */
+    paused() {
+      wanted = false;
+    },
+    /** Read before the swap: removing the old element pauses it. */
+    resumeAfterSwap: () => wanted,
+  };
+}
+
 export function createSongPlayer(store: VolumeStore) {
   const cards = new Map<number, Entry[]>();
   let current: SongMedia | null = null;

@@ -16,9 +16,11 @@
   import { SSR_PENDING } from '$lib/ssr-pending';
   import { songCardUrl, type SongCard } from '$lib/music/song-card';
   import {
+    createPlayIntent,
     formatSongTime,
     playSongAt,
     songPlayer,
+    uniqueCardKey,
     type SongCardKey,
   } from '$lib/music/song-player';
 
@@ -49,15 +51,19 @@
   let fallback = $state<{ id: number; mode: 'retracted' | 'failed' } | null>(null);
   const mode = $derived(fallback?.id === item.id ? fallback.mode : 'cdn');
   let reason = $state(RETRACTED_REFUSED);
-  // A click on play that the CDN's refusal interrupted: the stored copy picks it up.
-  let wantsPlay = false;
+  // A song playing when the CDN refused it goes on from the stored copy; a paused one stays paused.
+  const intent = createPlayIntent();
+  // The key this card registers under and its own controls target, so they never drive another card
+  // showing the same song.
+  const fallbackKey = uniqueCardKey();
+  const ownKey = $derived(cardKey ?? fallbackKey);
 
   const src = $derived(
     mode === 'cdn' ? getEdgeUrl(item.url, { type: 'audio' }) : retractedMediaUrl(item.id)
   );
 
   function register(el: HTMLAudioElement) {
-    const unregister = songPlayer.register(item.id, el, cardKey);
+    const unregister = songPlayer.register(item.id, el, ownKey);
     volume = el.volume;
     return unregister;
   }
@@ -65,9 +71,11 @@
   async function onError() {
     const id = item.id;
     if (mode === 'cdn') {
+      const resume = intent.resumeAfterSwap();
       fallback = { id, mode: 'retracted' };
-      if (!wantsPlay) return;
+      if (!resume) return;
       await tick();
+      intent.requested();
       audio?.play().catch(() => undefined);
       return;
     }
@@ -83,7 +91,7 @@
   function toggle() {
     if (!audio) return;
     if (audio.paused) {
-      wantsPlay = true;
+      intent.requested();
       audio.play().catch(() => undefined);
     } else audio.pause();
   }
@@ -169,8 +177,8 @@
               class="block w-full rounded px-1 text-left hover:bg-dark-5"
               title="Play from {formatSongTime(at)}"
               onclick={() => {
-                wantsPlay = true;
-                playSongAt(item.id, at, cardKey ?? item.id);
+                intent.requested();
+                playSongAt(item.id, at, ownKey);
               }}
             >
               {line.text}
@@ -201,6 +209,10 @@
       bind:currentTime={time}
       bind:duration
       onplay={(e) => songPlayer.played(e.currentTarget)}
+      onpause={(e) => {
+        // The element a swap removed reports its pause late; only this card's current one counts.
+        if (e.currentTarget === audio) intent.paused();
+      }}
       onvolumechange={(e) => {
         volume = e.currentTarget.volume;
         songPlayer.volumeChanged(e.currentTarget);

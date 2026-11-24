@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { createSongPlayer, formatSongTime, type SongMedia } from '../song-player';
+import {
+  createPlayIntent,
+  createSongPlayer,
+  formatSongTime,
+  uniqueCardKey,
+  type SongMedia,
+} from '../song-player';
 
 /**
  * The moderator song player (Music T10, docs/features/music.md "Moderating songs"): nothing plays
@@ -100,6 +106,20 @@ describe('the moderator song player', () => {
     expect([first.paused, second.paused, second.currentTime]).toEqual([true, false, 12]);
   });
 
+  it('a lyric click drives its own card, even where no caller gave the card a key', () => {
+    const player = createSongPlayer(memoryStore());
+    const first = fakeMedia(player);
+    const second = fakeMedia(player);
+    const [firstKey, secondKey] = [uniqueCardKey(), uniqueCardKey()];
+    expect(firstKey).not.toBe(secondKey);
+    player.register(1, first, firstKey);
+    player.register(1, second, secondKey);
+    first.play();
+
+    player.playAt(1, 30, secondKey);
+    expect([first.paused, second.paused, second.currentTime]).toEqual([true, false, 30]);
+  });
+
   it('stops a song whose card leaves the page', () => {
     const player = createSongPlayer(memoryStore());
     const a = fakeMedia(player);
@@ -116,5 +136,23 @@ describe('formatSongTime', () => {
     expect(formatSongTime(83.9)).toBe('1:23');
     expect(formatSongTime(5)).toBe('0:05');
     expect(formatSongTime(Number.NaN)).toBe('0:00');
+  });
+});
+
+describe('createPlayIntent', () => {
+  // A card swaps its source when the CDN refuses the song; the stored copy goes on playing only if
+  // the moderator asked for play and has not paused since.
+  it('resumes after a source swap only a song the moderator is playing', () => {
+    const intent = createPlayIntent();
+    expect(intent.resumeAfterSwap()).toBe(false);
+    intent.requested();
+    expect(intent.resumeAfterSwap()).toBe(true);
+  });
+
+  it('does not resume a song the moderator paused, or one that ended', () => {
+    const intent = createPlayIntent();
+    intent.requested();
+    intent.paused();
+    expect(intent.resumeAfterSwap()).toBe(false);
   });
 });
