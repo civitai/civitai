@@ -31,7 +31,6 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
-import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   BUZZ_AMOUNT_TO_TIER,
   TIER_BUZZ_AMOUNTS,
@@ -1613,27 +1612,40 @@ type LegacyPrepaidRow = {
 // filtering for rewards happens server-side (in the caller) to keep the SQL fast.
 // The query reads a closed date window, so a user's rows never change: cache them, empty
 // included (most lookups find none), for a month. The window is in the key, so moving it starts
-// a fresh cache rather than serving rows from the old one.
+// a fresh cache rather than serving rows from the old one. Plain redis get/set, like the combined
+// cache below: this module is imported by many tests with a partial env mock, and cache-helpers
+// builds a logger from env at import time.
 const getLegacyPrepaidRows = async (userId: number): Promise<LegacyPrepaidRow[]> => {
-  const ch = clickhouse;
-  if (!ch) return [];
-  return fetchThroughCache(
-    `${REDIS_KEYS.CACHES.LEGACY_PREPAID_DELIVERIES}:${userId}:${LEGACY_QUERY_START_DATE}:${LEGACY_QUERY_END_DATE}` as RedisKeyTemplateCache,
-    () => ch.$query<LegacyPrepaidRow>`
-      SELECT date, type, amount, externalTransactionId, description
-      FROM buzzTransactions
-      WHERE date >= '${LEGACY_QUERY_START_DATE}'
-        AND date < '${LEGACY_QUERY_END_DATE}'
-        AND toAccountId = ${userId}
-        AND toAccountType = 'yellow'
-        AND (
-          (type = 'purchase' AND externalTransactionId LIKE 'annual-sub-payment%')
-          OR type = 'reward'
-        )
-      ORDER BY date DESC
-    `,
-    { ttl: CacheTTL.month }
-  );
+  if (!clickhouse) return [];
+  const cacheKey =
+    `${REDIS_KEYS.CACHES.LEGACY_PREPAID_DELIVERIES}:${userId}:${LEGACY_QUERY_START_DATE}:${LEGACY_QUERY_END_DATE}` as RedisKeyTemplateCache;
+  try {
+    const cached = await redis.get(cacheKey);
+    if (cached) return JSON.parse(cached) as LegacyPrepaidRow[];
+  } catch {
+    // Redis down — fall through to ClickHouse
+  }
+
+  const rows = await clickhouse.$query<LegacyPrepaidRow>`
+    SELECT date, type, amount, externalTransactionId, description
+    FROM buzzTransactions
+    WHERE date >= '${LEGACY_QUERY_START_DATE}'
+      AND date < '${LEGACY_QUERY_END_DATE}'
+      AND toAccountId = ${userId}
+      AND toAccountType = 'yellow'
+      AND (
+        (type = 'purchase' AND externalTransactionId LIKE 'annual-sub-payment%')
+        OR type = 'reward'
+      )
+    ORDER BY date DESC
+  `;
+
+  try {
+    await redis.set(cacheKey, JSON.stringify(rows), { EX: CacheTTL.month });
+  } catch {
+    // Redis down — result still returned
+  }
+  return rows;
 };
 
 export const getHistoricalPrepaidDeliveries = async ({
