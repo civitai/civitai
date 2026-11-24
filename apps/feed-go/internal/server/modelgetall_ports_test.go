@@ -61,7 +61,19 @@ func TestModelGetAllPortsShadow(t *testing.T) {
 				if len(node) == 0 {
 					t.Fatalf("%s records no envelope", name)
 				}
+				// An answer that loaded no model row is counted match_empty (DESIGN.md §15.6).
 				want := "match"
+				var env0 struct {
+					JSON struct {
+						Items []json.RawMessage `json:"items"`
+					} `json:"json"`
+				}
+				if err := json.Unmarshal(node, &env0); err != nil {
+					t.Fatal(err)
+				}
+				if len(env0.JSON.Items) == 0 {
+					want = "match_empty"
+				}
 				if !on {
 					c := *fx
 					c.Config.ServeInputIDs, c.Config.ServeInputFollowed = false, false

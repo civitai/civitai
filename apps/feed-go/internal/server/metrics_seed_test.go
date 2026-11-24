@@ -120,9 +120,9 @@ func TestComputeFallbackReasonsAreSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
 	// serve: 6 routes x (bulkhead, error, deadline, canceled, panic); shadow: 7 x 3; probe: 4 x 3;
-	// and the 198 request-determined serve series.
-	if n := testutil.CollectAndCount(m.Fallbacks); n != 6*5+7*3+4*3+198 {
-		t.Fatalf("feed_go_fallback_total has %d series at construction, want 261", n)
+	// and the 199 request-determined serve series.
+	if n := testutil.CollectAndCount(m.Fallbacks); n != 6*5+7*3+4*3+199 {
+		t.Fatalf("feed_go_fallback_total has %d series at construction, want 262", n)
 	}
 	cases := map[string]struct {
 		endpoints, reasons []string
