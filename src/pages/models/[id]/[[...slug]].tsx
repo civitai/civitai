@@ -1716,6 +1716,12 @@ export default function ModelDetailsV2({
                 modelVersionId={selectedVersion.id}
                 thumbsUpCount={thumbsUpCount}
                 thumbsDownCount={thumbsDownCount}
+                versionRatingCount={
+                  selectedVersion.rank
+                    ? selectedVersion.rank.thumbsUpCountAllTime +
+                      selectedVersion.rank.thumbsDownCountAllTime
+                    : undefined
+                }
               />
             )}
             <AdUnitTopSection />
