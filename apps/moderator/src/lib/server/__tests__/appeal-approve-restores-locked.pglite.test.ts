@@ -260,6 +260,9 @@ describe('approving an appeal while the image owner is deleted', () => {
          'accountDeletionPriorIngestion', 'Blocked',
          'accountDeletionPriorBlockedFor', 'moderated',
          'accountDeletionPriorNeedsReview', 'minor',
+         -- The grace block's recorded rating: a lift records none, so a restore re-rates the row.
+         'accountDeletionPriorNsfwLevel', 4,
+         'accountDeletionPriorNsfwLevelLocked', true,
          'keep', 1)
        WHERE "id" = $1`,
       [IMAGE_ID, OWNER_ID]

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -375,8 +376,14 @@ function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   return [];
 }
 
-function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
+function writeExec(strings: TemplateStringsArray, ...values: unknown[]): number {
   const sql = strings.join('?');
+
+  // The marker strip binds its keys as one fragment; read it flattened, as Postgres receives it.
+  if (sql.includes('UPDATE "Image"') && sql.includes('SET "metadata" = "metadata"?')) {
+    const flat = Prisma.sql(strings, ...(values as never[]));
+    return writeExec(flat.strings as unknown as TemplateStringsArray, ...flat.values);
+  }
 
   // `blockImageFromRating`, the orchestrator content-rating block.
   if (sql.includes('"blockedFor" = CASE WHEN "blockedFor" = ? OR ?')) {

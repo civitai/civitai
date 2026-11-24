@@ -1,7 +1,11 @@
+import { Prisma } from '@prisma/client';
 import {
   GRACE_PRIOR_BLOCKED_FOR_KEY,
   GRACE_PRIOR_INGESTION_KEY,
+  GRACE_PRIOR_KEYS,
   GRACE_PRIOR_NEEDS_REVIEW_KEY,
+  GRACE_PRIOR_NSFW_LEVEL_KEY,
+  GRACE_PRIOR_NSFW_LOCKED_KEY,
 } from '@civitai/shared/account-deletion-grace';
 export type ImageRemovalMode = 'grace' | 'immediate';
 
@@ -23,3 +27,13 @@ export const PRIOR_BLOCKED_FOR_KEY = GRACE_PRIOR_BLOCKED_FOR_KEY;
  * rows it hides. A row written before this key existed has none, and the restore leaves its flag.
  */
 export const PRIOR_NEEDS_REVIEW_KEY = GRACE_PRIOR_NEEDS_REVIEW_KEY;
+export const PRIOR_NSFW_LEVEL_KEY = GRACE_PRIOR_NSFW_LEVEL_KEY;
+export const PRIOR_NSFW_LOCKED_KEY = GRACE_PRIOR_NSFW_LOCKED_KEY;
+/** Every grace breadcrumb. */
+export const PRIOR_KEYS = GRACE_PRIOR_KEYS;
+/** ` - key::text` for every grace breadcrumb: after a jsonb value, strips them all. */
+export const minusPriorKeysSql = Prisma.join(
+  PRIOR_KEYS.map((key) => Prisma.sql`${key}::text`),
+  ' - ',
+  ' - '
+);

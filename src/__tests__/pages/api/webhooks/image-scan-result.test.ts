@@ -832,7 +832,7 @@ describe('image-scan-result webhook - pipeline tests', () => {
         // arm of the stored-CSAM guard.
         needsReview: param(
           'needsReview',
-          `CASE WHEN "blockedFor" = 'CSAM' THEN[\\s\\S]*?ELSE \\(CASE\\s+WHEN "needsReview" = 'csam' THEN "needsReview"\\s+WHEN \\$(\\d+)::text`
+          `CASE WHEN "blockedFor" = 'CSAM' THEN[\\s\\S]*?ELSE[\\s\\S]*?\\$(\\d+)::text`
         ),
         // What the scan ORs into the stored flag.
         minor: param('minor', `"minor" OR \\$(\\d+)`),

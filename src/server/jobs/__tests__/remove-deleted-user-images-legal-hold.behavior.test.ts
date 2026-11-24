@@ -89,6 +89,7 @@ beforeAll(async () => {
       "blockedFor" text,
       "needsReview" text,
       "nsfwLevel" int NOT NULL DEFAULT 1,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       metadata jsonb NOT NULL DEFAULT '{}',
       "updatedAt" timestamp(3)
     );
@@ -195,6 +196,34 @@ beforeEach(async () => {
 });
 
 describe('remove-deleted-user-images under a legal hold', () => {
+  it("records each held image's rating and rating lock before blocking it", async () => {
+    await holder.db.exec(`
+      UPDATE "Image" SET "nsfwLevel" = 4, "nsfwLevelLocked" = true WHERE id = 1;
+      UPDATE "Image" SET "nsfwLevel" = 32, ingestion = 'Error' WHERE id = 2;
+    `);
+    await holdSecondaryUser(HELD);
+
+    await run();
+
+    const { rows } = await holder.db.query<{
+      id: number;
+      nsfwLevel: number;
+      metadata: Record<string, unknown>;
+    }>(`SELECT id, "nsfwLevel", metadata FROM "Image" WHERE id IN (1, 2) ORDER BY id`);
+    // Control: the grace block ran and replaced the rating.
+    expect(rows.map((row) => row.nsfwLevel)).toEqual([32, 32]);
+    expect(rows.map((row) => row.metadata)).toEqual([
+      expect.objectContaining({
+        accountDeletionPriorNsfwLevel: 4,
+        accountDeletionPriorNsfwLevelLocked: true,
+      }),
+      expect.objectContaining({
+        accountDeletionPriorNsfwLevel: 32,
+        accountDeletionPriorNsfwLevelLocked: false,
+      }),
+    ]);
+  });
+
   it("leaves a held user's images and posts, and drains everyone else", async () => {
     await holdSecondaryUser(HELD);
 

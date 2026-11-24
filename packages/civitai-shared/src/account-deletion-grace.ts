@@ -12,6 +12,22 @@ export const GRACE_PRIOR_INGESTION_KEY = 'accountDeletionPriorIngestion';
 export const GRACE_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
 /** The image's needsReview before the grace block. */
 export const GRACE_PRIOR_NEEDS_REVIEW_KEY = 'accountDeletionPriorNeedsReview';
+/**
+ * The image's nsfwLevel and rating lock before the grace block, which forces the level to Blocked. A
+ * restore puts both back; a row without them (blocked before they were recorded, or lifted while the
+ * owner was deleted) is re-rated instead.
+ */
+export const GRACE_PRIOR_NSFW_LEVEL_KEY = 'accountDeletionPriorNsfwLevel';
+export const GRACE_PRIOR_NSFW_LOCKED_KEY = 'accountDeletionPriorNsfwLevelLocked';
+
+/** Every breadcrumb above. A write that strips them strips this list, so a new key is never missed. */
+export const GRACE_PRIOR_KEYS = [
+  GRACE_PRIOR_INGESTION_KEY,
+  GRACE_PRIOR_BLOCKED_FOR_KEY,
+  GRACE_PRIOR_NEEDS_REVIEW_KEY,
+  GRACE_PRIOR_NSFW_LEVEL_KEY,
+  GRACE_PRIOR_NSFW_LOCKED_KEY,
+];
 
 /**
  * A lift (an approved appeal, an accept, an unblock) while the owner is deleted: the row keeps a block, and

@@ -1,9 +1,5 @@
 import { dbWrite } from '~/server/db/client';
-import {
-  PRIOR_BLOCKED_FOR_KEY,
-  PRIOR_INGESTION_KEY,
-  PRIOR_NEEDS_REVIEW_KEY,
-} from '~/server/utils/image-removal-mode';
+import { PRIOR_INGESTION_KEY, minusPriorKeysSql } from '~/server/utils/image-removal-mode';
 
 /**
  * 🔴 Strips the grace-block breadcrumbs off rows a MODERATION path is blocking right now.
@@ -46,14 +42,14 @@ export async function clearAccountDeletionImageMarkers(
     if (!target.ids.length) return 0;
     return dbWrite.$executeRaw`
       UPDATE "Image"
-      SET "metadata" = "metadata" - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text
+      SET "metadata" = "metadata"${minusPriorKeysSql}
       WHERE id = ANY(${target.ids})
         AND ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL
     `;
   }
   return dbWrite.$executeRaw`
     UPDATE "Image"
-    SET "metadata" = "metadata" - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text
+    SET "metadata" = "metadata"${minusPriorKeysSql}
     WHERE "userId" = ${target.userId}
       AND ("metadata" -> ${PRIOR_INGESTION_KEY}::text) IS NOT NULL
   `;

@@ -4,6 +4,7 @@ import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
 import {
   GRACE_PRIOR_BLOCKED_FOR_KEY,
   GRACE_PRIOR_INGESTION_KEY,
+  GRACE_PRIOR_KEYS,
   GRACE_PRIOR_NEEDS_REVIEW_KEY,
   LIFT_KEPT_ACTIVITY,
   LIFT_WHILE_OWNER_DELETED,
@@ -53,7 +54,7 @@ const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${F
 
 const BLOCKED_REASON_MODERATED = 'moderated';
 /** The block reason of a CSAM removal; the main app's `csamBlockedSql` reads the same literal. */
-export const BLOCKED_REASON_CSAM = 'CSAM';
+const BLOCKED_REASON_CSAM = 'CSAM';
 
 /**
  * Removed for CSAM, or under the review flag and not dismissed from its queue. A block of a held image
@@ -108,9 +109,14 @@ const OWNER_DELETED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "
  * key alone, so a row marked during a grace period and then moderated would be put back by a later
  * account restore.
  */
+/** Every grace breadcrumb, as `key::text - key::text ...`, to follow `jsonb -`. */
+const MINUS_GRACE_KEYS = sql.join(
+  GRACE_PRIOR_KEYS.map((key) => sql`${key}::text`),
+  sql` - `
+);
 const withoutGraceMarkers = (metadata: RawBuilder<unknown>) =>
   sql`(CASE WHEN jsonb_typeof(${metadata}) = 'object'
-    THEN (${metadata}) - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text
+    THEN (${metadata}) - ${MINUS_GRACE_KEYS}
     ELSE ${metadata} END)`;
 
 // A lift (approved appeal, accept) while the owner is deleted keeps the row blocked and records the
@@ -607,8 +613,8 @@ export async function blockImage({
         //     NULL-propagates too and would drop the stamp.
         metadata:
           img.needsReview === 'remixSource'
-            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
-            : sql`"metadata" - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason'`,
+            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${MINUS_GRACE_KEYS} - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
+            : sql`"metadata" - ${MINUS_GRACE_KEYS} - 'ruleId' - 'ruleReason'`,
       })
       .where('id', '=', imageId)
       // Already removed with only the review flag left: blocking again would only notify the uploader a

@@ -12,6 +12,7 @@ const { mockResetNsfwLevel, mockDropDeleteQueue, mockQueueSearchIndex, mockBustC
 
 vi.mock('~/server/services/image.service', () => ({
   resetBlockedNsfwLevel: mockResetNsfwLevel,
+  refreshImageLevelCaches: vi.fn(async () => undefined),
   dropBlockedImageDeleteQueue: mockDropDeleteQueue,
   queueImageSearchIndexUpdate: mockQueueSearchIndex,
 }));
@@ -93,7 +94,7 @@ const METADATA_LOOKUP = /^\(?"metadata"->>\?::text\)?(::"\w+")?$/;
 const METADATA_MINUS = /^"metadata"(\s*-\s*\?::text)+$/;
 const SCOPED_ON_BREADCRUMB = /"metadata"->>\?::text IS NOT NULL/;
 const CLAIM_START =
-  /FROM \(\s*SELECT i\.id, i\."needsReview" AS "currentReview",[\s\S]*?AS "recordedReview"\s+FROM "Image" i\s+WHERE\s/;
+  /FROM \(\s*SELECT i\.id, i\."needsReview" AS "currentReview",[\s\S]*?AS "recordedReview"[\s\S]*?\s+FROM "Image" i\s+WHERE\s/;
 const BOUNDED_CLAIM = /^LIMIT \?\s*\)\s*c\s+WHERE "Image"\.id = c\.id\s*$/;
 const OWNER_CHECK = /^\s*\(SELECT [^()]*\([^()]*\)[^()]* FROM "User" u WHERE u\.id = \?\)\s*$/;
 const ENUM_RANGE = /\(SELECT unnest\(enum_range\(NULL::"ImageIngestionStatus"\)\)::text\)/;
@@ -213,8 +214,10 @@ function applyRestoreUpdate(rawSql: string, values: unknown[]) {
   const staged = claimed.map((row) => {
     const next: Partial<ImageRow> = {};
     for (const { column, expr, keys } of assignments) {
-      // Which review flag survives is pinned on Postgres, in scan-outcome-csam-block.behavior.test.ts.
-      if (column === 'needsReview') continue;
+      // Which review flag survives, and the rating put back, are pinned on Postgres, in
+      // scan-outcome-csam-block.behavior.test.ts.
+      if (column === 'needsReview' || column === 'nsfwLevel' || column === 'nsfwLevelLocked')
+        continue;
       if (METADATA_MINUS.test(expr)) {
         const metadata = { ...row.metadata };
         for (const key of keys) delete metadata[key];
@@ -234,6 +237,7 @@ function applyRestoreUpdate(rawSql: string, values: unknown[]) {
     needsReview: row.needsReview ?? null,
     currentReview: row.needsReview ?? null,
     recordedReview,
+    recordedLevel: null,
   }));
 }
 
@@ -290,14 +294,14 @@ beforeEach(() => {
   ownerLive = true;
   mockSysRedis.sAdd.mockResolvedValue(1);
 
-  mockDbWrite.$queryRaw.mockImplementation(
-    (strings: TemplateStringsArray, ...values: unknown[]) => {
-      const sql = strings.join('?');
-      if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyRestoreUpdate(sql, values));
-      if (sql.includes('SELECT COUNT(*)')) return Promise.resolve(countMatchingImages(sql, values));
-      throw new Error(`unexpected read: ${sql}`);
-    }
-  );
+  mockDbWrite.$queryRaw.mockImplementation((strings: TemplateStringsArray, ...raw: unknown[]) => {
+    // Nested fragments flattened, as Prisma sends them.
+    const { strings: flat, values } = Prisma.sql(strings, ...(raw as never[]));
+    const sql = flat.join('?');
+    if (sql.includes('UPDATE "Image"')) return Promise.resolve(applyRestoreUpdate(sql, values));
+    if (sql.includes('SELECT COUNT(*)')) return Promise.resolve(countMatchingImages(sql, values));
+    throw new Error(`unexpected read: ${sql}`);
+  });
 
   mockDbWrite.$executeRaw.mockImplementation(
     (strings: TemplateStringsArray, ...values: unknown[]) => {

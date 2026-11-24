@@ -12,6 +12,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   queueImageSearchIndexUpdate,
+  refreshImageLevelCaches,
   resetBlockedNsfwLevel,
   dropBlockedImageDeleteQueue,
 } from '~/server/services/image.service';
@@ -21,10 +22,15 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { IMAGE_REVIEW_PRECEDENCE, RESTORABLE_REVIEWS } from '@civitai/shared/image-review-types';
 import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
+import { csamBlockedSql, pendingImageAppealSql } from '~/server/common/image-visibility';
+import { Prisma } from '@prisma/client';
 import {
   PRIOR_BLOCKED_FOR_KEY,
   PRIOR_INGESTION_KEY,
   PRIOR_NEEDS_REVIEW_KEY,
+  PRIOR_NSFW_LEVEL_KEY,
+  PRIOR_NSFW_LOCKED_KEY,
+  minusPriorKeysSql,
 } from '~/server/utils/image-removal-mode';
 
 export const RESTORE_BATCH_SIZE = 500;
@@ -137,11 +143,14 @@ export async function unblockAccountDeletionImages(userId: number) {
         needsReview: string | null;
         currentReview: string | null;
         recordedReview: string | null;
+        recordedLevel: number | null;
       }[]
     >`
       UPDATE "Image"
       SET ingestion = CASE
-            WHEN "blockedFor" = ${BlockedReason.CSAM} OR "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text = ${BlockedReason.CSAM}
+            WHEN "blockedFor" = ${
+              BlockedReason.CSAM
+            } OR "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text = ${BlockedReason.CSAM}
             THEN 'Blocked'::"ImageIngestionStatus"
             ELSE ("metadata"->>${PRIOR_INGESTION_KEY}::text)::"ImageIngestionStatus"
           END,
@@ -163,19 +172,48 @@ export async function unblockAccountDeletionImages(userId: number) {
             THEN "needsReview"
             ELSE c."recordedReview"
           END,
-          "metadata" = "metadata" - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text - ${PRIOR_NEEDS_REVIEW_KEY}::text
+          -- The rating the grace block replaced with Blocked, and its lock. A CSAM row stays Blocked;
+          -- a row with nothing recorded is re-rated below.
+          "nsfwLevel" = CASE
+            WHEN "blockedFor" = ${
+              BlockedReason.CSAM
+            } OR "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text = ${
+      BlockedReason.CSAM
+    } THEN "nsfwLevel"
+            WHEN c."recordedLevel" IS NOT NULL THEN c."recordedLevel"
+            ELSE "nsfwLevel"
+          END,
+          "nsfwLevelLocked" = CASE
+            WHEN "blockedFor" = ${
+              BlockedReason.CSAM
+            } OR "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text = ${
+      BlockedReason.CSAM
+    } THEN "nsfwLevelLocked"
+            WHEN c."recordedLevel" IS NOT NULL AND c."recordedLocked" IS NOT NULL THEN c."recordedLocked"
+            ELSE "nsfwLevelLocked"
+          END,
+          "metadata" = "metadata"${minusPriorKeysSql}
       FROM (
         SELECT i.id, i."needsReview" AS "currentReview",
-          -- A recorded appeal decided during the window has no queue left to clear it.
+          -- A recorded appeal decided during the window has no queue left to clear it, and a row
+          -- that keeps a CSAM block never takes the appeal review.
           CASE
-            WHEN i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text = 'appeal' AND NOT EXISTS (
-              SELECT 1 FROM "Appeal" a
-              WHERE a."entityType" = 'Image'::"EntityType"
-                AND a."entityId" = i.id
-                AND a.status = 'Pending'::"AppealStatus"
+            WHEN i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text = 'appeal' AND (
+              NOT ${pendingImageAppealSql(Prisma.sql`i.id`)}
+              OR (${csamBlockedSql('i')}) IS TRUE
+              OR i."metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text = ${BlockedReason.CSAM}
             ) THEN NULL
             ELSE i."metadata"->>${PRIOR_NEEDS_REVIEW_KEY}::text
-          END AS "recordedReview"
+          END AS "recordedReview",
+          CASE
+            WHEN jsonb_typeof(i."metadata"->${PRIOR_NSFW_LEVEL_KEY}::text) = 'number'
+              AND i."metadata"->>${PRIOR_NSFW_LEVEL_KEY}::text ~ '^[0-9]{1,2}$'
+            THEN (i."metadata"->>${PRIOR_NSFW_LEVEL_KEY}::text)::int
+          END AS "recordedLevel",
+          CASE
+            WHEN jsonb_typeof(i."metadata"->${PRIOR_NSFW_LOCKED_KEY}::text) = 'boolean'
+            THEN (i."metadata"->>${PRIOR_NSFW_LOCKED_KEY}::text)::boolean
+          END AS "recordedLocked"
         FROM "Image" i
         WHERE i."userId" = ${userId}
           AND i.ingestion = 'Blocked'::"ImageIngestionStatus"
@@ -185,7 +223,7 @@ export async function unblockAccountDeletionImages(userId: number) {
         LIMIT ${RESTORE_BATCH_SIZE}
       ) c
       WHERE "Image".id = c.id
-      RETURNING "Image".id, "postId", ingestion, "blockedFor", "needsReview", c."currentReview", c."recordedReview"
+      RETURNING "Image".id, "postId", ingestion, "blockedFor", "needsReview", c."currentReview", c."recordedReview", c."recordedLevel"
     `;
 
     if (!restored.length) {
@@ -224,12 +262,17 @@ export async function unblockAccountDeletionImages(userId: number) {
     unblocked += ids.length;
     stillBlocked += restored.length - ids.length;
 
+    // A row with its rating recorded got it back above. Re-rating it would lose a moderator's
+    // lock, and the Blocked level that marks a kept row.
+    const rerate = visible.filter((x) => x.recordedLevel == null).map((x) => x.id);
+    const rated = visible.filter((x) => x.recordedLevel != null).map((x) => x.id);
     if (ids.length)
       await limitConcurrency(
         [
           // Blocking force-set `nsfwLevel` to Blocked and left the rating lock on, which the
           // recompute skips; resetBlockedNsfwLevel is the shared undo for that.
-          () => resetBlockedNsfwLevel(ids),
+          () => resetBlockedNsfwLevel(rerate),
+          () => refreshImageLevelCaches(rated),
           // The grace block queued these for purge; leaving the row behind means a later
           // re-delete inherits the first block's clock and skips retention entirely.
           () => dropBlockedImageDeleteQueue(ids),

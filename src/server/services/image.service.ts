@@ -1729,6 +1729,12 @@ export async function updateNsfwLevel(ids: number | number[]) {
   await dbWrite.$executeRawUnsafe(
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
+  await refreshImageLevelCaches(ids);
+}
+
+/** What reads an image's level outside the row: thumbnails, profile pictures, search documents. */
+export async function refreshImageLevelCaches(ids: number[]) {
+  if (!ids.length) return;
   await Promise.all([refreshThumbnailCache(ids), refreshProfilePicturesForImages(ids)]);
   await queueDocumentsForImageMinorChanges({ levelImageIds: ids });
 }

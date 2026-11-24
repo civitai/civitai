@@ -46,7 +46,9 @@ function makePermissive(overrides: Record<string, unknown> = {}): any {
       return Promise.resolve([]);
     },
   };
-  return new Proxy(function () {}, handler);
+  return new Proxy(function () {
+    // Never runs: the apply trap answers every call.
+  }, handler);
 }
 
 // dbRead/dbWrite come from the canonical mock (src/__tests__/setup.ts). It vivifies on property
@@ -737,6 +739,7 @@ describe('handleUnblockImages while the owner is deleted', () => {
       CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
       CREATE TABLE "Appeal" ("entityType" "EntityType", "entityId" int, status "AppealStatus");
       CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, "postId" int, "nsfwLevel" int NOT NULL,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       minor boolean NOT NULL DEFAULT false, "needsReview" text, "blockedFor" text, metadata jsonb,
       "scannedAt" timestamp, ingestion "ImageIngestionStatus", "scanJobs" jsonb);
       CREATE TABLE "TagsOnImageDetails" ("imageId" int, disabled boolean);
@@ -747,7 +750,8 @@ describe('handleUnblockImages while the owner is deleted', () => {
       INSERT INTO "JobQueue" VALUES (1, 'Image', 'BlockedImageDelete', '2026-01-01');
       INSERT INTO "User" VALUES (1, now()), (2, NULL);
       INSERT INTO "Image" (id, "userId", "nsfwLevel", "blockedFor", metadata, ingestion) VALUES
-        (1, 1, 4, 'moderated', '{"ruleId": 3, "keep": 1}', 'Blocked'),
+        -- The grace block's recorded rating: a lift records none, so the restore re-rates the row.
+        (1, 1, 4, 'moderated', '{"ruleId": 3, "keep": 1, "accountDeletionPriorNsfwLevel": 4, "accountDeletionPriorNsfwLevelLocked": true}', 'Blocked'),
         (2, 2, 32, 'moderated', '{"ruleId": 3, "keep": 1}', 'Blocked');`);
     const raw = pgliteRaw(pg);
     const capture = dbWrite.$queryRaw.getMockImplementation();
