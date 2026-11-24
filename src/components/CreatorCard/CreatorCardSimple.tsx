@@ -147,7 +147,6 @@ const CreatorCardSimpleContent = ({
           <EdgeMedia2
             src={backgroundImage.data.url}
             type={backgroundImage.data.type ?? 'image'}
-            anim={true}
             width={450}
             wrapperProps={{
               style: {
