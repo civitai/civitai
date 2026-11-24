@@ -281,16 +281,21 @@ describe.each([
   ],
 ])('%s', (name, remove, queued) => {
   // An owner's own delete waits for a report not yet sent (`ownImageDeleteBlocked`) before any
-  // DELETE runs, so the trigger below never sees it: the row stays as it was until the send.
+  // DELETE runs, so the trigger below never sees it: the row is blocked in place until the send.
   const deferred = (hold: string) => name.startsWith('an owner') && UNSENT_HOLDS.has(hold);
 
   it.each(Object.entries(HOLDS).filter(([hold]) => deferred(hold)))(
-    'held by %s: queued, the row unchanged and no file queued',
+    'held by %s: queued, blocked in place and no file queued',
     async (__, uid) => {
       const before = await imageRow(imageOf(uid));
       await remove(uid);
       expect(await queuedFiles()).toEqual([]);
-      expect(await imageRow(imageOf(uid))).toEqual(before);
+      expect(await imageRow(imageOf(uid))).toEqual({
+        ...before,
+        ingestion: 'Blocked',
+        blockedFor: 'moderated',
+        nsfwLevel: 32,
+      });
       const { rows } = await holder.db.query<{ type: string; data: { ownerId?: number } }>(
         `SELECT "entityType"::text AS type, data FROM "JobQueue" WHERE type = 'PendingDelete'`
       );
@@ -506,8 +511,13 @@ describe('an owner deleting their own content in a child-safety case', () => {
     expect(await deleteImages([imageOf(PLAIN)], { actor: owner })).toEqual([]);
 
     await runJob();
-    // Not yet deleted, so not yet taken off the site either: the row is as it was.
-    expect(await imageRow(imageOf(PLAIN))).toEqual(before);
+    // Not yet deleted, but already off the site.
+    expect(await imageRow(imageOf(PLAIN))).toEqual({
+      ...before,
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+      nsfwLevel: 32,
+    });
     expect(await pending()).toHaveLength(1);
     expect(await queuedFiles()).toEqual([]);
 
@@ -520,6 +530,40 @@ describe('an owner deleting their own content in a child-safety case', () => {
     expect(await imageRow(imageOf(PLAIN))).toEqual(KEPT_ROW);
     expect(await queuedFiles()).toEqual([]);
   });
+
+  // A case-kept delete hides the image whoever deletes it (#10214 covered only a moderator's).
+  it.each<[string, { id: number; isModerator: boolean } | { system: string }]>([
+    ["the owner's", { id: PLAIN, isModerator: false }],
+    ['a system', { system: 'remove-deleted-user-images' }],
+    ["a moderator's own", { id: PLAIN, isModerator: true }],
+  ])(
+    'blocks an image %s delete keeps for its case until a hold placed later keeps it',
+    async (_, actor) => {
+      await holder.db.exec(`
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+      INSERT INTO "ImageReport" VALUES (${imageOf(PLAIN)}, 1);
+    `);
+
+      expect(await deleteImages([imageOf(PLAIN)], { actor })).toEqual([]);
+      expect(await imageRow(imageOf(PLAIN))).toMatchObject({
+        ingestion: 'Blocked',
+        blockedFor: 'moderated',
+        nsfwLevel: 32,
+      });
+      expect(await pending()).toHaveLength(1);
+
+      // The case closes, but a hold placed after the delete was queued (a sent report naming the
+      // owner) keeps the image.
+      await holder.db.exec(`UPDATE "Report" SET status = 'Actioned' WHERE id = 1;
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", images, details)
+      VALUES (${PLAIN}, now(), '[]', '{}')`);
+      await runJob();
+
+      expect(await imageRow(imageOf(PLAIN))).toEqual(KEPT_ROW);
+      expect(await pending()).toEqual([]);
+      expect(await queuedFiles()).toEqual([]);
+    }
+  );
 
   it('is carried out by pending-deletes once the report is ruled on, and not before', async () => {
     await holder.db.exec(`
@@ -536,8 +580,9 @@ describe('an owner deleting their own content in a child-safety case', () => {
 
     expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
     expect(await pending()).toEqual([]);
+    // Hidden while its case was open, so the delete it waited for is no longer a plain owner delete.
     expect(await queuedFiles()).toEqual([
-      { entityId: imageOf(PLAIN), data: { url: urlOf(PLAIN), keepShopArtwork: true } },
+      { entityId: imageOf(PLAIN), data: { url: urlOf(PLAIN) } },
     ]);
   });
 

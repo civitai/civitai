@@ -1150,8 +1150,8 @@ async function invalidateDeletedImages({
   const thumbnailParentIds = uniq(rows.map((row) => row.parentId).filter(isDefined));
   const results = await Promise.allSettled([
     queueImageSearchIndexUpdate({
-      // A row left in place by a condition, ownership, or a child-safety case that did not block it
-      // stays in search; a blocked (hold-kept or hidden) or already-gone row leaves it.
+      // A row left in place by a condition or ownership stays in search; a blocked (hold-kept or
+      // hidden) or already-gone row leaves it.
       ids: [...deletedIds, ...kept.map((x) => x.imageId), ...gone],
       action: SearchIndexUpdateQueueAction.Delete,
     }),

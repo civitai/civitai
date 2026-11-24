@@ -118,12 +118,11 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
           : PENDING_DELETE_UPSERT
       }
     )`);
-  // A moderator's delete blocks each image its case keeps and queues (in a moderator's session, all but
-  // their own), so it leaves feeds and search until the queued delete runs. It writes what
-  // `writeModeratorBlock` writes and also drops the grace markers, so an account restore cannot lift it.
-  // A caller that does not queue what it keeps (the blocked-image purge) blocks nothing.
-  const hides =
-    table === 'Image' && !!options.replay?.moderatorDelete && options.queueKept !== false;
+  // Every image delete blocks each image it keeps (for its case or `ownerReportHold`), whoever deletes
+  // it, so it leaves feeds and search until the delete is carried out. It writes what `writeModeratorBlock` writes and also drops
+  // the grace markers, so an account restore cannot lift it. A caller that does not queue what it keeps
+  // leaves an image already blocked as it is (a takedown's reason stays).
+  const hides = table === 'Image';
   if (hides)
     ctes.push(sql`hidden AS (
       UPDATE "Image" SET ingestion = 'Blocked', "nsfwLevel" = ${NSFW_LEVEL_BLOCKED},
@@ -139,7 +138,7 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
           ELSE metadata END,
         "updatedAt" = now()
       WHERE id IN (SELECT id FROM doomed WHERE blocked)
-        ${'id' in actor ? sql`AND "userId" <> ${actor.id}` : sql``}
+        ${options.queueKept === false ? sql`AND ingestion IS DISTINCT FROM 'Blocked'` : sql``}
       RETURNING id, "userId", "postId"
     )`);
   return {

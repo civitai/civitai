@@ -357,7 +357,7 @@ describe('deleteImageRows keeps a row in a child-safety case', () => {
     expect(gone).toEqual([404]);
   });
 
-  it("blocks what a moderator's delete of someone else's keeps, and only that", async () => {
+  it("blocks what a moderator's delete keeps, their own images included", async () => {
     const OWN = 3;
     const CSAM_BLOCKED = 4;
     await addImage({
@@ -387,6 +387,7 @@ describe('deleteImageRows keeps a row in a child-safety case', () => {
     expect(kept).toEqual([IMAGE, OWN, CSAM_BLOCKED]);
     expect(hidden).toEqual([
       { id: IMAGE, userId: OWNER, postId: 50 },
+      { id: OWN, userId: SOMEONE_ELSE, postId: null },
       { id: CSAM_BLOCKED, userId: OWNER, postId: null },
     ]);
     const { rows } = await pg.query(
@@ -402,7 +403,7 @@ describe('deleteImageRows keeps a row in a child-safety case', () => {
         blockedFor: 'moderated',
         metadata: { width: 1 },
       },
-      { id: OWN, ingestion: 'Scanned', nsfwLevel: 1, blockedFor: null, metadata: null },
+      { id: OWN, ingestion: 'Blocked', nsfwLevel: 32, blockedFor: 'moderated', metadata: null },
       { id: CSAM_BLOCKED, ingestion: 'Blocked', nsfwLevel: 32, blockedFor: 'CSAM', metadata: null },
     ]);
     // The CSAM review flag stays, so the image stays in the CSAM queue.
@@ -475,18 +476,56 @@ describe('deleteImageRows keeps a row in a child-safety case', () => {
     expect(rows).toEqual([{ blockedFor: 'tos' }]);
   });
 
-  it.each([
-    ['a system delete', { system: 'remove-deleted-user-images' }],
-    ["the owner's delete", owner],
-  ])('leaves what %s keeps as it is', async (_, actor) => {
-    await addImage({ needsReview: 'csam' });
+  it.each<[string, { id: number; isModerator?: boolean } | { system: string }, object]>([
+    ['a system delete', { system: 'remove-deleted-user-images' }, {}],
+    ["the owner's delete", owner, {}],
+    [
+      "a moderator's delete of their own image",
+      { id: OWNER, isModerator: true },
+      { moderatorDelete: true },
+    ],
+  ])('blocks what %s keeps for its case, and queues it', async (_, actor, replay) => {
+    await addImage({ needsReview: 'csam', postId: 50 });
 
-    const { kept, hidden } = await deleteImageRows(db, { ids: [IMAGE], actor });
+    const { kept, hidden } = await deleteImageRows(db, { ids: [IMAGE], actor, replay });
 
     expect(kept).toEqual([IMAGE]);
-    expect(hidden).toEqual([]);
+    expect(hidden).toEqual([{ id: IMAGE, userId: OWNER, postId: 50 }]);
+    const { rows } = await pg.query(
+      `SELECT ingestion, "nsfwLevel", "blockedFor" FROM "Image" WHERE id = ${IMAGE}`
+    );
+    expect(rows).toEqual([{ ingestion: 'Blocked', nsfwLevel: 32, blockedFor: 'moderated' }]);
+    expect((await pending()).map((row) => row.entityId)).toEqual([IMAGE]);
+  });
+
+  it("blocks an owner's image kept for an unsent report", async () => {
+    await pg.exec(
+      `INSERT INTO "CsamReport" ("userId", details, images) VALUES (${OWNER}, '{}', '[]')`
+    );
+
+    const { kept, hidden } = await deleteImageRows(db, { ids: [PLAIN], actor: owner });
+
+    expect(kept).toEqual([PLAIN]);
+    expect(hidden).toEqual([{ id: PLAIN, userId: OWNER, postId: null }]);
+    const { rows } = await pg.query(`SELECT ingestion FROM "Image" WHERE id = ${PLAIN}`);
+    expect(rows).toEqual([{ ingestion: 'Blocked' }]);
+    expect((await pending()).map((row) => row.entityId)).toEqual([PLAIN]);
+  });
+
+  it('blocks what a caller that does not queue keeps, unless it is blocked already', async () => {
+    await addImage({ needsReview: 'csam' });
+
+    const { kept, hidden } = await deleteImageRows(db, {
+      ids: [IMAGE],
+      actor: { system: 'remove-replaced-images' },
+      queueKept: false,
+    });
+
+    expect(kept).toEqual([IMAGE]);
+    expect(hidden).toEqual([{ id: IMAGE, userId: OWNER, postId: null }]);
     const { rows } = await pg.query(`SELECT ingestion FROM "Image" WHERE id = ${IMAGE}`);
-    expect(rows).toEqual([{ ingestion: 'Scanned' }]);
+    expect(rows).toEqual([{ ingestion: 'Blocked' }]);
+    expect(await pending()).toEqual([]);
   });
 
   it('keeps without queueing for a caller that retries from its own queue', async () => {

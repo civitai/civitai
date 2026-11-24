@@ -28,22 +28,22 @@ passes, runs one statement that:
 1. locks the listed rows the actor may delete and the caller's condition allows;
 2. leaves each locked row in an open case, or the actor's own row under `ownerReportHold`, and
    queues it as a `PendingDelete`;
-3. for a moderator's delete that queues what it keeps (`replay.moderatorDelete`: a moderator's
-   session; a system caller deleting for one, such as the mod and admin delete endpoints and
-   `removeAllContent`; or the job replaying such a delete), blocks each kept image (in a moderator's
-   session, all but their own) as `writeModeratorBlock` does (`ingestion = 'Blocked'`, `nsfwLevel`
+3. blocks each image it keeps, whoever deletes it (an owner, a moderator, any system
+   caller, or the job replaying a delete), as `writeModeratorBlock` does (`ingestion = 'Blocked'`, `nsfwLevel`
    Blocked, `blockedFor = 'moderated'` unless it is `CSAM`, every review flag but `csam` cleared, and `appeal` kept while an appeal is pending), and
    drops its account-deletion grace markers, so it leaves feeds, search and the review queues while
-   its case keeps it, and neither a queue's accept nor an account restore can lift it. The blocked-image purge (`removeBlockedImages`, `queueKept: false`) blocks nothing;
+   its case keeps it, and neither a queue's accept nor an account restore can lift it. A caller that
+   does not queue what it keeps (`queueKept: false`) leaves an image already blocked as it is, so a
+   takedown's reason stays;
 4. deletes the rest and, for images, queues what the caller asks for: their stored files (unless
    `files` is absent), post recounts (`recountPosts`) and CDN takedowns (`cdnTakedown`);
 5. returns `{ deleted, kept, hidden, gone }`: the deleted rows, the kept ids, the kept images it
    blocked (with their owner and post), and the listed ids that were already gone.
 
 Each app takes a blocked image out of search and busts its caches, as for one a hold marker's
-trigger blocked, and drops it from the comics and home blocks showing it. A kept post is left as it is; a moderator's `deletePost` deletes its images first,
-so those a case keeps are blocked (except the moderator's own). Other system deletes (the
-deleted-account drain, a parent's cleanup without `moderatorDelete`) block nothing.
+trigger blocked, and drops it from the comics and home blocks showing it. A kept post is left as it is; `deletePost` deletes its images first, so those a case
+keeps are blocked. An owner's image blocked this way is no longer a plain owner delete when the
+queued delete runs, so it does not keep an object shop artwork uses.
 
 Lifting a block (a moderator's unblock, an approved appeal, an account restore's lift of a grace
 block) releases any moderator's pending delete on that image: both apps'
