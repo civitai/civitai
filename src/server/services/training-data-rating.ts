@@ -1,4 +1,5 @@
-import { env } from '~/env/server';
+import { headBlob } from '@civitai/orchestration-client';
+import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 
@@ -31,29 +32,29 @@ type ExtractionOutput = {
   rejected?: unknown[];
 };
 
-const HEADER_TIMEOUT_MS = 30_000;
+const HEADER_TIMEOUT_MS = 5_000;
 const HEADER_CONCURRENCY = 8;
-/** The whole header pass, which runs inside the scan webhook: past it, the rest count as unrated. */
-export const HEADER_PASS_DEADLINE_MS = 120_000;
+/**
+ * The whole header pass, which runs inside the scan webhook, so it stays short: past it, the rest
+ * count as unrated and the zip stays not fully rated.
+ */
+export const HEADER_PASS_DEADLINE_MS = 15_000;
 /** Entries the extraction step extracts; the rest come back rejected, so the zip is not fully rated. */
 export const TRAINING_DATA_MAX_RATED_ENTRIES = 2_000;
 
 /** The blob's level as the orchestrator serves it, which waits for the blob's scan verdict. */
-async function blobHeaderLevel(air: string | undefined, workflowId: string) {
-  const key = air?.split('@').pop();
-  if (!key) return null;
+async function blobHeaderLevel(air: string | undefined, workflowId: string, deadline: number) {
+  const blobId = air?.split('@').pop();
+  const timeout = Math.min(HEADER_TIMEOUT_MS, deadline - Date.now());
+  if (!blobId || timeout <= 0) return null;
   try {
-    const response = await fetch(
-      `${env.ORCHESTRATOR_ENDPOINT?.replace(/\/$/, '')}/v2/consumer/blobs/${encodeURIComponent(
-        key
-      )}?workflowId=${encodeURIComponent(workflowId)}`,
-      {
-        headers: { Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}` },
-        signal: fetchTimeoutSignal(HEADER_TIMEOUT_MS),
-      }
-    );
-    await response.body?.cancel().catch(() => undefined);
-    return response.ok ? response.headers.get('x-nsfw-level') : null;
+    const { response } = await headBlob({
+      client: internalOrchestratorClient,
+      path: { blobId },
+      query: { workflowId },
+      signal: fetchTimeoutSignal(timeout),
+    });
+    return response?.ok ? response.headers.get('x-nsfw-level') : null;
   } catch {
     return null;
   }
@@ -83,7 +84,7 @@ export async function extractionRating(output: ExtractionOutput, workflowId: str
           nsfwLevel:
             entry.mediaType === 'text'
               ? null
-              : entry.blob?.nsfwLevel ?? (await blobHeaderLevel(entry.air, workflowId)),
+              : entry.blob?.nsfwLevel ?? (await blobHeaderLevel(entry.air, workflowId, deadline)),
         }))
       ))
     );

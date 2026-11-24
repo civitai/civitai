@@ -176,7 +176,7 @@ export async function deleteFilesForModelVersionCache(modelVersionId: number) {
 
 /**
  * A new Training Data zip is not rated until its scan rates it (the archiveExtraction step, or the
- * Studio dataset archive), and an unrated zip is not served off a red-capable host
+ * Studio dataset archive), and an unrated zip is not served off a non-red host
  * (trainingDataServableOnHost refuses fullyRated: false).
  */
 function notYetRated<M>(metadata: M): M {

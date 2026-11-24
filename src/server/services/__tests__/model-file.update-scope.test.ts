@@ -915,7 +915,7 @@ describe('the rating on a new dataset', () => {
     expect(createdData().metadata).toMatchObject({ selectedEpochUrl: 'https://orch.test/epoch-1' });
     expect(createdData().metadata).not.toHaveProperty('datasetArchive');
     expect(createdData().metadata).not.toHaveProperty('nsfwLevel');
-    // Unrated until its scan rates it, and so not served off a red-capable host meanwhile.
+    // Unrated until its scan rates it, so a non-red host does not serve it meanwhile.
     expect(createdData().metadata).toMatchObject({ fullyRated: false });
   });
 });
@@ -1100,7 +1100,7 @@ describe('an owner editing a Training Studio dataset directly', () => {
   });
 });
 
-// Until its zip is rated, a new Training Data upload is not served off a red-capable host
+// Until its zip is rated, a new Training Data upload is not served off a non-red host
 // (trainingDataServableOnHost refuses fullyRated: false); the scan's archiveExtraction step rates it.
 describe('a new Training Data zip starts not fully rated', () => {
   it('stamps a created zip, over whatever the input says', async () => {

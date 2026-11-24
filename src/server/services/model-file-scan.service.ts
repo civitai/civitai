@@ -1020,6 +1020,13 @@ async function handleScanWorkflow(event: WorkflowEvent) {
       ? (data.metadata?.url as string | undefined)
       : undefined;
 
+  const steps = (data.steps ?? []) as unknown as ModelScanStep[];
+  // A failed workflow keeps the result of a step that finished: a zip's rating step failing must not
+  // discard its virus verdict, it only leaves the zip unrated.
+  const finished = (step: { status?: string } | undefined) =>
+    event.status === 'succeeded' || step?.status === 'succeeded';
+  const clamScan = steps.find((x) => x.$type === 'modelClamScan') as ModelClamScanStep | undefined;
+
   if (event.status !== 'succeeded') {
     logToAxiom(
       {
@@ -1032,12 +1039,12 @@ async function handleScanWorkflow(event: WorkflowEvent) {
       },
       'webhooks'
     );
-    await applyScanOutcome({ fileId, modelVersionId, trainingDataUrl, failed: true });
-    return;
+    if (!trainingDataUrl || !finished(clamScan)) {
+      await applyScanOutcome({ fileId, modelVersionId, trainingDataUrl, failed: true });
+      return;
+    }
   }
 
-  const steps = (data.steps ?? []) as unknown as ModelScanStep[];
-  const clamScan = steps.find((x) => x.$type === 'modelClamScan') as ModelClamScanStep | undefined;
   const pickleScan = steps.find((x) => x.$type === 'modelPickleScan') as
     | ModelPickleScanStep
     | undefined;
@@ -1053,7 +1060,7 @@ async function handleScanWorkflow(event: WorkflowEvent) {
     rawScanResult: { source: 'orchestrator', workflowId: event.workflowId, steps },
   };
 
-  if (clamScan?.output) {
+  if (clamScan?.output && finished(clamScan)) {
     const derived = deriveClamScanResult(clamScan.output);
     // A zip's scan that read no files has not cleared it.
     const readNothing =
@@ -1115,9 +1122,14 @@ async function handleScanWorkflow(event: WorkflowEvent) {
   }
 
   const extraction = steps.find((x) => (x as { $type?: string }).$type === 'archiveExtraction') as
-    | { output?: Parameters<typeof extractionRating>[0] }
+    | { status?: string; output?: Parameters<typeof extractionRating>[0] }
     | undefined;
-  if (trainingDataUrl && outcome.virusScan?.result === ScanResultCode.Success && extraction?.output)
+  if (
+    trainingDataUrl &&
+    outcome.virusScan?.result === ScanResultCode.Success &&
+    extraction?.output &&
+    finished(extraction)
+  )
     outcome.trainingDataRating = await extractionRating(extraction.output, event.workflowId);
 
   if (pickleScan?.output) {

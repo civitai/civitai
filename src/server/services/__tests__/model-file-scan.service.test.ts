@@ -18,6 +18,7 @@ const mockBustSetNx = redisMock.redis.setNxKeepTtlWithEx;
 
 const {
   mockGetWorkflow,
+  mockHeadBlob,
   mockDeleteFilesForModelVersionCache,
   mockCreateNotification,
   mockModelsSearchIndexQueueUpdate,
@@ -50,6 +51,7 @@ const {
   }
   return {
     mockGetWorkflow: vi.fn(),
+    mockHeadBlob: vi.fn(),
     mockDeleteFilesForModelVersionCache: vi.fn().mockResolvedValue(undefined),
     mockCreateNotification: vi.fn().mockResolvedValue(undefined),
     mockModelsSearchIndexQueueUpdate: vi.fn().mockResolvedValue(undefined),
@@ -75,6 +77,7 @@ const {
 vi.mock('@civitai/orchestration-client', async () => ({
   ...(await import('../orchestrator/__tests__/civitai-client.stub')).civitaiClientStub(),
   getWorkflow: mockGetWorkflow,
+  headBlob: mockHeadBlob,
   submitWorkflow: vi.fn(),
   createCivitaiClient: vi.fn(),
   WorkflowStatus: { Pending: 'Pending', Running: 'Running', Completed: 'Completed' },
@@ -1464,18 +1467,14 @@ describe('model-file-scan.service', () => {
         const header = vi.fn();
         beforeEach(() => {
           mockDbWrite.$executeRaw.mockReset().mockResolvedValue(1);
-          header.mockReset().mockResolvedValue(null);
-          vi.stubGlobal(
-            'fetch',
-            vi.fn(
-              async () =>
-                new Response(null, {
-                  headers: (await header()) ? { 'x-nsfw-level': await header() } : {},
-                })
-            )
-          );
+          header.mockReset().mockReturnValue(null);
+          mockHeadBlob.mockReset().mockImplementation(async () => {
+            const level = header();
+            return {
+              response: new Response(null, { headers: level ? { 'x-nsfw-level': level } : {} }),
+            };
+          });
         });
-        afterEach(() => vi.unstubAllGlobals());
 
         it('stores the OR of the media levels, ignoring captions, on a row that is not a Studio dataset', async () => {
           extracted([
@@ -1492,7 +1491,7 @@ describe('model-file-scan.service', () => {
         });
 
         it("reads an entry's level from the blob's x-nsfw-level header when the entry has none", async () => {
-          header.mockResolvedValue('pg');
+          header.mockReturnValue('pg');
           extracted([{ path: '01.png', mediaType: 'image' }]);
           await deliver();
           expect(writtenRating()?.rating).toEqual({ nsfwLevel: 1, fullyRated: true });
@@ -1510,6 +1509,56 @@ describe('model-file-scan.service', () => {
           );
           await deliver();
           expect(writtenRating()?.rating).toEqual({ nsfwLevel: 1, fullyRated: false });
+        });
+
+        it('keeps the virus verdict when only the extraction step failed, and writes no rating', async () => {
+          mockGetWorkflow.mockResolvedValue({
+            data: {
+              metadata: {
+                fileId: 1,
+                scan: 'training-data-blob',
+                url: ZIP,
+                etag: '"e1"',
+                size: 2048,
+              },
+              steps: [
+                {
+                  $type: 'modelClamScan',
+                  status: 'succeeded',
+                  output: { status: 'clean', scannedFileCount: 3 },
+                },
+                { $type: 'archiveExtraction', status: 'failed' },
+              ],
+            },
+          });
+          await deliver('failed');
+          expect(mockDbWrite.modelFile.update.mock.calls[0]?.[0].data.virusScanResult).toBe(
+            ScanResultCode.Success
+          );
+          expect(writtenRating()).toBeUndefined();
+        });
+
+        it('still fails the scan when the virus scan step itself did not finish', async () => {
+          mockGetWorkflow.mockResolvedValue({
+            data: {
+              metadata: {
+                fileId: 1,
+                scan: 'training-data-blob',
+                url: ZIP,
+                etag: '"e1"',
+                size: 2048,
+              },
+              steps: [
+                { $type: 'modelClamScan', status: 'failed' },
+                { $type: 'archiveExtraction', status: 'succeeded', output: { entries: [] } },
+              ],
+            },
+          });
+          await deliver('failed');
+          expect(mockDbWrite.modelFile.update.mock.calls[0]?.[0].data).toEqual({
+            scanRequestedAt: expect.any(Date),
+          });
+          expect(writtenRating()).toBeUndefined();
         });
 
         it('writes no rating when the virus scan did not clear the zip', async () => {
