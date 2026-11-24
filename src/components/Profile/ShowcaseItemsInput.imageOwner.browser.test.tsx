@@ -7,8 +7,8 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 // The showcase editor's Images picker, mounted with the real InstantSearch, Configure and search
 // client wiring. Only the transports are faked: Meilisearch answers no images, the semantic search
-// fake applies `usernames` the way the server does, and `image.getMyImages` answers the caller's own
-// images (the server reads the caller from the session).
+// fake must never be called by the Images picker, and `image.getMyImages` answers the caller's own
+// images and videos, typed or not (the server reads the caller from the session).
 
 const OWNER_IMAGE = 41;
 const OWNER_VIDEO = 42;
@@ -176,8 +176,8 @@ describe('Images search in the showcase picker', () => {
     for (const [input] of state.myImages.mock.calls) expect(input).not.toHaveProperty('userId');
   });
 
-  // Owner scope only reaches the semantic image search (as a facet); the semantic article search
-  // would ignore it, so Articles stay on Meilisearch, where the `filters` string applies.
+  // The semantic article search would ignore an owner scope, so Articles stay on Meilisearch,
+  // where the `filters` string applies.
   test('the Articles tab offers only the owner’s articles with semantic article search on', async () => {
     renderWithProviders(
       <ShowcaseItemsInput username="fox" supportedIndexes={['articles']} value={[]} />
