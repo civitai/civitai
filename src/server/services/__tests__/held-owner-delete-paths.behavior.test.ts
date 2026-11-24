@@ -87,6 +87,7 @@ const urlOf = (uid: number) => `key-${uid}`;
 const OWNERS = [...Object.values(HOLDS), PLAIN];
 
 const BASE_SCHEMA = `
+  CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp(3));
   CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
   CREATE TABLE "Image" (
     id int PRIMARY KEY,
@@ -157,7 +158,7 @@ beforeAll(async () => {
 const reset = () =>
   holder.db.exec(`
     SET session_replication_role = replica;
-    TRUNCATE "Image", "Post", "CsamReport", "JobQueue", "EvidenceHold", "EvidenceHoldImage", "EvidenceHoldPost";
+    TRUNCATE "User", "Image", "Post", "CsamReport", "JobQueue", "EvidenceHold", "EvidenceHoldImage", "EvidenceHoldPost";
     SET session_replication_role = DEFAULT;
   `);
 
@@ -202,6 +203,7 @@ beforeEach(async () => {
     return (await holder.db.query(sql.text, sql.values as unknown[])).rows;
   };
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation(run as never);
+  vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(run as never);
   vi.mocked(dbMock.dbWrite.$transaction).mockImplementation((async (fn: unknown) =>
     (fn as (tx: unknown) => unknown)(dbMock.dbWrite)) as never);
 
@@ -566,6 +568,13 @@ describe('an owner deleting their own content in a child-safety case', () => {
       false,
     ],
     ['deletes', false, 'dismissed', dismissed, false],
+    [
+      'deletes',
+      true,
+      'dismissed, the account deleted again',
+      `${dismissed}; INSERT INTO "User" (id, "deletedAt") VALUES (${PLAIN}, now())`,
+      false,
+    ],
   ])(
     '%s a drain delete (restored: %s) once its case closes %s',
     async (_, restored, _closedAs, close, kept) => {
@@ -587,14 +596,6 @@ describe('an owner deleting their own content in a child-safety case', () => {
         nsfwLevel: 32,
       });
       if (restored) {
-        vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(((
-          strings: TemplateStringsArray,
-          ...values: unknown[]
-        ) =>
-          vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!(
-            strings,
-            ...(values as never[])
-          )) as never);
         await releaseAccountDeletionPendingDeletes(PLAIN);
       }
       expect(await pending()).toEqual([
@@ -718,6 +719,62 @@ describe('an owner deleting their own content in a child-safety case', () => {
     expect(await queuedFiles()).toEqual([
       { entityId: imageOf(PLAIN), data: { url: urlOf(PLAIN), allVersions: true } },
     ]);
+  });
+
+  // The image goes first; its finding must still reach the post (Legal, #10235).
+  it('deletes a restored post whose image the case found, not only the image', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+      INSERT INTO "PostReport" VALUES (${postOf(PLAIN)}, 1);
+    `);
+    await deletePost({ id: postOf(PLAIN), actor: { system: ACCOUNT_DELETION_DRAIN } });
+    expect(await pending()).toHaveLength(2);
+    await releaseAccountDeletionPendingDeletes(PLAIN);
+    expect((await pending()).map(({ data }) => data)).toEqual([
+      { deletedBy: ACCOUNT_DELETION_DRAIN, releasedOnRestore: true },
+      { deletedBy: ACCOUNT_DELETION_DRAIN, releasedOnRestore: true },
+    ]);
+
+    await holder.db.exec(`
+      UPDATE "Report" SET status = 'Unactioned' WHERE id = 1;
+      UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = ${imageOf(PLAIN)};
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", images, details)
+      VALUES (${PLAIN}, now(), '[${imageOf(
+      PLAIN
+    )}]', '{"evidenceVerifiedAt": "2026-11-01T00:00:00Z"}')
+    `);
+    await runJob();
+    await runJob();
+
+    expect(await pending()).toEqual([]);
+    expect(
+      (await holder.db.query(`SELECT id FROM "Post" WHERE id = ${postOf(PLAIN)}`)).rows
+    ).toEqual([]);
+  });
+
+  it("carries out a moderator's later delete of a post a restore marked, though its case finds nothing", async () => {
+    await holder.db.exec(`
+      INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+      INSERT INTO "PostReport" VALUES (${postOf(PLAIN)}, 1);
+    `);
+    await deletePost({ id: postOf(PLAIN), actor: { system: ACCOUNT_DELETION_DRAIN } });
+    await releaseAccountDeletionPendingDeletes(PLAIN);
+    await deletePost({
+      id: postOf(PLAIN),
+      actor: { id: MODERATOR, isModerator: true },
+      isModerator: true,
+    });
+    expect(
+      (await pending()).find(({ entityType }) => entityType === 'Post')?.data
+    ).not.toHaveProperty('releasedOnRestore');
+
+    await holder.db.exec(`UPDATE "Report" SET status = 'Unactioned' WHERE id = 1`);
+    await runJob();
+    await runJob();
+
+    expect(
+      (await holder.db.query(`SELECT id FROM "Post" WHERE id = ${postOf(PLAIN)}`)).rows
+    ).toEqual([]);
   });
 
   // An account's own deletion runs as the system, under its own condition.

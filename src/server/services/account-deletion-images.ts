@@ -54,7 +54,9 @@ export function disarmAccountDeletionImagePurge(userId: number) {
  * Takes the drain's ask off this account's pending deletes, which `pending-deletes` carries out
  * without looking at the account: a row only it asked for goes, and one someone else also asked for
  * keeps theirs. One whose case is still open stays, marked `releasedOnRestore`, so the restore cannot
- * make it publishable and `pending-deletes` releases rather than deletes it once the case closes. A `PrismaPromise`, for the same transaction as the `deletedAt` clear.
+ * make it publishable; `pending-deletes` releases it once the case closes with no finding, and
+ * deletes it otherwise.
+ * A `PrismaPromise`, for the same transaction as the `deletedAt` clear.
  */
 export function releaseAccountDeletionPendingDeletes(userId: number) {
   return dbWrite.$executeRaw`
@@ -80,7 +82,7 @@ export function releaseAccountDeletionPendingDeletes(userId: number) {
       WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"
         AND q."entityId" = d."entityId" AND d."askedElse"
     ),
-    -- Its case keeps it hidden; once the case closes, pending-deletes drops the row instead of deleting.
+    -- Its open case keeps it hidden; pending-deletes decides when the case closes.
     marked AS (
       UPDATE "JobQueue" q SET data = q.data || '{"releasedOnRestore": true}'::jsonb FROM drained d
       WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"

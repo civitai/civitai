@@ -54,9 +54,11 @@ post a moderator already unpublished keeps its own reason. Once that row is gone
 the post, a publish goes through and drops the stamp. An account restore
 (`releaseAccountDeletionPendingDeletes`) leaves the drain's delete of an image or post whose case is
 still open, marked `releasedOnRestore`, so it cannot make that content publishable: the content stays
-hidden until the case closes. Then `pending-deletes` releases it (drops the row and keeps the content, still hidden as the delete left it)
-only if the case found nothing; on a finding (blocked for CSAM, listed on a CSAM report, or an actioned
-child-safety report on the image, its post or its review) it carries out the delete as queued.
+hidden until the case closes. Then `pending-deletes` releases it (drops the row and keeps the content) only if the case found nothing and the account has
+not been deleted again; a released image stays hidden until a moderator lifts its block or the owner
+appeals it; on a finding (blocked for CSAM, listed on a CSAM report, or an actioned
+child-safety report on the image, its post or its review) it carries out the delete as queued, and
+an image carried out that way takes its post with it. Any other ask on a marked row takes the mark off.
 `deletePost` runs the unpublish follow-ups (`afterPostsUnpublish`) for a post it kept; the other
 `deletePostRows` callers do not yet. A publish the trigger refuses makes `updatePost` answer that the
 post can't be published right now.

@@ -179,7 +179,8 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
   };
 }
 
-/** Why a post its delete keeps is unpublished; trg_post_pending_delete_keep_unpublished refuses a publish while its PendingDelete row exists. */
+/** Why a post its delete keeps is unpublished. The publish guard trigger refuses a publish while its
+ * PendingDelete row exists. */
 export const POST_PENDING_DELETE_REASON = 'pending-delete';
 
 /** A kept image a moderator's delete blocked, and the post it is still in. */
@@ -235,8 +236,8 @@ const POST_RECOUNT_UPSERT = sql`
  * app's `image-storage-deletes` job (unless `files` is absent, when the files stay); with
  * `recountPosts`, each post's rating recount for `update-nsfw-levels`; and with `cdnTakedown`, a
  * moderator's takedown of each url for `cdn-access-sync`. So a deleted row always leaves its
- * follow-ups queued, with no transaction around it. A delete that hides an image no moderator decided
- * on runs a second statement, so run that one in a transaction. Returns what became of each listed id.
+ * follow-ups queued by the same statement. A delete that hides an image no moderator decided on runs a
+ * second statement, so run that one in a transaction. Returns what became of each listed id.
  */
 export async function deleteImageRows(
   db: Kysely<DB>,

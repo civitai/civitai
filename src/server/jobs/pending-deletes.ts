@@ -116,16 +116,37 @@ async function standing(kind: Kind, ids: number[]) {
   return new Map(rows.map(({ id, ...row }) => [id, row]));
 }
 
-/** Of `ids`, those whose closed case found nothing: only these may be kept rather than deleted. */
+/**
+ * Of `ids`, those whose closed case found nothing and whose owner is not deleted again: only these
+ * may be kept rather than deleted.
+ */
 async function clearedByCase(kind: Kind, ids: number[]) {
   if (!ids.length) return new Set<number>();
   const finding = kind === 'Image' ? childSafetyImageFinding(kind) : childSafetyPostFinding(kind);
   const { rows } = await sql<{ cleared: number }>`
     SELECT ${sql.table(kind)}.id AS cleared FROM ${sql.table(kind)}
     WHERE ${sql.table(kind)}.id = ANY(${ids}::int[]) AND (${finding}) IS FALSE
+      AND NOT EXISTS (
+        SELECT 1 FROM "User" u WHERE u.id = ${sql.ref(
+          `${kind}.userId`
+        )} AND u."deletedAt" IS NOT NULL
+      )
   `.execute(db());
   return new Set(rows.map(({ cleared }) => cleared));
 }
+
+/**
+ * A restore-marked image carried out on a finding takes the mark off its post's delete, so the post
+ * goes too: once the image is deleted, the post's own finding can no longer see it.
+ */
+const unmarkPostsOf = (imageIds: number[]) =>
+  imageIds.length
+    ? sql`
+        UPDATE "JobQueue" SET data = data - 'releasedOnRestore'
+        WHERE type = 'PendingDelete' AND "entityType" = 'Post'
+          AND "entityId" IN (SELECT "postId" FROM "Image" WHERE id = ANY(${imageIds}::int[]))
+      `.execute(db())
+    : undefined;
 
 /**
  * Carries out each pending delete as its kind says: a cleanup while `cleanupStillApplies`, anyone
@@ -191,12 +212,11 @@ export const pendingDeletes = createJob('pending-deletes', '*/5 * * * *', async 
     const dueIds = new Set(due.map((row) => row.id));
     // Only the drain asked and the account came back: a case that found nothing keeps the item, and
     // only the row goes. Any finding, or an outcome not read as none, deletes it as queued.
-    const releasedIds = await clearedByCase(
-      kind,
-      due
-        .filter(({ data }) => data.releasedOnRestore && data.ownerId === undefined && !data.cleanup)
-        .map((row) => row.id)
-    );
+    const marked = due
+      .filter(({ data }) => data.releasedOnRestore && data.ownerId === undefined && !data.cleanup)
+      .map((row) => row.id);
+    const releasedIds = await clearedByCase(kind, marked);
+    if (kind === 'Image') await unmarkPostsOf(marked.filter((id) => !releasedIds.has(id)));
     const threw = new Set(
       await carryOut(
         kind,

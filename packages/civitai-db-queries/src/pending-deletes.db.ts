@@ -54,19 +54,22 @@ const pendingRank = (column: string) => {
 
 // A stronger kind replaces a queued one (a moderator's delete or cleanup, anyone's outright delete, an
 // owner's cleanup, strongest first) and the row keeps its earlier due time. An outright ask (`ownerId`,
-// `deletedBy`) survives either way. Anything else changes nothing.
+// `deletedBy`) survives either way. Another ask on a row a restore marked takes the mark off, so the
+// row is carried out, not released. Anything else changes nothing.
 export const PENDING_DELETE_UPSERT = sql`
   ON CONFLICT ("entityType", "entityId", "type") DO UPDATE
-    SET "data" = CASE
+    SET "data" = (CASE
         WHEN ${pendingRank('EXCLUDED."data"')} > ${pendingRank('"JobQueue"."data"')}
         THEN EXCLUDED."data" ELSE "JobQueue"."data" END
       || jsonb_strip_nulls(jsonb_build_object(
         'ownerId', COALESCE(EXCLUDED."data"->'ownerId', "JobQueue"."data"->'ownerId'),
-        'deletedBy', COALESCE(EXCLUDED."data"->'deletedBy', "JobQueue"."data"->'deletedBy'))),
+        'deletedBy', COALESCE(EXCLUDED."data"->'deletedBy', "JobQueue"."data"->'deletedBy'))))
+      - 'releasedOnRestore',
       "createdAt" = LEAST("JobQueue"."createdAt", EXCLUDED."createdAt")
     WHERE ${pendingRank('EXCLUDED."data"')} > ${pendingRank('"JobQueue"."data"')}
       OR (EXCLUDED."data" ? 'ownerId' AND NOT "JobQueue"."data" ? 'ownerId')
-      OR (EXCLUDED."data" ? 'deletedBy' AND NOT "JobQueue"."data" ? 'deletedBy')`;
+      OR (EXCLUDED."data" ? 'deletedBy' AND NOT "JobQueue"."data" ? 'deletedBy')
+      OR "JobQueue"."data" ? 'releasedOnRestore'`;
 
 /** `NsfwLevel.Blocked`. */
 export const NSFW_LEVEL_BLOCKED = 32;
