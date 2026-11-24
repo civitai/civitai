@@ -4,6 +4,7 @@ import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { dbRead } from './db';
 import { issueStrike, removeImages, setImageFlag } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
+import { isReviewImageSql } from './review-image';
 import { approvedAppealOf, type ApprovedAppealBadge, type HeldSummary } from './removal-hold';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
 
@@ -75,9 +76,7 @@ const extraColumns = [
   sql<boolean>`EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."imageId" = i."id")`.as(
     'hasConnection'
   ),
-  sql<boolean>`EXISTS (SELECT 1 FROM "ServiceDealReviewImage" ri WHERE ri."imageId" = i."id")`.as(
-    'isReviewImage'
-  ),
+  isReviewImageSql(sql.ref('i.id')).as('isReviewImage'),
 ];
 
 /**
@@ -348,15 +347,16 @@ export type StrikeSummary = {
   error?: string;
 };
 
-/** Which of `imageIds` are images on a service review (`ServiceDealReviewImage`). */
+/** Which of `imageIds` are images on a service review. */
 export async function reviewImageIdsAmong(imageIds: number[]): Promise<Set<number>> {
   if (!imageIds.length) return new Set();
   const rows = await dbRead
-    .selectFrom('ServiceDealReviewImage')
-    .select('imageId')
-    .where('imageId', 'in', imageIds)
+    .selectFrom('Image as i')
+    .select('i.id')
+    .where('i.id', 'in', imageIds)
+    .where(isReviewImageSql(sql.ref('i.id')))
     .execute();
-  return new Set(rows.map((r) => r.imageId));
+  return new Set(rows.map((r) => r.id));
 }
 
 export function reviewImagesSkippedNote(reviewImagesSkipped: number): string {
