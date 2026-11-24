@@ -1,9 +1,10 @@
--- Takes back from the Knights app's database role the tables "KnightsImageGate" replaces, and an UPDATE it never uses.
+-- Least-privilege cleanup for the Knights app's database role: revokes its privileges on tables it no longer uses now
+-- that it reads "KnightsImageGate", and an UPDATE it never used, then checks it holds SELECT on none of them.
 --
--- Apply MANUALLY, per environment, only once the Knights release that reads "KnightsImageGate" is live (the release
--- before it still reads "CsamReport" and "EvidenceHeldUser"), and together with the grant reconciler's matrix change
--- that stops granting these, or the next reconciler run grants them back. Apply as the owner of these tables.
--- Re-runnable; a table this environment lacks is skipped.
+-- Apply MANUALLY, per environment, once the Knights release that reads "KnightsImageGate" is live, together with the
+-- grant reconciler's matrix change for these tables. Apply as the owner of these tables. Re-runnable; a table this
+-- environment lacks is skipped. Fails, changing nothing, if the role still holds SELECT on one of them (through a role
+-- it belongs to or a PUBLIC grant).
 
 BEGIN;
 
@@ -27,6 +28,18 @@ BEGIN
   IF to_regclass('public."KnightsInquisitorVote"') IS NOT NULL THEN
     REVOKE UPDATE ON public."KnightsInquisitorVote" FROM knights_app;
   END IF;
+  -- Every table above but the pg_stat_statements views, which PUBLIC may read wherever the extension is installed.
+  FOREACH relation IN ARRAY ARRAY[
+    'CsamReport', 'EvidenceHeldUser', 'EvidenceHoldImage', 'EvidenceHoldPost', 'BlockedImage',
+    'ScanLabelItem', 'ScanLabelFlag', 'ScanLabelVote', 'Model', 'ModelVersion', 'TextScanHold',
+    'ImageCdnModeratorDelete', 'UserReport', 'ModelReport', 'PostReport', 'Appeal', 'ImageFlag',
+    'ImageResourceNew', 'CollectionItem'
+  ] LOOP
+    IF to_regclass(format('public.%I', relation)) IS NOT NULL
+       AND has_table_privilege('knights_app', format('public.%I', relation), 'SELECT') THEN
+      RAISE EXCEPTION 'knights_app still holds SELECT on %; revoke the grant it inherits', relation;
+    END IF;
+  END LOOP;
 END
 $$;
 

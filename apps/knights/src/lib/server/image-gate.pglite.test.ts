@@ -290,10 +290,47 @@ describe('knights_ensure_vote_partition', () => {
   });
 });
 
+describe('the revoke migration', () => {
+  const REVOKES = IMAGE_GATE_MIGRATION.replace(
+    '20271127120000_knights_image_gate',
+    '20271127120100_knights_image_gate_revokes'
+  );
+  const apply = async () => {
+    await pg.exec(`SET ROLE ${TABLE_OWNER}`);
+    try {
+      await pg.exec(readFileSync(REVOKES, 'utf8'));
+    } catch (error) {
+      // The file's own transaction is left aborted by the failure.
+      await pg.exec('ROLLBACK');
+      throw error;
+    } finally {
+      await pg.exec('RESET ROLE');
+    }
+  };
+
+  it('takes back a direct grant', async () => {
+    await pg.exec(`GRANT SELECT ON "CsamReport" TO ${KNIGHTS_APP_ROLE}`);
+    await apply();
+    await expect(sql.raw('SELECT 1 FROM "CsamReport" LIMIT 1').execute(db)).rejects.toThrow(
+      /permission denied/
+    );
+  });
+
+  it('fails when the role still holds SELECT another way', async () => {
+    await pg.exec(`GRANT SELECT ON "CsamReport" TO PUBLIC`);
+    try {
+      await expect(apply()).rejects.toThrow(/still holds SELECT on CsamReport/);
+    } finally {
+      await pg.exec(`REVOKE SELECT ON "CsamReport" FROM PUBLIC`);
+    }
+  });
+});
+
 describe('the image gate migration', () => {
   it('refuses to run as a superuser', async () => {
     await expect(pg.exec(readFileSync(IMAGE_GATE_MIGRATION, 'utf8'))).rejects.toThrow(
       /not a superuser/
     );
+    await pg.exec('ROLLBACK');
   });
 });

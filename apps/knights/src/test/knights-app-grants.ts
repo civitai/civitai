@@ -21,7 +21,7 @@ export const KNIGHTS_APP_GRANTS: Readonly<Record<string, readonly Privilege[]>> 
   KnightsGoldConversion: ['SELECT', 'INSERT', 'UPDATE'],
   KnightsHarvestCursor: ['SELECT', 'INSERT', 'UPDATE'],
   KnightsInquisitorReview: ['SELECT', 'INSERT', 'UPDATE'],
-  KnightsInquisitorVote: ['SELECT', 'INSERT', 'UPDATE'],
+  KnightsInquisitorVote: ['SELECT', 'INSERT'],
   KnightsLegacyPlayerDay: ['SELECT'],
   KnightsNotificationSend: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
   KnightsPlayer: ['SELECT', 'INSERT', 'UPDATE'],
