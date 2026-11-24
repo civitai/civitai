@@ -66,6 +66,7 @@ describe('orchestrator mature unlock refusal', () => {
     expect(h.updateWorkflow).not.toHaveBeenCalled();
   });
 
+  // Domain-only mature rule: civitai/civitai#10332.
   it.each([true, false])(
     'unlocks on red whatever the mature content setting (%s)',
     async (showNsfw) => {
@@ -90,6 +91,7 @@ describe('orchestrator mature unlock refusal', () => {
   });
 });
 
+// Domain-only mature rule: civitai/civitai#10332.
 describe('orchestrator reads: mature content follows the domain, not the setting', () => {
   beforeEach(() => vi.clearAllMocks());
 

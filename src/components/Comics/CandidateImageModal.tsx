@@ -230,7 +230,6 @@ export function CandidateImageModal({
 
             const isSelected = slot.key === effectiveSelection;
             const matureClean = isCandidateMature(slot);
-            // On green a clean mature output is a slip-through, so it stays blurred.
             const showBlur = blurMatureCandidates && matureClean && !revealedKeys.has(slot.key);
             return (
               <div key={slot.key} className="relative">

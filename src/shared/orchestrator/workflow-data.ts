@@ -432,7 +432,7 @@ export abstract class BlobData {
     // Off green, an output withheld as 'MatureContent' (workflow created with mature content off,
     // e.g. on .com) goes through the rules below like any other, so a rated-mature one can offer its
     // owner the unlock; when no rule matches it keeps 'MatureContent'.
-    const withheldMature = !domain.green && this.blockedReason === 'MatureContent';
+    const withheldMature = this.blockedReason === 'MatureContent';
     if (data.blockedReason === 'none' || withheldMature) this.blockedReason = null;
 
     if (!this.blockedReason) {

@@ -141,6 +141,7 @@ describe('comics.unlockPanelGeneration - who may unlock', () => {
     expect(clientUpdateWorkflow).not.toHaveBeenCalled();
   });
 
+  // Domain-only mature rule: civitai/civitai#10332.
   it.each([true, false])(
     'CONTROL: sends the unlock on red whatever the mature content setting (%s)',
     async (showNsfw) => {

@@ -186,6 +186,7 @@ describe('pollIterationWorkflow availability', () => {
     expect(mocks.createImage).not.toHaveBeenCalled();
   });
 
+  // Domain-only mature rule: civitai/civitai#10332.
   it('returns a mature result on red whatever the mature content setting', async () => {
     givenWorkflow([output({ nsfwLevel: MATURE })], { allowMatureContent: true });
 
