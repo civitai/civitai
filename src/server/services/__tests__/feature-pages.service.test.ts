@@ -275,3 +275,23 @@ describe('getFeaturePageViewerHandle', () => {
     expect(Date.now() - started).toBeLessThan(4_000);
   });
 });
+
+describe('getFeaturePageProps', () => {
+  it('serves the page private and never stored, so no shared cache can hand it to another viewer', async () => {
+    envMock.set({ FEATURE_PAGES_EMBED_URL: 'https://features.example.com/feature.html' });
+    const setHeader = vi.fn();
+
+    const result = await service.getFeaturePageProps({
+      ctx: {
+        query: { slug: 'dark-mode' },
+        req: { headers: { host: 'civitai.com' } },
+        res: { setHeader },
+      },
+      features: { featurePages: true },
+      session: null,
+    });
+
+    expect(result).toMatchObject({ props: { viewerAuthor: null } });
+    expect(setHeader).toHaveBeenCalledWith('Cache-Control', 'private, no-store');
+  });
+});

@@ -12,7 +12,11 @@ import type {
 } from '~/server/schema/feature-pages.schema';
 import { fetchThroughCache, setFetchThroughCache } from '~/server/utils/cache-helpers';
 import { fetchTimeoutSignal, outboundFetch } from '~/server/utils/fetch-timeout';
-import { FEATURE_PAGES_HOST_ORIGINS } from '~/shared/constants/feature-pages.constants';
+import {
+  FEATURE_PAGES_FEATURE_URN_PREFIX,
+  FEATURE_PAGES_HOST_ORIGINS,
+  featurePageSlugRegex,
+} from '~/shared/constants/feature-pages.constants';
 import {
   PLATFORM_HANDLE_PATH,
   PLATFORM_ROUTE_MISSING,
@@ -173,6 +177,31 @@ export async function callSigner(
     body = null;
   }
   return { status: res.status, body };
+}
+
+type FeaturePageRequest = {
+  ctx: {
+    query: { slug?: string | string[] };
+    req: { headers: { host?: string } };
+    res: { setHeader: (name: string, value: string) => unknown };
+  };
+  features?: { featurePages?: boolean } | null;
+  session?: { user?: { id: number } } | null;
+};
+
+/** The server-side props of /features/[slug]. */
+export async function getFeaturePageProps({ ctx, features, session }: FeaturePageRequest) {
+  // The frame's props depend on the request, so no cache may hold the page for another viewer.
+  ctx.res.setHeader('Cache-Control', 'private, no-store');
+  if (!features?.featurePages) return { notFound: true as const };
+  const slug = ctx.query.slug;
+  if (typeof slug !== 'string' || !featurePageSlugRegex.test(slug))
+    return { notFound: true as const };
+  const feature = `${FEATURE_PAGES_FEATURE_URN_PREFIX}${slug}`;
+  const embed = resolveFeaturePageEmbed(env.FEATURE_PAGES_EMBED_URL, feature, ctx.req.headers.host);
+  if (!embed || !isFeaturePagesSignerConfigured()) return { notFound: true as const };
+  const viewerAuthor = session?.user ? await getFeaturePageViewerHandle(session.user.id) : null;
+  return { props: { ...embed, feature, viewerAuthor } };
 }
 
 /** The viewer's platform handle for fp-init, or null when the platform gives none. */
