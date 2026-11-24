@@ -93,9 +93,10 @@ async function isAutoApproveOn(user: SessionUser): Promise<boolean> {
 /**
  * The basic account checks an instant approval needs: the account exists and is not deleted, is
  * not banned, is not muted, and has a verified email; and the person has no declined request, so
- * a moderator's decline or revoke is never undone by the next submit. Read from the PRIMARY at submit time rather
- * than from the session, which can be hours old: a ban or a mute applied since must count. A
- * person who fails any check still gets a request, pending, for a moderator to decide.
+ * a moderator's decline or revoke is never undone by the next submit. Read from the PRIMARY at
+ * submit time rather than from the session, which can be hours old: a ban or a mute applied since
+ * must count. A person who fails any check still gets a request, pending, for a moderator to
+ * decide.
  */
 async function isEligibleForAutoApproval(userId: number): Promise<boolean> {
   const [row] = await dbWrite.$queryRaw<{ eligible: boolean }[]>(Prisma.sql`
