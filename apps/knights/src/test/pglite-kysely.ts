@@ -1,3 +1,4 @@
+import { afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
@@ -13,6 +14,7 @@ import {
   type QueryResult,
 } from 'kysely';
 import { parseTimestampAsUtc } from '@civitai/db/kysely';
+import { SERVABLE_IMAGE_CONTENT_MARKER } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 
 const MIGRATIONS = [
@@ -49,13 +51,29 @@ CREATE TABLE "Image" (
   "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
   "poi" BOOLEAN NOT NULL DEFAULT false,
   "minor" BOOLEAN NOT NULL DEFAULT false,
+  "tosViolation" BOOLEAN NOT NULL DEFAULT false,
   "postId" INTEGER
 );
 CREATE TABLE "Post" (
   "id" INTEGER PRIMARY KEY,
   "publishedAt" TIMESTAMP(3),
+  "availability" TEXT NOT NULL DEFAULT 'Public',
+  "modelVersionId" INTEGER
+);
+CREATE TABLE "Model" (
+  "id" INTEGER PRIMARY KEY,
+  "status" TEXT NOT NULL DEFAULT 'Published',
+  "availability" TEXT NOT NULL DEFAULT 'Public',
+  "deletedAt" TIMESTAMP(3)
+);
+CREATE TABLE "ModelVersion" (
+  "id" INTEGER PRIMARY KEY,
+  "modelId" INTEGER NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'Published',
   "availability" TEXT NOT NULL DEFAULT 'Public'
 );
+CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]', "details" jsonb);
+CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
 CREATE TABLE "NewOrderPlayer" (
   "userId" INTEGER PRIMARY KEY,
   "rankType" TEXT NOT NULL,
@@ -233,7 +251,7 @@ CREATE TABLE "Tag" (
   "nsfwLevel" INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]', "details" jsonb);
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
 CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "status" TEXT NOT NULL);
 CREATE TABLE "ImageReport" ("imageId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
 `;
@@ -261,9 +279,40 @@ function asNodePgParameter(value: unknown): unknown {
   );
 }
 
+/**
+ * Reads that broke the JIT rule below. Recorded as well as thrown, since a caller that catches the error (a sweep counting
+ * failures, a read that falls back) would otherwise hide it: every test using this harness fails if any were recorded.
+ * Known limit: it checks that some transaction is open with JIT off, not that it is this statement's own, so an
+ * interleaved pool read could pass here; prod callers pass their trx to `readWithoutJit` explicitly.
+ */
+const jitViolations: string[] = [];
+afterEach(() => {
+  const found = jitViolations.splice(0);
+  if (found.length)
+    throw new Error(`servableImageContent read ran with JIT on:\n${found.join('\n')}`);
+});
+
 function dialect(pg: PGlite, transactions: { open: number }, serialize: boolean): Dialect {
+  // A read carrying the CSAM subplans (`servableImageContent`) must run with JIT off in its transaction
+  // (`readWithoutJit`): its inflated estimate would make a server with JIT on compile it for longer than it runs.
+  let jitOff = false;
   const connection: DatabaseConnection = {
     async executeQuery<R>(compiled: CompiledQuery): Promise<QueryResult<R>> {
+      const text = compiled.sql.trim().toLowerCase();
+      if (text === 'begin' || text === 'commit' || text === 'rollback') jitOff = false;
+      else if (text === 'set local jit = off') jitOff = transactions.open > 0;
+      else if (
+        compiled.sql.includes(SERVABLE_IMAGE_CONTENT_MARKER) &&
+        !(jitOff && transactions.open > 0)
+      ) {
+        jitViolations.push(compiled.sql.slice(0, 160));
+        throw new Error(
+          `A servableImageContent read ran with JIT on (wrap it in readWithoutJit): ${compiled.sql.slice(
+            0,
+            120
+          )}`
+        );
+      }
       const result = await pg.query(compiled.sql, compiled.parameters.map(asNodePgParameter));
       return { rows: result.rows as R[], numAffectedRows: BigInt(result.affectedRows ?? 0) };
     },

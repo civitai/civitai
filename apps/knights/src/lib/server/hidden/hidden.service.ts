@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
-import { REFERENCE_POOL, REFERENCE_STATUS, servableImage } from '@civitai/db/knights';
+import {
+  readWithoutJit,
+  REFERENCE_POOL,
+  REFERENCE_STATUS,
+  servableImage,
+} from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
@@ -117,7 +122,15 @@ function eligibleReferences(
  *
  * A share of 0 never serves probation, not even as a fallback.
  */
+/** `pickHiddenCheckIn`, with JIT off: its walks read `servableImageContent`. */
 export async function pickHiddenCheck(
+  db: Executor,
+  input: Parameters<typeof pickHiddenCheckIn>[1]
+) {
+  return readWithoutJit(db, (trx) => pickHiddenCheckIn(trx, input));
+}
+
+async function pickHiddenCheckIn(
   db: Executor,
   input: {
     userId: number;
@@ -253,15 +266,17 @@ export async function answerHiddenCheck(
     const until = await pacingGate(trx, input, now, deps);
     if (until) return { status: 'limited', until };
 
-    const ref = await servableReferences(trx, REFERENCE_POOL.hiddenCheck, [
-      REFERENCE_STATUS.active,
-      REFERENCE_STATUS.probation,
-    ])
-      .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
-      .select(['r.id', 'r.imageId', 'r.questionKey', 'r.status', 'q.options'])
-      .where('r.id', '=', input.referenceId)
-      .where(notHiddenCreator(input.userId))
-      .executeTakeFirst();
+    const ref = await readWithoutJit(trx, (trx) =>
+      servableReferences(trx, REFERENCE_POOL.hiddenCheck, [
+        REFERENCE_STATUS.active,
+        REFERENCE_STATUS.probation,
+      ])
+        .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
+        .select(['r.id', 'r.imageId', 'r.questionKey', 'r.status', 'q.options'])
+        .where('r.id', '=', input.referenceId)
+        .where(notHiddenCreator(input.userId))
+        .executeTakeFirst()
+    );
     if (!ref) return { status: 'rejected', reason: 'unavailable' };
     const probation = ref.status === REFERENCE_STATUS.probation;
     // Fail closed on any other status.
@@ -383,31 +398,33 @@ const NOTICES_SHOWN = 5;
  * career. Reading changes nothing, so a preload cannot lose it.
  */
 export async function readHiddenNotices(db: Executor, playerId: number): Promise<CheckNotice[]> {
-  const rows = await db
-    .selectFrom('KnightsVote as v')
-    .leftJoin('KnightsReferenceImage as r', (join) => join.on(sql<SqlBool>`r.id = -v."itemId"`))
-    .leftJoin('KnightsQuestion as q', 'q.key', 'v.questionKey')
-    .leftJoin('Image as img', 'img.id', 'v.imageId')
-    .leftJoin('Post as p', 'p.id', 'img.postId')
-    .select((eb) => [
-      'v.itemId',
-      'v.createdAt',
-      'v.consequence',
-      'v.answer',
-      'r.answer as correct',
-      'q.options',
-      'img.url as imageKey',
-      servableImage(eb).as('servable'),
-    ])
-    .where('v.playerId', '=', playerId)
-    .where('v.consequence', 'is not', null)
-    .where('v.noticedAt', 'is', null)
-    .where(
-      sql<SqlBool>`v."createdAt" >= COALESCE((SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = v."playerId"), 'epoch')`
-    )
-    .orderBy('v.createdAt', 'desc')
-    .limit(NOTICES_SHOWN)
-    .execute();
+  const rows = await readWithoutJit(db, (trx) =>
+    trx
+      .selectFrom('KnightsVote as v')
+      .leftJoin('KnightsReferenceImage as r', (join) => join.on(sql<SqlBool>`r.id = -v."itemId"`))
+      .leftJoin('KnightsQuestion as q', 'q.key', 'v.questionKey')
+      .leftJoin('Image as img', 'img.id', 'v.imageId')
+      .leftJoin('Post as p', 'p.id', 'img.postId')
+      .select((eb) => [
+        'v.itemId',
+        'v.createdAt',
+        'v.consequence',
+        'v.answer',
+        'r.answer as correct',
+        'q.options',
+        'img.url as imageKey',
+        servableImage(eb).as('servable'),
+      ])
+      .where('v.playerId', '=', playerId)
+      .where('v.consequence', 'is not', null)
+      .where('v.noticedAt', 'is', null)
+      .where(
+        sql<SqlBool>`v."createdAt" >= COALESCE((SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = v."playerId"), 'epoch')`
+      )
+      .orderBy('v.createdAt', 'desc')
+      .limit(NOTICES_SHOWN)
+      .execute()
+  );
   return rows.map((row) => {
     const options = (row.options ?? []) as QuestionOption[];
     const labelOf = (value: string) => options.find((o) => o.value === value)?.label ?? value;

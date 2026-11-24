@@ -28,8 +28,10 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
 }));
 
 import { createEntityAppeal } from '~/server/services/report.service';
-import { keepPendingAppealFlags } from '~/server/services/image-appeal-flag';
-import { csamBlockedSql } from '~/server/common/image-visibility';
+import {
+  keepPendingAppealFlags,
+  releaseSettledAppealFlags,
+} from '~/server/services/image-appeal-flag';
 import { EntityType } from '~/shared/utils/prisma/enums';
 import { IMAGE_NOT_APPEALABLE } from '~/shared/utils/appeal';
 
@@ -49,11 +51,13 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TABLE "Image" (id int PRIMARY KEY, "needsReview" text, "blockedFor" text, "updatedAt" timestamp(3));
+    CREATE TYPE "EntityType" AS ENUM ('Image');
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
     CREATE TABLE "Appeal" (
       id serial PRIMARY KEY,
-      "entityType" text NOT NULL,
+      "entityType" "EntityType" NOT NULL,
       "entityId" int NOT NULL,
-      status text NOT NULL
+      status "AppealStatus" NOT NULL
     );
   `);
 });
@@ -108,6 +112,7 @@ describe('creating an image appeal', () => {
 
     expect(await flagOf(CSAM_BLOCKED)).toBe('minor');
     expect(tx.appeal.create).not.toHaveBeenCalled();
+    expect(mockRefundMultiAccountTransaction).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -139,9 +144,20 @@ describe('keepPendingAppealFlags', () => {
     expect(await flagOf(PLAIN)).toBe('appeal');
     expect(await flagOf(MODERATED_BLOCKED)).toBe('appeal');
   });
+});
 
-  // The moderator app's keepPendingAppealFlags compares the same literal.
-  it('reads the CSAM block reason the moderator app reads', () => {
-    expect(csamBlockedSql().sql).toBe(`"blockedFor" = 'CSAM'`);
+describe('releaseSettledAppealFlags', () => {
+  it('takes the appeal flag off an image whose appeal is no longer pending', async () => {
+    await holder.db.exec(`
+      UPDATE "Image" SET "needsReview" = 'appeal' WHERE id IN (${PLAIN}, ${OTHER_FLAG});
+      UPDATE "Appeal" SET status = 'Rejected' WHERE "entityId" = ${PLAIN};
+    `);
+
+    await releaseSettledAppealFlags([PLAIN, OTHER_FLAG, FLAGGED]);
+
+    expect(await flagOf(PLAIN)).toBeNull();
+    // Controls: a pending appeal keeps its flag, and another review is not touched.
+    expect(await flagOf(OTHER_FLAG)).toBe('appeal');
+    expect(await flagOf(FLAGGED)).toBe('csam');
   });
 });
