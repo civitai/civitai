@@ -26,6 +26,7 @@
     isSeek,
     playingLyricIndex,
     playSongAt,
+    seekMarkers,
     songLoading,
     songPlayer,
     uniqueCardKey,
@@ -44,6 +45,7 @@
     item,
     cardKey,
     variant = 'card',
+    reports = [],
     class: className,
   }: {
     item: { id: number; url: string };
@@ -52,6 +54,8 @@
     /** `card` fits a queue tile, its lyrics scrolling inside it. `detail` is a triage pane's middle
      *  column: the player and the lyrics as two panels at reading size, the column scrolling. */
     variant?: 'card' | 'detail';
+    /** Reports on this song: each timed one is a marker on the seek bar that plays from its time. */
+    reports?: readonly { timeSec: number | null; label: string }[];
     class?: string;
   } = $props();
   const detail = $derived(variant === 'detail');
@@ -246,17 +250,37 @@
         {#if !detail}{@render playButton('')}{/if}
       </div>
 
-      <Slider
-        type="single"
-        min={0}
-        max={lengthOf(song) || 1}
-        step={0.1}
-        aria-label="Seek"
-        class="h-6"
-        trackClass="bg-dark-4"
-        disabled={mode === 'failed'}
-        bind:value={() => time, seek}
-      />
+      <div class="relative">
+        <Slider
+          type="single"
+          min={0}
+          max={lengthOf(song) || 1}
+          step={0.1}
+          aria-label="Seek"
+          class="h-6"
+          trackClass="bg-dark-4"
+          disabled={mode === 'failed'}
+          bind:value={() => time, seek}
+        />
+        {#if mode !== 'failed'}
+          {#each seekMarkers(reports, lengthOf(song)) as mark (mark.timeSec)}
+            <!-- A wider hit area than the 3px line it draws. -->
+            <button
+              type="button"
+              class="group absolute top-1/2 flex h-4 w-2.5 -translate-x-1/2 -translate-y-1/2 justify-center"
+              style:left="{mark.percent}%"
+              title={mark.title}
+              aria-label={mark.title}
+              onclick={() => {
+                intent.requested();
+                playSongAt(item.id, mark.timeSec, ownKey);
+              }}
+            >
+              <span class="h-full w-[3px] rounded-sm bg-red-500 group-hover:bg-red-400"></span>
+            </button>
+          {/each}
+        {/if}
+      </div>
       {#if detail}
         <!-- The design's controls row: play, the time beside it, the volume at the far end. -->
         <div class="flex items-center gap-3">

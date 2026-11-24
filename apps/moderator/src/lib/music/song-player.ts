@@ -7,6 +7,8 @@
  * starts a card's song at a given time.
  */
 
+import { formatPlaybackTime } from '@civitai/shared';
+
 /** What the player reads and drives of an `<audio>` element. */
 export type SongMedia = {
   play(): Promise<void> | void;
@@ -166,4 +168,35 @@ export function playingLyricIndex<L extends { t: number | null }>(
       playing = i;
   });
   return playing;
+}
+
+/** A report's mark on a song's seek bar: where it sits (0 to 100) and its hover text. */
+export type SeekMarker = { timeSec: number; percent: number; title: string };
+
+/**
+ * The seek bar's report markers for a song `durationSec` long, earliest first. Reports at the same
+ * second share one marker naming each reason once. A report without a time, or one outside the song
+ * (the main app refuses those), draws nothing, and nothing is drawn until the length is known.
+ */
+export function seekMarkers(
+  reports: readonly { timeSec: number | null; label: string }[],
+  durationSec: number
+): SeekMarker[] {
+  if (!Number.isFinite(durationSec) || durationSec <= 0) return [];
+  const bySecond = new Map<number, { timeSec: number; labels: Set<string> }>();
+  const timed = reports
+    .filter((r): r is { timeSec: number; label: string } => r.timeSec != null)
+    .filter((r) => r.timeSec >= 0 && r.timeSec <= durationSec)
+    .sort((a, b) => a.timeSec - b.timeSec);
+  for (const r of timed) {
+    const second = Math.floor(r.timeSec);
+    const mark = bySecond.get(second) ?? { timeSec: r.timeSec, labels: new Set<string>() };
+    mark.labels.add(r.label);
+    bySecond.set(second, mark);
+  }
+  return [...bySecond.values()].map(({ timeSec, labels }) => ({
+    timeSec,
+    percent: (timeSec / durationSec) * 100,
+    title: `Report at ${formatPlaybackTime(timeSec)}: ${[...labels].join(' · ')}`,
+  }));
 }

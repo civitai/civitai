@@ -5,6 +5,7 @@ import {
   songLoading,
   isSeek,
   playingLyricIndex,
+  seekMarkers,
   uniqueCardKey,
   type SongMedia,
 } from '../song-player';
@@ -199,5 +200,53 @@ describe('the playing lyric line', () => {
 
   it('is none for lyrics with no times', () => {
     expect(playingLyricIndex([{ t: null, text: 'a' }], 30)).toBe(-1);
+  });
+});
+
+describe('report markers on the seek bar', () => {
+  it('sits each reported time at its share of the song, earliest first, the reason as its title', () => {
+    const marks = seekMarkers(
+      [
+        { timeSec: 150, label: 'Hateful lyrics' },
+        { timeSec: 30, label: 'Spam' },
+      ],
+      200
+    );
+    expect(marks).toEqual([
+      { timeSec: 30, percent: 15, title: 'Report at 0:30: Spam' },
+      { timeSec: 150, percent: 75, title: 'Report at 2:30: Hateful lyrics' },
+    ]);
+  });
+
+  it('draws one marker for reports at the same second, naming every reason once', () => {
+    const marks = seekMarkers(
+      [
+        { timeSec: 84, label: 'Spam' },
+        { timeSec: 84.6, label: 'Hateful lyrics' },
+        { timeSec: 84, label: 'Spam' },
+      ],
+      168
+    );
+    expect(marks).toEqual([
+      { timeSec: 84, percent: 50, title: 'Report at 1:24: Spam · Hateful lyrics' },
+    ]);
+  });
+
+  it('skips reports without a time and times outside the song, so none is drawn off the bar', () => {
+    const marks = seekMarkers(
+      [
+        { timeSec: null, label: 'Spam' },
+        { timeSec: 250, label: 'Spam' },
+        { timeSec: -1, label: 'Spam' },
+        { timeSec: 200, label: 'Spam' },
+      ],
+      200
+    );
+    expect(marks).toEqual([{ timeSec: 200, percent: 100, title: 'Report at 3:20: Spam' }]);
+  });
+
+  it('draws nothing while the song length is unknown', () => {
+    for (const duration of [0, Number.NaN, Infinity])
+      expect(seekMarkers([{ timeSec: 10, label: 'Spam' }], duration)).toEqual([]);
   });
 });

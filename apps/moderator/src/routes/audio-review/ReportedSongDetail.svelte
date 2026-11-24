@@ -3,7 +3,13 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { tick } from 'svelte';
-  import { IconExternalLink, IconFlag, IconSearch, IconUser } from '@tabler/icons-svelte';
+  import {
+    IconExternalLink,
+    IconFlag,
+    IconPlayerPlay,
+    IconSearch,
+    IconUser,
+  } from '@tabler/icons-svelte';
   import { formatPlaybackTime, getBrowsingLevelLabel } from '@civitai/shared';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -34,6 +40,7 @@
   import type { Outcome } from '$lib/triage/queue';
   import { VIOLATION_LABELS, VIOLATION_TYPES } from '$lib/violations';
   import { removedCovers } from '$lib/music/removed-covers';
+  import { playSongAt } from '$lib/music/song-player';
   import SongSideCards from './SongSideCards.svelte';
 
   let {
@@ -73,6 +80,8 @@
   const owner = $derived(row.owner);
   const songHref = $derived(entityUrl(civitaiUrl, 'image', row.id));
   const dismiss = $derived(dismissDecision(row));
+  // A report's time plays from there on the song card; there is none for a withheld song.
+  const playable = $derived(!row.withheld && !!row.url);
 
   // Remove song asks for a violation type before it submits.
   let violationType = $state('');
@@ -356,7 +365,7 @@
       {:else if !row.url}
         <p class="m-0 text-sm text-dark-2">No audio file.</p>
       {:else}
-        <SongCard item={{ id: row.id, url: row.url }} variant="detail" />
+        <SongCard item={{ id: row.id, url: row.url }} variant="detail" reports={row.reports} />
       {/if}
       {#if !row.withheld}
         <!-- The one place a failed read is reported; the sidebar's cards just stay away. -->
@@ -397,7 +406,17 @@
           <li class="space-y-1">
             <div class="flex flex-wrap items-center gap-1.5">
               {#if report.label}{@render chip(report.label, 'bg-red-500/15 text-red-300')}{/if}
-              {#if report.timeSec != null}
+              {#if report.timeSec != null && playable}
+                {@const at = report.timeSec}
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-0.5 rounded bg-blue-500/15 px-1.5 py-px text-[11px] font-medium text-blue-300 hover:bg-blue-500/25"
+                  title="Play from {formatPlaybackTime(at)}"
+                  onclick={() => playSongAt(row.id, at)}
+                >
+                  <IconPlayerPlay size={11} aria-hidden="true" />{formatPlaybackTime(at)}
+                </button>
+              {:else if report.timeSec != null}
                 {@render chip(formatPlaybackTime(report.timeSec), 'bg-blue-500/15 text-blue-300')}
               {/if}
               {#if report.also}{@render chip(`+${report.also} others`)}{/if}
