@@ -211,7 +211,13 @@ export function defaultCaseIntakeDeps(
         throw Object.assign(new Error('MODERATION_ALERT_EMAIL is not set'), {
           name: 'NoAlertAddress',
         });
-      await sendEmailStrict({ to, subject, text, html: `<p>${text}</p>` });
+      await sendEmailStrict({
+        to,
+        subject,
+        text,
+        html: `<p>${text}</p>`,
+        tags: { template: 'caseIntakeAlert', mailClass: 'transactional' },
+      });
     },
     background: (work) =>
       void work.catch((e) => console.error('case receipt send failed', e?.name)),

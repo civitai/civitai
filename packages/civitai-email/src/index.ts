@@ -3,8 +3,25 @@
 // shared layout in ./shell.
 export { loadEmailEnv } from './env';
 export type { EmailEnv } from './env';
-export { sendEmail, sendEmailStrict, EmailNotConfiguredError, isEmailConfigured } from './client';
-export type { SendEmailInput, SendEmailStrictInput } from './client';
+export {
+  sendEmail,
+  sendEmailStrict,
+  EmailNotConfiguredError,
+  isEmailConfigured,
+  setEmailSendRecorder,
+  emailSendRecord,
+  MAIL_CLASSES,
+  SEND_ID_HEADER,
+  EMAIL_SEND_RECORD_TIMEOUT_MS,
+} from './client';
+export type {
+  SendEmailInput,
+  SendEmailStrictInput,
+  EmailTags,
+  MailClass,
+  EmailSendRecord,
+  EmailSendRecorder,
+} from './client';
 export {
   NOTICE_MIN_INTERVAL_MS,
   THROTTLE_RETRY_DELAYS_MS,
@@ -13,7 +30,7 @@ export {
 } from './pacing';
 export type { Sleep } from './pacing';
 export { createEmail } from './create-email';
-export type { Email } from './create-email';
+export type { Email, EmailSendTags } from './create-email';
 export { removeTags } from './string';
 export {
   renderEmailShell,

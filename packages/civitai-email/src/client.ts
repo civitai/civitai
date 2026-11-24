@@ -5,6 +5,7 @@
 // The transport is built LAZILY on first send (not at module load), so importing this never
 // opens a pool — that replaces the old `!env.IS_BUILD` guard (build-detection is the app's job;
 // here, absent EMAIL_* simply yields a null transport that no-ops).
+import { randomUUID } from 'node:crypto';
 import nodemailer, { type Transporter } from 'nodemailer';
 import { loadEmailEnv } from './env';
 import { removeTags } from './string';
@@ -36,6 +37,27 @@ function getClient(): Transporter | null {
   return _client;
 }
 
+/** `transactional`: mail a user needs or asked for. `lifecycle`: engagement mail (the digest). */
+export const MAIL_CLASSES = ['transactional', 'lifecycle'] as const;
+export type MailClass = (typeof MAIL_CLASSES)[number];
+
+/** What one message is, for measurement. Never an address. */
+export interface EmailTags {
+  /** The sender's stable key (a template's, or a named one-off sender's). */
+  template: string;
+  mailClass: MailClass;
+  campaign?: string;
+  variant?: string;
+  /** The recipient's user id, when the sender knows it. */
+  userId?: number;
+}
+
+/**
+ * Our own per-send id, set on every message. The relay replaces the Message-ID, so a later
+ * delivery or bounce event can only be joined back to its send row through this header.
+ */
+export const SEND_ID_HEADER = 'X-Civitai-Send-Id';
+
 export interface SendEmailInput {
   to: string | string[] | null;
   cc?: string | string[] | null;
@@ -44,11 +66,73 @@ export interface SendEmailInput {
   text?: string;
   html: string;
   headers?: Record<string, string>;
+  /** Required: a send without a template and mail class is a type error. */
+  tags: EmailTags;
+}
+
+/** One send, as handed to the recorder: the tags and our send id, never an address or content. */
+export interface EmailSendRecord {
+  sendId: string;
+  sentAt: Date;
+  template: string;
+  mailClass: MailClass | '';
+  campaign: string;
+  variant: string;
+  userId: number;
+}
+export type EmailSendRecorder = (record: EmailSendRecord) => unknown;
+
+/** The longest a successful send waits on its recorder before returning. */
+export const EMAIL_SEND_RECORD_TIMEOUT_MS = 2000;
+
+let _recorder: EmailSendRecorder | null = null;
+
+/**
+ * Sets the function told of every successful send (null clears it). An app that writes send rows
+ * registers one; without it nothing is recorded. A recorder that throws, rejects or hangs never
+ * fails a send, and a send waits on it at most `EMAIL_SEND_RECORD_TIMEOUT_MS`.
+ */
+export function setEmailSendRecorder(recorder: EmailSendRecorder | null) {
+  _recorder = recorder;
+}
+
+export function emailSendRecord(sendId: string, tags: EmailTags | undefined, sentAt: Date) {
+  const userId = tags?.userId;
+  return {
+    sendId,
+    sentAt,
+    template: tags?.template ?? '',
+    mailClass: tags?.mailClass && MAIL_CLASSES.includes(tags.mailClass) ? tags.mailClass : '',
+    campaign: tags?.campaign ?? '',
+    variant: tags?.variant ?? '',
+    userId: Number.isSafeInteger(userId) && userId! > 0 ? userId! : 0,
+  } satisfies EmailSendRecord;
+}
+
+async function recordSend(record: EmailSendRecord) {
+  const recorder = _recorder;
+  if (!recorder) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.resolve().then(() => recorder(record)),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, EMAIL_SEND_RECORD_TIMEOUT_MS);
+        // A pending wait must not hold a short-lived process (a job, a script) open.
+        (timer as { unref?: () => void }).unref?.();
+      }),
+    ]);
+  } catch {
+    // Measurement never fails a send; the recorder logs its own errors.
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function compose(
   client: Transporter,
-  { to, cc, from, text, ...data }: SendEmailInput & { to: string | string[] }
+  sendId: string,
+  { to, cc, from, text, tags, headers, ...data }: SendEmailInput & { to: string | string[] }
 ) {
   const env = loadEmailEnv();
   return client.sendMail({
@@ -57,17 +141,20 @@ function compose(
     from: from ?? env.EMAIL_FROM,
     text: text ?? removeTags(data.html),
     ...data,
+    headers: { ...headers, [SEND_ID_HEADER]: sendId },
   });
 }
 
 export async function sendEmail(input: SendEmailInput): Promise<void> {
   const client = getClient();
   if (!client || !input.to) return;
-  const info = await compose(client, { ...input, to: input.to });
+  const sendId = randomUUID();
+  const info = await compose(client, sendId, { ...input, to: input.to });
   const failed = (info.rejected ?? []).filter(Boolean);
   if (failed.length) {
     throw new Error(`Email(s) (${failed.join(', ')}) could not be sent`);
   }
+  await recordSend(emailSendRecord(sendId, input.tags, new Date()));
 }
 
 export interface SendEmailStrictInput extends SendEmailInput {
@@ -95,10 +182,12 @@ export async function sendEmailStrict(input: SendEmailStrictInput): Promise<{ me
     ? input.to.filter(Boolean)
     : [input.to].filter(Boolean);
   if (!recipients.length) throw new Error('Email has no recipient');
-  const info = await compose(client, { ...input, to: recipients });
+  const sendId = randomUUID();
+  const info = await compose(client, sendId, { ...input, to: recipients });
   const failed = (info.rejected ?? []).filter(Boolean);
   if (failed.length) throw new Error(`${failed.length} recipient(s) could not be sent to`);
   if (!info.messageId) throw new Error('Email relay returned no message id');
+  await recordSend(emailSendRecord(sendId, input.tags, new Date()));
   return { messageId: info.messageId };
 }
 
