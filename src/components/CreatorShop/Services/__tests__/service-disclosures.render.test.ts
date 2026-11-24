@@ -49,10 +49,9 @@ vi.mock('~/components/Currency/CurrencyBadge', () => ({
 }));
 
 const { FeatureFlagsProvider } = await import('~/providers/FeatureFlagsProvider');
-const { SignedOutSessionProvider } = await import(
-  '~/components/CivitaiWrapped/CivitaiSessionProvider'
+const { SessionWrapper } = await import(
+  '~/components/CreatorShop/Services/__tests__/SessionWrapper'
 );
-const { FixedBrowserSettingsProvider } = await import('~/providers/BrowserSettingsProvider');
 const { ServiceRequestModal, ServiceOfferingTerms, ServiceBuyerDisclosure } = await import(
   '~/components/CreatorShop/Services/deals/ServiceRequestModal'
 );
@@ -65,13 +64,9 @@ const html = (component: ReactNode, flags: object = {}) =>
       MantineProvider,
       null,
       createElement(
-        SignedOutSessionProvider,
+        SessionWrapper,
         null,
-        createElement(
-          FixedBrowserSettingsProvider,
-          { domain: 'green' },
-          createElement(FeatureFlagsProvider, { flags: flags as never } as never, component)
-        )
+        createElement(FeatureFlagsProvider, { flags: flags as never } as never, component)
       )
     )
   );

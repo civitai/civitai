@@ -21,7 +21,7 @@ import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 const mocks = vi.hoisted(() => ({
   setStatus: vi.fn(),
   request: vi.fn(),
-  upsert: vi.fn(async () => undefined),
+  upsert: vi.fn(async (_input: unknown) => undefined),
 }));
 
 vi.mock('@mantine/core', async (importOriginal) => ({
@@ -65,10 +65,9 @@ vi.mock('~/libs/form/components/SimpleImageUpload', () => ({ SimpleImageUpload: 
 
 const { PublishServiceModal } = await import('~/components/CreatorShop/Services/SellerAffirmation');
 const { FeatureFlagsProvider } = await import('~/providers/FeatureFlagsProvider');
-const { SignedOutSessionProvider } = await import(
-  '~/components/CivitaiWrapped/CivitaiSessionProvider'
+const { SessionWrapper } = await import(
+  '~/components/CreatorShop/Services/__tests__/SessionWrapper'
 );
-const { FixedBrowserSettingsProvider } = await import('~/providers/BrowserSettingsProvider');
 const { ServiceRequestModal } = await import(
   '~/components/CreatorShop/Services/deals/ServiceRequestModal'
 );
@@ -103,13 +102,9 @@ const mount = async (node: ReactNode, flags: object = {}) => {
         MantineProvider,
         null,
         createElement(
-          SignedOutSessionProvider,
+          SessionWrapper,
           null,
-          createElement(
-            FixedBrowserSettingsProvider,
-            { domain: 'green' },
-            createElement(FeatureFlagsProvider, { flags: flags as never } as never, node)
-          )
+          createElement(FeatureFlagsProvider, { flags: flags as never } as never, node)
         )
       )
     );

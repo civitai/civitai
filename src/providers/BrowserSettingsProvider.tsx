@@ -36,7 +36,8 @@ export function EventCosmeticsPreview({ children }: { children: React.ReactNode 
   );
 }
 
-const Context = createContext<ContentSettingsStore | null>(null);
+/** Exported for test harnesses that seed the store without trpc. */
+export const Context = createContext<ContentSettingsStore | null>(null);
 
 const debouncer = createDebouncer(1000);
 export function BrowserSettingsProvider({ children }: { children: React.ReactNode }) {
@@ -167,20 +168,6 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
   return <Context.Provider value={storeRef.current}>{children}</Context.Provider>;
 }
 
-/** The settings store seeded from the session, with no server sync, for harnesses with no trpc. */
-export function FixedBrowserSettingsProvider({
-  domain,
-  children,
-}: {
-  domain: ColorDomain;
-  children: React.ReactNode;
-}) {
-  const { settings } = useCivitaiSessionContext();
-  const storeRef = useRef<ContentSettingsStore | null>(null);
-  if (!storeRef.current) storeRef.current = createContentSettingsStore({ ...settings, domain });
-  return <Context.Provider value={storeRef.current}>{children}</Context.Provider>;
-}
-
 function getChanged<T extends Record<string, unknown>>(curr: T, prev: T) {
   return Object.keys(curr).reduce<Partial<T>>((acc, key) => {
     if (!isEqual(curr[key], prev[key])) return { ...acc, [key]: curr[key] };
@@ -221,7 +208,7 @@ type StoreStateActions = {
 };
 
 type ContentSettingsStore = ReturnType<typeof createContentSettingsStore>;
-function createContentSettingsStore(state: StoreState) {
+export function createContentSettingsStore(state: StoreState) {
   return createStore<StoreState & StoreStateActions>()(
     devtools(
       (set) => ({

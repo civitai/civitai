@@ -18,8 +18,8 @@ describe('reviewImageLayout', () => {
 describe('reviewRowTileStyle', () => {
   it('sizes a tile by its own shape so the image shows whole', () => {
     expect(reviewRowTileStyle({ width: 800, height: 600 })).toEqual({
-      aspectRatio: String(800 / 600),
-      flex: `${800 / 600} 1 0`,
+      aspectRatio: '1.3333333333333333',
+      flex: '1.3333333333333333 1 0',
     });
     expect(reviewRowTileStyle({ width: 300, height: 400 }).aspectRatio).toBe('0.75');
   });
