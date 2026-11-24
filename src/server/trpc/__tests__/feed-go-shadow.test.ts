@@ -24,6 +24,7 @@ import {
   pickShadowHeaders,
   pickShadowResponseHeaders,
   readFeedGoShadowConfig,
+  type RestSampleOptions,
   SHADOW_DEFAULT_MAX_IN_FLIGHT,
   SHADOW_DEFAULT_MAX_PER_SECOND,
   SHADOW_DEFAULT_TIMEOUT_MS,
@@ -58,6 +59,7 @@ function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig
     probeInfiniteUrl: undefined,
     probeModelGetAllUrl: undefined,
     probeRate: 0,
+    v1ModelsCredentials: false,
     ...overrides,
   };
 }
@@ -171,6 +173,7 @@ describe('readFeedGoShadowConfig', () => {
       probeInfiniteUrl: undefined,
       probeModelGetAllUrl: undefined,
       probeRate: 0,
+      v1ModelsCredentials: false,
     });
   });
 
@@ -200,7 +203,24 @@ describe('readFeedGoShadowConfig', () => {
       probeInfiniteUrl: 'http://feed-go.internal.test:9090/internal/probe/image.getInfinite',
       probeModelGetAllUrl: 'http://feed-go.internal.test:9090/internal/probe/model.getAll',
       probeRate: 0.5,
+      v1ModelsCredentials: false,
     });
+  });
+
+  it('reads FEED_GO_SHADOW_V1_MODELS_CREDENTIALS as on only for true or 1', () => {
+    for (const [value, want] of [
+      [undefined, false],
+      ['', false],
+      ['false', false],
+      ['yes', false],
+      ['true', true],
+      [' TRUE ', true],
+      ['1', true],
+    ] as const) {
+      expect(
+        readFeedGoShadowConfig({ FEED_GO_SHADOW_V1_MODELS_CREDENTIALS: value }).v1ModelsCredentials
+      ).toBe(want);
+    }
   });
 
   it('rejects a non-http URL and clamps out-of-range numbers', () => {
@@ -951,9 +971,10 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
     h: ReturnType<typeof harness>,
     endpoint: 'v1-models' | 'v1-models-id',
     req: ReturnType<typeof restRequest>,
-    { status = 200, body = { items: [], metadata: {} } as unknown } = {}
+    { status = 200, body = { items: [], metadata: {} } as unknown } = {},
+    opts?: RestSampleOptions
   ) {
-    const sample = h.shadow.beginRest(endpoint, req);
+    const sample = h.shadow.beginRest(endpoint, req, opts);
     if (sample) {
       if (status === 200) h.shadow.captureRest(sample, body);
       h.shadow.finish(sample, status);
@@ -1062,6 +1083,110 @@ describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', ()
       expect(h.endpoints).toEqual([endpoint]);
     }
   );
+
+  describe('an API credential, with FEED_GO_SHADOW_V1_MODELS_CREDENTIALS', () => {
+    const KEY = 'k-live-secret-0123';
+    const DESCRIBED = 'key:described';
+    const keyed = (url: string, headers: Record<string, string> = {}) =>
+      modelsRequest(url, {
+        headers: { host: 'civitai.com', authorization: `Bearer ${KEY}`, ...headers },
+      });
+
+    it.each(['v1-models', 'v1-models-id'] as const)(
+      'off (the default): %s is counted skipped_credential and never sent, as before',
+      async (endpoint) => {
+        const h = harness();
+        expect(
+          serveModels(h, endpoint, keyed('/api/v1/models/1'), {}, { credential: () => DESCRIBED })
+        ).toBeUndefined();
+        await h.flush();
+        expect(h.fetchMock).not.toHaveBeenCalled();
+        expect(h.outcomes).toEqual(['skipped_credential']);
+      }
+    );
+
+    it('on: [id] is sent with the description in place of the key', async () => {
+      const h = harness({ config: { v1ModelsCredentials: true } });
+      const sample = serveModels(
+        h,
+        'v1-models-id',
+        keyed('/api/v1/models/1'),
+        { body: { id: 1 } },
+        { credential: () => DESCRIBED }
+      );
+      expect(sample).toBeDefined();
+      await h.flush();
+      expect(h.outcomes).toEqual(['sent']);
+      const [url, init] = h.fetchMock.mock.calls[0];
+      expect(url).toBe(V1_MODEL_ID_URL);
+      const body = init.body as string;
+      expect(JSON.parse(body).headers).toEqual({
+        host: 'civitai.com',
+        authorization: 'present',
+        'x-feed-go-credential': DESCRIBED,
+      });
+      expect(body).not.toContain(KEY);
+    });
+
+    it.each([
+      [
+        'the list (its credentials always fall back in feed-go)',
+        'v1-models',
+        keyed('/api/v1/models'),
+      ],
+      [
+        'a ?token= on [id] (the query string carries it)',
+        'v1-models-id',
+        modelsRequest('/api/v1/models/1?token=KEY', { query: { token: 'KEY' } }),
+      ],
+      ['GET /api/v1/images', 'v1-images', keyed('/api/v1/images')],
+    ] as const)('on: %s is still skipped_credential', async (_name, endpoint, req) => {
+      const h = harness({ config: { v1ModelsCredentials: true } });
+      const sample =
+        endpoint === 'v1-images'
+          ? h.shadow.beginV1Images(req)
+          : h.shadow.beginRest(endpoint, req, { credential: () => DESCRIBED });
+      expect(sample).toBeUndefined();
+      await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
+      expect(h.outcomes).toEqual(['skipped_credential']);
+    });
+
+    it('on: no description, an empty one or a throwing one is skipped_credential', async () => {
+      const h = harness({ config: { v1ModelsCredentials: true } });
+      for (const credential of [
+        undefined,
+        () => undefined,
+        () => {
+          throw new Error('x');
+        },
+      ]) {
+        expect(
+          h.shadow.beginRest('v1-models-id', keyed('/api/v1/models/1'), { credential })
+        ).toBeUndefined();
+      }
+      await h.flush();
+      expect(h.outcomes).toEqual([
+        'skipped_credential',
+        'skipped_credential',
+        'skipped_credential',
+      ]);
+    });
+
+    it('on: a request with no credential carries no description', async () => {
+      const h = harness({ config: { v1ModelsCredentials: true } });
+      serveModels(
+        h,
+        'v1-models-id',
+        modelsRequest('/api/v1/models/1', { headers: { host: 'civitai.com' } }),
+        { body: { id: 1 } },
+        { credential: () => DESCRIBED }
+      );
+      await h.flush();
+      const [, init] = h.fetchMock.mock.calls[0];
+      expect(JSON.parse(init.body as string).headers).toEqual({ host: 'civitai.com' });
+    });
+  });
 
   it('each model route has its own per-second bucket', async () => {
     const h = harness({ config: { maxPerSecond: 1 }, now: () => 0 });

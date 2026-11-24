@@ -25,6 +25,11 @@ type V1Models struct {
 	// upstream from FEED_GO_FALLBACK_URL (which answers the tRPC routes). Every fallback of the two
 	// public model routes is proxied to it; unset, the routes are not mounted.
 	FallbackURL string
+	// BearerAuth is FEED_GO_V1_BEARER_AUTH (default off): `GET /api/v1/models/{id}` decides an API
+	// credential as the Node route does (DESIGN.md §16.10) instead of falling back on every one
+	// (`bearer-token`); the list is unaffected. It reads keys with the tRPC routes' key resolver, so it
+	// needs FEED_GO_BEARER_AUTH (Validate).
+	BearerAuth bool
 }
 
 // LoadV1Models reads the V1Models settings from the environment.
@@ -33,6 +38,7 @@ func LoadV1Models() V1Models {
 		BaseURL:     os.Getenv("NEXTAUTH_URL"),
 		Serve:       boolEnv("FEED_GO_SERVE_V1_MODELS", false),
 		FallbackURL: strings.TrimSpace(os.Getenv("FEED_GO_V1_FALLBACK_URL")),
+		BearerAuth:  boolEnv("FEED_GO_V1_BEARER_AUTH", false),
 	}
 	if boolEnv("FEED_GO_MODEL_RESPONSE_CACHE", true) {
 		c.ResponseCacheTTL = 180 * time.Second
@@ -41,10 +47,15 @@ func LoadV1Models() V1Models {
 }
 
 // Validate refuses a serve switch with nowhere to send its fallbacks: FEED_GO_SERVE_V1_MODELS on
-// without FEED_GO_V1_FALLBACK_URL would leave every request the port does not answer unanswerable.
-func (c V1Models) Validate() error {
+// without FEED_GO_V1_FALLBACK_URL would leave every request the port does not answer unanswerable. It
+// also refuses FEED_GO_V1_BEARER_AUTH without bearerAuth (FEED_GO_BEARER_AUTH, Config.BearerAuth): with
+// no key resolver every key would fall back anyway, so the setting would claim what it cannot do.
+func (c V1Models) Validate(bearerAuth bool) error {
 	if c.Serve && c.FallbackURL == "" {
 		return errors.New("FEED_GO_SERVE_V1_MODELS is on without FEED_GO_V1_FALLBACK_URL: the public model routes need the Node app that serves /api/v1 for their fallbacks")
+	}
+	if c.BearerAuth && !bearerAuth {
+		return errors.New("FEED_GO_V1_BEARER_AUTH is on without FEED_GO_BEARER_AUTH: GET /api/v1/models/{id} reads API keys with the key resolver that switch turns on")
 	}
 	return nil
 }

@@ -35,7 +35,10 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
  *   `GET /api/v1/models` + `GET /api/v1/models/[id]` (one flag, `feed-go-shadow-v1-models`): the raw
  *   query string, the path and the JSON body the handler passed to `res.json`, captured by the
  *   handler itself. A request carrying an API credential is not mirrored (`skipped_credential`):
- *   the body can echo it.
+ *   the body can echo it. The exception, off unless `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS=true`:
+ *   an `/api/v1/models/[id]` request whose credential is an Authorization header (never a
+ *   `?token=`) is mirrored with a description of it in place of the key
+ *   (`feed-go-shadow-credential.ts`: the key's `generateSecretHash`, never the key). The list never.
  *
  * Off unless ALL of these hold: `FEED_GO_SHADOW_URL` is set; `FEED_GO_SHADOW_SAMPLE_RATE` is > 0;
  * the route's Flipt flag is on (unknown or uninitialized reads as off). Every route shares the
@@ -212,6 +215,11 @@ export type FeedGoShadowConfig = {
   probeModelGetAllUrl: string | undefined;
   /** The fraction of sampled requests that are also probed (0 = none, 1 = every one). */
   probeRate: number;
+  /**
+   * `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS` (`true` or `1`; default off): mirror an `[id]`
+   * request with an Authorization credential, described rather than forwarded (see the module doc).
+   */
+  v1ModelsCredentials?: boolean;
 };
 
 type Env = Record<string, string | undefined>;
@@ -272,6 +280,9 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
     probeInfiniteUrl,
     probeModelGetAllUrl,
     probeRate: envNumber(env.FEED_GO_GOFIRST_PROBE_SAMPLE_RATE, 0, 0, 1),
+    v1ModelsCredentials: ['true', '1'].includes(
+      (env.FEED_GO_SHADOW_V1_MODELS_CREDENTIALS ?? '').trim().toLowerCase()
+    ),
     rate: envNumber(env.FEED_GO_SHADOW_SAMPLE_RATE, 0, 0, 1),
     timeoutMs: Math.round(
       envNumber(env.FEED_GO_SHADOW_TIMEOUT_MS, SHADOW_DEFAULT_TIMEOUT_MS, 1, SHADOW_MAX_TIMEOUT_MS)
@@ -334,6 +345,18 @@ const REST_ENDPOINTS: ReadonlySet<FeedGoShadowEndpoint> = new Set<FeedGoShadowEn
 function isRestEndpoint(endpoint: FeedGoShadowEndpoint): endpoint is RestEndpoint {
   return REST_ENDPOINTS.has(endpoint);
 }
+
+/**
+ * The header a credentialed `/api/v1/models/[id]` sample carries in place of its key (feed-go's
+ * SampleCredentialHeader): the credential's description (`feed-go-shadow-credential.ts`).
+ */
+export const FEED_GO_SAMPLE_CREDENTIAL_HEADER = 'x-feed-go-credential';
+
+/** What `[id]` tells `beginRest` about the request's credential. */
+export type RestSampleOptions = {
+  /** Describes the request's Authorization credential (feed-go-shadow-credential.ts). */
+  credential?: () => string | undefined;
+};
 
 export type FeedGoShadowSample = {
   endpoint: FeedGoShadowEndpoint;
@@ -533,7 +556,8 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
    */
   function beginRest(
     endpoint: RestEndpoint,
-    req: ShadowRequestLike
+    req: ShadowRequestLike,
+    opts: RestSampleOptions = {}
   ): FeedGoShadowSample | undefined {
     try {
       const route = restRoutes[endpoint];
@@ -541,11 +565,16 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
       if (!route.enabled()) return undefined;
       if (random() >= config.rate) return undefined;
-      // Node's body can echo the credential (`metadata.nextPage` keeps `?token=`), and feed-go
-      // falls back on any credential: never mirrored, only counted.
+      // Node's body can echo the credential (`metadata.nextPage` keeps `?token=`): never mirrored,
+      // only counted, unless it is `[id]`'s Authorization credential with the credential sampling on,
+      // which is described instead (credentialHeaders).
+      let described: Record<string, string> | undefined;
       if (hasApiCredential(req)) {
-        record('skipped_credential', endpoint);
-        return undefined;
+        described = credentialHeaders(endpoint, req, opts);
+        if (!described) {
+          record('skipped_credential', endpoint);
+          return undefined;
+        }
       }
       const target = req.url ?? '';
       const q = target.indexOf('?');
@@ -559,6 +588,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
           // Without the hash feed-go falls back on any body with a Training Data file.
         }
       }
+      if (described) Object.assign(headers, described);
       return {
         endpoint,
         holdsSlot: false,
@@ -570,6 +600,28 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * The header describing `[id]`'s credential (FEED_GO_SAMPLE_CREDENTIAL_HEADER), or undefined when
+   * the request is not mirrored: another route (the list included), the credential sampling off, a
+   * `?token=` (the query string itself carries it), or no description.
+   */
+  function credentialHeaders(
+    endpoint: RestEndpoint,
+    req: ShadowRequestLike,
+    opts: RestSampleOptions
+  ): Record<string, string> | undefined {
+    if (endpoint !== 'v1-models-id' || !config.v1ModelsCredentials) return undefined;
+    if (req.query.token !== undefined || !opts.credential) return undefined;
+    let credential: string | undefined;
+    try {
+      credential = opts.credential();
+    } catch {
+      return undefined;
+    }
+    if (!credential) return undefined;
+    return { [FEED_GO_SAMPLE_CREDENTIAL_HEADER]: credential };
   }
 
   /** `beginRest` for `GET /api/v1/images`. */
@@ -950,11 +1002,12 @@ export function beginFeedGoShadowV1Images(req: ShadowRequestLike): FeedGoShadowS
  */
 export function beginFeedGoShadowV1Models(
   req: ShadowRequestLike,
-  kind: 'list' | 'id'
+  kind: 'list' | 'id',
+  opts?: RestSampleOptions
 ): FeedGoShadowSample | undefined {
   try {
     const owner = getInstance();
-    const sample = owner.beginRest(kind === 'list' ? 'v1-models' : 'v1-models-id', req);
+    const sample = owner.beginRest(kind === 'list' ? 'v1-models' : 'v1-models-id', req, opts);
     if (sample) owners.set(sample, owner);
     return sample;
   } catch {

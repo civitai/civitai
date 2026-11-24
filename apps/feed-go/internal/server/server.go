@@ -170,6 +170,12 @@ type Server struct {
 	V1Models *V1ModelsDeps
 	// ServeV1Models is FEED_GO_SERVE_V1_MODELS (default off); off, every request is the v1-models-off fallback.
 	ServeV1Models bool
+	// V1BearerAuth is FEED_GO_V1_BEARER_AUTH (default off; needs FEED_GO_BEARER_AUTH, so Resolver.APIKeys
+	// is set): `[id]`, shadow and public alike, decides an API credential as the Node route does
+	// (v1DetailCredential, auth.Resolver.DetailCredential; DESIGN.md §16.10) instead of falling back on
+	// every one (`bearer-token`). The list is unaffected either way. Off, both routes behave exactly as
+	// before it existed.
+	V1BearerAuth bool
 	// V1Fallback serves what the public `/api/v1/models` routes do not (a reverse proxy to the Node app
 	// that answers `/api/v1`, FEED_GO_V1_FALLBACK_URL: a different upstream from Fallback). The routes
 	// are mounted only when it is set.
