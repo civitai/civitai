@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildApp } from '../app';
 import {
@@ -19,6 +19,7 @@ import {
   type PreviewRestarts,
   type RestartOutcome,
 } from '../app-assistant/preview-restart';
+import { AppSandbox } from '../app-assistant/sandbox';
 import { MintRefusedError } from '../minter';
 import type { RunService } from '../core/service';
 import { FAKE_TUNNEL_PUBLIC_KEY, FakeSandboxService } from '../test-support/fake-sandbox';
@@ -316,9 +317,17 @@ describe('PreviewRestarter', () => {
         start?: (args: Record<string, unknown>) => string;
         /** Port probes that find nothing listening before one does (Infinity: never). */
         quietProbes?: number;
-        /** Whether the project has a `node_modules` directory (by default it has). */
-        nodeModules?: boolean;
-        /** What its `npm install` answers; by default it exits 0 and makes `node_modules`. */
+        /**
+         * The project's dependencies: `installed` (by default), `none` (no `node_modules`), or
+         * `partial` (a `node_modules` an install killed at its bound left, with no
+         * `.package-lock.json`).
+         */
+        deps?: 'installed' | 'none' | 'partial';
+        /** What the is-it-installed check answers instead of the file's state (a tool error, say). */
+        installedCheck?: () => string;
+        /** What the is-another-install-running check answers; by default `idle`. */
+        installRunning?: () => string;
+        /** What its `npm install` answers; by default it exits 0 and installs. */
         install?: (args: Record<string, unknown>) => string;
       } = {}
     ) {
@@ -327,7 +336,7 @@ describe('PreviewRestarter', () => {
         command: null as string | null,
         probes: 0,
         lastExit: null as unknown,
-        nodeModules: options.nodeModules ?? true,
+        deps: options.deps ?? 'installed',
       };
       const status = () =>
         JSON.stringify({
@@ -351,10 +360,21 @@ describe('PreviewRestarter', () => {
         const command = String(args.command);
         if (command.includes('block.manifest.json'))
           return runResult(0, (options.projects ?? ['web']).map((p) => `${p}\n`).join(''));
-        if (command.startsWith('test -d ')) return runResult(state.nodeModules ? 0 : 1);
+        // As a shell answers it: a killed install's `node_modules` is a directory all the same.
+        if (command.startsWith('test -d '))
+          return runResult(command === 'test -d web/node_modules' && state.deps !== 'none' ? 0 : 1);
+        if (command.startsWith('test -f ')) {
+          if (options.installedCheck) return options.installedCheck();
+          return runResult(
+            command === 'test -f web/node_modules/.package-lock.json' && state.deps === 'installed'
+              ? 0
+              : 1
+          );
+        }
+        if (command.includes('/cmdline')) return options.installRunning?.() ?? runResult(0, 'idle');
         if (command.includes('npm install')) {
           if (options.install) return options.install(args);
-          state.nodeModules = true;
+          state.deps = 'installed';
           return runResult(0, 'added 42 packages');
         }
         state.probes++;
@@ -369,32 +389,70 @@ describe('PreviewRestarter', () => {
         c.tool === 'run_command' ? `run_command: ${String(c.args.command)}` : c.tool
       );
 
-    describe('a project with no node_modules (woken from hibernation, remixed)', () => {
-      it('installs its dependencies before it starts the dev server, then opens the preview', async () => {
+    const INSTALL = 'run_command: cd web && npm install --no-audit --no-fund';
+    const INSTALLED_CHECK = 'run_command: test -f web/node_modules/.package-lock.json';
+    const installs = () => steps().filter((step) => step.includes('npm install'));
+    const INSTALL_FAILED =
+      'Your app’s dependencies could not be installed, so its dev server could not start. Ask the assistant to look at it, and the preview opens by itself.';
+    const INSTALLING =
+      'Your app is still installing its dependencies. Try again in a minute, and the preview opens by itself.';
+
+    describe('a project whose dependencies are not installed (woken from hibernation, remixed)', () => {
+      afterEach(() => {
+        vi.restoreAllMocks();
+      });
+
+      it('installs them before it starts the dev server, then opens the preview', async () => {
+        const call = vi.spyOn(AppSandbox.prototype, 'call');
         fake.add(APP);
-        resumed({ nodeModules: false });
+        resumed({ deps: 'none' });
         const outcome = await restarter().restart('u-1', APP, 'g');
 
         expect(outcome).toEqual({ ok: true, blockId: MANIFEST_BLOCK, host: HOST });
         const order = steps();
-        const install = order.indexOf('run_command: cd web && npm install --no-audit --no-fund');
+        const install = order.indexOf(INSTALL);
         expect(install).toBeGreaterThan(-1);
-        expect(order.indexOf('run_command: test -d web/node_modules')).toBeLessThan(install);
+        expect(order.indexOf(INSTALLED_CHECK)).toBeLessThan(install);
         expect(install).toBeLessThan(order.indexOf('dev_server_start'));
-        // Bounded in the sandbox as the SDK upgrade's install is (90 s).
-        expect(
-          fake.calls.find((c) => String(c.args.command).includes('npm install'))?.args.timeout_ms
-        ).toBe(90_000);
+        // Bounded in the sandbox as the SDK upgrade's install is (90 s), and waited for 10 s more.
+        const installCall = call.mock.calls.find((args) =>
+          String(args[1]?.command).includes('npm install')
+        );
+        expect(installCall?.[1]).toEqual({
+          command: 'cd web && npm install --no-audit --no-fund',
+          timeout_ms: 90_000,
+        });
+        expect(installCall?.[3]).toEqual({ timeoutMs: 100_000 });
         expect(starts()).toEqual([{ command: devCommand('web') }]);
       });
 
-      it('installs nothing in a project that has node_modules', async () => {
+      it('installs into a node_modules a killed install left (no .package-lock.json)', async () => {
         fake.add(APP);
-        resumed({ nodeModules: true });
+        resumed({ deps: 'partial' });
         expect(await restarter().restart('u-1', APP, 'g')).toMatchObject({ ok: true });
-        expect(steps()).toContain('run_command: test -d web/node_modules');
-        expect(steps().filter((s) => s.includes('npm install'))).toEqual([]);
+        expect(installs()).toEqual([INSTALL]);
         expect(starts()).toEqual([{ command: devCommand('web') }]);
+      });
+
+      it('installs nothing in a project whose dependencies are installed', async () => {
+        fake.add(APP);
+        resumed({ deps: 'installed' });
+        expect(await restarter().restart('u-1', APP, 'g')).toMatchObject({ ok: true });
+        expect(steps()).toContain(INSTALLED_CHECK);
+        expect(installs()).toEqual([]);
+        expect(starts()).toEqual([{ command: devCommand('web') }]);
+      });
+
+      it('installs when the is-it-installed check fails: an install is safe, a skipped one is exit 127', async () => {
+        fake.add(APP);
+        resumed({
+          deps: 'installed',
+          installedCheck: () => {
+            throw new Error('no answer');
+          },
+        });
+        expect(await restarter().restart('u-1', APP, 'g')).toMatchObject({ ok: true });
+        expect(installs()).toEqual([INSTALL]);
       });
 
       it.each([
@@ -409,18 +467,50 @@ describe('PreviewRestarter', () => {
         'says the dependencies could not be installed, and starts nothing, when the install %s',
         async (_, install) => {
           fake.add(APP);
-          resumed({ nodeModules: false, install });
+          resumed({ deps: 'none', install });
           expect(await restarter().restart('u-1', APP, 'g')).toEqual({
             ok: false,
             error: 'not-running',
-            message:
-              'Your app’s dependencies could not be installed, so its dev server could not start. Ask the assistant to look at it, and the preview opens by itself.',
+            message: INSTALL_FAILED,
           });
-          expect(steps()).toContain('run_command: cd web && npm install --no-audit --no-fund');
+          expect(installs()).toEqual([INSTALL]);
           expect(starts()).toEqual([]);
           expect(tunnels.started).toEqual([]);
         }
       );
+
+      it.each([
+        ['another install runs (the assistant’s own)', () => runResult(0, 'installing')],
+        [
+          'the sandbox will not say whether one runs',
+          () => {
+            throw new Error('no answer');
+          },
+        ],
+        ['the check answers something else', () => runResult(1, '')],
+      ])(
+        'installs and starts nothing when %s, and says to try again',
+        async (_, installRunning) => {
+          fake.add(APP);
+          resumed({ deps: 'none', installRunning });
+          expect(await restarter().restart('u-1', APP, 'g')).toEqual({
+            ok: false,
+            error: 'not-running',
+            message: INSTALLING,
+          });
+          expect(steps().some((step) => step.includes('/cmdline'))).toBe(true);
+          expect(installs()).toEqual([]);
+          expect(starts()).toEqual([]);
+          expect(tunnels.started).toEqual([]);
+        }
+      );
+
+      it('installs when the check says no other install runs (the control)', async () => {
+        fake.add(APP);
+        resumed({ deps: 'none', installRunning: () => runResult(0, 'idle\n') });
+        expect(await restarter().restart('u-1', APP, 'g')).toMatchObject({ ok: true });
+        expect(installs()).toEqual([INSTALL]);
+      });
     });
 
     it('starts the dev server itself, then opens the preview, with no run', async () => {
@@ -506,7 +596,7 @@ describe('PreviewRestarter', () => {
       fake.tools.set('run_command', (args) => {
         if (String(args.command).includes('block.manifest.json')) return runResult(0, 'web\n');
         // Its node_modules is there: nothing is installed.
-        if (String(args.command).startsWith('test -d ')) return runResult(0);
+        if (String(args.command).startsWith('test -f ')) return runResult(0);
         state.probes++;
         state.running = false;
         state.lastExit = { code: 2, signal: null, at: '2026-10-25T03:29:00.000Z' };
@@ -727,9 +817,9 @@ const previewGrant = (
   app: string,
   extra: Record<string, unknown> = { use: 'preview' }
 ) =>
-  // For 7 minutes, as civitai signs one (`PREVIEW_GRANT_TTL_SECONDS`): a shorter one leaves a
+  // For 9 minutes, as civitai signs one (`PREVIEW_GRANT_TTL_SECONDS`): a shorter one leaves a
   // restart too little to start a tunnel with (`TUNNEL_START_BUDGET_MS`).
-  signGrant(keys, { userId, conversationId: `preview:${app}`, idempotencyKey: 'pk-1' }, 420, extra);
+  signGrant(keys, { userId, conversationId: `preview:${app}`, idempotencyKey: 'pk-1' }, 540, extra);
 
 /** The run API's own service is not what this route uses: any call to it fails the test. */
 const noRuns = new Proxy({} as RunService, {
@@ -829,13 +919,13 @@ describe('POST apps/:app/preview', () => {
     const base = await serve(previews);
     const viewer = `Bearer ${await signViewer(keys, 'u1')}`;
     const before = Date.now();
-    // Signed for 420 s here (`previewGrant`): the expiry is the grant's, not a default.
+    // Signed for 540 s here (`previewGrant`): the expiry is the grant's, not a default.
     const own = await previewGrant('u1', APP);
     expect((await post(base, APP, { authorization: viewer, 'x-run-grant': own })).status).toBe(200);
     expect(expiries).toHaveLength(1);
     const left = expiries[0]!.getTime() - before;
-    expect(left).toBeGreaterThan(418_000);
-    expect(left).toBeLessThanOrEqual(421_000);
+    expect(left).toBeGreaterThan(538_000);
+    expect(left).toBeLessThanOrEqual(541_000);
   });
 
   it('refuses a preview grant for a reply start: it is good for nothing else', async () => {
