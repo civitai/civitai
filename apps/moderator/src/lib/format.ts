@@ -81,6 +81,14 @@ export const plural = (count: number, one: string, many = `${one}s`): string =>
 export const utcMs = (value: string): number =>
   Date.parse(value.includes('T') ? value : `${value.replace(' ', 'T')}Z`);
 
+const TIME_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ['year', 31_536_000],
+  ['month', 2_592_000],
+  ['day', 86_400],
+  ['hour', 3_600],
+  ['minute', 60],
+];
+
 /**
  * "3 hours ago" / "11 months ago". An absolute timestamp is precise and says nothing about whether a
  * value is fresh: a resume point reading "Sep 8, 2025" is a year stale, and no one reads that off the
@@ -91,17 +99,20 @@ export const relativeTime = (value: Date | string | null): string => {
   const then = new Date(value).getTime();
   if (Number.isNaN(then)) return '—';
   const seconds = Math.round((then - Date.now()) / 1000);
-  const units: [Intl.RelativeTimeFormatUnit, number][] = [
-    ['year', 31_536_000],
-    ['month', 2_592_000],
-    ['day', 86_400],
-    ['hour', 3_600],
-    ['minute', 60],
-  ];
   const fmt = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
-  for (const [unit, size] of units)
+  for (const [unit, size] of TIME_UNITS)
     if (Math.abs(seconds) >= size) return fmt.format(Math.round(seconds / size), unit);
   return fmt.format(seconds, 'second');
+};
+
+/** "4 years" / "5 months" / "12 days": how long ago, as a length (an account's age), in whole units. */
+export const timeSince = (value: Date | string | null, now = Date.now()): string => {
+  const then = value ? new Date(value).getTime() : NaN;
+  if (Number.isNaN(then)) return 'unknown';
+  const seconds = (now - then) / 1000;
+  for (const [unit, size] of TIME_UNITS.slice(0, 3))
+    if (seconds >= size) return plural(Math.floor(seconds / size), unit);
+  return 'less than a day';
 };
 
 /** "12m" / "5h" / "3d": for a badge or caption, where `relativeTime`'s phrasing is too long. */

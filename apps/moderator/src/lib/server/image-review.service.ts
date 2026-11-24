@@ -535,6 +535,7 @@ export async function getReportedImageQueue({
           // number. Today it removes nothing: Automated reports are filed for other entity types.
           .where('r.reason', 'in', DEFAULT_REPORT_REASONS)
           // Songs are judged in Audio review (`/audio-review`). Before the limit, so the cursor holds.
+          // A `?report=` deep link is not narrowed: it opens the one report it names, a song's too.
           .where('i.type', '<>', 'audio')
       )
       .$if(agents != null, (qb) =>

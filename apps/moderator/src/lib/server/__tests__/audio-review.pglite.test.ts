@@ -5,6 +5,10 @@ import { freshPglite } from '../../../test/pglite';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 import { RETRACTED_REFUSED } from '$lib/held-media';
 import { IMAGE_PAGES_SCHEMA } from './appeal-media-schema';
+import {
+  DEFERRED_BLOCK_EFFECT_TABLE_SQL,
+  SET_ASIDE_TABLE_SQL,
+} from '../../../test/held-image-tables';
 
 /**
  * Audio review's Reported tab (Music T10, docs/features/music.md "Moderating songs"): one row per
@@ -33,7 +37,7 @@ vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
 const { getReportedSongs, boundSongReports } = await import('../audio-review.service');
-const { countReportedSongs } = await import('../audio-review-count');
+const { countReportedSongs, withSongBadges } = await import('../audio-review-count');
 const page = await import('../../../routes/audio-review/+page.server');
 const details = await import('../../../routes/audio-review/details/[imageId]/+server');
 const { setImageFlag, SONG_FLAG_REFUSED } = await import('../user-actions.service');
@@ -61,6 +65,13 @@ beforeEach(async () => {
   await db.exec(`
     CREATE TABLE "Track" ("imageId" INTEGER PRIMARY KEY, "coverImageId" INTEGER UNIQUE, genre TEXT);
     CREATE TABLE "TrackLyrics" ("imageId" INTEGER PRIMARY KEY, text TEXT NOT NULL, lines JSONB NOT NULL, source TEXT);
+    ${SET_ASIDE_TABLE_SQL}
+    ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
+    CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
+    CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER, "data" JSONB,
+      PRIMARY KEY ("entityType", "entityId", "type"));
+    CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
+    CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
     CREATE TABLE "ModerationRule" (id INTEGER PRIMARY KEY, action TEXT NOT NULL);
     CREATE TABLE "ModerationRuleVersion" (id SERIAL PRIMARY KEY, "ruleId" INTEGER NOT NULL, action TEXT NOT NULL);
     INSERT INTO "ModerationRule" VALUES (1, 'Block');
@@ -91,10 +102,11 @@ beforeEach(async () => {
       (15, ${REPORTER_A}, 'TOSViolation', 'Pending', NULL, '2026-11-03', NULL),
       (16, ${REPORTER_A}, 'TOSViolation', 'Pending', NULL, '2026-10-15', NULL),
       (17, ${REPORTER_B}, 'TOSViolation', 'Pending', '{"comment": "names a person", "timestampSec": 3}', '2026-11-04', NULL),
-      (18, ${REPORTER_A}, 'TOSViolation', 'Pending', NULL, '2026-10-20', NULL);
+      (18, ${REPORTER_A}, 'TOSViolation', 'Pending', NULL, '2026-10-20', NULL),
+      (19, ${REPORTER_B}, 'TOSViolation', 'Actioned', NULL, '2026-09-01', NULL);
     INSERT INTO "ImageReport" ("imageId", "reportId") VALUES
       (${SONG}, 11), (${SONG}, 12), (${RULED_SONG}, 13), (${QUIET_SONG}, 14),
-      (${QUIET_SONG}, 15), (${PICTURE}, 16), (${WITHHELD}, 17), (${RULE_SONG}, 18);
+      (${QUIET_SONG}, 15), (${PICTURE}, 16), (${WITHHELD}, 17), (${RULE_SONG}, 18), (${SONG}, 19);
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -205,6 +217,16 @@ describe('the Reported tab', () => {
   it('counts songs and their reports for the sidebar', async () => {
     expect(await countReportedSongs()).toEqual({ songs: 4, reports: 5 });
   });
+
+  it('moves the song reports out of the Image Reports badge into Audio review', () => {
+    const reports = { 'report:image': 12, 'report:post': 3 };
+    expect(withSongBadges(reports, { songs: 4, reports: 5 })).toEqual({
+      'report:image': 7,
+      'report:post': 3,
+      audioReview: 4,
+    });
+    expect(withSongBadges(reports, null)).toEqual(reports);
+  });
 });
 
 describe('a decision on a song', () => {
@@ -254,8 +276,53 @@ describe('a decision on a song', () => {
   });
 
   it('refuses every decision without the image moderation grant', async () => {
-    expect(await act('dismiss', { imageId: String(SONG), reportIds: '11' }, {})).toMatchObject({
-      status: 403,
+    for (const action of ['dismiss', 'remove', 'setRating'] as const)
+      expect(
+        await act(
+          action,
+          { imageId: String(SONG), reportIds: '11', violationType: 'hate', nsfwLevel: '2' },
+          {}
+        )
+      ).toMatchObject({ status: 403 });
+  });
+
+  const statuses = async () =>
+    Object.fromEntries(
+      (
+        await db.query<{ id: number; status: string }>(
+          `SELECT id, status FROM "Report" ORDER BY id`
+        )
+      ).rows.map((r) => [r.id, r.status])
+    );
+
+  it("dismisses through Image reports' writer, closing only the song's Pending reports", async () => {
+    const before = await statuses();
+    // 19 is on the song but already ruled; 13 and 16 are on other images.
+    const result = await act('dismiss', { imageId: String(SONG), reportIds: '11,12,13,16,19' });
+    expect(result).toMatchObject({ success: true });
+    expect(await statuses()).toEqual({ ...before, 11: 'Unactioned', 12: 'Unactioned' });
+  });
+
+  it("removes through Image reports' writer, closing the song's Pending reports as Actioned", async () => {
+    const before = await statuses();
+    const result = await act('remove', {
+      imageId: String(SONG),
+      reportIds: '11,12,19',
+      violationType: 'hate',
+    });
+    expect(result).toMatchObject({ success: true });
+    expect(await statuses()).toEqual({ ...before, 11: 'Actioned', 12: 'Actioned' });
+    const { rows } = await db.query<{ ingestion: string }>(
+      `SELECT ingestion FROM "Image" WHERE id = ${SONG}`
+    );
+    expect(rows[0].ingestion).toBe('Blocked');
+  });
+
+  it('refuses a rating of a song its own scans have not reviewed, naming the song', async () => {
+    await db.query(`UPDATE "Image" SET ingestion = 'Pending' WHERE id = ${SONG}`);
+    expect(await act('setRating', { imageId: String(SONG), nsfwLevel: '2' })).toMatchObject({
+      status: 409,
+      data: { key: SONG, error: expect.stringMatching(/not been reviewed yet/) },
     });
   });
 });
@@ -320,5 +387,23 @@ describe('the open song details', () => {
       shown: false,
     });
     expect((await get(WITHOUT_GRANT, RULE_SONG)).body.cover).toMatchObject({ id: 622, url: null });
+  });
+
+  it('sends a cover the player would show without its file to a moderator it is withheld from', async () => {
+    // A scanned own cover whose key a still-scanning image shares: the access rule withholds it.
+    await db.exec(`
+      INSERT INTO "Image" (id, url, type, ingestion, "userId", "nsfwLevel") VALUES
+        (630, 'shared-scanned-cover', 'image', 'Scanned', ${OWNER}, 1),
+        (631, 'shared-scanned-cover', 'image', 'Pending', 1, 0);
+      UPDATE "Track" SET "coverImageId" = 630 WHERE "imageId" = ${QUIET_SONG};
+      UPDATE "Image" SET "needsReview" = NULL WHERE id = 621;
+    `);
+    expect((await get(WITH_GRANT, QUIET_SONG)).body.cover).toEqual({
+      id: 630,
+      url: 'shared-scanned-cover',
+      nsfwLevel: 1,
+      shown: true,
+    });
+    expect((await get(WITHOUT_GRANT, QUIET_SONG)).body.cover).toMatchObject({ id: 630, url: null });
   });
 });

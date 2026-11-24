@@ -12,8 +12,7 @@ import { dbRead } from './db';
 import { bounded } from './bounded';
 import { getRedis } from './redis';
 import { getImageReviewCounts } from './image-review.service';
-import { countReportedSongs } from './audio-review-count';
-import { reportCountKey } from '$lib/reports';
+import { countReportedSongs, withSongBadges } from './audio-review-count';
 import { countStuckIngestion, countIngestionErrorImages } from './ingestion.service';
 import { countImageTagsNeedingReview, IMAGE_TAGS_COUNT_TIMEOUT_MS } from './image-tags-count';
 import { getImageRatingReviewCount } from './image-rating-review.service';
@@ -285,11 +284,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
   return {
     counts: {
       ...modes,
-      ...reports,
-      // Image Reports lists no song, so its badge counts none; unknown, it keeps them.
-      ...(reportedSongs && {
-        [reportCountKey('image')]: (reports[reportCountKey('image')] ?? 0) - reportedSongs.reports,
-      }),
+      ...withSongBadges(reports, reportedSongs),
       imageRatings,
       appeals: Number(appeals?.count ?? 0),
       articles,

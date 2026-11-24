@@ -30,7 +30,7 @@
   } from '$lib/audio-review';
   import { entityUrl, userUrl } from '$lib/entity-url';
   import { fetchJson } from '$lib/fetch-json';
-  import { dateTime, LINK_BUTTON, LINK_CLASS, plural, shortAge, shortDate } from '$lib/format';
+  import { dateTime, LINK_BUTTON, LINK_CLASS, plural, shortAge, shortDate, timeSince } from '$lib/format';
   import { optimisticEnhancer } from '$lib/form-action';
   import { SSR_PENDING } from '$lib/ssr-pending';
   import type { Outcome } from '$lib/triage/queue';
@@ -116,8 +116,6 @@
     failed: 'Scan failed',
   };
 
-  const accountAge = (createdAt: Date | string | null) =>
-    createdAt ? shortAge(createdAt) : 'unknown';
 </script>
 
 {#snippet chip(text: string, tone = 'bg-dark-5 text-dark-0')}
@@ -458,7 +456,7 @@
             {:else}
               {@render fact('User', `#${d.owner.id}`)}
             {/if}
-            {@render fact('Account age', accountAge(d.owner.createdAt))}
+            {@render fact('Account age', timeSince(d.owner.createdAt))}
             {@render fact('Removed songs', String(d.owner.removedSongs))}
             {@render fact('Strikes', String(d.owner.strikes))}
             {@render fact('Other reported', plural(d.owner.otherReported, 'song'))}

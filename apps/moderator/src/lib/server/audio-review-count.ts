@@ -1,5 +1,5 @@
 import { sql } from '@civitai/db/kysely';
-import { DEFAULT_REPORT_REASONS } from '$lib/reports';
+import { DEFAULT_REPORT_REASONS, reportCountKey } from '$lib/reports';
 import { dbRead } from './db';
 
 /**
@@ -26,4 +26,15 @@ export async function countReportedSongs(): Promise<{ songs: number; reports: nu
     ])
     .executeTakeFirst();
   return { songs: row?.songs ?? 0, reports: row?.reports ?? 0 };
+}
+
+/** The report badges with songs moved out of Image Reports into Audio review. Unknown song counts
+ *  (`null`, a timed-out read) leave Image Reports counting them and give Audio review no badge. */
+export function withSongBadges(
+  reports: Record<string, number>,
+  songs: { songs: number; reports: number } | null
+): Record<string, number> {
+  if (!songs) return reports;
+  const image = reportCountKey('image');
+  return { ...reports, [image]: (reports[image] ?? 0) - songs.reports, audioReview: songs.songs };
 }

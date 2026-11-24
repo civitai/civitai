@@ -224,4 +224,9 @@ describe('the reported image queue and songs', () => {
     }
     expect(seen).toEqual([100, 101, 102, 103, 104, 105, 107]);
   });
+
+  it('still opens a song report a ?report= link names', async () => {
+    const { items } = await getReportedImageQueue({ browsingLevel: 31, limit: 10, reportId: 16 });
+    expect(items.map((i) => [i.id, i.report.id])).toEqual([[106, 16]]);
+  });
 });
