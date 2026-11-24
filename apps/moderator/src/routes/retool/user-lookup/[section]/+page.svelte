@@ -4,6 +4,7 @@
   import { fetchAccount } from '../user-account';
   import { fetchSignals } from '../signals';
   import AccountActionsPanel from '../AccountActionsPanel.svelte';
+  import MemorialPanel from '../MemorialPanel.svelte';
   import { fetchAccountLinks } from '../account-links';
   import AccountHistoryPanel from '../AccountHistoryPanel.svelte';
   import AddressesPanel from '../AddressesPanel.svelte';
@@ -301,6 +302,9 @@
         canDelete={!!data.grants['user.deleteAccount']}
         deleteHold={data.deleteHold}
       />
+      {#if data.memorial}
+        <MemorialPanel identity={result.identity} panel={data.memorial} />
+      {/if}
       {#if data.grants['user.removeReactions']}
         <ReactionErasurePanel userId={result.identity.id} username={result.identity.username} />
       {/if}

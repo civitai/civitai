@@ -6,6 +6,7 @@ import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { deleteUser } from '~/server/services/user.service';
 import { LegalHoldError, legalHoldMessage } from '~/server/services/legal-hold.service';
+import { MemorializedAccountError } from '~/server/services/memorial.service';
 import { TRPCError } from '@trpc/server';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint, moderatorBoolean } from '~/server/utils/moderator-endpoint';
@@ -139,6 +140,8 @@ export default defineModeratorEndpoint('user.delete', {
       // No moderator override: a hold is released by Legal, not here.
       if (e instanceof LegalHoldError)
         throw new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) });
+      if (e instanceof MemorializedAccountError)
+        throw new TRPCError({ code: 'FORBIDDEN', message: e.message });
       throw e;
     }
 

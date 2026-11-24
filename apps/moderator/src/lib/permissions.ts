@@ -53,6 +53,10 @@ export const PERMISSIONS = [
   // main app's `deleteUser`. That app checks this id by its literal (`ModeratorGrantId` in
   // `src/server/services/moderator-grants.ts`), so rename the two together.
   { id: 'user.deleteAccount', label: 'Delete an account on its owner’s behalf (erasure request)' },
+  // Checked again by the main app's `/api/mod/user/memorial-*` by this literal (`ModeratorGrantId`),
+  // so rename the two together. One grant for all three steps: the second-moderator rule is enforced
+  // on the write, not by splitting who may confirm.
+  { id: 'user.memorialize', label: 'Memorialize an account (propose, confirm, reverse)' },
   // Same kind of right, narrower blast radius: the account stays, its reactions go. Checked again by
   // the main app's `/api/mod/user/reactions` and `/remove-reactions` by this literal
   // (`ModeratorGrantId`), so rename the two together.

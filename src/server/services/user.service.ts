@@ -62,6 +62,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { isEqual, uniq } from 'lodash-es';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { assertNotMemorialized } from '~/server/services/memorial.service';
 import { notifyModAlert } from '~/server/common/mod-alert';
 import dayjs from '~/shared/utils/dayjs';
 import {
@@ -1418,9 +1419,10 @@ export const deleteUser = async ({
   if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   const user = await dbWrite.user.findFirst({
     where: { username, id },
-    select: { id: true, meta: true },
+    select: { id: true, meta: true, flags: true },
   });
   if (!user) throw throwNotFoundError('Could not find user');
+  assertNotMemorialized(user);
   // Here rather than in each caller, so every caller of `deleteUser` is held to it. The scrub below
   // checks again in the same statement as its write.
   const { markerView } = await assertAccountNotUnderLegalHold(user.id);

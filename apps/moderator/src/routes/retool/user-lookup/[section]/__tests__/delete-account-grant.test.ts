@@ -102,7 +102,7 @@ describe('load — the hold behind the Delete account button', () => {
     'passes a %s hold through on Admin for someone with the permission',
     async (hold) => {
       deleteAccountHold.mockResolvedValue(hold);
-      expect(await load(loadEvent('admin', { 'user.deleteAccount': true }))).toEqual({
+      expect(await load(loadEvent('admin', { 'user.deleteAccount': true }))).toMatchObject({
         section: 'admin',
         deleteHold: hold,
       });
