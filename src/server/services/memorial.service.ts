@@ -128,6 +128,8 @@ export async function proposeMemorial(input: {
 /** What confirming or reversing reaches outside the database. */
 export type MemorialEffects = {
   invalidateSession: (userId: number, caller: 'moderation') => Promise<unknown>;
+  /** Re-reads the session shape, so a reversed memorialization's sessions resolve again at once. */
+  refreshSession: (userId: number) => Promise<unknown>;
   expireUserApiKeys: (
     userId: number
   ) => Promise<{ expired: number; orchestratorConfirmed: boolean }>;
@@ -230,6 +232,9 @@ export async function reverseMemorial(input: { userId: number }, effects: Memori
     await readTarget(input.userId);
     throw throwBadRequestError('This account is not memorialized.');
   }
+  await effects
+    .refreshSession(input.userId)
+    .catch((error) => logMemorialError('memorial-refresh-session', input.userId, error));
   await afterMemorialChanged(input.userId, updated[0].username, effects);
 }
 

@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { isRefusedModerationAccount } from '$lib/server/auth/moderation-account';
+import { refuseAccountToken } from '$lib/server/auth/account-refusal';
 import { generateKey, generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
 import type { Kysely } from 'kysely';
@@ -103,8 +103,7 @@ export async function createOAuthTokenPair(
   clientId: string,
   scope: bigint
 ): Promise<TokenPair> {
-  if (isRefusedModerationAccount({ id: userId }, 'oauth-token'))
-    error(403, 'This account cannot sign in.');
+  await refuseAccountToken(userId, 'oauth-token');
   await assertScopeAllowedForAccount(userId, scope);
   const now = new Date();
 
@@ -145,8 +144,7 @@ export async function createPlannedOAuthTokens(
   scope: bigint,
   plan: MintPlan
 ): Promise<PlannedTokens> {
-  if (isRefusedModerationAccount({ id: userId }, 'oauth-token'))
-    error(403, 'This account cannot sign in.');
+  await refuseAccountToken(userId, 'oauth-token');
   await assertScopeAllowedForAccount(userId, scope);
   const now = new Date();
   scope = scope | TokenScope.UserRead;
@@ -190,6 +188,8 @@ export async function createAppAccessToken(
     mintOrigin?: MintOrigin;
   } = {}
 ): Promise<{ accessToken: string; expiresAt: Date }> {
+  // Only these two: a banned, deleted or absent owner (the system clients' -1) still mints here as before.
+  await refuseAccountToken(userId, 'app-token');
   await assertScopeAllowedForAccount(userId, scope);
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
   const insert = (executor?: Kysely<DB>) =>

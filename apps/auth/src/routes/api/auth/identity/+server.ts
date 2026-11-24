@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { refusesMemorializedSession } from '@civitai/auth';
 import { verifier } from '$lib/server/auth/verifier';
 import {
   getOrProduceSessionUser,
@@ -49,6 +50,8 @@ export const GET: RequestHandler = async ({ request, url, cookies }) => {
 
   const user = await getOrProduceSessionUser(userId);
   if (!user) return json({ error: 'not_found' }, { status: 404 });
+  if (refusesMemorializedSession(user, claims))
+    return json({ error: 'unauthorized' }, { status: 401 });
 
   return json(user);
 };

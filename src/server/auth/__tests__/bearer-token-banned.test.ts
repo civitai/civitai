@@ -34,3 +34,11 @@ describe('a bearer key of a banned account', () => {
     await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
   });
 });
+
+// A key or OAuth token row the memorialization's revoke did not reach still authenticates no one.
+describe('a bearer key of a memorialized account', () => {
+  it('is refused once the session user carries the marker', async () => {
+    getSessionUserById.mockResolvedValue({ id: 5, memorialized: true });
+    await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
+  });
+});

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { parseMeta, type SessionUser } from '@civitai/auth';
 import { getUserBanDetails, type BanDetailsMeta } from './ban';
+import { isMemorializedFlags } from '@civitai/shared/memorial';
 
 // Focused parse of the content-preference fields the session exposes off `User.settings`. The main app
 // runs the FULL userSettingsSchema.safeParse (which fails wholesale if any unrelated field is mistyped, then
@@ -58,6 +59,8 @@ export interface ProducerUserRow {
    * `EXISTS` as `SqlBool` (`boolean | 0 | 1`); node-postgres returns a boolean.
    */
   appBuilderApproved?: boolean | 0 | 1 | null;
+  /** `User.flags`; only the memorialized bit reaches the session, as `memorialized`. */
+  flags?: number | null;
   profilePicture: { url: string } | null;
   referral: { id: number } | null;
 }
@@ -141,6 +144,7 @@ export function shapeSessionUser({
   // query, not of `settings`, so a settings blob carrying the same key is ignored. Sparse like
   // `isEarlyAdopter`: only an approved user's payload changes.
   const appBuilderApproved: true | undefined = row.appBuilderApproved ? true : undefined;
+  const memorialized: true | undefined = isMemorializedFlags(row.flags) ? true : undefined;
 
   // meta → banDetails (parity: the main app strips banDetails out of meta before reading it, so banDetails
   // is effectively undefined; reproduced here). parseMeta keeps the system-account marker on string meta.
@@ -188,6 +192,7 @@ export function shapeSessionUser({
     allowAds,
     isEarlyAdopter,
     appBuilderApproved,
+    memorialized,
     tier: highestTier,
     meta: userMeta,
     banDetails: banDetails as Record<string, unknown> | undefined,

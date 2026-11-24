@@ -13,6 +13,7 @@ import {
 } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { AppBlockSuspendedError, createAppAccessToken } from '$lib/server/oauth/token-helpers';
+import { MemorializedAccountError } from '$lib/server/auth/account-refusal';
 import { isOfflineGrantOn } from '$lib/server/oauth/offline-grant';
 import {
   APP_TOKEN_DEFAULT_TTL,
@@ -98,6 +99,9 @@ export const POST: RequestHandler = async ({ request }) => {
   } catch (err) {
     if (err instanceof AppBlockSuspendedError) {
       return bad('access_denied', 'This application is not currently available.', 403);
+    }
+    if (err instanceof MemorializedAccountError) {
+      return bad('access_denied', 'Account unavailable', 403);
     }
     throw err;
   }

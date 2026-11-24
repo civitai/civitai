@@ -11,6 +11,7 @@ import {
 import { getClientIp } from '$lib/server/auth/request';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { createOAuthTokenPair, createPlannedOAuthTokens } from '$lib/server/oauth/token-helpers';
+import { MemorializedAccountError } from '$lib/server/auth/account-refusal';
 import { isOfflineGrantOn, planDeviceGrant } from '$lib/server/oauth/offline-grant';
 import { ACCESS_TOKEN_TTL, DEVICE_CODE_GRANT } from '$lib/server/oauth/constants';
 import { isScopeGrantable, scopeFromColumn } from '$lib/server/oauth/scope';
@@ -131,9 +132,18 @@ export async function deviceTokenGrant(
   }
 
   // Offline-grant flag on: the same pair, with its mint origin and a refresh family recorded.
-  const pair = (await isOfflineGrantOn())
-    ? await createPlannedOAuthTokens(data.userId, client_id, scope, planDeviceGrant())
-    : await createOAuthTokenPair(data.userId, client_id, scope);
+  let pair: Awaited<ReturnType<typeof createPlannedOAuthTokens>>;
+  try {
+    pair = (await isOfflineGrantOn())
+      ? await createPlannedOAuthTokens(data.userId, client_id, scope, planDeviceGrant())
+      : await createOAuthTokenPair(data.userId, client_id, scope);
+  } catch (err) {
+    if (!(err instanceof MemorializedAccountError)) throw err;
+    return json(
+      { error: 'invalid_grant', error_description: err.message },
+      { status: 400, headers }
+    );
+  }
 
   logOAuthEvent({
     type: 'token.issued',
