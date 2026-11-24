@@ -312,14 +312,16 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     select: { pickleScanResult: true, virusScanResult: true },
   });
   // One writer per row: a Studio dataset's rating is the archive's, so this write skips it, and a zip
-  // swapped in meanwhile.
+  // swapped in meanwhile. A zip from before the stamp has no fullyRated and stays served until the
+  // backfill, so a rescan only moves it to fully rated, never to not fully rated.
   if (isTrainingData && outcome.trainingDataRating) {
     const patch = JSON.stringify(outcome.trainingDataRating);
     await dbWrite.$executeRaw`
       UPDATE "ModelFile"
       SET metadata = (COALESCE(metadata, '{}'::jsonb) - 'nsfwLevel') || ${patch}::jsonb
       WHERE id = ${fileId} AND url = ${file.url} AND type = 'Training Data'
-        AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'datasetArchive')`;
+        AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'datasetArchive')
+        AND (${outcome.trainingDataRating.fullyRated} OR COALESCE(metadata, '{}'::jsonb) ? 'fullyRated')`;
   }
   const failedScan = ranScan && hasFailedScan(written);
   const coverageMoved =
@@ -1058,7 +1060,23 @@ async function handleScanWorkflow(event: WorkflowEvent) {
     fileId,
     modelVersionId,
     trainingDataUrl,
-    rawScanResult: { source: 'orchestrator', workflowId: event.workflowId, steps },
+    // An extraction's entries (up to TRAINING_DATA_MAX_RATED_ENTRIES) are kept as counts only.
+    rawScanResult: {
+      source: 'orchestrator',
+      workflowId: event.workflowId,
+      steps: steps.map((step) => {
+        const output = (step as { output?: { entries?: unknown[]; rejected?: unknown[] } }).output;
+        return (step as { $type: string }).$type === 'archiveExtraction' && output
+          ? {
+              ...step,
+              output: {
+                entries: output.entries?.length ?? 0,
+                rejected: output.rejected?.length ?? 0,
+              },
+            }
+          : step;
+      }),
+    },
   };
 
   if (clamScan?.output && finished(clamScan)) {
