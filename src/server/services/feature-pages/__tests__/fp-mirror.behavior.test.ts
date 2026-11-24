@@ -453,6 +453,16 @@ describe('the reconcile', () => {
     }
   );
 
+  it("never lifts over the site's own hide stamped ahead of the clock: counted, nothing sent", async () => {
+    const id = (await seed('hidden ahead of the clock')).comment.sourceId;
+    verdictAt('site', id, 'hidden', new Date(Date.now() + 60 * 60_000));
+    const sent = verdicts('site').length;
+    expect(await reconcile()).toMatchObject({ mismatched: 1, liftsLost: 0 });
+    expect((await mirrorRow(id)).nextPushAt).toBeNull();
+    await runMirror(mirror);
+    expect(verdicts('site')).toHaveLength(sent);
+  });
+
   it('never lifts over a moderator hide on the platform: counted apart, nothing sent', async () => {
     const id = (await seed('hidden by a platform moderator')).comment.sourceId;
     verdictAt('mod', id, 'hidden', new Date());
