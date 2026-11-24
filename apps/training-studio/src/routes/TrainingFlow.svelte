@@ -53,6 +53,7 @@
   import { watchReadiness, type ReadinessView } from './uploadReadiness';
   import {
     draftEntries,
+    draftModelsAllowed,
     flowDraftStore,
     type FlowDraft,
     type FlowDraftState,
@@ -134,6 +135,16 @@
     // for a later visit.
     const handOff = reuseItems.length > 0 || reusePairItems.length > 0;
     void draftStore.load(nextImgId).then((draft) => {
+      if (unmounted) {
+        if (draft) for (const img of draft.images) URL.revokeObjectURL(img.previewUrl);
+        return;
+      }
+      // A draft for a model this viewer may no longer pick is left stored, but neither offered nor
+      // overwritten.
+      if (draft && !draftModelsAllowed(draft.state, new Set(enabledModelFlags))) {
+        for (const img of draft.images) URL.revokeObjectURL(img.previewUrl);
+        return;
+      }
       if (!draft) draftArmed = true;
       else if (!handOff && images.length === 0) {
         draftOffer = draft;
@@ -148,6 +159,7 @@
   const draftStore = draftUserId != null ? flowDraftStore(draftUserId) : null;
   let draftOffer = $state<FlowDraft | null>(null);
   let draftArmed = $state(false);
+  let unmounted = false;
   // Whether this visit saved a draft — only then does an emptied dataset clear it, so the offer of
   // an earlier one survives until the user answers it or builds a new dataset.
   let draftSaved = false;
@@ -191,6 +203,7 @@
           promptsSeed,
           paramsSeedTrigger,
           paramsSeedLoraType,
+          submitKey,
         },
         entries
       );
@@ -218,6 +231,7 @@
     paramsSeedTrigger = s.paramsSeedTrigger;
     paramsSeedLoraType = s.paramsSeedLoraType;
     presetType = s.presetType;
+    if (s.submitKey) submitKey = s.submitKey;
     images = draft.images;
     step = 2;
   }
@@ -398,6 +412,8 @@
   // load-bearing: a preview hydration resolving after teardown checks membership and revokes its
   // fresh URL instead of leaking it.
   $effect(() => () => {
+    unmounted = true;
+    if (draftOffer) for (const img of draftOffer.images) URL.revokeObjectURL(img.previewUrl);
     for (const img of images) URL.revokeObjectURL(img.previewUrl);
     images = [];
     for (const pair of pairs)
@@ -492,7 +508,7 @@
     // Any run that landed ends the draft: resuming it would resubmit (and charge) that run again.
     if (ids.length > 0 && draftStore) {
       submitted = true;
-      await draftStore.clear();
+      await draftStore.end();
     }
     if (failure)
       submitNotice.set(

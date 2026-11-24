@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { deleteFlowDrafts } from '@civitai/shared/training-flow-draft';
   import '$lib/civitai-elements';
   import type { CivitaiCheckbox } from '@civitai/components/civitai-checkbox';
   import type { CivitaiSegmentedControl } from '@civitai/components/civitai-segmented-control';
@@ -33,7 +34,9 @@
 
   function onAccountSelect(event: CustomEvent<{ value: string }>) {
     // A full load, not client navigation: /logout is a server route that clears the session.
-    if (event.detail.value === 'logout' && logoutUrl) window.location.assign(logoutUrl);
+    if (event.detail.value !== 'logout' || !logoutUrl) return;
+    // The New training autosave keeps a dataset per user in this browser; sign-out ends it.
+    void deleteFlowDrafts().then(() => window.location.assign(logoutUrl));
   }
 </script>
 

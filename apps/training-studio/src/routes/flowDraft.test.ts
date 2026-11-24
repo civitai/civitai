@@ -3,6 +3,7 @@ import { MODEL_CARDS } from '$lib/data/trainingModels';
 import {
   DRAFT_MAX_AGE_MS,
   draftEntries,
+  draftModelsAllowed,
   isUsableDraft,
   restoreImages,
   type FlowDraftState,
@@ -107,6 +108,33 @@ describe('draft round trip', () => {
     expect(entry!.localUrl).toBeUndefined();
     const [restored] = restoreImages([entry!.img], new Map(), nextId);
     expect(restored).toMatchObject({ previewUrl: url, blobUrl: url });
+  });
+});
+
+describe('draftModelsAllowed', () => {
+  const gated = MODEL_CARDS.find((c) => c.flagKey)!;
+  const open = MODEL_CARDS.find((c) => !c.flagKey && !c.versions[0]!.flagKey)!;
+  const draftOn = (card: (typeof MODEL_CARDS)[number]) =>
+    ({
+      selection: {
+        media: 'image',
+        loraType: 'character',
+        runs: [{ id: 1, cardType: card.type, versionKey: card.versions[0]!.key }],
+      },
+    } as FlowDraftState);
+
+  it('lets an ungated model resume for anyone', () => {
+    expect(draftModelsAllowed(draftOn(open), new Set())).toBe(true);
+  });
+
+  it("refuses a gated model once the viewer's gate is closed, and allows it while open", () => {
+    expect(draftModelsAllowed(draftOn(gated), new Set())).toBe(false);
+    expect(
+      draftModelsAllowed(
+        draftOn(gated),
+        new Set([gated.flagKey!, ...gated.versions.map((v) => v.flagKey!).filter(Boolean)])
+      )
+    ).toBe(true);
   });
 });
 
