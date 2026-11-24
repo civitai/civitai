@@ -52,7 +52,7 @@ describe.each([
   });
 
   // Sign-ins are written with the signed-in account in targetUserId, and userId is the session's
-  // account, usually 0. Only the reported account's own sign-ins are sent: userId 0 or its own.
+  // account, usually 0.
   describe('sign-in IPs', () => {
     const row = (userId: number, targetUserId: number, ip: string, type: string) => ({
       userId,
