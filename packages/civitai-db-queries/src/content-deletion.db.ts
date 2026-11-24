@@ -78,6 +78,10 @@ type DeleteOptions = {
   queueKept?: boolean;
 };
 
+/** A moderator's delete that queues what it keeps: a moderator decided the image goes. */
+const moderatorDecides = (options: DeleteOptions) =>
+  !!options.replay?.moderatorDelete && options.queueKept !== false;
+
 function conditions({ actor, where }: DeleteOptions) {
   const own = 'id' in actor && !actor.isModerator ? sql`AND "userId" = ${actor.id}` : sql``;
   return sql`${own} ${where ? sql`AND (${where})` : sql``}`;
@@ -120,9 +124,11 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
     )`);
   // Every image delete blocks each image it keeps (for its case or `ownerReportHold`), whoever deletes
   // it, so it leaves feeds and search until the delete is carried out. It writes what `writeModeratorBlock` writes and also drops
-  // the grace markers, so an account restore cannot lift it. A caller that does not queue what it keeps
-  // leaves an image already blocked as it is (a takedown's reason stays).
+  // the grace markers, so an account restore cannot lift it. Only a moderator's delete that queues what it
+  // keeps rewrites an image already blocked; any other leaves it as it is, so a takedown keeps its
+  // reason and an account-deletion grace block stays liftable by a restore.
   const hides = table === 'Image';
+  const skipBlocked = !moderatorDecides(options);
   if (hides)
     ctes.push(sql`hidden AS (
       UPDATE "Image" SET ingestion = 'Blocked', "nsfwLevel" = ${NSFW_LEVEL_BLOCKED},
@@ -138,7 +144,7 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
           ELSE metadata END,
         "updatedAt" = now()
       WHERE id IN (SELECT id FROM doomed WHERE blocked)
-        ${options.queueKept === false ? sql`AND ingestion IS DISTINCT FROM 'Blocked'` : sql``}
+        ${skipBlocked ? sql`AND ingestion IS DISTINCT FROM 'Blocked'` : sql``}
       RETURNING id, "userId", "postId"
     )`);
   return {
@@ -208,7 +214,8 @@ const POST_RECOUNT_UPSERT = sql`
  * app's `image-storage-deletes` job (unless `files` is absent, when the files stay); with
  * `recountPosts`, each post's rating recount for `update-nsfw-levels`; and with `cdnTakedown`, a
  * moderator's takedown of each url for `cdn-access-sync`. So a deleted row always leaves its
- * follow-ups queued, with no transaction around it. Returns what became of each listed id.
+ * follow-ups queued, with no transaction around it. A delete that hides an image no moderator decided
+ * on runs a second statement, so run that one in a transaction. Returns what became of each listed id.
  */
 export async function deleteImageRows(
   db: Kysely<DB>,
@@ -275,7 +282,17 @@ export async function deleteImageRows(
       SELECT id, NULL, "userId", "postId", NULL, NULL, NULL, NULL, NULL, NULL, 'hidden' FROM hidden`
         : sql``
     }`.execute(db);
-  return splitOutcome(rows);
+  const outcome = splitOutcome(rows);
+  // Blocking an image queues it for `remove-blocked-images` (trg_blocked_image_delete_queue), which
+  // would delete it on a retention clock with no one having decided so. Unless a moderator did, the
+  // queued delete owns it. A second statement: the trigger's row is not visible inside the first.
+  if (outcome.hidden.length && !moderatorDecides(options))
+    await sql`
+      DELETE FROM "JobQueue"
+      WHERE type = 'BlockedImageDelete' AND "entityType" = 'Image'
+        AND "entityId" = ANY(${outcome.hidden.map(({ id }) => id)}::int[])
+    `.execute(db);
+  return outcome;
 }
 
 /** Deletes post rows; returns what became of each listed id. */

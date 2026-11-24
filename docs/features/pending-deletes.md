@@ -32,9 +32,12 @@ passes, runs one statement that:
    caller, or the job replaying a delete), as `writeModeratorBlock` does (`ingestion = 'Blocked'`, `nsfwLevel`
    Blocked, `blockedFor = 'moderated'` unless it is `CSAM`, every review flag but `csam` cleared, and `appeal` kept while an appeal is pending), and
    drops its account-deletion grace markers, so it leaves feeds, search and the review queues while
-   its case keeps it, and neither a queue's accept nor an account restore can lift it. A caller that
-   does not queue what it keeps (`queueKept: false`) leaves an image already blocked as it is, so a
-   takedown's reason stays;
+   its case keeps it, and neither a queue's accept nor an account restore can lift it. Only a
+   moderator's delete that queues what it keeps rewrites an image already blocked; any other leaves it
+   as it is, so a takedown keeps its reason and an account-deletion grace block stays liftable by a
+   restore. Blocking queues the image for `remove-blocked-images` (`trg_blocked_image_delete_queue`); unless a
+   moderator's delete did the blocking, a second statement drops that queue row, so the queued delete,
+   not the purge's retention clock, decides when it goes;
 4. deletes the rest and, for images, queues what the caller asks for: their stored files (unless
    `files` is absent), post recounts (`recountPosts`) and CDN takedowns (`cdnTakedown`);
 5. returns `{ deleted, kept, hidden, gone }`: the deleted rows, the kept ids, the kept images it

@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'fs';
 import {
   deleteImageRows,
   deletePostRows,
@@ -36,7 +37,7 @@ beforeAll(async () => {
   await pg.exec(`
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
     CREATE TYPE "JobQueueType" AS ENUM (
-      'PendingDelete', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync'
+      'PendingDelete', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync', 'BlockedImageDelete'
     );
     CREATE TABLE "JobQueue" (
       "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
@@ -512,7 +513,35 @@ describe('deleteImageRows keeps a row in a child-safety case', () => {
     expect((await pending()).map((row) => row.entityId)).toEqual([PLAIN]);
   });
 
-  it('blocks what a caller that does not queue keeps, unless it is blocked already', async () => {
+  it("leaves an image already blocked as it is for any delete but a moderator's", async () => {
+    const grace = {
+      accountDeletionPriorIngestion: 'Scanned',
+      accountDeletionPriorBlockedFor: null,
+    };
+    await addImage({
+      needsReview: 'csam',
+      ingestion: 'Blocked',
+      blockedFor: 'tos',
+      metadata: JSON.stringify(grace),
+    });
+
+    const { kept, hidden } = await deleteImageRows(db, {
+      ids: [IMAGE],
+      actor: { system: 'remove-deleted-user-images' },
+    });
+
+    expect(kept).toEqual([IMAGE]);
+    expect(hidden).toEqual([]);
+    const { rows } = await pg.query(
+      `SELECT "blockedFor", metadata FROM "Image" WHERE id = ${IMAGE}`
+    );
+    // The grace markers stay, so an account restore can still lift its grace block.
+    expect(rows).toEqual([{ blockedFor: 'tos', metadata: grace }]);
+    expect((await pending()).map((row) => row.entityId)).toEqual([IMAGE]);
+  });
+
+  // docs/features/pending-deletes.md: a delete that keeps an image hides it, whoever deletes it.
+  it('blocks what a caller that does not queue keeps', async () => {
     await addImage({ needsReview: 'csam' });
 
     const { kept, hidden } = await deleteImageRows(db, {
@@ -614,6 +643,77 @@ describe('deleteImageRows keeps a row in a child-safety case', () => {
       moderatorDelete: true,
       ownerId: OWNER,
     });
+  });
+});
+
+describe('a delete that blocks an image no moderator decided on', () => {
+  const MIGRATIONS = `${__dirname}/../../../../packages/civitai-db-schema/prisma`;
+  beforeAll(async () => {
+    const queueFn = readFileSync(
+      `${MIGRATIONS}/programmability/nsfw_level_update_triggers.sql`,
+      'utf8'
+    ).split('\n---')[0];
+    await pg.exec(queueFn);
+    // The real trigger that queues a newly blocked image for `remove-blocked-images`.
+    const migration = readFileSync(
+      `${MIGRATIONS}/migrations/20260806130000_blocked_image_delete_queue_completeness/migration.sql`,
+      'utf8'
+    );
+    const between = (from: string, to: string) => {
+      const start = migration.indexOf(from);
+      return migration.slice(start, migration.indexOf(to, start) + to.length);
+    };
+    await pg.exec(
+      between('CREATE OR REPLACE FUNCTION queue_blocked_image_for_delete', '$$ LANGUAGE plpgsql;')
+    );
+    await pg.exec(
+      between(
+        'CREATE TRIGGER trg_blocked_image_delete_queue',
+        'EXECUTE FUNCTION queue_blocked_image_for_delete();'
+      )
+    );
+  });
+  afterAll(() => pg.exec(`DROP TRIGGER trg_blocked_image_delete_queue ON "Image"`));
+
+  const blockQueue = async () =>
+    (
+      await pg.query<{ entityId: number }>(
+        `SELECT "entityId" FROM "JobQueue" WHERE type = 'BlockedImageDelete' ORDER BY "entityId"`
+      )
+    ).rows.map((row) => row.entityId);
+
+  it('leaves its queued delete, not the blocked-image purge, to delete it', async () => {
+    await addImage({ needsReview: 'csam' });
+
+    const { hidden } = await deleteImageRows(db, {
+      ids: [IMAGE],
+      actor: { system: 'remove-deleted-user-images' },
+    });
+
+    expect(hidden.map((row) => row.id)).toEqual([IMAGE]);
+    expect(await blockQueue()).toEqual([]);
+    expect((await pending()).map((row) => row.entityId)).toEqual([IMAGE]);
+  });
+
+  it("keeps the purge's queue row of a moderator's delete", async () => {
+    await addImage({ needsReview: 'csam' });
+
+    await deleteImageRows(db, {
+      ids: [IMAGE],
+      actor: { system: 'mod-delete-user-images' },
+      replay: { moderatorDelete: true },
+    });
+
+    expect(await blockQueue()).toEqual([IMAGE]);
+  });
+
+  it('keeps the queue row of an image blocked before the delete', async () => {
+    await addImage({ needsReview: 'csam', ingestion: 'Blocked', blockedFor: 'tos' });
+    expect(await blockQueue()).toEqual([IMAGE]);
+
+    await deleteImageRows(db, { ids: [IMAGE], actor: { system: 'remove-deleted-user-images' } });
+
+    expect(await blockQueue()).toEqual([IMAGE]);
   });
 });
 

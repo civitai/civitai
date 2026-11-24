@@ -132,7 +132,7 @@ const BASE_SCHEMA = `
   );
   CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
   CREATE TYPE "JobQueueType" AS ENUM (
-    'ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel', 'PendingDelete'
+    'ImageStorageDelete', 'CdnAccessSync', 'UpdateNsfwLevel', 'PendingDelete', 'BlockedImageDelete'
   );
   CREATE TABLE "JobQueue" (
     "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
@@ -531,7 +531,7 @@ describe('an owner deleting their own content in a child-safety case', () => {
     expect(await queuedFiles()).toEqual([]);
   });
 
-  // A case-kept delete hides the image whoever deletes it (#10214 covered only a moderator's).
+  // A case-kept delete hides the image whoever deletes it.
   it.each<[string, { id: number; isModerator: boolean } | { system: string }]>([
     ["the owner's", { id: PLAIN, isModerator: false }],
     ['a system', { system: 'remove-deleted-user-images' }],

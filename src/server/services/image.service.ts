@@ -1037,6 +1037,18 @@ export async function deleteImages(...args: Parameters<typeof deleteImagesWithOu
   return (await deleteImagesWithOutcome(...args)).deleted;
 }
 
+/**
+ * A delete that may hide an image no moderator decided on runs two statements (`deleteImageRows`),
+ * so they share a transaction.
+ */
+const withDeleteTransaction = <T>(
+  needed: boolean,
+  run: (db: ReturnType<typeof kyselyOver>) => Promise<T>
+) =>
+  needed
+    ? dbWrite.$transaction((tx) => run(kyselyOver(tx)), { maxWait: 10_000, timeout: 30_000 })
+    : run(kyselyOver(dbWrite));
+
 /** `deleteImages`, with the images it left for their child-safety case. */
 export async function deleteImagesWithOutcome(
   ids: number[],
@@ -1080,27 +1092,29 @@ export async function deleteImagesWithOutcome(
       kept: caseKept,
       hidden,
       gone,
-    } = await deleteImageRows(kyselyOver(dbWrite), {
-      ids,
-      actor,
-      where: callerWhere,
-      queueKept,
-      replay: {
-        ...(moderatorDelete && { moderatorDelete: true }),
-        ...(keepStoredFiles && { keepStoredFiles: true }),
-      },
-      files: keepStoredFiles
-        ? undefined
-        : {
-            allVersions: moderatorDelete ? moderatorPurge : undefined,
-            keepShopArtwork:
-              deletedById === undefined
-                ? undefined
-                : plainOwnerDeleteSql(deletedById, [...reported]),
-          },
-      recountPosts: updatePosts,
-      cdnTakedown: moderatorDelete,
-    });
+    } = await withDeleteTransaction(!(moderatorDelete && queueKept !== false), (db) =>
+      deleteImageRows(db, {
+        ids,
+        actor,
+        where: callerWhere,
+        queueKept,
+        replay: {
+          ...(moderatorDelete && { moderatorDelete: true }),
+          ...(keepStoredFiles && { keepStoredFiles: true }),
+        },
+        files: keepStoredFiles
+          ? undefined
+          : {
+              allVersions: moderatorDelete ? moderatorPurge : undefined,
+              keepShopArtwork:
+                deletedById === undefined
+                  ? undefined
+                  : plainOwnerDeleteSql(deletedById, [...reported]),
+            },
+        recountPosts: updatePosts,
+        cdnTakedown: moderatorDelete,
+      })
+    );
 
     keptForCase.push(...caseKept);
     // Of the rest, only the hold marker's record tells a row its delete trigger kept from one the
