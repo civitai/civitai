@@ -1124,13 +1124,14 @@ describe('?from= imports: a tally through an import is the same on both routes',
         });
         landed.push({ status: r.status, body: r.body });
       }
-      // The legacy headers follow the route, not the import.
+      // The deprecation headers follow the route, not the import: both tally routes are
+      // deprecated (the PATCH since rollout step 3).
       const last = await call({
         token,
         ...tally(route, 'mark', 'board', 'b1', 'vote'),
         query: from,
       });
-      expect(last.headers.deprecation).toBe(route === 'legacy' ? '@1794182400' : undefined);
+      expect(last.headers.deprecation).toBe('@1794182400');
       outcomes[route] = {
         refused: refused.map((r) => ({
           ...r,
