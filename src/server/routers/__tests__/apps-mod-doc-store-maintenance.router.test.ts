@@ -3,11 +3,12 @@ import type * as FliptClient from '~/server/flipt/client';
 import type { DocStore, DocStoreMaintenance } from '~/server/services/apps/doc-store';
 
 /**
- * `apps.mod.docStore.maintenance.*` end to end below the HTTP layer: the REAL router and its
- * `moderatorProcedure`, the REAL service (`storage-mark-migration.service.ts`) and the REAL
- * document store on PGlite (real migrations, least-privilege role, RLS on). Replaced at the
- * boundary only: the main-database rows (`AppBlock`, the audit table) through the canonical db
- * mock, the Flipt switch, and the derivation secret (the canonical env mock).
+ * `apps.mod.docStore.maintenance.*`: the REAL router and its `moderatorProcedure` for who may call
+ * it, and the REAL service (`storage-mark-migration.service.ts`), handed the REAL document store on
+ * PGlite (real migrations, least-privilege role, RLS on) through its `store` dependency, for what
+ * each op does. Replaced at the boundary only: the main-database rows (`AppBlock`, the audit
+ * table) through the canonical db mock, the Flipt switch, and the derivation secret (the canonical
+ * env mock).
  *
  * What this file owns, beyond the store suite (`doc-store.mark-migration.pglite.test.ts`): who may
  * call the ops, that each writing op is audited before it changes anything, the gates only the
@@ -22,9 +23,6 @@ const h = vi.hoisted(() => ({
   maint: undefined as unknown as DocStoreMaintenance,
   /** Viewer-keyed collections whose switch is open. */
   open: new Set<string>(),
-}));
-vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
-  getDocStoreMaintenance: () => h.maint,
 }));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const real = await importOriginal<typeof FliptClient>();
@@ -45,6 +43,13 @@ import { appsModRouter } from '~/server/routers/apps-shared.router';
 import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-moderation.schema';
 import { createDocStore, createDocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { viewerKeyedDocKey } from '~/server/services/apps/doc-store-viewer-keyed';
+import {
+  migrateMarksToDocs,
+  purgeStorageCollection,
+  rollbackMarkMigration,
+  storageMaintenanceStatus,
+  storagePurgeDump,
+} from '~/server/services/apps/storage-mark-migration.service';
 import type { DocCollection } from '~/server/services/apps/doc-store.types';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
@@ -168,15 +173,23 @@ async function seedVotes() {
   await h.store.mark(v(V2), RECORDS, 'rec_x', 'vote');
   await h.store.mark(v(V2), RECORDS, 'rec_y', 'vote');
 }
-const migrate = (dryRun?: boolean, user: unknown = MOD) =>
-  caller(user).migrateMarks({
-    appBlockId: app.id,
-    from: 'records',
-    mark: 'vote',
-    to: 'votes',
-    reason: REASON,
-    ...(dryRun === undefined ? {} : { dryRun }),
-  });
+/** The service with the PGlite store passed in (the router passes none: production's). */
+const deps = () => ({ store: h.maint });
+const migrate = (dryRun = true, to = 'votes') =>
+  migrateMarksToDocs(
+    {
+      actorUserId: MOD.id,
+      appBlockId: app.id,
+      from: 'records',
+      mark: 'vote',
+      to,
+      reason: REASON,
+      dryRun,
+    },
+    deps()
+  );
+const status = () => storageMaintenanceStatus({ appBlockId: app.id }, deps());
+const refusal = (reason: string) => ({ code: 'invalid_request', details: { reason } });
 const votes = () =>
   harness.raw(`SELECT key FROM appdata.doc WHERE app_id = $1 AND coll = 'votes' ORDER BY key`, [
     app.id,
@@ -186,7 +199,18 @@ describe('access: session moderators only', () => {
   const calls = (user: unknown) =>
     [
       ['status', () => caller(user).status({ appBlockId: app.id })],
-      ['migrateMarks', () => migrate(false, user)],
+      [
+        'migrateMarks',
+        () =>
+          caller(user).migrateMarks({
+            appBlockId: app.id,
+            from: 'records',
+            mark: 'vote',
+            to: 'votes',
+            dryRun: false,
+            reason: REASON,
+          }),
+      ],
       [
         'rollbackMarks',
         () => caller(user).rollbackMarks({ appBlockId: app.id, to: 'votes', reason: REASON }),
@@ -218,6 +242,13 @@ describe('access: session moderators only', () => {
       expect(await h.store.mark(v(V1), RECORDS, 'rec_y', 'vote')).toMatchObject({ marked: true });
     }
   );
+
+  it('positive control: a moderator session reaches the service (an unknown app is NOT_FOUND)', async () => {
+    await expect(caller().status({ appBlockId: 'apb_NOSUCHAPP' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: 'app block not found',
+    });
+  });
 });
 
 describe('migrateMarks', () => {
@@ -232,7 +263,7 @@ describe('migrateMarks', () => {
     });
     expect(audit).toEqual([]);
     expect(await votes()).toEqual([]);
-    expect((await caller().status({ appBlockId: app.id })).runs).toEqual([]);
+    expect((await status()).runs).toEqual([]);
   });
 
   it("copies each vote to the key its voter's own @me call derives; audited before it ran", async () => {
@@ -269,7 +300,7 @@ describe('migrateMarks', () => {
       after: { outcome: 'applied', copy: { inserted: 3 }, verify: { ok: true } },
     });
     expect(APP_LISTING_MODERATION_ACTIONS as readonly string[]).toContain(audit[0].action);
-    expect((await caller().status({ appBlockId: app.id })).runs).toMatchObject([
+    expect((await status()).runs).toMatchObject([
       { collection: 'records', kind: 'mark_migration', name: 'vote', status: 'verified' },
     ]);
   });
@@ -277,10 +308,7 @@ describe('migrateMarks', () => {
   it('refuses a target whose switch is open, before any audit row, freeze or copy', async () => {
     await seedVotes();
     h.open.add('votes');
-    await expect(migrate(false)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: expect.stringContaining('(target_open)'),
-    });
+    await expect(migrate(false)).rejects.toMatchObject(refusal('target_open'));
     expect(audit).toEqual([]);
     expect(await votes()).toEqual([]);
     expect(await h.store.mark(v(V1), RECORDS, 'rec_y', 'vote')).toMatchObject({ marked: true });
@@ -289,26 +317,17 @@ describe('migrateMarks', () => {
   it('refuses while the derivation secret is unset, before any audit row, freeze or copy', async () => {
     await seedVotes();
     envMock.set({ APP_STORAGE_VIEWER_KEY_SECRET: undefined });
-    await expect(migrate(false)).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    await expect(migrate(false)).rejects.toMatchObject({
+      code: 'service_unavailable',
+      details: { reason: 'viewer_keys_unconfigured' },
+    });
     expect(audit).toEqual([]);
     expect(await votes()).toEqual([]);
   });
 
   it('refuses a target the enforced manifest does not declare', async () => {
     await seedVotes();
-    await expect(
-      caller().migrateMarks({
-        appBlockId: app.id,
-        from: 'records',
-        mark: 'vote',
-        to: 'ballots',
-        dryRun: false,
-        reason: REASON,
-      })
-    ).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: expect.stringContaining('(target_not_declared)'),
-    });
+    await expect(migrate(false, 'ballots')).rejects.toMatchObject(refusal('target_not_declared'));
     expect(audit).toEqual([]);
   });
 });
@@ -322,11 +341,11 @@ describe('purgeCollection and rollbackMarks', () => {
   it('reads the counters from the ENFORCED manifest: refused while declared, applied once dropped', async () => {
     await seedCounters();
     const purge = () =>
-      caller().purgeCollection({ appBlockId: app.id, collection: 'popular_plays', reason: REASON });
-    await expect(purge()).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: expect.stringContaining('(counters_declared)'),
-    });
+      purgeStorageCollection(
+        { actorUserId: MOD.id, appBlockId: app.id, collection: 'popular_plays', reason: REASON },
+        deps()
+      );
+    await expect(purge()).rejects.toMatchObject(refusal('counters_declared'));
     // The refusal is audited as failed: the audit row comes first.
     expect(audit.map((r) => [r.action, r.after?.outcome, r.after?.reason])).toEqual([
       ['storage-collection-purge', 'failed', 'counters_declared'],
@@ -346,11 +365,10 @@ describe('purgeCollection and rollbackMarks', () => {
       ['storage-collection-purge', 'failed'],
       ['storage-collection-purge', 'applied'],
     ]);
-    const dump = await caller().purgeDump({
-      appBlockId: app.id,
-      collection: 'popular_plays',
-      runId: out.runId,
-    });
+    const dump = await storagePurgeDump(
+      { appBlockId: app.id, collection: 'popular_plays', runId: out.runId },
+      deps()
+    );
     expect(dump?.docs.map((d) => d.key)).toEqual(['song_1', 'song_2']);
   });
 
@@ -359,11 +377,11 @@ describe('purgeCollection and rollbackMarks', () => {
     await migrate(false);
     h.open.add('votes');
     const rollback = () =>
-      caller().rollbackMarks({ appBlockId: app.id, to: 'votes', reason: 'revert the migration' });
-    await expect(rollback()).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: expect.stringContaining('(target_open)'),
-    });
+      rollbackMarkMigration(
+        { actorUserId: MOD.id, appBlockId: app.id, to: 'votes', reason: 'revert the migration' },
+        deps()
+      );
+    await expect(rollback()).rejects.toMatchObject(refusal('target_open'));
     expect(await votes()).toHaveLength(3);
 
     h.open.clear();

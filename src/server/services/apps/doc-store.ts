@@ -2093,7 +2093,7 @@ export const PURGE_MAX_DOCS = 1000;
 /** Bytes of document bodies one purge dumps at most. */
 export const PURGE_MAX_DUMP_BYTES = 16 * 1024 * 1024;
 
-/** The production namespace: published data, never a developer's dev or a moderator's review namespace.
+/** The production namespace: published data, never a developer's dev or a moderator's review namespace. */
 export const PUBLISHED_NS = 'prod';
 
 /** Postgres `undefined_column`: what a statement naming `schema_major` gets before the migration. */

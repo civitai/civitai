@@ -70,6 +70,7 @@ type Deps = { store?: DocStoreMaintenance };
 
 /** The app, with its ENFORCED manifest, from the primary. */
 async function loadApp(appBlockId: string): Promise<App> {
+  // primary: the enforced manifest decides the copy's target and the purge's counter gate.
   const block = await dbWrite.appBlock.findUnique({
     where: { id: appBlockId },
     select: {
