@@ -155,6 +155,24 @@ describe('servableImage', () => {
       values.filter((a) => !postHiddenFromKnights(a))
     );
     expect(values.filter(postHiddenFromKnights)).toEqual(['Private']);
+    // Fails closed: a missing value, and one added to the enum later, are hidden until someone lists them.
+    expect([null, undefined, 'NotYetAValue'].map(postHiddenFromKnights)).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    await pg.query(
+      `INSERT INTO "Post" (id, "publishedAt", availability) VALUES (199, now() - interval '1 day', 'NotYetAValue')`
+    );
+    await pg.query(`INSERT INTO "Image" (id, "postId") VALUES (990000399, 199)`);
+    const unknownShown = await db
+      .selectFrom('Image as img')
+      .innerJoin('Post as p', 'p.id', 'img.postId')
+      .select('img.id')
+      .where('img.id', '=', 990000399)
+      .where(postNotPrivate)
+      .execute();
+    expect(unknownShown).toEqual([]);
     await pg.exec(`DELETE FROM "Image" WHERE id >= 990000300; DELETE FROM "Post" WHERE id >= 100`);
   });
 
