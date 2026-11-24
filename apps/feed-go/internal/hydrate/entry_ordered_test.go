@@ -134,12 +134,12 @@ func TestOrderedCaches(t *testing.T) {
 	}
 	p := &PackedReader{}
 	for _, k := range want {
-		if !p.Queue(NewBatch(), k, nil, 0).ordered {
+		if !p.Queue(NewBatch(), k, nil, 0).opts.ordered {
 			t.Errorf("%s: read unordered", k)
 		}
 	}
 	for _, k := range []string{KeyBasicUsers, KeyImageFrames, KeyModelFrames, KeyTagIDs, KeyModelTags, KeyThumbnails} {
-		if p.Queue(NewBatch(), k, nil, 0).ordered {
+		if p.Queue(NewBatch(), k, nil, 0).opts.ordered {
 			t.Errorf("%s: read ordered", k)
 		}
 	}

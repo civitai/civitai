@@ -14,87 +14,27 @@
 package hydrate
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
-// jsUndefined absorbs msgpackr's encoding of `undefined` (fixext1, type 0).
+// jsUndefined is msgpackr's encoding of `undefined` (fixext1, type 0) as the reader decodes it
+// (jsUndef), before a map drops it or an array makes it nil.
 type jsUndefined struct{}
 
-func (*jsUndefined) UnmarshalMsgpack([]byte) error  { return nil }
-func (jsUndefined) MarshalMsgpack() ([]byte, error) { return nil, nil }
-
-func init() {
-	msgpack.RegisterExt(0, (*jsUndefined)(nil))
-}
-
-// Unpack decodes one msgpackr value into Go maps/slices. Maps decode to map[string]any.
+// Unpack decodes one msgpackr value into Go maps/slices (msgpack.go: the types it returns, and the
+// generic decoder it replaced, which the tests keep as their oracle). Maps decode to map[string]any.
 //
-// Checked first (checkSizes): the decoder allocates from a declared length before reading elements,
-// and an out-of-memory error cannot be recovered.
+// Checked first (checkSizes): every container is allocated from its declared length before its
+// elements are read, and an out-of-memory error cannot be recovered.
 func Unpack(b []byte) (any, error) {
-	if err := checkSizes(b); err != nil {
-		return nil, err
-	}
-	dec := msgpack.NewDecoder(bytes.NewReader(b))
-	dec.UseLooseInterfaceDecoding(true)
-	v, err := dec.DecodeInterface()
-	if err != nil {
-		return nil, err
-	}
-	return normalize(v), nil
-}
-
-// normalize turns map[any]any (non-string keys) into map[string]any and drops jsUndefined values.
-func normalize(v any) any {
-	switch t := v.(type) {
-	case map[any]any:
-		out := make(map[string]any, len(t))
-		for k, val := range t {
-			if isUndef(val) {
-				continue
-			}
-			out[toKey(k)] = normalize(val)
-		}
-		return out
-	case map[string]any:
-		for k, val := range t {
-			if isUndef(val) {
-				delete(t, k)
-				continue
-			}
-			t[k] = normalize(val)
-		}
-		return t
-	case []any:
-		for i := range t {
-			if isUndef(t[i]) {
-				t[i] = nil
-				continue
-			}
-			t[i] = normalize(t[i])
-		}
-		return t
-	case *jsUndefined, jsUndefined:
-		return nil
-	}
-	return v
-}
-
-func isUndef(v any) bool {
-	switch v.(type) {
-	case *jsUndefined, jsUndefined:
-		return true
-	}
-	return false
+	return unpackString(string(b), "")
 }
 
 func toKey(k any) string {
@@ -185,9 +125,30 @@ func (p *PackedReader) key(key string, id int) string {
 // `{debounce: true}` marker. A `{notFound: true}` marker is an entry with NotFound set; any other value
 // is data, Stale when ttl > 0 and its `cachedAt` is older than ttl before now. `cachedAt` is removed
 // from the value either way.
-func decodeEntry(cmd *redis.StringCmd, ttl time.Duration, now time.Time, ordered bool) (Entry, bool) {
-	e, st := entryState(cmd, ttl, now, ordered)
+func decodeEntry(cmd *redis.StringCmd, ttl time.Duration, now time.Time, opts decodeOpts) (Entry, bool) {
+	e, st := entryState(cmd, ttl, now, opts)
 	return e, st == stateEntry
+}
+
+// decodeOpts is how one cache's values decode (optsFor).
+type decodeOpts struct {
+	// ordered: the cache is an ordered one (orderedCaches), its entries read with UnpackOrdered.
+	ordered bool
+	// intList is the record member whose list of integers decodes as an unboxed []int (intLists).
+	intList string
+}
+
+// intLists are the caches whose records carry one list of integer ids read only as ints: the
+// member decodes as a []int when every element is an integer that fits one (any other list, or one
+// with no element, is the []any it always was), so a long id list costs one allocation, not one per
+// id. Every reader of the member accepts both types (userFollowsFrom).
+var intLists = map[string]string{
+	KeyUserFollows: "follows",
+}
+
+// optsFor is key's decodeOpts.
+func optsFor(key string) decodeOpts {
+	return decodeOpts{ordered: orderedCaches[key], intList: intLists[key]}
 }
 
 // readState is what one GET's answer means for a miss computation.
@@ -204,28 +165,34 @@ const (
 	stateHeld
 )
 
-// entryState is decodeEntry with the reason for a miss (readState).
-func entryState(cmd *redis.StringCmd, ttl time.Duration, now time.Time, ordered bool) (Entry, readState) {
-	b, err := cmd.Bytes()
+// entryState is decodeEntry with the reason for a miss (readState). The reply is decoded as the
+// string go-redis holds it in, so the entry's strings share its bytes (msgpack.go).
+func entryState(cmd *redis.StringCmd, ttl time.Duration, now time.Time, opts decodeOpts) (Entry, readState) {
+	s, err := cmd.Result()
 	if errors.Is(err, redis.Nil) {
 		return Entry{}, stateAbsent
 	}
 	if err != nil {
 		return Entry{}, stateHeld
 	}
-	return decodeBytes(b, ttl, now, ordered)
+	return decodeValue(s, ttl, now, opts)
 }
 
 // decodeBytes is one cached value as an Entry (see decodeEntry); ordered decodes it as an ordered
-// cache's (orderedCaches: decodeOrderedBytes).
+// cache's (orderedCaches: decodeOrderedValue).
 func decodeBytes(b []byte, ttl time.Duration, now time.Time, ordered bool) (Entry, readState) {
+	return decodeValue(string(b), ttl, now, decodeOpts{ordered: ordered})
+}
+
+// decodeValue is decodeBytes over a string, with a cache's decodeOpts.
+func decodeValue(b string, ttl time.Duration, now time.Time, opts decodeOpts) (Entry, readState) {
 	if len(b) == 0 {
 		return Entry{}, stateAbsent
 	}
-	if ordered {
-		return decodeOrderedBytes(b, ttl, now)
+	if opts.ordered {
+		return decodeOrderedValue(b, ttl, now)
 	}
-	v, err := Unpack(b)
+	v, err := unpackString(b, opts.intList)
 	if err != nil {
 		return Entry{}, stateAbsent
 	}
@@ -251,11 +218,11 @@ func decodeBytes(b []byte, ttl time.Duration, now time.Time, ordered bool) (Entr
 	return e, stateEntry
 }
 
-// decodeOrderedBytes is decodeBytes for an ordered cache: the same states from the same members
+// decodeOrderedValue is decodeValue for an ordered cache: the same states from the same members
 // (`debounce`, `notFound`, `cachedAt`), the record decoded once, with UnpackOrdered, into the entry's
 // Ordered.
-func decodeOrderedBytes(b []byte, ttl time.Duration, now time.Time) (Entry, readState) {
-	v, err := UnpackOrdered(b)
+func decodeOrderedValue(b string, ttl time.Duration, now time.Time) (Entry, readState) {
+	v, err := unpackOrderedString(b)
 	if err != nil {
 		return Entry{}, stateAbsent
 	}

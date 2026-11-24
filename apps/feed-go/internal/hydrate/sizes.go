@@ -1,7 +1,6 @@
 package hydrate
 
 import (
-	"encoding/binary"
 	"errors"
 )
 
@@ -13,7 +12,7 @@ var errTruncated = errors.New("msgpack: a declared length exceeds the remaining 
 // array/map with more elements than remaining bytes (every element takes at least one byte). A value
 // that passes cannot make the decoder allocate more than a small multiple of len(b). It does not
 // allocate; trailing bytes after the first value are ignored, as the decoder ignores them.
-func checkSizes(b []byte) error {
+func checkSizes[T ~string | ~[]byte](b T) error {
 	pending := 1 // values still to read
 	i := 0
 	for pending > 0 {
@@ -95,17 +94,12 @@ func checkSizes(b []byte) error {
 }
 
 // length reads a big-endian length of size bytes at b[i:].
-func length(b []byte, i, size int) (n, next int, ok bool) {
+func length[T ~string | ~[]byte](b T, i, size int) (n, next int, ok bool) {
 	if size > len(b)-i {
 		return 0, i, false
 	}
-	switch size {
-	case 1:
-		n = int(b[i])
-	case 2:
-		n = int(binary.BigEndian.Uint16(b[i:]))
-	default:
-		n = int(binary.BigEndian.Uint32(b[i:]))
+	for k := range size {
+		n = n<<8 | int(b[i+k])
 	}
 	return n, i + size, true
 }
