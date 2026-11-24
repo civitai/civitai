@@ -8,8 +8,8 @@ export type MoreLikeThisAnchor = {
 };
 
 /**
- * Images "more like this" can't search from: the ones Remix refuses image-to-image. The card button
- * and the server's anchor check both decide with this, for every viewer and browsing level.
+ * Images "more like this" can't search from, for every viewer and browsing level. Stricter than
+ * Remix's `getEngineRefusal`, which routes an unscanned image to its safe tier: here it is refused.
  */
 export function isMoreLikeThisRefused(image: MoreLikeThisAnchor) {
   if (image.ingestion === ImageIngestionStatus.Blocked || image.blockedFor) return true;

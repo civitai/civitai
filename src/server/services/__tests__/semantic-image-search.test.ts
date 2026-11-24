@@ -797,6 +797,7 @@ describe('"more like this" never rates above its anchor', () => {
     expect(gate).toEqual([1, 2, 4, 8, 16]);
   });
 });
+// Pins the anchor rule shared with the card button (isMoreLikeThisRefused, #10245).
 describe('"more like this" refuses a minor- or POI-flagged anchor at every level', () => {
   const run = (anchor: Record<string, unknown>, user: SessionUser, browsingLevel = PG) => {
     const { source, calls } = rankedSource([101]);
