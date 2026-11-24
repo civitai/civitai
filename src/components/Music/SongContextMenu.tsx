@@ -6,12 +6,14 @@ import {
   IconExternalLink,
   IconFlag,
   IconRadar2,
+  IconScale,
   IconShare3,
   IconTrash,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import type { ReactNode } from 'react';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
+import { openRatingReviewModal } from '~/components/Dialog/triggers/rating-review';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
@@ -30,6 +32,7 @@ import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookup
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { ratingDisputeEnabled } from '~/server/schema/rating-review.schema';
 import {
   moderatorBulkImageManagerPath,
   moderatorImageLookupPath,
@@ -72,9 +75,27 @@ async function shareSong(imageId: number, onCopied: (url: string) => void) {
   });
 }
 
+/** The owner's "Dispute rating": only on a song its own scans have reviewed, the one a moderator
+ *  may rule on. A card that does not carry the song's state leaves the check to the server. */
+export function canDisputeSongRating({
+  isOwner,
+  features,
+  ingestion,
+}: {
+  isOwner: boolean;
+  features: Parameters<typeof ratingDisputeEnabled>[0];
+  ingestion?: string;
+}) {
+  return (
+    isOwner &&
+    ratingDisputeEnabled(features, 'Song') &&
+    (ingestion === undefined || ingestion === 'Scanned')
+  );
+}
+
 /**
  * A song's ⋯ menu (Pencil `rUDmm`): play, save to a playlist, share, open and report, with the
- * owner's delete and the moderator tools that apply to a song. Image-only actions (showcase,
+ * owner's rating dispute and delete, and the moderator tools that apply to a song. Image-only actions (showcase,
  * decorations, minor/POI flags, storylines, More like this) are not offered.
  */
 function SongMenuItems({ image, leadingMenuItems, additionalMenuItems }: SongContextMenuProps) {
@@ -153,6 +174,23 @@ function SongMenuItems({ image, leadingMenuItems, additionalMenuItems }: SongCon
           <HideImageButton as="menu-item" imageId={imageId} noun="song" />
           {ownerId && <HideUserButton as="menu-item" userId={ownerId} />}
           {ownerId && <BlockUserButton userId={ownerId} as="menu-item" />}
+        </>
+      )}
+      {canDisputeSongRating({ isOwner, features, ingestion: image.ingestion }) && (
+        <>
+          <Menu.Divider />
+          <Menu.Item
+            leftSection={<IconScale size={16} stroke={1.5} />}
+            onClick={() =>
+              openRatingReviewModal({
+                entityType: 'Song',
+                entityId: imageId,
+                currentLevel: image.nsfwLevel,
+              })
+            }
+          >
+            Dispute rating
+          </Menu.Item>
         </>
       )}
       {(isOwner || isModerator) && canDelete && (

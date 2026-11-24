@@ -165,6 +165,8 @@ feed card, the song row, the post page and the song detail view, and offers:
 - Play now, Add to up next and Play next, for the list the song is shown in.
 - Save to playlist (a published song), Share (the system share sheet, or the link copied) and Open song.
 - For listeners: Report song, Hide this song, and hide or block the creator.
+- For the owner: Dispute rating, with the `ratingDispute` flag, once the song's own scans have
+  reviewed it (see "Rating disputes" below).
 - For the owner and moderators: Delete song (not on a collection page, which removes from the collection).
 - For moderators: Lookup song and post, Remove as ToS violation, Rescan song and Report CSAM.
 
@@ -331,6 +333,22 @@ list songs or their own covers (Audio review's Held tab decides them), except as
   decisions stay available. Remove, strike and ban are offered as on a post hold; "Remove"
   unpublishes the post that contains the song. Dismiss releases the song, so it is back on the site
   and in search. The decisions are the main app's (`csam-hold-decision.ts`).
+
+## Rating disputes
+
+A song's owner disputes its rating from the song menu's Dispute rating, which opens the shared
+rating-dispute modal (`RatingReviewModal`). The dispute is a `RatingReview` row of entity type `Song`
+whose `entityId` is the song's `Image` id, so a plain image is never disputable. Filing follows the
+shared rules in `docs/features/rating-dispute.md` (owner only, one pending per song, 3 a day), needs
+the `music` flag beside `ratingDispute`, and no text scan: the current level is the song's
+`nsfwLevel`. A song its own scans have not reviewed yet (`ingestion` other than `Scanned`), or a
+removed one, cannot be disputed.
+
+Moderators decide song disputes on the moderator app's Audio review page, not in `/ratings`, whose
+tabs, deep links and sidebar badge leave songs out. A ruling goes through the moderator rating writer
+(`updateImageNsfwLevel`): it sets and locks the song's level, and since a locked level counts as the
+song's review, it is refused, with nothing written, unless the song's scans have reviewed it, which the
+write re-checks. The owner's notification names the song ("your song "<title>"") and links its page.
 
 ## After launch
 
