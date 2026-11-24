@@ -7,6 +7,9 @@
 // and importing it from `creator-shop.schema` drags that whole chain into every
 // suite that touches a creator-shop service.
 export const COSMETIC_SHOP_PAGE_SIZES = [24, 32, 48] as const;
+
+/** The Creator Score (`total`, the Blaze tier) that opening a Creator Shop needs. */
+export const CREATOR_SHOP_MIN_CREATOR_SCORE = 10_000;
 export const COSMETIC_SHOP_DEFAULT_PAGE_SIZE = COSMETIC_SHOP_PAGE_SIZES[0];
 
 // How many nearest cosmetics the creator-shop review panel lists.
