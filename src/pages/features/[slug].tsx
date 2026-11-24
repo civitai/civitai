@@ -20,7 +20,11 @@ export const getServerSideProps = createServerSideProps({
     const slug = ctx.query.slug;
     if (typeof slug !== 'string' || !featurePageSlugRegex.test(slug)) return { notFound: true };
     const feature = `${FEATURE_PAGES_FEATURE_URN_PREFIX}${slug}`;
-    const embed = resolveFeaturePageEmbed(env.FEATURE_PAGES_EMBED_URL, feature);
+    const embed = resolveFeaturePageEmbed(
+      env.FEATURE_PAGES_EMBED_URL,
+      feature,
+      ctx.req.headers.host
+    );
     if (!embed || !isFeaturePagesSignerConfigured()) return { notFound: true };
     return { props: { ...embed, feature } };
   },
