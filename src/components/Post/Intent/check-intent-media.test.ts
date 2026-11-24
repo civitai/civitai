@@ -20,9 +20,16 @@ describe('checkIntentMedia', () => {
     });
   });
 
-  it('fails a video that is too long instead of reporting success', async () => {
-    const d = deps(mp4, { duration: 300, width: 1080, height: 1920 });
-    await expect(checkIntentMedia('https://x.test/a.mp4', d)).rejects.toThrow(/245 seconds/);
+  it('accepts an 8-minute video', async () => {
+    const d = deps(mp4, { duration: 480, width: 1080, height: 1920 });
+    await expect(checkIntentMedia('https://x.test/a.mp4', d)).resolves.toMatchObject({
+      type: 'video',
+    });
+  });
+
+  it('fails a video over 8 minutes instead of reporting success', async () => {
+    const d = deps(mp4, { duration: 481, width: 1080, height: 1920 });
+    await expect(checkIntentMedia('https://x.test/a.mp4', d)).rejects.toThrow(/480 seconds/);
     expect(d.revokeObjectUrl).toHaveBeenCalledWith('blob:1');
   });
 

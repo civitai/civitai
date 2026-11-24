@@ -117,7 +117,7 @@ export const STICKER_TRACK_DEFAULT_MS = 100;
 export const STICKER_TRACK_MIN_MS = 10;
 export const STICKER_TRACK_MAX_TICK_MS = 1000;
 /** Above the longest accepted video (`maxVideoDurationSeconds`), so a rounding at the end is not refused. */
-export const STICKER_TRACK_MAX_DURATION_MS = 300_000;
+export const STICKER_TRACK_MAX_DURATION_MS = 500_000;
 /**
  * Longest a segment may fade between a hidden key and a shown one. A fade can be drawn below the
  * opacity floor for up to its whole length, so this and `STICKER_TRACK_MAX_FAINT_MS` bound how
