@@ -1104,8 +1104,9 @@
     {/if}
   </div>
 
-  <div class="flex flex-wrap gap-2.5">
-    <civitai-button variant="outline" onclick={() => fileInput.click()}>
+  <!-- Upload is the primary way in; the other sources sit beside it, and the export apart from them. -->
+  <div class="flex flex-wrap items-center gap-2.5">
+    <civitai-button onclick={() => fileInput.click()}>
       <span slot="left"><IconUpload size={15} stroke={2} /></span>Upload files
     </civitai-button>
     <civitai-button variant="outline" onclick={() => (genPickerOpen = true)}>
@@ -1114,16 +1115,17 @@
     <civitai-button variant="outline" onclick={() => zipInput.click()} disabled={importing}>
       <span slot="left"><IconArchive size={15} stroke={2} /></span>{importing ? 'Importing…' : 'Import .zip'}
     </civitai-button>
+    <civitai-button variant="outline" onclick={() => (reuseOpen = true)}>
+      <span slot="left"><IconRepeat size={15} stroke={2} /></span>Reuse a dataset
+    </civitai-button>
     <civitai-button
-      variant="outline"
+      class="ml-auto"
+      variant="subtle"
       onclick={exportZip}
       disabled={exporting || images.every((i) => i.status === 'blocked')}
       title="Download your {media} files with their {noun} as same-named .txt files"
     >
       <span slot="left"><IconDownload size={15} stroke={2} /></span>{exporting ? 'Zipping…' : 'Download .zip'}
-    </civitai-button>
-    <civitai-button variant="outline" onclick={() => (reuseOpen = true)}>
-      <span slot="left"><IconRepeat size={15} stroke={2} /></span>Reuse a dataset
     </civitai-button>
   </div>
 
