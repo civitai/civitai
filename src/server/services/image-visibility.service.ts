@@ -17,9 +17,8 @@ import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
 import {
   notReviewImageSql,
   shownReviewImageSql,
-  isReviewImageBlockedForViewer,
 } from '~/server/services/creator-service-review-image-sql';
-import { BlockedByUsers } from '~/server/services/user-preferences.service';
+import { BlockedByUsers, getBlockedPairIds } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
@@ -335,6 +334,26 @@ export async function assertImageReportable({
     isModerator,
   });
   if (blocked) throw throwNotFoundError(REPORTED_CONTENT_GONE);
+}
+
+/**
+ * Whether a block either way between the viewer and a review image's buyer or seller hides it from
+ * the viewer, as on the review. Moderators and the buyer always see it; so does a signed-out viewer.
+ */
+export async function isReviewImageBlockedForViewer({
+  viewerId,
+  buyerId,
+  sellerId,
+  isModerator,
+}: {
+  viewerId?: number;
+  buyerId: number;
+  sellerId: number;
+  isModerator?: boolean;
+}) {
+  if (!viewerId || isModerator || viewerId === buyerId) return false;
+  const blockedPair = await getBlockedPairIds(viewerId);
+  return blockedPair.includes(buyerId) || blockedPair.includes(sellerId);
 }
 
 /**

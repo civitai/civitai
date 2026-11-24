@@ -1,6 +1,5 @@
 import { Prisma } from '@prisma/client';
 import { shownReviewSql } from '~/server/services/creator-service-deal-review-publish';
-import { getBlockedPairIds } from '~/server/services/user-preferences.service';
 
 /**
  * A review image's level, with `i` the image and `d` its deal: the deal's when that is higher, so
@@ -22,26 +21,6 @@ export const reviewImageVisibleSql = (
   AND (${reviewImageLevelSql} & ${levels}::int) <> 0
   AND EXISTS (SELECT 1 FROM "ServiceOffering" o WHERE o."id" = d."offeringId" AND o."allowReviewWork")
 )`;
-
-/**
- * Whether a block either way between the viewer and a review image's buyer or seller hides it from
- * the viewer, as on the review. Moderators and the buyer always see it; so does a signed-out viewer.
- */
-export async function isReviewImageBlockedForViewer({
-  viewerId,
-  buyerId,
-  sellerId,
-  isModerator,
-}: {
-  viewerId?: number;
-  buyerId: number;
-  sellerId: number;
-  isModerator?: boolean;
-}) {
-  if (!viewerId || isModerator || viewerId === buyerId) return false;
-  const blockedPair = await getBlockedPairIds(viewerId);
-  return blockedPair.includes(buyerId) || blockedPair.includes(sellerId);
-}
 
 /**
  * A LATERAL subquery naming the review and deal image `i` is attached to, and its review level:

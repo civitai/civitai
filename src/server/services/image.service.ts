@@ -1,8 +1,5 @@
 import { fallbackUserImageColumn } from '~/server/services/profile-picture-fallback.sql';
-import {
-  isReviewImageBlockedForViewer,
-  reviewOfImageSql,
-} from '~/server/services/creator-service-review-image-sql';
+import { reviewOfImageSql } from '~/server/services/creator-service-review-image-sql';
 import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { modelNotWithheldSql } from '~/server/utils/model-withheld';
 import { isSessionOrFullUserKey, withModeratorRightsFor } from '~/server/auth/full-user-credential';
@@ -107,6 +104,7 @@ import {
   notReportListedSql,
   reviewedGalleryImageConditions,
   imageVisibilityConditions,
+  isReviewImageBlockedForViewer,
 } from '~/server/services/image-visibility.service';
 import {
   type MediaViewer,
