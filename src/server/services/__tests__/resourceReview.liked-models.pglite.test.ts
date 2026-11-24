@@ -257,6 +257,26 @@ describe('Liked Models from a review thumbs-up', () => {
     });
   });
 
+  it("a moderator's post-editor edit adds only what the author could add", async () => {
+    const { id } = await createResourceReview({
+      modelId: PRIVATE_MODEL,
+      modelVersionId: VERSION,
+      rating: 1,
+      recommended: false,
+      userId: LIKER,
+    });
+    await upsertResourceReview({
+      id,
+      modelId: PRIVATE_MODEL,
+      modelVersionId: VERSION,
+      rating: 5,
+      recommended: true,
+      userId: MODERATOR,
+      isModerator: true,
+    });
+    expect(await likedModels()).toEqual([]);
+  });
+
   it('deleting one of two liked versions keeps the model', async () => {
     const { id } = await thumbs(true);
     await thumbs(true, OTHER_VERSION);

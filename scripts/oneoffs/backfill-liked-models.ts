@@ -4,12 +4,13 @@
  * `user.toggleFavorite` wrote to that collection before, so those likes never reached it.
  *
  * A row is added for each (user, model) with a review written since `--since` that counts as a
- * like (recommended, not excluded, no TOS violation: the rule `syncLikedModel` applies live), on
- * a model the live add accepts (`assertCollectionItemsVisibleToViewer`: the user's own model, or
- * a published, non-private, not taken down, non-POI model whose owner does not block them), and
- * not yet in the user's Model bookmark collection. A user with no such collection gets one first.
- * Rows are derived by query at run time; this file holds no ids. Both inserts skip what already
- * exists, so a re-run (or a chunk a live like already covered) adds nothing twice.
+ * like (recommended, not excluded, no TOS violation: the rule `syncLikedModel` uses before it
+ * removes a model), on a model the live add accepts (`assertCollectionItemsVisibleToViewer`: the
+ * user's own model, or a published, non-private, not taken down, non-POI model whose owner does
+ * not block them), and not yet in the user's Model bookmark collection. A user with no such
+ * collection gets one first. A review written before `--since` and turned into a like after it is
+ * not covered. Rows are derived by query at run time; this file holds no ids. Both inserts skip
+ * what already exists, so a re-run (or a chunk a live like already covered) adds nothing twice.
  *
  * Added items carry `note = BACKFILL_NOTE`, so they can be counted and removed again:
  *   DELETE FROM "CollectionItem" WHERE note = '<BACKFILL_NOTE>';
