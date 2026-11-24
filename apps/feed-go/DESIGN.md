@@ -1813,8 +1813,8 @@ domain cap.
    createContext's (nothing in the chain lowers it): a signed-out, unbatched call that is not a
    verified crawler is `public, max-age=60, s-maxage=60, stale-while-revalidate=30`, as for §1. The
    compute here records the same signed-out TTL, so the shadow header compare reads it as expected.
-2. **Hat Turf.** `hatSort`, `hatTurfMine`, `hideTurfHats`, `hideWornHats` are acted on only with the
-   `hatTurfFeedCard` and `hatTurfFeedSorts` features on, on an unscoped feed, and when
+2. **Hat Turf.** `hatSort`, `hatTurfMine`, `hatTurfExpired`, `hideTurfHats`, `hideWornHats` are acted on
+   only with the `hatTurfFeedCard` and `hatTurfFeedSorts` features on, on an unscoped feed, and when
    `getHatTurfFeedEvent` finds a live event; then the page comes from the turf rank
    (`readTurfRankPage` / `readMyTurfPage`) or is filtered by `turfHiddenIds` (`fillTurfPage`).
 3. **Routing.** `requiresImageDbPath`: a `postId`, `postIds`, `collectionId`, `reactions`, `imageId`,

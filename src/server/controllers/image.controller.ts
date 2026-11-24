@@ -512,7 +512,15 @@ export const getInfiniteImagesHandler = async ({
   // same thing either way. The `hubId` conflict in `getInfiniteImagesSchema` still
   // reads the un-narrowed input and so stays the stricter of the two — it refuses
   // a combination this would have served, which is the safe direction.
-  const { hatSort, hatTeams, hatTurfMine, hideTurfHats, hideWornHats, ...unhatted } = input;
+  const {
+    hatSort,
+    hatTeams,
+    hatTurfMine,
+    hatTurfExpired,
+    hideTurfHats,
+    hideWornHats,
+    ...unhatted
+  } = input;
   let scopedInput =
     unhatted.publishedOnly && unhatted.userId && unhatted.userId !== user?.id
       ? { ...unhatted, publishedOnly: undefined }
@@ -521,15 +529,17 @@ export const getInfiniteImagesHandler = async ({
   // unasked. Not on a scoped feed (profile, model, post...): the hydrate drops a model or hub scope, and
   // the Show filters live in the shared images filter store, so a gallery would silently lose images.
   const turfEvent =
-    (hatSort || hatTurfMine || hideTurfHats || hideWornHats) &&
+    (hatSort || hatTurfMine || hatTurfExpired || hideTurfHats || hideWornHats) &&
     features.hatTurfFeedCard &&
     features.hatTurfFeedSorts &&
     !isScopedImageFeed(scopedInput)
       ? await getHatTurfFeedEvent(user?.id)
       : null;
   const hatFeedSort = turfEvent ? hatSort : undefined;
-  // The images the viewer has a live Turf hat on. A player is always signed in.
-  const hatsOf = turfEvent && hatTurfMine ? user?.id : undefined;
+  // The images the viewer has a live Turf hat on, or one that expired. A player is always signed in.
+  const hatsOf = turfEvent && (hatTurfMine || hatTurfExpired) ? user?.id : undefined;
+  // The chips are exclusive in the filters menu; sent together, the live hats win.
+  const expiredHats = !hatTurfMine && !!hatTurfExpired;
   // Under a Hat Turf sort or the viewer's own hats every image has Turf hats, so hiding them would
   // empty the feed: only the worn-hat filter applies there.
   const hide = { turf: hatFeedSort || hatsOf ? undefined : hideTurfHats, worn: hideWornHats };
@@ -597,12 +607,17 @@ export const getInfiniteImagesHandler = async ({
         async (at) => {
           const read = { event: turfEvent, teams: hatTeams, cursor: at, limit: input.limit };
           const mine = hatsOf
-            ? await readMyTurfPage({ ...read, userId: hatsOf, sort: hatFeedSort })
+            ? await readMyTurfPage({
+                ...read,
+                userId: hatsOf,
+                sort: hatFeedSort,
+                expired: expiredHats,
+              })
             : undefined;
           const page = mine ?? (await readTurfRankPage({ ...read, sort: hatFeedSort! }));
           if (!page.ids.length) return { items: [], nextCursor: page.nextCursor };
-          // Only in the viewer's own hats: the card shows that hat's time left.
-          const placedAt = mine?.placedAt;
+          // Only in the viewer's own live hats: the card shows that hat's time left.
+          const placedAt = expiredHats ? undefined : mine?.placedAt;
           const rows = await hydrateWithReadRescue(
             { ...feedHydrateQuery(input, page.ids), ...dbInput },
             async (query) => (await getAllImages(query)).items
