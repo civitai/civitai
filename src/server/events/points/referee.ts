@@ -27,7 +27,7 @@ import {
 import { drainEventPointsPush, markEventPointsDirty } from '~/server/events/points/push';
 import type { EventPointType } from '~/server/events/points/types';
 import { sysRedis } from '~/server/redis/client';
-import { UserFlag } from '~/shared/constants/user-flags.constants';
+import { eventPointsExcludedFromSql } from '~/server/events/player-eligibility';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { logToAxiom } from '~/server/logging/client';
 import { freezeEventAwards } from '~/server/events/scoring/award-results';
@@ -196,7 +196,7 @@ export function refereeQueryParams(
   event: RefereeEvent,
   window: Window,
   liveWeights: Record<string, string> | undefined,
-  restricted: { hidden: number[]; newAccountMinId: number }
+  restricted: { hidden: RestrictedUser[]; newAccountMinId: number }
 ) {
   const types = Object.entries(event.scoring.types).filter(([, rule]) => !!rule);
   return {
@@ -213,15 +213,20 @@ export function refereeQueryParams(
       return Number.isFinite(live) ? live : rule!.weight;
     }),
     dailyTypes: types.filter(([, rule]) => rule!.once === 'day').map(([type]) => type),
-    restrictedUsers: restricted.hidden,
+    restrictedUsers: restricted.hidden.map((u) => u.id),
+    // Aligned with restrictedUsers: from when each is restricted, in epoch ms (0: the whole season).
+    restrictedFrom: restricted.hidden.map((u) => u.fromMs),
     newAccountMinId: restricted.newAccountMinId,
   };
 }
 
 const MAX_INT32 = 2147483647;
 
-// Who must not earn or give points. Hidden (banned, deleted, excluded from event points): looked up
-// in Postgres among the people the recomputed rows involve. New accounts: every id from the first
+type RestrictedUser = { id: number; fromMs: number };
+
+// Who must not earn or give points. Hidden (banned, deleted, excluded from event points), each from
+// their exclusion start (eventPointsExcludedFromSql): looked up in Postgres among the people the
+// recomputed rows involve. New accounts: every id from the first
 // account registered inside the new-account window, since ids are assigned in registration order.
 // A threshold, not a list: a month of signups is ~250k ids, past what fits in a query's URL.
 async function restrictedUsers(event: RefereeEvent, window: Window, deadline: number) {
@@ -250,14 +255,17 @@ async function restrictedUsers(event: RefereeEvent, window: Window, deadline: nu
   );
   const ids = [...new Set([...(users?.actors ?? []), ...(users?.owners ?? [])].map(Number))];
 
-  const hidden: number[] = [];
+  const hidden: RestrictedUser[] = [];
   for (const part of chunk(ids, 10_000)) {
-    const rows = await dbRead.$queryRaw<{ id: number }[]>`
-      SELECT id FROM "User"
-      WHERE id = ANY(${part}::int[])
-        AND ("bannedAt" IS NOT NULL OR "deletedAt" IS NOT NULL OR (flags & ${UserFlag.ExcludeFromEventPoints}::int) <> 0)
+    const rows = await dbRead.$queryRaw<{ id: number; fromMs: bigint | number }[]>`
+      SELECT id, (extract(epoch FROM "from"::timestamp) * 1000)::bigint AS "fromMs"
+      FROM (
+        SELECT u.id, ${eventPointsExcludedFromSql()} AS "from" FROM "User" u
+        WHERE u.id = ANY(${part}::int[])
+      ) restricted
+      WHERE "from" IS NOT NULL
     `;
-    hidden.push(...rows.map((r) => r.id));
+    hidden.push(...rows.map((r) => ({ id: r.id, fromMs: Number(r.fromMs) })));
   }
 
   const newAccountCutoff = new Date(

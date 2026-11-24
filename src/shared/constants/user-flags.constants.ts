@@ -10,7 +10,10 @@ export const UserFlag = {
   /** User opts out of receiving creator payouts (tips + creator compensation) on their content. */
   DisablePayout: 1 << 0, // 1
 
-  /** Moderator-set: the user's actions earn no event points and count toward no event standings. */
+  /**
+   * Moderator-set: the user's actions earn no event points and count toward no event standings. With
+   * `meta.eventPointsExcludedFrom` set, only from that UTC day on (see player-eligibility.ts).
+   */
   ExcludeFromEventPoints: 1 << 1, // 2
 } as const;
 
