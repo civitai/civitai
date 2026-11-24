@@ -30,6 +30,13 @@ var errV1ImagesOff = fallback.New("v1-images-off")
 // ServeV1ImagesHTTP is the public `GET /api/v1/images` route. With ServeV1Images off every request is
 // the `v1-images-off` fallback: nothing is computed and no serve slot is taken.
 func (s *Server) ServeV1ImagesHTTP(w http.ResponseWriter, r *http.Request) {
+	withProfileLabels(r.Context(), EndpointV1Images, "serve", func(ctx context.Context) {
+		s.serveV1ImagesLabelled(w, r.WithContext(ctx))
+	})
+}
+
+// serveV1ImagesLabelled is ServeV1ImagesHTTP under the request's profile labels (withProfileLabels).
+func (s *Server) serveV1ImagesLabelled(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	endpoint := EndpointV1Images
 	ctx, span := s.startSpan(r.Context(), r.Header, "serve", endpoint)
