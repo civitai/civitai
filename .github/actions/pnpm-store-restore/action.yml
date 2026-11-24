@@ -10,10 +10,9 @@ description: >-
 # missed, whatever the ref, and it has no input to turn the save off. Actions caches are scoped
 # to a ref: a run reads its own ref's entries and the default branch's, and saves into its own
 # ref. So every run on a pull request or a branch dispatch that misses (the lockfile changed on
-# that branch, or on `main` before `main` saved the new key) writes its own copy of the store,
-# ~500-600 MB, that nothing but that ref can ever read. Measured 2026-11-23: 9 such copies,
-# ~5 GB of the repo's 10 GB cache budget. At the cap GitHub evicts the least recently used
-# entries, `main`'s included. Guarded by scripts/__tests__/no-pr-scoped-cache-save.test.ts.
+# that branch, or on `main` before `main` saved the new key) writes its own full copy of the
+# store, which nothing but that ref can ever read, against the repo's 10 GB cache budget. At the
+# cap GitHub evicts the least recently used entries, `main`'s included. Guarded by scripts/__tests__/no-pr-scoped-cache-save.test.ts.
 #
 # ── THE KEY IS setup-node's, ON PURPOSE ──────────────────────────────────────────────────────
 #
