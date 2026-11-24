@@ -62,6 +62,11 @@ func userFollowsFrom(userID int, got map[int]Entry) ([]int, error) {
 	if !present || raw == nil {
 		return []int{}, nil // `?.follows ?? []`
 	}
+	if ints, ok := raw.([]int); ok {
+		// The cache's reader decodes an all-integer list unboxed (intLists): the same ids followID
+		// reads one by one below.
+		return ints, nil
+	}
 	list, ok := raw.([]any)
 	if !ok {
 		return nil, fallback.Safef("user-follows-shape", "follows")

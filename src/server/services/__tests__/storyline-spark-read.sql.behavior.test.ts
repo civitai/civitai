@@ -51,7 +51,6 @@ beforeAll(async () => {
       "modelRestricted" boolean NOT NULL DEFAULT false);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
       images jsonb NOT NULL DEFAULT '[]');
-    CREATE TABLE "EvidenceHeldUser" ("userId" int);
     CREATE TABLE "TagsOnImageDetails" ("imageId" integer, "tagId" integer,
       disabled boolean NOT NULL DEFAULT false);
     CREATE TYPE "UserEngagementType" AS ENUM ('Follow', 'Hide', 'Block');

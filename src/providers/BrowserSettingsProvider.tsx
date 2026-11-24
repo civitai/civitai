@@ -36,7 +36,8 @@ export function EventCosmeticsPreview({ children }: { children: React.ReactNode 
   );
 }
 
-const Context = createContext<ContentSettingsStore | null>(null);
+/** Exported for test harnesses that seed the store without trpc. */
+export const Context = createContext<ContentSettingsStore | null>(null);
 
 const debouncer = createDebouncer(1000);
 export function BrowserSettingsProvider({ children }: { children: React.ReactNode }) {
@@ -207,7 +208,7 @@ type StoreStateActions = {
 };
 
 type ContentSettingsStore = ReturnType<typeof createContentSettingsStore>;
-function createContentSettingsStore(state: StoreState) {
+export function createContentSettingsStore(state: StoreState) {
   return createStore<StoreState & StoreStateActions>()(
     devtools(
       (set) => ({

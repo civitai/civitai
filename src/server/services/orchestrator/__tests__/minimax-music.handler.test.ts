@@ -115,7 +115,7 @@ describe('minimax music output rendering', () => {
   it('reports the step as audio to the client', () => {
     const workflow = new WorkflowData(
       { id: 'wf-1', status: 'succeeded', steps: [{ ...step, output: [] }] } as any,
-      { domain: { green: false }, nsfwEnabled: true } as any
+      { domain: { green: false } } as any
     );
     expect(workflow.steps[0].mediaType).toBe('audio');
   });

@@ -62,6 +62,7 @@ describe('buildCreatorScoreLadder', () => {
     expect(keysAt('Spark')).toEqual(['crucible-judge']);
     expect(keysAt('Flame')).toContain('challenge-create');
     expect(keysAt('Blaze')).toContain('monetize-pricing');
+    expect(keysAt('Blaze')).toContain('creator-shop');
     expect(keysAt('Beacon')).toContain('creator-program');
     expect(keysAt('Legend')).toEqual([]);
 

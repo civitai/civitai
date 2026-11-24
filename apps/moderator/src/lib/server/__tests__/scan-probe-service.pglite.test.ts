@@ -230,7 +230,7 @@ describe('runProbe: images it refuses, with no reason given', () => {
     ['blocked for CSAM', 990100017],
     ['owned by a held user', 990100018],
   ])('refuses an image %s', async (_label, imageId) => {
-    h.held.set(HELD_OWNER, ['evidenceHold']);
+    h.held.set(HELD_OWNER, ['csamReport']);
     h.nextIds = ['0-wf-1'];
     const result = await runProbe(MODERATOR, [990100014, imageId]);
     expect(result).toMatchObject({ ok: true, submitted: 1, refused: [imageId] });
@@ -260,7 +260,7 @@ describe('runProbe: images it refuses, with no reason given', () => {
   });
 
   it('control: submits an image whose owner holds nothing while another owner is held', async () => {
-    h.held.set(4242, ['evidenceHold']);
+    h.held.set(4242, ['csamReport']);
     h.nextIds = ['0-wf-1'];
     expect(await runProbe(MODERATOR, [990100018])).toMatchObject({
       ok: true,

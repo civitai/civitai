@@ -30,7 +30,5 @@ CREATE TABLE "ScanLabelVote" ("itemId" INTEGER, reason TEXT);
 CREATE TABLE "CsamReport" (
   id SERIAL PRIMARY KEY, "userId" INTEGER, details JSONB, images JSONB, "reportSentAt" TIMESTAMP
 );
-CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
-CREATE TABLE "EvidenceHoldImage" ("imageId" INTEGER PRIMARY KEY);
 CREATE TABLE "TextScanHold" (id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL, label TEXT NOT NULL, status TEXT NOT NULL, "textHash" TEXT, meta JSONB);
 ${CSAM_LINK_TABLES_SQL}`;

@@ -53,8 +53,6 @@ export const routes: ApiRoutes = {
     import('~/server/api-routes/admin/temp/apply-models-index-filterable-attributes'),
   'temp/apply-models-index-ranking-rules': () =>
     import('~/server/api-routes/admin/temp/apply-models-index-ranking-rules'),
-  'temp/archive-held-user-comments': () =>
-    import('~/server/api-routes/admin/temp/archive-held-user-comments'),
   'temp/backfill-base-model-hot-score': () =>
     import('~/server/api-routes/admin/temp/backfill-base-model-hot-score'),
   'temp/backfill-block-image-blurhash': () =>

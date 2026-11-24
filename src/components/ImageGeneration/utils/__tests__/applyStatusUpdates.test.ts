@@ -79,7 +79,6 @@ describe('applyStatusUpdates', () => {
 
     const workflow = new WorkflowData(data.pages[0].items[0], {
       domain: { green: false, blue: false, red: true },
-      nsfwEnabled: true,
     } as any);
     expect(workflow.steps[0].output[0].blockedReason).toBe(NSFW_CAPPED);
   });

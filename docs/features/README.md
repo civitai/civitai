@@ -29,6 +29,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Comped membership gifts (moderator, no charge) | [docs/features/membership-gift-comps.md](membership-gift-comps.md) |
 | Notifications | [docs/features/notifications.md](notifications.md) |
 | Message as Civitai Moderation (shared moderator chat account) | [docs/features/message-as-civitai.md](message-as-civitai.md) |
+| Memorialized profiles (accounts of creators who have died) | [docs/features/memorialized-profiles.md](memorialized-profiles.md) |
 | Web Push (browser push notifications) | [docs/features/web-push.md](web-push.md) |
 | Metrics/Analytics | [docs/features/entity-metrics.md](entity-metrics.md) |
 | Creator engagement API (`GET /api/v1/creator/engagement`) | [docs/features/creator-engagement-api.md](creator-engagement-api.md) |

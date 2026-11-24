@@ -85,7 +85,6 @@ const SCHEMA = `
   CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean DEFAULT false);
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
-  CREATE TABLE "EvidenceHeldUser" ("userId" int);
   CREATE TABLE "PostText" (id serial PRIMARY KEY, "postId" int, "csamHeld" boolean NOT NULL);
   CREATE TABLE "TextScanHold" (id serial PRIMARY KEY, "entityType" text, "entityId" int,
     label text, status text);
@@ -246,8 +245,7 @@ describe('semantic storyline search', () => {
     await storyline(2, { owner: 77 });
     await storyline(3, { owner: 3, author: 78 });
     await storyline(4);
-    await h.pg!.exec(`INSERT INTO "EvidenceHeldUser" VALUES (77);
-      INSERT INTO "CsamReport" ("userId") VALUES (78);
+    await h.pg!.exec(`INSERT INTO "CsamReport" ("userId") VALUES (77), (78);
       UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 400;`);
     expect(shown(await search([4, 3, 2, 1]))).toEqual([1]);
   });

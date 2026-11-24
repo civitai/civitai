@@ -84,7 +84,6 @@ beforeAll(async () => {
      CREATE TABLE "Model" (id INTEGER PRIMARY KEY, status TEXT NOT NULL, availability TEXT NOT NULL, "deletedAt" TIMESTAMP);
      CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, status TEXT NOT NULL, availability TEXT NOT NULL);
      CREATE TABLE "CsamReport" (id SERIAL PRIMARY KEY, "userId" INTEGER, images JSONB NOT NULL DEFAULT '[]', details JSONB);
-     CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
      CREATE TABLE "ImageRatingRequest" (
        "imageId" integer NOT NULL, "userId" integer NOT NULL, "nsfwLevel" integer NOT NULL,
        status text NOT NULL DEFAULT 'Pending',

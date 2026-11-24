@@ -44,7 +44,6 @@ import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { useAppContext } from '~/providers/AppProvider';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
 import { watchUnratedOutputs } from '~/components/ImageGeneration/utils/unratedOutputRefetch';
 
@@ -80,7 +79,6 @@ export function useGetTextToImageRequests(
 ) {
   registerSignalGroup('generation');
   const { domain } = useAppContext();
-  const nsfwEnabled = useBrowsingSettings((state) => state.showNsfw);
   const currentUser = useCurrentUser();
 
   const globalFilters = useFiltersContext((state) => state.generation);
@@ -149,9 +147,9 @@ export function useGetTextToImageRequests(
               return false;
             return true;
           })
-          .map((workflow) => new WorkflowData(workflow, { domain, nsfwEnabled, holdUnrated: true }))
+          .map((workflow) => new WorkflowData(workflow, { domain, holdUnrated: true }))
       ) ?? [],
-    [data, nsfwEnabled, domain, markerTags]
+    [data, domain, markerTags]
   );
 
   // Unconditional: the watcher reads the raw cache, which includes outputs `flatData` hides

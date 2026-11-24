@@ -1310,7 +1310,7 @@ END`;
  * no label, no write-back, leftover votes inconclusive (`settleFinalItems`, next in the tick, settles them unpaid).
  * - `unservable`: the image row is gone, or its post is (`Image.post` is `onDelete: SetNull`). Neither comes back. Also an item
  *   waiting on the Inquisitors (`Inquisitor`, or `Ruling` whose moderator lease has lapsed) whose image row is gone, which no
- *   moderator can rule on; an image an evidence hold kept with its post deleted still can, and so a ruling in progress, or an
+ *   moderator can rule on; an image whose post is deleted still can, and so a ruling in progress, or an
  *   Inquisitor item whose image is merely blocked, is left alone.
  * - `image-unservable`: the post is live (published, not later than `now`) but the image fails `servableImageContent`: blocked,
  *   held for review, flagged poi/minor, or unrated, once scanned (ingestion `Scanned` or `Blocked`: a scan still to land may make
@@ -1363,7 +1363,7 @@ export async function closeUnservableItems(
           eb.or([
             // Also true when the image is gone: the Post join then has nothing to match.
             eb.and([eb('i.status', '=', 'Open'), eb('p.id', 'is', null)]),
-            // Only the image row: an evidence hold keeps an image with its post deleted, and a moderator can still rule on it.
+            // Only the image row: an image can outlive its post, and a moderator can still rule on it.
             eb.and([
               eb('img.id', 'is', null),
               eb.or([

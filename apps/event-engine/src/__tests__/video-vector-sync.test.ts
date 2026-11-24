@@ -18,7 +18,6 @@ const SCHEMA = `
     width int, height int, metadata jsonb DEFAULT '{}');
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
-  CREATE TABLE "EvidenceHeldUser" ("userId" int);
   CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean DEFAULT false);
   CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "baseModel" text);
   CREATE TABLE "ImageResourceNew" ("imageId" int, "modelVersionId" int);
@@ -135,8 +134,7 @@ describe('which videos get a point', () => {
     const pg = await pglite(`
       ${video(1)} ${video(2)} ${video(3)}
       UPDATE "Image" SET "userId" = 8 WHERE id = 2;
-      INSERT INTO "EvidenceHeldUser" VALUES (8);
-      INSERT INTO "CsamReport" ("userId", images) VALUES (99, '[3]');
+      INSERT INTO "CsamReport" ("userId", images) VALUES (8, '[]'), (99, '[3]');
     `);
     try {
       expect([...(await getVideoDocs(pg as unknown as Pg, [1, 2, 3])).keys()]).toEqual([1]);
