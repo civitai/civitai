@@ -104,8 +104,7 @@ export function useSearchPeriod(searching: boolean) {
   return params.period ? undefined : searchPeriodChange(read())?.write;
 }
 
-/** The images feed answered by the semantic search, in the shape the feed renders. */
-/** `videos`: the search runs on the video index (`searchVideos`), as the /videos feed does. */
+/** The images feed answered by the semantic search, in the shape the feed renders; `videos` searches the video index. */
 export function useSemanticImageFeed(
   input: SemanticImageSearchInput | undefined,
   { videos = false }: { videos?: boolean } = {}
