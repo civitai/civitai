@@ -23,6 +23,7 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 import { kyselyV3Read } from '~/server/db/kyselyDb';
 import { getCommentSong } from '~/server/services/commentv3/timed-comments.service';
+import { getVisibleSongIds } from '~/server/services/image-visibility.service';
 import { reviewPublic } from '~/server/services/creator-service-deal-review-publish';
 import { reportAcceptedReward } from '~/server/rewards';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -393,15 +394,28 @@ type CreateReportProps = CreateReportInput & {
 /**
  * A song report says when in the song it is about, within the song's stored length; nothing else
  * carries a time. With no stored length any time is taken: refusing would leave the song unreportable.
- * "Photorealistic depiction of a minor" is not a reason a song can be reported for.
+ * "Photorealistic depiction of a minor" is not a reason a song can be reported for. A sticker report
+ * is about the placement, so it takes no time, as on an image.
+ *
+ * The song rules apply only for a reporter with the music feature who may open the song; any other
+ * image gets the image answer, so a refusal never tells a hidden song from a hidden image.
  *
  * For reports a user files (`createReportHandler`), not `createReport`: scanners and Knights file
  * image reports with no time and must keep landing on a song.
  */
-export async function assertSongReportTime(input: CreateReportInput) {
+export async function assertSongReportTime(
+  input: CreateReportInput,
+  viewer: { user: { id: number; isModerator?: boolean | null }; features?: { music?: boolean } }
+) {
   const details: { timestampSec?: number; violation?: string } = input.details ?? {};
-  const song =
-    input.type === ReportEntity.Image ? await getCommentSong(kyselyV3Read, input.id) : null;
+  const visible =
+    input.type === ReportEntity.Image && input.reason !== ReportReason.StickerPlacement
+      ? await getVisibleSongIds({
+          ids: [input.id],
+          viewer: { user: viewer.user, features: { music: !!viewer.features?.music } },
+        })
+      : null;
+  const song = visible?.has(input.id) ? await getCommentSong(kyselyV3Read, input.id) : null;
   if (!song) {
     if (details.timestampSec !== undefined)
       throw throwBadRequestError('Only a report on a song can carry a time.');

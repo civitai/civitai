@@ -6,7 +6,7 @@ import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
 
-// Music T10 S3 (odd/tasks/music-section-t10.md): a song report carries a time, prefilled from the player.
+// docs/features/music.md (The song menu): a song report carries a time, prefilled from the player.
 
 const SONG = 42;
 const MINOR = 'Photorealistic depiction of a minor';
@@ -63,6 +63,22 @@ describe('the report form on a song', () => {
     renderForm({ durationSec: 180 });
 
     await expect.element(timeField()).toHaveValue('0:00');
+  });
+
+  test('takes the last second of the song', async () => {
+    renderForm({ durationSec: 180 });
+    await submitWith('3:00');
+
+    await vi.waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ timestampSec: 180 });
+  });
+
+  test.each(['1:5', 'abc', '1:75'])('refuses %s as not m:ss', async (time) => {
+    renderForm({ durationSec: 180 });
+    await submitWith(time);
+
+    await expect.element(page.getByText('Enter the time as m:ss, for example 1:05.')).toBeVisible();
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   test('refuses a time past the end of the song', async () => {

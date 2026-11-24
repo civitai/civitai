@@ -1,7 +1,4 @@
-import { PGlite } from '@electric-sql/pglite';
-import { pgliteKysely } from '~/__tests__/pglite-kysely';
-import type * as KyselyDb from '~/server/db/kyselyDb';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Rewards from '~/server/rewards';
 import type * as ModeratorService from '~/server/services/moderator.service';
 import type * as TagService from '~/server/services/tag.service';
@@ -39,19 +36,6 @@ vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeratorService>()),
   trackModActivity: vi.fn(async () => undefined),
 }));
-
-// The song-report check reads the image's type; no image here is a song.
-const pg = { db: null as unknown as PGlite };
-vi.mock('~/server/db/kyselyDb', async (importOriginal) => ({
-  ...(await importOriginal<typeof KyselyDb>()),
-  kyselyV3Read: pgliteKysely(() => pg.db),
-}));
-vi.setConfig({ hookTimeout: 60_000 });
-beforeAll(async () => {
-  pg.db = new PGlite();
-  await pg.db.exec(`CREATE TABLE "Image" (id int PRIMARY KEY, type text NOT NULL, metadata jsonb)`);
-});
-afterAll(() => pg.db.close());
 
 const { createReportHandler } = await import('~/server/controllers/report.controller');
 const { bulkSetReportStatus } = await import('~/server/services/report.service');
