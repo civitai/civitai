@@ -47,25 +47,49 @@ const keyOf = (ref: ItemRef) =>
   ref.kind === 'yesno' ? `y${ref.id}` : `r${ref.kind === 'hidden' ? -ref.id : ref.id}`;
 
 /**
- * The player's recent votes, then the items already handed out ahead of them (oldest first) that have no vote yet. A hidden
- * check sits in the ledger under the negative of its reference id, so it keys the same either way.
+ * The player's recent votes and "Not sure" answers, oldest first, then the items already handed out ahead of them that have
+ * neither yet. A "Not sure" counts as a question served, so a run ends at its rolled length whatever the player answers. A
+ * hidden check sits in the ledger under the negative of its reference id, so it keys the same either way.
  */
 export async function servedHistory(
   db: Executor,
   userId: number,
   ahead: ItemRef[] = []
 ): Promise<Served[]> {
-  const rows = await db
-    .selectFrom('KnightsVote as v')
-    .leftJoin('KnightsQueueItem as i', 'i.id', 'v.itemId')
-    .select(['v.itemId', sql<boolean>`i."audience" IS NOT NULL`.as('yesno')])
-    .where('v.playerId', '=', userId)
-    .orderBy('v.createdAt', 'desc')
-    .limit(HISTORY)
-    .execute();
-  const voted: Served[] = rows
-    .reverse()
-    .map((row) => ({ yesno: row.yesno, key: `${row.yesno ? 'y' : 'r'}${row.itemId}` }));
+  const [votes, unsure] = await Promise.all([
+    db
+      .selectFrom('KnightsVote as v')
+      .leftJoin('KnightsQueueItem as i', 'i.id', 'v.itemId')
+      .select(['v.itemId', 'v.createdAt', sql<boolean>`i."audience" IS NOT NULL`.as('yesno')])
+      .where('v.playerId', '=', userId)
+      .orderBy('v.createdAt', 'desc')
+      .limit(HISTORY)
+      .execute(),
+    db
+      .selectFrom('KnightsUnsure as u')
+      .select(['u.itemId', 'u.createdAt'])
+      .where('u.playerId', '=', userId)
+      .where('u.itemId', 'is not', null)
+      .orderBy('u.createdAt', 'desc')
+      .limit(HISTORY)
+      .execute()
+      .catch((error) => {
+        // Serving must not stop over it: without the "Not sure" rows the cadence counts votes only, as it did before them.
+        console.error('knights: could not read Not sure answers for the cadence', { userId, error });
+        return [];
+      }),
+  ]);
+  const recent = [
+    ...votes.map((row) => ({ at: row.createdAt.getTime(), yesno: row.yesno, itemId: row.itemId })),
+    ...unsure.map((row) => ({ at: row.createdAt.getTime(), yesno: true, itemId: row.itemId as number })),
+  ]
+    .sort((a, b) => b.at - a.at)
+    .slice(0, HISTORY)
+    .reverse();
+  const voted: Served[] = recent.map((row) => ({
+    yesno: row.yesno,
+    key: `${row.yesno ? 'y' : 'r'}${row.itemId}`,
+  }));
   const recorded = new Set(voted.map((s) => s.key));
   const pending = ahead
     .map((ref) => ({ yesno: ref.kind === 'yesno', key: keyOf(ref) }))

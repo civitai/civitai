@@ -99,7 +99,8 @@ votes, never player rows.
 ## Serving (`feed.ts`)
 
 - Questions come in bursts (`cadence.ts`, `BURSTS`): a gap of 5, 8 or 10 ratings, then a burst of 1 to 5 questions, each length
-  rolled anew per player. `burstDue` reads the player's last 11 votes plus the items already handed out ahead (`servedHistory`; a
+  rolled anew per player. `burstDue` reads the player's last 11 votes and "Not sure" answers (`KnightsUnsure`, a question
+  served, so a run ends at its length whatever the answer) plus the items already handed out ahead (`servedHistory`; a
   hidden check counts as a rating), and rolls each length from the item that ended the run before it, so a reload or the look-ahead
   never re-rolls. A due burst comes before the hidden-check roll; a hidden check rides only on a rating slot. When no question is
   left, the slot is a rating; with no rating to show, a question is shown whenever there is one. A share of 0 switches questions
