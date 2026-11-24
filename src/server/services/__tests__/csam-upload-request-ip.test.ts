@@ -51,8 +51,8 @@ describe.each([
     expect(events).toEqual([login]);
   });
 
-  // Sign-ins are written with the signed-in account in targetUserId, and userId is usually 0.
-  // A row whose userId differs from targetUserId is one account acting on another.
+  // Sign-ins are written with the signed-in account in targetUserId, and userId is the session's
+  // account, usually 0. Only the reported account's own sign-ins are sent: userId 0 or its own.
   describe('sign-in IPs', () => {
     const row = (userId: number, targetUserId: number, ip: string, type: string) => ({
       userId,
@@ -93,38 +93,42 @@ describe.each([
       m.query.mockImplementation(async (sql: string) => userActivitiesTable(sql));
     });
 
-    it("returns exactly the reported account's sign-ins", async () => {
+    it("returns exactly the reported account's own sign-ins and registrations", async () => {
       const events = await getUserIpInfo({ userId: 42, type: 'TrainingData', details: {} });
 
-      expect(events.map((e) => e.ip).sort()).toEqual([
-        '192.0.2.10',
-        '192.0.2.11',
-        '192.0.2.12',
-        '192.0.2.13',
-        '192.0.2.14',
-      ]);
+      expect(events.map((e) => e.ip).sort()).toEqual(['192.0.2.10', '192.0.2.11', '192.0.2.13']);
     });
 
-    it('includes a sign-in to it whatever session the device held, without naming that account', async () => {
+    it('includes a sign-in with no session on the device (userId 0)', async () => {
       const events = await getUserIpInfo({ userId: 42, type: 'TrainingData', details: {} });
 
       expect(events).toContainEqual({
-        ip: '192.0.2.14',
+        ip: '192.0.2.10',
         type: 'Login',
         time: '2026-10-20 09:00:00',
       });
-      expect(JSON.stringify(events)).not.toContain('7');
     });
 
-    it('includes its activity on another account without naming that account', async () => {
+    it('includes a sign-in made from its own session', async () => {
       const events = await getUserIpInfo({ userId: 42, type: 'TrainingData', details: {} });
 
       expect(events).toContainEqual({
-        ip: '192.0.2.12',
-        type: 'Registration',
+        ip: '192.0.2.13',
+        type: 'Login',
         time: '2026-10-20 09:00:00',
       });
-      expect(JSON.stringify(events)).not.toContain('99');
+    });
+
+    it("leaves out a sign-in to it made from another account's session", async () => {
+      const events = await getUserIpInfo({ userId: 42, type: 'TrainingData', details: {} });
+
+      expect(events.map((e) => e.ip)).not.toContain('192.0.2.14');
+    });
+
+    it('leaves out its activity on another account', async () => {
+      const events = await getUserIpInfo({ userId: 42, type: 'TrainingData', details: {} });
+
+      expect(events.map((e) => e.ip)).not.toContain('192.0.2.12');
     });
 
     it("never returns another account's activity (control)", async () => {
