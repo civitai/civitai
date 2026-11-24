@@ -2,7 +2,7 @@ import { BlockedReason } from '~/server/common/enums';
 import { graceBlockedSql, scanKeepsByMarkerSql } from '~/server/common/image-visibility';
 import { dbWrite } from '~/server/db/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { blockKeptByBanOrHoldSql } from '~/server/services/image-scan-pipeline';
+import { blockKeptByBanSql } from '~/server/services/image-scan-pipeline';
 import { ingestImageById } from '~/server/services/image.service';
 
 /**
@@ -19,7 +19,7 @@ export async function rescanImageById({ id }: GetByIdInput) {
       AND "blockedFor" IS NOT NULL
       AND "blockedFor" NOT IN (${BlockedReason.AiNotVerified}, ${BlockedReason.CSAM})
       AND NOT ${scanKeepsByMarkerSql('Image')}
-      AND NOT ${blockKeptByBanOrHoldSql('Image')}
+      AND NOT ${blockKeptByBanSql('Image')}
       AND NOT ${graceBlockedSql}
   `;
   return ingestImageById({ id });

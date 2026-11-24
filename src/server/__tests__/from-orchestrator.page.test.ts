@@ -142,7 +142,6 @@ describe('from-orchestrator SSR — adding the run as a new version', () => {
   it("lists the owner's eligible models, those on the run's base model first", async () => {
     dbMock.dbRead.model.findMany.mockResolvedValue([
       { id: 1, name: 'Flux one', meta: null, modelVersions: [{ baseModel: 'Flux.1 D' }] },
-      { id: 2, name: 'Kept', meta: { removedWithOwner: true }, modelVersions: [] },
       { id: 3, name: 'SDXL one', meta: null, modelVersions: [{ baseModel: 'SDXL 1.0' }] },
     ] as never);
     const result = (await asVersion({ q: 'one' })) as {

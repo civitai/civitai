@@ -36,11 +36,6 @@ beforeAll(async () => {
       id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
       images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'
     );
-    CREATE TABLE "HeldResourceReview" (
-      id int PRIMARY KEY, "modelId" int, "modelVersionId" int, "userId" int, rating int,
-      recommended boolean, details text, exclude boolean, nsfw boolean, "tosViolation" boolean,
-      metadata jsonb, "createdAt" timestamp(3), "updatedAt" timestamp(3), "holdReasons" text[]
-    );
     CREATE TYPE "CollectionType" AS ENUM ('Model', 'Article', 'Post', 'Image', 'Model3D');
     CREATE TYPE "CollectionMode" AS ENUM ('Contest', 'Bookmark');
     CREATE TABLE "Model" (

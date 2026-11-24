@@ -141,6 +141,23 @@ export function pipelineVerdict(sourceId: number, verdict: 'visible' | 'hidden')
   });
 }
 
+/** A verdict on the comment's current token, as `path`'s source wrote it at `at`. */
+export function verdictAt(
+  path: 'site' | 'mod',
+  sourceId: number,
+  verdict: 'visible' | 'hidden',
+  at: Date
+) {
+  platform.verdicts.push({
+    path: `/internal/verdict/${path}`,
+    body: {
+      target: { urn: urnOf(sourceId), digest: tokenOf(sourceId) },
+      verdict,
+      at: at.toISOString(),
+    },
+  });
+}
+
 /** What the platform shows for a comment: visible only when its deciding verdict is visible. */
 export function decided(sourceId: number): 'visible' | 'hidden' {
   return deciding(sourceId)?.verdict === 'visible' ? 'visible' : 'hidden';
@@ -156,46 +173,59 @@ export type VerdictStep = {
 
 /**
  * The platform's decider over a comment's verdicts, in the order written. A write supersedes the
- * newest of its source not newer than itself. A moderator removal is final; otherwise the newest
- * live moderator hide hides, and a live moderator visible on the current token newer than it shows.
- * Else pipeline, then site, by their newest live verdict on the current token, failing closed: a
- * hide of either, or a newer hide on an old token, hides. None on the current token: none decides.
+ * newest of its source not newer than itself, and within a source a tie goes to the non-visible
+ * (platform wire contract 6.5). A moderator removal is final; otherwise the newest live moderator
+ * hide hides, and a live moderator visible on the current token newer than it shows. Else
+ * pipeline, then site, by their newest live verdict on the current token, failing closed: a hide
+ * of either, or a newer hide on an old token, hides. None on the current token: none decides.
  */
 export function decideVerdicts(steps: VerdictStep[]): { source: string; verdict: string } | null {
-  if (steps.some((s) => s.source === 'moderator' && s.outcome === 'removed'))
-    return { source: 'moderator', verdict: 'removed' };
+  const step = decidingStep(steps);
+  return step && { source: step.source, verdict: step.verdict };
+}
+
+function decidingStep(
+  steps: VerdictStep[]
+): { source: string; verdict: string; at: string } | null {
+  const removal = steps.find((s) => s.source === 'moderator' && s.outcome === 'removed');
+  if (removal) return { source: 'moderator', verdict: 'removed', at: removal.at };
+  const wins = (x: VerdictStep, over: VerdictStep) =>
+    x.at > over.at || (x.at === over.at && x.outcome !== 'visible');
   const superseded = new Set<number>();
   steps.forEach((s, i) => {
     let prior = -1;
     steps.slice(0, i).forEach((p, j) => {
-      if (p.source === s.source && p.at <= s.at && (prior < 0 || p.at > steps[prior].at)) prior = j;
+      if (p.source === s.source && wins(s, p) && (prior < 0 || p.at > steps[prior].at)) prior = j;
     });
     if (prior >= 0) superseded.add(prior);
   });
   const live = steps.filter((_, i) => !superseded.has(i));
   const newest = (xs: VerdictStep[]) =>
-    xs.reduce<VerdictStep | undefined>((a, x) => (!a || x.at >= a.at ? x : a), undefined);
+    xs.reduce<VerdictStep | undefined>((a, x) => (!a || wins(x, a) ? x : a), undefined);
   const mod = live.filter((s) => s.source === 'moderator');
   const lastMod = newest(mod);
-  if (lastMod?.outcome === 'hidden') return { source: 'moderator', verdict: 'hidden' };
+  if (lastMod?.outcome === 'hidden')
+    return { source: 'moderator', verdict: 'hidden', at: lastMod.at };
   const hiddenAt = newest(mod.filter((s) => s.outcome === 'hidden'))?.at ?? '';
-  if (mod.some((s) => s.outcome === 'visible' && s.token === 'current' && s.at > hiddenAt))
-    return { source: 'moderator', verdict: 'visible' };
+  const modVisible = mod.find(
+    (s) => s.outcome === 'visible' && s.token === 'current' && s.at > hiddenAt
+  );
+  if (modVisible) return { source: 'moderator', verdict: 'visible', at: modVisible.at };
   const of = (source: VerdictStep['source']) => {
     const current = newest(live.filter((s) => s.source === source && s.token === 'current'));
     if (!current) return undefined;
-    const hiddenSince = live.some(
+    const hiddenSince = live.find(
       (s) => s.source === source && s.token === 'old' && s.outcome === 'hidden' && s.at > current.at
     );
-    return hiddenSince ? 'hidden' : current.outcome;
+    return hiddenSince
+      ? { source, verdict: 'hidden', at: hiddenSince.at }
+      : { source, verdict: current.outcome, at: current.at };
   };
   const site = of('site');
   const pipeline = of('pipeline');
-  if (pipeline === 'hidden') return { source: 'pipeline', verdict: 'hidden' };
-  if (site === 'hidden') return { source: 'site', verdict: 'hidden' };
-  if (pipeline) return { source: 'pipeline', verdict: 'visible' };
-  if (site) return { source: 'site', verdict: 'visible' };
-  return null;
+  if (pipeline?.verdict === 'hidden') return pipeline;
+  if (site?.verdict === 'hidden') return site;
+  return pipeline ?? site ?? null;
 }
 
 const SOURCE_OF_PATH: Record<string, VerdictStep['source']> = {
@@ -204,8 +234,14 @@ const SOURCE_OF_PATH: Record<string, VerdictStep['source']> = {
   '/internal/verdict/mod': 'moderator',
 };
 
-/** The deciding verdict, as the readback reports it; null when none decides (withheld). */
+/** The deciding verdict; null when none decides (withheld). */
 export function deciding(sourceId: number): { source: string; verdict: string } | null {
+  const step = decidingStepOf(sourceId);
+  return step && { source: step.source, verdict: step.verdict };
+}
+
+/** The deciding verdict as the readback reports it, with its `at`. */
+function decidingStepOf(sourceId: number) {
   const urn = urnOf(sourceId);
   const current = tokenOf(sourceId);
   const posted = platform.tokenSite.get(current);
@@ -223,7 +259,7 @@ export function deciding(sourceId: number): { source: string; verdict: string } 
         at: String(v.body.at ?? ''),
       })),
   ];
-  return decideVerdicts(steps);
+  return decidingStep(steps);
 }
 
 export async function platformReply(url: URL, init: RequestInit): Promise<Response> {
@@ -363,7 +399,7 @@ export async function platformReply(url: URL, init: RequestInit): Promise<Respon
           digest: tokenOf(p.sourceId as number),
           retracted: p.text === null || platform.erasedUids.has(p.uid as number),
           removed: platform.removed.has(p.sourceId as number) || undefined,
-          verdict: deciding(p.sourceId as number),
+          verdict: decidingStepOf(p.sourceId as number),
         });
       const items = [...latest.values()];
       return json(200, { items: platform.readback ? platform.readback(items) : items, next: null });

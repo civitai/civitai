@@ -85,7 +85,7 @@ export type ImageAccessFacts = {
   blockedAt: Date | null;
   /** Latest `MODERATOR_TAKEDOWN_ACTIVITIES` row on this image. */
   lastTakedownActivityAt: Date | null;
-  /** A CSAM review flag or an evidence hold. Caps its url at `deny`. */
+  /** A CSAM review flag or an owner on an unfiled CSAM report, among others. Caps its url at `deny`. */
   held: boolean;
   /** `scanKeepsRowSql` holds for the row. */
   keptRow: boolean;
@@ -627,10 +627,7 @@ async function reportCoverage(
 }
 
 type OwnerHolds = {
-  /**
-   * Has an active hold marker, or is named on a CSAM report that is unsent, or sent without a
-   * verified evidence copy.
-   */
+  /** Named on a CSAM report that is unsent, or sent without a verified evidence copy. */
   held: (userId: number) => boolean;
   /** Named on any CSAM report. */
   reported: (userId: number) => boolean;
@@ -662,7 +659,7 @@ async function ownerHolds(userIds: number[]): Promise<OwnerHolds> {
     logToAxiom({
       type: 'error',
       name: 'cdn-access-hold-lookup',
-      message: 'evidence hold lookup failed; treating every owner as held',
+      message: 'owner report lookup failed; treating every owner as held',
       error: safeError(error),
     });
     return { held: () => true, reported: () => true, failed: true };

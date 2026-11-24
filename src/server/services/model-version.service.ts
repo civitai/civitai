@@ -4,15 +4,6 @@ import {
 } from '~/server/services/public-model-response-cache';
 import { Prisma } from '@prisma/client';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
-import { keepHeldReviewsCte, reviewsOnVersionsSql } from '~/server/services/held-review.service';
-import {
-  contentKeptError,
-  deleteUnlessHeld,
-  heldModelIdsSql,
-  isLegalHoldAbort,
-  modelRowHeldSql,
-  ownerHeld,
-} from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { asResourceValue } from '~/shared/utils/resource.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
@@ -1676,19 +1667,6 @@ async function purgeModelVersionByHashCacheById(modelVersionIds: number[]) {
   await purgeModelVersionByHashCache(hashes.map((h) => h.hash));
 }
 
-/** A statement whose hold check could not be read is refused as held, as `deleteUnlessHeld` does. */
-const refuseOnHoldAbort = <T>(statement: Promise<T>) =>
-  statement.catch((e: unknown) => {
-    throw isLegalHoldAbort(e) ? contentKeptError(false) : e;
-  });
-
-/** The versions `ids` with their model owner as `m."userId"`, for `deleteUnlessHeld`. */
-const versionOwnerSql = (ids: number[]) => Prisma.sql`
-  FROM "ModelVersion" mv
-  JOIN "Model" m ON m.id = mv."modelId"
-  WHERE mv.id = ANY(${ids}::int[])
-`;
-
 export const deleteVersionById = async ({
   id,
   isModerator,
@@ -1766,26 +1744,8 @@ export const deleteVersionById = async ({
 
     // The caller returns the whole row, so it is read here, under the lock taken above.
     const deleted = await tx.modelVersion.findUniqueOrThrow({ where: { id } });
-    // A held owner's version is refused, and the throw rolls back the access rows removed above.
-    const reviews = Prisma.sql`SELECT r.id FROM "ResourceReview" r WHERE r."modelVersionId" = ${id}`;
-    const outcome = await deleteUnlessHeld(
-      tx.$executeRaw`
-        WITH ${keepHeldReviewsCte(reviews, true)}
-        DELETE FROM "ModelVersion" mv
-        USING "Model" m
-        WHERE mv.id = ${id}
-          AND m.id = mv."modelId"
-          AND NOT ${modelRowHeldSql()}
-      `,
-      {
-        expected: 1,
-        isModerator,
-        db: tx,
-        ownerFrom: versionOwnerSql([id]),
-        held: modelRowHeldSql(),
-      }
-    );
-    if (outcome === 'short') throw throwNotFoundError(`No model version with id ${id}`);
+    const removed = await tx.$executeRaw`DELETE FROM "ModelVersion" WHERE id = ${id}`;
+    if (!removed) throw throwNotFoundError(`No model version with id ${id}`);
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
 
     return deleted;
@@ -3777,12 +3737,6 @@ export const mergeVersions = async ({
     }
   }
 
-  // Checked again in the delete below; this only spares a held owner the long transaction.
-  if (
-    await ownerHeld(dbWrite, Prisma.sql`FROM "Model" m WHERE m.id = ${modelId}`, modelRowHeldSql())
-  )
-    throw contentKeptError(false);
-
   // Populated inside the tx after files are moved to the target — captures any
   // file row that slipped past the move and would be orphaned by the cascade.
   let sourceFileUrls: string[] = [];
@@ -4069,18 +4023,12 @@ export const mergeVersions = async ({
             SELECT "userId" FROM "ResourceReview"
             WHERE "modelVersionId" = ${targetVersionId}
           )`;
-      await refuseOnHoldAbort(tx.$executeRaw`
-        WITH ${keepHeldReviewsCte(supersededByTarget, true)}
-        DELETE FROM "ResourceReview" WHERE id IN (${supersededByTarget})
-      `);
+      await tx.$executeRaw`DELETE FROM "ResourceReview" WHERE id IN (${supersededByTarget})`;
       const supersededBySource = Prisma.sql`SELECT a.id FROM "ResourceReview" a
         JOIN "ResourceReview" b ON a."userId" = b."userId" AND a.id < b.id
         WHERE a."modelVersionId" IN (${Prisma.join(sourceVersionIds)})
           AND b."modelVersionId" IN (${Prisma.join(sourceVersionIds)})`;
-      await refuseOnHoldAbort(tx.$executeRaw`
-        WITH ${keepHeldReviewsCte(supersededBySource, true)}
-        DELETE FROM "ResourceReview" WHERE id IN (${supersededBySource})
-      `);
+      await tx.$executeRaw`DELETE FROM "ResourceReview" WHERE id IN (${supersededBySource})`;
       await tx.resourceReview.updateMany({
         where: { modelVersionId: { in: sourceVersionIds } },
         data: { modelVersionId: targetVersionId },
@@ -4130,29 +4078,10 @@ export const mergeVersions = async ({
       await tx.paidAccess.deleteMany({
         where: { entityType: 'ModelVersion', entityId: { in: sourceVersionIds } },
       });
-      // A held owner's merge is refused, and the throw rolls back the whole merge.
-      const outcome = await deleteUnlessHeld(
-        tx.$executeRaw`
-          WITH ${keepHeldReviewsCte(
-            reviewsOnVersionsSql(Prisma.sql`SELECT unnest(${sourceVersionIds}::int[])`),
-            true
-          )}
-          DELETE FROM "ModelVersion" mv
-          USING "Model" m
-          WHERE mv.id = ANY(${sourceVersionIds}::int[])
-            AND m.id = mv."modelId"
-            -- One model: its owners, present and past, checked once rather than once per version.
-            AND m.id NOT IN (${heldModelIdsSql(Prisma.sql`SELECT ${modelId}::int`, true)})
-        `,
-        {
-          expected: new Set(sourceVersionIds).size,
-          isModerator: false,
-          db: tx,
-          ownerFrom: versionOwnerSql(sourceVersionIds),
-          held: modelRowHeldSql(),
-        }
-      );
-      if (outcome === 'short')
+      const removed = await tx.$executeRaw`
+        DELETE FROM "ModelVersion" WHERE id = ANY(${sourceVersionIds}::int[])
+      `;
+      if (removed < new Set(sourceVersionIds).size)
         throw throwNotFoundError('One or more source versions no longer exist.');
 
       // 13. Update the model's lastVersionAt

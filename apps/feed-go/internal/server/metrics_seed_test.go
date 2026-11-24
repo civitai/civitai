@@ -26,15 +26,16 @@ import (
 // Every request outcome a path can reach is a 0 series per endpoint, and only those: served_cached
 // on the single-model route alone (the only cached answer), on both modes; no served_empty on
 // as-posts (its compute marks no trivial answer) nor on the single-model public route (its trivial
-// answer, the not-found body, falls back there).
+// answer, the not-found body, falls back there); region_blocked (the app's 451 written here) on every
+// public route, serve mode only.
 func TestRequestOutcomesAreSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
 	// serve: 6 public routes x served, served_empty, fallback, error, + v1-models-id served_cached,
 	// - served_empty on as-posts and v1-models-id; shadow: 7 endpoints x the same 4, + v1-models-id
-	// served_cached, - served_empty on as-posts.
-	if n := testutil.CollectAndCount(m.Requests); n != 6*4+1-2+7*4+1-1 {
-		t.Fatalf("feed_go_requests_total has %d series at construction, want 51", n)
+	// served_cached, - served_empty on as-posts; + region_blocked on the 6 public routes (serve only).
+	if n := testutil.CollectAndCount(m.Requests); n != 6*4+1-2+7*4+1-1+6 {
+		t.Fatalf("feed_go_requests_total has %d series at construction, want 57", n)
 	}
 	served := []string{"as-posts", "model-getall", "infinite", "v1-models", "v1-models-id", "v1-images"}
 	all := append([]string{"model-associated"}, served...)
@@ -67,6 +68,18 @@ func TestRequestOutcomesAreSeeded(t *testing.T) {
 	} {
 		if _, found := metricValue(t, reg, "feed_go_requests_total", l); found {
 			t.Errorf("requests%v exists, but its path cannot count it", l)
+		}
+	}
+	for _, e := range served {
+		l := map[string]string{"feed_endpoint": e, "mode": "serve", "outcome": "region_blocked"}
+		if v, found := metricValue(t, reg, "feed_go_requests_total", l); !found || v != 0 {
+			t.Errorf("requests%v = %v found=%v, want a 0 series", l, v, found)
+		}
+	}
+	for _, e := range all {
+		l := map[string]string{"feed_endpoint": e, "mode": "shadow", "outcome": "region_blocked"}
+		if _, found := metricValue(t, reg, "feed_go_requests_total", l); found {
+			t.Errorf("requests%v exists: the shadow never answers a 451", l)
 		}
 	}
 	if _, found := metricValue(t, reg, "feed_go_requests_total", map[string]string{"feed_endpoint": "model-associated", "mode": "serve", "outcome": "served"}); found {
@@ -120,9 +133,9 @@ func TestComputeFallbackReasonsAreSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
 	// serve: 6 routes x (bulkhead, error, deadline, canceled, panic); shadow: 7 x 3; probe: 4 x 3;
-	// and the 198 request-determined serve series.
-	if n := testutil.CollectAndCount(m.Fallbacks); n != 6*5+7*3+4*3+198 {
-		t.Fatalf("feed_go_fallback_total has %d series at construction, want 261", n)
+	// and the 199 request-determined serve series.
+	if n := testutil.CollectAndCount(m.Fallbacks); n != 6*5+7*3+4*3+199 {
+		t.Fatalf("feed_go_fallback_total has %d series at construction, want 262", n)
 	}
 	cases := map[string]struct {
 		endpoints, reasons []string
@@ -198,7 +211,7 @@ var wantRequestFallbackReasons = map[string][]string{
 		"method", "region-blocked", "crawler-user-agent",
 		"bearer-malformed", "bearer-multiple-headers", "bearer-query-token", "verified-bot",
 		"input-envelope", "input-invalid", "input-unknown-key", "input-ids",
-		"model-cursor", "model-sort-recently-added", "model-collection-id",
+		"model-cursor", "model-sort-recently-added", "model-collection-id", "model-ids",
 		"input-query", "input-hidden", "input-followed", "input-newCreators", "input-modelVersionIds",
 		"input-status", "input-needsReview", "input-pending", "input-supportsGeneration",
 		"input-isFeatured", "input-availability", "input-publishedFrom", "input-publishedTo",
@@ -251,8 +264,8 @@ func TestRequestFallbackReasonsAreSeeded(t *testing.T) {
 		}
 		total += len(want)
 	}
-	if total != 198 {
-		t.Errorf("the literal holds %d (endpoint, reason) pairs, want 198", total)
+	if total != 199 {
+		t.Errorf("the literal holds %d (endpoint, reason) pairs, want 199", total)
 	}
 
 	reg := prometheus.NewRegistry()
@@ -299,7 +312,7 @@ func TestRequestFallbackReasonsAreSeeded(t *testing.T) {
 // It mirrors the reason set an external consumer of feed_go_fallback_total subtracts as
 // request-determined (plus `bearer-token`, seeded here on the REST model routes): a change to either
 // list must be made to both, and to unservedRequestReasons below.
-var requestDeterminedRe = regexp.MustCompile(`^(?:input-.+|method|region-blocked|crawler-user-agent|verified-bot|bearer-token|bearer-malformed|bearer-multiple-headers|bearer-query-token|model-cursor|model-sort-recently-added|model-collection-id|collection-id|collection-tag-id|ids-not-int4|infinite-user-zero|prioritized-cursor|v1-images-(?:conditional|session-cookie)|v1-models-(?:origin|session-cookie|conditional|etag|host|path|id|ids|query|query-encoding|authed-only|sort|limit|page-limit|cursor|input-enum|input-number|input-bool|input-duplicate|tagname|user|rating|favorites|hidden|checkpointType|needsReview|paidAccess|hidePaid|onSale|modelVersionIds|supportsGeneration|fromPlatform|followed|newCreators|collectionId|collectionItemStatus|fileFormats|pending|collectionTagId|availability|disablePoi|disableMinor|isFeatured|poiOnly|minorOnly|allowNoCredit|allowCommercialUse|allowDerivatives|allowDifferentLicense|browsingLevel|excludedModelIds|excludedUserIds|excludedTagIds|excludedImageIds)|v1-(?:host|path|query-encoding|input-duplicate|input-number|input-username|input-period|input-type|input-ids|input-bool|image-id|tags|base-models|user-zero|model-only|sort|with-tags|cursor|legacy-cursor|page-limit))$`)
+var requestDeterminedRe = regexp.MustCompile(`^(?:input-.+|method|region-blocked|crawler-user-agent|verified-bot|bearer-token|bearer-malformed|bearer-multiple-headers|bearer-query-token|model-cursor|model-sort-recently-added|model-collection-id|model-ids|collection-id|collection-tag-id|ids-not-int4|infinite-user-zero|prioritized-cursor|v1-images-(?:conditional|session-cookie)|v1-models-(?:origin|session-cookie|conditional|etag|host|path|id|ids|query|query-encoding|authed-only|sort|limit|page-limit|cursor|input-enum|input-number|input-bool|input-duplicate|tagname|user|rating|favorites|hidden|checkpointType|needsReview|paidAccess|hidePaid|onSale|modelVersionIds|supportsGeneration|fromPlatform|followed|newCreators|collectionId|collectionItemStatus|fileFormats|pending|collectionTagId|availability|disablePoi|disableMinor|isFeatured|poiOnly|minorOnly|allowNoCredit|allowCommercialUse|allowDerivatives|allowDifferentLicense|browsingLevel|excludedModelIds|excludedUserIds|excludedTagIds|excludedImageIds)|v1-(?:host|path|query-encoding|input-duplicate|input-number|input-username|input-period|input-type|input-ids|input-bool|image-id|tags|base-models|user-zero|model-only|sort|with-tags|cursor|legacy-cursor|page-limit))$`)
 
 // unservedRequestReasons are the request-determined reasons no public route produces: `v1-path`
 // (feed.ServeV1's nextPage on a path other than the images route's, which a shadow sample can carry
@@ -433,7 +446,7 @@ func parsedReason(endpoint, reason string) string {
 	case EndpointInfinite:
 		_, err = feed.ParseInfinite(in)
 	case EndpointModelGetAll:
-		_, err = modelfeed.Parse(in)
+		_, err = modelfeed.ParseWith(in, modelfeed.Ports{})
 	default:
 		return ""
 	}

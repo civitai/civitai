@@ -291,7 +291,7 @@ function moderatorBlock(values: unknown[]) {
 }
 
 function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
-  // The legal-hold lookup arrives as one `Prisma.sql` value rather than a template.
+  // Some reads arrive as one `Prisma.sql` value rather than a template.
   const sql = Array.isArray(strings)
     ? strings.join('?')
     : (strings as unknown as { sql: string }).sql;
@@ -325,10 +325,6 @@ function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
       .filter((q) => !ids.includes(q.entityId))
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
-
-  // The hold marker's view exists, as on prod, and holds nobody.
-  if (sql.includes('SELECT to_regclass(')) return [{ present: true }];
-  if (sql.includes('FROM "EvidenceHeldUser"')) return [];
 
   // `countPendingAccountDeletionImageRestores` — the read `restoreUser` gates the whole gallery
   // restore on. Its `NOT IN (SELECT unnest(enum_range(...)))` sibling is the unreadable-breadcrumb

@@ -66,8 +66,6 @@ CREATE TABLE "Image" (
   "pHash" BIGINT
 );
 CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB, "images" JSONB);
-CREATE TABLE "EvidenceHold" ("userId" INTEGER);
-CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold";
 CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN NOT NULL DEFAULT FALSE);
 CREATE TYPE "BlockImageReason" AS ENUM ('Ownership', 'CSAM', 'TOS');
 CREATE TABLE "BlockedImage" ("hash" BIGINT PRIMARY KEY, "reason" "BlockImageReason" NOT NULL DEFAULT 'Ownership');

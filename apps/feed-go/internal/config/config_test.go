@@ -229,6 +229,46 @@ func TestLoadServeInfiniteDefaultsOff(t *testing.T) {
 	}
 }
 
+// The model.getAll input ports' switches default off, and each turns on only its own port.
+func TestLoadGetAllInputPortsDefaultOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GetAllServeInputIDs || c.GetAllServeInputFollowed {
+		t.Fatalf("unset: ids %v followed %v, want both off", c.GetAllServeInputIDs, c.GetAllServeInputFollowed)
+	}
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_IDS", "true")
+	if c, err = Load(); err != nil || !c.GetAllServeInputIDs || c.GetAllServeInputFollowed {
+		t.Fatalf("ids on: ids %v followed %v err %v", c.GetAllServeInputIDs, c.GetAllServeInputFollowed, err)
+	}
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_IDS", "")
+	t.Setenv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", "true")
+	if c, err = Load(); err != nil || c.GetAllServeInputIDs || !c.GetAllServeInputFollowed {
+		t.Fatalf("followed on: ids %v followed %v err %v", c.GetAllServeInputIDs, c.GetAllServeInputFollowed, err)
+	}
+}
+
+// FEED_GO_ANSWER_REGION_BLOCKED is off unless set: a blocked region is then handed back to the app.
+func TestLoadAnswerRegionBlockedDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_ANSWER_REGION_BLOCKED", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.AnswerRegionBlocked != want {
+			t.Errorf("FEED_GO_ANSWER_REGION_BLOCKED=%q -> %v, want %v", in, c.AnswerRegionBlocked, want)
+		}
+	}
+}
+
 // TRPC_WRITE_DEVALUE is read as the main app reads it (`=== 'true'`): only the exact string turns it
 // on, and unset is off.
 func TestLoadWriteDevalue(t *testing.T) {

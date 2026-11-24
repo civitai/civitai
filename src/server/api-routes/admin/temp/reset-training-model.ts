@@ -1,10 +1,7 @@
 import { deletePostRows } from '@civitai/db-queries/content-deletion';
 import { kyselyOver } from '~/server/db/prisma-kysely';
-import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
-import { Prisma } from '@prisma/client';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { contentRemovalHeldSql } from '~/server/services/legal-hold.service';
 import { leavePrivateWithHeldVerdict } from '~/server/services/model.service';
 import { deleteImages } from '~/server/services/image.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -55,7 +52,7 @@ export default WebhookEndpoint(async (req, res) => {
     where: { modelVersionId: { in: modelVersions.map((v) => v.id) } },
   });
 
-  // Images first, by id: the post delete only unlinks them. A held owner's rows are left.
+  // Images first, by id: the post delete only unlinks them.
   const postIds = posts.map((p) => p.id);
   if (postIds.length) {
     const actor = { system: 'reset-training-model' };
@@ -66,18 +63,11 @@ export default WebhookEndpoint(async (req, res) => {
       images.map((i) => i.id),
       {
         actor,
-        onlyWhere: Prisma.sql`NOT ${contentRemovalHeldSql(Prisma.raw('"Image"."userId"'), true)}`,
         updatePosts: false,
         keepStoredFiles: true,
       }
     );
-    await deletePostRows(kyselyOver(dbWrite), {
-      ids: postIds,
-      actor,
-      where: fromPrismaSql(
-        Prisma.sql`NOT ${contentRemovalHeldSql(Prisma.raw('"Post"."userId"'), true)}`
-      ),
-    });
+    await deletePostRows(kyselyOver(dbWrite), { ids: postIds, actor });
   }
 
   res.status(200).json({ finished: true });

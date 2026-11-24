@@ -166,12 +166,6 @@ const { fake, mockPool, mockClient } = vi.hoisted(() => {
   };
 });
 
-// No hold covers the account here; the hold itself is `remove-all-content-legal-hold.behavior.test.ts`.
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
-  assertContentRemovalNotHeld: async () => ({ markerView: false }),
-}));
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
 vi.mock('~/server/search-index', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -339,7 +333,6 @@ describe('removeAllContent → App Blocks per-user storage', () => {
 
     expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
       incomplete: ['app-storage'],
-      keptModelIds: [],
     });
 
     const lines = warn.mock.calls.map((c) => String(c[0]));
@@ -365,7 +358,6 @@ describe('removeAllContent → App Blocks per-user storage', () => {
 
     expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
       incomplete: ['app-storage-truncated'],
-      keptModelIds: [],
     });
 
     const truncated = warn.mock.calls
@@ -399,7 +391,6 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
       incomplete: [],
-      keptModelIds: [],
     });
     expect(
       warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('[removeAllContent]'))
@@ -428,7 +419,6 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     // Must RESOLVE, not reject.
     await expect(removeAllContent({ id: TARGET, actorUserId: MOD })).resolves.toEqual({
       incomplete: ['app-storage'],
-      keptModelIds: [],
     });
 
     // 🔴 Same anti-vacuity point: a build that never calls the purge also never
@@ -443,8 +433,7 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     expect(dbMock.dbWrite.collection.deleteMany).toHaveBeenCalledWith({
       where: { userId: TARGET },
     });
-    // The evidence deletes are raw, so each can carry the legal hold in its own statement.
-    // The images, uploaded late ones included, go through `deleteImages`, its guard naming the
+    // The images, uploaded late ones included, go through `deleteImages`, the late pass naming the
     // account.
     expect(
       vi

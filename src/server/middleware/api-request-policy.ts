@@ -19,7 +19,12 @@ import { getRegion, isAPIAccessBlocked, type RegionInfo } from '~/server/utils/r
 
 export type ApiRegionBlock = { status: 451; contentType: 'application/json'; body: string };
 
-const API_REGION_BLOCK: ApiRegionBlock = {
+/**
+ * The one 451 every API path answers a blocked region with (the tRPC route and the `/api/v1` proxy
+ * middleware alike). Exported for scripts/feed-go-api-policy.ts, which hands it to the Go feed
+ * service so the service can answer the same bytes itself.
+ */
+export const API_REGION_BLOCK: ApiRegionBlock = {
   status: 451, // Unavailable For Legal Reasons
   contentType: 'application/json',
   body: JSON.stringify({

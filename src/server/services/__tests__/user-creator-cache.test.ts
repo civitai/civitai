@@ -360,6 +360,8 @@ describe('creator card invalidation ledger', () => {
       'src/server/services/creator-shop.service.ts': 1,
       // A showcase hat pick: the card carries it beside the cached entry, so only the edge copy is stale.
       'src/server/services/event.service.ts': 1,
+      // Memorializing or reversing one adds or removes the Tip and Chat buttons on the card.
+      'src/server/services/memorial.service.ts': 1,
       // A ban or unban drops the card's links; a moderator's link removal changes them.
       'src/server/services/user.service.ts': 2,
     });

@@ -8,6 +8,14 @@ func TestEmbeddedPolicy(t *testing.T) {
 	if got := PrivateCacheControl(); got != "max-age=0, private, no-cache" {
 		t.Fatalf("PrivateCacheControl = %q", got)
 	}
+	want451 := RegionBlockAnswer{
+		Status:      451,
+		ContentType: "application/json",
+		Body:        `{"error":"Access to this service is not available in your region due to legal restrictions.","code":"REGION_BLOCKED"}`,
+	}
+	if got := RegionBlockResponse(); got != want451 {
+		t.Fatalf("RegionBlockResponse = %+v, want %+v", got, want451)
+	}
 	found := false
 	for _, b := range RegionBlockDefault() {
 		if b == (RegionBlock{Region: "GB", EffectiveDate: "2025-07-24"}) {

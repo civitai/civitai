@@ -6,6 +6,7 @@ import {
   eventPointsExcludedFromSql,
 } from '~/server/events/player-eligibility';
 import { logToAxiom } from '~/server/logging/client';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 export const COMEBACK_KIND = 'comeback';
 const COMEBACK_SOURCE = 'comeback:result';
@@ -91,8 +92,8 @@ export function comebackCup(teams: ComebackTeam[], { baseline, week, floorPerDay
 
 type PrizeEvent = { name: string; startDate: Date; endDate: Date; teams: readonly string[] };
 
-// Play points only, from the daily snapshot; a user the standings hide counts only for days before
-// their exclusion start.
+// Play points only, from the daily snapshot. A user flagged ExcludeFromEventPoints counts for no day,
+// whatever their exclusion start; the standings still count their days before it.
 async function comebackTeams(event: PrizeEvent, { baseline, week }: CupWindows) {
   const rows = await dbWrite.$queryRaw<{ team: string; baseline: bigint; week: bigint }[]>`
     SELECT d.team,
@@ -106,6 +107,7 @@ async function comebackTeams(event: PrizeEvent, { baseline, week }: CupWindows) 
     JOIN "User" u ON u.id = d."userId"
     WHERE d.event = ${event.name}
       AND d.day < COALESCE(${eventPointsExcludedFromSql()}, 'infinity'::date)
+      AND (u.flags & ${UserFlag.ExcludeFromEventPoints}::int) = 0
     GROUP BY d.team
   `;
   const byTeam = new Map(rows.map((r) => [r.team, r]));

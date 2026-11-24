@@ -79,7 +79,7 @@ const deletedState: {
   blockedFor: string | null;
 } = { ...SCANNED };
 
-/** `kept`: deletable images the DELETE does not return, as when a hold marker keeps the row. */
+/** `kept`: deletable images the DELETE does not return, as when a child-safety case keeps the row. */
 function primeQueries(images: (typeof OWNER_IMAGE)[], kept: number[] = []) {
   const deletable = images.filter((i) => i.deletable && !kept.includes(i.id));
   dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {

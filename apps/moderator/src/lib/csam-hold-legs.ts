@@ -7,8 +7,6 @@ export const HOLD_LEG_LABELS: Record<CsamQueueHoldReason, string> = {
   csamReportSecondary: 'Secondary user on a CSAM report',
   ban: 'Ban hold',
   reportedImage: 'Image listed on a CSAM report',
-  evidenceHold: 'Evidence hold',
-  evidenceHoldUnknown: 'Evidence-hold status unknown',
 };
 
 export const holdLegLabels = (legs: readonly CsamQueueHoldReason[]) =>

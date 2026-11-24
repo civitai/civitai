@@ -453,41 +453,6 @@ describe('nsfwLockBackfill', () => {
   });
 });
 
-// A content wipe's removal record: client meta can neither set nor change it, a moderator's included
-// (their edit form sends stored meta back, which could put a stale record onto a live model).
-describe('removal record keys', () => {
-  const RECORD = {
-    removedWithOwner: true,
-    statusBeforeRemoval: 'Published',
-    versionsUnpublishedByRemoval: [{ id: 1, status: 'Published' }],
-  };
-
-  it.each([
-    ['an owner', OWNER_ID, false],
-    ['a moderator', MODERATOR_ID, true],
-  ])('drops them from %s’s meta on a model without them', async (_, userId, isModerator) => {
-    mockStored({ meta: {} });
-    await upsert({
-      id: MODEL_ID,
-      userId,
-      isModerator,
-      meta: { ...RECORD, hideBuzz: true } as ModelUpsertInput['meta'],
-    });
-    expect(updateData().meta).toEqual({ hideBuzz: true });
-  });
-
-  it('keeps the stored record when a moderator saves different values', async () => {
-    mockStored({ meta: RECORD });
-    await upsert({
-      id: MODEL_ID,
-      userId: MODERATOR_ID,
-      isModerator: true,
-      meta: { removedWithOwner: false, statusBeforeRemoval: 'Draft' } as ModelUpsertInput['meta'],
-    });
-    expect(updateData().meta).toEqual(RECORD);
-  });
-});
-
 // The .com re-check's record that it took the model off civitai.com. If client meta could clear it,
 // the owner would lose the notice; if it could forge one, the owner would see a removal that never happened.
 describe('comFaceRemoved', () => {
@@ -648,37 +613,6 @@ describe('a moderator lifting the nsfw lock', () => {
 });
 
 describe('the locked row', () => {
-  const RECORD = {
-    removedWithOwner: true,
-    statusBeforeRemoval: 'Published',
-    versionsUnpublishedByRemoval: [{ id: 1, status: 'Published' }],
-  };
-
-  it('refuses an owner’s save of a model a content wipe kept, writing nothing', async () => {
-    mockStored({ meta: RECORD });
-    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID })).rejects.toThrow(/not authorized/);
-    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
-  });
-
-  it('refuses it when the wipe kept the model after the save read it', async () => {
-    mockStored({ meta: {} });
-    mockLocked({ meta: RECORD });
-    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID })).rejects.toThrow(/not authorized/);
-    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
-  });
-
-  it('keeps the record a wipe wrote after a moderator’s save read the model', async () => {
-    mockStored({ meta: {} });
-    mockLocked({ meta: RECORD });
-    await upsert({
-      id: MODEL_ID,
-      userId: MODERATOR_ID,
-      isModerator: true,
-      meta: { hideBuzz: true } as ModelUpsertInput['meta'],
-    });
-    expect(updateData().meta).toEqual({ ...RECORD, hideBuzz: true });
-  });
-
   it('keeps a moderation key written after an owner’s save read the model', async () => {
     mockStored({ meta: {} });
     mockLocked({ meta: { cannotPublish: true } });

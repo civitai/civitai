@@ -668,14 +668,16 @@ jobs:
       - name: allocs/op gate
         run: |
           set -euo pipefail
-          # Positive control: every benchmark produced its 6 samples (11 benchmarks: superjson Serialize,
+          # Positive control: every benchmark produced its 6 samples (20 benchmarks: superjson Serialize,
           # SerializeBuffer, SerializeColdStart/page and SerializeColdStart/owned-small, hydrate Unpack,
-          # TagIDs and HydratePage/pipelined, feed BuildImages, shadow Compare/golden, Compare/page50
-          # and CompareJSON). A filter or build change that drops benchmarks would otherwise pass as "no
-          # regression"; raise the count with each new benchmark.
+          # TagIDs, HydratePage/pipelined and UnpackCache/{model-data,tag-ids,follows}, feed BuildImages,
+          # server Route/{as-posts,infinite,model-getall} and DevaluePayload/{as-posts,infinite,
+          # model-getall}, shadow Compare/golden, Compare/page50 and CompareJSON). A filter or build
+          # change that drops benchmarks would otherwise pass as "no regression"; raise the count with
+          # each new benchmark.
           samples=$(grep -c ' allocs/op' "$RUNNER_TEMP/head.txt" || true)
           echo "head samples with allocs/op: $samples"
-          [ "$samples" -ge 66 ]
+          [ "$samples" -ge 120 ]
           python3 ci/allocs_gate.py "$RUNNER_TEMP/base.txt" "$RUNNER_TEMP/head.txt"
 
       # Last, so the build cache holds what the steps above built. Saves only on `main`.
