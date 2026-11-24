@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import '~/__tests__/mocks/logging.mock';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ModerationService from '~/server/services/commentv3/moderation.service';
@@ -475,6 +476,23 @@ describe('the reconcile', () => {
         .filter(([, init]) => (init as RequestInit | undefined)?.method === 'POST')
     ).toEqual([]);
     expect(deciding(id)).toEqual({ source: 'moderator', verdict: 'hidden' });
+  });
+
+  it('a lift whose counter cannot be read is neither sent nor counted stuck this pass', async () => {
+    const id = (await seed('counter down')).comment.sourceId;
+    const hiddenAt = new Date(Date.now() - 1_000).toISOString();
+    platform.readback = (items) =>
+      items.map((i) => ({
+        ...(i as object),
+        verdict: { source: 'site', verdict: 'hidden', at: hiddenAt },
+      }));
+    redisMock.redis.multi.mockImplementationOnce(() => {
+      throw new Error('cache cluster down');
+    });
+    expect(await reconcile()).toMatchObject({ mismatched: 1, liftsLost: 0 });
+    const row = await mirrorRow(id);
+    expect(row.nextPushAt).toBeNull();
+    expect(row.pushAttempts).toBe(0);
   });
 
   it('a lift that keeps losing is sent three times, then counted stuck and never settled', async () => {
