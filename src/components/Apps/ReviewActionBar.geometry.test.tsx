@@ -1,64 +1,52 @@
 import { Notifications, notifications } from '@mantine/notifications';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { useRef } from 'react';
+import { afterEach, describe, expect, test } from 'vitest';
 import { page } from 'vitest/browser';
-import type * as TrpcMod from '~/utils/trpc';
+import { useReserveViewportBottom } from '~/components/Apps/ReviewActionBar';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { box, nextLayout, renderAtViewport } from '../../../test/geometry-setup';
-import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
- * The review page's sticky action bar against a toast from anything else on the page, in the
- * real cascade: the bar publishes how much of the viewport bottom it covers, and the bottom
- * notification containers are lifted above it (`globals.css`), so no such toast lands on Approve.
+ * The sticky review bar's reserve against a toast from anything else on the page, in the real
+ * cascade: the hook publishes how much of the viewport bottom the bar covers, and `globals.css`
+ * lifts the bottom notification containers by it, so no such toast lands on the bar's buttons.
+ * (That `ReviewActionBar` mounts the hook for a sticky pending bar is in its browser test.)
  */
-
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcMod>()),
-  trpc: makeTrpcProxy({}),
-}));
-
-const { ReviewActionBar } = await import('./ReviewActionBar');
-
-const PENDING = {
-  id: 'req-geometry',
-  appBlockId: null,
-  slug: 'my-block',
-  version: '1.2.0',
-  submittedAt: new Date('2026-01-01T00:00:00Z'),
-  bundleSizeBytes: '2048',
-  bundleSha256: 'abc',
-  manifest: { name: 'My Block', scopes: [] },
-  fileSummary: { files: [], added: [], removed: [], changed: [] },
-  manifestDiffSummary: { kind: 'first-version', fields: [] },
-  reviewRepoUrl: null,
-  pushCommitUrl: null,
-  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
-};
 
 const RESERVE = '--review-action-bar-reserve';
 const DESKTOP = { width: 1124, height: 900 };
+
+/** A sticky bottom bar shaped like the review bar, carrying the hook. */
+function StickyBar() {
+  const ref = useRef<HTMLDivElement>(null);
+  useReserveViewportBottom(ref, true);
+  return (
+    <div
+      ref={ref}
+      data-testid="sticky-bar"
+      style={{ position: 'sticky', bottom: 0, height: 120, background: 'white' }}
+    >
+      Approve
+    </div>
+  );
+}
 
 afterEach(() => {
   notifications.clean();
 });
 
-describe('the sticky review bar keeps bottom toasts off its buttons', () => {
+describe('the sticky review bar keeps bottom toasts off it', () => {
   test('🔴 a bottom-right toast rests above the bar; without the reserve it lands on it', async () => {
     const view = await renderAtViewport(
       <>
         <Notifications />
         {/* A long review, so the bar is stuck to the viewport bottom as on the page. */}
         <div style={{ height: 3000 }} />
-        <ReviewActionBar
-          selection={{ request: PENDING as never, mode: 'pending' }}
-          onClose={vi.fn()}
-          sticky
-          approveAndNext
-        />
+        <StickyBar />
       </>,
       DESKTOP
     );
-    const bar = page.getByTestId('apps-review-action-bar');
+    const bar = page.getByTestId('sticky-bar');
     await expect.element(bar).toBeInTheDocument();
     notifications.show({ id: 'other', message: 'Something else happened', autoClose: false });
     await expect.element(page.getByText('Something else happened')).toBeInTheDocument();

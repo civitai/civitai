@@ -545,7 +545,10 @@ export const REVIEW_ACTION_BAR_FAB_GUTTER_PX = 96;
  */
 export const REVIEW_ACTION_BAR_RESERVE_VAR = '--review-action-bar-reserve';
 
-function useReserveViewportBottom(ref: React.RefObject<HTMLDivElement | null>, active: boolean) {
+export function useReserveViewportBottom(
+  ref: React.RefObject<HTMLDivElement | null>,
+  active: boolean
+) {
   useEffect(() => {
     const el = ref.current;
     if (!active || !el || typeof window === 'undefined') return;

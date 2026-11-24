@@ -789,3 +789,26 @@ describe('🔴 "Approve & next" survives the tab closing (keepalive)', () => {
     }
   });
 });
+
+describe('ReviewActionBar — the sticky bar reserves the viewport bottom', () => {
+  const reserve = () =>
+    document.documentElement.style.getPropertyValue('--review-action-bar-reserve');
+
+  test('set while a sticky bar shows a pending request, removed when it unmounts', async () => {
+    const view = await renderWithProviders(
+      <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} sticky />
+    );
+    await expect.element(page.getByTestId('apps-review-action-bar')).toBeInTheDocument();
+    await vi.waitFor(() => expect(reserve()).toMatch(/^[1-9]\d*px$/));
+    await view.unmount();
+    expect(reserve()).toBe('');
+  });
+
+  test('not set by the inline (modal) bar', async () => {
+    renderWithProviders(
+      <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await expect.element(page.getByRole('button', { name: 'Reject…' })).toBeInTheDocument();
+    expect(reserve()).toBe('');
+  });
+});
