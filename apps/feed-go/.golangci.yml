@@ -48,6 +48,13 @@ linters:
         linters:
           - gosec
         text: G115
+      # The msgpack reader's differential test writes random msgpack (a reproducible generator,
+      # not a secret) byte by byte: each int->byte / ->uint64 conversion is a deliberate truncation
+      # to the wire width, and the corpus is meant to include out-of-range values.
+      - path: internal/hydrate/msgpack_diff_test\.go
+        linters:
+          - gosec
+        text: G115|G404
 
 issues:
   # Report everything: a capped report hides findings behind the first few.
