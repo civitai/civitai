@@ -107,17 +107,18 @@ export type UrlAccessFacts = {
 
 function desiredPostAccess(post: PostAccessFacts | null): CdnAccess {
   if (!post || !post.unpublished || !post.stamped) return 'allow';
+  const violation =
+    post.versionStatus === ModelStatus.UnpublishedViolation ||
+    post.modelStatus === ModelStatus.UnpublishedViolation;
+  // Kept by a delete its case still holds, whoever deleted it: denied, not taken down, unless a
+  // moderator took down its version or model.
+  if (post.pendingDelete) return violation ? 'retract' : 'deny';
   // The owner unpublishing their own post or model is not a takedown, even if a moderator later
   // marks the model as a violation or an earlier moderator unpublish left its reason behind.
   if (post.unpublishedBy === null || post.unpublishedBy === String(post.ownerId)) return 'allow';
-  // The pending-delete stamp is not a takedown, but it leaves a version or model takedown to decide.
-  if (post.moderatorReason && !post.pendingDelete) return 'retract';
+  if (post.moderatorReason) return 'retract';
   // Only a moderator can set this status: the unpublish services refuse a reason from anyone else.
-  if (
-    post.versionStatus === ModelStatus.UnpublishedViolation ||
-    post.modelStatus === ModelStatus.UnpublishedViolation
-  )
-    return 'retract';
+  if (violation) return 'retract';
   // Someone other than the owner, with no violation: the ban cascade. Reversible on purpose.
   return 'deny';
 }

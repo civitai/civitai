@@ -1,4 +1,9 @@
-import { childSafetyImageCase, childSafetyPostCase } from '@civitai/db-queries/child-safety-case';
+import {
+  childSafetyImageCase,
+  childSafetyImageFinding,
+  childSafetyPostCase,
+  childSafetyPostFinding,
+} from '@civitai/db-queries/child-safety-case';
 import { uniq } from 'lodash-es';
 import { toPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
@@ -53,7 +58,8 @@ export function disarmAccountDeletionImagePurge(userId: number) {
 /**
  * Takes the drain's ask off this account's pending deletes, which `pending-deletes` carries out
  * without looking at the account: a row only it asked for goes, and one someone else also asked for
- * keeps theirs. One whose case is still open stays, marked `releasedOnRestore`, so the restore cannot
+ * keeps theirs. One whose case is still open, or closed with a finding the delete has not yet acted
+ * on, stays, marked `releasedOnRestore`, so the restore cannot
  * make it publishable; `pending-deletes` releases it once the case closes with no finding, and
  * deletes it otherwise.
  * A `PrismaPromise`, for the same transaction as the `deletedAt` clear.
@@ -63,12 +69,12 @@ export function releaseAccountDeletionPendingDeletes(userId: number) {
     WITH drained AS (
       SELECT q."entityType", q."entityId", q.data ?| array['ownerId', 'cleanup'] AS "askedElse",
         CASE WHEN q."entityType" = 'Image'
-          THEN EXISTS (SELECT 1 FROM "Image" WHERE "Image".id = q."entityId" AND ${toPrismaSql(
+          THEN EXISTS (SELECT 1 FROM "Image" WHERE "Image".id = q."entityId" AND (${toPrismaSql(
             childSafetyImageCase()
-          )})
-          ELSE EXISTS (SELECT 1 FROM "Post" WHERE "Post".id = q."entityId" AND ${toPrismaSql(
+          )} OR ${toPrismaSql(childSafetyImageFinding())} IS NOT FALSE))
+          ELSE EXISTS (SELECT 1 FROM "Post" WHERE "Post".id = q."entityId" AND (${toPrismaSql(
             childSafetyPostCase()
-          )})
+          )} OR ${toPrismaSql(childSafetyPostFinding())} IS NOT FALSE))
         END AS "inCase"
       FROM "JobQueue" q
       WHERE q.type = 'PendingDelete'::"JobQueueType" AND q.data->>'deletedBy' = ${ACCOUNT_DELETION_DRAIN}
@@ -82,8 +88,8 @@ export function releaseAccountDeletionPendingDeletes(userId: number) {
       WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"
         AND q."entityId" = d."entityId" AND d."askedElse"
     ),
-    -- Kept, hidden, for its open case: pending-deletes releases it only if the case closes with no
-    -- finding and no other ask has replaced the drain's.
+    -- Kept, hidden, while its case is open or has a finding: pending-deletes decides it, releasing it
+    -- only on a no-finding close when no other ask has replaced the drain's.
     marked AS (
       UPDATE "JobQueue" q SET data = q.data || '{"releasedOnRestore": true}'::jsonb FROM drained d
       WHERE q.type = 'PendingDelete'::"JobQueueType" AND q."entityType" = d."entityType"

@@ -663,6 +663,7 @@ describe('post takedowns', () => {
   it.each([
     ['a system', -1],
     ["a moderator's own", MOD],
+    ["the owner's", OWNER],
   ])('%s delete a case keeps denies its post without retracting', async (_, by) => {
     await pendingDeleteStamp(5, by);
     await syncCdnAccess();
@@ -670,12 +671,18 @@ describe('post takedowns', () => {
     expect(callsFor(u(2))).toEqual(['deny']);
   });
 
-  it("a kept post's stamp does not soften a moderator's violation takedown of its version", async () => {
-    await sql`UPDATE "ModelVersion" SET status = 'UnpublishedViolation' WHERE id = 1`;
-    await pendingDeleteStamp(5, -1);
-    await syncCdnAccess();
-    expect(callsFor(u(1))).toEqual(['retract']);
-  });
+  it.each([
+    ['a system', -1],
+    ["the owner's", OWNER],
+  ])(
+    "a kept post's stamp from %s delete does not soften a moderator's violation takedown of its version",
+    async (_, by) => {
+      await sql`UPDATE "ModelVersion" SET status = 'UnpublishedViolation' WHERE id = 1`;
+      await pendingDeleteStamp(5, by);
+      await syncCdnAccess();
+      expect(callsFor(u(1))).toEqual(['retract']);
+    }
+  );
 
   it('a moderator post unpublish retracts', async () => {
     await moderatorPostUnpublish(5);

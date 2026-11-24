@@ -818,6 +818,44 @@ describe('an owner deleting their own content in a child-safety case', () => {
     });
   });
 
+  // A case closed before the restore: the restore releases it only if it found nothing (Legal, #10235).
+  it.each([
+    ['deletes', 'Actioned', false],
+    ['releases', 'Unactioned', true],
+  ])(
+    '%s a drain delete whose case closed %s before the account was restored',
+    async (_, status, kept) => {
+      await holder.db.exec(`
+        INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
+        INSERT INTO "ImageReport" VALUES (${imageOf(PLAIN)}, 1);
+      `);
+      await deleteImages([imageOf(PLAIN)], {
+        actor: { system: ACCOUNT_DELETION_DRAIN },
+        onlyWhere: Prisma.sql`true`,
+      });
+      const hidden = await imageRow(imageOf(PLAIN));
+      await holder.db.exec(`UPDATE "Report" SET status = '${status}' WHERE id = 1`);
+
+      await releaseAccountDeletionPendingDeletes(PLAIN);
+      expect(await pending()).toEqual(
+        kept
+          ? []
+          : [
+              {
+                entityId: imageOf(PLAIN),
+                entityType: 'Image',
+                data: { deletedBy: ACCOUNT_DELETION_DRAIN, releasedOnRestore: true },
+              },
+            ]
+      );
+
+      await runJob();
+      expect(await pending()).toEqual([]);
+      if (kept) expect(await imageRow(imageOf(PLAIN))).toEqual(hidden);
+      else expect(await imageRow(imageOf(PLAIN))).toBeUndefined();
+    }
+  );
+
   it("carries out a moderator's later delete of a post a restore marked, though its case finds nothing", async () => {
     await holder.db.exec(`
       INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
