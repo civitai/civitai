@@ -46,8 +46,6 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import { assertCommentActionable } from '~/server/controllers/commentv3.controller';
 import { getJudgingCrucibleIdsForImage } from '~/server/services/crucible.service';
-import { guardFlagEnabled } from '~/server/trpc';
-
 /**
  * The exact payload `Tracker.reaction` accepts.
  *
@@ -259,7 +257,7 @@ export const toggleReactionHandler = async ({
         if (await holdsReaction({ ...input, userId: ctx.user.id })) return;
         // A crucible entry from a draft post publishes when the crucible ends; its judges react
         // to it before then.
-        if (!guardFlagEnabled(ctx, 'crucible')) throw error;
+        if (!ctx.features?.crucible) throw error;
         const judgingCrucibleIds = await getJudgingCrucibleIdsForImage({
           imageId: input.entityId,
           viewerId: ctx.user.id,

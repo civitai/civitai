@@ -205,6 +205,7 @@ const asMissing = async () => {
   return expect.objectContaining({ code: missing.code, message: missing.message });
 };
 
+// Pins the judging exception to the single-image rule on reactions (#9789), from #10344.
 describe('a reaction to a crucible entry while it is judged', () => {
   it('gets past the image check on an entry whose post is published (control)', async () => {
     expect(await react(PUBLISHED_ENTRY)).toEqual(pastTheCheck);

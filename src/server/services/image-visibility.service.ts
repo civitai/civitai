@@ -142,7 +142,8 @@ export function imageVisibilityConditions({
   shownReviewImageLevels?: number;
   /**
    * Crucibles the viewer is judging (`getJudgingCrucibleIdsForImage`): their entries open while
-   * the entry's post waits to publish at the crucible's end. Only the reaction toggle passes it.
+   * the entry's post waits to publish at the crucible's end. Only the reaction toggle passes it, and
+   * only that helper's answer: these ids are trusted, never take them from input.
    */
   judgingCrucibleIds?: number[];
 }) {
