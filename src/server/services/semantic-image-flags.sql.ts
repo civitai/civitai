@@ -25,8 +25,7 @@ export const semanticCoverImageCleanText = (column: string) =>
     AND ci."nsfwLevel" NOT IN (0, 32)))`;
 
 /**
- * The "Image" row aliased `image` is held (`heldImageSql`) or listed on a CsamReport. Used by
- * storyline image visibility.
+ * The "Image" row aliased `image` is held (`heldImageSql`) or listed on a CsamReport.
  */
 export const semanticImageHeldText = (image: string) =>
   `COALESCE((${heldImageSql(

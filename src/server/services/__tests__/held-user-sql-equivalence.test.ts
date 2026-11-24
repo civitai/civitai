@@ -68,4 +68,8 @@ describe('heldUserSql', () => {
       [null, false],
     ]);
   });
+
+  it('refuses a reference it would splice unchecked', () => {
+    expect(() => heldUserSql('x); DROP TABLE "User"; --')).toThrow(/reference/);
+  });
 });
