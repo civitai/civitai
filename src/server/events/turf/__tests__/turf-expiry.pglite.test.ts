@@ -424,6 +424,21 @@ describe("Hat Turf: the viewer's expired hats", () => {
     expect((await expiredPage(now, first.nextCursor, 1)).ids).toEqual([older]);
   });
 
+  it('a hat at exactly its lifetime is on the expired list and off the live one', async () => {
+    override = ttl();
+    const now = later();
+    const image = await newImage();
+    await sticker(image, VIEWER, hoursBefore(now, 48));
+    expect((await expiredPage(now)).ids).toEqual([image]);
+    const live = await readMyTurfPage({
+      event: (await getTurfEvent('e', now))!,
+      userId: VIEWER,
+      limit: 10,
+      now,
+    });
+    expect(live.ids).toEqual([]);
+  });
+
   it('placing the hat again takes the image off the list', async () => {
     override = ttl();
     const now = later();

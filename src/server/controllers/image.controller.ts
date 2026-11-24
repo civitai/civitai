@@ -540,8 +540,8 @@ export const getInfiniteImagesHandler = async ({
   const hatsOf = turfEvent && (hatTurfMine || hatTurfExpired) ? user?.id : undefined;
   // The chips are exclusive in the filters menu; sent together, the live hats win.
   const expiredHats = !hatTurfMine && !!hatTurfExpired;
-  // Under a Hat Turf sort or the viewer's own hats every image has Turf hats, so hiding them would
-  // empty the feed: only the worn-hat filter applies there.
+  // A Hat Turf sort or the viewer's own hats (live or expired) already picks images by Turf hats, so
+  // hiding them does not apply: only the worn-hat filter does.
   const hide = { turf: hatFeedSort || hatsOf ? undefined : hideTurfHats, worn: hideWornHats };
   const hideHats = turfEvent && (hide.turf || hide.worn) ? turfEvent : null;
   const withoutHidden = async <T extends { id: number }>(items: T[]) => {
