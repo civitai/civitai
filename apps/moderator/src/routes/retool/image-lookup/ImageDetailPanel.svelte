@@ -167,7 +167,10 @@
       <div class="max-w-64 shrink-0 p-4 text-center text-xs text-dark-2">{RETRACTED_REFUSED}</div>
     {:else if isSong(image)}
       <div class="h-80 w-72 shrink-0 overflow-hidden rounded-lg border border-dark-4">
-        <SongCard item={image} />
+        <!-- Keyed: the panel stays mounted from one lookup to the next. -->
+        {#key image.id}
+          <SongCard item={image} />
+        {/key}
       </div>
     {:else}
       <CdnOrRetractedMedia

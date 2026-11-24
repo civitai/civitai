@@ -7,6 +7,7 @@
   import { cn } from '@civitai/ui/utils.js';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import SongBadge from '$lib/components/SongBadge.svelte';
   import SongCard from '$lib/components/SongCard.svelte';
   import { RETRACTED_REFUSED } from '$lib/held-media';
   import RulingForm, { emptyRulingDraft, type RulingDraft } from '$lib/components/RulingForm.svelte';
@@ -101,7 +102,7 @@
             <div class="flex flex-wrap items-baseline gap-x-2">
               <span class="font-medium">{row.entityType} #{row.entityId}</span>
               {#if row.song || row.songWithheld}
-                <Badge class="border-transparent bg-sky-600 text-white">Song</Badge>
+                <SongBadge />
               {/if}
               <code class="text-xs text-dark-2">appeal #{row.id}</code>
               {#if row.hasFee}

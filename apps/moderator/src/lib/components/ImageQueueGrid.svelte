@@ -20,6 +20,7 @@
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import HeldMedia from '$lib/components/image-queue/HeldMedia.svelte';
   import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
+  import SongBadge from '$lib/components/SongBadge.svelte';
   import SongCard from '$lib/components/SongCard.svelte';
   import { isSong } from '$lib/music/song-card';
   import { reportHeldGridView, RETRACTED_REFUSED } from '$lib/held-media';
@@ -225,7 +226,7 @@
           {/if}
           {#if song}
             <div class="absolute left-2 top-2 flex gap-1">
-              <Badge class="border-transparent bg-sky-600 text-white">Song</Badge>
+              <SongBadge />
               {#if item.nsfwLevel != null}
                 <Badge class="border-transparent {RATING_BADGE[item.nsfwLevel] ?? 'bg-black/70 text-white'}">
                   {getBrowsingLevelLabel(item.nsfwLevel)}

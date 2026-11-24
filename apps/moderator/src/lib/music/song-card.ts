@@ -1,6 +1,7 @@
 import type { MediaType } from '$lib/media/edge-url';
 
-/** A lyric line: `t` is its offset in milliseconds, or null when the line has no time. */
+/** A lyric line: `t` is its offset in milliseconds, or null when the line has no time. The main app
+ *  writes it to `lyricLineSchema` (src/server/schema/media.schema.ts); read leniently here. */
 export type SongLyricLine = { t: number | null; text: string };
 
 /** What `/api/song-card/[imageId]` answers: everything a song card shows beyond the audio itself. */
