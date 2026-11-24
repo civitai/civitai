@@ -62,6 +62,10 @@ type Config struct {
 	LoadingOpenToAll bool
 	// VisibleDecorationEvents is FEED_GO_DECORATION_EVENTS (as the image feed reads it).
 	VisibleDecorationEvents map[string]bool
+	// ServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (default off): compute an
+	// owner's user-cosmetics miss (hydrate.ModelPageRequest.ComputeUserCosmetics) instead of the
+	// `user-cosmetics-miss` fallback.
+	ServeUserCosmeticsMiss bool
 }
 
 // Deps are model.getAll's collaborators.
@@ -367,6 +371,7 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 	g.Go(safe.Go(func() (err error) {
 		hy, err = d.Sources.ModelPage(gctx, hydrate.ModelPageRequest{
 			OwnerIDs: ownerIDs, ModelIDs: modelIDs, VisibleEvents: d.Config.VisibleDecorationEvents,
+			ComputeUserCosmetics: d.Config.ServeUserCosmeticsMiss,
 		})
 		return
 	}))

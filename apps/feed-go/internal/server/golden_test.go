@@ -51,7 +51,7 @@ const (
 	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
 	goldenMinInfinite = 87
-	goldenMinModels   = 34
+	goldenMinModels   = 36
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
@@ -107,6 +107,9 @@ type goldenFixture struct {
 		// ComputeMissesOff runs the model harness with FEED_GO_COMPUTE_MISSES off (a fixture of a
 		// fallback only that state still has).
 		ComputeMissesOff bool `json:"computeMissesOff"`
+		// ServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (model-getall/; absent:
+		// off, an owner's user-cosmetics miss falls back).
+		ServeUserCosmeticsMiss bool `json:"serveUserCosmeticsMiss"`
 	} `json:"config"`
 	Request struct {
 		Input   string            `json:"input"`
@@ -1885,6 +1888,24 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 		{Match: `FROM "ModelVersionShowcaseItem" s`, Rows: func(_ []any) (*testkit.Rows, error) {
 			return testkit.NewRows([]string{"modelId", "imageId"}), nil
 		}},
+		// userCosmeticCache's lookup (a cold-user-cosmetics fixture): the owners' equipped cosmetics not
+		// equipped to an entity, then the creator-made check of withheldCosmeticIDs (the fixtures'
+		// cosmetics have no creator, so its rows are none).
+		{Match: `FROM "UserCosmetic" WHERE "userId" = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, r := range db.UserCosmetics {
+				if goldenHas(goldenInts(args[0]), r.UserID) && r.Equipped && r.EquippedToID == nil {
+					rows = append(rows, []any{r.UserID, r.CosmeticID, goldenPtr(r.Data)})
+				}
+			}
+			return testkit.NewRows([]string{"userId", "cosmeticId", "data"}, rows...), nil
+		}},
+		{Match: `FROM "CosmeticShopItem" si`, Rows: func(_ []any) (*testkit.Rows, error) {
+			return testkit.NewRows([]string{"cosmeticId", "addedById", "status", "meta", "rejectionReason", "createdById"}), nil
+		}},
+		{Match: `SELECT id, flags FROM "Cosmetic"`, Rows: func(_ []any) (*testkit.Rows, error) {
+			return testkit.NewRows([]string{"id", "flags"}), nil
+		}},
 		// The collection permission read: the fixture's Collection row and the viewer's contributor
 		// row (none: no permissions); a collection the fixture does not hold is no row.
 		{Match: `FROM "Collection" c`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
@@ -2148,6 +2169,7 @@ func goldenSetupModelsMode(t *testing.T, fx *goldenFixture, writeBack bool) *gol
 			BaseModelMetrics: fx.Config.BaseModelMetrics, ImagesSlim: fx.Config.ModelImagesSlim,
 			CoverageNext: fx.Config.CoverageNext, LoadingOpenToAll: fx.Config.LoadingOpenToAll,
 			VisibleDecorationEvents: events,
+			ServeUserCosmeticsMiss:  fx.Config.ServeUserCosmeticsMiss,
 		},
 		Now: env.now,
 	}

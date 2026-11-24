@@ -137,7 +137,9 @@ Every `feed_go_*` series carries `feed_endpoint` (`as-posts` | `v1-images` | `in
 samplers for `image.getInfinite` and `model.getAll` are their own Flipt flags,
 `feed-go-shadow-infinite` and `feed-go-shadow-model-getall` (both default off), sharing
 `FEED_GO_SHADOW_URL` and the rate and in-flight knobs with the other routes; `model.getAll`'s own flags
-are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). The `feed_endpoint`
+are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). An owner's user-cosmetics miss on a
+`model.getAll` page is computed only with `FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS` (default off: the
+`user-cosmetics-miss` fallback; DESIGN.md §15.2.5). The `feed_endpoint`
 label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
 `endpoint` would overwrite it.
 
