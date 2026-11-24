@@ -90,8 +90,9 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
       )} INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (${ITEM}, ${SIBLING}, 'csam-hold');`,
   },
   {
+    // A scan flag is a signal for review, not a CSAM mark: it does not limit which moderators see it.
     label: 'a row on its url with a csam scan flag',
-    restricts: true,
+    restricts: false,
     mark: (t) =>
       `${sibling(t)} ${item(
         SIBLING
@@ -362,6 +363,29 @@ export const CSAM_RESTRICTION_CASES: CsamCase[] = [
         OFFERING,
         'Confirmed'
       )}`,
+  },
+  // Its own label item: a hold or a vote keeps it with the grant, a scan flag alone does not.
+  {
+    label: 'its own label item with a csam scan flag',
+    restricts: false,
+    mark: (t) =>
+      `${item(
+        t.id
+      )} INSERT INTO "ScanLabelFlag" ("itemId", snapshot) VALUES (${ITEM}, '{"csam": "true"}');`,
+  },
+  {
+    label: 'its own label item on a csam hold',
+    restricts: true,
+    mark: (t) =>
+      `INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (${ITEM}, ${t.id}, 'csam-hold');`,
+  },
+  {
+    label: 'its own label item with a csam vote',
+    restricts: true,
+    mark: (t) =>
+      `${item(
+        t.id
+      )} INSERT INTO "ScanLabelVote" ("itemId", reason) VALUES (${ITEM}, 'csam-realistic');`,
   },
   // civitai/civitai#10202: item-level CSAM signals stay with the grant; owner, post, model and entity
   // signals do not.

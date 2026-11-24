@@ -60,7 +60,7 @@ export async function readRetractedMedia(
   const eligible = new Set<number>();
   const viewable = new Map<number, ModeratorMedia>();
   if (!imageIds.length) return { eligible, viewable };
-  const access = retractedAccessColumnsSql('i', { csamReview });
+  const access = retractedAccessColumnsSql('i', { csamReview, scanFlag: false });
   const cdnLeg = retractedMediaCdnLeg();
   const retracted = retractedImageWhereSql('i', { cdnLeg });
   const where = moderatorMediaWhereSql('i', { cdnLeg, csamReview, heldLeg: orHeld });
@@ -156,7 +156,7 @@ export async function restrictedImageAccess(
   })} OR ${heldImageKnownSql('i')})`;
   for (let i = 0; i < imageIds.length; i += RESTRICTED_READ_PAGE) {
     const page = imageIds.slice(i, i + RESTRICTED_READ_PAGE);
-    const access = retractedAccessColumnsSql('i', { csamReview });
+    const access = retractedAccessColumnsSql('i', { csamReview, scanFlag: false });
     const rows = await dbWrite.transaction().execute(async (trx) => {
       await sql
         .raw(`SET LOCAL statement_timeout = ${RETRACTED_MEDIA_READ_TIMEOUT_MS}`)

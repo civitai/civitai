@@ -1114,6 +1114,29 @@ describe('the reported and review queues, without the grant', () => {
     });
   });
 
+  // Only a CSAM mark, report or hold keeps a card to the grant; a scan flag alone does not.
+  it.each([
+    ['minor review', minor],
+    ['reported', reported],
+  ] as const)('%s draws a card with only a csam scan flag with its media', async (_, read) => {
+    await db.exec(`INSERT INTO "ScanLabelItem" (id, "imageId") VALUES (990000090, ${CLEAN});
+      INSERT INTO "ScanLabelFlag" ("itemId", snapshot) VALUES (990000090, '{"csam": "true"}')`);
+    expect((await read(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({
+      url: 'queue-clean-key',
+      restricted: false,
+    });
+  });
+
+  it.each([
+    ['minor review', minor],
+    ['reported', reported],
+  ] as const)('%s still withholds a card whose label item is on a csam hold', async (_, read) => {
+    await db.exec(
+      `INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES (990000091, ${CLEAN}, 'csam-hold')`
+    );
+    expect((await read(WITHOUT_GRANT)).get(CLEAN)).toMatchObject({ url: '', restricted: true });
+  });
+
   it('sends no report reason or details on a withheld reported card, and both to a grant holder', async () => {
     expect((await reported(WITHOUT_GRANT)).get(KEPT)).toMatchObject({
       report: { reason: '', details: null },

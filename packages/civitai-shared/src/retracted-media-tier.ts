@@ -105,14 +105,15 @@ export function moderatorMediaWhereSql(
 export const URL_SIBLING_CAP = 50;
 
 /**
- * The CSAM signals read off one "Image" row aliased `image` itself: in the CSAM queue or blocked as
- * CSAM (`heldItemImageSql`), or a CSAM hash, scan flag, hold or vote (`csamSignalImageSql`). Nothing
- * about its owner, post, model or the entities it appears on, and no minor signal, is here.
+ * The CSAM marks read off one "Image" row aliased `image` itself: in the CSAM queue or blocked as
+ * CSAM (`heldItemImageSql`), or a CSAM hash, hold, vote or, with `scanFlag`, scan flag
+ * (`csamSignalImageSql`). Nothing about its owner, post, model or the entities it appears on, and no
+ * minor signal, is here.
  */
-function csamRowSql(image: string): string {
+function csamRowSql(image: string, scanFlag: boolean): string {
   return `(
     COALESCE(${heldItemImageSql(image)}, false)
-    OR ${csamSignalImageSql(image)}
+    OR ${csamSignalImageSql(image, { scanFlag })}
   )`;
 }
 
@@ -137,21 +138,22 @@ export function upgradedRetractionSql(image: string): string {
  * one of the first `URL_SIBLING_CAP` other rows on its url, carries a CSAM signal in Postgres
  * (`csamRowSql`); it is listed on a CSAM report; its bytes (by url or pHash copy) are reported, held
  * or under an evidence hold; or the file is held (`heldUrlSql` with `owners: false`). Nothing about
- * an owner, post or model is here, and neither is a minor signal alone: any moderator may see those. `blockedFor`
+ * an owner, post or model is here, and neither is a minor signal alone: any moderator may see those.
+ * With `scanFlag: false` a scan flag alone is not a CSAM signal either: what the moderator views use. `blockedFor`
  * text and the scanner's labels, of this row and of `urlSiblingsSql`'s rows, are read by the caller.
  */
-export function csamRestrictedSql(image: string): string {
+export function csamRestrictedSql(image: string, { scanFlag = true } = {}): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image) || CSAM_RESTRICTED_ALIASES.has(image.toLowerCase()))
     throw new Error(`Bad table alias: ${image}`);
-  return buildCsamRestrictedSql(image);
+  return buildCsamRestrictedSql(image, scanFlag);
 }
 
-function buildCsamRestrictedSql(image: string): string {
+function buildCsamRestrictedSql(image: string, scanFlag = true): string {
   const id = `${image}.id`;
   const url = `${image}."url"`;
-  const sibling = csamRowSql('cs');
+  const sibling = csamRowSql('cs', scanFlag);
   return `COALESCE((
-    ${csamRowSql(image)}
+    ${csamRowSql(image, scanFlag)}
     OR EXISTS (
       SELECT 1 FROM (
         SELECT * FROM "Image" cs WHERE cs.url = ${url} AND cs.id <> ${id} LIMIT ${URL_SIBLING_CAP}
@@ -228,11 +230,15 @@ export async function siblingsServable(
  * The two columns a retracted-media read selects for the "Image" row aliased `image`, as SQL:
  * `restricted` (`csamRestrictedSql`, or a url retracted by an upgraded deny) and `siblings`
  * (`urlSiblingsSql`). Constants for a moderator cleared for CSAM review, who is never refused on them.
+ * `scanFlag` is `csamRestrictedSql`'s.
  */
-export function retractedAccessColumnsSql(image: string, { csamReview }: { csamReview: boolean }) {
+export function retractedAccessColumnsSql(
+  image: string,
+  { csamReview, scanFlag = true }: { csamReview: boolean; scanFlag?: boolean }
+) {
   if (csamReview) return { restricted: 'false', siblings: "'[]'::json" };
   return {
-    restricted: `(${csamRestrictedSql(image)} OR ${upgradedRetractionSql(image)})`,
+    restricted: `(${csamRestrictedSql(image, { scanFlag })} OR ${upgradedRetractionSql(image)})`,
     siblings: urlSiblingsSql(image),
   };
 }
