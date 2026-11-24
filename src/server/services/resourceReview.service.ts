@@ -286,7 +286,10 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
 // Read through the writer: on the replica a review created seconds ago resolves no model, the
 // guard finds no owner to refuse against, and the write it guards then succeeds anyway.
 const storedReview = async (id: number) =>
-  dbWrite.resourceReview.findUnique({ where: { id }, select: { modelId: true, details: true } });
+  dbWrite.resourceReview.findUnique({
+    where: { id },
+    select: { modelId: true, details: true, recommended: true },
+  });
 
 const hasText = (details?: string | null) => !!removeTags(details ?? '');
 
@@ -335,29 +338,40 @@ async function throwIfBlockedByModelOwners({
 
 /**
  * Liked Models holds every model the user recommends from any review surface, not only the ones
- * liked through `user.toggleFavorite`. A model leaves when none of its versions is still recommended.
+ * liked through `user.toggleFavorite`. Only a write that takes a like back removes the model, and
+ * only when no other liked review of it remains: the collection is the user's, and it can hold a
+ * model they saved there themselves.
  */
 async function syncLikedModel({
   userId,
   modelId,
   isModerator,
+  wasLiked,
+  isLiked,
 }: {
   userId: number;
   modelId: number;
   isModerator?: boolean;
+  /** Whether this review recommended the model before the write, and after it. */
+  wasLiked: boolean;
+  isLiked: boolean;
 }) {
-  // primary: the review this request just wrote decides the answer.
-  const liked = await dbWrite.resourceReview.findFirst({
-    where: { userId, modelId, recommended: true, exclude: false, tosViolation: false },
-    select: { id: true },
-  });
+  if (!isLiked && !wasLiked) return;
+  if (!isLiked) {
+    // primary: the review written a moment ago must be visible.
+    const stillLiked = await dbWrite.resourceReview.findFirst({
+      where: { userId, modelId, recommended: true, exclude: false, tosViolation: false },
+      select: { id: true },
+    });
+    if (stillLiked) return;
+  }
   // The review is saved; a refused or failed bookmark must not turn that into an error.
   await toggleBookmarked({
     type: 'Model',
     entityId: modelId,
     userId,
     isModerator,
-    setTo: !!liked,
+    setTo: isLiked,
   }).catch((error) =>
     logToAxiom({
       type: 'error',
@@ -415,7 +429,13 @@ export const upsertResourceReview = async ({
     }).catch();
     if (data.details) queueScamScan({ entityType: 'ResourceReview', entityId: ret.id });
     void onModelReviewsChanged([{ modelId: data.modelId, userId }]);
-    await syncLikedModel({ userId, modelId: data.modelId, isModerator });
+    await syncLikedModel({
+      userId,
+      modelId: data.modelId,
+      isModerator,
+      wasLiked: false,
+      isLiked: ret.recommended,
+    });
     return ret;
   } else {
     const ret = await dbWrite.resourceReview.update({
@@ -444,16 +464,22 @@ export const upsertResourceReview = async ({
     if (data.details) queueScamScan({ entityType: 'ResourceReview', entityId: ret.id });
     // The author's collection, so a moderator's exemption from its add gate must not carry over.
     const authorIsModerator = isModerator && ret.userId === userId;
+    const moved = !!storedModelId && storedModelId !== ret.modelId;
+    const wasLiked = !!stored?.recommended;
     await syncLikedModel({
       userId: ret.userId,
       modelId: ret.modelId,
       isModerator: authorIsModerator,
+      wasLiked: wasLiked && !moved,
+      isLiked: ret.recommended,
     });
-    if (storedModelId && storedModelId !== ret.modelId)
+    if (moved && storedModelId)
       await syncLikedModel({
         userId: ret.userId,
         modelId: storedModelId,
         isModerator: authorIsModerator,
+        wasLiked,
+        isLiked: false,
       });
     // Narrow on purpose: the post editor narrows this result with `'recommended' in saved`.
     return {
@@ -483,7 +509,12 @@ export const deleteResourceReview = async ({ id }: GetByIdInput) => {
   const [ret] = await deleteReviews(Prisma.sql`SELECT ${id}::int`);
   if (!ret) throw throwNotFoundError(`No review with id ${id}`);
   void onModelReviewsChanged([ret]);
-  await syncLikedModel({ userId: ret.userId, modelId: ret.modelId });
+  await syncLikedModel({
+    userId: ret.userId,
+    modelId: ret.modelId,
+    wasLiked: ret.recommended,
+    isLiked: false,
+  });
   await bustRatingTotalsCache({
     modelId: ret.modelId,
     modelVersionId: ret.modelVersionId,
@@ -556,7 +587,13 @@ export const createResourceReview = async ({
     modelVersionId: data.modelVersionId,
   }).catch();
   if (data.details) queueScamScan({ entityType: 'ResourceReview', entityId: ret.id });
-  await syncLikedModel({ userId: data.userId, modelId: data.modelId, isModerator });
+  await syncLikedModel({
+    userId: data.userId,
+    modelId: data.modelId,
+    isModerator,
+    wasLiked: false,
+    isLiked: ret.recommended,
+  });
   return ret;
 };
 
@@ -597,6 +634,8 @@ export const updateResourceReview = async ({
     userId: ret.userId,
     modelId: ret.modelId,
     isModerator: isModerator && ret.userId === userId,
+    wasLiked: !!stored?.recommended,
+    isLiked: ret.recommended,
   });
   return ret;
 };

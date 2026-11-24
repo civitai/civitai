@@ -9,7 +9,9 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const { createResourceReview, deleteResourceReview, updateResourceReview, upsertResourceReview } =
   await import('~/server/services/resourceReview.service');
-const { getUserBookmarkedModels } = await import('~/server/services/user.service');
+const { getUserBookmarkedModels, toggleBookmarked } = await import(
+  '~/server/services/user.service'
+);
 
 const OWNER = 7;
 const LIKER = 42;
@@ -172,6 +174,19 @@ describe('Liked Models from a review thumbs-up', () => {
     expect(await likedModels()).toEqual([]);
   });
 
+  it('a thumbs-down edit in the post editor removes the model', async () => {
+    const { id } = await thumbs(true);
+    await upsertResourceReview({
+      id,
+      modelId: MODEL,
+      modelVersionId: VERSION,
+      rating: 1,
+      recommended: false,
+      userId: LIKER,
+    });
+    expect(await likedModels()).toEqual([]);
+  });
+
   it('keeps the model while another of its versions is still liked', async () => {
     const { id } = await thumbs(true);
     await thumbs(true, OTHER_VERSION);
@@ -220,6 +235,25 @@ describe('Liked Models from a review thumbs-up', () => {
     });
     await updateResourceReview({ id, recommended: true, userId: MODERATOR, isModerator: true });
     expect(await likedModels()).toEqual([]);
+  });
+
+  describe('a model the user saved to Liked Models themselves', () => {
+    const save = () =>
+      toggleBookmarked({ type: 'Model', entityId: MODEL, userId: LIKER, setTo: true });
+
+    it('stays when they give it a thumbs-down', async () => {
+      await save();
+      await thumbs(false);
+      expect(await likedModels()).toEqual([MODEL]);
+    });
+
+    it('stays when they edit or delete that thumbs-down', async () => {
+      await save();
+      const { id } = await thumbs(false);
+      await updateResourceReview({ id, details: 'Not for me', userId: LIKER });
+      await deleteResourceReview({ id });
+      expect(await likedModels()).toEqual([MODEL]);
+    });
   });
 
   it('a second thumbs-up on another version leaves one entry', async () => {
