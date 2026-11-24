@@ -342,8 +342,7 @@ function ImageContent({
     mediaRef,
   } = useRetractedMedia(
     image,
-    features.modRetractedMedia && session?.type === 'authed' ? session : null,
-    { cdnLeg: features.modRetractedMediaCdnLeg }
+    features.modRetractedMedia && session?.type === 'authed' ? session : null
   );
 
   const imageHeight = image?.height ?? 1200;

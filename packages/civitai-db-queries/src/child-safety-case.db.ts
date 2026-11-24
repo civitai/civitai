@@ -45,6 +45,8 @@ const evidenceFiled = (id: RawBuilder<unknown>) => sql<boolean>`EXISTS (
   END
 )`;
 
+const csamBlocked = (image: string) => sql<boolean>`${sql.ref(`${image}.blockedFor`)} = 'CSAM'`;
+
 // Each leg is a CASE so its subquery runs only on a row the leg can hold: an AND whose first test is
 // NULL (no flag, the usual image) still evaluates its second.
 
@@ -52,11 +54,9 @@ const evidenceFiled = (id: RawBuilder<unknown>) => sql<boolean>`EXISTS (
  * Blocked for CSAM, until its CyberTip is filed with verified evidence. Read against `image` (a
  * table name or alias). The broader "held" rule is `heldImageSql` in @civitai/shared/held-media.
  */
-const csamBlockOpen = (image: string) => {
-  const col = (name: string) => sql.ref(`${image}.${name}`);
-  return sql<boolean>`CASE WHEN ${col('blockedFor')} = 'CSAM'
-    THEN NOT ${evidenceFiled(col('id'))} ELSE false END`;
-};
+const csamBlockOpen = (image: string) =>
+  sql<boolean>`CASE WHEN ${csamBlocked(image)}
+    THEN NOT ${evidenceFiled(sql.ref(`${image}.id`))} ELSE false END`;
 
 /** Under CSAM review, until the CSAM queue dismisses it; once blocked as CSAM, the block decides. */
 const csamReviewOpen = (image: string) => {
@@ -72,11 +72,13 @@ const csamReviewOpen = (image: string) => {
 
 /**
  * A child-safety case its owner can already see, read against `image`: the image is served to them
- * as blocked. Only this case may tell the owner their delete waits on a review.
+ * as blocked. Only this case may tell the owner their delete waits on a review. Unlike
+ * `csamBlockOpen`, it does not follow the review's progress, so what the owner is told holds while
+ * their delete waits.
  */
 export const childSafetyVisibleCase = (image = 'Image') => {
   const needsReview = sql.ref(`${image}.needsReview`);
-  return sql<boolean>`(${csamBlockOpen(image)}
+  return sql<boolean>`(${csamBlocked(image)}
     AND COALESCE(${needsReview}, '') <> ALL(${sql.val([...OWNER_HIDDEN_REVIEWS])}::text[]))`;
 };
 
