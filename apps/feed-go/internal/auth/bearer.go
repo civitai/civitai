@@ -56,6 +56,10 @@ const (
 	ScopeReadOnly int64 = 1<<0 | 1<<2 | 1<<5 | 1<<8 | 1<<11 | 1<<16 | 1<<17 | 1<<14 | 1<<21 | 1<<23
 	// ScopeClientCredentialsOnly is CLIENT_CREDENTIALS_ONLY_SCOPES: AppStoreCatalogWrite | DownloadLink.
 	ScopeClientCredentialsOnly int64 = 1<<28 | 1<<30
+	// ScopeModelsRead and ScopeAIServicesRead are TokenScope.ModelsRead and TokenScope.AIServicesRead:
+	// MODEL_VIEW_SCOPE (src/server/auth/route-scopes.ts) is either one.
+	ScopeModelsRead     int64 = 1 << 2
+	ScopeAIServicesRead int64 = 1 << 14
 )
 
 // ApiKeyType values (packages/civitai-db-schema/src/enums.ts) this service tells apart.
@@ -284,10 +288,43 @@ type cachedAPIKey struct {
 	typ    string
 }
 
+// BearerSession is getSessionFromBearerToken's answer for an API key, before any route applies its
+// own view rules: User nil is the app's null session (signed out, the cookies not read); otherwise
+// User is the key's user, with the key's Scope and Type.
+type BearerSession struct {
+	User  *SessionUser
+	Scope int64
+	Type  string
+}
+
+// FullUserKey is isFullScopeUserKey (src/server/auth/full-user-credential.ts): a full-scope personal
+// (`User`) key. The principal cache holds no OAuth key, so every key read here has no OAuth client.
+func (b *BearerSession) FullUserKey() bool {
+	return b.Type == apiKeyTypeUser && b.Scope == ScopeFull
+}
+
 // resolveBearer is getSessionFromBearerToken for an API key, followed by the parts of createContext and
 // enforceTokenScope that decide the viewer. (nil, nil) is signed out: the app's session is null, and
 // its cookies are not read.
 func (r *Resolver) resolveBearer(ctx context.Context, key string) (*SessionUser, error) {
+	b, err := r.bearerSession(ctx, key)
+	if err != nil || b.User == nil {
+		return nil, err
+	}
+	// The one credential with a cookie session's views (isFullScopeUserKey): a full-scope personal key
+	// not issued to an OAuth client (the cache holds no OAuth key). Any other key changes the moderator
+	// and owner views (withModeratorRightsFor, credentialViews) and is held to each procedure's scope.
+	if !b.FullUserKey() {
+		return nil, fallback.New("bearer-scoped-key")
+	}
+	out := *b.User
+	out.APIKey = true
+	return &out, nil
+}
+
+// bearerSession is getSessionFromBearerToken for the token readRequestBearerToken gave: the checks on
+// the token itself, then principalSession on its hash.
+func (r *Resolver) bearerSession(ctx context.Context, key string) (*BearerSession, error) {
 	k := r.APIKeys
 	if strings.TrimSpace(k.Secret) == "" {
 		return nil, fallback.New("bearer-unconfigured")
@@ -297,19 +334,25 @@ func (r *Resolver) resolveBearer(ctx context.Context, key string) (*SessionUser,
 	}
 	// A per-provider download token (`<provider>:<secret>`) never stands for a session.
 	if strings.Contains(key, ":") {
-		return nil, nil
+		return &BearerSession{}, nil
 	}
 	if k.isOrchestratorServiceToken(key) {
-		return nil, nil
+		return &BearerSession{}, nil
 	}
-	now := k.now()
-	apiKey, err := k.readPrincipal(ctx, SecretHash(key, k.Secret), now)
+	return r.principalSession(ctx, SecretHash(key, k.Secret))
+}
+
+// principalSession is getSessionFromBearerToken from the row lookup on: the principal cache entry
+// under hash (generateSecretHash of the key), then getBearerTokenUser.
+func (r *Resolver) principalSession(ctx context.Context, hash string) (*BearerSession, error) {
+	k := r.APIKeys
+	apiKey, err := k.readPrincipal(ctx, hash, k.now())
 	if err != nil {
 		return nil, err
 	}
 	// A client-credentials token resolves to no session (no caller here opts in).
 	if apiKey.scope&ScopeClientCredentialsOnly != 0 {
-		return nil, nil
+		return &BearerSession{}, nil
 	}
 	u, err := r.user(ctx, apiKey.userID)
 	if err != nil {
@@ -321,10 +364,10 @@ func (r *Resolver) resolveBearer(ctx context.Context, key string) (*SessionUser,
 		return nil, fallback.New("bearer-user-shape")
 	}
 	if banned {
-		return nil, nil
+		return &BearerSession{}, nil
 	}
 	if IsModerationAccount(u.ID, u.Username, r.ModerationAccountID) {
-		return nil, nil
+		return &BearerSession{}, nil
 	}
 	if apiKey.scope&^ScopeReadOnly != 0 {
 		// A system account with moderator access and a write key: the app reads its access from the
@@ -333,15 +376,7 @@ func (r *Resolver) resolveBearer(ctx context.Context, key string) (*SessionUser,
 			return nil, fallback.New("bearer-system-account")
 		}
 	}
-	// The one credential with a cookie session's views (isFullScopeUserKey): a full-scope personal key
-	// not issued to an OAuth client (the cache holds no OAuth key). Any other key changes the moderator
-	// and owner views (withModeratorRightsFor, credentialViews) and is held to each procedure's scope.
-	if apiKey.typ != apiKeyTypeUser || apiKey.scope != ScopeFull {
-		return nil, fallback.New("bearer-scoped-key")
-	}
-	out := *u
-	out.APIKey = true
-	return &out, nil
+	return &BearerSession{User: u, Scope: apiKey.scope, Type: apiKey.typ}, nil
 }
 
 // readPrincipal is readCachedApiKey plus the checks getSessionFromBearerToken makes on a cache hit

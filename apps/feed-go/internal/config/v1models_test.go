@@ -56,9 +56,35 @@ func TestV1ModelsValidate(t *testing.T) {
 		{true, "http://u.example", true},
 		{true, "", false},
 	} {
-		err := V1Models{Serve: c.serve, FallbackURL: c.url}.Validate()
+		err := V1Models{Serve: c.serve, FallbackURL: c.url}.Validate(false)
 		if (err == nil) != c.ok {
 			t.Errorf("serve=%v url=%q: %v, want ok %v", c.serve, c.url, err, c.ok)
+		}
+	}
+}
+
+// FEED_GO_V1_BEARER_AUTH defaults off, reads as the other switches do, and is refused at startup
+// without FEED_GO_BEARER_AUTH (the key resolver it uses); with it, it starts.
+func TestV1ModelsBearerAuthSwitch(t *testing.T) {
+	t.Setenv("FEED_GO_V1_BEARER_AUTH", "")
+	if LoadV1Models().BearerAuth {
+		t.Fatal("FEED_GO_V1_BEARER_AUTH unset reads as on")
+	}
+	t.Setenv("FEED_GO_V1_BEARER_AUTH", "true")
+	if !LoadV1Models().BearerAuth {
+		t.Fatal("FEED_GO_V1_BEARER_AUTH=true reads as off")
+	}
+	for _, c := range []struct {
+		v1, keys, ok bool
+	}{
+		{false, false, true},
+		{false, true, true},
+		{true, true, true},
+		{true, false, false},
+	} {
+		err := V1Models{BearerAuth: c.v1}.Validate(c.keys)
+		if (err == nil) != c.ok {
+			t.Errorf("v1=%v keys=%v: %v, want ok %v", c.v1, c.keys, err, c.ok)
 		}
 	}
 }

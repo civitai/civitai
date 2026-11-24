@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { TokenScope, TokenScopePresets } from '~/shared/constants/token-scope.constants';
 
 /**
  * The feed-go shadow wiring of `GET /api/v1/models`: which requests are sampled, and that every
@@ -72,12 +73,16 @@ beforeAll(async () => {
   handler = mod.default as any;
 }, 120000);
 
-async function invoke(query: Record<string, unknown>) {
+async function invoke(
+  query: Record<string, unknown>,
+  extra: { headers?: Record<string, string>; context?: Record<string, unknown> } = {}
+) {
   const req = {
     method: 'GET',
     query,
-    headers: { host: 'site.example.test' },
+    headers: { host: 'site.example.test', ...extra.headers },
     url: '/api/v1/models',
+    context: extra.context,
   } as unknown as NextApiRequest;
   const res = fakeRes();
   await handler(req, res);
@@ -97,7 +102,11 @@ describe('/api/v1/models — feed-go shadow sampling', () => {
   it('a sampled 200: captures the body it writes and finishes with 200', async () => {
     const res = await invoke({ limit: '1' });
     expect(res.statusCode).toBe(200);
-    expect(mockBegin).toHaveBeenCalledWith(expect.anything(), 'list');
+    expect(mockBegin).toHaveBeenCalledWith(
+      expect.anything(),
+      'list',
+      expect.objectContaining({ keySession: false, viewer: 'anonymous' })
+    );
     expect(mockCapture).toHaveBeenCalledWith(SAMPLE, res.body);
     expect(mockFinish).toHaveBeenCalledTimes(1);
     expect(mockFinish).toHaveBeenCalledWith(SAMPLE, 200, res);
@@ -126,6 +135,34 @@ describe('/api/v1/models — feed-go shadow sampling', () => {
     expect(mockBegin).not.toHaveBeenCalled();
     expect(mockFinish).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['a read-only key searches as signed out', TokenScopePresets.ReadOnly, 'anonymous'],
+    ['a full-scope personal key searches as its user', TokenScope.Full, 'user'],
+  ] as const)(
+    'a session an API key resolved is offered to the sampler as one (%s)',
+    async (_name, tokenScope, viewer) => {
+      session.user = { id: 7 };
+      const res = await invoke(
+        { limit: '1' },
+        {
+          headers: { authorization: 'Bearer k-1' },
+          context: {
+            tokenScope,
+            apiKeyId: 3,
+            apiKeyType: 'User',
+            subject: { type: 'apiKey', id: 3 },
+          },
+        }
+      );
+      expect(res.statusCode).toBe(200);
+      expect(mockBegin).toHaveBeenCalledTimes(1);
+      const [, kind, opts] = mockBegin.mock.calls[0];
+      expect(kind).toBe('list');
+      expect(opts).toMatchObject({ keySession: true, viewer });
+      expect(typeof opts.credential).toBe('function');
+    }
+  );
 
   it('an unsampled request touches nothing', async () => {
     mockBegin.mockReturnValue(undefined);

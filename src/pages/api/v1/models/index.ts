@@ -24,6 +24,7 @@ import {
   captureFeedGoShadowRest,
   finishFeedGoShadow,
 } from '~/server/trpc/feed-go-shadow';
+import { listCredentialDescriptor } from '~/server/trpc/feed-go-shadow-credential';
 import { publishTrainingDataRulesLive } from '~/server/services/feed-go-training-data-rules';
 import { MODEL_VIEW_SCOPE } from '~/server/auth/route-scopes';
 import { requestHoldsScope } from '~/server/auth/session-scope';
@@ -110,9 +111,23 @@ async function handler(
   // headers the answer depends on and that body are POSTed to feed-go's internal compare endpoint
   // from `setImmediate`, never awaited. A sample holds nothing until `finish`; one that ends in
   // another status is counted `skipped_status`. Never throws. See `~/server/trpc/feed-go-shadow`.
-  // Not sampled: a text `query` (the Meilisearch path) and a signed-in caller, both of which feed-go
-  // always answers with a fallback (`v1-models-query`, `v1-models-session`).
-  const shadow = query || user ? undefined : beginFeedGoShadowV1Models(req, 'list');
+  // Not sampled: a text `query` (the Meilisearch path) and a cookie session, both of which feed-go
+  // always answers with a fallback (`v1-models-query`, `v1-models-session`). A session an API key
+  // resolved is sampled only with FEED_GO_SHADOW_V1_MODELS_CREDENTIALS on, described rather than
+  // forwarded, with the viewer the search runs as.
+  const viewer = searchViewer(req, user, {
+    ownList: !!data.hidden || !!data.followed || !!data.favorites,
+    privateListing: data.availability === Availability.Private,
+  });
+  const keySession = !!user && getRequestCredential(req).subject !== undefined;
+  const shadow =
+    query || (user && !keySession)
+      ? undefined
+      : beginFeedGoShadowV1Models(req, 'list', {
+          keySession,
+          credential: () => listCredentialDescriptor(req),
+          viewer: viewer ? 'user' : 'anonymous',
+        });
   publishTrainingDataRulesLive();
 
   // The query cursor is an opaque numeric OFFSET, not a model id: Meili's order
@@ -185,10 +200,7 @@ async function handler(
         // region holds the level to SFW.
         browsingLevel,
         nsfwImagePassthrough: !!parsedParams.data.nsfw && !isRegionRestricted(region),
-        user: searchViewer(req, user, {
-          ownList: !!data.hidden || !!data.followed || !!data.favorites,
-          privateListing: data.availability === Availability.Private,
-        }),
+        user: viewer,
         baseUrlOrigin,
         redCapable: isRedCapableHost(req.headers.host),
       }

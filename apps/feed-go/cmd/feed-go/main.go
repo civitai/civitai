@@ -447,7 +447,7 @@ func run(log *slog.Logger) error {
 	}
 	// The REST /api/v1/models shadows read the replica and the caches (read-only) the same way.
 	mc := config.LoadV1Models()
-	if err := mc.Validate(); err != nil {
+	if err := mc.Validate(cfg.BearerAuth); err != nil {
 		return err
 	}
 	v1Models := &server.V1ModelsDeps{
@@ -503,6 +503,7 @@ func run(log *slog.Logger) error {
 		Infinite:       infinite,
 		V1Models:       v1Models,
 		ServeV1Models:  mc.Serve,
+		V1BearerAuth:   mc.BearerAuth,
 		Associated:     associated,
 		RequestBudget:  cfg.RequestBudget,
 		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
@@ -539,7 +540,8 @@ func run(log *slog.Logger) error {
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll)
 	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
-	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil)
+	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,
+		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth)
 	log.Info("public tRPC answers' write format", "TRPC_WRITE_DEVALUE", cfg.WriteDevalue)
 	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
 	// OpenMetrics on request only with tracing on: the exemplars ride in that format alone.
