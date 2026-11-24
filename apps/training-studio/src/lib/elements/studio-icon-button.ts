@@ -82,6 +82,16 @@ export class StudioIconButton extends CivitaiElement {
     this.size = 'md';
     this.color = '';
     this.disabled = false;
+    // A disabled custom element still receives clicks on its host; stop them before a consumer's handler.
+    this.addEventListener(
+      'click',
+      (event) => {
+        if (!this.disabled) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      { capture: true }
+    );
   }
 
   #popupState = new MutationObserver(() => this.requestUpdate());

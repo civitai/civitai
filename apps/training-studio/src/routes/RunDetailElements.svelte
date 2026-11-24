@@ -1243,7 +1243,6 @@
           </div>
           <div class="flex flex-col gap-1.5 md:items-end">
             <div class="flex flex-wrap items-center gap-2">
-              <!-- Label inline with its field, so the panel's controls are one row. -->
               <civitai-number-input
                 class="flex-row items-center gap-2 [&::part(control)]:w-16 [&::part(label)]:whitespace-nowrap [&::part(label)]:font-normal [&::part(label)]:text-dark-1"
                 label="Add checkpoints"

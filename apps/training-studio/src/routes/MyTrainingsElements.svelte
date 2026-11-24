@@ -170,7 +170,6 @@
       />
     {/if}
   {:else}
-    <!-- No sample to show yet: the gradient placeholder, with a glyph for why. -->
     <div class="grid size-full place-items-center" style={`background:${grad(placeholderIndex(r))}`}>
       {#if r.state === 'failed'}
         <IconAlertTriangle size={40} stroke={1.5} class="text-white/50" />
@@ -355,7 +354,7 @@
 
           <span
             slot="top-start"
-            class="inline-flex h-[26px] items-center gap-1.5 rounded-full bg-black/55 px-2.5 text-xs font-bold text-white backdrop-blur-sm"
+            class="pointer-events-none inline-flex h-[26px] items-center gap-1.5 rounded-full bg-black/55 px-2.5 text-xs font-bold text-white backdrop-blur-sm"
           >
             <span class="size-1.5 rounded-full {badge.dot}"></span>{badge.label}
           </span>

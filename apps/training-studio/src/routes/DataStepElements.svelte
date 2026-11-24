@@ -1104,7 +1104,6 @@
     {/if}
   </div>
 
-  <!-- Upload is the primary way in; the other sources sit beside it, and the export apart from them. -->
   <div class="flex flex-wrap items-center gap-2.5">
     <civitai-button onclick={() => fileInput.click()}>
       <span slot="left"><IconUpload size={15} stroke={2} /></span>Upload files
