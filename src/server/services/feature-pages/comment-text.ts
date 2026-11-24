@@ -3,19 +3,20 @@
  * every other comment. These two are inverses for any text with \n line endings (CR and CRLF become
  * \n): one paragraph, lines split by `<br>`, the five HTML specials escaped.
  */
+import { escapeHtml } from '@civitai/shared/html-escape';
 
-const ESCAPES: Record<string, string> = {
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&#39;',
+// The inverse of escapeHtml's five entities.
+const UNESCAPES: Record<string, string> = {
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#39;': "'",
 };
-const UNESCAPES = Object.fromEntries(Object.entries(ESCAPES).map(([k, v]) => [v, k]));
 
 export function fpTextToHtml(text: string) {
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
-  return `<p>${lines.map((line) => line.replace(/[&<>"']/g, (c) => ESCAPES[c])).join('<br>')}</p>`;
+  return `<p>${lines.map(escapeHtml).join('<br>')}</p>`;
 }
 
 export function fpHtmlToText(html: string) {

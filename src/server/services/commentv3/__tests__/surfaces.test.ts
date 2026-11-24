@@ -86,12 +86,10 @@ describe('visibility', () => {
     expect(m.storylineVisible).not.toHaveBeenCalled();
   });
 
-  it('keeps a Feature Pages thread from members with the discussion feature, and opens it to moderators without it', async () => {
-    m.flags = { storylines: true, featurePagesDiscussion: true } as never;
+  it('keeps a Feature Pages thread on the generic comment surfaces from members, and opens it to moderators', async () => {
     await expect(commentSurface('featurePage').assertVisible?.(1, member)).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
-    m.flags = { storylines: true, featurePagesDiscussion: false } as never;
     await expect(
       commentSurface('featurePage').assertVisible?.(1, moderator)
     ).resolves.toBeUndefined();
