@@ -3818,8 +3818,7 @@ export function PageBlockHost({
       } catch (err) {
         send('SHARED_LIST_RESULT', {
           requestId,
-          error: storageErrorMessage(err),
-          ...rateLimitReplyFields(err),
+          ...sharedStorageErrorReply(err),
         });
       }
     });
@@ -3849,8 +3848,7 @@ export function PageBlockHost({
         } catch (err) {
           send('SHARED_GET_COUNT_RESULT', {
             requestId,
-            error: storageErrorMessage(err),
-            ...rateLimitReplyFields(err),
+            ...sharedStorageErrorReply(err),
           });
         }
       }
@@ -3881,8 +3879,7 @@ export function PageBlockHost({
         } catch (err) {
           send('SHARED_GET_COUNTS_RESULT', {
             requestId,
-            error: storageErrorMessage(err),
-            ...rateLimitReplyFields(err),
+            ...sharedStorageErrorReply(err),
           });
         }
       }
@@ -4148,8 +4145,7 @@ export function PageBlockHost({
           send('SHARED_GET_RESULT', {
             requestId,
             item: null,
-            error: storageErrorMessage(err),
-            ...rateLimitReplyFields(err),
+            ...sharedStorageErrorReply(err),
           });
         }
       }

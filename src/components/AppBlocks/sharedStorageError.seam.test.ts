@@ -83,8 +83,7 @@ describe('rate-limit refusal → host SHARED_APPEND_RESULT reply', () => {
   });
 
   it('a refusal by a non-storage limiter carries its rateLimit into any bridge error reply', async () => {
-    // CREATE_POST_FROM_APP's posts limiter: the hosts spread rateLimitReplyFields(err) into
-    // every error reply built from a caught server error, not only shared storage's.
+    // 'apps.post' is CREATE_POST_FROM_APP's limiter.
     const err = await rejection(() => client.createPost.mutate());
 
     expect({ requestId: 'rq_seam', error: 'x', ...rateLimitReplyFields(err) }).toEqual({
