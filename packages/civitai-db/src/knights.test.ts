@@ -9,7 +9,7 @@ import {
   type Dialect,
   type QueryResult,
 } from 'kysely';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest';
 import { Availability } from '@civitai/db-schema/enums';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
@@ -131,8 +131,11 @@ describe('servableImage', () => {
   });
 
   // Moderation Lead ruling 2026-11-24: Knights shows posts that are Public, Unsearchable or EarlyAccess; any other
-  // availability, including one added to the enum later, is hidden until it is listed (docs/features/knights-sources.md).
+  // availability, including one added to the enum later, is hidden until it is listed (`KNIGHTS_SHOWN_POST_AVAILABILITIES`; docs/features/knights-sources.md).
   it('hides the same availabilities whether the rule runs in SQL or on a row already read', async () => {
+    onTestFinished(() =>
+      pg.exec(`DELETE FROM "Image" WHERE id >= 990000300; DELETE FROM "Post" WHERE id >= 100`)
+    );
     const values = Object.values(Availability);
     for (const [index, availability] of values.entries()) {
       await pg.query(
@@ -175,7 +178,6 @@ describe('servableImage', () => {
       .where(postShownToKnights)
       .execute();
     expect(unknownShown).toEqual([]);
-    await pg.exec(`DELETE FROM "Image" WHERE id >= 990000300; DELETE FROM "Post" WHERE id >= 100`);
   });
 
   // Moderation Lead ruling 2026-11-23 on the Knights exclusions: CSAM-listed or held, ToS-violating, deleted-uploader and

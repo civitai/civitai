@@ -9,7 +9,9 @@ Per item it answers `enqueued` | `duplicate` | `refused` (refusal reasons: see t
 index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knights_v2_tables`, applied by hand, which also has the `prediction` column) closes the race.
 
 - `POST /api/mod/knights/enqueue` (`src/server/api-routes/mod/knights/enqueue.ts`): a moderator session or full-access API key that also holds the
-  `knightsEnqueue` grant. Up to 1000 items per call; a 200 does not mean every item was queued, read `results`. Unlike the producers below, it also refuses images Knights may not show (`not-servable`: `servableImage` in `@civitai/db/knights`: published on a post whose availability Knights shows (`postShownToKnights`), rated, no block marker or review hold, not flagged poi/minor).
+  `knightsEnqueue` grant. Up to 1000 items per call; a 200 does not mean every item was queued, read `results`. Unlike the producers below, it also refuses images Knights may not show (`not-servable`: `servableImage` in `@civitai/db/knights`: published on a post whose availability Knights shows (`postShownToKnights`), rated, no block marker or review hold, not flagged poi/minor). The availabilities Knights shows are an allow-list,
+  `KNIGHTS_SHOWN_POST_AVAILABILITIES`: Public, Unsearchable and EarlyAccess (Moderation Lead ruling, 2026-11-24). Any other value, including one
+  added to the enum later, is hidden until it is listed.
 - The image-scan pipeline (`scan-sample`: safe-looking priority 1, NSFW priority 2) and an owner's own rating (`owner-rating`, priority 1) also enqueue
   here, beside today's game, which is untouched. Both pass `requirePublished`: an image with no post is refused (`no-post`), and so is one whose post is
   a draft or scheduled for later (`unpublished`), which the publish sweep below picks up once the post goes live (a Pending owner rating there is queued as
