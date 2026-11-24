@@ -787,8 +787,7 @@ describe('checkpoints', () => {
     });
   });
 
-  // 60 answers played one after another, each several PGlite round trips (every stream read runs in
-  // its own JIT-off transaction): over Vitest's 5s default on a loaded CI shard.
+  // 60 sequential answers, each several PGlite round trips: over Vitest's 5s default on a loaded CI shard.
   it('offers coaching once accuracy is under 60% after 50 answers, and not before', async () => {
     await player(1);
     for (let i = 0; i < 70; i++) await rating(i + 1, { answer: '2' });
