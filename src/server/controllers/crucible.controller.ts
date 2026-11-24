@@ -67,13 +67,9 @@ import {
   submitVote,
   withoutEntryScores,
   withEntryCounts,
+  getAllBlockedCreatorIds,
   getBlockLists,
 } from '~/server/services/crucible.service';
-
-const getAllBlockedCreatorIds = async (user: Context['user']) => {
-  const { blockedBy, blocked } = await getBlockLists(user);
-  return [...new Set([...blockedBy, ...blocked])];
-};
 
 /** Bounded for a `notIn`; on overflow the viewer's own block list is dropped first. */
 const getBlockedCreatorIds = async (user: Context['user']) => {

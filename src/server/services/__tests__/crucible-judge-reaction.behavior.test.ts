@@ -4,8 +4,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 /**
- * A judge reacts to a crucible's entries while it is judged, and an entry entered from a draft post
- * stays unpublished until the crucible ends. Image, post and entry rows live in an in-process
+ * A judge reacts to a crucible's entries while it is judged, and an entry made from a draft post is
+ * scheduled to publish at the crucible's end. Image, post and entry rows live in an in-process
  * Postgres; the image rule's Kysely read gets the same answers as `$queryRaw`.
  */
 
@@ -36,6 +36,8 @@ const COMPLETED = 3;
 const TAKEN_DOWN = 4;
 const ADULT_TEXT = 5; // off the green site
 const BY_BLOCKER = 6;
+const NO_END = 7;
+const ALL_LEVELS = 8; // takes every rating, so only the image rule can refuse a Blocked one
 
 // Images, each on its own post
 const PUBLISHED_ENTRY = 10;
@@ -49,6 +51,11 @@ const SCHEDULED_PRIVATE_ENTRY = 17;
 const SCHEDULED_ADULT_TEXT_ENTRY = 18;
 const SCHEDULED_BY_BLOCKER_ENTRY = 19;
 const DRAFT_ENTRY = 20; // post never published or scheduled
+const SCHEDULED_NO_END_ENTRY = 21;
+const SCHEDULED_IN_REVIEW_ENTRY = 22;
+const SCHEDULED_UNRATED_ENTRY = 23;
+const SCHEDULED_BLOCKED_RATING_ENTRY = 24;
+const SCHEDULED_ENTRY_OF_BLOCKER = 25; // entered by a user who blocked the judge
 
 beforeAll(async () => {
   const db = new PGlite();
@@ -93,7 +100,10 @@ beforeAll(async () => {
       (${COMPLETED}, 'Completed', now() + interval '1 day', NULL),
       (${TAKEN_DOWN}, 'Active', now() + interval '1 day', now() - interval '1 hour'),
       (${ADULT_TEXT}, 'Active', now() + interval '1 day', NULL),
-      (${BY_BLOCKER}, 'Active', now() + interval '1 day', NULL);
+      (${BY_BLOCKER}, 'Active', now() + interval '1 day', NULL),
+      (${NO_END}, 'Active', NULL, NULL);
+    INSERT INTO "Crucible" (id, status, "endAt", "nsfwLevel") VALUES
+      (${ALL_LEVELS}, 'Active', now() + interval '1 day', 63);
     INSERT INTO "Post" (id, "publishedAt") VALUES
       (${PUBLISHED_ENTRY}, now() - interval '1 day'),
       (${SCHEDULED_ENTRY}, now() + interval '1 day'),
@@ -104,7 +114,13 @@ beforeAll(async () => {
       (${SCHEDULED_ACCEPTABLE_MINOR_ENTRY}, now() + interval '1 day'),
       (${SCHEDULED_ADULT_TEXT_ENTRY}, now() + interval '1 day'),
       (${SCHEDULED_BY_BLOCKER_ENTRY}, now() + interval '1 day'),
-      (${DRAFT_ENTRY}, NULL);
+      (${DRAFT_ENTRY}, NULL),
+      (${SCHEDULED_NO_END_ENTRY}, now() + interval '1 day'),
+      (${SCHEDULED_IN_REVIEW_ENTRY}, now() + interval '1 day'),
+      (${SCHEDULED_UNRATED_ENTRY}, now() + interval '1 day'),
+      (${SCHEDULED_BLOCKED_RATING_ENTRY}, now() + interval '1 day');
+    INSERT INTO "Post" (id, "userId", "publishedAt") VALUES
+      (${SCHEDULED_ENTRY_OF_BLOCKER}, ${BLOCKER}, now() + interval '1 day');
     INSERT INTO "Post" (id, "publishedAt", availability) VALUES
       (${SCHEDULED_PRIVATE_ENTRY}, now() + interval '1 day', 'Private');
     INSERT INTO "Image" (id, "postId", "acceptableMinor") VALUES
@@ -118,7 +134,15 @@ beforeAll(async () => {
       (${SCHEDULED_PRIVATE_ENTRY}, ${SCHEDULED_PRIVATE_ENTRY}, false),
       (${SCHEDULED_ADULT_TEXT_ENTRY}, ${SCHEDULED_ADULT_TEXT_ENTRY}, false),
       (${SCHEDULED_BY_BLOCKER_ENTRY}, ${SCHEDULED_BY_BLOCKER_ENTRY}, false),
-      (${DRAFT_ENTRY}, ${DRAFT_ENTRY}, false);
+      (${DRAFT_ENTRY}, ${DRAFT_ENTRY}, false),
+      (${SCHEDULED_NO_END_ENTRY}, ${SCHEDULED_NO_END_ENTRY}, false);
+    INSERT INTO "Image" (id, "postId", "needsReview") VALUES
+      (${SCHEDULED_IN_REVIEW_ENTRY}, ${SCHEDULED_IN_REVIEW_ENTRY}, 'minor');
+    INSERT INTO "Image" (id, "postId", "nsfwLevel") VALUES
+      (${SCHEDULED_UNRATED_ENTRY}, ${SCHEDULED_UNRATED_ENTRY}, 0),
+      (${SCHEDULED_BLOCKED_RATING_ENTRY}, ${SCHEDULED_BLOCKED_RATING_ENTRY}, 32);
+    INSERT INTO "Image" (id, "postId", "userId") VALUES
+      (${SCHEDULED_ENTRY_OF_BLOCKER}, ${SCHEDULED_ENTRY_OF_BLOCKER}, ${BLOCKER});
     INSERT INTO "CrucibleEntry" ("crucibleId", "userId", "imageId") VALUES
       (${ACTIVE}, ${ENTRANT}, ${PUBLISHED_ENTRY}),
       (${ACTIVE}, ${ENTRANT}, ${SCHEDULED_ENTRY}),
@@ -129,7 +153,12 @@ beforeAll(async () => {
       (${ACTIVE}, ${ENTRANT}, ${SCHEDULED_PRIVATE_ENTRY}),
       (${ADULT_TEXT}, ${ENTRANT}, ${SCHEDULED_ADULT_TEXT_ENTRY}),
       (${BY_BLOCKER}, ${ENTRANT}, ${SCHEDULED_BY_BLOCKER_ENTRY}),
-      (${ACTIVE}, ${ENTRANT}, ${DRAFT_ENTRY});
+      (${ACTIVE}, ${ENTRANT}, ${DRAFT_ENTRY}),
+      (${NO_END}, ${ENTRANT}, ${SCHEDULED_NO_END_ENTRY}),
+      (${ACTIVE}, ${ENTRANT}, ${SCHEDULED_IN_REVIEW_ENTRY}),
+      (${ACTIVE}, ${ENTRANT}, ${SCHEDULED_UNRATED_ENTRY}),
+      (${ALL_LEVELS}, ${ENTRANT}, ${SCHEDULED_BLOCKED_RATING_ENTRY}),
+      (${ACTIVE}, ${BLOCKER}, ${SCHEDULED_ENTRY_OF_BLOCKER});
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -146,6 +175,8 @@ const crucibleRows: Record<
   [TAKEN_DOWN]: { userId: CREATOR, takenDownAt: new Date(0) },
   [ADULT_TEXT]: { userId: CREATOR, takenDownAt: null, textNsfw: true },
   [BY_BLOCKER]: { userId: BLOCKER, takenDownAt: null },
+  [NO_END]: { userId: CREATOR, takenDownAt: null },
+  [ALL_LEVELS]: { userId: CREATOR, takenDownAt: null },
 };
 
 beforeEach(() => {
@@ -215,6 +246,14 @@ describe('a reaction to a crucible entry while it is judged', () => {
     expect(await react(SCHEDULED_ENTRY)).toEqual(pastTheCheck);
   });
 
+  it('gets past the image check on an unpublished entry of an active crucible with no end set', async () => {
+    expect(await react(SCHEDULED_NO_END_ENTRY)).toEqual(pastTheCheck);
+  });
+
+  it('is refused as a missing image on an unpublished entry by a user who blocked the judge', async () => {
+    expect(await react(SCHEDULED_ENTRY_OF_BLOCKER)).toEqual(await asMissing());
+  });
+
   it('is refused as a missing image to a user below the judge score', async () => {
     expect(await react(SCHEDULED_ENTRY, LOW_SCORE)).toEqual(await asMissing());
   });
@@ -250,6 +289,10 @@ describe('a reaction to a crucible entry while it is judged', () => {
     ['acceptable-minor', SCHEDULED_ACCEPTABLE_MINOR_ENTRY],
     ['on a private post', SCHEDULED_PRIVATE_ENTRY],
     ['on a draft post with no publish date', DRAFT_ENTRY],
+    // These two are also out of what judging serves, so they pin the outcome, not the image rule alone.
+    ['held for review', SCHEDULED_IN_REVIEW_ENTRY],
+    ['unrated', SCHEDULED_UNRATED_ENTRY],
+    ['rated Blocked', SCHEDULED_BLOCKED_RATING_ENTRY],
   ])('keeps every other image rule: refused on an unpublished entry that is %s', async (_, id) => {
     expect(await react(id)).toEqual(await asMissing());
   });
