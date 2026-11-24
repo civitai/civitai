@@ -13,6 +13,7 @@ import { bounded } from './bounded';
 import { getRedis } from './redis';
 import { getImageReviewCounts } from './image-review.service';
 import {
+  countHeldSongs,
   countReportedSongs,
   countSongAppeals,
   songAppealImages,
@@ -197,6 +198,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     trainingDataReview,
     reportedSongs,
     songAppeals,
+    heldSongs,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Waited on for 3 seconds at most, and at most one scan runs across all servers: it can take
@@ -267,6 +269,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     // Bounded: it reads every Pending image report to find the songs among them.
     bounded(countReportedSongs),
     bounded(countSongAppeals),
+    // The Held tab's songs and covers decided there; lyrics holds are CSAM holds' badge.
+    bounded(countHeldSongs),
   ]);
   // Null where a bounded count did not answer.
   const maybe: Record<string, number | null> = {
@@ -286,7 +290,10 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bountyUnpaidAwards,
     imageTags,
     trainingDataReview,
-    audioReview: reportedSongs && songAppeals != null ? reportedSongs.songs + songAppeals : null,
+    audioReview:
+      reportedSongs && songAppeals != null && heldSongs
+        ? reportedSongs.songs + songAppeals + heldSongs.actionable
+        : null,
   };
   const unavailable = Object.keys(maybe).filter((key) => maybe[key] == null);
   const known = Object.entries(maybe).filter((e): e is [string, number] => e[1] != null);

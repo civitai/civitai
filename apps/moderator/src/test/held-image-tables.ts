@@ -22,3 +22,8 @@ CREATE TABLE IF NOT EXISTS "ImageDeferredBlockEffect" (
 /** The text-scan holds a lift's confirmed-song guard reads (`confirmedLyricsHoldSql`). */
 export const TEXT_SCAN_HOLD_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS "TextScanHold" ("entityType" text, "entityId" int, label text, status text);`;
+
+/** What the generic review queues read to leave out the songs and covers Audio review's Held tab
+ *  decides (`onHeldTabText`): songs' covers and their lyrics holds. */
+export const HELD_TAB_TABLE_SQL = `${TEXT_SCAN_HOLD_TABLE_SQL}
+CREATE TABLE IF NOT EXISTS "Track" ("imageId" int PRIMARY KEY, "coverImageId" int UNIQUE, genre text);`;

@@ -3,6 +3,7 @@ import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
+import { HELD_TAB_TABLE_SQL } from '../../../test/held-image-tables';
 import { walkPages } from './keyset-walk.harness';
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
@@ -88,6 +89,7 @@ CREATE TABLE "ImageRatingRequest" (
   "imageId" INTEGER, "weight" INTEGER, "nsfwLevel" INTEGER, "status" TEXT,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
 );
+${HELD_TAB_TABLE_SQL}
 `;
 
 const IMAGE_IDS = [101, 102, 103, 104, 105];

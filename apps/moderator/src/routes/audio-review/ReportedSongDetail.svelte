@@ -171,6 +171,7 @@
     use:enhance={removeCoverSubmit}
   >
     <input type="hidden" name="imageId" value={row.id} />
+    <input type="hidden" name="coverId" value={row.removableCoverId ?? ''} />
     <input type="hidden" name="violationType" value={violationType} />
     <input type="hidden" name="violationDetails" value={note} />
   </form>
@@ -350,7 +351,7 @@
           <p class="m-0">
             This song is withheld from you: its audio, lyrics, cover and owner are not shown here.
           </p>
-          <a href="/csam/text-holds?status=all&q={row.id}" class={LINK_CLASS}>Open in CSAM holds</a>
+          <a href="/images/csam" class={LINK_CLASS}>Open the CSAM image queue</a>
         </div>
       {:else if !row.url}
         <p class="m-0 text-sm text-dark-2">No audio file.</p>

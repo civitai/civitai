@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   checkState,
   dismissDecision,
+  heldDecisions,
+  heldDecisionsEnabled,
+  lyricsHoldHref,
   ratingKeysEnabled,
   reportedOutcome,
   REPORTED_DECISIONS,
@@ -135,5 +138,73 @@ describe('the list row and the checks card', () => {
     );
     expect(checkState({ ...scanned, ingestion: 'Pending' })).toBe('pending');
     expect(checkState({ ...scanned, ingestion: 'Error' })).toBe('failed');
+  });
+});
+
+describe('the decision keys on a held song', () => {
+  const base = {
+    withheld: false,
+    removed: false,
+    cover: { id: 9, url: 'c', flag: 'tag', nsfwLevel: 1 },
+    removableCoverId: 9,
+  };
+  const lyrics = {
+    ...base,
+    kind: 'lyrics' as const,
+    withheld: true,
+    cover: null,
+    removableCoverId: null,
+  };
+
+  it('offer a lyrics hold only the link to CSAM holds, and only with its grant', () => {
+    expect(heldDecisions('lyrics')).toEqual(['openHold']);
+    expect(heldDecisionsEnabled(lyrics, true, true)).toEqual([true]);
+    expect(heldDecisionsEnabled(lyrics, true, false)).toEqual([false]);
+    // The image moderation grant does not open it: the hold is decided in CSAM holds.
+    expect(heldDecisionsEnabled(lyrics, false, true)).toEqual([true]);
+  });
+
+  it('offer a flagged cover Approve cover, Remove cover, Remove song and Set rating', () => {
+    const cover = { ...base, kind: 'cover' as const };
+    expect(heldDecisions('cover')).toEqual(['approveCover', 'removeCover', 'removeSong', 'rate']);
+    expect(heldDecisionsEnabled(cover, true, false)).toEqual([true, true, true, true]);
+    expect(heldDecisionsEnabled(cover, false, true)).toEqual([false, false, false, false]);
+    // A removed song keeps only its cover's decisions.
+    expect(heldDecisionsEnabled({ ...cover, removed: true }, true, false)).toEqual([
+      true,
+      true,
+      false,
+      false,
+    ]);
+    // A cover removed on this page has nothing left to approve or remove.
+    expect(
+      heldDecisionsEnabled({ ...cover, cover: null, removableCoverId: null }, true, false)
+    ).toEqual([false, false, true, true]);
+  });
+
+  it('offer a flagged song the Reported tab’s decisions with Approve song first', () => {
+    const song = { ...base, kind: 'song' as const, cover: null };
+    expect(heldDecisions('song')).toEqual(['approveSong', 'removeSong', 'removeCover', 'rate']);
+    expect(heldDecisionsEnabled(song, true, false)).toEqual([true, true, true, true]);
+    expect(heldDecisionsEnabled({ ...song, removableCoverId: null }, true, false)).toEqual([
+      true,
+      true,
+      false,
+      true,
+    ]);
+  });
+
+  it('offer a withheld cover or song nothing', () => {
+    for (const kind of ['cover', 'song'] as const)
+      expect(heldDecisionsEnabled({ ...base, kind, withheld: true }, true, true)).toEqual([
+        false,
+        false,
+        false,
+        false,
+      ]);
+  });
+
+  it('link a lyrics hold to its pending hold in CSAM holds', () => {
+    expect(lyricsHoldHref(701)).toBe('/csam/text-holds?entityType=TrackLyrics&q=701');
   });
 });

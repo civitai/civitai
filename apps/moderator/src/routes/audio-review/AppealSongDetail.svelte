@@ -223,7 +223,7 @@
           <p class="m-0">
             This {subject} is withheld from you: its media, owner and appeal are not shown here.
           </p>
-          <a href="/csam/text-holds?status=all&q={row.id}" class={LINK_CLASS}>Open in CSAM holds</a>
+          <a href="/images/csam" class={LINK_CLASS}>Open the CSAM image queue</a>
         </div>
       {:else if isSong}
         <p class="m-0 rounded-lg border border-blue-500/35 bg-blue-500/10 px-3.5 py-2 text-[13px] text-blue-200">

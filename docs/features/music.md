@@ -186,14 +186,14 @@ song card (see Moderating songs).
 ## Moderating songs
 
 In the moderator app (`apps/moderator`), songs have their own page, **Audio review**
-(`/audio-review`, under Images in the sidebar, with the number of reported songs and pending
-appeals). It is built on the shared triage shell: the queue on the left, the open song in the
+(`/audio-review`, under Images in the sidebar, with the number of reported songs, pending
+appeals and held songs and covers decided there). It is built on the shared triage shell: the queue on the left, the open song in the
 middle, its reports, cover, checks, generation details and owner on the right with the decision bar
 pinned under them. J/K move, number
 keys decide, and a decided song dims and the next one opens. Desktop widths only.
 
-- **Tabs:** Reported, Appeals, Held and Disputes. Reported and Appeals work today; Held and Disputes
-  show as "Soon" and arrive on this page later.
+- **Tabs:** Reported, Appeals, Held and Disputes. Reported, Appeals and Held work today; Disputes
+  shows as "Soon" and arrives on this page later.
 - **Reported** lists songs with Pending reports (the reasons Image reports counts), one row per song:
   cover, title, how long it has waited, the most reported reason, the number of reporters and the
   owner. Sort by oldest, newest or most reports; chips for All, "Has a time" (a report with
@@ -212,12 +212,14 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   with its own violation type: the song stays public with the placeholder, its reports stay open
   and the song stays open; the cover drops to the placeholder on the page without a reload. It is
   offered only while the song has its own cover that is not removed or withheld
-  (`removableCoverId`, from `visibleSongLinks`). A removed song is ruled on as Image reports rules on a removed image: one blocked by an automated
+  (`removableCoverId`, from `visibleSongLinks`), and is refused when the song has a new cover since
+  the page loaded (the page posts the cover it showed). A removed song is ruled on as Image reports rules on a removed image: one blocked by an automated
   rule gets "Restore and dismiss" (it comes back up) and can be made a moderator removal; one a
   moderator removed only has its reports closed ("Close reports"); one removed for CSAM, or under
   CSAM review, takes nothing here.
 - **A withheld song** (`withheldImageIds`) shows as "Withheld song #id", with no title, audio, lyrics,
-  cover, owner, rating or report text, and no decisions; it links to CSAM holds. Search finds it only
+  cover, owner, rating or report text, and no decisions; it links to the CSAM image queue
+  (`/images/csam`), where media withheld by that rule is decided. Search finds it only
   by its exact id, and it counts for no "Has a time" chip. A cover's file is sent only when the
   public player would show it and it is not withheld.
 - **Appeals** lists owners' Pending appeals of a removed song or of a song's removed cover (an image
@@ -232,6 +234,35 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   appealed: a cover's approval leaves its song alone, and the reverse. There is no rating to apply
   on restore: the resolver lifts the removal and rescans an unrated image, and a moderator rates it
   afterwards. A withheld appeal shows no media, owner, words or removal and takes no decision.
+- **Held** lists three kinds of held song, one row per song (chips All, Lyrics, Cover, Song; sort
+  by oldest or newest; search by title, owner or id):
+  - **Lyrics held:** the song's lyrics are under a Pending CSAM text hold (`TrackLyrics`). The row
+    shows "Withheld song #id", "Song withheld" and when it was held, with no audio, cover, lyrics,
+    title or owner for anyone on this page, whatever their grants; search finds it only by its exact
+    id. Its one key, 1 Open in CSAM holds, links to the hold in `/csam/text-holds`, and is enabled
+    only for a moderator who can open that page and holds `csam.report.file` (the grant its load
+    demands); otherwise it is disabled with "You don't have access to CSAM holds. Ask a team lead
+    for the grant." Nothing is decided here.
+  - **Cover flagged:** the song's own cover carries a review flag of the image review queues
+    (minor, POI, tag, new user, moderation rule, remix source). The open row shows the cover under
+    review, then the song card and the side cards. 1 Approve cover clears only the cover's flag
+    through the review queues' accept writer, on the cover's row alone (the song is untouched, and
+    the cover goes public once nothing else holds it); 2 Remove cover and 3 Remove song take a
+    violation type; 4 Set rating rates the song. The page posts the cover and the flag it showed, and
+    a cover replaced since (even by one flagged the same), one whose flag changed, or one under the
+    CSAM flag, is refused.
+  - **Song flagged:** the song itself carries one of those flags (a moderation rule's Hold can set
+    `modRule` on a song). 1 Approve song clears it the same way, then 2 Remove song, 3 Remove cover
+    and 4 Set rating as on the Reported tab.
+  A song under a lyrics hold is listed only as that hold, and a flagged song only once, even when its
+  cover is flagged too (the cover row appears once the song's flag is decided). A flagged cover or
+  song withheld from the moderator (`withheldImageIds`) carries only its id and kind, and takes no
+  decision. Every decision needs `image.moderate`. The sidebar badge counts the flagged songs and
+  covers decided here, not lyrics holds, which CSAM holds counts; the tab's own count includes them.
+- **The image review queues** (`/images/minor`, `/images/poi`, `/images/tag` and the rest, not the
+  CSAM queue) and their badges leave out songs and songs' own covers under those flags
+  (`onHeldTabText`), since the Held tab decides each of them. The one case it does not take stays
+  there: the flagged cover of a song under a lyrics hold. The CSAM queue keeps songs and covers.
 - **Image reports** lists images and videos only, and its badge leaves songs out. The image Appeals
   queue (`/images/appeals`) and its badge leave out the Pending appeals of songs and their own covers,
   which Audio review's Appeals tab decides, so an appeal is decided in one place; the Audio review
@@ -247,8 +278,8 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
 The song card (`SongCard.svelte`) also renders in the image review queues, Image lookup and
 Removed-appeals, marked "Song": its cover, a play/pause button, a seek bar with the time, a volume
 control, the title, and the lyrics in a scrollable panel. A lyric line with a time plays the song from
-there; a line without one is text. Image and video cards are unchanged. The review queues keep songs
-until Audio review's Held tab takes them.
+there; a line without one is text. Image and video cards are unchanged. The review queues no longer
+list songs or their own covers (Audio review's Held tab decides them), except as above.
 
 - **Playback** (`$lib/music/song-player.ts`): nothing plays until the moderator clicks, one song plays
   at a time across the page, and each song starts at the last volume chosen (kept in this browser's

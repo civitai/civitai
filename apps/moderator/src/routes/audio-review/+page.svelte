@@ -34,6 +34,7 @@
   import { formActionHref } from '$lib/triage/queue';
   import { urlWith } from '$lib/url';
   import AppealsQueue from './AppealsQueue.svelte';
+  import HeldQueue from './HeldQueue.svelte';
   import ReportedSongDetail from './ReportedSongDetail.svelte';
   import type { ActionData, PageData } from './$types';
 
@@ -185,10 +186,26 @@
     title="Audio review"
     subtitle="Songs and their covers: reports, appeals and holds. Decide on the song, its cover and its rating together."
     placeholder="Song, owner or ID"
-    searchLabel={data.tab === 'appeals' ? 'Search appealed songs and covers' : 'Search reported songs'}
+    searchLabel={data.tab === 'appeals'
+      ? 'Search appealed songs and covers'
+      : data.tab === 'held'
+      ? 'Search held songs'
+      : 'Search reported songs'}
   />
   <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
-    {#if data.tab === 'appeals'}
+    {#if data.tab === 'held'}
+      <HeldQueue
+        held={data.held}
+        filters={data.held.filters}
+        q={data.q}
+        page={data.page}
+        canAct={data.canAct}
+        canOpenHolds={data.canOpenHolds}
+        civitaiUrl={data.civitaiUrl}
+        {form}
+        {tabsBar}
+      />
+    {:else if data.tab === 'appeals'}
       <AppealsQueue
         appeals={data.appeals}
         filters={data.appeals.filters}
