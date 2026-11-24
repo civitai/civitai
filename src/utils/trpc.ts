@@ -37,10 +37,17 @@ import {
   getTrpcUnifiedBatchWindowEnabled,
   registerBatchingApplies,
 } from '~/utils/trpc-batch-window';
-import { GO_TRANSPORT_URL, isGoTransportEnabledFor } from '~/utils/trpc-go-transport';
+import {
+  GO_TRANSPORT_URL,
+  isGoTransportEnabledFor,
+  isSignedOutGoTransportEnabledFor,
+} from '~/utils/trpc-go-transport';
 import { feedTransportTimingLink } from '~/utils/faro/feedTransport';
 import { createShadowCompareFetch, goTransportCandidate } from '~/utils/faro/shadowCompare';
-import { isShadowCompareEnabledFor } from '~/utils/trpc-shadow-compare';
+import {
+  isShadowCompareEnabledFor,
+  isSignedOutShadowCompareEnabledFor,
+} from '~/utils/trpc-shadow-compare';
 import { setFeedEventsCache } from '~/utils/feed-events';
 
 const url = '/api/trpc';
@@ -205,6 +212,15 @@ export const __getTrpcBatchingEnabled = getTrpcBatchingEnabled;
  */
 export function isAuthedBrowser() {
   return typeof window !== 'undefined' && window.isAuthed === true;
+}
+
+/**
+ * True ONLY when the browser has rendered as signed out (`window.isAuthed === false`, set by
+ * `CivitaiSessionProvider`). On the server, and before the session provider has rendered, this is
+ * `false`, so neither cohort's flag applies there: only `isAuthedBrowser` or this can move a query.
+ */
+export function isSignedOutBrowser() {
+  return typeof window !== 'undefined' && window.isAuthed === false;
 }
 
 /**
@@ -375,20 +391,25 @@ export function shouldBatch(op: {
 /**
  * Send this operation over the Go transport only when ALL hold:
  *  - it's a `query` for a procedure in `GO_TRANSPORT_PROCEDURES`,
- *  - THAT procedure's own flag is on for this user (`feedGoTransport` for
- *    `image.getImagesAsPostsInfinite`, `feedGoTransportModelGetAll` for `model.getAll`,
- *    `feedGoTransportInfinite` for `image.getInfinite`),
- *  - we're in an authenticated browser — signed-out responses are edge-cached under the
- *    `/api/trpc` path, and moving them to another path would trade those hits for origin load,
+ *  - in an authenticated browser, THAT procedure's own flag is on for this user (`feedGoTransport`
+ *    for `image.getImagesAsPostsInfinite`, `feedGoTransportModelGetAll` for `model.getAll`,
+ *    `feedGoTransportInfinite` for `image.getInfinite`); in a browser rendered as signed out
+ *    (`isSignedOutBrowser`), THAT procedure's signed-out flag instead (`feedGoTransportSignedOut`,
+ *    `feedGoTransportSignedOutModelGetAll`, `feedGoTransportSignedOutInfinite`). Each cohort reads
+ *    only its own flags, so the two ramp independently. A signed-out answer is edge-cacheable on
+ *    both paths (the Go service sends the same public Cache-Control as this app), but each path is
+ *    its own cache entry, so while the signed-out cohort is split the hits for one query are split
+ *    between two entries,
  *  - it would leave as a GET (`shouldSendQueryAsPost` false): the Go service answers GETs only.
  */
 export function shouldUseGoTransport(op: { type: string; path: string; input: unknown }) {
-  return (
-    op.type === 'query' &&
-    isGoTransportEnabledFor(op.path) &&
-    isAuthedBrowser() &&
-    !shouldSendQueryAsPost(op)
-  );
+  return op.type === 'query' && isGoTransportCohortFor(op.path) && !shouldSendQueryAsPost(op);
+}
+
+/** This browser's cohort flag for `path`: the signed-in flag when signed in, else the signed-out one. */
+function isGoTransportCohortFor(path: string): boolean {
+  if (isAuthedBrowser()) return isGoTransportEnabledFor(path);
+  return isSignedOutBrowser() && isSignedOutGoTransportEnabledFor(path);
 }
 
 /**
@@ -400,15 +421,18 @@ export function shouldUseGoTransport(op: { type: string; path: string; input: un
  * serve: at 0% transport nobody is shadowed, and killing the transport flag kills its shadow too.
  * Evaluated only on the Go branch of `terminatingLink`. A shadowed request's control leg is the old
  * `/api/trpc` route, so for those requests the app uses the old route's answer and the Go answer is
- * only compared.
+ * only compared. A browser rendered as signed out reads the signed-out twins instead
+ * (`clientShadowCompareSignedOut` with that procedure's signed-out transport flag); its compares
+ * are beaconed as `viewer=signed_out`.
  */
 export function shouldShadowCompare(op: { type: string; path: string; input: unknown }) {
+  if (op.type !== 'query' || shouldSendQueryAsPost(op)) return false;
+  if (isAuthedBrowser())
+    return isShadowCompareEnabledFor(op.path) && isGoTransportEnabledFor(op.path);
   return (
-    op.type === 'query' &&
-    isShadowCompareEnabledFor(op.path) &&
-    isGoTransportEnabledFor(op.path) &&
-    isAuthedBrowser() &&
-    !shouldSendQueryAsPost(op)
+    isSignedOutBrowser() &&
+    isSignedOutShadowCompareEnabledFor(op.path) &&
+    isSignedOutGoTransportEnabledFor(op.path)
   );
 }
 
@@ -432,6 +456,8 @@ function shadowCompareLink({
       fetch: createShadowCompareFetch({
         procedure: opts.op.path,
         candidate: goTransportCandidate,
+        // Signed-in compares keep the beacon they always had (no `viewer`).
+        viewer: isAuthedBrowser() ? undefined : 'signed_out',
       }),
     })(runtime)(opts);
 }

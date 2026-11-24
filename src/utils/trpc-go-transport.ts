@@ -43,6 +43,44 @@ export function isGoTransportEnabledFor(path: string): boolean {
 }
 
 /**
+ * The signed-out cohort's toggles, one per procedure, written by `FeatureFlagsProvider` from the
+ * signed-out twin of each flag (`feedGoTransportSignedOut`, `…SignedOutModelGetAll`,
+ * `…SignedOutInfinite`; default OFF). Read only for a signed-out browser, so turning one on never
+ * moves a signed-in user, and the signed-in flags above never move a signed-out one.
+ */
+let feedGoTransportSignedOutEnabled = false;
+let feedGoTransportSignedOutModelGetAllEnabled = false;
+let feedGoTransportSignedOutInfiniteEnabled = false;
+
+const SIGNED_OUT_GO_TRANSPORT_FLAGS: Readonly<Record<string, () => boolean>> = {
+  'image.getImagesAsPostsInfinite': () => feedGoTransportSignedOutEnabled,
+  'model.getAll': () => feedGoTransportSignedOutModelGetAllEnabled,
+  'image.getInfinite': () => feedGoTransportSignedOutInfiniteEnabled,
+};
+
+/** Whether `path`'s own signed-out Go-transport flag is on (false for any other procedure). */
+export function isSignedOutGoTransportEnabledFor(path: string): boolean {
+  return Object.prototype.hasOwnProperty.call(SIGNED_OUT_GO_TRANSPORT_FLAGS, path)
+    ? SIGNED_OUT_GO_TRANSPORT_FLAGS[path]()
+    : false;
+}
+
+/** `feedGoTransportSignedOut`: `image.getImagesAsPostsInfinite`, signed out. */
+export function setFeedGoTransportSignedOutEnabled(enabled: boolean) {
+  feedGoTransportSignedOutEnabled = enabled;
+}
+
+/** `feedGoTransportSignedOutModelGetAll`: `model.getAll`, signed out. */
+export function setFeedGoTransportSignedOutModelGetAllEnabled(enabled: boolean) {
+  feedGoTransportSignedOutModelGetAllEnabled = enabled;
+}
+
+/** `feedGoTransportSignedOutInfinite`: `image.getInfinite`, signed out. */
+export function setFeedGoTransportSignedOutInfiniteEnabled(enabled: boolean) {
+  feedGoTransportSignedOutInfiniteEnabled = enabled;
+}
+
+/**
  * The separate path. `next.config.mjs` rewrites `<this>/<procedure>` back to `/api/trpc/<procedure>`
  * for each procedure above (only those), so with no route in front of it the request still reaches
  * this app and is served: a flag can never strand a request. It can still MOVE one — edge rules

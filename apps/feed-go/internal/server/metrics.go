@@ -33,13 +33,19 @@ type Metrics struct {
 	ShadowDropped *prometheus.CounterVec   // endpoint
 
 	// ShadowViewer counts the body comparison results of the endpoints whose answer reports a viewer
-	// class (model-associated: modelfeed.ViewerClasses), so a serve gate can require samples per class
-	// (endpoint, viewer, result: ShadowResults' values). Seeded for each class's match result.
+	// class (model-associated: modelfeed.ViewerClasses; the tRPC feeds: FeedViewerClasses), so a serve
+	// gate can require samples per class (endpoint, viewer, result: ShadowResults' values). Seeded for
+	// each class's match result.
 	ShadowViewer *prometheus.CounterVec
 
 	// ShadowResponse counts the header comparison of each compared sample, beside the body's
 	// ShadowResults (endpoint, result: match|mismatch|uncompared).
 	ShadowResponse *prometheus.CounterVec
+
+	// ShadowResponseViewer is ShadowResponse's match and mismatch per viewer class, for the tRPC feeds
+	// (FeedViewerEndpoints; endpoint, viewer: FeedViewerClasses, result). Seeded for every class and
+	// result.
+	ShadowResponseViewer *prometheus.CounterVec
 
 	// Per-phase cost of a shadow sample (DESIGN.md §10). Phases: decode (read + parse the posted
 	// sample, Node's envelope included), compute (the answer serving would produce), compare
@@ -163,6 +169,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_shadow_response_total",
 			Help: "Shadow comparisons of the compared response headers (shadow.ComparedHeaders), by result: match, mismatch (the diffs are in feed_go_shadow_field_diffs_total as header:<name>), uncompared (a REST endpoint, whose port writes no headers yet, or a sample that carried none). Separate from feed_go_shadow_compare_total, which is the body's.",
 		}, []string{EndpointLabel, "result"}),
+		ShadowResponseViewer: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_shadow_response_viewer_total",
+			Help: "feed_go_shadow_response_total's match and mismatch by the sample's viewer class (anon, crawler, banned, user, moderator), for the tRPC feed endpoints.",
+		}, []string{EndpointLabel, "viewer", "result"}),
 		ShadowDropped: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_shadow_dropped_total",
 			Help: "Shadow requests dropped because the comparison queue was full.",
@@ -309,7 +319,15 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	for _, v := range modelfeed.ViewerClasses {
 		m.ShadowViewer.WithLabelValues(EndpointAssociated, v, "match")
 	}
-	reg.MustRegister(m.ShadowViewer)
+	for _, e := range FeedViewerEndpoints {
+		for _, v := range FeedViewerClasses {
+			m.ShadowViewer.WithLabelValues(e, v, "match")
+			for _, r := range []string{"match", "mismatch"} {
+				m.ShadowResponseViewer.WithLabelValues(e, v, r)
+			}
+		}
+	}
+	reg.MustRegister(m.ShadowViewer, m.ShadowResponseViewer)
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowResponse, m.ShadowDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
