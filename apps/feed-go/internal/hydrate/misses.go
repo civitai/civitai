@@ -38,6 +38,9 @@ const (
 	// curated-showcase guard, ShowcaseState): only the curated-or-not decision is computed, never
 	// an entry, so nothing is written or kept.
 	MissVersionShowcase = "version-showcase"
+	// MissImageResources (resources.go) is imageResourcesCache (the public images endpoint): computed
+	// from the replica only while the Node lookup reads it too (ImageResourcesFromReplica), never
+	// written back nor kept.
 )
 
 // MissCaches lists every MissXxx label, for seeding the counter. A label that is also a page cache
@@ -45,7 +48,7 @@ const (
 // this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
 var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames,
 	MissModelDecorations, MissVersionImages, MissModelData, MissModelTags, MissOfficialModels, MissMetrics, MissImageTags,
-	MissUserFollows, MissVersionShowcase}
+	MissUserFollows, MissVersionShowcase, MissImageResources}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
@@ -112,6 +115,11 @@ type MissCompute struct {
 	// falls back (`metrics-miss-failed`). It bounds only that wait, never this lookup's own ClickHouse
 	// read (MetricsTimeout's); a MetricsTimeout that ends first still ends the wait.
 	MetricsLockWait time.Duration
+	// ImageResourcesFromReplica reports whether the Node app's image-resources lookup reads the
+	// replica: ImageResourceUseWriteFlag read and off. Only then is an image-resources miss computed
+	// (computeImageResources); nil, or false (the flag on, or not known), leaves it falling back
+	// (`image-resources-miss`).
+	ImageResourcesFromReplica func() bool
 	// waitSleep, when set (tests), replaces the timer between lock-wait reads (sleepLockWait): called
 	// with the delay, it returns nil to read next or an error to end the wait.
 	waitSleep func(ctx context.Context, d time.Duration) error
@@ -272,9 +280,11 @@ func (c *MissCompute) flightLookup(ctx context.Context, cache string, ids []int,
 // viewer (the showcase lookup reads no user, and the per-viewer image filter runs on every read), Node
 // keeps tag ids in a per-pod L1 far longer than recentTTL, and a model frame or decoration is the same
 // lookup the image ones keep. The version-showcase decision (MissVersionShowcase, ShowcaseState) does
-// not go through lookupShared and keeps nothing, so it is false for it too.
+// not go through lookupShared and keeps nothing, so it is false for it too, as for the image resources
+// (MissImageResources, computeImageResources).
 func (c *MissCompute) memoized(cache string) bool {
-	return !c.writes(cache) && cache != MissImageMeta && cache != MissUserFollows && cache != MissVersionShowcase
+	return !c.writes(cache) && cache != MissImageMeta && cache != MissUserFollows && cache != MissVersionShowcase &&
+		cache != MissImageResources
 }
 
 // fromRecent adds the kept, unexpired answers of ids to out and returns the ids it could not answer.

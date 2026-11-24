@@ -117,39 +117,47 @@ func TestShadowComparesHeaders(t *testing.T) {
 	waitFor(t, "an uncompared response", response("uncompared", 1))
 }
 
-// A /api/v1/images sample is uncompared whatever headers it carries: that port writes none of its own,
-// so a comparison would only count Node's headers as missing here. (The model routes' are compared:
-// TestV1ModelsShadowComparesResponseHeaders.)
-func TestShadowRESTResponseIsUncompared(t *testing.T) {
+// A /api/v1/images sample's response headers are compared, as the model routes' are
+// (TestV1ModelsShadowComparesResponseHeaders): the headers the public images route writes
+// (v1ImagesCompute) against Node's, over the base list for a sample without the REST mark. Here Node's
+// Cache-Control and Vary differ from the route's, so both are value diffs. A sample with no headers is
+// uncompared.
+func TestShadowV1ImagesResponseIsCompared(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	s := newPhaseServer(reg, 1, nil)
 	s.computeV1Fn = func(context.Context, *http.Request) (*computed, error) {
 		return &computed{payload: []byte(v1Body)}, nil
 	}
-	b, err := json.Marshal(ShadowRequest{
-		Input: "modelVersionId=9", Path: "/api/v1/images", Headers: map[string]string{"host": "civitai.example"},
-		Node: json.RawMessage(v1Body), ResponseHeaders: map[string]string{"cache-control": "public, max-age=60", "vary": "accept"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	w := httptest.NewRecorder()
-	s.ShadowV1Handler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/api/v1/images", strings.NewReader(string(b))))
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("code %d, want 202", w.Code)
-	}
-	waitFor(t, "the REST sample", func() bool {
-		v, _ := metricValue(t, reg, "feed_go_shadow_response_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": "uncompared"})
-		return v == 1 && len(s.ShadowQueue) == 0
-	})
-	for _, r := range []string{"match", "mismatch"} {
-		if v, _ := metricValue(t, reg, "feed_go_shadow_response_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": r}); v != 0 {
-			t.Errorf("v1-images response %s = %v, want 0", r, v)
+	post := func(headers map[string]string) {
+		t.Helper()
+		b, err := json.Marshal(ShadowRequest{
+			Input: "modelVersionId=9", Path: "/api/v1/images", Headers: map[string]string{"host": "civitai.example"},
+			Node: json.RawMessage(v1Body), ResponseHeaders: headers,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := httptest.NewRecorder()
+		s.ShadowV1Handler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/api/v1/images", strings.NewReader(string(b))))
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("code %d, want 202", w.Code)
 		}
 	}
-	if v, _ := metricValue(t, reg, "feed_go_shadow_field_diffs_total", map[string]string{"feed_endpoint": EndpointV1Images, "category": "header:cache-control", "kind": "missing-in-go"}); v != 0 {
-		t.Errorf("a REST header diff was counted: %v", v)
+	result := func(r string) float64 {
+		v, _ := metricValue(t, reg, "feed_go_shadow_response_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": r})
+		return v
 	}
+	post(map[string]string{"cache-control": "public, max-age=60", "vary": "accept"})
+	waitFor(t, "the REST mismatch", func() bool { return result("mismatch") == 1 && len(s.ShadowQueue) == 0 })
+	for _, c := range []string{"header:cache-control", "header:vary"} {
+		if v, _ := metricValue(t, reg, "feed_go_shadow_field_diffs_total", map[string]string{"feed_endpoint": EndpointV1Images, "category": c, "kind": "value"}); v != 1 {
+			t.Errorf("%s value diff = %v, want 1", c, v)
+		}
+	}
+	post(map[string]string{"cache-control": "public, s-maxage=300, stale-while-revalidate=150", "vary": "Authorization"})
+	waitFor(t, "the REST match", func() bool { return result("match") == 1 && len(s.ShadowQueue) == 0 })
+	post(nil)
+	waitFor(t, "the uncompared sample", func() bool { return result("uncompared") == 1 && len(s.ShadowQueue) == 0 })
 }
 
 func TestExpectedResponseDiff(t *testing.T) {

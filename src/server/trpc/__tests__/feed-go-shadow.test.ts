@@ -173,6 +173,8 @@ describe('readFeedGoShadowConfig', () => {
       probeInfiniteUrl: undefined,
       probeModelGetAllUrl: undefined,
       probeRate: 0,
+      probeV1ImagesUrl: undefined,
+      probeV1ImagesRate: 0,
       v1ModelsCredentials: false,
     });
   });
@@ -203,6 +205,8 @@ describe('readFeedGoShadowConfig', () => {
       probeInfiniteUrl: 'http://feed-go.internal.test:9090/internal/probe/image.getInfinite',
       probeModelGetAllUrl: 'http://feed-go.internal.test:9090/internal/probe/model.getAll',
       probeRate: 0.5,
+      probeV1ImagesUrl: 'http://feed-go.internal.test:9090/internal/probe/api/v1/images',
+      probeV1ImagesRate: 0,
       v1ModelsCredentials: false,
     });
   });

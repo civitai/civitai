@@ -15,8 +15,9 @@ import (
 )
 
 // The response headers Node sends with a 200 on `GET /api/v1/models` and `GET /api/v1/models/[id]`
-// (DESIGN.md §16.8). They decide how Cloudflare and browsers cache the public API, so a served answer
-// must carry exactly Node's, and the shadow compares them (shadow.RESTComparedHeaders). The goldens
+// (DESIGN.md §16.8), and on `GET /api/v1/images` (PublicEndpoint as on `[id]`, with its handler's own
+// Cache-Control: HeaderInput.NoStore; DESIGN.md §13.8). They decide how Cloudflare and browsers cache
+// the public API, so a served answer must carry exactly Node's, and the shadow compares them (shadow.RESTComparedHeaders). The goldens
 // pin the result against the real Node route (testdata/golden/v1-models-headers, configheaders.json).
 //
 // Not reproduced, so the request falls back instead (internal/server/v1models_serve.go): the list's
@@ -79,6 +80,11 @@ type HeaderInput struct {
 	VerifiedCrawler bool
 	// Nsfw is the list's parsed `nsfw` (unused on `[id]`).
 	Nsfw bool
+	// NoStore is a handler's own `private, no-store` over the wrapper's Cache-Control, for a reason
+	// other than these (`GET /api/v1/images` above SFW: feed.V1Input.WithinSFW). PublicEndpoint's
+	// headers are otherwise the ones `[id]` gets, so that route's 200 is ResponseHeaders with Detail
+	// false, Nsfw false and this.
+	NoStore bool
 }
 
 // ResponseHeaders are the headers Node sends with a 200 whose body is body (the bytes res.json
@@ -95,7 +101,7 @@ func ResponseHeaders(in HeaderInput, body []byte) []Header {
 	if in.Credentialed || in.VerifiedCrawler {
 		cc = apipolicy.PrivateCacheControl()
 	}
-	if in.Detail || in.Nsfw {
+	if in.Detail || in.Nsfw || in.NoStore {
 		cc = noStoreCacheControl
 	}
 	return append(out,
