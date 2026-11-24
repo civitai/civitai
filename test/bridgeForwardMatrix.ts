@@ -876,6 +876,15 @@ const BUZZ_BALANCE = rowsFor('GET_BUZZ_BALANCE', 'blocks.getMyBuzzBalance', BALA
     reply: { requestId: 'rq_1', error: 'missing scope' },
   },
   {
+    scenario: 'rpc rejects with tRPC rateLimit error → message and rateLimit meta',
+    hosts: BOTH,
+    mode: 'default',
+    rpc: { rejects: rateLimited },
+    payload: { requestId: 'rq_1' },
+    call: [{ blockToken: TOKEN }],
+    reply: { requestId: 'rq_1', error: RL_MESSAGE, rateLimit: RATE_LIMIT },
+  },
+  {
     // current behaviour; candidate fix D3
     scenario: 'rpc rejects with a non-Error → "unknown"',
     hosts: BOTH,
@@ -1068,6 +1077,15 @@ const VIEWER = rowsFor('GET_VIEWER', 'blocks.getMyViewer', VIEWER_RESULT, [
     reply: { requestId: 'rq_1', error: 'missing scope' },
   },
   {
+    scenario: 'rpc rejects with tRPC rateLimit error → message and rateLimit meta',
+    hosts: PBH,
+    mode: 'default',
+    rpc: { rejects: rateLimited },
+    payload: { requestId: 'rq_1' },
+    call: [{ blockToken: TOKEN }],
+    reply: { requestId: 'rq_1', error: RL_MESSAGE, rateLimit: RATE_LIMIT },
+  },
+  {
     scenario: 'no requestId → dropped',
     hosts: PBH,
     mode: 'default',
@@ -1220,6 +1238,15 @@ const S_GET = rowsFor('APP_STORAGE_GET', 'apps.storage.get', { value: { note: 'h
     payload: { requestId: 'rq_1', key: 'draft' },
     call: [{ blockToken: TOKEN, key: 'draft' }, READ_OPTS],
     reply: { requestId: 'rq_1', value: null, error: 'feature disabled' },
+  },
+  {
+    scenario: 'rpc rejects with tRPC rateLimit error → message and rateLimit meta',
+    hosts: BOTH,
+    mode: 'default',
+    rpc: { rejects: rateLimited },
+    payload: { requestId: 'rq_1', key: 'draft' },
+    call: [{ blockToken: TOKEN, key: 'draft' }, READ_OPTS],
+    reply: { requestId: 'rq_1', value: null, error: RL_MESSAGE, rateLimit: RATE_LIMIT },
   },
   {
     // current behaviour; candidate fix D3

@@ -6001,7 +6001,10 @@ export function PageBlockHost({
                 } catch (err) {
                   if (!reviewMode) reportAppSubmitError(appBlockId, 'training_submit', err);
                   // Never resent: the quote is spent once. See runTrainingGate.ts.
-                  settlement.reply(trainingSubmitReplyFromError(err));
+                  settlement.reply({
+                    ...trainingSubmitReplyFromError(err),
+                    ...rateLimitReplyFields(err),
+                  });
                   return;
                 }
                 if (!reviewMode) reportAppSubmitResult(appBlockId, 'training_submit', result);
@@ -6134,7 +6137,7 @@ export function PageBlockHost({
             if (!reviewMode) reportAppSubmitError(appBlockId, 'confirmed_step_submit', err);
             // Never resent: the quote is spent once.
             const failed = trainingSubmitReplyFromError(err);
-            settlement.reply(failed);
+            settlement.reply({ ...failed, ...rateLimitReplyFields(err) });
             if ('error' in failed && failed.error === 'submission-unconfirmed') {
               showUnconfirmedNotice(requestId);
             }
