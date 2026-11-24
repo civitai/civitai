@@ -472,7 +472,7 @@ func (q *PageQuery) Build() (SQL, error) {
 		and = append(and, p+`."availability" != 'Private'::"Availability"`)
 	}
 	if q.CollectionID != 0 {
-		// The semi-join of every sort but Recently Added (Parse refuses that one), with
+		// The semi-join of every sort but Recently Added (ParseWith refuses that one), with
 		// getAvailableCollectionItemsFilterForUser's item filter built without `statuses`: accepted
 		// items, and for a signed-in viewer also the items they added that are still in review.
 		clause := `EXISTS (
@@ -508,7 +508,7 @@ func (q *PageQuery) Build() (SQL, error) {
 	if len(q.FileFormats) > 0 {
 		ors := make([]string, len(q.FileFormats))
 		for i, f := range q.FileFormats {
-			// Interpolated as Node does; Parse admits only the constants.modelFileFormats values.
+			// Interpolated as Node does; ParseWith admits only the constants.modelFileFormats values.
 			ors[i] = `mf."metadata" @> '{"format": "` + f + `"}'`
 		}
 		and = append(and, `EXISTS (

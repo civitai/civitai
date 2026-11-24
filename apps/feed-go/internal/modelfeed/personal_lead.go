@@ -9,7 +9,7 @@ package modelfeed
 // so a request Node would refuse the lead for lack of one is a superset this side can only
 // over-report (and over-reporting costs a fallback, never a page that differs from Node's).
 //
-// query and hidden are not checked either: Parse already falls back on each. `followed` (truthy) and
+// query and hidden are not checked either: ParseWith already falls back on each. `followed` (truthy) and
 // a non-empty `ids` (`input.ids?.length`: an empty list keeps the lead) are, for when their ports
 // read them.
 //

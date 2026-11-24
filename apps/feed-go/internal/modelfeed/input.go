@@ -3,7 +3,7 @@
 // getModelsInfiniteHandler / getModelsFeed (src/server/controllers/model.controller.ts) →
 // getModelsWithImagesAndModelVersions → getModelsRaw (src/server/services/model.service.ts), for the
 // request shapes it supports. Every other shape is a fallback (package fallback); the supported set is
-// defined in Parse and grows as parity is proven. See DESIGN.md §15.
+// defined in ParseWith and grows as parity is proven. See DESIGN.md §15.
 package modelfeed
 
 import (
@@ -119,7 +119,7 @@ type Ports struct {
 // modelsSchema is model.getAll's allow-list and defaults (why: the inputschema package doc).
 var modelsSchema = inputschema.Get(inputschema.AllModels)
 
-// modelsDefaults are the schema defaults Parse starts from, decoded once at package init.
+// modelsDefaults are the schema defaults ParseWith starts from, decoded once at package init.
 var modelsDefaults = struct{ sort, period, periodMode string }{
 	sort: modelsSchema.DefaultString("sort"), period: modelsSchema.DefaultString("period"),
 	periodMode: modelsSchema.DefaultString("periodMode"),
@@ -129,7 +129,7 @@ var modelsDefaults = struct{ sort, period, periodMode string }{
 // (authedCacheBypassLink, signed in) and `direction` (an infinite query's paging direction).
 var trpcTransportKeys = map[string]bool{"authed": true, "direction": true}
 
-// parsedKeys are the schema keys Parse reads (`favorites` only for PersonalHotLeadEligible: getModelsRaw
+// parsedKeys are the schema keys ParseWith reads (`favorites` only for PersonalHotLeadEligible: getModelsRaw
 // never reads it); ignoredKeys the ones getModelsRaw never reads (rating, excludedModelIds,
 // excludedImageIds, and collectionItemStatus: getModelsRaw
 // builds its collection item filter without `statuses`), as zod's strip and the destructuring leave
@@ -150,7 +150,7 @@ var (
 
 // unsupportedKeys are input keys that change the answer in ways not ported. Present with a truthy
 // value (isEmpty: not null, false, 0, "" or []), they make the request fall back with reason
-// `input-<key>`; `ids` falls back whenever it is present (Parse).
+// `input-<key>`; `ids` falls back whenever it is present unless its port is on (ParseWith).
 var unsupportedKeys = []string{
 	// Meilisearch (`query`), the viewer's engagements and follows, the new-creators board, id lists,
 	// moderator filters, drafts and pending images, the coverage filter, the featured list, a
@@ -160,15 +160,13 @@ var unsupportedKeys = []string{
 	"publishedTo", "poiOnly", "minorOnly", "page",
 }
 
-// UnsupportedInputKeys are the keys Parse falls back on as `input-<key>` (a copy; `ids` among them).
+// UnsupportedInputKeys are the keys ParseWith falls back on (with every port off) as `input-<key>` (a copy; `ids` among them).
 func UnsupportedInputKeys() []string { return append([]string(nil), unsupportedKeys...) }
 
-// Parse validates the decoded input map (trpc.DecodeEnvelope's output). A shape outside the supported
-// subset is a fallback, and so is a value the schema itself rejects (Node answers it with its own
-// BAD_REQUEST, which the sampler never mirrors). It is ParseWith with every port off.
-func Parse(m map[string]any) (*Input, error) { return ParseWith(m, Ports{}) }
-
-// ParseWith is Parse with the ports p switches on read instead of falling back.
+// ParseWith validates the decoded input map (trpc.DecodeEnvelope's output), reading the input shapes
+// the ports p switches on instead of falling back on them. A shape outside the supported subset is a
+// fallback, and so is a value the schema itself rejects (Node answers it with its own BAD_REQUEST,
+// which the sampler never mirrors).
 func ParseWith(m map[string]any, p Ports) (*Input, error) {
 	// `ids` changes the answer whenever it is present at all: commaDelimitedNumberArray turns [] into
 	// [], "" into [0] and null into [], and getModelsRaw's hidePrivateModels is `!ids && …`, so even

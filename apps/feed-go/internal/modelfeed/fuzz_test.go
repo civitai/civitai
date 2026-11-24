@@ -23,7 +23,7 @@ func FuzzParse(f *testing.F) {
 		if err != nil {
 			return
 		}
-		in, err := Parse(m)
+		in, err := ParseWith(m, Ports{})
 		if err != nil {
 			if fallback.Reason(err) == "" {
 				t.Fatalf("Parse(%s) refused with a non-fallback error: %v", raw, err)

@@ -446,7 +446,7 @@ func parsedReason(endpoint, reason string) string {
 	case EndpointInfinite:
 		_, err = feed.ParseInfinite(in)
 	case EndpointModelGetAll:
-		_, err = modelfeed.Parse(in)
+		_, err = modelfeed.ParseWith(in, modelfeed.Ports{})
 	default:
 		return ""
 	}
