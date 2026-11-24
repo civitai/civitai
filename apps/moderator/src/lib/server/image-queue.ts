@@ -588,7 +588,12 @@ export const imageQueueActions = {
         failed.push(id);
       }
     }
-    if (songs.length === imageIds.length) return fail(409, { error: songRefusal });
+    // One card's refusal is that card's to show (`ratedImageId`); a batch's is the page's.
+    if (songs.length === imageIds.length)
+      return fail(409, {
+        error: songRefusal,
+        ...(imageIds.length === 1 ? { ratedImageId: imageIds[0] } : {}),
+      });
     if (failed.length || songs.length)
       return fail(400, {
         error: [

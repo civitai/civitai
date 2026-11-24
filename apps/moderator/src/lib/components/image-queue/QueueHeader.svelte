@@ -107,13 +107,16 @@
       <AgentReportFilter value={agentFilter} onselect={setAgents} />
     {/if}
     {#if songsOnly != null}
-      <button
-        class="{chip} {songsOnly ? 'border-primary bg-primary text-primary-foreground' : off}"
-        aria-pressed={songsOnly}
-        onclick={toggleSongs}
-      >
-        Songs only
-      </button>
+      <!-- A filter of its own, set apart from the rating chips beside it. -->
+      <div class="mr-1 border-r border-dark-4 pr-2">
+        <button
+          class="{chip} {songsOnly ? 'border-primary bg-primary text-primary-foreground' : off}"
+          aria-pressed={songsOnly}
+          onclick={toggleSongs}
+        >
+          Songs only
+        </button>
+      </div>
     {/if}
     {#each filterLevels as bit (bit)}
       <button

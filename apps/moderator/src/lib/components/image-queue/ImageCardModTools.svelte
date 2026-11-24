@@ -49,13 +49,24 @@
       };
     };
 
-  const rate = untilSettled(
-    optimisticEnhancer(({ formData }) => {
-      const previous = levelSet;
-      levelSet = Number(formData.get('nsfwLevel'));
-      return () => (levelSet = previous);
-    })
-  );
+  // A refusal the action names this card for (`ratedImageId`: a song not yet reviewed) shows here,
+  // under the chips, rather than in the page banner.
+  let refusal = $state<string | null>(null);
+  const optimisticRate = optimisticEnhancer(({ formData }) => {
+    const previous = levelSet;
+    levelSet = Number(formData.get('nsfwLevel'));
+    return () => (levelSet = previous);
+  });
+  const rate = untilSettled(async (input) => {
+    refusal = null;
+    const callback = await optimisticRate(input);
+    return async (opts) => {
+      const { result } = opts;
+      if (result.type === 'failure' && result.data?.ratedImageId != null)
+        refusal = String(result.data.error ?? '');
+      await callback?.(opts);
+    };
+  });
 
   const flag = untilSettled(
     optimisticEnhancer(({ formData }) => {
@@ -96,6 +107,9 @@
         </button>
       {/each}
     </form>
+  {/if}
+  {#if refusal}
+    <p class="basis-full text-xs text-red-400" role="alert">{refusal}</p>
   {/if}
 
   <form method="POST" action="?/setFlag" use:enhance={flag} class="flex flex-wrap gap-1">

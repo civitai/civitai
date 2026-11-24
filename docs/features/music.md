@@ -179,7 +179,7 @@ Image and video cards are unchanged.
   any other is the placeholder. A song withheld from the moderator is refused, lyrics included.
 - **Image reports** has a "Songs only" filter (`?songs=1`).
 - **Rating** a song is allowed once its own scans have reviewed it (`ingestion` Scanned). Before that
-  the rating is refused with "This song has not been reviewed yet", since a locked level would count
+  the rating is refused, under that card's rating chips, with "This song has not been reviewed yet", since a locked level would count
   as the song's review (#10162); a removed song is refused with "This song was removed, so it can't
   be rated." A rated song is locked, and `imageReviewedSql` counts a lock as a review, so nothing may
   return a rated song to Pending, Error or Rescan without clearing its lock.
