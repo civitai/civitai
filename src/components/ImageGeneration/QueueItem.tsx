@@ -196,7 +196,7 @@ export function QueueItem({
     // 3D Models: pin the ecosystem so the form's discriminator activates the
     // matching subgraph (auto-hiding the checkpoint picker via Controller's
     // null return) and lands the user on the 3D Models segment with all params
-    // pre-filled and the SAME model (Meshy/Tripo/Hunyuan3D) they generated
+    // pre-filled and the SAME model (Meshy/Tripo/…) they generated
     // with. The ecosystem is carried in the params snapshot; fall back to
     // PolyGen (Meshy) for legacy items generated before the model selector.
     const isPolyGenReplay = request.steps.some((s) => s.$type === 'polyGen');
@@ -206,7 +206,7 @@ export function QueueItem({
           ecosystem: replayEcosystem,
           workflow:
             (replayParams?.workflow as string | undefined) ??
-            // Tripo/Hunyuan3D are image-to-3D only; only PolyGen (Meshy) has a
+            // The other 3D ecosystems are image-to-3D only; only PolyGen (Meshy) has a
             // text-to-3D branch, so consult its `process` for those items.
             // `multiImageTo3D` is Meshy v7's multi-view operation — also
             // image-driven, so it must not fall through to txt2model3d.
@@ -287,7 +287,7 @@ export function QueueItem({
       ? '3D Model'
       : null;
 
-  // The model (Meshy/Tripo/Hunyuan3D) that generated the mesh. Derived from the
+  // The model (Meshy, Tripo, …) that generated the mesh. Derived from the
   // ecosystem carried in the params snapshot; legacy items predate the model
   // selector, so any 3D item without an ecosystem is Meshy (PolyGen).
   const polyGenModelVersion = isPolyGen

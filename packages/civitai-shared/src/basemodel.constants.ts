@@ -1062,7 +1062,6 @@ export const ecosystemByKey = new Map(ecosystems.map((e) => [e.key, e]));
 export const MODEL3D_ECOSYSTEM_IDS = new Set<number>([
   ECO.PolyGen,
   ECO.Tripo,
-  ECO.Hunyuan3D,
   ECO.Pixal3D,
   ECO.Trellis2,
 ]);
@@ -1126,8 +1125,6 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   // MiniMaxMusic3Input
   'MiniMaxMusic3',
   'YuE2',
-  // Hunyuan3dComfyPolyGenInput (3D; Meshy/Tripo are FAL and stay external)
-  'Hunyuan3D',
   // Trellis2ImageTo3dComfyPolyGenInput (3D; Pixal3D + Trellis.2 are modelVersions of trellis2)
   'Pixal3D',
   'Trellis2',
@@ -1435,11 +1432,10 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // and the dev-time `getEcosystemSupport` audit in workflows.ts stays clean.
   { ecosystemId: ECO.PolyGen, supportType: 'generation', modelTypes: [] },
 
-  // Tripo / Hunyuan3D - remote 3D generators (Fal / Comfy). Like PolyGen, no
-  // Civitai checkpoint/LoRA; entries exist so the unified generator picker can
-  // route the img2model3d workflow to these ecosystems.
+  // Tripo / Pixal3D / Trellis.2 - remote 3D generators (Fal / Comfy). Like
+  // PolyGen, no Civitai checkpoint/LoRA; entries exist so the unified generator
+  // picker can route the img2model3d workflow to these ecosystems.
   { ecosystemId: ECO.Tripo, supportType: 'generation', modelTypes: [] },
-  { ecosystemId: ECO.Hunyuan3D, supportType: 'generation', modelTypes: [] },
   { ecosystemId: ECO.Pixal3D, supportType: 'generation', modelTypes: [] },
   { ecosystemId: ECO.Trellis2, supportType: 'generation', modelTypes: [] },
 
@@ -4257,8 +4253,8 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 52,
     hidden: true,
   },
-  // Tripo / Hunyuan3D — remote image-to-3D generators. Same `type: 'image'`,
-  // resource-less, hidden-from-picker convention as PolyGen above.
+  // Tripo — remote image-to-3D generator. Same `type: 'image'`, resource-less,
+  // hidden-from-picker convention as PolyGen above.
   {
     id: BM.Tripo,
     name: 'Tripo',
@@ -4276,6 +4272,8 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.Hunyuan3D,
     licenseId: 54,
     hidden: true,
+    // Retired from the generator; the record stays so past Hunyuan3D images keep their base model and license.
+    disabled: true,
   },
   {
     id: BM.Pixal3D,
