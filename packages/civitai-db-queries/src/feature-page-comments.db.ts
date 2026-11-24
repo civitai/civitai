@@ -430,6 +430,18 @@ export async function countFpSubjectWaits(db: Kysely<DB>) {
   return { waiting: row?.n ?? 0, oldestMinutes: row?.oldestMinutes ?? 0 };
 }
 
+/** The comment's scan verdict as stored: its status, the text it was for, and whether it flagged. */
+export async function readFpScanVerdict(db: Kysely<DB>, commentId: number) {
+  const [row] = await rows<{ status: string; contentHash: string | null; flagged: boolean }>(
+    db,
+    `SELECT status::text AS status, "contentHash",
+            coalesce(cardinality("triggeredLabels"), 0) > 0 AS flagged
+     FROM "EntityModeration" WHERE "entityType" = 'CommentV3' AND "entityId" = $1`,
+    [commentId]
+  );
+  return row;
+}
+
 /** By urn, for the reconcile. */
 export function readFpMirrorByUrns(db: Kysely<DB>, urns: string[]) {
   if (!urns.length) return Promise.resolve([]);

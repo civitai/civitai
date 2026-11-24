@@ -20,6 +20,7 @@ import {
   markFpRunbookRemoval,
   readFpMirrorByUrns,
   readFpMirrorFacts,
+  readFpScanVerdict,
   readFpMirrorFactsPage,
   readFpRunbookCounts,
   readFpScanCandidates,
@@ -90,6 +91,7 @@ const SWEEP_CURSOR_KEY = 'feature-pages-sweep-scan-cursor';
 /** Seconds a new comment waits for the cron, so the inline push and the cron never post it twice. */
 export const FP_INLINE_GRACE_SECONDS = 60;
 const SCAN_INACTIVE_WAIT_MINUTES = 5;
+const SCAN_PENDING_WAIT_MINUTES = 1;
 const STANDING_WAIT_MINUTES = 15;
 const PARENT_WAIT_MINUTES = 5;
 const UNRESOLVED_WAIT_MINUTES = 60;
@@ -399,10 +401,15 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
     return 'pushed';
   }
 
-  // Nothing is shown unless its text is scanned and its author is in standing.
+  // Nothing is shown until a finished scan of its current text found nothing, and only while its
+  // author is in standing.
   if (state === 'visible') {
     if ((await getTextScanMode('CommentV3', row.commentId)) !== 'active')
       return wait(SCAN_INACTIVE_WAIT_MINUTES, 'text scan not active');
+    const scan = await currentTextScan(row.commentId);
+    if (scan === 'not clean')
+      return wait(UNRESOLVED_WAIT_MINUTES, 'current text scanned, not clean');
+    if (scan !== 'clean') return wait(SCAN_PENDING_WAIT_MINUTES, 'current text not scanned yet');
     if (!authorInStanding(row)) return wait(STANDING_WAIT_MINUTES, 'author banned or muted');
   }
 
@@ -590,6 +597,27 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
   return 'pushed';
 }
 
+/** A scan verdict that finished for exactly this text. */
+const finishedFor = (
+  status: string | null | undefined,
+  contentHash: string | null | undefined,
+  hash: string
+) => status === 'Succeeded' && contentHash === hash;
+
+/**
+ * The scan of the comment's current text: clean, finished and not clean (flagged, or failed), or
+ * not yet in (none, in flight, or for older text).
+ */
+async function currentTextScan(commentId: number) {
+  const hash = (await currentScanContentHashes('CommentV3', [commentId])).get(commentId);
+  if (!hash) return 'pending' as const;
+  const verdict = await readFpScanVerdict(kyselyWrite, commentId);
+  if (finishedFor(verdict?.status, verdict?.contentHash, hash))
+    return verdict!.flagged ? ('not clean' as const) : ('clean' as const);
+  if (verdict?.status === 'Failed' && verdict.contentHash === hash) return 'not clean' as const;
+  return 'pending' as const;
+}
+
 /** What the frame shows: shown on civitai, and pushed to the platform as shown. */
 export async function isFpCommentShown(commentId: number) {
   const [row] = await readFpMirrorFacts(kyselyWrite, [commentId]);
@@ -697,7 +725,7 @@ export async function runFpSweep() {
       if (c.overdue) unscanned += 1;
       continue;
     }
-    if (c.scanStatus === 'Succeeded' && c.scanContentHash === hash) continue;
+    if (finishedFor(c.scanStatus, c.scanContentHash, hash)) continue;
     if (c.overdue) unscanned += 1;
     const attempts = c.scanHash === hash ? c.scanAttempts : 0;
     if (attempts >= FP_MAX_SCAN_ATTEMPTS) {

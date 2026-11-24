@@ -95,13 +95,22 @@ describe('throwRateLimited', () => {
   });
 
   it('drops counts from a meta that is not a product limit', () => {
-    const { kind: _kind, ...withoutKind } = productMeta;
+    // An id the registry does not hold: the meta's own kind decides (a registry id is decided by
+    // the registry, below).
+    const { kind: _kind, ...withoutKind } = { ...productMeta, id: 'unregistered.daily' };
     const err = thrown(() => throwRateLimited(withoutKind, 'slow'));
     expect(rateLimitMetaOf(err)).toStrictEqual({
       retryAfterSeconds: productMeta.retryAfterSeconds,
       retryAt: productMeta.retryAt,
-      id: productMeta.id,
+      id: 'unregistered.daily',
     });
+  });
+
+  it('a registry id is classed by the registry, whatever kind its meta claims', () => {
+    // `posts.daily` is a registry product limit: its counts are kept with no kind on the meta.
+    const { kind: _kind, ...withoutKind } = productMeta;
+    const err = thrown(() => throwRateLimited(withoutKind, 'slow'));
+    expect(rateLimitMetaOf(err)).toMatchObject({ id: 'posts.daily', limit: productMeta.limit });
   });
 
   it('adds no count fields to an abuse refusal', () => {

@@ -18,6 +18,7 @@ import {
   q,
   resetFpState,
   runMirror,
+  scanClean,
   seedFpComment,
   SIGNER,
   UNKNOWN,
@@ -70,7 +71,7 @@ const reconcile = async () =>
   (await mirror.runFpReconcile()) as Migrated<
     Awaited<ReturnType<typeof MirrorService.runFpReconcile>>
   >;
-const seed = (text: string, opts?: { userId?: number; subject?: string }) =>
+const seed = (text: string, opts?: { userId?: number; subject?: string; scanned?: boolean }) =>
   seedFpComment(mirror, text, opts);
 /** Its earlier post attempt is known never to have reached the platform. */
 const neverSent = (id: number) =>
@@ -127,10 +128,10 @@ describe('before the migration is applied', () => {
 });
 
 describe('the text-scan gate', () => {
-  it('keeps a comment off the platform while its scan is off or unreadable, and posts it once active, before any verdict', async () => {
+  it('keeps a comment off the platform while its scan is off or unreadable or has no clean verdict for its text, and posts it after one', async () => {
     try {
       flags.textScan = false;
-      const { comment } = await seed('while scanning is off');
+      const { comment } = await seed('while scanning is off', { scanned: false });
       await runMirror(mirror);
       flags.textScan = 'throw';
       await runMirror(mirror);
@@ -138,6 +139,9 @@ describe('the text-scan gate', () => {
       expect((await mirrorRow(comment.sourceId)).pushAttempts).toBe(0);
       flags.textScan = true;
       expect(await q(`SELECT 1 FROM "EntityModeration"`)).toEqual([]);
+      await runMirror(mirror);
+      expect(posts()).toEqual([]);
+      await scanClean(comment.sourceId);
       await runMirror(mirror);
       expect(posts().map((p) => p.sourceId)).toEqual([comment.sourceId]);
     } finally {
@@ -424,8 +428,8 @@ describe('the reconcile', () => {
 
 describe('the sweep', () => {
   it('re-queues a live comment with no verdict for its current text, up to the cap, and not a scanned one', async () => {
-    const { comment } = await seed('never scanned');
-    const scanned = (await seed('scanned')).comment;
+    const { comment } = await seed('never scanned', { scanned: false });
+    const scanned = (await seed('scanned', { scanned: false })).comment;
     await q(`UPDATE "CommentV3" SET "updatedAt" = now() - interval '6 minutes'`);
     const hashes = await (
       await import('~/server/services/text-scan/submit')
@@ -448,7 +452,7 @@ describe('the sweep', () => {
   });
 
   it('counts an overdue comment as unscanned while text scan is off for it', async () => {
-    await seed('scanning is off');
+    await seed('scanning is off', { scanned: false });
     await q(`UPDATE "CommentV3" SET "updatedAt" = now() - interval '16 minutes'`);
     flags.textScan = false;
     try {
@@ -459,7 +463,7 @@ describe('the sweep', () => {
   });
 
   it('counts an overdue comment as unscanned while scanning is on but has no prompt to scan it with', async () => {
-    await seed('no prompt');
+    await seed('no prompt', { scanned: false });
     await q(`UPDATE "CommentV3" SET "updatedAt" = now() - interval '16 minutes'`);
     const prompts = await q<{ key: string; content: string }>(
       `DELETE FROM "TextScanPrompt" RETURNING key, content`
@@ -473,7 +477,7 @@ describe('the sweep', () => {
   });
 
   it('counts a comment scanned at an old text as unscanned, once its text changes', async () => {
-    const { comment } = await seed('version one');
+    const { comment } = await seed('version one', { scanned: false });
     await q(`UPDATE "CommentV3" SET "updatedAt" = now() - interval '16 minutes'`);
     const submit = await import('~/server/services/text-scan/submit');
     const before = (await submit.currentScanContentHashes('CommentV3', [comment.sourceId])).get(
@@ -657,8 +661,9 @@ describe('the platform ends on what civitai decided', () => {
     );
     await setCommentFlags(prismaRunner(dbMock.dbWrite as never), [id], { hidden });
   };
-  // As the edit path leaves it: new text and time, and the mirror's version bumped.
-  const edit = async (id: number, text: string) => {
+  // As the edit path leaves it: new text and time, and the mirror's version bumped. Unless
+  // `unscanned`, its rescan then finishes clean.
+  const edit = async (id: number, text: string, { unscanned = false } = {}) => {
     await q(`UPDATE "CommentV3" SET content = $2, "updatedAt" = now() WHERE id = $1`, [
       id,
       `<p>${text}</p>`,
@@ -667,6 +672,7 @@ describe('the platform ends on what civitai decided', () => {
       `UPDATE "FeaturePageCommentMirror" SET version = version + 1, "contentAt" = now() WHERE "commentId" = $1`,
       [id]
     );
+    if (!unscanned) await scanClean(id);
   };
   const rename = (userId: number, username: string) =>
     q(`UPDATE "User" SET username = $2 WHERE id = $1`, [userId, username]);
@@ -785,6 +791,7 @@ describe('the platform ends on what civitai decided', () => {
        VALUES ($1, $2, 'reply-1', now())`,
       [reply, OTHER]
     );
+    await scanClean(reply);
     // The parent's author is banned, so the parent is not posted yet.
     await q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [AUTHOR]);
     platform.down = false;
@@ -1006,6 +1013,7 @@ describe('the platform ends on what civitai decided', () => {
        VALUES ($1, $2, 'reply-old', now())`,
       [reply, OTHER]
     );
+    await scanClean(reply);
     await q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [AUTHOR]);
     platform.down = false;
     try {
@@ -1046,6 +1054,54 @@ describe('the platform ends on what civitai decided', () => {
     const row = await mirrorRow(id);
     expect(row.pushedState).not.toBe('retracted');
     expect(row.pushAttempts).toBeGreaterThanOrEqual(mirror.FP_MAX_PUSH_ATTEMPTS);
+  });
+
+  it('an edit is not sent until a finished scan of its new text is clean, then the new text goes', async () => {
+    const id = (await seed('first words')).comment.sourceId;
+    await edit(id, 'second words', { unscanned: true });
+    await runMirror(mirror);
+    expect(posts().map((p) => p.text)).toEqual(['first words']);
+    await scanClean(id);
+    await runMirror(mirror);
+    expect(posts().map((p) => p.text)).toEqual(['first words', 'second words']);
+  });
+
+  it('a failed scan of the current text is not clean: nothing is sent, retried on the hourly wait', async () => {
+    const id = (await seed('scan failed', { scanned: false })).comment.sourceId;
+    await scanClean(id);
+    await q(
+      `UPDATE "EntityModeration" SET status = 'Failed' WHERE "entityType" = 'CommentV3' AND "entityId" = $1`,
+      [id]
+    );
+    await runMirror(mirror);
+    expect(posts()).toEqual([]);
+    const next = (await mirrorRow(id)).nextPushAt as Date;
+    expect(+new Date(next) - Date.now()).toBeGreaterThan(55 * 60_000);
+  });
+
+  it('a scan still in flight for the current text is not a verdict: nothing is sent', async () => {
+    const id = (await seed('being scanned', { scanned: false })).comment.sourceId;
+    await scanClean(id);
+    await q(
+      `UPDATE "EntityModeration" SET status = 'Pending' WHERE "entityType" = 'CommentV3' AND "entityId" = $1`,
+      [id]
+    );
+    await runMirror(mirror);
+    expect(posts()).toEqual([]);
+  });
+
+  it('a finished scan that flagged the text is never a clean verdict: nothing is sent', async () => {
+    const id = (await seed('flagged words', { scanned: false })).comment.sourceId;
+    await scanClean(id);
+    await q(
+      `UPDATE "EntityModeration" SET "triggeredLabels" = '{scam}' WHERE "entityType" = 'CommentV3' AND "entityId" = $1`,
+      [id]
+    );
+    await runMirror(mirror);
+    expect(posts()).toEqual([]);
+    // Finished, so not polled every minute: retried on the hourly wait.
+    const next = (await mirrorRow(id)).nextPushAt as Date;
+    expect(+new Date(next) - Date.now()).toBeGreaterThan(55 * 60_000);
   });
 
   it('a post the platform answers stale is not recorded as pushed, so its text goes again', async () => {
@@ -1251,6 +1307,7 @@ describe('the hide state', () => {
          "nextPushAt" = now(), "pushAttempts" = 0, "pendingDigest" = NULL WHERE "commentId" = $1`,
       [id]
     );
+    await scanClean(id);
   };
   const holdOn = (id: number) =>
     q(
@@ -1743,7 +1800,7 @@ describe('a marker never outlives the want it was written for', () => {
     ['held again by its stored verdict after a rescan', true, false],
     ['held again after a rescan and an edit', true, true],
   ] as const)('%s: the clock runs', async (_, rescan, edited) => {
-    const id = (await seed('held by its verdict')).comment.sourceId;
+    const id = (await seed('held by its verdict', { scanned: false })).comment.sourceId;
     flags.mirror = false;
     await q(
       `INSERT INTO "EntityModeration"("entityType", "entityId", status, "triggeredLabels", result)

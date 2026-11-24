@@ -496,7 +496,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // Every recorded push supersedes the slug's pending request and can start a review build, so
   // bound how many a slug records per window. Past it the commit is told why and nothing is
   // recorded; the next push after the window is recorded as usual.
-  const pushSlot = await takePushReviewSlot(`slug:${slug}`);
+  const pushSlot = await takePushReviewSlot(`slug:${slug}`, null);
   if (!pushSlot.ok) {
     await setCommitStatusSafe({
       slug,

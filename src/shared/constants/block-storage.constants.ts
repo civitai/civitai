@@ -463,9 +463,14 @@ export type AppStorageFeature =
  *   - `registryExport` — `registry: "public"` (the collection's shared documents published to
  *                      registries by the registry adapter).
  *   - `viewerKeyedDocs` — `keyedBy` (viewer-keyed documents, served at `/:c/@me[/:parent]`).
- *                      The runtime ships with it, dark: each collection's writes also wait on
- *                      its own Flipt switch (`app-blocks-storage-viewer-keyed-open`), and every
- *                      `@me` op on the derivation secret (`APP_STORAGE_VIEWER_KEY_SECRET`).
+ *                      ON: the runtime shipped in #10216 (`doc-store-viewer-keyed.ts`,
+ *                      `viewerKeyedRoute` in `doc-store-api.ts`). In production each collection's
+ *                      writes still wait on its own Flipt switch
+ *                      (`app-blocks-storage-viewer-keyed-open`, per app with context
+ *                      `{ collection }`: default on, closed for the migration-targets segment,
+ *                      and closed when the flag is absent or Flipt cannot be read), and every
+ *                      `@me` op needs the derivation secret `APP_STORAGE_VIEWER_KEY_SECRET`
+ *                      (`503` while it is unset).
  *
  * Flip one only in the same change that ships the runtime behind it: an accepted
  * declaration with nothing behind it reads as a working feature to the author and the
@@ -480,7 +485,7 @@ export const APP_STORAGE_ENABLED_FEATURES: Readonly<Record<AppStorageFeature, bo
     perAuthorWriteBudget: false,
     hooks: true,
     registryExport: false,
-    viewerKeyedDocs: false,
+    viewerKeyedDocs: true,
   });
 
 /**

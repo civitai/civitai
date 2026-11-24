@@ -16,8 +16,8 @@ import { dbRead } from '~/server/db/client';
 import { Tracker } from '~/server/clickhouse/client';
 import type { ProtectedContext } from '~/server/createContext';
 import { hydrateBlockSubject } from '~/server/services/blocks/block-collections.service';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
 import {
-  BLOCK_TIP_CAP_PER_DAY,
   BLOCK_TIP_MAX_PER_TIP,
   checkBlockTipRateLimit,
   claimTipIdempotency,
@@ -48,7 +48,7 @@ import { appRateLimitBody, appRateLimitMeta, utcDayReset } from '~/server/utils/
  * Response: `{ ok: true, tip: { toUserId, amount, entityType?, entityId? } }`.
  *
  * PAGE-SAFE via BOUNDED tipping: this endpoint enforces a per-tip cap
- * (BLOCK_TIP_MAX_PER_TIP) AND a per-user daily cap (BLOCK_TIP_CAP_PER_DAY,
+ * (BLOCK_TIP_MAX_PER_TIP) AND a per-user daily cap (the registry's `apps.tip-daily`,
  * reserve-and-refund) BEFORE any money moves — the analogue of the gen-spend
  * `buzzBudget` + per-user daily cap pair. Those caps are what let
  * `social:tip:self` come off PAGE_FORBIDDEN_SCOPES (a page tip is now bounded, no
@@ -200,17 +200,20 @@ export const baseHandler = withAxiom(async function handler(
     // aggregate BEFORE the money moves. Fail-CLOSED on a redis error (503). Over the
     // daily cap → refund the reservation + a 429 with the cap's meta. The reservation
     // stands only if the tip transaction below resolves; any throw refunds it.
+    // The user's daily cap: the registry's `apps.tip-daily` (a KeyValue override, else the code
+    // default). Never throws; read before the reservation, so a refusal reserves nothing extra.
+    const dailyCap = await resolveUserAppLimit('apps.tip-daily', subjectId);
     let capKey: Awaited<ReturnType<typeof reserveBlockTipSpend>>['key'];
     try {
       const reserved = await reserveBlockTipSpend(subjectId, amount);
       capKey = reserved.key;
-      if (reserved.total > BLOCK_TIP_CAP_PER_DAY) {
+      if (reserved.total > dailyCap) {
         await refundBlockTipSpend(capKey, amount);
         // TRANSIENT, like the rate limit: no Buzz moved and the reservation is refunded, so a
         // retry (after the UTC reset, or with a smaller tip) must run rather than replay this.
         const { retryAfterSeconds, resetAt } = utcDayReset();
         const meta = appRateLimitMeta('apps.tip-daily', retryAfterSeconds, {
-          limit: BLOCK_TIP_CAP_PER_DAY,
+          limit: dailyCap,
           // The day's tips before this one, which the refund just gave back.
           used: reserved.total - Math.ceil(amount),
           windowSeconds: 24 * 60 * 60,
@@ -221,7 +224,7 @@ export const baseHandler = withAxiom(async function handler(
           status: 429,
           body: appRateLimitBody(
             meta,
-            `Daily tip limit reached (${BLOCK_TIP_CAP_PER_DAY} Buzz). Try again tomorrow.`
+            `Daily tip limit reached (${dailyCap} Buzz). Try again tomorrow.`
           ),
           transient: true,
         };

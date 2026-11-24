@@ -73,6 +73,7 @@ const {
   syncTurfImages,
   turfCreditedByTeam,
 } = await import('~/server/events/turf/turf.service');
+const { readMyTurfPage } = await import('~/server/events/turf/turf-feed');
 
 const OWNER = 7;
 const keys = turfKeys('e');
@@ -386,6 +387,74 @@ describe('Hat Turf sticker lifetime', () => {
     expect((await rowsOf(image))[0].createdAt).toEqual(placedAt);
     // The bucket opened full at 50 (the mocked transaction does not roll back), and none was spent.
     expect(await stockOf(4)).toBe(50);
+  });
+});
+
+describe("Hat Turf: the viewer's expired hats", () => {
+  const VIEWER = 4;
+  const expiredPage = async (now: Date, cursor?: string, limit = 10, sort?: 'most' | 'fewest') =>
+    readMyTurfPage({
+      event: (await getTurfEvent('e', now))!,
+      userId: VIEWER,
+      sort,
+      cursor,
+      limit,
+      expired: true,
+      now,
+    });
+
+  it('lists own hats past their lifetime, most recently expired first, and nothing else', async () => {
+    override = ttl();
+    const now = later();
+    const [older, newer, live, removed, others] = [
+      await newImage(),
+      await newImage(),
+      await newImage(),
+      await newImage(),
+      await newImage(),
+    ];
+    await sticker(older, VIEWER, hoursBefore(now, 60));
+    await sticker(newer, VIEWER, hoursBefore(now, 50));
+    await sticker(live, VIEWER, hoursBefore(now, 1));
+    await sticker(removed, VIEWER, hoursBefore(now, 50), hoursBefore(now, 49));
+    await sticker(others, 5, hoursBefore(now, 50));
+    expect((await expiredPage(now)).ids).toEqual([newer, older]);
+    // An expired hat has no rank: a Hat Turf sort leaves the order as it is.
+    expect((await expiredPage(now, undefined, 10, 'fewest')).ids).toEqual([newer, older]);
+    const first = await expiredPage(now, undefined, 1);
+    expect(first.ids).toEqual([newer]);
+    expect((await expiredPage(now, first.nextCursor, 1)).ids).toEqual([older]);
+  });
+
+  it('a hat at exactly its lifetime is on the expired list and off the live one', async () => {
+    override = ttl();
+    const now = later();
+    const image = await newImage();
+    await sticker(image, VIEWER, hoursBefore(now, 48));
+    expect((await expiredPage(now)).ids).toEqual([image]);
+    const live = await readMyTurfPage({
+      event: (await getTurfEvent('e', now))!,
+      userId: VIEWER,
+      limit: 10,
+      now,
+    });
+    expect(live.ids).toEqual([]);
+  });
+
+  it('placing the hat again takes the image off the list', async () => {
+    override = ttl();
+    const now = later();
+    const image = await newImage();
+    await sticker(image, VIEWER, hoursBefore(now, 50));
+    expect((await expiredPage(now)).ids).toEqual([image]);
+    await place(VIEWER, image, now);
+    expect((await expiredPage(now)).ids).toEqual([]);
+  });
+
+  it('with no lifetime configured, lists nothing', async () => {
+    const now = later();
+    await sticker(await newImage(), VIEWER, hoursBefore(now, 500));
+    expect((await expiredPage(now)).ids).toEqual([]);
   });
 });
 

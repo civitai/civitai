@@ -8,19 +8,34 @@ import {
 import type { NextApiResponse } from 'next';
 import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 import { boundedClusterCall, takeClusterWindowCount } from '~/server/utils/cluster-window-count';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
+import type { AppUsageLimitId } from '~/shared/constants/app-usage-limits';
+import { getUsageLimitDef } from '~/shared/constants/usage-limits';
+import type { SessionUser } from '~/types/session';
+
+/** A registry entry's code-default limit and its rolling window. */
+function codeDefault(id: AppUsageLimitId): RateLimit {
+  const def = getUsageLimitDef(id);
+  if (def.window.type !== 'rolling') throw new Error(`${id} is not a rolling window`);
+  return { max: def.base, windowSeconds: def.window.seconds };
+}
 
 /**
  * The bundle-submit rate limit, shared by both submit routes (the CLI's token route and the session
  * route): decode + ZIP extract + manifest validation of up to ~72 MiB is heavy, so the window is tight.
  */
-export const SUBMIT_RATE_LIMIT = { max: 10, windowSeconds: 60 } as const;
+export const SUBMIT_RATE_LIMIT_ID = 'apps.version-submits';
+/** The code default; the enforced limit is the user's resolved `apps.version-submits`. */
+export const SUBMIT_RATE_LIMIT = codeDefault(SUBMIT_RATE_LIMIT_ID);
 
 /**
  * Pushes recorded for review: per slug on the git-push webhook, per user on the web manifest editor.
  * Each recorded push supersedes the previous pending request and can start a review build, so this
  * bounds build and moderator-alert churn rather than CPU.
  */
-export const PUSH_REVIEW_RATE_LIMIT = { max: 20, windowSeconds: 60 * 60 } as const;
+export const PUSH_REVIEW_RATE_LIMIT_ID = 'apps.push-review';
+/** The code default; the enforced limit is the resolved `apps.push-review`. */
+export const PUSH_REVIEW_RATE_LIMIT = codeDefault(PUSH_REVIEW_RATE_LIMIT_ID);
 
 export type RateLimit = { readonly max: number; readonly windowSeconds: number };
 
@@ -59,8 +74,8 @@ export type SubmitRateDecision =
   | { ok: true }
   /** The limiter could not be read: refuse (503), never let the submit through un-limited. */
   | { ok: false; reason: 'unavailable' | 'malformed' }
-  /** `used`: this window's count, this refused submit included. */
-  | { ok: false; reason: 'limited'; retryAfterSeconds: number; used: number };
+  /** `used`: this window's count, this refused submit included; `limit`: the limit it passed. */
+  | { ok: false; reason: 'limited'; retryAfterSeconds: number; used: number; limit: number };
 
 /**
  * Counts one submit against `subject` (e.g. `key:<apiKeyId>`, `user:<id>`).
@@ -70,8 +85,13 @@ export type SubmitRateDecision =
  * silent half-open parks the MULTI until TCP keepalive) or a non-finite count (`NaN > max` is false)
  * is a refusal, not a pass.
  */
-export async function takeSubmitSlot(subject: string): Promise<SubmitRateDecision> {
-  return takeRateSlot('submit', subject, SUBMIT_RATE_LIMIT);
+export async function takeSubmitSlot(
+  subject: string,
+  /** The submitting user, whose resolved `apps.version-submits` is the limit (both subjects). */
+  user: SessionUser | number | null
+): Promise<SubmitRateDecision> {
+  const max = await resolveUserAppLimit(SUBMIT_RATE_LIMIT_ID, user);
+  return takeRateSlot('submit', subject, { ...SUBMIT_RATE_LIMIT, max });
 }
 
 /**
@@ -81,9 +101,12 @@ export async function takeSubmitSlot(subject: string): Promise<SubmitRateDecisio
  * the limit exists to bound build and alert churn rather than server load.
  */
 export async function takePushReviewSlot(
-  subject: string
+  subject: string,
+  /** The pushing user where there is one (the manifest editor); null for a slug's webhook push. */
+  user: SessionUser | number | null
 ): Promise<{ ok: true } | { ok: false; retryAfterSeconds: number }> {
-  const decision = await takeRateSlot('push', subject, PUSH_REVIEW_RATE_LIMIT);
+  const max = await resolveUserAppLimit(PUSH_REVIEW_RATE_LIMIT_ID, user);
+  const decision = await takeRateSlot('push', subject, { ...PUSH_REVIEW_RATE_LIMIT, max });
   if (!decision.ok && decision.reason === 'limited') {
     return { ok: false, retryAfterSeconds: decision.retryAfterSeconds };
   }
@@ -106,7 +129,7 @@ async function takeRateSlot(
   if (count <= limit.max) return { ok: true };
   // Bound the 429-path TTL read (#28) too; on a deadline/throw fall back to the full window.
   const retryAfterSeconds = await store.ttl().catch(() => limit.windowSeconds);
-  return { ok: false, reason: 'limited', retryAfterSeconds, used: count };
+  return { ok: false, reason: 'limited', retryAfterSeconds, used: count, limit: limit.max };
 }
 
 /**
@@ -115,10 +138,11 @@ async function takeRateSlot(
  */
 export function sendSubmitRateLimited(
   res: NextApiResponse,
-  slot: { retryAfterSeconds: number; used: number }
+  slot: { retryAfterSeconds: number; used: number; limit: number }
 ): void {
-  const { max, windowSeconds } = SUBMIT_RATE_LIMIT;
-  const meta = appRateLimitMeta('apps.version-submits', slot.retryAfterSeconds, {
+  const { windowSeconds } = SUBMIT_RATE_LIMIT;
+  const max = slot.limit;
+  const meta = appRateLimitMeta(SUBMIT_RATE_LIMIT_ID, slot.retryAfterSeconds, {
     limit: max,
     used: slot.used,
     windowSeconds,

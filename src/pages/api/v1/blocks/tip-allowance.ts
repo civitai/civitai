@@ -8,6 +8,7 @@ import {
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
 import { readBlockTipAllowance } from '~/server/utils/block-tip-rate-limit';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
@@ -16,7 +17,7 @@ import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-li
  *
  * Returns the viewer's CURRENT daily tip allowance `{ cap, spent, remaining }`
  * from the SAME authoritative `tip-cap` Redis counter the tip endpoint's
- * reserve/refund path mutates (BLOCK_TIP_CAP_PER_DAY). This lets a block show a
+ * reserve/refund path mutates (the registry's `apps.tip-daily`). This lets a block show a
  * genuinely-tracked remaining allowance and disable the tip button at the true
  * ceiling — instead of the dead client-side full-cap guess (`localStorage` is
  * inert in the opaque-origin sandbox).
@@ -90,7 +91,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 
   try {
-    const allowance = await readBlockTipAllowance(subjectUserId);
+    // The same cap the tip enforces: the registry's, as resolved for this user.
+    const allowance = await readBlockTipAllowance(
+      subjectUserId,
+      await resolveUserAppLimit('apps.tip-daily', subjectUserId)
+    );
     res.status(200).json(allowance);
   } catch {
     // Fail-CLOSED (redis error) → retryable 503, mirroring the reserve path.

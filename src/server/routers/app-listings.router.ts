@@ -121,6 +121,7 @@ import {
   rateLimitedTrpcError,
   rateLimitMetaOfServiceError,
 } from '~/server/utils/app-rate-limit';
+import { usageLimits } from '~/shared/constants/usage-limits';
 
 /**
  * App Store Listings (W13) — asset pipeline + off-site submission router (NEW
@@ -759,15 +760,13 @@ export const appListingsRouter = router({
    */
   submitExternalListing: appDeveloperProcedure
     .use(
-      rateLimit({
+      rateLimit(
         // A row-creating write reachable by non-mod dev-testers — heavier than
         // the store reads, so a conservative hourly cap throttles draft-spam /
         // slug-squat. The per-user PENDING cap in the service bounds the standing
         // orphan-draft count; this bounds the submit RATE.
-        limit: 10,
-        period: 3600,
-        errorMessage: 'Too many submissions — slow down.',
-      })
+        usageLimits('apps.listing-submits')
+      )
     )
     .input(submitExternalListingSchema)
     .mutation(async ({ ctx, input }) => {
@@ -875,13 +874,7 @@ export const appListingsRouter = router({
    */
   updateListing: appDeveloperProcedure
     .meta(listingMediaCliScope)
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many edits — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.listing-edits')))
     .input(updateListingSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -970,13 +963,7 @@ export const appListingsRouter = router({
    */
   updateRevisionDraft: appDeveloperProcedure
     .meta(listingMediaCliScope)
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many edits — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.listing-edits')))
     .input(updateRevisionDraftSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -1022,7 +1009,7 @@ export const appListingsRouter = router({
   getMyListingForApp: appDeveloperProcedure
     .meta(listingMediaCliScope)
     .use(
-      rateLimit({
+      rateLimit(
         // A READ limit, shaped like this router's other reads (`getAppDetail`,
         // `listAvailable`, `listReviews` are all 60/60) rather than like the hourly
         // write caps — it must not interrupt authoring. The media editor invalidates
@@ -1030,10 +1017,8 @@ export const appListingsRouter = router({
         // (a screenshot batch + icon + cover + reorders) is well under a refetch a
         // second; the CLI calls it once per `app listing`. 60/60 clears both with
         // room, while turning an unbounded enumeration into a metered one.
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many listing lookups — slow down.',
-      })
+        usageLimits('apps.listing-lookups')
+      )
     )
     .input(getMyListingForAppSchema)
     .query(async ({ ctx, input }) => {
@@ -1088,13 +1073,7 @@ export const appListingsRouter = router({
    */
   submitListingRevision: appDeveloperProcedure
     .meta(listingMediaCliScope)
-    .use(
-      rateLimit({
-        limit: 20,
-        period: 3600,
-        errorMessage: 'Too many revision submissions — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.listing-revision-submits')))
     .input(submitListingRevisionSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -1122,13 +1101,7 @@ export const appListingsRouter = router({
    */
   persistAssetImage: appDeveloperProcedure
     .meta(listingMediaCliScope)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 3600,
-        errorMessage: 'Too many image uploads — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.image-uploads')))
     .input(persistListingAssetImageSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -1149,13 +1122,7 @@ export const appListingsRouter = router({
    * (~30/hr) — it triggers an outbound fetch per call.
    */
   fetchListingMetaFromUrl: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many preview lookups — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.listing-previews')))
     .input(fetchListingMetaSchema)
     .query(async ({ input }) => {
       const { fetchListingMeta } = await import('~/server/services/blocks/listing-meta.service');
@@ -1173,13 +1140,7 @@ export const appListingsRouter = router({
    * CF upload per call). Ownership is bound to the caller.
    */
   ingestAssetFromUrl: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many image imports — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.image-imports')))
     .input(ingestListingAssetFromUrlSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -1200,13 +1161,7 @@ export const appListingsRouter = router({
    */
   ingestAssetFromDataUri: appDeveloperProcedure
     .meta(listingMediaCliScope)
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many image imports — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.image-imports')))
     .input(ingestListingAssetFromDataUriSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -1520,14 +1475,12 @@ export const appListingsRouter = router({
    */
   reportListing: protectedProcedure
     .use(
-      rateLimit({
+      rateLimit(
         // Report-spam guard (mirrors the submit rate-limit idiom). The DB
         // one-open-report-per-(listing,reporter) partial-unique bounds duplicate
         // reports; this bounds the report RATE across listings.
-        limit: 20,
-        period: 3600,
-        errorMessage: 'Too many reports — slow down.',
-      })
+        usageLimits('apps.listing-reports')
+      )
     )
     .input(reportListingSchema)
     .mutation(async ({ ctx, input }) => {
@@ -1891,13 +1844,7 @@ export const appListingsRouter = router({
    * via `mapOffsiteError`.
    */
   unpublishOwnListing: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many listing changes — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.listing-changes')))
     .input(unpublishOwnListingSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -1920,13 +1867,7 @@ export const appListingsRouter = router({
    * NOT_TRANSITIONABLE→BAD_REQUEST).
    */
   republishOwnListing: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many listing changes — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.listing-changes')))
     .input(republishOwnListingSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -2066,13 +2007,7 @@ export const appListingsRouter = router({
   /** Unified store listing over BOTH kinds — approved rows, keyset-paginated. */
   listAvailable: publicProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(listAppListingsSchema)
     .query(async ({ ctx, input }) => {
       const { scope, floor } = applyStoreGates(ctx, 'trpc-list');
@@ -2140,13 +2075,7 @@ export const appListingsRouter = router({
    */
   listMyApps: protectedProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .query(async ({ ctx }) => {
       const { scope, floor } = applyStoreGates(ctx, 'trpc-my-apps');
       if (scope === 'none') {
@@ -2171,13 +2100,7 @@ export const appListingsRouter = router({
    */
   hideMyApp: protectedProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.hidden-apps')))
     .input(myAppsHideInputSchema)
     .mutation(async ({ ctx, input }) => {
       // The same dark-store refusal as `listMyApps`, read straight off the gate's ctx: not
@@ -2195,13 +2118,7 @@ export const appListingsRouter = router({
    */
   unhideMyApp: protectedProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.hidden-apps')))
     .input(myAppsHideInputSchema)
     .mutation(async ({ ctx, input }) => {
       // The same dark-store refusal as `listMyApps`, read straight off the gate's ctx: not
@@ -2242,13 +2159,7 @@ export const appListingsRouter = router({
    * remediation, sending a maintainer to reconcile orphaned level changes that cannot exist.
    */
   setListingVisibility: appDeveloperProcedure
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 3600,
-        errorMessage: 'Too many visibility changes — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.listing-visibility-changes')))
     .input(setListingVisibilitySchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -2328,13 +2239,7 @@ export const appListingsRouter = router({
    */
   getDeveloperTrackRecord: publicProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(getDeveloperTrackRecordSchema)
     .query(async ({ ctx, input }): Promise<DeveloperTrackRecord | null> => {
       const { scope, floor } = applyStoreGates(ctx, 'trpc-track-record');
@@ -2363,13 +2268,7 @@ export const appListingsRouter = router({
    */
   listForks: publicProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(listListingForksSchema)
     .query(async ({ ctx, input }): Promise<ListingForksPage | null> => {
       const { isAppBlocksForkEnabled } = await import('~/server/services/app-blocks-flag');
@@ -2444,13 +2343,7 @@ export const appListingsRouter = router({
   /** Per-listing public detail, by EXACTLY ONE of slug or id (approved only). */
   getAppDetail: publicProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(getAppListingDetailSchema)
     .query(async ({ ctx, input }) => {
       const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
@@ -2478,13 +2371,7 @@ export const appListingsRouter = router({
    */
   getAppHiddenState: publicProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(getAppListingDetailSchema)
     .query(async ({ ctx, input }) => {
       const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
@@ -2502,13 +2389,7 @@ export const appListingsRouter = router({
 
   getAppCard: publicProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many marketplace requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.marketplace-reads')))
     .input(getAppListingDetailSchema)
     .query(async ({ ctx, input }) => {
       const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
@@ -2567,13 +2448,7 @@ export const appListingsRouter = router({
    */
   upsertReview: protectedProcedure
     .use(enforceAppListingsWriteFlag)
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 60,
-        errorMessage: 'Too many review submissions — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.review-submits')))
     .input(upsertAppListingReviewSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -2606,13 +2481,7 @@ export const appListingsRouter = router({
   /** PUBLIC: keyset-paginated reviews for a listing (newest-first, mod-filtered). */
   listReviews: publicProcedure
     .use(enforceAppListingsReadFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many review requests — slow down.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.review-reads')))
     .input(listAppListingReviewsSchema)
     .query(async ({ ctx, input }) => {
       const scope = applyStoreScope(ctx, 'trpc-reviews');

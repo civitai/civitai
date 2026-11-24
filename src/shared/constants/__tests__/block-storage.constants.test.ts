@@ -27,7 +27,9 @@ describe('APP_STORAGE_ENABLED_FEATURES', () => {
   // A ledger: turning a feature on must be a deliberate edit of this line AND of the
   // runtime behind it. `hooks` is on: the write path calls them (`doc-store-hook.ts`), and who
   // may declare one is the `app-blocks-storage-hooks` cohort's to decide (`storage-hooks.ts`).
-  it('ships with permission hooks on, and anyone-writes, owner writes, log collections, TTL, per-author write budgets, registry export and viewer-keyed documents switched off', () => {
+  // `viewerKeyedDocs` is on: the `@me` routes serve it (`doc-store-viewer-keyed.ts`), and each
+  // collection's writes wait on the `app-blocks-storage-viewer-keyed-open` switch.
+  it('ships with permission hooks and viewer-keyed documents on, and anyone-writes, owner writes, log collections, TTL, per-author write budgets and registry export switched off', () => {
     expect(APP_STORAGE_ENABLED_FEATURES).toEqual({
       anyoneWrites: false,
       ownerWrites: false,
@@ -36,7 +38,7 @@ describe('APP_STORAGE_ENABLED_FEATURES', () => {
       perAuthorWriteBudget: false,
       hooks: true,
       registryExport: false,
-      viewerKeyedDocs: false,
+      viewerKeyedDocs: true,
     });
     expect(Object.isFrozen(APP_STORAGE_ENABLED_FEATURES)).toBe(true);
   });
