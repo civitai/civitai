@@ -191,6 +191,15 @@ const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif
 /** Containers every current browser plays. The codec inside is the browser's call: one it cannot
  *  decode fires the element's `error`, which the grid renders as the placeholder. */
 const VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
+/** A song's types every current browser plays. */
+const AUDIO_TYPES = new Set([
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/aac',
+  'audio/ogg',
+  'audio/wav',
+  'audio/webm',
+]);
 
 const OPAQUE = 'application/octet-stream';
 
@@ -199,14 +208,15 @@ const normalize = (type: string | null | undefined) =>
 
 /**
  * The content type to serve, from the first candidate on the whitelist (the store's header, then the
- * row's `mimeType`). An image of any other type goes out opaque, never as svg or html. A video of any
- * other type returns `null`: it is refused rather than offered as a download.
+ * row's `mimeType`). An image or song of any other type goes out opaque, never as svg or html. A
+ * video of any other type returns `null`: it is refused rather than offered as a download.
  */
 export function heldMediaContentType(
   mediaType: string,
   candidates: (string | null | undefined)[]
 ): string | null {
-  const allowed = mediaType === 'video' ? VIDEO_TYPES : IMAGE_TYPES;
+  const allowed =
+    mediaType === 'video' ? VIDEO_TYPES : mediaType === 'audio' ? AUDIO_TYPES : IMAGE_TYPES;
   const hit = candidates.map(normalize).find((type) => allowed.has(type));
   if (hit) return hit;
   return mediaType === 'video' ? null : OPAQUE;
