@@ -282,10 +282,14 @@ func TestRequestFallbackReasonsAreSeeded(t *testing.T) {
 
 // requestDeterminedRe is the class of fallback reasons a request alone decides (its method, region,
 // user agent, credential form, path, query or input), as names: anchored, as a label matcher is.
+// It mirrors the reason set an external consumer of feed_go_fallback_total subtracts as
+// request-determined (plus `bearer-token`, seeded here on the REST model routes): a change to either
+// list must be made to both, and to unservedRequestReasons below.
 var requestDeterminedRe = regexp.MustCompile(`^(?:input-.+|method|region-blocked|crawler-user-agent|verified-bot|bearer-token|bearer-malformed|bearer-multiple-headers|bearer-query-token|model-cursor|model-sort-recently-added|model-collection-id|collection-id|collection-tag-id|ids-not-int4|infinite-user-zero|prioritized-cursor|v1-models-(?:origin|session-cookie|conditional|etag|host|path|id|ids|query|query-encoding|authed-only|sort|limit|page-limit|cursor|input-enum|input-number|input-bool|input-duplicate|tagname|user|rating|favorites|hidden|checkpointType|needsReview|paidAccess|hidePaid|onSale|modelVersionIds|supportsGeneration|fromPlatform|followed|newCreators|collectionId|collectionItemStatus|fileFormats|pending|collectionTagId|availability|disablePoi|disableMinor|isFeatured|poiOnly|minorOnly|allowNoCredit|allowCommercialUse|allowDerivatives|allowDifferentLicense|browsingLevel|excludedModelIds|excludedUserIds|excludedTagIds|excludedImageIds)|v1-(?:host|path|query-encoding|input-duplicate|input-number|input-username|input-period|input-type|input-ids|input-bool|image-id|tags|base-models|user-zero|model-only|sort|with-tags|cursor|legacy-cursor|page-limit))$`)
 
 // unservedRequestReasons are the request-determined reasons no public route produces: GET
-// /api/v1/images's own (feed.ParseV1, feed.ServeV1), which is shadowed only.
+// /api/v1/images's own (feed.ParseV1, feed.ServeV1), which is shadowed only. Part of the same mirrored
+// reason set as requestDeterminedRe: keep it in step with that consumer's list.
 var unservedRequestReasons = []string{
 	"v1-host", "v1-path", "v1-query-encoding", "v1-input-duplicate", "v1-input-number",
 	"v1-input-username", "v1-input-period", "v1-input-type", "v1-input-ids", "v1-input-bool",
