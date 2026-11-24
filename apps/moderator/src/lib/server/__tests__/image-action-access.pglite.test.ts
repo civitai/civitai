@@ -269,6 +269,39 @@ describe('Bulk Image Manager', () => {
     });
   });
 
+  it('withholds the whole batch, rather than failing to load, when one chunk of the read fails', async () => {
+    // One image past a chunk, so the read takes two transactions.
+    const filler = Array.from({ length: 50 }, (_, k) => 990000400 + k);
+    await db.exec(`INSERT INTO "Image" (id, url, ingestion, "blockedFor", "userId") VALUES
+      ${filler.map((id) => `(${id}, 'filler-${id}', 'Scanned', NULL, 9)`).join(', ')}`);
+    const loadAll = async () =>
+      (
+        (await bulkPage.load({
+          url: new URL(
+            `https://mod.test/retool/bulk-image-manager?source=imageIds&q=${[
+              CONTROL,
+              ...filler,
+            ].join(',')}`
+          ),
+          locals: { user: WITHOUT_GRANT, grants: GRANTS },
+        } as never)) as { batch: { items: { id: number; restricted: boolean }[] } }
+      ).batch.items;
+    expect((await loadAll()).filter((i) => i.restricted)).toEqual([]);
+
+    const client = dbHandle.current as { transaction: () => unknown };
+    const transaction = client.transaction.bind(client);
+    let calls = 0;
+    vi.spyOn(client, 'transaction').mockImplementation(() => {
+      calls += 1;
+      if (calls === 2) throw new Error('canceling statement due to statement timeout');
+      return transaction();
+    });
+    const items = await loadAll();
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(items).toHaveLength(51);
+    expect(items.every((i) => i.restricted)).toBe(true);
+  });
+
   it.each([
     ['restore', {}, writes.restoreImages],
     ['setFlag', { flagValue: 'minor:true' }, writes.setImageFlag],

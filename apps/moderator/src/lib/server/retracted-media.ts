@@ -20,6 +20,7 @@ import { dbWrite } from './db';
 import { holdsCsamReview } from './held-media';
 import { WITHHELD_REFUSED, SCANNER_UNAVAILABLE_REFUSED } from '$lib/held-media';
 import { insertModActivity } from './mod-activity';
+import { logToAxiom } from './axiom';
 import { readScannerCsamVerdict, readScannerCsamVerdicts } from './review-batch';
 
 export const scannerVerdicts = createScannerVerdictCache(readScannerCsamVerdict);
@@ -133,7 +134,7 @@ async function viewableToNonGrant(
 }
 
 /** Ids `restrictedImageIds` reads in one go, so a large selection is several bounded reads. */
-const RESTRICTED_READ_PAGE = 200;
+const RESTRICTED_READ_PAGE = 50;
 
 /**
  * Which of these images a moderator without `csamReview` is refused (`kept`), so a list withholds
@@ -240,6 +241,27 @@ export function withheldRow<T extends object>(row: T) {
 /** `restrictedImageAccess`'s kept ids. */
 export async function restrictedImageIds(imageIds: number[], opts: { csamReview: boolean }) {
   return (await restrictedImageAccess(imageIds, opts)).kept;
+}
+
+/** `restrictedImageIds` for a list a page draws: a failed read withholds every id rather than
+ *  failing the page. */
+export async function listWithheldIds(
+  imageIds: number[],
+  opts: { csamReview: boolean },
+  list: string
+) {
+  return restrictedImageIds(imageIds, opts).catch((e) => {
+    void logToAxiom({
+      name: 'image-queue-withheld-read-failed',
+      type: 'error',
+      payload: {
+        list,
+        count: imageIds.length,
+        message: e instanceof Error ? e.message : String(e),
+      },
+    });
+    return new Set(imageIds);
+  });
 }
 
 /** The images among these withheld from `user` (`restrictedImageIds`). */
