@@ -520,9 +520,9 @@ export type TrainingVersionDetail = {
   jobId: string | null;
   trainingResults: TrainingResults;
   /** Set only for a Training Studio run, whose dataset is per-item blobs on this workflow (its
-   *  `Training Data` row points at the trained model). Read from model meta, not file metadata,
-   *  which the owner can edit, and must match this version's own run: the model's other versions
-   *  may be ordinary zip runs. */
+   *  `Training Data` row points at the trained model). Read from version or model meta, not file
+   *  metadata, which the owner can edit, and must match this version's own run: the model's other
+   *  versions may be ordinary zip runs. */
   studioWorkflowId: string | null;
 };
 
@@ -545,20 +545,25 @@ export async function getTrainingVersionDetail(
       'm.name as modelName',
       'u.id as userId',
       'u.username',
-      sql<string | null>`m.meta->>'trainingStudioWorkflowId'`.as('modelStudioWorkflowId'),
+      // The version's own link, else its model's (a draft made before versions carried one).
+      sql<
+        string | null
+      >`COALESCE(mv.meta->>'trainingStudioWorkflowId', m.meta->>'trainingStudioWorkflowId')`.as(
+        'linkedStudioWorkflowId'
+      ),
     ])
     .where('mv.id', '=', versionId)
     .executeTakeFirst();
   if (!version) return null;
 
   const trainingResults = await getTrainingResults(versionId);
-  const { modelStudioWorkflowId, ...rest } = version;
+  const { linkedStudioWorkflowId, ...rest } = version;
 
   return {
     ...rest,
     studioWorkflowId:
-      modelStudioWorkflowId && trainingResults?.workflowId === modelStudioWorkflowId
-        ? modelStudioWorkflowId
+      linkedStudioWorkflowId && trainingResults?.workflowId === linkedStudioWorkflowId
+        ? linkedStudioWorkflowId
         : null,
     workflowId: trainingResults?.workflowId ?? null,
     jobId: trainingResults?.jobId ?? null,

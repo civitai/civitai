@@ -195,6 +195,26 @@ describe('archiveStudioDataset', () => {
     });
   });
 
+  it('reads the run of a version added to a model that never came from the Studio', async () => {
+    const added = placeholder();
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue({
+      ...added,
+      modelVersion: {
+        meta: { trainingStudioWorkflowId: 'wf-added' },
+        model: { ...added.modelVersion.model, meta: null },
+      },
+    });
+    getWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND' }));
+
+    await expect(archiveStudioDataset(7)).resolves.toMatchObject({
+      outcome: 'unavailable',
+      reason: 'workflow no longer exists',
+    });
+    expect(getWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ path: { workflowId: 'wf-added' } })
+    );
+  });
+
   it('never stores an empty zip: a run whose blobs all fail is retried, then given up on', async () => {
     getWorkflow.mockResolvedValue(workflowWith([{ air: 'AAA.png', caption: 'x' }]));
     fetchMock.mockResolvedValue(new Response('', { status: 503 }));

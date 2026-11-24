@@ -10,6 +10,7 @@
     modelPageUrl,
     navigate,
     publishUrl,
+    publishVersionUrl,
   } from '$lib/host';
   import { loraBlobAir } from '$lib/train-core';
   import { publishShareChoice } from '$lib/publish-url-core';
@@ -38,6 +39,7 @@
     IconBoltFilled,
     IconSparkles,
     IconUpload,
+    IconVersions,
     IconExternalLink,
   } from '@tabler/icons-svelte';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
@@ -551,16 +553,23 @@
   let ownRights = $state(false);
   let shareDataset = $state(false);
   let shareTouched = $state(false);
+  const publishRequest = $derived(
+    publishEpoch
+      ? {
+          workflowId: d.workflowId,
+          epoch: publishEpoch.number,
+          ...publishShareChoice(shareTouched, ownRights, shareDataset),
+        }
+      : null
+  );
   const publishLink = $derived.by(() => {
     const toUrl = publishUrl();
-    if (!toUrl || !publishEpoch) return null;
-    return hostLink(
-      toUrl({
-        workflowId: d.workflowId,
-        epoch: publishEpoch.number,
-        ...publishShareChoice(shareTouched, ownRights, shareDataset),
-      })
-    );
+    return toUrl && publishRequest ? hostLink(toUrl(publishRequest)) : null;
+  });
+  // The main app asks which of the owner's models the run goes on.
+  const publishVersionLink = $derived.by(() => {
+    const toUrl = publishVersionUrl();
+    return toUrl && publishRequest ? hostLink(toUrl(publishRequest)) : null;
   });
   const dataPolicyUrl = $derived(hostConfig().dataPolicyUrl);
   function setOwnRights(next: boolean) {
@@ -577,17 +586,18 @@
   const modelLink = $derived.by(() => {
     const toUrl = modelPageUrl();
     if (!toUrl || d.modelId == null) return null;
-    return hostLink(toUrl({ modelId: d.modelId }));
+    return hostLink(toUrl({ modelId: d.modelId, modelVersionId: d.modelVersionId }));
   });
   // The run keeps its modelId after the owner deletes the model, so ask once per id (a primitive,
   // so the training poll's fresh `d` doesn't re-ask), and only when there's a link to drop. Never
   // settles on the server: SSR and hydration both render the pending branch.
   const runModelId = $derived(modelLink ? d.modelId : undefined);
+  const runModelVersionId = $derived(modelLink ? d.modelVersionId : undefined);
   const modelLive = $derived(
     runModelId == null
       ? null
       : browser
-        ? backend().modelLive(runModelId)
+        ? backend().modelLive(runModelId, runModelVersionId)
         : new Promise<boolean>(() => {})
   );
 
@@ -1350,6 +1360,11 @@
             <a {...publishLink} class={LINK_FILLED}>
               <IconUpload size={14} stroke={2} />Publish a model page
             </a>
+            {#if publishVersionLink && !link}
+              <a {...publishVersionLink} class={LINK_OUTLINE}>
+                <IconVersions size={14} stroke={2} />Add as a new version
+              </a>
+            {/if}
             {#if link}
               <a {...link} class={LINK_OUTLINE}>
                 <IconExternalLink size={14} stroke={2} />View draft
@@ -1363,6 +1378,8 @@
                 Creates a draft model page on Civitai from epoch {publishEpoch.number}{publishEpoch ===
                 recommended
                   ? ' (recommended)'
+                  : ''}{publishVersionLink
+                  ? ', or a draft version on one of your existing models'
                   : ''} — you review, finish, and publish it there. Nothing goes public until you do.
               </p>
             {/if}
