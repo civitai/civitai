@@ -16,6 +16,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, clickhouseLongQueries: null }));
 
 const { awardEventPrizes, comebackCup } = await import('~/server/events/scoring/event-prizes');
+const { comebackPace } = await import('~/server/events/scoring/comeback-pace');
 const { loadTeamAwards } = await import('~/server/events/scoring/team-awards');
 const { refreshStandings } = await import('~/server/events/scoring/cosmetic-placement.service');
 const { eventSeasonKeys, LIVE_BUCKET_MS } = await import('~/server/events/points/keys');
@@ -223,6 +224,29 @@ describe('comebackCup', () => {
         parsed
       ).winners
     ).toEqual(['B']);
+  });
+});
+
+describe('comebackPace', () => {
+  it("ranks each team's week so far against its own pace, over the days played, and says no more", async () => {
+    dbMock.dbRead.cosmetic.findUnique.mockResolvedValue({
+      data: { url: 'cup-badge', animated: true },
+    } as never);
+    const json = { mode: 'live', prizes: { comeback: comeback('shadow') } };
+    // Six days in: Blue's 1000 over its 20 a day is +733%; Pink's 1000 over its 200 a day is -17%
+    // (over the full seven days it would read -29%).
+    const pace = await comebackPace(event, json, new Date('2026-11-30T00:00:00.000Z'));
+    expect(pace).toEqual({
+      teams: [
+        { team: 'Blue', pct: 733 },
+        { team: 'Pink', pct: -17 },
+      ],
+      week: WEEK,
+      badge: { url: 'cup-badge', animated: true },
+    });
+    expect(await comebackPace(event, json, new Date('2026-11-23T12:00:00.000Z'))).toBeNull();
+    const off = { mode: 'live', prizes: { comeback: comeback('off') } };
+    expect(await comebackPace(event, off, new Date('2026-11-30T00:00:00.000Z'))).toBeNull();
   });
 });
 

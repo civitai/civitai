@@ -1,0 +1,84 @@
+.card {
+  padding: 16px;
+  border-radius: 18px;
+}
+
+.art {
+  position: absolute;
+  pointer-events: none;
+  object-fit: cover;
+  right: -16px;
+  top: -16px;
+  width: 260px;
+  height: 130px;
+  object-position: 50% 52%;
+  mask-image: linear-gradient(90deg, transparent, #000 45%);
+
+  @container (max-width: 639px) {
+    right: -14px;
+    top: -14px;
+    width: 180px;
+    height: 110px;
+  }
+}
+
+.play {
+  position: absolute;
+  right: 20px;
+  top: 14px;
+  width: 130px;
+  height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  @container (max-width: 639px) {
+    right: 8px;
+    top: 8px;
+    width: 100px;
+    height: 84px;
+  }
+}
+
+// Own pace is the middle of the track; the bar runs from 0 to twice it.
+.track {
+  position: relative;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+
+  > i {
+    position: absolute;
+    inset: 0 auto 0 0;
+    border-radius: 3px;
+  }
+
+  > b {
+    position: absolute;
+    top: -4px;
+    bottom: -4px;
+    left: 50%;
+    width: 2px;
+    border-radius: 1px;
+    background: #fff;
+    opacity: 0.7;
+  }
+}
+
+.explainer {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  color: #c1c2c5;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(255, 255, 255, 0.09);
+
+  b {
+    color: #fff;
+  }
+}
