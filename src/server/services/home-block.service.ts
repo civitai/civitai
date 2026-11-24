@@ -346,6 +346,8 @@ export type HomeBlockWithData = {
   userId?: number;
   index?: number | null;
   sourceId?: number | null;
+  /** The source row's owner, on `getHomeBlocks` rows read with `includeSource`. */
+  source?: { userId: number } | null;
   collection?: GetCollectionWithItems;
   leaderboards?: GetLeaderboardsWithResults;
   announcements?: GetAnnouncements;
