@@ -348,7 +348,7 @@ async function syncLikedModel({
 }) {
   // primary: the review this request just wrote decides the answer.
   const liked = await dbWrite.resourceReview.findFirst({
-    where: { userId, modelId, recommended: true },
+    where: { userId, modelId, recommended: true, exclude: false, tosViolation: false },
     select: { id: true },
   });
   // The review is saved; a refused or failed bookmark must not turn that into an error.
@@ -442,9 +442,19 @@ export const upsertResourceReview = async ({
       modelVersionId: ret.modelVersionId,
     }).catch();
     if (data.details) queueScamScan({ entityType: 'ResourceReview', entityId: ret.id });
-    await syncLikedModel({ userId: ret.userId, modelId: ret.modelId, isModerator });
+    // The author's collection, so a moderator's exemption from its add gate must not carry over.
+    const authorIsModerator = isModerator && ret.userId === userId;
+    await syncLikedModel({
+      userId: ret.userId,
+      modelId: ret.modelId,
+      isModerator: authorIsModerator,
+    });
     if (storedModelId && storedModelId !== ret.modelId)
-      await syncLikedModel({ userId: ret.userId, modelId: storedModelId, isModerator });
+      await syncLikedModel({
+        userId: ret.userId,
+        modelId: storedModelId,
+        isModerator: authorIsModerator,
+      });
     // Narrow on purpose: the post editor narrows this result with `'recommended' in saved`.
     return {
       id: ret.id,
@@ -583,7 +593,11 @@ export const updateResourceReview = async ({
     modelVersionId: ret.modelVersionId,
   }).catch();
   if (data.details) queueScamScan({ entityType: 'ResourceReview', entityId: ret.id });
-  await syncLikedModel({ userId: ret.userId, modelId: ret.modelId, isModerator });
+  await syncLikedModel({
+    userId: ret.userId,
+    modelId: ret.modelId,
+    isModerator: isModerator && ret.userId === userId,
+  });
   return ret;
 };
 

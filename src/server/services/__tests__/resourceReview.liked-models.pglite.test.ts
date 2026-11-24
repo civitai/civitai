@@ -7,9 +7,8 @@ import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { createResourceReview, updateResourceReview, upsertResourceReview } = await import(
-  '~/server/services/resourceReview.service'
-);
+const { createResourceReview, deleteResourceReview, updateResourceReview, upsertResourceReview } =
+  await import('~/server/services/resourceReview.service');
 const { getUserBookmarkedModels } = await import('~/server/services/user.service');
 
 const OWNER = 7;
@@ -17,6 +16,10 @@ const LIKER = 42;
 const MODEL = 10;
 const VERSION = 20;
 const OTHER_VERSION = 21;
+const OTHER_MODEL = 11;
+const OTHER_MODEL_VERSION = 30;
+const PRIVATE_MODEL = 12;
+const MODERATOR = 99;
 
 let harness: Awaited<ReturnType<typeof startPglitePrisma>>;
 
@@ -25,6 +28,16 @@ beforeAll(async () => {
     CREATE TYPE "UserEngagementType" AS ENUM ('Follow', 'Hide', 'Block');
     CREATE TABLE "User" (id int PRIMARY KEY, username text);
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
+    CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, "needsReview" text, "blockedFor" text);
+    CREATE TABLE "CsamReport" (
+      id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
+      images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE "HeldResourceReview" (
+      id int PRIMARY KEY, "modelId" int, "modelVersionId" int, "userId" int, rating int,
+      recommended boolean, details text, exclude boolean, nsfw boolean, "tosViolation" boolean,
+      metadata jsonb, "createdAt" timestamp(3), "updatedAt" timestamp(3), "holdReasons" text[]
+    );
     CREATE TYPE "CollectionType" AS ENUM ('Model', 'Article', 'Post', 'Image', 'Model3D');
     CREATE TYPE "CollectionMode" AS ENUM ('Contest', 'Bookmark');
     CREATE TABLE "Model" (
@@ -105,7 +118,9 @@ beforeEach(async () => {
   await harness.pg.exec(`
     DELETE FROM "CollectionItem"; DELETE FROM "Collection"; DELETE FROM "ResourceReview";
     DELETE FROM "Model";
-    INSERT INTO "Model" (id, "userId") VALUES (${MODEL}, ${OWNER});
+    INSERT INTO "Model" (id, "userId", availability) VALUES
+      (${MODEL}, ${OWNER}, 'Public'), (${OTHER_MODEL}, ${OWNER}, 'Public'),
+      (${PRIVATE_MODEL}, ${OWNER}, 'Private');
   `);
 });
 
@@ -123,6 +138,10 @@ describe('Liked Models from a review thumbs-up', () => {
   it('a thumbs-up on the version card adds the model', async () => {
     await thumbs(true);
     expect(await likedModels()).toEqual([MODEL]);
+    const names = await harness.pg.query<{ name: string }>(
+      `SELECT name FROM "Collection" WHERE type = 'Model'`
+    );
+    expect(names.rows).toEqual([{ name: 'Liked Models' }]);
   });
 
   it('a thumbs-down adds nothing', async () => {
@@ -158,6 +177,49 @@ describe('Liked Models from a review thumbs-up', () => {
     await thumbs(true, OTHER_VERSION);
     await updateResourceReview({ id, recommended: false, rating: 1, userId: LIKER });
     expect(await likedModels()).toEqual([MODEL]);
+  });
+
+  it('deleting the only thumbs-up removes the model', async () => {
+    const { id } = await thumbs(true);
+    await deleteResourceReview({ id });
+    expect(await likedModels()).toEqual([]);
+  });
+
+  it('moving a liked review to another model moves it in Liked Models too', async () => {
+    const { id } = await thumbs(true);
+    await upsertResourceReview({
+      id,
+      modelId: OTHER_MODEL,
+      modelVersionId: OTHER_MODEL_VERSION,
+      rating: 5,
+      recommended: true,
+      userId: LIKER,
+    });
+    expect(await likedModels()).toEqual([OTHER_MODEL]);
+  });
+
+  it('a thumbs-up the collection refuses still saves the review', async () => {
+    const review = await createResourceReview({
+      modelId: PRIVATE_MODEL,
+      modelVersionId: VERSION,
+      rating: 5,
+      recommended: true,
+      userId: LIKER,
+    });
+    expect(review.recommended).toBe(true);
+    expect(await likedModels()).toEqual([]);
+  });
+
+  it("a moderator's edit adds to the author's collection only what the author could add", async () => {
+    const { id } = await createResourceReview({
+      modelId: PRIVATE_MODEL,
+      modelVersionId: VERSION,
+      rating: 1,
+      recommended: false,
+      userId: LIKER,
+    });
+    await updateResourceReview({ id, recommended: true, userId: MODERATOR, isModerator: true });
+    expect(await likedModels()).toEqual([]);
   });
 
   it('a second thumbs-up on another version leaves one entry', async () => {

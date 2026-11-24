@@ -3833,8 +3833,16 @@ export const toggleBookmarked = async ({
             userId,
             type,
             mode: CollectionMode.Bookmark,
-            name: `Bookmarked ${type}`,
-            description: `Your bookmarked ${type.toLowerCase()} will appear in this collection.`,
+            // The name getUserBookmarkCollections gives the same collection.
+            ...(type === CollectionType.Model
+              ? {
+                  name: 'Liked Models',
+                  description: 'Your liked models will appear in this collection.',
+                }
+              : {
+                  name: `Bookmarked ${type}`,
+                  description: `Your bookmarked ${type.toLowerCase()} will appear in this collection.`,
+                }),
           },
         })
         .catch((e) => {

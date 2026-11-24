@@ -3,11 +3,13 @@
  * thumbs, the reviews page, the post editor) is added to their Liked Models collection. Only
  * `user.toggleFavorite` wrote to that collection before, so those likes never reached it.
  *
- * A row is added for each (user, model) with a recommended, non-excluded, non-TOS review written
- * since `--since`, on a model that is Published and not deleted, that is not in the user's Model
- * bookmark collection yet. A user with no such collection gets one first. Rows are derived by
- * query at run time; this file holds no ids. Both inserts skip what already exists, so a re-run
- * (or a run over a chunk a live like already covered) adds nothing twice.
+ * A row is added for each (user, model) with a review written since `--since` that counts as a
+ * like (recommended, not excluded, no TOS violation: the rule `syncLikedModel` applies live), on
+ * a model the live add accepts (`assertCollectionItemsVisibleToViewer`: the user's own model, or
+ * a published, non-private, not taken down, non-POI model whose owner does not block them), and
+ * not yet in the user's Model bookmark collection. A user with no such collection gets one first.
+ * Rows are derived by query at run time; this file holds no ids. Both inserts skip what already
+ * exists, so a re-run (or a chunk a live like already covered) adds nothing twice.
  *
  * Added items carry `note = BACKFILL_NOTE`, so they can be counted and removed again:
  *   DELETE FROM "CollectionItem" WHERE note = '<BACKFILL_NOTE>';
@@ -27,6 +29,7 @@
  *   --limit-chunks <n>   Stop after n chunks.
  */
 import { Prisma } from '@prisma/client';
+import { publishedModelSql } from '~/server/services/collection-cover-visibility';
 
 export const SCRIPT_BASENAME = 'backfill-liked-models';
 export const BACKFILL_NOTE = 'Backfilled from a review like (2026-11)';
@@ -74,10 +77,20 @@ function missingLikesSql(since: Date, after: number, upTo: number) {
   return Prisma.sql`
     SELECT DISTINCT ON (r."userId", r."modelId") r."userId", r."modelId", r."createdAt"
     FROM "ResourceReview" r
-    JOIN "Model" m ON m.id = r."modelId" AND m.status = 'Published' AND m."deletedAt" IS NULL
+    JOIN "Model" m ON m.id = r."modelId" AND m."deletedAt" IS NULL
     WHERE r.id > ${after} AND r.id <= ${upTo}
       AND r."createdAt" >= ${since}
       AND r.recommended AND NOT r.exclude AND NOT r."tosViolation"
+      AND (
+        m."userId" = r."userId"
+        OR (
+          ${publishedModelSql} AND m.poi IS NOT TRUE
+          AND NOT EXISTS (
+            SELECT 1 FROM "UserEngagement" ue
+            WHERE ue."userId" = m."userId" AND ue."targetUserId" = r."userId" AND ue.type = 'Block'
+          )
+        )
+      )
       AND NOT EXISTS (
         SELECT 1 FROM "CollectionItem" ci
         JOIN "Collection" c ON c.id = ci."collectionId"
