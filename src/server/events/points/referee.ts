@@ -30,7 +30,7 @@ import { sysRedis } from '~/server/redis/client';
 import { eventPointsExcludedFromSql } from '~/server/events/player-eligibility';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { logToAxiom } from '~/server/logging/client';
-import { freezeEventAwards } from '~/server/events/scoring/award-results';
+import { freezeEventAwards } from '~/server/events/scoring/freeze-event-awards';
 import {
   clientAbortAfter,
   LONG_QUERY_PROGRESS_SETTINGS,
