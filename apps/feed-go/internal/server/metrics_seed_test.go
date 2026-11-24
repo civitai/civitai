@@ -133,9 +133,9 @@ func TestComputeFallbackReasonsAreSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
 	// serve: 6 routes x (bulkhead, error, deadline, canceled, panic); shadow: 7 x 3; probe: 4 x 3;
-	// and the 199 request-determined serve series.
-	if n := testutil.CollectAndCount(m.Fallbacks); n != 6*5+7*3+4*3+199 {
-		t.Fatalf("feed_go_fallback_total has %d series at construction, want 262", n)
+	// and the 200 request-determined serve series.
+	if n := testutil.CollectAndCount(m.Fallbacks); n != 6*5+7*3+4*3+200 {
+		t.Fatalf("feed_go_fallback_total has %d series at construction, want 263", n)
 	}
 	cases := map[string]struct {
 		endpoints, reasons []string
@@ -211,7 +211,7 @@ var wantRequestFallbackReasons = map[string][]string{
 		"method", "region-blocked", "crawler-user-agent",
 		"bearer-malformed", "bearer-multiple-headers", "bearer-query-token", "verified-bot",
 		"input-envelope", "input-invalid", "input-unknown-key", "input-ids",
-		"model-cursor", "model-sort-recently-added", "model-collection-id", "model-ids",
+		"model-cursor", "model-sort-recently-added", "model-collection-id", "model-ids", "input-hidePaid",
 		"input-query", "input-hidden", "input-followed", "input-newCreators", "input-modelVersionIds",
 		"input-status", "input-needsReview", "input-pending", "input-supportsGeneration",
 		"input-isFeatured", "input-availability", "input-publishedFrom", "input-publishedTo",
@@ -264,8 +264,8 @@ func TestRequestFallbackReasonsAreSeeded(t *testing.T) {
 		}
 		total += len(want)
 	}
-	if total != 199 {
-		t.Errorf("the literal holds %d (endpoint, reason) pairs, want 199", total)
+	if total != 200 {
+		t.Errorf("the literal holds %d (endpoint, reason) pairs, want 200", total)
 	}
 
 	reg := prometheus.NewRegistry()

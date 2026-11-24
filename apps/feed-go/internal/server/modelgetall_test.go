@@ -10,6 +10,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 )
@@ -85,6 +86,38 @@ func TestModelGetAllShadowWithoutDepsFallsBack(t *testing.T) {
 	})
 	if n, _ := metricValue(t, reg, "feed_go_fallback_total", map[string]string{"feed_endpoint": EndpointModelGetAll, "mode": "shadow", "reason": "model-getall-unconfigured"}); n != 1 {
 		t.Fatalf("fallback = %v, want 1", n)
+	}
+}
+
+// Hide Paid on, in each form booleanString reads as true, is handed back to Node as `input-hidePaid`
+// before anything is read; off, absent, or false as a string, the request is prepared as before. A
+// value the schema refuses stays `input-invalid`.
+func TestComputeModelGetAllHidePaidFallsBack(t *testing.T) {
+	s := &Server{Models: &modelfeed.Deps{}}
+	// Signed out, resolved: a prepared request reaches the session read.
+	ctx := auth.WithResolved(context.Background(), nil, nil)
+	req := func(input string) *http.Request {
+		r, err := SyntheticModelGetAllRequest(ctx, ShadowRequest{Input: input})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	for _, c := range []struct{ input, reason string }{
+		{`{"json":{"hidePaid":true}}`, "input-hidePaid"},
+		{`{"json":{"hidePaid":"true","sort":"Newest","limit":20}}`, "input-hidePaid"},
+		{`{"json":{"hidePaid":1}}`, "input-hidePaid"},
+		{`{"json":{"hidePaid":"maybe"}}`, "input-invalid"},
+	} {
+		_, err := s.computeModelGetAll(ctx, req(c.input))
+		if got := fallback.Reason(err); got != c.reason {
+			t.Errorf("%s: %q (%v), want %q", c.input, got, err, c.reason)
+		}
+	}
+	for _, input := range []string{`{"json":{}}`, `{"json":{"hidePaid":false}}`, `{"json":{"hidePaid":"false"}}`, `{"json":{"hidePaid":null}}`} {
+		if _, _, err := s.prepareModelGetAllViewer(ctx, req(input)); err != nil {
+			t.Errorf("%s: prepare %v (%q), want prepared", input, err, fallback.Reason(err))
+		}
 	}
 }
 
