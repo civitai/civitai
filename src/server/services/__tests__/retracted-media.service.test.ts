@@ -23,12 +23,6 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 let pg: PGlite;
 
-const patterns = vi.hoisted(() => ({
-  current: null as { signal: RegExp[]; nonMinor: RegExp[] } | null,
-}));
-vi.mock('~/server/services/blocked-for-patterns', () => ({
-  blockedForPatterns: () => patterns.current,
-}));
 /** The scanner's verdict for every image, or null when it cannot be read. */
 const scanner = vi.hoisted(() => ({
   verdict: 'clear' as 'hit' | 'clear' | 'none' | null,
@@ -163,7 +157,6 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  patterns.current = null;
   scanner.verdict = 'clear';
   dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
@@ -222,10 +215,8 @@ describe('getRetractedMedia', () => {
     await expectTiers('anyMod', [4]);
   });
 
-  // The block-reason patterns are not read here: only a CSAM block reason withholds.
-  it('serves any block reason but CSAM to any moderator, with or without the patterns', async () => {
-    await expectTiers('anyMod', [10]);
-    patterns.current = { signal: [/^scan-reason-/u], nonMinor: [] };
+  // civitai/civitai#10377: only a CSAM block reason withholds.
+  it('serves any block reason but CSAM to any moderator', async () => {
     await expectTiers('anyMod', [10]);
   });
 

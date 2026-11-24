@@ -714,7 +714,7 @@ describe('a scanned image whose post someone other than its owner unpublished', 
  * marks one target with one fact and nothing else, and either withholds the card and refuses the
  * bytes, or shows both. A moderator with the grant gets every one of them.
  */
-describe('the moderator-view rule, one leg at a time', () => {
+describe('the moderator-view rule, one fact at a time (civitai/civitai#10377)', () => {
   const base = 990001000;
   const owner = 990011000;
   type Leg = { leg: string; mark: (id: number, url: string) => string; scanner?: 'hit' | null };
@@ -754,6 +754,13 @@ describe('the moderator-view rule, one leg at a time', () => {
         `INSERT INTO "Image" (id, url, "userId", "blockedFor") VALUES (${
           id + 500
         }, '${url}', ${owner}, 'CSAM');`,
+    },
+    {
+      leg: 'a row on its url with CSAM among its block reasons',
+      mark: (id, url) =>
+        `INSERT INTO "Image" (id, url, "userId", "blockedFor") VALUES (${
+          id + 500
+        }, '${url}', ${owner}, 'moderated, csam ');`,
     },
     {
       leg: 'a row on its url with a CSAM hash block',
@@ -906,6 +913,8 @@ describe('the moderator-view rule, one leg at a time', () => {
     try {
       const ids = [base + 999, base + 998];
       expect([...(await listWithheldIds(ids, { csamReview: false }, 'test'))]).toEqual(ids);
+      // Operators count this event to tell a read outage from the rule withholding.
+      expect(logToAxiom).toHaveBeenCalledTimes(1);
       expect(logToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'image-queue-withheld-read-failed' })
       );
