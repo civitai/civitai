@@ -21,6 +21,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import handler, { config } from '~/pages/api/training-studio/studio/[route]';
 import { studioOrigin } from '~/server/services/training-studio-forward.service';
 
@@ -77,6 +78,7 @@ function call({
 const fetchMock = vi.fn();
 beforeEach(() => {
   access.allow.mockReset().mockResolvedValue(true);
+  loggingMock.logToAxiom.mockClear();
   fetchMock.mockReset().mockResolvedValue(Response.json({ workflowIds: ['wf-1'] }));
   vi.stubGlobal('fetch', fetchMock);
 });
@@ -114,6 +116,31 @@ describe('/api/training-studio/studio/[route]', () => {
     expect(res.statusCode).toBe(409);
     expect(res.body).toEqual({ message: 'confirm', matureCount: 2 });
     expect(res.headers['set-cookie']).toBeUndefined();
+  });
+
+  // The Studio's own log of a refusal is not shipped anywhere readable; this row is.
+  it("logs the Studio's refusal with the user and the reason", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ message: 'still processing', code: 'filesProcessing' }, { status: 400 })
+    );
+    await call({ route: 'train' });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'training-studio-forward-refused',
+        userId: 7,
+        route: 'train',
+        status: 400,
+        message: 'still processing',
+        code: 'filesProcessing',
+      })
+    );
+  });
+
+  it('does not log a submit that started, or a session the Studio did not accept', async () => {
+    await call({ route: 'train' });
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 401 }));
+    await call({ route: 'train' });
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
   it("prices a continuation with the caller's query, minus the route", async () => {
