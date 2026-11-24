@@ -109,6 +109,56 @@ export function ratingReviewEntityPath(
   }
 }
 
+// The ingest cron's scan retry ceilings, by stored failure class; the main app's
+// `image-scan-failure.ts` exports these as its own. Here because a song's rating dispute also
+// reads them: past its ceiling a song's scan is never re-sent, so it can never be reviewed.
+export const IMAGE_SCAN_TRANSIENT_RETRY_LIMIT = 30; // bounded, but well above the old 9-cap
+export const IMAGE_SCAN_UNKNOWN_RETRY_LIMIT = 9; // historical flood-protection cap
+// Give up on the first failure: markImageScanError already bumped retryCount to 1, so
+// `retryCount < 1` is false on the next cron pass and the image is never re-queued.
+export const IMAGE_SCAN_PERMANENT_RETRY_LIMIT = 1;
+/** A `Rescan` image is re-sent only while its retryCount is below this. */
+export const IMAGE_RESCAN_RETRY_LIMIT = 9;
+
+/** Absolute retry ceiling for a stored failure class (defaults to the conservative cap). */
+export function imageScanRetryLimit(failureClass?: string | null): number {
+  switch (failureClass) {
+    case 'transient':
+      return IMAGE_SCAN_TRANSIENT_RETRY_LIMIT;
+    case 'permanent':
+      return IMAGE_SCAN_PERMANENT_RETRY_LIMIT;
+    default:
+      return IMAGE_SCAN_UNKNOWN_RETRY_LIMIT;
+  }
+}
+
+/** A song's ingestion, with `scanJobs.retryCount` and the failure class of its last failed scan. */
+export type SongScanState = {
+  ingestion: string;
+  retryCount: number | null;
+  failureClass: string | null;
+};
+
+/** A removed song, a lost file, or a scan past its retry ceiling: its own scans will never review it. */
+export function songNeverReviewable({
+  ingestion,
+  retryCount,
+  failureClass,
+}: SongScanState): boolean {
+  const retries = retryCount ?? 0;
+  switch (ingestion) {
+    case 'Blocked':
+    case 'NotFound':
+      return true;
+    case 'Error':
+      return retries >= imageScanRetryLimit(failureClass);
+    case 'Rescan':
+      return retries >= IMAGE_RESCAN_RETRY_LIMIT;
+    default:
+      return false;
+  }
+}
+
 // XGuard and Clavata rows share the `result` column with a different shape; `version` is what marks a
 // text-scan row, the same test the scan floor applies (`result->>'version' IS NOT NULL`).
 export function textScanNsfwReason(result: unknown): string | null {

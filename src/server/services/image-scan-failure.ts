@@ -15,6 +15,8 @@
  * hard backstop that stops any image re-flooding the scanner forever.
  */
 
+import { imageScanRetryLimit } from '@civitai/shared/rating-review';
+
 export const ImageScanFailureClass = {
   /** Infra churn that recovers on its own (container-create, 5xx, timeout, expiry). Keep retrying. */
   Transient: 'transient',
@@ -28,14 +30,14 @@ export type ImageScanFailureClass =
 
 // Retry ceilings by class. The cron ALWAYS increments `scanJobs.retryCount` on every
 // failed attempt (see markImageScanError; a 429 is not one) — these are the absolute
-// backstops applied against that ever-incrementing count.
-export const IMAGE_SCAN_TRANSIENT_RETRY_LIMIT = 30; // bounded, but well above the old 9-cap
-export const IMAGE_SCAN_UNKNOWN_RETRY_LIMIT = 9; // historical flood-protection cap
-// Give up on the first failure: markImageScanError already bumped retryCount to 1, so
-// `retryCount < 1` is false on the next cron pass and the image is never re-queued.
-export const IMAGE_SCAN_PERMANENT_RETRY_LIMIT = 1;
-/** A `Rescan` image is re-sent only while its retryCount is below this. */
-export const IMAGE_RESCAN_RETRY_LIMIT = 9;
+// backstops applied against that ever-incrementing count. Defined in @civitai/shared, which a song's
+// rating dispute in both apps also reads.
+export {
+  IMAGE_RESCAN_RETRY_LIMIT,
+  IMAGE_SCAN_PERMANENT_RETRY_LIMIT,
+  IMAGE_SCAN_TRANSIENT_RETRY_LIMIT,
+  IMAGE_SCAN_UNKNOWN_RETRY_LIMIT,
+} from '@civitai/shared/rating-review';
 
 // Reason substrings that mark infra-transient failures. Matched case-insensitively.
 const TRANSIENT_REASON_PATTERNS = [
@@ -124,13 +126,4 @@ export function getImageScanRetryDelayMinutes(failureClass?: string | null): num
 }
 
 /** Absolute retry ceiling for a stored failure class (defaults to the conservative cap). */
-export function getImageScanRetryLimit(failureClass?: string | null): number {
-  switch (failureClass) {
-    case ImageScanFailureClass.Transient:
-      return IMAGE_SCAN_TRANSIENT_RETRY_LIMIT;
-    case ImageScanFailureClass.Permanent:
-      return IMAGE_SCAN_PERMANENT_RETRY_LIMIT;
-    default:
-      return IMAGE_SCAN_UNKNOWN_RETRY_LIMIT;
-  }
-}
+export const getImageScanRetryLimit = imageScanRetryLimit;

@@ -341,12 +341,14 @@ rating-dispute modal (`RatingReviewModal`). The dispute is a `RatingReview` row 
 whose `entityId` is the song's `Image` id, so a plain image is never disputable. Filing follows the
 shared rules in `docs/features/rating-dispute.md` (owner only, one pending per song, 3 a day), needs
 the `music` flag beside `ratingDispute`, and no text scan: the current level is the song's
-`nsfwLevel`. A song its own scans have not reviewed yet (`ingestion` other than `Scanned`), or a
-removed one, cannot be disputed.
+`nsfwLevel`. A song its own scans have not reviewed yet (`ingestion` other than `Scanned`), a removed
+one, or one whose scan gave up (`songNeverReviewable` in `@civitai/shared/rating-review`, the ingest
+cron's retry ceilings) cannot be disputed, each with its own message.
 
 Moderators decide song disputes on the moderator app's Audio review page, not in `/ratings`, whose
 tabs, deep links and sidebar badge leave songs out, nor from a ticket's rating disputes. A ruling goes through the moderator rating writer
-(`updateImageNsfwLevel`): it sets and locks the song's level, and since a locked level counts as the
+(`writeImageNsfwLevel`, on the ruling's own transaction, with its cache, activity and search work run
+after commit): it sets and locks the song's level, and since a locked level counts as the
 song's review, it is refused, with nothing written, while the song's scans are running or due a retry,
 which the write re-checks. A song that can never be reviewed (removed, its file gone, or its scan past
 its retry ceiling) closes its dispute as a deleted entity's closes: nothing applied, no notification. The owner's notification names the song ("your song "<title>"") and links its page.

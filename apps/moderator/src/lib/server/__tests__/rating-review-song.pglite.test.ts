@@ -155,6 +155,62 @@ describe('a song rating dispute', () => {
     expect(await review(id)).toEqual({ status: 'Actioned', appliedLevel: 4, resolvedBy: mod });
   });
 
+  it("commits the song's level with the ruling, then runs the writer's cache work after commit", async () => {
+    const { invalidateThumbnails } = await import('../thumbnail-cache');
+    const { queueDocumentsForImageMinorChanges } = await import('../image-models-reindex');
+    const song = await seedSong();
+    const id = await fileSongReview(song);
+    let lockedWhenBusted: boolean | undefined;
+    vi.mocked(invalidateThumbnails).mockImplementationOnce(async () => {
+      lockedWhenBusted = (await image(song)).nsfwLevelLocked;
+    });
+    vi.mocked(queueDocumentsForImageMinorChanges).mockRejectedValueOnce(new Error('search down'));
+
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+    ).resolves.toMatchObject({ status: 'Actioned' });
+
+    // Run once the ruling committed; its failure is logged, not turned into a failed ruling.
+    expect(lockedWhenBusted).toBe(true);
+    expect(await review(id)).toMatchObject({ status: 'Actioned', appliedLevel: 4 });
+    const activity = await rows<{ activity: string }>(
+      db,
+      `SELECT "activity" FROM "ModActivity" WHERE "entityType" = 'image' AND "entityId" = $1`,
+      [song]
+    );
+    expect(activity).toEqual([{ activity: 'setNsfwLevel' }]);
+  });
+
+  it("writes the song's level on the ruling's own transaction, not beside it", async () => {
+    const song = await seedSong();
+    const id = await fileSongReview(song);
+    // PGlite is one session, so which pool connection ran each statement is what tells them apart.
+    let connection = 0;
+    const ran: { connection: number; text: string }[] = [];
+    const tracing = new Proxy(db, {
+      get(target, key) {
+        if (key === 'query')
+          return async (text: string, params?: unknown[]) => {
+            ran.push({ connection, text: text.trim().toLowerCase() });
+            return target.query(text, params);
+          };
+        const value = Reflect.get(target, key);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    dbHandle.current = new Kysely({
+      dialect: pgliteDialect(tracing, { onQuery: (c) => (connection = c) }),
+    });
+
+    await service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod });
+
+    dbHandle.current = ratingReviewKysely(db);
+    const begin = ran.find((r) => r.text === 'begin');
+    const write = ran.find((r) => r.text.startsWith('update "image"'));
+    expect(write?.connection).toBe(begin?.connection);
+    expect(await image(song)).toEqual({ nsfwLevel: 4, nsfwLevelLocked: true });
+  });
+
   it('refuses a ruling on a song its scans are still reviewing or will retry, and changes nothing', async () => {
     const states = [
       { ingestion: 'Pending' },

@@ -68,7 +68,7 @@ A moderator applies a level; the review reads `Actioned` when it matches the sug
    - **Article, Post, BountyEntry:** the override pair and `nsfwLevel`; Article also locks `userNsfwLevel`.
    - **Bounty:** as above, plus `nsfw` from the applied level, locked.
    - **Model:** `nsfw`, keeping its lock. Marking a model NSFW is refused while it is flagged POI, minor or SFW-only, by the `UPDATE`'s own condition.
-   - **Song:** through the moderator rating writer (`updateImageNsfwLevel`), which sets and locks the level and refuses, rolling the claim back, a song its own scans have not reviewed. A ruling is refused the same way before the claim while the song's scans are running or due a retry. A song that can never be reviewed (Blocked, NotFound, or an Error or Rescan past the ingest cron's retry ceilings) closes as a gone entity does.
+   - **Song:** through the moderator rating writer (`writeImageNsfwLevel` on this transaction; its cache, activity and search work runs after commit), which sets and locks the level and refuses, rolling the claim back, a song its own scans have not reviewed. A ruling is refused the same way before the claim while the song's scans are running or due a retry. A song that can never be reviewed (Blocked, NotFound, or an Error or Rescan past the ingest cron's retry ceilings) closes as a gone entity does.
    - **Challenge:** lower-only, judged against the live level read under a row lock. The allowed mask is narrowed to the applied level, its collection's `forcedBrowsingLevel` follows, and the basis is the narrowed mask's level.
 4. Queue `JobQueue(UpdateNsfwLevel)` for Post, Bounty, BountyEntry and Model, so the main app's crons run the connected-entity cascade.
 

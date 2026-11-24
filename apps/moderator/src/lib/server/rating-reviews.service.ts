@@ -15,10 +15,12 @@ import {
   ratingReviewEntityPath,
   ratingReviewLevelLabel,
   ratingReviewModeratorLevels,
+  songNeverReviewable,
   SYSTEM_NSFW_LOCK_META_KEY,
   textScanNsfwReason,
   textScanResultTextHash,
   type RatingReviewEntityType,
+  type SongScanState,
 } from '@civitai/shared/rating-review';
 import { dbRead, dbWrite } from './db';
 import { loadComFaces, type ComFaceSource } from './com-face';
@@ -27,7 +29,8 @@ import { modelCoverCount, modelCoverImages, MODEL_COVER_ORDER } from './model-co
 import { postCoverRows } from './post-covers';
 import { challengeAllowedMaskAt } from './rating-review-apply';
 import { computeRatedEntityDerivedNsfwLevel } from './rated-entity-derivation';
-import { SongRatingRefusedError, updateImageNsfwLevel } from './image-nsfw-level';
+import { bustAfterWrite } from './bust-after-write';
+import { SongRatingRefusedError, writeImageNsfwLevel } from './image-nsfw-level';
 import { ReportStatus, SONG_ENTITY_TYPE, type RatingReviewStatusFilter } from '$lib/rating-review';
 import type { MediaType } from '$lib/media/edge-url';
 import type { ComFace } from '$lib/com-face';
@@ -1011,37 +1014,21 @@ async function entityExists(
 const SONG_UNREVIEWED =
   "This song's own scans have not reviewed it yet; they are running or will be retried. Rule on its dispute once they have.";
 
-// The main app's scan retry ceilings (src/server/services/image-scan-failure.ts, pinned by
-// song-dispute-retry-parity.test.ts): past them the ingest cron never re-sends the song.
-const SCAN_RETRY_LIMITS: Record<string, number> = { transient: 30, permanent: 1 };
-const UNKNOWN_SCAN_RETRY_LIMIT = 9;
-const RESCAN_RETRY_LIMIT = 9;
-
-type SongScanState = { ingestion: string; retryCount: number | null; failureClass: string | null };
-
-/** A removed song, a lost file, or a scan that gave up can never be reviewed, so its dispute closes
- *  as a gone entity's does; one still scanning or due a retry is refused until its scans decide. */
-function songNeverReviewable(s: SongScanState): boolean {
-  const retries = s.retryCount ?? 0;
-  switch (s.ingestion) {
-    case 'Blocked':
-    case 'NotFound':
-      return true;
-    case 'Error':
-      return retries >= (SCAN_RETRY_LIMITS[s.failureClass ?? ''] ?? UNKNOWN_SCAN_RETRY_LIMIT);
-    case 'Rescan':
-      return retries >= RESCAN_RETRY_LIMIT;
-    default:
-      return false;
-  }
-}
-
 // A ruling is the moderator rating writer's own: a locked level counts as the song's review, so it
-// refuses a song its scans have not reviewed, re-checked in its write. It writes on its own
-// connection, so a refusal throws here and rolls back the claim; it can never be undone after commit.
-async function applySongRating(songId: number, appliedLevel: number, moderatorId: number) {
+// refuses a song its scans have not reviewed, re-checked in its write. It writes on the claim's
+// transaction, so the level and the ruling commit together; its cache work runs after commit.
+async function applySongRating(
+  trx: Transaction<DB>,
+  songId: number,
+  appliedLevel: number,
+  moderatorId: number
+): Promise<() => Promise<void>> {
   try {
-    await updateImageNsfwLevel({ id: songId, nsfwLevel: appliedLevel, userId: moderatorId });
+    return await writeImageNsfwLevel(trx, {
+      id: songId,
+      nsfwLevel: appliedLevel,
+      userId: moderatorId,
+    });
   } catch (err) {
     if (err instanceof SongRatingRefusedError) throw new RatingReviewResolveError(err.message);
     throw err;
@@ -1073,6 +1060,7 @@ export async function resolveRatingReview(input: {
 }): Promise<ResolveResult> {
   const { reviewId, appliedLevel, modComment, moderatorId } = input;
 
+  let afterSongRating: (() => Promise<void>) | undefined;
   const core = await dbWrite.transaction().execute(async (trx) => {
     const review = await trx
       .selectFrom('RatingReview')
@@ -1181,7 +1169,8 @@ export async function resolveRatingReview(input: {
 
     if (challenge) await applyChallengeOverride(trx, entityId, challenge, appliedLevel);
     else if (crucible) await applyCrucibleOverride(trx, entityId, crucible, appliedLevel);
-    else if (song) await applySongRating(entityId, appliedLevel, moderatorId);
+    else if (song)
+      afterSongRating = await applySongRating(trx, entityId, appliedLevel, moderatorId);
     else if (
       exists &&
       entityType !== 'Challenge' &&
@@ -1199,6 +1188,9 @@ export async function resolveRatingReview(input: {
       exists,
     };
   });
+
+  // The ruling has committed, so a failure here is logged, not reported as a failed ruling.
+  if (afterSongRating) await bustAfterWrite('rating-review-song-rating', afterSongRating);
 
   const summary = core.exists
     ? (await loadSummaries(core.entityType, [core.entityId])).get(core.entityId)

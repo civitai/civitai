@@ -11,6 +11,7 @@ import {
   ratingReviewLevels,
   ratingReviewModeratorLevels,
   ratingReviewOwnerLevels,
+  songNeverReviewable,
   textScanNsfwReason,
   textScanResultTextHash,
 } from '../rating-review';
@@ -127,5 +128,30 @@ describe('rating-review constants', () => {
         modComment: 'text is explicit',
       },
     });
+  });
+});
+
+describe('songNeverReviewable', () => {
+  const state = (
+    ingestion: string,
+    retryCount: number | null = null,
+    failureClass: string | null = null
+  ) => songNeverReviewable({ ingestion, retryCount, failureClass });
+
+  it('is true for a removed song, a lost file, and a scan past its retry ceiling', () => {
+    expect(state('Blocked')).toBe(true);
+    expect(state('NotFound')).toBe(true);
+    expect(state('Error', 9)).toBe(true);
+    expect(state('Error', 1, 'permanent')).toBe(true);
+    expect(state('Error', 30, 'transient')).toBe(true);
+    expect(state('Rescan', 9)).toBe(true);
+  });
+
+  it('is false for a reviewed song and one whose scans are running or due a retry', () => {
+    expect(state('Scanned')).toBe(false);
+    expect(state('Pending')).toBe(false);
+    expect(state('Error', 8)).toBe(false);
+    expect(state('Error', 29, 'transient')).toBe(false);
+    expect(state('Rescan', 8)).toBe(false);
   });
 });

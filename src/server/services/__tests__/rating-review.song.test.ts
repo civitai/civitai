@@ -85,6 +85,28 @@ describe('a song rating dispute', () => {
     expect(dbMock.dbWrite.ratingReview.create).not.toHaveBeenCalled();
   });
 
+  it('tells the owner a song whose scan gave up can never be disputed, and one due a retry not yet', async () => {
+    dbMock.dbRead.image.findUnique.mockResolvedValue(
+      song({
+        ingestion: 'Error',
+        scanJobs: { retryCount: 1, error: { failureClass: 'permanent' } },
+      })
+    );
+    await expect(file()).rejects.toThrow(
+      "This song's scans could not review it, so its rating can't be disputed."
+    );
+    dbMock.dbRead.image.findUnique.mockResolvedValue(
+      song({
+        ingestion: 'Error',
+        scanJobs: { retryCount: 2, lastFailure: { failureClass: 'unknown' } },
+      })
+    );
+    await expect(file()).rejects.toThrow(
+      "This song is still being reviewed, so its rating can't be disputed yet."
+    );
+    expect(dbMock.dbWrite.ratingReview.create).not.toHaveBeenCalled();
+  });
+
   it('keeps one pending dispute per song', async () => {
     dbMock.dbRead.ratingReview.findFirst.mockImplementation(
       async (args: { where: { status: unknown } }) =>
