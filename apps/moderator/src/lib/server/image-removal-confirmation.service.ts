@@ -85,6 +85,16 @@ const NOT_PENDING = 'This removal was decided or changed since the page loaded. 
  * second moderator agrees. The removal is recorded as the requester's, the confirmation as the
  * confirmer's.
  */
+/** The image a removal confirmation is about; `null` for one that does not exist. */
+export async function removalConfirmationImageId(id: number): Promise<number | null> {
+  const row = await dbWrite
+    .selectFrom('ImageRemovalConfirmation')
+    .select('imageId')
+    .where('id', '=', id)
+    .executeTakeFirst();
+  return row?.imageId ?? null;
+}
+
 export async function confirmRemoval({
   id,
   userId,

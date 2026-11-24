@@ -138,13 +138,10 @@ async function viewableToNonGrant(
 const RESTRICTED_READ_PAGE = 200;
 
 /**
- * Which of these images a moderator without `csamReview` is refused (`kept`), so a caller that lists
- * a row without its media withholds what `/api/retracted-media` would refuse. Only a row that route
- * could serve, retracted or held, is read from the scanner (`viewableToNonGrant`), and one whose
- * verdict could not be read is kept and named in `unreadable`; every other row is decided on the
- * Postgres signals alone, its url siblings' included, so ordinary moderation does not wait on ClickHouse. An id the primary does
- * not have is kept too. Read on the primary, a page of ids at a time. None for a moderator with the
- * grant; a Postgres read that fails throws.
+ * Which of these images a moderator without `csamReview` is refused (`kept`), so a list withholds
+ * what `/api/retracted-media` would refuse. Only rows that route could serve are read from the
+ * scanner, so ordinary moderation never waits on ClickHouse; a row whose verdict can't be read is
+ * kept and named in `unreadable`. An id the primary lacks is kept too.
  */
 export async function restrictedImageAccess(
   imageIds: number[],

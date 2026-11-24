@@ -8,7 +8,9 @@ import {
   confirmRemoval,
   declineRemoval,
   getRemovalConfirmations,
+  removalConfirmationImageId,
 } from '$lib/server/image-removal-confirmation.service';
+import { withheldRefusal } from '$lib/server/retracted-media';
 
 const LIMIT = 50;
 
@@ -39,6 +41,9 @@ const decide =
     if (typeof input === 'string') return fail(400, { error: input });
     let result: Awaited<ReturnType<typeof run>>;
     try {
+      const imageId = await removalConfirmationImageId(input.id);
+      const withheld = imageId === null ? null : await withheldRefusal(locals.user, [imageId]);
+      if (withheld) return fail(403, { error: withheld, id: input.id });
       result = await run({ ...input, userId: locals.user.id });
     } catch (e) {
       // Returned, not thrown: an error page would unmount the queue and the note being written.

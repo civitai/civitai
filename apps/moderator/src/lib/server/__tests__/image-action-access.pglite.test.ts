@@ -83,6 +83,15 @@ vi.mock('../ingestion.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../ingestion.service')>()),
   resolveIngestionError,
 }));
+const { confirmRemoval, declineRemoval } = vi.hoisted(() => ({
+  confirmRemoval: vi.fn(async (_input: unknown) => ({ ok: true as const, status: 'Confirmed' })),
+  declineRemoval: vi.fn(async (_input: unknown) => ({ ok: true as const, status: 'Declined' })),
+}));
+vi.mock('../image-removal-confirmation.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../image-removal-confirmation.service')>()),
+  confirmRemoval,
+  declineRemoval,
+}));
 vi.mock('../knights/inquisitor.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../knights/inquisitor.service')>()),
   ruleOnInquisitorItem,
@@ -109,6 +118,7 @@ const userLookupPage = await import('../../../routes/retool/user-lookup/[section
 const ingestionPage = await import('../../../routes/images/ingestion-errors/+page.server');
 const inquisitorPage = await import('../../../routes/knights-of-new-order/inquisitor/+page.server');
 const { getImageLookup } = await import('../image-lookup.service');
+const reRemovalsPage = await import('../../../routes/images/re-removals/+page.server');
 
 // A routine block reason, kept by the other row on its url, which has not finished its scan.
 const WITHHELD = 501;
@@ -132,6 +142,8 @@ beforeEach(async () => {
   dismissUserFromCsamQueue.mockClear();
   resolveIngestionError.mockClear();
   ruleOnInquisitorItem.mockClear();
+  confirmRemoval.mockClear();
+  declineRemoval.mockClear();
   db = await freshPglite();
   await db.exec(IMAGE_PAGES_SCHEMA);
   await db.exec(
@@ -810,5 +822,51 @@ describe("Image Lookup's activity for a withheld image", () => {
       'dismissFromCsamQueue',
       'heldMedia:view',
     ]);
+  });
+});
+
+describe("the re-removal queue's confirm and decline", () => {
+  beforeEach(() =>
+    db.exec(`CREATE TABLE "ImageRemovalConfirmation" (id INTEGER PRIMARY KEY, "imageId" INTEGER);
+      INSERT INTO "ImageRemovalConfirmation" (id, "imageId") VALUES (1, ${WITHHELD}), (2, ${CONTROL})`)
+  );
+  const decide = (
+    action: 'confirm' | 'decline',
+    user: { id: number; roles: string[] },
+    id: number
+  ) => {
+    const form = new FormData();
+    form.set('id', String(id));
+    return (reRemovalsPage.actions[action] as (e: never) => Promise<unknown>)({
+      request: new Request('https://mod.test/images/re-removals', { method: 'POST', body: form }),
+      locals: { user, grants: { 'image.removal.confirm': true } },
+    } as never) as Promise<Result>;
+  };
+
+  it.each([
+    ['confirm', () => confirmRemoval],
+    ['decline', () => declineRemoval],
+  ] as const)(
+    '%s refuses a withheld image without the grant, writing nothing',
+    async (action, run) => {
+      expect((await decide(action, WITHOUT_GRANT, 1)).status).toBe(403);
+      expect(run()).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['confirm', () => confirmRemoval],
+    ['decline', () => declineRemoval],
+  ] as const)('%s decides an image nothing withholds, without the grant', async (action, run) => {
+    await decide(action, WITHOUT_GRANT, 2);
+    expect(run()).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['confirm', () => confirmRemoval],
+    ['decline', () => declineRemoval],
+  ] as const)('%s decides the withheld image for a grant holder', async (action, run) => {
+    await decide(action, WITH_GRANT, 1);
+    expect(run()).toHaveBeenCalledOnce();
   });
 });
