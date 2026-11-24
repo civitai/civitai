@@ -87,6 +87,8 @@ type fakeSources struct {
 	// follows is FollowedUserIDs' answer per viewer; followRq the viewers it was asked for.
 	follows  map[int][]int
 	followRq []int
+	// computedRq are CreatorMembershipsComputed's calls.
+	computedRq [][]int
 }
 
 func (f *fakeSources) OfficialModels(_ context.Context) ([]hydrate.OfficialModel, error) {
@@ -126,6 +128,12 @@ func (f *fakeSources) CreatorMemberships(_ context.Context, ids []int) (map[int]
 		}
 	}
 	return out, nil
+}
+
+// CreatorMembershipsComputed answers as CreatorMemberships; computedRq records its calls.
+func (f *fakeSources) CreatorMembershipsComputed(ctx context.Context, ids []int) (map[int]bool, error) {
+	f.computedRq = append(f.computedRq, ids)
+	return f.CreatorMemberships(ctx, ids)
 }
 
 func (f *fakeSources) UserIDByUsername(_ context.Context, name string) (int, bool, error) {

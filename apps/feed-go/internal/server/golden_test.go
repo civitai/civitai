@@ -51,7 +51,7 @@ const (
 	goldenMinAsPosts  = 35
 	goldenMinV1       = 36
 	goldenMinInfinite = 87
-	goldenMinModels   = 46
+	goldenMinModels   = 49
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
@@ -114,6 +114,9 @@ type goldenFixture struct {
 		// ServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (model-getall/; absent:
 		// off, an owner's user-cosmetics miss falls back).
 		ServeUserCosmeticsMiss bool `json:"serveUserCosmeticsMiss"`
+		// ServeMembershipMiss is FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS (model-getall/; absent: off, an
+		// owner's creator-membership miss falls back).
+		ServeMembershipMiss bool `json:"serveMembershipMiss"`
 	} `json:"config"`
 	Request struct {
 		Input   string            `json:"input"`
@@ -361,6 +364,14 @@ type goldenDB struct {
 		ModelID int `json:"modelId"`
 		TagID   int `json:"tagId"`
 	} `json:"tagsOnModels"`
+	// Subscriptions are the CustomerSubscription rows (with their product's metadata, both as JSON
+	// text) getValidCreatorMembershipMap's origin read for a model-getall fixture's cold membership
+	// keys, after its status filter.
+	Subscriptions []struct {
+		UserID          int    `json:"userId"`
+		Metadata        string `json:"metadata"`
+		ProductMetadata string `json:"productMetadata"`
+	} `json:"subscriptions"`
 	// OfficialModels are the official, published models getOfficialModelIds' fetchFn reads (a fixture
 	// whose request reads the official-models entry).
 	OfficialModels []struct {
@@ -1946,6 +1957,17 @@ func newGoldenModelPG(t testing.TB, fx *goldenFixture) *goldenModelPG {
 			}
 			return testkit.NewRows([]string{"userId", "targetUserId"}, rows...), nil
 		}},
+		// getValidCreatorMembershipMap's origin (a cold membership key): the fixture's subscription rows
+		// of the ids asked.
+		{Match: `FROM "CustomerSubscription" cs`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, r := range db.Subscriptions {
+				if goldenHas(goldenInts(args[0]), r.UserID) {
+					rows = append(rows, []any{int64(r.UserID), r.Metadata, r.ProductMetadata})
+				}
+			}
+			return testkit.NewRows([]string{"userId", "metadata", "productMetadata"}, rows...), nil
+		}},
 		// The collection permission read: the fixture's Collection row and the viewer's contributor
 		// row (none: no permissions); a collection the fixture does not hold is no row.
 		{Match: `FROM "Collection" c`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
@@ -2198,7 +2220,7 @@ func goldenSetupModelsMode(t testing.TB, fx *goldenFixture, writeBack bool) *gol
 	blocked := &feed.BlockedTags{Cache: env.cache}
 	// As main: the model feed shares the miss computation.
 	compute := &hydrate.MissCompute{FrameNegative: fx.Config.FrameCacheNegative, Now: env.now, TagGate: feed.ImageTagGate(blocked, addons),
-		WriteBack: goldenWrites(writeBack)}
+		WriteBack: goldenWrites(writeBack), TierMetadataKey: "tier"}
 	if writeBack {
 		compute.Primary = db
 	}
@@ -2218,6 +2240,7 @@ func goldenSetupModelsMode(t testing.TB, fx *goldenFixture, writeBack bool) *gol
 			VisibleDecorationEvents: events,
 			Ports:                   modelfeed.Ports{IDs: fx.Config.ServeInputIDs, Followed: fx.Config.ServeInputFollowed},
 			ServeUserCosmeticsMiss:  fx.Config.ServeUserCosmeticsMiss,
+			ServeMembershipMiss:     fx.Config.ServeMembershipMiss,
 		},
 		Now: env.now,
 	}

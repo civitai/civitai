@@ -75,6 +75,8 @@ const { isMinorContentRestricted } = await repo(
 );
 // getAllModelsSchema's `ids` and `followed` (src/server/schema/model.schema.ts) are these helpers.
 const { commaDelimitedNumberArray, booleanString } = await repo('src/utils/zod-helpers.ts');
+const { subscriptionProductMetadataSchema } = await repo('src/server/schema/subscriptions.schema.ts');
+const { constants } = await repo('src/server/common/constants.ts');
 
 // ---------------------------------------------------------------------------------------------
 // The synthetic world
@@ -321,6 +323,14 @@ const MODELS = {
       version(6013, 'Pony', { index: 0, trainingStatus: 'Approved', vaeId: 6099, flags: 2 }),
     ],
   }),
+  // A moderator's model with a hidden buzz count: its owner is a creator-membership candidate for
+  // any other viewer (cold-creator-memberships).
+  5013: model(5013, 1004, {
+    rank: rank(3, 2),
+    lastVersionAt: day(2),
+    meta: { metricVisibility: { buzz: 'hide' } },
+    versions: [version(6016, 'Pony')],
+  }),
   // No version at all: dataForModelsCache's lookup has no record for it (cacheNotFound off: nothing is
   // written, and the model is left out).
   5011: model(5011, 1002, { rank: rank(2, 2), versions: [], hashes: ['HASH5011'] }),
@@ -376,6 +386,7 @@ const VERSION_IMAGES = {
   ),
   6013: [showcase(8130, 1001, 1)],
   6014: [showcase(8140, 1001, 1)],
+  6016: [showcase(8160, 1004, 1)],
   // Cached as the lookup wrote it before the rule: 8150 (minor-flagged, R, the model's cover) is held
   // here, and the read leaves it out for every viewer; 8151 (R) and 8152 (minor-flagged, PG-13) stay.
   6015: [
@@ -412,6 +423,22 @@ const PRIVACY = {
 const MEMBERS = { 1001: true };
 // Each viewer's Follow rows (UserEngagement, type Follow): the creators they follow.
 const FOLLOWS = { 1003: [1002], 1001: [] };
+// CustomerSubscription rows queryValidCreatorMembership reads for a cold membership key (status
+// already filtered, as Postgres answers the query): each with its own metadata and its product's.
+// 1001: a gold membership, and a silver one whose renewal email went out (skipped). 1004: a founder
+// membership, and a gold one bought with Buzz (no Creator Program validity), so not valid.
+const SUBSCRIPTIONS = {
+  1001: [
+    { metadata: {}, product: { tier: 'gold', monthlyBuzz: '5000', badgeType: 'static' } },
+    { metadata: { renewalEmailSent: true }, product: { tier: 'silver' } },
+  ],
+  1004: [
+    { metadata: {}, product: { tier: 'founder', rewardsMultiplier: 1.5 } },
+    { metadata: {}, product: { tier: 'gold', buzzPurchase: 'true' } },
+  ],
+};
+// A product whose metadata subscriptionProductMetadataSchema rejects (no tier): Node's parse throws.
+const BAD_SUBSCRIPTIONS = { 1001: [{ metadata: {}, product: { monthlyBuzz: 5000 } }] };
 
 // ---------------------------------------------------------------------------------------------
 // Caches, as Node writes them; reads are traced so each fixture carries what Node read.
@@ -490,6 +517,7 @@ class Trace {
     this.coldRead = new Set();
     this.writes = new Map(); // key -> what Node's fetch writes on the cold miss ({value, ex})
     this.events = new Set(spec.events ?? []);
+    this.badSubscriptions = !!spec.badSubscriptions;
     this.db = {
       modelVersionRows: [],
       modelHashes: [],
@@ -503,6 +531,7 @@ class Trace {
       userFollows: new Map(),
       followsRead: 0,
       userCosmetics: [],
+      subscriptions: [],
     };
   }
 }
@@ -1124,10 +1153,59 @@ function getUserMetricPrivacyDefaultsMap(userIds) {
   return result;
 }
 
+/** queryValidCreatorMembership (creator-membership.service.ts) over the fixture's subscriptions, with
+ *  the real subscriptionProductMetadataSchema and tierOrder, TIER_METADATA_KEY at its default. */
+function queryValidCreatorMembership(userIds) {
+  const result = new Map();
+  const tierOrder = constants.memberships.tierOrder;
+  const highestTierByUser = new Map();
+  for (const id of userIds)
+    for (const sub of (T.badSubscriptions ? BAD_SUBSCRIPTIONS : SUBSCRIPTIONS)[id] ?? []) {
+      T.db.subscriptions.push({
+        userId: id,
+        metadata: JSON.stringify(sub.metadata),
+        productMetadata: JSON.stringify(sub.product),
+      });
+      const subMeta = sub.metadata ?? {};
+      if (subMeta.renewalEmailSent) continue;
+      const productMeta = subscriptionProductMetadataSchema.parse(sub.product);
+      if (productMeta.buzzPurchase) continue;
+      const tier = productMeta?.tier ?? 'free';
+      const prev = highestTierByUser.get(id);
+      if (prev === undefined || tierOrder.indexOf(tier) > tierOrder.indexOf(prev))
+        highestTierByUser.set(id, tier);
+    }
+  for (const id of userIds) {
+    const tier = highestTierByUser.get(id);
+    result.set(id, !!tier && tier !== 'free' && tier !== 'founder');
+  }
+  return result;
+}
+
+/** getValidCreatorMembershipMap: the cached booleans; a cold key is a miss, computed with the origin
+ *  and written back (a plain SET for MEMBERSHIP_CACHE_TTL, 10 minutes). */
 function getValidCreatorMembershipMap(userIds) {
   const result = new Map();
-  for (const id of [...new Set(userIds)])
+  const misses = [];
+  for (const id of [...new Set(userIds)]) {
+    const key = `${K.membership}:${id}`;
+    if (T.cold.has(key)) {
+      T.coldRead.add(key);
+      const written = T.writes.get(key);
+      if (written) result.set(id, written.value);
+      else misses.push(id);
+      continue;
+    }
     result.set(id, packedScalar(K.membership, id, MEMBERS[id] ?? false));
+  }
+  if (misses.length) {
+    const fresh = queryValidCreatorMembership(misses);
+    for (const id of misses) {
+      const value = fresh.get(id) ?? false;
+      result.set(id, value);
+      T.writes.set(`${K.membership}:${id}`, { value, ex: 600 });
+    }
+  }
   return result;
 }
 
@@ -1795,6 +1873,43 @@ const SPECS = [
     cold: [`${K.userCosmetics}:1001`, `${K.userCosmetics}:1002`],
     fallback: 'user-cosmetics-miss',
   },
+  // An owner's creator-membership miss: computed only behind FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS
+  // (default off: the membership-miss fallback).
+  {
+    name: 'cold-creator-memberships',
+    description:
+      'Creator-membership entries absent for two owners with a hidden metric: computed with getValidCreatorMembershipMap’s origin (a gold membership, a renewal-emailed one skipped: valid; a founder one and a gold one bought with Buzz: not) and written back for 10 minutes; the valid owner’s hidden count stays hidden.',
+    host: HOST.blue,
+    viewer: 1003,
+    config: { serveMembershipMiss: true },
+    input: { sort: 'Highest Rated', limit: 3, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5002, 5013, 5009] }],
+    cold: [`${K.membership}:1001`, `${K.membership}:1004`],
+  },
+  {
+    name: 'fallback-membership-miss',
+    description: 'The same membership entries absent with the switch off (the default): not served.',
+    host: HOST.blue,
+    viewer: 1003,
+    input: { sort: 'Highest Rated', limit: 3, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5002, 5013, 5009] }],
+    cold: [`${K.membership}:1001`, `${K.membership}:1004`],
+    fallback: 'membership-miss',
+  },
+  {
+    name: 'fallback-membership-shape',
+    description:
+      'A product metadata subscriptionProductMetadataSchema rejects (no tier): Node’s parse throws, so feed-go hands the request to Node.',
+    host: HOST.blue,
+    viewer: 1003,
+    config: { serveMembershipMiss: true },
+    input: { sort: 'Highest Rated', limit: 1, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5002] }],
+    cold: [`${K.membership}:1001`],
+    badSubscriptions: true,
+    nodeThrows: /tier/,
+    fallback: 'membership-shape',
+  },
   // The minor content rule on the shared version-showcase cache (imagesForModelVersionsCache's
   // appendFn): viewer-independent, so 8150 is left out for every viewer, its owner and moderators
   // included; the cover is then looked up on the replica, found on the same version, and left out
@@ -1862,6 +1977,8 @@ function dbTables() {
   // Only a fixture with a cold user-cosmetics key lists the UserCosmetic rows its lookup read.
   if ([...T.cold].some((k) => k.startsWith(`${K.userCosmetics}:`)))
     tables.userCosmetics = T.db.userCosmetics;
+  // Only a fixture with a cold membership key lists the subscription rows its origin read.
+  if (T.db.subscriptions.length) tables.subscriptions = T.db.subscriptions;
   // Only a fixture that reads a collection lists the table (a missing collection is no row).
   if (T.db.collections.size)
     tables.collections = m2o(T.db.collections, ([, c]) => c)
@@ -1900,7 +2017,10 @@ for (const spec of SPECS) {
     try {
       value = runModels({ ...spec, config });
     } catch (err) {
-      throw new Error(`${spec.name}: ${err.message}`);
+      // `nodeThrows`: Node's own error is the expected outcome (feed-go must hand it to Node).
+      if (!(spec.nodeThrows && spec.nodeThrows.test(String(err?.message ?? err))))
+        throw new Error(`${spec.name}: ${err.message}`);
+      T.pages = [];
     }
     if (T.pages.length)
       throw new Error(`${spec.name}: ${T.pages.length} listed page(s) never asked for`);

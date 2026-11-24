@@ -116,7 +116,7 @@ are computed with the Node lookup's own query (`FEED_GO_COMPUTE_MISSES`, default
 caches `FEED_GO_CACHE_WRITEBACK` lists (default none), e.g. `FEED_GO_CACHE_WRITEBACK=metrics,tag-ids`; the names
 are the `cache` labels of `feed_go_cache_miss_total` (`user-cosmetics`, `image-frames`, `event-decorations`,
 `tag-ids`, `model-frames`, `model-decorations`, `version-images`, `model-data`, `model-tags`,
-`official-models`, `metrics`), and an unknown name, the old `true`/`false` included, fails startup. Listing a frame, decoration, `version-images` or
+`official-models`, `metrics`, `creator-memberships`), and an unknown name, the old `true`/`false` included, fails startup. Listing a frame, decoration, `version-images` or
 `model-data` cache also needs `DATABASE_URL`, the primary. Each write is counted in
 `feed_go_cache_writes_total{cache,result}` (`written` | `nx_lost` | `error`; not per endpoint), and
 `FEED_GO_CACHE_WRITE_LOG_PER_MIN` (default 0) logs each written key, rate-limited, never its value
@@ -145,7 +145,9 @@ are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). 
 computed only behind `FEED_GO_GETALL_SERVE_INPUT_IDS` / `FEED_GO_GETALL_SERVE_INPUT_FOLLOWED` (both
 default off: the `input-ids` / `input-followed` fallbacks; DESIGN.md §15.2.4). An owner's user-cosmetics miss on a
 `model.getAll` page is computed only with `FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS` (default off: the
-`user-cosmetics-miss` fallback; DESIGN.md §15.2.5). The `feed_endpoint`
+`user-cosmetics-miss` fallback; DESIGN.md §15.2.5), and an owner's creator-membership miss only with
+`FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS` (default off: the `membership-miss` fallback; DESIGN.md §15.2.6),
+reading the tier under the app's own `TIER_METADATA_KEY`. The `feed_endpoint`
 label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
 `endpoint` would overwrite it.
 

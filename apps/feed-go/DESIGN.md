@@ -406,8 +406,8 @@ or "no row") is also kept in process for 10 s (at most 50 000 ids; expired ones 
 once a second, and while it is full of live ones a new id is not kept), so the same miss within seconds
 sends no query: without a write, Node's next fill is the only thing that would otherwise end the
 repeats. For a written-back cache nothing is kept (the written entry answers repeats). Every computed cache
-is kept but the image meta (§13) and the user follows (§14.2: the viewer's own follow set, read back
-after they change it): the tag ids, model frames, model decorations, model data, model
+is kept but the image meta (§13), the user follows (§14.2: the viewer's own follow set, read back
+after they change it) and the creator memberships (§15.2.6: Node keeps no per-pod copy): the tag ids, model frames, model decorations, model data, model
 tags and the official models too, as none depends on the viewer
 and Node already serves tag ids from a per-process copy for longer than 10 s. The kept answer is a
 §9 divergence.
@@ -2129,7 +2129,7 @@ read would see. Serving needs a Go-first miss measurement and Go-side miss filli
 | Flags | the state production runs (§15.3) | any model flag mirror off (`flag-off-state`) |
 | Lookups | the tag by name and the creator by name on the replica; the blocked tag list; the collection read permission on the replica | a creator the replica does not hold (`model-username-miss`: Node reads the primary, then 404s); the blocked list absent or unreadable (`blocked-tags-miss`, `blocked-tags-stale`) |
 | Covers | the owner's image on the shown version, or located on another of the model's versions (§15.1 step 4); a chosen cover neither finds and that has no featured community showcase row for the model (Node's `withCommunityCovers` finds nothing either) | a chosen cover neither finds that has a Community, not-removed `ModelVersionShowcaseItem` row on a version of the model (`model-community-cover`: Node may serve that community image as the cover, §16.9) |
-| Caches | basic users, profile pictures, cosmetics and tags by id on a miss (the replica); privacy defaults on a miss (`User.settings` on the replica); computed misses (§3.1) on the model data, the model tags, the model frames, the model hats, the version showcases and the showcase images' tag ids; the official models (§15.2.2) | misses on user cosmetics (`user-cosmetics-miss`; with its switch on, computed: §15.2.5) and memberships (`membership-miss`), and on the model data, model tags, model frames, model hats, version showcases, image tags and the official models without the computation (`model-data-miss`, `model-tags-miss`, `model-frame-miss`, `model-decoration-miss`, `model-images-miss`, `tag-ids-miss`, `official-models-miss`); a failed miss computation (`<reason>-failed`); a gallery-settings key Node would rebuild (`gallery-settings-miss`, `gallery-settings-stale`); a held setting with no level (`model-held-level-unset`) |
+| Caches | basic users, profile pictures, cosmetics and tags by id on a miss (the replica); privacy defaults on a miss (`User.settings` on the replica); computed misses (§3.1) on the model data, the model tags, the model frames, the model hats, the version showcases and the showcase images' tag ids; the official models (§15.2.2) | misses on user cosmetics (`user-cosmetics-miss`; with its switch on, computed: §15.2.5) and memberships (`membership-miss`; with its switch on, computed: §15.2.6), and on the model data, model tags, model frames, model hats, version showcases, image tags and the official models without the computation (`model-data-miss`, `model-tags-miss`, `model-frame-miss`, `model-decoration-miss`, `model-images-miss`, `tag-ids-miss`, `official-models-miss`); a failed miss computation (`<reason>-failed`); a gallery-settings key Node would rebuild (`gallery-settings-miss`, `gallery-settings-stale`); a held setting with no level (`model-held-level-unset`) |
 
 ### 15.2.1 Collections
 
@@ -2265,6 +2265,44 @@ process for 10 s (§3.1), and written back (SET NX, a day) only when `FEED_GO_CA
 would write too. It needs the miss computation (`FEED_GO_COMPUTE_MISSES`, default on); without it the
 miss still falls back. Under the Go-first probe the miss is recorded as one Go computes, as for the
 other computed caches. The switch decides the public route and the shadow alike.
+
+### 15.2.6 Creator-membership misses (behind a switch, default off)
+
+`FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS` (default off). The metric-privacy step reads, for every owner
+a viewer would see a hidden count for, `getValidCreatorMembershipMap`
+(`src/server/services/creator-membership.service.ts`). Off, an owner whose packed boolean
+(`packed:caches:creator-membership-valid:<id>`) is absent falls back (`membership-miss`), as it
+always has here. On, the page runs the whole function (`hydrate.Sources.CreatorMembershipsComputed`):
+
+- **Misses.** An absent key, a value that is not a packed boolean, or, when the read fails, every
+  owner (Node's `mGet` is one command, so a failed read answers no owner from the cache).
+- **The origin** (`queryValidCreatorMembership`): one read of the owners' `CustomerSubscription` rows
+  whose status is none of `canceled`, `incomplete_expired`, `past_due`, `unpaid`, joined to their
+  `Product`, on the replica (Node's `dbRead`). A subscription whose metadata has a truthy
+  `renewalEmailSent` is skipped. Each product metadata goes through `subscriptionProductMetadataSchema`
+  and a Buzz purchase (`buzzPurchase`) is skipped. The tier is read under `TIER_METADATA_KEY` (the
+  app's own variable, from the same shared config, read as its `z.string().default('tier')` reads it:
+  `tier` only when unset; set empty, it is the empty key, so every tier is free), and the user's highest
+  tier by `constants.memberships.tierOrder` is kept. Valid is a tier that is neither free nor founder;
+  an owner with no row is not valid.
+- **The schema.** The metadata must be an object with `tier` one of the product tiers. Each optional
+  coerced number must be absent, a JSON number or a plain decimal string, within its bound. The
+  strings must be strings, the enums in their sets, and the boolean strings a boolean, a number or a
+  `z.stringbool` word. Anything else is `membership-shape`, and Node answers it. That covers what
+  Node's parse throws on (its 500), and the values Node would coerce (null, a boolean, a blank
+  string, an exponent), which are left to Node rather than coerced here. A `TIER_METADATA_KEY`
+  naming another schema field, or a non-string value under another key, is `membership-shape` too.
+- **Writes.** Each computed answer is written back with a plain `SET` (not NX) for 10 minutes
+  (`MEMBERSHIP_CACHE_TTL`), as Node's best-effort `redis.packed.set`. That happens only when
+  `FEED_GO_CACHE_WRITEBACK` lists `creator-memberships`. With write-back off, nothing is kept in
+  process either (unlike the other caches not written back, §3.1): Node keeps no per-pod copy, so
+  every miss reads the origin, and a membership busted by a subscription change is read anew.
+- **Failures.** A failed origin read is `membership-miss-failed`.
+- **Probe and shadow.** Under the Go-first probe a miss is recorded as computed and looked up on the
+  replica, never written. The switch decides the public route and the shadow alike. It needs the
+  miss computation (`FEED_GO_COMPUTE_MISSES`, default on); without it the miss still falls back. The
+  v1 models routes and `model.getAssociatedResourcesCardData` keep their own membership reads,
+  unchanged.
 
 ### 15.3 Flags
 

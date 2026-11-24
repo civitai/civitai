@@ -76,7 +76,7 @@ func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache
 		return nil
 	}
 	c := &hydrate.MissCompute{WriteBack: cfg.CacheWriteBack, FrameNegative: cfg.FrameCacheNegative, Observe: observe,
-		TagGate: feed.ImageTagGate(blocked, addons)}
+		TagGate: feed.ImageTagGate(blocked, addons), TierMetadataKey: cfg.TierMetadataKey}
 	if cfg.CacheWriteBack.NeedsPrimary() {
 		c.Primary = primary
 	}
@@ -496,6 +496,7 @@ func run(log *slog.Logger) error {
 			VisibleDecorationEvents: cfg.DecorationEvents,
 			Ports:                   modelfeed.Ports{IDs: cfg.GetAllServeInputIDs, Followed: cfg.GetAllServeInputFollowed},
 			ServeUserCosmeticsMiss:  cfg.GetAllServeUserCosmeticsMiss,
+			ServeMembershipMiss:     cfg.GetAllServeMembershipMiss,
 		},
 	}
 	// The model.getAssociatedResourcesCardData shadow shares model.getAll's deps, plus the viewer's
@@ -617,7 +618,8 @@ func run(log *slog.Logger) error {
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll,
 		"FEED_GO_GETALL_SERVE_INPUT_IDS", cfg.GetAllServeInputIDs, "FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", cfg.GetAllServeInputFollowed,
-		"FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", cfg.GetAllServeUserCosmeticsMiss)
+		"FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS", cfg.GetAllServeUserCosmeticsMiss,
+		"FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS", cfg.GetAllServeMembershipMiss)
 	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
 	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,
 		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth)
