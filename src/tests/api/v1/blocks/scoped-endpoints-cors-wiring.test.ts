@@ -253,6 +253,13 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
     requiredScope: 'apps:storage',
     allowOpaqueOrigin: true,
   },
+  // The report moderation API: the document store's own scope and opaque-origin argument; a
+  // POST only, so no extra preflight methods.
+  {
+    module: '~/pages/api/v1/blocks/moderation/reports',
+    requiredScope: 'apps:storage',
+    allowOpaqueOrigin: true,
+  },
   {
     module: '~/pages/api/v1/blocks/shared-storage/append',
     requiredScope: 'apps:storage:shared:write',

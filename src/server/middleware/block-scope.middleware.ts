@@ -2366,6 +2366,10 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   // `/api/v1/blocks/sub-listings/mine` — the caller's own store items.
   'mine',
   'models',
+  // `/api/v1/blocks/moderation/reports` — the report moderation API
+  // (`doc-store-report-api.ts`). Both segments static: the collection, key and import
+  // source ride the POST body.
+  'moderation',
   'poll',
   // `/api/v1/blocks/resource-intent` — the Jev resource-intent primitive. Static:
   // the prompt and every parameter ride the POST body, so there is no `:seg`
@@ -2379,6 +2383,7 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'query',
   'quota',
   'report',
+  'reports',
   'set',
   'shared-storage',
   // `/api/v1/blocks/storage/…` — the document store, one optional catch-all route. Only
