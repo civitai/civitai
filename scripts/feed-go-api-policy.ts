@@ -7,6 +7,9 @@
  *   - `botUserAgentPatterns`: the user-agent patterns `verifyBot` requires before it checks the IP
  *     ranges. The Go service never decides a crawler itself: a request matching one goes to the app.
  *   - `privateCacheControl`: PRIVATE_CACHE_CONTROL, the default Cache-Control of an API response.
+ *   - `regionBlockResponse`: API_REGION_BLOCK, the 451 (status, Content-Type, body) every API path
+ *     answers a blocked region with. With FEED_GO_ANSWER_REGION_BLOCKED on, the Go service writes it
+ *     itself instead of handing the request to the app, so the bytes must be the app's own.
  *
  * Writes apps/feed-go/internal/apipolicy/apipolicy.json:
  *
@@ -17,6 +20,7 @@
  */
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { API_REGION_BLOCK } from '~/server/middleware/api-request-policy';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { BOT_UA_PATTERNS } from '~/server/utils/bot-detection/verify-bot';
 import { DEFAULT_REGION_BLOCK_CONFIG } from '~/server/utils/region-blocking';
@@ -44,6 +48,11 @@ export function buildFeedGoApiPolicy() {
       })
       .sort((a, b) => a.name.localeCompare(b.name)),
     privateCacheControl: PRIVATE_CACHE_CONTROL,
+    regionBlockResponse: {
+      status: API_REGION_BLOCK.status,
+      contentType: API_REGION_BLOCK.contentType,
+      body: API_REGION_BLOCK.body,
+    },
   };
 }
 

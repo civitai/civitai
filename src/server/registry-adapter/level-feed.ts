@@ -1,80 +1,44 @@
 /**
- * SHARED-COLLECTION LEVEL STREAMS (`apps/app-data-go/WRITES-DESIGN.md`, "The shape: one stream per
- * level bit, one small stream per viewer"): the documents of one shared collection major, split by
- * content level, read by app-data-go under its own service identity and shared by every viewer.
+ * SHARED-COLLECTION LEVEL STREAMS: the documents of one shared collection major, split by content
+ * level, read under a service identity and shared by every viewer. Design:
+ * `apps/app-data-go/WRITES-DESIGN.md` ("The shape: one stream per level bit, one small stream per
+ * viewer") for the shape, routing, mode, bindings, head and bound; what an entity carries is
+ * `docs/app-storage-generic-core.md` ("Registry and app-data-go impact"). Off unless
+ * `REGISTRY_ADAPTER_SHARED_LEVEL_CLIENTS` names a client ({@link parseSharedLevelClients}).
  *
- * WHAT IS SUPERSEDED: `docs/app-storage-generic-core.md` ("Registry and app-data-go impact")
- * supersedes WRITES-DESIGN's level-stream text on entity contents. Its `tallies` on entities, its
- * mark head (`head.markSeq`) and its `level: counters` stream are gone: a level entity is a plain
- * document on ONE sequence. WRITES-DESIGN still holds for the shape, routing, mode, bindings, the
- * head and the bound.
+ * WHAT EACH STREAM HOLDS. A BIT stream (1, 2, 4, 8, 16): the visible documents rated, for their
+ * current version, at exactly that bit, so the five partition the rated board (an unrated, pending,
+ * stale-rated or Blocked document is on none). `none`: every visible document, served only while
+ * content levels are OFF for the app. Neither carries a counter document (`author_kind =
+ * 'counter'`): the predicate admits one at every level, so it would sit on all five bit streams.
+ * Each entity is a PLAIN document (body, `key`, `version`, `createdAt`, `updatedAt`, `seq`; never
+ * its author, a tally or a mark), under the shared document's key URN as the public document feed
+ * builds it (`services/apps/app-record.ts`). A delete, a moderator hide and a re-rating off the bit
+ * arrive as `Delete`; any write of a document on the bit, a re-rating onto it included, as `Upsert`.
  *
- * HTTP ONLY. A level entity's `key`, `seq`, `version`, `createdAt` and `updatedAt` have no field in
- * the gRPC `Entity`, so the gRPC binding refuses a level subscription (`grpc.ts`).
- *
- * OFF unless `REGISTRY_ADAPTER_SHARED_LEVEL_CLIENTS` names a client ({@link parseSharedLevelClients});
- * until then no subscription is routed here and every document stream is served as before.
- *
- * ROUTING ("Feed routing"). A subscription is a level stream exactly when ALL hold
- * ({@link isLevelSubscription}): its schema is a collection-schema URN, its token is a SERVICE
- * token (a client as itself, no user) of a client on the shared-level allowlist, and its `meta`
- * names a level ({@link parseLevel}): `level` is one of the five selectable NsfwLevel bits
- * (1 PG, 2 PG-13, 4 R, 8 X, 16 XXX) or `"none"`. Anything else, a token-bearing relay on an
- * exported collection included, is routed as it was before this file existed.
- *
- * WHAT EACH STREAM HOLDS (`docs/app-storage-generic-core.md`, "Registry and app-data-go impact"):
- *   - a BIT stream: the collection's visible documents rated, for their current version, at
- *     exactly that bit (`SQL_LEVEL_DOCS_*_BIT`, through THE level predicate with no viewer). A
- *     rated document has one bit, so the five streams partition the rated board; an unrated,
- *     pending or stale-rated document, and a Blocked one, is on none of them;
- *   - `none`: every visible document, served only while content levels are OFF for the app
- *     (`app-blocks-shared-doc-levels`; an unreadable flag counts as ON).
- * Neither carries a counter document (`author_kind = 'counter'`, being removed).
- * Each entity is a PLAIN document: its body (`data`), storage `key`, `version`, `createdAt`,
- * `updatedAt` and `seq`. Never its author, any tally, or anyone's marks: a vote is a document on
- * its votes collection's own stream, ordered by `seq` like every write. A viewer-keyed document
- * (`keyedBy`) is streamed as any shared document, under the opaque key the REST list returns. Its
- * URN is the shared document's key URN, as the public document feed's (`app-record.ts`). A delete,
- * a moderator hide (a tombstone) and a re-rating off the bit arrive as `Delete`; a re-rating onto
- * the bit, and any write of a document on it, as `Upsert`.
- *
- * MODE. Every `live` and `progress` names `levels: "on" | "off"` and the slug's approved
- * production block (`block`, the app's store id: app-data-go's signed-out path checks a block
- * token's `appBlockId` against it). A `none` subscription is refused while levels are on, before
- * any snapshot, with an `end` whose meta is `{ reason: "levels_on" }`, and a live one is ended so
- * when they turn on; a bit stream likewise with `levels_off`. A collection that does not resolve
- * now (no approved app, not a shared collection, the major not minted) ends `not_resolved`,
- * never an empty stream that reads as an empty board.
- *
- * POLL ("Poll shapes and cost"). The head (`usage_app.last_seq`, ONE sequence) is read FIRST,
- * before any row, then the `seq` range on `doc` and `doc_tomb` since the stream's last position
- * (the shared feed's shape). Every write at or below the head had committed when it was read, so
- * it is in what the poll read; a head read after the rows could name a write they missed. The
- * head goes out in `meta` ({@link headMeta}, `head.seq`) on `live` (the state the cursor names)
- * and on a `progress` after each poll whose head moved.
- *
- * BOUND ("Size, count and alert"). A stream holds at most `maxRecords` documents, strictly above
- * the app's own 2,000-row read ({@link MIN_LEVEL_STREAM_RECORDS}): past it, its NEWEST documents by
- * key (keys sort as the store's `COLLATE "C"`). A delete or re-rating inside the window backfills
- * the next-newest from beyond it. Each poll reports its fill ({@link LevelStreamFill}) for the 75%
- * alert.
- *
- * BINDINGS. A stored state names its schema, its level (which fixes its levels mode), its token
- * subject and its bound. A resume whose `meta` names another level or comes from another subject is
- * `cursor_expired` before anything else in the state is used; a resume in a mode the stream
- * cannot be served in is ended with its reason, as a snapshot is.
+ * Invariants:
+ *   - HEAD BEFORE ROWS. Each poll reads the head (`usage_app.last_seq`, one sequence) before any
+ *     row: every write at or below it had committed, so it is in what the poll read. A head read
+ *     after the rows could name a write they missed.
+ *   - HTTP ONLY. The gRPC `Entity` has no field for `key`, `seq`, `version`, `createdAt` or
+ *     `updatedAt`, so a level subscription over gRPC is refused, never served as another stream.
+ *   - THE BOUND is strictly above the app's own 2,000-row read ({@link MIN_LEVEL_STREAM_RECORDS}):
+ *     past it a stream keeps its NEWEST documents by key (keys sort as the store's `COLLATE "C"`),
+ *     and a delete or re-rating inside the window backfills the next-newest from beyond it.
+ *   - AN UNREADABLE LEVELS FLAG COUNTS AS ON (`app-blocks-shared-doc-levels`).
  */
 import type { Registry } from 'prom-client';
 import { Gauge } from 'prom-client';
 import type { Audience } from '~/server/registry-adapter/audience';
 import { audienceAdmits, contextAudience } from '~/server/registry-adapter/audience';
+import { parseClientIdList } from '~/server/registry-adapter/auth';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import type { CollectionStream } from '~/server/registry-adapter/doc-feed';
 import { createClaimer, docRev, familyDigest } from '~/server/registry-adapter/doc-feed';
 import { headMeta } from '~/server/registry-adapter/private-feed';
 import type { AdapterContext, Change, Entity, EventMeta } from '~/server/registry-adapter/protocol';
 import { ProtocolError, StreamEnd, cursorExpired } from '~/server/registry-adapter/protocol';
-import { sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
+import { compareCodeUnits, sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
 import { parseCollectionSchemaUrn, registryUrn } from '~/server/registry-adapter/urn';
 import type {
   LevelChangesPage,
@@ -99,13 +63,11 @@ export function parseLevel(meta: AdapterContext['meta']): LevelName | null {
 }
 
 /**
- * The clients whose service tokens may read level streams (`REGISTRY_ADAPTER_SHARED_LEVEL_CLIENTS`):
- * OAuth client ids, separated by commas or whitespace. Unset or empty (the default) is the empty
- * set: no level stream exists. Its values live in deploy configuration, never here.
+ * The clients whose service tokens may read level streams (`REGISTRY_ADAPTER_SHARED_LEVEL_CLIENTS`),
+ * as a client-id list ({@link parseClientIdList}). Unset or empty (the default) is the empty set: no
+ * level stream exists. Its values live in deploy configuration, never here.
  */
-export function parseSharedLevelClients(raw: string | undefined): ReadonlySet<string> {
-  return new Set((raw ?? '').split(/[\s,]+/).filter(Boolean));
-}
+export const parseSharedLevelClients = parseClientIdList;
 
 /** A service token (no user) of a client on `clients`. */
 export function isLevelClient(
@@ -115,7 +77,12 @@ export function isLevelClient(
   return !!reader && reader.userId === null && clients.has(reader.clientId);
 }
 
-/** Whether a subscription is a level stream (see the file comment's ROUTING). */
+/**
+ * Whether a subscription is a level stream: its schema is a collection-schema URN, its token is a
+ * SERVICE token (a client as itself, no user) of a client on the allowlist, and its `meta` names a
+ * level ({@link parseLevel}). Anything else, a token-bearing relay on an exported collection
+ * included, is routed as if this feed did not exist.
+ */
 export function isLevelSubscription(
   clients: ReadonlySet<string>,
   schema: string,
@@ -171,7 +138,10 @@ export type SharedLevelCollection = Pick<
   CollectionStream,
   'appId' | 'slug' | 'collection' | 'contentRating' | 'family'
 > & {
-  /** The slug's approved production block id, which `live` and `progress` name. */
+  /**
+   * The slug's approved production block id (the app's store id), which `live` and `progress`
+   * name: app-data-go's signed-out path checks a block token's `appBlockId` against it.
+   */
   appBlockId: string;
   /** Content levels on for the app (`isSharedDocLevelsOn`: an unreadable flag counts as on). */
   levelsOn: boolean;
@@ -308,7 +278,6 @@ type LevelState = {
 
 const levelString = (level: LevelName) => String(level);
 const selectorOf = (level: LevelName): LevelSelector => (level === 'none' ? level : { bit: level });
-const byKey = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** A level entity's rev: everything the entity carries, under {@link LEVEL_BODY_FORMAT}. */
 export const levelRev = (d: LevelStreamDocument, schemas: readonly string[]) =>
@@ -359,7 +328,7 @@ export function createLevelFeed(opts: LevelFeedOptions) {
     if (!isLevelSubscription(opts.clients, schema, ctx) || level === null) {
       throw cursorExpired('this subscription is not a level stream');
     }
-    // Routed here, then refused, so it is never served as some other stream (see HTTP ONLY).
+    // Routed here, then refused, so it is never served as some other stream (HTTP ONLY).
     if (ctx.binding === 'grpc') {
       throw new ProtocolError(
         'bad_request',
@@ -369,7 +338,12 @@ export function createLevelFeed(opts: LevelFeedOptions) {
     return level;
   };
 
-  /** The state a cursor names, every binding checked before any of it is used. */
+  /**
+   * The state a cursor names, every binding checked before any of it is used. A state names its
+   * schema, its level (which fixes its levels mode), its token subject and its bound: a resume
+   * naming another level or from another subject is `cursor_expired` before anything else in the
+   * state is used; a resume in a mode the stream cannot be served in is ended by `advance`.
+   */
   const load = async (schema: string, cursor: string, ctx: AdapterContext): Promise<LevelState> => {
     const digest = CURSOR_RE.exec(cursor)?.[1];
     if (!digest) throw cursorExpired('not a cursor this source issued');
@@ -438,7 +412,11 @@ export function createLevelFeed(opts: LevelFeedOptions) {
 
   /**
    * The stream's state now, from `prev` (null for a snapshot), and the entities to upsert. Throws
-   * {@link StreamEnd} when the stream cannot be served (see the file comment's MODE).
+   * {@link StreamEnd} when the stream cannot be served: `levels_on` for `none` while levels are on,
+   * `levels_off` for a bit while they are off (a live stream is ended so when the mode flips), and
+   * `not_resolved` when the collection does not resolve now (no approved app, not a shared
+   * collection, the major not minted) or its content rating is one the token's audience does not
+   * admit. Never an empty stream that reads as an empty board.
    */
   async function advance(
     schema: string,
@@ -456,7 +434,7 @@ export function createLevelFeed(opts: LevelFeedOptions) {
     }
     const selector = selectorOf(level);
 
-    // The head, BEFORE any row (see the file comment's POLL).
+    // The head, BEFORE any row (see the file comment's invariants).
     const seq = await opts.source.head(s.appId);
     if (prev && seq < prev.seq) throw cursorExpired('the namespace seq went back');
     if (prev?.witness) {
@@ -553,12 +531,12 @@ export function createLevelFeed(opts: LevelFeedOptions) {
       truncated = prev.truncated;
       if (served.size < bound && truncated) {
         // A delete or re-rating inside the window: backfill the next-newest from beyond it.
-        const below = [...served.keys()].sort(byKey)[0] ?? '';
+        const below = [...served.keys()].sort(compareCodeUnits)[0] ?? '';
         truncated = await readDown(below, bound - served.size + 1);
       }
     }
     // Past the bound: keep the newest by key.
-    const keys = [...served.keys()].sort(byKey);
+    const keys = [...served.keys()].sort(compareCodeUnits);
     if (keys.length > bound) {
       truncated = true;
       for (const k of keys.slice(0, keys.length - bound)) {
@@ -577,7 +555,7 @@ export function createLevelFeed(opts: LevelFeedOptions) {
         witness,
         served: [...served]
           .map(([key, v]) => [key, v.rev, v.seq] as [string, string, number])
-          .sort((a, b) => byKey(a[0], b[0])),
+          .sort((a, b) => compareCodeUnits(a[0], b[0])),
       },
       entities,
     };
@@ -639,7 +617,7 @@ export function createLevelFeed(opts: LevelFeedOptions) {
         if (next !== before) {
           const was = new Map(before.served.map(([key, rev]) => [key, rev]));
           const still = new Set(next.served.map(([key]) => key));
-          const deletes = [...was.keys()].filter((k) => !still.has(k)).sort(byKey);
+          const deletes = [...was.keys()].filter((k) => !still.has(k)).sort(compareCodeUnits);
           const upserts = next.served
             .filter(([key, rev]) => was.get(key) !== rev)
             .map(([key]) => entities.get(key))
@@ -678,7 +656,7 @@ export function createLevelFeed(opts: LevelFeedOptions) {
   }
 
   return {
-    /** Whether a subscription is routed here (see the file comment's ROUTING). */
+    /** Whether a subscription is routed here ({@link isLevelSubscription}). */
     routes(schema: string, ctx: Pick<AdapterContext, 'reader' | 'meta'>): boolean {
       return isLevelSubscription(opts.clients, schema, ctx);
     },
