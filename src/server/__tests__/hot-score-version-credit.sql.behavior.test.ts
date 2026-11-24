@@ -602,7 +602,7 @@ describe("an unmeasured slice follows its model's score", () => {
   });
 });
 
-const PRICE_WEIGHT_DIR = '20271126120000_model_hot_score_buyer_price_weight';
+const PRICE_WEIGHT_DIR = '20271128120000_model_hot_score_buyer_price_weight';
 
 describe('a buyer counts toward the head-start bar by what they paid, capped', () => {
   // The rule is docs/model-feed-hot-ranking.md §21: change it there first. A buyer paying p Buzz

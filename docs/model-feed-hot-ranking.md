@@ -1756,7 +1756,7 @@ buyer weight = least(1 + log2(max(price, 100) / 100) / 3, 3)
 - **Known over-count.** A purchase made before this release is priced at the gate's price now, so a
   creator who raises the price after selling counts those buyers higher. It is bounded by the cap,
   and the 60-day window ends it.
-- The migration (`20271126120000_model_hot_score_buyer_price_weight`) is applied by hand, as §20's
+- The migration (`20271128120000_model_hot_score_buyer_price_weight`) is applied by hand, as §20's
   is, after the app release that records the amount. It rescores only the models its weights lift
   over the bar. Its `rollback.sql` restores §20's functions and rescores every model with an access
   row on a version published since 2026-09-22.

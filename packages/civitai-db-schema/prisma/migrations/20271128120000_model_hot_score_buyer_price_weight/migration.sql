@@ -22,7 +22,7 @@
 -- file on refusal, and section 5 is a CALL whose procedure COMMITs per batch. Deploy the app first:
 -- applied before it, only older purchases are weighed, by the gate's price, until it ships.
 --
--- No other application change ships with this: the formula lives only in these functions.
+-- The formula lives only in these functions; the app change is only the recorded amount and currency.
 
 BEGIN;
 
