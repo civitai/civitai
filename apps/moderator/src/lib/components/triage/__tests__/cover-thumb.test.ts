@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -26,9 +26,9 @@ function clientEntry(spec: string): string {
   return pathToFileURL(path.join(SVELTE, e)).href;
 }
 
-const cache = path.resolve(import.meta.dirname, '../../../../../../../node_modules/.cache');
-mkdirSync(cache, { recursive: true });
-const work = mkdtempSync(path.join(cache, 'cover-thumb-'));
+// Inside src, not node_modules: Vitest transforms only files outside node_modules, and CI reads no
+// path outside the app.
+const work = mkdtempSync(path.join(import.meta.dirname, '.cover-thumb-'));
 afterAll(() => rmSync(work, { recursive: true, force: true }));
 
 function emit(name: string, source: string) {
