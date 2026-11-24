@@ -339,24 +339,48 @@ describe('send rows', () => {
     });
   });
 
-  it('waits on a recorder that hangs for at most EMAIL_SEND_RECORD_TIMEOUT_MS', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const mod = await load();
-    expect(mod.EMAIL_SEND_RECORD_TIMEOUT_MS).toBe(2000);
-    let called!: () => void;
-    const reached = new Promise<void>((resolve) => (called = resolve));
-    mod.setEmailSendRecorder(() => {
-      called();
-      return new Promise(() => undefined);
-    });
-    let done = false;
-    const sending = mod.sendEmail(input).then(() => (done = true));
-    await reached;
-    await vi.advanceTimersByTimeAsync(1999);
-    expect(done).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    await sending;
-    expect(done).toBe(true);
+  const turns = async (n: number) => {
+    for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve));
+  };
+
+  it.each(['sendEmail', 'sendEmailStrict'] as const)(
+    '%s resolves without waiting for its recorder, and leaves no timer behind',
+    async (fn) => {
+      // Timers are faked and never advanced, so no timeout can release a wait on the recorder:
+      // the send resolves only if it never waits on the row at all.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const mod = await load();
+      const rows: EmailSendRecord[] = [];
+      mod.setEmailSendRecorder((r) => {
+        rows.push(r);
+        return new Promise(() => undefined); // a ClickHouse insert that never settles
+      });
+      let done = false;
+      const sending = mod[fn](input).then(() => (done = true));
+      for (let i = 0; i < 100 && !rows.length; i++) await turns(1);
+      expect(rows).toHaveLength(1);
+      await turns(2);
+      expect(done).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+      await sending;
+    }
+  );
+
+  it('a recorder that rejects after the send has returned raises no unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => void unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const mod = await load();
+      let reject!: (err: Error) => void;
+      mod.setEmailSendRecorder(() => new Promise((_, rj) => (reject = rj)));
+      await expect(mod.sendEmail(input)).resolves.toBeUndefined();
+      reject(new Error('late boom'));
+      await turns(5);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 
   it('a send without its template and mail class does not typecheck', () => {

@@ -13,7 +13,6 @@ export {
   emailSendRecord,
   MAIL_CLASSES,
   SEND_ID_HEADER,
-  EMAIL_SEND_RECORD_TIMEOUT_MS,
 } from './client';
 export type {
   SendEmailInput,

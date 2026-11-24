@@ -82,15 +82,12 @@ export interface EmailSendRecord {
 }
 export type EmailSendRecorder = (record: EmailSendRecord) => unknown;
 
-/** The longest a successful send waits on its recorder before returning. */
-export const EMAIL_SEND_RECORD_TIMEOUT_MS = 2000;
-
 let _recorder: EmailSendRecorder | null = null;
 
 /**
  * Sets the function told of every successful send (null clears it). An app that writes send rows
- * registers one; without it nothing is recorded. A recorder that throws, rejects or hangs never
- * fails a send, and a send waits on it at most `EMAIL_SEND_RECORD_TIMEOUT_MS`.
+ * registers one; without it nothing is recorded. The send never waits on it: a recorder that
+ * throws, rejects or hangs costs a missing row, never a failed or delayed send.
  */
 export function setEmailSendRecorder(recorder: EmailSendRecorder | null) {
   _recorder = recorder;
@@ -115,23 +112,15 @@ export function emailSendRecord(sendId: string, tags: EmailTags | undefined, sen
   } satisfies EmailSendRecord;
 }
 
-async function recordSend(record: EmailSendRecord) {
+// Fire-and-forget: the recorder is started and never awaited. Its errors are swallowed here (it
+// logs its own), and its promise gets a handler, so a late rejection is never unhandled.
+function recordSend(record: EmailSendRecord) {
   const recorder = _recorder;
   if (!recorder) return;
-  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await Promise.race([
-      Promise.resolve().then(() => recorder(record)),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, EMAIL_SEND_RECORD_TIMEOUT_MS);
-        // A pending wait must not hold a short-lived process (a job, a script) open.
-        (timer as { unref?: () => void }).unref?.();
-      }),
-    ]);
+    Promise.resolve(recorder(record)).catch(() => undefined);
   } catch {
-    // Measurement never fails a send; the recorder logs its own errors.
-  } finally {
-    clearTimeout(timer);
+    // A recorder that throws synchronously costs the row, never the send.
   }
 }
 
@@ -169,7 +158,7 @@ export async function sendEmail(input: SendEmailInput): Promise<void> {
   if (failed.length) {
     throw new Error(`Email(s) (${failed.join(', ')}) could not be sent`);
   }
-  await recordSend(emailSendRecord(sendId, input.tags, new Date()));
+  recordSend(emailSendRecord(sendId, input.tags, new Date()));
 }
 
 export interface SendEmailStrictInput extends SendEmailInput {
@@ -202,7 +191,7 @@ export async function sendEmailStrict(input: SendEmailStrictInput): Promise<{ me
   const failed = (info.rejected ?? []).filter(Boolean);
   if (failed.length) throw new Error(`${failed.length} recipient(s) could not be sent to`);
   if (!info.messageId) throw new Error('Email relay returned no message id');
-  await recordSend(emailSendRecord(sendId, input.tags, new Date()));
+  recordSend(emailSendRecord(sendId, input.tags, new Date()));
   return { messageId: info.messageId };
 }
 

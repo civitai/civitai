@@ -1,4 +1,4 @@
-import { EMAIL_SEND_RECORD_TIMEOUT_MS, type EmailSendRecord } from '@civitai/email';
+import type { EmailSendRecord } from '@civitai/email';
 import type { CustomClickHouseClient } from '@civitai/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { logToAxiom, safeError } from '~/server/logging/client';
@@ -6,10 +6,13 @@ import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 
 /**
  * One `send` row per message the transport accepted, in the general email events table. The
- * transport (@civitai/email) calls `recordEmailSend` after every successful send and waits on it
- * at most EMAIL_SEND_RECORD_TIMEOUT_MS; this never throws either. The row carries the send's tags
- * and our own send id (the message's X-Civitai-Send-Id header), never an address.
+ * transport (@civitai/email) starts `recordEmailSend` after every successful send and never waits
+ * on it; this never throws either. The row carries the send's tags and our own send id (the
+ * message's X-Civitai-Send-Id header), never an address.
  */
+
+/** How long one insert may run before it is aborted, so a stalled ClickHouse holds no request open. */
+export const EMAIL_EVENT_INSERT_TIMEOUT_MS = 2000;
 
 /** The ClickHouse table (DDL: src/server/clickhouse/migrations/2026-11-24-email-events.sql). */
 export const EMAIL_EVENTS_TABLE = 'emailEvents';
@@ -52,7 +55,7 @@ export async function insertEmailSend(client: Inserter | undefined, r: EmailSend
       table: EMAIL_EVENTS_TABLE,
       values: [emailSendRow(r)],
       format: 'JSONEachRow',
-      abort_signal: fetchTimeoutSignal(EMAIL_SEND_RECORD_TIMEOUT_MS),
+      abort_signal: fetchTimeoutSignal(EMAIL_EVENT_INSERT_TIMEOUT_MS),
     });
   } catch (err) {
     logRecordFailure(err, r);

@@ -5,8 +5,7 @@
 -- a direct insert called by the one transport in @civitai/email after each successful send), not
 -- through the tracker service, so no tracker restart is needed. While the table is missing no row
 -- lands (the client inserts asynchronously, so the error may not reach the app's log) and every
--- send still goes out: the transport never fails a send on its recorder and waits on it at most
--- 2 seconds.
+-- send still goes out: the transport never fails a send on its recorder and never waits on it.
 --
 -- One row per event. Written today:
 --   send          one per message the transport accepted (never a skipped or failed send), from
