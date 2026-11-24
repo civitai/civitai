@@ -31,7 +31,11 @@ function choose(spec: Extract<RemixAsk, { kind: 'choice' }>, option?: string) {
 /** The image prompts a run sends, answering text asks with `extra` and choices with `option`. */
 async function promptsOf(app: (typeof SEED_APPS)[number], extra = '', option?: string) {
   const answer = (spec: RemixAsk) =>
-    spec.kind === 'text' ? extra : spec.kind === 'pick' ? 0 : choose(spec, option);
+    spec.kind === 'text'
+      ? extra
+      : spec.kind === 'pick' || spec.kind === 'image'
+      ? 0
+      : choose(spec, option);
   const { trace } = await dryRunRemixApp(app, source, { answer });
   return trace.flatMap((step) =>
     step.type === 'workflow' && step.request.kind === 'image' ? [step.request.prompt] : []

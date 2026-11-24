@@ -180,16 +180,19 @@ export function buildRuntimeRequest({
   viewer,
   author,
   log,
+  references = [],
 }: {
   app: Pick<RemixApp, 'name' | 'engine'>;
   image: RemixSourceImage;
+  /** Every image the run's `image` asks were answered with: they rate the run with the source. */
+  references?: readonly RemixSourceImage[];
   request: RemixWorkflowRequest;
   viewer: { isGreen: boolean; showNsfw: boolean };
   /** Required, so no caller can leave a user app's sizes to its claim. */
   author: RegisteredRemixApp['author'] | undefined;
   log: readonly RemixLogEntry[];
 }) {
-  const resolved = resolveRemixAppEngine(app, image, viewer);
+  const resolved = resolveRemixAppEngine(app, image, viewer, references);
   if ('refusal' in resolved) throw new TRPCError({ code: 'FORBIDDEN', message: resolved.refusal });
   const { tier, engine } = resolved;
   const sized = ({ url, width, height }: RemixImage) => ({
@@ -351,6 +354,20 @@ export async function loadSource(
   return readSource(imageId);
 }
 
+/**
+ * An image the viewer answered an `image` ask with: one of their own images, through the source's
+ * visibility check. Its rating gate is `resolveRemixAppEngine`, beside the source's.
+ */
+export async function loadReference(imageId: number, caller: RemixAppCaller) {
+  const owner = await dbRead.image.findUnique({ where: { id: imageId }, select: { userId: true } });
+  if (owner?.userId !== caller.user.id)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Pick one of your own images' });
+  const image = await loadSource(imageId, caller, true);
+  if (image.type !== 'image')
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Pick an image, not a video' });
+  return image;
+}
+
 async function readSource(imageId: number) {
   const image = await dbRead.image.findUnique({
     where: { id: imageId },
@@ -365,6 +382,7 @@ async function readSource(imageId: number) {
       blockedFor: true,
       minor: true,
       poi: true,
+      needsReview: true,
     },
   });
   if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });

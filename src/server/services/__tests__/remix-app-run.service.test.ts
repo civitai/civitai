@@ -416,7 +416,8 @@ import {
   type RemixAppCaller,
 } from '~/server/services/remix-app.service';
 import { getRemixSourceUrl } from '~/shared/utils/remix-tier';
-import { RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
+import { REMIX_IMAGE_STAND_IN, RemixReplayError, replayRemixApp } from '~/shared/remix-apps/replay';
+import { REMIX_REFERENCE_UNSCANNED } from '~/shared/utils/remix-apps';
 import {
   auditPromptServer,
   classifyPromptServer,
@@ -1707,6 +1708,199 @@ describe('a row-defined app', () => {
     serve(row());
     await expect(start(['golden'], h.price, 'nonce-ok')).resolves.toMatchObject({
       status: 'running',
+    });
+  });
+});
+
+// Policy: the reference passes the source's gates, the run takes the tier of its most mature
+// input, and an unscanned reference fails closed (Mod Lead ruling on hub:data:agent_tasks/1a20f84c2123ffede).
+describe('an image ask', () => {
+  const REF_ID = 21;
+  const matureEngine = {
+    ecosystem: REMIX_ENGINES.edit.mature.ecosystemKey,
+    versionId: REMIX_ENGINES.edit.mature.modelVersionId,
+  };
+  /** "Put on this jacket": the viewer's own image goes to the edit beside the source, then an upscale. */
+  const row = ({ mature = true }: { mature?: boolean } = {}) => ({
+    id: 'apb_remix_wear_it',
+    blockId: 'remix-wear-it',
+    version: '1.0.0',
+    status: 'remix',
+    featuredOrder: 0,
+    manifest: {
+      kind: 'remix',
+      name: 'Wear it',
+      version: '1.0.0',
+      targets: [{ slotId: 'image.remix' }],
+      remix: {
+        icon: 'pencil',
+        engine: {
+          safe: { ecosystem: 'NanoBanana', versionId: NANO_V2_LITE },
+          ...(mature ? { mature: matureEngine } : {}),
+        },
+        asks: [{ id: 'garment', kind: 'image', prompt: 'Pick the jacket' }],
+        steps: [
+          {
+            kind: 'image',
+            prompt: 'Dress the person in the jacket from the second image.',
+            aspectRatio: 'source',
+            quantity: 1,
+            input: 'source',
+            references: ['garment'],
+          },
+          { kind: 'upscale', scale: 2 },
+        ],
+      },
+    },
+  });
+  const serve = (over?: Parameters<typeof row>[0]) =>
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([row(over)] as never);
+  const start = (answers: number[], quote?: number, viewer = caller()) =>
+    startRemixRun({
+      slug: 'wear-it',
+      imageId: SOURCE_ID,
+      nonce: 'nonce-wear',
+      answers,
+      quote,
+      caller: viewer,
+    });
+  const refUrl = () => (h.images.get(REF_ID) as { url: string }).url;
+
+  beforeEach(() => {
+    addImage(SOURCE_ID);
+    addImage(REF_ID, { userId: USER_ID });
+    serve();
+  });
+
+  it('asks for an image, then edits the source with it, priced and signed for both', async () => {
+    expect(await start([])).toMatchObject({
+      status: 'ask',
+      ask: { kind: 'image', prompt: 'Pick the jacket' },
+    });
+    expect(await start([REF_ID])).toMatchObject({ status: 'priced', cost: h.price });
+    expect(submits()).toHaveLength(0);
+
+    await start([REF_ID], h.price);
+    const [edit] = submits();
+    expect(JSON.stringify(edit)).toContain(refUrl());
+    expect(edit.metadata?.remixRun).toMatchObject({ answers: [REF_ID] });
+    expect(verifyProvenance(edit.metadata?.provenance, USER_ID)).toEqual([SOURCE_ID, REF_ID]);
+  });
+
+  it('runs a safe source with a mature reference on the mature engine', async () => {
+    // POSITIVE CONTROL: a safe reference keeps the safe engine.
+    await start([REF_ID], h.price);
+    expect(JSON.stringify(submits()[0])).not.toContain(String(matureEngine.versionId));
+
+    addImage(REF_ID, { userId: USER_ID, nsfwLevel: 8 });
+    await startRemixRun({
+      slug: 'wear-it',
+      imageId: SOURCE_ID,
+      nonce: 'nonce-wear-mature',
+      answers: [REF_ID],
+      quote: h.price,
+      caller: caller(),
+    });
+    expect(JSON.stringify(submits()[1])).toContain(String(matureEngine.versionId));
+  });
+
+  it.each([
+    ['on green', caller({ isGreenDomain: true })],
+    [
+      'for a viewer who hides mature content',
+      caller({ user: { ...caller().user, showNsfw: false } }),
+    ],
+  ])('refuses a mature reference beside a safe source %s', async (_, viewer) => {
+    // POSITIVE CONTROL: the same viewer runs it with a safe reference.
+    expect(await start([REF_ID], undefined, viewer)).toMatchObject({ status: 'priced' });
+    addImage(REF_ID, { userId: USER_ID, nsfwLevel: 8 });
+    await expect(start([REF_ID], undefined, viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(submits()).toHaveLength(0);
+  });
+
+  it('refuses a mature reference for an app with no mature engine', async () => {
+    serve({ mature: false });
+    addImage(REF_ID, { userId: USER_ID, nsfwLevel: 8 });
+    await expect(start([REF_ID])).rejects.toMatchObject({
+      message: 'Wear it does not run on mature images.',
+    });
+  });
+
+  // Minor and POI refuse on any tier (getEngineRefusal), so on either side of the pair.
+  it.each([
+    ['a minor-flagged reference beside a mature source', { nsfwLevel: 8 }, { minor: true }],
+    ['a mature reference beside a minor-flagged source', { minor: true }, { nsfwLevel: 8 }],
+    ['a reference of a real person', {}, { poi: true }],
+    ['a blocked reference', {}, { blockedFor: 'moderated' }],
+  ])('refuses %s', async (_, source, reference) => {
+    addImage(SOURCE_ID, source);
+    addImage(REF_ID, { userId: USER_ID, ...reference });
+    await expect(start([REF_ID])).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(submits()).toHaveLength(0);
+  });
+
+  it.each(['Pending', 'Error', null])(
+    'refuses a reference whose scan is %s, never treating it as safe',
+    async (ingestion) => {
+      addImage(REF_ID, { userId: USER_ID, ingestion, nsfwLevel: 0 });
+      await expect(start([REF_ID])).rejects.toMatchObject({
+        message: REMIX_REFERENCE_UNSCANNED,
+      });
+    }
+  );
+
+  // Mod Lead ruling 2026-11-24: any pending review refuses use as an input, source or reference.
+  it.each([
+    ['a reference', SOURCE_ID, REF_ID],
+    ['a source', REF_ID, SOURCE_ID],
+  ])('refuses %s waiting on a moderation review', async (_, clear, held) => {
+    // POSITIVE CONTROL: with no review pending (null), the same run is priced.
+    addImage(clear, { userId: USER_ID });
+    addImage(held, { userId: USER_ID, needsReview: null });
+    expect(await start([REF_ID])).toMatchObject({ status: 'priced' });
+    addImage(held, { userId: USER_ID, needsReview: 'minor' });
+    await expect(start([REF_ID])).rejects.toMatchObject({ message: /waiting on a review/ });
+    expect(submits()).toHaveLength(0);
+  });
+
+  it("refuses another user's image, a missing one, and the quote's stand-in", async () => {
+    addImage(REF_ID, { userId: USER_ID + 1 });
+    await expect(start([REF_ID])).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(start([REF_ID + 1])).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(start([REMIX_IMAGE_STAND_IN])).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('checks the reference again at each submit: one blocked mid-run refuses the next step', async () => {
+    const { runId } = await start([REF_ID], h.price);
+    finish(submits()[0].id, [blob('worn')], { [blob('worn')]: 'pg' });
+    // POSITIVE CONTROL: unblocked, the upscale is priced.
+    expect(await advanceRemixRun({ runId, caller: caller() })).toMatchObject({ status: 'priced' });
+
+    addImage(REF_ID, { userId: USER_ID, blockedFor: 'moderated' });
+    await expect(
+      advanceRemixRun({ runId, quote: h.upscalePrice, caller: caller() })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // Deleted refuses too.
+    h.images.delete(REF_ID);
+    await expect(
+      advanceRemixRun({ runId, quote: h.upscalePrice, caller: caller() })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(submits()).toHaveLength(1);
+  });
+
+  // Only a submit is gated: what the viewer already paid for stays theirs to see and post.
+  it.each([
+    ['blocked', () => addImage(REF_ID, { userId: USER_ID, blockedFor: 'moderated' })],
+    ['deleted', () => h.images.delete(REF_ID)],
+  ])('a finished run stays done after its reference is %s', async (_, change) => {
+    const { runId } = await start([REF_ID], h.price);
+    finish(submits()[0].id, [blob('worn')], { [blob('worn')]: 'pg' });
+    await advanceRemixRun({ runId, quote: h.upscalePrice, caller: caller() });
+    finish(submits()[1].id, [blob('big')], { [blob('big')]: 'pg' });
+    change();
+    expect(await advanceRemixRun({ runId, caller: caller() })).toMatchObject({
+      status: 'done',
+      outputs: [{ url: blob('big') }],
     });
   });
 });

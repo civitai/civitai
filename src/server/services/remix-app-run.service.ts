@@ -33,6 +33,7 @@ import {
   assertInputsUsable,
   assertWithinQuote,
   buildRuntimeRequest,
+  loadReference,
   loadSource,
   remixRunId,
   remixSubmitArgs,
@@ -63,11 +64,14 @@ import { remixOptionEffects } from '~/shared/remix-apps/mock-host';
 import { isDefined } from '~/utils/type-guards';
 import {
   remixAnswerRefusal,
+  REMIX_IMAGE_STAND_IN,
   remixLogSize,
+  RemixMissingReference,
   RemixReplayError,
   REMIX_RUN_LIMITS,
   type RemixLogEntry,
   type RemixReplayer,
+  type RemixReplayOutcome,
 } from '~/shared/remix-apps/replay';
 import {
   readRemixTag,
@@ -80,7 +84,12 @@ import {
 import { RemixQuarantinedError } from '~/server/services/remix-app-runner';
 import { orchestratorRefundableStatuses } from '~/shared/constants/generation.constants';
 import { isMature } from '~/shared/constants/orchestrator.constants';
-import type { RemixSourceImage } from '~/shared/utils/remix-tier';
+import { resolveRemixAppEngine } from '~/shared/utils/remix-apps';
+import {
+  getRemixSourceUrl,
+  REMIX_FALLBACK_DIMENSIONS,
+  type RemixSourceImage,
+} from '~/shared/utils/remix-tier';
 
 export const MAX_RUN_SEGMENTS = 8;
 
@@ -261,11 +270,13 @@ async function optionPrices({
   spec,
   caller,
   currencies,
+  references,
 }: {
   app: RemixApp;
   author: RegisteredRemixApp['author'] | undefined;
   replay: RemixReplayer;
   image: RemixSourceImage;
+  references: readonly RemixSourceImage[];
   source: RemixAppSource;
   log: RemixLogEntry[];
   spec: Extract<RemixAsk, { kind: 'choice' }>;
@@ -289,6 +300,7 @@ async function optionPrices({
           viewer: viewerOf(caller),
           author,
           log,
+          references,
         });
         const { cost } = await whatIfPresetImageGen({
           graphInput: run.graphInput,
@@ -491,10 +503,51 @@ async function advance({
       ? new TRPCError({ code: 'PRECONDITION_FAILED', message: REMIX_APP_HELD })
       : new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: REMIX_APP_UNAVAILABLE });
   };
-  const replay = () =>
-    replayer(source, log).catch(async (error) => {
-      throw error instanceof RemixReplayError ? damaged(error.message) : await quarantined(error);
+  // Loaded on every advance and gated at each submit (`buildRuntimeRequest`), so one blocked or
+  // rerated since it was picked refuses the next segment. Only a submit is gated: a finished run
+  // stays readable and postable whatever its references became.
+  const references = new Map<number, RemixImage>();
+  const referenceRows: RemixSourceImage[] = [];
+  /** Recorded answers that no longer load (deleted, or no longer the viewer's): nothing more runs. */
+  const unavailable = new Set<number>();
+  /** `asked`: answered just now, so refused at once rather than at the submit. */
+  const addReference = async (imageId: number, asked: boolean) => {
+    const row = await loadReference(imageId, caller).catch((error) => {
+      if (asked) throw error;
+      return null;
     });
+    if (!row) {
+      unavailable.add(imageId);
+      // A url no step may submit: the submit refuses first.
+      references.set(imageId, { url: `remix-unavailable:${imageId}` });
+      return;
+    }
+    if (asked) {
+      const resolved = resolveRemixAppEngine(app, image, viewerOf(caller), [...referenceRows, row]);
+      if ('refusal' in resolved)
+        throw new TRPCError({ code: 'FORBIDDEN', message: resolved.refusal });
+    }
+    referenceRows.push(row);
+    references.set(imageId, {
+      url: getRemixSourceUrl(row),
+      width: remixLogSize(row.width) ?? REMIX_FALLBACK_DIMENSIONS.width,
+      height: remixLogSize(row.height) ?? REMIX_FALLBACK_DIMENSIONS.height,
+    });
+  };
+  const replay = async (): Promise<RemixReplayOutcome> => {
+    // Bounded by the log: each pass loads an image answer it had not.
+    for (;;) {
+      try {
+        return await replayer(source, log, references);
+      } catch (error) {
+        if (error instanceof RemixMissingReference && !references.has(error.imageId)) {
+          await addReference(error.imageId, false);
+          continue;
+        }
+        throw error instanceof RemixReplayError ? damaged(error.message) : await quarantined(error);
+      }
+    }
+  };
   const pending = [...answers];
   let outcome = await replay();
   while (outcome.status === 'effect' && outcome.effect.type === 'ask' && pending.length) {
@@ -505,8 +558,12 @@ async function advance({
       // Only an image the viewer was shown can be picked.
       (spec.kind === 'pick' && !viewerPick(spec.images, levels, caller)?.[answer as number]
         ? 'Not one of the images'
-        : undefined);
+        : undefined) ??
+      // The stand-in is for quotes; a viewer names a real image.
+      (spec.kind === 'image' && answer === REMIX_IMAGE_STAND_IN ? 'Not an image' : undefined);
     if (refusal) throw new TRPCError({ code: 'BAD_REQUEST', message: refusal });
+    if (spec.kind === 'image' && typeof answer === 'number' && !references.has(answer))
+      await addReference(answer, true);
     log.push({ type: 'ask', answer });
     outcome = await replay();
   }
@@ -539,13 +596,13 @@ async function advance({
     const { image: shown, ...choice } = spec;
     const ask =
       shown && gateOf(shown.url, levels, caller) === 'shown' ? { ...choice, image: shown } : choice;
-    if (!priceOptions) return { status: 'ask', runId, ask };
+    if (!priceOptions || unavailable.size) return { status: 'ask', runId, ask };
     const prices = await cachedOptionPrices([runId, segments.length, outcome.index], () =>
       optionPrices({
         app,
         author,
-        replay: (...args) =>
-          replayer(...args).catch(async (error) => {
+        replay: (from, optionLog) =>
+          replayer(from, optionLog, references).catch(async (error) => {
             throw error instanceof RemixReplayError ? error : await quarantined(error);
           }),
         image,
@@ -554,6 +611,7 @@ async function advance({
         spec,
         caller,
         currencies,
+        references: referenceRows,
       })
     );
     return { status: 'ask', runId, ask, prices };
@@ -561,6 +619,11 @@ async function advance({
 
   const index = segments.length;
   if (index >= MAX_RUN_SEGMENTS) throw damaged('it has too many steps');
+  if (unavailable.size)
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'An image this run uses is no longer available',
+    });
   const run = buildRuntimeRequest({
     app,
     image,
@@ -568,6 +631,7 @@ async function advance({
     viewer: viewerOf(caller),
     author,
     log,
+    references: referenceRows,
   });
   // The graph submit skips its own input gate ('checked-by-caller').
   await assertInputsUsable(run.inputUrls, caller, 'remixAppRun');
@@ -599,7 +663,11 @@ async function advance({
   const remixRun: RemixRunMetadata = { app: app.slug, version: app.version, shape, answers };
   // A segment after the first reads the previous segment's output, which carries no source; the
   // mint names it again so the graph signs it into this segment's metadata and output files.
-  const mint = signProvenance({ userId: caller.user.id, sourceImageIds: [image.id], kind: 'mint' });
+  const mint = signProvenance({
+    userId: caller.user.id,
+    sourceImageIds: [image.id, ...references.keys()],
+    kind: 'mint',
+  });
   const result = await submitPresetImageGen({
     graphInput: run.graphInput,
     ...remixSubmitArgs(caller, tags, currencies),

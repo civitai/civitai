@@ -202,3 +202,37 @@ describe('replay checks', () => {
     });
   });
 });
+
+describe('an image answer', () => {
+  const ref = { url: 'https://image.example/jacket.png', width: 600, height: 900 };
+  const references = new Map([[21, ref]]);
+  const asks = (then: (ctx: RemixCtx, picked: RemixImage) => Promise<RemixImage[]>) =>
+    appOf(async (ctx) => then(ctx, (await ctx.ask({ kind: 'image', prompt: 'Jacket' }))!));
+  const log: RemixLogEntry[] = [{ type: 'ask', answer: 21 }];
+
+  it('reaches a step as an input, never the run as an output', async () => {
+    // POSITIVE CONTROL: the same reference is accepted as a step's input.
+    const asInput = asks(async (ctx, picked) => {
+      const { images } = await ctx.workflow({
+        kind: 'image',
+        prompt: 'Wear it',
+        images: [ctx.source, picked],
+        aspectRatio: 'source',
+        quantity: 1,
+      });
+      return images;
+    });
+    expect(await replayRemixApp(asInput, source, log, references)).toMatchObject({
+      status: 'effect',
+      effect: { type: 'workflow', request: { images: [{ url: source.url }, ref] } },
+    });
+    await expect(
+      replayRemixApp(
+        asks(async (_, picked) => [picked]),
+        source,
+        log,
+        references
+      )
+    ).rejects.toThrow('returned an image this run did not make');
+  });
+});

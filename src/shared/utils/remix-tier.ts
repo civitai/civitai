@@ -25,6 +25,8 @@ export type RemixSourceImage = {
   blockedFor?: string | null;
   minor?: boolean;
   poi?: boolean;
+  /** A moderation review is pending on it. */
+  needsReview?: string | null;
   hasMeta?: boolean | null;
   hasPositivePrompt?: boolean | null;
 };
@@ -63,11 +65,17 @@ const capitalize = (word: string) => word.charAt(0).toUpperCase() + word.slice(1
  * runs its own refusal on what it receives, which is what the routing leans on
  * in place of the verdict we do not have.
  */
-export function getEngineRefusal(image: RemixSourceImage): string | undefined {
+export function getEngineRefusal(
+  image: RemixSourceImage,
+  /** The tier the run goes to, which a reference can raise above this image's own. */
+  tier: RemixTier = getRemixTier(image)
+): string | undefined {
   const noun = image.type === 'video' ? 'video' : 'image';
   const plural = `${noun}s`;
   if (image.ingestion === ImageIngestionStatus.Blocked || image.blockedFor)
     return `This ${noun} was blocked, so it cannot be remixed.`;
+  // Any pending review, fail closed. Only use as an input is refused; its owner still sees it.
+  if (image.needsReview) return `This ${noun} is waiting on a review, so it cannot be remixed yet.`;
   if (image.minor) return `${capitalize(plural)} that may depict a minor cannot be remixed.`;
   if (image.poi) return `${capitalize(plural)} of real people cannot be remixed.`;
   // Rated mature by a human before the classifiers ran. `minor`/`poi` are NOT
@@ -82,11 +90,7 @@ export function getEngineRefusal(image: RemixSourceImage): string | undefined {
   //
   // LIMIT, stated rather than papered over: the search backend's document type
   // carries no `ingestion`, so this closes the DB path only.
-  if (
-    getRemixTier(image) === 'mature' &&
-    image.ingestion != null &&
-    UNVERDICTED_INGESTION.has(image.ingestion)
-  )
+  if (tier === 'mature' && image.ingestion != null && UNVERDICTED_INGESTION.has(image.ingestion))
     return `This ${noun} is still being reviewed. Try again once it finishes scanning.`;
   return undefined;
 }
