@@ -23,6 +23,19 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   return { ...(await importOriginal<typeof Trpc>()), trpc: makeTrpcProxy({}) };
 });
 
+vi.mock('~/client-utils/cf-images-utils', async (importOriginal) => {
+  const clip = (await import('../../utils/metadata/__tests__/fixtures/video/core.webm?url'))
+    .default;
+  const orig = await importOriginal<typeof import('~/client-utils/cf-images-utils')>();
+  return {
+    ...orig,
+    useEdgeUrl: (...a: Parameters<typeof orig.useEdgeUrl>) => ({
+      ...orig.useEdgeUrl(...a),
+      url: clip,
+    }),
+  };
+});
+
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
   useFeatureFlags: () => ({}),
@@ -85,5 +98,36 @@ describe('CreatorCardSimple name row at a 320px card', () => {
     const { name, actions } = await renderCard([32, 32]);
     expect(name.width).toBeGreaterThanOrEqual(MIN_NAME_WIDTH);
     expect(actions.top).toBeLessThan(name.bottom);
+  });
+});
+
+describe('CreatorCardSimple with a video profile background', () => {
+  test('the pointer lands on the username link, not the background video', async () => {
+    await renderAtViewport(
+      <IntersectionObserverProvider>
+        <div style={{ width: CARD_WIDTH }}>
+          <CreatorCardSimple
+            user={{ id: 7, username: NAME }}
+            cosmeticOverwrites={[
+              {
+                id: 1,
+                type: 'ProfileBackground',
+                name: 'video bg',
+                data: { url: 'b2a1b3c4-0000-4000-8000-000000000000', type: 'video' },
+              } as never,
+            ]}
+          />
+        </div>
+      </IntersectionObserverProvider>,
+      { width: 390, height: 844 }
+    );
+    await vi.waitFor(() => expect(document.querySelector('video')).toBeTruthy());
+    const name = page.getByText(NAME).element();
+    const { left, top, width, height } = name.getBoundingClientRect();
+    const hit = document.elementFromPoint(left + width / 2, top + height / 2);
+    expect(hit?.tagName).not.toBe('VIDEO');
+    expect(hit?.closest('a')).toBe(name.closest('a'));
+    // The video stays rendered: this is display-only, so it must not be hidden to pass.
+    expect(document.querySelector('video')).toBeTruthy();
   });
 });
