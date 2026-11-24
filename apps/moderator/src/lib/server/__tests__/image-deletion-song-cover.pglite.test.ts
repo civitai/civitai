@@ -8,7 +8,8 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /**
  * A moderator's song delete deletes the song's cover, which the `Track` cascade would otherwise leave
- * unlinked. A hold on the cover keeps it as it would any image.
+ * unlinked. A hold on the cover keeps it as it would any image. The rule: docs/features/music.md,
+ * "A generated song's cover" (cover cleanup).
  */
 
 const MODERATOR = { id: 1, isModerator: true };
@@ -171,12 +172,35 @@ describe('a moderator deleting a song', () => {
     expect(rows).toEqual([{ ingestion: null }]);
   });
 
-  it('leaves an image that names the song as its parent but is not its cover', async () => {
+  it("leaves another song's linked image that names this song as its parent", async () => {
     await db.exec(`
-      INSERT INTO "Image" (id, url, "userId", metadata) VALUES (3, 'key-3', ${OWNER}, '{"parentId": ${SONG}}');
+      INSERT INTO "Image" (id, url, "userId", metadata) VALUES
+        (6, 'key-6', ${OWNER}, NULL), (3, 'key-3', ${OWNER}, '{"parentId": ${SONG}}');
+      INSERT INTO "Track" ("imageId", "coverImageId") VALUES (6, 3);
     `);
+    await deleteImages([6], MODERATOR);
+    expect(await remaining()).toEqual([SONG, COVER, 3]);
+  });
+
+  it('leaves a linked image that is in a post', async () => {
+    await db.exec(`UPDATE "Image" SET "postId" = 70 WHERE id = ${COVER}`);
     await deleteImages([SONG], MODERATOR);
-    expect(await remaining()).toEqual([3]);
+    expect(await remaining()).toEqual([COVER]);
+  });
+
+  it('deletes a song listed with its own cover once', async () => {
+    const refused = await deleteImages([SONG, COVER], MODERATOR);
+    expect(await remaining()).toEqual([]);
+    expect(await queuedUrls()).toEqual(['key-cover', 'key-song']);
+    expect(deindexed()).toEqual([SONG, COVER]);
+    expect(refused).toEqual([]);
+  });
+
+  it('refuses a held cover listed with its song once', async () => {
+    await openCsamReport(COVER);
+    const refused = await deleteImages([SONG, COVER], MODERATOR);
+    expect(await remaining()).toEqual([COVER]);
+    expect(refused).toEqual([{ id: COVER, reason: 'review' }]);
   });
 
   it('leaves a linked image that was not made for the song', async () => {

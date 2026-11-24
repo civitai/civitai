@@ -5,7 +5,8 @@ import type * as PromClient from '~/server/prom/client';
 
 /**
  * Deleting a song deletes its cover, through the real `deleteImages` and `deletePost`, whose SQL runs
- * on PGlite with the `Track` link and its cascade. A cover under a hold is kept and blocked.
+ * on PGlite with the `Track` link and its cascade. A cover under a hold is kept and blocked. The rule:
+ * docs/features/music.md, "A generated song's cover" (cover cleanup).
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -146,12 +147,33 @@ describe('a song delete', () => {
     expect(await imageRow(COVER)).toEqual({ ingestion: 'Scanned', nsfwLevel: 1 });
   });
 
-  it('leaves an image that names the song as its parent but is not its cover', async () => {
+  it("leaves another song's linked image that names this song as its parent", async () => {
     await pg.exec(`
-      INSERT INTO "Image" (id, "userId", url, metadata) VALUES (3, ${OWNER}, 'other', '{"parentId": ${SONG}}');
+      INSERT INTO "Image" (id, "userId", url, metadata) VALUES
+        (6, ${OWNER}, 'song-6', NULL), (3, ${OWNER}, 'other', '{"parentId": ${SONG}}');
+      INSERT INTO "Track" ("imageId", "coverImageId") VALUES (6, 3);
     `);
+    await deleteImages([6], { actor: owner });
+    expect(await remaining()).toEqual([SONG, COVER, 3]);
+  });
+
+  it('leaves a linked image that is in a post', async () => {
+    await pg.exec(`UPDATE "Image" SET "postId" = ${POST} WHERE id = ${COVER}`);
     await deleteImages([SONG], { actor: owner });
-    expect(await remaining()).toEqual([3]);
+    expect(await remaining()).toEqual([COVER]);
+  });
+
+  it('deletes a song listed with its own cover once', async () => {
+    const { deleted } = await deleteImagesWithOutcome([SONG, COVER], { actor: owner });
+    expect(deleted.map((row) => row.id).sort()).toEqual([SONG, COVER]);
+    expect(await queuedFiles()).toEqual(['cover', 'song']);
+  });
+
+  it('keeps a held cover listed with its song once', async () => {
+    await pg.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${COVER}`);
+    const { deleted, kept } = await deleteImagesWithOutcome([SONG, COVER], { actor: owner });
+    expect(deleted.map((row) => row.id)).toEqual([SONG]);
+    expect(kept).toEqual([COVER]);
   });
 
   it('leaves a linked image that was not made for the song', async () => {
