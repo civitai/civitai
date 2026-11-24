@@ -118,8 +118,8 @@ type OwnHat = { id: number; key: number };
  * One page of the images `userId` has a hat drawn on (ownDrawnStickers), with when each hat was
  * placed. Soonest to expire first; under a Hat Turf sort, ranked as readTurfRankPage ranks them,
  * leaving out an image with no counted hat as it does. With `expired`, the images whose hat has
- * expired instead; placing again takes the image off. The cursor is `key|id` of the last id served;
- * a cursor of another shape starts from the top.
+ * expired instead, most recently placed first and ignoring `sort`; placing again takes the image
+ * off. The cursor is `key|id` of the last id served; a cursor of another shape starts from the top.
  */
 export async function readMyTurfPage({
   event,

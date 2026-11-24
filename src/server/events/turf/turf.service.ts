@@ -166,7 +166,7 @@ function unexpired(event: TurfEvent, now: Date) {
   return after ? Prisma.sql`AND s."createdAt" > ${after}` : Prisma.empty;
 }
 
-/** The stickers unexpired leaves out: none while none has expired. */
+/** Only expired stickers; `AND false` while none can have expired. */
 function expiredOnly(event: TurfEvent, now: Date) {
   const after = stickerLiveAfter(event.turf, now);
   return after ? Prisma.sql`AND s."createdAt" <= ${after}` : Prisma.sql`AND false`;

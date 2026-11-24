@@ -300,7 +300,8 @@ export function MediaFiltersDropdown({
   const myLiveHats = showTurf && !!mergedFilters.hatTurfMine;
   const myExpiredHats = showTurf && !myLiveHats && !!mergedFilters.hatTurfExpired;
   const myHats = myLiveHats || myExpiredHats;
-  // Both are served by the database hydrate, which has no period or remix filter.
+  // Both are served by the database hydrate, which has no period or remix filter. Expired hats have
+  // no rank, so a Hat Turf sort (and its team chips) does not apply to them.
   const turfHydrated = hatSorted || myHats;
 
   // maybe have individual filter length with labels next to them
@@ -325,7 +326,7 @@ export function MediaFiltersDropdown({
     mergedFilters.period !== MetricTimeframe.AllTime
       ? 1
       : 0) +
-    (hatSorted ? mergedFilters.hatTeams?.length ?? 0 : 0) +
+    (hatSorted && !myExpiredHats ? mergedFilters.hatTeams?.length ?? 0 : 0) +
     (myHats ? 1 : 0) +
     (showTurf && mergedFilters.hideTurfHats ? 1 : 0) +
     (showTurf && mergedFilters.hideWornHats ? 1 : 0) +
@@ -527,7 +528,7 @@ export function MediaFiltersDropdown({
                 <span>My expired hats</span>
               </FilterChip>
             </Group>
-            {hatSorted && (
+            {hatSorted && !myExpiredHats && (
               <Chip.Group
                 value={mergedFilters.hatTeams ?? []}
                 onChange={(hatTeams) => handleChange({ hatTeams })}
