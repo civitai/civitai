@@ -53,12 +53,19 @@ describe('buyer disclosure in the request modal', () => {
   );
 
   it("shows the offering's own price, revisions and days, and the deal-code hours", () => {
-    expect(out).toContain('2,500 Buzz is held now');
-    expect(out).toContain('Includes 1 revision. Delivery within 4 days of acceptance.');
+    expect(out).toContain('2,500 Buzz is held now.');
+    expect(out).toContain('Delivery within 4 days of acceptance.');
+    expect(out).toContain('1 revision included.');
     expect(out).toContain('doesn&#x27;t accept within 48 hours');
-    expect(out).toContain('completes after 72 hours');
-    expect(out).toContain('48-hour dispute window');
+    expect(out).toContain('it completes 72 hours after the latest delivery');
+    expect(out).toContain('You have 48 hours after completion to dispute.');
     expect(out).toContain(escaped("Civitai isn't a party to this deal."));
+  });
+
+  // No flags provider: a buyer outside the creatorServicesNext rollout, so no review sentence.
+  it('shows the dispute line without the review sentence outside the rollout', () => {
+    expect(out).toContain('Then the seller is paid. Moderator decisions on disputes');
+    expect(out).not.toContain('review the work as Happy');
   });
 
   it('puts the disclosure before the button that holds the Buzz', () => {
