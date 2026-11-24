@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { creatorShopRouter } from '../creator-shop.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -57,6 +57,11 @@ const withOwnShopItem = () =>
   dbMock.dbRead.cosmeticShopItem.findFirst.mockResolvedValue({ id: 1 } as never);
 const withResoldItem = () =>
   dbMock.dbRead.userCosmeticShopItemResale.findFirst.mockResolvedValue({ shopItemId: 1 } as never);
+
+beforeEach(() => {
+  dbMock.dbRead.cosmeticShopItem.findFirst.mockResolvedValue(null as never);
+  dbMock.dbRead.userCosmeticShopItemResale.findFirst.mockResolvedValue(null as never);
+});
 
 describe('opening a Creator Shop', () => {
   it.each(doorNames)('%s refuses a new seller below 10,000, naming the score', async (door) => {
