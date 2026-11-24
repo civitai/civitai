@@ -26,7 +26,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     status,
     judgments: judgments.map((j) => ({
       ...j,
-      imageHref: j.imageKey ? imagePageUrl(j.imageId) : null,
+      imageHref: j.imageKey && j.imageId !== null ? imagePageUrl(j.imageId) : null,
       src: j.imageKey ? imageUrl(j.imageKey, THUMBNAIL_WIDTH) : null,
       at: j.at.toISOString(),
     })),
