@@ -80,7 +80,7 @@ const getBlockLists = async (user: Context['user']) => {
   return { blockedBy: blockedBy.map((u) => u.id), blocked: blocked.map((u) => u.id) };
 };
 
-const getAllBlockedCreatorIds = async (user: Context['user']) => {
+export const getAllBlockedCreatorIds = async (user: Context['user']) => {
   const { blockedBy, blocked } = await getBlockLists(user);
   return [...new Set([...blockedBy, ...blocked])];
 };

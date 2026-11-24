@@ -124,6 +124,7 @@ export function imageVisibilityConditions({
   isModerator,
   ownerSeesHeld = false,
   shownReviewImageLevels,
+  judgingCrucibleIds,
 }: {
   userId?: number;
   isModerator?: boolean;
@@ -139,6 +140,11 @@ export function imageVisibilityConditions({
    * data) must not.
    */
   shownReviewImageLevels?: number;
+  /**
+   * Crucibles the viewer is judging (`getJudgingCrucibleIdsForImage`): their entries open while
+   * the entry's post waits to publish at the crucible's end. Only the reaction toggle passes it.
+   */
+  judgingCrucibleIds?: number[];
 }) {
   if (isModerator) return [];
   return [
@@ -161,6 +167,14 @@ export function imageVisibilityConditions({
     Prisma.sql`(
       p."publishedAt" < now()
       OR p."userId" = ${userId}
+      ${
+        judgingCrucibleIds?.length
+          ? Prisma.sql`OR (p."publishedAt" IS NOT NULL AND EXISTS (
+              SELECT 1 FROM "CrucibleEntry" ce
+              WHERE ce."imageId" = i.id AND ce."crucibleId" IN (${Prisma.join(judgingCrucibleIds)})
+            ))`
+          : Prisma.empty
+      }
       OR (i."postId" IS NULL AND i."userId" = ${userId})
       OR (i."postId" IS NULL AND EXISTS (
         SELECT 1 FROM "Article" a
@@ -225,12 +239,15 @@ export async function assertImageVisibleToViewer({
   confirmBlockOnPrimary = false,
   withSignedOutVerdict = false,
   ownerSeesHeld = false,
+  judgingCrucibleIds,
 }: {
   id: number;
   userId?: number;
   isModerator?: boolean;
   /** `imageVisibilityConditions`' `ownerSeesHeld`. */
   ownerSeesHeld?: boolean;
+  /** `imageVisibilityConditions`' `judgingCrucibleIds`. */
+  judgingCrucibleIds?: number[];
   /**
    * Only for a caller that WRITES on the strength of this check (the prompt-provenance mint):
    * confirm a cache "not blocked" against the primary. Read callers leave it off.
@@ -266,7 +283,7 @@ export async function assertImageVisibleToViewer({
     WHERE ${Prisma.join(
       [
         Prisma.sql`i.id = ${id}`,
-        ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld }),
+        ...imageVisibilityConditions({ userId, isModerator, ownerSeesHeld, judgingCrucibleIds }),
       ],
       ' AND '
     )}

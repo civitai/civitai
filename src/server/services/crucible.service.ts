@@ -208,7 +208,10 @@ import {
 } from '~/utils/crucible-helpers';
 import { getPrefixRefundState, refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
-import { assertCanCreateCrucible } from '~/server/services/crucible-eligibility.service';
+import {
+  assertCanCreateCrucible,
+  getCrucibleJudgeEligibility,
+} from '~/server/services/crucible-eligibility.service';
 import { getEligibleModels } from '~/server/services/eligible-models.service';
 import {
   matureBrowsingLevelsFlag,
@@ -961,6 +964,43 @@ export const assertCrucibleVisible = async (crucibleId: number, viewer: Crucible
   )
     throw throwNotFoundError('Crucible not found');
 };
+
+/**
+ * The crucibles this viewer may judge right now in which image `imageId` is someone else's entry
+ * that judging can serve, short of the viewer's browsing level: `getJudgingPair`'s rules.
+ */
+export async function getJudgingCrucibleIdsForImage({
+  imageId,
+  ...viewer
+}: CrucibleViewer & { imageId: number; viewerId: number }): Promise<number[]> {
+  // From the active crucibles: CrucibleEntry has no imageId index.
+  const entries = await dbRead.$queryRaw<{ crucibleId: number }[]>`
+    SELECT DISTINCT ce."crucibleId"
+    FROM "Crucible" c
+    JOIN "CrucibleEntry" ce ON ce."crucibleId" = c.id
+    JOIN "Image" i ON i.id = ce."imageId"
+    WHERE c.status = 'Active'::"CrucibleStatus"
+      AND (c."endAt" IS NULL OR c."endAt" > now())
+      AND ce."imageId" = ${imageId}
+      AND ce."userId" != ${viewer.viewerId}
+      AND ${visibleEntryImageSql(Prisma.sql`c."nsfwLevel"`, 0)}
+  `;
+  if (!entries.length) return [];
+  const { canJudge } = await getCrucibleJudgeEligibility({
+    userId: viewer.viewerId,
+    isModerator: viewer.isModerator,
+  });
+  if (!canJudge) return [];
+  const visible = await Promise.all(
+    entries.map(({ crucibleId }) =>
+      assertCrucibleVisible(crucibleId, viewer).then(
+        () => crucibleId,
+        () => null
+      )
+    )
+  );
+  return visible.filter(isDefined);
+}
 
 const greenSiteSql = (isGreen: boolean) =>
   isGreen
