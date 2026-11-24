@@ -22,3 +22,37 @@ export function profileCardBackground(color: string | null, opacity: number | nu
 export function profileBarBackground(color: string | null) {
   return color ? `${color}ed` : undefined;
 }
+
+const hexChannels = (hex: string) =>
+  [1, 3, 5].map((start) => parseInt(hex.slice(start, start + 2), 16));
+
+const luminance = ([r, g, b]: number[]) => {
+  const linear = (channel: number) => {
+    const c = channel / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+};
+
+/** The theme surface a translucent card is painted over. */
+const schemeSurface = { dark: '#25262b', light: '#ffffff' } as const;
+
+/**
+ * Whether text on a tinted card should be dark or light: the card colour as it renders, blended
+ * over the theme surface at its opacity, against whichever of black or white contrasts more.
+ */
+export function profileCardInk(
+  color: string | null,
+  opacity: number | null,
+  scheme: keyof typeof schemeSurface
+): 'dark' | 'light' | undefined {
+  if (!color) return undefined;
+  const alpha = (opacity ?? profileCardOpacityDefault) / 100;
+  const surface = hexChannels(schemeSurface[scheme]);
+  const rendered = hexChannels(color).map(
+    (channel, i) => channel * alpha + surface[i] * (1 - alpha)
+  );
+  const l = luminance(rendered);
+  // Contrast with black is (l + .05) / .05, with white 1.05 / (l + .05); equal at l ≈ .179.
+  return (l + 0.05) / 0.05 > 1.05 / (l + 0.05) ? 'dark' : 'light';
+}

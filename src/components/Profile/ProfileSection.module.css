@@ -126,6 +126,20 @@
       --profile-card-bg,
       light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))
     );
+    /* Ink set by ProfilePageCustomization for a member's card colour; the theme's otherwise. */
+    --mantine-color-text: var(
+      --profile-ink-text,
+      light-dark(var(--mantine-color-black), var(--mantine-color-dark-0))
+    );
+    --mantine-color-dimmed: var(
+      --profile-ink-dimmed,
+      light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2))
+    );
+    --mantine-color-bright: var(
+      --profile-ink-bright,
+      light-dark(var(--mantine-color-black), var(--mantine-color-white))
+    );
+    color: var(--mantine-color-text);
   }
 
   & .title {

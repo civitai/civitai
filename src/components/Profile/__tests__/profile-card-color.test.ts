@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   profileBarBackground,
   profileCardBackground,
+  profileCardInk,
   suggestedCardColor,
 } from '~/components/Profile/profile-card-color';
 
@@ -35,5 +36,23 @@ describe('profileBarBackground', () => {
   it('is the card colour nearly opaque, and nothing without one', () => {
     expect(profileBarBackground('#112233')).toBe('#112233ed');
     expect(profileBarBackground(null)).toBeUndefined();
+  });
+});
+
+describe('profileCardInk', () => {
+  it('picks dark text on a light card and light text on a dark one', () => {
+    expect(profileCardInk('#f3ead7', 100, 'dark')).toBe('dark'); // cream
+    expect(profileCardInk('#7fd1c4', 100, 'dark')).toBe('dark'); // teal
+    expect(profileCardInk('#1b2a4a', 100, 'dark')).toBe('light'); // navy
+  });
+
+  it('accounts for the theme showing through a translucent card', () => {
+    // A mid-light colour at 60% over the dark theme renders dark enough for light text.
+    expect(profileCardInk('#9aa0a6', 60, 'dark')).toBe('light');
+    expect(profileCardInk('#9aa0a6', 60, 'light')).toBe('dark');
+  });
+
+  it('leaves the theme alone without a colour', () => {
+    expect(profileCardInk(null, 80, 'dark')).toBeUndefined();
   });
 });

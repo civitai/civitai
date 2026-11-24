@@ -1,8 +1,10 @@
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useComputedColorScheme } from '@mantine/core';
 import {
   profileBarBackground,
   profileCardBackground,
+  profileCardInk,
 } from '~/components/Profile/profile-card-color';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Flags } from '~/shared/utils/flags';
@@ -16,6 +18,7 @@ import { trpc } from '~/utils/trpc';
 export function ProfilePageCustomization({ userId }: { userId: number }) {
   const features = useFeatureFlags();
   const browsingLevel = useBrowsingLevelDebounced();
+  const scheme = useComputedColorScheme('dark');
   const { data } = trpc.userProfile.customization.useQuery(
     { userId, browsingLevel },
     { enabled: !!features.profileRedesign }
@@ -28,12 +31,23 @@ export function ProfilePageCustomization({ userId }: { userId: number }) {
       : null;
   const card = profileCardBackground(data.cardColor, data.cardOpacity);
   const bar = profileBarBackground(data.cardColor);
+  const cardInk = profileCardInk(data.cardColor, data.cardOpacity, scheme);
+  // The bar is the same colour, nearly opaque, so it can need the other ink.
+  const barInk = profileCardInk(data.cardColor, 93, scheme);
   if (!background && !card) return null;
 
   const rules = [
     card &&
       `:root{--profile-card-bg:${card}}[data-profile-card]{background-color:${card}!important}`,
-    bar && `[data-subnav]{background-color:${bar}!important;backdrop-filter:blur(8px)}`,
+    cardInk && `:root{${inkVars(cardInk)}}[data-profile-card]{${mantineInk}}`,
+    // Light-variant buttons (Tip) are a tint of their own colour, which washes out on a light card.
+    cardInk === 'dark' &&
+      '[data-profile-card] .mantine-Button-root[data-variant="light"]{background-color:rgba(26,27,30,.85)}',
+    bar &&
+      barInk &&
+      `[data-subnav]{background-color:${bar}!important;backdrop-filter:blur(8px);${inkVars(
+        barInk
+      )}${mantineInk}}`,
     // As in the design: anchored at the top, behind a 50% scrim so the panels stay readable.
     background &&
       `[data-profile-content]{background-image:linear-gradient(rgba(14,15,18,.5),rgba(14,15,18,.5)),url(${JSON.stringify(
@@ -43,3 +57,14 @@ export function ProfilePageCustomization({ userId }: { userId: number }) {
 
   return <style>{rules.join('')}</style>;
 }
+
+// Text that stays legible on the member's card colour: Mantine's text variables, re-pointed inside
+// the tinted areas. Panels read the same variables from ProfileSection.module.css.
+const inks = {
+  dark: { text: '#212529', dimmed: '#495057', bright: '#000000' },
+  light: { text: '#c1c2c5', dimmed: '#909296', bright: '#ffffff' },
+};
+const inkVars = (ink: keyof typeof inks) =>
+  `--profile-ink-text:${inks[ink].text};--profile-ink-dimmed:${inks[ink].dimmed};--profile-ink-bright:${inks[ink].bright};`;
+const mantineInk =
+  'color:var(--profile-ink-text);--mantine-color-text:var(--profile-ink-text);--mantine-color-dimmed:var(--profile-ink-dimmed);--mantine-color-bright:var(--profile-ink-bright);';
