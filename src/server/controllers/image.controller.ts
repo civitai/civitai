@@ -143,6 +143,7 @@ import { moderatorApp } from '~/server/services/moderator-app.service';
 import { ModeratorClientError } from '@civitai/moderation';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import { visibleReviewWhere } from '~/server/services/resourceReview.visibility';
+import { seesReportListed } from '~/server/utils/report-listed-viewer';
 
 export const moderateImageHandler = async ({
   input,
@@ -1306,6 +1307,7 @@ export const getEntitiesCoverImageHandler = async ({
       ...input,
       include: ['tags'],
       viewer: isSessionOrFullUserKey(ctx) ? ctx.user : undefined,
+      seesReportListed: seesReportListed(ctx),
       // Only signed-out responses are edge-cached (createContext), so a viewer's hats stay theirs.
       // The route must not gain edgeCacheIt/cacheIt: entities-cover-image-viewer.test.ts pins it.
       eventDecorationViewer: eventViewerOf(ctx),

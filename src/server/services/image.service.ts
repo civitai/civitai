@@ -100,6 +100,7 @@ import {
   assertImageVisibleToViewer,
   entityImageVisibilityConditions,
   imageBlockedForConditions,
+  notReportListedSql,
   reviewedGalleryImageConditions,
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
@@ -5812,10 +5813,14 @@ export const getEntityCoverImage = async ({
   include,
   viewer,
   eventDecorationViewer,
+  seesReportListed = false,
 }: GetEntitiesCoverImage & {
   include?: ['tags'];
   // Covers follow the parent entity's visibility for this viewer; undefined is signed out.
   viewer: CoverImageViewer;
+  // A bounty's own images follow the bounty search index's exclusions (its uploader keeps theirs)
+  // unless this is set.
+  seesReportListed?: boolean;
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Pass one only
   // where the result is never cached for someone else.
   eventDecorationViewer?: EventViewer;
@@ -5858,6 +5863,7 @@ export const getEntityCoverImage = async ({
     exempt: Prisma.sql`(${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean`,
   });
 
+  const bountyNotReportListed = notReportListedSql(signedIn ? viewerId ?? undefined : undefined);
   // A blocked or ToS-violating cover is its owner's and moderators' alone.
   const coverNotBlocked = Prisma.join(
     [
@@ -6154,6 +6160,7 @@ export const getEntityCoverImage = async ({
             AND ${coverNotBlocked}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
+            AND (e."entityType" <> 'Bounty' OR ${seesReportListed}::boolean OR ${bountyNotReportListed})
             AND (
               ${isModerator}::boolean
               -- canViewBounty
