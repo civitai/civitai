@@ -296,7 +296,25 @@ describe('ReviewActionBar — approve', () => {
       <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={onClose} />
     );
     await page.getByRole('button', { name: 'Approve + build' }).click();
-    expect(showError).toHaveBeenCalledWith(expect.objectContaining({ title: 'Approve failed' }));
+    // Persistent, at the top, like every other review failure.
+    expect(showError).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Approve failed', autoClose: false, position: 'top-center' })
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test('a reject error is persistent too, and does NOT close', async () => {
+    mocks.errorMode = true;
+    const onClose = vi.fn();
+    renderWithProviders(
+      <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={onClose} />
+    );
+    await page.getByRole('button', { name: 'Reject…' }).click();
+    await page.getByTestId('apps-review-reject-chip-duplicate').click();
+    await page.getByTestId('apps-review-reject-confirm').click();
+    expect(showError).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Reject failed', autoClose: false, position: 'top-center' })
+    );
     expect(onClose).not.toHaveBeenCalled();
   });
 });
@@ -787,5 +805,28 @@ describe('🔴 "Approve & next" survives the tab closing (keepalive)', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('ReviewActionBar — the sticky bar reserves the viewport bottom', () => {
+  const reserve = () =>
+    document.documentElement.style.getPropertyValue('--review-action-bar-reserve');
+
+  test('set while a sticky bar shows a pending request, removed when it unmounts', async () => {
+    const view = await renderWithProviders(
+      <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} sticky />
+    );
+    await expect.element(page.getByTestId('apps-review-action-bar')).toBeInTheDocument();
+    await vi.waitFor(() => expect(reserve()).toMatch(/^[1-9]\d*px$/));
+    await view.unmount();
+    expect(reserve()).toBe('');
+  });
+
+  test('not set by the inline (modal) bar', async () => {
+    renderWithProviders(
+      <ReviewActionBar selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await expect.element(page.getByRole('button', { name: 'Reject…' })).toBeInTheDocument();
+    expect(reserve()).toBe('');
   });
 });

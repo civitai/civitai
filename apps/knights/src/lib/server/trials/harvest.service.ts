@@ -11,9 +11,8 @@ import {
   REFERENCE_POOL,
   REFERENCE_SOURCE,
   REFERENCE_STATUS,
-  servableImage,
-  servableImageForSweeps,
 } from '@civitai/db/knights';
+import { servableImage, servableImageForSweeps } from '../image-gate';
 import { HARVEST, type HarvestConfig, type HarvestSettings } from './config';
 import { takeAgreementIntake } from './agreement-intake.service';
 import { poolFor } from './pool';

@@ -37,7 +37,12 @@ type Sources interface {
 	ModelPage(ctx context.Context, req hydrate.ModelPageRequest) (*hydrate.ModelPage, error)
 	VersionImages(ctx context.Context, versionIDs []int) (map[int][]superjson.Object, error)
 	CreatorMemberships(ctx context.Context, userIDs []int) (map[int]bool, error)
+	// CreatorMembershipsComputed is CreatorMemberships with its misses computed
+	// (hydrate.Sources.CreatorMembershipsComputed), read only with Config.ServeMembershipMiss.
+	CreatorMembershipsComputed(ctx context.Context, userIDs []int) (map[int]bool, error)
 	UserIDByUsername(ctx context.Context, username string) (int, bool, error)
+	// FollowedUserIDs is the ids the user follows, read from the replica (hydrate.Sources).
+	FollowedUserIDs(ctx context.Context, userID int) ([]int, error)
 	// OfficialModels is getOfficialModelIds (hydrate.Sources.OfficialModels).
 	OfficialModels(ctx context.Context) ([]hydrate.OfficialModel, error)
 }
@@ -63,6 +68,16 @@ type Config struct {
 	LoadingOpenToAll bool
 	// VisibleDecorationEvents is FEED_GO_DECORATION_EVENTS (as the image feed reads it).
 	VisibleDecorationEvents map[string]bool
+	// Ports are the input shapes served behind their own switch (ParseWith), all off by default.
+	Ports Ports
+	// ServeUserCosmeticsMiss is FEED_GO_GETALL_SERVE_USER_COSMETICS_MISS (default off): compute an
+	// owner's user-cosmetics miss (hydrate.ModelPageRequest.ComputeUserCosmetics) instead of the
+	// `user-cosmetics-miss` fallback.
+	ServeUserCosmeticsMiss bool
+	// ServeMembershipMiss is FEED_GO_GETALL_SERVE_MEMBERSHIP_MISS (default off): compute an owner's
+	// creator-membership miss (Sources.CreatorMembershipsComputed) instead of the `membership-miss`
+	// fallback.
+	ServeMembershipMiss bool
 }
 
 // Deps are model.getAll's collaborators.
@@ -312,6 +327,16 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		}
 		targetUserID = id
 	}
+	var follows []int
+	followed := in.Followed && viewerID != 0
+	if followed {
+		// `followed && sessionUser?.id`: the viewer's Follow rows on the replica (Node's dbRead read),
+		// after the creator lookup, as Node orders them.
+		var err error
+		if follows, err = d.Sources.FollowedUserIDs(ctx, viewerID); err != nil {
+			return nil, err
+		}
+	}
 	if in.CollectionID != 0 {
 		// Node checks the collection after the tag/creator lookups (an unknown creator stays a 404)
 		// and before parsing the cursor, on every page of its loop.
@@ -334,6 +359,7 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		HidePaid: in.HidePaid, OnSale: in.OnSale, ExcludedUserIDs: in.ExcludedUserIDs, FileFormats: in.FileFormats,
 		CollectionID: in.CollectionID, CollectionTagID: in.CollectionTagID,
 		OnlyModelIDs: scope.only, ExcludeModelIDs: scope.exclude,
+		IDs: in.IDs, Followed: followed, FollowedUserIDs: follows,
 	}
 	if in.Period != "AllTime" && in.PeriodMode != "stats" {
 		q.PeriodCutoff = decreaseDate(now, in.Period)
@@ -371,6 +397,7 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		phase.SetInt(tracing.AttrItems, len(modelIDs))
 		hy, err = d.Sources.ModelPage(pctx, hydrate.ModelPageRequest{
 			OwnerIDs: ownerIDs, ModelIDs: modelIDs, VisibleEvents: d.Config.VisibleDecorationEvents,
+			ComputeUserCosmetics: d.Config.ServeUserCosmeticsMiss,
 		})
 		return
 	}))
@@ -386,8 +413,9 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		rows = rows[:len(rows)-1]
 	}
 	showSfwFace := level != 0 && level&table.Levels.NSFW == 0
-	// `!ids && !username && !user && !followed && !collectionId` (ids and followed fall back).
-	hidePrivateModels := in.Username == "" && in.User == "" && in.CollectionID == 0
+	// `!ids && !username && !user && !followed && !collectionId`: `ids` present at all, `[]` included,
+	// and `followed` signed out too.
+	hidePrivateModels := !in.HasIDs && in.Username == "" && in.User == "" && !in.Followed && in.CollectionID == 0
 	// The build phase: the per-row transform and finishItems (whose version-image and membership
 	// reads are their own child spans).
 	bctx, phase := tracing.StartPhase(ctx, tracing.PhaseBuild)
@@ -741,7 +769,11 @@ func finishItems(ctx context.Context, d *Deps, in *Input, level int, raw rawInpu
 	}
 	memberships := map[int]bool{}
 	if len(candidates) > 0 {
-		if memberships, err = d.Sources.CreatorMemberships(ctx, candidates); err != nil {
+		read := d.Sources.CreatorMemberships
+		if d.Config.ServeMembershipMiss {
+			read = d.Sources.CreatorMembershipsComputed
+		}
+		if memberships, err = read(ctx, candidates); err != nil {
 			return nil, err
 		}
 	}

@@ -160,6 +160,7 @@ export type ScoredSection =
   | 'standings'
   | 'turf'
   | 'flagRace'
+  | 'comeback'
   | 'hats'
   | 'shop'
   | 'topHats'
@@ -178,10 +179,20 @@ export function scoredSectionOrder({
   ended: boolean;
 }): ScoredSection[] {
   // Once ended, Hat Turf (while its gate is open) sits under the result.
-  if (ended) return ['standings', 'turf', 'flagRace', 'topHats', 'hats'];
+  if (ended) return ['standings', 'turf', 'flagRace', 'comeback', 'topHats', 'hats'];
   if (joined)
-    return ['hats', 'turf', 'flagRace', 'standings', 'shop', 'topHats', 'turfPlayers', 'rules'];
-  return ['rules', 'shop', 'turf', 'flagRace', 'standings', 'topHats', 'turfPlayers'];
+    return [
+      'hats',
+      'turf',
+      'flagRace',
+      'comeback',
+      'standings',
+      'shop',
+      'topHats',
+      'turfPlayers',
+      'rules',
+    ];
+  return ['rules', 'shop', 'turf', 'flagRace', 'comeback', 'standings', 'topHats', 'turfPlayers'];
 }
 
 type Settling = { endDate: Date; finalAt?: Date };

@@ -49,6 +49,7 @@ var OverlayKinds = []string{"record", "delete_marker"}
 var BlockOutcomes = []string{
 	exchange.BlockIssued, exchange.BlockReused, exchange.BlockRefused, exchange.BlockRemembered,
 	exchange.BlockFailed, exchange.BlockSpent, exchange.BlockFull, exchange.BlockUnverifiable,
+	exchange.BlockRateLimited,
 }
 
 // WriteOps are the `op` values of app_data_writes_total and app_data_write_forward_seconds (the

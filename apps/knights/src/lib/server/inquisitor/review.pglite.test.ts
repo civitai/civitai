@@ -4,7 +4,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { counterValue } from '../../../test/metrics';
-import { createQueueDb } from '../../../test/pglite-kysely';
+import {
+  createQueueDb,
+  SKILL_CHECK_GATE_READABLE,
+  SKILL_CHECK_GATE_UNREADABLE,
+} from '../../../test/pglite-kysely';
 import { lockImage, seedImage } from '../../../test/seed';
 import {
   applyPendingResolutions,
@@ -675,13 +679,13 @@ describe('a backlog of held reviews', () => {
 describe('failing closed', () => {
   it('serves no review and records no vote while a safety check cannot be read, and closes nothing', async () => {
     const id = await reviewed(1);
-    await pg.query(`ALTER TABLE "ImageFlag" RENAME TO "ImageFlagGone"`);
+    await pg.exec(SKILL_CHECK_GATE_UNREADABLE);
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       expect(await nextReview(db, { moderatorId: MOD_A })).toBe('unreadable');
       expect(await vote(id, MOD_A, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
     } finally {
-      await pg.query(`ALTER TABLE "ImageFlagGone" RENAME TO "ImageFlag"`);
+      await pg.exec(SKILL_CHECK_GATE_READABLE);
     }
     expect(await votesOn(id)).toEqual([]);
     expect((await reviewRow(id)).status).toBe('open');

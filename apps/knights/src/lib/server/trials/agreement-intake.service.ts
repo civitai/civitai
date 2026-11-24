@@ -7,8 +7,8 @@ import {
   REFERENCE_POOL,
   REFERENCE_SOURCE,
   REFERENCE_STATUS,
-  servableImage,
 } from '@civitai/db/knights';
+import { servableImage } from '../image-gate';
 import { BUCKET_LEVELS } from '../queue/feed';
 import { MODERATOR_RULING_ACTIVITY } from './harvest.service';
 

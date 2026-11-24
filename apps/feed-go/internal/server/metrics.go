@@ -368,7 +368,7 @@ func RequestFallbackReasons() map[string][]string {
 	}, prefixed("input-", feed.InfiniteUnsupportedInputKeys()))
 	modelGetAll := sortedUnion(policy, bearer, []string{
 		"verified-bot", "input-envelope", "input-invalid", "input-unknown-key", "input-ids",
-		"model-cursor", "model-sort-recently-added", "model-collection-id",
+		"model-cursor", "model-sort-recently-added", "model-collection-id", "model-ids", "input-hidePaid",
 	}, prefixed("input-", modelfeed.UnsupportedInputKeys()))
 	v1Models := sortedUnion(policy, v1, []string{
 		"v1-models-session-cookie", "v1-models-etag", "v1-models-query-encoding", "v1-models-authed-only",

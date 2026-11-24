@@ -10,6 +10,7 @@ import {
   bootFpDatabase,
   decided,
   fetchFake,
+  json,
   mirrorRow,
   OTHER,
   pg,
@@ -93,6 +94,8 @@ const post = async (
   });
   return over.unscanned ? reply : scannedAndPushed(reply);
 };
+
+const UNKNOWN_LATER = 'urn:data.civitai.com:feature-pages/requests/dropped-later';
 
 describe('posting', () => {
   it('writes one comment and one mirror row, and once its scan is clean posts it once under a mirror key, not the client requestId', async () => {
@@ -202,41 +205,79 @@ describe('posting', () => {
     });
   });
 
-  it('a subject the platform does not know: nothing is sent before a clean scan, then it is refused', async () => {
+  const written = async (subject: string) => ({
+    topics: (await q(`SELECT id FROM "FeaturePageTopic" WHERE urn = $1`, [subject])).length,
+    comments: (await q(`SELECT id FROM "CommentV3" WHERE "entityType"::text = 'featurePage'`))
+      .length,
+  });
+
+  // Refused before any write since civitai/civitai#10318; a feature was answered pending before.
+  it.each([
+    ['a request', UNKNOWN, true],
+    ['a request', UNKNOWN, false],
+    ['a feature', FEATURE, true],
+    ['a feature', FEATURE, false],
+  ])(
+    '%s the platform does not hold is refused with nothing written (mirror on: %s)',
+    async (_, subject, mirrorOn) => {
+      flags.mirror = mirrorOn;
+      for (let attempt = 0; attempt < 2; attempt++)
+        await expect(
+          comments.postFeaturePageComment(ctxFor(AUTHOR), {
+            requestId: 'r-unknown',
+            subject,
+            text: 'hello',
+          })
+        ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(await written(subject)).toEqual({ topics: 0, comments: 0 });
+      expect(posts()).toEqual([]);
+      platform.unknown.delete(subject);
+      platform.features.add(subject);
+      await expect(post('hello', { subject })).resolves.toMatchObject({
+        comment: { text: 'hello' },
+      });
+      expect(await written(subject)).toEqual({ topics: 1, comments: 1 });
+    }
+  );
+
+  it('a subject the platform drops after the lookup: the push is refused, the comment hidden, a resend refused', async () => {
     dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue(null as never);
-    const { comment } = await post('hello', { subject: UNKNOWN, unscanned: true });
-    expect(comment.urn).toBeNull();
-    expect(fetchFake.mock.calls.filter(([u]) => String(u).startsWith(SIGNER))).toEqual([]);
+    const { comment } = await post('hello', { subject: UNKNOWN_LATER, unscanned: true });
+    platform.unknown.add(UNKNOWN_LATER);
     await scannedAndPushed({ comment });
     expect(
       await q(`SELECT hidden FROM "CommentV3" WHERE "entityType"::text = 'featurePage'`)
     ).toEqual([{ hidden: true }]);
     expect(posts()).toEqual([]);
-    // A resend of the refused request is refused again, not answered with the kept comment.
+    // Known again to the lookup, so only the stored refusal refuses the resend.
+    platform.unknown.delete(UNKNOWN_LATER);
     await expect(
       comments.postFeaturePageComment(ctxFor(AUTHOR), {
         requestId: `r${seq}`,
-        subject: UNKNOWN,
+        subject: UNKNOWN_LATER,
         text: 'hello',
       })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    await expect(post('hello')).resolves.toMatchObject({ comment: { text: 'hello' } });
   });
 
-  it('a feature the platform does not hold yet: answered pending, never refused, and a resend writes no second comment', async () => {
-    const first = await post('about a feature', { subject: FEATURE });
-    expect(first.comment).toMatchObject({ urn: null, text: 'about a feature' });
-    await expect(
-      comments.postFeaturePageComment(ctxFor(AUTHOR), {
-        requestId: `r${seq}`,
-        subject: FEATURE,
-        text: 'about a feature',
-      })
-    ).resolves.toMatchObject({ comment: { sourceId: first.comment.sourceId, urn: null } });
-    expect(await q(`SELECT id FROM "CommentV3" WHERE "entityType"::text = 'featurePage'`)).toEqual([
-      { id: first.comment.sourceId },
-    ]);
-  });
+  it.each([
+    ['down', () => void (platform.down = true)],
+    ['without the lookup route', () => void (platform.subjectLookup = 'no-route')],
+    ['answering a 200 that is not an answer', () => void (platform.subjectLookup = 'bad')],
+  ])(
+    'with the subject lookup %s, a post is refused to try again, nothing written',
+    async (_, fail) => {
+      fail();
+      await expect(
+        comments.postFeaturePageComment(ctxFor(AUTHOR), {
+          requestId: 'r-down',
+          subject: SUBJECT,
+          text: 'while down',
+        })
+      ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+      expect(await written(SUBJECT)).toEqual({ topics: 0, comments: 0 });
+    }
+  );
 
   it('takes a feature subject only by its slug, and no text longer than the platform takes', async () => {
     const { featurePageCommentSchema } = await import('~/server/schema/feature-pages.schema');
@@ -274,10 +315,11 @@ describe('posting', () => {
     ).toHaveLength(1);
   });
 
-  it('with the platform down, answers ok with no urn, and the cron posts it once when it is back', async () => {
+  it('with the platform down after the lookup, answers ok with no urn, and the cron posts it once when it is back', async () => {
+    const { comment } = await post('while down', { unscanned: true });
     platform.down = true;
-    const { comment } = await post('while down');
-    expect(comment.urn).toBeNull();
+    await scannedAndPushed({ comment });
+    expect((await mirrorRow(comment.sourceId)).urn).toBeNull();
     platform.down = false;
     await runMirror(mirror);
     await runMirror(mirror);

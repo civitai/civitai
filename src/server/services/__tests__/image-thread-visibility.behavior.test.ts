@@ -63,6 +63,9 @@ beforeAll(async () => {
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     CREATE TABLE "Bounty" (id int PRIMARY KEY, "userId" int, availability "Availability");
     CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int);
+    CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
+    CREATE TABLE "Crucible" (id int PRIMARY KEY, status "CrucibleStatus", "endAt" timestamp, "nsfwLevel" int);
+    CREATE TABLE "CrucibleEntry" (id int PRIMARY KEY, "crucibleId" int, "userId" int, "imageId" int);
     CREATE TABLE "CommentV3" (
       id serial PRIMARY KEY, "entityType" text, "entityId" int, "parentId" int, "userId" int,
       content text, "deletedAt" timestamp, "createdAt" timestamp NOT NULL DEFAULT now()

@@ -783,6 +783,18 @@ export enum FLIPT_FEATURE_FLAGS {
   // flag state (enabled: false) before this code serves traffic.
   IMAGE_METRICS_DEDICATED_CLICKHOUSE = 'image-metrics-dedicated-clickhouse',
 
+  // On, with CLICKHOUSE_DOWNLOADS_HOST and CLICKHOUSE_DOWNLOADS_USERNAME set: the user-downloads
+  // cache lookup reads the dedicated downloads replica (`~/server/services/downloads-clickhouse`).
+  // Kill: disable.
+  // 🔴 BOOLEAN ONLY, global. The key must exist in flag state (enabled: false) before deploy.
+  USER_DOWNLOADS_DEDICATED_CLICKHOUSE = 'user-downloads-dedicated-clickhouse',
+
+  // On, with CLICKHOUSE_DOWNLOADS_HOST and CLICKHOUSE_DOWNLOADS_USERNAME set: the download
+  // limiter's count reads the dedicated downloads replica; its address branch also needs
+  // CLICKHOUSE_DOWNLOADS_IP_HASH_KEY. Kill: disable.
+  // 🔴 BOOLEAN ONLY, global. The key must exist in flag state (enabled: false) before deploy.
+  DOWNLOAD_COUNT_DEDICATED_CLICKHOUSE = 'download-count-dedicated-clickhouse',
+
   // On: a full page load of `/images/[imageId]` or `/posts/[postId]` server-renders a fixed
   // placeholder in place of the sections listed at their `ClientOnlySection` call sites, and those
   // sections mount right after hydration (`~/components/ClientOnlySection`). Off (and unknown, or a

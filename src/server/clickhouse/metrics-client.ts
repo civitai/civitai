@@ -20,7 +20,10 @@ import {
 } from '@civitai/clickhouse/client';
 import { registerCounterWithLabels } from '@civitai/telemetry/client';
 import { env } from '~/env/server';
-import { withConnectionResetRetry } from '~/server/clickhouse/retry-on-connection-reset';
+import {
+  type ConnectionRetryOutcome,
+  withConnectionResetRetry,
+} from '~/server/clickhouse/retry-on-connection-reset';
 import { createLogger } from '~/utils/logging';
 
 declare global {
@@ -34,11 +37,17 @@ const retryCounter = registerCounterWithLabels({
   labelNames: ['outcome'] as const,
 });
 
-export function createClickhouseMetricsClient(
-  options: CreateClickhouseClientOptions & { requestTimeoutMs: number }
-): CustomClickHouseClient {
+// `onRetry` counts each re-send; unset, it counts on image_metrics_clickhouse_retry_total. Another
+// dedicated client built from this factory (./downloads-client) passes its own counter.
+export function createClickhouseMetricsClient({
+  onRetry = (outcome) => retryCounter.inc({ outcome }),
+  ...options
+}: CreateClickhouseClientOptions & {
+  requestTimeoutMs: number;
+  onRetry?: (outcome: ConnectionRetryOutcome) => void;
+}): CustomClickHouseClient {
   return withConnectionResetRetry(createClickhouseClient(options), {
-    onRetry: (outcome) => retryCounter.inc({ outcome }),
+    onRetry,
     requestTimeoutMs: options.requestTimeoutMs,
   });
 }

@@ -1,10 +1,6 @@
 import type { Kysely, Transaction } from 'kysely';
-import {
-  MOD_TAG_REVIEW_SOURCE,
-  modReviewEligibleImage,
-  servableImage,
-  servableImageForSweeps,
-} from '@civitai/db/knights';
+import { MOD_TAG_REVIEW_SOURCE } from '@civitai/db/knights';
+import { modReviewEligibleImage, servableImage, servableImageForSweeps } from '../image-gate';
 import type { DB } from '@civitai/db-schema/kysely';
 import { YESNO_AUDIENCE, YESNO_CONSENSUS_VOTES, YESNO_KEY_PREFIX } from './keys';
 
