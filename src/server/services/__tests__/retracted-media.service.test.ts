@@ -8,6 +8,7 @@ import {
   CSAM_RESTRICTION_CASES,
   csamCaseCleanupSql,
 } from '../../../../packages/civitai-shared/src/__tests__/csam-restriction-cases';
+import { POST_PENDING_DELETE_REASON } from '@civitai/db-queries/content-deletion';
 import { heldImageSql, heldUserSql } from '@civitai/shared/held-media';
 import { heldUrlSql } from '@civitai/shared/held-url';
 import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
@@ -668,16 +669,22 @@ describe('a scanned image whose post someone other than its owner unpublished', 
     deleted: 990000314,
     live: 990000315,
     ownPull: 990000316,
+    keptDelete: 990000317,
   };
   const all = Object.values(ids);
-  const post = (id: number) =>
-    id === ids.live ? 990400315 : id === ids.ownPull ? 990400316 : 990400310;
+  const posts: Record<number, number> = {
+    [ids.live]: 990400315,
+    [ids.ownPull]: 990400316,
+    [ids.keptDelete]: 990400317,
+  };
+  const post = (id: number) => posts[id] ?? 990400310;
   beforeAll(async () => {
     await pg.exec(`
       INSERT INTO "Post" (id, metadata, "modelVersionId", "userId", "publishedAt") VALUES
         (990400310, '{"unpublishedAt": "2026-11-18", "unpublishedBy": "990100399"}', NULL, ${OWNER}, NULL),
         (990400315, '{}', NULL, ${OWNER}, now()),
-        (990400316, '{"unpublishedAt": "2026-11-18", "unpublishedBy": "${OWNER}"}', NULL, ${OWNER}, NULL);
+        (990400316, '{"unpublishedAt": "2026-11-18", "unpublishedBy": "${OWNER}"}', NULL, ${OWNER}, NULL),
+        (990400317, '{"unpublishedAt": "2026-11-18", "unpublishedBy": "990100399", "unpublishedReason": "${POST_PENDING_DELETE_REASON}"}', NULL, ${OWNER}, NULL);
       INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId", "userId") VALUES ('key-${ids.shop}', 1, ${OWNER});
       INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview")
         VALUES (${ids.deleted}, 'key-${ids.deleted}', ${OWNER}, false);
@@ -715,6 +722,10 @@ describe('a scanned image whose post someone other than its owner unpublished', 
 
   it('refuses a denied url no unpublish by someone else explains', async () => {
     await expectTiers('none', [ids.live, ids.ownPull]);
+  });
+
+  it('refuses a post a delete its case keeps unpublished', async () => {
+    await expectTiers('none', [ids.keptDelete]);
   });
 });
 

@@ -63,8 +63,12 @@ function scannedRefusedSql(image: string): string {
     )`;
 }
 
-/** Its post was unpublished by someone other than its owner: the only fact that makes cdn-access
- *  refuse a scanned image's url (`desiredPostAccess` in the main app's cdn-access service). */
+// `POST_PENDING_DELETE_REASON` in @civitai/db-queries, which imports this package.
+const PENDING_DELETE_REASON = 'pending-delete';
+
+/** Its post was unpublished by someone other than its owner, and not by a delete a case keeps: what
+ *  makes cdn-access refuse a scanned image's url (`desiredPostAccess` in the main app's cdn-access
+ *  service), less the kept delete, which stays refused. */
 function postPulledSql(image: string): string {
   return `EXISTS (
       SELECT 1 FROM "Post" pp
@@ -72,6 +76,7 @@ function postPulledSql(image: string): string {
         AND pp.metadata ? 'unpublishedAt'
         AND pp.metadata ->> 'unpublishedBy' IS DISTINCT FROM pp."userId"::text
         AND pp.metadata ->> 'unpublishedBy' IS NOT NULL
+        AND pp.metadata ->> 'unpublishedReason' IS DISTINCT FROM '${PENDING_DELETE_REASON}'
     )`;
 }
 
