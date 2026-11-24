@@ -118,8 +118,13 @@ type Server struct {
 	HostPrimaries map[string]string
 	RegionRules   []browsing.RegionRule
 	// RegionBlockRules is REGION_BLOCK_CONFIG (config.RegionBlockRules): a public request from a region
-	// on it is handed to Fallback, where applyApiRequestPolicy answers the 451.
+	// on it is the app's 451, answered here with AnswerRegionBlocked, else handed to the route's
+	// fallback, where applyApiRequestPolicy answers it.
 	RegionBlockRules []browsing.RegionRule
+	// AnswerRegionBlocked is FEED_GO_ANSWER_REGION_BLOCKED (default off): write the app's 451 to a
+	// request from a blocked region here (writeRegionBlocked, outcome `region_blocked`) instead of
+	// proxying it as the `region-blocked` fallback. Off, the request is handed back as before.
+	AnswerRegionBlocked bool
 	// Fallback serves what this service does not (a reverse proxy to the Node app). Required to serve
 	// public traffic; nil only in shadow-only deployments, where the public route is not exposed.
 	Fallback http.Handler
@@ -629,7 +634,8 @@ func (s *Server) noteWriteFormat(ctx context.Context, endpoint string, c *comput
 // that the tRPC route runs before anything else and this service hands to the app rather than answer:
 //
 //   - a region on REGION_BLOCK_CONFIG (getRegion: cf-ipcountry, cf-region-code for US states, x-isuk
-//     true|1 as GB) is `region-blocked`, and the app answers its 451 with its own body and headers.
+//     true|1 as GB) is errRegionBlocked: the app's 451, which answerRegionBlocked writes here with
+//     AnswerRegionBlocked on, and which is otherwise the `region-blocked` fallback (the app answers it).
 //   - a user agent matching a crawler pattern is `crawler-user-agent`: verifyBot may then set the
 //     verified-crawler header (it also needs the IP in that crawler's published ranges), which changes
 //     the answer, and only the app holds those ranges. A request whose user agent matches none can
@@ -641,7 +647,7 @@ func (s *Server) noteWriteFormat(ctx context.Context, endpoint string, c *comput
 func (s *Server) apiRequestPolicy(r *http.Request) error {
 	// IsRegionRestricted is isRegionBlocked's match over any rule list (same region key and date).
 	if browsing.IsRegionRestricted(s.RegionBlockRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now()) {
-		return fallback.New("region-blocked")
+		return errRegionBlocked
 	}
 	if apipolicy.IsCrawlerUserAgent(r.Header.Get("User-Agent")) {
 		return fallback.New("crawler-user-agent")
@@ -947,6 +953,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		setOutcome(span, served)
 		s.Metrics.Requests.WithLabelValues(endpoint, "serve", served).Inc()
 		tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "serve", served), time.Since(start).Seconds())
+		return
+	}
+	if s.answerRegionBlocked(ctx, span, start, w, endpoint, err) {
 		return
 	}
 	if !s.serveFallback(ctx, span, start, endpoint, err) {
