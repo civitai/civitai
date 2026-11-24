@@ -12,5 +12,5 @@ The design is the Pencil file's M0-M8 storyboards and S1. Motion tokens and easi
   linear countdown bar) and locks the answers; a click, tap, Space or Enter starts at once. The first rating after a run carries
   a "Questions done · back to rating" pill for 2.5 s, and the eyebrow glows once. Runs are read from what the page showed, not
   the server's stretch banner, since a stretch spans several bursts. Reduced motion: fades only, "Starting in 3 s" instead of
-  the bar. No sound yet: the planned chime needs a generated file.
+  the bar. Silent by decision; a sound for it waits for per-player sound choices.
 - Rewards: `lib/rewards.ts` turns a status change into the floating "+XP"/"+gold" and the gold sound; both are read in `AppHeader.svelte`.
