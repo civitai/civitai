@@ -404,6 +404,33 @@ describe('submitAppAccessRequest — app-access-auto-approve', () => {
     await expect(submit(tomasz, TOMASZ_IDEA)).resolves.toMatchObject({ status: 'approved' });
   });
 
+  it('🔴 a decline that commits BETWEEN the eligibility read and the approved insert is not undone: PENDING', async () => {
+    const first = await submit(mira, MIRA_IDEA);
+    flag.on.add(String(mira));
+    // The moderator's decline lands after the submit's eligibility read (no declined row yet) and
+    // before its approved INSERT: run the real `decide` just ahead of that one statement.
+    let injected = false;
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (q: Prisma.Sql) => {
+      if (!injected && q.text.includes(`'approved', CURRENT_TIMESTAMP`)) {
+        injected = true;
+        await decide(first.id, 'declined');
+      }
+      return run(q);
+    }) as never);
+    refreshSession.mockClear();
+
+    const again = await submit(mira, MIRA_IDEA_AGAIN);
+    expect(injected).toBe(true);
+    expect(again).toMatchObject({ status: 'pending', reviewedAt: null });
+    expect(await rowsFor(mira)).toEqual([
+      { id: first.id, status: 'declined', whatToBuild: MIRA_IDEA },
+      { id: again.id, status: 'pending', whatToBuild: MIRA_IDEA_AGAIN },
+    ]);
+    expect(await isApproved(mira)).toBe(false);
+    // The only session bust is the decline's own; the submit granted nothing.
+    expect(refreshSession).toHaveBeenCalledTimes(1);
+  });
+
   it('🔴 a request a moderator DECLINED (never approved): the next submit with the flag on is PENDING', async () => {
     const first = await submit(mira, MIRA_IDEA);
     await decide(first.id, 'declined');

@@ -146,31 +146,31 @@ export async function submitAppAccessRequest({
     throw new TRPCError({ code: 'CONFLICT', message: APP_ACCESS_ALREADY_APPROVED });
 
   if ((await isAutoApproveOn(user)) && (await isEligibleForAutoApproval(userId))) {
-    // Inserted approved only when the person holds NO pending row and NO approved one. A pending
-    // request keeps waiting for a moderator — the same "waiting for review" CONFLICT as with the
-    // flag off — and a grant that landed since the read above is a CONFLICT, not a second row.
-    // Two submits racing each other can still leave two approved rows, which the revoke sweep in
-    // `decide` covers. `reviewedById` stays NULL — no moderator decided this.
+    // Inserted approved only when the person holds NO pending, approved or declined row. The
+    // eligibility read above already refused a declined row, but a moderator's decline that
+    // commits between that read and this insert must not be undone by it either, so the insert
+    // re-checks it. A grant that landed since the read is a CONFLICT, not a second row. Anything
+    // else that blocks it falls through to the pending insert below: a pending request keeps
+    // waiting for a moderator (the same "waiting for review" CONFLICT as with the flag off), and a
+    // decline that landed since gets a new pending request. Two submits racing each other can
+    // still leave two approved rows, which the revoke sweep in `decide` covers. `reviewedById`
+    // stays NULL — no moderator decided this.
     const [row] = await dbWrite.$queryRaw<AppAccessRequestView[]>(Prisma.sql`
       INSERT INTO "AppAccessRequest" ("userId", "whatToBuild", "status", "reviewedAt")
       SELECT ${userId}::int, ${input.whatToBuild}::text, 'approved', CURRENT_TIMESTAMP
       WHERE NOT EXISTS (
         SELECT 1 FROM "AppAccessRequest"
-        WHERE "userId" = ${userId} AND "status" IN ('pending', 'approved')
+        WHERE "userId" = ${userId} AND "status" IN ('pending', 'approved', 'declined')
       )
       RETURNING ${VIEW_COLUMNS}
     `);
-    if (!row) {
-      throw new TRPCError({
-        code: 'CONFLICT',
-        message: (await hasApprovedAppAccessRequest(userId))
-          ? APP_ACCESS_ALREADY_APPROVED
-          : APP_ACCESS_ALREADY_PENDING,
-      });
+    if (row) {
+      // Best-effort, after the commit, as in `decide`: a failed bust is bounded by the session TTL.
+      await refreshSession(userId, { caller: 'profile' }).catch(handleLogError);
+      return row;
     }
-    // Best-effort, after the commit, as in `decide`: a failed bust is bounded by the session TTL.
-    await refreshSession(userId, { caller: 'profile' }).catch(handleLogError);
-    return row;
+    if (await hasApprovedAppAccessRequest(userId))
+      throw new TRPCError({ code: 'CONFLICT', message: APP_ACCESS_ALREADY_APPROVED });
   }
 
   const [row] = await dbWrite.$queryRaw<AppAccessRequestView[]>(Prisma.sql`
