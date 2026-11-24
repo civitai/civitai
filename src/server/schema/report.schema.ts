@@ -10,7 +10,14 @@ import { AppealStatus, EntityType, ReportReason, ReportStatus } from '~/shared/u
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
 // #region [report reason detail schemas]
-const baseDetailSchema = z.object({ comment: z.string().optional() });
+const baseDetailSchema = z.object({
+  comment: z.string().optional(),
+  /**
+   * Where in a song the report is about, in whole seconds. Required on a song and refused on anything
+   * else (`assertSongReportTime`); the moderator queue plays from here.
+   */
+  timestampSec: z.number().int().min(0).optional(),
+});
 
 export const reportNsfwDetailsSchema = baseDetailSchema.extend({
   tags: z.string().array().optional(),
@@ -43,6 +50,8 @@ export const TOS_VIOLATIONS = [
 ] as const;
 
 export const REAL_PERSON_VIOLATION = TOS_VIOLATIONS[0];
+/** Not offered for a song, and refused on one (`assertSongReportTime`). */
+export const MINOR_VIOLATION = TOS_VIOLATIONS[6];
 
 export const reportTosViolationDetailsSchema = baseDetailSchema
   .extend({
