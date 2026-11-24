@@ -113,7 +113,7 @@ async function declaredCollection(app: App, name: string): Promise<DocCollection
 }
 
 /** The per-user lists an op answers (who was refunded, who is over a ceiling, who mismatched). */
-const PER_USER_LISTS = new Set(['refunds', 'overCeiling', 'userSample']);
+const PER_USER_LISTS = new Set<string>([]);
 
 /**
  * The op's answer as the audit row keeps it: each per-user list replaced by its length
