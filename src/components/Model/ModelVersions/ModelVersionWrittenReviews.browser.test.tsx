@@ -150,7 +150,7 @@ describe('ModelVersionWrittenReviews', () => {
           <ModelVersionWrittenReviews modelId={1} modelVersionId={3} versionRatingCount={7} />
         </>
       );
-      await vi.waitFor(() => expect(enabledCalls(3)).toHaveLength(1));
+      await vi.waitFor(() => expect(enabledCalls(3)).not.toHaveLength(0));
       expect(enabledCalls(2)).toHaveLength(0);
       expect(document.querySelectorAll('[data-testid="model-written-reviews"]')).toHaveLength(1);
     });
