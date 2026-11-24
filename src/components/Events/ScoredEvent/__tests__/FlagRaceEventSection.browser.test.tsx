@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as ImageUtils from '~/components/Image/image.utils';
+import type * as Trpc from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 
 const h = vi.hoisted(() => ({
   flagRace: true,
@@ -19,6 +21,10 @@ const h = vi.hoisted(() => ({
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => ({ flagRace: h.flagRace }),
+}));
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof Trpc>()),
+  trpc: makeTrpcProxy({}),
 }));
 vi.mock('~/components/HatTurf/FlagRace/FlagRowProviders', () => ({
   useFlagRow: (event: string | undefined) => (event ? h.row : null),
