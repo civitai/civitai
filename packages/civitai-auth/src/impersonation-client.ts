@@ -1,10 +1,4 @@
-import {
-  hostOnlySite,
-  hostSessionCookieName,
-  readCookie,
-  sessionCookieName,
-  siteCookieHeader,
-} from './cookies';
+import { parseCookieHeader, readSessionToken, siteCookieHeader } from './cookies';
 import { hubFetch, sessionCall } from './hub';
 
 // IMPERSONATION CLIENT — the hub's moderator-impersonation endpoints (section F). The hub gates `impersonate`
@@ -49,12 +43,8 @@ export function createImpersonationClient(): ImpersonationClient {
     let res: Response;
     try {
       const cookie = siteCookieHeader(rawCookie, host);
-      const name = hostOnlySite(host) ? hostSessionCookieName() : sessionCookieName();
-      const { headers, body } = sessionCall(
-        { token: readCookie(cookie, name) },
-        { cookie },
-        fields
-      );
+      const token = readSessionToken(parseCookieHeader(cookie), { host })?.value;
+      const { headers, body } = sessionCall({ token }, { cookie }, fields);
       res = await hubFetch(path, { method: 'POST', headers, body });
     } catch {
       // hub unreachable or unconfigured (AUTH_JWT_ISSUER unset) — status 0 signals "no hub response".

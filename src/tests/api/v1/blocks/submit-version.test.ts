@@ -371,6 +371,27 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(429);
     expect(res._getHeaders()['Retry-After']).toBeDefined();
+    // The fields this route always sent, plus the house envelope and the product meta: the
+    // window's count (this refused submit included) against its 10 a minute.
+    expect(res._getJSONData()).toEqual({
+      retryAfterSeconds: 60,
+      limit: 10,
+      windowSeconds: 60,
+      error: 'Rate limit exceeded',
+      message: 'Rate limit exceeded',
+      code: 'TOO_MANY_REQUESTS',
+      rateLimit: {
+        retryAfterSeconds: 60,
+        retryAt: expect.any(String),
+        id: 'apps.version-submits',
+        kind: 'product',
+        limit: 10,
+        used: 11,
+        remaining: 0,
+        windowSeconds: 60,
+        resetAt: expect.any(String),
+      },
+    });
     expect(mockSubmitVersion).not.toHaveBeenCalled();
   });
 

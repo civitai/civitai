@@ -206,6 +206,9 @@ beforeAll(async () => {
   const [addValue, partition] = migration('20270108094000_post_text_comment_type').split('\n-- 2.');
   await db.pg.exec(addValue);
   await db.pg.exec(`-- 2.${partition}`);
+  const [fpValue, fpRest] = migration('20271125140000_feature_page_comments').split('\n-- 2.');
+  await db.pg.exec(fpValue);
+  await db.pg.exec(`-- 2.${fpRest}`);
   await db.pg.exec(COMMENTS);
   holder.kysely = new Kysely({ dialect: dialect(db.pg) });
 });
@@ -1058,4 +1061,56 @@ describe('a comment hidden for ToS', () => {
     );
     expect(rows[0].n).toBe(1);
   });
+});
+
+describe('a Feature Pages comment', () => {
+  // Topic 1: 880 (by 2) names user 9, and 881 (by 3) answers it. Image 10's 101, which names user 6
+  // and answers 100 by 2, is the control in each check.
+  const FP = `
+    INSERT INTO "FeaturePageTopic"(id, urn, kind) VALUES (1, 'urn:data.civitai.com:feature-pages/requests/r1', 'request');
+    INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('featurePage', 1);
+    INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, "createdAt") VALUES
+      (880, 'featurePage', 1, NULL, 2, 'on a feature "mention:9"', now()),
+      (881, 'featurePage', 1, 880, 3, 'a reply on the feature', now());`;
+  const UNDO = `DELETE FROM "CommentV3" WHERE id IN (881, 880);
+    DELETE FROM "CommentTopic" WHERE "entityType" = 'featurePage';
+    DELETE FROM "FeaturePageTopic";`;
+  const ids = (out: Emitted[]) => out.map((r) => r.details.commentId as number);
+
+  it('notifies no one of a reply or a response, while a reply on an image still notifies', () =>
+    temporarily(FP, UNDO, async () => {
+      for (const type of [
+        'new-comment-reply',
+        'new-thread-response',
+        'new-comment-response',
+      ] as const) {
+        const out = ids(await emitted(type));
+        expect(out).not.toContain(880);
+        expect(out).not.toContain(881);
+      }
+      expect(ids(await emitted('new-comment-reply'))).toContain(101);
+    }));
+
+  it('sends no mention, while a mention on an image still goes out', () =>
+    temporarily(FP, UNDO, async () => {
+      const out = ids(await run(mentionNotifications['new-mention'].prepareQuery));
+      expect(out).not.toContain(880);
+      expect(out).toContain(101);
+    }));
+
+  it('is never previewed in a notification, while an image comment is', () =>
+    temporarily(FP, UNDO, async () => {
+      const notifications = [881, 101].map((commentId) => ({
+        type: 'new-comment-reply',
+        details: { version: 3, commentId } as Record<string, unknown>,
+      }));
+      await commentDetailFetcher.fetcher(
+        notifications as never,
+        {
+          db: { user: { findMany: async () => [] } },
+        } as never
+      );
+      expect(notifications[0].details.content).toBeUndefined();
+      expect(notifications[1].details.content).toBeDefined();
+    }));
 });

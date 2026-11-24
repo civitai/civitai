@@ -11,13 +11,13 @@ delete of their own row also waits while a CSAM report not yet sent names them o
 
 ## Where it lives
 
-| Piece | File |
-|---|---|
-| The delete statement: locks, keeps, queues, deletes, reports | `packages/civitai-db-queries/src/content-deletion.db.ts` (`deleteImageRows`, `deletePostRows`) |
-| The queue: row data, kind, merge, blocked rules, due and settle, owner notice read | `packages/civitai-db-queries/src/pending-deletes.db.ts` |
-| What counts as an open case | `packages/civitai-db-queries/src/child-safety-case.db.ts` |
-| Each app's image delete (caches, search, posts) | `src/server/services/image.service.ts` (`deleteImages`), `apps/moderator/src/lib/server/image-deletion.ts` |
-| The job | `src/server/jobs/pending-deletes.ts` (every 5 minutes) |
+| Piece                                                                              | File                                                                                                       |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| The delete statement: locks, keeps, queues, deletes, reports                       | `packages/civitai-db-queries/src/content-deletion.db.ts` (`deleteImageRows`, `deletePostRows`)             |
+| The queue: row data, kind, merge, blocked rules, due and settle, owner notice read | `packages/civitai-db-queries/src/pending-deletes.db.ts`                                                    |
+| What counts as an open case                                                        | `packages/civitai-db-queries/src/child-safety-case.db.ts`                                                  |
+| Each app's image delete (caches, search, posts)                                    | `src/server/services/image.service.ts` (`deleteImages`), `apps/moderator/src/lib/server/image-deletion.ts` |
+| The job                                                                            | `src/server/jobs/pending-deletes.ts` (every 5 minutes)                                                     |
 
 ## The delete statement
 
@@ -28,22 +28,45 @@ passes, runs one statement that:
 1. locks the listed rows the actor may delete and the caller's condition allows;
 2. leaves each locked row in an open case, or the actor's own row under `ownerReportHold`, and
    queues it as a `PendingDelete`;
-3. for a moderator's delete that queues what it keeps (`replay.moderatorDelete`: a moderator's
-   session; a system caller deleting for one, such as the mod and admin delete endpoints and
-   `removeAllContent`; or the job replaying such a delete), blocks each kept image (in a moderator's
-   session, all but their own) as `writeModeratorBlock` does (`ingestion = 'Blocked'`, `nsfwLevel`
+3. blocks each image it keeps, whoever deletes it (an owner, a moderator, any system
+   caller, or the job replaying a delete), as `writeModeratorBlock` does (`ingestion = 'Blocked'`, `nsfwLevel`
    Blocked, `blockedFor = 'moderated'` unless it is `CSAM`, every review flag but `csam` cleared, and `appeal` kept while an appeal is pending), and
    drops its account-deletion grace markers, so it leaves feeds, search and the review queues while
-   its case keeps it, and neither a queue's accept nor an account restore can lift it. The blocked-image purge (`removeBlockedImages`, `queueKept: false`) blocks nothing;
+   its case keeps it, and neither a queue's accept nor an account restore can lift it. Only a
+   moderator's delete that queues what it keeps rewrites an image already blocked; any other leaves it
+   as it is, so a takedown keeps its reason and an account-deletion grace block stays liftable by a
+   restore. Blocking queues the image for `remove-blocked-images` (`trg_blocked_image_delete_queue`); unless a
+   moderator's delete did the blocking, a second statement drops that queue row, so the queued delete,
+   not the purge's retention clock, decides when it goes;
 4. deletes the rest and, for images, queues what the caller asks for: their stored files (unless
    `files` is absent), post recounts (`recountPosts`) and CDN takedowns (`cdnTakedown`);
 5. returns `{ deleted, kept, hidden, gone }`: the deleted rows, the kept ids, the kept images it
    blocked (with their owner and post), and the listed ids that were already gone.
 
 Each app takes a blocked image out of search and busts its caches, as for one a hold marker's
-trigger blocked, and drops it from the comics and home blocks showing it. A kept post is left as it is; a moderator's `deletePost` deletes its images first,
-so those a case keeps are blocked (except the moderator's own). Other system deletes (the
-deleted-account drain, a parent's cleanup without `moderatorDelete`) block nothing.
+trigger blocked, and drops it from the comics and home blocks showing it. A kept post is unpublished as a moderator's unpublish does (`publishedAt` cleared, the
+`unpublishedAt`/`unpublishedBy`/`prevPublishedAt` stamps written, `unpublishedReason = 'pending-delete'`),
+so it leaves public reads and stays visible to its owner and moderators; `deletePost` then runs the
+unpublish follow-ups. The `trg_post_pending_delete_keep_unpublished` trigger (migration
+`20271126120000_post_pending_delete_publish_guard`) keeps such a post unpublished, its stamp intact,
+whatever path tries to publish it, while its `PendingDelete` row exists. A kept draft is stamped too; a
+post a moderator already unpublished keeps its own reason. While the row exists its owner is told only
+that the post isn't available, with no publish controls; once that row is gone without the post, it
+reads as a plain unpublished post, and a publish goes through and drops the stamp. An account restore
+(`releaseAccountDeletionPendingDeletes`) leaves the drain's delete of an image or post whose case is
+still open, marked `releasedOnRestore`, so it cannot make that content publishable: the content stays
+hidden until the case closes. Then `pending-deletes` releases it (drops the row and keeps the content) only if the case found nothing and the account has
+not been deleted again; a released image stays hidden until a moderator lifts its block or the owner
+appeals it; on a finding (blocked for CSAM, listed on a CSAM report, or an actioned
+child-safety report on the image, its post or its review) it carries out the delete as queued, and
+an image carried out on a finding takes the mark off its post's delete, so the post goes too. Another
+ask queued on a marked row (through `PENDING_DELETE_UPSERT`) replaces the drain's withdrawn ask, so
+that ask alone decides how the row is carried out (a cleanup is still re-checked as one).
+`deletePost` runs the unpublish follow-ups (`afterPostsUnpublish`) for a post it kept; the other
+`deletePostRows` callers do not yet. A publish the trigger refuses makes `updatePost` answer that the
+post can't be published right now.
+`deletePost` deletes a post's images first, so those a case keeps are blocked. An owner's image blocked this way is no longer a plain owner delete when the
+queued delete runs, so it does not keep an object shop artwork uses.
 
 Lifting a block (a moderator's unblock, an approved appeal, an account restore's lift of a grace
 block) releases any moderator's pending delete on that image: both apps'
@@ -70,11 +93,11 @@ out without their condition or outside their own run:
 One row per entity (`JobQueue` type `PendingDelete`, unique on entity). Its `data` says how to carry
 the delete out later:
 
-| Kind | Data | Written by | Carried out as |
-|---|---|---|---|
-| `own` | `{ ownerId }` | the owner deleting their own row | the owner |
-| `other` | `{ deletedBy, moderatorDelete?, keepStoredFiles? }` | anyone else: a moderator (`deletedBy: 'moderator:<id>'`) or a system caller (its name) | the system, with those flags; a moderator's post delete as a moderator's |
-| `cleanup` | `{ cleanup: true, moderatorDelete? }` | `queueImageDeletes` (a parent letting go of an image) | the system, only while the image is still unused |
+| Kind      | Data                                                | Written by                                                                             | Carried out as                                                           |
+| --------- | --------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `own`     | `{ ownerId }`                                       | the owner deleting their own row                                                       | the owner                                                                |
+| `other`   | `{ deletedBy, moderatorDelete?, keepStoredFiles? }` | anyone else: a moderator (`deletedBy: 'moderator:<id>'`) or a system caller (its name) | the system, with those flags; a moderator's post delete as a moderator's |
+| `cleanup` | `{ cleanup: true, moderatorDelete? }`               | `queueImageDeletes` (a parent letting go of an image)                                  | the system, only while the image is still unused                         |
 
 The kind is not stored: `pendingKindOf` (TypeScript) and `pendingKind` (SQL) read it from the data,
 and every rule starts from that reading; the merge rank, the waiting interval and the cleanup replay

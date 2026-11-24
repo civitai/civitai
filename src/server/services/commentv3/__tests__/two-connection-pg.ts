@@ -14,6 +14,7 @@ const DDL = `
   CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
   CREATE TYPE "ReportReason" AS ENUM ('TOSViolation', 'NSFW', 'Spam');
   CREATE TABLE "CommentV3" (id int PRIMARY KEY, "userId" int NOT NULL,
+    "entityType" text NOT NULL DEFAULT 'model',
     hidden boolean NOT NULL DEFAULT false, "hiddenAt" timestamptz,
     "tosViolation" boolean NOT NULL DEFAULT false, "pinnedAt" timestamptz,
     "deletedAt" timestamptz, "updatedAt" timestamptz NOT NULL DEFAULT now(), "legacyV1Id" int);

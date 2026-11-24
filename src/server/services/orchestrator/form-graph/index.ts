@@ -57,7 +57,6 @@ import { createSoniloInput } from './sonilo.handler';
 import {
   createPolyGenInput,
   createTripoInput,
-  createHunyuan3dInput,
   createPixal3dInput,
   createTrellis2Input,
 } from './model3d.handler';
@@ -117,7 +116,6 @@ export { createSoniloInput } from './sonilo.handler';
 export {
   createPolyGenInput,
   createTripoInput,
-  createHunyuan3dInput,
   createPixal3dInput,
   createTrellis2Input,
 } from './model3d.handler';
@@ -318,9 +316,6 @@ function createStep(
 
     case 'Tripo':
       return createTripoInput(data, handlerCtx);
-
-    case 'Hunyuan3D':
-      return createHunyuan3dInput(data, handlerCtx);
 
     case 'Pixal3D':
       return createPixal3dInput(data, handlerCtx);

@@ -15,6 +15,12 @@ import {
   checkAppBlocksCliCredential,
 } from '~/server/auth/bearer-scope-tighten';
 import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
+import {
+  appRateLimitMeta,
+  retryAfterSecondsOf,
+  sendAppRateLimited,
+} from '~/server/utils/app-rate-limit';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
@@ -80,7 +86,8 @@ export const config = {
 // A write — keep the window tighter than the submissions read (60/60s) but
 // still generous enough for an interactive CLI + a couple of retries. Per-user
 // fixed window, fail-closed on a malformed limiter.
-const RATE_LIMIT = { max: 30, windowSeconds: 60 } as const;
+// The window; the limit is the registry's `apps.listing-withdrawals`, resolved per user (its code default is 30).
+const RATE_LIMIT = { windowSeconds: 60 } as const;
 
 const bodySchema = z.object({
   // The `pubreq_<ULID>` of the request to withdraw. Self-scoping is enforced in
@@ -170,6 +177,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // fallback. Same atomic SET NX EX + INCR MULTI as submissions/submit-version/
   // dev-token; fail CLOSED on a malformed limiter result or a Redis incident.
   const rateSubject = user.id ? `u:${user.id}` : `ip:${clientIp(req)}`;
+  const rateMax = await resolveUserAppLimit('apps.listing-withdrawals', user.id ? user : null);
   const rateKey = `${REDIS_SYS_KEYS.BLOCKS.WITHDRAW_RATE_LIMIT}:${rateSubject}` as const;
   let count: number;
   try {
@@ -197,15 +205,21 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     const ttl = await sysRedis.ttl(rateKey).catch(() => -1);
     if (ttl < 0) await sysRedis.expire(rateKey, RATE_LIMIT.windowSeconds).catch(() => {});
   }
-  if (count > RATE_LIMIT.max) {
+  if (count > rateMax) {
     const retryAfter = await sysRedis.ttl(rateKey);
-    res.setHeader('Retry-After', String(Math.max(retryAfter, 1)));
-    res.status(429).json({
-      message: 'Rate limit exceeded',
-      retryAfterSeconds: retryAfter,
-      limit: RATE_LIMIT.max,
-      windowSeconds: RATE_LIMIT.windowSeconds,
-    });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta(
+        'apps.listing-withdrawals',
+        retryAfterSecondsOf(retryAfter, RATE_LIMIT.windowSeconds)
+      ),
+      'Rate limit exceeded',
+      {
+        retryAfterSeconds: retryAfter,
+        limit: rateMax,
+        windowSeconds: RATE_LIMIT.windowSeconds,
+      }
+    );
     return;
   }
 

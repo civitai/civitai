@@ -1028,6 +1028,9 @@ describe('AppAssistantWorkspace app switcher', () => {
     await page.getByRole('menuitem', { name: 'Delete app' }).click();
     await page.getByRole('button', { name: 'Keep it' }).click();
     expect(m.remove).not.toHaveBeenCalled();
+    // An answered confirm stays on screen through its exit transition with its buttons inert:
+    // wait for it to go, or the next click can land on the old dialog's button.
+    await expect.element(page.getByRole('button', { name: 'Keep it' })).not.toBeInTheDocument();
 
     await switcher().click();
     await page.getByRole('button', { name: 'Actions for app-aaaa' }).click();
@@ -4082,6 +4085,10 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     // The confirmation: Keep it deletes nothing.
     await page.getByRole('button', { name: 'Keep it' }).click();
     expect(hib.deleteMine).not.toHaveBeenCalled();
+    // As above: wait for the answered confirm to go. Answering it is a click outside the switcher
+    // popover, which then closes; reopen it to reach the offer again.
+    await expect.element(page.getByRole('button', { name: 'Keep it' })).not.toBeInTheDocument();
+    await switcher().click();
     await offer.click();
     await page.getByRole('button', { name: 'Delete old-quiz', exact: true }).click();
     await vi.waitFor(() =>

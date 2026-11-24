@@ -267,6 +267,7 @@ const validateReportCreation = async ({
   reason,
   details,
   pendingOnly,
+  whilePending,
   tx,
 }: {
   userId: number;
@@ -275,6 +276,8 @@ const validateReportCreation = async ({
   reason: ReportReason;
   details?: MixedObject;
   pendingOnly?: boolean;
+  /** Fold only if the report is still Pending when written, else return null so a new one is filed. */
+  whilePending?: boolean;
   tx?: Prisma.TransactionClient;
 }): Promise<Report | null> => {
   const db = tx ?? dbWrite;
@@ -297,29 +300,20 @@ const validateReportCreation = async ({
 
   // if alsoReportedBy count is greater than previouslyReviewedCount * 2,
   // then set the status to pending and reset the previouslyReviewedCount
-  if (previouslyReviewedCount > 0 && alsoReportedBy.length >= previouslyReviewedCount * 2) {
-    const updatedReport = await db.report.update({
-      where: { id },
-      data: {
-        status: ReportStatus.Pending,
-        previouslyReviewedCount: 0,
-        alsoReportedBy: [...alsoReportedBy, userId],
-        ...(mergedDetails ? { details: mergedDetails } : {}),
-      },
-    });
+  const data: Prisma.ReportUpdateInput = {
+    ...(previouslyReviewedCount > 0 && alsoReportedBy.length >= previouslyReviewedCount * 2
+      ? { status: ReportStatus.Pending, previouslyReviewedCount: 0 }
+      : {}),
+    alsoReportedBy: [...alsoReportedBy, userId],
+    ...(mergedDetails ? { details: mergedDetails } : {}),
+  };
+  if (!whilePending) return db.report.update({ where: { id }, data });
 
-    return updatedReport;
-  }
-
-  const updatedReport = await db.report.update({
-    where: { id },
-    data: {
-      alsoReportedBy: [...alsoReportedBy, userId],
-      ...(mergedDetails ? { details: mergedDetails } : {}),
-    },
+  const { count } = await db.report.updateMany({
+    where: { id, status: ReportStatus.Pending },
+    data: data as Prisma.ReportUpdateManyMutationInput,
   });
-
-  return updatedReport;
+  return count ? db.report.findUnique({ where: { id } }) : null;
 };
 
 const reportTypeNameMap: Record<ReportEntity, string> = {
@@ -451,6 +445,13 @@ async function readReportedServiceDealReview(reviewId: number) {
   return review;
 }
 
+async function isFeaturePageComment(db: Prisma.TransactionClient, commentId: number) {
+  // primary: the fold below is decided by it. Compared as text: the label may not exist yet.
+  const [row] = await db.$queryRaw<{ fp: boolean }[]>`
+    SELECT "entityType"::text = 'featurePage' AS fp FROM "CommentV3" WHERE id = ${commentId}`;
+  return !!row?.fp;
+}
+
 export const createReport = async ({
   userId,
   id,
@@ -535,6 +536,10 @@ export const createReport = async ({
       throw throwBadRequestError('You cannot report your own text.');
   }
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
+  // A Feature Pages comment's delete, edit and refusal read its open reports under lock, so a
+  // report on one is open or it is a new row, whoever files it.
+  const reportsFeaturePageComment =
+    type === ReportEntity.CommentV3 && (await isFeaturePageComment(callerTx ?? dbWrite, id));
 
   // An image's or a model's mature-content report casts tag votes, unless its reporter may not vote
   // on tags yet. Without them nothing automated acts on it, so, like a crucible's, game's,
@@ -583,7 +588,9 @@ export const createReport = async ({
             reportsStorylineChapter ||
             type === ReportEntity.PostText ||
             type === ReportEntity.ServiceDealReview ||
+            reportsFeaturePageComment ||
             foldIntoPendingOnly,
+          whilePending: reportsFeaturePageComment,
           tx: callerTx,
         })
       : null;

@@ -1229,7 +1229,7 @@
 
     {#if publishTarget && runComplete}
       <civitai-card id="train-further" padding="lg" with-border>
-        <div class="flex flex-wrap items-center gap-3">
+        <div class="grid items-center gap-x-6 gap-y-3 md:grid-cols-[minmax(0,1fr)_auto]">
           <div class="min-w-0">
             <h3 class="m-0 flex items-center gap-1.5 text-base font-semibold text-white">
               <IconRepeat size={16} stroke={2} class="text-dark-2" />Train further
@@ -1241,12 +1241,11 @@
               save point along the way, not one pass over your images.
             </p>
           </div>
-          <div class="ml-auto flex flex-col items-end gap-1.5">
-            <div class="flex items-end gap-2">
+          <div class="flex flex-col gap-1.5 md:items-end">
+            <div class="flex flex-wrap items-center gap-2">
               <civitai-number-input
-                class="w-32"
-                size="sm"
-                label="+ checkpoints"
+                class="flex-row items-center gap-2 [&::part(control)]:w-16 [&::part(label)]:whitespace-nowrap [&::part(label)]:font-normal [&::part(label)]:text-dark-1"
+                label="Add checkpoints"
                 min="1"
                 max="20"
                 value={String(furtherEpochs)}
@@ -1256,7 +1255,6 @@
               ></civitai-number-input>
               {#if confirming}
                 <civitai-button
-                  class="self-end"
                   loading={continuing}
                   onclick={doTrainFurther}
                   disabled={continuing || quote?.cost == null}
@@ -1266,11 +1264,11 @@
                         >— <IconBoltFilled size={13} stroke={2} class="mx-0.5 inline" />{quote.cost.toLocaleString()}</span
                       >{/if}{/if}
                 </civitai-button>
-                <civitai-button class="self-end" variant="outline" onclick={() => (confirming = false)} disabled={continuing}>
+                <civitai-button variant="outline" onclick={() => (confirming = false)} disabled={continuing}>
                   Cancel
                 </civitai-button>
               {:else}
-                <civitai-button class="self-end" onclick={() => (confirming = true)}>Train further</civitai-button>
+                <civitai-button onclick={() => (confirming = true)}>Train further</civitai-button>
               {/if}
             </div>
             <BlueFirstNote />

@@ -175,6 +175,7 @@ export const mentionNotifications = createNotificationProcessor({
         ${v3EntityJoins('c')}
         WHERE ${liveCommentCreatedOrEditedSince(lastSent)}
           AND c."deletedAt" IS NULL
+          AND c."entityType"::text <> 'featurePage'
           AND c.content LIKE '%"mention:%'
           AND (NOT ${isModelComment('c')} OR m."userId" > 0)
           -- Same slug-resolution guard the reply processors carry: those threads are addressed by

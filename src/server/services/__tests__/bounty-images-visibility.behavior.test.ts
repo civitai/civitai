@@ -28,8 +28,9 @@ const OTHER_UPLOADER = 40;
 const viewers = {
   anonymous: {},
   stranger: { userId: 20 },
-  owner: { userId: OWNER },
+  owner: { userId: OWNER, ownerSeesReportListed: true },
   moderator: { userId: 30, isModerator: true },
+  grantHolder: { userId: 31, isModerator: true, seesReportListed: true },
 };
 type Viewer = (typeof viewers)[keyof typeof viewers];
 
@@ -76,6 +77,7 @@ const RESTRICTED_R = 8; // rated R, made with a base model that restricts mature
 const HIDDEN_META = 9; // its uploader hid its generation data
 const ACCEPTABLE_MINOR = 10;
 const TOS_VIOLATION = 11;
+const REPORT_LISTED = 12; // listed on a CsamReport, otherwise clean
 const TWO_IMAGES = 20;
 const FIRST_OF_TWO = 21;
 const SECOND_OF_TWO = 22;
@@ -91,6 +93,7 @@ const images: ImageRow[] = [
   image(HIDDEN_META, { hideMeta: true }),
   image(ACCEPTABLE_MINOR, { acceptableMinor: true }),
   image(TOS_VIOLATION, { tosViolation: true }),
+  image(REPORT_LISTED),
   image(FIRST_OF_TWO),
   image(SECOND_OF_TWO),
 ];
@@ -132,6 +135,8 @@ beforeAll(async () => {
       "acceptableMinor" boolean NOT NULL, "tosViolation" boolean NOT NULL
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, images jsonb NOT NULL DEFAULT '[]');
+    INSERT INTO "CsamReport" (images) VALUES ('[{"id": ${REPORT_LISTED}}]'), ('[]');
   `);
   for (const i of images) {
     await db.query('INSERT INTO "Image" VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', [
@@ -214,6 +219,25 @@ describe.each(Object.keys(readers) as (keyof typeof readers)[])('%s', (reader) =
     'withholds a base-model restricted mature image from the %s',
     async (who) => {
       expect(await imagesOf(RESTRICTED_R, viewers[who])).toEqual([]);
+    }
+  );
+
+  // The bounty search index's exclusion; staff visibility follows the held-media grant.
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
+    'withholds an image listed on a report from the %s',
+    async (who) => {
+      expect(await imagesOf(REPORT_LISTED, viewers[who])).toEqual([]);
+    }
+  );
+
+  it('withholds an image listed on a report from its uploader on a scoped credential', async () => {
+    expect(await imagesOf(REPORT_LISTED, { userId: OWNER })).toEqual([]);
+  });
+
+  it.each(['owner', 'grantHolder'] as const)(
+    'serves an image listed on a report to the %s',
+    async (who) => {
+      expect(await imagesOf(REPORT_LISTED, viewers[who])).toEqual([REPORT_LISTED]);
     }
   );
 

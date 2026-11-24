@@ -126,12 +126,15 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // directly would just restore the stashed date (via the CASE in
   // updatePost) without making the post visible, which is confusing.
   const isUnpublishedByParent = post.wasPublished && !post.publishedAt;
+  // Kept for now by a delete still queued: its owner cannot publish it, and is not told why.
+  const isUnavailable = !!post.unavailable && !post.publishedAt;
+  const publishBlocked = isUnpublishedByParent || isUnavailable;
   const eventCard = postEditEventCard({
     ownerId: post.user.id,
     viewerId: currentUser?.id,
     collectionId,
     publishedAt: post.publishedAt,
-    unpublishedByParent: !!isUnpublishedByParent,
+    unpublishedByParent: publishBlocked,
     addedImages,
     ownModelId: post.ownModelId,
   });
@@ -265,10 +268,10 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   };
 
   const handleScheduleClick = () => {
-    // Defensive: the Schedule controls aren't rendered when
-    // `isUnpublishedByParent`, but guard the entry point in case a future
-    // call site (keyboard shortcut, programmatic trigger) bypasses the UI.
-    if (isUnpublishedByParent) return;
+    // Defensive: the Schedule controls aren't rendered when publishing is
+    // blocked, but guard the entry point in case a future call site
+    // (keyboard shortcut, programmatic trigger) bypasses the UI.
+    if (publishBlocked) return;
     dialogStore.trigger({
       component: SchedulePostModal,
       props: {
@@ -319,10 +322,10 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   };
 
   useCatchNavigation({
-    // When the post is unpublished because the parent model/version is
-    // unpublished, the user can't republish from this page anyway —
-    // showing the "you haven't published this post" warning is misleading.
-    unsavedChanges: !post.publishedAt && !deleted && !isUnpublishedByParent,
+    // When publishing is blocked (a parent unpublish, or a delete still
+    // queued), the user can't publish from this page anyway — showing the
+    // "you haven't published this post" warning is misleading.
+    unsavedChanges: !post.publishedAt && !deleted && !publishBlocked,
     // Every edit is autosaved and the provider flushes anything still pending on the way out,
     // so nothing is lost here — what the user needs warning about is that a draft is invisible
     // until they publish it, which is the mistake this prompt was added to prevent.
@@ -373,7 +376,9 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         </div>
 
         <Text size="xs" component="div">
-          {isUnpublishedByParent ? (
+          {isUnavailable ? (
+            <>This {postLabel} isn&apos;t available right now.</>
+          ) : isUnpublishedByParent ? (
             <>Your {postLabel} is currently hidden because its parent resource was unpublished.</>
           ) : !post.publishedAt ? (
             <>
@@ -429,7 +434,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         </Alert>
       )}
 
-      {isUnpublishedByParent ? null : !post.publishedAt ? (
+      {publishBlocked ? null : !post.publishedAt ? (
         <Tooltip
           disabled={canPublish}
           label={
@@ -505,7 +510,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         </Button.Group>
       )}
 
-      {!post.publishedAt && !isUnpublishedByParent && storylinePublish.caption && (
+      {!post.publishedAt && !publishBlocked && storylinePublish.caption && (
         <Text size="xs" c="dimmed" data-testid="storyline-publish-caption">
           {storylinePublish.caption}
         </Text>
@@ -515,7 +520,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
 
       {eventCard && <PostEditEventCard {...eventCard} />}
 
-      {!post.publishedAt && !isUnpublishedByParent && !deleted && (
+      {!post.publishedAt && !publishBlocked && !deleted && (
         <Button
           variant="default"
           onClick={handleSaveAsDraft}

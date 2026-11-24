@@ -17,6 +17,12 @@ describe('csamQueueHeldText', () => {
     expect(csamQueueHeldText('ServiceOffering', 'qhx."id"')).toContain('"entityId" = qhx."id"');
   });
 
+  it('takes an entity type with a digit in it, and still refuses one that is not a name', () => {
+    expect(csamQueueHeldText('CommentV3', 'm."commentId"')).toContain(`= 'CommentV3'`);
+    expect(() => csamQueueHeldText("CommentV3' OR '1", '1')).toThrow(/Bad entity type/);
+    expect(() => csamQueueHeldText('3Comment', '1')).toThrow(/Bad entity type/);
+  });
+
   it('refuses an entity that names one of its own aliases', () => {
     expect(() => csamQueueHeldText('ServiceOffering', 'qh."id"')).toThrow(/Alias taken/);
   });

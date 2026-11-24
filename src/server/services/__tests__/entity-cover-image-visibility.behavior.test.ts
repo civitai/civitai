@@ -78,6 +78,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int NOT NULL, "userId" int);
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "CollectionItem" (
       id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "addedById" int,
@@ -736,5 +737,49 @@ describe('a cover at the Blocked level with no block recorded', () => {
 
   it.each(['anonymous', 'stranger', 'owner'] as const)('is no cover for the %s', async (who) => {
     expect(await coverOf('Article', 3032, viewers[who])).toBeNull();
+  });
+});
+
+describe("a bounty's image listed on a report", () => {
+  // Bounty 3101's images: 3111 listed (as an object entry) and owned by OWNER, 3112 unlisted.
+  // Entry 3102's only image 3113 is listed too; entries are out of this rule's scope.
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "Bounty" VALUES (3101, ${OWNER}, 'Public');
+      INSERT INTO "BountyEntry" VALUES (3102, 3101, 50);
+      INSERT INTO "Image" (id) VALUES (3111), (3112), (3113);
+      INSERT INTO "ImageConnection" VALUES
+        (3111, 3101, 'Bounty'), (3112, 3101, 'Bounty'), (3113, 3102, 'BountyEntry');
+      INSERT INTO "CsamReport" ("userId", images) VALUES (${OWNER}, '[{"id": 3111}, "3113"]');
+    `);
+  });
+
+  const coverFor = async (viewer: Viewer, seesReportListed?: boolean) => {
+    const covers = await getEntityCoverImage({
+      entities: [{ entityType: 'Bounty', entityId: 3101 }],
+      viewer,
+      seesReportListed,
+    });
+    return covers[0]?.id ?? null;
+  };
+
+  // The bounty search index drops these images; a moderator needs the held-media grant too.
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
+    'is passed over for the %s',
+    async (who) => {
+      expect(await coverFor(viewers[who])).toBe(3112);
+    }
+  );
+
+  it('is kept for its uploader', async () => {
+    expect(await coverFor(viewers.owner)).toBe(3111);
+  });
+
+  it('is kept for a viewer who sees report-listed images', async () => {
+    expect(await coverFor(viewers.moderator, true)).toBe(3111);
+  });
+
+  it("still serves an entry's listed image", async () => {
+    expect(await coverOf('BountyEntry', 3102, viewers.anonymous)).toBe(3113);
   });
 });

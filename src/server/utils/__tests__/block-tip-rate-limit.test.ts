@@ -229,13 +229,13 @@ describe('checkBlockTipRateLimit', () => {
 
 describe('readBlockTipAllowance (item 4)', () => {
   it('returns full cap + remaining when nothing has been tipped today', async () => {
-    const a = await readBlockTipAllowance(42);
+    const a = await readBlockTipAllowance(42, BLOCK_TIP_CAP_PER_DAY);
     expect(a).toEqual({ cap: BLOCK_TIP_CAP_PER_DAY, spent: 0, remaining: BLOCK_TIP_CAP_PER_DAY });
   });
 
   it('reflects a reservation: spent tracks the counter, remaining = cap - spent', async () => {
     await reserveBlockTipSpend(42, 4_000);
-    const a = await readBlockTipAllowance(42);
+    const a = await readBlockTipAllowance(42, BLOCK_TIP_CAP_PER_DAY);
     expect(a.cap).toBe(BLOCK_TIP_CAP_PER_DAY);
     expect(a.spent).toBe(4_000);
     expect(a.remaining).toBe(BLOCK_TIP_CAP_PER_DAY - 4_000);
@@ -243,20 +243,20 @@ describe('readBlockTipAllowance (item 4)', () => {
 
   it('reads the CURRENT-day key (same key the reserve path mutates)', async () => {
     await reserveBlockTipSpend(7, 100);
-    await readBlockTipAllowance(7);
+    await readBlockTipAllowance(7, BLOCK_TIP_CAP_PER_DAY);
     expect(mockSys.get).toHaveBeenCalledWith(`system:blocks:tip-cap:7:${FROZEN_DAY}`);
   });
 
   it('CLAMPS remaining at 0 when a straddling over-cap reservation pushed spent past the cap', async () => {
     await reserveBlockTipSpend(42, BLOCK_TIP_CAP_PER_DAY + 500); // momentarily over-cap
-    const a = await readBlockTipAllowance(42);
+    const a = await readBlockTipAllowance(42, BLOCK_TIP_CAP_PER_DAY);
     expect(a.spent).toBe(BLOCK_TIP_CAP_PER_DAY + 500);
     expect(a.remaining).toBe(0); // never negative (safe direction: under-reports)
   });
 
   it('FAILS-CLOSED (throws) on a redis error — the endpoint maps it to a 503', async () => {
     mockSys.get.mockRejectedValueOnce(new Error('redis down'));
-    await expect(readBlockTipAllowance(42)).rejects.toThrow();
+    await expect(readBlockTipAllowance(42, BLOCK_TIP_CAP_PER_DAY)).rejects.toThrow();
   });
 });
 

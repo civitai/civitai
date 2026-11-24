@@ -104,6 +104,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 const mockDbRead = dbMock.dbRead;
 
 function fakeCtx(user: unknown) {
@@ -233,9 +234,33 @@ describe('blocks.retriggerBuild — typed error mapping', () => {
   it('RATE_LIMITED maps to TOO_MANY_REQUESTS', async () => {
     mockRetrigger.mockRejectedValue(retriggerErr('RATE_LIMITED', 'Too many build re-triggers'));
     const caller = blocksRouter.createCaller(fakeCtx(mod) as never);
-    await expect(caller.retriggerBuild({ publishRequestId: REQ_ID })).rejects.toMatchObject({
-      code: 'TOO_MANY_REQUESTS',
+    const refused = await caller
+      .retriggerBuild({ publishRequestId: REQ_ID })
+      .catch((e: unknown) => e);
+    expect(refused).toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    // An error without meta of its own still answers the id and a retry.
+    expect(rateLimitMetaOf(refused)).toMatchObject({
+      retryAfterSeconds: 60,
+      id: 'apps.build-retrigger',
+      kind: 'abuse',
     });
+  });
+
+  it('RATE_LIMITED answers with the meta the service error carries', async () => {
+    const rateLimit = {
+      retryAfterSeconds: 1234,
+      retryAt: '2026-01-01T00:20:34.000Z',
+      id: 'apps.build-retrigger',
+      kind: 'abuse',
+    };
+    mockRetrigger.mockRejectedValue(
+      Object.assign(retriggerErr('RATE_LIMITED', 'Too many build re-triggers'), { rateLimit })
+    );
+    const caller = blocksRouter.createCaller(fakeCtx(mod) as never);
+    const refused = await caller
+      .retriggerBuild({ publishRequestId: REQ_ID })
+      .catch((e: unknown) => e);
+    expect(rateLimitMetaOf(refused)).toEqual(rateLimit);
   });
 
   it('NOT_RETRIGGERABLE maps to BAD_REQUEST and surfaces the reason to the mod', async () => {

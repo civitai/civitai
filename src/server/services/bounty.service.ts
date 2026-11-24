@@ -81,7 +81,10 @@ import type {
 import { createBountyInputSchema, updateBountyInputSchema } from '../schema/bounty.schema';
 import { isNotTag, isTag } from '../schema/tag.schema';
 import { imageSelect } from '../selectors/image.selector';
-import { entityImageVisibilityConditions } from '~/server/services/image-visibility.service';
+import {
+  entityImageVisibilityConditions,
+  notReportListedSql,
+} from '~/server/services/image-visibility.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -1230,18 +1233,21 @@ export const deleteBountyById = async ({
   return result?.bounty ?? null;
 };
 
-/** The ids of the bounties' images the viewer may see, by the entity image rules. */
+/**
+ * The ids of the bounties' images the viewer may see, by the entity image rules and the bounty
+ * search index's exclusions. `seesReportListed` is the held-media viewer: a moderator holding the
+ * csamReports grant.
+ */
 async function getVisibleBountyImageIds({
   bountyIds,
   userId,
   isModerator,
-}: {
-  bountyIds: number[];
-  userId?: number;
-  isModerator?: boolean;
-}) {
+  seesReportListed,
+  ownerSeesReportListed,
+}: BountyImageViewer & { bountyIds: number[] }) {
   if (bountyIds.length === 0) return [];
   const AND = entityImageVisibilityConditions({ userId, isModerator });
+  if (!seesReportListed) AND.push(notReportListedSql(ownerSeesReportListed ? userId : undefined));
   const rows = await dbRead.$queryRaw<{ imageId: number }[]>`
     SELECT ic."imageId"
     FROM "ImageConnection" ic
@@ -1252,6 +1258,14 @@ async function getVisibleBountyImageIds({
   `;
   return rows.map(({ imageId }) => imageId);
 }
+
+type BountyImageViewer = {
+  userId?: number;
+  isModerator?: boolean;
+  seesReportListed?: boolean;
+  // The uploader keeps their own report-listed images only on a session or a full-access key.
+  ownerSeesReportListed?: boolean;
+};
 
 /** Generation data its uploader hid goes only to the uploader and moderators. */
 const withVisibleMeta = <T extends { meta: unknown; hideMeta: boolean; userId: number }>(
@@ -1266,8 +1280,16 @@ export const getBountyImages = async ({
   id,
   userId,
   isModerator,
-}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
-  const imageIds = await getVisibleBountyImageIds({ bountyIds: [id], userId, isModerator });
+  seesReportListed,
+  ownerSeesReportListed,
+}: GetByIdInput & BountyImageViewer) => {
+  const imageIds = await getVisibleBountyImageIds({
+    bountyIds: [id],
+    userId,
+    isModerator,
+    seesReportListed,
+    ownerSeesReportListed,
+  });
 
   const connections = await dbRead.imageConnection.findMany({
     // image-connection-orphan-safe: imageIds were read from Image just above.
@@ -1408,12 +1430,16 @@ export const getImagesForBounties = async ({
   bountyIds,
   userId,
   isModerator,
-}: {
-  bountyIds: number[];
-  userId?: number;
-  isModerator?: boolean;
-}) => {
-  const imageIds = await getVisibleBountyImageIds({ bountyIds, userId, isModerator });
+  seesReportListed,
+  ownerSeesReportListed,
+}: BountyImageViewer & { bountyIds: number[] }) => {
+  const imageIds = await getVisibleBountyImageIds({
+    bountyIds,
+    userId,
+    isModerator,
+    seesReportListed,
+    ownerSeesReportListed,
+  });
 
   const connections = await dbRead.imageConnection.findMany({
     // image-connection-orphan-safe: imageIds were read from Image just above.

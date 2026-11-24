@@ -24,6 +24,7 @@ import type {
 } from '~/server/schema/blocks/offsite-listing.schema';
 import type * as S3Utils from '~/utils/s3-utils';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 // Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
 // refusal overrides the stub.
 vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
@@ -441,11 +442,22 @@ describe('submitExternalListing', () => {
 
   it('per-user pending cap: AT the cap → TOO_MANY_REQUESTS, no write', async () => {
     mockRead.appListingPublishRequest.count.mockResolvedValue(MAX_PENDING_OFFSITE_SUBMISSIONS);
-    await expect(
-      submitExternalListing({ input: validInput, userId: CALLER })
-    ).rejects.toMatchObject({
+    const refused = await submitExternalListing({ input: validInput, userId: CALLER }).catch(
+      (e: unknown) => e
+    );
+    expect(refused).toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       message: expect.stringContaining('pending'),
+    });
+    // A standing product allowance: its counts, and no window or reset time.
+    expect(rateLimitMetaOf(refused)).toEqual({
+      retryAfterSeconds: 3600,
+      retryAt: expect.any(String),
+      id: 'apps.offsite-pending',
+      kind: 'product',
+      limit: 10,
+      used: 10,
+      remaining: 0,
     });
     // The count is scoped to the caller's pending offsite requests (on the replica).
     expect(mockRead.appListingPublishRequest.count).toHaveBeenCalledWith({

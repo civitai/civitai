@@ -1,4 +1,4 @@
-import { Button, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Anchor, Button, Group, Stack, Text, ThemeIcon } from '@mantine/core';
 import { randomId } from '@mantine/hooks';
 import type { NotificationData } from '@mantine/notifications';
 import { hideNotification, showNotification } from '@mantine/notifications';
@@ -16,6 +16,7 @@ import type {
   ReportProblem,
   ReportProblemButton as ReportProblemButtonComponent,
 } from '~/components/Feedback/ReportProblemButton';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { parseErrorRef } from '~/utils/feedback/errorRef';
 import { getRateLimit, withRetryText } from '~/utils/rate-limit';
 
@@ -97,7 +98,7 @@ export function showErrorNotification({
       ))}
     </ul>
   ) : (
-    reason ?? withRetryText(error.message, getRateLimit(error))
+    reason ?? rateLimitedMessage(error.message, getRateLimit(error))
   );
 
   const text = Array.isArray(error)
@@ -268,4 +269,18 @@ export function showExpiredCaptchaTokenNotification({
       </div>
     ),
   });
+}
+
+/** A refusal's message with when to retry, and for a plan limit, a link to where to see it. */
+function rateLimitedMessage(message: string, rateLimit: ReturnType<typeof getRateLimit>) {
+  const text = withRetryText(message, rateLimit);
+  if (rateLimit?.kind !== 'product') return text;
+  return (
+    <>
+      {text}{' '}
+      <Anchor component={NextLink} href="/user/account/usage" inherit>
+        See your usage limits
+      </Anchor>
+    </>
+  );
 }

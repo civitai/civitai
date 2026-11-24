@@ -166,6 +166,11 @@ write answers; `markSeq` goes with the tally ops.
   viewer's documents unlinkable across parents and apps unless the collection declares `showAuthor`.
 - The digest is keyed (HMAC), not a plain hash: user ids are small integers, so an unkeyed hash of one
   is reversed by hashing every id.
+- **The derivation key is one value everywhere.** It is read from `APP_STORAGE_VIEWER_KEY_SECRET`, and
+  it must be byte-identical in every deployment that writes the same database and namespace.
+  Otherwise one viewer derives two different keys and gets two documents for one (parent) key. While it
+  is unset, every `@me` op answers `503` (`details.reason: "viewer_keys_unconfigured"`), and `GET /`
+  reports every viewer-keyed collection `"open": false`.
 - What the derivation key protects is that unlinkability only. Authorization never depends on it:
   every `@me` op resolves the viewer from the verified token, and raw-key writes to a viewer-keyed
   collection are refused, so knowing the key grants no write.
@@ -224,8 +229,11 @@ write answers; `markSeq` goes with the tally ops.
 `StorageErrorCode`, which reports it as "this operation no longer exists" rather than retrying.
 Otherwise no new code. New `details.reason` values on `400 invalid_request`: `viewer_keyed`
 (a raw-key write, or a create), `parent_required` (`/@me` on a `parent+viewer` collection),
-`parent_not_allowed` (`/@me/:parent` on a `viewer` collection), `invalid_parent`; and
-`401 sign_in_required` for an anonymous `@me`. Every other refusal is today's error table
+`parent_not_allowed` (`/@me/:parent` on a `viewer` collection), `invalid_parent`, `not_viewer_keyed`
+(`/@me` on a collection without `keyedBy`); `403 write_policy` with `details.reason:
+"viewer_keyed_closed"` for a `@me` write while the collection's switch is closed; `503
+service_unavailable` with `details.reason: "viewer_keys_unconfigured"` while the derivation key is
+unset; and `401 sign_in_required` for an anonymous `@me`. Every other refusal is today's error table
 (`STORAGE_ERROR_STATUS`).
 
 ## What is removed, and what replaces it
@@ -359,6 +367,27 @@ Every step is per app, runs in one (app, namespace) at a time through the store'
 manual-apply SQL file under `src/server/services/apps/migrations/`, applied by hand to each environment
 with its rollback file beside it; nothing applies one automatically.
 
+**Tooling (built, moderator-only).** `apps.mod.docStore.maintenance.*` (`storage-mark-migration.service.ts`):
+`migrateMarks` (a dry run by default: the key check and the counts; otherwise key check, freeze, copy and
+verify in one call, idempotent), `rollbackMarks`, `purgeCollection`, `purgeDump` and `status`. Each run is
+recorded in `appdata.maint_run` (manual migration `20261123120000_appdata_maint_run.sql`), which is also
+where a mark's freeze lives and where a purge's dump is written, in the transaction that deletes. Each op
+that writes is audited first as an `AppListingModerationEvent` (`storage-mark-migration`,
+`storage-collection-purge`; their CHECK widen is a manual main-database migration).
+
+A purge (and so a rollback) is **batched and resumable**: one call deletes at most 1,000 documents
+(fewer when their dump would pass 16 MiB), dumps them in their own row and transaction, and advances the
+purge's run; the moderator calls again until it answers `done`, and a rollback lifts the freeze only with
+its last batch, so a target of any size can be rolled back. The normal purge deletes counter documents
+only (`author_kind = 'counter'`) and refuses anything else, a viewer-keyed collection included whether or
+not the manifest still declares it. The rollback refuses unless every document left in the target is
+exactly a copy (version 1, at a derived key, by its mark's voter, created when that mark was), because the
+switch fails closed and "closed" therefore does not prove nobody wrote; it also refuses once the source
+collection was purged. Dumps are deleted 30 days after their purge finished, or 30 days after an
+unfinished purge started (it is then `abandoned`), by a daily job. An account deletion finds every
+namespace whose runs name the account, a user who only reported a purged document included, and
+removes the account from every dump and run result; the main-database audit rows hold counts only.
+
 ### `doc_mark` votes to viewer-keyed documents
 
 For each (source collection `c`, mark name `m`) the inventory lists, the app ships a manifest version
@@ -367,9 +396,15 @@ model-benchmarking: `votes`, from `records` / `vote`). One target per name becau
 viewer on one document (`dataset-commons`' `up` and `down`) would derive the same key in one
 collection; the app may later fold them into one document of its own shape.
 
-**The per-target switch.** Each target `t` has its own switch, off until step 6 below, so
-`dataset-commons`' two targets each open only after their own copy and verify. While it is off, `@me`
-writes to `t` answer `403 write_policy`, and `GET /` reports the collection with `"open": false`. The
+**The per-target switch.** One Flipt flag, `app-blocks-storage-viewer-keyed-open`, is evaluated per
+(app, collection): the entity is the app block id (the source app's through an import) and the context
+is `{ collection }`. It is created **default on**, so a new viewer-keyed collection with nothing to
+migrate just works once approved. Each **migration target** `t` is listed in a closed segment by app
+and collection, and stays closed until step 6 below, so `dataset-commons`' two targets each open only
+after their own copy and verify. The code fails closed: an absent flag or an unreachable Flipt reads as
+closed. It applies in the production namespace only; development and review namespaces hold no
+migrated data and are always open. While `t` is closed, `@me` writes to it answer `403 write_policy`
+(`details.reason: "viewer_keyed_closed"`), and `GET /` reports the collection with `"open": false`. The
 new app version branches on that one field: closed, it reads the old marks on `c` (still presented
 during the compatibility window) and shows voting as unavailable; open, it reads and writes `t`. So
 reads and writes move together, in one flip, with no second app release. Then, per target, in this

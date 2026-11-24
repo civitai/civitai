@@ -85,6 +85,33 @@ describe('applyGenerationData (v1 GenerationFormProvider parity)', () => {
       )}`
     ).toBe(true);
   });
+  // Hunyuan3D was retired from the generator (#10233), but its stored jobs still carry
+  // `ecosystem: 'Hunyuan3D'` and QueueItem's Remix pins that value. The fallback is here,
+  // not in QueueItem: a key outside MODEL3D_ECOSYSTEM_KEYS lands on PolyGen (Meshy). Keep
+  // it here so every replay entry point gets it, not only the queue card.
+  it('replay: a retired 3D ecosystem opens Image to 3D on Meshy', () => {
+    const store = makeStore();
+    store.set({ workflow: 'txt2img', ecosystem: 'SDXL', prompt: 'a cat' });
+
+    // The params QueueItem.handleGenerate sends for a stored Hunyuan3D image-to-3D job.
+    applyGenerationData(store, {
+      runType: 'replay',
+      params: {
+        workflow: 'img2model3d',
+        ecosystem: 'Hunyuan3D',
+        seed: null,
+        images: [{ url: 'https://image.civitai.com/a.png', width: 512, height: 512 }],
+      },
+      resources: [],
+    } satisfies Payload);
+
+    const s = state(store);
+    expect({ ecosystem: s.ecosystem, workflow: s.workflow }).toEqual({
+      ecosystem: 'PolyGen',
+      workflow: 'img2model3d',
+    });
+  });
+
   // Append crosses output types, so the cap belongs to the TARGET workflow's resolved
   // ecosystem, not the one on screen. img2model3d resolves to PolyGen, max 1.
   it('append: a cross-output target keeps the NEWEST image, not the first', () => {

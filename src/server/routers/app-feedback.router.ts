@@ -28,8 +28,8 @@ import {
   router,
   verifiedProcedure,
 } from '~/server/trpc';
-import { FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { usageLimits } from '~/shared/constants/usage-limits';
 
 /**
  * `AppBlocksSubmit`, the bit the CLI's other app-management calls require (see
@@ -54,13 +54,7 @@ export const appFeedbackRouter = router({
     .query(({ ctx, input }) => getAppFeedbackEligibility(ctx.user, input.target)),
 
   create: guardedProcedureAllowUnverifiedEmail
-    .use(
-      rateLimit({
-        limit: FEEDBACK_RATE_LIMIT.max,
-        period: FEEDBACK_RATE_LIMIT.periodSeconds,
-        errorMessage: 'You have submitted a lot of feedback — give it a little while.',
-      })
-    )
+    .use(rateLimit(usageLimits('apps.feedback')))
     .input(createAppFeedbackSchema)
     .mutation(({ ctx, input }) => createAppFeedback({ user: ctx.user, input })),
 

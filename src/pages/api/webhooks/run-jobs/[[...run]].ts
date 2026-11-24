@@ -55,6 +55,7 @@ import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-revie
 import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
 import { drainReviewPreviewQueueJob } from '~/server/jobs/drain-review-preview-queue';
 import { runStorageMigrationsJob } from '~/server/jobs/run-storage-migrations';
+import { expireStorageMaintenanceDumpsJob } from '~/server/jobs/expire-storage-maintenance-dumps';
 import { reapDeletedAppStorageJob } from '~/server/jobs/reap-deleted-app-storage';
 import { removeDeletedAccountAppDataJob } from '~/server/jobs/remove-deleted-account-app-data';
 import { sweepHibernationObjectsJob } from '~/server/jobs/sweep-hibernation-objects';
@@ -100,6 +101,11 @@ import {
 import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { cdnAccessReconcile, cdnAccessSync } from '~/server/jobs/cdn-access-sync';
+import {
+  featurePagesMirror,
+  featurePagesReconcile,
+  featurePagesSweep,
+} from '~/server/jobs/feature-pages-mirror';
 import { missedNotificationDigest } from '~/server/jobs/missed-notification-digest';
 import { idempotencyKeyPurge } from '~/server/jobs/idempotency-key-purge';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
@@ -237,6 +243,9 @@ export const jobs: Job[] = [
   removeBlockedImages,
   cdnAccessSync,
   cdnAccessReconcile,
+  featurePagesMirror,
+  featurePagesSweep,
+  featurePagesReconcile,
   missedNotificationDigest,
   idempotencyKeyPurge,
   removeReplacedImages,
@@ -326,6 +335,7 @@ export const jobs: Job[] = [
   sweepReviewStorageJob,
   drainReviewPreviewQueueJob,
   runStorageMigrationsJob,
+  expireStorageMaintenanceDumpsJob,
   reapDeletedAppStorageJob,
   removeDeletedAccountAppDataJob,
   sweepHibernationObjectsJob,
