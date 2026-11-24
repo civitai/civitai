@@ -34,6 +34,11 @@ export const requestServiceDealSchema = z.object({
   requestText: text(5000),
   /** The buyer-disclosure version the buyer was shown; the service refuses a request without the current one. */
   disclosureVersion: z.string(),
+  /**
+   * Which disclosure the buyer was shown: with reviews or without. Must match the deal's. Optional so
+   * an old page that sends none gets the service's terms refusal, not a validation error.
+   */
+  disclosureReviewEnabled: z.boolean().optional(),
 });
 
 export const getServiceDealSchema = dealId;
