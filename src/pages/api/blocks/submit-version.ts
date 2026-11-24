@@ -150,6 +150,8 @@ export default AuthedEndpoint(
         status: 'pending',
         listing: result.listing ?? null,
         storageMigrationWarnings: result.storageMigrationWarnings ?? [],
+        // Never refuses: notes the developer may act on (`submitAdvisories`), `[]` when none.
+        advisories: result.advisories ?? [],
         // Only when a GitHub Actions token was verified: whether its run was stored.
         ...(result.actionsRunSourceRecorded === undefined
           ? {}
