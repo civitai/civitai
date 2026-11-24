@@ -226,7 +226,6 @@ const mantineFamily = [
   '@mantine/hooks',
   '@mantine/dates',
   '@mantine/dropzone',
-  '@mantine/modals',
   '@mantine/notifications',
   '@mantine/nprogress',
   '@mantine/tiptap',

@@ -1,7 +1,8 @@
 import { resolveFeedSort } from '~/components/Filters/sort-availability';
 import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
-import { closeModal, openConfirmModal } from '@mantine/modals';
+import { openConfirm } from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { isEqual } from 'lodash-es';
 import { useMemo, useState } from 'react';
@@ -277,7 +278,7 @@ export function useReportCsamImages(
         title: 'Image reported',
         message: 'Your request has been received',
       });
-      closeModal('confirm-csam');
+      dialogStore.closeById('confirm-csam');
       await onSuccess?.(...args);
     },
     async onError(error, ...args) {
@@ -296,11 +297,10 @@ export function useReportCsamImages(
   });
 
   const mutate = (args: Parameters<typeof reportCsamImage.mutate>[0]) => {
-    openConfirmModal({
-      modalId: 'confirm-csam',
+    openConfirm({
+      id: 'confirm-csam',
       title: 'Report CSAM',
-      children: `Are you sure you want to report this as CSAM?`,
-      centered: true,
+      message: `Are you sure you want to report this as CSAM?`,
       labels: { confirm: 'Yes', cancel: 'Cancel' },
       confirmProps: { color: 'red', loading: reportCsamImage.isPending },
       closeOnConfirm: false,

@@ -1,6 +1,6 @@
 import type { InputWrapperProps, MantineSize } from '@mantine/core';
 import { Group, Input, Text } from '@mantine/core';
-import { openModal } from '@mantine/modals';
+import { openContentDialog } from '~/components/Dialog/Common/ContentDialog';
 import type { RichTextEditorProps } from '@mantine/tiptap';
 import { Link, RichTextEditor as RTE } from '@mantine/tiptap';
 import { IconAlertTriangle, IconUnlink } from '@tabler/icons-react';
@@ -75,7 +75,7 @@ const mapEditorSize: Omit<Record<MantineSize, CSSProperties>, 'xs'> = {
 };
 
 function openLinkWhitelistRequestModal() {
-  return openModal({
+  return openContentDialog({
     title: (
       <Group gap="xs">
         <IconAlertTriangle color="gold" />

@@ -46,7 +46,7 @@ export default function TransferModelOwnership({ modelId }: { modelId: number })
       {...dialog}
       title="Transfer Model Ownership"
       closeOnClickOutside={!transferMutation.isPending}
-      closeOnEscape={!transferMutation.isPending}
+      closeOnEscape={dialog.closeOnEscape && !transferMutation.isPending}
       withCloseButton={!transferMutation.isPending}
       withinPortal
     >

@@ -1,13 +1,11 @@
-import dynamic from 'next/dynamic';
 import { useCallback, useMemo } from 'react';
-import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+import { useDialogStore } from '~/components/Dialog/dialogStore';
+import { openDialog } from '~/components/Dialog/openDialog';
 import type {
   OutputUnlockOffer,
   OutputUnlockServerResult,
 } from '~/components/AppBlocks/OutputUnlockDialog';
 import { trpc } from '~/utils/trpc';
-
-const OutputUnlockDialog = dynamic(() => import('./OutputUnlockDialog'), { ssr: false });
 
 /**
  * What the app learns from REQUEST_OUTPUT_UNLOCK (`OUTPUT_UNLOCK_RESULT { result }`):
@@ -83,10 +81,9 @@ export function useOutputUnlockBridge(opts: {
       }
       let last: OutputUnlockServerResult | null = null;
       let linkedOut = false;
-      dialogStore.trigger({
-        id,
-        component: OutputUnlockDialog,
-        props: {
+      openDialog(
+        () => import('./OutputUnlockDialog'),
+        {
           appName,
           offer: offer as OutputUnlockOffer,
           linkOut:
@@ -103,7 +100,8 @@ export function useOutputUnlockBridge(opts: {
             linkedOut = true;
           },
         },
-        options: {
+        {
+          id,
           onClose: () => {
             const result = last as OutputUnlockServerResult | null;
             if (linkedOut) reply({ outcome: 'linked-out' });
@@ -137,8 +135,8 @@ export function useOutputUnlockBridge(opts: {
               reply({ outcome: 'unlocked', snapshot: result.snapshot });
             }
           },
-        },
-      });
+        }
+      );
     },
     [disabled, appName, utils, linkOutSlug, linkOutSubPath]
   );

@@ -21,7 +21,6 @@ vi.mock('@mantine/notifications', async (importOriginal) => ({
 
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 import {
-  ListingModerationHistoryModal,
   listingModerationHistoryDialogId,
   openListingModerationHistory,
 } from '~/components/Apps/ListingModerationHistoryModal';
@@ -64,7 +63,6 @@ const LISTING = { appListingId: 'apl_cut_failed_3', slug: 'cut-failed-app' };
 
 type OpenedDialog = {
   id: unknown;
-  component: unknown;
   props: { listing: unknown; onClose: () => void };
 };
 const openDialogs = () => useDialogStore.getState().dialogs as unknown as OpenedDialog[];
@@ -88,7 +86,6 @@ describe('takedown warning toast → moderation history', () => {
     expect(openDialogs()).toHaveLength(1);
     const [dialog] = openDialogs();
     expect(dialog.id).toBe('listing-moderation-history-apl_cut_failed_3');
-    expect(dialog.component).toBe(ListingModerationHistoryModal);
     expect(dialog.props.listing).toEqual({
       appListingId: 'apl_cut_failed_3',
       slug: 'cut-failed-app',
@@ -127,7 +124,6 @@ describe('openListingModerationHistory — the one opener every surface uses', (
     const [dialog] = openDialogs();
     expect(dialog.id).toBe(listingModerationHistoryDialogId('apl_open_5'));
     expect(dialog.id).toBe('listing-moderation-history-apl_open_5');
-    expect(dialog.component).toBe(ListingModerationHistoryModal);
     expect(dialog.props.listing).toEqual({ appListingId: 'apl_open_5', slug: 'open-app' });
     dialog.props.onClose();
     expect(openDialogs().map((d) => d.id)).toEqual(['listing-moderation-history-apl_other_6']);

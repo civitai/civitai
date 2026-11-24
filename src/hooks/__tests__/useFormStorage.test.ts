@@ -10,13 +10,14 @@ import * as z from 'zod';
 const act = (React as unknown as { act: typeof actType }).act;
 
 // --- module mocks (must be declared before importing the hook) ---
-const { openConfirmModalMock, showErrorNotificationMock } = vi.hoisted(() => ({
-  openConfirmModalMock: vi.fn(),
+const { showErrorNotificationMock } = vi.hoisted(() => ({
   showErrorNotificationMock: vi.fn(),
 }));
-vi.mock('@mantine/modals', () => ({ openConfirmModal: openConfirmModalMock }));
 vi.mock('~/utils/notifications', () => ({ showErrorNotification: showErrorNotificationMock }));
 
+import { MantineProvider } from '@mantine/core';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
   FORM_STORAGE_TTL_MS,
   mergeRestoredValues,
@@ -290,16 +291,47 @@ function installLocalStorage() {
 
 let localStorage: ReturnType<typeof installLocalStorage>;
 
+// The restore offer is a confirm on the dialog stack, rendered here.
+let unmountDialogs: () => void;
+function renderDialogs() {
+  const root = createRoot(document.body.appendChild(document.createElement('div')));
+  act(() => {
+    root.render(
+      React.createElement(MantineProvider, { env: 'test' }, React.createElement(DialogProvider))
+    );
+  });
+  return () => act(() => root.unmount());
+}
+/** The restore offer, once its dialog has opened (a tick after it is added). */
+function restoreOffer() {
+  act(() => {
+    vi.advanceTimersByTime(0);
+  });
+  return [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find((el) =>
+    el.textContent?.includes('Restore unsaved changes?')
+  );
+}
+function answerOffer(label: 'Yes' | 'No') {
+  const button = [...(restoreOffer()?.querySelectorAll('button') ?? [])].find(
+    (b) => b.textContent === label
+  );
+  if (!button) throw new Error('no restore offer on screen');
+  act(() => button.click());
+}
+
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   localStorage = installLocalStorage();
-  openConfirmModalMock.mockReset();
   showErrorNotificationMock.mockReset();
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
+  unmountDialogs = renderDialogs();
 });
 
 afterEach(() => {
+  act(() => dialogStore.closeAll());
+  unmountDialogs();
+  document.body.innerHTML = '';
   vi.useRealTimers();
 });
 
@@ -312,7 +344,7 @@ describe('useFormStorage on mount', () => {
 
     const unmount = renderHook(makeForm({ title: 'server' }));
 
-    expect(openConfirmModalMock).not.toHaveBeenCalled();
+    expect(restoreOffer()).toBeUndefined();
     expect(localStorage.getItem(KEY)).toBeNull();
     unmount();
   });
@@ -322,7 +354,7 @@ describe('useFormStorage on mount', () => {
 
     const unmount = renderHook(makeForm({ title: 'server' }));
 
-    expect(openConfirmModalMock).toHaveBeenCalledTimes(1);
+    expect(restoreOffer()).toBeDefined();
     unmount();
   });
 
@@ -341,9 +373,7 @@ describe('useFormStorage on mount', () => {
         name !== 'coverImage' || !persistedValueLostIdentity(storedValue, currentValue)
     );
 
-    act(() => {
-      openConfirmModalMock.mock.calls[0][0].onConfirm();
-    });
+    answerOffer('Yes');
 
     expect(showErrorNotificationMock).not.toHaveBeenCalled();
     expect(form.reset).toHaveBeenCalledTimes(1);
@@ -367,9 +397,7 @@ describe('useFormStorage on mount', () => {
         name !== 'coverImage' || !persistedValueLostIdentity(storedValue, currentValue)
     );
 
-    act(() => {
-      openConfirmModalMock.mock.calls[0][0].onConfirm();
-    });
+    answerOffer('Yes');
 
     expect(form.reset.mock.calls[0][0]).toEqual({
       title: 'draft',
@@ -399,14 +427,7 @@ describe('useFormStorage restore', () => {
     return () => act(() => root.unmount());
   }
 
-  // Confirm then close, in the order Mantine runs them for `closeOnConfirm`.
-  function confirmRestore() {
-    const modal = openConfirmModalMock.mock.calls[0][0];
-    act(() => {
-      modal.onConfirm();
-      modal.onClose();
-    });
-  }
+  const confirmRestore = () => answerOffer('Yes');
 
   it('restores the text of a new article that has no category or cover yet', () => {
     const draft = { title: 'My draft', content: '<p>typed</p>', categoryId: -1, coverImage: null };
@@ -474,9 +495,7 @@ describe('useFormStorage restore', () => {
     localStorage.setItem(KEY, serializeStoredFormValue({ title: 'My draft' }, NOW - 60_000));
 
     const unmount = renderArticleHook(makeForm(newArticle));
-    act(() => {
-      openConfirmModalMock.mock.calls[0][0].onClose();
-    });
+    answerOffer('No');
 
     expect(localStorage.getItem(KEY)).toBeNull();
     unmount();

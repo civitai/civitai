@@ -1,11 +1,13 @@
 import { sql } from '@civitai/db/kysely';
 import { BLOCKED_IMAGE_DELETE_QUEUE } from '@civitai/shared/account-deletion-grace';
+import { releaseModeratorPendingDeletes } from '@civitai/db-queries/pending-deletes';
 import { dbWrite } from './db';
 
 /**
  * Mirrors the main app's `dropBlockedImageDeleteQueue`: a surviving row keeps the first block's time,
  * so a later re-block would inherit it, and an un-block's activity would read as a takedown of the
- * next block. Call it from anything that clears an image's block.
+ * next block. Call it from anything that clears an image's block. A lift also releases the
+ * moderator's pending delete its child-safety case kept.
  */
 export async function dropBlockedImageDeleteQueue(imageId: number) {
   await dbWrite
@@ -14,6 +16,7 @@ export async function dropBlockedImageDeleteQueue(imageId: number) {
     .where('entityType', '=', 'Image')
     .where('entityId', '=', imageId)
     .execute();
+  await releaseModeratorPendingDeletes(dbWrite, [imageId]);
 }
 
 /**

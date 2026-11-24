@@ -54,11 +54,12 @@ deferred), #4 (user moderation, out of scope), #8 (dispute auto-resolve, needs a
         dedup), `UpdateNsfwLevel` for the post and, when asked, `CdnAccessSync`; the helper then removes the image's collection
         links. After commit, `finishImageDeletes`:
         `IMAGE_EXISTS` sysRedis false → bust `imageMeta`/`imageMetadata` → `syncSearchIndex('image', delete)`.
-        An image the hold check refuses (CSAM review or block) is left untouched and returned as `review`, with
-        nothing queued. One that reaches the delete in an open child-safety case is left in place, queued by
-        the same statement as a `PendingDelete` for the main app's `pending-deletes` job, and also returned as
-        `review`. Either way it keeps its search entry. Once the holds are removed, every in-case image takes
-        the second path.
+        An image the hold check refuses (CSAM review or block) is left untouched, keeps its search entry, and is
+        returned as `review`, with nothing queued. One that reaches the delete in an open child-safety case is
+        left in place, queued by the same statement as a `PendingDelete` for the main app's `pending-deletes`
+        job, and also returned as `review`; unless it is the moderator's own, the same statement blocks it
+        (`hidden`), so `finishImageDeletes` takes it out of search. Once the holds are removed, every in-case
+        image takes the second path.
   - [x] Wire into `deleteArticle`: capture `coverId` + content image ids before deleting connections; hand
         cover, banner and content images to the shared `queueImageDeletes` in the delete's transaction, which
         queues the author's images nothing else uses, the same rule as `deleteArticleById`; the main app's
@@ -73,7 +74,7 @@ deferred), #4 (user moderation, out of scope), #8 (dispute auto-resolve, needs a
         file and its resized copies are purged by the main app's `image-storage-deletes` job, and the CDN takedown
         is queued as `CdnAccessSync` by the delete statement itself, so the spoke has no purge helper.
   - [x] **postId images — DONE.** The delete statement queues each deleted image's post for its recount
-        (`UpdateNsfwLevel`), `finishImageDeletes` queues a kept image's post, and both get `bustPostGalleryCaches`
+        (`UpdateNsfwLevel`), `finishImageDeletes` queues the post of each image it blocked (one a hold marker's trigger kept, and one its case kept and the delete blocked), and both get `bustPostGalleryCaches`
         (the spoke's `bustCachesForPosts` port). An article delete leaves posted images alone in both apps (the
         shared `queueImageDeletes` rule). `postMetrics.queueUpdate`
         is intentionally NOT mirrored — it enqueues to the main app's bucket-based metric queue (unsafe to

@@ -1,6 +1,6 @@
 # Training Studio on Civitai Elements
 
-**Status:** in progress, behind the `training-studio-elements-ui` flag. Redesigned: the Select step (#9552), the Data step (#9878), the shell (#9902), the Review step (#10185), the run page (#10189) and My trainings (#10196). The Data-step dialogs are in review. Next: the run page's charts and sample viewer, the image-edit Data step, then cleanup.
+**Status:** in progress, behind the `training-studio-elements-ui` flag. Redesigned: the Select step (#9552), the Data step (#9878), the shell (#9902), the Review step (#10185), the run page (#10189) and My trainings (#10196). Also the Data-step dialogs (#10201) and the run page's loss graph and log (#10204). The image-edit Data step is in review; cleanup is last.
 Tracked in HQ as `training_studio_civitai_ww5n`; slice 0 is `elements_training_studio_d595`.
 
 ## Goal
@@ -77,6 +77,12 @@ Measured on the Select step (Media, Type and Engine rows, Continue button):
   whose content holds media or runs a mount-time action renders that content only while `open`.
 - **Enter in kit fields** submits the form through `requestSubmit()` even when the form's submit button
   is disabled, so a submit handler checks the same condition the button does.
+- **Controls on a card.** In the dark theme the slider track (`--civitai-color-track`) and the segmented
+  control's group background (`--civitai-color-segmented-bg`) are the card surface colour, so on a
+  card they disappear; set the token on the element (the loss graph does).
+- **Overlay clicks.** `civitai-modal` closes on any click whose target is the overlay, and a text-selection
+  drag that ends past the panel lands there. A dialog whose state is costly to lose (the paid Create
+  dialog, typed instructions) sets `closeOnOverlayClick={false}`.
 - **Datalists.** A `list=` id can't reach an `<input>` inside a shadow root, so a field with datalist
   suggestions (the Data step's tag filter) stays a native input.
 - **Not yet checked:** rendering inside the main-app embed. The spike was checked in the standalone

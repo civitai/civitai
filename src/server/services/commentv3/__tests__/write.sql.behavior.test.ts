@@ -29,6 +29,7 @@ beforeAll(async () => {
   await pg.exec(migration('20261210120000_comment_v3_mirror_changed_columns'));
   await pg.exec(migration('20270101120000_comment_v3_old_table_triggers_off'));
   await pg.exec(migration('20270102120000_comment_v3_teardown'));
+  await pg.exec(migration('20271125130000_comment_v3_hidden_at'));
   db = {
     query: async <R extends Record<string, unknown>>(sql: string, params?: unknown[]) =>
       (await pg.query<R>(sql, params)) as { rows: R[] },
@@ -199,6 +200,25 @@ describe('comment v3 writes', () => {
     const edited = await updateCommentContent(db, { id: c.id, content: 'after' });
     expect(edited).toMatchObject({ content: 'after' });
     expect(edited?.updatedAt.getTime()).toBeGreaterThan(new Date('2021-01-01').getTime());
+  });
+
+  it('a hide stamps hiddenAt once, other flag changes keep it, and a show clears it', async () => {
+    const c = await post(1, 7);
+    const stampOf = async () =>
+      (
+        await one<{ hiddenAt: Date | null }>(
+          `SELECT "hiddenAt" FROM "CommentV3" WHERE id = ${c.id}`
+        )
+      )?.hiddenAt ?? null;
+    const at = new Date('2026-11-01T00:00:00.000Z');
+    await setCommentFlags(db, [c.id], { hidden: true }, { hiddenAt: at });
+    expect(await stampOf()).toEqual(at);
+    await setCommentFlags(db, [c.id], { hidden: true, tosViolation: true });
+    expect(await stampOf()).toEqual(at);
+    await setCommentFlags(db, [c.id], { hidden: false });
+    expect(await stampOf()).toBeNull();
+    await setCommentFlags(db, [c.id], { hidden: true });
+    expect(await stampOf()).not.toBeNull();
   });
 
   it('flags report only the rows they changed, and a repeated pin keeps its first time', async () => {

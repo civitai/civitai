@@ -18,6 +18,7 @@ vi.mock('~/server/services/home-block.service', () => ({
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 
 import { getHomeBlockCached } from '~/server/services/home-block-cache.service';
+import * as homeBlockSource from '~/server/services/home-block.service';
 
 const HUNG = Symbol('hung');
 const within = <T>(p: Promise<T>, ms: number) =>
@@ -33,7 +34,10 @@ describe('getHomeBlockCached with the cache unavailable', () => {
   it('a rejecting cache read builds the block from its source', async () => {
     redisMock.redis.packed.get.mockRejectedValue(new Error('cluster down'));
 
-    const result = await within(getHomeBlockCached(BLOCK as never, undefined, {}), 2000);
+    const result = await within(
+      getHomeBlockCached(BLOCK as never, undefined, {}, homeBlockSource),
+      2000
+    );
 
     expect(result).not.toBe(HUNG);
     expect(result).toMatchObject({ id: 31, leaderboards: [{ id: 'weekly' }] });
@@ -44,7 +48,10 @@ describe('getHomeBlockCached with the cache unavailable', () => {
     redisMock.redis.packed.get.mockImplementation(() => new Promise(() => undefined));
 
     const started = Date.now();
-    const result = await within(getHomeBlockCached(BLOCK as never, undefined, {}), 2000);
+    const result = await within(
+      getHomeBlockCached(BLOCK as never, undefined, {}, homeBlockSource),
+      2000
+    );
 
     expect(result).not.toBe(HUNG);
     expect(result).toMatchObject({ leaderboards: [{ id: 'weekly' }] });
@@ -56,7 +63,10 @@ describe('getHomeBlockCached with the cache unavailable', () => {
     redisMock.redis.packed.set.mockImplementation(() => new Promise(() => undefined));
 
     const started = Date.now();
-    const result = await within(getHomeBlockCached(BLOCK as never, undefined, {}), 2000);
+    const result = await within(
+      getHomeBlockCached(BLOCK as never, undefined, {}, homeBlockSource),
+      2000
+    );
 
     expect(result).not.toBe(HUNG);
     expect(Date.now() - started).toBeLessThan(750);
