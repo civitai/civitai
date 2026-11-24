@@ -110,6 +110,16 @@ export async function submitFinalScan(target: FinalScanTarget): Promise<'Pending
   return 'Pending';
 }
 
+/**
+ * Whether unpack accepted this Final as a video: its bytes sniffed as video, its container and
+ * length read, and its frames sent to the content scan. `scannedEtag` is the proof. It is written
+ * only by `unpackVideo`, after every one of those checks, so a file that merely has a video name
+ * never has it; a replaced upload is a new row, and the object's key is fixed once the file is
+ * Ready, so the scan reads the version the etag names. Anything that starts writing `scannedEtag`
+ * elsewhere widens what this lets through.
+ */
+export const acceptedAsVideo = (file: { scannedEtag: string | null }) => !!file.scannedEtag;
+
 /** What a scan workflow says about its file: a verdict, a scan to run again, or nothing yet. */
 export type FinalScanReading = 'Passed' | 'Failed' | 'Retry' | 'Running';
 
@@ -133,7 +143,10 @@ const TERMINAL = new Set(['succeeded', 'failed', 'expired', 'canceled']);
  * finished workflow, including a step status this code does not know, is a scan to run again. A
  * workflow not finished is Running whatever its status, and is abandoned once stale.
  */
-export function readFinalScan(workflow: { status?: string | null; steps?: unknown[] | null }) {
+export function readFinalScan(
+  workflow: { status?: string | null; steps?: unknown[] | null },
+  { video = false }: { video?: boolean } = {}
+) {
   const steps = (workflow.steps ?? []) as ScanStep[];
   const clam = steps.find((step) => step.$type === 'modelClamScan')?.output;
   const pickle = steps.find((step) => step.$type === 'modelPickleScan')?.output;
@@ -144,24 +157,32 @@ export function readFinalScan(workflow: { status?: string | null; steps?: unknow
   // A file a scanner could not fully read is not cleared, and scanning it again reads no more.
   const clamStatus = clam?.status?.toLowerCase();
   if (clamStatus === 'encrypted' || clamStatus === 'limitsexceeded') return 'Failed';
-  if (pickle?.status?.toLowerCase() === 'parseerror') return 'Failed';
+  // A pickle scan reads a model's code; a video has none, so its parse error says nothing about it.
+  const pickleParseError = pickle?.status?.toLowerCase() === 'parseerror';
+  if (pickleParseError && !video) return 'Failed';
   if (!TERMINAL.has(workflow.status ?? '')) return 'Running';
   if (workflow.status !== 'succeeded') return 'Retry';
-  const pickleClean = pickle?.status === 'clean' || !!pickle?.status?.startsWith('skipped');
+  const pickleClean =
+    pickle?.status === 'clean' ||
+    !!pickle?.status?.startsWith('skipped') ||
+    (video && pickleParseError);
   // A virus scan that does not say it read the file has not cleared it.
   const clamClean = clam?.status === 'clean' && clamFilesScanned(clam) > 0;
   return clamClean && pickleClean ? 'Passed' : 'Retry';
 }
 
 /** Fetches and reads a scan workflow; null when the orchestrator did not answer. */
-export async function getFinalScanReading(workflowId: string): Promise<FinalScanReading | null> {
+export async function getFinalScanReading(
+  workflowId: string,
+  options: { video?: boolean } = {}
+): Promise<FinalScanReading | null> {
   const { data } = await getWorkflow({
     client: internalOrchestratorClient,
     signal: AbortSignal.timeout(READ_TIMEOUT_MS),
     path: { workflowId },
   });
   if (!data) return null;
-  return readFinalScan(data as { status?: string; steps?: unknown[] });
+  return readFinalScan(data as { status?: string; steps?: unknown[] }, options);
 }
 
 /**
