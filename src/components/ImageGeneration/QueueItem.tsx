@@ -206,10 +206,8 @@ export function QueueItem({
           ecosystem: replayEcosystem,
           workflow:
             (replayParams?.workflow as string | undefined) ??
-            // Items without a stored workflow: non-PolyGen replays use img2model3d;
-            // only PolyGen's `process` is consulted.
-            // `multiImageTo3D` is Meshy v7's multi-view operation — also
-            // image-driven, so it must not fall through to txt2model3d.
+            // `multiImageTo3D` is Meshy v7's multi-view operation, image-driven, so
+            // it must not fall through to txt2model3d.
             (replayEcosystem !== 'PolyGen' ||
             request.steps.some(
               (s) =>
