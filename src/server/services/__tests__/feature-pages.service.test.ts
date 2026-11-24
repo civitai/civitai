@@ -181,3 +181,27 @@ describe('getMyFeaturePageVotes', () => {
     expect(JSON.parse(String(init.body))).toEqual({ uid: 42, requests: [REQUEST] });
   });
 });
+
+describe('getFeaturePageViewerHandle', () => {
+  const author = `h1:${'b'.repeat(64)}`;
+
+  it('asks the platform for the uid once, then serves the handle from cache', async () => {
+    signerReplies.push(() => json(200, { author }));
+
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+
+    const calls = signerCalls();
+    expect(calls.map(([url]) => url)).toEqual([`${SIGNER}/internal/handle?uid=42`]);
+  });
+
+  it.each([
+    ['a refusal', () => json(400, { code: 'bad_request' })],
+    ['a reply that is not a handle', () => json(200, { author: 'u42' })],
+  ])('gives no handle on %s, and asks again next time', async (_, reply) => {
+    signerReplies.push(reply, () => json(200, { author }));
+
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBeNull();
+    await expect(service.getFeaturePageViewerHandle(42)).resolves.toBe(author);
+  });
+});

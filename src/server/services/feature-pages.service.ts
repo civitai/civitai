@@ -12,8 +12,10 @@ import type {
 import { fetchThroughCache, setFetchThroughCache } from '~/server/utils/cache-helpers';
 import { fetchTimeoutSignal, outboundFetch } from '~/server/utils/fetch-timeout';
 import {
+  PLATFORM_HANDLE_PATH,
   PLATFORM_ROUTE_MISSING,
   platformRefusalSchema,
+  viewerHandleSchema,
 } from '~/server/services/feature-pages/platform-wire';
 
 // The data.civitai.com platform's internal write path (no ingress), and the audience of its tokens.
@@ -27,6 +29,8 @@ const HUB_TOKEN_TIMEOUT_MS = 8_000;
 // its refresh while another pod refreshes it, so the TTL stays under half the token's life.
 const SERVICE_TOKEN_TTL_SECONDS = 5 * 60;
 const SERVICE_TOKEN_KEY = REDIS_KEYS.CACHES.FEATURE_PAGES_SERVICE_TOKEN;
+// A handle is fixed per account, so it is kept long.
+const VIEWER_HANDLE_TTL_SECONDS = 24 * 60 * 60;
 
 const log = (data: MixedObject) => logToAxiom({ name: 'feature-pages', type: 'error', ...data });
 
@@ -155,6 +159,29 @@ export async function callSigner(
     body = null;
   }
   return { status: res.status, body };
+}
+
+/** The viewer's platform handle for fp-init, or null when the platform gives none. */
+export async function getFeaturePageViewerHandle(userId: number): Promise<string | null> {
+  try {
+    return await fetchThroughCache(
+      `${REDIS_KEYS.CACHES.FEATURE_PAGES_VIEWER_HANDLE}:${userId}`,
+      async () => {
+        const reply = await callSigner(PLATFORM_HANDLE_PATH, {
+          method: 'GET',
+          query: new URLSearchParams({ uid: String(userId) }),
+        });
+        const parsed = viewerHandleSchema.safeParse(reply.body);
+        // Thrown, so a failure is never cached.
+        if (!parsed.success) throw new Error(`viewer handle unavailable (${reply.status})`);
+        return parsed.data.author;
+      },
+      { ttl: VIEWER_HANDLE_TTL_SECONDS }
+    );
+  } catch (e) {
+    log({ message: 'viewer handle unavailable', error: safeError(e) });
+    return null;
+  }
 }
 
 /** The refusal code of a non-2xx answer (`{ code, message, details }`), if it has one. */

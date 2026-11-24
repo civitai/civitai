@@ -38,6 +38,8 @@ export type FeaturePageHostDeps = {
   maskProfanity: boolean;
   /** The viewer's featurePagesDiscussion flag: the frame offers comments only when it is on. */
   discussion: boolean;
+  /** The viewer's platform handle: with it the frame offers Edit and Retract on their own only. */
+  viewerAuthor: string | null;
   vote: (input: { request: unknown; value: unknown }) => Promise<{ votes: number }>;
   mine: (input: { requests: unknown }) => Promise<{ votes: MineVotes }>;
   comment: (input: {
@@ -96,6 +98,7 @@ export function createFeaturePageHost(deps: FeaturePageHostDeps) {
       feature: deps.feature,
       capabilities: { comments: deps.discussion, edit: deps.discussion },
       maskProfanity: deps.maskProfanity,
+      ...(deps.viewerAuthor ? { viewer: { author: deps.viewerAuthor } } : {}),
     });
     initialised = true;
   };
