@@ -10,11 +10,13 @@ site. Everything the creator posted stays exactly as it was.
 | Stays | Stops |
 |---|---|
 | Models, versions, images, articles, comments, reviews, collections, follows | Sign-in sessions and API keys (revoked when confirmed) |
-| Others can follow, comment, review and remix | New chats to the account, the Tip and Chat buttons |
+| Others can follow, comment, review and remix | Tips and new chats to the account; the Tip and Chat buttons |
 | | Account deletion, by the owner or a moderator (reverse it first) |
 | | Event points (`ExcludeFromEventPoints`, cleared again on reversal only if memorializing set it) |
 
 Payouts are not changed. Whether a memorialized creator's earnings keep accruing is decided case by case.
+Tips to a memorialized account are refused by the tip handler, and the Tip and Chat buttons are hidden
+on the profile and on creator cards.
 
 ## How it is set
 

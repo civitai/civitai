@@ -76,7 +76,7 @@ export function CreatorCard({
             />
             {withActions && (
               <Group gap={8} wrap="nowrap">
-                {tipsEnabled && (
+                {tipsEnabled && !isMemorializedCreator(creator) && (
                   <TipBuzzButton
                     toUserId={creator.id}
                     entityId={tipBuzzEntityId}
@@ -85,7 +85,9 @@ export function CreatorCard({
                     size="compact-xs"
                   />
                 )}
-                <ChatUserButton user={creator} label="" size="compact-xs" />
+                {!isMemorializedCreator(creator) && (
+                  <ChatUserButton user={creator} label="" size="compact-xs" />
+                )}
                 <FollowUserButton userId={creator.id} size="compact-xs" />
               </Group>
             )}
@@ -176,7 +178,7 @@ export const CreatorCardV2 = ({
                     </LegacyActionIcon>
                   </Tooltip>
                 )}
-                {tipsEnabled && (
+                {tipsEnabled && !isMemorializedCreator(creator) && (
                   <TipBuzzButton
                     toUserId={creator.id}
                     size="xs"
@@ -190,16 +192,18 @@ export const CreatorCardV2 = ({
                     h={32}
                   />
                 )}
-                <ChatUserButton
-                  user={creator}
-                  size="xs"
-                  label=""
-                  radius="xl"
-                  color="gray"
-                  variant="filled"
-                  w={32}
-                  h={32}
-                />
+                {!isMemorializedCreator(creator) && (
+                  <ChatUserButton
+                    user={creator}
+                    size="xs"
+                    label=""
+                    radius="xl"
+                    color="gray"
+                    variant="filled"
+                    w={32}
+                    h={32}
+                  />
+                )}
                 <FollowUserButton
                   userId={creator.id}
                   size="xs"
@@ -214,6 +218,10 @@ export const CreatorCardV2 = ({
     />
   );
 };
+
+/** A memorialized creator takes no tips and no new chats. */
+const isMemorializedCreator = (creator: object) =>
+  'memorialized' in creator && creator.memorialized === true;
 
 type Props = {
   user: { id: number } & Partial<UserWithCosmetics>;

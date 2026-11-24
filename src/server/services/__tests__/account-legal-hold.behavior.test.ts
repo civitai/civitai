@@ -38,6 +38,7 @@ import {
 import { modelsSearchIndex } from '~/server/search-index';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { deleteUser } from '~/server/services/user.service';
+import { MemorializedAccountError } from '~/server/services/memorial.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
@@ -111,7 +112,8 @@ beforeAll(async () => {
       "profilePictureId" int,
       "subscriptionId" text,
       meta jsonb,
-      "bannedAt" timestamp(3)
+      "bannedAt" timestamp(3),
+      flags int NOT NULL DEFAULT 0
     );
     CREATE TABLE "UserReport" ("userId" int, "reportId" int);
     -- What deleteUser's deal-file statement reads; no deals, so it marks nothing.
@@ -616,6 +618,14 @@ describe('deleteUser under a legal hold', () => {
 
     await expect(run(CLEAN)).rejects.toBeInstanceOf(LegalHoldError);
     expect(await userRow(CLEAN)).toEqual(before);
+  });
+
+  it('stops the scrub when the account is memorialized after the check', async () => {
+    const before = await userRow(CLEAN);
+    beforeScrub = () => holder.db.exec(`UPDATE "User" SET flags = 4 WHERE id = ${CLEAN}`);
+
+    await expect(run(CLEAN)).rejects.toBeInstanceOf(MemorializedAccountError);
+    expect(await userRow(CLEAN)).toEqual({ ...before, flags: 4 });
   });
 
   it('stops the scrub when the marker objects appear after a check that found none', async () => {

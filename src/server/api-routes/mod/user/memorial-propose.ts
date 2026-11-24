@@ -4,8 +4,8 @@ import {
   memorialBases,
   memorialTributesSchema,
   proposeMemorial,
-  assertMemorialModerator,
 } from '~/server/services/memorial.service';
+import { assertMemorialModerator } from '~/server/services/memorial-moderator';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { userId } from '~/server/schema/moderator/user';

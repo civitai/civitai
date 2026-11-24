@@ -338,6 +338,16 @@ describe('createBuzzTipTransactionHandler — block gate', () => {
     });
     expect(mockCreateMany).not.toHaveBeenCalled();
   });
+
+  it('refuses a tip to a memorialized account, and moves no Buzz', async () => {
+    installLedger();
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ id: 5 }] as never);
+
+    await expect(
+      createBuzzTipTransactionHandler({ input: baseInput, ctx: ctxUser() })
+    ).rejects.toThrow('This account is memorialized and cannot receive tips.');
+    expect(mockCreateMany).not.toHaveBeenCalled();
+  });
 });
 
 describe('createBuzzTipTransactionHandler — a model that is not commercially available', () => {

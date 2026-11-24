@@ -956,9 +956,12 @@ export const actions: Actions = {
   }),
 
   memorialConfirm: requiresGrant('user.memorialize', async ({ request }) => {
-    const input = parseForm(userIdSchema, await request.formData());
+    const input = parseForm(
+      userIdSchema.extend({ proposedAt: z.string().min(1, 'Reload the page and try again.') }),
+      await request.formData()
+    );
     if (typeof input === 'string') return memorialFail(input);
-    const result = await confirmMemorial(input.userId);
+    const result = await confirmMemorial(input.userId, input.proposedAt);
     if (!result.ok) return memorialFail(result.error);
     return { success: true, warning: result.warning };
   }),

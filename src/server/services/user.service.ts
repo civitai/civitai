@@ -420,7 +420,10 @@ export const getUsers = async ({
     );
 
   if (contestBanned) {
-    select.push(`u."meta"`);
+    // The memorial record is for `user.memorialize` holders, not every moderator.
+    select.push(
+      `(CASE WHEN jsonb_typeof(u."meta") = 'object' THEN u."meta" - 'memorial' ELSE u."meta" END) AS "meta"`
+    );
   }
 
   // The contest-ban list is a WINDOW over a set larger than itself, so without an order it showed an
@@ -1513,9 +1516,14 @@ export const deleteUser = async ({
           ]
         : []),
     ])
-    .catch((e) => {
-      if (isLegalHoldAbort(e)) throw new LegalHoldError();
-      throw e;
+    .catch(async (e) => {
+      if (!isLegalHoldAbort(e)) throw e;
+      // The scrub refuses a memorialized account too, one memorialized after the check above.
+      const [now] = await dbWrite.$queryRaw<{ flags: number }[]>`
+        SELECT flags FROM "User" WHERE id = ${user.id}
+      `;
+      if (now) assertNotMemorialized(now);
+      throw new LegalHoldError();
     });
   const deletedVersions = removeModels ? (result.pop() as DeletedVersionRow[]) : [];
 

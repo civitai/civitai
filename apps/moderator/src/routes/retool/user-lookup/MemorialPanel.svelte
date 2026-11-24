@@ -64,8 +64,10 @@
   </div>
   <p class="mb-3 text-xs text-dark-2">
     For an account whose holder has died. The profile shows a "Remembering" label and a short note;
-    everything they posted stays. Nobody can sign in, message them, tip them or delete the account
-    while it is memorialized. A different moderator must confirm before anything public changes.
+    everything they posted stays. Confirming signs the account out and expires its API keys, and
+    while it is memorialized it takes no tips or new chats and cannot be deleted. Sign-in is not
+    locked yet: someone with the account's email could sign in again. A different moderator must
+    confirm before anything public changes.
   </p>
 
   {#if form.error}
@@ -106,6 +108,7 @@
       {#if memorial.status === 'pending'}
         <form method="POST" action="?/memorialConfirm" use:enhance={form.enhance}>
           <input type="hidden" name="userId" value={identity.id} />
+          <input type="hidden" name="proposedAt" value={memorial.proposedAt} />
           <Button type="submit" size="sm" disabled={form.submitting}>
             Confirm memorialization
           </Button>

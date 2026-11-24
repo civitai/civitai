@@ -14,7 +14,8 @@ export const MEMORIAL_TRIBUTES_MAX = 3;
 
 /**
  * `User.meta.memorial`, written only by the main app's memorial service. `status: 'active'` is set in
- * the same statement as the `Memorialized` user flag. Never send it to the account's owner or visitors.
+ * the same statement as the `Memorialized` user flag. Private to moderators: only the tributes of an active
+ * memorial are public.
  */
 export type MemorialState = {
   status: 'pending' | 'active';
@@ -27,6 +28,14 @@ export type MemorialState = {
   /** Whether confirming set `ExcludeFromEventPoints`, so reversing clears only what it set. */
   setEventExclusion?: boolean;
 };
+
+/** `meta` without the memorial record, for a payload that is not limited to `user.memorialize` holders. */
+export function withoutMemorial<T>(meta: T): T {
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta) || !('memorial' in meta))
+    return meta;
+  const { memorial: _memorial, ...rest } = meta as Record<string, unknown>;
+  return rest as T;
+}
 
 export function memorialOf(meta: unknown): MemorialState | null {
   if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return null;

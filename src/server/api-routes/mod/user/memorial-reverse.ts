@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { logToAxiom } from '~/server/logging/client';
-import { reverseMemorial, assertMemorialModerator } from '~/server/services/memorial.service';
+import { reverseMemorial } from '~/server/services/memorial.service';
+import { assertMemorialModerator, memorialEffects } from '~/server/services/memorial-moderator';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { userId } from '~/server/schema/moderator/user';
@@ -16,7 +17,7 @@ export default defineModeratorEndpoint('user.memorialReverse', {
   input: z.object({ userId }),
   async handler(input, ctx) {
     await assertMemorialModerator(ctx);
-    await reverseMemorial({ userId: input.userId });
+    await reverseMemorial({ userId: input.userId }, memorialEffects);
     const result = { memorialized: false };
 
     let auditRecorded = true;

@@ -2540,7 +2540,7 @@ export async function removePlacement(input: {
   return { ok: true };
 }
 
-// The evidence note is written by the page action as a moderator note, never on the account row.
+const MEMORIAL_CONFIRM_TIMEOUT_MS = 60_000;
 const MEMORIAL_MAY_HAVE_COMPLETED =
   'Outcome unknown: the change may have gone through. Reload the page before trying again.';
 const memorialFailure = (result: Extract<JsonResult, { ok: false }>): ActionResult => ({
@@ -2572,6 +2572,7 @@ export async function getMemorialPanelState(userId: number): Promise<MemorialPan
   };
 }
 
+/** The evidence note is not sent: the page action writes it as a moderator note, never on the account row. */
 export async function proposeMemorial(input: {
   userId: number;
   basis: MemorialBasis;
@@ -2587,13 +2588,12 @@ export async function proposeMemorial(input: {
   return { ok: true };
 }
 
-export async function confirmMemorial(userId: number): Promise<ActionResult> {
-  // Longer than the default: it waits on session revocation and the generation service.
+export async function confirmMemorial(userId: number, proposedAt: string): Promise<ActionResult> {
   const result = await callModEndpoint(
     'user/memorial-confirm',
-    { userId },
+    { userId, proposedAt },
     'Memorialization',
-    60_000
+    MEMORIAL_CONFIRM_TIMEOUT_MS
   );
   if (!result.ok) return memorialFailure(result);
   const { status, sessionsRevoked, keysRevoked, orchestratorConfirmed } = result.body;

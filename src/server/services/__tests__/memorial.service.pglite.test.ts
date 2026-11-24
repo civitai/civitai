@@ -6,19 +6,32 @@ import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { proposeMemorial, confirmMemorial, reverseMemorial, publicMemorial } = await import(
-  '~/server/services/memorial.service'
-);
+const {
+  proposeMemorial,
+  confirmMemorial,
+  reverseMemorial,
+  publicMemorial,
+  memorializedAmong,
+  assertNotMemorialized,
+  MemorializedAccountError,
+} = await import('~/server/services/memorial.service');
 
 // Redis, the signals service and the orchestrator: what confirming reaches outside the database.
 const invalidateSession = vi.fn(async () => undefined);
 const expireUserApiKeys = vi.fn(async () => ({ expired: 2, orchestratorConfirmed: true }));
+const syncEventStanding = vi.fn(async () => undefined);
+const bustUserCreator = vi.fn(async () => undefined);
 const effects = {
   invalidateSession,
   expireUserApiKeys,
-  bustUserCreator: vi.fn(async () => undefined),
+  bustUserCreator,
+  syncEventStanding,
 };
-const confirm = (actorId: number) => confirmMemorial({ userId: USER, actorId }, effects);
+/** Confirms the proposal as a moderator who opened the panel now would see it. */
+const confirm = async (actorId: number) => {
+  const { proposedAt } = (await row()).meta.memorial as { proposedAt: string };
+  return confirmMemorial({ userId: USER, actorId, proposedAt }, effects);
+};
 const reverse = () => reverseMemorial({ userId: USER }, effects);
 
 const USER = 990400001;
@@ -43,6 +56,8 @@ afterAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   dbMock.dbWrite.$queryRaw.mockImplementation(pgliteRaw(pg).queryRaw as never);
+  dbMock.dbRead.$queryRaw.mockImplementation(pgliteRaw(pg).queryRaw as never);
+  invalidateSession.mockImplementation(async () => undefined);
   dbMock.dbWrite.user.findUnique.mockImplementation(
     (async ({ where }: { where: { id: number } }) =>
       (await pg.query('SELECT * FROM "User" WHERE id = $1', [where.id])).rows[0] ?? null) as never
@@ -62,7 +77,7 @@ const row = async () =>
 const propose = () =>
   proposeMemorial({ userId: USER, actorId: PROPOSER, basis: 'attestation', tributes: [TRIBUTE] });
 
-describe('memorialization', () => {
+describe('memorialization (docs/features/memorialized-profiles.md)', () => {
   it('changes nothing public until a second moderator confirms', async () => {
     await propose();
     const { flags, meta } = await row();
@@ -70,12 +85,14 @@ describe('memorialization', () => {
     expect(publicMemorial(meta)).toBeNull();
   });
 
+  // The two-person rule: docs/features/memorialized-profiles.md.
   it('refuses a confirmation by the moderator who proposed it', async () => {
     await propose();
     await expect(confirm(PROPOSER)).rejects.toThrow(/different moderator/);
     expect((await row()).flags & UserFlag.Memorialized).toBe(0);
     expect(invalidateSession).not.toHaveBeenCalled();
     expect(expireUserApiKeys).not.toHaveBeenCalled();
+    expect(bustUserCreator).not.toHaveBeenCalled();
   });
 
   it('on a second moderator, memorializes, signs the account out and expires its keys', async () => {
@@ -88,6 +105,61 @@ describe('memorialization', () => {
     expect(publicMemorial(meta)).toEqual({ tributes: [TRIBUTE] });
     expect(invalidateSession).toHaveBeenCalledWith(USER, 'moderation');
     expect(expireUserApiKeys).toHaveBeenCalledWith(USER);
+    expect(syncEventStanding).toHaveBeenCalledWith(USER);
+    expect(bustUserCreator).toHaveBeenCalledTimes(1);
+    expect(bustUserCreator).toHaveBeenCalledWith(USER, { usernames: ['zavy'] });
+  });
+
+  it('refuses a confirmation of a proposal that was replaced after it was viewed', async () => {
+    await propose();
+    const { proposedAt: viewed } = (await row()).meta.memorial as { proposedAt: string };
+    await reverse();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await propose();
+    await expect(
+      confirmMemorial({ userId: USER, actorId: CONFIRMER, proposedAt: viewed }, effects)
+    ).rejects.toThrow(/changed since you opened it/);
+    expect((await row()).flags & UserFlag.Memorialized).toBe(0);
+  });
+
+  it('still expires the keys when signing out fails, and says sessions were not revoked', async () => {
+    invalidateSession.mockImplementation(async () => {
+      throw new Error('redis down');
+    });
+    await propose();
+    const result = await confirm(CONFIRMER);
+    expect(expireUserApiKeys).toHaveBeenCalledWith(USER);
+    expect(result).toMatchObject({ sessionsRevoked: false, keysRevoked: true });
+  });
+
+  it.each([
+    ['banned', 'UPDATE "User" SET "bannedAt" = now() WHERE id = $1'],
+    ['deleted', 'UPDATE "User" SET "deletedAt" = now() WHERE id = $1'],
+  ])('refuses to propose for a %s account', async (_, sql) => {
+    await pg.query(sql, [USER]);
+    await expect(propose()).rejects.toThrow();
+    expect((await row()).meta).not.toHaveProperty('memorial');
+  });
+
+  it('refuses a second proposal while one is waiting', async () => {
+    await propose();
+    await expect(
+      proposeMemorial({ userId: USER, actorId: CONFIRMER, basis: 'family', tributes: [] })
+    ).rejects.toThrow(/already waiting/);
+    expect(((await row()).meta.memorial as { proposedBy: number }).proposedBy).toBe(PROPOSER);
+  });
+
+  it('refuses to reverse an account that is not memorialized', async () => {
+    await expect(reverse()).rejects.toThrow(/not memorialized/);
+  });
+
+  it('drops a memorialized account from new chats and refuses its deletion', async () => {
+    await pg.query('INSERT INTO "User" (id, username) VALUES ($1, $2)', [USER + 1, 'alive']);
+    await propose();
+    await confirm(CONFIRMER);
+    expect([...(await memorializedAmong([USER, USER + 1]))]).toEqual([USER]);
+    const { flags } = await row();
+    expect(() => assertNotMemorialized({ flags })).toThrow(MemorializedAccountError);
   });
 
   it('reverses to the flags the account had, keeping an event exclusion set before it', async () => {

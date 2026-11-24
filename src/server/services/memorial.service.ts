@@ -1,5 +1,3 @@
-import { TRPCError } from '@trpc/server';
-import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import {
   MEMORIAL_BASES,
@@ -9,10 +7,7 @@ import {
   type MemorialState,
   type MemorialTribute,
 } from '@civitai/shared/memorial';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { assertNotImpersonating } from '~/server/auth/refuse-while-impersonating';
-import { dbWrite } from '~/server/db/client';
-import { hasModeratorGrant } from '~/server/services/moderator-grants';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
@@ -43,27 +38,6 @@ export const memorialTributeSchema = z.object({
     }, 'Tribute links must be https links on a Civitai site.'),
 });
 export const memorialTributesSchema = z.array(memorialTributeSchema).max(MEMORIAL_TRIBUTES_MAX);
-
-/**
- * Every memorial endpoint's gate. An impersonation session is refused because the two-person rule
- * compares moderator ids, and a moderator acting as another moderator would carry the second id.
- */
-export async function assertMemorialModerator(ctx: {
-  actor: { roles?: string[] };
-  req: NextApiRequest;
-  res: NextApiResponse;
-}) {
-  if (!(await hasModeratorGrant(ctx.actor, 'user.memorialize')))
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'Memorializing an account needs the "user.memorialize" moderator permission.',
-    });
-  const session = await getServerAuthSession({ req: ctx.req, res: ctx.res });
-  assertNotImpersonating(
-    { impersonatedBy: session?.impersonatedBy },
-    'Memorialization cannot be done while impersonating.'
-  );
-}
 
 export class MemorializedAccountError extends Error {
   constructor() {
@@ -141,21 +115,14 @@ export type MemorialEffects = {
     userId: number
   ) => Promise<{ expired: number; orchestratorConfirmed: boolean }>;
   bustUserCreator: (userId: number, opts: { usernames: string[] }) => Promise<unknown>;
-};
-
-const defaultEffects: MemorialEffects = {
-  invalidateSession: async (userId, caller) =>
-    (await import('~/server/auth/session-invalidation')).invalidateSession(userId, caller),
-  expireUserApiKeys: async (userId) =>
-    (await import('~/server/services/api-key.service')).expireUserApiKeys(userId),
-  bustUserCreator: async (userId, opts) =>
-    (await import('~/server/services/user-creator.service')).bustUserCreator(userId, opts),
+  /** Re-reads the event-points exclusion into live rosters and hats, as `setEventPointsExclusion` does. */
+  syncEventStanding: (userId: number) => Promise<unknown>;
 };
 
 /** The proposer-differs check is in the UPDATE's WHERE, so no route lets a proposer confirm their own proposal. */
 export async function confirmMemorial(
-  input: { userId: number; actorId: number },
-  effects: MemorialEffects = defaultEffects
+  input: { userId: number; actorId: number; proposedAt: string },
+  effects: MemorialEffects
 ) {
   const updated = await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
     UPDATE "User"
@@ -175,6 +142,7 @@ export async function confirmMemorial(
       AND jsonb_typeof(meta) = 'object'
       AND meta -> 'memorial' ->> 'status' = 'pending'
       AND (meta -> 'memorial' ->> 'proposedBy')::int <> ${input.actorId}::int
+      AND meta -> 'memorial' ->> 'proposedAt' = ${input.proposedAt}
     RETURNING id, username
   `;
   if (!updated.length) {
@@ -185,6 +153,10 @@ export async function confirmMemorial(
       throw throwBadRequestError('This account is already memorialized.');
     if (target.memorial?.status !== 'pending')
       throw throwBadRequestError('There is no memorialization waiting for confirmation.');
+    if (target.memorial.proposedAt !== input.proposedAt)
+      throw throwBadRequestError(
+        'The proposal changed since you opened it. Reload the page and review it again.'
+      );
     throw throwBadRequestError(
       'A different moderator from the one who proposed it must confirm a memorialization.'
     );
@@ -216,11 +188,8 @@ export async function confirmMemorial(
   };
 }
 
-/** Sessions are not restored. */
-export async function reverseMemorial(
-  input: { userId: number },
-  effects: MemorialEffects = defaultEffects
-) {
+/** Does not undo what confirming revoked: sessions, API keys, orchestrator tokens. */
+export async function reverseMemorial(input: { userId: number }, effects: MemorialEffects) {
   const meta = asJsonbObjectSql('meta');
   const updated = await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
     UPDATE "User"
@@ -246,6 +215,9 @@ async function afterMemorialChanged(
   effects: MemorialEffects
 ) {
   await effects
+    .syncEventStanding(userId)
+    .catch((error) => logMemorialError('memorial-sync-event-standing', userId, error));
+  await effects
     .bustUserCreator(userId, { usernames: username ? [username] : [] })
     .catch((error) => logMemorialError('memorial-bust-user-creator', userId, error));
 }
@@ -268,7 +240,7 @@ export function assertNotMemorialized(user: { flags: number }) {
 /** The recipients that are memorialized, so a new chat can drop them. */
 export async function memorializedAmong(userIds: number[]): Promise<Set<number>> {
   if (!userIds.length) return new Set();
-  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT id FROM "User" WHERE id = ANY(${userIds}::int[]) AND (flags & ${MEMORIAL}) <> 0
   `;
   return new Set(rows.map((row) => row.id));

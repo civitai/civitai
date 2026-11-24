@@ -46,6 +46,7 @@ import {
   throwInsufficientFundsError,
 } from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '../utils/pagination-helpers';
+import { memorializedAmong } from '~/server/services/memorial.service';
 
 export function getUserAccountHandler({ ctx }: { ctx: ProtectedContext }) {
   try {
@@ -156,6 +157,9 @@ export async function createBuzzTipTransactionHandler({
     if (input.toAccountId === -1) {
       throw throwBadRequestError('You cannot send Buzz to the system account');
     }
+
+    if (input.toAccountId && (await memorializedAmong([input.toAccountId])).size)
+      throw throwBadRequestError('This account is memorialized and cannot receive tips.');
 
     let accountCreatedAt = ctx.user?.createdAt ? new Date(ctx.user.createdAt) : undefined;
     if (!accountCreatedAt) {

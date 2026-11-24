@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { logToAxiom } from '~/server/logging/client';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
@@ -601,6 +602,7 @@ export function guardedAccountScrubSql(userId: number, withMarker: boolean): Pri
   if (!Number.isSafeInteger(userId) || userId <= 0)
     throw new Error(`Refusing to build an account scrub for user id ${String(userId)}`);
   const id = Prisma.raw(`${userId}::int`);
+  const memorialized = Prisma.raw(`${UserFlag.Memorialized}::int`);
   const statement = Prisma.sql`DO $guard$
 DECLARE scrubbed integer;
 BEGIN
@@ -613,7 +615,7 @@ BEGIN
       image = NULL,
       "profilePictureId" = NULL,
       "subscriptionId" = NULL
-  WHERE id = ${id} AND NOT ${accountHoldSql(id, withMarker)};
+  WHERE id = ${id} AND (flags & ${memorialized}) = 0 AND NOT ${accountHoldSql(id, withMarker)};
   GET DIAGNOSTICS scrubbed = ROW_COUNT;
   IF scrubbed = 0 THEN
     RAISE EXCEPTION USING ERRCODE = ${abortCode}, MESSAGE = 'account scrub changed no row';

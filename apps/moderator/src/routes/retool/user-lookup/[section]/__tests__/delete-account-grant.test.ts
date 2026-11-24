@@ -8,14 +8,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
-const { deleteAccount, deleteAccountHold } = vi.hoisted(() => ({
+const { deleteAccount, deleteAccountHold, getMemorialPanelState } = vi.hoisted(() => ({
   deleteAccount: vi.fn(async () => ({ ok: true as const })),
   deleteAccountHold: vi.fn<() => Promise<'clear' | 'held' | 'unknown'>>(async () => 'clear'),
+  getMemorialPanelState: vi.fn(async () => ({
+    memorial: null,
+    proposedBy: null,
+    confirmedBy: null,
+  })),
 }));
 vi.mock('$lib/server/user-actions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/user-actions.service')>()),
   deleteAccount,
   deleteAccountHold,
+  getMemorialPanelState,
 }));
 
 const { actions, load } = await import('../+page.server');
@@ -115,6 +121,17 @@ describe('load — the hold behind the Delete account button', () => {
       deleteHold: null,
     });
     expect(deleteAccountHold).not.toHaveBeenCalled();
+  });
+
+  it('reads the memorial panel only on Admin, for someone with user.memorialize', async () => {
+    await load(loadEvent('admin', { 'user.memorialize': true }));
+    expect(getMemorialPanelState).toHaveBeenCalledWith(TARGET);
+    vi.clearAllMocks();
+    expect(await load(loadEvent('admin', { 'user.deleteAccount': true }))).toMatchObject({
+      memorial: null,
+    });
+    await load(loadEvent('basic', { 'user.memorialize': true }));
+    expect(getMemorialPanelState).not.toHaveBeenCalled();
   });
 
   it('does not ask without the permission or off Admin', async () => {
