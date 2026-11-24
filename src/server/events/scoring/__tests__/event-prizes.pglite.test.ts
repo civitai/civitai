@@ -247,32 +247,42 @@ describe('awardEventPrizes', () => {
   });
 
   describe('with an exclusion start (meta.eventPointsExcludedFrom)', () => {
-    const blueWeek = async () => {
+    const blueCup = async () => {
       setPrizes({ comeback: comeback('live') });
       await award('Pink');
       const [row] = await cupRows();
-      return (row.inputs as unknown as { teams: { team: string; week: number }[] }).teams.find(
-        (t) => t.team === 'Blue'
-      )?.week;
+      return (
+        row.inputs as unknown as { teams: { team: string; baseline: number; week: number }[] }
+      ).teams.find((t) => t.team === 'Blue');
     };
     const excludeFrom = (value: string | null) =>
       pg.db.query(`UPDATE "User" SET meta = $1::jsonb WHERE id = ${BLUE_EXCLUDED}`, [
         value === null ? null : JSON.stringify({ eventPointsExcludedFrom: value }),
       ]);
+    const setFlag = (flags: number) =>
+      pg.db.exec(`UPDATE "User" SET flags = ${flags} WHERE id = ${BLUE_EXCLUDED}`);
+    beforeEach(() =>
+      pg.db.query(
+        `INSERT INTO "EventCosmeticScoreDaily" (event, day, "userId", "cosmeticId", "claimKey", team, points, impressions)
+         VALUES ($1, '2026-11-15', $2, 11, 'claimed', 'Blue', 30, 0)`,
+        [event.name, BLUE_EXCLUDED]
+      )
+    );
     afterEach(() => excludeFrom(null));
 
-    it('counts the play points a user scored before it', async () => {
+    it('counts their points before it for the standings, but none of them for the Cup or its badge', async () => {
       await excludeFrom('2026-11-29T00:00:00.000Z');
-      expect(await blueWeek()).toBe(700 + 300 + 50);
-    });
+      await setFlag(0);
+      const unflagged = await standings();
+      await setFlag(UserFlag.ExcludeFromEventPoints);
+      expect(await standings()).toBe(unflagged);
 
-    it('drops the play points from its day on', async () => {
-      await excludeFrom('2026-11-28T00:00:00.000Z');
-      expect(await blueWeek()).toBe(700 + 300);
-    });
+      expect(await blueCup()).toMatchObject({ baseline: 440, week: 700 + 300 });
+      expect(await holders(CUP_BADGE)).not.toContain(BLUE_EXCLUDED);
 
-    it('without it, drops the whole season', async () => {
-      expect(await blueWeek()).toBe(700 + 300);
+      // Control: the standings comparison sees their points once the start is before them.
+      await excludeFrom('2026-11-01T00:00:00.000Z');
+      expect(await standings()).not.toBe(unflagged);
     });
   });
 
