@@ -11,6 +11,7 @@ import type {
   ListingSubListingItem,
 } from '~/server/registry-adapter/catalog-media';
 import type { CatalogApp } from '~/server/registry-adapter/entities';
+import { compareCodeUnits } from '~/server/registry-adapter/release';
 import type {
   ListingActionsRunSource,
   ListingCard,
@@ -240,7 +241,7 @@ export async function readCatalog(
   }
   const reviewOrder = (a: CatalogApprovedRequest, b: CatalogApprovedRequest) => {
     const at = (a.reviewedAt?.getTime() ?? 0) - (b.reviewedAt?.getTime() ?? 0);
-    return at !== 0 ? at : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    return at !== 0 ? at : compareCodeUnits(a.id, b.id);
   };
 
   const blockOf = (l: CatalogListing) =>

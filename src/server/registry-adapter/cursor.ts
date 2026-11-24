@@ -102,7 +102,7 @@ export function diffServed(
   const deletes = [...before.keys()].filter((urn) => !now.has(urn)).sort();
   const upserts = [...now.values()]
     .filter((e) => before.get(e.urn) !== e.rev)
-    .sort((a, b) => (a.urn < b.urn ? -1 : a.urn > b.urn ? 1 : 0));
+    .sort((a, b) => compareCodeUnits(a.urn, b.urn));
   return [...deletes.map((urn) => ({ delete: urn })), ...upserts.map((upsert) => ({ upsert }))];
 }
 
