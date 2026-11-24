@@ -111,12 +111,12 @@ export async function submitFinalScan(target: FinalScanTarget): Promise<'Pending
 }
 
 /**
- * Whether unpack accepted this Final as a video: its bytes sniffed as video, its container and
- * length read, and its frames sent to the content scan. `scannedEtag` is the proof. It is written
- * only by `unpackVideo`, after every one of those checks, so a file that merely has a video name
- * never has it; a replaced upload is a new row, and the object's key is fixed once the file is
- * Ready, so the scan reads the version the etag names. Anything that starts writing `scannedEtag`
- * elsewhere widens what this lets through.
+ * Whether unpack accepted this Final as a video. Only `unpackVideo` writes `scannedEtag`, after
+ * its sniff, length and probe checks and before the content scan (`createScanImage`), so a file
+ * that merely has a video name never has it. The marker does not prove the scan: the Final passing
+ * still rests on every entry's content scan having Passed (`settleFinals`). A replaced upload is a
+ * new row and the key is fixed once Ready, so the scan reads the version the etag names. Anything
+ * that writes `scannedEtag` elsewhere widens what this lets through.
  */
 export const acceptedAsVideo = (file: { scannedEtag: string | null }) => !!file.scannedEtag;
 

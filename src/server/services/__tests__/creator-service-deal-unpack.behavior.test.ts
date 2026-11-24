@@ -2273,7 +2273,7 @@ describe('the finals malware scan', () => {
       });
     });
 
-    it('does not pass a video with dangerous imports, or one the virus scan found infected', async () => {
+    it('does not pass a video whose pickle scan found dangerous imports, even with a clean virus scan', async () => {
       const { fileId } = await deliveredVideo();
       workflows.set(
         'wf-1',
