@@ -27,7 +27,7 @@ import type { ReverseSearchIndexKey, SearchIndexKey } from '~/components/Search/
 import { reverseSearchIndexMap, searchIndexMap } from '~/components/Search/search.types';
 
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
-import { useHitsTransformed } from '~/components/Search/search.utils2';
+import { useHitsTransformed, useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { IndexToLabel } from '~/components/Search/useSearchState';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { IMAGES_SEARCH_INDEX, TOOLS_SEARCH_INDEX } from '~/server/common/constants';
@@ -395,7 +395,44 @@ const QuickSearchDropdownInner = ({
 
 export const QuickSearchDropdown = withSearchBrowsingScope(QuickSearchDropdownInner);
 
-function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
+type QuickSearchDropdownContentProps<TIndex extends SearchIndexKey> = QuickSearchDropdownProps & {
+  indexName: TIndex;
+  ownerPicker?: boolean;
+  carriedSearchText: React.MutableRefObject<string>;
+};
+
+// The owner picker pages on scroll; every other search shows its first page.
+function QuickSearchDropdownContent<TIndex extends SearchIndexKey>(
+  props: QuickSearchDropdownContentProps<TIndex>
+) {
+  return props.ownerPicker ? <OwnerPickerOptions {...props} /> : <FirstPageOptions {...props} />;
+}
+
+function FirstPageOptions<TIndex extends SearchIndexKey>(
+  props: QuickSearchDropdownContentProps<TIndex>
+) {
+  const { hits, results } = useHitsTransformed<TIndex>();
+  return <QuickSearchDropdownOptions {...props} hits={hits} results={results} />;
+}
+
+function OwnerPickerOptions<TIndex extends SearchIndexKey>(
+  props: QuickSearchDropdownContentProps<TIndex>
+) {
+  const { hits, results, showMore, isLastPage } = useInfiniteHitsTransformed<TIndex>();
+  return (
+    <QuickSearchDropdownOptions
+      {...props}
+      hits={hits}
+      results={results}
+      onListEnd={isLastPage ? undefined : showMore}
+    />
+  );
+}
+
+function QuickSearchDropdownOptions<TIndex extends SearchIndexKey>({
+  hits,
+  results,
+  onListEnd,
   indexName: indexNameProp,
   onItemSelected,
   filters,
@@ -406,16 +443,15 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   carriedSearchText,
   ownerPicker,
   ...autocompleteProps
-}: QuickSearchDropdownProps & {
-  indexName: TIndex;
-  ownerPicker?: boolean;
-  carriedSearchText: React.MutableRefObject<string>;
+}: QuickSearchDropdownContentProps<TIndex> & {
+  hits: ReturnType<typeof useHitsTransformed<TIndex>>['hits'];
+  results: ReturnType<typeof useHitsTransformed<TIndex>>['results'];
+  onListEnd?: () => void;
 }) {
   // const currentUser = useCurrentUser();
   const { browsingLevel: viewerLevel } = useBrowsingSettingsAddons();
   const { blurLevels } = useBrowsingLevelContext();
   const { query, refine: setQuery, isSearchStalled } = useSearchBox();
-  const { hits, results } = useHitsTransformed<TIndex>();
   const [search, setSearch] = useCarriedSearchText(carriedSearchText, query);
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const isSubmittingOptionRef = useRef(false);
@@ -557,6 +593,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
         }
       }}
       renderOption={renderOption}
+      scrollAreaProps={onListEnd ? { onBottomReached: onListEnd } : undefined}
       // prevent default filtering behavior
       filter={({ options }) => options}
       clearable={query.length > 0}

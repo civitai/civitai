@@ -11,6 +11,7 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 // images (the server reads the caller from the session).
 
 const OWNER_IMAGE = 41;
+const OWNER_VIDEO = 42;
 const OTHER_USERS_IMAGE = 99;
 const OWNER_ARTICLE = 51;
 const OTHER_USERS_ARTICLE = 98;
@@ -137,13 +138,24 @@ const offeredIds = () =>
   );
 
 describe('Images search in the showcase picker', () => {
-  // Control built into the fake: it answers another user's image whenever the owner scope is
-  // missing, so offering exactly the owner's image is the scope holding, not the fake.
+  // A typed search is the caller's own list narrowed by the query (the server matches prompt, post
+  // title and tags), so videos are found too. Whose media it is stays the session's call.
   test.each([
     ['with image search', true],
     ['without image search', false],
-  ])('typing a search offers the owner’s images and never another user’s, %s', async (_, flag) => {
+  ])('typing a search offers the owner’s matching media, videos included, %s', async (_, flag) => {
     state.imageSearch = flag;
+    const own = [
+      { id: OWNER_VIDEO, nsfwLevel: 1, url: 'v', type: 'video', title: 'Kuro at dusk' },
+      { id: OWNER_IMAGE, nsfwLevel: 1, url: 'i', type: 'image', title: 'Beach day' },
+    ];
+    state.myImages.mockImplementation(async (input: { query?: string; mediaTypes: string[] }) => ({
+      items: own.filter(
+        (item) =>
+          input.mediaTypes.includes(item.type) &&
+          (!input.query || item.title.toLowerCase().includes(input.query.toLowerCase()))
+      ),
+    }));
     renderWithProviders(
       <ShowcaseItemsInput username="fox" supportedIndexes={['images']} value={[]} />
     );
@@ -153,18 +165,15 @@ describe('Images search in the showcase picker', () => {
     await new Promise((resolve) => setTimeout(resolve, 400));
     await userEvent.type(page.getByPlaceholder('Search Civitai'), 'o');
 
-    // Slow typing can let the debounce fire on a prefix ("kur"), which the fake answers the same way:
-    // wait for the full word's search, not just for a matching list.
     await vi.waitFor(
       () => {
-        expect(state.semanticQuery).toHaveBeenCalledWith(
-          expect.objectContaining({ query: 'kuro' })
-        );
-        expect(offeredIds()).toEqual([OWNER_IMAGE]);
+        expect(state.myImages).toHaveBeenCalledWith(expect.objectContaining({ query: 'kuro' }));
+        expect(offeredIds()).toEqual([OWNER_VIDEO]);
       },
       { timeout: 3000 }
     );
-    for (const [input] of state.semanticQuery.mock.calls) expect(input.usernames).toEqual(['fox']);
+    expect(state.semanticQuery).not.toHaveBeenCalled();
+    for (const [input] of state.myImages.mock.calls) expect(input).not.toHaveProperty('userId');
   });
 
   // Owner scope only reaches the semantic image search (as a facet); the semantic article search
@@ -224,6 +233,40 @@ describe('Images search in the showcase picker', () => {
 
     await vi.waitFor(() => expect(offeredIds()).toHaveLength(40), { timeout: 3000 });
     expect(offeredIds()).toContain(1030);
+  });
+
+  test('scrolling to the end of the list loads the caller’s older media', async () => {
+    state.imageSearch = false;
+    // As the server: newest first, `limit` rows from the cursor (inclusive), and the next row's id.
+    const own = Array.from({ length: 150 }, (_, i) => ({
+      id: 5000 - i,
+      nsfwLevel: 1,
+      url: `p${i}`,
+      type: 'image',
+    }));
+    state.myImages.mockImplementation(async (input: { limit: number; cursor?: number }) => {
+      const start = input.cursor ? own.findIndex((item) => item.id === input.cursor) : 0;
+      const rows = own.slice(start, start + input.limit + 1);
+      return { items: rows.slice(0, input.limit), nextCursor: rows[input.limit]?.id };
+    });
+    renderWithProviders(
+      <ShowcaseItemsInput username="fox" supportedIndexes={['images']} value={[]} />
+    );
+
+    await userEvent.click(page.getByPlaceholder('Search Civitai'));
+    await vi.waitFor(() => expect(offeredIds().length).toBeGreaterThan(0), { timeout: 3000 });
+    const firstPage = offeredIds().length;
+    expect(firstPage).toBeLessThan(own.length);
+
+    // Mantine calls `onBottomReached` from the list's scroll event once it is scrolled to the end.
+    const list = document
+      .querySelector(`[data-testid="option-${offeredIds().at(-1)}"]`)!
+      .closest('.mantine-ScrollArea-viewport')!;
+    list.scrollTop = list.scrollHeight;
+    list.dispatchEvent(new Event('scroll'));
+
+    await vi.waitFor(() => expect(offeredIds()).toHaveLength(own.length), { timeout: 3000 });
+    expect(offeredIds().at(-1)).toBe(own.at(-1)!.id);
   });
 
   // The profile editor renders this input signed in with no owner: a session check in place of the
