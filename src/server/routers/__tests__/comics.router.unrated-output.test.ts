@@ -6,6 +6,7 @@ import type * as ImageService from '~/server/services/image.service';
 import type * as SignalClient from '~/utils/signal-client';
 import type * as S3Utils from '~/utils/s3-utils';
 import type * as StorageResolver from '~/server/services/storage-resolver';
+import type * as Workflows from '~/server/services/orchestrator/workflows';
 
 /**
  * The orchestrator can report a workflow succeeded before rating its outputs. Ready and saved
@@ -114,7 +115,6 @@ function givenWorkflow(
   mocks.getWorkflow.mockResolvedValue({
     id: 'wf-1',
     status: 'succeeded',
-    tags: ['gen', 'comics'],
     allowMatureContent: unlocked,
     steps: [{ $type: 'comfy', name: '$0', output: { blobs: [output('b0', { nsfwLevel: 'x' })] } }],
   });
@@ -165,10 +165,19 @@ const writes = () => {
       data: call[0].data,
     })),
     ...raw.calls.flatMap((call: unknown[], i: number) => {
-      const [strings, status, setsError, errorMessage, metadata] = call as [string[], ...unknown[]];
+      const strings = call[0] as string[];
       if (!strings.join('').includes('SET status')) return [];
-      const data: Record<string, unknown> = { status, metadata: JSON.parse(metadata as string) };
-      if (setsError) data.errorMessage = errorMessage;
+      // Each value follows the template text that ends with its column.
+      const valueAfter = (text: string) => {
+        const at = strings.findIndex((s) => s.trimEnd().endsWith(text));
+        if (at < 0) throw new Error(`The poll's write no longer has "${text}"`);
+        return call[at + 1];
+      };
+      const data: Record<string, unknown> = {
+        status: valueAfter('SET status ='),
+        metadata: JSON.parse(valueAfter('metadata =') as string),
+      };
+      if (valueAfter('CASE WHEN')) data.errorMessage = valueAfter('THEN');
       return [{ order: raw.invocationCallOrder[i], data }];
     }),
   ]
@@ -187,8 +196,10 @@ beforeEach(() => {
       ? { muted: false, bannedAt: null }
       : undefined) as never);
   vi.clearAllMocks();
-  // The unlock's per-panel claim takes the panel.
   dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: PANEL_ID }] as never);
+  // The panel generated wf-1.
+  dbMock.dbWrite.comicPanel.findFirst.mockImplementation((async (args: any) =>
+    args?.where?.workflowId === 'wf-1' ? { id: PANEL_ID } : null) as never);
   // The poll catches and logs any throw, then returns the panel unchanged: the same result as the
   // hold. Every case asserts nothing was logged, so a broken fixture cannot pass as a held output.
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -440,6 +451,17 @@ const seedClaim = (token: string, age: string) =>
     [token, age, PANEL_ID]
   );
 
+/** The charge write's failure as the real client maps an orchestrator answer of `status`. */
+const orchestratorFailure = async (status: number, detail: string) => {
+  const { throwOrchestratorFailure } = await vi.importActual<typeof Workflows>(
+    '~/server/services/orchestrator/workflows'
+  );
+  return throwOrchestratorFailure({
+    error: { detail },
+    response: new Response(null, { status }),
+    message: detail,
+  });
+};
 /** A two-image panel the owner picked 'picked' from; slot 2 was mature and still locked. */
 const selectedPanel = () =>
   givenPanel({
@@ -502,7 +524,7 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
     mocks.updateWorkflow.mockImplementationOnce(async () => {
       // Its claim went stale and another request took the panel over.
       await seedClaim('other', '0 minutes');
-      throw new Error('You need more yellow Buzz.');
+      return orchestratorFailure(403, 'You need more yellow Buzz.');
     });
 
     await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(/Buzz/);
@@ -629,6 +651,8 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
     secondReads = 0;
     const second = caller().unlockPanelGeneration({ panelId: PANEL_ID });
     await expect(second).rejects.toThrow(/already being unlocked/);
+    // Refused after its first read: a second read before the claim would get the stale answer.
+    expect(secondReads).toBe(1);
     release();
     await first;
 
@@ -664,7 +688,7 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       const unlock = caller().unlockPanelGeneration({ panelId: PANEL_ID });
-      const refused = expect(unlock).rejects.toThrow(/taking longer than usual/);
+      const refused = expect(unlock).rejects.toThrow(/not confirmed yet/);
       while (!mocks.updateWorkflow.mock.calls.length) await new Promise((r) => setImmediate(r));
       // Well inside the claim's 10 minutes.
       await vi.advanceTimersByTimeAsync(3 * 60_000);
@@ -676,10 +700,24 @@ describe('comics.unlockPanelGeneration - a multi-image panel with a selection', 
     expect(await storedClaim()).toMatchObject({ token: expect.any(String) });
   });
 
-  it('CONTROL: a failed charge releases the claim, so the next unlock can pay', async () => {
+  it('a charge write answered by a gateway error keeps the claim until it expires', async () => {
     selectedPanel();
     givenWorkflow(bothRated, { allowMatureContent: true });
-    mocks.updateWorkflow.mockRejectedValueOnce(new Error('You need more yellow Buzz.'));
+    mocks.updateWorkflow.mockImplementationOnce(() => orchestratorFailure(504, 'Gateway Timeout'));
+
+    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(
+      /not confirmed yet/
+    );
+
+    expect(await storedClaim()).toMatchObject({ token: expect.any(String) });
+  });
+
+  it('CONTROL: a refused charge releases the claim, so the next unlock can pay', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+    mocks.updateWorkflow.mockImplementationOnce(() =>
+      orchestratorFailure(403, 'You need more yellow Buzz.')
+    );
 
     await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(/Buzz/);
     await caller().unlockPanelGeneration({ panelId: PANEL_ID });

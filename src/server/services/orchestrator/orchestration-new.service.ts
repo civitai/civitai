@@ -21,6 +21,7 @@
  */
 
 import { assertGenerationLicenseAccepted } from '~/server/services/generation-license.service';
+import { dbWrite } from '~/server/db/client';
 import type {
   ImageBackgroundRemovalModel,
   ImageBackgroundRemovalStepTemplate,
@@ -3275,9 +3276,13 @@ export async function assertUnlockReleasesOutput({
   /** A comic panel's unlock holds a per-panel claim against a second charge; others take none. */
   outsideComicEditor?: boolean;
 }) {
-  const workflow = await getWorkflow({ token, path: { workflowId } });
-  if (outsideComicEditor && workflow.tags?.includes(WORKFLOW_TAGS.COMICS))
+  // By the panel row, not a tag the owner can edit. Primary: the panel is written at submit.
+  if (
+    outsideComicEditor &&
+    (await dbWrite.comicPanel.findFirst({ where: { workflowId }, select: { id: true } }))
+  )
     throw throwBadRequestError('Unlock this from the comic editor.');
+  const workflow = await getWorkflow({ token, path: { workflowId } });
   if (workflow.allowMatureContent === true)
     throw throwBadRequestError('This generation is already unlocked.');
   // Absent reads as null, the classic API's unrestricted workflow: the queue offers the unlock only

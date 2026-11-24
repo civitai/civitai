@@ -58,7 +58,7 @@ import { panelSourceImageUrl, viewerPanelMetadata } from '~/server/services/comi
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { TRPCError } from '@trpc/server';
 import {
   assertUnlockAllowed,
   assertUnlockReleasesOutput,
@@ -223,7 +223,7 @@ async function submitComicGeneration({
     token,
     flags: features,
     currencies: getAllowedAccountTypes(features, ['blue']),
-    tags: isGreen ? [WORKFLOW_TAGS.COMICS, 'green'] : [WORKFLOW_TAGS.COMICS],
+    tags: isGreen ? ['comics', 'green'] : ['comics'],
     isGreen,
     allowMatureContent,
     track,
@@ -732,10 +732,23 @@ async function getReferenceImages(referenceId: number) {
 const UNLOCK_CHARGE_TIMEOUT_MS = 150_000;
 
 /**
+ * A failed charge write was refused (a 4xx: insufficient Buzz, a refused unlock) or may still have
+ * been applied (no response, an upstream 5xx, an unmapped failure).
+ */
+function chargeOutcomeUnknown(error: unknown) {
+  return (
+    !(error instanceof TRPCError) ||
+    error.code === 'SERVICE_UNAVAILABLE' ||
+    error.code === 'INTERNAL_SERVER_ERROR'
+  );
+}
+
+/**
  * Claims a panel's unlock before the charge, so two concurrent unlocks cannot both pay. The writes
  * that end an unlock replace `metadata` from the copy read before the claim, which is what drops it
- * on success (a jsonb merge there would leave it held); any failure releases it; one left by a crash
- * expires. The poll's metadata writes keep the row's own claim (writePolledPanel).
+ * on success (a jsonb merge there would leave it held); a failure releases it, except a charge write
+ * that may still land (cut off by its bound, a gateway error, no response); one left that way or by a
+ * crash expires. The poll's metadata writes keep the row's own claim (writePolledPanel).
  */
 async function claimPanelUnlock(panelId: number) {
   const token = randomUUID();
@@ -3337,7 +3350,8 @@ export const comicsRouter = router({
         (await getWorkflow({ token, path: { workflowId: panel.workflowId } }))
           .allowMatureContent === true;
       let claim: string | null = null;
-      // A charge cut off by its bound may still land: the claim then stays until it expires.
+      // A charge write that failed without a refusal (cut off by its bound, a gateway error) may
+      // still land: the claim then stays until it expires.
       let chargeMayLand = false;
       try {
         if (!alreadyPaid) {
@@ -3357,10 +3371,10 @@ export const comicsRouter = router({
               signal: bound.signal,
             });
           } catch (error) {
-            if (!bound.signal.aborted) throw error;
+            if (!bound.signal.aborted && !chargeOutcomeUnknown(error)) throw error;
             chargeMayLand = true;
             throw throwBadRequestError(
-              'This unlock is taking longer than usual. Check this panel again in a few minutes.'
+              'This unlock is not confirmed yet. Check this panel again in a few minutes.'
             );
           } finally {
             clearTimeout(timer);

@@ -49,8 +49,6 @@ export const WORKFLOW_TAGS = {
   WILDCARDS: 'wildcards',
   /** Stamped on every App Block workflow at submit; the generator Queue leaves these out. */
   APP_BLOCK: 'app-block',
-  /** Stamped on every comic panel workflow; such a workflow is unlocked from the comic editor only. */
-  COMICS: 'comics',
   FEEDBACK: {
     LIKED: 'feedback:liked',
     DISLIKED: 'feedback:disliked',

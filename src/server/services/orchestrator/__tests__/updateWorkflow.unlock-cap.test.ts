@@ -10,6 +10,7 @@ vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
 }));
 
 import { updateWorkflow } from '../orchestration-new.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const video = (nsfwLevel: string) => ({
   $type: 'videoGen',
@@ -38,6 +39,7 @@ const unlock = { token: 'tok', workflowId: '5-1', allowMatureContent: true, view
 beforeEach(() => {
   vi.clearAllMocks();
   clientUpdateWorkflow.mockResolvedValue({ id: '5-1', steps: [] });
+  dbMock.dbWrite.comicPanel.findFirst.mockResolvedValue(null as never);
 });
 
 /** A locked workflow, as the queue sees it before an unlock: charged with safe Buzz. */
@@ -106,13 +108,26 @@ describe('updateWorkflow unlock', () => {
     await refuses(/Nothing in this generation needs unlocking yet/);
   });
 
+  /** The comic panel rows, by the workflow each generated. */
+  const givenPanelFor = (workflowId: string) =>
+    dbMock.dbWrite.comicPanel.findFirst.mockImplementation((async (args: any) =>
+      args?.where?.workflowId === workflowId ? { id: 21 } : null) as never);
+
   it("refuses a comic panel's workflow: the comic editor's unlock holds a claim against a second charge", async () => {
+    givenPanelFor('5-1');
     getWorkflow.mockResolvedValue({ ...locked(undefined, video('x')), tags: ['gen', 'comics'] });
     await refuses(/Unlock this from the comic editor/);
   });
 
-  it('CONTROL: charges a tagged workflow that is not a comic panel', async () => {
-    getWorkflow.mockResolvedValue({ ...locked(undefined, video('x')), tags: ['gen', 'vid'] });
+  it("refuses a comic panel's workflow whose comics tag was removed", async () => {
+    givenPanelFor('5-1');
+    getWorkflow.mockResolvedValue({ ...locked(undefined, video('x')), tags: ['gen'] });
+    await refuses(/Unlock this from the comic editor/);
+  });
+
+  it('CONTROL: charges a comics workflow with no panel, such as an iteration', async () => {
+    givenPanelFor('other-workflow');
+    getWorkflow.mockResolvedValue({ ...locked(undefined, video('x')), tags: ['gen', 'comics'] });
     await charges();
   });
 
