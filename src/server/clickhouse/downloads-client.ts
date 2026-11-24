@@ -45,6 +45,14 @@ export const clickhouseDownloads: CustomClickHouseClient | undefined = !shouldCo
       onRetry: (outcome) => retryCounter.inc({ outcome }),
     }));
 
+// Sent with every read, so the server does not keep running one the client has given up on: it
+// stops a read after 2s of execution (the client's own timeout is 2s without a byte), and cancels
+// one whose connection the client has closed (a timed-out read already re-run on the shared client).
+export const DOWNLOADS_CLICKHOUSE_QUERY_SETTINGS = {
+  max_execution_time: 2,
+  cancel_http_readonly_queries_on_client_close: 1,
+} as const;
+
 /**
  * One read on the dedicated client, rows as JSON. Through `query`, not `$query`: the factory's
  * connection-reset re-send wraps `query` only (`$query` calls the unwrapped client), and
@@ -56,6 +64,11 @@ export async function queryDownloadsClickhouse<T>(
   query_params?: Record<string, unknown>
 ): Promise<T[]> {
   if (!clickhouseDownloads) throw new Error('The downloads ClickHouse client is not configured');
-  const result = await clickhouseDownloads.query({ query, format: 'JSONEachRow', query_params });
+  const result = await clickhouseDownloads.query({
+    query,
+    format: 'JSONEachRow',
+    query_params,
+    clickhouse_settings: DOWNLOADS_CLICKHOUSE_QUERY_SETTINGS,
+  });
   return result.json<T>();
 }

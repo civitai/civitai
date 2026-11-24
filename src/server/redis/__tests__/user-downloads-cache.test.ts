@@ -142,11 +142,17 @@ describe('userDownloadsCache: users with no downloads', () => {
   });
 });
 
-describe('userDownloadsCache: a bust outlasts a late row', () => {
-  // On the dedicated replica the row can land about two minutes after the download, so the bust
-  // window (180 s) must outlast that. Here the row lands 150 s after the bust, and a lookup 145 s
-  // after it runs before the row is there: far past the cache's default 10 s window, which
-  // re-cached the pre-download answer at that lookup.
+describe('userDownloadsCache: the bust window follows user-downloads-dedicated-clickhouse', () => {
+  // With the flag on, the row can land about two minutes after the download on the dedicated
+  // replica, so the bust window (180 s) must outlast that. Here the row lands 150 s after the
+  // bust, and a lookup 145 s after it runs before the row is there: far past the cache's default
+  // 10 s window, which re-cached the pre-download answer at that lookup. With the flag off the bust
+  // keeps that 10 s default, as before.
+  beforeEach(() => {
+    dedicated.configured = true;
+    dedicated.flags['user-downloads-dedicated-clickhouse'] = true;
+  });
+
   const lateRow = {
     userId: NO_DOWNLOADS,
     modelVersionId: 9_103,
@@ -186,6 +192,46 @@ describe('userDownloadsCache: a bust outlasts a late row', () => {
         (d) => d.modelVersionId
       )
     ).toEqual([9_103, 9_100]);
+  });
+
+  it('flag off: the cache keeps its own 10 s window, so a lookup 30 s after the bust re-caches "none"', async () => {
+    dedicated.flags['user-downloads-dedicated-clickhouse'] = false;
+    expect(await userDownloadsCache.fetch([NO_DOWNLOADS])).toEqual({});
+
+    await bustUserDownloadsCache(NO_DOWNLOADS);
+    vi.setSystemTime(T0 + 30_000);
+    expect(await userDownloadsCache.fetch([NO_DOWNLOADS])).toEqual({});
+
+    table.set(NO_DOWNLOADS, [lateRow]);
+    vi.setSystemTime(T0 + 90_000);
+    expect(await userDownloadsCache.fetch([NO_DOWNLOADS])).toEqual({});
+    expect(lookupsFor(NO_DOWNLOADS)).toBe(2);
+  });
+
+  it('flag on: every bust restarts the window, so a run of downloads shows 180 s after the last', async () => {
+    const earlier = { ...lateRow, modelVersionId: 9_100, lastDownloaded: '2026-11-19 08:00:00' };
+    const second = { ...lateRow, modelVersionId: 9_105, lastDownloaded: '2026-11-20 12:02:00' };
+    table.set(NO_DOWNLOADS, [earlier]);
+    await userDownloadsCache.fetch([NO_DOWNLOADS]);
+    const versions = async () =>
+      (await userDownloadsCache.fetch([NO_DOWNLOADS]))[NO_DOWNLOADS]?.downloads.map(
+        (d) => d.modelVersionId
+      );
+
+    await bustUserDownloadsCache(NO_DOWNLOADS); // download 1 at T0
+    vi.setSystemTime(T0 + 30_000);
+    table.set(NO_DOWNLOADS, [lateRow, earlier]); // its row lands
+    vi.setSystemTime(T0 + 120_000);
+    await bustUserDownloadsCache(NO_DOWNLOADS); // download 2
+    vi.setSystemTime(T0 + 150_000);
+    table.set(NO_DOWNLOADS, [second, lateRow, earlier]); // its row lands
+
+    // 181 s after the first bust, but only 61 s after the second: still the pre-download entry.
+    vi.setSystemTime(T0 + 181_000);
+    expect(await versions()).toEqual([9_100]);
+    // 181 s after the second bust: both new rows.
+    vi.setSystemTime(T0 + 301_000);
+    expect(await versions()).toEqual([9_105, 9_103, 9_100]);
   });
 });
 

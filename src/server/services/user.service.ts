@@ -80,6 +80,8 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
+import { clickhouseDownloads } from '~/server/clickhouse/downloads-client';
+import { readsDedicatedDownloadsClickhouse } from '~/server/services/downloads-clickhouse';
 import { listModelEngagements } from '@civitai/db-queries/model';
 import { deletePostRows, type DeleteActor } from '@civitai/db-queries/content-deletion';
 import { kyselyOver } from '~/server/db/prisma-kysely';
@@ -1000,18 +1002,25 @@ export async function getUserDownloadedModelVersions({
   return downloads.map((d) => ({ modelVersionId: d.modelVersionId }));
 }
 
-// The bust window, in seconds. `userDownloadsCache` is stale-while-revalidate, so a bust of a user
-// with cached downloads keeps serving that entry for the window and revalidates it on the first
-// read after; a bust of a "none" marker reads the table uncached for the window instead. Either way
-// the entry is re-cached from what the table holds once the window is over, so the window must
-// outlast the row's arrival: the row is written asynchronously, on the dedicated downloads replica
-// up to about two minutes after the download. A row later than the window is missed until that
-// entry expires (10 minutes for "none", the cache TTL otherwise). The cost: a user who already has
-// downloads sees a new one up to this long after it, instead of the cache's 10-second default.
-const USER_DOWNLOADS_BUST_WINDOW_SECONDS = 180;
+// The bust window while `user-downloads-dedicated-clickhouse` is on, in seconds. The dedicated
+// downloads replica can write a download row up to about two minutes after the download, and
+// `userDownloadsCache` is stale-while-revalidate: a bust of a user with cached downloads keeps
+// serving that entry for the window and revalidates it on the first read after, and a bust of a
+// "none" marker reads the table uncached for the window. Either way the entry is re-cached from
+// what the table holds once the window is over, so the window must outlast the row's arrival.
+// The cost: a user who already has downloads sees a new one up to this long after it, and since
+// every bust restarts the window, a run of downloads stays hidden until this long after the LAST
+// one. With the flag off the bust is the cache's own (a 10-second window), as before.
+const USER_DOWNLOADS_DEDICATED_BUST_WINDOW_SECONDS = 180;
 
 export async function bustUserDownloadsCache(userId: number) {
-  await userDownloadsCache.bust([userId], { debounceTime: USER_DOWNLOADS_BUST_WINDOW_SECONDS });
+  if (readsDedicatedDownloadsClickhouse('user-downloads', clickhouseDownloads !== undefined)) {
+    await userDownloadsCache.bust([userId], {
+      debounceTime: USER_DOWNLOADS_DEDICATED_BUST_WINDOW_SECONDS,
+    });
+    return;
+  }
+  await userDownloadsCache.bust([userId]);
 }
 
 export const getUserEngagedModelByModelId = ({
