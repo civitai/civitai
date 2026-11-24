@@ -289,6 +289,7 @@ describe('a reaction to a crucible entry while it is judged', () => {
     ['acceptable-minor', SCHEDULED_ACCEPTABLE_MINOR_ENTRY],
     ['on a private post', SCHEDULED_PRIVATE_ENTRY],
     ['on a draft post with no publish date', DRAFT_ENTRY],
+    // These two are also out of what judging serves, so they pin the outcome, not the image rule alone.
     ['held for review', SCHEDULED_IN_REVIEW_ENTRY],
     ['unrated', SCHEDULED_UNRATED_ENTRY],
     ['rated Blocked', SCHEDULED_BLOCKED_RATING_ENTRY],
