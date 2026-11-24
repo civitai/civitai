@@ -343,8 +343,8 @@ var computeFallbackReasons = []string{"deadline", "canceled", "panic"}
 //
 // Each list holds only the reasons that route's code can produce: the input-<key> and
 // v1-models-<key> reasons are the parsers' own key lists, so a key added there is seeded here.
-// `bearer-token` is seeded on the REST model routes only: on the tRPC routes it means the API keys
-// are not configured.
+// `bearer-token` is seeded on the REST routes only: on the tRPC routes it means the API keys are not
+// configured.
 func RequestFallbackReasons() map[string][]string {
 	// Every public route: the API request policy (apiRequestPolicy) and a method other than GET.
 	policy := []string{"method", "region-blocked", "crawler-user-agent"}
@@ -375,12 +375,23 @@ func RequestFallbackReasons() map[string][]string {
 		"v1-models-page-limit", "v1-models-cursor",
 	}, prefixed("v1-models-", v1models.UnportedFallbackKeys()))
 	v1ModelsID := sortedUnion(policy, v1, []string{"v1-models-origin", "v1-models-path", "v1-models-id"})
+	// The REST images route: preflight's credential check, its serve-only checks, and feed.ParseV1 /
+	// feed.ServeV1's request-determined reasons (the query, the shapes not ported, nextPage's host, the
+	// paging guard, the cursors). Not `v1-path`: the route's pattern is the images path itself.
+	v1Images := sortedUnion(policy, []string{
+		"bearer-token", "v1-images-conditional", "v1-images-session-cookie", "input-unknown-key",
+		"v1-host", "v1-query-encoding", "v1-input-duplicate", "v1-input-number",
+		"v1-input-username", "v1-input-period", "v1-input-type", "v1-input-ids", "v1-input-bool",
+		"v1-image-id", "v1-tags", "v1-base-models", "v1-user-zero", "v1-model-only", "v1-sort",
+		"v1-with-tags", "v1-cursor", "v1-legacy-cursor", "v1-page-limit",
+	})
 	return map[string][]string{
 		EndpointAsPosts:     asPosts,
 		EndpointInfinite:    infinite,
 		EndpointModelGetAll: modelGetAll,
 		EndpointV1Models:    v1Models,
 		EndpointV1ModelsID:  v1ModelsID,
+		EndpointV1Images:    v1Images,
 	}
 }
 
@@ -486,8 +497,8 @@ func (m *Metrics) seedOutcomes() {
 }
 
 // ServedEndpoints are the endpoints with a public route (each takes its serve slot from the one
-// shared pool): the three tRPC procedures and the two REST model routes.
-var ServedEndpoints = []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite, EndpointV1Models, EndpointV1ModelsID}
+// shared pool): the three tRPC procedures, the two REST model routes and the REST images route.
+var ServedEndpoints = []string{EndpointAsPosts, EndpointModelGetAll, EndpointInfinite, EndpointV1Models, EndpointV1ModelsID, EndpointV1Images}
 
 // ErrorModes are the `mode` values of feed_go_errors_total: a compute error on the public route, in a
 // shadow sample or in a Go-first probe, and a fallback-proxy error.

@@ -690,7 +690,7 @@ export const createReport = async ({
                         userId: userId,
                         weight: 3,
                       },
-                      update: { nsfwLevel: maxRating },
+                      update: { nsfwLevel: maxRating, status: 'Pending' },
                     }),
                     dbWrite.image.update({ where: { id }, data: { nsfwLevelLocked: false } }),
                   ]);

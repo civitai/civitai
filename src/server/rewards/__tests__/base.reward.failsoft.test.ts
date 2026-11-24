@@ -63,10 +63,10 @@ vi.mock('~/server/prom/client', () => ({
   clickhouseFailSoftCounter: { inc: (...a: any[]) => h.chFailSoftInc(...a) },
 }));
 
-vi.mock('~/server/services/buzz.service', () => ({
+vi.mock('~/server/services/buzz-payout', () => ({
   createBuzzTransactionMany: (...args: any[]) => h.createBuzzTransactionMany(...args),
-  getMultipliersForUser: (...args: any[]) => h.getMultipliersForUser(...args),
   getTransactionByExternalId: vi.fn(async () => null),
+  getMultipliersForUser: (...args: any[]) => h.getMultipliersForUser(...args),
 }));
 
 vi.mock('~/shared/constants/buzz.constants', () => ({

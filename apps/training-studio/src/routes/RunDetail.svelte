@@ -46,6 +46,7 @@
   import LossGraph from '$lib/components/LossGraph.svelte';
   import RunLog from '$lib/components/RunLog.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
+  import RatingBadge from '$lib/components/RatingBadge.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import ReviewStatusPanel from '$lib/components/ReviewStatusPanel.svelte';
   import HelpTip from '$lib/components/HelpTip.svelte';
@@ -261,6 +262,7 @@
   // revoked on unmount. A failed fetch clears its slot so the next poll retries it.
   const datasetObjectUrls = new Map<string, string>();
   let datasetSrcs = $state<Record<string, string>>({});
+  let datasetRatings = $state<Record<string, string>>({});
   let destroyed = false;
   $effect(() => {
     if (!browser) return;
@@ -271,11 +273,12 @@
       datasetObjectUrls.set(air, '');
       backend()
         .datasetBlob(air, workflowId)
-        .then((blob) => {
+        .then(({ blob, nsfwLevel }) => {
           if (destroyed) return;
           const url = URL.createObjectURL(blob);
           datasetObjectUrls.set(air, url);
           datasetSrcs = { ...datasetSrcs, [air]: url };
+          if (nsfwLevel) datasetRatings = { ...datasetRatings, [air]: nsfwLevel };
         })
         .catch(() => {
           datasetObjectUrls.delete(air);
@@ -299,7 +302,7 @@
   }
   async function fetchDatasetBlob(air: string): Promise<Blob> {
     const direct = directDatasetUrl(air);
-    if (!direct) return backend().datasetBlob(air, d.workflowId);
+    if (!direct) return (await backend().datasetBlob(air, d.workflowId)).blob;
     const res = await fetch(direct);
     if (!res.ok) throw new Error(String(res.status));
     return res.blob();
@@ -1439,15 +1442,18 @@
         {#each d.dataset as item, i (item.air + i)}
           {@const src = datasetSrc(item.air)}
           <figure class="m-0 flex flex-col gap-1">
-            {#if src}
-              <img
-                src={src}
-                alt={item.caption || `dataset image ${i + 1}`}
-                class="aspect-square w-full rounded bg-dark-7 object-cover ring-1 ring-inset ring-dark-4/60"
-              />
-            {:else}
-              <div class="aspect-square w-full rounded bg-dark-7 ring-1 ring-inset ring-dark-4/60"></div>
-            {/if}
+            <div class="relative">
+              {#if src}
+                <img
+                  src={src}
+                  alt={item.caption || `dataset image ${i + 1}`}
+                  class="aspect-square w-full rounded bg-dark-7 object-cover ring-1 ring-inset ring-dark-4/60"
+                />
+              {:else}
+                <div class="aspect-square w-full rounded bg-dark-7 ring-1 ring-inset ring-dark-4/60"></div>
+              {/if}
+              <RatingBadge level={datasetRatings[item.air]} class="absolute bottom-1.5 left-1.5" />
+            </div>
             {#if item.caption}
               <figcaption
                 class="line-clamp-2 font-mono text-xs leading-snug text-dark-2"

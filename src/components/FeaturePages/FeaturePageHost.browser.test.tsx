@@ -17,6 +17,7 @@ const deps = {
   openLogin: vi.fn(),
   maskProfanity: false,
   discussion: false,
+  viewerAuthor: null,
   vote: vi.fn(),
   mine: vi.fn(),
   comment: vi.fn(),

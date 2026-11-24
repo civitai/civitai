@@ -41,6 +41,12 @@ export type TrainingRunPayload = Omit<TrainingRunInput, 'continueFrom' | 'curren
   currencies: string[];
 };
 
+/** A dataset blob's bytes and the scan rating the orchestrator serves with them (`X-NSFW-Level`). */
+export interface DatasetBlob {
+  blob: Blob;
+  nsfwLevel?: string;
+}
+
 export interface StudioBackend {
   listTrainings(): Promise<TrainingRow[]>;
   getRunDetail(workflowId: string): Promise<TrainingDetail>;
@@ -51,7 +57,7 @@ export interface StudioBackend {
   /** One dataset image/video/audio blob. Blobs need auth (shell: the session-gated proxy; element: a
    *  Bearer fetch against the orchestrator), so views turn these into object URLs — a bare URL for a
    *  dataset blob is never browser-fetchable in the element. */
-  datasetBlob(air: string, workflowId: string): Promise<Blob>;
+  datasetBlob(air: string, workflowId: string): Promise<DatasetBlob>;
   listGenerations(media: Media): Promise<GenerationItem[]>;
   /** Presigned blob upload target. The upload PUT/POST itself goes straight to the orchestrator
    *  ($lib/upload) — this only mints the URL. */

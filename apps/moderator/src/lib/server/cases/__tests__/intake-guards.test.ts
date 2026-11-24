@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createIntakeRateLimit, IntakeRateLimitedError } from '../intake-rate-limit';
-import { renderNotice } from '../notice-render';
+import { noticeTime, renderNotice } from '../notice-render';
 import { TurnstileRefusedError, verifyTurnstile } from '../turnstile';
 
 describe('createIntakeRateLimit', () => {
@@ -19,6 +19,13 @@ describe('createIntakeRateLimit', () => {
 describe('renderNotice', () => {
   it('fills known slots and leaves a slot with no value as written', () => {
     expect(renderNotice('{caseRef} / {items}', { caseRef: 'TD-1' })).toBe('TD-1 / {items}');
+  });
+});
+
+describe('noticeTime', () => {
+  it('writes the date US style, in UTC', () => {
+    expect(noticeTime(new Date('2026-11-24T15:23:31Z'))).toBe('November 24, 2026, 3:23 PM UTC');
+    expect(noticeTime(new Date('2026-12-01T00:05:00Z'))).toBe('December 1, 2026, 12:05 AM UTC');
   });
 });
 

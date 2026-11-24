@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as BuzzService from '~/server/services/buzz.service';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as PostService from '~/server/services/post.service';
 
@@ -31,8 +30,8 @@ vi.mock('~/server/prom/client', async (importOriginal) => ({
   rewardGivenCounter: { inc: vi.fn() },
   clickhouseFailSoftCounter: { inc: vi.fn() },
 }));
-vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof BuzzService>()),
+vi.mock('~/server/services/buzz-payout', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   createBuzzTransactionMany: (...args: unknown[]) => h.createBuzzTransactionMany(...args),
   getTransactionByExternalId: vi.fn(async () => null),
   getMultipliersForUser: vi.fn(async () => ({ rewardsMultiplier: 1 })),

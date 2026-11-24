@@ -3400,6 +3400,7 @@ const REDIS_KEYS_UNPREFIXED = {
     PAID_ACCESS: 'packed:caches:paid-access',
     PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
     FEATURE_PAGES_SERVICE_TOKEN: 'packed:caches:feature-pages-service-token',
+    FEATURE_PAGES_VIEWER_HANDLE: 'packed:caches:feature-pages-viewer-handle',
     // `<prefix>:row:<surface>:<entityType>:<entityId>` (a cached space row) and
     // `<prefix>:written:<surface>:<entityType>:<entityId>` (when that row was last written) —
     // the display read of a placement space. See placement-space.service.ts.
@@ -3449,6 +3450,8 @@ const REDIS_KEYS_UNPREFIXED = {
     TENSOR_METADATA_SUMMARY: 'packed:caches:tensor-metadata-summary',
     IMAGE_RESOURCES: 'packed:caches:image-resources',
     USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
+    // Legacy annual-sub-payment and reward rows, per user and query window.
+    LEGACY_PREPAID_DELIVERIES: 'packed:caches:legacy-prepaid-deliveries',
     MOD_RULES: {
       MODELS: 'packed:caches:mod-rules:models:v2',
       IMAGES: 'packed:caches:mod-rules:images',

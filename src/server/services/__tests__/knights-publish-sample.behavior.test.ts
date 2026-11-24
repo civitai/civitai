@@ -641,6 +641,24 @@ describe('offerImagesToKnights', () => {
     ]);
   });
 
+  it("queues the owner's rating of an image on a shown post, and refuses it on a Private one", async () => {
+    await post(1, minutesAgo(300));
+    await post(2, minutesAgo(300));
+    await images(1, [11]);
+    await images(2, [21]);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 2`);
+    await ownerRating(11);
+    await ownerRating(21);
+
+    const result = await offer({ postIds: [1, 2] }, { sfwRate: 0, nsfwRate: 0 });
+
+    // The owner-rating read has no post-availability rule: requirePublished's private-post refusal keeps 21 out.
+    expect(result).toEqual({ ownerRatings: 1, enqueued: 0, capped: false });
+    expect(await queued()).toEqual([
+      { imageId: 11, source: 'owner-rating', priority: 1, status: 'Open' },
+    ]);
+  });
+
   it('queues no owner rating for an image Knights may not show: blocked, a minor, or not yet scanned', async () => {
     await post(1, minutesAgo(300));
     await images(1, [11, 12, 13]);

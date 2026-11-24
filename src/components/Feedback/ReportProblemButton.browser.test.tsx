@@ -2,7 +2,8 @@ import { Notifications, notifications } from '@mantine/notifications';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
-import { showErrorNotification } from '~/utils/notifications';
+import { ReportProblemButton } from '~/components/Feedback/ReportProblemButton';
+import { registerReportProblemButton, showErrorNotification } from '~/utils/notifications';
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
@@ -50,6 +51,9 @@ function actionIn(text: string) {
 }
 type Opened = { props: { area: string; context: Record<string, unknown> } };
 const opened = () => mocks.trigger.mock.calls.at(-1)?.[0] as Opened;
+
+// The app shell registers it in `_app`.
+registerReportProblemButton(ReportProblemButton);
 
 describe('showErrorNotification — Report this', () => {
   beforeEach(() => {

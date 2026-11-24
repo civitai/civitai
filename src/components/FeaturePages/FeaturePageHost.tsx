@@ -23,10 +23,12 @@ export function FeaturePageHost({
   src,
   origin,
   feature,
+  viewerAuthor,
 }: {
   src: string;
   origin: string;
   feature: string;
+  viewerAuthor: string | null;
 }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -49,6 +51,7 @@ export function FeaturePageHost({
       signedIn,
       maskProfanity,
       discussion,
+      viewerAuthor,
       openLogin: () => openLoginHere('perform-action'),
       vote: (input) => vote(input as FeaturePageVoteInput),
       comment: (input) => comment(input as FeaturePageCommentInput),
@@ -68,6 +71,7 @@ export function FeaturePageHost({
       signedIn,
       maskProfanity,
       discussion,
+      viewerAuthor,
       router,
       utils,
       vote,

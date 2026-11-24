@@ -50,9 +50,6 @@ export async function updateImageNsfwLevel({
     })
     .where('id', '=', id)
     .execute();
-  await invalidateThumbnails(id, [image.parentId]);
-  await bustProfilePictures({ imageIds: [id] });
-
   if (status) {
     await dbWrite
       .updateTable('ImageRatingRequest')
@@ -61,6 +58,8 @@ export async function updateImageNsfwLevel({
       .where('status', '=', 'Pending')
       .execute();
   }
+  await invalidateThumbnails(id, [image.parentId]);
+  await bustProfilePictures({ imageIds: [id] });
 
   // Thumbnails are never posted, so a non-null postId means this image can't be a Model3D thumbnail.
   if (image.postId == null) {

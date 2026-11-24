@@ -5,7 +5,8 @@ and, in shadow only, of the tRPC procedures `image.getInfinite` (the flat image 
 behind `FEED_GO_SERVE_INFINITE`, default off) and `model.getAll` (the model browse feed; also servable
 behind `FEED_GO_SERVE_MODEL_GETALL`, default off) and the public
 REST endpoints `GET /api/v1/images` and `GET /api/v1/models` / `/api/v1/models/{id}` (the model ones
-also servable behind `FEED_GO_SERVE_V1_MODELS`, default off), built to measure CPU per
+also servable behind `FEED_GO_SERVE_V1_MODELS`, the images one behind `FEED_GO_SERVE_V1_IMAGES`, both
+default off), built to measure CPU per
 request against the Node path on the same traffic. It answers the request shapes it has ported and
 proxies everything else to the Node app unchanged. **Read
 [DESIGN.md](DESIGN.md) first** — it covers scope, auth, wire format, routing, shadow comparison, the
@@ -22,10 +23,11 @@ scripts touch it; its CI is `.github/workflows/feed-go.yml`.
 |                                   | `GET /api/trpc/model.getAll`                           | computed only with `FEED_GO_SERVE_MODEL_GETALL=true` (default off: proxied to the Node app as the `model-getall-off` fallback; DESIGN.md §15.8) |
 |                                   | `GET /api/trpc/image.getInfinite`                      | computed only with `FEED_GO_SERVE_INFINITE=true` (default off: proxied to the Node app as the `infinite-off` fallback; DESIGN.md §14.8)         |
 |                                   | `GET /api/v1/models`, `GET /api/v1/models/{id}`        | mounted only with `FEED_GO_V1_FALLBACK_URL`; computed only with `FEED_GO_SERVE_V1_MODELS=true` (default off: proxied as `v1-models-off`; §16.8) |
+|                                   | `GET /api/v1/images`                                   | mounted only with `FEED_GO_V1_IMAGES_FALLBACK_URL`, its one fallback upstream; computed only with `FEED_GO_SERVE_V1_IMAGES=true` (default off: proxied as `v1-images-off`; §13.8) |
 | `FEED_GO_INTERNAL_ADDR` (`:9090`) | `GET /healthz`                                         | liveness / readiness                                                                                                                            |
 |                                   | `GET /metrics`                                         | Prometheus (`feed_go_*`, Go runtime, process CPU)                                                                                               |
 |                                   | `POST /internal/shadow/image.getImagesAsPostsInfinite` | shadow comparison (DESIGN.md §7)                                                                                                                |
-|                                   | `POST /internal/shadow/api/v1/images`                  | shadow comparison of the REST endpoint (DESIGN.md §13); never served publicly                                                                   |
+|                                   | `POST /internal/shadow/api/v1/images`                  | shadow comparison of the REST images endpoint, body and response headers (DESIGN.md §13)                                                        |
 |                                   | `POST /internal/shadow/image.getInfinite`              | shadow comparison of `image.getInfinite` (DESIGN.md §14)                                                                                        |
 |                                   | `POST /internal/shadow/model.getAll`                   | shadow comparison of `model.getAll` (DESIGN.md §15)                                                                                             |
 |                                   | `POST /internal/shadow/api/v1/models`, `…/models/id`   | shadow comparison of the REST model endpoints, body and response headers (DESIGN.md §16)                                                        |
@@ -119,7 +121,13 @@ are the `cache` labels of `feed_go_cache_miss_total` (`user-cosmetics`, `image-f
 falls back (`index-feed-unconfigured`). The public `/api/v1/models` routes hand their fallbacks to
 `FEED_GO_V1_FALLBACK_URL`, the Node app that serves `/api/v1` (a different upstream from
 `FEED_GO_FALLBACK_URL`'s; deployment config, not set here); `FEED_GO_SERVE_V1_MODELS=true` without it
-fails startup. The kill is the switch: off, every request there is proxied (DESIGN.md §16.8). The
+fails startup. The kill is the switch: off, every request there is proxied (DESIGN.md §16.8). Both
+routes hand every API credential to the Node app (`bearer-token`); `GET /api/v1/models/{id}` stops
+doing so with `FEED_GO_V1_BEARER_AUTH` on (default off; needs `FEED_GO_BEARER_AUTH`): a credential
+Node answers with the body any caller gets is computed here, and every other one falls back with
+its own reason (DESIGN.md §16.10). The list keeps every API credential a fallback. Credentialed
+requests reach this service only once the deployment's routing sends them here: the bypass that
+sends them to the Node app is narrowed to the list path (not removed) when `[id]` serves them. The
 REST endpoint's shadow also needs
 `NEXT_PUBLIC_IMAGE_LOCATION` (the same edge URL prefix the Node app publishes); it builds
 `metadata.nextPage` as the production Node app does (`https://<host>`).

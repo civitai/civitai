@@ -35,6 +35,7 @@ import {
   captureFeedGoShadowRest,
   finishFeedGoShadow,
 } from '~/server/trpc/feed-go-shadow';
+import { blockCredentialDescriptor } from '~/server/trpc/feed-go-shadow-credential';
 import { publishTrainingDataRulesLive } from '~/server/services/feed-go-training-data-rules';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
@@ -225,9 +226,12 @@ const baseHandler = PublicEndpoint(async function handler(
 
   // feed-go shadow (flag `feed-go-shadow-v1-models`, default off): a sampled 200 body is POSTed to
   // feed-go's internal compare endpoint after the handler, never awaited. Never throws. A request
-  // with an API credential (a block token included) is never mirrored. See
-  // `~/server/trpc/feed-go-shadow`.
-  const shadow = beginFeedGoShadowV1Models(req, 'id');
+  // with an API credential (a block token included) is mirrored only with
+  // FEED_GO_SHADOW_V1_MODELS_CREDENTIALS on and only for an Authorization credential, described
+  // rather than forwarded. See `~/server/trpc/feed-go-shadow`.
+  const shadow = beginFeedGoShadowV1Models(req, 'id', {
+    credential: () => blockCredentialDescriptor(req),
+  });
   publishTrainingDataRulesLive();
   try {
     // Cache only when enabled (IS_DATAPACKET) AND this is the pure-public path.

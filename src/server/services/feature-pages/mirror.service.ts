@@ -54,9 +54,11 @@ import {
 } from '~/server/services/feature-pages/comment-state';
 import { fpHtmlToText } from '~/server/services/feature-pages/comment-text';
 import {
+  commentBySourceSchema,
   commentPostReplySchema,
   commentsPageSchema,
   PLATFORM_AUTHOR_ERASE_PATH,
+  PLATFORM_COMMENT_BY_SOURCE_PATH,
   PLATFORM_COMMENT_PATH,
   PLATFORM_COMMENTS_PAGE_LIMIT,
   PLATFORM_COMMENTS_READ_PATH,
@@ -198,6 +200,37 @@ async function send(path: string, body: Record<string, unknown>): Promise<StepOu
     const details = (reply.body as { details?: { digest?: unknown } } | null)?.details;
     return { kind: 'stale', digest: typeof details?.digest === 'string' ? details.digest : null };
   }
+  return { kind: 'retry', status: reply.status };
+}
+
+type HeldOutcome =
+  | { kind: 'held'; urn: string; digest: string; state: string }
+  | { kind: 'not-held' }
+  | { kind: 'retry'; status: number | 'unreachable' };
+
+/** What the platform holds for a comment, by its sourceId: never its text. */
+async function readBySource(sourceId: number): Promise<HeldOutcome> {
+  let reply: SignerReply;
+  try {
+    reply = await callSigner(PLATFORM_COMMENT_BY_SOURCE_PATH, {
+      method: 'GET',
+      query: new URLSearchParams({ sourceId: String(sourceId) }),
+    });
+  } catch (e) {
+    if (e instanceof SignerUnavailableError) return { kind: 'retry', status: 'unreachable' };
+    throw e;
+  }
+  if (reply.status === 404 && signerErrorCode(reply) === PlatformRefusal.NotHeld)
+    return { kind: 'not-held' };
+  if (reply.status >= 200 && reply.status < 300) {
+    const parsed = commentBySourceSchema.safeParse(reply.body);
+    return parsed.success ? { kind: 'held', ...parsed.data } : { kind: 'retry', status: 200 };
+  }
+  if (isRouteMissing(reply))
+    log('error', 'platform route missing', {
+      path: PLATFORM_COMMENT_BY_SOURCE_PATH,
+      status: reply.status,
+    });
   return { kind: 'retry', status: reply.status };
 }
 
@@ -563,8 +596,27 @@ async function pushRow(e: Evaluated): Promise<PushResult> {
         return 'pushed';
       }
     } else {
-      // Hidden with no urn: nothing to aim a verdict at until the platform resolves it by sourceId.
-      return wait(UNRESOLVED_WAIT_MINUTES, 'lost first post: no urn', true);
+      const held = await readBySource(row.commentId);
+      if (held.kind === 'retry') return fail(held.status, 'by-source');
+      if (held.kind === 'held') {
+        if (held.state === 'erased') return erased();
+        urn = held.urn;
+        platformDigest = held.digest;
+        steps.push('by-source');
+      } else {
+        // Not held yet: hidden ahead of its post, so a post that lands later is withheld.
+        const r = await send(PLATFORM_MOD_VERDICT_PATH, {
+          target: { sourceId: row.commentId },
+          verdict: 'hidden',
+          at: new Date().toISOString(),
+        });
+        if (r.kind === 'removed') return removed('mod-hidden-ahead');
+        if (r.kind === 'erased') return erased();
+        if (r.kind !== 'ok') return failed(r, 'mod-hidden-ahead');
+        await done();
+        log('info', 'pushed', { commentId: row.commentId, state, steps: ['mod-hidden-ahead'] });
+        return 'pushed';
+      }
     }
   }
 
