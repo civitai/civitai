@@ -53,6 +53,7 @@ const {
   getModeratorMedia,
   readRetractedMedia,
   listWithheldIds,
+  moderatorMediaUnavailable,
   recordRetractedView,
   restrictedImageAccess,
 } = await import('../retracted-media');
@@ -921,5 +922,27 @@ describe('the moderator-view rule, one fact at a time (civitai/civitai#10377)', 
     } finally {
       dbHandle.current = real;
     }
+  });
+});
+
+describe('the storage probe\'s "unavailable" answer', () => {
+  // It must not say anything about the owner's account: an ordinary live image reads the same
+  // whether or not its owner is named on a CSAM report.
+  it('is the same for a live image of a held owner and of any other owner', async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, url, "userId", ingestion) VALUES
+        (990002001, 'probe-held-owner', 990012001, 'Scanned'),
+        (990002002, 'probe-clear-owner', 990012002, 'Scanned');
+      INSERT INTO "CsamReport" ("userId", details, images) VALUES (990012001, '{}', '[]');
+    `);
+    expect([
+      await moderatorMediaUnavailable(990002001),
+      await moderatorMediaUnavailable(990002002),
+    ]).toEqual([true, true]);
+  });
+
+  it('is false for a file storage serves, and true for an id with no row', async () => {
+    expect(await moderatorMediaUnavailable(1)).toBe(false);
+    expect(await moderatorMediaUnavailable(990002999)).toBe(true);
   });
 });

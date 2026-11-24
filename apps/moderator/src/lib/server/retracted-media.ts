@@ -227,10 +227,11 @@ export async function getModeratorMedia(
   return viewable.get(imageId) ?? null;
 }
 
-/** Whether `/api/retracted-media` would serve this image to no moderator at all, grant or not: gone,
- *  unprocessed, or a file the CDN still serves. Never true for an image only kept from some. */
+/** Whether `/api/retracted-media` has no file to serve for this image by its own facts: gone,
+ *  unprocessed, or a file the CDN still serves. Read without the grant's owner-level legs, so the
+ *  answer is the same whatever the owner's account state. */
 export async function moderatorMediaUnavailable(imageId: number): Promise<boolean> {
-  const { eligible } = await readRetractedMedia([imageId], { csamReview: true, orHeld: true });
+  const { eligible } = await readRetractedMedia([imageId], { csamReview: false, orHeld: true });
   return !eligible.has(imageId);
 }
 
