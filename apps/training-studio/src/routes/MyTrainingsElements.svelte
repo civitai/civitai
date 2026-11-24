@@ -149,26 +149,30 @@
 
 {#snippet cardCover(r: TrainingRow)}
   {#if r.sampleUrls.length > 0 && r.media !== 'audio'}
-    {#if r.isVideo}
-      <video
-        src={r.sampleUrls[0]}
-        muted
-        loop
-        playsinline
-        preload="metadata"
-        aria-hidden="true"
-        class="size-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-        onmouseenter={playOnHover}
-        onmouseleave={resetOnLeave}
-      ></video>
-    {:else}
-      <img
-        src={r.sampleUrls[0]}
-        alt=""
-        loading="lazy"
-        class="size-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-      />
-    {/if}
+    {@const shown = r.sampleUrls.slice(0, 4)}
+    <!-- One sample fills the cover; more show as a 2×2 grid of the run's samples. -->
+    <div class="grid size-full gap-0.5 bg-dark-8 {shown.length > 1 ? 'grid-cols-2 grid-rows-2' : ''}">
+      {#each shown as url, i (i)}
+        {#if r.isVideo}
+          <video
+            src={url}
+            muted
+            loop
+            playsinline
+            preload="metadata"
+            aria-hidden="true"
+            class="size-full min-h-0 object-cover"
+            onmouseenter={playOnHover}
+            onmouseleave={resetOnLeave}
+          ></video>
+        {:else}
+          <img src={url} alt="" loading="lazy" class="size-full min-h-0 object-cover" />
+        {/if}
+      {/each}
+      {#each Array(shown.length > 1 ? 4 - shown.length : 0) as _, i (i)}
+        <div class="bg-dark-7"></div>
+      {/each}
+    </div>
   {:else}
     <div class="grid size-full place-items-center" style={`background:${grad(placeholderIndex(r))}`}>
       {#if r.state === 'failed'}
