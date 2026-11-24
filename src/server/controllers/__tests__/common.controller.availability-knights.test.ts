@@ -25,6 +25,12 @@ vi.mock('~/server/db/kyselyDb', async () => {
   });
   return { kyselyWrite: kysely, kyselyRead: kysely };
 });
+// A model leaving Private applies any held scan verdict in the same transaction; none is held here.
+vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  applyHeldVerdictLeavingPrivate: vi.fn(async () => false),
+  finishHeldVerdictApply: vi.fn(async () => undefined),
+}));
 
 // The stored availability: `stored` until the availability write runs, then the value written, as the primary returns it.
 let stored: Availability;
@@ -37,6 +43,15 @@ const setPost = (availability: Availability) => {
   });
 };
 const imageReads = () => statements.filter((s) => s.sql.includes('from "Image"'));
+const postsOfVersionsReads = () =>
+  statements.filter((s) => s.sql.includes('from "Post"') && s.sql.includes('"modelVersionId" in'));
+const setModel = (entityType: 'Model' | 'ModelVersion', availability: Availability) => {
+  written = availability;
+  return updateEntityAvailabilityHandler({
+    ctx: {} as Context,
+    input: { entityType, entityId: 3, availability },
+  });
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -47,9 +62,14 @@ beforeEach(() => {
   );
   dbMock.dbRead.image.findMany.mockResolvedValue([{ id: 50 }]);
   stored = Availability.Private;
-  dbMock.dbWrite.post.findUnique.mockImplementation((async () => ({
+  const storedNow = async () => ({
     availability: dbMock.dbWrite.$executeRawUnsafe.mock.calls.length === 0 ? stored : written,
-  })) as never);
+  });
+  dbMock.dbWrite.post.findUnique.mockImplementation(storedNow as never);
+  dbMock.dbWrite.model.findUnique.mockImplementation(storedNow as never);
+  dbMock.dbWrite.modelVersion.findUnique.mockImplementation(storedNow as never);
+  dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([{ id: 7 }, { id: 8 }] as never);
+  dbMock.dbRead.modelVersion.findUniqueOrThrow.mockResolvedValue({ id: 3, modelId: 1 } as never);
 });
 
 describe('updateEntityAvailabilityHandler on a Post', () => {
@@ -87,4 +107,39 @@ describe('updateEntityAvailabilityHandler on a Post', () => {
     );
     expect(imageReads()).toEqual([]);
   });
+});
+
+describe('updateEntityAvailabilityHandler on a Model or ModelVersion', () => {
+  it.each([
+    ['Model', [7, 8]],
+    ['ModelVersion', [3]],
+  ] as const)(
+    "offers the images on a %s's posts to Knights after it leaves Private",
+    async (entityType, versionIds) => {
+      await setModel(entityType, Availability.Public);
+
+      await vi.waitFor(() => expect(postsOfVersionsReads().length).toBeGreaterThan(0));
+      for (const read of postsOfVersionsReads()) {
+        expect(read.values.filter((v) => typeof v === 'number')).toEqual(versionIds);
+        expect(read.writesBefore).toBe(1);
+      }
+    }
+  );
+
+  it.each([
+    ['Model', Availability.Public, Availability.Unsearchable],
+    ['ModelVersion', Availability.Public, Availability.Public],
+    ['Model', Availability.Private, Availability.Private],
+  ] as const)(
+    'offers nothing when a %s does not leave Private: %s to %s',
+    async (entityType, before, after) => {
+      stored = before;
+      await setModel(entityType, after);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalled();
+      expect(postsOfVersionsReads()).toEqual([]);
+      expect(imageReads()).toEqual([]);
+    }
+  );
 });

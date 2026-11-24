@@ -55,23 +55,19 @@ export const updateEntityAvailabilityHandler = async ({
   input: AvailabilityInput;
 }) => {
   try {
-    // Only a post leaving Private is offered to the Knights, as moveImagesToPost does. Read before the
-    // write, which overwrites the old availability; from the primary so a lagging replica cannot hide Private.
-    let postLeavesPrivate = false;
-    if (entityType === 'Post' && availability !== Availability.Private) {
-      // primary: the old availability, read before this request overwrites it
-      const prior = await dbWrite.post.findUnique({
-        where: { id: entityId },
-        select: { availability: true },
-      });
-      postLeavesPrivate = prior?.availability === Availability.Private;
-    }
+    // A post, model or version leaving Private is offered to the Knights, as moveImagesToPost and publishPrivateModel
+    // do. Read before the write, which overwrites the old availability; from the primary so a lagging replica cannot
+    // hide Private.
+    const leavesPrivate =
+      availability !== Availability.Private &&
+      (await priorAvailability(entityType, entityId)) === Availability.Private;
 
     await entityAvailabilityUpdate({
       availability,
       entityIds: [entityId],
       entityType,
     });
+    if (leavesPrivate) await offerLeftPrivateToKnights(entityType, entityId);
 
     // Update search index:
     switch (entityType) {
@@ -121,7 +117,6 @@ export const updateEntityAvailabilityHandler = async ({
         );
         break;
       case 'Post':
-        if (postLeavesPrivate) void queueLeftPrivateForKnights({ postIds: [entityId] });
         const images = await dbRead.image.findMany({
           where: { postId: entityId },
           select: { id: true },
@@ -164,3 +159,33 @@ export const updateEntityAvailabilityHandler = async ({
     throw throwDbError(error);
   }
 };
+
+/** The stored availability, from the primary, of an entity whose leaving Private offers images to the Knights. */
+async function priorAvailability(
+  entityType: SupportedAvailabilityResources,
+  id: number
+): Promise<Availability | undefined> {
+  const select = { availability: true } as const;
+  if (entityType === 'Post')
+    return (await dbWrite.post.findUnique({ where: { id }, select }))?.availability;
+  if (entityType === 'Model')
+    return (await dbWrite.model.findUnique({ where: { id }, select }))?.availability;
+  if (entityType === 'ModelVersion')
+    return (await dbWrite.modelVersion.findUnique({ where: { id }, select }))?.availability;
+  return undefined;
+}
+
+/** Never waits on the Knights: the offer runs after the response, and logs its own failures. */
+async function offerLeftPrivateToKnights(entityType: SupportedAvailabilityResources, id: number) {
+  if (entityType === 'Post') return void queueLeftPrivateForKnights({ postIds: [id] });
+  if (entityType === 'ModelVersion')
+    return void queueLeftPrivateForKnights({ modelVersionIds: [id] });
+  if (entityType !== 'Model') return;
+  // The model's trigger carries a flip to Public onto its versions; the sampler still checks each version's own state.
+  const versions = await dbWrite.modelVersion.findMany({
+    where: { modelId: id },
+    select: { id: true },
+  });
+  if (versions.length > 0)
+    void queueLeftPrivateForKnights({ modelVersionIds: versions.map((v) => v.id) });
+}
