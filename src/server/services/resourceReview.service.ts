@@ -359,14 +359,13 @@ async function syncLikedModel({
   // A write that leaves the like as it was changes nothing, so a model the user took out of
   // the collection by hand stays out when they edit the review.
   if (isLiked === wasLiked) return;
-  if (!isLiked) {
-    // primary: the review written a moment ago must be visible.
-    const stillLiked = await dbWrite.resourceReview.findFirst({
-      where: { userId, modelId, recommended: true, exclude: false, tosViolation: false },
-      select: { id: true },
-    });
-    if (stillLiked) return;
-  }
+  // primary: the review written a moment ago must be visible.
+  const liked = await dbWrite.resourceReview.findFirst({
+    where: { userId, modelId, recommended: true, exclude: false, tosViolation: false },
+    select: { id: true },
+  });
+  // An excluded or TOS-flagged review is no like; another liked review keeps the model.
+  if (isLiked !== !!liked) return;
   // The review is saved; a refused or failed bookmark must not turn that into an error.
   await toggleBookmarked({
     type: 'Model',

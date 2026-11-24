@@ -85,7 +85,7 @@ beforeEach(async () => {
       (7, ${NO_COLLECTION}, ${LIVE}, true, false, false, '2026-09-06'),   -- missing, no collection yet
       (8, ${NO_COLLECTION}, ${OTHER}, false, false, false, '2026-09-07'), -- a thumbs-down
       (9, ${NO_COLLECTION}, ${OTHER}, true, true, false, '2026-09-08'),   -- excluded
-      (10, ${NO_COLLECTION}, ${LIVE}, true, false, true, '2026-09-09'),   -- TOS violation
+      (10, ${NO_COLLECTION}, ${OTHER}, true, false, true, '2026-09-09'),  -- TOS violation
       (11, ${OTHER_USER}, ${OTHER}, true, false, false, '2026-06-01'),    -- before the cutoff
       (12, ${OTHER_USER}, ${PRIVATE}, true, false, false, '2026-09-10'),
       (13, ${OTHER_USER}, ${TAKEN_DOWN}, true, false, false, '2026-09-11'),

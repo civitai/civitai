@@ -277,6 +277,17 @@ describe('Liked Models from a review thumbs-up', () => {
     expect(await likedModels()).toEqual([]);
   });
 
+  it('an excluded review is no like, whichever way it turns', async () => {
+    const { id } = await thumbs(false);
+    await harness.pg.exec(`UPDATE "ResourceReview" SET exclude = true WHERE id = ${id}`);
+    await updateResourceReview({ id, recommended: true, rating: 5, userId: LIKER });
+    expect(await likedModels()).toEqual([]);
+
+    const other = await thumbs(true, OTHER_VERSION);
+    await updateResourceReview({ id: other.id, recommended: false, rating: 1, userId: LIKER });
+    expect(await likedModels()).toEqual([]);
+  });
+
   it('deleting one of two liked versions keeps the model', async () => {
     const { id } = await thumbs(true);
     await thumbs(true, OTHER_VERSION);
