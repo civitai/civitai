@@ -17,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
 )
 
@@ -372,7 +373,7 @@ func TestServeParityNeverReplaysAFallback(t *testing.T) {
 func TestServeParityDevalueAnswerComparedAsSuperjson(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	fn := func(context.Context, *http.Request) (*computed, error) {
-		return &computed{payload: []byte(`"[devalue]"`), devalue: true, value: map[string]any{"items": []any{}}}, nil
+		return &computed{payload: []byte(`"[devalue]"`), devalue: true, value: superjson.Object{{Key: "items", Val: []any{}}}}, nil
 	}
 	s, _ := paritySrv(reg, fn, nodeAnswering(servedPayload))
 	w := httptest.NewRecorder()

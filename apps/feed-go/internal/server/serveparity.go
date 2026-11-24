@@ -53,7 +53,7 @@ const (
 	ParityUpstreamError     = "upstream_error"     // the Node app could not be reached, or broke the connection
 	ParityUpstreamStatus    = "upstream_status"    // the Node app answered a status other than 200
 	ParityTimeout           = "timeout"            // the replay ran past its deadline
-	ParityBadBody           = "bad_body"           // Node's body was not a tRPC result (or over maxParityBody)
+	ParityBadBody           = "bad_body"           // Node's body was not a tRPC result (or over maxParityBody), or a devalue answer would not re-encode as superjson
 )
 
 // ServeParityOutcomes is every outcome, seeded at 0 per ParityEndpoints.
