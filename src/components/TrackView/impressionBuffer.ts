@@ -158,7 +158,7 @@ export function recordImpression(
   else scheduleTimer();
 }
 
-/** Adds an item to its feed load's seen set. Flushed with impressions, one row per load. */
+/** Queues an item in its feed load's seen set, flushed with impressions. */
 export function recordFeedSeen(context: FeedEventContext, entityId: number): void {
   if (typeof window === 'undefined') return;
   let sent = sentSeen.get(context);
