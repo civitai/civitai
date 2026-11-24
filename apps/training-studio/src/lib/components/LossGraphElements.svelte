@@ -52,9 +52,8 @@
   // a trace tailed live is re-read once its epoch is done.
   const tailedLive = new Set<string>();
 
-  // Read all at once, a long run's later traces sat in the browser's connection queue past
-  // FIRST_LINE_TIMEOUT_MS and were marked unavailable unread. Kept under the per-host connection
-  // limit.
+  // Caps concurrent catch-up reads below the per-host connection limit; queued reads would
+  // otherwise burn FIRST_LINE_TIMEOUT_MS waiting and be marked unavailable unread.
   const CATCH_UP_READS = 4;
   let freeReads = CATCH_UP_READS;
   const waitingReads: (() => void)[] = [];
