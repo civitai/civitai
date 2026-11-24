@@ -2505,7 +2505,7 @@
   "src/server/services/__tests__/restore-user-reserved-name.test.ts": 4,
   "src/server/services/__tests__/restore-user-restrictions.test.ts": 4,
   "src/server/services/__tests__/restricted-images.pglite.test.ts": 2,
-  "src/server/services/__tests__/retracted-media.service.test.ts": 2,
+  "src/server/services/__tests__/retracted-media.service.test.ts": 1,
   "src/server/services/__tests__/scam-auto-mute.service.test.ts": 5,
   "src/server/services/__tests__/scam-case-ledger.test.ts": 1,
   "src/server/services/__tests__/scan-audit-benign.test.ts": 5,
