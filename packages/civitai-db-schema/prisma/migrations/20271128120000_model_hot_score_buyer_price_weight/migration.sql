@@ -20,7 +20,7 @@
 --
 -- 🔴 APPLY WITH psql -X -v ON_ERROR_STOP=1 AND WITHOUT --single-transaction: section 0 must stop the
 -- file on refusal, and section 5 is a CALL whose procedure COMMITs per batch. Deploy the app first:
--- applied before it, only older purchases are weighed, by the gate's price, until it ships.
+-- applied before it, every purchase is weighed by the gate's current price until it ships.
 --
 -- The formula lives only in these functions; the app change is only the recorded amount and currency.
 
