@@ -1,5 +1,5 @@
 import { Upload } from '@aws-sdk/lib-storage';
-import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
+import { datasetRating, type RatedEntry } from '~/server/services/training-data-rating';
 import type { Prisma } from '@prisma/client';
 import type { Workflow } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
@@ -234,15 +234,12 @@ async function uploadDatasetZip({
   const pad = Math.max(2, String(items.length).length);
   let included = 0;
   let captions = 0;
-  let nsfwLevel = 0;
-  let unrated = 0;
+  const rated: RatedEntry[] = [];
   try {
     for (const [index, item] of items.entries()) {
       const blob = await fetchBlob({ baseUrl, token, air: item.air, workflowId });
       if (!blob) continue;
-      const level = blob.nsfwLevel ? orchestratorNsfwLevelMap[blob.nsfwLevel] : undefined;
-      if (level) nsfwLevel |= level;
-      else unrated += 1;
+      rated.push({ mediaType: 'image', nsfwLevel: blob.nsfwLevel });
       const base = String(index + 1).padStart(pad, '0');
       await bounded.append(blob.bytes, {
         name: `${base}.${extensionFor(blob.key, blob.contentType)}`,
@@ -271,8 +268,7 @@ async function uploadDatasetZip({
     bytes: archive.pointer(),
     included,
     captions,
-    nsfwLevel: nsfwLevel || undefined,
-    fullyRated: unrated === 0,
+    ...datasetRating(rated),
     skipped: items.length - included,
     backend: useB2 ? ('backblaze' as const) : ('cloudflare' as const),
   };
