@@ -201,7 +201,7 @@ export function ProfileLayout2({
         subNav={blockedByThem ? null : <ProfileNavigation username={username} />}
         announcements={false}
       >
-        <div className="min-h-full px-3" data-profile-content>
+        <div className="isolate min-h-full px-3" data-profile-content>
           {blockedByThem && user ? (
             <BlockedByThemPanel user={user} />
           ) : isBlocked ? (

@@ -52,23 +52,40 @@ export function ProfilePageCustomization({ userId }: { userId: number }) {
       `[data-subnav]{background-color:${bar}!important;backdrop-filter:blur(8px);${inkVars(
         barInk
       )}${mantineInk}}`,
-    // As in the design: anchored at the top, behind a 50% scrim so the panels stay readable.
+    // Wider gutters so the background frames the content, and panels frost what they cover.
     background &&
-      `[data-profile-content]{background-image:linear-gradient(rgba(14,15,18,.5),rgba(14,15,18,.5)),url(${JSON.stringify(
-        getEdgeUrl(background.url, { width: 1920 })
-      )});background-size:cover;background-position:center top;background-attachment:fixed}`,
+      '[data-profile-content]{padding-left:24px;padding-right:24px}:root{--profile-card-blur:blur(14px) saturate(1.15)}',
   ].filter(Boolean);
 
-  return <style>{rules.join('')}</style>;
+  return (
+    <>
+      <style>{rules.join('')}</style>
+      {background && (
+        // Pinned to the top of the scroll area and one screen tall, so it never grows with the
+        // profile or scrolls away: the content scrolls over it, under a light scrim.
+        <div
+          aria-hidden
+          className="pointer-events-none sticky top-0 z-[-1] -mx-6 -mb-[100dvh] h-[100dvh]"
+          style={{
+            backgroundImage: `linear-gradient(rgba(14,15,18,.3),rgba(14,15,18,.3)),url(${JSON.stringify(
+              getEdgeUrl(background.url, { width: 1920 })
+            )})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center top',
+          }}
+        />
+      )}
+    </>
+  );
 }
 
 // Text that stays legible on the member's card colour: Mantine's text variables, re-pointed inside
 // the tinted areas. Panels read the same variables from ProfileSection.module.css.
 const inks = {
-  dark: { text: '#212529', dimmed: '#495057', bright: '#000000' },
-  light: { text: '#c1c2c5', dimmed: '#909296', bright: '#ffffff' },
+  dark: { text: '#212529', dimmed: '#495057', bright: '#000000', anchor: '#1864ab' },
+  light: { text: '#c1c2c5', dimmed: '#909296', bright: '#ffffff', anchor: '#74c0fc' },
 };
 const inkVars = (ink: keyof typeof inks) =>
-  `--profile-ink-text:${inks[ink].text};--profile-ink-dimmed:${inks[ink].dimmed};--profile-ink-bright:${inks[ink].bright};`;
+  `--profile-ink-text:${inks[ink].text};--profile-ink-dimmed:${inks[ink].dimmed};--profile-ink-bright:${inks[ink].bright};--profile-ink-anchor:${inks[ink].anchor};`;
 const mantineInk =
-  'color:var(--profile-ink-text);--mantine-color-text:var(--profile-ink-text);--mantine-color-dimmed:var(--profile-ink-dimmed);--mantine-color-bright:var(--profile-ink-bright);';
+  'color:var(--profile-ink-text);--mantine-color-text:var(--profile-ink-text);--mantine-color-dimmed:var(--profile-ink-dimmed);--mantine-color-bright:var(--profile-ink-bright);--mantine-color-anchor:var(--profile-ink-anchor);';

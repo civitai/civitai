@@ -139,7 +139,18 @@
       --profile-ink-bright,
       light-dark(var(--mantine-color-black), var(--mantine-color-white))
     );
+    --mantine-color-anchor: var(
+      --profile-ink-anchor,
+      light-dark(var(--mantine-color-blue-6), var(--mantine-color-blue-4))
+    );
     color: var(--mantine-color-text);
+    /* "View all" and other subtle buttons read as links on a member's card colour. */
+    & :global(.mantine-Button-root[data-variant='subtle']) {
+      /* Mantine sets the button colour inline, so only !important reaches it. */
+      color: var(--mantine-color-anchor) !important;
+    }
+    /* Frosted over a member's page background, so it shows through as texture (see ProfilePageCustomization). */
+    backdrop-filter: var(--profile-card-blur, none);
   }
 
   & .title {
