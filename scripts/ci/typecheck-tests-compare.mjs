@@ -127,7 +127,7 @@ const PLAIN_DIAG = /^(.*?)\((\d+),(\d+)\): error TS(\d+):/;
 // clean text. The leading path may not contain a colon-digit run of its own.
 const PRETTY_DIAG = /^(.*?):(\d+):(\d+) - error TS(\d+):/;
 // eslint-disable-next-line no-control-regex
-const ANSI = /\[[0-9;]*m/g;
+const ANSI = /\x1b\[[0-9;]*m/g;
 
 /**
  * Parse tsc output into per-file error counts.
