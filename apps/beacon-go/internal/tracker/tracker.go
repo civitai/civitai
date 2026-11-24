@@ -7,7 +7,8 @@
 // it, the backlog is bounded (a queue of Queue rows, drained by Workers goroutines): a full queue
 // drops the row and counts it, where Node would keep piling up promises. When Close gives up, every
 // row still queued and every row inside a POST that is still running is counted as dropped too (and
-// reported back, per table), so every queued row ends in exactly one result.
+// reported back, per table), so every queued row ends in exactly one result; the running POSTs are
+// then cancelled and no row starts another attempt.
 package tracker
 
 import (
@@ -64,6 +65,13 @@ type Client struct {
 	// has given up, after which a worker sends nothing more.
 	flights   []atomic.Pointer[flight]
 	abandoned atomic.Bool
+	// stop is the context every worker sends on; cancel ends it when Close gives up, cutting the
+	// running POSTs short and keeping a retry from starting.
+	stop   context.Context
+	cancel context.CancelFunc
+	// taken, when set (tests only), is called after a worker takes a row off the queue and before it
+	// publishes the row as its flight.
+	taken func()
 }
 
 // flight is one row a worker took off the queue. settled is won by whoever records the row's one
@@ -96,11 +104,15 @@ func (a Abandoned) Total() int {
 func (c *Client) Start(workers, queue int) {
 	c.queue = make(chan beacon.Write, max(queue, 1))
 	c.flights = make([]atomic.Pointer[flight], max(workers, 1))
+	c.stop, c.cancel = context.WithCancel(context.Background())
 	for i := range c.flights {
 		c.wg.Add(1)
 		go func(slot *atomic.Pointer[flight]) {
 			defer c.wg.Done()
 			for w := range c.queue {
+				if c.taken != nil {
+					c.taken()
+				}
 				f := &flight{table: w.Table}
 				slot.Store(f)
 				// Close stores abandoned before it reads the slots and this reads it after the Store,
@@ -114,7 +126,9 @@ func (c *Client) Start(workers, queue int) {
 					continue
 				}
 				start := time.Now()
-				result := c.Send(context.Background(), w)
+				// Close settles this row before it cancels stop (it sees the flight stored above, or
+				// this worker saw abandoned), so a send cut short by stop is never what gets recorded.
+				result := c.Send(c.stop, w)
 				if f.settled.CompareAndSwap(false, true) {
 					if c.Observe != nil {
 						c.Observe(w.Table, time.Since(start))
@@ -157,7 +171,8 @@ func (c *Client) Depth() int { return len(c.queue) }
 // Close stops accepting rows and waits (until ctx ends) for the queued ones to be sent. When ctx
 // ends first, every row still waiting is taken off the queue and every row inside a POST that is
 // still running is given up on; each is counted as dropped (uncounted it would be a silent loss: the
-// process exits before that POST ends) and returned per table, with ctx's error.
+// process exits before that POST ends) and returned per table, with ctx's error; then the running
+// POSTs are cancelled, so a row counted as dropped starts no further attempt.
 func (c *Client) Close(ctx context.Context) (Abandoned, error) {
 	c.mu.Lock()
 	if !c.closed {
@@ -172,8 +187,16 @@ func (c *Client) Close(ctx context.Context) (Abandoned, error) {
 	}()
 	select {
 	case <-done:
+		c.cancel()
 		return Abandoned{}, nil
 	case <-ctx.Done():
+		// When both are ready the select picks either; a drain that did finish is not a give-up.
+		select {
+		case <-done:
+			c.cancel()
+			return Abandoned{}, nil
+		default:
+		}
 		a := Abandoned{Dropped: map[string]int{}}
 		c.abandoned.Store(true)
 		// The queue is closed, so this ends once it is empty; a worker finishing its POST takes the
@@ -189,6 +212,9 @@ func (c *Client) Close(ctx context.Context) (Abandoned, error) {
 				a.InFlight++
 			}
 		}
+		// Only now: every row a worker is sending has been settled above, so cancelling cannot turn a
+		// send into a recorded result, it only stops the POST and any retry.
+		c.cancel()
 		return a, ctx.Err()
 	}
 }
@@ -212,7 +238,8 @@ func Delay(attempt int, jitter float64) time.Duration {
 	return BaseDelay<<(attempt-2) + time.Duration(jitter*float64(BaseDelay))
 }
 
-// Send posts one row with sendWithRetry's policy and returns its result.
+// Send posts one row with sendWithRetry's policy and returns its result. Once ctx is cancelled it
+// starts no further attempt and returns failed.
 func (c *Client) Send(ctx context.Context, w beacon.Write) string {
 	url := strings.TrimRight(c.BaseURL, "/") + "/track/" + w.Table
 	client := c.HTTP
@@ -222,6 +249,10 @@ func (c *Client) Send(ctx context.Context, w beacon.Write) string {
 	for attempt := 1; attempt <= MaxAttempts; attempt++ {
 		if attempt > 1 {
 			c.sleep(ctx, Delay(attempt, rand.Float64())) //nolint:gosec // G404: retry jitter, not a secret
+		}
+		// A cancelled ctx (Close gave up on this row) starts no further attempt.
+		if ctx.Err() != nil {
+			return ResultFailed
 		}
 		status, err := c.post(ctx, client, url, w.Body)
 		switch {
