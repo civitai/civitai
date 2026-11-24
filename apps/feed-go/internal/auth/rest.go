@@ -49,8 +49,9 @@ func WithSampleCredential(ctx context.Context, desc string) context.Context {
 	return context.WithValue(ctx, sampleCredentialKey{}, desc)
 }
 
-func sampleCredential(ctx context.Context) (string, bool) {
-	v, ok := ctx.Value(sampleCredentialKey{}).(string)
+// sampleCredentialOf is the description on the request's own context (WithSampleCredential).
+func sampleCredentialOf(req *http.Request) (string, bool) {
+	v, ok := req.Context().Value(sampleCredentialKey{}).(string)
 	return v, ok
 }
 
@@ -74,7 +75,7 @@ func sampleKeyHash(desc string) (string, bool) {
 // the session cookies do (resolveCookie). With API keys off, or on a sample without a description, any
 // API credential is the `bearer-token` fallback. The route's own view rules are the caller's.
 func (r *Resolver) ResolveREST(ctx context.Context, req *http.Request) (RESTSession, error) {
-	if desc, ok := sampleCredential(req.Context()); ok && r.APIKeys != nil {
+	if desc, ok := sampleCredentialOf(req); ok && r.APIKeys != nil {
 		return r.restFromSample(ctx, req, desc)
 	}
 	if r.APIKeys == nil || credentialsRedacted(ctx) {
@@ -132,7 +133,7 @@ func (r *Resolver) restFromSample(ctx context.Context, req *http.Request, desc s
 // PublicEndpoint whatever the user. So such a bearer is answered only when its principal-cache entry
 // is read here as getSessionFromBearerToken would read it with no write due (readPrincipal).
 func (r *Resolver) DetailCredential(ctx context.Context, req *http.Request) error {
-	if desc, ok := sampleCredential(req.Context()); ok && r.APIKeys != nil {
+	if desc, ok := sampleCredentialOf(req); ok && r.APIKeys != nil {
 		switch desc {
 		case SampleCredentialNone, SampleCredentialProvider, SampleCredentialService:
 			return nil

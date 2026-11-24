@@ -94,8 +94,9 @@ const NodeViewerUser = "user"
 
 type nodeViewerKey struct{}
 
-func nodeViewer(ctx context.Context) string {
-	v, _ := ctx.Value(nodeViewerKey{}).(string)
+// nodeViewer is the list sample's SampleViewerHeader, off the rebuilt request's context.
+func nodeViewer(r *http.Request) string {
+	v, _ := r.Context().Value(nodeViewerKey{}).(string)
 	return v
 }
 
@@ -335,7 +336,7 @@ func (s *Server) v1ListViewer(ctx context.Context, r *http.Request) error {
 			return fallback.New("v1-models-bearer-moderator")
 		}
 	}
-	if nodeViewer(r.Context()) == NodeViewerUser {
+	if nodeViewer(r) == NodeViewerUser {
 		return fallback.New("v1-models-bearer-viewer-mismatch")
 	}
 	return nil

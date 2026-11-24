@@ -219,7 +219,7 @@ export type FeedGoShadowConfig = {
    * `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS` (`true` or `1`; default off): mirror a model route's
    * request with an Authorization credential, described rather than forwarded (see the module doc).
    */
-  v1ModelsCredentials: boolean;
+  v1ModelsCredentials?: boolean;
 };
 
 type Env = Record<string, string | undefined>;
