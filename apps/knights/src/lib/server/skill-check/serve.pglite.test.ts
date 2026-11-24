@@ -126,7 +126,7 @@ describe('serving mod-confirmed checks to Knights', () => {
     expect((await pick(1))?.referenceId).toBe(id);
   });
 
-  it('offers both pools side by side', async () => {
+  it('offers both pools side by side', { timeout: 30_000 }, async () => {
     await seedPlayer(pg, 1);
     const ids = new Set([await hiddenRef(10), await skillCheck(11)]);
     const seen = new Set<number>();

@@ -138,26 +138,11 @@ Queue producers (moderator enqueue endpoint, sampling, which takes an image once
 
 `Dockerfile` (adapter-node, user 1001, port 3000, `node build`) builds from the repo root: `docker build -f apps/knights/Dockerfile .`; its only build-time env is a placeholder `DATABASE_URL`. `GET /healthz` (`src/routes/healthz`) is the probe: 200 `ok`, no database, Redis or Flipt, and `hooks.server.ts` exempts that exact path (apart from `JOB_PATHS`) from the guard, the access gate and the standing check. `GET /metrics` is exempt the same way (see Metrics).
 
-Before a release: if it changes the predicates "KnightsImageGate" is generated from (`servableImage` and friends in
-`packages/civitai-db/src/knights.ts`, `@civitai/shared/held-media`, `held-url`, the skill-check exclusions), its new view
-migration must be applied in production first. The tests only prove the migration matches the code; until it is applied,
-Knights keeps reading the old view.
+Database role: Image eligibility (whether an image may be shown or used as a check) comes from the "KnightsImageGate" view (`src/lib/server/image-gate.ts`); the open-report check on a single image still reads ImageReport and Report directly. A month's "KnightsVote" partition comes from the owner's `knights_ensure_vote_partition`. The PGlite harness runs every app statement as the app's database role with production's grants (`src/test/knights-app-grants.ts`), so a query needing a table the role cannot read fails in tests. A new table read needs a production grant first, then a line in that file. The view's SQL is generated from the TypeScript predicates (`imageGateViewSql`); a change to them ships as a new migration carrying the regenerated SQL, with `IMAGE_GATE_MIGRATION` (`src/test/pglite-kysely.ts`) pointed at it, and `image-gate.pglite.test.ts` fails until the two match. Keep "KnightsImageGate" WHERE-free with only `imageId` and boolean columns; adding a filter or another column means marking it `security_barrier`. Before a release: if it changes the predicates "KnightsImageGate" is generated from (`servableImage` and friends in `packages/civitai-db/src/knights.ts`, `@civitai/shared/held-media`, `held-url`, the skill-check exclusions), its new view migration must be applied in production first. The tests only prove the migration matches the code; until it is applied, Knights keeps reading the old view.
 
 ## Metrics
 
 `GET /metrics` serves Prometheus text to in-cluster scrapes only. Every metric, its labels and meaning, and the gauge queries: [`docs/features/knights-metrics.md`](../../docs/features/knights-metrics.md). Labels are bounded enums, never user, image or item ids; add a new metric there too.
-
-## Database role
-
-Image eligibility (whether an image may be shown or used as a check) comes from the "KnightsImageGate" view
-(`src/lib/server/image-gate.ts`); the open-report check on a single image still reads ImageReport and Report directly.
-A month's "KnightsVote" partition comes from the owner's `knights_ensure_vote_partition`. The PGlite harness runs every
-app statement as the app's database role with production's grants
-(`src/test/knights-app-grants.ts`), so a query needing a table the role cannot read fails in tests. A new table read
-needs a production grant first, then a line in that file. The view's SQL is generated from the TypeScript predicates
-(`imageGateViewSql`); a change to them ships as a new migration carrying the regenerated SQL, with `IMAGE_GATE_MIGRATION`
-(`src/test/pglite-kysely.ts`) pointed at it, and `image-gate.pglite.test.ts` fails until the two match.
-Keep "KnightsImageGate" WHERE-free with only `imageId` and boolean columns; adding a filter or another column means marking it `security_barrier`.
 
 ## Tests
 
