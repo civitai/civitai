@@ -72,11 +72,12 @@ const csamReviewOpen = (image: string) => {
 
 /**
  * A child-safety case its owner can already see, read against `image`: the image is served to them
- * as blocked. Only this case may tell the owner their delete waits on a review.
+ * as blocked. Only this case may tell the owner their delete waits on a review. Reads the block alone,
+ * not how far the review behind it has got, so what the owner is told holds while their delete waits.
  */
 export const childSafetyVisibleCase = (image = 'Image') => {
   const needsReview = sql.ref(`${image}.needsReview`);
-  return sql<boolean>`(${csamBlockOpen(image)}
+  return sql<boolean>`(${sql.ref(`${image}.blockedFor`)} = 'CSAM'
     AND COALESCE(${needsReview}, '') <> ALL(${sql.val([...OWNER_HIDDEN_REVIEWS])}::text[]))`;
 };
 
