@@ -281,39 +281,43 @@ export type OwnerImageUser = {
   profilePicture?: unknown;
 };
 
-/** Cap on the owner's newest images and videos the empty picker lists. */
-export const OWNER_LIST_LIMIT = 100;
+/** The owner's media per page of the picker. */
+export const OWNER_PAGE_SIZE = 100;
 
 /**
- * The showcase picker's Images, offered with or without image search. A typed query goes to the
- * semantic search, scoped by the `user.username` facet (without the flag the server serves only the
- * caller's own name). An empty one lists the caller's recent published images and videos, which the
- * semantic search cannot, at the viewer's browsing level.
+ * The showcase picker's Images, offered with or without image search: the caller's own published
+ * images and videos at the viewer's browsing level, newest first, narrowed by a typed query (the
+ * server matches prompt, post title and post tags within the caller's newest 1,000 media). The caller is the session's, so no user is sent.
+ * Each InstantSearch page is one `getMyImages` page, reached through the cursor the page before returned.
  */
 export function createOwnerImageSearch({
-  searchImages = createSemanticImageSearch(),
   getMyImages = (input: MyImagesInput) => trpcVanilla.image.getMyImages.query(input),
   getUser = () => undefined,
 }: {
-  searchImages?: ReturnType<typeof createSemanticImageSearch>;
   getMyImages?: (input: MyImagesInput) => Promise<MyImagesOutput>;
-  /** The caller, whose images the empty list is: that query's rows carry no `user`. */
+  /** The caller, whose images these are: that query's rows carry no `user`. */
   getUser?: () => OwnerImageUser | undefined;
 } = {}) {
+  // Not createOffsetPager: its fallback for an unfetched page is an offset, and this cursor is an image id.
+  const cursors = new Map<string, number>();
   return async function searchOwnerImages(indexName: string, params: RequestParams) {
-    if (params.query?.trim()) return searchImages(indexName, params);
-
     const empty = emptyResult(indexName, params);
-    const hitsPerPage = params.hitsPerPage ?? 0;
-    // shortcut: the first page only; the picker shows one page.
-    if (!hitsPerPage || params.page) return empty;
+    if (!params.hitsPerPage) return empty;
+    const query = params.query?.trim() || undefined;
+    const page = params.page ?? 0;
+    const pageKey = (n: number) => `${n}:${query ?? ''}`;
+    const cursor = page ? cursors.get(pageKey(page)) : undefined;
+    if (page && cursor === undefined) return empty;
+
     const browsingLevel = readBrowsingLevel(params.filters);
-    const { items } = await getMyImages({
-      limit: Math.max(hitsPerPage, OWNER_LIST_LIMIT),
-      // The owner's own list, not the semantic search, so videos can be offered here.
+    const { items, nextCursor } = await getMyImages({
+      limit: OWNER_PAGE_SIZE,
+      cursor,
+      query,
       mediaTypes: [MediaType.image, MediaType.video],
       publishedOnly: true,
     });
+    if (nextCursor !== undefined) cursors.set(pageKey(page + 1), nextCursor);
     const user = getUser();
     const hits = items
       .filter((item) => !browsingLevel || Flags.intersects(browsingLevel, item.nsfwLevel))
@@ -326,7 +330,8 @@ export function createOwnerImageSearch({
         };
         return { ...item, hash, width, height, objectID: String(item.id), ...(user && { user }) };
       });
-    return { ...empty, hits, nbHits: hits.length, nbPages: 1 };
+    const nbPages = nextCursor === undefined ? page + 1 : page + 2;
+    return { ...empty, hits, page, nbHits: hits.length, nbPages };
   };
 }
 

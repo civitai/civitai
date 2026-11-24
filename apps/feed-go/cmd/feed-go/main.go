@@ -494,6 +494,7 @@ func run(log *slog.Logger) error {
 			CoverageNext:            cfg.CoverageNext,
 			LoadingOpenToAll:        cfg.LoadingOpenToAll,
 			VisibleDecorationEvents: cfg.DecorationEvents,
+			Ports:                   modelfeed.Ports{IDs: cfg.GetAllServeInputIDs, Followed: cfg.GetAllServeInputFollowed},
 		},
 	}
 	// The model.getAssociatedResourcesCardData shadow shares model.getAll's deps, plus the viewer's
@@ -552,9 +553,11 @@ func run(log *slog.Logger) error {
 		RegionRules:       cfg.RegionRules,
 		// REGION_BLOCK_CONFIG, else the app's default list (apipolicy.json).
 		RegionBlockRules: cfg.RegionBlockRules,
-		Metrics:          metrics,
-		Log:              log,
-		ShadowQueue:      make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		// FEED_GO_ANSWER_REGION_BLOCKED: the app's 451 written here instead of handed back.
+		AnswerRegionBlocked: cfg.AnswerRegionBlocked,
+		Metrics:             metrics,
+		Log:                 log,
+		ShadowQueue:         make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		// The Go-first probes get as many slots as the comparisons, in their own queue.
 		ProbeQueue:     make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
@@ -611,13 +614,15 @@ func run(log *slog.Logger) error {
 	}
 
 	public := server.PublicMux(srv)
-	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll)
+	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll,
+		"FEED_GO_GETALL_SERVE_INPUT_IDS", cfg.GetAllServeInputIDs, "FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", cfg.GetAllServeInputFollowed)
 	log.Info("public image.getInfinite", "FEED_GO_SERVE_INFINITE", cfg.ServeInfinite)
 	log.Info("public /api/v1/models", "FEED_GO_SERVE_V1_MODELS", mc.Serve, "mounted", srv.V1Fallback != nil,
 		"FEED_GO_V1_BEARER_AUTH", mc.BearerAuth)
 	log.Info("public /api/v1/images", "FEED_GO_SERVE_V1_IMAGES", mc.ServeImages,
 		"mounted", srv.V1ImagesFallback != nil)
 	log.Info("public tRPC answers' write format", "TRPC_WRITE_DEVALUE", cfg.WriteDevalue)
+	log.Info("blocked-region requests answered here (451) instead of handed back", "FEED_GO_ANSWER_REGION_BLOCKED", cfg.AnswerRegionBlocked)
 	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
 	// OpenMetrics on request only with tracing on: the exemplars ride in that format alone.
 	internal := server.InternalMux(srv, server.MetricsHandler(reg, tp != nil), cfg.Pprof)

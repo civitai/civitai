@@ -77,6 +77,9 @@ func (s *Server) serveV1ModelsLabelled(w http.ResponseWriter, r *http.Request, e
 		tracing.Observe(ctx, s.Metrics.Duration.WithLabelValues(endpoint, "serve", served), time.Since(start).Seconds())
 		return
 	}
+	if s.answerRegionBlocked(ctx, span, start, w, endpoint, err) {
+		return
+	}
 	if !s.serveFallback(ctx, span, start, endpoint, err) {
 		return
 	}

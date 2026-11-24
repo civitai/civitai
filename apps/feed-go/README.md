@@ -33,6 +33,10 @@ scripts touch it; its CI is `.github/workflows/feed-go.yml`.
 |                                   | `POST /internal/shadow/api/v1/models`, `…/models/id`   | shadow comparison of the REST model endpoints, body and response headers (DESIGN.md §16)                                                        |
 |                                   | `GET /debug/pprof/…`                                   | `net/http/pprof`, only with `FEED_GO_PPROF=true` (default off; DESIGN.md §10.2)                                                                 |
 
+A request from a blocked region (`REGION_BLOCK_CONFIG`) is handed to the Node app, which answers its
+451, unless `FEED_GO_ANSWER_REGION_BLOCKED=true` (default off): then every public route writes that
+same 451 here (outcome `region_blocked`; DESIGN.md §6.2).
+
 Every answer on the public routes carries `X-Feed-Go-Served`: `go` when this service computed it
 (or answered the error itself), `node` when it was proxied to the Node app, including the proxy's own 502. The browser's shadow compare (`src/utils/faro/shadowCompare.ts`) reads it, so a proxied answer,
 which is Node's own bytes, is never counted as Go matching Node. Same-origin, so no CORS
@@ -137,7 +141,9 @@ Every `feed_go_*` series carries `feed_endpoint` (`as-posts` | `v1-images` | `in
 samplers for `image.getInfinite` and `model.getAll` are their own Flipt flags,
 `feed-go-shadow-infinite` and `feed-go-shadow-model-getall` (both default off), sharing
 `FEED_GO_SHADOW_URL` and the rate and in-flight knobs with the other routes; `model.getAll`'s own flags
-are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). The `feed_endpoint`
+are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). Its `ids` and `followed` input shapes are
+computed only behind `FEED_GO_GETALL_SERVE_INPUT_IDS` / `FEED_GO_GETALL_SERVE_INPUT_FOLLOWED` (both
+default off: the `input-ids` / `input-followed` fallbacks; DESIGN.md §15.2.4). The `feed_endpoint`
 label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
 `endpoint` would overwrite it.
 
