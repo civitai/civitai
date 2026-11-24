@@ -11,6 +11,7 @@ const {
   confirmMemorial,
   reverseMemorial,
   publicMemorial,
+  memorialActorRefusal,
   memorializedAmong,
   assertNotMemorialized,
   MemorializedAccountError,
@@ -181,5 +182,15 @@ describe('memorialization (docs/features/memorialized-profiles.md)', () => {
     await confirm(CONFIRMER);
     await reverse();
     expect((await row()).flags).toBe(0);
+  });
+
+  it('refuses an impersonation session even for a moderator who holds the grant', () => {
+    expect(memorialActorRefusal({ mayMemorialize: true, impersonatedBy: PROPOSER })).toMatch(
+      /impersonating/
+    );
+    expect(memorialActorRefusal({ mayMemorialize: true, impersonatedBy: null })).toBeNull();
+    expect(memorialActorRefusal({ mayMemorialize: false, impersonatedBy: null })).toMatch(
+      /user\.memorialize/
+    );
   });
 });

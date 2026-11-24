@@ -39,6 +39,20 @@ export const memorialTributeSchema = z.object({
 });
 export const memorialTributesSchema = z.array(memorialTributeSchema).max(MEMORIAL_TRIBUTES_MAX);
 
+/**
+ * Why this caller may not memorialize, or null. An impersonation session is refused because the
+ * two-person rule compares moderator ids, and impersonating a second moderator would carry theirs.
+ */
+export function memorialActorRefusal(caller: {
+  mayMemorialize: boolean;
+  impersonatedBy: number | null | undefined;
+}): string | null {
+  if (!caller.mayMemorialize)
+    return 'Memorializing an account needs the "user.memorialize" moderator permission.';
+  if (caller.impersonatedBy != null) return 'Memorialization cannot be done while impersonating.';
+  return null;
+}
+
 export class MemorializedAccountError extends Error {
   constructor() {
     super('This account is memorialized. Reverse the memorialization before deleting it.');
@@ -162,8 +176,8 @@ export async function confirmMemorial(
     );
   }
 
-  await afterMemorialChanged(input.userId, updated[0].username, effects);
-  // The account change has committed; each step logs its own failure so one cannot skip the next.
+  // Revoked first, ahead of the cache and event work. Each step logs its own failure so one
+  // cannot skip the next.
   const sessionsRevoked = await effects
     .invalidateSession(input.userId, 'moderation')
     .then(() => true)
@@ -181,6 +195,7 @@ export async function confirmMemorial(
       input.userId,
       new Error('orchestrator did not confirm token revocation')
     );
+  await afterMemorialChanged(input.userId, updated[0].username, effects);
   return {
     sessionsRevoked,
     keysRevoked: keys !== null,
