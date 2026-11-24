@@ -53,7 +53,7 @@ const serve: RequestHandler = async ({ params, locals, request, url }) => {
   const probe = url.searchParams.get('probe') === '1';
   if (!media) {
     // Only a probe is told the file is gone; an image withheld from this moderator reads as before.
-    if (probe && (await moderatorMediaUnavailable(imageId, { csamReview }).catch(() => false)))
+    if (probe && (await moderatorMediaUnavailable(imageId).catch(() => false)))
       error(404, RETRACTED_UNAVAILABLE);
     error(404, 'Not available here.');
   }

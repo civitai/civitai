@@ -14,14 +14,11 @@ import { blockedForSignal, type BlockedForPatterns, type ScannerVerdict } from '
  *  not held (`heldUrlSql` with `owners: false`). Without `cdnLeg`, the refusal must come from someone
  *  other than the owner unpublishing its post, not by a delete a case keeps, and the row must carry no
  *  CSAM mark of its own. Held media (`heldImageSql`) is excluded: the held-media route and the
- *  moderator app's held leg serve it. Who among moderators may see it is `csamRestrictedSql`'s call.
- *  `scanFlag` is `csamSignalImageSql`'s. */
-export function retractedImageWhereSql(
-  image: string,
-  { cdnLeg = false, scanFlag = true }: { cdnLeg?: boolean; scanFlag?: boolean } = {}
-): string {
+ *  moderator app's held leg serve it. Who among moderators may see it is `moderatorWithheldSql`'s
+ *  call. */
+export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): string {
   return `(
-    ${retractedEligibleSql(image, cdnLeg, scanFlag)}
+    ${retractedEligibleSql(image, cdnLeg)}
     AND NOT ${heldImageKnownSql(image)}
   )`;
 }
@@ -35,7 +32,7 @@ function retractedOrOwnerHeldWhereSql(image: string, { cdnLeg = false } = {}): s
   )`;
 }
 
-function retractedEligibleSql(image: string, cdnLeg: boolean, scanFlag = true): string {
+function retractedEligibleSql(image: string, cdnLeg: boolean): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const refused = scannedRefusedSql(image);
   if (cdnLeg) return `(${image}.ingestion = 'Blocked' OR ${refused})`;
@@ -45,7 +42,7 @@ function retractedEligibleSql(image: string, cdnLeg: boolean, scanFlag = true): 
     ${refused}
     AND ${postPulledSql(image)}
     AND NOT COALESCE(${heldItemImageSql(image)}, false)
-    AND NOT COALESCE(${csamSignalImageSql(image, { scanFlag })}, false)
+    AND NOT COALESCE(${csamSignalImageSql(image)}, false)
   ))`;
 }
 
@@ -105,19 +102,20 @@ export function moderatorMediaWhereSql(
   return heldLeg ? `(${openable} OR COALESCE(${heldItemImageSql(image)}, false))` : openable;
 }
 
-/** At most this many other rows on a url are read; a url with more is refused (`siblingsServable`). */
+/** At most this many other rows on a url `csamRestrictedSql` and `urlSiblingsSql` read; a url with
+ *  more is refused (`siblingsServable`). */
 export const URL_SIBLING_CAP = 50;
 
 /**
  * The CSAM marks read off one "Image" row aliased `image` itself: in the CSAM queue or blocked as
- * CSAM (`heldItemImageSql`), or a CSAM hash, hold, vote or, with `scanFlag`, scan flag
+ * CSAM (`heldItemImageSql`), or a CSAM hash, hold, vote or scan flag
  * (`csamSignalImageSql`). Nothing about its owner, post, model or the entities it appears on, and no
  * minor signal, is here.
  */
-function csamRowSql(image: string, scanFlag: boolean): string {
+function csamRowSql(image: string): string {
   return `(
     COALESCE(${heldItemImageSql(image)}, false)
-    OR ${csamSignalImageSql(image, { scanFlag })}
+    OR ${csamSignalImageSql(image)}
   )`;
 }
 
@@ -138,26 +136,26 @@ function upgradedRetractionSql(image: string): string {
 }
 
 /**
+ * The review-batch tier rule, not the moderator views' (`moderatorWithheldSql`).
  * Whether the "Image" row aliased `image` is kept to moderators cleared for CSAM review: it, or
  * one of the first `URL_SIBLING_CAP` other rows on its url, carries a CSAM signal in Postgres
  * (`csamRowSql`); it is listed on a CSAM report; its bytes (by url or pHash copy) are reported, held
  * or under an evidence hold; or the file is held (`heldUrlSql` with `owners: false`). Nothing about
  * an owner, post or model is here, and neither is a minor signal alone: any moderator may see those.
- * With `scanFlag: false` a scan flag alone is not a CSAM signal either: what the moderator views use. `blockedFor`
- * text and the scanner's labels, of this row and of `urlSiblingsSql`'s rows, are read by the caller.
+ * `blockedFor` text and the scanner's labels, of this row and of `urlSiblingsSql`'s rows, are read by the caller.
  */
-export function csamRestrictedSql(image: string, { scanFlag = true } = {}): string {
+export function csamRestrictedSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image) || CSAM_RESTRICTED_ALIASES.has(image.toLowerCase()))
     throw new Error(`Bad table alias: ${image}`);
-  return buildCsamRestrictedSql(image, scanFlag);
+  return buildCsamRestrictedSql(image);
 }
 
-function buildCsamRestrictedSql(image: string, scanFlag = true): string {
+function buildCsamRestrictedSql(image: string): string {
   const id = `${image}.id`;
   const url = `${image}."url"`;
-  const sibling = csamRowSql('cs', scanFlag);
+  const sibling = csamRowSql('cs');
   return `COALESCE((
-    ${csamRowSql(image, scanFlag)}
+    ${csamRowSql(image)}
     OR EXISTS (
       SELECT 1 FROM (
         SELECT * FROM "Image" cs WHERE cs.url = ${url} AND cs.id <> ${id} LIMIT ${URL_SIBLING_CAP}
@@ -267,18 +265,14 @@ export async function siblingsServable(
 }
 
 /**
- * The two columns a retracted-media read selects for the "Image" row aliased `image`, as SQL:
+ * For review-batch routing. The two columns a read selects for the "Image" row aliased `image`, as SQL:
  * `restricted` (`csamRestrictedSql`, or a url retracted by an upgraded deny) and `siblings`
  * (`urlSiblingsSql`). Constants for a moderator cleared for CSAM review, who is never refused on them.
- * `scanFlag` is `csamRestrictedSql`'s.
  */
-export function retractedAccessColumnsSql(
-  image: string,
-  { csamReview, scanFlag = true }: { csamReview: boolean; scanFlag?: boolean }
-) {
+export function retractedAccessColumnsSql(image: string, { csamReview }: { csamReview: boolean }) {
   if (csamReview) return { restricted: 'false', siblings: "'[]'::json" };
   return {
-    restricted: `(${csamRestrictedSql(image, { scanFlag })} OR ${upgradedRetractionSql(image)})`,
+    restricted: `(${csamRestrictedSql(image)} OR ${upgradedRetractionSql(image)})`,
     siblings: urlSiblingsSql(image),
   };
 }
@@ -290,7 +284,7 @@ export type RetractedAccessRow = {
 };
 
 /**
- * Whether a moderator without the CSAM grant may see an eligible row read with
+ * For review-batch routing. Whether a moderator without the CSAM grant may see an eligible row read with
  * `retractedAccessColumnsSql`: not restricted, no `blockedFor` signal (`blockedForSignal`, where a
  * minor reason alone is none), the scanner's CSAM label on neither the row
  * (`readVerdict`) nor its url's other rows, and `siblingsServable`. A verdict that could not be read

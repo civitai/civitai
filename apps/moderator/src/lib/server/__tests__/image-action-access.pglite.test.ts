@@ -775,6 +775,25 @@ describe("the ingestion-error queue's resolve", () => {
     await resolve(WITH_GRANT, WITHHELD);
     expect(resolveIngestionError).toHaveBeenCalledOnce();
   });
+
+  it('lists a withheld Error image without its media, and a clean one with it', async () => {
+    // The queue's SQL casts to the enum this schema keeps as text.
+    await db.exec(`CREATE DOMAIN "ImageIngestionStatus" AS TEXT;
+      UPDATE "Image" SET "nsfwLevel" = 0, "createdAt" = now() - interval '2 hours'
+      WHERE id IN (${CLEAN_ERROR}, 503);
+      UPDATE "Image" SET ingestion = 'Error' WHERE id = 503`);
+    const cards = async (user: { id: number; roles: string[] }) => {
+      const data = (await ingestionPage.load({
+        url: new URL('https://mod.test/images/ingestion-errors'),
+        locals: { user, grants: GRANTS },
+      } as never)) as { items: { id: number; url: string; restricted: boolean }[] };
+      return new Map(data.items.map((i) => [i.id, { url: i.url, restricted: i.restricted }]));
+    };
+    const without = await cards(WITHOUT_GRANT);
+    expect(without.get(503)).toEqual({ url: '', restricted: true });
+    expect(without.get(CLEAN_ERROR)).toEqual({ url: 'error-key', restricted: false });
+    expect((await cards(WITH_GRANT)).get(503)).toEqual({ url: 'shared-key', restricted: false });
+  });
 });
 
 describe("the front page sweep's tag vote", () => {

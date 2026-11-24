@@ -51,11 +51,16 @@ vi.mock('../axiom', () => ({ logToAxiom }));
 
 const {
   getModeratorMedia,
-  getRetractedMedia,
+  readRetractedMedia,
   listWithheldIds,
   recordRetractedView,
   restrictedImageAccess,
 } = await import('../retracted-media');
+/** The route's answer from storage, held media left out. */
+const getRetractedMedia = async (imageId: number, opts: { csamReview: boolean }) => {
+  const media = (await readRetractedMedia([imageId], opts)).viewable.get(imageId);
+  return media ? { url: media.url, type: media.type, mimeType: media.mimeType } : null;
+};
 const { URL_SIBLING_CAP } = await import('@civitai/shared/retracted-media-tier');
 
 const SCHEMA = `

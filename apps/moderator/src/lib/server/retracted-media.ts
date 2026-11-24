@@ -15,15 +15,14 @@ import { WITHHELD_REFUSED } from '$lib/held-media';
 import { insertModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
 
-export type RetractedMedia = {
+/** `held` marks held media (`heldImageSql`), so its serve is recorded as a held view; who is served
+ *  it is `moderatorMediaWhereSql`'s call. */
+export type ModeratorMedia = {
   url: string;
   type: string;
   mimeType: string | null;
+  kind: 'retracted' | 'held';
 };
-
-/** `held` marks held media (`heldImageSql`), so its serve is recorded as a held view; who is served
- *  it is `moderatorMediaWhereSql`'s call. */
-export type ModeratorMedia = RetractedMedia & { kind: 'retracted' | 'held' };
 
 /**
  * Which of these images `/api/retracted-media` serves at all (`eligible`) and, with each one's
@@ -219,20 +218,7 @@ export async function withheldAccountRefusal(user: App.Locals['user'] | undefine
   );
 }
 
-/**
- * The image's storage key and type while this moderator may see it on `/api/retracted-media`, media
- * held for itself excluded; `null` otherwise, so an image they may not see is answered exactly as a
- * missing one.
- */
-export async function getRetractedMedia(
-  imageId: number,
-  { csamReview }: { csamReview: boolean }
-): Promise<RetractedMedia | null> {
-  const media = (await readRetractedMedia([imageId], { csamReview })).viewable.get(imageId);
-  return media ? { url: media.url, type: media.type, mimeType: media.mimeType } : null;
-}
-
-/** What `/api/retracted-media` serves this moderator: `getRetractedMedia`, plus held media. */
+/** What `/api/retracted-media` serves this moderator, held media included. */
 export async function getModeratorMedia(
   imageId: number,
   { csamReview }: { csamReview: boolean }
@@ -241,13 +227,10 @@ export async function getModeratorMedia(
   return viewable.get(imageId) ?? null;
 }
 
-/** Whether `/api/retracted-media` has nothing to answer this moderator from for this image: gone,
- *  unprocessed, or a file the CDN still serves. Never true for an image only withheld from them. */
-export async function moderatorMediaUnavailable(
-  imageId: number,
-  { csamReview }: { csamReview: boolean }
-): Promise<boolean> {
-  const { eligible } = await readRetractedMedia([imageId], { csamReview, orHeld: true });
+/** Whether `/api/retracted-media` would serve this image to no moderator at all, grant or not: gone,
+ *  unprocessed, or a file the CDN still serves. Never true for an image only kept from some. */
+export async function moderatorMediaUnavailable(imageId: number): Promise<boolean> {
+  const { eligible } = await readRetractedMedia([imageId], { csamReview: true, orHeld: true });
   return !eligible.has(imageId);
 }
 
