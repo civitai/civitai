@@ -2,7 +2,11 @@ import * as grpc from '@grpc/grpc-js';
 import type { Server as HttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { VerifyToken } from '~/server/registry-adapter/auth';
 import { createPollingAdapter } from '~/server/registry-adapter/cursor';
+import { createDocFeed } from '~/server/registry-adapter/doc-feed';
+import { composeAdapter } from '~/server/registry-adapter/doc-streams';
+import { createLevelFeed, parseSharedLevelClients } from '~/server/registry-adapter/level-feed';
 import type { SubscriptionLimiter } from '~/server/registry-adapter/limits';
 import { createSubscriptionLimiter } from '~/server/registry-adapter/limits';
 import { abortableSleep } from '~/utils/errorHandling';
@@ -76,12 +80,14 @@ async function viaGrpc(
     metadata?: grpc.Metadata;
     limiter?: SubscriptionLimiter;
     regionRestricted?: (origin: RequestOrigin) => boolean;
+    verifyToken?: VerifyToken;
   } = {}
 ): Promise<Outcome> {
   const server = createGrpcServer(a, {
     onRegion: extra.onRegion,
     limiter: extra.limiter,
     regionRestricted: extra.regionRestricted,
+    verifyToken: extra.verifyToken,
   });
   grpcServers.push(server);
   const port = await listenGrpc(server, 0);
@@ -470,8 +476,6 @@ describe('🔴 the wire: the spec proto’s field numbers', () => {
       { type: 'progress', cursor: 'ab', meta: { head: { seq: 7 } } },
       META_HEX + '32040a026162',
     ],
-    // An end with meta (a level stream's reason, `level-feed.ts`): after end (4).
-    ['end', { type: 'end', meta: { head: { seq: 7 } } }, '2200' + META_HEX],
   ])('%s with meta: Event.meta is its JSON text, and decodes back', (_name, event, hex) => {
     expect(encodeEvent(event).toString('hex')).toBe(hex);
     expect(decodeEvent(Buffer.from(hex, 'hex'))).toEqual(event);
@@ -625,5 +629,108 @@ describe('🔴 an error is named by its ErrorInfo reason alone, as the spec name
         '0a0e637572736f725f65787069726564'
     );
     expect(errorInfoOf(metadata)).toEqual({ reason: 'cursor_expired', domain: '' });
+  });
+});
+
+describe('🔴 a shared-collection level subscription is refused on gRPC (level-feed.ts, HTTP only)', () => {
+  const LEVEL_CLIENT = 'svc-appdata-grpc-93d2';
+  const SLUG = 'grpc-board-41';
+  const SCHEMA = `urn:schema:apps.civitai.com:${SLUG}/records@v1`;
+  const service: VerifyToken = async () => ({
+    subject: `service:${LEVEL_CLIENT}`,
+    userId: null,
+    clientId: LEVEL_CLIENT,
+    scope: 0n,
+    actor: null,
+    service: true,
+    expiresAt: null,
+  });
+  const store = createMemorySnapshotStore();
+  let reads = 0;
+  /** A level feed that WOULD serve one rated document, were the subscription not refused. */
+  const adapter = () =>
+    composeAdapter(
+      catalog([[]]),
+      createDocFeed({
+        source: {
+          head: async () => 0,
+          changes: async () => ({ docs: [], tombs: [] }),
+          documents: async () => [],
+          witness: async () => ({ docSeq: null, tombSeq: null }),
+        },
+        resolve: async () => null,
+        store,
+        pollMs: 60_000,
+        sleep: abortableSleep,
+      }),
+      undefined,
+      createLevelFeed({
+        clients: parseSharedLevelClients(LEVEL_CLIENT),
+        source: {
+          head: async () => {
+            reads += 1;
+            return 3;
+          },
+          changes: async () => ({ docs: [], tombs: [] }),
+          documents: async (_a, _c, _s, beforeKey) =>
+            beforeKey === ''
+              ? [
+                  {
+                    key: '01KG0R',
+                    data: { t: 'r-doc' },
+                    version: 1,
+                    seq: 3,
+                    createdAt: '2026-11-01T00:00:00.000Z',
+                    updatedAt: '2026-11-01T00:00:00.000Z',
+                  },
+                ]
+              : [],
+          witness: async () => ({ docSeq: 3, tombSeq: null }),
+        },
+        resolve: async () => ({
+          appId: 'ab_grpc_board',
+          slug: SLUG,
+          collection: 'records',
+          contentRating: 'pg13',
+          family: [{ urn: SCHEMA, body: { type: 'object' } }],
+          appBlockId: 'ab_grpc_board',
+          levelsOn: true,
+        }),
+        store,
+        pollMs: 60_000,
+        sleep: abortableSleep,
+        maxRecords: 2_001,
+      })
+    );
+  const bearer = () => {
+    const m = new grpc.Metadata();
+    m.set('authorization', 'Bearer svc');
+    return m;
+  };
+
+  it('a level subscription answers bad_request with no event and no store read', async () => {
+    reads = 0;
+    const out = await viaGrpc(
+      adapter(),
+      { schema: SCHEMA, meta: Buffer.from('{"level":4}', 'utf8') },
+      undefined,
+      SPEC_PATH,
+      { verifyToken: service, metadata: bearer() }
+    );
+    expect(out.events).toEqual([]);
+    expect(out.error).toEqual({ code: grpc.status.INVALID_ARGUMENT, reason: 'bad_request' });
+    expect(reads).toBe(0);
+  });
+
+  it('positive control: the same token naming no level is served as today (live, no error)', async () => {
+    const out = await viaGrpc(
+      adapter(),
+      { schema: SCHEMA },
+      (events) => events.some((e) => e.type === 'live'),
+      SPEC_PATH,
+      { verifyToken: service, metadata: bearer() }
+    );
+    expect(out.error).toBeUndefined();
+    expect(kinds(out.events)).toEqual(['live']);
   });
 });

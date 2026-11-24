@@ -173,6 +173,7 @@ import {
   DocStoreError,
   DocStoreMigrationPendingError,
   isDocStoreError,
+  LEVEL_STREAM_BITS,
   REPORT_MARK,
 } from '~/server/services/apps/doc-store.types';
 
@@ -2082,9 +2083,6 @@ export type FeedChangesPage = {
  * those rated at exactly one selectable level bit, or every visible document (content levels off).
  */
 export type LevelSelector = { bit: number } | 'none';
-
-/** The five selectable level bits (PG, PG-13, R, X, XXX): a level stream's `bit`. */
-export const LEVEL_STREAM_BITS: readonly number[] = [1, 2, 4, 8, 16];
 
 /**
  * A shared document as a level stream carries it: a plain document (`docs/app-storage-generic-core.md`,
@@ -5612,7 +5610,9 @@ function buildDocStore(deps: DocStoreDeps) {
 
   const levelBit = (selector: LevelSelector): number | null => {
     if (selector === 'none') return null;
-    if (!LEVEL_STREAM_BITS.includes(selector.bit)) throw invalid('feed: not a level bit');
+    if (!(LEVEL_STREAM_BITS as readonly number[]).includes(selector.bit)) {
+      throw invalid('feed: not a level bit');
+    }
     return selector.bit;
   };
   const levelSql = (selector: LevelSelector, bit: string, none: string) =>

@@ -148,6 +148,11 @@ export interface AdapterContext {
    * subscription (`level-feed.ts`); no other stream does.
    */
   meta?: RequestMeta;
+  /**
+   * The binding the subscription arrived on; absent is HTTP. Only the level feed reads it: it
+   * refuses a gRPC level subscription (`level-feed.ts`), whose entities `Entity` cannot carry.
+   */
+  binding?: 'http' | 'grpc';
 }
 
 export interface Adapter {

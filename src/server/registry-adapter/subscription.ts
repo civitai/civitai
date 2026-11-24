@@ -31,6 +31,7 @@ import { ANONYMOUS_PRINCIPAL } from '~/server/registry-adapter/auth';
 import { createFilterCompiler } from '~/server/registry-adapter/json-schema';
 import type {
   Adapter,
+  AdapterContext,
   EventMeta,
   StreamEvent,
   SubscribeRequest,
@@ -152,7 +153,11 @@ export function servesAnyUrn(urns: readonly string[], namespace: string): boolea
   return urns.length === 0 || urns.some((urn) => urnNamespace(urn) === namespace);
 }
 
-export function createSubscriber(adapter: Adapter) {
+export function createSubscriber(
+  adapter: Adapter,
+  /** The binding this subscriber serves (`AdapterContext.binding`); absent is HTTP. */
+  opts: { binding?: AdapterContext['binding'] } = {}
+) {
   const compileFilter = createFilterCompiler();
 
   return async function subscribe(
@@ -176,6 +181,7 @@ export function createSubscriber(adapter: Adapter) {
       audience: principal.audience,
       reader,
       ...(req.meta ? { meta: req.meta } : {}),
+      ...(opts.binding ? { binding: opts.binding } : {}),
     };
 
     const binding = requestBinding(req, principal.subject);

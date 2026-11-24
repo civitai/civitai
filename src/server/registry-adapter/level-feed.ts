@@ -3,6 +3,15 @@
  * level bit, one small stream per viewer"): the documents of one shared collection major, split by
  * content level, read by app-data-go under its own service identity and shared by every viewer.
  *
+ * WHAT IS SUPERSEDED: `docs/app-storage-generic-core.md` ("Registry and app-data-go impact")
+ * supersedes WRITES-DESIGN's level-stream text on entity contents. Its `tallies` on entities, its
+ * mark head (`head.markSeq`) and its `level: counters` stream are gone: a level entity is a plain
+ * document on ONE sequence. WRITES-DESIGN still holds for the shape, routing, mode, bindings, the
+ * head and the bound.
+ *
+ * HTTP ONLY. A level entity's `key`, `seq`, `version`, `createdAt` and `updatedAt` have no field in
+ * the gRPC `Entity`, so the gRPC binding refuses a level subscription (`grpc.ts`).
+ *
  * OFF unless `REGISTRY_ADAPTER_SHARED_LEVEL_CLIENTS` names a client ({@link parseSharedLevelClients});
  * until then no subscription is routed here and every document stream is served as before.
  *
@@ -50,8 +59,8 @@
  * the next-newest from beyond it. Each poll reports its fill ({@link LevelStreamFill}) for the 75%
  * alert.
  *
- * BINDINGS. A stored state names its schema, its level, its levels mode, its token subject and its
- * bound. A resume whose `meta` names another level or comes from another subject is
+ * BINDINGS. A stored state names its schema, its level (which fixes its levels mode), its token
+ * subject and its bound. A resume whose `meta` names another level or comes from another subject is
  * `cursor_expired` before anything else in the state is used; a resume in a mode the stream
  * cannot be served in is ended with its reason, as a snapshot is.
  */
@@ -72,21 +81,19 @@ import type {
   LevelSelector,
   LevelStreamDocument,
 } from '~/server/services/apps/doc-store';
+import { LEVEL_STREAM_BITS } from '~/server/services/apps/doc-store.types';
 
-/** The five selectable level bits (PG, PG-13, R, X, XXX), as a level stream's `meta.level`. */
-export const LEVEL_BITS = [1, 2, 4, 8, 16] as const;
-
-/** What a level subscription's `meta.level` names: one bit or `none`. */
-export type LevelName = (typeof LEVEL_BITS)[number] | 'none';
+/** What a level subscription's `meta.level` names: one bit ({@link LEVEL_STREAM_BITS}) or `none`. */
+export type LevelName = (typeof LEVEL_STREAM_BITS)[number] | 'none';
 
 /**
  * The level a request's `meta` names, or null when it names none this feed serves: `level` must
- * be exactly one of {@link LEVEL_BITS} (a JSON number) or the string `none`.
+ * be exactly one of {@link LEVEL_STREAM_BITS} (a JSON number) or the string `none`.
  */
 export function parseLevel(meta: AdapterContext['meta']): LevelName | null {
   const level = meta?.level;
   if (level === 'none') return level;
-  return typeof level === 'number' && (LEVEL_BITS as readonly number[]).includes(level)
+  return typeof level === 'number' && (LEVEL_STREAM_BITS as readonly number[]).includes(level)
     ? (level as LevelName)
     : null;
 }
@@ -269,8 +276,6 @@ type LevelState = {
   schema: string;
   /** {@link LevelName}, as a string: `"1"` … `"16"` or `none`. */
   level: string;
-  /** The content-levels mode the state was served in. */
-  levels: 'on' | 'off';
   /** The token subject the state was served to. */
   subject: string;
   appId: string;
@@ -304,15 +309,19 @@ export const levelRev = (d: LevelStreamDocument, schemas: readonly string[]) =>
     })
   ).slice(0, 16);
 
-/** What a level stream's `live` and `progress` carry: its head, its mode and its block. */
-const levelMeta = (state: Pick<LevelState, 'seq' | 'levels' | 'appBlockId'>) => ({
+/**
+ * What a level stream's `live` and `progress` carry: its head, its mode and its block. The mode
+ * is fixed by the level for the stream's whole life (`none` is served only while levels are off,
+ * a bit only while they are on; any change ends the stream), so it is derived, never stored.
+ */
+const levelMeta = (state: Pick<LevelState, 'seq' | 'level' | 'appBlockId'>) => ({
   ...headMeta(state.seq),
-  levels: state.levels,
+  levels: state.level === 'none' ? 'off' : 'on',
   block: state.appBlockId,
 });
 
-const end = (reason: 'levels_on' | 'levels_off' | 'not_resolved', levels?: 'on' | 'off') =>
-  new StreamEnd({ reason, ...(levels ? { levels } : {}) });
+/** An `end` naming why the stream ended; the reason alone says which mode ended it. */
+const end = (reason: 'levels_on' | 'levels_off' | 'not_resolved') => new StreamEnd({ reason });
 
 export function createLevelFeed(opts: LevelFeedOptions) {
   if (!(opts.maxRecords > MIN_LEVEL_STREAM_RECORDS)) {
@@ -335,6 +344,13 @@ export function createLevelFeed(opts: LevelFeedOptions) {
     const level = parseLevel(ctx.meta);
     if (!isLevelSubscription(opts.clients, schema, ctx) || level === null) {
       throw cursorExpired('this subscription is not a level stream');
+    }
+    // Routed here, then refused, so it is never served as some other stream (see HTTP ONLY).
+    if (ctx.binding === 'grpc') {
+      throw new ProtocolError(
+        'bad_request',
+        'level streams are served over the HTTP binding only: a gRPC Entity has no field for key, seq, version, createdAt or updatedAt'
+      );
     }
     return level;
   };
@@ -419,9 +435,8 @@ export function createLevelFeed(opts: LevelFeedOptions) {
   ): Promise<{ next: LevelState; entities: Map<string, Entity> }> {
     const s = await opts.resolve(schema);
     if (!s || !audienceAdmits(audience, s.contentRating)) throw end('not_resolved');
-    const mode = s.levelsOn ? 'on' : 'off';
-    if (level === 'none' && s.levelsOn) throw end('levels_on', 'on');
-    if (level !== 'none' && !s.levelsOn) throw end('levels_off', 'off');
+    if (level === 'none' && s.levelsOn) throw end('levels_on');
+    if (level !== 'none' && !s.levelsOn) throw end('levels_off');
     if (prev && prev.appId !== s.appId) {
       throw cursorExpired('the collection now belongs to a different app');
     }
@@ -445,7 +460,6 @@ export function createLevelFeed(opts: LevelFeedOptions) {
       v: STATE_FORMAT,
       schema,
       level: levelString(level),
-      levels: mode,
       subject: ctx.reader?.subject ?? '',
       appId: s.appId,
       appBlockId: s.appBlockId,
@@ -453,13 +467,7 @@ export function createLevelFeed(opts: LevelFeedOptions) {
       family: digest,
       bound,
     } as const;
-    if (
-      prev &&
-      !full &&
-      seq === prev.seq &&
-      prev.levels === mode &&
-      prev.appBlockId === s.appBlockId
-    ) {
+    if (prev && !full && seq === prev.seq && prev.appBlockId === s.appBlockId) {
       return { next: prev, entities: new Map() };
     }
 
@@ -636,9 +644,9 @@ export function createLevelFeed(opts: LevelFeedOptions) {
                 : { delete: c.delete, cursor: at };
             }
             position = nextCursor;
-          } else if (next.levels !== before.levels || next.appBlockId !== before.appBlockId) {
-            // The mode or the block moved with nothing to send: saved, so the progress cursor is
-            // one a resume is bound to.
+          } else if (next.appBlockId !== before.appBlockId) {
+            // The block moved with nothing to send: saved, so the progress cursor is one a resume
+            // is bound to.
             position = await guarded(() => save(next));
           }
         }

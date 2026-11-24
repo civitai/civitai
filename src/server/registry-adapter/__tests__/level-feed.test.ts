@@ -420,6 +420,43 @@ describe('routing: only an allowlisted service client naming a level is a level 
   });
 });
 
+describe('the gRPC binding refuses a level subscription', () => {
+  it('🔴 a level subscription on the gRPC binding is refused as bad_request, before any read', async () => {
+    seedBoard();
+    const events: StreamEvent[] = [];
+    const err = await createSubscriber(composed(), { binding: 'grpc' })(
+      { schema: SCHEMA, urns: [], meta: { level: 4 } },
+      { signal: new AbortController().signal, send: async (e) => void events.push(e) },
+      servicePrincipal(LEVEL_CLIENT)
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ProtocolError);
+    expect((err as ProtocolError).code).toBe('bad_request');
+    expect(events).toEqual([]);
+    expect(reads).toEqual([]);
+  });
+
+  it('positive control: the same subscription on the HTTP binding (explicit or default) is served', async () => {
+    seedBoard();
+    for (const sub of [
+      createSubscriber(composed(), { binding: 'http' }),
+      createSubscriber(composed()),
+    ]) {
+      const abort = new AbortController();
+      const events: StreamEvent[] = [];
+      const done = sub(
+        { schema: SCHEMA, urns: [], meta: { level: 4 } },
+        { signal: abort.signal, send: async (e) => void events.push(e) },
+        servicePrincipal(LEVEL_CLIENT)
+      ).catch((e: unknown) => e);
+      await settle({ events, done, stop: () => abort.abort() }, wakers.length + 1);
+      expect(keysOf(events)).toEqual(['01K2R']);
+      abort.abort();
+      wake();
+      await done;
+    }
+  });
+});
+
 describe('levels mode: every level stream names it, and a stream that cannot be served in it ends', () => {
   it('🔴 every live and progress names levels, the one seq head and the approved block', async () => {
     seedBoard();
@@ -439,7 +476,7 @@ describe('levels mode: every level stream names it, and a stream that cannot be 
     seedBoard();
     const run = await open('none');
     await run.done;
-    expect(run.events).toEqual([{ type: 'end', meta: { reason: 'levels_on', levels: 'on' } }]);
+    expect(run.events).toEqual([{ type: 'end', meta: { reason: 'levels_on' } }]);
     expect(reads).toEqual([]);
   });
 
@@ -456,11 +493,14 @@ describe('levels mode: every level stream names it, and a stream that cannot be 
       '01K5UNRATED',
       '01K6BLOCKED',
     ]);
-    expect(metaOf(run.events, 'live')[0]).toMatchObject({ levels: 'off' });
+    // The mode is derived from the level: `none` is only ever served with levels off.
+    expect(metaOf(run.events, 'live')).toEqual([
+      { head: { seq: 10 }, levels: 'off', block: APP_ID },
+    ]);
     levelsOn = true;
     const batch = await poll(run);
     await run.done;
-    expect(batch).toEqual([{ type: 'end', meta: { reason: 'levels_on', levels: 'on' } }]);
+    expect(batch).toEqual([{ type: 'end', meta: { reason: 'levels_on' } }]);
   });
 
   it('🔴 a bit stream is ended levels_off when levels turn off, and refused so while they are off', async () => {
@@ -470,10 +510,10 @@ describe('levels mode: every level stream names it, and a stream that cannot be 
     levelsOn = false;
     const batch = await poll(run);
     await run.done;
-    expect(batch).toEqual([{ type: 'end', meta: { reason: 'levels_off', levels: 'off' } }]);
+    expect(batch).toEqual([{ type: 'end', meta: { reason: 'levels_off' } }]);
     const again = await open(8);
     await again.done;
-    expect(again.events).toEqual([{ type: 'end', meta: { reason: 'levels_off', levels: 'off' } }]);
+    expect(again.events).toEqual([{ type: 'end', meta: { reason: 'levels_off' } }]);
   });
 
   it('a collection that does not resolve ends not_resolved, never an empty board', async () => {
@@ -598,9 +638,7 @@ describe('bindings: a level stream’s state binds its level', () => {
     levelsOn = false;
     const resumed = subscribe(composed(), servicePrincipal(LEVEL_CLIENT), { level: 4 }, cursor);
     await resumed.done;
-    expect(resumed.events).toEqual([
-      { type: 'end', meta: { reason: 'levels_off', levels: 'off' } },
-    ]);
+    expect(resumed.events).toEqual([{ type: 'end', meta: { reason: 'levels_off' } }]);
   });
 });
 
