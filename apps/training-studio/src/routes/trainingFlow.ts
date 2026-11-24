@@ -342,8 +342,8 @@ export type BatchSource = 'upload' | 'zip' | 'reuse' | 'generations';
 
 /** One add to the dataset: a drop or pick, one zip, one reused dataset, one generations pick. */
 export interface ImgBatch {
-  /** Unique and increasing. Seeded from the clock, so a batch restored after a reload never shares an
-   *  id with one added after it. */
+  /** Unique and increasing, also across page loads: seeded from the clock rather than a counter, so
+   *  a batch kept in a saved draft can't share an id with one added later. */
   id: number;
   source: BatchSource;
   addedAt: number;

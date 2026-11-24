@@ -1262,7 +1262,8 @@ describe('dataset batches', () => {
       'Zip import 1 · 1 image',
       'Upload 2 · 2 images',
     ]);
-    expect(options[2]!.label).toMatch(/3:41/);
+    // 12- or 24-hour, whichever the runner's locale uses.
+    expect(options[2]!.label).toMatch(/(3|15):41/);
   });
 
   it('gives batches added in the same millisecond distinct, increasing ids', () => {
