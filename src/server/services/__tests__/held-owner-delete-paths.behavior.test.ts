@@ -42,6 +42,10 @@ vi.mock('~/server/search-index', () => ({
 import { deleteImages, imagesPendingDeletion } from '~/server/services/image.service';
 import { deletePost } from '~/server/services/post.service';
 import { pendingDeletes } from '~/server/jobs/pending-deletes';
+import {
+  ACCOUNT_DELETION_DRAIN,
+  releaseAccountDeletionPendingDeletes,
+} from '~/server/services/account-deletion-images';
 import { imagesMetricsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
@@ -568,14 +572,38 @@ describe('an owner deleting their own content in a child-safety case', () => {
       await holder.db.exec(`
         INSERT INTO "Report" (id, reason) VALUES (1, 'CSAM');
         INSERT INTO "ImageReport" VALUES (${imageOf(PLAIN)}, 1);
-        INSERT INTO "JobQueue" ("entityId", "entityType", type, data) VALUES (${imageOf(
-          PLAIN
-        )}, 'Image',
-          'PendingDelete', '{"deletedBy": "remove-deleted-user-images"${
-            restored ? ', "releasedOnRestore": true' : ''
-          }}');
       `);
       const before = await imageRow(imageOf(PLAIN));
+      await deleteImages([imageOf(PLAIN)], {
+        actor: { system: ACCOUNT_DELETION_DRAIN },
+        onlyWhere: Prisma.sql`true`,
+      });
+      const hidden = await imageRow(imageOf(PLAIN));
+      // The hide is a moderated block, not a CSAM one, so it is no finding by itself.
+      expect(hidden).toEqual({
+        ...before,
+        ingestion: 'Blocked',
+        blockedFor: 'moderated',
+        nsfwLevel: 32,
+      });
+      if (restored) {
+        vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(((
+          strings: TemplateStringsArray,
+          ...values: unknown[]
+        ) =>
+          vi.mocked(dbMock.dbWrite.$queryRaw).getMockImplementation()!(
+            strings,
+            ...(values as never[])
+          )) as never);
+        await releaseAccountDeletionPendingDeletes(PLAIN);
+      }
+      expect(await pending()).toEqual([
+        {
+          entityId: imageOf(PLAIN),
+          entityType: 'Image',
+          data: { deletedBy: ACCOUNT_DELETION_DRAIN, ...(restored && { releasedOnRestore: true }) },
+        },
+      ]);
       await runJob();
       expect(await pending()).toHaveLength(1);
 
@@ -585,7 +613,7 @@ describe('an owner deleting their own content in a child-safety case', () => {
 
       expect(await pending()).toEqual([]);
       const after = await imageRow(imageOf(PLAIN));
-      if (kept) expect(after).toEqual(before);
+      if (kept) expect(after).toEqual(hidden);
       else expect(after).not.toEqual(closed);
     }
   );
