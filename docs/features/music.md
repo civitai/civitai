@@ -158,17 +158,45 @@ cover image" and "Remove from feed" have no action yet.
 
 ## Moderating songs
 
-In the moderator app (`apps/moderator`), a song in Image reports, the image review queues, Image
-lookup and Removed-appeals renders as a song card (`SongCard.svelte`) marked "Song": its cover, a
-play/pause button, a seek bar with the time, a volume control, the title, and the lyrics in a
-scrollable panel. A lyric line with a time plays the song from there; a line without one is text.
-Image and video cards are unchanged.
+In the moderator app (`apps/moderator`), songs have their own page, **Audio review**
+(`/audio-review`, under Images in the sidebar, with the number of reported songs). It is built on the
+shared triage shell: the queue on the left, the open song in the middle, its reports, cover, checks,
+generation details and owner on the right with the decision bar pinned under them. J/K move, number
+keys decide, and a decided song dims and the next one opens. Desktop widths only.
+
+- **Tabs:** Reported, Appeals, Held and Disputes. Only Reported works today; the other three show as
+  "Soon" and arrive on this page later.
+- **Reported** lists songs with Pending reports (the reasons Image reports counts), one row per song:
+  cover, title, how long it has waited, the most reported reason, the number of reporters and the
+  owner. Sort by oldest, newest or most reports; chips for All, "Has a time" (a report with
+  `details.timestampSec`) and "3+ reports"; search by title, owner or id.
+- **The open song:** the song card in its `detail` form (player, then the lyrics at reading size,
+  "Lyrics · click a line to seek"), and its length, genre, post, rating and remix setting. On the right:
+  each report (reason, reporter, time in the song when it has one, the reporter's words), the cover
+  with its rating and scan state, the automated checks as states only (passed, held, blocked, not
+  finished, failed), the generation details the song stored (model, seed, prompt, music description,
+  lyrics source) and the owner (account age, removed songs, active strikes, other reported songs).
+  Play, like and comment counts are not shown.
+- **Decisions** (`image.moderate`, as on Image reports): 1 Dismiss reports closes the song's shown
+  reports as Unactioned (Image reports' Unaction); 2 Remove song is Image reports' removal and asks for a
+  violation type, closing the reports as Actioned; 4 Set rating opens PG to XXX (the next digit picks)
+  and is a correction that leaves the reports open. 3 Remove cover is shown but not offered yet. A
+  removed song takes only Dismiss.
+- **A withheld song** (`withheldImageIds`) shows as "Withheld song #id", with no title, audio, lyrics,
+  cover, owner or report text, and no decisions; it links to CSAM holds.
+- **Image reports** lists images and videos only, and its badge leaves songs out.
+- **Minor and POI** are not offered on a song anywhere in the image queues, and `setFlag` refuses them.
+
+The song card (`SongCard.svelte`) also renders in the image review queues, Image lookup and
+Removed-appeals, marked "Song": its cover, a play/pause button, a seek bar with the time, a volume
+control, the title, and the lyrics in a scrollable panel. A lyric line with a time plays the song from
+there; a line without one is text. Image and video cards are unchanged. The review queues keep songs
+until Audio review's Held tab takes them.
 
 - **Playback** (`$lib/music/song-player.ts`): nothing plays until the moderator clicks, one song plays
   at a time across the page, and each song starts at the last volume chosen (kept in this browser's
   localStorage). `playSongAt(imageId, seconds, cardKey?)` starts a card's song at a time from
-  anywhere on the page; `cardKey` is the grid's item key (the report id on Image reports), for a song
-  shown on more than one card.
+  anywhere on the page; `cardKey` is the grid's item key, for a song shown on more than one card.
 - **A removed song** plays from storage through `/api/retracted-media`, which serves only a signed-in
   moderator, as audio (`heldMediaContentType` names the audio types); the public CDN refuses it to
   everyone else. From storage nothing loads until play, since every response there is an audit row.
@@ -177,9 +205,8 @@ Image and video cards are unchanged.
   `@civitai/db-queries/profile-picture-clear`, which `getSongCoversForPlayer` uses too): the owner's own image
   outside any post, scanned, with no block marker, not held for review and not flagged as a minor;
   any other is the placeholder. A song withheld from the moderator is refused, lyrics included.
-- **Image reports** has a "Songs only" filter (`?songs=1`).
 - **Rating** a song is allowed once its own scans have reviewed it (`ingestion` Scanned). Before that
-  the rating is refused, under that card's rating chips, with "This song has not been reviewed yet", since a locked level would count
+  the rating is refused, under that card's rating chips (in Audio review, in the page's banner), with "This song has not been reviewed yet", since a locked level would count
   as the song's review (#10162); a removed song is refused with "This song was removed, so it can't
   be rated." A rated song is locked, and `imageReviewedSql` counts a lock as a review, so nothing may
   return a rated song to Pending, Error or Rescan without clearing its lock.

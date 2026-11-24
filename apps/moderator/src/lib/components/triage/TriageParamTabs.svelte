@@ -13,7 +13,13 @@
     selectionParam,
     counts,
   }: {
-    tabs: { value: string; label: string; /** Shown on hover. */ hint?: string }[];
+    tabs: {
+      value: string;
+      label: string;
+      /** Shown on hover. */ hint?: string;
+      /** Shown but not yet open: no link, its hint says why. */
+      disabled?: boolean;
+    }[];
     current: string;
     /** The URL param holding the tab. */
     param: string;
@@ -41,28 +47,39 @@
   {#each tabs as tab (tab.value)}
     {@const active = tab.value === current}
     {@const count = counts?.[tab.value]}
-    <a
-      href={hrefFor(tab.value)}
-      title={tab.hint}
-      data-sveltekit-noscroll
-      data-sveltekit-keepfocus
-      aria-current={active ? 'page' : undefined}
-      class={cn(
-        'flex min-w-0 flex-col items-center justify-center gap-0.5 rounded px-1.5 py-1 text-[13px] leading-tight',
-        active ? 'bg-dark-5 font-semibold text-white' : 'font-medium text-dark-0 hover:text-white'
-      )}
-    >
-      <span class="whitespace-nowrap">{tab.label}</span>
-      {#if count !== undefined}
-        <span
-          class={cn(
-            'rounded-lg px-[7px] py-px text-[11px] font-semibold tabular-nums',
-            active ? 'bg-blue-500 text-white' : 'bg-dark-6 text-dark-0'
-          )}
-        >
-          {num(count)}
-        </span>
-      {/if}
-    </a>
+    {#if tab.disabled}
+      <span
+        aria-disabled="true"
+        title={tab.hint}
+        class="flex min-w-0 cursor-not-allowed flex-col items-center justify-center gap-0.5 rounded px-1.5 py-1 text-[13px] leading-tight font-medium text-dark-3"
+      >
+        <span class="whitespace-nowrap">{tab.label}</span>
+        <span class="text-[11px] font-normal">Soon</span>
+      </span>
+    {:else}
+      <a
+        href={hrefFor(tab.value)}
+        title={tab.hint}
+        data-sveltekit-noscroll
+        data-sveltekit-keepfocus
+        aria-current={active ? 'page' : undefined}
+        class={cn(
+          'flex min-w-0 flex-col items-center justify-center gap-0.5 rounded px-1.5 py-1 text-[13px] leading-tight',
+          active ? 'bg-dark-5 font-semibold text-white' : 'font-medium text-dark-0 hover:text-white'
+        )}
+      >
+        <span class="whitespace-nowrap">{tab.label}</span>
+        {#if count !== undefined}
+          <span
+            class={cn(
+              'rounded-lg px-[7px] py-px text-[11px] font-semibold tabular-nums',
+              active ? 'bg-blue-500 text-white' : 'bg-dark-6 text-dark-0'
+            )}
+          >
+            {num(count)}
+          </span>
+        {/if}
+      </a>
+    {/if}
   {/each}
 </nav>

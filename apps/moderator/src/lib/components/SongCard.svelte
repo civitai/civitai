@@ -39,13 +39,22 @@
   let {
     item,
     cardKey,
+    variant = 'card',
+    meta,
     class: className,
   }: {
     item: { id: number; url: string };
     /** Which card this is where the same song shows twice (the grid's item key); see `playSongAt`. */
     cardKey?: SongCardKey;
+    /** `card` fits a queue tile, its lyrics scrolling inside it. `detail` is a triage pane's middle
+     *  column: the player and the lyrics as two panels at reading size, the column scrolling. */
+    variant?: 'card' | 'detail';
+    /** A line under the title in `detail`, e.g. its length, genre and when it was posted. */
+    meta?: string;
     class?: string;
   } = $props();
+  const detail = $derived(variant === 'detail');
+  const PANEL = 'rounded-lg border border-dark-4 bg-dark-7 p-3.5';
 
   const card = $derived(browser ? fetchJson<SongCard>(songCardUrl(item.id)) : SSR_PENDING);
 
@@ -124,78 +133,99 @@
 
 <!-- `phase`: the card's details are loading, came back, or could not be read (the song still plays). -->
 {#snippet player(song: SongCard | null, phase: 'loading' | 'loaded' | 'failed')}
-  <div class={cn('flex h-full w-full flex-col gap-2 p-2 text-left', className)}>
-    <div class="flex items-center gap-2">
-      <div class="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-md bg-dark-6">
-        {#if song?.cover}
-          <EdgeImage src={song.cover.url} width={320} alt="" class="size-full object-cover" />
-        {:else}
-          <IconMusic size={28} class="text-dark-2" aria-label="No cover" />
-        {/if}
-      </div>
-      <div class="min-w-0 flex-1">
-        <p class="truncate text-sm font-semibold text-dark-0" title={song?.title ?? undefined}>
-          {#if phase === 'loading'}
-            Loading song…
-          {:else if phase === 'failed'}
-            Song #{item.id}
+  <div
+    class={cn(
+      'flex w-full flex-col text-left',
+      detail ? 'gap-3' : 'h-full gap-2 p-2',
+      className
+    )}
+  >
+    <div class={cn('flex flex-col gap-2', detail && PANEL)}>
+      <div class="flex items-center gap-2">
+        <div class="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-md bg-dark-6">
+          {#if song?.cover}
+            <EdgeImage src={song.cover.url} width={320} alt="" class="size-full object-cover" />
           {:else}
-            {song?.title || 'Untitled song'}
+            <IconMusic size={28} class="text-dark-2" aria-label="No cover" />
           {/if}
-        </p>
-        {#if mode === 'failed'}
-          <p class="text-xs text-dark-2">{reason}</p>
-        {:else}
-          <p class="text-xs tabular-nums text-dark-2">
-            {formatPlaybackTime(time)} / {formatPlaybackTime(lengthOf(song))}
+        </div>
+        <div class="min-w-0 flex-1">
+          <p
+            class={cn('truncate font-semibold', detail ? 'text-[15px] text-white' : 'text-sm text-dark-0')}
+            title={song?.title ?? undefined}
+          >
+            {#if phase === 'loading'}
+              Loading song…
+            {:else if phase === 'failed'}
+              Song #{item.id}
+            {:else}
+              {song?.title || 'Untitled song'}
+            {/if}
           </p>
-        {/if}
+          {#if detail && meta}<p class="truncate text-xs text-dark-2">{meta}</p>{/if}
+          {#if mode === 'failed'}
+            <p class="text-xs text-dark-2">{reason}</p>
+          {:else}
+            <p class="text-xs tabular-nums text-dark-2">
+              {formatPlaybackTime(time)} / {formatPlaybackTime(lengthOf(song))}
+            </p>
+          {/if}
+        </div>
+        <Button
+          size="icon-lg"
+          class="shrink-0 rounded-full"
+          aria-label={loading ? 'Loading' : paused ? 'Play' : 'Pause'}
+          aria-busy={loading}
+          disabled={mode === 'failed'}
+          onclick={toggle}
+        >
+          {#if loading}
+            <IconLoader2 size={16} class="animate-spin" />
+          {:else if paused}
+            <IconPlayerPlayFilled size={16} />
+          {:else}
+            <IconPlayerPauseFilled size={16} />
+          {/if}
+        </Button>
       </div>
-      <Button
-        size="icon-lg"
-        class="shrink-0 rounded-full"
-        aria-label={loading ? 'Loading' : paused ? 'Play' : 'Pause'}
-        aria-busy={loading}
-        disabled={mode === 'failed'}
-        onclick={toggle}
-      >
-        {#if loading}
-          <IconLoader2 size={16} class="animate-spin" />
-        {:else if paused}
-          <IconPlayerPlayFilled size={16} />
-        {:else}
-          <IconPlayerPauseFilled size={16} />
-        {/if}
-      </Button>
-    </div>
 
-    <Slider
-      type="single"
-      min={0}
-      max={lengthOf(song) || 1}
-      step={0.1}
-      aria-label="Seek"
-      class="h-6"
-      trackClass="bg-dark-4"
-      disabled={mode === 'failed'}
-      bind:value={() => time, seek}
-    />
-    <div class="flex items-center gap-2">
-      <IconVolume size={14} class="shrink-0 text-dark-2" aria-hidden="true" />
       <Slider
         type="single"
         min={0}
-        max={1}
-        step={0.05}
-        aria-label="Volume"
-        class="h-6 max-w-24"
+        max={lengthOf(song) || 1}
+        step={0.1}
+        aria-label="Seek"
+        class="h-6"
         trackClass="bg-dark-4"
-        bind:value={() => volume, setVolume}
+        disabled={mode === 'failed'}
+        bind:value={() => time, seek}
       />
+      <div class="flex items-center gap-2">
+        <IconVolume size={14} class="shrink-0 text-dark-2" aria-hidden="true" />
+        <Slider
+          type="single"
+          min={0}
+          max={1}
+          step={0.05}
+          aria-label="Volume"
+          class="h-6 max-w-24"
+          trackClass="bg-dark-4"
+          bind:value={() => volume, setVolume}
+        />
+      </div>
     </div>
 
     {#if song?.lines.length}
-      <div class="min-h-0 flex-1 overflow-y-auto rounded-md bg-dark-7 p-2 text-xs leading-relaxed">
+      <div
+        class={cn(
+          detail
+            ? cn(PANEL, 'text-sm leading-snug')
+            : 'min-h-0 flex-1 overflow-y-auto rounded-md bg-dark-7 p-2 text-xs leading-relaxed'
+        )}
+      >
+        {#if detail}
+          <h3 class="m-0 mb-2 text-xs font-semibold text-dark-2">Lyrics · click a line to seek</h3>
+        {/if}
         {#each song.lines as line, i (i)}
           {#if isSection(line.text)}
             <p class="mt-1 text-xs font-semibold uppercase tracking-wide text-dark-2">{line.text}</p>
@@ -203,18 +233,26 @@
             {@const at = line.t / 1000}
             <button
               type="button"
-              class="flex min-h-6 w-full items-baseline gap-2 rounded px-1 py-0.5 text-left hover:bg-dark-5"
+              class={cn(
+                'flex w-full items-baseline text-left hover:bg-dark-5',
+                detail ? 'gap-2 rounded-md px-2 py-1.5' : 'min-h-6 gap-2 rounded px-1 py-0.5'
+              )}
               title="Play from {formatPlaybackTime(at)}"
               onclick={() => {
                 intent.requested();
                 playSongAt(item.id, at, ownKey);
               }}
             >
-              <span class="shrink-0 tabular-nums text-dark-2">{formatPlaybackTime(at)}</span>
+              <span
+                class={cn(
+                  'shrink-0 tabular-nums text-dark-2',
+                  detail && 'w-[34px] text-xs font-semibold'
+                )}>{formatPlaybackTime(at)}</span
+              >
               <span>{line.text}</span>
             </button>
           {:else}
-            <p class="px-1">{line.text}</p>
+            <p class={detail ? 'm-0 px-2 py-1.5' : 'px-1'}>{line.text}</p>
           {/if}
         {/each}
       </div>

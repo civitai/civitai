@@ -1,0 +1,234 @@
+<script lang="ts">
+  import { IconMusic, IconZoomCancel } from '@tabler/icons-svelte';
+  import { page } from '$app/state';
+  import TriageFilterChips, {
+    type ChipGroup,
+  } from '$lib/components/triage/TriageFilterChips.svelte';
+  import TriagePageHeader from '$lib/components/triage/TriagePageHeader.svelte';
+  import TriageParamTabs from '$lib/components/triage/TriageParamTabs.svelte';
+  import TriageRow from '$lib/components/triage/TriageRow.svelte';
+  import TriageShell from '$lib/components/triage/TriageShell.svelte';
+  import {
+    AUDIO_TAB_LABELS,
+    AUDIO_TABS,
+    DEFAULT_AUDIO_TAB,
+    LIVE_AUDIO_TABS,
+    REPORTED_DECISIONS,
+    REPORTED_FILTER_LABELS,
+    REPORTED_FILTERS,
+    REPORTED_SORT_LABELS,
+    REPORTED_SORTS,
+    reportedDecisionsEnabled,
+    songReportReasons,
+    SONG_RATING_LEVELS,
+    type ReportedSongRow,
+  } from '$lib/audio-review';
+  import { LINK_CLASS, plural, shortAge } from '$lib/format';
+  import { submitDecisionForm } from '$lib/triage/decision-form';
+  import { formActionHref } from '$lib/triage/queue';
+  import { urlWith } from '$lib/url';
+  import ReportedSongDetail from './ReportedSongDetail.svelte';
+  import type { ActionData, PageData } from './$types';
+
+  let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  const SELECTION = 'selected';
+  const f = $derived(data.filters);
+
+  // Key 4 opens the rating row for the open song; the next digit picks its level.
+  let current = $state<number | null>(null);
+  let rating = $state<number | null>(null);
+  const ratingOpen = $derived(rating !== null && rating === current);
+  const closeRating = () => (rating = null);
+
+  const actionHref = (action: string) =>
+    formActionHref(action, {
+      sort: f.sort === 'oldest' ? undefined : f.sort,
+      has: f.filter === 'all' ? undefined : f.filter,
+      q: data.q,
+      page: data.page > 1 ? data.page : undefined,
+    });
+
+  const tabs = AUDIO_TABS.map((value) => ({
+    value,
+    label: AUDIO_TAB_LABELS[value],
+    disabled: !LIVE_AUDIO_TABS.includes(value),
+    hint: LIVE_AUDIO_TABS.includes(value) ? undefined : 'Coming soon on this page',
+  }));
+
+  const sortGroup = $derived({
+    key: 'sort',
+    label: 'Sort',
+    values: REPORTED_SORTS,
+    labels: REPORTED_SORT_LABELS,
+    active: f.sort,
+    defaultValue: 'oldest',
+    pill: true,
+  } satisfies ChipGroup);
+  const filterGroup = $derived({
+    key: 'has',
+    label: 'Show',
+    values: REPORTED_FILTERS,
+    labels: REPORTED_FILTER_LABELS,
+    active: f.filter,
+    defaultValue: 'all',
+    counts: data.facets,
+    compact: true,
+  } satisfies ChipGroup);
+
+  const clearSearchHref = $derived(urlWith(page.url, { q: null, page: null, [SELECTION]: null }));
+  const rowTitle = (row: ReportedSongRow) =>
+    row.withheld ? `Withheld song #${row.id}` : row.title || `Untitled song #${row.id}`;
+
+  const decisionsFor = (row: ReportedSongRow) => {
+    const enabled = reportedDecisionsEnabled(row, data.canAct);
+    return ratingOpen && row.id === current ? SONG_RATING_LEVELS.map(() => enabled[3]) : enabled;
+  };
+
+  function decide(row: ReportedSongRow, index: number) {
+    if (ratingOpen && row.id === current) {
+      const level = SONG_RATING_LEVELS[index];
+      closeRating();
+      document
+        .querySelector<HTMLButtonElement>(
+          `[data-triage-actions] form[data-rating-form] button[value="${level}"]`
+        )
+        ?.click();
+      return;
+    }
+    if (REPORTED_DECISIONS[index] === 'rate') {
+      rating = row.id;
+      return;
+    }
+    submitDecisionForm(REPORTED_DECISIONS, reportedDecisionsEnabled(row, data.canAct), index);
+  }
+
+  function onkeydown(e: KeyboardEvent) {
+    if (ratingOpen && e.key === 'Escape') {
+      e.preventDefault();
+      closeRating();
+    }
+  }
+</script>
+
+<svelte:window {onkeydown} />
+
+{#snippet listHeader()}
+  <div class="flex flex-col gap-2.5">
+    <TriageParamTabs
+      {tabs}
+      current={f.tab}
+      param="tab"
+      defaultValue={DEFAULT_AUDIO_TAB}
+      label="Audio review"
+      selectionParam={SELECTION}
+      counts={{ reported: data.facets.all }}
+    />
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <TriageFilterChips sort={sortGroup} selectionParam={SELECTION} />
+    </div>
+    <TriageFilterChips groups={[filterGroup]} selectionParam={SELECTION} />
+  </div>
+{/snippet}
+
+{#snippet empty()}
+  <div
+    class="flex h-full flex-col items-center justify-center gap-1 p-5 text-center text-sm text-dark-0 in-[section]:hidden"
+  >
+    <IconZoomCancel class="mb-1.5 size-5 text-dark-2" aria-hidden="true" />
+    <p class="m-0 font-medium text-white">
+      No reported songs{data.q ? ` match "${data.q}"` : ''}
+    </p>
+    <p class="m-0 text-xs text-dark-2">Search matches a song title, an owner username or an ID.</p>
+    {#if data.q}
+      <a href={clearSearchHref} class="text-xs {LINK_CLASS}">Clear search</a>
+    {/if}
+  </div>
+  <p class="m-0 hidden text-sm text-dark-2 in-[section]:block">Select a song to review it.</p>
+{/snippet}
+
+<div class="flex flex-col lg:h-svh">
+  <TriagePageHeader
+    title="Audio review"
+    subtitle="Songs and their covers: reports, appeals, holds and rating disputes. Listen before you decide."
+    placeholder="Song, owner or ID"
+    searchLabel="Search reported songs"
+  />
+  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
+    <TriageShell
+      flush
+      rows={data.items}
+      rowKey={(row: ReportedSongRow) => row.id}
+      parseKey={(raw) => Number(raw) || null}
+      selectionParam={SELECTION}
+      queueLabel="Reported songs"
+      itemLabel="Song"
+      decisionEnabled={decisionsFor}
+      decisionActions={REPORTED_DECISIONS}
+      ondecision={decide}
+      outcomeFor={(result, outcome) =>
+        result.type === 'success' && typeof result.data?.held === 'string'
+          ? result.data.held
+          : outcome}
+      pinned={data.pinned}
+      bind:current
+      pageNumber={data.page}
+      hasMore={data.hasMore}
+      offset={data.offset}
+      total={data.total}
+      {form}
+      {listHeader}
+      {empty}
+    >
+      {#snippet listRow(row, state)}
+        {@const reasons = songReportReasons(row.reports)}
+        <TriageRow
+          id={state.id}
+          href={state.href}
+          selected={state.selected}
+          title={rowTitle(row)}
+          meta="waiting {shortAge(row.waitingSince)}"
+          metaClass="text-amber-300"
+          coverUrl={row.coverUrl ?? undefined}
+          verdict={state.verdict}
+          error={state.error}
+          onselect={state.select}
+        >
+          {#snippet coverIcon()}<IconMusic aria-hidden="true" />{/snippet}
+          {#snippet badges()}
+            {#if reasons[0]}
+              <span class="rounded bg-red-500/15 px-1.5 py-px text-[11px] font-medium text-red-300">
+                {reasons[0]}
+              </span>
+            {/if}
+            <span class="rounded bg-dark-5 px-1.5 py-px text-[11px] font-medium text-dark-0">
+              {plural(row.reportCount, 'report')}
+            </span>
+            {#if row.ingestion === 'Blocked'}
+              <span class="text-[11px] text-dark-2 italic">Removed</span>
+            {/if}
+            {#if row.owner}
+              <span class="ml-auto truncate text-xs text-dark-2">
+                {row.owner.username ?? `User #${row.owner.id}`}
+              </span>
+            {/if}
+          {/snippet}
+        </TriageRow>
+      {/snippet}
+      {#snippet detail(row, state)}
+        <ReportedSongDetail
+          {row}
+          civitaiUrl={data.civitaiUrl}
+          canAct={data.canAct}
+          verdict={state.verdict}
+          error={state.error}
+          submit={state.submit}
+          {actionHref}
+          ratingOpen={ratingOpen && row.id === current}
+          onrate={() => (rating = row.id)}
+          oncloserating={closeRating}
+        />
+      {/snippet}
+    </TriageShell>
+  </div>
+</div>

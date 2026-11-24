@@ -12,6 +12,8 @@ import { dbRead } from './db';
 import { bounded } from './bounded';
 import { getRedis } from './redis';
 import { getImageReviewCounts } from './image-review.service';
+import { countReportedSongs } from './audio-review-count';
+import { reportCountKey } from '$lib/reports';
 import { countStuckIngestion, countIngestionErrorImages } from './ingestion.service';
 import { countImageTagsNeedingReview, IMAGE_TAGS_COUNT_TIMEOUT_MS } from './image-tags-count';
 import { getImageRatingReviewCount } from './image-rating-review.service';
@@ -189,6 +191,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     ticketCounts,
     bountyUnpaidAwards,
     trainingDataReview,
+    reportedSongs,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Waited on for 3 seconds at most, and at most one scan runs across all servers: it can take
@@ -254,6 +257,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bounded(countOpenUnpaidAwards),
     // A build reads every Paused version's workflow and the gate ledger, well past a sidebar wait.
     withLastGood('training-data-review', countTrainingDataReview, 3_000),
+    // Bounded: it reads every Pending image report to find the songs among them.
+    bounded(countReportedSongs),
   ]);
   // Null where a bounded count did not answer.
   const maybe: Record<string, number | null> = {
@@ -273,6 +278,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bountyUnpaidAwards,
     imageTags,
     trainingDataReview,
+    audioReview: reportedSongs?.songs ?? null,
   };
   const unavailable = Object.keys(maybe).filter((key) => maybe[key] == null);
   const known = Object.entries(maybe).filter((e): e is [string, number] => e[1] != null);
@@ -280,6 +286,10 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     counts: {
       ...modes,
       ...reports,
+      // Image Reports lists no song, so its badge counts none; unknown, it keeps them.
+      ...(reportedSongs && {
+        [reportCountKey('image')]: (reports[reportCountKey('image')] ?? 0) - reportedSongs.reports,
+      }),
       imageRatings,
       appeals: Number(appeals?.count ?? 0),
       articles,

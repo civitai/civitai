@@ -125,6 +125,8 @@ export const NAVIGATION: NavLink[] = [
         countKey: reportCountKey('image'),
         shortcut: true,
       },
+      // Songs and their covers: the song reports Image Reports no longer lists.
+      { path: '/audio-review', label: 'Audio review', countKey: 'audioReview' },
       // Linked from the expiry alert email, which never names the policy: keep it out of /csam.
       { path: '/evidence-holds', label: 'Evidence Holds', countKey: 'evidenceHoldsEnding' },
       { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
