@@ -192,6 +192,26 @@ func (s *Switch) On() bool {
 	return s != nil && s.on.Load()
 }
 
+// Off reports whether the flag is KNOWN to be off: a read has succeeded (or answered the flag does not
+// exist) within MaxStale and its value is off. False before the first such read and once the last
+// one is older than MaxStale, where On also reads false: for a caller whose safe side is the flag
+// being ON (an unconfirmed flag must not be taken as off).
+func (s *Switch) Off() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastOK.IsZero() {
+		return false
+	}
+	maxStale := s.MaxStale
+	if maxStale <= 0 {
+		maxStale = DefaultMaxStale
+	}
+	return s.now().Sub(s.lastOK) <= maxStale && !s.on.Load()
+}
+
 // Refresh reads the flag once. A successful read sets the value. Flipt answering that the flag does
 // not exist (ErrFlagNotFound) sets it OFF, as Node's evaluation of a key missing from its snapshot
 // throws and its gate reads that as off. Any other failure keeps the last good value, as Node's client

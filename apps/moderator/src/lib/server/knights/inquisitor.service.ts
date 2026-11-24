@@ -338,6 +338,8 @@ export async function ruleOnInquisitorItem(
       id: claimed.imageId,
       nsfwLevel: level,
       ...(reason && { reason }),
+      // Left Pending, the requests come back to the rating queue if the level is ever unlocked.
+      status: 'Actioned',
       userId: moderatorId,
     });
   } catch (error) {

@@ -67,7 +67,11 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
  * Fire-and-forget: the POST is started before the handler and never awaited. It runs only for a
  * request the shadow sampler already sampled (so it is inside that sample's per-second token), for
  * a further `FEED_GO_GOFIRST_PROBE_SAMPLE_RATE` fraction of them (default 0: off), takes its own
- * slot under the shared in-flight cap, and has the shadow timeout.
+ * slot under the shared in-flight cap, and has the shadow timeout. `image.getInfinite` and
+ * `model.getAll` are probed the same way; `GET /api/v1/images` too, at
+ * `/internal/probe/api/v1/images` with its raw query as `input` and its `path`, at its own rate
+ * (`FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE`, default 0: off), started where the route decides
+ * its sample (after the cheap rejects and the bulkhead slot, before the gallery gates and the search).
  */
 
 export const FEED_GO_SHADOW_PROCEDURE = 'image.getImagesAsPostsInfinite';
@@ -94,6 +98,8 @@ export const FEED_GO_PROBE_PATH = `/internal/probe/${FEED_GO_SHADOW_PROCEDURE}`;
 export const FEED_GO_PROBE_INFINITE_PATH = `/internal/probe/${FEED_GO_SHADOW_INFINITE_PROCEDURE}`;
 /** feed-go's Go-first probe path for `model.getAll`. */
 export const FEED_GO_PROBE_MODEL_GET_ALL_PATH = `/internal/probe/${FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE}`;
+/** feed-go's Go-first probe path for `GET /api/v1/images`. */
+export const FEED_GO_PROBE_V1_IMAGES_PATH = `/internal/probe${FEED_GO_SHADOW_V1_IMAGES_ROUTE}`;
 
 export const SHADOW_DEFAULT_TIMEOUT_MS = 2_000;
 export const SHADOW_MAX_TIMEOUT_MS = 10_000;
@@ -215,6 +221,14 @@ export type FeedGoShadowConfig = {
   probeModelGetAllUrl: string | undefined;
   /** The fraction of sampled requests that are also probed (0 = none, 1 = every one). */
   probeRate: number;
+  /** Full Go-first probe URL for `GET /api/v1/images`, or undefined (disabled). */
+  probeV1ImagesUrl?: string;
+  /**
+   * The fraction of sampled `GET /api/v1/images` requests that are also probed
+   * (`FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE`, default 0: off). Its own rate, so turning the
+   * REST probe on is a separate step from the tRPC probes' `FEED_GO_GOFIRST_PROBE_SAMPLE_RATE`.
+   */
+  probeV1ImagesRate?: number;
   /**
    * `FEED_GO_SHADOW_V1_MODELS_CREDENTIALS` (`true` or `1`; default off): mirror an `[id]`
    * request with an Authorization credential, described rather than forwarded (see the module doc).
@@ -239,6 +253,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
   let probeUrl: string | undefined;
   let probeInfiniteUrl: string | undefined;
   let probeModelGetAllUrl: string | undefined;
+  let probeV1ImagesUrl: string | undefined;
   const base = env.FEED_GO_SHADOW_URL?.trim();
   if (base) {
     try {
@@ -254,6 +269,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
         probeUrl = new URL(FEED_GO_PROBE_PATH, parsed).toString();
         probeInfiniteUrl = new URL(FEED_GO_PROBE_INFINITE_PATH, parsed).toString();
         probeModelGetAllUrl = new URL(FEED_GO_PROBE_MODEL_GET_ALL_PATH, parsed).toString();
+        probeV1ImagesUrl = new URL(FEED_GO_PROBE_V1_IMAGES_PATH, parsed).toString();
       }
     } catch {
       url = undefined;
@@ -266,6 +282,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
       probeUrl = undefined;
       probeInfiniteUrl = undefined;
       probeModelGetAllUrl = undefined;
+      probeV1ImagesUrl = undefined;
     }
   }
   return {
@@ -280,6 +297,8 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
     probeInfiniteUrl,
     probeModelGetAllUrl,
     probeRate: envNumber(env.FEED_GO_GOFIRST_PROBE_SAMPLE_RATE, 0, 0, 1),
+    probeV1ImagesUrl,
+    probeV1ImagesRate: envNumber(env.FEED_GO_GOFIRST_PROBE_V1_IMAGES_SAMPLE_RATE, 0, 0, 1),
     v1ModelsCredentials: ['true', '1'].includes(
       (env.FEED_GO_SHADOW_V1_MODELS_CREDENTIALS ?? '').trim().toLowerCase()
     ),
@@ -595,6 +614,8 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
         input,
         path: path || undefined,
         headers,
+        // The images route can be probed (`probe`): its start time, as a tRPC sample's.
+        ...(endpoint === 'v1-images' ? { startedAt: epochNow() } : {}),
         done: false,
       };
     } catch {
@@ -643,15 +664,17 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   }
 
   /**
-   * The Go-first probe for a sampled `as-posts` request: call it at the start of the request, before
-   * the handler runs. Starts the POST synchronously (its bytes leave on a later turn of the event
+   * The Go-first probe for a sampled request of a probed endpoint (the three tRPC procedures above,
+   * and `GET /api/v1/images` at its own rate): call it at the start of the request, before the
+   * handler runs. Starts the POST synchronously (its bytes leave on a later turn of the event
    * loop) and never awaits it; the probe holds its own in-flight slot until the POST settles. At most
    * once per sample. Never throws.
    */
   function probe(sample: FeedGoShadowSample | undefined): void {
     try {
       if (!sample || sample.probed) return;
-      // The tRPC procedures feed-go has a probe for; a REST sample is never probed.
+      // The endpoints feed-go has a probe for: three tRPC procedures and `GET /api/v1/images`, the
+      // latter at its own rate (default 0). No other REST sample is probed.
       const url =
         sample.endpoint === 'as-posts'
           ? config.probeUrl
@@ -659,10 +682,14 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
           ? config.probeInfiniteUrl
           : sample.endpoint === 'model-getall'
           ? config.probeModelGetAllUrl
+          : sample.endpoint === 'v1-images'
+          ? config.probeV1ImagesUrl
           : undefined;
-      if (!url || config.probeRate <= 0) return;
+      const rate =
+        sample.endpoint === 'v1-images' ? config.probeV1ImagesRate ?? 0 : config.probeRate;
+      if (!url || rate <= 0) return;
       if (!enabledProbe()) return;
-      if (random() >= config.probeRate) return;
+      if (random() >= rate) return;
       sample.probed = true;
       if (inFlight >= config.maxInFlight) {
         recordProbe('dropped_overload', sample.endpoint);
@@ -670,6 +697,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       }
       const body = JSON.stringify({
         input: sample.input,
+        ...(sample.path ? { path: sample.path } : {}),
         headers: sample.headers,
         startedAt: sample.startedAt,
       });

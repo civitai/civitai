@@ -156,7 +156,7 @@ function givenPanel(over: Record<string, unknown> = {}) {
   dbMock.dbRead.comicPanel.findUnique.mockResolvedValue(panel);
 }
 
-/** The panel writes in order, the poll's raw one read back as the `data` of an update. */
+/** Panel writes in call order; the poll's raw UPDATE is parsed back into the shape of an update's `data`. */
 const writes = () => {
   const { update } = dbMock.dbWrite.comicPanel;
   const raw = dbMock.dbWrite.$executeRaw.mock;

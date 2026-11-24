@@ -89,7 +89,7 @@ resolver, dynamic imports counted), comparing each change applied to the graph:
 What this shows:
 - Only the routed split breaks a cycle.
 - `openDialog` leaves the cycles as they are, because a trigger file only passes the edge through: the opener still reaches the modal. Its value is a single pattern with no hub, so a new registry can't bring a cycle back.
-- The client cycles that remain are mostly ordinary component imports. One opener is still in one: `Dialog/triggers/blurb-manager.ts` sits in the 24-module cycle through the editor ↔ blurb manager. Examples: the cosmetics hat popover ↔ the hat modal, `utils/notifications` ↔ `ReportProblemButton` ↔ `trpc`, the resource-select modal ↔ generation utils. They stay on the import-cycle follow-on milestone.
+- The client cycles that remain are mostly ordinary component imports. One opener is still in one: `Dialog/triggers/blurb-manager.ts` sits in the 24-module cycle through the editor ↔ blurb manager. Examples: the cosmetics hat popover ↔ the hat modal, the resource-select modal ↔ generation utils. They stay on the import-cycle follow-on milestone.
 - Moving confirms has no cycle effect: none of `ConfirmDialog`'s imports (Mantine, `DialogProvider`, `dialogStore`, `app-layout.constants`) is in a cycle.
 - Built: `scripts/import-cycles.ts` measures 309 modules in cycles, as modelled; client cycles are 24, 10, 9, 7 (the kept `blurb-manager` opener keeps the 24 whole) and summed page reach is 705k. The guard caps are lowered to match.
 

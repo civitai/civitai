@@ -9,12 +9,14 @@ import {
   AUTHOR,
   bootFpDatabase,
   decided,
+  deciding,
   fetchFake,
   mirrorRow,
   OTHER,
   pg,
   pipelineVerdict,
   platform,
+  platformReply,
   posts,
   q,
   resetFpState,
@@ -717,17 +719,82 @@ describe('the platform ends on what civitai decided', () => {
     expect(posts().map((p) => p.authorName)).toEqual(['author', 'renamed']);
   });
 
-  it('a lost first-post reply on a comment hidden since: nothing sent, retried hourly, counted stuck', async () => {
+  const bySourceReads = () =>
+    fetchFake.mock.calls.filter(([u]) => String(u).includes('/internal/comments/by-source'));
+
+  it('a lost first-post reply on a comment hidden since: the urn is read by sourceId, then hidden by it', async () => {
     const id = await seedLost('posted, reply lost, then hidden');
     await setHidden(id, true);
+    await runMirror(mirror);
+    expect(bySourceReads()).toHaveLength(1);
+    expect(verdicts('mod')).toEqual([['hidden', null]]);
+    expect(await mirrorRow(id)).toMatchObject({
+      urn: urnOf(id),
+      pushedState: 'mod-hidden',
+      pushAttempts: 0,
+    });
+    expect(decided(id)).toBe('hidden');
+  });
+
+  it('a first post the platform never got, hidden since: hidden ahead by sourceId, so the post landing late is withheld', async () => {
+    platform.down = true;
+    const id = (await seed('never got there')).comment.sourceId;
+    platform.down = false;
+    const sent = fetchFake.mock.calls.find(
+      ([u, init]) =>
+        String(u).endsWith('/internal/comment') && JSON.parse(String(init?.body)).sourceId === id
+    )!;
+    await setHidden(id, true);
+    await runMirror(mirror);
+    expect(platform.verdicts.at(-1)?.body.target).toEqual({
+      urn: urnOf(id),
+      digest: `source:${id}`,
+    });
+    expect(await mirrorRow(id)).toMatchObject({ urn: null, pushedState: 'mod-hidden' });
+    await platformReply(new URL(String(sent[0])), sent[1]!);
+    expect(decided(id)).toBe('hidden');
+    expect(deciding(id)).toEqual({ source: 'moderator', verdict: 'hidden' });
+  });
+
+  it.each([
+    ['removed', 'mod-removed'],
+    ['erased', 'erased'],
+  ])(
+    'a lost first-post reply on a hidden comment the platform holds %s: recorded so, nothing applied there',
+    async (held, pushedState) => {
+      const id = await seedLost(`posted, reply lost, then hidden, ${held} there`);
+      await setHidden(id, true);
+      if (held === 'removed') platform.removed.add(id);
+      else platform.erasedUids.add(AUTHOR);
+      await runMirror(mirror);
+      await runMirror(mirror);
+      expect(platform.verdicts).toEqual([]);
+      expect(await mirrorRow(id)).toMatchObject({ pushedState, pushAttempts: 0 });
+    }
+  );
+
+  it('a lost first-post reply on a hidden comment, the by-source reply unreadable: nothing sent, retried', async () => {
+    const id = await seedLost('posted, reply lost, then hidden, unreadable lookup');
+    await setHidden(id, true);
+    platform.badBySource = true;
+    await runMirror(mirror);
+    expect(platform.verdicts).toEqual([]);
+    expect(await mirrorRow(id)).toMatchObject({ urn: null, pushAttempts: 1 });
+  });
+
+  it('a lost first-post reply on a hidden comment, the platform unreachable: nothing sent, retried', async () => {
+    const id = await seedLost('posted, reply lost, then hidden, platform down');
+    await setHidden(id, true);
+    platform.down = true;
     const before = fetchFake.mock.calls.length;
     await runMirror(mirror);
+    platform.down = false;
     expect(
-      fetchFake.mock.calls.slice(before).filter(([u]) => String(u).startsWith(SIGNER))
+      fetchFake.mock.calls.slice(before).filter(([u]) => String(u).includes('/internal/verdict'))
     ).toEqual([]);
     const row = await mirrorRow(id);
-    expect(row.pushAttempts).toBeGreaterThanOrEqual(mirror.FP_MAX_PUSH_ATTEMPTS);
-    expect(minutesUntil(row.nextPushAt)).toBeGreaterThan(55);
+    expect(row).toMatchObject({ urn: null, pushAttempts: 1 });
+    expect(minutesUntil(row.nextPushAt)).toBeGreaterThan(0);
   });
 
   it('a lost first-post reply on a retracted or removed comment: the retract by sourceId finds the urn, a removal follows', async () => {

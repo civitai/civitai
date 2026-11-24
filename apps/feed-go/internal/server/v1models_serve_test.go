@@ -631,7 +631,8 @@ func TestPublicEndpointNamesTheModelRoutes(t *testing.T) {
 		"/api/v1/models/42":   EndpointV1ModelsID,
 		"/api/v1/models/42/x": EndpointV1ModelsID,
 		"/api/v1/modelsx":     "",
-		"/api/v1/images":      "",
+		"/api/v1/images":      EndpointV1Images,
+		"/api/v1/images/42":   "",
 	} {
 		if got := PublicEndpoint(path); got != want {
 			t.Errorf("PublicEndpoint(%q) = %q, want %q", path, got, want)
