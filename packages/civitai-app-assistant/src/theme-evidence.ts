@@ -260,7 +260,7 @@ export function themeSignals(files: ReadonlyMap<string, string>): {
 const COLOR_TOKEN_PREFIX = '--civitai-color-';
 /**
  * Colour literals of its own at or past which an app reads as having its own look even with no
- * colour token set (a hand-rolled palette). Calibrated by eye on 12 approved apps: see below.
+ * colour token set (a hand-rolled palette). Its calibration: `accentCustomizedFrom`.
  */
 export const OWN_PALETTE_MIN_COLORS = 60;
 
@@ -272,8 +272,8 @@ export const OWN_PALETTE_MIN_COLORS = 60;
  * implementation of this rule: the trace signal (`accentCustomized`), the submit advisory and
  * `report_ready`'s advisory all call it.
  *
- * Calibrated against an operator's by-eye verdict on screenshots of 12 approved apps: it agrees on
- * 10. Code-level evidence cannot fully see "looks default", and the two misses show how:
+ * Calibrated against an operator's by-eye verdict on screenshots of 12 approved apps (calibrated
+ * 2026-11-24): it agrees on 10. Code-level evidence cannot fully see "looks default", and the two misses show how:
  *   - an app that overrides `--civitai-color-primary` (and other colour tokens) and still looks
  *     stock reads `true` (the override is close to, or styles little beyond, the default);
  *   - an app with many colour literals (90) that are still Civitai's blue reads `true`.

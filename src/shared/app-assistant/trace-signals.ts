@@ -11,8 +11,8 @@
  * (shared with the submit advisory and App Assistant's report_ready); its header lists what the
  * static scan cannot see.
  *   - `accentCustomized` (v2+): whether the app has a look of its own (`accentCustomizedFrom`).
- *     THE signal for "did it ship Civitai's stock look?". Calibrated by eye on 12 approved apps, it
- *     agrees on 10; both known misses read `true` for an app that looks stock.
+ *     THE signal for "did it ship Civitai's stock look?". Its calibration and known misses are on
+ *     `accentCustomizedFrom`.
  *   - `themeCustomized` (v1, kept for compatibility): true on ANY token override or ANY colour
  *     literal of the app's own, so it reads true on nearly every app and cannot tell a distinct
  *     theme from the stock look. Not the "looks default" signal.

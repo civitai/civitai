@@ -99,6 +99,8 @@ describe('openAppThemeEvidence', () => {
     for (let i = 0; i <= THEME_EVIDENCE_MAX_FILES; i++) {
       files[`my-app/src/__tests__/t${i}.ts`] = "const s = { color: '#abcdef' };";
       files[`my-app/tests/e${i}.ts`] = 'export {};';
+      // Each pruned directory alone exceeds the cap: dropping any one prune turns this red.
+      files[`my-app/src/dev/d${i}.ts`] = 'export {};';
     }
     files['my-app/test/x.css'] = '.t { color: #222222; }';
     files['my-app/src/dev/harness.css'] = '.d { color: #333333; }';

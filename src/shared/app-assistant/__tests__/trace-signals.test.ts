@@ -274,7 +274,7 @@ const ev = (customColorCount: number, tokenOverrides: string[] = []) => ({
 /**
  * The rule's calibration: 12 approved apps an operator labelled by eye from screenshots
  * ("distinct" own look vs Civitai's "default" look), as v1's `themeSignals` measured them
- * (customColorCount, tokenOverrides). The rule agrees on 10. The 2 KNOWN MISSES are pinned as
+ * (customColorCount, tokenOverrides). The figures live on `accentCustomizedFrom`. The 2 KNOWN MISSES are pinned as
  * misses, so a better rule flips them on purpose, here, rather than by accident.
  */
 describe('accentCustomizedFrom: the 12-app calibration', () => {
@@ -321,7 +321,7 @@ describe('accentCustomizedFrom: the 12-app calibration', () => {
     expect(accentCustomizedFrom(evidence)).toBe(expected);
   });
 
-  const KNOWN_MISSES: Array<[slug: string, evidence: ReturnType<typeof ev>, labelled: boolean]> = [
+  const KNOWN_MISSES: Array<[slug: string, evidence: ReturnType<typeof ev>]> = [
     // Overrides --civitai-color-primary and 7 more colour tokens, and still looks stock.
     [
       'dataset-commons',
@@ -335,19 +335,18 @@ describe('accentCustomizedFrom: the 12-app calibration', () => {
         '--civitai-color-text-dimmed',
         '--civitai-color-warning',
       ]),
-      false,
     ],
     // 90 colour literals of its own, still Civitai's blue.
-    ['grembed-preview', ev(90), false],
+    ['grembed-preview', ev(90)],
   ];
   it.each(KNOWN_MISSES)(
-    'KNOWN MISS %s: labelled default, reads as its own look',
-    (_slug, evidence, labelled) => {
+    'KNOWN MISS %s: labelled default by eye, reads as its own look',
+    (_slug, evidence) => {
       expect(accentCustomizedFrom(evidence)).toBe(true);
-      expect(labelled).toBe(false);
     }
   );
 
+  // The threshold: the operator's by-eye calibration of 12 apps on 2026-11-24 (PR #10274).
   it('the palette boundary: 59 colours of its own is the stock look, 60 is its own', () => {
     expect(accentCustomizedFrom(ev(59))).toBe(false);
     expect(accentCustomizedFrom(ev(60))).toBe(true);
@@ -416,8 +415,8 @@ describe('accentCustomizedOf: a stored row of either version', () => {
 /**
  * The scan's cost is linear in its input. Before this was pinned, `--civitai-a--civitai-a…` with no
  * `:` took ~14 s per 512 KiB (every `--civitai-` retried to the end of the run), and a run of
- * unclosed `<style>` tags ~4 s. Each case pins a deterministic step count AND a generous wall-time
- * bound, so it cannot flake on a slow machine yet still fails loudly on a quadratic scan.
+ * unclosed `<style>` tags ~4 s. The deterministic step count is the guard; the wall-time bound is
+ * generous (2 s per 512 KiB file), there only to fail loudly on a quadratic scan, never to flake.
  */
 describe('the theme scan is linear time', () => {
   const KIB_512 = 512 * 1024;
@@ -435,7 +434,7 @@ describe('the theme scan is linear time', () => {
   ])('an unbroken --civitai- chain with no colon (%s, 512 KiB)', (path, text) => {
     const { out, ms } = timed(new Map([[path, text]]));
     expect(out.theme.tokenOverrides).toEqual([]);
-    expect(ms).toBeLessThan(250);
+    expect(ms).toBeLessThan(2_000);
     const meter: ScanMeter = { steps: 0 };
     const found = new Set<string>();
     tokensSetIn(text, found, meter);
@@ -448,7 +447,7 @@ describe('the theme scan is linear time', () => {
     (text) => {
       const { out, ms } = timed(new Map([['index.html', text]]));
       expect(out.theme.filesScanned).toBe(1);
-      expect(ms).toBeLessThan(250);
+      expect(ms).toBeLessThan(2_000);
       const meter: ScanMeter = { steps: 0 };
       expect(styleBlocksIn(text, meter)).toEqual([]);
       expect(meter.steps).toBe(0);

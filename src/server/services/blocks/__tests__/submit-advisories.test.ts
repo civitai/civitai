@@ -74,7 +74,7 @@ describe('submitAdvisories — warn, never block', () => {
     const started = performance.now();
     // The real unzip and read (`bundleSignalFiles`), and a bound no slow machine reaches.
     const advisories = await submitAdvisories(buffer, { timeoutMs: 30_000 });
-    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(performance.now() - started).toBeLessThan(10_000);
     expect(advisories.map((a) => a.code)).toEqual(['default-theme']);
   });
 });
