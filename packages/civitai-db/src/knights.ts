@@ -107,8 +107,8 @@ export const postNotPrivate = (eb: ExpressionBuilder<Joined, 'p'>) =>
 
 /**
  * Hides an image whose uploader is banned or muted, or whose post's model or version is not Published or is Private. Each
- * can be lifted, so this only hides: it stays out of `servableImageForSweeps`. `servableImage` composes it, and the main
- * app's sampling applies it as it reads. Expects `Image as img` joined to `Post as p`.
+ * can be lifted, so this only hides: it stays out of `servableImageForSweeps`. Expects `Image as img` joined to
+ * `Post as p`.
  */
 export const imageSourceVisible = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
   eb.and([
