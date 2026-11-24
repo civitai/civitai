@@ -18,7 +18,7 @@ import type { Audience } from '~/server/registry-adapter/audience';
 import { contextAudience } from '~/server/registry-adapter/audience';
 import type { Adapter, Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
-import { sha256Hex } from '~/server/registry-adapter/release';
+import { compareCodeUnits, sha256Hex } from '~/server/registry-adapter/release';
 import type { EntitySets } from '~/server/registry-adapter/entities';
 import { RATED_SCHEMAS, readableBy } from '~/server/registry-adapter/entities';
 
@@ -70,7 +70,7 @@ export function servedSet(
 ): ServedSet {
   const byUrn = new Map<string, string>();
   for (const e of entities) if (!byUrn.has(e.urn)) byUrn.set(e.urn, e.rev);
-  const entries = [...byUrn].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const entries = [...byUrn].sort(([a], [b]) => compareCodeUnits(a, b));
   return audience === undefined ? { schema, entries } : { schema, audience, entries };
 }
 

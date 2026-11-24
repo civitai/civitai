@@ -63,13 +63,14 @@
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 import { audienceAdmits, contextAudience } from '~/server/registry-adapter/audience';
+import { parseClientIdList } from '~/server/registry-adapter/auth';
 import { hasScope } from '~/server/registry-adapter/auth.jwt';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import type { CollectionStream } from '~/server/registry-adapter/doc-feed';
 import { createClaimer, docRev, familyDigest } from '~/server/registry-adapter/doc-feed';
 import type { AdapterContext, Change, Entity, EventMeta } from '~/server/registry-adapter/protocol';
 import { ProtocolError, cursorExpired } from '~/server/registry-adapter/protocol';
-import { sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
+import { compareCodeUnits, sha256Hex, sortedKeyJson } from '~/server/registry-adapter/release';
 import { registryUrn } from '~/server/registry-adapter/urn';
 import { ratingAllowedForCeiling } from '~/server/utils/rating-ceiling';
 import type {
@@ -86,12 +87,10 @@ export const PRIVATE_STATE_RETENTION_SECONDS = PRIVATE_CURSOR_TTL_MS / 1000;
 
 /**
  * The relays allowed to read private data (`REGISTRY_ADAPTER_PRIVATE_RELAYS`): the OAuth client
- * ids a relay exchanges tokens as (a token's `act.sub`), separated by commas or whitespace. Unset
- * or empty is the empty set: no private stream exists.
+ * ids a relay exchanges tokens as (a token's `act.sub`), as a client-id list
+ * ({@link parseClientIdList}). Unset or empty is the empty set: no private stream exists.
  */
-export function parsePrivateRelays(raw: string | undefined): ReadonlySet<string> {
-  return new Set((raw ?? '').split(/[\s,]+/).filter(Boolean));
-}
+export const parsePrivateRelays = parseClientIdList;
 
 /** Whether the token was presented by one of `relays` (its `act.sub`). */
 export function isListedRelay(
@@ -418,7 +417,7 @@ export function createPrivateDocFeed(opts: PrivateFeedOptions) {
         head,
         served: [...entities.values()]
           .map((e) => [e.urn, e.rev] as [string, string])
-          .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
+          .sort((a, b) => compareCodeUnits(a[0], b[0])),
       },
       entities,
       head,

@@ -366,6 +366,53 @@ describe('the level streams over the store (rls on)', () => {
     await close(pg, pg13);
   });
 
+  it('🔴 the level reads page: newest key first by `beforeKey` with no duplicate or gap, and a bounded changes page holds exactly `limit` rows in seq order', async () => {
+    const PAGES: DocCollection = {
+      name: 'pages',
+      config: decl({ visibility: 'shared', write: 'own' }),
+    };
+    const source = docStoreLevelSource(feed);
+    const me = ctx(app, NS_PROD, VIEWER_1);
+    // Seven documents, written and then rated in orders that are neither key order nor each
+    // other, so seq order, heap order and key order all differ.
+    const written = ['k4', 'k1', 'k7', 'k3', 'k6', 'k2', 'k5'];
+    const rated = ['k2', 'k6', 'k1', 'k5', 'k7', 'k3', 'k4'];
+    for (const key of written) await store.put(me, PAGES, key, { t: `page-${key}` });
+    for (const key of rated) await rate(PAGES, key, 4);
+    const upTo = await feed.feedHead(app);
+    const LIMIT = 3;
+
+    const pageDown = async (selector: 'none' | { bit: number }) => {
+      const pages: string[][] = [];
+      let before = '';
+      for (;;) {
+        const page = await source.documents(app, PAGES.name, selector, before, upTo, LIMIT);
+        pages.push(page.map((d) => d.key));
+        if (page.length < LIMIT) return pages;
+        before = page[page.length - 1].key;
+      }
+    };
+    const expected = [['k7', 'k6', 'k5'], ['k4', 'k3', 'k2'], ['k1']];
+    expect(await pageDown('none')).toEqual(expected);
+    expect(await pageDown({ bit: 4 })).toEqual(expected);
+    // Positive control: the bit read selects by level, so another bit holds none of them.
+    expect(await pageDown({ bit: 2 })).toEqual([[]]);
+
+    // The changed set after the first rating is the other six; a page of three is the next three.
+    const after = (await docSeq('k2', PAGES)) ?? 0;
+    const seqs = await Promise.all(rated.map((key) => docSeq(key, PAGES)));
+    expect(seqs.every((s, i) => i === 0 || (s ?? 0) > (seqs[i - 1] ?? 0))).toBe(true);
+    for (const selector of ['none', { bit: 4 }] as const) {
+      const page = await source.changes(app, PAGES.name, selector, after, upTo, LIMIT);
+      expect(page.docs.map((d) => [d.key, d.seq, d.onStream])).toEqual([
+        ['k6', seqs[1], true],
+        ['k1', seqs[2], true],
+        ['k5', seqs[3], true],
+      ]);
+      expect(page.tombs).toEqual([]);
+    }
+  });
+
   it('a counter document is on no level stream', async () => {
     const pg = await open(1, TALLIES);
     expect(upserted(pg.events)).toEqual([]);
