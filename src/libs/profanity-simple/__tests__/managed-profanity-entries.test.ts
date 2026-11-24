@@ -51,7 +51,6 @@ describe('managedProfanityEntries', () => {
   });
 });
 
-// Pins that a managed copy of today's shipped list matches it (#10081).
 // Editing the shipped list changes what a managed copy of it enforces. Before updating this
 // digest, check the change against the managed list with the moderation team.
 it('shipped list edits are checked against the managed list', () => {
@@ -60,6 +59,7 @@ it('shipped list edits are checked against the managed list', () => {
   );
 });
 
+// Pins that a managed copy of today's shipped list matches it (#10081).
 describe('a managed copy of the shipped list', () => {
   const managedWords = managedProfanityEntries(blockedWords).usable;
 
