@@ -491,11 +491,8 @@ jobs:
       # the exit code. It prints one `::error` command per failing test it can place in a file
       # (GitHub keeps 10 error annotations per step, 50 per job; the rest stay in the log), appends a
       # pass/fail/flaky summary to GITHUB_STEP_SUMMARY on every run, and ignores `--outputFile`,
-      # so the json report each count/ledger step reads is unchanged. Every vitest step that names
-      # its reporters carries it: here `Manifest schema drift tests`, `Unit tests`, `Package unit
-      # tests`, `Component tests` and `Geometry tests`; the related tier in
-      # scripts/ci/related-tests.mjs (node API, same reporter); apps.yml `App unit tests`; ports.yml
-      # `Generator tests`. `Moderator hold SQL matches the main app` names none, so it already has it.
+      # so the json report each count/ledger step reads is unchanged. A new vitest step that names
+      # its reporters must name this one too.
       - name: Manifest schema drift tests
         run: |
           set -euo pipefail
