@@ -39,16 +39,15 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
     OR (img."userId" <> -1
       AND img."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = img."userId")
-      -- Uncorrelated, so Postgres reads the reports once per statement rather than once per row.
-      -- CASE as well as the filter: Postgres may cast before it tests the pattern, and one bad
-      -- row would fail every request. The filter keeps NULLs out of the list; COALESCE covers a
-      -- NULL user.
-      OR COALESCE(img."userId" IN (
-        SELECT CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-                    THEN (hs.details ->> 'secondaryUserId')::bigint END
-        FROM "CsamReport" hs
-        WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-      ), false)
+      -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
+      -- index probe per row for a few rows or one hashed read per statement for many. The app
+      -- writes the id as a JSON number, whose text is canonical; a hand-written "007" matches no one,
+      -- and the pattern keeps a negative id matching no one, as before.
+      OR EXISTS (
+        SELECT 1 FROM "CsamReport" hs
+        WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
+          AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+      )
       OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = img."userId")
     ))
   ), false) and (img.id)::text NOT IN (SELECT listed.id FROM (
@@ -64,16 +63,15 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
     OR (img."userId" <> -1
       AND img."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = img."userId")
-      -- Uncorrelated, so Postgres reads the reports once per statement rather than once per row.
-      -- CASE as well as the filter: Postgres may cast before it tests the pattern, and one bad
-      -- row would fail every request. The filter keeps NULLs out of the list; COALESCE covers a
-      -- NULL user.
-      OR COALESCE(img."userId" IN (
-        SELECT CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-                    THEN (hs.details ->> 'secondaryUserId')::bigint END
-        FROM "CsamReport" hs
-        WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-      ), false)
+      -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
+      -- index probe per row for a few rows or one hashed read per statement for many. The app
+      -- writes the id as a JSON number, whose text is canonical; a hand-written "007" matches no one,
+      -- and the pattern keeps a negative id matching no one, as before.
+      OR EXISTS (
+        SELECT 1 FROM "CsamReport" hs
+        WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
+          AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+      )
       OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = img."userId")
     ))
   ), false) and (img.id)::text NOT IN (SELECT listed.id FROM (
@@ -89,16 +87,15 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
     OR (img."userId" <> -1
       AND img."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = img."userId")
-      -- Uncorrelated, so Postgres reads the reports once per statement rather than once per row.
-      -- CASE as well as the filter: Postgres may cast before it tests the pattern, and one bad
-      -- row would fail every request. The filter keeps NULLs out of the list; COALESCE covers a
-      -- NULL user.
-      OR COALESCE(img."userId" IN (
-        SELECT CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-                    THEN (hs.details ->> 'secondaryUserId')::bigint END
-        FROM "CsamReport" hs
-        WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-      ), false)
+      -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
+      -- index probe per row for a few rows or one hashed read per statement for many. The app
+      -- writes the id as a JSON number, whose text is canonical; a hand-written "007" matches no one,
+      -- and the pattern keeps a negative id matching no one, as before.
+      OR EXISTS (
+        SELECT 1 FROM "CsamReport" hs
+        WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
+          AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+      )
       OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = img."userId")
     ))
   ), false) and (img.id)::text NOT IN (SELECT listed.id FROM (
@@ -114,16 +111,15 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
     OR (img."userId" <> -1
       AND img."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = img."userId")
-      -- Uncorrelated, so Postgres reads the reports once per statement rather than once per row.
-      -- CASE as well as the filter: Postgres may cast before it tests the pattern, and one bad
-      -- row would fail every request. The filter keeps NULLs out of the list; COALESCE covers a
-      -- NULL user.
-      OR COALESCE(img."userId" IN (
-        SELECT CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-                    THEN (hs.details ->> 'secondaryUserId')::bigint END
-        FROM "CsamReport" hs
-        WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-      ), false)
+      -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
+      -- index probe per row for a few rows or one hashed read per statement for many. The app
+      -- writes the id as a JSON number, whose text is canonical; a hand-written "007" matches no one,
+      -- and the pattern keeps a negative id matching no one, as before.
+      OR EXISTS (
+        SELECT 1 FROM "CsamReport" hs
+        WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
+          AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+      )
       OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = img."userId")
     ))
   ), false) and NOT COALESCE((
@@ -196,16 +192,15 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
     OR (img."userId" <> -1
       AND img."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = img."userId")
-      -- Uncorrelated, so Postgres reads the reports once per statement rather than once per row.
-      -- CASE as well as the filter: Postgres may cast before it tests the pattern, and one bad
-      -- row would fail every request. The filter keeps NULLs out of the list; COALESCE covers a
-      -- NULL user.
-      OR COALESCE(img."userId" IN (
-        SELECT CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-                    THEN (hs.details ->> 'secondaryUserId')::bigint END
-        FROM "CsamReport" hs
-        WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-      ), false)
+      -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
+      -- index probe per row for a few rows or one hashed read per statement for many. The app
+      -- writes the id as a JSON number, whose text is canonical; a hand-written "007" matches no one,
+      -- and the pattern keeps a negative id matching no one, as before.
+      OR EXISTS (
+        SELECT 1 FROM "CsamReport" hs
+        WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
+          AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+      )
       OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = img."userId")
     ))
   ), false) and (img.id)::text NOT IN (SELECT listed.id FROM (
@@ -221,16 +216,15 @@ select "img"."id" as "imageId", COALESCE(((("img"."type" = 'image' and "img"."ns
     OR (img."userId" <> -1
       AND img."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = img."userId")
-      -- Uncorrelated, so Postgres reads the reports once per statement rather than once per row.
-      -- CASE as well as the filter: Postgres may cast before it tests the pattern, and one bad
-      -- row would fail every request. The filter keeps NULLs out of the list; COALESCE covers a
-      -- NULL user.
-      OR COALESCE(img."userId" IN (
-        SELECT CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-                    THEN (hs.details ->> 'secondaryUserId')::bigint END
-        FROM "CsamReport" hs
-        WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-      ), false)
+      -- Compared as text, the form "CsamReport_secondaryUserId_idx" indexes, so Postgres picks an
+      -- index probe per row for a few rows or one hashed read per statement for many. The app
+      -- writes the id as a JSON number, whose text is canonical; a hand-written "007" matches no one,
+      -- and the pattern keeps a negative id matching no one, as before.
+      OR EXISTS (
+        SELECT 1 FROM "CsamReport" hs
+        WHERE hs.details ->> 'secondaryUserId' = (img."userId")::text
+          AND hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+      )
       OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = img."userId")
     ))
   ), false) and NOT COALESCE((

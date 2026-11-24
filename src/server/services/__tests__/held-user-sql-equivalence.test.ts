@@ -5,7 +5,11 @@ import * as eventEngine from '../../../../apps/event-engine/src/vector-sync/held
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-/** heldUserSql before its secondary-report leg was made uncorrelated, kept to prove the two agree. */
+/**
+ * The oracle: heldUserSql's secondary-report leg as it read the id before it compared text (through
+ * #8943's uncorrelated list, same results). A user a CsamReport names, as subject or secondary user,
+ * stays held: the one difference allowed is a non-canonical id ("007"), which the app never writes.
+ */
 const heldUserSqlBefore = (user: string) => `(
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = ${user})
       OR EXISTS (
@@ -21,6 +25,7 @@ const SECONDARY = 2;
 const BOTH = 3;
 const NEITHER = 4;
 const HOLD_ONLY = 6;
+const NONCANONICAL = 7;
 // Ids a malformed secondaryUserId could be misread as.
 const NEGATIVE = -5;
 // The 21-digit value's first 18 digits; past 2^53, so kept as text.
@@ -32,7 +37,7 @@ beforeAll(async () => {
   await pg.exec(`
     CREATE TABLE "Viewer" (id bigint);
     INSERT INTO "Viewer" VALUES (${SUBJECT}), (${SECONDARY}), (${BOTH}), (${NEITHER}),
-      (${HOLD_ONLY}), (${NEGATIVE}), (${OVERFLOW_PREFIX}), (NULL);
+      (${HOLD_ONLY}), (${NONCANONICAL}), (${NEGATIVE}), (${OVERFLOW_PREFIX}), (NULL);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}');
     INSERT INTO "CsamReport" ("userId", details) VALUES
       (${SUBJECT}, '{}'),
@@ -42,7 +47,8 @@ beforeAll(async () => {
       (NULL, '{"secondaryUserId": "123456789012345678901"}'),
       (NULL, '{"secondaryUserId": ""}'),
       (NULL, '{"secondaryUserId": "${NEGATIVE}"}'),
-      (NULL, '{"secondaryUserId": null}');
+      (NULL, '{"secondaryUserId": null}'),
+      (NULL, '{"secondaryUserId": "00${NONCANONICAL}"}');
     CREATE TABLE "EvidenceHeldUser" ("userId" int);
     INSERT INTO "EvidenceHeldUser" VALUES (${HOLD_ONLY});
   `);
@@ -60,9 +66,11 @@ const held = async (sql: (user: string) => string) =>
   ).rows.map((r) => [r.id === null ? null : String(r.id), r.held]);
 
 describe('heldUserSql', () => {
-  it('holds exactly the users the correlated form held, NULL and malformed reports included', async () => {
+  it('holds the users the oracle held, NULL and malformed reports included, except a non-canonical id', async () => {
     const before = await held(heldUserSqlBefore);
-    expect(await held(heldUserSql)).toEqual(before);
+    expect(await held(heldUserSql)).toEqual(
+      before.map(([id, isHeld]) => [id, id === String(NONCANONICAL) ? false : isHeld])
+    );
     expect(before).toEqual([
       [String(NEGATIVE), false],
       [String(SUBJECT), true],
@@ -70,12 +78,13 @@ describe('heldUserSql', () => {
       [String(BOTH), true],
       [String(NEITHER), false],
       [String(HOLD_ONLY), true],
+      [String(NONCANONICAL), true],
       [OVERFLOW_PREFIX, false],
       [null, false],
     ]);
   });
 
   it("is the event-engine copy's result too", async () => {
-    expect(await held(eventEngine.heldUserSql)).toEqual(await held(heldUserSqlBefore));
+    expect(await held(eventEngine.heldUserSql)).toEqual(await held(heldUserSql));
   });
 });
