@@ -12,6 +12,7 @@
  */
 
 import type { ReviewSourceProvenance } from '~/server/schema/blocks/actions-run-source.schema';
+import { validateRepositoryUrl } from '~/server/schema/blocks/external-app.schema';
 
 export type ReviewProvenanceLine = {
   key: 'claimed' | 'actions-run';
@@ -37,6 +38,56 @@ function claimedValue(p: ReviewSourceProvenance): string {
   if (p.claimedDirty === true) return `${sha7} · uncommitted changes`;
   if (p.claimedDirty === false) return `${sha7} · clean tree`;
   return `${sha7} · tree state not sent`;
+}
+
+export const DECLARED_REPOSITORY_LABEL = 'Repository (declared by the developer, not checked)';
+
+export type DeclaredRepository = {
+  /** What to show: the canonical URL when it links, else the value as the developer wrote it. */
+  text: string;
+  /** Only set when `validateRepositoryUrl` accepts the value. */
+  href: string | null;
+  /** The client-claimed commit, shortened; `null` when none was sent. */
+  claimedCommit: string | null;
+  /** `<repo>/commit/<sha>`, only for a github.com repository and a full 40-hex claim. */
+  claimedCommitHref: string | null;
+};
+
+/**
+ * The manifest's `repository`, as the review header shows it.
+ *
+ * 🔴 AUTHOR-DECLARED AND UNCHECKED. Nothing ties this URL to the bundle under review, so it is
+ * labelled as the developer's claim and never as "verified" (that word belongs to the
+ * GitHub-signed Actions run alone). The commit beside it is the client's claim, labelled so.
+ *
+ * 🔴 A LINK ONLY WHERE THE STORE WOULD LINK IT: `validateRepositoryUrl`, the same rule the server
+ * and the manifest editor run (https, no credentials, no port, an allowlisted forge host, exactly
+ * `/<owner>/<repo>`). Anything it refuses — `javascript:`, `http:`, a bare `github.com/a/b`,
+ * another host, a deep link — stays PLAIN TEXT as the developer wrote it. A linked value shows
+ * the canonical URL, the same string as its `href`, so what the moderator reads is where the
+ * click goes.
+ */
+export function declaredRepository(
+  repository: unknown,
+  claimedCommit?: string | null
+): DeclaredRepository | null {
+  if (typeof repository !== 'string' || repository.trim() === '') return null;
+  const sha =
+    typeof claimedCommit === 'string' && SHA_RE.test(claimedCommit) ? claimedCommit : null;
+  const out: DeclaredRepository = {
+    text: repository.trim(),
+    href: null,
+    claimedCommit: sha ? sha.slice(0, 7) : null,
+    claimedCommitHref: null,
+  };
+  const checked = validateRepositoryUrl(repository);
+  if (!checked.ok) return out;
+  out.text = checked.url;
+  out.href = checked.url;
+  if (sha && new URL(checked.url).hostname === 'github.com') {
+    out.claimedCommitHref = `${checked.url}/commit/${sha}`;
+  }
+  return out;
 }
 
 /** The two lines, claim first. Empty when the request carries no provenance block at all. */
