@@ -124,9 +124,9 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
     )`);
   const hides = table === 'Image';
   // Only a moderator's delete that queues what it keeps rewrites an already-blocked image, so a
-  // takedown keeps its reason and a grace block stays restorable. Grace markers are dropped so a
-  // restore cannot lift this block.
+  // takedown keeps its reason and a grace block stays restorable.
   const skipBlocked = !moderatorDecides(options);
+  // Grace markers are dropped so a restore cannot lift this block.
   if (hides)
     ctes.push(sql`hidden AS (
       UPDATE "Image" SET ingestion = 'Blocked', "nsfwLevel" = ${NSFW_LEVEL_BLOCKED},
@@ -179,8 +179,7 @@ function deleteStatement(table: 'Image' | 'Post', options: DeleteOptions, ids: n
   };
 }
 
-/** Why a post its delete keeps is unpublished. The publish guard trigger refuses a publish while its
- * PendingDelete row exists. */
+/** `unpublishedReason` of a post unpublished because an open case keeps its delete. */
 export const POST_PENDING_DELETE_REASON = 'pending-delete';
 
 /** A kept image a moderator's delete blocked, and the post it is still in. */

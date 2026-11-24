@@ -1,3 +1,4 @@
+import { POST_PENDING_DELETE_REASON } from '@civitai/db-queries/content-deletion';
 import { Prisma } from '@prisma/client';
 import { createHash, randomUUID } from 'crypto';
 import { env } from '~/env/server';
@@ -65,8 +66,13 @@ export type PostAccessFacts = {
   stamped: boolean;
   /** `metadata.unpublishedBy`, as text. */
   unpublishedBy: string | null;
-  /** `metadata.unpublishedReason` is set. Only a moderator post unpublish writes it on a Post. */
+  /**
+   * `metadata.unpublishedReason` is set: a moderator post unpublish, or a delete a case keeps
+   * (`pendingDelete`).
+   */
   moderatorReason: boolean;
+  /** Unpublished by a delete its open case keeps: nobody has decided anything yet. */
+  pendingDelete: boolean;
   versionStatus: string | null;
   modelStatus: string | null;
 };
@@ -104,6 +110,7 @@ function desiredPostAccess(post: PostAccessFacts | null): CdnAccess {
   // The owner unpublishing their own post or model is not a takedown, even if a moderator later
   // marks the model as a violation or an earlier moderator unpublish left its reason behind.
   if (post.unpublishedBy === null || post.unpublishedBy === String(post.ownerId)) return 'allow';
+  if (post.pendingDelete) return 'deny';
   if (post.moderatorReason) return 'retract';
   // Only a moderator can set this status: the unpublish services refuse a reason from anyone else.
   if (
@@ -317,6 +324,7 @@ type FactsRow = {
   postStamped: boolean | null;
   postUnpublishedBy: string | null;
   postModeratorReason: boolean | null;
+  postPendingDelete: boolean | null;
   postCsamHoldRemoved: boolean | null;
   matureUnderageUnpublish: boolean | null;
   versionStatus: string | null;
@@ -445,6 +453,7 @@ async function loadFacts(urls: string[]) {
         p.metadata ? 'unpublishedAt' AS "postStamped",
         p.metadata->>'unpublishedBy' AS "postUnpublishedBy",
         p.metadata ? 'unpublishedReason' AS "postModeratorReason",
+        p.metadata->>'unpublishedReason' = ${POST_PENDING_DELETE_REASON} AS "postPendingDelete",
         p.metadata->>'unpublishedReason' = ${CSAM_HOLD_POST_UNPUBLISH_REASON} AS "postCsamHoldRemoved",
         (mv.meta->>'unpublishedReason' = ${MATURE_UNDERAGE_REASON}
           OR mo.meta->>'unpublishedReason' = ${MATURE_UNDERAGE_REASON}) AS "matureUnderageUnpublish",
@@ -516,6 +525,7 @@ async function loadFacts(urls: string[]) {
               stamped: !!row.postStamped,
               unpublishedBy: row.postUnpublishedBy,
               moderatorReason: !!row.postModeratorReason,
+              pendingDelete: !!row.postPendingDelete,
               versionStatus: row.versionStatus,
               modelStatus: row.modelStatus,
             },

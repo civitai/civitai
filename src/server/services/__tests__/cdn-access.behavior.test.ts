@@ -161,6 +161,7 @@ const { EVIDENCE_VERIFIED_KEY, CSAM_HOLD_POST_UNPUBLISH_REASON } = await import(
 const { MODERATOR_TAKEDOWN_ACTIVITIES } = await import(
   '~/server/common/moderator-takedown-activities'
 );
+const { POST_PENDING_DELETE_REASON } = await import('@civitai/db-queries/content-deletion');
 
 const sql = (strings: TemplateStringsArray, ...values: unknown[]) => {
   const q = Prisma.sql(strings, ...(values as never[]));
@@ -647,6 +648,23 @@ describe('post takedowns', () => {
     await syncCdnAccess();
     expect(callsFor(u(1))).toEqual(['retract', 'allow']);
     expect(callsFor(u(2))).toEqual(['retract', 'allow']);
+  });
+
+  // The stamp content-deletion's kept-post delete writes (-1: a system actor such as the account
+  // deletion drain). Kept for an open case, nothing is decided yet: deny, reversible, never retract.
+  it.each([
+    ['a system', -1],
+    ["a moderator's own", MOD],
+  ])('%s delete a case keeps denies its post without retracting', async (_, by) => {
+    await sql`UPDATE "Post"
+      SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+            'unpublishedAt', now()::text, 'unpublishedBy', ${by}::int,
+            'unpublishedReason', ${POST_PENDING_DELETE_REASON}::text, 'prevPublishedAt', "publishedAt"),
+          "publishedAt" = NULL
+      WHERE id = 5`;
+    await syncCdnAccess();
+    expect(callsFor(u(1))).toEqual(['deny']);
+    expect(callsFor(u(2))).toEqual(['deny']);
   });
 
   it('a moderator post unpublish retracts', async () => {

@@ -1463,7 +1463,6 @@ export const deletePost = async ({
     kept: keptPost,
     hidden: hiddenPost,
   } = await deletePostRows(kyselyOver(dbWrite), { ids: [id], actor });
-  // A post kept for its case was unpublished in the delete itself.
   await afterPostsUnpublish(hiddenPost.map(({ id: postId, userId }) => ({ postId, userId }))).catch(
     (e: unknown) =>
       logToAxiom({
