@@ -1,5 +1,4 @@
 import { PGlite } from '@electric-sql/pglite';
-import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as OrchestrationNew from '~/server/services/orchestrator/orchestration-new.service';
@@ -60,6 +59,7 @@ vi.mock('~/utils/signal-client', async (importOriginal) => ({
 }));
 
 import { comicsRouter } from '../comics.router';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -404,21 +404,29 @@ const pg = new PGlite();
 beforeAll(async () => {
   await pg.exec(`CREATE TABLE "ComicPanel" (id int PRIMARY KEY, metadata jsonb)`);
 });
-const runRaw = (strings: TemplateStringsArray, values: unknown[]) => {
-  const sql = Prisma.sql(strings, ...(values as never[]));
-  return pg.query(sql.text, sql.values as unknown[]);
-};
-beforeEach(async () => {
-  await pg.exec(`DELETE FROM "ComicPanel"; INSERT INTO "ComicPanel" VALUES (${PANEL_ID}, '{}')`);
-  dbMock.dbWrite.$queryRaw.mockImplementation(
-    (async (s: TemplateStringsArray, ...v: unknown[]) => (await runRaw(s, v)).rows) as never
+/** The claim held in the stored row now, or undefined. */
+const storedClaim = async () =>
+  (
+    await pg.query<{ c: { token: string } | null }>(
+      `SELECT metadata->'unlockClaim' AS c FROM "ComicPanel" WHERE id = $1`,
+      [PANEL_ID]
+    )
+  ).rows[0]?.c ?? undefined;
+const seedClaim = (token: string, age: string) =>
+  pg.query(
+    `UPDATE "ComicPanel" SET metadata = jsonb_build_object('unlockClaim',
+      jsonb_build_object('token', $1::text, 'at', now() - $2::interval)) WHERE id = $3`,
+    [token, age, PANEL_ID]
   );
-  dbMock.dbWrite.$executeRaw.mockImplementation(
-    (async (s: TemplateStringsArray, ...v: unknown[]) =>
-      (await runRaw(s, v)).affectedRows ?? 0) as never
-  );
-});
 
+/** After givenPanel: a read of the metadata alone (the claim carry-over) sees the stored row. */
+const claimReadsHitStoredRow = () => {
+  const read = dbMock.dbWrite.comicPanel.findUnique.getMockImplementation();
+  dbMock.dbWrite.comicPanel.findUnique.mockImplementation((async (args: any) =>
+    args?.select?.metadata
+      ? (await pg.query(`SELECT metadata FROM "ComicPanel" WHERE id = $1`, [PANEL_ID])).rows[0]
+      : read?.(args)) as never);
+};
 /** A two-image panel the owner picked 'picked' from; slot 2 was mature and still locked. */
 const selectedPanel = () =>
   givenPanel({
@@ -433,6 +441,96 @@ const selectedPanel = () =>
 const bothRated = [output('b1', { nsfwLevel: 'pg' }), output('b2', { nsfwLevel: 'x' })];
 
 describe('comics.unlockPanelGeneration - a multi-image panel with a selection', () => {
+  beforeEach(async () => {
+    await pg.exec(`DELETE FROM "ComicPanel"; INSERT INTO "ComicPanel" VALUES (${PANEL_ID}, '{}')`);
+    const raw = pgliteRaw(pg);
+    dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
+    dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
+    // The panel writes reach the stored row too, so what a write leaves of the claim is real.
+    dbMock.dbWrite.comicPanel.update.mockImplementation((async ({ data }: { data: any }) => {
+      if (data.metadata)
+        await pg.query(`UPDATE "ComicPanel" SET metadata = $1 WHERE id = $2`, [
+          JSON.stringify(data.metadata),
+          PANEL_ID,
+        ]);
+      return { id: PANEL_ID, projectId: 11, imageUrl: null, errorMessage: null, ...data };
+    }) as never);
+  });
+
+  it('drops the claim when the unlock succeeds', async () => {
+    selectedPanel();
+    claimReadsHitStoredRow();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+
+    await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(mocks.updateWorkflow).toHaveBeenCalledTimes(1);
+    expect(await storedClaim()).toBeUndefined();
+  });
+
+  it('takes over a claim left more than 10 minutes ago, and refuses a fresh one', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+    await seedClaim('crashed', '11 minutes');
+    await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+    expect(mocks.updateWorkflow).toHaveBeenCalledTimes(1);
+
+    await seedClaim('live', '1 minute');
+    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(
+      /already being unlocked/
+    );
+    expect(mocks.updateWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failing unlock frees only its own claim, not one taken over since', async () => {
+    selectedPanel();
+    givenWorkflow(bothRated, { allowMatureContent: true });
+    mocks.updateWorkflow.mockImplementationOnce(async () => {
+      // Its claim went stale and another request took the panel over.
+      await seedClaim('other', '0 minutes');
+      throw new Error('You need more yellow Buzz.');
+    });
+
+    await expect(caller().unlockPanelGeneration({ panelId: PANEL_ID })).rejects.toThrow(/Buzz/);
+
+    expect(await storedClaim()).toMatchObject({ token: 'other' });
+  });
+
+  it('collects a single-image unlock already paid for, without charging again', async () => {
+    givenPanel({ status: 'RequireUnlock', metadata: { quantity: 1, blockedReason: 'canUpgrade' } });
+    givenWorkflow(
+      [output('b1', { nsfwLevel: 'x' })],
+      { allowMatureContent: true },
+      { unlocked: true }
+    );
+
+    const result = await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expect(mocks.updateWorkflow).not.toHaveBeenCalled();
+    expect(result.status).toBe('Ready');
+    expect(mocks.createImage).toHaveBeenCalledTimes(1);
+  });
+
+  it("the poll's candidate write keeps a claim an unlock took meanwhile", async () => {
+    givenPanel({
+      status: 'AwaitingSelection',
+      metadata: {
+        quantity: 2,
+        candidateImages: [{ key: 'a' }, { requiresUnlock: true, blockedReason: 'canUpgrade' }],
+      },
+    });
+    givenWorkflow(bothRated, { allowMatureContent: true });
+    const read = dbMock.dbWrite.comicPanel.findUnique.getMockImplementation();
+    dbMock.dbWrite.comicPanel.findUnique.mockImplementation((async (args: any) =>
+      args?.select?.metadata
+        ? { metadata: { unlockClaim: { token: 'live' } } }
+        : read?.(args)) as never);
+
+    await caller().pollPanelStatus({ panelId: PANEL_ID });
+
+    expect(writes()[0]?.metadata).toMatchObject({ unlockClaim: { token: 'live' } });
+  });
+
   it('keeps the selection and unlocks the paid slot', async () => {
     selectedPanel();
     givenWorkflow(bothRated, { allowMatureContent: true });

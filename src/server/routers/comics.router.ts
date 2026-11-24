@@ -729,25 +729,44 @@ async function getReferenceImages(referenceId: number) {
 
 // Shared helper: create a single panel record and submit generation
 /**
- * Claims a panel's unlock before the charge, so two concurrent unlocks cannot both pay. The panel
- * write that ends a successful unlock replaces `metadata` and drops the claim; a failed charge
- * releases it; one left by a crash expires.
+ * Claims a panel's unlock before the charge, so two concurrent unlocks cannot both pay. The writes
+ * that end an unlock replace `metadata` from the copy read before the claim, which is what drops it
+ * on success (a jsonb merge there would leave it held); any failure releases it; one left by a crash
+ * expires. The poll's metadata writes carry a live claim over (liveUnlockClaim).
  */
 async function claimPanelUnlock(panelId: number) {
+  const token = randomUUID();
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
     UPDATE "ComicPanel"
-    SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('unlockClaimedAt', now())
+    SET metadata = COALESCE(metadata, '{}'::jsonb)
+      || jsonb_build_object('unlockClaim', jsonb_build_object('token', ${token}::text, 'at', now()))
     WHERE id = ${panelId}
-      AND (metadata->>'unlockClaimedAt' IS NULL
-        OR (metadata->>'unlockClaimedAt')::timestamptz < now() - interval '10 minutes')
+      AND (metadata->'unlockClaim' IS NULL
+        OR (metadata->'unlockClaim'->>'at')::timestamptz < now() - interval '10 minutes')
     RETURNING id
   `;
-  return rows.length > 0;
+  return rows.length > 0 ? token : null;
 }
 
-async function releasePanelUnlock(panelId: number) {
+/**
+ * A poll's metadata write starts from a copy read before its downloads; it carries over the claim
+ * an unlock took meanwhile, so the write does not free it.
+ */
+async function liveUnlockClaim(panelId: number) {
+  // primary: the claim is taken on the primary moments before.
+  const row = await dbWrite.comicPanel.findUnique({
+    where: { id: panelId },
+    select: { metadata: true },
+  });
+  const claim = (row?.metadata as { unlockClaim?: unknown } | null)?.unlockClaim;
+  return claim ? { unlockClaim: claim } : {};
+}
+
+/** Frees the claim only if it is still this request's own. */
+async function releasePanelUnlock(panelId: number, token: string) {
   await dbWrite.$executeRaw`
-    UPDATE "ComicPanel" SET metadata = metadata - 'unlockClaimedAt' WHERE id = ${panelId}
+    UPDATE "ComicPanel" SET metadata = metadata - 'unlockClaim'
+    WHERE id = ${panelId} AND metadata->'unlockClaim'->>'token' = ${token}
   `;
 }
 
@@ -2997,6 +3016,7 @@ export const comicsRouter = router({
                 status: ComicPanelStatus.AwaitingSelection,
                 metadata: {
                   ...((panel.metadata as any) ?? {}),
+                  ...(await liveUnlockClaim(panel.id)),
                   candidateImages: newCandidates,
                 },
               },
@@ -3058,6 +3078,7 @@ export const comicsRouter = router({
                 errorMessage,
                 metadata: {
                   ...((panel.metadata as any) ?? {}),
+                  ...(await liveUnlockClaim(panel.id)),
                   blockedReason,
                 },
               },
@@ -3273,7 +3294,8 @@ export const comicsRouter = router({
   unlockPanelGeneration: comicGenerationProcedure
     .input(z.object({ panelId: z.number().int() }))
     .mutation(async ({ ctx, input }) => {
-      const panel = await dbRead.comicPanel.findUnique({
+      // primary: the stored candidates route the unlock; a lagging replica can miss them.
+      const panel = await dbWrite.comicPanel.findUnique({
         where: { id: input.panelId },
         include: { chapter: { include: { project: { select: { userId: true } } } } },
       });
@@ -3303,18 +3325,20 @@ export const comicsRouter = router({
       } catch (error) {
         throw throwBadRequestError(getOrchestratorErrorMessage(error));
       }
-      // Already unlocked with slots still locked here (an earlier unlock that did not reach them):
-      // collect them below without charging again.
+      // Already unlocked with slots still locked here (an earlier unlock that did not reach them), or
+      // a single-image panel whose unlock was paid but not collected: collect without a new charge.
       const alreadyPaid =
-        candidates.some((c) => c?.requiresUnlock === true) &&
+        (candidates.some((c) => c?.requiresUnlock === true) ||
+          (isSinglePanelBlocked && panel.status !== ComicPanelStatus.Ready)) &&
         (await getWorkflow({ token, path: { workflowId: panel.workflowId } }))
           .allowMatureContent === true;
-      if (!alreadyPaid) {
-        await assertUnlockReleasesOutput({ token, workflowId: panel.workflowId });
-        // One charge per panel: a second unlock while this one is charging is refused.
-        if (!(await claimPanelUnlock(panel.id)))
-          throw throwBadRequestError('This panel is already being unlocked.');
-        try {
+      let claim: string | null = null;
+      try {
+        if (!alreadyPaid) {
+          // One charge per panel: claimed first, so the lock is re-checked by the claim holder.
+          claim = await claimPanelUnlock(panel.id);
+          if (!claim) throw throwBadRequestError('This panel is already being unlocked.');
+          await assertUnlockReleasesOutput({ token, workflowId: panel.workflowId });
           // The mapped error keeps the orchestrator's own message (insufficient Buzz, the cap).
           await updateWorkflow({
             token,
@@ -3322,45 +3346,112 @@ export const comicsRouter = router({
             allowMatureContent: true,
             throwOnError: true,
           });
-        } catch (error) {
-          await releasePanelUnlock(panel.id);
-          throw error;
         }
-      }
 
-      // 2) Re-fetch the workflow and run it through the same `BlobData`
-      //    pipeline `pollPanelStatus` uses, so the derived `blockedReason`
-      //    reflects the post-unlock state. We do this inline rather than
-      //    waiting for a poll tick — clicking Unlock should produce the
-      //    final result in one round-trip, not after a 25-second sleep.
-      const fresh = await getWorkflow({ token, path: { workflowId: panel.workflowId } });
-      const [normalized] = await formatGenerationResponse2([fresh as any], ctx.user);
-      const domainFlags: Record<ColorDomain, boolean> = colorDomainNames.reduce(
-        (acc, c) => ({ ...acc, [c]: false }),
-        {} as Record<ColorDomain, boolean>
-      );
-      domainFlags[ctx.domain as ColorDomain] = true;
-      const wfData = new WorkflowData(normalized as any, {
-        domain: domainFlags,
-        nsfwEnabled: !!ctx.user!.showNsfw,
-        holdUnrated: true,
-      });
-      const firstStep = wfData.steps[0];
-      const outputs = firstStep?.output ?? [];
+        // 2) Re-fetch the workflow and run it through the same `BlobData`
+        //    pipeline `pollPanelStatus` uses, so the derived `blockedReason`
+        //    reflects the post-unlock state. We do this inline rather than
+        //    waiting for a poll tick — clicking Unlock should produce the
+        //    final result in one round-trip, not after a 25-second sleep.
+        const fresh = await getWorkflow({ token, path: { workflowId: panel.workflowId } });
+        const [normalized] = await formatGenerationResponse2([fresh as any], ctx.user);
+        const domainFlags: Record<ColorDomain, boolean> = colorDomainNames.reduce(
+          (acc, c) => ({ ...acc, [c]: false }),
+          {} as Record<ColorDomain, boolean>
+        );
+        domainFlags[ctx.domain as ColorDomain] = true;
+        const wfData = new WorkflowData(normalized as any, {
+          domain: domainFlags,
+          nsfwEnabled: !!ctx.user!.showNsfw,
+          holdUnrated: true,
+        });
+        const firstStep = wfData.steps[0];
+        const outputs = firstStep?.output ?? [];
 
-      // 3a) Single-image: download the now-clean URL into S3 and mark Ready.
-      if (isSinglePanelBlocked) {
-        const clean = outputs.find((o) => !o.blockedReason && o.url);
-        if (!clean?.url) {
-          // Orchestrator hasn't propagated the unblocked output yet, or the
-          // unlock didn't actually clear the block (e.g. POI/minor flag).
-          // Drop back to `Generating` so the regular poll loop picks it up
-          // when it does become available.
+        // 3a) Single-image: download the now-clean URL into S3 and mark Ready.
+        if (isSinglePanelBlocked) {
+          const clean = outputs.find((o) => !o.blockedReason && o.url);
+          if (!clean?.url) {
+            // Orchestrator hasn't propagated the unblocked output yet, or the
+            // unlock didn't actually clear the block (e.g. POI/minor flag).
+            // Drop back to `Generating` so the regular poll loop picks it up
+            // when it does become available.
+            const { blockedReason: _drop, ...metaWithoutBlock } = meta;
+            const updated = await dbWrite.comicPanel.update({
+              where: { id: panel.id },
+              data: {
+                status: ComicPanelStatus.Generating,
+                errorMessage: null,
+                metadata: metaWithoutBlock,
+              },
+            });
+            sendComicPanelSignal(ctx.user!.id, {
+              panelId: updated.id,
+              projectId: panel.projectId,
+              status: updated.status,
+            });
+            return {
+              id: updated.id,
+              status: updated.status,
+              imageUrl: null,
+              candidateImages: [] as string[],
+            };
+          }
+
+          const genParams = meta?.generationParams;
+          const imgWidth = genParams?.width ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).width;
+          const imgHeight =
+            genParams?.height ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height;
+
+          let s3Key: string;
+          try {
+            const resp = await fetch(clean.url, { signal: fetchTimeoutSignal(120_000) });
+            if (!resp.ok) throw new Error(`Failed to download: ${resp.status}`);
+            const buf = Buffer.from(await resp.arrayBuffer());
+            s3Key = randomUUID();
+            const { s3, bucket, backend } = await getImageUploadBackend();
+            await s3.send(
+              new PutObjectCommand({
+                Bucket: bucket,
+                Key: s3Key,
+                Body: buf,
+                ContentType: resp.headers.get('content-type') || 'image/jpeg',
+              })
+            );
+            registerMediaLocation(s3Key, backend, buf.length);
+            await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
+          } catch (e) {
+            console.error(`Failed to download unlocked panel ${panel.id}:`, e);
+            throw throwBadRequestError('Unlock succeeded but image download failed. Please retry.');
+          }
+
+          const civitaiResources = (firstStep?.resources ?? []).map((r) => ({
+            modelVersionId: r.id,
+            type: r.model.type,
+            weight: r.strength,
+          }));
+          const image = await createImage({
+            url: s3Key,
+            type: 'image',
+            userId: ctx.user!.id,
+            width: imgWidth,
+            height: imgHeight,
+            meta: { prompt: panel.prompt, civitaiResources } as any,
+          });
+          await createImageResources({ imageId: image.id }).catch((e) =>
+            console.error(
+              `Failed to materialize resources for unlocked panel image ${image.id}:`,
+              e
+            )
+          );
+
           const { blockedReason: _drop, ...metaWithoutBlock } = meta;
           const updated = await dbWrite.comicPanel.update({
             where: { id: panel.id },
             data: {
-              status: ComicPanelStatus.Generating,
+              status: ComicPanelStatus.Ready,
+              imageUrl: s3Key,
+              imageId: image.id,
               errorMessage: null,
               metadata: metaWithoutBlock,
             },
@@ -3369,215 +3460,151 @@ export const comicsRouter = router({
             panelId: updated.id,
             projectId: panel.projectId,
             status: updated.status,
+            imageUrl: updated.imageUrl,
           });
           return {
             id: updated.id,
             status: updated.status,
-            imageUrl: null,
+            imageUrl: updated.imageUrl,
             candidateImages: [] as string[],
           };
         }
 
-        const genParams = meta?.generationParams;
-        const imgWidth = genParams?.width ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).width;
-        const imgHeight =
-          genParams?.height ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height;
+        // 3b) Multi-image: replace each `requiresUnlock` slot with a freshly
+        //     downloaded S3 key, in stable orchestrator order. Already-clean
+        //     slots keep their existing key (no re-upload).
+        const previousByIndex = candidates;
+        const newCandidates: Array<
+          | { key: string; nsfwLevel?: number }
+          | { requiresUnlock: true; blockedReason: string; nsfwLevel?: number }
+        > = [];
+        const {
+          s3: s3Multi,
+          bucket: multiBucket,
+          backend: multiBackend,
+        } = await getImageUploadBackend();
 
-        let s3Key: string;
-        try {
-          const resp = await fetch(clean.url, { signal: fetchTimeoutSignal(120_000) });
-          if (!resp.ok) throw new Error(`Failed to download: ${resp.status}`);
-          const buf = Buffer.from(await resp.arrayBuffer());
-          s3Key = randomUUID();
-          const { s3, bucket, backend } = await getImageUploadBackend();
-          await s3.send(
-            new PutObjectCommand({
-              Bucket: bucket,
-              Key: s3Key,
-              Body: buf,
-              ContentType: resp.headers.get('content-type') || 'image/jpeg',
-            })
-          );
-          registerMediaLocation(s3Key, backend, buf.length);
-          await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
-        } catch (e) {
-          console.error(`Failed to download unlocked panel ${panel.id}:`, e);
-          throw throwBadRequestError('Unlock succeeded but image download failed. Please retry.');
+        for (let i = 0; i < outputs.length; i++) {
+          const out = outputs[i];
+          const prev = previousByIndex[i] as any;
+          const slotNsfwLevel = normalizeCandidateNsfwLevel((out as any)?.nsfwLevel);
+
+          if (prev && typeof prev.key === 'string') {
+            newCandidates.push({
+              key: prev.key,
+              ...(typeof prev.nsfwLevel === 'number'
+                ? { nsfwLevel: prev.nsfwLevel }
+                : slotNsfwLevel != null
+                ? { nsfwLevel: slotNsfwLevel }
+                : {}),
+            });
+            continue;
+          }
+
+          if (!out?.url) {
+            // Orchestrator still has nothing for this slot — keep it locked
+            // so a subsequent poll can pick it up if/when it materializes.
+            newCandidates.push({
+              requiresUnlock: true,
+              blockedReason: out?.blockedReason ?? 'canUpgrade',
+              ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
+            });
+            continue;
+          }
+
+          if (out.blockedReason) {
+            // Still blocked even after the unlock (POI, minor, etc.). Keep
+            // the marker so the picker doesn't render it as selectable.
+            newCandidates.push({
+              requiresUnlock: true,
+              blockedReason: out.blockedReason,
+              ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
+            });
+            continue;
+          }
+
+          try {
+            const resp = await fetch(out.url, { signal: fetchTimeoutSignal(120_000) });
+            if (!resp.ok) {
+              newCandidates.push({
+                requiresUnlock: true,
+                blockedReason: 'canUpgrade',
+                ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
+              });
+              continue;
+            }
+            const buf = Buffer.from(await resp.arrayBuffer());
+            const s3Key = randomUUID();
+            await s3Multi.send(
+              new PutObjectCommand({
+                Bucket: multiBucket,
+                Key: s3Key,
+                Body: buf,
+                ContentType: resp.headers.get('content-type') || 'image/jpeg',
+              })
+            );
+            registerMediaLocation(s3Key, multiBackend, buf.length);
+            await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
+            newCandidates.push({
+              key: s3Key,
+              ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
+            });
+          } catch (e) {
+            console.error(
+              `Failed to download unlocked candidate for panel ${panel.id} slot ${i}:`,
+              e
+            );
+            newCandidates.push({
+              requiresUnlock: true,
+              blockedReason: 'canUpgrade',
+              ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
+            });
+          }
         }
 
-        const civitaiResources = (firstStep?.resources ?? []).map((r) => ({
-          modelVersionId: r.id,
-          type: r.model.type,
-          weight: r.strength,
-        }));
-        const image = await createImage({
-          url: s3Key,
-          type: 'image',
-          userId: ctx.user!.id,
-          width: imgWidth,
-          height: imgHeight,
-          meta: { prompt: panel.prompt, civitaiResources } as any,
-        });
-        await createImageResources({ imageId: image.id }).catch((e) =>
-          console.error(`Failed to materialize resources for unlocked panel image ${image.id}:`, e)
-        );
-
-        const { blockedReason: _drop, ...metaWithoutBlock } = meta;
+        // A selection stays selected: only the slots change.
+        const keepsSelection = panel.status === ComicPanelStatus.Ready && !!panel.imageUrl;
         const updated = await dbWrite.comicPanel.update({
           where: { id: panel.id },
           data: {
-            status: ComicPanelStatus.Ready,
-            imageUrl: s3Key,
-            imageId: image.id,
-            errorMessage: null,
-            metadata: metaWithoutBlock,
+            status: keepsSelection ? panel.status : ComicPanelStatus.AwaitingSelection,
+            metadata: {
+              ...meta,
+              candidateImages: newCandidates,
+            },
           },
         });
         sendComicPanelSignal(ctx.user!.id, {
           panelId: updated.id,
           projectId: panel.projectId,
           status: updated.status,
-          imageUrl: updated.imageUrl,
         });
         return {
           id: updated.id,
           status: updated.status,
           imageUrl: updated.imageUrl,
-          candidateImages: [] as string[],
+          // Per-slot detail with the orchestrator's nsfwLevel so the picker
+          // can blur mature candidates by default. Locked entries lose any
+          // ephemeral preview URL here — the unlock response shouldn't need
+          // them since the workflow restriction was just lifted.
+          candidates: newCandidates.map((c) =>
+            'requiresUnlock' in c
+              ? {
+                  requiresUnlock: true as const,
+                  blockedReason: c.blockedReason,
+                  blurredPreviewUrl: null as string | null,
+                  nsfwLevel: c.nsfwLevel ?? null,
+                }
+              : { key: c.key, nsfwLevel: c.nsfwLevel ?? null }
+          ),
+          candidateImages: newCandidates
+            .filter((c): c is { key: string; nsfwLevel?: number } => 'key' in c)
+            .map((c) => c.key),
         };
+      } catch (error) {
+        if (claim) await releasePanelUnlock(panel.id, claim).catch(() => undefined);
+        throw error;
       }
-
-      // 3b) Multi-image: replace each `requiresUnlock` slot with a freshly
-      //     downloaded S3 key, in stable orchestrator order. Already-clean
-      //     slots keep their existing key (no re-upload).
-      const previousByIndex = candidates;
-      const newCandidates: Array<
-        | { key: string; nsfwLevel?: number }
-        | { requiresUnlock: true; blockedReason: string; nsfwLevel?: number }
-      > = [];
-      const {
-        s3: s3Multi,
-        bucket: multiBucket,
-        backend: multiBackend,
-      } = await getImageUploadBackend();
-
-      for (let i = 0; i < outputs.length; i++) {
-        const out = outputs[i];
-        const prev = previousByIndex[i] as any;
-        const slotNsfwLevel = normalizeCandidateNsfwLevel((out as any)?.nsfwLevel);
-
-        if (prev && typeof prev.key === 'string') {
-          newCandidates.push({
-            key: prev.key,
-            ...(typeof prev.nsfwLevel === 'number'
-              ? { nsfwLevel: prev.nsfwLevel }
-              : slotNsfwLevel != null
-              ? { nsfwLevel: slotNsfwLevel }
-              : {}),
-          });
-          continue;
-        }
-
-        if (!out?.url) {
-          // Orchestrator still has nothing for this slot — keep it locked
-          // so a subsequent poll can pick it up if/when it materializes.
-          newCandidates.push({
-            requiresUnlock: true,
-            blockedReason: out?.blockedReason ?? 'canUpgrade',
-            ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
-          });
-          continue;
-        }
-
-        if (out.blockedReason) {
-          // Still blocked even after the unlock (POI, minor, etc.). Keep
-          // the marker so the picker doesn't render it as selectable.
-          newCandidates.push({
-            requiresUnlock: true,
-            blockedReason: out.blockedReason,
-            ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
-          });
-          continue;
-        }
-
-        try {
-          const resp = await fetch(out.url, { signal: fetchTimeoutSignal(120_000) });
-          if (!resp.ok) {
-            newCandidates.push({
-              requiresUnlock: true,
-              blockedReason: 'canUpgrade',
-              ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
-            });
-            continue;
-          }
-          const buf = Buffer.from(await resp.arrayBuffer());
-          const s3Key = randomUUID();
-          await s3Multi.send(
-            new PutObjectCommand({
-              Bucket: multiBucket,
-              Key: s3Key,
-              Body: buf,
-              ContentType: resp.headers.get('content-type') || 'image/jpeg',
-            })
-          );
-          registerMediaLocation(s3Key, multiBackend, buf.length);
-          await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
-          newCandidates.push({
-            key: s3Key,
-            ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
-          });
-        } catch (e) {
-          console.error(
-            `Failed to download unlocked candidate for panel ${panel.id} slot ${i}:`,
-            e
-          );
-          newCandidates.push({
-            requiresUnlock: true,
-            blockedReason: 'canUpgrade',
-            ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
-          });
-        }
-      }
-
-      // A selection stays selected: only the slots change.
-      const keepsSelection = panel.status === ComicPanelStatus.Ready && !!panel.imageUrl;
-      const updated = await dbWrite.comicPanel.update({
-        where: { id: panel.id },
-        data: {
-          status: keepsSelection ? panel.status : ComicPanelStatus.AwaitingSelection,
-          metadata: {
-            ...meta,
-            candidateImages: newCandidates,
-          },
-        },
-      });
-      sendComicPanelSignal(ctx.user!.id, {
-        panelId: updated.id,
-        projectId: panel.projectId,
-        status: updated.status,
-      });
-      return {
-        id: updated.id,
-        status: updated.status,
-        imageUrl: updated.imageUrl,
-        // Per-slot detail with the orchestrator's nsfwLevel so the picker
-        // can blur mature candidates by default. Locked entries lose any
-        // ephemeral preview URL here — the unlock response shouldn't need
-        // them since the workflow restriction was just lifted.
-        candidates: newCandidates.map((c) =>
-          'requiresUnlock' in c
-            ? {
-                requiresUnlock: true as const,
-                blockedReason: c.blockedReason,
-                blurredPreviewUrl: null as string | null,
-                nsfwLevel: c.nsfwLevel ?? null,
-              }
-            : { key: c.key, nsfwLevel: c.nsfwLevel ?? null }
-        ),
-        candidateImages: newCandidates
-          .filter((c): c is { key: string; nsfwLevel?: number } => 'key' in c)
-          .map((c) => c.key),
-      };
     }),
 
   selectPanelImage: comicProtectedProcedure
