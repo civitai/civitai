@@ -38,6 +38,13 @@ import { bustKeyBestEffort, bustUserCosmeticCaches } from './cache';
 import { logAxiomError } from './axiom';
 import { ITEM_HOLDER_BUSY_MESSAGE, isItemHolderBusy, lockItemHolder } from './item-holder-lock';
 import { getModeratorDb } from './moderator-db';
+import { usersByIds } from './users.service';
+import {
+  memorialOf,
+  type MemorialBasis,
+  type MemorialState,
+  type MemorialTribute,
+} from '@civitai/shared/memorial';
 import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
 import { responseMayHaveLanded, restErrorReason } from './rest-error-reason';
@@ -312,6 +319,9 @@ export type ModEndpoint =
   | 'user/membership-cancel'
   | 'user/membership-extend'
   | 'user/membership-resync'
+  | 'user/memorial-confirm'
+  | 'user/memorial-propose'
+  | 'user/memorial-reverse'
   | 'user/message-as-civitai'
   | 'user/personal-data-export-release'
   | 'user/remove-link'
@@ -2487,5 +2497,84 @@ export async function removePlacement(input: {
     return { ok: false, error: 'That placement was already settled — reload.' };
 
   // The endpoint writes its own ModActivity row against the real moderator id, so none here.
+  return { ok: true };
+}
+
+const MEMORIAL_CONFIRM_TIMEOUT_MS = 60_000;
+const MEMORIAL_MAY_HAVE_COMPLETED =
+  'Outcome unknown: the change may have gone through. Reload the page before trying again.';
+const memorialFailure = (result: Extract<JsonResult, { ok: false }>): ActionResult => ({
+  ok: false,
+  error: writeFailureError(result, MEMORIAL_MAY_HAVE_COMPLETED),
+});
+export type MemorialPanelState = {
+  memorial: MemorialState | null;
+  proposedBy: string | null;
+  confirmedBy: string | null;
+};
+
+export async function getMemorialPanelState(userId: number): Promise<MemorialPanelState> {
+  const row = await dbWrite
+    .selectFrom('User')
+    .select('meta')
+    .where('id', '=', userId)
+    .executeTakeFirst();
+  const memorial = memorialOf(row?.meta);
+  const ids = [memorial?.proposedBy, memorial?.confirmedBy].filter(
+    (id): id is number => typeof id === 'number'
+  );
+  const users = await usersByIds(ids);
+  const name = (id?: number) => (id ? users.get(id)?.username ?? `#${id}` : null);
+  return {
+    memorial,
+    proposedBy: name(memorial?.proposedBy),
+    confirmedBy: name(memorial?.confirmedBy),
+  };
+}
+
+export async function proposeMemorial(input: {
+  userId: number;
+  basis: MemorialBasis;
+  tributes: MemorialTribute[];
+}): Promise<ActionResult> {
+  const result = await callModEndpoint(
+    'user/memorial-propose',
+    { userId: input.userId, basis: input.basis, tributes: input.tributes },
+    'Memorialization proposal'
+  );
+  if (!result.ok) return memorialFailure(result);
+  if (result.body.status !== 'pending') return { ok: false, error: MEMORIAL_MAY_HAVE_COMPLETED };
+  return { ok: true };
+}
+
+export async function confirmMemorial(userId: number, proposedAt: string): Promise<ActionResult> {
+  const result = await callModEndpoint(
+    'user/memorial-confirm',
+    { userId, proposedAt },
+    'Memorialization',
+    MEMORIAL_CONFIRM_TIMEOUT_MS
+  );
+  if (!result.ok) return memorialFailure(result);
+  const { status, sessionsRevoked, keysRevoked, orchestratorConfirmed } = result.body;
+  if (status !== 'active') return { ok: false, error: MEMORIAL_MAY_HAVE_COMPLETED };
+  const gaps = [
+    sessionsRevoked === false && 'its sessions were not signed out (use Force logout)',
+    keysRevoked === false && 'its API keys were not expired',
+    keysRevoked !== false &&
+      orchestratorConfirmed === false &&
+      'the generation service did not confirm revoking its tokens',
+  ].filter(Boolean);
+  if (gaps.length) return { ok: true, warning: `Memorialized, but ${gaps.join('; ')}.` };
+  return { ok: true };
+}
+
+export async function reverseMemorial(userId: number): Promise<ActionResult> {
+  const result = await callModEndpoint(
+    'user/memorial-reverse',
+    { userId },
+    'Reverse memorialization'
+  );
+  if (!result.ok) return memorialFailure(result);
+  if (result.body.memorialized !== false) return { ok: false, error: MEMORIAL_MAY_HAVE_COMPLETED };
   return { ok: true };
 }

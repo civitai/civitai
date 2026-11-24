@@ -17,6 +17,7 @@ import {
   buildCreateEligibility,
 } from '~/server/services/challenge-eligibility.service';
 import { getCrucibleJudgeEligibility } from '~/server/services/crucible-eligibility.service';
+import { assertCanOpenCreatorShop } from '~/server/services/creator-shop-open.service';
 import {
   buildCreatorScoreUnlocks,
   compiledCreatorScoreUnlockInputs,
@@ -131,10 +132,24 @@ describe('creator score unlock registry', () => {
       'placement-price-cap': 'total',
       'placement-free-slots': 'total',
       'creator-program': 'aggregate',
+      'creator-shop': 'total',
     };
     expect(compiled.map((u) => [u.key, u.scoreKind])).toEqual(
       compiled.map((u) => [u.key, kindByGate[u.key.split(':')[0]]])
     );
+  });
+
+  it('opening a Creator Shop flips at the registry threshold', async () => {
+    const { minScore } = unlock('creator-shop');
+    const opens = async (total: number) => {
+      dbMock.dbRead.user.findUnique.mockResolvedValue({ meta: { scores: { total } } } as never);
+      return assertCanOpenCreatorShop(1).then(
+        () => true,
+        () => false
+      );
+    };
+    expect(await opens(minScore - 1)).toBe(false);
+    expect(await opens(minScore)).toBe(true);
   });
 
   it('crucible judging flips at the registry threshold', async () => {

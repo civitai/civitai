@@ -46,6 +46,7 @@ import {
   throwInsufficientFundsError,
 } from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '../utils/pagination-helpers';
+import { memorializedAmong } from '~/server/services/memorial.service';
 
 export function getUserAccountHandler({ ctx }: { ctx: ProtectedContext }) {
   try {
@@ -241,6 +242,11 @@ export async function createBuzzTipTransactionHandler({
       if (bannedUsers.length > 0) {
         throw throwBadRequestError('One or more target users are banned');
       }
+
+      if ((await memorializedAmong(targetUserIds)).size)
+        throw throwBadRequestError(
+          'One or more target users are memorialized and cannot receive tips.'
+        );
     }
 
     const amount = Math.floor(input.amount / targetUserIds.length);

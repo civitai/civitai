@@ -21,7 +21,7 @@ import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 const mocks = vi.hoisted(() => ({
   setStatus: vi.fn(),
   request: vi.fn(),
-  upsert: vi.fn(async () => undefined),
+  upsert: vi.fn(async (_input: unknown) => undefined),
 }));
 
 vi.mock('@mantine/core', async (importOriginal) => ({
@@ -65,6 +65,9 @@ vi.mock('~/libs/form/components/SimpleImageUpload', () => ({ SimpleImageUpload: 
 
 const { PublishServiceModal } = await import('~/components/CreatorShop/Services/SellerAffirmation');
 const { FeatureFlagsProvider } = await import('~/providers/FeatureFlagsProvider');
+const { SessionWrapper } = await import(
+  '~/components/CreatorShop/Services/__tests__/SessionWrapper'
+);
 const { ServiceRequestModal } = await import(
   '~/components/CreatorShop/Services/deals/ServiceRequestModal'
 );
@@ -98,7 +101,11 @@ const mount = async (node: ReactNode, flags: object = {}) => {
       createElement(
         MantineProvider,
         null,
-        createElement(FeatureFlagsProvider, { flags: flags as never, children: node })
+        createElement(
+          SessionWrapper,
+          null,
+          createElement(FeatureFlagsProvider, { flags: flags as never } as never, node)
+        )
       )
     );
   });

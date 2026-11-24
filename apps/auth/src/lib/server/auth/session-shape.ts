@@ -148,10 +148,12 @@ export function shapeSessionUser({
     string,
     unknown
   >;
-  // heldImageCleared is a server-side marker for a review hold, not shown even to the account's owner.
+  // heldImageCleared is a server-side marker for a review hold, and memorial the moderators' record of a
+  // memorialization; neither is shown even to the account's owner.
   const {
     banDetails: _strippedBanDetails,
     heldImageCleared: _heldImageCleared,
+    memorial: _memorial,
     ...userMeta
   } = fullMeta;
   const banDetails = getUserBanDetails({ meta: userMeta as { banDetails?: BanDetailsMeta } });

@@ -49,7 +49,10 @@ vi.mock('~/components/Currency/CurrencyBadge', () => ({
 }));
 
 const { FeatureFlagsProvider } = await import('~/providers/FeatureFlagsProvider');
-const { ServiceRequestModal } = await import(
+const { SessionWrapper } = await import(
+  '~/components/CreatorShop/Services/__tests__/SessionWrapper'
+);
+const { ServiceRequestModal, ServiceOfferingTerms, ServiceBuyerDisclosure } = await import(
   '~/components/CreatorShop/Services/deals/ServiceRequestModal'
 );
 const { PublishServiceModal } = await import('~/components/CreatorShop/Services/SellerAffirmation');
@@ -60,7 +63,11 @@ const html = (component: ReactNode, flags: object = {}) =>
     createElement(
       MantineProvider,
       null,
-      createElement(FeatureFlagsProvider, { flags: flags as never, children: component })
+      createElement(
+        SessionWrapper,
+        null,
+        createElement(FeatureFlagsProvider, { flags: flags as never } as never, component)
+      )
     )
   );
 
@@ -103,6 +110,57 @@ describe('buyer disclosure in the request modal', () => {
     expect(button).toBeGreaterThan(-1);
     expect(out.indexOf('Before you request:')).toBeLessThan(button);
     expect(out.indexOf('is held now')).toBeLessThan(button);
+  });
+});
+
+describe('the request modal outside the creatorServicesNext rollout', () => {
+  const offering = {
+    id: 9,
+    title: 'Badge',
+    description: 'A hand-drawn badge.',
+    price: 2500,
+    deliveryDays: 4,
+    revisionsIncluded: 1,
+  };
+  const terms = (flags: object) =>
+    html(
+      createElement(ServiceOfferingTerms, { offering, sellerUsername: 'seller' } as never),
+      flags
+    );
+  const disclosure = (flags: object) =>
+    html(createElement(ServiceBuyerDisclosure, { offering } as never), flags);
+
+  it('keeps the plain seller line and the description, with no avatar or About heading', () => {
+    const off = terms({});
+    expect(off).toContain('From seller · ');
+    expect(off).toContain('A hand-drawn badge.');
+    expect(off).not.toContain('/user/seller');
+    expect(off).not.toContain('About this service');
+    // Control: inside the rollout the same component does show them, so the checks above can fail.
+    const on = terms({ creatorServicesNext: true });
+    expect(on).toContain('/user/seller');
+    expect(on).toContain('About this service');
+    expect(on).not.toContain('From seller · ');
+  });
+
+  it('keeps the bullet list without icons, with the same items as inside the rollout', () => {
+    const off = disclosure({});
+    const on = disclosure({ creatorServicesNext: true });
+    expect(off).toContain('mantine-List-root');
+    expect(off).not.toContain('mantine-ThemeIcon-root');
+    expect(on).toContain('mantine-ThemeIcon-root');
+    expect(on).not.toContain('mantine-List-root');
+    for (const line of [
+      '2,500 Buzz is held now.',
+      'Delivery within 4 days of acceptance.',
+      'Accept or request an included revision.',
+      'Either side can ask to cancel before completion.',
+      'You have 48 hours after completion to dispute.',
+      escaped("Civitai isn't a party to this deal."),
+    ]) {
+      expect(off).toContain(line);
+      expect(on).toContain(line);
+    }
   });
 });
 

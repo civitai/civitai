@@ -75,6 +75,7 @@ const userCreatorSelect = {
 export type UserCreatorUser = Prisma.UserGetPayload<{ select: typeof userCreatorSelect }> & {
   /** UserFlag.ExcludeFromEventPoints; moderator-only, masked like `excludeFromLeaderboards`. */
   excludeFromEventPoints: boolean;
+  memorialized: boolean;
 };
 export type UserCreatorRead = { user: UserCreatorUser; modelCount: number } | null;
 
@@ -165,6 +166,7 @@ export async function readUserCreatorViaKysely(
     settings: row.settings,
     excludeFromLeaderboards: row.excludeFromLeaderboards,
     excludeFromEventPoints: Flags.hasFlag(row.flags, UserFlag.ExcludeFromEventPoints),
+    memorialized: Flags.hasFlag(row.flags, UserFlag.Memorialized),
     links: row.links,
     stats: stats ?? null,
     rank:

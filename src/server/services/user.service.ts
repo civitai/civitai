@@ -40,6 +40,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { isEqual, uniq } from 'lodash-es';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { assertNotMemorialized, metaWithoutMemorialSql } from '~/server/services/memorial.service';
 import { notifyModAlert } from '~/server/common/mod-alert';
 import dayjs from '~/shared/utils/dayjs';
 import {
@@ -397,7 +398,8 @@ export const getUsers = async ({
     );
 
   if (contestBanned) {
-    select.push(`u."meta"`);
+    // The memorial record is for `user.memorialize` holders, not every moderator.
+    select.push(`${metaWithoutMemorialSql('u."meta"')} AS "meta"`);
   }
 
   // The contest-ban list is a WINDOW over a set larger than itself, so without an order it showed an
@@ -1361,6 +1363,22 @@ export async function dropDeletedModelIdCaches(modelIds: number[]) {
 }
 const DELETED_MODEL_CACHE_CHUNK = 500;
 
+export const MEMORIALIZED_SCRUB_REFUSAL = 'account scrub refused: memorialized';
+
+/** Fails the account scrub's transaction when the account is memorialized; locks its row first. */
+export function memorialScrubGuardSql(userId: number): Prisma.Sql {
+  if (!Number.isSafeInteger(userId) || userId <= 0)
+    throw new Error(`Refusing to build an account scrub guard for user id ${String(userId)}`);
+  return Prisma.raw(`DO $guard$
+BEGIN
+  PERFORM 1 FROM "User" WHERE id = ${userId} FOR UPDATE;
+  IF EXISTS (SELECT 1 FROM "User" WHERE id = ${userId} AND (flags & ${UserFlag.Memorialized}) <> 0) THEN
+    RAISE EXCEPTION '${MEMORIALIZED_SCRUB_REFUSAL}';
+  END IF;
+END
+$guard$`);
+}
+
 /** `deleteUser`'s sleeping-app step; imported lazily so the account path loads no S3 client. */
 async function deleteSleepingAppsOfDeletedAccount(userId: number) {
   const [{ deleteSleepingAppsForAccount }, { hibernationRepo }, { isMissingTableError }, s3] =
@@ -1397,9 +1415,10 @@ export const deleteUser = async ({
   if (isFeedbackCaptureOwner(id)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
   const user = await dbWrite.user.findFirst({
     where: { username, id },
-    select: { id: true, meta: true },
+    select: { id: true, meta: true, flags: true },
   });
   if (!user) throw throwNotFoundError('Could not find user');
+  assertNotMemorialized(user);
   // Archived first for a user a report names; a failed archive deletes nothing.
   await archiveProfileBeforeModeratorChange({
     userId: user.id,
@@ -1426,65 +1445,68 @@ export const deleteUser = async ({
     tokenRevocation: undefined,
   };
 
-  const result = await dbWrite.$transaction([
-    ...(removeDealUploads ? [dbWrite.$executeRaw(markUserDealUploadsRemovedSql(user.id))] : []),
-    ...(removeModels
-      ? []
-      : [
-          dbWrite.$executeRaw(recordCurrentModelOwnersSql(Prisma.sql`m."userId" = ${user.id}`)),
-          dbWrite.$executeRaw(
-            recordModelOwnershipSql({
-              where: Prisma.sql`m."userId" = ${user.id}`,
-              userId: -1,
-              reason: 'account-delete',
-            })
-          ),
-        ]),
-    dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
-    dbWrite.account.deleteMany({ where: { userId: user.id } }),
-    dbWrite.session.deleteMany({ where: { userId: user.id } }),
-    // Two OR elements, not one carrying two fields — that is a single ANDed
-    // predicate (`userId = X AND targetUserId = X`), which matches only a
-    // self-engagement row and so deleted nothing. `deleteUser` soft-deletes the User
-    // row, so no FK cascade covers for it: every follow and hide of a deleted account
-    // survived and kept being counted by `getUserList`.
-    //
-    // Blocks are EXEMPT, in both directions. This delete is reversible — `restoreUser`
-    // brings the account back and restores nothing here — so clearing a Block would
-    // silently switch off a safety control that someone else set, with no event
-    // telling them. A Follow or a Hide is list noise; a Block is not.
-    dbWrite.userEngagement.deleteMany({
-      where: {
-        OR: [{ userId: user.id }, { targetUserId: user.id }],
-        type: { not: UserEngagementType.Block },
-      },
-    }),
-    // deleteMany, not delete: most accounts have no row here, and `delete` throws on a
-    // miss. The FK cascade never fires for either of these because this is a SOFT delete.
-    dbWrite.userProfile.deleteMany({ where: { userId: user.id } }),
-    dbWrite.userLink.deleteMany({ where: { userId: user.id } }),
-    // "subscriptionId" is a second pointer to the billing record (subscription -> customer ->
-    // charges) that outlives paddleCustomerId. The Stripe customer id is deliberately kept: see
-    // the webhook test in delete-user-pii-scrub.test.ts.
-    dbWrite.user.update({
-      where: { id: user.id },
-      data: {
-        deletedAt: new Date(),
-        email: null,
-        username: null,
-        name: null,
-        paddleCustomerId: null,
-        image: null,
-        profilePictureId: null,
-        subscriptionId: null,
-        meta,
-      },
-    }),
-    // Last, so it can be taken off the result below. The status `deleteModelById` writes on the
-    // versions of a model it deletes; the version rows and their files stay.
-    ...(removeModels
-      ? [
-          dbWrite.$queryRaw<DeletedVersionRow[]>`
+  const result = await dbWrite
+    .$transaction([
+      // Locks the row and refuses an account memorialized after the check above.
+      dbWrite.$executeRaw(memorialScrubGuardSql(user.id)),
+      ...(removeDealUploads ? [dbWrite.$executeRaw(markUserDealUploadsRemovedSql(user.id))] : []),
+      ...(removeModels
+        ? []
+        : [
+            dbWrite.$executeRaw(recordCurrentModelOwnersSql(Prisma.sql`m."userId" = ${user.id}`)),
+            dbWrite.$executeRaw(
+              recordModelOwnershipSql({
+                where: Prisma.sql`m."userId" = ${user.id}`,
+                userId: -1,
+                reason: 'account-delete',
+              })
+            ),
+          ]),
+      dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
+      dbWrite.account.deleteMany({ where: { userId: user.id } }),
+      dbWrite.session.deleteMany({ where: { userId: user.id } }),
+      // Two OR elements, not one carrying two fields — that is a single ANDed
+      // predicate (`userId = X AND targetUserId = X`), which matches only a
+      // self-engagement row and so deleted nothing. `deleteUser` soft-deletes the User
+      // row, so no FK cascade covers for it: every follow and hide of a deleted account
+      // survived and kept being counted by `getUserList`.
+      //
+      // Blocks are EXEMPT, in both directions. This delete is reversible — `restoreUser`
+      // brings the account back and restores nothing here — so clearing a Block would
+      // silently switch off a safety control that someone else set, with no event
+      // telling them. A Follow or a Hide is list noise; a Block is not.
+      dbWrite.userEngagement.deleteMany({
+        where: {
+          OR: [{ userId: user.id }, { targetUserId: user.id }],
+          type: { not: UserEngagementType.Block },
+        },
+      }),
+      // deleteMany, not delete: most accounts have no row here, and `delete` throws on a
+      // miss. The FK cascade never fires for either of these because this is a SOFT delete.
+      dbWrite.userProfile.deleteMany({ where: { userId: user.id } }),
+      dbWrite.userLink.deleteMany({ where: { userId: user.id } }),
+      // "subscriptionId" is a second pointer to the billing record (subscription -> customer ->
+      // charges) that outlives paddleCustomerId. The Stripe customer id is deliberately kept: see
+      // the webhook test in delete-user-pii-scrub.test.ts.
+      dbWrite.user.update({
+        where: { id: user.id },
+        data: {
+          deletedAt: new Date(),
+          email: null,
+          username: null,
+          name: null,
+          paddleCustomerId: null,
+          image: null,
+          profilePictureId: null,
+          subscriptionId: null,
+          meta,
+        },
+      }),
+      // Last, so it can be taken off the result below. The status `deleteModelById` writes on the
+      // versions of a model it deletes; the version rows and their files stay.
+      ...(removeModels
+        ? [
+            dbWrite.$queryRaw<DeletedVersionRow[]>`
               UPDATE "ModelVersion" mv
               SET status = 'Deleted'::"ModelStatus", "updatedAt" = now()
               FROM "Model" m
@@ -1493,9 +1515,17 @@ export const deleteUser = async ({
                 AND mv.status IN ('Published'::"ModelStatus", 'Scheduled'::"ModelStatus")
               RETURNING mv.id
             `,
-        ]
-      : []),
-  ]);
+          ]
+        : []),
+    ])
+    .catch(async (e) => {
+      if (!(e instanceof Error) || !e.message.includes(MEMORIALIZED_SCRUB_REFUSAL)) throw e;
+      const [now] = await dbWrite.$queryRaw<{ flags: number }[]>`
+        SELECT flags FROM "User" WHERE id = ${user.id}
+      `;
+      if (now) assertNotMemorialized(now);
+      throw e;
+    });
   const deletedVersions = removeModels ? (result.pop() as DeletedVersionRow[]) : [];
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
@@ -1593,7 +1623,13 @@ export async function setEventPointsExclusion({ id, setTo }: { id: number; setTo
   await dbWrite.$executeRaw`
     UPDATE "User"
     SET flags = CASE WHEN ${setTo} THEN flags | ${bit}::int ELSE flags & ~${bit}::int END,
-      meta = CASE WHEN ${setTo} THEN meta ELSE meta - ${EVENT_POINTS_EXCLUDED_FROM_META_KEY}::text END
+      meta = CASE
+        -- A moderator's own exclusion on a memorialized account: reversing the memorial must keep it.
+        WHEN ${setTo} AND jsonb_typeof(meta) = 'object' AND meta ? 'memorial'
+          THEN jsonb_set(meta, '{memorial,setEventExclusion}', 'false'::jsonb)
+        WHEN ${setTo} THEN meta
+        ELSE meta - ${EVENT_POINTS_EXCLUDED_FROM_META_KEY}::text
+      END
     WHERE id = ${id}
   `;
   userUpdateCounter?.inc({ location: 'user.service:setEventPointsExclusion' });

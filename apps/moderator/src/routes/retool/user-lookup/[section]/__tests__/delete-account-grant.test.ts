@@ -8,12 +8,35 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
 
-const { deleteAccount } = vi.hoisted(() => ({
+const {
+  deleteAccount,
+  getMemorialPanelState,
+  proposeMemorial,
+  confirmMemorial,
+  reverseMemorial,
+} = vi.hoisted(() => ({
+  proposeMemorial: vi.fn(async () => ({ ok: true as const })),
+  confirmMemorial: vi.fn(async () => ({ ok: true as const })),
+  reverseMemorial: vi.fn(async () => ({ ok: true as const })),
   deleteAccount: vi.fn(async () => ({ ok: true as const })),
+  getMemorialPanelState: vi.fn(async () => ({
+    memorial: null,
+    proposedBy: null,
+    confirmedBy: null,
+  })),
+}));
+const { addUserNote } = vi.hoisted(() => ({ addUserNote: vi.fn(async () => undefined) }));
+vi.mock('$lib/server/moderation-memory.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/server/moderation-memory.service')>()),
+  addUserNote,
 }));
 vi.mock('$lib/server/user-actions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/user-actions.service')>()),
   deleteAccount,
+  getMemorialPanelState,
+  proposeMemorial,
+  confirmMemorial,
+  reverseMemorial,
 }));
 
 const { actions } = await import('../+page.server');
@@ -31,6 +54,34 @@ const formEvent = (grants: Record<string, boolean>, fields: Record<string, strin
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+// Policy: docs/features/memorialized-profiles.md.
+describe('memorial actions — bound to user.memorialize', () => {
+  const fields = {
+    userId: String(TARGET),
+    basis: 'attestation',
+    note: 'first-hand',
+    tributes: '[]',
+    proposedAt: '2026-11-24T00:00:00.000Z',
+  };
+
+  it.each(['memorialPropose', 'memorialConfirm', 'memorialReverse'] as const)(
+    '%s refuses a moderator without the grant, before any note or call',
+    async (name) => {
+      const result = await actions[name](formEvent({ 'user.deleteAccount': true }, fields));
+      expect(result).toMatchObject({ status: 403, data: { scope: 'denied' } });
+      expect(addUserNote).not.toHaveBeenCalled();
+      expect(proposeMemorial).not.toHaveBeenCalled();
+      expect(confirmMemorial).not.toHaveBeenCalled();
+      expect(reverseMemorial).not.toHaveBeenCalled();
+    }
+  );
+
+  it('memorialConfirm reaches the service with the grant', async () => {
+    await actions.memorialConfirm(formEvent({ 'user.memorialize': true }, fields));
+    expect(confirmMemorial).toHaveBeenCalledWith(TARGET, fields.proposedAt);
+  });
 });
 
 describe('deleteAccount action — bound to user.deleteAccount', () => {

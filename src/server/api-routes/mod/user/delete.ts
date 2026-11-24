@@ -5,6 +5,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { deleteUser } from '~/server/services/user.service';
+import { MemorializedAccountError } from '~/server/services/memorial.service';
 import { TRPCError } from '@trpc/server';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint, moderatorBoolean } from '~/server/utils/moderator-endpoint';
@@ -123,15 +124,21 @@ export default defineModeratorEndpoint('user.delete', {
         `That username does not belong to user ${input.userId}. Check the id and try again.`
       );
 
-    await deleteUser({
-      id: input.userId,
-      // The STORED value, not the trimmed confirmation: `deleteUser` matches on it exactly.
-      username: target.username ?? undefined,
-      removeModels: input.removeModels,
-      removeImages: input.removeImages,
-      removeAppData: input.removeAppData,
-      actorId: ctx.actor.id,
-    });
+    try {
+      await deleteUser({
+        id: input.userId,
+        // The STORED value, not the trimmed confirmation: `deleteUser` matches on it exactly.
+        username: target.username ?? undefined,
+        removeModels: input.removeModels,
+        removeImages: input.removeImages,
+        removeAppData: input.removeAppData,
+        actorId: ctx.actor.id,
+      });
+    } catch (e) {
+      if (e instanceof MemorializedAccountError)
+        throw new TRPCError({ code: 'FORBIDDEN', message: e.message, cause: e });
+      throw e;
+    }
 
     // 🔴 THE SPOKE DELIBERATELY DOES NOT LOG THIS ONE — see `deleteAccount` in
     // `apps/moderator/src/lib/server/user-actions.service.ts`. Most `defineModeratorEndpoint`s leave
