@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import type { CommentGoneCause } from '~/server/services/commentv3/write.service';
 
 /**
- * What the platform should hold for one Feature Pages comment. Only ever tightens: visible, hidden,
- * then no text. The last four are final.
+ * What the platform should hold for one Feature Pages comment now, derived from facts. Once a
+ * removal is sent it is final (removeWanted).
  */
 export type FpCommentState =
   | 'visible'
