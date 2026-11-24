@@ -5,6 +5,7 @@
   import { buzzMode, type BuzzMode } from '$lib/buzz-mode.svelte';
   import { buzzBalance } from '$lib/buzz-balance.svelte';
   import { dismiss } from '$lib/actions/dismiss';
+  import { deleteFlowDrafts } from '@civitai/shared/training-flow-draft';
   import BlueFirstToggle from './BlueFirstToggle.svelte';
 
   let {
@@ -151,6 +152,13 @@
             <a
               href={logoutUrl}
               data-sveltekit-reload
+              onclick={async (e) => {
+                // A modified click (new tab/window) keeps link behaviour.
+                if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                e.preventDefault();
+                await deleteFlowDrafts();
+                window.location.href = logoutUrl;
+              }}
               class="block rounded px-3 py-2 text-sm text-dark-2 transition-colors hover:bg-dark-5 hover:text-white"
             >
               Sign out
