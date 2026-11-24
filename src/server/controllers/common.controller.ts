@@ -186,9 +186,10 @@ async function offerLeftPrivateToKnights(entityType: SupportedAvailabilityResour
   if (entityType === 'ModelVersion')
     return void queueLeftPrivateForKnights({ modelVersionIds: [id] });
   if (entityType !== 'Model') return;
-  // The model's trigger carries a flip to Public onto its versions; the sampler still checks each version's own state.
+  // Offers every version; the sampler re-checks each one, and imageSourceVisible refuses an image whose version or model
+  // is still Private or unpublished.
   try {
-    // primary: runs right after the availability write, before a replica may show the model's versions as changed.
+    // primary: a lagging replica could miss versions.
     const versions = await dbWrite.modelVersion.findMany({
       where: { modelId: id },
       select: { id: true },

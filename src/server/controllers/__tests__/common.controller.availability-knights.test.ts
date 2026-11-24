@@ -116,7 +116,6 @@ describe('updateEntityAvailabilityHandler on a Model or ModelVersion', () => {
 
       await vi.waitFor(() => expect(postsOfVersionsReads().length).toBeGreaterThan(0));
       await new Promise((resolve) => setTimeout(resolve, 20));
-      // One offer, for every version at once.
       expect(postsOfVersionsReads()).toHaveLength(1);
       const [read] = postsOfVersionsReads();
       expect(read.values.filter((v) => typeof v === 'number')).toEqual(versionIds);
