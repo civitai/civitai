@@ -176,13 +176,14 @@ song card (see Moderating songs).
 ## Moderating songs
 
 In the moderator app (`apps/moderator`), songs have their own page, **Audio review**
-(`/audio-review`, under Images in the sidebar, with the number of reported songs). It is built on the
-shared triage shell: the queue on the left, the open song in the middle, its reports, cover, checks,
-generation details and owner on the right with the decision bar pinned under them. J/K move, number
+(`/audio-review`, under Images in the sidebar, with the number of reported songs and pending
+appeals). It is built on the shared triage shell: the queue on the left, the open song in the
+middle, its reports, cover, checks, generation details and owner on the right with the decision bar
+pinned under them. J/K move, number
 keys decide, and a decided song dims and the next one opens. Desktop widths only.
 
-- **Tabs:** Reported, Appeals, Held and Disputes. Only Reported works today; the other three show as
-  "Soon" and arrive on this page later.
+- **Tabs:** Reported, Appeals, Held and Disputes. Reported and Appeals work today; Held and Disputes
+  show as "Soon" and arrive on this page later.
 - **Reported** lists songs with Pending reports (the reasons Image reports counts), one row per song:
   cover, title, how long it has waited, the most reported reason, the number of reporters and the
   owner. Sort by oldest, newest or most reports; chips for All, "Has a time" (a report with
@@ -197,8 +198,11 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
 - **Decisions** (`image.moderate`, as on Image reports): 1 Dismiss reports closes the song's shown
   reports as Unactioned (Image reports' Unaction); 2 Remove song is Image reports' removal and asks for a
   violation type, closing the reports as Actioned; 4 Set rating opens PG to XXX (the next digit picks)
-  and is a correction that leaves the reports open. 3 Remove cover is shown but not offered yet. A
-  removed song is ruled on as Image reports rules on a removed image: one blocked by an automated
+  and is a correction that leaves the reports open. 3 Remove cover removes only the song's own cover,
+  with its own violation type: the song stays public with the placeholder, its reports stay open
+  and the song stays open; the cover drops to the placeholder on the page without a reload. It is
+  offered only while the song has its own cover that is not removed or withheld
+  (`removableCoverId`, from `visibleSongLinks`). A removed song is ruled on as Image reports rules on a removed image: one blocked by an automated
   rule gets "Restore and dismiss" (it comes back up) and can be made a moderator removal; one a
   moderator removed only has its reports closed ("Close reports"); one removed for CSAM, or under
   CSAM review, takes nothing here.
@@ -206,7 +210,22 @@ keys decide, and a decided song dims and the next one opens. Desktop widths only
   cover, owner, rating or report text, and no decisions; it links to CSAM holds. Search finds it only
   by its exact id, and it counts for no "Has a time" chip. A cover's file is sent only when the
   public player would show it and it is not withheld.
-- **Image reports** lists images and videos only, and its badge leaves songs out.
+- **Appeals** lists owners' Pending appeals of a removed song or of a song's removed cover (an image
+  flagged for appeal that is a song or a song's own cover, `songAppealImages`), one row per appeal:
+  "Song appeal" or "Cover appeal", the removal's violation, "Repeat ×n" from the second appeal on the
+  same image, and the owner. Chips for All, Song and Cover; sort by oldest or newest. The open
+  appeal shows the owner's words, the removal (who removed it, when, the violation) and the song's
+  side cards; a song appeal has the player and lyrics (a removed song plays from storage), a cover
+  appeal the removed cover and its "Cover of song" link. 1 Approve appeal and 2 Reject appeal
+  (`image.moderate`) take a reason, an optional note and an optional message to the owner, and go
+  through the image appeal resolver (`resolveImageAppeal`), so approving restores only the image
+  appealed: a cover's approval leaves its song alone, and the reverse. There is no rating to apply
+  on restore: the resolver lifts the removal and rescans an unrated image, and a moderator rates it
+  afterwards. A withheld appeal shows no media, owner, words or removal and takes no decision.
+- **Image reports** lists images and videos only, and its badge leaves songs out. The image Appeals
+  queue (`/images/appeals`) and its badge leave out songs and their own covers, which Audio review's
+  Appeals tab decides, so an appeal is decided in one place; the Audio review badge counts reported
+  songs and these appeals.
 - **Minor and POI** are not offered on a song in the image queues, and `setImageFlag` refuses to set
   either on a song, whichever page asks; clearing one still works.
 
@@ -233,16 +252,18 @@ until Audio review's Held tab takes them.
   as the song's review (#10162); a removed song is refused with "This song was removed, so it can't
   be rated." A rated song is locked, and `imageReviewedSql` counts a lock as a review, so nothing may
   return a rated song to Pending, Error or Rescan without clearing its lock.
-- **Removing a song or its cover** are two actions, each with the usual violation type and notes: a
-  song card's "Remove song" and, while the song has a cover to remove, "Remove cover" (`cardRemovals`
-  in `$lib/music/song-tos.ts`). Both are `blockImage` on their own row. Removing the cover leaves the
+- **Removing a song or its cover** are two actions, each with the usual violation type and notes:
+  Audio review's keys 2 and 3, and on a song card in the review queues "Remove song" and, while the
+  song has a cover to remove, "Remove cover" (`cardRemovals` in `$lib/music/song-tos.ts`). Both are
+  `blockImage` on their own row. Removing the cover leaves the
   song public, and the player shows the placeholder (a blocked cover fails `isPlayerSongCover`);
-  removing the song leaves the cover alone (decided by the moderation lead). On Image reports "Remove
-  song" actions the song's report and "Remove cover" leaves it open. Each removal records its own
+  removing the song leaves the cover alone (decided by the moderation lead). "Remove song" actions
+  the song's reports and "Remove cover" leaves them open. Each removal records its own
   violation type, notifies the owner ("Your song "<title>" has been removed …", "The cover of your
   song "<title>" has been removed …", both linking to the song: `songNoticeSubject`, and the
-  `tos-violation` template's `song` / `song cover` wording), and is appealed on its own, as any image
-  is (the owner's removed-images list and the image appeal flow are per image row).
+  `tos-violation` template's `song` / `song cover` wording), and is appealed on its own: the owner's
+  removed-images list and the image appeal flow are per image row, and Audio review's Appeals tab
+  decides each.
 - **A cover in an image queue** carries "Cover of song <title>", linking to the song in Image lookup.
   Song and cover are linked only through the song's own cover (`songsOwnCoverText`), read by
   `getSongLinks` (`song-links.service.ts`) for every queue card. A link to a song or cover withheld
