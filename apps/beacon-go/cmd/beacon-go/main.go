@@ -52,6 +52,25 @@ func redisClient(rawURL string, cluster bool) (redis.UniversalClient, error) {
 	return redis.NewClient(opts), nil
 }
 
+// trackerWriter builds and starts the serve-mode tracker client, wired to the metrics: each row's
+// result (beacon_go_tracker_writes_total), each sent row's duration (beacon_go_tracker_send_seconds),
+// and the queue-depth gauge, registered on reg.
+func trackerWriter(cfg *config.Config, metrics *server.Metrics, reg prometheus.Registerer) *tracker.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.MaxIdleConnsPerHost = cfg.TrackerWorkers
+	w := &tracker.Client{
+		BaseURL: cfg.TrackerURL,
+		HTTP:    &http.Client{Transport: tr},
+		Record:  func(table, result string) { metrics.TrackerWrites.WithLabelValues(table, result).Inc() },
+		Observe: func(table string, d time.Duration) {
+			metrics.TrackerSendSeconds.WithLabelValues(table).Observe(d.Seconds())
+		},
+	}
+	w.Start(cfg.TrackerWorkers, cfg.TrackerQueue)
+	reg.MustRegister(server.TrackerQueueDepth(w.Depth))
+	return w
+}
+
 func run(log *slog.Logger) error {
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
@@ -133,18 +152,7 @@ func run(log *slog.Logger) error {
 			return err
 		}
 		srv.Proxy = fallbackProxy(target)
-		tr := http.DefaultTransport.(*http.Transport).Clone()
-		tr.MaxIdleConnsPerHost = cfg.TrackerWorkers
-		writer = &tracker.Client{
-			BaseURL: cfg.TrackerURL,
-			HTTP:    &http.Client{Transport: tr},
-			Record:  func(table, result string) { metrics.TrackerWrites.WithLabelValues(table, result).Inc() },
-			Observe: func(table string, d time.Duration) {
-				metrics.TrackerSendSeconds.WithLabelValues(table).Observe(d.Seconds())
-			},
-		}
-		writer.Start(cfg.TrackerWorkers, cfg.TrackerQueue)
-		reg.MustRegister(server.TrackerQueueDepth(writer.Depth))
+		writer = trackerWriter(cfg, metrics, reg)
 		srv.Writer = writer
 		servers = append(servers, server.PublicHTTPServer(cfg.Addr, server.PublicMux(srv)))
 	}
