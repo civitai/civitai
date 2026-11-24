@@ -3,10 +3,10 @@ import type { ConsumerBlobPresignResponse } from '@civitai/orchestration-client'
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
+import { throwAppRateLimited, utcDayReset } from '~/server/utils/app-rate-limit';
 import { getConsumerBlobUploadUrlService } from '~/server/services/orchestrator/consumerBlobUpload';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
 import {
-  MEDIA_UPLOAD_BATCH_DAILY_BYTES,
-  MEDIA_UPLOAD_BATCH_DAILY_ITEMS,
   MEDIA_UPLOAD_BATCH_RETENTION_MS,
   MEDIA_UPLOAD_BATCH_UNAVAILABLE_ERROR,
   mediaUploadBatchQuotaError,
@@ -114,6 +114,11 @@ export async function reserveMediaUploadBatchQuota(
   now: Date = new Date()
 ): Promise<() => Promise<void>> {
   const day = now.toISOString().slice(0, 10);
+  // The viewer's daily quota, from the registry (a KeyValue override, else the code defaults).
+  const [dailyItems, dailyBytes] = await Promise.all([
+    resolveUserAppLimit('apps.media-upload-daily-items', userId),
+    resolveUserAppLimit('apps.media-upload-daily-bytes', userId),
+  ]);
   const base = REDIS_KEYS.BLOCKS.MEDIA_UPLOAD_BATCH_DAILY;
   const itemsKey = `${base}:items:${userId}:${day}` as const;
   const bytesKey = `${base}:bytes:${userId}:${day}` as const;
@@ -146,9 +151,22 @@ export async function reserveMediaUploadBatchQuota(
       cause: err,
     });
   }
-  if (itemTotal > MEDIA_UPLOAD_BATCH_DAILY_ITEMS || byteTotal > MEDIA_UPLOAD_BATCH_DAILY_BYTES) {
+  if (itemTotal > dailyItems || byteTotal > dailyBytes) {
     await release();
-    throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: mediaUploadBatchQuotaError() });
+    // `used` is the day's usage before this batch, which the release just gave back.
+    const itemsOver = itemTotal > dailyItems;
+    const { retryAfterSeconds, resetAt } = utcDayReset(now.getTime());
+    throwAppRateLimited(
+      itemsOver ? 'apps.media-upload-daily-items' : 'apps.media-upload-daily-bytes',
+      retryAfterSeconds,
+      mediaUploadBatchQuotaError(dailyItems, dailyBytes),
+      {
+        limit: itemsOver ? dailyItems : dailyBytes,
+        used: itemsOver ? itemTotal - items : byteTotal - bytes,
+        windowSeconds: 24 * 60 * 60,
+        resetAt,
+      }
+    );
   }
   return release;
 }

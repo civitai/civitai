@@ -16,6 +16,8 @@ export type MissedNotificationsDigestData = {
   /** True when `total` stopped at its ceiling, so the real number may be higher. */
   totalIsFloor: boolean;
   unsubscribeUrl: string;
+  /** The "See all notifications" link; the notifications page when not given. */
+  allUrl?: string;
 };
 
 export const notificationsPageUrl = () => `${getBaseUrl()}/user/notifications`;
@@ -36,6 +38,8 @@ const moreLine = (data: MissedNotificationsDigestData) => {
 };
 
 export const missedNotificationsDigestEmail = createEmail({
+  template: 'missedNotificationsDigest',
+  mailClass: 'lifecycle',
   header: (data: MissedNotificationsDigestData) => ({
     subject: subjectFor(data),
     to: data.to,
@@ -76,7 +80,7 @@ export const missedNotificationsDigestEmail = createEmail({
       )}</p><ul style="margin: 16px 0; text-align: left; padding-left: 20px;">${list}</ul>${
         more ? `<p>${escapeHtml(more)}</p>` : ''
       }`,
-      btnUrl: escapeHtml(notificationsPageUrl()),
+      btnUrl: escapeHtml(data.allUrl ?? notificationsPageUrl()),
       btnLabel: 'See all notifications',
       footer,
     });
@@ -92,7 +96,7 @@ export const missedNotificationsDigestEmail = createEmail({
         })
         .join('\n'),
       more ?? '',
-      `See all notifications: ${notificationsPageUrl()}`,
+      `See all notifications: ${data.allUrl ?? notificationsPageUrl()}`,
       `You're getting this because "${MISSED_DIGEST_DISPLAY_NAME}" is on.`,
       `Manage notification emails: ${notificationSettingsUrl()}`,
       `Unsubscribe from this one: ${data.unsubscribeUrl}`,

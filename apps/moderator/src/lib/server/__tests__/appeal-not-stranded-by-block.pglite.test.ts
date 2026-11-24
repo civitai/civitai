@@ -53,7 +53,7 @@ vi.mock('../mod-activity', () => ({
 }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 
-const { blockImage, BLOCKED_REASON_CSAM } = await import('../image-moderation.service');
+const { blockImage } = await import('../image-moderation.service');
 
 // Enums as in prod, so a literal outside the enum fails here too.
 const SCHEMA = `
@@ -174,10 +174,5 @@ describe('blocking an image that is under appeal', () => {
     // Control: the block kept the CSAM reason.
     expect(blockedFor).toBe('CSAM');
     expect(needsReview).toBeNull();
-  });
-
-  // The main app's csamBlockedSql compares the same literal.
-  it('reads the CSAM block reason the main app reads', () => {
-    expect(BLOCKED_REASON_CSAM).toBe('CSAM');
   });
 });

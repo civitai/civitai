@@ -4,7 +4,10 @@ import { REVIEWS_KEPT_WHEN_LIFTED } from '@civitai/shared/image-review-types';
 import {
   GRACE_PRIOR_BLOCKED_FOR_KEY,
   GRACE_PRIOR_INGESTION_KEY,
+  GRACE_PRIOR_KEYS,
   GRACE_PRIOR_NEEDS_REVIEW_KEY,
+  GRACE_PRIOR_NSFW_LEVEL_KEY,
+  GRACE_PRIOR_NSFW_LOCKED_KEY,
   LIFT_KEPT_ACTIVITY,
   LIFT_WHILE_OWNER_DELETED,
 } from '@civitai/shared/account-deletion-grace';
@@ -53,7 +56,7 @@ const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${F
 
 const BLOCKED_REASON_MODERATED = 'moderated';
 /** The block reason of a CSAM removal; the main app's `csamBlockedSql` reads the same literal. */
-export const BLOCKED_REASON_CSAM = 'CSAM';
+const BLOCKED_REASON_CSAM = 'CSAM';
 
 /**
  * Removed for CSAM, or under the review flag and not dismissed from its queue. A block of a held image
@@ -101,6 +104,11 @@ END)`;
 /** The image's owner has deleted their account (in its grace period, or not yet purged). */
 const OWNER_DELETED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "Image"."userId" AND u."deletedAt" IS NOT NULL)`;
 
+const MINUS_GRACE_KEYS = sql.join(
+  GRACE_PRIOR_KEYS.map((key) => sql`${key}::text`),
+  sql` - `
+);
+
 /**
  * The grace-block breadcrumbs off `metadata`; a non-object value is left as it is.
  *
@@ -110,7 +118,7 @@ const OWNER_DELETED = sql<boolean>`EXISTS (SELECT 1 FROM "User" u WHERE u.id = "
  */
 const withoutGraceMarkers = (metadata: RawBuilder<unknown>) =>
   sql`(CASE WHEN jsonb_typeof(${metadata}) = 'object'
-    THEN (${metadata}) - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text
+    THEN (${metadata}) - ${MINUS_GRACE_KEYS}
     ELSE ${metadata} END)`;
 
 // A lift (approved appeal, accept) while the owner is deleted keeps the row blocked and records the
@@ -128,11 +136,18 @@ const LIFTED_INGESTION = sql<
 >`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.ingestion} ELSE ${RECORDED.ingestion} END)::"ImageIngestionStatus"`;
 const LIFTED_NSFW_LEVEL = sql<number>`(CASE WHEN ${OWNER_DELETED} THEN ${KEPT.nsfwLevel}::int ELSE "nsfwLevel" END)`;
 const LIFT_KEPT_BLOCKED = sql<boolean>`(ingestion = ${KEPT.ingestion}::"ImageIngestionStatus")`;
+/** A recorded rating other than Blocked outlives a lift, so a restore still puts back a moderator's lock. */
+const RATING_KEPT_WHEN_LIFTED = sql`(CASE
+  WHEN jsonb_typeof("metadata"->${GRACE_PRIOR_NSFW_LEVEL_KEY}::text) = 'number'
+    AND "metadata"->>${GRACE_PRIOR_NSFW_LEVEL_KEY}::text <> ${String(KEPT.nsfwLevel)}
+  THEN jsonb_build_object(${GRACE_PRIOR_NSFW_LEVEL_KEY}::text, "metadata"->${GRACE_PRIOR_NSFW_LEVEL_KEY}::text,
+    ${GRACE_PRIOR_NSFW_LOCKED_KEY}::text, "metadata"->${GRACE_PRIOR_NSFW_LOCKED_KEY}::text)
+  ELSE '{}'::jsonb END)`;
 /** `metadata` for a lifted row: `stripped`, or while the owner is deleted, that recording the lift. */
 const liftedMetadata = (stripped: RawBuilder<unknown>) => sql`(CASE WHEN ${OWNER_DELETED}
   THEN COALESCE(${stripped}, '{}'::jsonb) || jsonb_build_object(
     ${GRACE_PRIOR_INGESTION_KEY}::text, ${RECORDED.ingestion}::text, ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text, ${RECORDED.blockedFor}::text,
-    ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLifted})
+    ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text, ${reviewKeptWhenLifted}) || ${RATING_KEPT_WHEN_LIFTED}
   ELSE ${stripped} END)`;
 
 const recompute = async (imageId: number) => {
@@ -291,8 +306,8 @@ export async function acceptImage({
     return;
   }
   const nr = img.needsReview;
-  // A report verdict is already refused for a removed image (`keepModeratorRemoved`), and its page shows
-  // one image on several cards, so a second verdict there must not fail on the first one's flag change.
+  // Not for a report verdict: its page shows one image on several cards and does not reload between
+  // verdicts, so a second verdict must not fail on the first one's flag change.
   const checksShown = shownNeedsReview !== undefined && !keepModeratorRemoved;
 
   // remixSource: stamp remixSourceReviewed so the audit job doesn't re-flag it. COALESCE guards the usual
@@ -327,9 +342,7 @@ export async function acceptImage({
     .where('id', '=', imageId)
     .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
     .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
-    // A queue's accept rules on the flag its page showed. One that changed since (a moderator's removal
-    // clears it) is refused, rather than lifting the image and releasing a delete its child-safety case
-    // keeps.
+    // A stale accept would lift an image whose child-safety case keeps a moderator's pending delete.
     .$if(checksShown, (qb) =>
       qb.where('needsReview', 'is not distinct from', shownNeedsReview ?? null)
     )
@@ -609,8 +622,8 @@ export async function blockImage({
         //     NULL-propagates too and would drop the stamp.
         metadata:
           img.needsReview === 'remixSource'
-            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
-            : sql`"metadata" - ${GRACE_PRIOR_INGESTION_KEY}::text - ${GRACE_PRIOR_BLOCKED_FOR_KEY}::text - ${GRACE_PRIOR_NEEDS_REVIEW_KEY}::text - 'ruleId' - 'ruleReason'`,
+            ? sql`(COALESCE("metadata", '{}'::jsonb) - ${MINUS_GRACE_KEYS} - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
+            : sql`"metadata" - ${MINUS_GRACE_KEYS} - 'ruleId' - 'ruleReason'`,
       })
       .where('id', '=', imageId)
       // Already removed with only the review flag left: blocking again would only notify the uploader a

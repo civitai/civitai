@@ -21,6 +21,8 @@ const headline = ({ appName, invitedBy }: InviteData) =>
   invitedBy ? `${invitedBy} invited you to ${appName}` : `You're invited to ${appName}`;
 
 export const inviteEmail = createEmail<InviteData, void>({
+  template: 'invite',
+  mailClass: 'transactional',
   header: (data) => ({ subject: headline(data), to: data.to }),
   html: (data) =>
     renderEmailShell({

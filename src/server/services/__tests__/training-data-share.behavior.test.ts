@@ -50,7 +50,7 @@ const SCHEMA = `
     "tosViolation" boolean NOT NULL DEFAULT false,
     meta jsonb
   );
-  CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+  CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL, meta jsonb);
   CREATE TABLE "ModelFile" (
     id int PRIMARY KEY,
     "modelVersionId" int NOT NULL,
@@ -298,6 +298,12 @@ describe('versionHasStudioDataset', () => {
   it('stays true for a Studio model after its dataset row is deleted', async () => {
     await db.exec(
       `UPDATE "Model" SET meta = '{"trainingStudioWorkflowId": "wf"}' WHERE id = 100 + ${PLAIN}`
+    );
+    expect(await studio()).toBe(true);
+  });
+  it('is true for a run added to a model that never came from the Studio', async () => {
+    await db.exec(
+      `UPDATE "ModelVersion" SET meta = '{"trainingStudioWorkflowId": "wf"}' WHERE id = ${VERSION}`
     );
     expect(await studio()).toBe(true);
   });

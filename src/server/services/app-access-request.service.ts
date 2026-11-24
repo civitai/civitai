@@ -5,6 +5,7 @@ import { FLIPT_FEATURE_FLAGS, readFliptBoolean } from '~/server/flipt/client';
 import { notifyAppAccessDecision } from '~/server/services/app-access-request-notify';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import { dbWrite } from '~/server/db/client';
+import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import type {
   DecideAppAccessRequestInput,
   ListAppAccessRequestsInput,
@@ -92,26 +93,30 @@ async function isAutoApproveOn(user: SessionUser): Promise<boolean> {
 
 /**
  * The basic account checks an instant approval needs: the account exists and is not deleted, is
- * not banned, is not muted, and has a verified email; and the person has no declined request, so
- * a moderator's decline or revoke is never undone by the next submit. Read from the PRIMARY at
- * submit time rather than from the session, which can be hours old: a ban or a mute applied since
- * must count. A person who fails any check still gets a request, pending, for a moderator to
- * decide.
+ * not banned, is not muted, and does not still owe the site's email check — the same rule the rest
+ * of the site applies, {@link requiresEmailVerification}: only an account stamped at onboarding as
+ * having to prove its email fails it until it does; an older account with no verified email
+ * passes; and the person has no declined request, so a moderator's decline or revoke is never
+ * undone by the next submit. Every field is read from the PRIMARY at submit time rather than from
+ * the session, which can be hours old: a ban, a mute or a verification since must count. A person
+ * who fails any check still gets a request, pending, for a moderator to decide.
  */
 async function isEligibleForAutoApproval(userId: number): Promise<boolean> {
-  const [row] = await dbWrite.$queryRaw<{ eligible: boolean }[]>(Prisma.sql`
+  const [row] = await dbWrite.$queryRaw<
+    { inGoodStanding: boolean; emailVerified: Date | null; meta: unknown }[]
+  >(Prisma.sql`
     SELECT (
       "deletedAt" IS NULL
       AND "bannedAt" IS NULL
       AND "muted" = FALSE
-      AND "emailVerified" IS NOT NULL
       AND NOT EXISTS (
         SELECT 1 FROM "AppAccessRequest" WHERE "userId" = ${userId} AND "status" = 'declined'
       )
-    ) AS "eligible"
+    ) AS "inGoodStanding", "emailVerified", "meta"
     FROM "User" WHERE "id" = ${userId}
   `);
-  return row?.eligible === true;
+  if (!row) return false;
+  return row.inGoodStanding === true && !requiresEmailVerification(row);
 }
 
 /**

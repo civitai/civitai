@@ -843,11 +843,6 @@ const newOrderLinkDetection = createJob(
   { lockExpiration: 10 * 60 }
 );
 
-export const newOrderJobs = [
-  newOrderDailyReset,
-  newOrderCleanseSmites,
-  // newOrderCleanupQueues,
-  newOrderChangeFillTarget,
-  newOrderAbuseDetection,
-  newOrderLinkDetection,
-];
+// The old game's jobs stay defined as a reference for checking v1 logic against v2, but are not
+// registered: v1 no longer runs.
+export const newOrderJobs = [newOrderAbuseDetection, newOrderLinkDetection];

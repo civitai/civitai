@@ -1,5 +1,5 @@
 import type { Kysely } from 'kysely';
-import { MOD_TAG_REVIEW_SOURCE } from '@civitai/db/knights';
+import { MOD_TAG_REVIEW_SOURCE, readWithoutJit } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
 import { closeOpenYesNoItem } from './close';
@@ -60,10 +60,12 @@ export async function closeStrandedYesNo(
         .filter((p) => (p.source === MOD_TAG_REVIEW_SOURCE) === tagReview)
         .map((p) => p.id);
       if (ids.length === 0) continue;
-      for (const r of await playableItems(db, { forSweeps: true, tagReview })
-        .select('i.id')
-        .where('i.id', 'in', ids)
-        .execute())
+      for (const r of await readWithoutJit(db, (trx) =>
+        playableItems(trx, { forSweeps: true, tagReview })
+          .select('i.id')
+          .where('i.id', 'in', ids)
+          .execute()
+      ))
         playable.add(r.id);
     }
 

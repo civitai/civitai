@@ -4,7 +4,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SERVICES_TERMS_VERSION } from '~/shared/constants/creator-service-terms.constants';
+import { BUYER_DISCLOSURE_VERSION } from '~/shared/constants/creator-service-terms.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -194,6 +194,7 @@ const MIGRATIONS = [
   '20271120030000_service_license_presets',
   '20271120100000_service_deal_reviewed_happy',
   '20271120100100_service_deal_reviews',
+  '20271125130000_service_deal_buyer_disclosure',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -258,7 +259,8 @@ async function accepted() {
     expectedDeliveryDays: 3,
     buyerId: BUYER,
     requestText: 'please',
-    disclosureVersion: SERVICES_TERMS_VERSION,
+    disclosureVersion: BUYER_DISCLOSURE_VERSION,
+    disclosureReviewEnabled: false,
     buzzType: 'yellow',
     servableLevels: 31,
     consentLevels: 1,
@@ -2161,6 +2163,168 @@ describe('the finals malware scan', () => {
       ['an unknown workflow status', workflow('somethingNew', [CLEAN, NOT_PICKLE]), 'Running'],
     ])('%s reads as %s', (_name, wf, expected) => {
       expect(scan.readFinalScan(wf)).toBe(expected);
+    });
+  });
+
+  describe('a pickle parse error', () => {
+    const pickleParseError = {
+      $type: 'modelPickleScan',
+      output: { status: 'parseError', dangerousImportsFound: false },
+    };
+    const clam = (status: string, extra = {}) => ({
+      $type: 'modelClamScan',
+      output: { status, infected: false, scannedFileCount: 1, ...extra },
+    });
+
+    it.each([
+      [
+        'a video with a clean virus scan',
+        { video: true },
+        workflow('succeeded', [CLEAN, pickleParseError]),
+        'Passed',
+      ],
+      [
+        'a video the virus scan could not read in full',
+        { video: true },
+        workflow('succeeded', [clam('limitsExceeded'), pickleParseError]),
+        'Failed',
+      ],
+      [
+        'a video the virus scan found infected',
+        { video: true },
+        workflow('succeeded', [EICAR, pickleParseError]),
+        'Failed',
+      ],
+      [
+        'a video the virus scan called clean without reading a file',
+        { video: true },
+        workflow('succeeded', [
+          { $type: 'modelClamScan', output: { status: 'clean', infected: false } },
+          pickleParseError,
+        ]),
+        'Retry',
+      ],
+      [
+        'a video the virus scan errored on',
+        { video: true },
+        workflow('succeeded', [CLAM_ERROR, pickleParseError]),
+        'Retry',
+      ],
+      [
+        'a video with dangerous imports',
+        { video: true },
+        workflow('succeeded', [
+          CLEAN,
+          {
+            $type: 'modelPickleScan',
+            output: { status: 'parseError', dangerousImportsFound: true },
+          },
+        ]),
+        'Failed',
+      ],
+      [
+        'a file not accepted as video',
+        {},
+        workflow('succeeded', [CLEAN, pickleParseError]),
+        'Failed',
+      ],
+    ])('reads %s', (_name, options, wf, expected) => {
+      expect(scan.readFinalScan(wf, options)).toBe(expected);
+    });
+
+    const videoClip = mp4Clip({ seconds: 10 });
+    const probeTen = async () => ({ width: 640, height: 360, duration: 10.1 });
+    const serveVideo = () =>
+      s3.send.mockImplementation(async (command: { input: { Key: string; Range?: string } }) =>
+        command.input.Range
+          ? body(videoClip.subarray(0, 16))
+          : {
+              Body: {
+                transformToByteArray: async () => videoClip,
+                transformToWebStream: () => ({ streamOf: command.input.Key }),
+              },
+              ETag: '"v1"',
+              VersionId: 'ver1',
+            }
+      );
+    const scannedEtagOf = async (fileId: number) =>
+      (
+        await q<{ scannedEtag: string | null }>(
+          `SELECT "scannedEtag" FROM "ServiceDealFile" WHERE id = $1`,
+          [fileId]
+        )
+      )[0].scannedEtag;
+    async function deliveredVideo(fileName = 'clip.mp4') {
+      const dealId = await accepted();
+      const fileId = await final(dealId, fileName, videoClip);
+      serveVideo();
+      await unpack.unpackFinals({ probeVideo: probeTen });
+      await files.deliverServiceDeal({ dealId, userId: SELLER });
+      await verdict('Scanned');
+      return { dealId, fileId };
+    }
+
+    it('passes a video unpack accepted, which the pickle scan could not read', async () => {
+      const { fileId } = await deliveredVideo();
+      expect(await scannedEtagOf(fileId)).toBe('"v1"');
+      workflows.set('wf-1', workflow('succeeded', [CLEAN, pickleParseError]));
+      expect(await run()).toMatchObject({ scansPassed: 1, finalsPassed: 1 });
+      expect(await fileRow(fileId)).toMatchObject({
+        scanStatus: 'Passed',
+        malwareScanStatus: 'Passed',
+      });
+    });
+
+    it('does not pass a video whose pickle scan found dangerous imports, even with a clean virus scan', async () => {
+      const { fileId } = await deliveredVideo();
+      workflows.set(
+        'wf-1',
+        workflow('succeeded', [
+          CLEAN,
+          {
+            $type: 'modelPickleScan',
+            output: { status: 'parseError', dangerousImportsFound: true },
+          },
+        ])
+      );
+      expect(await run()).toMatchObject({ scansFailed: 1, finalsPassed: 0 });
+      expect((await fileRow(fileId)).malwareScanStatus).toBe('Failed');
+    });
+
+    it('fails a file that only has a video name', async () => {
+      const { fileId } = await deliveredVideo();
+      // The name is the same; what unpack recorded about the bytes is not.
+      await q(`UPDATE "ServiceDealFile" SET "scannedEtag" = NULL WHERE id = $1`, [fileId]);
+      workflows.set('wf-1', workflow('succeeded', [CLEAN, pickleParseError]));
+      expect(await run()).toMatchObject({ scansPassed: 0, scansFailed: 1 });
+      expect((await fileRow(fileId)).malwareScanStatus).toBe('Failed');
+    });
+
+    it('fails an image whose pickle scan could not read it', async () => {
+      const { fileId } = await delivered();
+      expect(await scannedEtagOf(fileId)).toBeNull();
+      workflows.set('wf-1', workflow('succeeded', [CLEAN, pickleParseError]));
+      expect(await run()).toMatchObject({ scansPassed: 0, scansFailed: 1 });
+    });
+
+    it('leaves scannedEtag empty for a refused .mp4 name, an image and a zip: only unpackVideo sets it', async () => {
+      const dealId = await accepted();
+      const notVideo = await final(dealId, 'clip.mp4', IMAGE_A);
+      const image = await final(dealId, 'a.png', IMAGE_A);
+      const zip = await zipFinal(dealId, [{ name: 'a.png', data: IMAGE_A }]);
+      s3.send.mockImplementation(async (command: { input: { Key: string; Range?: string } }) => {
+        const data = bucket.objects.get(command.input.Key) ?? Buffer.alloc(0);
+        return {
+          Body: {
+            transformToByteArray: async () => (command.input.Range ? data.subarray(0, 16) : data),
+            transformToWebStream: () => ({ streamOf: command.input.Key }),
+          },
+          ETag: '"v1"',
+        };
+      });
+      while (await unpack.unpackFinals({ probeVideo: probeTen }));
+      expect(await fileRow(notVideo)).toMatchObject({ scanStatus: 'Failed' });
+      for (const id of [notVideo, image, zip]) expect(await scannedEtagOf(id)).toBeNull();
     });
   });
 

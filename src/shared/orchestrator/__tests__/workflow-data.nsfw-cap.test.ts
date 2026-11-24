@@ -28,7 +28,7 @@ const build = (
       metadata: {},
       steps: [{ $type: 'videoGen', name: '$0', status: 'succeeded', metadata: {}, output }],
     } as any,
-    { domain: { green } as any, nsfwEnabled: true }
+    { domain: { green } as any }
   );
 
 describe('WorkflowData nsfw cap', () => {

@@ -3,9 +3,20 @@ import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseKnightsSourcesConfig } from '@civitai/shared/new-order';
+import {
+  type CompiledQuery,
+  type DatabaseConnection,
+  Kysely,
+  PostgresAdapter,
+  PostgresIntrospector,
+  PostgresQueryCompiler,
+  type QueryResult,
+} from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
 import {
   knightsSampleDraw,
+  offerImagesToKnights,
   runKnightsPublishSampling,
   sampleNewlyLivePostsForKnights,
   type PublishSampleCursor,
@@ -48,18 +59,36 @@ const queued = async () =>
     )
   ).rows;
 
+const ownerRating = (imageId: number, userId = 1) =>
+  pg.query(
+    `INSERT INTO "ImageRatingRequest" ("imageId", "userId", "nsfwLevel") VALUES ($1, $2, 4)`,
+    [imageId, userId]
+  );
+
 const range = (from: number, count: number) => Array.from({ length: count }, (_, i) => from + i);
 
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(
-    `CREATE TABLE "Post" (id integer PRIMARY KEY, "publishedAt" timestamp, availability text NOT NULL DEFAULT 'Public');
+    `CREATE TABLE "Post" (id integer PRIMARY KEY, "publishedAt" timestamp, availability text NOT NULL DEFAULT 'Public', "modelVersionId" integer);
      CREATE TABLE "Image" (
        id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
        type text NOT NULL DEFAULT 'image', "nsfwLevel" integer NOT NULL DEFAULT 1,
        ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "postId" integer,
        poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
-       "userId" integer NOT NULL DEFAULT 1
+       "userId" integer NOT NULL DEFAULT 1, "nsfwLevelLocked" boolean NOT NULL DEFAULT false
+     );
+     ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "tosViolation" BOOLEAN NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS "userId" INTEGER;
+     ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "modelVersionId" INTEGER;
+     CREATE TABLE "User" (id INTEGER PRIMARY KEY, "deletedAt" TIMESTAMP, "bannedAt" TIMESTAMP, muted BOOLEAN NOT NULL DEFAULT false);
+     CREATE TABLE "Model" (id INTEGER PRIMARY KEY, status TEXT NOT NULL, availability TEXT NOT NULL, "deletedAt" TIMESTAMP);
+     CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, status TEXT NOT NULL, availability TEXT NOT NULL);
+     CREATE TABLE "CsamReport" (id SERIAL PRIMARY KEY, "userId" INTEGER, images JSONB NOT NULL DEFAULT '[]', details JSONB);
+     CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
+     CREATE TABLE "ImageRatingRequest" (
+       "imageId" integer NOT NULL, "userId" integer NOT NULL, "nsfwLevel" integer NOT NULL,
+       status text NOT NULL DEFAULT 'Pending',
+       PRIMARY KEY ("imageId", "userId")
      );`
   );
   await pg.exec(
@@ -78,7 +107,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await pg.exec(`DELETE FROM "KnightsQueueItem"; DELETE FROM "Image"; DELETE FROM "Post";`);
+  await pg.exec(
+    `DELETE FROM "KnightsQueueItem"; DELETE FROM "ImageRatingRequest"; DELETE FROM "Image"; DELETE FROM "Post";`
+  );
 });
 
 describe('knightsSampleDraw', () => {
@@ -270,6 +301,41 @@ describe('sampleNewlyLivePostsForKnights', () => {
     expect((await queued()).map((i) => i.imageId)).toEqual([11, 12, 91, 92]);
   });
 
+  it("queues the owner's rating of an image on a post that just went live, whatever the rates and the cap (lost since #9735)", async () => {
+    // The intake cap is already full.
+    await post(9, new Date('2020-01-01T00:00:00Z'));
+    await images(9, [91]);
+    await pg.query(
+      `INSERT INTO "KnightsQueueItem" ("questionKey","imageId","source","minRank","votesNeeded")
+       VALUES ('knights.image.nsfwLevel', 91, 'test', 'Knight', 5)`
+    );
+    // Rated by its owner while the post was a draft or scheduled.
+    await post(1, minutesAgo(5));
+    await images(1, [11, 13, 14]);
+    await images(1, [12], { nsfwLevel: 8 });
+    await ownerRating(11);
+    await ownerRating(12);
+    await ownerRating(13, 2); // not the owner's
+    await ownerRating(14);
+    // Ruled by a moderator, then unlocked again (an NSFW report): the old request is settled.
+    await pg.query(`UPDATE "ImageRatingRequest" SET status = 'Actioned' WHERE "imageId" = 14`);
+
+    const result = await sweep(minutesAgo(10), { sfwRate: 0, nsfwRate: 0, maxOpen: 1 });
+
+    expect(result).toMatchObject({ ownerRatings: 2, enqueued: 0, capped: false });
+    expect(await queued()).toEqual([
+      { imageId: 11, source: 'owner-rating', priority: 1, status: 'Open' },
+      { imageId: 12, source: 'owner-rating', priority: 1, status: 'Open' },
+      { imageId: 91, source: 'test', priority: 2, status: 'Open' },
+    ]);
+
+    // The overlap re-read queues none of them again, settled or not.
+    await pg.exec(`UPDATE "KnightsQueueItem" SET status = 'Closed' WHERE source = 'owner-rating'`);
+    expect(await sweep(minutesAgo(20), { sfwRate: 0, nsfwRate: 0 })).toMatchObject({
+      ownerRatings: 0,
+    });
+  });
+
   it('does nothing while the sources are off, and still moves past the window', async () => {
     await post(1, minutesAgo(5));
     await images(1, [11]);
@@ -363,6 +429,248 @@ describe('runKnightsPublishSampling', () => {
       ...on,
     });
     expect(on.saved).toEqual([{ publishedAt: minutesAgo(1), postId: 0 }]);
+    expect((await queued()).map((i) => i.imageId)).toEqual([11]);
+  });
+});
+
+describe('offerImagesToKnights', () => {
+  const offer = (
+    scope: Parameters<typeof offerImagesToKnights>[1]['scope'],
+    fields: Record<string, unknown> = { sfwRate: 1, nsfwRate: 1 }
+  ) => offerImagesToKnights(db, { scope, now: NOW, config: config(fields) });
+
+  // JIT off per read: see readWithoutJit in packages/civitai-db/src/knights.ts.
+  it('runs each Image read, enqueueing included, in a transaction that turned JIT off first', async () => {
+    await post(1, minutesAgo(300));
+    await images(1, [11]);
+    await ownerRating(11);
+    // The shared client has no transactions, so this one logs where each begins and ends.
+    const log: string[] = [];
+    const connection: DatabaseConnection = {
+      async executeQuery<R>(compiled: CompiledQuery): Promise<QueryResult<R>> {
+        log.push(compiled.sql);
+        const result = await pg.query(compiled.sql, [...compiled.parameters]);
+        return { rows: result.rows as R[], numAffectedRows: BigInt(result.affectedRows ?? 0) };
+      },
+      // eslint-disable-next-line require-yield
+      async *streamQuery() {
+        throw new Error('streaming is not used');
+      },
+    };
+    const recording = new Kysely<DB>({
+      dialect: {
+        createAdapter: () => new PostgresAdapter(),
+        createDriver: () => ({
+          init: async () => undefined,
+          acquireConnection: async () => connection,
+          beginTransaction: async () => void log.push('BEGIN'),
+          commitTransaction: async () => void log.push('COMMIT'),
+          rollbackTransaction: async () => void log.push('ROLLBACK'),
+          releaseConnection: async () => undefined,
+          destroy: async () => undefined,
+        }),
+        createIntrospector: (k) => new PostgresIntrospector(k),
+        createQueryCompiler: () => new PostgresQueryCompiler(),
+      },
+    });
+
+    await offerImagesToKnights(recording, {
+      scope: { postIds: [1] },
+      now: NOW,
+      config: config({ sfwRate: 1, nsfwRate: 1 }),
+    });
+
+    const reads = log.flatMap((text, i) => (/ from "Image" as "img"/.test(text) ? [i] : []));
+    // The owner-rating read, enqueueKnightsItems' lookup for those ratings, and the sampling read.
+    expect(reads).toHaveLength(3);
+    for (const i of reads) {
+      const begin = log.lastIndexOf('BEGIN', i);
+      expect(begin).toBeGreaterThanOrEqual(0);
+      expect(log.slice(begin + 1, i)).toContain('SET LOCAL jit = off');
+      expect(log.slice(begin + 1, i)).not.toContain('COMMIT');
+    }
+  });
+
+  // Moderation Lead ruling 2026-11-23: a banned or muted uploader, or a model version that is not published, hides an
+  // image from players; sampling must not offer it either.
+  describe('hidden sources', () => {
+    beforeEach(async () => {
+      await pg.exec(`
+        INSERT INTO "User" (id, "bannedAt", muted) VALUES (7, now(), false), (8, NULL, true) ON CONFLICT DO NOTHING;
+        INSERT INTO "Model" (id, status, availability) VALUES (301, 'Published', 'Public') ON CONFLICT DO NOTHING;
+        INSERT INTO "ModelVersion" (id, "modelId", status, availability) VALUES
+          (401, 301, 'Draft', 'Public'), (402, 301, 'UnpublishedViolation', 'Public')
+          ON CONFLICT DO NOTHING;
+      `);
+      await post(1, minutesAgo(300));
+      await post(2, minutesAgo(300));
+      await post(3, minutesAgo(300));
+      await pg.query(`UPDATE "Post" SET "modelVersionId" = 401 WHERE id = 2`);
+      await pg.query(`UPDATE "Post" SET "modelVersionId" = 402 WHERE id = 3`);
+      await images(1, [11, 12, 14]);
+      await images(2, [13]);
+      await images(3, [15]);
+      await pg.query(`UPDATE "Image" SET "userId" = 7 WHERE id = 11`);
+      await pg.query(`UPDATE "Image" SET "userId" = 8 WHERE id = 12`);
+    });
+
+    it('draws none of their images, and still draws a clean one', async () => {
+      expect(await offer({ postIds: [1, 2, 3] })).toEqual({
+        ownerRatings: 0,
+        enqueued: 1,
+        capped: false,
+      });
+      expect(await queued()).toEqual([
+        { imageId: 14, source: 'scan-sample', priority: 1, status: 'Open' },
+      ]);
+    });
+
+    it("queues none of their owners' ratings, and still queues a clean one", async () => {
+      await ownerRating(11, 7);
+      await ownerRating(12, 8);
+      await ownerRating(13);
+      await ownerRating(14);
+      await ownerRating(15);
+      expect(await offer({ postIds: [1, 2, 3] }, { sfwRate: 0, nsfwRate: 0 })).toEqual({
+        ownerRatings: 1,
+        enqueued: 0,
+        capped: false,
+      });
+      expect(await queued()).toEqual([
+        { imageId: 14, source: 'owner-rating', priority: 1, status: 'Open' },
+      ]);
+    });
+  });
+
+  it('samples, once, the images of a post that became public', async () => {
+    await post(1, minutesAgo(300));
+    await images(1, [11]);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 1`);
+    const sweep = (cursor: PublishSampleCursor | null) =>
+      sampleNewlyLivePostsForKnights(db, { cursor, now: NOW, config: config({ sfwRate: 1 }) });
+
+    // Within the sweep's lookback, so it reads the post, and skips it while Private.
+    const first = await sweep(null);
+    expect(first.posts).toBe(1);
+    await pg.query(`UPDATE "Post" SET availability = 'Public' WHERE id = 1`);
+    await sweep(first.cursor);
+    expect(await queued()).toEqual([]);
+
+    expect(await offer({ postIds: [1] })).toEqual({ ownerRatings: 0, enqueued: 1, capped: false });
+    expect(await offer({ postIds: [1] })).toEqual({ ownerRatings: 0, enqueued: 0, capped: false });
+    expect(await queued()).toEqual([
+      { imageId: 11, source: 'scan-sample', priority: 1, status: 'Open' },
+    ]);
+  });
+
+  it("draws each image against its pool's rate, as the sweep does", async () => {
+    const ids = range(1, 200);
+    const below = ids.find((id) => knightsSampleDraw(id) < 0.5) as number;
+    const above = ids.find((id) => knightsSampleDraw(id) >= 0.5) as number;
+    await post(1, minutesAgo(300));
+    await images(1, [below, above]);
+
+    await offer({ postIds: [1] }, { sfwRate: 0.5 });
+
+    expect((await queued()).map((i) => i.imageId)).toEqual([below]);
+  });
+
+  it('offers nothing while the post is still Private, and only the images named by an image scope', async () => {
+    await post(1, minutesAgo(300));
+    await post(2, minutesAgo(300));
+    await images(1, [11]);
+    await images(2, [21, 22]);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 1`);
+    await ownerRating(11);
+
+    expect(await offer({ postIds: [1] })).toEqual({ ownerRatings: 0, enqueued: 0, capped: false });
+    await offer({ imageIds: [22] });
+
+    expect((await queued()).map((i) => i.imageId)).toEqual([22]);
+  });
+
+  it("offers the images of a model version's posts by version", async () => {
+    await post(1, minutesAgo(300));
+    await post(2, minutesAgo(300));
+    await images(1, [11]);
+    await images(2, [21]);
+    await pg.query(`UPDATE "Post" SET "modelVersionId" = 9 WHERE id = 1`);
+
+    await offer({ modelVersionIds: [9] });
+
+    expect((await queued()).map((i) => i.imageId)).toEqual([11]);
+  });
+
+  it('reads a version with more posts than one page, and stops once more are due than fit', async () => {
+    await pg.query(
+      `INSERT INTO "Post" (id, "publishedAt", "modelVersionId") SELECT g, $1, 9 FROM generate_series(1, 201) AS g`,
+      [ts(minutesAgo(300))]
+    );
+    await pg.query(
+      `INSERT INTO "Image" (id, "postId") SELECT g, g FROM generate_series(1, 201) AS g`
+    );
+
+    const capped = await offer({ modelVersionIds: [9] }, { sfwRate: 1, nsfwRate: 1, maxOpen: 3 });
+    expect(capped).toEqual({ ownerRatings: 0, enqueued: 3, capped: true });
+    expect((await queued()).map((i) => i.imageId)).toEqual([1, 2, 3]);
+
+    const all = await offer({ modelVersionIds: [9] }, { sfwRate: 1, nsfwRate: 1, maxOpen: 10_000 });
+    expect(all).toEqual({ ownerRatings: 0, enqueued: 198, capped: false });
+    expect((await queued()).map((i) => i.imageId)).toEqual(range(1, 201));
+  });
+
+  it("queues the owner's rating as an owner rating, ahead of the draw, unless the image ever had an item or its level is locked", async () => {
+    await post(1, minutesAgo(300));
+    await images(1, [11, 12, 13, 14]);
+    await ownerRating(11);
+    await ownerRating(12, 2); // not the owner's
+    await ownerRating(13);
+    await ownerRating(14);
+    await pg.query(`UPDATE "Image" SET "nsfwLevelLocked" = true WHERE id = 14`);
+    await pg.query(
+      `INSERT INTO "KnightsQueueItem" ("questionKey", "imageId", source, "minRank", "votesNeeded", priority, status, "createdAt", "updatedAt")
+       VALUES ('knights.image.nsfwLevel', 13, 'owner-rating', 'Knight', 3, 1, 'Applied', now(), now())`
+    );
+
+    const result = await offer({ postIds: [1] }, { sfwRate: 0, nsfwRate: 0 });
+
+    expect(result).toEqual({ ownerRatings: 1, enqueued: 0, capped: false });
+    expect(await queued()).toEqual([
+      { imageId: 11, source: 'owner-rating', priority: 1, status: 'Open' },
+      { imageId: 13, source: 'owner-rating', priority: 1, status: 'Applied' },
+    ]);
+  });
+
+  it("queues the owner's rating of an image on a shown post, and refuses it on a Private one", async () => {
+    await post(1, minutesAgo(300));
+    await post(2, minutesAgo(300));
+    await images(1, [11]);
+    await images(2, [21]);
+    await pg.query(`UPDATE "Post" SET availability = 'Private' WHERE id = 2`);
+    await ownerRating(11);
+    await ownerRating(21);
+
+    const result = await offer({ postIds: [1, 2] }, { sfwRate: 0, nsfwRate: 0 });
+
+    // The owner-rating read has no post-availability rule: requirePublished's private-post refusal keeps 21 out.
+    expect(result).toEqual({ ownerRatings: 1, enqueued: 0, capped: false });
+    expect(await queued()).toEqual([
+      { imageId: 11, source: 'owner-rating', priority: 1, status: 'Open' },
+    ]);
+  });
+
+  it('queues no owner rating for an image Knights may not show: blocked, a minor, or not yet scanned', async () => {
+    await post(1, minutesAgo(300));
+    await images(1, [11, 12, 13]);
+    await images(1, [14], { ingestion: 'Pending' });
+    await pg.query(`UPDATE "Image" SET "blockedFor" = 'moderated' WHERE id = 12`);
+    await pg.query(`UPDATE "Image" SET minor = true WHERE id = 13`);
+    for (const id of [11, 12, 13, 14]) await ownerRating(id);
+
+    const result = await offer({ postIds: [1] }, { sfwRate: 0, nsfwRate: 0 });
+
+    // 11 is the servable control.
+    expect(result).toEqual({ ownerRatings: 1, enqueued: 0, capped: false });
     expect((await queued()).map((i) => i.imageId)).toEqual([11]);
   });
 });

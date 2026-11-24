@@ -50,7 +50,13 @@ or a missing key. A 401 or 403 means the key is not a full-access moderator key.
    `trace` (or `null` when tracing was off at submit or nothing could be written) and every `links`
    row for the app. Pick the request in question.
 2. **Read the signals.** Use `request <publishRequestId>`, then `trace.signals`:
-   - `themeCustomized` and `theme`: `tokenOverrides` (the `--civitai-*` tokens the app sets),
+   - `accentCustomized`: **the signal for "did it ship the default look?"** `false` = Civitai's
+     stock look, `true` = an accent of its own, `null` = nothing to judge. A row with
+     `signalsVersion: 1` has no `accentCustomized`; judge it from its `theme` by the same rule
+     (below). `themeCustomized` is the v1 signal. It is `true` on ANY colour literal or token the app
+     sets (80 of 93 traces), so it cannot tell a look of its own from the stock look. Don't use it for
+     that.
+   - `theme`, the evidence: `tokenOverrides` (the `--civitai-*` tokens the app sets),
      `customColorCount` and `customColorFiles` (its own colours), `usesThemePackage` and
      `stylingDependencies`.
    - `readDocsTopics`: which developer-docs pages the build read, in order. Look for a theme or design
@@ -70,20 +76,40 @@ or a missing key. A 401 or 403 means the key is not a full-access moderator key.
      theme or design page and the styling was never attempted.
    - **Read the docs but didn't apply them**: the theme page was read, but `editedFiles` shows no
      style file and no token was set. Or the assistant said it styled the app and the bundle shows
-     nothing (`themeCustomized: false`).
+     nothing (`accentCustomized: false`).
    - **Template or docs gap**: the assistant tried and the docs or template offered no way to do it.
      For example, it asked or searched for theming guidance that doesn't exist, or the template's
      structure fought the change.
    - **Tool failure**: the styling edits or checks failed (errors in the tool outputs, preview check
      failures, a sandbox that went away) and the build was submitted anyway.
-5. **Aggregate.** `signals` gives the weekly share of `themeDefault` versus `themeCustomized`, and
-   each docs topic with how many of the builds that read it customised the theme. That tells you
-   whether a fix belongs in the prompt, the docs or the template.
+5. **Aggregate.** `signals` gives the weekly `accentDefault` versus `accentCustomized` (every
+   version judged by the same rule; `accentUnknown` = nothing to judge), and each docs topic with how
+   many of the builds that read it have a look of their own (`accentCustomized`). That tells you
+   whether a fix belongs in the prompt, the docs or the template. The `theme*` counts are the v1
+   signal, kept for comparison.
 
-## Blind spots of `themeCustomized`. Don't over-trust it.
+## `accentCustomized`: the rule and its known misses
+
+`accentCustomized` is `true` when the app sets at least one `--civitai-color-*` token, OR has at
+least 60 colour literals of its own (`customColorCount >= 60`). A non-colour token such as
+`--civitai-radius` doesn't count. It is `null` when no source file was scanned. One implementation,
+`accentCustomizedFrom` in `packages/civitai-app-assistant/src/theme-evidence.ts`, also drives the
+submit's `default-theme` advisory and App Assistant's `report_ready` advisory.
+
+It was calibrated against an operator's by-eye labels on 12 approved apps and agrees on 10. The two
+known misses both read `true` for an app that looks stock:
+
+- an app that overrides `--civitai-color-primary` and other colour tokens yet still looks like
+  Civitai (an override close to the default, or one that styles little);
+- an app with many colour literals (90) that are still Civitai's blue.
+
+So `false` is a strong signal, and `true` sometimes means "looks default anyway". When a `true` is
+surprising, check the screenshots.
+
+## Blind spots of the theme evidence. Don't over-trust it.
 
 It is a static scan of the submitted source against the `page-elements` template's defaults
-(`src/shared/app-assistant/trace-signals.ts` in the civitai repo). It cannot see:
+(`packages/civitai-app-assistant/src/theme-evidence.ts` in the civitai repo). It cannot see:
 
 - colour set from code at runtime (`ctx.fillStyle = …`, a computed `setProperty`), or a colour held
   in a plain `const` and used elsewhere;

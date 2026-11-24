@@ -1881,6 +1881,12 @@ describe('apps.mod.* mount seam', () => {
       'mod.docStore.dismissReports',
       'mod.docStore.get',
       'mod.docStore.listReported',
+      // The data-migration ops; behaviour in `apps-mod-doc-store-maintenance.router.test.ts`.
+      'mod.docStore.maintenance.migrateMarks',
+      'mod.docStore.maintenance.purgeCollection',
+      'mod.docStore.maintenance.purgeDump',
+      'mod.docStore.maintenance.rollbackMarks',
+      'mod.docStore.maintenance.status',
       'mod.docStore.setHidden',
       'mod.purgeSharedRow',
       'mod.userStorage.preview',

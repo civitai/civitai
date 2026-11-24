@@ -409,6 +409,50 @@ describe('moderation-flow meta keys', () => {
   });
 });
 
+// The nsfw lock backfill's record decides what a revert touches: an owner's save cannot change it.
+describe('nsfwLockBackfill', () => {
+  const STORED_BACKFILL = {
+    at: '2026-11-25T00:00:00.000Z',
+    bucket: 'scan-locks',
+    priorLockedProperties: ['nsfw', 'tags'],
+    revertedAt: '2026-11-26T00:00:00.000Z',
+  };
+
+  it.each([
+    ['leaves it out', {}],
+    [
+      'sends a stale copy without revertedAt',
+      { nsfwLockBackfill: { ...STORED_BACKFILL, revertedAt: undefined } },
+    ],
+    [
+      'sends a forged one',
+      { nsfwLockBackfill: { at: 'x', bucket: 'other', priorLockedProperties: [] } },
+    ],
+  ])('keeps the stored record when an owner save %s', async (_case, sent) => {
+    mockStored({ meta: { nsfwLockBackfill: STORED_BACKFILL } });
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      meta: { ...sent, hideBuzz: true } as ModelUpsertInput['meta'],
+    });
+
+    expect(updateData().meta).toEqual({ nsfwLockBackfill: STORED_BACKFILL, hideBuzz: true });
+  });
+
+  it('does not let an owner save add one the model never had', async () => {
+    mockStored({ meta: null });
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      meta: { nsfwLockBackfill: STORED_BACKFILL, hideBuzz: true } as ModelUpsertInput['meta'],
+    });
+
+    expect(updateData().meta).toEqual({ hideBuzz: true });
+  });
+});
+
 // A content wipe's removal record: client meta can neither set nor change it, a moderator's included
 // (their edit form sends stored meta back, which could put a stale record onto a live model).
 describe('removal record keys', () => {

@@ -10,7 +10,7 @@ CREATE TABLE "Image" (
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false,
   "pHash" BIGINT, "userId" INTEGER NOT NULL DEFAULT 1, "postId" INTEGER
 );
-CREATE TABLE "Post" (id INTEGER PRIMARY KEY, metadata JSONB, "modelVersionId" INTEGER);
+CREATE TABLE "Post" (id INTEGER PRIMARY KEY, metadata JSONB, "modelVersionId" INTEGER, "userId" INTEGER, "publishedAt" TIMESTAMP);
 CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, meta JSONB, "modelId" INTEGER);
 CREATE TABLE "Model" (id INTEGER PRIMARY KEY, meta JSONB);
 CREATE TABLE "User" (id INTEGER PRIMARY KEY, meta JSONB);

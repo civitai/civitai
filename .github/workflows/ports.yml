@@ -72,10 +72,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: |
-            apps/feed-go/go.sum
-            apps/beacon-go/go.sum
-            apps/content-policy-go/go.sum
+          # No Go cache: setup-go's saves on every ref, and this key's entry is too small to be worth a step that can fail the job.
+          cache: false
 
       - name: Install
         run: pnpm install --frozen-lockfile
@@ -94,7 +92,7 @@ jobs:
             exit 1
           fi
           pnpm exec vitest run --project 'unit*' --reporter=default --reporter=json \
-            --outputFile=ports-test-report.json "${files[@]}"
+            --reporter=github-actions --outputFile=ports-test-report.json "${files[@]}"
           ran=$(node -e 'console.log(require("./ports-test-report.json").testResults.length)')
           if [ "$ran" -ne "${#files[@]}" ]; then
             echo "::error::vitest ran $ran of ${#files[@]} ports test files; each one must run."
@@ -126,10 +124,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: apps/feed-go/go.mod
-          cache-dependency-path: |
-            apps/feed-go/go.sum
-            apps/beacon-go/go.sum
-            apps/content-policy-go/go.sum
+          # No Go cache: setup-go's saves on every ref, and this key's entry is too small to be worth a step that can fail the job.
+          cache: false
 
       # For `typescript`, which the Node dependency walk parses with.
       - name: Install

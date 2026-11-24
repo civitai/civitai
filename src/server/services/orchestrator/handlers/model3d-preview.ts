@@ -1,6 +1,6 @@
 /**
  * Shared model3DPreview step builder for 3D-model ecosystems (PolyGen, Tripo,
- * Hunyuan3D). Every polyGen-based ecosystem chains the same controllable 2D
+ * Pixal3D, Trellis.2). Every polyGen-based ecosystem chains the same controllable 2D
  * preview render after its generation step, so the camera pose + step shape
  * live here rather than being copy-pasted into each `*-graph.handler.ts`.
  */

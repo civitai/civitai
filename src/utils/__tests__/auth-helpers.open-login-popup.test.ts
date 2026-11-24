@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { LOGIN_POPUP_DONE, openLoginPopup } from '~/utils/auth-helpers';
+import { FLOW_DRAFT_DB } from '@civitai/shared/training-flow-draft';
+import { handleSignOut, LOGIN_POPUP_DONE, openLoginPopup } from '~/utils/auth-helpers';
 
 // Regression: every caller passes `pathname + search + hash` as the callback. On a page with a #fragment,
 // `location.assign(<same url with that fragment>)` is a same-document fragment navigation — the page never
@@ -116,5 +117,51 @@ describe('openLoginPopup completion', () => {
     completeLogin();
     expect(loc.assign).toHaveBeenCalledWith('/models/123?tab=b#node-3');
     expect(loc.reload).not.toHaveBeenCalled();
+  });
+});
+
+// Sign-out deletes the Training Studio's autosaved datasets before leaving, so the next person on a
+// shared browser isn't offered the last user's draft — and never hangs on it.
+describe('handleSignOut', () => {
+  type DeleteRequest = { onsuccess?: () => void; onerror?: () => void; onblocked?: () => void };
+  let request: DeleteRequest;
+  let deleteDatabase: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    setup('https://example.test/models/1?x=1');
+    Object.assign(loc, { pathname: '/models/1', search: '?x=1', hash: '' });
+    request = {};
+    deleteDatabase = vi.fn(() => request);
+    vi.stubGlobal('indexedDB', { deleteDatabase });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const logoutUrl = 'https://example.test/api/auth/logout?callbackUrl=%2Fmodels%2F1%3Fx%3D1';
+
+  it('navigates to logout only after the draft database is deleted', async () => {
+    const done = handleSignOut();
+    expect(deleteDatabase).toHaveBeenCalledExactlyOnceWith(FLOW_DRAFT_DB);
+    await Promise.resolve();
+    expect(loc.href).toBe('https://example.test/models/1?x=1');
+    request.onsuccess?.();
+    await done;
+    expect(loc.href).toBe(logoutUrl);
+  });
+
+  it('still signs out when the delete never settles', async () => {
+    const done = handleSignOut();
+    await vi.advanceTimersByTimeAsync(1000);
+    await done;
+    expect(loc.href).toBe(logoutUrl);
+  });
+
+  it('still signs out when IndexedDB is unavailable', async () => {
+    vi.stubGlobal('indexedDB', undefined);
+    await handleSignOut();
+    expect(loc.href).toBe(logoutUrl);
   });
 });

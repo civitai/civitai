@@ -51,6 +51,8 @@ import {
   PRIOR_BLOCKED_FOR_KEY,
   PRIOR_INGESTION_KEY,
   PRIOR_NEEDS_REVIEW_KEY,
+  PRIOR_NSFW_LEVEL_KEY,
+  PRIOR_NSFW_LOCKED_KEY,
 } from '~/server/utils/image-removal-mode';
 import {
   removeDeletedUserImages,
@@ -102,6 +104,10 @@ type Fixture = {
   csamFlagged?: boolean;
   /** The flag as the primary holds it, when it lands after the worklist read. */
   primaryCsamFlagged?: boolean;
+  /** Per-image `nsfwLevel`; an id absent from here is 1. */
+  nsfwLevel?: Record<number, number>;
+  /** Per-image `nsfwLevelLocked`; an id absent from here is unlocked. */
+  nsfwLevelLocked?: Record<number, boolean>;
   /** Per-image `ingestion`; an id absent from here is `Scanned`. */
   ingestion?: Record<number, string>;
   /** Per-image `blockedFor`; an id absent from here holds NULL. */
@@ -309,6 +315,8 @@ function resolveMetadata(
       if (column === 'ingestion') return [key, ingestionOf(fixture, id)];
       if (column === 'blockedFor') return [key, blockedForOf(fixture, id)];
       if (column === 'needsReview') return [key, fixture.reviewFlags?.[id] ?? null];
+      if (column === 'nsfwLevel') return [key, fixture.nsfwLevel?.[id] ?? 1];
+      if (column === 'nsfwLevelLocked') return [key, fixture.nsfwLevelLocked?.[id] ?? false];
       throw new Error(`unhandled metadata source: ${source}`);
     })
   );
@@ -1381,16 +1389,21 @@ describe('grace mode restore breadcrumbs', () => {
         meta: { imageRemoval: 'grace' },
         images: [1],
         ingestion: { 1: 'Pending' },
+        nsfwLevel: { 1: 4 },
+        nsfwLevelLocked: { 1: true },
       },
     });
 
     await run();
 
-    // Restoring these to a flat `Scanned` would promote an image past the scan it never had.
+    // Restoring these to a flat `Scanned` would promote an image past the scan it never had, and
+    // re-rating it would drop a moderator's rating lock.
     expect(blockedRows()[0].metadata).toEqual({
       [PRIOR_INGESTION_KEY]: 'Pending',
       [PRIOR_BLOCKED_FOR_KEY]: null,
       [PRIOR_NEEDS_REVIEW_KEY]: null,
+      [PRIOR_NSFW_LEVEL_KEY]: 4,
+      [PRIOR_NSFW_LOCKED_KEY]: true,
     });
   });
 
@@ -1435,6 +1448,8 @@ describe('grace mode restore breadcrumbs', () => {
       [PRIOR_INGESTION_KEY]: 'Blocked',
       [PRIOR_BLOCKED_FOR_KEY]: AI_NOT_VERIFIED,
       [PRIOR_NEEDS_REVIEW_KEY]: null,
+      [PRIOR_NSFW_LEVEL_KEY]: 1,
+      [PRIOR_NSFW_LOCKED_KEY]: false,
     });
   });
 

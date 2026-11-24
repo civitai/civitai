@@ -81,6 +81,7 @@ import type { DatasetRating, StoredRating } from '$lib/dataset-rating';
 import { slugify } from '$lib/slug';
 import { MAX_RUNS } from '$lib/submit-limits';
 import { MatureRepriceError } from '$lib/mature-charge';
+import { isMatureNsfwLevel } from '$lib/nsfw-rating';
 import type { TrainingTextCheck } from '$lib/training-text';
 
 /** Captions remain raw until the engine-specific submit builder applies the trigger word. */
@@ -816,7 +817,6 @@ export interface ContinueOpts {
 
 export { MatureRepriceError };
 
-const MATURE_NSFW_LEVELS = new Set(['r', 'x', 'xxx']);
 const PROBE_CONCURRENCY = 8;
 const PROBE_TTL_MS = 10 * 60 * 1000;
 const PROBE_CACHE_MAX = 200;
@@ -860,8 +860,7 @@ async function countMatureBlobs(
         return;
       }
       if (rating && response?.ok) unratedKeys.push(blobIdFromAir(air));
-      const level = response?.headers.get('x-nsfw-level')?.toLowerCase();
-      if (level && MATURE_NSFW_LEVELS.has(level)) mature++;
+      if (isMatureNsfwLevel(response?.headers.get('x-nsfw-level'))) mature++;
     } catch {
       failed++;
     }

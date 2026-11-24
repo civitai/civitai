@@ -8,6 +8,13 @@ import type {
 } from '~/shared/constants/block-storage.constants';
 
 /**
+ * The five selectable content-level bits (PG 1, PG-13 2, R 4, X 8, XXX 16): the registry level
+ * streams' bits, as a subscription's `meta.level` (`registry-adapter/level-feed.ts`) and as the
+ * store's level-stream selector (`levelChanges`, `levelDocuments`). The one list of them.
+ */
+export const LEVEL_STREAM_BITS = [1, 2, 4, 8, 16] as const;
+
+/**
  * One collection's declaration — the manifest parser's own type, so the store sees exactly
  * what the validator accepted at review. The store never reads `showAuthor` or
  * `ownedModelVersions`; the REST layer applies them (`doc-store-api.ts`,
@@ -192,6 +199,19 @@ export const DOC_STORE_BOUNDS = {
 
 export const REPORT_MARK = 'report';
 
+/**
+ * A viewer-keyed collection's PARENT key (`docs/app-storage-generic-core.md`, "Key derivation"):
+ * the store's key grammar without `:`, at most 96 characters, not only dots. `:` is excluded so
+ * `keyPrefix=<parent>:` lists exactly one parent's documents. The one definition: the `@me`
+ * routes (`doc-store-viewer-keyed.ts`) and the mark migration's key check both apply it.
+ */
+export const VIEWER_KEY_PARENT_RE = /^[A-Za-z0-9._-]{1,96}$/;
+
+/** Whether `parent` is a valid viewer-keyed parent key ({@link VIEWER_KEY_PARENT_RE}). */
+export function isViewerKeyParent(parent: string): boolean {
+  return VIEWER_KEY_PARENT_RE.test(parent) && !/^\.+$/.test(parent);
+}
+
 /** Stable codes from the storage proposal's error table. The HTTP mapping belongs to the route layer. */
 export type DocStoreErrorCode =
   | 'invalid_request'
@@ -215,6 +235,12 @@ export type DocStoreErrorCode =
   | 'version_conflict'
   | 'index_building'
   | 'cursor_expired'
+  /**
+   * The operation no longer exists here (410). Today: a `$mark` / `$unmark` of a mark whose rows
+   * were moved to a viewer-keyed collection (`details.reason: 'mark_migrated'`, with the target
+   * collection), refused from the moment the migration froze it (`migrateMarksToDocs`).
+   */
+  | 'removed'
   | 'too_large'
   | 'quota_exceeded'
   | 'content_rejected'
@@ -270,6 +296,11 @@ export type AccountWipeNamespaceResult = {
   marks: number;
   /** Rows deleted in `namespace` mode, across every table (index rows not counted). */
   namespaceRows: number;
+  /**
+   * Maintenance runs (purge dumps and their results, mark-migration results) that named the
+   * account and lost it (`user` mode; in `namespace` mode they are deleted with the rest).
+   */
+  maintRunsScrubbed: number;
 };
 
 export type AccountWipeResult = {

@@ -97,6 +97,8 @@ export async function getThreadEntityOwnerId({
       });
       return row?.post.userId ?? null;
     }
+    // A platform subject: no civitai account owns it.
+    case 'featurePage':
     default:
       return null;
   }

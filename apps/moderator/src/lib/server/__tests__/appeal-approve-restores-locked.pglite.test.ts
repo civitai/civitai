@@ -260,6 +260,9 @@ describe('approving an appeal while the image owner is deleted', () => {
          'accountDeletionPriorIngestion', 'Blocked',
          'accountDeletionPriorBlockedFor', 'moderated',
          'accountDeletionPriorNeedsReview', 'minor',
+         -- The grace block's recorded rating, a moderator's lock: it outlives the lift.
+         'accountDeletionPriorNsfwLevel', 4,
+         'accountDeletionPriorNsfwLevelLocked', true,
          'keep', 1)
        WHERE "id" = $1`,
       [IMAGE_ID, OWNER_ID]
@@ -282,6 +285,22 @@ describe('approving an appeal while the image owner is deleted', () => {
       )
     ).rows[0];
 
+  it('drops a recorded Blocked rating on the lift, so the restore re-rates the row', async () => {
+    await seed('2026-11-20 00:00:00');
+    await db.query(
+      `UPDATE "Image" SET "metadata" = "metadata" || '{"accountDeletionPriorNsfwLevel": 32}' WHERE "id" = $1`,
+      [IMAGE_ID]
+    );
+
+    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+
+    const { metadata } = (await row()) as { metadata: Record<string, unknown> };
+    expect(metadata).not.toHaveProperty('accountDeletionPriorNsfwLevel');
+    expect(metadata).not.toHaveProperty('accountDeletionPriorNsfwLevelLocked');
+    // Control: the lift was recorded.
+    expect(metadata).toMatchObject({ accountDeletionPriorIngestion: 'Scanned' });
+  });
+
   it('keeps it Blocked, recorded as Scanned for an account restore, and settles the appeal', async () => {
     await seed('2026-11-20 00:00:00');
 
@@ -296,6 +315,8 @@ describe('approving an appeal while the image owner is deleted', () => {
         accountDeletionPriorIngestion: 'Scanned',
         accountDeletionPriorBlockedFor: null,
         accountDeletionPriorNeedsReview: 'minor',
+        accountDeletionPriorNsfwLevel: 4,
+        accountDeletionPriorNsfwLevelLocked: true,
       },
     });
     const { rows } = await db.query<{ status: string }>(`SELECT "status" FROM "Appeal"`);
@@ -325,6 +346,8 @@ describe('approving an appeal while the image owner is deleted', () => {
         accountDeletionPriorIngestion: 'Scanned',
         accountDeletionPriorBlockedFor: null,
         accountDeletionPriorNeedsReview: 'minor',
+        accountDeletionPriorNsfwLevel: 4,
+        accountDeletionPriorNsfwLevelLocked: true,
       },
     });
     expect(await imageRow()).toMatchObject({ nsfwLevel: 32, nsfwLevelLocked: true });

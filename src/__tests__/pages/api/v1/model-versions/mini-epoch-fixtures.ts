@@ -19,6 +19,7 @@ export const versionRow = {
   baseModel: 'SD 1.5',
   status: 'Published',
   modelStatus: 'Published',
+  modelAvailability: 'Public',
   modelMode: null as string | null,
   type: 'LORA',
   requireAuth: false,

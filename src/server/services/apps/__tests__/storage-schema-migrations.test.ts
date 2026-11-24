@@ -971,3 +971,189 @@ describe('checkStorageMigrations — default values', () => {
     expect(() => assertStorageMigrationsCover(check)).not.toThrow();
   });
 });
+
+// docs/app-storage-generic-core.md, "Viewer-keyed documents": `keyedBy` is immutable once approved.
+describe('checkStorageMigrations — keyedBy is immutable against every approved version', () => {
+  const votes = (keyedBy?: string) => ({
+    storage: {
+      collections: {
+        votes: { visibility: 'shared', write: 'own', ...(keyedBy ? { keyedBy } : {}) },
+        notes: { visibility: 'private' },
+      },
+    },
+  });
+  const only = (decl: Record<string, unknown>) => ({ storage: { collections: { other: decl } } });
+  const refusal = (was: string) =>
+    `storage.collections.votes: an approved version declared it with ${was}, and keyedBy cannot be added, removed or changed on a collection once approved (it changes what every stored key means) — declare a new collection instead`;
+
+  it('unchanged keyedBy, and a collection no approved version declared, are accepted', () => {
+    expect(checkStorageMigrations(votes('parent+viewer'), votes('parent+viewer')).errors).toEqual(
+      []
+    );
+    expect(checkStorageMigrations(only({ visibility: 'private' }), votes('viewer')).errors).toEqual(
+      []
+    );
+  });
+
+  it('🔴 adding keyedBy to a collection the baseline declares without it is refused', () => {
+    const check = checkStorageMigrations(votes(), votes('parent+viewer'));
+    expect(check.errors).toEqual([refusal('no keyedBy')]);
+    expect(() => assertStorageMigrationsCover(check)).toThrow(StorageMigrationRefusal);
+  });
+
+  it('🔴 removing or changing it is refused', () => {
+    expect(checkStorageMigrations(votes('viewer'), votes()).errors).toEqual([
+      refusal('keyedBy "viewer"'),
+    ]);
+    expect(checkStorageMigrations(votes('viewer'), votes('parent+viewer')).errors).toEqual([
+      refusal('keyedBy "viewer"'),
+    ]);
+  });
+
+  it('🔴 a collection dropped and declared again is checked against the version that declared it, however old', () => {
+    // The baseline and the 50 newest approvals never declared `votes`; the 51st did, without it.
+    const recent = Array.from({ length: 50 }, () => only({ visibility: 'private' }));
+    const everApproved = [...recent, votes()];
+    const check = checkStorageMigrations(
+      only({ visibility: 'private' }),
+      votes('viewer'),
+      recent,
+      everApproved
+    );
+    expect(check.errors).toEqual([refusal('no keyedBy')]);
+    // Positive control: the same history capped at 50 does not see it.
+    expect(
+      checkStorageMigrations(only({ visibility: 'private' }), votes('viewer'), recent, recent)
+        .errors
+    ).toEqual([]);
+  });
+
+  it('🔴 an approved manifest that no longer parses still counts: its raw declaration is read', () => {
+    const unparseable = {
+      storage: { collections: { votes: { visibility: 'shared', write: 'own', bogus: 1 } } },
+    };
+    expect(
+      checkStorageMigrations(null, votes('viewer'), [unparseable], [unparseable]).errors
+    ).toEqual([refusal('no keyedBy')]);
+  });
+});
+
+// docs/app-storage-generic-core.md, "Manifest, schema majors and the SDK" and rollout step 3:
+// marks, counters and `write: "none"` are deprecated. A version may keep what its previous
+// approved version declared on a collection (or less), and may declare nothing new.
+describe('checkStorageMigrations — marks, counters and write "none" are deprecated', () => {
+  const INSTEAD =
+    'declare a viewer-keyed collection instead (keyedBy "viewer" or "parent+viewer": each viewer\'s own document is their vote or entry), and report a document through the moderation report API — see https://developer.civitai.com/apps/guide/storage';
+  const newNames = (coll: string, field: 'marks' | 'counters', names: string) =>
+    `storage.collections.${coll}.${field}: ${names} not declared on this collection by the previous approved version, and ${field} are deprecated — a collection may keep only the ${field} it already declares, until its data is migrated; ${INSTEAD}`;
+  const newNone = (coll: string) =>
+    `storage.collections.${coll}.write: "none" is not declared on this collection by the previous approved version, and write "none" is deprecated — a collection may keep it only if it already declares it, until its data is migrated; ${INSTEAD}`;
+  // With no previous approved version there is nothing to keep, and the message says so.
+  const firstNames = (coll: string, field: 'marks' | 'counters', listed: string) =>
+    `storage.collections.${coll}.${field}: ${field} are deprecated and cannot be declared on a new app (declared: ${listed}); ${INSTEAD}`;
+  const firstNone = (coll: string) =>
+    `storage.collections.${coll}.write: "none" is deprecated and cannot be declared on a new app; ${INSTEAD}`;
+  const withColls = (collections: Record<string, unknown>) => ({ storage: { collections } });
+  const posts = (extra: Record<string, unknown> = {}) =>
+    withColls({ posts: { visibility: 'shared', write: 'own', ...extra } });
+  const plays = (extra: Record<string, unknown> = {}) =>
+    withColls({ plays: { visibility: 'shared', write: 'none', ...extra } });
+
+  it('🔴 adding a mark, a counter or write "none" to a collection that lacked it is refused', () => {
+    const marks = checkStorageMigrations(
+      posts({ marks: ['up'] }),
+      posts({ marks: ['up', 'down'] })
+    );
+    expect(marks.errors).toEqual([newNames('posts', 'marks', '"down" is')]);
+    expect(() => assertStorageMigrationsCover(marks)).toThrow(StorageMigrationRefusal);
+
+    expect(checkStorageMigrations(posts(), posts({ counters: ['views', 'runs'] })).errors).toEqual([
+      newNames('posts', 'counters', '"views", "runs" are'),
+    ]);
+
+    // `posts` turned into a write-"none" counter collection: both the policy and the counter.
+    expect(
+      checkStorageMigrations(
+        posts(),
+        withColls({ posts: { visibility: 'shared', write: 'none', counters: ['n'] } })
+      ).errors
+    ).toEqual([newNames('posts', 'counters', '"n" is'), newNone('posts')]);
+  });
+
+  it('🔴 renaming a kept mark counts as a new one', () => {
+    expect(
+      checkStorageMigrations(posts({ marks: ['vote'] }), posts({ marks: ['upvote'] })).errors
+    ).toEqual([newNames('posts', 'marks', '"upvote" is')]);
+  });
+
+  it('keeping exactly what the previous approved version declared is accepted', () => {
+    for (const decl of [
+      posts({ marks: ['up', 'down'], counters: ['views'] }),
+      plays({ marks: ['played'], counters: ['plays'] }),
+    ]) {
+      expect(checkStorageMigrations(decl, decl).errors).toEqual([]);
+    }
+    // Order within the list does not matter.
+    expect(
+      checkStorageMigrations(posts({ marks: ['up', 'down'] }), posts({ marks: ['down', 'up'] }))
+        .errors
+    ).toEqual([]);
+  });
+
+  it('dropping some or all of them is accepted', () => {
+    const was = plays({ marks: ['played'], counters: ['plays'] });
+    expect(checkStorageMigrations(was, plays({ counters: ['plays'] })).errors).toEqual([]);
+    expect(checkStorageMigrations(was, plays({ marks: ['played'] })).errors).toEqual([]);
+    // Dropping write "none" (and with it the tallies): an ordinary own collection.
+    expect(
+      checkStorageMigrations(was, withColls({ plays: { visibility: 'shared', write: 'own' } }))
+        .errors
+    ).toEqual([]);
+    expect(
+      checkStorageMigrations(posts({ marks: ['up', 'down'] }), posts({ marks: ['up'] })).errors
+    ).toEqual([]);
+  });
+
+  it('🔴 a first version may declare none of them', () => {
+    expect(checkStorageMigrations(null, posts({ marks: ['vote'] })).errors).toEqual([
+      firstNames('posts', 'marks', '"vote"'),
+    ]);
+    expect(checkStorageMigrations(null, posts({ counters: ['views', 'runs'] })).errors).toEqual([
+      firstNames('posts', 'counters', '"views", "runs"'),
+    ]);
+    expect(checkStorageMigrations(null, plays({ counters: ['plays'] })).errors).toEqual([
+      firstNames('plays', 'counters', '"plays"'),
+      firstNone('plays'),
+    ]);
+    // Positive control: the same first version without them is accepted.
+    expect(checkStorageMigrations(null, posts()).errors).toEqual([]);
+  });
+
+  it('🔴 only the previous approved version grandfathers: another collection, or older history, does not', () => {
+    // Declared on a DIFFERENT collection of the baseline: still new on this one.
+    expect(
+      checkStorageMigrations(
+        withColls({ other: { visibility: 'shared', write: 'own', marks: ['vote'] } }),
+        posts({ marks: ['vote'] })
+      ).errors
+    ).toEqual([newNames('posts', 'marks', '"vote" is')]);
+    // A collection an older approval declared with the mark, dropped by the baseline.
+    expect(
+      checkStorageMigrations(
+        withColls({ notes: { visibility: 'private' } }),
+        posts({ marks: ['vote'] }),
+        [posts({ marks: ['vote'] })]
+      ).errors
+    ).toEqual([newNames('posts', 'marks', '"vote" is')]);
+  });
+
+  it('a baseline that no longer parses still grandfathers what it declared (read raw)', () => {
+    const unparseable = withColls({
+      posts: { visibility: 'shared', write: 'own', marks: ['vote'], bogus: 1 },
+    });
+    expect(checkStorageMigrations(unparseable, posts({ marks: ['vote'] })).errors).toEqual([]);
+    expect(checkStorageMigrations(unparseable, posts({ marks: ['vote', 'x'] })).errors).toEqual([
+      newNames('posts', 'marks', '"x" is'),
+    ]);
+  });
+});

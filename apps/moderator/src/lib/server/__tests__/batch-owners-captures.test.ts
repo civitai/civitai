@@ -43,13 +43,19 @@ describe('a batch with feedback page captures in it', () => {
     ];
     const result = await strikeBatchOwners({ imageIds: [1, 2], description: 'd', moderatorId: 9 });
     expect(issueStrike.mock.calls.map(([input]) => input.userId)).toEqual([5]);
-    expect(result).toEqual({ struck: 1, owners: 1, capturesSkipped: 1, error: undefined });
+    expect(result).toEqual({
+      struck: 1,
+      owners: 1,
+      capturesSkipped: 1,
+      reviewImagesSkipped: 0,
+      error: undefined,
+    });
   });
 
   it('strikes nobody, and reports no failure, when the batch is all captures', async () => {
     rows.current = [{ userId: CAPTURE, images: '2' }];
     expect(await strikeBatchOwners({ imageIds: [1, 2], description: 'd', moderatorId: 9 })).toEqual(
-      { struck: 0, owners: 0, capturesSkipped: 2 }
+      { struck: 0, owners: 0, capturesSkipped: 2, reviewImagesSkipped: 0 }
     );
     expect(issueStrike).not.toHaveBeenCalled();
   });

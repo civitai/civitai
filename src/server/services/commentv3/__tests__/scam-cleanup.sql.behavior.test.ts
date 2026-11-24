@@ -100,7 +100,7 @@ describe('scam cleanup of comments', () => {
       triggers: [{ cleanup: { ...record, ids: [...(record?.ids ?? []), 45] } }],
     } as never);
 
-    expect(await restoreScamCase(1)).toEqual({ restored: 3 });
+    expect(await restoreScamCase(1)).toEqual({ restored: 3, skipped: 0 });
     // 43 was hidden before the cleanup and is not in the record.
     expect(await hidden()).toEqual([43, 45]);
   });
@@ -131,7 +131,7 @@ describe('scam cleanup of comments', () => {
     } as never);
 
     // 61 is someone else's comment under a recorded id: never touched.
-    expect(await restoreScamCase(1)).toEqual({ restored: 1 });
+    expect(await restoreScamCase(1)).toEqual({ restored: 1, skipped: 0 });
     expect(await hidden()).not.toContain(60);
     expect(await hidden()).toContain(61);
   });
@@ -156,7 +156,7 @@ describe('scam cleanup of comments', () => {
       triggers: [{ entityType: 'Comment', entityId: 31, cleanup: record }],
     } as never);
 
-    expect(await restoreScamCase(1)).toEqual({ restored: 1 });
+    expect(await restoreScamCase(1)).toEqual({ restored: 1, skipped: 0 });
     expect(await hidden()).toContain(31);
     expect(await hidden()).not.toContain(62);
 
@@ -171,7 +171,7 @@ describe('scam cleanup of comments', () => {
         { entityType: 'Comment', entityId: 31, cleanup: { ...record, ids: [62], migrated: true } },
       ],
     } as never);
-    expect(await restoreScamCase(1)).toEqual({ restored: 1 });
+    expect(await restoreScamCase(1)).toEqual({ restored: 1, skipped: 0 });
     expect(await hidden()).not.toContain(62);
   });
 
@@ -186,7 +186,7 @@ describe('scam cleanup of comments', () => {
       triggers: [{ cleanup: record }],
     } as never);
 
-    expect(await restoreScamCase(1)).toEqual({ restored: 2 });
+    expect(await restoreScamCase(1)).toEqual({ restored: 2, skipped: 0 });
     expect(await hidden()).toEqual([42, 43]);
   });
 
@@ -210,19 +210,19 @@ describe('scam cleanup of comments', () => {
 
     it('matches an unstamped row last written inside the record window', async () => {
       await legacyRow(70, CLEANUP_WRITE);
-      expect(await restoreLegacy([70])).toEqual({ restored: 1 });
+      expect(await restoreLegacy([70])).toEqual({ restored: 1, skipped: 0 });
       expect(await hidden()).not.toContain(70);
     });
 
     it('passes by an unstamped row written after the window', async () => {
       await legacyRow(71, `'2026-11-01T00:11:00Z'`);
-      expect(await restoreLegacy([71])).toEqual({ restored: 0 });
+      expect(await restoreLegacy([71])).toEqual({ restored: 0, skipped: 0 });
       expect(await hidden()).toContain(71);
     });
 
     it('passes by an unstamped row written before the window', async () => {
       await legacyRow(72, `'2026-10-31T23:59:59Z'`);
-      expect(await restoreLegacy([72])).toEqual({ restored: 0 });
+      expect(await restoreLegacy([72])).toEqual({ restored: 0, skipped: 0 });
       expect(await hidden()).toContain(72);
     });
   });

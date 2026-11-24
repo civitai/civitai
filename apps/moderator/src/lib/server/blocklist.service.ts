@@ -284,8 +284,7 @@ export async function removeBlocklistItems({
     if (type === 'ProfanityWord') {
       const before = managedProfanityEntries(row.data);
       const after = managedProfanityEntries(filtered);
-      if (!after.enforced && after.usable.length < before.usable.length)
-        throw new BlocklistBelowFloorError();
+      if (!after.enforced && after.distinct < before.distinct) throw new BlocklistBelowFloorError();
     }
 
     await trx

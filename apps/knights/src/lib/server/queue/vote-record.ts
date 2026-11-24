@@ -49,6 +49,11 @@ export type VoteSubject = {
    * apart by their prompt, so (image, question key) is not the unit there.
    */
   ownJudgmentRule?: boolean;
+  /**
+   * A mod-confirmed skill check under `skillCheckServeJudged`: the player may already have judged its image in the queue.
+   * The same check (`itemId`) is still never answered twice.
+   */
+  judgedImageAllowed?: boolean;
 };
 
 export type InsertedVote = {
@@ -120,7 +125,7 @@ export async function insertVote(
     .executeTakeFirst();
   if (already) return rejected('already-voted');
 
-  if (!subject.ownJudgmentRule) {
+  if (!subject.ownJudgmentRule && !subject.judgedImageAllowed) {
     const judged = await trx
       .selectFrom('KnightsVote')
       .select('playerId')

@@ -8,6 +8,7 @@ import { bustProfilePictures } from './profile-picture-cache';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { recordModActivity } from './mod-activity';
 import { queueDocumentsForImageMinorChanges } from './image-models-reindex';
+import { ratingRecordedUnderGrace } from '@civitai/shared/account-deletion-grace';
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
@@ -33,9 +34,11 @@ export async function updateImageNsfwLevel({
     .executeTakeFirst();
   if (!image) throw new Error('Image not found');
 
+  const stored = (image.metadata as Record<string, unknown> | null) ?? {};
   const metadata = {
-    ...((image.metadata as Record<string, unknown> | null) ?? {}),
+    ...stored,
     nsfwLevelReason: reason ?? null,
+    ...ratingRecordedUnderGrace(stored, nsfwLevel),
   };
 
   await dbWrite
@@ -47,9 +50,6 @@ export async function updateImageNsfwLevel({
     })
     .where('id', '=', id)
     .execute();
-  await invalidateThumbnails(id, [image.parentId]);
-  await bustProfilePictures({ imageIds: [id] });
-
   if (status) {
     await dbWrite
       .updateTable('ImageRatingRequest')
@@ -58,6 +58,8 @@ export async function updateImageNsfwLevel({
       .where('status', '=', 'Pending')
       .execute();
   }
+  await invalidateThumbnails(id, [image.parentId]);
+  await bustProfilePictures({ imageIds: [id] });
 
   // Thumbnails are never posted, so a non-null postId means this image can't be a Model3D thumbnail.
   if (image.postId == null) {

@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.550",
+  "version": "5.1.553",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -150,7 +150,7 @@
     "test:packages:run": "node scripts/queued-check.mjs packages",
     "test:apps": "vitest --project 'app:*'",
     "test:apps:run": "node scripts/queued-check.mjs apps",
-    "test:lint-rules": "vitest run --project 'unit*' src/server/services/__tests__/no- src/server/notifications/__tests__/notification-settings-polarity.test.ts src/server/schema/__tests__/track.addView.schema.test.ts src/server/services/__tests__/contest-collection-items-writers.test.ts src/server/services/__tests__/hub-filter-parity.test.ts src/server/services/__tests__/poi-checks-strip-benign-phrases.test.ts src/server/services/__tests__/video-leaderboard-badge-staging.test.ts src/server/auth/__tests__/api-ban-gate.guard.test.ts src/server/email/transport-ledger.test.ts src/server/services/blocks/__tests__/source-scanned-rows.ledger.test.ts src/tests/api/v1/blocks/catalog-clamp-ledger.test.ts src/server/services/blocks/__tests__/forgejo-orgs.literal-ledger.test.ts src/components/Buzz/__tests__/hold-wiring.test.ts",
+    "test:lint-rules": "vitest run --project 'unit*' src/server/services/__tests__/no- src/server/notifications/__tests__/notification-settings-polarity.test.ts src/server/schema/__tests__/track.addView.schema.test.ts src/server/services/__tests__/contest-collection-items-writers.test.ts src/server/services/__tests__/hub-filter-parity.test.ts src/server/services/__tests__/poi-checks-strip-benign-phrases.test.ts src/server/services/__tests__/video-leaderboard-badge-staging.test.ts src/server/auth/__tests__/api-ban-gate.guard.test.ts src/server/email/transport-ledger.test.ts src/server/services/blocks/__tests__/source-scanned-rows.ledger.test.ts src/tests/api/v1/blocks/catalog-clamp-ledger.test.ts src/server/services/blocks/__tests__/forgejo-orgs.literal-ledger.test.ts src/components/Buzz/__tests__/hold-wiring.test.ts scripts/__tests__/no-pr-scoped-cache-save.test.ts",
     "test:component": "node scripts/queued-check.mjs component",
     "test:component:watch": "vitest --project component",
     "test:geometry": "node scripts/queued-check.mjs geometry",

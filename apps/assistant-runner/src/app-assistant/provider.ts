@@ -64,6 +64,7 @@ import { toolResultsOf } from './history';
 import { RunnerPreview, type AutoPreview } from './preview';
 import { AppSandbox } from './sandbox';
 import { unjustifiedManifestScopes } from './scope-justifications';
+import { openAppThemeEvidence } from './theme-evidence';
 import { SdkUpgrades, upgradeBeforeSubmit } from './sdk-pin';
 import type { RunSleepingApps } from './sleeping-apps';
 
@@ -371,6 +372,8 @@ export class AppAssistantTools implements ToolProvider {
         openApp: () => sandbox.active?.app ?? null,
         // civitai refuses a submission whose sensitive scopes have no justification.
         unjustifiedScopes: () => unjustifiedManifestScopes(sandbox, signal),
+        // report_ready notes (never refuses) an app with Civitai's stock look.
+        themeEvidence: () => openAppThemeEvidence(sandbox, signal),
         // A sandbox with run_checks is told to run it; the others, npm test and tsc.
         sandboxFeatures: () => sandbox.features,
         ...(sourceSaves ? { onAppChanged: (app: string) => sourceSaves.changed(app) } : {}),

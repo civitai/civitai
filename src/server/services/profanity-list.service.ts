@@ -103,7 +103,7 @@ export function createProfanityListReader({
 
       // A MISSING allow row is the shipped allow list; an EMPTY one is honoured (`moderatorWhitelist`, src/libs/profanity-simple/index.ts).
       const allowed = allowedRow.dto.id == null ? null : allowedRow.dto.data;
-      const { usable, enforced } = managedProfanityEntries(
+      const { usable, distinct, enforced } = managedProfanityEntries(
         blockedRow.dto.id == null ? [] : blockedRow.dto.data
       );
       // Unlike the allow list, an empty or tiny block list is NOT honoured: it would filter nothing.
@@ -116,7 +116,7 @@ export function createProfanityListReader({
               name: 'profanity-blocklist-below-floor',
               type: 'error',
               message: 'Managed profanity list is below the floor; enforcing the shipped list',
-              payload: { usable: usable.length, floor: MIN_MANAGED_PROFANITY_ENTRIES },
+              payload: { distinct, floor: MIN_MANAGED_PROFANITY_ENTRIES },
             });
         }
         return { blocked: null, allowed, source: 'fallback' };

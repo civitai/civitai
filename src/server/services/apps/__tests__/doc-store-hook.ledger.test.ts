@@ -51,6 +51,7 @@ const LEDGER = {
     increment: 'hooked',
     mark: 'hooked',
     unmark: 'hooked',
+    report: 'reportExempt',
     putIfUnchanged: 'unchangedProbe',
     previewPublish: 'refusesHooked',
     publishCopies: 'refusesHooked',
@@ -69,6 +70,15 @@ const LEDGER = {
     wipeAccount: 'exempt',
     purgeApp: 'exempt',
     migrateDocuments: 'exempt',
+    // The mark migration and the per-collection purge: moderator-run platform operations.
+    checkMarkMigration: 'read',
+    freezeMarks: 'exempt',
+    copyMarksToDocs: 'exempt',
+    verifyMarkMigration: 'exempt',
+    listMaintRuns: 'read',
+    purgeDump: 'read',
+    purgeCollection: 'exempt',
+    expireMaintDumps: 'exempt',
   },
   rater: {
     ready: 'read',
@@ -79,7 +89,14 @@ const LEDGER = {
     applyRating: 'exempt',
   },
   lookup: { findSharedByKey: 'read' },
-  feed: { feedHead: 'read', feedChanges: 'read', feedDocuments: 'read', feedWitness: 'read' },
+  feed: {
+    feedHead: 'read',
+    feedChanges: 'read',
+    feedDocuments: 'read',
+    feedWitness: 'read',
+    levelChanges: 'read',
+    levelDocuments: 'read',
+  },
   viewerData: {
     listViewerUsage: 'read',
     viewerHoldings: 'read',
@@ -138,6 +155,7 @@ describe('every store entry point is classified', () => {
     expect(filesMatching(/\bgetDocStore\b|\bcreateDocStore\(/)).toEqual([
       'src/server/services/apps/doc-store-api.ts',
       'src/server/services/apps/doc-store-owner-usage.service.ts',
+      'src/server/services/apps/doc-store-report-api.ts',
       'src/server/services/apps/doc-store-viewer-usage.service.ts',
       'src/server/services/apps/doc-store.instance.ts',
       'src/server/services/apps/doc-store.ts',
@@ -251,6 +269,12 @@ describe('a hooked collection refuses every hooked write without a HookPass', ()
 
   it('the report mark is exempt: no pass needed on a hooked collection', async () => {
     expect(await outcome(store.mark(ctx, hooked, KEY, 'report'))).toBe('reached the transaction');
+  });
+
+  // The report API's write takes no HookPass at all: a hook must never be able to silence a
+  // report. (Through the route: `doc-store-report-api.test.ts`, a hooked collection.)
+  it('the report API write is exempt: it reaches the transaction on a hooked collection', async () => {
+    expect(await outcome(store.report(ctx, hooked, KEY))).toBe('reached the transaction');
   });
 
   // Publish and unpublish write a batch no single hook call decides: a hooked target refuses

@@ -44,8 +44,11 @@ type Doc struct {
 // transport failure or an unreadable answer.
 type Error struct {
 	Status int
-	// Body is the site's error envelope, at most 64 KiB, or nil.
+	// Body is the site's error envelope, at most 64 KiB, or nil. A rate-limited refusal's envelope
+	// carries the site's `rateLimit` meta, which is passed on with the rest of the body.
 	Body []byte
+	// RetryAfter is the site's Retry-After header on a refusal, or "" when it sent none.
+	RetryAfter string
 }
 
 func (e *Error) Error() string { return fmt.Sprintf("rest: status %d", e.Status) }
@@ -126,7 +129,7 @@ func (c *Client) page(ctx context.Context, token, collection, from, keyPrefix, c
 		if !json.Valid(body) {
 			body = nil
 		}
-		return nil, "", &Error{Status: res.StatusCode, Body: body}
+		return nil, "", &Error{Status: res.StatusCode, Body: body, RetryAfter: res.Header.Get("Retry-After")}
 	}
 	var p struct {
 		Items      []Doc   `json:"items"`

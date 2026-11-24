@@ -3,6 +3,7 @@
   import '$lib/civitai-elements';
   import type { CivitaiTextarea } from '@civitai/components/civitai-textarea';
   import { cn } from '@civitai/ui/utils.js';
+  import RatingBadge from '$lib/components/RatingBadge.svelte';
   import { isFailed, type Img } from './trainingFlow';
   import { pairProblem, type EditPair } from './editPairs';
 
@@ -50,6 +51,9 @@
   >
     {#if img.previewUrl}
       <img src={img.previewUrl} alt="" class="h-full w-full object-cover" />
+    {/if}
+    {#if img.status === 'uploaded'}
+      <RatingBadge level={img.nsfwLevel} class="absolute bottom-1 left-1" />
     {/if}
     {#if showBefore}
       <span
@@ -154,15 +158,9 @@
           {sourceLabel} · {pair.before.name}
         </span>
       {/if}
-      <!-- Not civitai-action-button: it expands to show its label on hover, and this one carries the file name. -->
-      <button
-        type="button"
-        aria-label="Remove pair {pair.before.name}"
-        onclick={onRemove}
-        class="grid size-7 shrink-0 place-items-center rounded text-dark-2 transition-colors hover:bg-dark-5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-      >
+      <studio-icon-button class="shrink-0" label="Remove pair {pair.before.name}" onclick={onRemove}>
         <IconX size={14} stroke={2} />
-      </button>
+      </studio-icon-button>
     </div>
   </div>
 </article>

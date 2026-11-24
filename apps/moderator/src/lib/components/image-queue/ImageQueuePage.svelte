@@ -15,6 +15,7 @@
   import QueueSelectionBar from './QueueSelectionBar.svelte';
   import ReviewActions from './ReviewActions.svelte';
   import AppealActions from './AppealActions.svelte';
+  import { WITHHELD_REFUSED } from '$lib/held-media';
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
@@ -102,10 +103,11 @@
     selected.clear();
   });
 
-  const itemKeys = $derived(data.items.map((i) => ('report' in i ? i.report.id : i.id)));
+  const selectable = $derived(data.items.filter((i) => !('restricted' in i && i.restricted)));
+  const itemKeys = $derived(selectable.map((i) => ('report' in i ? i.report.id : i.id)));
 
   const selectedItems = $derived(
-    data.items.filter((i) => selected.has('report' in i ? i.report.id : i.id))
+    selectable.filter((i) => selected.has('report' in i ? i.report.id : i.id))
   );
   // Deduped: two selected reports on one image are two cards but one image, and the action would
   // otherwise be posted `5,5` and report twice the work it did.
@@ -391,27 +393,31 @@
       {@render userHeader(item)}
       {#if data.view === 'minor'}
         <div class="flex flex-col gap-1.5">
-          <div class="flex flex-wrap gap-1">
-            <Badge
-              class={item.minor
-                ? 'bg-rose-500/15 text-rose-500'
-                : 'bg-emerald-500/15 text-emerald-500'}
-            >
-              {item.minor ? 'Minor' : 'Not minor'}
-            </Badge>
-            {#if item.acceptableMinor}
-              <Badge class="bg-pink-500/15 text-pink-400">Acceptable minor</Badge>
+          {#if !item.restricted}
+            <div class="flex flex-wrap gap-1">
+              <Badge
+                class={item.minor
+                  ? 'bg-rose-500/15 text-rose-500'
+                  : 'bg-emerald-500/15 text-emerald-500'}
+              >
+                {item.minor ? 'Minor' : 'Not minor'}
+              </Badge>
+              {#if item.acceptableMinor}
+                <Badge class="bg-pink-500/15 text-pink-400">Acceptable minor</Badge>
+              {/if}
+            </div>
+            {#if item.promptHighlight.hasHighlights}
+              <PromptHighlight result={item.promptHighlight} />
             {/if}
-          </div>
-          {#if item.promptHighlight.hasHighlights}
-            <PromptHighlight result={item.promptHighlight} />
           {/if}
           <ReviewActions {item} minorQueue verdict={verdictOf(item)} {selected} {submit} />
         </div>
       {:else}
         <div class="flex flex-col gap-1.5">
-          <Badge class="w-fit bg-fuchsia-500/15 text-fuchsia-400">Remix source — prompt flagged</Badge>
-          <PromptHighlight result={item.promptHighlight} />
+          {#if !item.restricted}
+            <Badge class="w-fit bg-fuchsia-500/15 text-fuchsia-400">Remix source — prompt flagged</Badge>
+            <PromptHighlight result={item.promptHighlight} />
+          {/if}
           <ReviewActions {item} verdict={verdictOf(item)} {selected} {submit} />
         </div>
       {/if}
@@ -433,7 +439,7 @@
       {@render userHeader(item)}
       <div class="rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs">
         <div class="flex items-center justify-between gap-2">
-          <span class="font-semibold text-amber-400">{item.report.reason}</span>
+          {#if !item.restricted}<span class="font-semibold text-amber-400">{item.report.reason}</span>{/if}
           {#if item.removed}
             <Badge
               class="bg-muted"
@@ -458,12 +464,14 @@
           {#if item.report.agentFiled}<AgentBadge />{/if}
           · {new Date(item.report.createdAt).toLocaleDateString()}
         </div>
-        {#each reportDetailEntries(item.report.details) as [k, v] (k)}
-          <p class="mt-1 text-muted-foreground/90">
-            <span class="font-semibold">{formatEnum(k)}:</span>
-            {v}
-          </p>
-        {/each}
+        {#if !item.restricted}
+          {#each reportDetailEntries(item.report.details) as [k, v] (k)}
+            <p class="mt-1 text-muted-foreground/90">
+              <span class="font-semibold">{formatEnum(k)}:</span>
+              {v}
+            </p>
+          {/each}
+        {/if}
       </div>
       {@const placementId = reportedPlacementId(item.report.details, item.report.reason)}
       {#if canAct}
@@ -490,17 +498,19 @@
       <div class="flex flex-col gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/5 p-2 text-xs">
         <div>
           <span class="font-semibold text-rose-400">Removed:</span>
-          {formatEnum(item.tosReason ?? item.blockedFor ?? 'TOS violation')}
+          {#if !item.restricted}{formatEnum(item.tosReason ?? item.blockedFor ?? 'TOS violation')}{/if}
           {#if item.removedAt}
             <span class="text-muted-foreground">
               · by {item.moderatorUsername ?? 'moderator'} · {fmt(item.removedAt)}
             </span>
           {/if}
         </div>
-        <div>
-          <span class="font-semibold text-sky-400">Appeal:</span>
-          <span class="text-muted-foreground/90">{item.appeal.message}</span>
-        </div>
+        {#if !item.restricted}
+          <div>
+            <span class="font-semibold text-sky-400">Appeal:</span>
+            <span class="text-muted-foreground/90">{item.appeal.message}</span>
+          </div>
+        {/if}
         <div class="text-muted-foreground">
           by
           <a
@@ -529,7 +539,11 @@
           </div>
         {/if}
       </div>
-      <AppealActions {item} verdict={verdictOf(item)} {selected} {messages} {drafts} {submit} />
+      {#if item.restricted}
+        <p class="text-xs text-dark-2">{WITHHELD_REFUSED}</p>
+      {:else}
+        <AppealActions {item} verdict={verdictOf(item)} {selected} {messages} {drafts} {submit} />
+      {/if}
       {@render model3dAffordance(item)}
       {@render appealHistory(item)}
     {/snippet}
@@ -546,7 +560,9 @@
   >
     {#snippet card(item)}
       {@render userHeader(item)}
-      {#if data.view === 'poi'}
+      {#if item.restricted}
+        <!-- Withheld: nothing that says why. -->
+      {:else if data.view === 'poi'}
         <div class="flex flex-wrap gap-1">
           <Badge class="bg-orange-500/15 text-orange-400">POI</Badge>
           {#each item.reviewTags as reviewTag (reviewTag.id)}

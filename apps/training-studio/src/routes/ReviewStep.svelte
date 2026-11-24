@@ -17,6 +17,7 @@
   import { FILES_PROCESSING_MESSAGE, FilesProcessingError } from '$lib/files-processing';
   import { holdsStart, readinessMessage, type ReadinessView } from './uploadReadiness';
   import { MatureRepriceError } from '$lib/mature-charge';
+  import type { RatingCount } from '$lib/nsfw-rating';
   import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import BlueFirstToggle from '$lib/components/BlueFirstToggle.svelte';
@@ -101,6 +102,7 @@
     repeated,
     trainsPairs = false,
     matureCount: scannedMature,
+    matureRatings = [],
     readiness = { kind: 'off' },
     readinessUnusableCount,
     onCheckReadinessAgain,
@@ -131,6 +133,8 @@
     trainsPairs?: boolean;
     /** Trainable images whose upload scan rated them mature (R and up). */
     matureCount: number;
+    /** `matureCount` by rating, when the upload scan's ratings account for it. */
+    matureRatings?: RatingCount[];
     /** Whether every dataset file is ready to train; `off` leaves Start to the other checks. */
     readiness?: ReadinessView;
     /** How many images or pairs Remove takes out when files can't be used. */
@@ -223,6 +227,10 @@
   let refusedMature = $state(0);
   const matureCount = $derived(Math.max(scannedMature, refusedMature));
   const mature = $derived(matureCount > 0);
+  // The server's count can include images the upload scan never rated; then no breakdown adds up.
+  const matureBreakdown = $derived(
+    matureRatings.reduce((sum, r) => sum + r.count, 0) === matureCount ? matureRatings : []
+  );
 
 
   const OPTIMIZERS = ['AdamW8Bit', 'Adafactor', 'Prodigy', 'Automagic'];
@@ -1114,7 +1122,9 @@
         <span>
           {matureCount}
           {matureCount === 1 ? 'image in your dataset was' : 'images in your dataset were'} rated
-          <strong>mature</strong> (R or above).
+          <strong>mature</strong>{#if matureBreakdown.length > 0}:
+            {matureBreakdown.map((r) => `${r.count} ${r.label}`).join(', ')}.{:else}
+            (R or above).{/if}
           {#if scannedMature > 0}
             <button type="button" onclick={onShowMature} class="font-semibold text-primary hover:underline">
               See which

@@ -4,7 +4,6 @@
  * translation of field names the graphs have since dropped.
  */
 
-import { hunyuan3dModelVersionOptions, hunyuan3dOctreeResolutionOptions } from './hunyuan3d.graph';
 import {
   polygenGeometryResolutionOptions,
   polygenModelTypeOptions,
@@ -104,9 +103,18 @@ const optionsByEcosystem: Record<string, Partial<Record<Model3dField, readonly O
     textureAlignment: tripoTextureAlignmentOptions,
     orientation: tripoOrientationOptions,
   },
+  // Retired from the generator; kept so past Hunyuan3D jobs still read with labels.
   Hunyuan3D: {
-    version: hunyuan3dModelVersionOptions,
-    octreeResolution: hunyuan3dOctreeResolutionOptions,
+    version: [
+      { label: 'v2.1', value: 'v2.1' },
+      { label: 'v2', value: 'v2' },
+      { label: 'v2 Mini', value: 'v2-mini' },
+    ],
+    octreeResolution: [
+      { label: '256', value: 256 },
+      { label: '384', value: 384 },
+      { label: '512', value: 512 },
+    ],
   },
 };
 

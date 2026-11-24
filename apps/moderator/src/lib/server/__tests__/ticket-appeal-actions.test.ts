@@ -17,6 +17,7 @@ const note = vi.fn();
 const actions = createTicketAppealActions({
   linkedUser: (...a) => linkedUser(...a),
   canAct: (...a) => canAct(...a),
+  withheld: async () => false,
   appealOf: (...a) => appealOf(...a),
   needsReviewOf: (...a) => needsReviewOf(...a),
   parseReason: (...a) => parseReason(...a),

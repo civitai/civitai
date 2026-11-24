@@ -120,6 +120,16 @@ export type AppStorageVisibility = (typeof APP_STORAGE_VISIBILITIES)[number];
 export const APP_STORAGE_WRITE_POLICIES = ['own', 'anyone', 'owner', 'none'] as const;
 export type AppStorageWritePolicy = (typeof APP_STORAGE_WRITE_POLICIES)[number];
 
+/**
+ * `keyedBy` on a shared `write: "own"` collection: the server derives each document's key from
+ * the verified viewer (`viewer`: at most one document per viewer), or from a parent key the
+ * client names plus the viewer (`parent+viewer`: at most one per viewer per parent). The key is
+ * never taken from the request (`doc-store-viewer-keyed.ts`; `docs/app-storage-generic-core.md`,
+ * "Viewer-keyed documents"). Immutable once approved (`checkStorageMigrations`).
+ */
+export const APP_STORAGE_KEYED_BY = ['viewer', 'parent+viewer'] as const;
+export type AppStorageKeyedBy = (typeof APP_STORAGE_KEYED_BY)[number];
+
 /** `ttlSeconds` bounds: one minute to 365 days. */
 export const APP_STORAGE_TTL_MIN_SECONDS = 60;
 export const APP_STORAGE_TTL_MAX_SECONDS = 31_536_000;
@@ -427,7 +437,8 @@ export type AppStorageFeature =
   | 'ttl'
   | 'perAuthorWriteBudget'
   | 'hooks'
-  | 'registryExport';
+  | 'registryExport'
+  | 'viewerKeyedDocs';
 
 /**
  * 🔴 THE ONE SWITCH for which declared storage features the platform accepts. Everything
@@ -451,6 +462,15 @@ export type AppStorageFeature =
  *                      with a message naming it while the table is missing).
  *   - `registryExport` — `registry: "public"` (the collection's shared documents published to
  *                      registries by the registry adapter).
+ *   - `viewerKeyedDocs` — `keyedBy` (viewer-keyed documents, served at `/:c/@me[/:parent]`).
+ *                      ON: the runtime shipped in #10216 (`doc-store-viewer-keyed.ts`,
+ *                      `viewerKeyedRoute` in `doc-store-api.ts`). In production each collection's
+ *                      writes still wait on its own Flipt switch
+ *                      (`app-blocks-storage-viewer-keyed-open`, per app with context
+ *                      `{ collection }`: default on, closed for the migration-targets segment,
+ *                      and closed when the flag is absent or Flipt cannot be read), and every
+ *                      `@me` op needs the derivation secret `APP_STORAGE_VIEWER_KEY_SECRET`
+ *                      (`503` while it is unset).
  *
  * Flip one only in the same change that ships the runtime behind it: an accepted
  * declaration with nothing behind it reads as a working feature to the author and the
@@ -465,6 +485,7 @@ export const APP_STORAGE_ENABLED_FEATURES: Readonly<Record<AppStorageFeature, bo
     perAuthorWriteBudget: false,
     hooks: true,
     registryExport: false,
+    viewerKeyedDocs: true,
   });
 
 /**
@@ -516,6 +537,11 @@ export type DeclaredStorageCollection = {
   migrations?: readonly StorageMigrationOp[];
   /** The permission hook that decides this collection's writes. Absent: none. */
   hook?: DeclaredStorageHook;
+  /**
+   * How the server derives a document's key ({@link APP_STORAGE_KEYED_BY}). Absent: keys are the
+   * client's or the server's ULID, as on any collection. Shared `write: "own"` only.
+   */
+  keyedBy?: AppStorageKeyedBy;
 };
 
 /** Who a collection may be published to beyond its app: `public` is every registry. */
@@ -615,6 +641,7 @@ const COLLECTION_KEYS = new Set([
   'schema',
   'migrations',
   'hook',
+  'keyedBy',
 ]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -800,17 +827,11 @@ function parseCollection(
     write = raw.write as AppStorageWritePolicy;
     if (write === 'anyone' && !features.anyoneWrites) {
       errors.push(
-        notYet(
-          `${at}.write "anyone"`,
-          'documents any viewer may edit',
-          'use "own" or "none" for now'
-        )
+        notYet(`${at}.write "anyone"`, 'documents any viewer may edit', 'use "own" for now')
       );
     }
     if (write === 'owner' && !features.ownerWrites) {
-      errors.push(
-        notYet(`${at}.write "owner"`, 'owner-written documents', 'use "own" or "none" for now')
-      );
+      errors.push(notYet(`${at}.write "owner"`, 'owner-written documents', 'use "own" for now'));
     }
   }
 
@@ -1003,6 +1024,36 @@ function parseCollection(
     }
   }
 
+  // VIEWER-KEYED: only where one viewer is the author of every key they address (shared, `own`),
+  // and only on a collection whose keys are not the server's own (`docs`).
+  let keyedBy: AppStorageKeyedBy | undefined;
+  if (raw.keyedBy !== undefined) {
+    if (
+      typeof raw.keyedBy !== 'string' ||
+      !(APP_STORAGE_KEYED_BY as readonly string[]).includes(raw.keyedBy)
+    ) {
+      errors.push(`${at}.keyedBy must be one of ${APP_STORAGE_KEYED_BY.join(', ')}`);
+    } else if (!shared) {
+      errors.push(
+        `${at}.keyedBy applies only to shared collections — a private collection already has one key space per viewer`
+      );
+    } else if (write !== undefined && write !== 'own') {
+      errors.push(
+        `${at}.keyedBy applies only to write "own" — the viewer must be the author of the document their key names`
+      );
+    } else if (kind === 'log') {
+      errors.push(`${at}.keyedBy does not apply to kind "log" — log entries have server keys`);
+    } else if (raw.counters !== undefined || raw.marks !== undefined) {
+      errors.push(
+        `${at}.keyedBy cannot be combined with counters or marks — each viewer's document is itself their vote or entry`
+      );
+    } else if (!features.viewerKeyedDocs) {
+      errors.push(notYet(`${at}.keyedBy`, 'viewer-keyed documents', 'remove keyedBy for now'));
+    } else {
+      keyedBy = raw.keyedBy as AppStorageKeyedBy;
+    }
+  }
+
   if (errors.length > before) return null;
   const collection: DeclaredStorageCollection = {
     kind,
@@ -1023,6 +1074,7 @@ function parseCollection(
   if (schema) collection.schema = schema;
   if (migrations) collection.migrations = migrations;
   if (hook) collection.hook = hook;
+  if (keyedBy) collection.keyedBy = keyedBy;
   return collection;
 }
 

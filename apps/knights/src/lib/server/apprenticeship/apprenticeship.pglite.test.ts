@@ -787,6 +787,7 @@ describe('checkpoints', () => {
     });
   });
 
+  // 60 sequential answers, each several PGlite round trips: over Vitest's 5s default on a loaded CI shard.
   it('offers coaching once accuracy is under 60% after 50 answers, and not before', async () => {
     await player(1);
     for (let i = 0; i < 70; i++) await rating(i + 1, { answer: '2' });
@@ -797,7 +798,7 @@ describe('checkpoints', () => {
     await play(1, 20, (n) => n % 2 === 0);
     const later = await getApprentice(db, 1);
     expect(later.kind === 'checkpoint' && later.checkpoint.coach).toBe(true);
-  });
+  }, 20_000);
 });
 
 describe('answers outlive their reference', () => {

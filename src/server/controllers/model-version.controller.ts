@@ -137,7 +137,10 @@ import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { assertBaseModelAttestations } from '~/server/services/base-model-attestation.service';
-import { assertTrainingSourcePublishable } from '~/server/services/orchestrator/training/publish-from-workflow';
+import {
+  assertTrainingSourcePublishable,
+  stampPublishedTrainingRuns,
+} from '~/server/services/orchestrator/training/publish-from-workflow';
 import { assertNotCrossOwnerDuplicate } from '~/server/services/duplicate-model-hash.service';
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
 import { unpublishLiveModelForLiteralRules } from '~/server/services/text-scan/actions/model-rules';
@@ -1059,6 +1062,7 @@ export const publishModelVersionHandler = async ({
       meta: version.model.meta as ModelMeta | null,
       ownerId: version.model.userId,
       callerId: ctx.user.id,
+      versionIds: [input.id],
     });
     await assertNotCrossOwnerDuplicate({
       versionId: input.id,
@@ -1134,6 +1138,16 @@ export const publishModelVersionHandler = async ({
         type: 'published',
         entityType: 'modelVersion',
         entityId: updatedVersion.id,
+      });
+      // A version added from a Training Studio run names the run itself; the model's own run (if
+      // any) was back-linked when the model was published. A scheduled publish is not stamped, as
+      // on the model path.
+      await stampPublishedTrainingRuns({
+        ownerId: version.model.userId,
+        callerId: ctx.user.id,
+        modelId: version.modelId,
+        modelMeta: undefined,
+        versions: [{ id: updatedVersion.id, meta: version.meta }],
       });
     }
 
@@ -1635,6 +1649,7 @@ export async function publishPrivateModelVersionHandler({
     meta: version.model.meta as ModelMeta | null,
     ownerId: version.model.userId,
     callerId: ctx.user.id,
+    versionIds: [version.id],
   });
   assertBaseModelAttestations({ versions: [version] });
 

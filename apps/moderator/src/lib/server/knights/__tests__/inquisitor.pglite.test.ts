@@ -338,6 +338,29 @@ describe('getInquisitorQueue block markers', () => {
   });
 });
 
+describe('getInquisitorQueue media for a withheld image', () => {
+  it('draws an image whose url another row keeps as restricted without the grant, and a clean one from the CDN', async () => {
+    await db.query(
+      `INSERT INTO "Image" ("id","url","name","type","nsfwLevel","nsfwLevelLocked","ingestion") VALUES
+        (990000020,'k1',NULL,'image',4,false,'Pending')`
+    );
+    await insertItem(1, 1, 'Inquisitor');
+    await insertItem(3, 3, 'Inquisitor');
+
+    const media = async (csamReview: boolean) =>
+      (await getInquisitorQueue('all', { csamReview })).map((i) => [i.id, i.media, i.imageKey]);
+
+    expect(await media(false)).toEqual([
+      [1, 'restricted', ''],
+      [3, 'cdn', 'k3'],
+    ]);
+    expect(await media(true)).toEqual([
+      [1, 'cdn', 'k1'],
+      [3, 'cdn', 'k3'],
+    ]);
+  });
+});
+
 describe('ruleOnInquisitorItem', () => {
   it('sets the image through the moderator path, closes the item and grades pending votes against the ruling', async () => {
     await insertItem(1, 1, 'Inquisitor');
@@ -347,7 +370,7 @@ describe('ruleOnInquisitorItem', () => {
 
     expect(await ruleOnInquisitorItem(1, { level: 8 }, MOD)).toEqual({ ok: true });
 
-    expect(setLevel).toHaveBeenCalledWith({ id: 1, nsfwLevel: 8, userId: MOD });
+    expect(setLevel).toHaveBeenCalledWith({ id: 1, nsfwLevel: 8, status: 'Actioned', userId: MOD });
     expect(await item(1)).toMatchObject({
       status: 'Closed',
       resolvedValue: '8',
@@ -375,6 +398,7 @@ describe('ruleOnInquisitorItem', () => {
       id: 1,
       nsfwLevel: 32,
       reason: 'Inquisitor ruling: Realistic Minors',
+      status: 'Actioned',
       userId: MOD,
     });
     expect(await verdicts(1)).toEqual([
@@ -575,6 +599,7 @@ describe('ruleOnInquisitorItem', () => {
       id: 1,
       nsfwLevel: 32,
       reason: 'Inquisitor ruling: Realistic Minors',
+      status: 'Actioned',
       userId: MOD,
     });
     expect(await item(1)).toMatchObject({ status: 'Closed', resolvedValue: '32' });

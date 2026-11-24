@@ -63,6 +63,7 @@ const {
   listSubListingQueue,
   moderateSubListing,
   SubListingError,
+  subListingErrorResponse,
   syncSubListingForSharedRow,
   syncSubListingRatingFromDoc,
   upsertSubListing,
@@ -260,7 +261,23 @@ describe('upsertSubListing — refusals', () => {
     mockRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 77 });
     await expectError(upsert(), 429, 'rate_limited');
     mockRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 77 });
-    await expect(upsert()).rejects.toMatchObject({ retryAfterSeconds: 77 });
+    const refused = await upsert().catch((e: unknown) => e);
+    expect(refused).toMatchObject({ retryAfterSeconds: 77 });
+    // The REST body and the tRPC mapper both carry the refusal's meta: an abuse limit, no counts.
+    expect(subListingErrorResponse(refused)).toEqual({
+      status: 429,
+      body: {
+        error: 'Too many store item updates, retry later',
+        code: 'rate_limited',
+        rateLimit: {
+          retryAfterSeconds: 77,
+          retryAt: expect.any(String),
+          id: 'apps.store-item-writes',
+          kind: 'abuse',
+        },
+      },
+      retryAfter: 77,
+    });
     expect(mockRateLimit).toHaveBeenCalledWith(AUTHOR, PARENT);
   });
 
@@ -530,7 +547,18 @@ describe('upsertSubListing — refusals', () => {
 
   it('caps active items per author per parent', async () => {
     write.appSubListing.count.mockResolvedValueOnce(20);
-    await expectError(upsert(), 429, 'author_cap');
+    const refused = await upsert().catch((e: unknown) => e);
+    await expectError(Promise.reject(refused), 429, 'author_cap');
+    // A standing product allowance: the author's count against the parent's cap, no window.
+    expect(subListingErrorResponse(refused)?.body.rateLimit).toEqual({
+      retryAfterSeconds: 3600,
+      retryAt: expect.any(String),
+      id: 'apps.store-items',
+      kind: 'product',
+      limit: 20,
+      used: 20,
+      remaining: 0,
+    });
     expect(write.appSubListing.count).toHaveBeenCalledWith({
       where: {
         parentListingId: PARENT,

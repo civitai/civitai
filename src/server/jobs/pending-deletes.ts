@@ -1,3 +1,7 @@
+import {
+  childSafetyImageFinding,
+  childSafetyPostFinding,
+} from '@civitai/db-queries/child-safety-case';
 import { imageNotUsed } from '@civitai/db-queries/content-deletion';
 import {
   cleanupBlocked,
@@ -113,6 +117,49 @@ async function standing(kind: Kind, ids: number[]) {
 }
 
 /**
+ * Of `ids`, those whose closed case found nothing and whose owner is not deleted again: only these
+ * may be kept rather than deleted.
+ */
+async function clearedByCase(kind: Kind, ids: number[]) {
+  if (!ids.length) return new Set<number>();
+  const finding = kind === 'Image' ? childSafetyImageFinding(kind) : childSafetyPostFinding(kind);
+  const { rows } = await sql<{ cleared: number }>`
+    SELECT ${sql.table(kind)}.id AS cleared FROM ${sql.table(kind)}
+    WHERE ${sql.table(kind)}.id = ANY(${ids}::int[]) AND (${finding}) IS FALSE
+      AND NOT EXISTS (
+        SELECT 1 FROM "User" u WHERE u.id = ${sql.ref(
+          `${kind}.userId`
+        )} AND u."deletedAt" IS NOT NULL
+      )
+  `.execute(db());
+  return new Set(rows.map(({ cleared }) => cleared));
+}
+
+/** Of `ids`, the images whose case has a finding, or an outcome not read as none. */
+async function imagesWithFinding(ids: number[]) {
+  if (!ids.length) return [];
+  const { rows } = await sql<{ found: number }>`
+    SELECT "Image".id AS found FROM "Image"
+    WHERE "Image".id = ANY(${ids}::int[]) AND (${childSafetyImageFinding('Image')}) IS NOT FALSE
+  `.execute(db());
+  return rows.map(({ found }) => found);
+}
+
+/**
+ * An image carried out on a finding, or under a restore mark it did not clear, takes the mark off its
+ * post's delete, so the post goes too: once the image is deleted, the post's own finding can no
+ * longer see it.
+ */
+const unmarkPostsOf = (imageIds: number[]) =>
+  imageIds.length
+    ? sql`
+        UPDATE "JobQueue" SET data = data - 'releasedOnRestore'
+        WHERE type = 'PendingDelete' AND "entityType" = 'Post'
+          AND "entityId" IN (SELECT "postId" FROM "Image" WHERE id = ANY(${imageIds}::int[]))
+      `.execute(db())
+    : undefined;
+
+/**
  * Carries out each pending delete as its kind says: a cleanup while `cleanupStillApplies`, anyone
  * else's as the system with the flags it was queued with (no caller condition), an owner's as the
  * owner. Returns the ids whose delete threw; a batch that throws is retried one at a time, and a
@@ -174,7 +221,22 @@ export const pendingDeletes = createJob('pending-deletes', '*/5 * * * *', async 
       (row) => before.get(row.id)?.present && !before.get(row.id)?.blocked && !textHeld.has(row.id)
     );
     const dueIds = new Set(due.map((row) => row.id));
-    const threw = new Set(await carryOut(kind, due));
+    // A restore-marked row is released (dropped, the item kept) only on a no-finding close.
+    const marked = due
+      .filter(({ data }) => data.releasedOnRestore && data.ownerId === undefined && !data.cleanup)
+      .map((row) => row.id);
+    const releasedIds = await clearedByCase(kind, marked);
+    if (kind === 'Image') {
+      const carried = due.map((row) => row.id).filter((id) => !releasedIds.has(id));
+      const found = new Set(await imagesWithFinding(carried));
+      await unmarkPostsOf(carried.filter((id) => found.has(id) || marked.includes(id)));
+    }
+    const threw = new Set(
+      await carryOut(
+        kind,
+        due.filter((row) => !releasedIds.has(row.id))
+      )
+    );
 
     // A row carried out is done once gone or no longer applicable (in use again, given away, kept by
     // a hold marker); blocked again it waits, and a delete that threw is retried.

@@ -10,9 +10,9 @@ import { describe, expect, it } from 'vitest';
 // Actions caches are scoped to a ref: a run reads its own ref's entries and the default branch's,
 // and saves into its own ref. An entry saved by a pull request (refs/pull/<n>/merge) or by a
 // dispatch on a branch is readable by that ref alone, and still counts against the repo's 10 GB
-// cap, where GitHub evicts the least recently used entries, `main`'s included. Measured
-// 2026-11-23: nine pnpm-store copies saved by PR and branch runs, ~5 GB, from setup-node's
-// `cache: pnpm`, which saves on every run that misses and has no input to stop it.
+// cap, where GitHub evicts the least recently used entries, `main`'s included. The case that
+// prompted this: setup-node's `cache: pnpm`, which saves on every run that misses, on any ref, and
+// has no input to stop it, so PR and branch runs each saved their own copy of the pnpm store.
 //
 // THE RULE, for every step in .github/workflows/*.yml and .github/actions/*/action.yml:
 //   a step that SAVES a cache must be gated, by its own `if` or its job's, to a push, dispatch or
@@ -22,8 +22,14 @@ import { describe, expect, it } from 'vitest';
 //     - `actions/setup-node@*` with a non-empty `cache:` input (saves in a post step; an
 //       expression counts, since it can evaluate to a package manager on a PR)
 //     - `pnpm/action-setup@*` with a truthy `cache:` input (saves the store in a post step)
+//     - `actions/setup-go@*` unless `cache:` is explicitly false (its cache DEFAULTS to true, so
+//       an absent input saves; an expression counts, since it can be true on a PR)
+//     - `golangci/golangci-lint-action@*` unless `skip-cache` is literally true, or
+//       `skip-save-cache` is the negation of a main gate: `${{ !(<gate>) }}` (its cache is on by
+//       default and saves in a post step)
 //   Restore steps (`actions/cache/restore@*`) are always fine. Use ./.github/actions/pnpm-store-restore
-//   and ./.github/actions/pnpm-store-save for the pnpm store; the save action carries the gate.
+//   and ./.github/actions/pnpm-store-save for the pnpm store, ./.github/actions/go-cache-restore
+//   and ./.github/actions/go-cache-save for Go's; the save actions carry the gate.
 //
 // "Gated" means the `if` is a pure conjunction (no `||`) containing BOTH
 //   `github.ref == 'refs/heads/main'`, and
@@ -37,11 +43,9 @@ import { describe, expect, it } from 'vitest';
 // trigger or job `if` is how such an analysis reports safe over a leak, and the gate costs one
 // line where it is not needed.
 //
-// NOT COVERED, stated so this does not read as wider than it is: actions whose cache is built in
-// and on by default under another input name, notably `actions/setup-go` (`cache`, default true)
-// and `golangci/golangci-lint-action`. They save on a miss in any ref too; their keys change only
-// with go.sum (and, for golangci-lint, a time interval), and on 2026-11-23 no PR-scoped entry of
-// either existed.
+// NOT COVERED, stated so this does not read as wider than it is: any other action with a built-in
+// cache. The list above is every cache-saving action this repo used when the guard was written; a
+// new one needs a branch in savesCache.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
@@ -83,7 +87,9 @@ function gatedToMain(cond: unknown): boolean {
 
 /** Why this step saves a cache, or null when it does not. */
 function savesCache(step: Step): string | null {
-  const uses = typeof step.uses === 'string' ? step.uses : '';
+  // Lower-cased: GitHub resolves `owner/repo` case-insensitively, so `Actions/Setup-Go@v6` runs
+  // the same action and must not walk past the matchers below.
+  const uses = (typeof step.uses === 'string' ? step.uses : '').trim().toLowerCase();
   if (/^actions\/cache\/save@/.test(uses)) return 'actions/cache/save';
   if (/^actions\/cache@/.test(uses)) return 'actions/cache (saves in its post step)';
   if (/^actions\/setup-node@/.test(uses)) {
@@ -101,7 +107,27 @@ function savesCache(step: Step): string | null {
     )
       return `pnpm/action-setup \`cache: ${String(cache)}\` (saves the store in its post step)`;
   }
+  if (/^actions\/setup-go@/.test(uses)) {
+    const cache = step.with?.cache;
+    if (cache !== false && String(cache).trim() !== 'false')
+      return `actions/setup-go \`cache: ${
+        cache === undefined ? '(default true)' : String(cache)
+      }\` (saves in its post step)`;
+  }
+  if (/^golangci\/golangci-lint-action@/.test(uses)) {
+    const isTrue = (v: unknown) => v === true || String(v).trim() === 'true';
+    if (isTrue(step.with?.['skip-cache']) || isTrue(step.with?.['skip-save-cache'])) return null;
+    if (!skipsSaveOffMain(step.with?.['skip-save-cache']))
+      return 'golangci-lint-action cache (saves in its post step; set skip-save-cache to ${{ !(<main gate>) }})';
+  }
   return null;
+}
+
+/** Is this a `skip-save-cache` value that is true everywhere but a gated run on `main`? */
+function skipsSaveOffMain(v: unknown): boolean {
+  if (typeof v !== 'string') return false;
+  const m = /^\$\{\{\s*!\s*\(([\s\S]*)\)\s*\}\}$/.exec(v.trim());
+  return m !== null && gatedToMain(m[1]);
 }
 
 /** Every saving step not gated to `main`, as "where: step: reason". */
@@ -135,16 +161,20 @@ function loadStepSets(): StepSet[] {
       });
     }
   }
-  if (existsSync(ACTIONS_DIR)) {
-    for (const dir of readdirSync(ACTIONS_DIR).sort()) {
-      const file = ['action.yml', 'action.yaml']
-        .map((f) => path.join(ACTIONS_DIR, dir, f))
-        .find((f) => existsSync(f));
-      if (!file) continue;
-      const doc = yamlFile(file);
-      sets.push({ where: `.github/actions/${dir}`, steps: doc.runs?.steps ?? [] });
+  // Recursive: a local action can live at any depth (`./.github/actions/go/restore`).
+  const walk = (dir: string) => {
+    for (const ent of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    )) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) walk(full);
+      else if (/^action\.ya?ml$/.test(ent.name)) {
+        const where = path.relative(ROOT, dir).split(path.sep).join('/');
+        sets.push({ where, steps: yamlFile(full).runs?.steps ?? [] });
+      }
     }
-  }
+  };
+  if (existsSync(ACTIONS_DIR)) walk(ACTIONS_DIR);
   return sets;
 }
 
@@ -158,11 +188,14 @@ describe('no cache is saved outside main', () => {
       expect.arrayContaining([
         '.github/actions/pnpm-store-restore',
         '.github/actions/pnpm-store-save',
+        '.github/actions/go-cache-restore',
+        '.github/actions/go-cache-save',
       ])
     );
     // ...and it finds the saving steps that exist, so a zero below is not a matcher that never fires.
     const saving = sets.flatMap((s) => s.steps.filter((st) => savesCache(st)).map(() => s.where));
     expect(saving).toContain('.github/actions/pnpm-store-save');
+    expect(saving).toContain('.github/actions/go-cache-save');
     expect(saving.length).toBeGreaterThanOrEqual(4);
   });
 
@@ -170,7 +203,7 @@ describe('no cache is saved outside main', () => {
     const found = offenders(sets);
     expect(
       found,
-      `These save an Actions cache on pull requests or branch runs, where the entry is readable only by that ref and spends the repo's 10 GB budget. Gate the save with \`contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main'\`, or use ./.github/actions/pnpm-store-restore + pnpm-store-save instead of setup-node's \`cache:\`:\n${found.join(
+      `These save an Actions cache on pull requests or branch runs, where the entry is readable only by that ref and spends the repo's 10 GB budget. Gate the save with \`contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main'\`, or use ./.github/actions/pnpm-store-restore + pnpm-store-save instead of setup-node's \`cache:\`, go-cache-restore + go-cache-save with setup-go \`cache: false\`, and golangci-lint-action \`skip-save-cache: \${{ !(<that gate>) }}\`:\n${found.join(
         '\n'
       )}`
     ).toEqual([]);
@@ -203,6 +236,34 @@ describe('no cache is saved outside main', () => {
         },
       ],
       ['pnpm/action-setup cache: true', { uses: 'pnpm/action-setup@v6', with: { cache: true } }],
+      [
+        'setup-go with no cache input (defaults to true)',
+        { uses: 'actions/setup-go@v6', with: { 'go-version-file': 'go.mod' } },
+      ],
+      ['setup-go cache: true', { uses: 'actions/setup-go@v6', with: { cache: true } }],
+      [
+        'a mixed-case setup-go with its default cache',
+        { uses: 'Actions/Setup-Go@v6', with: { 'go-version-file': 'go.mod' } },
+      ],
+      [
+        'setup-go cache as an expression',
+        { uses: 'actions/setup-go@v6', with: { cache: "${{ github.ref == 'refs/heads/main' }}" } },
+      ],
+      [
+        'golangci-lint-action with its default cache',
+        { uses: 'golangci/golangci-lint-action@abc', with: { version: 'v2' } },
+      ],
+      [
+        'golangci-lint-action skip-save-cache on a deny-one gate',
+        {
+          uses: 'golangci/golangci-lint-action@abc',
+          with: { 'skip-save-cache': "${{ github.event_name == 'pull_request' }}" },
+        },
+      ],
+      [
+        'golangci-lint-action skip-save-cache: false',
+        { uses: 'golangci/golangci-lint-action@abc', with: { 'skip-save-cache': false } },
+      ],
       ['an ungated save', { uses: 'actions/cache/save@v6', with: { key: 'k', path: 'p' } }],
       [
         'actions/cache (restore + post save)',
@@ -262,6 +323,32 @@ describe('no cache is saved outside main', () => {
         undefined,
       ],
       ['pnpm/action-setup without cache', { uses: 'pnpm/action-setup@v6' }, undefined],
+      ['setup-go cache: false', { uses: 'actions/setup-go@v6', with: { cache: false } }, undefined],
+      [
+        'golangci-lint-action skip-cache: true',
+        { uses: 'golangci/golangci-lint-action@abc', with: { 'skip-cache': true } },
+        undefined,
+      ],
+      [
+        'golangci-lint-action skip-save-cache: true',
+        { uses: 'golangci/golangci-lint-action@abc', with: { 'skip-save-cache': true } },
+        undefined,
+      ],
+      [
+        'golangci-lint-action skip-save-cache off main',
+        {
+          uses: 'golangci/golangci-lint-action@abc',
+          with: {
+            'skip-save-cache': `\${{ !(contains(fromJSON('["push", "workflow_dispatch", "schedule"]'), github.event_name) && github.ref == 'refs/heads/main') }}`,
+          },
+        },
+        undefined,
+      ],
+      [
+        'setup-go default cache in a main-gated job',
+        { uses: 'actions/setup-go@v6' },
+        "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}",
+      ],
       [
         'pnpm/action-setup cache: false',
         { uses: 'pnpm/action-setup@v6', with: { cache: false } },

@@ -23,6 +23,8 @@ export const absoluteUrl = (url?: string) =>
   !url ? undefined : /^https?:\/\//.test(url) ? url : `${getBaseUrl()}${url}`;
 
 export const notificationEmail = createEmail({
+  template: 'notification',
+  mailClass: 'transactional',
   header: ({ to, typeName, unsubscribeUrl }: NotificationEmailData) => ({
     subject: subjectFor(typeName),
     to,

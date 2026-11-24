@@ -37,6 +37,12 @@ export function heldUserSql(column: string): string {
     )`;
 }
 
+/** Whether the "Image" row aliased `image` is itself in the CSAM queue or blocked as CSAM. */
+export function heldItemImageSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
+  return `(${image}."needsReview" = 'csam' OR ${image}."blockedFor" = 'CSAM')`;
+}
+
 /**
  * Whether the "Image" row aliased `image` may be served: it is flagged for CSAM itself, or its owner
  * is held (`heldUserSql`). The one definition both routes run, as plain SQL so each app wraps it in
@@ -56,13 +62,25 @@ export function heldImageSql(image: string): string {
   )`;
 }
 
+/** `heldImageSql`, false rather than NULL for an image with no review flag or block reason. */
+export function heldImageKnownSql(image: string): string {
+  return `COALESCE(${heldImageSql(image)}, false)`;
+}
+
 /**
  * Whether the "Image" row aliased `image` is marked as CSAM by a hash block, a scan flag, a
- * moderator vote or a CSAM hold on its label item. Not `heldImageSql`'s legs.
+ * moderator vote or a CSAM hold on its label item. Not `heldImageSql`'s legs. With
+ * `scanFlag: false` a scan flag alone does not count.
  */
-export function csamSignalImageSql(image: string): string {
+export function csamSignalImageSql(image: string, { scanFlag = true } = {}): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const id = `${image}.id`;
+  const flagged = scanFlag
+    ? `
+        OR EXISTS (
+          SELECT 1 FROM "ScanLabelFlag" sf WHERE sf."itemId" = si.id AND sf.snapshot ->> 'csam' = 'true'
+        )`
+    : '';
   return `(
     EXISTS (
       SELECT 1 FROM "BlockedImage" sb WHERE sb.hash = ${image}."pHash" AND sb.reason = 'CSAM'
@@ -70,10 +88,7 @@ export function csamSignalImageSql(image: string): string {
     OR EXISTS (
       SELECT 1 FROM "ScanLabelItem" si
       WHERE si."imageId" = ${id} AND (
-        si."voidReason" = 'csam-hold'
-        OR EXISTS (
-          SELECT 1 FROM "ScanLabelFlag" sf WHERE sf."itemId" = si.id AND sf.snapshot ->> 'csam' = 'true'
-        )
+        si."voidReason" = 'csam-hold'${flagged}
         OR EXISTS (
           SELECT 1 FROM "ScanLabelVote" sv WHERE sv."itemId" = si.id AND sv.reason = 'csam-realistic'
         )

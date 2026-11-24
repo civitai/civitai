@@ -4,6 +4,7 @@
   import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { cn } from '@civitai/ui/utils.js';
+  import RatingBadge from '$lib/components/RatingBadge.svelte';
   import { isFailed, type Img } from './trainingFlow';
   import { pairProblem, type EditPair } from './editPairs';
 
@@ -51,6 +52,9 @@
   >
     {#if img.previewUrl}
       <img src={img.previewUrl} alt="" class="h-full w-full object-cover" />
+    {/if}
+    {#if img.status === 'uploaded'}
+      <RatingBadge level={img.nsfwLevel} class="absolute bottom-1 left-1" />
     {/if}
     {#if showBefore}
       <span

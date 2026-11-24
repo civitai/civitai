@@ -37,7 +37,7 @@ export function postTextCsamHeldText(text: string): string {
  * too.
  */
 export function csamQueueHeldText(entityType: string, entity: string): string {
-  if (!/^[A-Za-z]+$/.test(entityType)) throw new Error(`Bad entity type: ${entityType}`);
+  if (!/^[A-Za-z][A-Za-z0-9]*$/.test(entityType)) throw new Error(`Bad entity type: ${entityType}`);
   const e = /^\d{1,18}$/.test(entity) ? entity : sqlRef(entity);
   if (/^"?(qh|qm|qd)"?\./.test(e)) throw new Error(`Alias taken inside csamQueueHeldText: ${e}`);
   return `(
@@ -125,13 +125,16 @@ export function imageCoveredText(image: string, user: string): string {
  * An unreadable fact fails the statement rather than reading as not held.
  * With `matureUnderage: false` a `mature-underage` unpublish alone does not hold: it takes the
  * media off the site but does not limit which moderators may view it.
+ * With `owners: false` only a moderator delete flagged for CSAM review that no verified report covers
+ * holds. Use it to decide which moderators may view media, never for what cdn-access retracts.
  */
 export function heldUrlSql(
   url: string,
   {
     exceptImageId,
     matureUnderage = true,
-  }: { exceptImageId?: string; matureUnderage?: boolean } = {}
+    owners = true,
+  }: { exceptImageId?: string; matureUnderage?: boolean; owners?: boolean } = {}
 ): string {
   const u = sqlRef(url);
   const except = exceptImageId ? ` AND hx.id <> ${sqlRef(exceptImageId)}` : '';
@@ -143,6 +146,12 @@ export function heldUrlSql(
           OR COALESCE(hmv.meta ->> 'unpublishedReason' = '${MATURE_UNDERAGE_REASON}', false)
           OR COALESCE(hmo.meta ->> 'unpublishedReason' = '${MATURE_UNDERAGE_REASON}', false)`
     : '';
+  if (!owners)
+    return `EXISTS (
+    SELECT 1 FROM "ImageCdnModeratorDelete" hd
+    WHERE hd.url = ${u} AND hd."csamReview"
+      AND NOT ${imageCoveredText('hd."imageId"', 'hd."userId"')}
+  )`;
   return `(
     EXISTS (
       SELECT 1 FROM "Image" hx

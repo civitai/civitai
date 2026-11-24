@@ -40,7 +40,11 @@ Worked example: `src/components/Dialog/dialog-registry2.ts` held 23 `dynamic()` 
 were opened, each from one component. Each opener now names only its own modal:
 
 ```ts
-openDialog(() => import('~/components/Buzz/CryptoDeposit/BulkBonusInfoModal'), {}, { id: 'bulk-bonus-info' });
+openDialog(
+  () => import('~/components/Buzz/CryptoDeposit/BulkBonusInfoModal'),
+  {},
+  { id: 'bulk-bonus-info' }
+);
 ```
 
 The registry was deleted, along with one modal that only the registry had imported. The 164-module
@@ -52,12 +56,32 @@ Before deleting a registry, check two things. Nothing may look an entry up by a 
 runtime: grep for the registry's export, not only its file name. And when an entry goes, check
 that its target is still imported somewhere; if not, delete it too.
 
+A barrel is the same shape. The `~/libs/form` barrel built every form input, the rich-text and
+cosmetic inputs among them, so `SendTipModal`, which needs three plain inputs, reached the editor
+and the cosmetic picker, and they reached the modal back. The plain inputs moved to
+`~/libs/form/basic-inputs.ts`, which the barrel re-exports, and the modal imports that and the
+`Form`/`useForm` modules directly. The 24-module client cycle split into three small ones, and 11
+of its modules left cycles entirely.
+
 ### A shared piece lives in a big service
 
 Module A imports service B for one function or constant, and B (through anything) imports A. Move
 the piece into a new module that imports neither A nor B, and point both at it. Name the new module
 for what the piece does, not for the service it came out of. A type-only import (`import type`) is
 not an edge and needs no move.
+
+Example: `rewards/base.reward` imported `buzz.service` for three functions. Those three, with the
+multiplier helpers beside them, moved to `buzz-payout`, and the Buzz client they wrap to
+`buzz-client`; `buzz.service` re-exports both, so its other callers are unchanged. Only
+`base.reward` and the tests that stubbed Buzz for its payouts point at the new module: a
+`buzz.service` mock no longer stands in for what `base.reward` calls. Move the pieces into one
+module per caller, so each of those tests replaces its one mock with one mock and the own-module
+mock ratchet does not grow.
+
+The same move works the other way round: a widely imported service holding one function with a
+heavy import. Example: `notification.service`, which most notification senders import, held
+`getUserNotifications`, the one function that needs the notification detail fetchers. It moved to
+`notification-feed.service`, which only the notification controller imports.
 
 ### A low-level module calls up
 
@@ -69,8 +93,24 @@ higher-level modules it hands work to. Two fixes, in order of preference:
 2. The higher-level modules register themselves at an entry point (a route, a job, a
    startup module), and the low-level module reads the registration.
 
-An uncut example: `text-scan/submit.ts` reaches `moderation-adapters.ts` through a call-site
-`await import()`. The fix is for the caller to pass the adapter.
+Example of the first: `home-block-cache.service` is imported by every writer that busts a home
+block, and its read-through getter lazily imported `home-block.service` to build a missing block,
+which handed every one of those writers that service's imports. The getter's only caller is
+`home-block.service`, so it now passes its two builders in (`getHomeBlockCached(…, source)`), and
+the cache imports the service for types only.
+
+Example of the second: `utils/notifications.tsx` (which the tRPC client imports) rendered the
+"Report this" button, which queries tRPC. `_app` registers the button with
+`registerReportProblemButton`. Registration fits here because a missing registration costs only an
+optional button (and its longer toast timeout); it fits badly where skipping the registered work
+would lose data.
+
+An uncut example that neither fix covers yet: `text-scan/submit.ts` reaches `moderation-adapters.ts`
+through a call-site `await import()`, to apply a cleared verdict when text shrinks below the scan
+minimum. The main callers of `scanEntity` (the post, bounty, collection and model services, and
+text-scan's own retry adapter and route) are modules the adapters import, so they cannot pass the
+adapter in, and a registration would skip the apply in any process that never loaded the registry.
+Its fix needs a decision first (see "Ask first when").
 
 ## After each cut
 

@@ -38,9 +38,16 @@ export const MEDIA_UPLOAD_BATCH_DISABLED_ERROR = 'batch media upload is not avai
 export const MEDIA_UPLOAD_BATCH_UNAVAILABLE_ERROR =
   'batch media upload is not available yet, please try again later';
 
-/** The refusal past the daily quota. Written for the viewer; the host relays it. */
-export function mediaUploadBatchQuotaError(): string {
-  const files = MEDIA_UPLOAD_BATCH_DAILY_ITEMS.toLocaleString('en-US');
-  const gb = MEDIA_UPLOAD_BATCH_DAILY_BYTES / 1024 ** 3;
+/**
+ * The refusal past the daily quota, naming the viewer's limits (the registry's
+ * `apps.media-upload-daily-items` / `-bytes`; these constants are their code defaults). Written for
+ * the viewer; the host relays it.
+ */
+export function mediaUploadBatchQuotaError(
+  items: number = MEDIA_UPLOAD_BATCH_DAILY_ITEMS,
+  bytes: number = MEDIA_UPLOAD_BATCH_DAILY_BYTES
+): string {
+  const files = items.toLocaleString('en-US');
+  const gb = Math.round((bytes / 1024 ** 3) * 100) / 100;
   return `You've reached today's batch upload limit (${files} files or ${gb} GB). It resets at midnight UTC.`;
 }

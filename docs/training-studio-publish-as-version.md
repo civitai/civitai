@@ -1,6 +1,21 @@
 # Training Studio: publish a run as a new version of an existing model — scope
 
-Status: scoped, not started. Size: **medium, about 5–7 dev-days** including tests and review.
+**Status:** built, in review (PR on `feat/training-studio-publish-as-version`). Size was scoped at
+**medium, about 5–7 dev-days** including tests and review.
+
+Where the build differs from the plan below:
+
+- The run link is read by two more places than the table lists: `studio-withheld.ts` (now also matches
+  `ModelVersion.meta`) and `versionHasStudioDataset` in `training-data-restricted.service.ts`. Readers
+  check the version's own link and fall back to the model's: `studioRunOfVersion`
+  (`studio-run-link.ts`) for the archive job and mod resolve, inline in the SQL readers and the
+  moderator detail. The publish gate checks the model's and each published version's link on its own.
+- Private models are not offered: `upsertModelVersion` refuses versions on a private model.
+- The studio opts in through a separate host function, `publishVersionUrl`, rather than a `target`
+  field on `PublishRequest`. A host without it shows only the new-model CTA.
+- The picker is rendered on the server (`?q=` search, up to 100 models); no new tRPC procedure.
+- Open checks: the version wizard handles `Trained` versions (step 1 is `TrainingSelectFile`, step 2
+  "Edit version"); the block publish path keeps new-model only.
 
 ## The ask
 
@@ -116,10 +131,3 @@ Same shape as `createDraftModelFromWorkflow`, sharing its helpers (training deta
   resumes a classic-trainer draft or run on its own model. It doesn't add a version to an existing
   model. It is being replaced by the studio (`trainingStudioUi` sends new trainings there), so the fix
   lands in the studio only. Revisit only if the classic trainer stays live after the studio rollout.
-
-## Open checks before step 3
-
-- Confirm that the version wizard's Files step accepts a `Trained` version, and shows the epoch
-  picker from `metadata.trainingResults` the same way the model wizard does.
-- Find out whether the block publish path (`blocks.router.ts` → `from-orchestrator`) should offer
-  this option. The default is no; blocks keep new-model-only.

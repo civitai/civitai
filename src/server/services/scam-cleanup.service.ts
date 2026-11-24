@@ -1,5 +1,9 @@
 import { dbWrite } from '~/server/db/client';
-import { prismaRunner, setCommentFlags } from '~/server/services/commentv3/write.service';
+import {
+  prismaRunner,
+  setCommentFlags,
+  type SqlRunner,
+} from '~/server/services/commentv3/write.service';
 
 export type ScamCleanup = 'chatMessages' | 'comments' | 'none';
 export const SCAM_CLEANUP_MAX_RECORDED_IDS = 5000;
@@ -34,25 +38,29 @@ async function hideUserComments(userId: number, at: Date) {
  * cleanup's own, which lands within minutes of `at`.
  */
 async function restoreComments(userId: number, among: number[], at: Date) {
-  if (!among.length) return [];
-  return dbWrite.$transaction(async (tx) => {
-    const db = prismaRunner(tx);
-    const { rows } = await db.query<IdRow>(
-      `SELECT id FROM "CommentV3"
+  if (!among.length) return { changed: [], skipped: 0 };
+  return dbWrite.$transaction((tx) => restoreCommentsIn(prismaRunner(tx), userId, among, at));
+}
+
+/** restoreComments' writes in the caller's transaction. */
+export async function restoreCommentsIn(db: SqlRunner, userId: number, among: number[], at: Date) {
+  const { rows } = await db.query<IdRow & { fp: boolean }>(
+    `SELECT id, "entityType"::text = 'featurePage' AS fp FROM "CommentV3"
        WHERE "userId" = $1 AND id = ANY(string_to_array($2, ',')::int[])
          AND "deletedAt" IS NULL AND hidden
          AND ("hiddenAt" = $3::timestamptz
            OR ("hiddenAt" IS NULL
              AND "updatedAt" BETWEEN $3::timestamptz AND $3::timestamptz + interval '10 minutes'))
        ORDER BY id FOR UPDATE`,
-      [userId, among.join(','), at]
-    );
-    return setCommentFlags(
-      db,
-      rows.map((r) => r.id),
-      { hidden: false }
-    );
-  });
+    [userId, among.join(','), at]
+  );
+  const changed = await setCommentFlags(
+    db,
+    rows.map((r) => r.id),
+    { hidden: false }
+  );
+  // `skipped`: the Feature Pages comments it leaves hidden (setCommentFlags never unhides one).
+  return { changed, skipped: rows.filter((r) => r.fp).length };
 }
 
 function affectedRows(kind: Exclude<ScamCleanup, 'none'>, userId: number, at: Date) {
@@ -102,27 +110,27 @@ async function storedCommentIds(record: StoredCleanup, triggerType: unknown) {
 }
 
 async function restore(userId: number, record: StoredCleanup, triggerType: unknown) {
+  const shown = async (ids: number[]) => {
+    const { changed, skipped } = await restoreComments(userId, ids, new Date(record.at));
+    return { restored: changed.length, skipped };
+  };
   switch (record.kind) {
     case 'chatMessages':
       // By the exact timestamp written, so messages the user deleted themselves stay deleted.
-      return dbWrite.$executeRaw`
-        UPDATE "ChatMessage" SET "deletedAt" = NULL
-        WHERE "chatId" IN (SELECT "chatId" FROM "ChatMember" WHERE "userId" = ${userId})
-          AND "userId" = ${userId} AND "deletedAt" = ${new Date(record.at)}
-      `;
+      return {
+        restored: await dbWrite.$executeRaw`
+          UPDATE "ChatMessage" SET "deletedAt" = NULL
+          WHERE "chatId" IN (SELECT "chatId" FROM "ChatMember" WHERE "userId" = ${userId})
+            AND "userId" = ${userId} AND "deletedAt" = ${new Date(record.at)}
+        `,
+        skipped: 0,
+      };
     case 'comments':
-      return (
-        await restoreComments(
-          userId,
-          await storedCommentIds(record, triggerType),
-          new Date(record.at)
-        )
-      ).length;
+      return shown(await storedCommentIds(record, triggerType));
     default:
       // `commentsV2`, no longer written, also holds CommentV3 ids.
-      if ((record.kind as string) === 'commentsV2')
-        return (await restoreComments(userId, record.ids, new Date(record.at))).length;
-      return 0;
+      if ((record.kind as string) === 'commentsV2') return shown(record.ids);
+      return { restored: 0, skipped: 0 };
   }
 }
 
@@ -131,13 +139,17 @@ export async function restoreScamCase(userRestrictionId: number) {
     where: { id: userRestrictionId },
     select: { userId: true, type: true, triggers: true },
   });
-  if (!row || row.type !== 'scam' || !Array.isArray(row.triggers)) return { restored: 0 };
+  if (!row || row.type !== 'scam' || !Array.isArray(row.triggers))
+    return { restored: 0, skipped: 0 };
 
   let restored = 0;
+  let skipped = 0;
   for (const trigger of row.triggers as { entityType?: string; cleanup?: StoredCleanup | null }[]) {
     const record = trigger?.cleanup;
     if (!record?.count) continue;
-    restored += await restore(row.userId, record, trigger.entityType);
+    const r = await restore(row.userId, record, trigger.entityType);
+    restored += r.restored;
+    skipped += r.skipped;
   }
-  return { restored };
+  return { restored, skipped };
 }

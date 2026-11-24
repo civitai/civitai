@@ -6,7 +6,7 @@ import {
   submitVersionSchema,
 } from '~/server/schema/blocks/publish-request.schema';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
-import { SUBMIT_RATE_LIMIT, takeSubmitSlot } from '~/server/services/blocks/submit-rate-limit';
+import { sendSubmitRateLimited, takeSubmitSlot } from '~/server/services/blocks/submit-rate-limit';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
@@ -90,19 +90,13 @@ export default AuthedEndpoint(
     }
 
     // Per user, as the CLI route's is per key; fails closed (`takeSubmitSlot`).
-    const slot = await takeSubmitSlot(`user:${user.id}`);
+    const slot = await takeSubmitSlot(`user:${user.id}`, user);
     if (!slot.ok && slot.reason !== 'limited') {
       res.status(503).json({ message: 'Rate limiter unavailable; please retry' });
       return;
     }
     if (!slot.ok) {
-      res.setHeader('Retry-After', String(Math.max(slot.retryAfterSeconds, 1)));
-      res.status(429).json({
-        message: 'Rate limit exceeded',
-        retryAfterSeconds: slot.retryAfterSeconds,
-        limit: SUBMIT_RATE_LIMIT.max,
-        windowSeconds: SUBMIT_RATE_LIMIT.windowSeconds,
-      });
+      sendSubmitRateLimited(res, slot);
       return;
     }
 
@@ -156,6 +150,8 @@ export default AuthedEndpoint(
         status: 'pending',
         listing: result.listing ?? null,
         storageMigrationWarnings: result.storageMigrationWarnings ?? [],
+        // Never refuses: notes the developer may act on (`submitAdvisories`), `[]` when none.
+        advisories: result.advisories ?? [],
         // Only when a GitHub Actions token was verified: whether its run was stored.
         ...(result.actionsRunSourceRecorded === undefined
           ? {}

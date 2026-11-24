@@ -13,6 +13,7 @@ import {
   type ReviewPreviewState,
   type StoredReviewPreviewState,
 } from '~/shared/constants/app-review-preview.constants';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 import type {
   NewPendingSubmission,
   ReviewPreviewActor,
@@ -85,6 +86,7 @@ import {
   type FloorAsset,
 } from '~/shared/utils/listing-publish-floor';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
+import type { Advisory } from '~/server/services/blocks/submit-advisories';
 // Pure util (no env/Prisma) — folds a blockId to the appsDb schema slug. Used by
 // the (3c) storage-provision-on-approve block; matches the admin backfill's
 // derivation exactly. The provisioner VALUE is dynamically imported at use so
@@ -258,6 +260,12 @@ export type SubmitVersionResult = {
    * (the manual-apply columns are not there yet). Absent when no token was verified.
    */
   actionsRunSourceRecorded?: boolean;
+  /**
+   * Notes that never refuse or delay the submit (`submitAdvisories`): today only `default-theme`,
+   * when the bundle reads as Civitai's stock look. Empty when there is nothing to say, or when they
+   * could not be worked out in time. Part of the submit API's response (both routes).
+   */
+  advisories: Advisory[];
 };
 
 /**
@@ -1401,8 +1409,13 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   ]);
   const baseline = existingApp
     ? await loadStorageMigrationBaseline({ slug })
-    : { prev: null, history: [] };
-  const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
+    : { prev: null, history: [], approved: [] };
+  const storageMigrations = checkStorageMigrations(
+    baseline.prev,
+    manifest,
+    baseline.history,
+    baseline.approved
+  );
   assertStorageMigrationsCover(storageMigrations);
 
   // 🔴 APP STORAGE PERMISSION HOOKS — refused HERE too, before the upload and the review-repo push:
@@ -1627,12 +1640,18 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     }
   }
 
-  const listing = await submitListingReadiness({
-    slug,
-    submittedByUserId,
-    existingAppBlockId: existingApp?.id ?? null,
-    manifest,
-  });
+  // WARN, NEVER BLOCK: never throws; its bundle read is time-bounded (not its scan: `submitAdvisories`).
+  const [listing, advisories] = await Promise.all([
+    submitListingReadiness({
+      slug,
+      submittedByUserId,
+      existingAppBlockId: existingApp?.id ?? null,
+      manifest,
+    }),
+    import('./submit-advisories')
+      .then(({ submitAdvisories }) => submitAdvisories(bundleBuffer))
+      .catch(() => []),
+  ]);
 
   announceNewPendingRequest({
     publishRequestId,
@@ -1653,6 +1672,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     listing,
     storageMigrationWarnings: storageMigrations.warnings,
     ...(actionsRunSourceRecorded === undefined ? {} : { actionsRunSourceRecorded }),
+    advisories,
   };
 }
 
@@ -3792,13 +3812,18 @@ async function approveRequestUnderClaim(
     import('~/server/services/apps/storage-migration-run.service'),
   ]);
   const baseline = isFirstVersion
-    ? { prev: null, history: [] }
+    ? { prev: null, history: [], approved: [] }
     : await loadStorageMigrationBaseline({
         slug: request.slug,
         excludePublishRequestId: request.id,
         selfManifest: manifest,
       });
-  const storageMigrations = checkStorageMigrations(baseline.prev, manifest, baseline.history);
+  const storageMigrations = checkStorageMigrations(
+    baseline.prev,
+    manifest,
+    baseline.history,
+    baseline.approved
+  );
   assertStorageMigrationsCover(storageMigrations);
 
   // APP STORAGE PERMISSION HOOKS — the submit pin, again, against the bytes this approve will
@@ -5294,10 +5319,13 @@ export async function markRequestDeployState(
 /** Typed failure from {@link retriggerBuild}; `code` drives the tRPC mapping. */
 export class RetriggerBuildError extends Error {
   code: string;
-  constructor(code: string, message: string) {
+  /** On a `RATE_LIMITED` refusal: its meta, which `blocks.retriggerBuild` answers with. */
+  readonly rateLimit?: RateLimitMeta;
+  constructor(code: string, message: string, rateLimit?: RateLimitMeta) {
     super(message);
     this.name = 'RetriggerBuildError';
     this.code = code;
+    this.rateLimit = rateLimit;
   }
 }
 
@@ -5548,21 +5576,28 @@ export async function retriggerBuild(params: RetriggerBuildParams): Promise<Retr
 
   // (7) Abuse controls — redis-backed, because the tRPC `rateLimit` middleware
   //     short-circuits for moderators and would be a no-op here.
-  const { acquireRetriggerLock, releaseRetriggerLock, checkRetriggerModeratorQuota } = await import(
-    '~/server/utils/blocks-retrigger-rate-limit'
-  );
+  const {
+    acquireRetriggerLock,
+    releaseRetriggerLock,
+    checkRetriggerModeratorQuota,
+    RETRIGGER_LOCK_TTL_SECONDS,
+  } = await import('~/server/utils/blocks-retrigger-rate-limit');
+  const { appRateLimitMeta } = await import('~/server/utils/app-rate-limit');
   const quota = await checkRetriggerModeratorQuota(params.reviewerUserId);
   if (!quota.allowed) {
     throw new RetriggerBuildError(
       'RATE_LIMITED',
-      `Too many build re-triggers — try again in ${quota.retryAfterSeconds}s.`
+      `Too many build re-triggers — try again in ${quota.retryAfterSeconds}s.`,
+      appRateLimitMeta('apps.build-retrigger', quota.retryAfterSeconds)
     );
   }
   // Single-flight: a double-click must not create two PipelineRuns.
   if (!(await acquireRetriggerLock(request.id))) {
     throw new RetriggerBuildError(
       'RATE_LIMITED',
-      'A re-trigger for this request is already in flight.'
+      'A re-trigger for this request is already in flight.',
+      // The lock lapses by its TTL at the latest.
+      appRateLimitMeta('apps.build-retrigger', RETRIGGER_LOCK_TTL_SECONDS)
     );
   }
 

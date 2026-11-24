@@ -5,10 +5,16 @@ import { mainAppModelLive } from '$lib/server/model-status';
 export const GET: RequestHandler = async ({ locals, request, url }) => {
   const id = Number(url.searchParams.get('id'));
   if (!Number.isInteger(id) || id <= 0) error(400, 'Invalid model id.');
+  const versionParam = url.searchParams.get('versionId');
+  const versionId = versionParam === null ? undefined : Number(versionParam);
+  if (versionId !== undefined && (!Number.isInteger(versionId) || versionId <= 0))
+    error(400, 'Invalid version id.');
   // The dev-login preview has no session to ask the main app with.
   if (locals.devPreview) return json({ live: true });
   try {
-    return json({ live: await mainAppModelLive(request.headers.get('cookie') ?? '')(id) });
+    return json({
+      live: await mainAppModelLive(request.headers.get('cookie') ?? '')(id, versionId),
+    });
   } catch {
     error(502, 'The model check is unavailable right now.');
   }

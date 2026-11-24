@@ -15,6 +15,8 @@ type EmailVerificationData = {
 };
 
 export const emailVerificationEmail = createEmail({
+  template: 'emailVerification',
+  mailClass: 'transactional',
   header: ({ to, isEmailChange }: EmailVerificationData) => ({
     subject: isEmailChange
       ? 'Verify your new email address - Civitai'

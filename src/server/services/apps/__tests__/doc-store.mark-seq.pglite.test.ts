@@ -198,8 +198,11 @@ describe.each([{ rls: true }, { rls: false }])('the mark sequence (rls %o)', (op
       const app = freshApp('MSEQLOCK');
       const v1 = ctx(app, NS_PROD, VIEWER_1);
       await store.put(v1, POSTS, 'p', { status: 'open' });
+      // `maint_run` right after the document lock is the freeze read (`refuseFrozenMark`): a read,
+      // no lock.
       expect(await tablesOf(app, () => store.mark(v1, POSTS, 'p', 'vote'))).toEqual([
         'doc',
+        'maint_run',
         'doc_mark',
         'doc_tally',
         'mark_head',
@@ -207,6 +210,7 @@ describe.each([{ rls: true }, { rls: false }])('the mark sequence (rls %o)', (op
       ]);
       expect(await tablesOf(app, () => store.unmark(v1, POSTS, 'p', 'vote'))).toEqual([
         'doc',
+        'maint_run',
         'doc_mark',
         'doc_tally',
         'mark_head',

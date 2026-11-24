@@ -21,6 +21,8 @@ import {
   PRIOR_BLOCKED_FOR_KEY,
   PRIOR_INGESTION_KEY,
   PRIOR_NEEDS_REVIEW_KEY,
+  PRIOR_NSFW_LEVEL_KEY,
+  PRIOR_NSFW_LOCKED_KEY,
 } from '~/server/utils/image-removal-mode';
 import type { ReportFilter } from '~/server/utils/legal-hold';
 import {
@@ -366,7 +368,7 @@ async function blockUserImages(
                   BlockedReason.CSAM
                 } THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
                 "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam' END,
-                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor", ${PRIOR_NEEDS_REVIEW_KEY}::text, "needsReview"),
+                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor", ${PRIOR_NEEDS_REVIEW_KEY}::text, "needsReview", ${PRIOR_NSFW_LEVEL_KEY}::text, "nsfwLevel", ${PRIOR_NSFW_LOCKED_KEY}::text, "nsfwLevelLocked"),
                 "updatedAt" = now()
             WHERE id IN (${Prisma.join(hide)})
               AND "userId" = ${userId}
@@ -384,7 +386,7 @@ async function blockUserImages(
           ...(await dbWrite.$queryRaw<TouchedImage[]>`
             UPDATE "Image"
             SET "blockedFor" = ${BlockedReason.Moderated},
-                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor", ${PRIOR_NEEDS_REVIEW_KEY}::text, "needsReview"),
+                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor", ${PRIOR_NEEDS_REVIEW_KEY}::text, "needsReview", ${PRIOR_NSFW_LEVEL_KEY}::text, "nsfwLevel", ${PRIOR_NSFW_LOCKED_KEY}::text, "nsfwLevelLocked"),
                 "updatedAt" = now()
             WHERE id IN (${Prisma.join(repoint)})
               AND "userId" = ${userId}

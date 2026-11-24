@@ -21,6 +21,7 @@ import { requireFullScopeSession } from '~/server/utils/require-full-scope-sessi
 import { refuseWhileImpersonating } from '~/server/auth/refuse-while-impersonating';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { BlockRegistry } from '~/server/services/block-registry.service';
+import { BLOCK_TOKEN_MINT_RATE_LIMIT } from '~/server/common/block-token-mint-rate-limit';
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -75,6 +76,7 @@ import {
   withholdUncoveredImportScope,
 } from '~/server/services/apps/storage-import-grant.service';
 import type { Logger } from '@civitai/next-axiom';
+import { appRateLimitMeta, sendAppRateLimited } from '~/server/utils/app-rate-limit';
 
 /** Call only after the host gate: the site rule takes precedence over the level. */
 function hiddenByViewerBrowsingLevel(
@@ -1144,7 +1146,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   const clientIp = getClientIp(req);
   const ipOk = await checkPerIpRateLimit(clientIp);
   if (!ipOk) {
-    res.status(429).json({ error: 'Rate limit exceeded' });
+    // Both mint limits are fixed windows read without their TTL: the window bounds the wait.
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.block-token-mint-ip', PER_IP_RATE_LIMIT_WINDOW_SECONDS),
+      'Rate limit exceeded'
+    );
     return;
   }
 
@@ -1195,7 +1202,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // attacker can't fresh-mint a bucket by rotating blockInstanceId strings.
   const instanceOk = await BlockTokenService.checkRateLimit(userId, blockInstanceId, clientIp);
   if (!instanceOk) {
-    res.status(429).json({ error: 'Rate limit exceeded' });
+    sendAppRateLimited(
+      res,
+      appRateLimitMeta('apps.block-token-mint', BLOCK_TOKEN_MINT_RATE_LIMIT.windowSeconds),
+      'Rate limit exceeded'
+    );
     return;
   }
 

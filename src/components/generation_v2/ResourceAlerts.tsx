@@ -4,6 +4,7 @@
  * Displays alerts related to selected resources including:
  * - Unstable resources (high failure rate)
  * - Content restricted resources (minor/SFW flagged)
+ * - Private generation (private, unpublished or epoch resources)
  * - Ready state alerts (resources need to be downloaded)
  *
  * Experimental state is not here — it lives in `Experimental.tsx`, marked by a
@@ -19,6 +20,7 @@ import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm
 import { useGeneratorLayout } from '~/hooks/useMobileGenerator';
 import { useAppContext } from '~/providers/AppProvider';
 import { isWorkflowOrVariant } from '~/shared/generation/config/workflows';
+import { capsAsPrivateGeneration } from '~/shared/utils/resource.utils';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
 import { formatDownloadEta } from '~/components/ResourceLoad/download-eta';
 import {
@@ -37,6 +39,9 @@ import { useWhatIfContext } from '~/components/form-graph/generation/WhatIfProvi
 interface ResourceInfo {
   id: number;
   name: string;
+  air?: string;
+  isPrivate?: boolean;
+  epochDetails?: unknown;
   model: {
     name: string;
     minor?: boolean;
@@ -87,7 +92,7 @@ function getSelectedResources(model: unknown, resources: unknown, vae: unknown):
 // =============================================================================
 
 /**
- * Displays alerts for unstable and content-restricted resources.
+ * Displays alerts for unstable, content-restricted and private-generation resources.
  * Should be used inside a MultiController for 'model', 'resources', and 'vae'.
  */
 export function ResourceAlerts({ model, resources, vae }: ResourceAlertsProps) {
@@ -106,9 +111,13 @@ export function ResourceAlerts({ model, resources, vae }: ResourceAlertsProps) {
   const restrictedResources = domain.green
     ? []
     : selectedResources.filter((x) => x.model?.minor || x.model?.sfwOnly);
+  const privateResources = domain.green ? [] : selectedResources.filter(capsAsPrivateGeneration);
 
-  // Early return if no alerts
-  if (unstableResources.length === 0 && restrictedResources.length === 0) {
+  if (
+    unstableResources.length === 0 &&
+    restrictedResources.length === 0 &&
+    privateResources.length === 0
+  ) {
     return null;
   }
 
@@ -124,6 +133,26 @@ export function ResourceAlerts({ model, resources, vae }: ResourceAlertsProps) {
           </Text>
           <List size="xs" mt="xs">
             {unstableResources.map((resource) => (
+              <List.Item key={resource.id}>
+                {resource.model.name} - {resource.name}
+              </List.Item>
+            ))}
+          </List>
+        </Alert>
+      )}
+
+      {privateResources.length > 0 && (
+        <Alert color="yellow" title="Limited to PG and PG-13" radius="md">
+          <Text size="xs">
+            Private and unpublished models, including training epochs, can only generate PG and
+            PG-13 content. Anything rated more mature is hidden and can&apos;t be unlocked, but you{' '}
+            <Text span italic inherit>
+              will
+            </Text>
+            {` be charged Buzz.`}
+          </Text>
+          <List size="xs" mt="xs">
+            {privateResources.map((resource) => (
               <List.Item key={resource.id}>
                 {resource.model.name} - {resource.name}
               </List.Item>

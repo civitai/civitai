@@ -1600,6 +1600,53 @@ const inferTierFromAmount = (amount: number, fallbackTier?: MembershipTier): Mem
   return 'bronze';
 };
 
+type LegacyPrepaidRow = {
+  date: string;
+  type: string;
+  amount: number;
+  externalTransactionId: string;
+  description: string;
+};
+
+// Legacy annual-sub-payment + migration-era reward comps (yellow account). Description-based
+// filtering for rewards happens server-side (in the caller) to keep the SQL fast.
+// The window is closed, so a user's rows never change: cache them, empty included. The window
+// is in the key, so moving it starts a fresh cache. Plain redis get/set, like the combined cache
+// below, rather than fetchThroughCache: cache-helpers builds a logger from env at import time,
+// which breaks the many tests that import this module with a partial env mock.
+const getLegacyPrepaidRows = async (userId: number): Promise<LegacyPrepaidRow[]> => {
+  if (!clickhouse) return [];
+  const cacheKey =
+    `${REDIS_KEYS.CACHES.LEGACY_PREPAID_DELIVERIES}:${userId}:${LEGACY_QUERY_START_DATE}:${LEGACY_QUERY_END_DATE}` as RedisKeyTemplateCache;
+  try {
+    const cached = await redis.get(cacheKey);
+    if (cached) return JSON.parse(cached) as LegacyPrepaidRow[];
+  } catch {
+    // Redis down — fall through to ClickHouse
+  }
+
+  const rows = await clickhouse.$query<LegacyPrepaidRow>`
+    SELECT date, type, amount, externalTransactionId, description
+    FROM buzzTransactions
+    WHERE date >= '${LEGACY_QUERY_START_DATE}'
+      AND date < '${LEGACY_QUERY_END_DATE}'
+      AND toAccountId = ${userId}
+      AND toAccountType = 'yellow'
+      AND (
+        (type = 'purchase' AND externalTransactionId LIKE 'annual-sub-payment%')
+        OR type = 'reward'
+      )
+    ORDER BY date DESC
+  `;
+
+  try {
+    await redis.set(cacheKey, JSON.stringify(rows), { EX: CacheTTL.month });
+  } catch {
+    // Redis down — result still returned
+  }
+  return rows;
+};
+
 export const getHistoricalPrepaidDeliveries = async ({
   userId,
   accountType = 'yellow',
@@ -1615,7 +1662,6 @@ export const getHistoricalPrepaidDeliveries = async ({
   //      rows from the Paddle migration era. Slow (~10s) due to the table being sorted by
   //      (date, fromAccountId, toAccountId); the date filter limits the scan. The byToAccount
   //      projection exists but can't be used with SharedReplacingMergeTree.
-  // Cache aggressively since legacy txns are historical and don't change.
   const cacheKey =
     `${REDIS_KEYS.SYSTEM.BLOCKLIST}:prepaid-deliveries:${userId}:${accountType}:v2` as RedisKeyTemplateCache;
   try {
@@ -1643,30 +1689,8 @@ export const getHistoricalPrepaidDeliveries = async ({
     ORDER BY date DESC
   `;
 
-  // Legacy annual-sub-payment + migration-era reward comps. Description-based
-  // filtering for rewards happens server-side (below) to keep the SQL fast.
   const legacyPromise =
-    accountType === 'yellow'
-      ? clickhouse.$query<{
-          date: string;
-          type: string;
-          amount: number;
-          externalTransactionId: string;
-          description: string;
-        }>`
-          SELECT date, type, amount, externalTransactionId, description
-          FROM buzzTransactions
-          WHERE date >= '${LEGACY_QUERY_START_DATE}'
-            AND date < '${LEGACY_QUERY_END_DATE}'
-            AND toAccountId = ${userId}
-            AND toAccountType = '${accountType}'
-            AND (
-              (type = 'purchase' AND externalTransactionId LIKE 'annual-sub-payment%')
-              OR type = 'reward'
-            )
-          ORDER BY date DESC
-        `
-      : Promise.resolve([] as never[]);
+    accountType === 'yellow' ? getLegacyPrepaidRows(userId) : Promise.resolve([] as never[]);
 
   const [membershipRows, legacyRows] = await Promise.all([membershipPromise, legacyPromise]);
   // Pull the YYYY-MM period out of `civitai-membership:YYYY-MM:...` or

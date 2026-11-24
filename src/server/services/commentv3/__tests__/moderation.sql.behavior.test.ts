@@ -166,6 +166,7 @@ describe('removing CommentV3 comments as ToS violations', () => {
     expect(await bulkClearCommentV3TosViolation({ ids: [41, 42] })).toEqual({
       count: 2,
       reopenedReports: 3,
+      held: 0,
       failed: 0,
     });
     expect(await tos()).toMatchObject({ 41: false, 42: false });
@@ -207,6 +208,7 @@ describe('removing CommentV3 comments as ToS violations', () => {
     expect(await bulkClearCommentV3TosViolation({ ids: [41, 42] })).toEqual({
       count: 0,
       reopenedReports: 0,
+      held: 0,
       failed: 2,
     });
     expect(await tos()).toMatchObject({ 41: true, 42: true });
