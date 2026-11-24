@@ -121,8 +121,8 @@ export const platform = {
   held: new Map<number, string>(),
   /** The by-source read answers 200 with a body that is not a record. */
   badBySource: false,
-  /** The platform has no subject lookup route yet (a deploy gap). */
-  noSubjectRoute: false,
+  /** The subject lookup answers with no route (a deploy gap) or a 200 that is not an answer. */
+  subjectLookup: null as null | 'no-route' | 'bad',
 };
 export const urnOf = (sourceId: number) =>
   `urn:data.civitai.com:feature-pages/comments/c${sourceId}`;
@@ -335,7 +335,8 @@ export async function platformReply(url: URL, init: RequestInit): Promise<Respon
       return json(200, { ok: true });
     }
     case '/internal/subject': {
-      if (platform.noSubjectRoute) return json(404, { code: 'not_found' });
+      if (platform.subjectLookup === 'no-route') return json(404, { code: 'not_found' });
+      if (platform.subjectLookup === 'bad') return json(200, { ok: true });
       const urn = url.searchParams.get('urn') ?? '';
       return subjectKnown(urn)
         ? json(200, {
@@ -471,7 +472,7 @@ export async function resetFpState(flags: { mirror: boolean }) {
     failNext: [],
     held: new Map(),
     badBySource: false,
-    noSubjectRoute: false,
+    subjectLookup: null,
   });
   // The text-scan rollout: CommentV3 fully active.
   redisMock.sysRedis.hGetAll.mockImplementation((async () => ({

@@ -95,6 +95,8 @@ const post = async (
   return over.unscanned ? reply : scannedAndPushed(reply);
 };
 
+const UNKNOWN_LATER = 'urn:data.civitai.com:feature-pages/requests/dropped-later';
+
 describe('posting', () => {
   it('writes one comment and one mirror row, and once its scan is clean posts it once under a mirror key, not the client requestId', async () => {
     const reply = await comments.postFeaturePageComment(ctxFor(AUTHOR), {
@@ -203,7 +205,6 @@ describe('posting', () => {
     });
   });
 
-  /** What a post wrote for a subject: its topic rows and Feature Pages comments. */
   const written = async (subject: string) => ({
     topics: (await q(`SELECT id FROM "FeaturePageTopic" WHERE urn = $1`, [subject])).length,
     comments: (await q(`SELECT id FROM "CommentV3" WHERE "entityType"::text = 'featurePage'`))
@@ -229,7 +230,6 @@ describe('posting', () => {
         ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect(await written(subject)).toEqual({ topics: 0, comments: 0 });
       expect(posts()).toEqual([]);
-      // Once the platform holds it, the same post goes through.
       platform.unknown.delete(subject);
       platform.features.add(subject);
       await expect(post('hello', { subject })).resolves.toMatchObject({
@@ -239,9 +239,28 @@ describe('posting', () => {
     }
   );
 
+  it('a subject the platform drops after the lookup: the push is refused, the comment hidden, a resend refused', async () => {
+    dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue(null as never);
+    const { comment } = await post('hello', { subject: UNKNOWN_LATER, unscanned: true });
+    platform.unknown.add(UNKNOWN_LATER);
+    await scannedAndPushed({ comment });
+    expect(
+      await q(`SELECT hidden FROM "CommentV3" WHERE "entityType"::text = 'featurePage'`)
+    ).toEqual([{ hidden: true }]);
+    expect(posts()).toEqual([]);
+    await expect(
+      comments.postFeaturePageComment(ctxFor(AUTHOR), {
+        requestId: `r${seq}`,
+        subject: UNKNOWN_LATER,
+        text: 'hello',
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
   it.each([
     ['down', () => void (platform.down = true)],
-    ['without the lookup route', () => void (platform.noSubjectRoute = true)],
+    ['without the lookup route', () => void (platform.subjectLookup = 'no-route')],
+    ['answering a 200 that is not an answer', () => void (platform.subjectLookup = 'bad')],
   ])(
     'with the subject lookup %s, a post is refused to try again, nothing written',
     async (_, fail) => {
