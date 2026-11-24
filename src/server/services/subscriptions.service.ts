@@ -31,6 +31,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   BUZZ_AMOUNT_TO_TIER,
   TIER_BUZZ_AMOUNTS,
@@ -1600,6 +1601,41 @@ const inferTierFromAmount = (amount: number, fallbackTier?: MembershipTier): Mem
   return 'bronze';
 };
 
+type LegacyPrepaidRow = {
+  date: string;
+  type: string;
+  amount: number;
+  externalTransactionId: string;
+  description: string;
+};
+
+// Legacy annual-sub-payment + migration-era reward comps (yellow account). Description-based
+// filtering for rewards happens server-side (in the caller) to keep the SQL fast.
+// The query reads a closed date window, so a user's rows never change: cache them, empty
+// included (most lookups find none), for a month. The window is in the key, so moving it starts
+// a fresh cache rather than serving rows from the old one.
+const getLegacyPrepaidRows = async (userId: number): Promise<LegacyPrepaidRow[]> => {
+  const ch = clickhouse;
+  if (!ch) return [];
+  return fetchThroughCache(
+    `${REDIS_KEYS.CACHES.LEGACY_PREPAID_DELIVERIES}:${userId}:${LEGACY_QUERY_START_DATE}:${LEGACY_QUERY_END_DATE}` as RedisKeyTemplateCache,
+    () => ch.$query<LegacyPrepaidRow>`
+      SELECT date, type, amount, externalTransactionId, description
+      FROM buzzTransactions
+      WHERE date >= '${LEGACY_QUERY_START_DATE}'
+        AND date < '${LEGACY_QUERY_END_DATE}'
+        AND toAccountId = ${userId}
+        AND toAccountType = 'yellow'
+        AND (
+          (type = 'purchase' AND externalTransactionId LIKE 'annual-sub-payment%')
+          OR type = 'reward'
+        )
+      ORDER BY date DESC
+    `,
+    { ttl: CacheTTL.month }
+  );
+};
+
 export const getHistoricalPrepaidDeliveries = async ({
   userId,
   accountType = 'yellow',
@@ -1614,8 +1650,9 @@ export const getHistoricalPrepaidDeliveries = async ({
   //   2. buzzTransactions (raw, yellow only, narrow date window) → annual-sub-payment + reward
   //      rows from the Paddle migration era. Slow (~10s) due to the table being sorted by
   //      (date, fromAccountId, toAccountId); the date filter limits the scan. The byToAccount
-  //      projection exists but can't be used with SharedReplacingMergeTree.
-  // Cache aggressively since legacy txns are historical and don't change.
+  //      projection exists but can't be used with SharedReplacingMergeTree. Its window is closed,
+  //      so its rows are cached per user for a month on their own (getLegacyPrepaidRows).
+  // The combined result is cached for an hour, since new membership deliveries keep arriving.
   const cacheKey =
     `${REDIS_KEYS.SYSTEM.BLOCKLIST}:prepaid-deliveries:${userId}:${accountType}:v2` as RedisKeyTemplateCache;
   try {
@@ -1643,30 +1680,8 @@ export const getHistoricalPrepaidDeliveries = async ({
     ORDER BY date DESC
   `;
 
-  // Legacy annual-sub-payment + migration-era reward comps. Description-based
-  // filtering for rewards happens server-side (below) to keep the SQL fast.
   const legacyPromise =
-    accountType === 'yellow'
-      ? clickhouse.$query<{
-          date: string;
-          type: string;
-          amount: number;
-          externalTransactionId: string;
-          description: string;
-        }>`
-          SELECT date, type, amount, externalTransactionId, description
-          FROM buzzTransactions
-          WHERE date >= '${LEGACY_QUERY_START_DATE}'
-            AND date < '${LEGACY_QUERY_END_DATE}'
-            AND toAccountId = ${userId}
-            AND toAccountType = '${accountType}'
-            AND (
-              (type = 'purchase' AND externalTransactionId LIKE 'annual-sub-payment%')
-              OR type = 'reward'
-            )
-          ORDER BY date DESC
-        `
-      : Promise.resolve([] as never[]);
+    accountType === 'yellow' ? getLegacyPrepaidRows(userId) : Promise.resolve([] as never[]);
 
   const [membershipRows, legacyRows] = await Promise.all([membershipPromise, legacyPromise]);
   // Pull the YYYY-MM period out of `civitai-membership:YYYY-MM:...` or
