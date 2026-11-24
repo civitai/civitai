@@ -489,7 +489,7 @@ func (s *Server) prepareModelGetAllViewer(ctx context.Context, r *http.Request) 
 	if err != nil {
 		return modelfeed.Request{}, nil, fallback.Wrap("input-envelope", err)
 	}
-	in, err := modelfeed.Parse(raw)
+	in, err := modelfeed.ParseWith(raw, s.Models.Config.Ports)
 	if err != nil {
 		return modelfeed.Request{}, nil, err
 	}

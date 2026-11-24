@@ -9,11 +9,14 @@ package modelfeed
 // so a request Node would refuse the lead for lack of one is a superset this side can only
 // over-report (and over-reporting costs a fallback, never a page that differs from Node's).
 //
-// query, hidden, followed and ids are not checked either: Parse already falls back on each.
+// query and hidden are not checked either: Parse already falls back on each. `followed` (truthy) and
+// a non-empty `ids` (`input.ids?.length`: an empty list keeps the lead) are, for when their ports
+// read them.
 //
 // Temporary: it exists for the model-getall-personal-hot-lead fallback until the experiment is
 // decided (DESIGN.md §15.2.3).
 func (in *Input) PersonalHotLeadEligible() bool {
 	return in.Sort == SortHot &&
-		in.Username == "" && in.User == "" && in.CollectionID == 0 && !in.Favorites && !in.Archived
+		in.Username == "" && in.User == "" && in.CollectionID == 0 && !in.Favorites && !in.Archived &&
+		!in.Followed && len(in.IDs) == 0
 }

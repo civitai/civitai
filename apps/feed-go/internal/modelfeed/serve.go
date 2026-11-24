@@ -37,6 +37,8 @@ type Sources interface {
 	VersionImages(ctx context.Context, versionIDs []int) (map[int][]superjson.Object, error)
 	CreatorMemberships(ctx context.Context, userIDs []int) (map[int]bool, error)
 	UserIDByUsername(ctx context.Context, username string) (int, bool, error)
+	// FollowedUserIDs is the ids the user follows, read from the replica (hydrate.Sources).
+	FollowedUserIDs(ctx context.Context, userID int) ([]int, error)
 	// OfficialModels is getOfficialModelIds (hydrate.Sources.OfficialModels).
 	OfficialModels(ctx context.Context) ([]hydrate.OfficialModel, error)
 }
@@ -62,6 +64,8 @@ type Config struct {
 	LoadingOpenToAll bool
 	// VisibleDecorationEvents is FEED_GO_DECORATION_EVENTS (as the image feed reads it).
 	VisibleDecorationEvents map[string]bool
+	// Ports are the input shapes served behind their own switch (ParseWith), all off by default.
+	Ports Ports
 }
 
 // Deps are model.getAll's collaborators.
@@ -311,6 +315,16 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		}
 		targetUserID = id
 	}
+	var follows []int
+	followed := in.Followed && viewerID != 0
+	if followed {
+		// `followed && sessionUser?.id`: the viewer's Follow rows on the replica (Node's dbRead read),
+		// after the creator lookup, as Node orders them.
+		var err error
+		if follows, err = d.Sources.FollowedUserIDs(ctx, viewerID); err != nil {
+			return nil, err
+		}
+	}
 	if in.CollectionID != 0 {
 		// Node checks the collection after the tag/creator lookups (an unknown creator stays a 404)
 		// and before parsing the cursor, on every page of its loop.
@@ -333,6 +347,7 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		HidePaid: in.HidePaid, OnSale: in.OnSale, ExcludedUserIDs: in.ExcludedUserIDs, FileFormats: in.FileFormats,
 		CollectionID: in.CollectionID, CollectionTagID: in.CollectionTagID,
 		OnlyModelIDs: scope.only, ExcludeModelIDs: scope.exclude,
+		IDs: in.IDs, Followed: followed, FollowedUserIDs: follows,
 	}
 	if in.Period != "AllTime" && in.PeriodMode != "stats" {
 		q.PeriodCutoff = decreaseDate(now, in.Period)
@@ -382,8 +397,9 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		rows = rows[:len(rows)-1]
 	}
 	showSfwFace := level != 0 && level&table.Levels.NSFW == 0
-	// `!ids && !username && !user && !followed && !collectionId` (ids and followed fall back).
-	hidePrivateModels := in.Username == "" && in.User == "" && in.CollectionID == 0
+	// `!ids && !username && !user && !followed && !collectionId`: `ids` present at all, `[]` included,
+	// and `followed` signed out too.
+	hidePrivateModels := !in.HasIDs && in.Username == "" && in.User == "" && !in.Followed && in.CollectionID == 0
 	items := make([]*feedItem, 0, len(rows))
 	for i := range rows {
 		if it := buildFeedItem(&rows[i], in, raw, hy, gates, showSfwFace, hidePrivateModels); it != nil {

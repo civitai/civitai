@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
@@ -93,6 +94,26 @@ type Input struct {
 	// Favorites is `favorites` (booleanString, default false). getModelsRaw never reads it; only the
 	// personal Hot lead's eligibility does (PersonalHotLeadEligible).
 	Favorites bool
+	// HasIDs is `ids` present at all (read only with Ports.IDs; otherwise `ids` falls back): after
+	// commaDelimitedNumberArray every present value is an array, `[]` included, and any array turns
+	// getModelsRaw's hidePrivateModels off. IDs is that array; a non-empty one filters the page to
+	// those models (`mm."modelId" IN (…)`), an empty one filters nothing.
+	HasIDs bool
+	IDs    []int
+	// Followed is `followed` (booleanString; read only with Ports.Followed, otherwise a truthy value
+	// falls back): any truthy value turns hidePrivateModels off, and for a signed-in viewer the page is
+	// held to the creators they follow.
+	Followed bool
+}
+
+// Ports are the input shapes ported behind their own serve switch, each off by default: off, the
+// shape falls back as it always has (`input-ids`, `input-followed`), so turning one on is the only
+// way it is ever computed (DESIGN.md §15.2.4).
+type Ports struct {
+	// IDs is FEED_GO_GETALL_SERVE_INPUT_IDS: compute a request with `ids`.
+	IDs bool
+	// Followed is FEED_GO_GETALL_SERVE_INPUT_FOLLOWED: compute a request with `followed`.
+	Followed bool
 }
 
 // modelsSchema is model.getAll's allow-list and defaults (why: the inputschema package doc).
@@ -144,15 +165,21 @@ func UnsupportedInputKeys() []string { return append([]string(nil), unsupportedK
 
 // Parse validates the decoded input map (trpc.DecodeEnvelope's output). A shape outside the supported
 // subset is a fallback, and so is a value the schema itself rejects (Node answers it with its own
-// BAD_REQUEST, which the sampler never mirrors).
-func Parse(m map[string]any) (*Input, error) {
+// BAD_REQUEST, which the sampler never mirrors). It is ParseWith with every port off.
+func Parse(m map[string]any) (*Input, error) { return ParseWith(m, Ports{}) }
+
+// ParseWith is Parse with the ports p switches on read instead of falling back.
+func ParseWith(m map[string]any, p Ports) (*Input, error) {
 	// `ids` changes the answer whenever it is present at all: commaDelimitedNumberArray turns [] into
 	// [], "" into [0] and null into [], and getModelsRaw's hidePrivateModels is `!ids && …`, so even
-	// an empty list shows private models (and "" filters to model 0). None of that is ported.
-	if _, ok := m["ids"]; ok {
+	// an empty list shows private models (and "" filters to model 0). Read only with p.IDs.
+	if _, ok := m["ids"]; ok && !p.IDs {
 		return nil, fallback.New("input-ids")
 	}
 	for _, k := range unsupportedKeys {
+		if (k == "ids" && p.IDs) || (k == "followed" && p.Followed) {
+			continue
+		}
 		if v, ok := m[k]; ok && !isEmpty(v) {
 			return nil, fallback.New("input-" + k)
 		}
@@ -309,8 +336,81 @@ func Parse(m map[string]any) (*Input, error) {
 	if in.CollectionID, in.CollectionTagID, err = collectionKeys(m); err != nil {
 		return nil, err
 	}
+	if v, ok := m["ids"]; ok && p.IDs {
+		in.HasIDs = true
+		if in.IDs, err = commaDelimitedIDs(v); err != nil {
+			return nil, err
+		}
+	}
+	if p.Followed {
+		if in.Followed, err = booleanString(m["followed"]); err != nil {
+			return nil, fallback.NewfSafe("input-invalid", "followed", "followed: %v", err)
+		}
+	}
 	return in, nil
 }
+
+// commaDelimitedIDs is `ids` through commaDelimitedNumberArray (src/utils/zod-helpers.ts): a string is
+// split on `,` and each part trimmed (stringToArray), an array is taken as it is, null is [] (the
+// preprocess runs on it: `(null ?? []).map(String)`), and every element then goes through JS
+// `Number` and must be a finite number (`z.number()`, else the schema's 400).
+// Only what Number reads unambiguously is read here: an integer (a JSON integer, or a string of
+// optional ASCII blanks, an optional sign, decimal digits and blanks), and an empty or blank string
+// (0). Any other element (a fraction, an exponent, a hex or other spelling Number accepts, a string
+// Number reads as NaN, another type), and an id outside int4 (Node binds it; no row holds it), is
+// `model-ids`: Node answers those itself, its 400 included.
+func commaDelimitedIDs(v any) ([]int, error) {
+	var elems []any
+	switch t := v.(type) {
+	case nil:
+		return []int{}, nil
+	case string:
+		for _, part := range strings.Split(t, ",") {
+			elems = append(elems, part)
+		}
+	case []any:
+		elems = t
+	default:
+		// A number or an object: stringToArray's `.map` throws in Node.
+		return nil, fallback.Safef("model-ids", "%T", v)
+	}
+	out := make([]int, 0, len(elems))
+	for _, e := range elems {
+		var f float64
+		switch t := e.(type) {
+		case json.Number:
+			n, err := t.Float64()
+			if err != nil {
+				return nil, fallback.Safef("model-ids", "number")
+			}
+			f = n
+		case string:
+			s := strings.Trim(t, " \t\n\r")
+			switch {
+			case s == "":
+				f = 0
+			case plainInteger.MatchString(s):
+				n, err := strconv.ParseFloat(s, 64)
+				if err != nil {
+					return nil, fallback.Safef("model-ids", "string")
+				}
+				f = n
+			default:
+				return nil, fallback.Safef("model-ids", "string")
+			}
+		default:
+			return nil, fallback.Safef("model-ids", "%T", e)
+		}
+		if f != math.Trunc(f) || f < math.MinInt32 || f > math.MaxInt32 {
+			return nil, fallback.Safef("model-ids", "range")
+		}
+		out = append(out, int(f))
+	}
+	return out, nil
+}
+
+// plainInteger is a decimal integer JS Number reads as that integer.
+var plainInteger = regexp.MustCompile(`^[+-]?[0-9]+$`)
 
 // collectionKeys reads `collectionId` and `collectionTagId` (both `z.number().optional()`): a value
 // that is not a number, null included, is the schema's 400 (input-invalid). getModelsRaw tests each

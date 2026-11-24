@@ -72,6 +72,12 @@ type Config struct {
 	// route (`/api/trpc/model.getAll`). Off, every request there is the `model-getall-off` fallback,
 	// proxied to the Node app unchanged.
 	ServeModelGetAll bool
+	// GetAllServeInputIDs / GetAllServeInputFollowed are FEED_GO_GETALL_SERVE_INPUT_IDS and
+	// FEED_GO_GETALL_SERVE_INPUT_FOLLOWED (each default off): compute a model.getAll request with
+	// `ids` / `followed` (DESIGN.md §15.2.4). Off, it is the `input-ids` / `input-followed` fallback, as
+	// before; they change nothing while ServeModelGetAll is off, except in the shadow.
+	GetAllServeInputIDs      bool
+	GetAllServeInputFollowed bool
 	// ServeInfinite is FEED_GO_SERVE_INFINITE (default off): compute `image.getInfinite` on the public
 	// route (`/api/trpc/image.getInfinite`). Off, every request there is the `infinite-off` fallback,
 	// proxied to the Node app unchanged.
@@ -248,6 +254,9 @@ func Load() (*Config, error) {
 		ServeInfinite:        boolEnv("FEED_GO_SERVE_INFINITE", false),
 		WriteDevalue:         trpc.WriteDevalueOn(os.Getenv(trpc.WriteDevalueEnv)),
 		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
+
+		GetAllServeInputIDs:      boolEnv("FEED_GO_GETALL_SERVE_INPUT_IDS", false),
+		GetAllServeInputFollowed: boolEnv("FEED_GO_GETALL_SERVE_INPUT_FOLLOWED", false),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
 		RedisSysSentinelName:     os.Getenv("REDIS_SYS_SENTINEL_NAME"),

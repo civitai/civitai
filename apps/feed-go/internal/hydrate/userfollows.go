@@ -77,6 +77,42 @@ func userFollowsFrom(userID int, got map[int]Entry) ([]int, error) {
 	return out, nil
 }
 
+// FollowedUserIDs is model.getAll's follow list (getModelsRaw's `followed`): the ids the user follows,
+// read from the replica on every call, never through userFollowsCache, as Node reads them
+// (`dbRead.user.findUnique({ where: { id }, select: { engagingUsers: { where: { type: 'Follow' } } } })`:
+// the user's Follow rows of UserEngagement). It runs the cache lookup's own statement
+// (sqlUserFollows) for the one user; the order is the rows', which only feeds an `IN (…)`. No row is
+// an empty list.
+func (s *Sources) FollowedUserIDs(ctx context.Context, userID int) ([]int, error) {
+	got, err := s.lookupUserFollows(ctx, []int{userID})
+	if err != nil {
+		return nil, err
+	}
+	rec, ok := got[userID]
+	if !ok {
+		return []int{}, nil
+	}
+	var out []int
+	for _, kv := range rec {
+		if kv.K != "follows" {
+			continue
+		}
+		list, _ := kv.V.([]any)
+		out = make([]int, 0, len(list))
+		for _, v := range list {
+			n, ok := Int(v)
+			if !ok {
+				return nil, fmt.Errorf("followed user ids: %v", v)
+			}
+			out = append(out, n)
+		}
+	}
+	if out == nil {
+		out = []int{}
+	}
+	return out, nil
+}
+
 // followID reads one cached follow id: an integer msgpack number (a string, which Int would parse,
 // is not one Node binds the same way).
 func followID(v any) (int, bool) {
