@@ -77,3 +77,18 @@ describe('the About text', () => {
     expect(about).not.toMatch(/<img|<iframe/);
   });
 });
+
+describe('the page theme', () => {
+  const parse = (pageTheme: unknown) => userProfileUpdateSchema.safeParse({ pageTheme }).success;
+
+  it('takes a colour, an opacity on its own, or both, per theme', () => {
+    expect(parse({ dark: { color: '#112233', opacity: 80 } })).toBe(true);
+    expect(parse({ light: { opacity: 70 } })).toBe(true);
+  });
+
+  it('refuses a theme with neither, an opacity out of range, or a colour that is not hex', () => {
+    expect(parse({ dark: {} })).toBe(false);
+    expect(parse({ dark: { opacity: 50 } })).toBe(false);
+    expect(parse({ dark: { color: 'red' } })).toBe(false);
+  });
+});

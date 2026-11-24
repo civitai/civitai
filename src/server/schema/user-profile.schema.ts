@@ -145,10 +145,16 @@ export const showcaseItemSchema = z.object({
 
 export const profileAboutMaxLength = 5000;
 
-const profileThemeColorSchema = z.object({
-  color: z.string().regex(/^#[0-9a-f]{6}$/i),
-  opacity: z.number().int().min(60).max(100).optional(),
-});
+// No colour means the theme's own panel colour, at the opacity given.
+const profileThemeColorSchema = z
+  .object({
+    color: z
+      .string()
+      .regex(/^#[0-9a-f]{6}$/i)
+      .optional(),
+    opacity: z.number().int().min(60).max(100).optional(),
+  })
+  .refine((theme) => theme.color != null || theme.opacity != null, 'Pick a colour or an opacity');
 /** A member's card colours, per theme. Light mode falls back to dark when it has none. */
 export const profilePageThemeSchema = z.object({
   dark: profileThemeColorSchema.optional(),

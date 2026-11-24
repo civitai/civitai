@@ -34,7 +34,7 @@ export function ImageCard(props: Props) {
   );
 }
 
-function ImageCardContent({ data, hideCreator, aspectRatio }: Props) {
+function ImageCardContent({ data, hideCreator, aspectRatio, mediaWidth }: Props) {
   const { getImages, ...context } = useImagesContext();
   const features = useFeatureFlags();
   // Called unconditionally: inside the `??` below it would sit after a
@@ -45,6 +45,7 @@ function ImageCardContent({ data, hideCreator, aspectRatio }: Props) {
     <AspectRatioImageCard
       image={data}
       aspectRatio={aspectRatio}
+      mediaWidth={mediaWidth}
       // The owner's own cosmetic wins; the remix frame is only a fallback.
       cosmetic={data.cosmetic?.data ?? (remix.any ? REMIX_FRAME : undefined)}
       eventDecoration={data.eventDecoration?.data}
@@ -155,4 +156,5 @@ type Props = {
   /** For a gallery of one creator's images (their own profile), where the name repeats on every card. */
   hideCreator?: boolean;
   aspectRatio?: AspectRatioImageCardProps<'imageDetail'>['aspectRatio'];
+  mediaWidth?: number;
 };

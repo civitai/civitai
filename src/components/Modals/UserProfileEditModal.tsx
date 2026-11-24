@@ -913,6 +913,7 @@ export default function UserProfileEditModal() {
           name="sfwBackgroundImage"
           label="Page background (civitai.com)"
           description="Leave empty to use the page background above. Only a safe-for-work image shows on civitai.com."
+          aspectRatio={16 / 9}
           previewWidth={constants.profile.coverImageWidth}
         />
       )}
@@ -1208,7 +1209,8 @@ function PageCustomizationFields() {
       <InputSimpleImageUpload
         name="backgroundImage"
         label="Page background"
-        description="Shown behind your whole profile page."
+        description="Shown behind your profile. A new upload appears once it has been scanned."
+        aspectRatio={16 / 9}
         previewWidth={constants.profile.coverImageWidth}
       />
       <CardColorPicker

@@ -232,7 +232,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5, flex: 1 }}
         variant={isMobile ? 'filled' : undefined}
       />
-      <AnnouncementMuteToggle creatorId={user.id} creatorName={user.username} />
+      <AnnouncementMuteToggle creatorId={user.id} creatorName={user.username} solid={redesign} />
     </Group>
   );
 

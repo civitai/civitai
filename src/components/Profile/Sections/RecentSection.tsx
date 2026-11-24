@@ -16,11 +16,10 @@ import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useAddToShowcaseAction } from '~/components/Profile/AddToShowcaseMenuItem';
+import { useSetProfileBackground } from '~/components/Profile/SetAsBackground';
 import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import { ProfileSection, ProfileSectionPreview } from '~/components/Profile/ProfileSection';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
 import { ArticleSort, ImageSort } from '~/server/common/enums';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -70,7 +69,13 @@ export const RecentSection = ({ user }: ProfileSectionProps) => {
               {image && (
                 <div className="flex min-w-0 flex-[2_1_300px] flex-col gap-2">
                   <ImagesProvider images={[image]}>
-                    <ImageCard data={image} hideCreator aspectRatio={RECENT_TILE_RATIO} />
+                    <ImageCard
+                      data={image}
+                      hideCreator
+                      aspectRatio={RECENT_TILE_RATIO}
+                      // The tile spans most of the content column, about twice a feed card.
+                      mediaWidth={1080}
+                    />
                   </ImagesProvider>
                   {isOwner && <OwnerImageActions image={image} />}
                 </div>
@@ -105,19 +110,7 @@ function OwnerImageActions({ image }: { image: ImagesInfiniteModel }) {
     entityType: 'Image',
     entityId: image.id,
   });
-  const currentUser = useCurrentUser();
-  const utils = trpc.useUtils();
-  const setBackground = trpc.userProfile.setBackground.useMutation({
-    onSuccess: async () => {
-      await utils.userProfile.customization.invalidate();
-      showSuccessNotification({ message: 'Set as your page background' });
-    },
-    onError: (error) =>
-      showErrorNotification({
-        title: 'Could not set your background',
-        error: new Error(error.message),
-      }),
-  });
+  const background = useSetProfileBackground();
 
   return (
     <div className="flex flex-wrap gap-2">
@@ -130,13 +123,13 @@ function OwnerImageActions({ image }: { image: ImagesInfiniteModel }) {
       >
         Add to Showcase
       </Button>
-      {currentUser?.isPaidMember && (
+      {background.available && (
         <Button
           variant="default"
           size="compact-sm"
           leftSection={<IconWallpaper size={14} />}
-          onClick={() => setBackground.mutate({ imageId: image.id })}
-          loading={setBackground.isPending}
+          onClick={() => background.setBackground(image.id)}
+          loading={background.isPending}
         >
           Set as background
         </Button>

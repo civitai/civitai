@@ -33,7 +33,12 @@ export function ProfilePageCustomization({ userId }: { userId: number }) {
   const theme = (scheme === 'light' && data.pageTheme?.light) || data.pageTheme?.dark;
   const cardColor = theme?.color ?? null;
   const cardOpacity = theme?.opacity ?? null;
-  const card = profileCardBackground(cardColor, cardOpacity);
+  // Without a colour, an opacity (or a page background, which needs panels to sit on) uses the
+  // theme's own panel colour; its text needs no change.
+  const card = profileCardBackground(
+    cardColor ?? (cardOpacity != null || background ? themePanel[scheme] : null),
+    cardOpacity
+  );
   const bar = profileBarBackground(cardColor);
   const cardInk = profileCardInk(cardColor, cardOpacity, scheme);
   // The bar is the same colour, nearly opaque, so it can need the other ink.
@@ -81,6 +86,8 @@ export function ProfilePageCustomization({ userId }: { userId: number }) {
 
 // Text that stays legible on the member's card colour: Mantine's text variables, re-pointed inside
 // the tinted areas. Panels read the same variables from ProfileSection.module.css.
+const themePanel = { dark: '#25262b', light: '#ffffff' } as const;
+
 const inks = {
   dark: { text: '#212529', dimmed: '#495057', bright: '#000000', anchor: '#1864ab' },
   light: { text: '#c1c2c5', dimmed: '#909296', bright: '#ffffff', anchor: '#74c0fc' },

@@ -28,6 +28,9 @@ type HashedImage = { hash?: string | null } | null | undefined;
 // A few tried colours beside the ones taken from the member's own images.
 const presets = ['#1b2a4a', '#2b3a2e', '#3d2c5c', '#f3ead7', '#d9e8f5', '#f6dfe5'];
 
+/** The theme's own panel colour, used at the chosen opacity when no colour is picked. */
+const themePanel: Record<Mode, string> = { dark: '#25262b', light: '#ffffff' };
+
 /** The theme surface a card sits on, for the preview. */
 const surface: Record<Mode, string> = { dark: '#1a1b1e', light: '#f1f3f5' };
 
@@ -76,8 +79,15 @@ export function CardColorPicker({
   ].filter((swatch, i, all) => all.findIndex((other) => other.color === swatch.color) === i);
   const isCustom = !!ownColor && !swatches.some((swatch) => swatch.color === ownColor);
 
+  // Clearing the colour keeps a chosen opacity, which then applies to the theme's own panel colour.
   const setColor = (next: string | null) =>
-    setTheme(next ? { color: next, opacity: own?.opacity } : undefined);
+    setTheme(
+      next
+        ? { color: next, opacity: own?.opacity }
+        : own?.opacity != null
+        ? { opacity: own.opacity }
+        : undefined
+    );
   // Without a colour the preview is the theme's own card, with the theme's own text.
   const ink = profileCardInk(color, opacity, mode) ?? (mode === 'dark' ? 'light' : 'dark');
 
@@ -124,9 +134,7 @@ export function CardColorPicker({
                 mode === 'dark' ? 'border-dark-4' : 'border-gray-3'
               )}
               style={{
-                background:
-                  profileCardBackground(color, opacity) ??
-                  (mode === 'dark' ? 'var(--mantine-color-dark-6)' : '#ffffff'),
+                background: profileCardBackground(color ?? themePanel[mode], opacity),
                 color: ink === 'dark' ? '#212529' : '#f1f3f5',
               }}
             >
@@ -221,10 +229,9 @@ export function CardColorPicker({
             max={100}
             step={5}
             value={opacity}
-            disabled={color == null}
             onChange={(next) => {
               // In light mode this gives light its own colours, starting from the dark ones.
-              if (color) setTheme({ color, opacity: next });
+              setTheme({ ...(color && { color }), opacity: next });
             }}
             marks={[{ value: 60 }, { value: 80 }, { value: 100 }]}
             label={null}
