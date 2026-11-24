@@ -20,7 +20,16 @@ export type HoldParent = {
   imageTotal: number;
 };
 
-export type HoldContext = { profile: HoldProfile | null; parent: HoldParent | null };
+/** A `TrackLyrics` hold's song, for the player; null when gone or withheld from this moderator. */
+export type HoldSong = { id: number; url: string };
+
+export type HoldContext = {
+  profile: HoldProfile | null;
+  parent: HoldParent | null;
+  song: HoldSong | null;
+  /** The song exists but is withheld from this moderator (`withheldImageIds`). */
+  songWithheld: boolean;
+};
 
 export type CsamHoldView = CsamHoldItem & HoldContext;
 

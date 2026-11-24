@@ -287,6 +287,11 @@ until Audio review's Held tab takes them.
 - **Removed-appeals** shows the song card for an appeal on a song still on file, unless the song is
   withheld from the moderator (`withheldImageIds`), which shows the refusal line instead; other rows
   stay text only. An appeal whose song row is gone has nothing to play.
+- **Text holds** (`/csam/text-holds`): a lyrics hold (`TrackLyrics`, whose entity id is the song's
+  Image id) shows as "Song lyrics", with the held text and the song card, or the refusal line for a
+  song withheld from the moderator. Remove, strike and ban are offered as on a post hold; "Remove"
+  unpublishes the post that contains the song. Dismiss releases the song, so it is back on the site
+  and in search. The decisions are the main app's (`csam-hold-decision.ts`).
 
 ## After launch
 
