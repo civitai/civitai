@@ -90,7 +90,7 @@ export default AuthedEndpoint(
     }
 
     // Per user, as the CLI route's is per key; fails closed (`takeSubmitSlot`).
-    const slot = await takeSubmitSlot(`user:${user.id}`);
+    const slot = await takeSubmitSlot(`user:${user.id}`, user);
     if (!slot.ok && slot.reason !== 'limited') {
       res.status(503).json({ message: 'Rate limiter unavailable; please retry' });
       return;

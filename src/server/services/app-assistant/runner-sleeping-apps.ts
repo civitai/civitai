@@ -5,6 +5,7 @@ import * as z from 'zod';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { readRunnerRequest } from '~/server/services/app-assistant/runner-request';
 import { appRateLimitMeta } from '~/server/utils/app-rate-limit';
+import { getUsageLimitDef, usageLimits } from '~/shared/constants/usage-limits';
 import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 import { sleepingAppSchema } from '~/server/schema/app-hibernation.schema';
 import type { SessionUser } from '~/types/session';
@@ -31,7 +32,12 @@ import type {
  */
 
 /** Per user, per route: the page's own `getWakeSeed` limit (60 an hour). */
-export const RUNNER_SLEEPING_RATE_LIMIT = { limit: 60, period: 60 * 60 } as const;
+export const RUNNER_SLEEPING_RATE_LIMIT = usageLimits('apps.sleeping-reads');
+/** The window of `apps.sleeping-reads`: the wait when the limiter names none. */
+const RUNNER_SLEEPING_WINDOW_SECONDS = (() => {
+  const { window } = getUsageLimitDef('apps.sleeping-reads');
+  return window.type === 'rolling' ? window.seconds : 60 * 60;
+})();
 
 export type RunnerSleepingDeps = {
   /** The grant's user when every App Assistant gate admits them, else the refusal. */
@@ -77,7 +83,7 @@ async function admitted(
   if (allowed !== true) {
     const meta = appRateLimitMeta(
       'apps.sleeping-reads',
-      allowed ? allowed.retryAfterSeconds : RUNNER_SLEEPING_RATE_LIMIT.period
+      allowed ? allowed.retryAfterSeconds : RUNNER_SLEEPING_WINDOW_SECONDS
     );
     return {
       answer: {
@@ -150,7 +156,7 @@ async function defaultDeps(req: AxiomAPIRequest, keyName: string): Promise<Runne
     allow: async (user) => {
       try {
         const record = await claimRateLimitAttempt({
-          rules: [RUNNER_SLEEPING_RATE_LIMIT],
+          rules: RUNNER_SLEEPING_RATE_LIMIT,
           keyName,
           user,
           req,

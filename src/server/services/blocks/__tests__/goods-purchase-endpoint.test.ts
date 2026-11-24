@@ -363,7 +363,8 @@ describe('caps and their refunds', () => {
         retryAfterSeconds: 19_800,
         retryAt: '2026-09-28T00:00:00.000Z',
         id: 'apps.goods-daily',
-        kind: 'product',
+        // Abuse in the registry (no override can disable it), and it still reports its counts.
+        kind: 'abuse',
         limit: 150_000,
         // 150,001 reserved with this 1,300-Buzz purchase, which the refund gave back.
         used: 148_701,

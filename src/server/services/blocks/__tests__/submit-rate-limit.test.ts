@@ -53,7 +53,7 @@ beforeEach(() => {
 
 describe('takePushReviewSlot — the push window on the cache cluster', () => {
   it('counts the push window on the cluster client and leaves system Redis untouched', async () => {
-    expect(await takePushReviewSlot('slug:my-app')).toEqual({ ok: true });
+    expect(await takePushReviewSlot('slug:my-app', null)).toEqual({ ok: true });
 
     expect([...counters.redis.entries()]).toEqual([[`${PUSH_KEY}:slug:my-app`, 1]]);
     expect(counters.sysRedis.size).toBe(0);
@@ -62,9 +62,12 @@ describe('takePushReviewSlot — the push window on the cache cluster', () => {
 
   it('a push past the max is limited, with retryAfter from the cluster TTL', async () => {
     for (let i = 0; i < PUSH_REVIEW_RATE_LIMIT.max; i++) {
-      expect(await takePushReviewSlot('user:42')).toEqual({ ok: true });
+      expect(await takePushReviewSlot('user:42', null)).toEqual({ ok: true });
     }
-    expect(await takePushReviewSlot('user:42')).toEqual({ ok: false, retryAfterSeconds: 1234 });
+    expect(await takePushReviewSlot('user:42', null)).toEqual({
+      ok: false,
+      retryAfterSeconds: 1234,
+    });
 
     expect(redisMock.redis.ttl).toHaveBeenCalledWith(`${PUSH_KEY}:user:42`);
     expect(redisMock.redis.ttl).toHaveBeenCalledTimes(1);
@@ -83,7 +86,7 @@ describe('takePushReviewSlot — the push window on the cache cluster', () => {
       return chain;
     });
 
-    expect(await takePushReviewSlot('slug:my-app')).toEqual({ ok: true });
+    expect(await takePushReviewSlot('slug:my-app', null)).toEqual({ ok: true });
     expect(redisMock.redis.multi).toHaveBeenCalledTimes(1);
     expect(redisMock.redis.ttl).not.toHaveBeenCalled();
     expect(calledHybridNodes(['sysRedis'])).toEqual([]);
@@ -92,7 +95,7 @@ describe('takePushReviewSlot — the push window on the cache cluster', () => {
 
 describe('takeSubmitSlot — the submit window stays in system Redis', () => {
   it('counts the submit window in system Redis and never on the cluster', async () => {
-    expect(await takeSubmitSlot('key:9')).toEqual({ ok: true });
+    expect(await takeSubmitSlot('key:9', null)).toEqual({ ok: true });
 
     expect([...counters.sysRedis.entries()]).toEqual([[`${SUBMIT_KEY}:key:9`, 1]]);
     expect(counters.redis.size).toBe(0);
@@ -101,14 +104,15 @@ describe('takeSubmitSlot — the submit window stays in system Redis', () => {
 
   it('a submit past the max is limited, with retryAfter from the system Redis TTL', async () => {
     for (let i = 0; i < SUBMIT_RATE_LIMIT.max; i++) {
-      expect(await takeSubmitSlot('user:7')).toEqual({ ok: true });
+      expect(await takeSubmitSlot('user:7', null)).toEqual({ ok: true });
     }
     // `used`: the window's count with this refused submit, for the product meta's counts.
-    expect(await takeSubmitSlot('user:7')).toEqual({
+    expect(await takeSubmitSlot('user:7', null)).toEqual({
       ok: false,
       reason: 'limited',
       retryAfterSeconds: 55,
       used: 11,
+      limit: 10,
     });
 
     expect(redisMock.sysRedis.ttl).toHaveBeenCalledWith(`${SUBMIT_KEY}:user:7`);
@@ -128,7 +132,7 @@ describe('takeSubmitSlot — the submit window stays in system Redis', () => {
       return chain;
     });
 
-    expect(await takeSubmitSlot('key:9')).toEqual({ ok: false, reason: 'unavailable' });
+    expect(await takeSubmitSlot('key:9', null)).toEqual({ ok: false, reason: 'unavailable' });
     expect(redisMock.redis.multi).not.toHaveBeenCalled();
   });
 });

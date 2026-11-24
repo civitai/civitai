@@ -47,18 +47,29 @@ export const FORK_SETTING_DISABLED_MESSAGE = 'Forking is not available for your 
 /** The Fork action's label, on the store page and in the running app's ⋮ menu. */
 export const FORK_ACTION_LABEL = 'Fork';
 
-/** Per-user caps on starting a fork. Each start builds and uploads a copy of the parent's source. */
-export const FORK_START_LIMITS = [
-  { id: 'apps.fork-starts-hourly', windowSeconds: 60 * 60, max: 5 },
-  { id: 'apps.fork-starts-daily', windowSeconds: 24 * 60 * 60, max: 20 },
-] as const;
+/**
+ * Per-user caps on starting a fork, each a usage-limit registry entry (`app-usage-limits.ts`:
+ * its window and its tunable limit). Each start builds and uploads a copy of the parent's source.
+ */
+export const FORK_START_LIMIT_IDS = ['apps.fork-starts-hourly', 'apps.fork-starts-daily'] as const;
 
 /** Refusals of `appListings.startFork`, pinned whole by the tests. */
 export const FORK_PARENT_UNAVAILABLE_MESSAGE = 'This app isn’t available to fork.';
 export const FORK_NOT_ALLOWED_MESSAGE = 'The author of this app hasn’t allowed forks.';
 export const FORK_NO_APPROVED_VERSION_MESSAGE = 'This app has no reviewed version to fork yet.';
-export const FORK_RATE_LIMITED_MESSAGE =
-  'You can start up to 5 forks an hour and 20 a day. Try again later.';
+/**
+ * The fork-start refusal, naming the user's resolved hourly and daily limits. A disabled window
+ * (an override, `Infinity`) is left out rather than named.
+ */
+export function forkRateLimitedMessage(hourly: number, daily: number): string {
+  const limits = [
+    Number.isFinite(hourly) ? `${hourly} forks an hour` : null,
+    Number.isFinite(daily) ? `${daily} ${Number.isFinite(hourly) ? '' : 'forks '}a day` : null,
+  ].filter((part): part is string => part !== null);
+  return `You can start up to ${limits.join(' and ')}. Try again later.`;
+}
+/** The refusal at the code-default limits. */
+export const FORK_RATE_LIMITED_MESSAGE = forkRateLimitedMessage(5, 20);
 export const FORK_UNAVAILABLE_HERE_MESSAGE = 'Forking isn’t available on this site yet.';
 export const FORK_TOO_LARGE_MESSAGE = 'This app is too large to fork.';
 export const FORK_BUSY_MESSAGE = 'Forking is busy right now. Try again in a moment.';

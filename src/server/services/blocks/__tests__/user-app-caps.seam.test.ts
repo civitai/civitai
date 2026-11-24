@@ -37,17 +37,40 @@ describe('one resolver for the per-user app caps', () => {
     ]);
   });
 
+  // The App Platform's owner-counted registry caps (`app-usage-limits.ts`): each enforcing service
+  // reads its limit through `resolveUserAppLimit`, and nothing else reads it.
+  const LIMIT_READERS = [
+    'pages/api/v1/blocks/dev-token.ts',
+    'pages/api/v1/blocks/goods/purchase.ts',
+    'pages/api/v1/blocks/submissions.ts',
+    'pages/api/v1/blocks/tip-allowance.ts',
+    'pages/api/v1/blocks/tip.ts',
+    'pages/api/v1/blocks/withdraw.ts',
+    'server/services/blocks/app-fork-start.service.ts',
+    'server/services/blocks/dev-tunnel-access.service.ts',
+    'server/services/blocks/media-upload-batch.service.ts',
+    'server/services/blocks/offsite-listing.service.ts',
+    'server/services/blocks/submit-rate-limit.ts',
+    'server/utils/block-catalog-rate-limit.ts',
+  ];
+  it('the owner-counted registry caps: each enforcing service reads resolveUserAppLimit', () => {
+    expect(importersOf(CAPS, 'resolveUserAppLimit')).toEqual(LIMIT_READERS);
+  });
+
   it('nothing else imports the resolver module', () => {
-    expect(importersOf(CAPS)).toEqual([
-      'server/routers/blocks.router.ts',
-      // A type import only (`SleepingAppLimits`).
-      'server/services/app-hibernation/app-hibernation.service.ts',
-      'server/services/app-hibernation/hibernation-deps.ts',
-      'server/services/apps/doc-store-maintenance.instance.ts',
-      'server/services/apps/doc-store-viewer-usage.service.ts',
-      'server/services/apps/doc-store.instance.ts',
-      'server/services/blocks/app-buzz-usage.service.ts',
-    ]);
+    expect(importersOf(CAPS)).toEqual(
+      [
+        'server/routers/blocks.router.ts',
+        // A type import only (`SleepingAppLimits`).
+        'server/services/app-hibernation/app-hibernation.service.ts',
+        'server/services/app-hibernation/hibernation-deps.ts',
+        'server/services/apps/doc-store-maintenance.instance.ts',
+        'server/services/apps/doc-store-viewer-usage.service.ts',
+        'server/services/apps/doc-store.instance.ts',
+        'server/services/blocks/app-buzz-usage.service.ts',
+        ...LIMIT_READERS,
+      ].sort()
+    );
   });
 
   // The pre-tier constant is gone, not merely unimported: an import ledger cannot see a use

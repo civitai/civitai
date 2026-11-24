@@ -30,6 +30,7 @@ import {
   retryAfterSecondsOf,
   sendAppRateLimited,
 } from '~/server/utils/app-rate-limit';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
@@ -286,7 +287,8 @@ export const config = {
 // (read/catalog + page spend + per-app storage; EXCLUDES social:tip:self +
 // block:settings:*) now live in dev-scoped-mint.service so the Phase-2 cookie
 // host-mint reuses the identical belt. Imported above.
-const RATE_LIMIT = { max: 30, windowSeconds: 60 } as const;
+// The window; the limit is the registry's `apps.dev-token`, resolved per user (its code default is 30).
+const RATE_LIMIT = { windowSeconds: 60 } as const;
 
 const PAGE_INSTANCE_PREFIX = 'page_';
 
@@ -474,6 +476,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // fallback. Same atomic SET NX EX + INCR pattern as submit-version; fail
   // CLOSED on a malformed limiter result (never silently bypass a mint).
   const rateSubject = user.id ? `u:${user.id}` : `ip:${clientIp(req)}`;
+  const rateMax = await resolveUserAppLimit('apps.dev-token', user.id ? user : null);
   const rateKey = `${REDIS_SYS_KEYS.BLOCKS.DEV_TOKEN_RATE_LIMIT}:${rateSubject}` as const;
   let count: number;
   try {
@@ -523,7 +526,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     // proceed; the .catch keeps the orphaned promise from surfacing as unhandled.
     if (ttl < 0) void sysRedis.expire(rateKey, RATE_LIMIT.windowSeconds).catch(() => {});
   }
-  if (count > RATE_LIMIT.max) {
+  if (count > rateMax) {
     // Bound the 429-path TTL read (#28) so a hung sysRedis.ttl can't park the
     // over-limit response. On a deadline/throw fall back to the full window.
     const retryAfter = await withSysReadDeadline(sysRedis.ttl(rateKey)).catch(
@@ -535,7 +538,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       'Rate limit exceeded',
       {
         retryAfterSeconds: retryAfter,
-        limit: RATE_LIMIT.max,
+        limit: rateMax,
         windowSeconds: RATE_LIMIT.windowSeconds,
       }
     );

@@ -1,7 +1,10 @@
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { usageLimitDefs } from '~/shared/constants/usage-limits';
 import {
   APP_RATE_LIMITS,
+  appRateLimitClass,
+  type AppRateLimitId,
   appRateLimitBody,
   appRateLimitMeta,
   rateLimitedTrpcError,
@@ -188,25 +191,31 @@ describe('retry arithmetic', () => {
 });
 
 describe('the id table', () => {
-  it('pins each id’s kind: the product allowances, every other id abuse', () => {
-    const product = Object.entries(APP_RATE_LIMITS)
-      .filter(([, def]) => def.kind === 'product')
-      .map(([id]) => id)
-      .sort();
-    expect(product).toEqual([
+  it('pins each id’s class: the product allowances, the abuse caps that report counts, the rest abuse', () => {
+    const ids = [
+      ...Object.keys(APP_RATE_LIMITS),
+      ...usageLimitDefs.map((def) => def.id).filter((id) => id.startsWith('apps.')),
+    ] as AppRateLimitId[];
+    const by = (pick: (c: ReturnType<typeof appRateLimitClass>) => boolean) =>
+      ids.filter((id) => pick(appRateLimitClass(id))).sort();
+    expect(by((c) => c.kind === 'product')).toEqual([
       'apps.fork-starts-daily',
       'apps.fork-starts-hourly',
-      'apps.goods-daily',
       'apps.media-upload-daily-bytes',
       'apps.media-upload-daily-items',
       'apps.offsite-pending',
       'apps.store-items',
-      'apps.tip-daily',
       'apps.version-submits',
     ]);
-    for (const [id, def] of Object.entries(APP_RATE_LIMITS)) {
-      expect(id, id).toMatch(/^apps\.[a-z0-9-]+$/);
-      expect(['product', 'abuse'], id).toContain(def.kind);
-    }
+    expect(by((c) => c.kind === 'abuse' && c.reportsCounts)).toEqual([
+      'apps.goods-daily',
+      'apps.tip-daily',
+    ]);
+    for (const id of ids) expect(id, id).toMatch(/^apps\.[a-z0-9-]+$/);
+  });
+
+  it('a per-user cap is a registry entry OR a table row, never both (one place decides its class)', () => {
+    const registry = new Set<string>(usageLimitDefs.map((def) => def.id));
+    expect(Object.keys(APP_RATE_LIMITS).filter((id) => registry.has(id))).toEqual([]);
   });
 });

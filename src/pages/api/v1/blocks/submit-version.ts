@@ -185,7 +185,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // malformed counter is a 503, never a silent bypass). See `takeSubmitSlot`.
   const keySubject = session.apiKeyId ? `key:${session.apiKeyId}` : `ip:${clientIp(req)}`;
   for (const rateSubject of [`user:${user.id}`, keySubject]) {
-    const slot = await takeSubmitSlot(rateSubject);
+    const slot = await takeSubmitSlot(rateSubject, user);
     if (!slot.ok && slot.reason !== 'limited') {
       req.log?.warn(
         slot.reason === 'unavailable'

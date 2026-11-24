@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { resolveUserAppLimit } from '~/server/services/blocks/user-app-caps.service';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   appRateLimitBody,
@@ -76,7 +77,9 @@ export async function getDevTunnelFlagRefusal(user: SessionUser): Promise<DevTun
 // author can trigger — blunts host-pool enumeration / DoS across many unclaimed
 // slugs. Applies ONLY to the ephemeral branch; the approved/owned path never
 // increments this counter. ONE counter per user, whichever caller starts the tunnel.
-export const EPHEMERAL_DEV_TUNNEL_RATE_LIMIT = { max: 20, windowSeconds: 3600 } as const;
+// The window; the limit is the registry's `apps.dev-tunnel-starts`, resolved per user (code
+// default 20).
+export const EPHEMERAL_DEV_TUNNEL_RATE_LIMIT = { windowSeconds: 3600 } as const;
 
 /**
  * Atomically counts one ephemeral dev-tunnel start against this user's fixed
@@ -90,7 +93,8 @@ async function checkEphemeralDevTunnelRateLimit(
   userId: number
 ): Promise<{ allowed: true } | { allowed: false; retryAfterSeconds: number }> {
   const key = `${REDIS_SYS_KEYS.BLOCKS.DEV_TUNNEL_EPHEMERAL_RATE_LIMIT}:${userId}` as const;
-  const { max, windowSeconds } = EPHEMERAL_DEV_TUNNEL_RATE_LIMIT;
+  const { windowSeconds } = EPHEMERAL_DEV_TUNNEL_RATE_LIMIT;
+  const max = await resolveUserAppLimit('apps.dev-tunnel-starts', userId);
   try {
     const count = await sysRedis.incrBy(key, 1);
     if (count === 1) {
